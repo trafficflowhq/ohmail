@@ -1,5 +1,6 @@
 import {
   UNMETERED_ACCESS,
+  type AccessLifecycle, type AccessLifecycleState, type AccessClosedReason,
   type AccessRefusal, type AccessVerdict, type EntitlementsPort,
   type ReleaseOutcome, type ReleaseReceipt, type SpendAction, type SpendMeta, type SpendOutcome,
   type SpendRelease,
@@ -107,6 +108,52 @@ function refusalOf(reason: unknown): AccessRefusal {
   return reason === "suspended" ? "suspended" : "payment_required";
 }
 
+const LIFECYCLE_STATES: ReadonlySet<string> =
+  new Set<AccessLifecycleState>(["trialing", "grace", "past_due", "active", "closed", "erased"]);
+const CLOSED_REASONS: ReadonlySet<string> =
+  new Set<AccessClosedReason>(["trial_ended", "canceled", "unpaid", "suspended"]);
+
+/**
+ * The `lifecycle` block, or `null` for an old program that sends none (= today's behaviour), or
+ * the field that could not be read. Two refusals are the contract's own: an unknown `state` (a
+ * word no surface here has a sentence for), and `closed`/`erased` beside `syncEnabled: true` —
+ * the one property the joint truth table pins, so a body breaking it is a drift between the two
+ * programs, never a verdict. Both go through the EXISTING fault arm: last verdict else allow,
+ * NEVER a lockout invented from a drift.
+ */
+function lifecycleOf(raw: unknown, syncEnabled: boolean): AccessLifecycle | null | { bad: string } {
+  if (raw === undefined || raw === null) return null;
+  const l = obj(raw);
+  if (!l) return { bad: "lifecycle" };
+  if (typeof l.state !== "string" || !LIFECYCLE_STATES.has(l.state)) return { bad: "lifecycle.state" };
+  if ((l.state === "closed" || l.state === "erased") && syncEnabled) return { bad: "lifecycle.state" };
+  const reason = l.closedReason ?? null;
+  if (reason !== null && (typeof reason !== "string" || !CLOSED_REASONS.has(reason))) {
+    return { bad: "lifecycle.closedReason" };
+  }
+  if (typeof l.formerlyPaid !== "boolean") return { bad: "lifecycle.formerlyPaid" };
+  const iso = (field: string): string | null | { bad: string } => {
+    const v = l[field] ?? null;
+    return v === null || typeof v === "string" ? v : { bad: `lifecycle.${field}` };
+  };
+  const read: Partial<Record<"trialEndsAt" | "graceUntil" | "closedAt" | "erasureAt" | "erasedAt", string | null>> = {};
+  for (const field of ["trialEndsAt", "graceUntil", "closedAt", "erasureAt", "erasedAt"] as const) {
+    const v = iso(field);
+    if (typeof v === "object" && v !== null) return v;
+    read[field] = v;
+  }
+  return {
+    state: l.state as AccessLifecycleState,
+    closedReason: (reason as AccessClosedReason | null),
+    trialEndsAt: read.trialEndsAt ?? null,
+    graceUntil: read.graceUntil ?? null,
+    closedAt: read.closedAt ?? null,
+    erasureAt: read.erasureAt ?? null,
+    erasedAt: read.erasedAt ?? null,
+    formerlyPaid: l.formerlyPaid,
+  };
+}
+
 /**
  * THE `access` ANSWER — the full entitlement, from which the open side derives what it needs.
  * The refusal is `syncEnabled === false`: the program deliberately does not send an ok/refused
@@ -123,9 +170,19 @@ function verdictOf(body: unknown): AccessVerdict | { bad: string } {
   if (typeof e.canAddMailbox !== "boolean") return { bad: "entitlements.canAddMailbox" };
   if (typeof e.aiEnabled !== "boolean") return { bad: "entitlements.aiEnabled" };
 
+  // The lifecycle rides BOTH arms below, so it is read before either returns; a block that
+  // cannot be read refuses the WHOLE body — reading the verdict while dropping the block would
+  // hand a locked screen no dates to render, silently.
+  const lifecycle = lifecycleOf(b.lifecycle, e.syncEnabled);
+  if (lifecycle !== null && "bad" in lifecycle) return lifecycle;
+
   const url = typeof b.manageUrl === "string" && b.manageUrl.length > 0 ? b.manageUrl : undefined;
   if (!e.syncEnabled) {
-    return { ok: false, reason: refusalOf(e.reason), ...(url ? { manageUrl: url } : {}) };
+    return {
+      ok: false, reason: refusalOf(e.reason),
+      ...(url ? { manageUrl: url } : {}),
+      ...(lifecycle ? { lifecycle } : {}),
+    };
   }
   const num = (v: unknown, field: string): number | null | { bad: string } =>
     v === null ? null : typeof v === "number" ? v : { bad: field };
@@ -138,6 +195,7 @@ function verdictOf(body: unknown): AccessVerdict | { bad: string } {
     limits: {
       mailboxes, storageBytes, canAddMailbox: e.canAddMailbox, aiEnabled: e.aiEnabled,
     },
+    ...(lifecycle ? { lifecycle } : {}),
   };
 }
 

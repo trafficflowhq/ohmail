@@ -15,10 +15,37 @@ import type { AiRefusalReason } from "./ai-gate-port.js";
 /** Why access was refused. Two states, because a refusal has two remedies: pay, or ask us. */
 export type AccessRefusal = "payment_required" | "suspended";
 
+/** The lifecycle's closed state set — wire contract v1's `lifecycle.state` (2026-09-20). */
+export type AccessLifecycleState =
+  | "trialing" | "grace" | "past_due" | "active" | "closed" | "erased";
+
+/** Why a closed account closed. `null` on a closed state means "nothing to depart from". */
+export type AccessClosedReason = "trial_ended" | "canceled" | "unpaid" | "suspended";
+
+/**
+ * The program's `lifecycle` block, carried VERBATIM (ISO strings, not Dates): every consumer is a
+ * renderer or a comparator, and parsing dates here would put a timezone decision in a port.
+ * Absent on the wire = an old program = today's behaviour, so the field below is optional on both
+ * verdict arms — `grace`/`past_due` ride `ok: true`, `closed`/`erased` ride the refusal.
+ */
+export interface AccessLifecycle {
+  state: AccessLifecycleState;
+  closedReason: AccessClosedReason | null;
+  /** The trial period's end, while `trialing` only — the day-12 mail and the banner's date. */
+  trialEndsAt: string | null;
+  /** The open-until deadline: dunning's 7 d, or cancel + 24 h for a never-paid cancel. */
+  graceUntil: string | null;
+  closedAt: string | null;
+  /** `closedAt` + retention (30 d never-paid / 90 d formerly paid); null while suspended. */
+  erasureAt: string | null;
+  erasedAt: string | null;
+  formerlyPaid: boolean;
+}
+
 /** May this account use the service, and within what limits. */
 export type AccessVerdict =
-  | { ok: true; limits: AccessLimits }
-  | { ok: false; reason: AccessRefusal; manageUrl?: string };
+  | { ok: true; limits: AccessLimits; lifecycle?: AccessLifecycle }
+  | { ok: false; reason: AccessRefusal; manageUrl?: string; lifecycle?: AccessLifecycle };
 
 /**
  * `null` means UNBOUNDED, never unknown: a fault answers with the last known verdict and defaults
@@ -254,10 +281,10 @@ export const UNMETERED_ACCESS: AccessVerdict = {
 /** Read access through whatever this host declared. The unmetered arm dials nothing, which is what
  *  makes an unmetered install unable to depend on a network answer. */
 export async function accessOf(
-  entitlements: EntitlementsComposition, accountId: string,
+  entitlements: EntitlementsComposition, accountId: string, opts?: { fresh?: boolean },
 ): Promise<AccessVerdict> {
   if (entitlements === UNMETERED) return UNMETERED_ACCESS;
-  return entitlements.access(accountId);
+  return entitlements.access(accountId, opts);
 }
 
 /** True iff this host reaches an entitlements program at all. */
