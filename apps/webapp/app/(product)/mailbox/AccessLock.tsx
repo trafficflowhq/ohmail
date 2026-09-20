@@ -90,6 +90,11 @@ export function AccessLock({ facts }: { facts: AccessRefusedFacts }) {
   /* An operator hold is not a departure, so it has no erasure clock (ruling §1(a)). The sentence
      says who holds it and where to ask, rather than leaving a date-shaped hole. */
   const held = lifecycle !== undefined && lifecycle.closedReason === "suspended";
+  /* Is the DATED erasure sentence on this screen? The delete hint below says "rather than on the
+     date above", and three states render no date (held, unknown, no lifecycle) — a hint that
+     points at a date that is not there gets the undated sentence instead. */
+  const datedErasure =
+    lifecycle !== undefined && lifecycle.state !== "erased" && !held && erasureAt !== null;
 
   /* THE SHELL EVERY FULL-SCREEN SENTENCE IN THIS APP STANDS IN — `.gate` / `.gate-card` /
      `.gate-actions` from `app.css`, the same one the resume splash, the engine's four states and
@@ -200,7 +205,7 @@ export function AccessLock({ facts }: { facts: AccessRefusedFacts }) {
                 <Button variant="ghost" className="wall-act" onClick={() => setDeleting(true)}>
                   {t("deleteNow")}
                 </Button>
-                <p className="wall-hint">{t("deleteHint")}</p>
+                <p className="wall-hint">{t(datedErasure ? "deleteHint" : "deleteHintUndated")}</p>
               </div>
               <div className="gate-actions">
                 <Button onClick={doSignOut} disabled={signingOut}>

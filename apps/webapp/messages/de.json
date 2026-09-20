@@ -3626,6 +3626,7 @@
     "moveOutFailed": "Die Datei konnte gerade nicht heruntergeladen werden. Versuch es gleich noch einmal.",
     "deleteNow": "Konto jetzt löschen",
     "deleteHint": "Löscht alles, was ohmail behält — heute statt am Datum oben. Dein Postfach bleibt unberührt.",
+    "deleteHintUndated": "Löscht alles, was ohmail behält — noch heute. Dein Postfach bleibt unberührt.",
     "back": "Zurück",
     "openAccount": "Dein ohmail-Konto öffnen",
     "openInBrowser": "Öffne ohmail.app im Browser, um wieder ein Abo abzuschließen, deine Einstellungen zu exportieren oder dein Konto zu löschen.",
