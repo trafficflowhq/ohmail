@@ -1341,6 +1341,7 @@ export const DE: Deck = {
     "Gibt deine Regeln, Screener-Entscheidungen und Einstellungen als eine Datei weiter, die deine eigene Installation liest, wenn sie dieses Postfach übernimmt.",
   wallMoveOutGuide: "Zur Anleitung fürs Selbsthosten",
   wallMoveOutFailed: "Die Datei konnte gerade nicht erstellt werden. Versuch es gleich noch einmal.",
+  wallMoveOutBusy: "Die Datei wird vorbereitet…",
   wallDeleteNow: "Konto jetzt löschen",
   wallDeleteElsewhere:
     "Zum Löschen deines Kontos brauchst du deinen zweiten Faktor — das passiert auf deiner Kontoseite im Browser. Dein Postfach bleibt unberührt.",

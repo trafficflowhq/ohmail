@@ -2085,6 +2085,9 @@ const TABLE = {
     "Hands over your rules, Screener decisions and settings as one file, which your own install reads when it takes over this mailbox.",
   wallMoveOutGuide: "Read the self-host guide",
   wallMoveOutFailed: "The file could not be made just now. Try again in a moment.",
+  /* The export button's own busy word. It used to borrow the sign-in screen's "Signing in…",
+     which is a false sentence over a press that makes a file. */
+  wallMoveOutBusy: "Preparing the file…",
   wallDeleteNow: "Delete my account now",
   /* WHY THIS ONE LEAVES. Deleting an account needs the second factor, and a phone paired by code
      has never asserted one — the server refuses the erasure route to it by design. Saying so is

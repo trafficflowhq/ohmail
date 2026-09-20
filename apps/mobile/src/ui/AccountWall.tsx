@@ -128,8 +128,11 @@ export function AccountWall(
           {plan.actions.map((action, i) => (
             <View key={action.id} style={{ gap: 6 }}>
               <Button
-                label={action.id === "export" && busy ? Copy.signInAgainSaving : action.label}
-                variant={i === 0 ? "solid" : action.id === "servers" ? "quiet" : "plain"}
+                label={action.id === "export" && busy ? Copy.wallMoveOutBusy : action.label}
+                /* The browser wall's three-level emphasis, mirrored: the way back solid, the way
+                   out plain, the end and the way off the screen quiet — the end-of-account verb
+                   may not outweigh the way out (the tab draws it as its quietest control too). */
+                variant={i === 0 ? "solid" : action.id === "export" ? "plain" : "quiet"}
                 onPress={() => press(action)}
               />
               {action.id === "export" || action.id === "delete" ? (
