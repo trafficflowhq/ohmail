@@ -1723,9 +1723,8 @@ const TABLE = {
   /**
    * PHONE-ONLY: an appointment the server could not keep. The scheduled-send pass closes such a
    * message back to an ordinary draft with its refusal, and the webapp's Drafts list catches
-   * it; this app has no Drafts screen, so the row stays HERE and says what happened rather than
-   * disappearing — a message that vanishes from the only screen that ever mentioned it reads as
-   * one that was sent.
+   * it; the row stays HERE TOO and says what happened rather than disappearing from the only
+   * screen that ever named its appointment — a message that vanishes reads as one that was sent.
    */
   scheduledNotSent: "Not sent",
   /**
@@ -1738,6 +1737,63 @@ const TABLE = {
    */
   scheduledNotOnThisPhone:
     "This phone organizes your mailbox only while ohmail is running on it, so it cannot hold a message for a later time. Send now, or schedule it from a computer or ohmail Cloud.",
+  /*
+   * DRAFTS — what you started and have not sent, and the one way out of a send
+   * this server could not confirm. Every sentence below is the webapp catalogue's `drafts.*` word
+   * for word, except the four marked PHONE-ONLY, which say what this app does instead of a verb
+   * it does not have. Until this screen existed a `send_unverified` answer was said once, in a
+   * toast, and then nowhere on the phone at all — the row held the only copy of a message that
+   * may never have been delivered and no surface here mentioned it.
+   */
+  draftsTitle: "Drafts",
+  draftsExplainer: "Messages you started and haven't sent.",
+  draftsEmptyTitle: "Nothing half-written",
+  draftsEmptyHint: "They're saved to your account, so they're here on every device you read your mail on.",
+  draftsIsReply: "Reply",
+  draftsUnverifiedNote:
+    "Not confirmed — it may not have been delivered. It's held here; check your Sent folder.",
+  draftsInterruptedNote:
+    "The send was interrupted — it may not have been delivered. It's held here; check your Sent folder.",
+  draftsResolveWhat: "Did this message arrive?",
+  draftsResolveArrived: "It arrived",
+  draftsResolveNotArrived: "It didn't arrive",
+  draftsResolveFailed: "That didn't reach the server. The message is still held here.",
+  draftsBodyUnavailable: "This draft's text hasn't reached this device yet. Try again in a moment.",
+  draftsDiscard: "Discard",
+  draftsDiscardWhat: "This deletes the draft. It isn't recoverable, and it's the only copy.",
+  draftsDiscardConfirm: "Discard draft",
+  draftsDiscardCancel: "Keep it",
+  draftsDiscardRefused: (reason: string) => `Not discarded: ${reason}`,
+  draftsDiscardRefusedUnnamed:
+    "That didn't go through, and the server didn't say why. The draft is still here.",
+  draftsDiscardQueued:
+    "Not discarded yet — this phone could not reach your account. We will keep trying.",
+  draftsDiscardAwaitingOrganizer:
+    "Asked for. The install that organizes this mailbox discards it on its next pass.",
+  draftsHeldDiscardBlocked:
+    "This message has a send we couldn't confirm. Tell us whether it arrived and you can discard it.",
+  /**
+   * PHONE-ONLY (1/4): the row's own verb where this mirror holds the message the draft answers.
+   * The webapp opens the draft in its editor; this app has none, so the honest verb is the
+   * conversation, where Reply is one press — and it is offered only where `liveDrafts` measured
+   * the parent present, never as a promise about a message this device may not hold.
+   */
+  draftsOpenConversation: "Open the conversation",
+  /**
+   * PHONE-ONLY (2/4): the stated degradation, `scheduledEditNote`'s twin and for its reason.
+   * This screen reads drafts and answers for held sends; it does not edit them.
+   */
+  draftsEditNote:
+    "Drafts are read and recovered here. Edit and send them from ohmail on the web or the desktop.",
+  /** PHONE-ONLY (3/4): the detail screen's heading over the text itself. */
+  draftsTextHeading: "Message",
+  /**
+   * PHONE-ONLY (4/4): a draft with nothing typed in it yet. The empty string is a KNOWN body
+   * ({@link draftBodyKnown}), which is a different fact from a body this mirror never received —
+   * `draftsBodyUnavailable` says that one — and collapsing the two is the distinction a recovery
+   * surface may not lose.
+   */
+  draftsTextEmpty: "Nothing written yet.",
   /*
    * THE SIGNATURE BLOCK (`compose.signature*` in the webapp catalogue, word for word —
    * `folders-parity.test.ts` pins them): the sending mailbox's stored signature as a

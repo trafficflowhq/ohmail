@@ -66,6 +66,22 @@ export function MoreNav({ onNavigate }: { onNavigate?: () => void }) {
           from a mirror that may simply not have synced. */}
       <Nav label={Copy.history} sub={Copy.historyNavSub} onPress={() => go("/history")} chevron />
 
+      {/* DRAFTS — the browser rail's own order puts it directly under History
+          and above Trash. Present while the account HOLDS one, and also while the mirror has
+          never settled, exactly as Scheduled below: a row hidden on zero would assert "nothing
+          half-written" from a database that has simply not synced (unknown ≠ empty,
+          `state/surface.ts`). It is not a permanent row on zero, because this app does not write
+          drafts and a standing "Drafts 0" would teach a phone-only reader nothing — the moment
+          a send here cannot be confirmed the row carries it, which is the state this destination
+          exists for. The count is silent while unsettled for the piles' reason. */}
+      {!w.boot.settled || w.drafts.length > 0 ? (
+        <Nav
+          label={Copy.draftsTitle}
+          count={w.boot.settled ? w.drafts.length : undefined}
+          onPress={() => go("/drafts")}
+        />
+      ) : null}
+
       {/* SCHEDULED (Send later, mail 0077) — its own destination, in the rail's idiom.
           Present while the account HOLDS an appointment, and also while the mirror has
           never settled: a row hidden on zero would otherwise assert "nothing scheduled"

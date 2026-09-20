@@ -63,6 +63,7 @@ import {
   livePiles,
   liveReads,
   liveReceipts,
+  liveDrafts,
   liveScheduled,
   liveScreener,
   liveSearch,
@@ -92,6 +93,7 @@ import {
   type PhoneOrganizer,
   type WorldMail,
   type WorldPile,
+  type WorldDraft,
   type WorldScheduled,
   type ScreeningPosture,
   type WorldScreener,
@@ -117,7 +119,7 @@ import {
 
 export type {
   FolderEntity, MoveTarget, PhoneOrganizer, ScreenerRow, WorldActions, WorldHistory, WorldMail,
-  WorldPile, WorldScheduled, WorldScreener, WorldSearch, WorldTag,
+  WorldPile, WorldScheduled, WorldScreener, WorldSearch, WorldTag, WorldDraft,
 } from "./live";
 
 export interface World {
@@ -278,6 +280,14 @@ export interface World {
    * drain, so a message scheduled from the web is visible — and cancellable — here.
    */
   scheduled: WorldScheduled[];
+  /**
+   * THE DRAFTS — what you started and have not sent, most recently touched first
+   * (`live.ts#liveDrafts`), including the two held states a send can end in. Ungated for
+   * `scheduled`'s reason: a draft is the account's own state and every drain mirrors `draft`
+   * entities, so a message begun on the web is here — and an unconfirmed send made ON THIS
+   * PHONE has, for the first time, a surface that says so.
+   */
+  drafts: WorldDraft[];
   /**
    * THE FOLDERS SURFACE (FOLDERS-SPEC.md; stage-1 read-only parity with the webapp's
    * foundation). `enabled` is the SERVER's consent answer (`GET /consent`,
@@ -470,6 +480,8 @@ const NO_ACTIONS: WorldActions = {
   withdrawSend: () => Promise.resolve("gone" as const),
   // Nor cancel: `false` is "not confirmed", which is exactly what nothing-connected means.
   cancelSchedule: () => Promise.resolve(false),
+  draftDiscard: () => Promise.resolve("refused" as const),
+  draftResolve: () => Promise.resolve(false),
   sendOutcome: () => "unknown",
   tagToggle: () => undefined,
   tagCreate: () => undefined,
@@ -516,6 +528,7 @@ function emptyWorld(actions: WorldActions): World {
     pilesMeta: "",
     tags: [],
     scheduled: [],
+    drafts: [],
     folders: {
       enabled: false,
       // Nothing is connected, so no door has said it cannot keep one: today's interface.
@@ -1198,6 +1211,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           sendNew: acts.sendNew,
           withdrawSend: (key) => acts.withdrawSend(key),
           cancelSchedule: (draftId) => acts.cancelSchedule(draftId),
+          draftDiscard: (draftId) => acts.draftDiscard(draftId),
+          draftResolve: (draftId, outcome) => acts.draftResolve(draftId, outcome),
           sendOutcome: (key) => outcomeOf(key),
           tagToggle: (id, tag, assigned) => void acts.tagToggle(id, tag, assigned),
           tagCreate: (id, name) => void acts.tagCreate(id, name),
@@ -1368,6 +1383,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       // Also raw, and for the same reason: a draft is not presented mail and never passes
       // through the consent cutline. `v` carries the clock the appointment is read in.
       scheduled: liveScheduled(engine.read(), v),
+      // Raw too, and for `scheduled`'s reason exactly.
+      drafts: liveDrafts(engine.read(), v),
       folders: (() => {
         // Gated TWICE, the webapp shell's own double gate: the flag is the authority, the
         // entities are data — a mirror still holding `folder` rows after a disable lists none.

@@ -1125,6 +1125,39 @@ export const DE: Deck = {
   scheduledNotOnThisPhone:
     "Dieses Telefon organisiert dein Postfach nur, solange ohmail darauf läuft, und kann eine Nachricht deshalb nicht für einen späteren Zeitpunkt aufbewahren. Sende jetzt, oder plane den Versand auf einem Computer oder in ohmail Cloud.",
 
+  draftsTitle: "Entwürfe",
+  draftsExplainer: "Nachrichten, die du begonnen und nicht gesendet hast.",
+  draftsEmptyTitle: "Nichts Halbfertiges",
+  draftsEmptyHint: "Sie liegen in deinem Konto und sind deshalb auf jedem Gerät da, auf dem du deine Mail liest.",
+  draftsIsReply: "Antwort",
+  draftsUnverifiedNote:
+    "Nicht bestätigt — sie wurde möglicherweise nicht zugestellt. Sie wird hier festgehalten; sieh in deinem Ordner „Gesendet“ nach.",
+  draftsInterruptedNote:
+    "Der Versand wurde unterbrochen — die Nachricht wurde möglicherweise nicht zugestellt. Sie wird hier festgehalten; sieh in deinem Ordner „Gesendet“ nach.",
+  draftsResolveWhat: "Ist diese Nachricht angekommen?",
+  draftsResolveArrived: "Sie ist angekommen",
+  draftsResolveNotArrived: "Sie ist nicht angekommen",
+  draftsResolveFailed: "Das hat den Server nicht erreicht. Die Nachricht wird hier weiterhin festgehalten.",
+  draftsBodyUnavailable: "Der Text dieses Entwurfs hat dieses Gerät noch nicht erreicht. Versuch es gleich noch einmal.",
+  draftsDiscard: "Verwerfen",
+  draftsDiscardWhat: "Das löscht den Entwurf. Er ist nicht wiederherstellbar, und es ist die einzige Kopie.",
+  draftsDiscardConfirm: "Entwurf verwerfen",
+  draftsDiscardCancel: "Behalten",
+  draftsDiscardRefused: (reason: string) => `Nicht verworfen: ${reason}`,
+  draftsDiscardRefusedUnnamed:
+    "Das ist nicht durchgegangen, und der Server hat nicht gesagt, warum. Der Entwurf ist noch da.",
+  draftsDiscardQueued:
+    "Noch nicht verworfen — dieses Telefon konnte dein Konto nicht erreichen. Wir versuchen es weiter.",
+  draftsDiscardAwaitingOrganizer:
+    "Angefragt. Die Installation, die dieses Postfach organisiert, verwirft ihn bei ihrem nächsten Durchlauf.",
+  draftsHeldDiscardBlocked:
+    "Zu dieser Nachricht gibt es einen Versand, den wir nicht bestätigen konnten. Sag uns, ob sie angekommen ist, dann kannst du sie verwerfen.",
+  draftsOpenConversation: "Unterhaltung öffnen",
+  draftsEditNote:
+    "Entwürfe werden hier gelesen und zurückgeholt. Bearbeiten und senden kannst du sie in ohmail im Web oder auf dem Desktop.",
+  draftsTextHeading: "Nachricht",
+  draftsTextEmpty: "Noch nichts geschrieben.",
+
   sigLabel: "Signatur",
   sigRemove: "Signatur für diese Nachricht entfernen",
   sigAria: "Signatur — Teil dieser Nachricht; hier bearbeiten oder entfernen",

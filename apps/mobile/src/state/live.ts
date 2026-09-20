@@ -31,6 +31,9 @@ import {
   receiptsByDay,
   rulesList,
   scheduledSendsList,
+  draftsList,
+  draftBodyKnown,
+  SENDING_STALE_AFTER_MS,
   screenerAdviceAi,
   screenerSegments,
   senderKey,
@@ -742,7 +745,8 @@ export function liveScheduled(reader: EntityReader, v: WorldView): WorldSchedule
    * only place on the phone that can say so. `runScheduledSendPass` closes such a row back to a
    * `draft` carrying the server's sentence in `sendError`; the shared selector lists `scheduled`
    * rows alone — correct for the webapp, where the row falls into Drafts underneath. This app
-   * has no Drafts screen: filtered the same way the message would vanish entirely, and "it
+   * Drafts screen lists it too ({@link liveDrafts}), and it belongs on BOTH: filtered here the
+   * message would vanish from the only screen that ever named its appointment, and "it
    * disappeared" reads as "it was sent". So failed rows are listed beside standing ones, marked
    * by `when: null` + a `failure` sentence, and sort last (no appointment, no time to order by).
    */
@@ -762,6 +766,90 @@ export function liveScheduled(reader: EntityReader, v: WorldView): WorldSchedule
     /** A standing appointment can be cancelled; a failed one has nothing left to cancel. */
     cancellable: d.status === "scheduled",
   }));
+}
+
+/**
+ * WHAT STATE A DRAFT ROW IS IN, as the phone's Drafts surface has to treat it — three, not one.
+ *
+ * `open` is an ordinary unsent message. `held` is a send whose verdict never came (`unverified`,
+ * the 409 whose answer is "check your Sent folder") and `interrupted` is one still calling itself
+ * `sending` past every possible invocation lifetime: both hold the only copy of a message that may
+ * never have been delivered, and both are answered rather than discarded.
+ */
+export type WorldDraftState = "open" | "held" | "interrupted";
+
+/**
+ * ONE DRAFT, as the phone's Drafts screen renders it — `WorldScheduled`'s charter exactly: the
+ * screens stay logic-free, so the stamp arrives read in the reader's clock and the held state
+ * arrives named.
+ */
+export interface WorldDraft {
+  id: string;
+  /** The subject, or the empty-subject stand-in the mail lists already use. */
+  subject: string;
+  /** To, Cc and Bcc as one readable line, or the empty string for a draft with no recipient yet. */
+  to: string;
+  /** The first line or so of the body — enough to tell two drafts apart. */
+  preview: string;
+  /** "Fri 09:00" / "12 Sep" in the reader's zone: when this row was last written. */
+  when: string;
+  state: WorldDraftState;
+  /**
+   * Does THIS mirror hold the draft's text ({@link draftBodyKnown})? `false` is a row that
+   * arrived without a body, and the reader is told that rather than shown an empty message — the
+   * one distinction a recovery surface may not collapse.
+   */
+  bodyKnown: boolean;
+  /** The text, for the detail screen to render and a reader to copy out of. Empty where unknown. */
+  body: string;
+  /** Does this draft answer a message THIS mirror holds — the one thing an id cannot say. */
+  repliesHere: boolean;
+  /** The message it answers, where {@link repliesHere}; `null` otherwise. */
+  inReplyToMessageId: string | null;
+  /**
+   * The server's own sentence from a scheduled send that could not be kept, or `null` — quoted
+   * verbatim, `WorldScheduled.failure`'s treatment and for its reason.
+   */
+  failure: string | null;
+}
+
+/**
+ * THE DRAFTS — the shared selector's list (`draftsList`: open drafts, held sends and stale
+ * `sending` rows, most recently touched first), mapped to rows. Read off the RAW mirror like
+ * {@link liveScheduled}: a draft is not presented mail and never passes through the consent
+ * cutline.
+ *
+ * A FAILED APPOINTMENT IS ON TWO SCREENS, deliberately: listed here by the shared selector AND
+ * on Scheduled, which absorbs it ({@link liveScheduled}'s own note). Both sentences are true, and
+ * suppressing it on either would hide it from whoever came looking on that one.
+ */
+export function liveDrafts(reader: EntityReader, v: WorldView): WorldDraft[] {
+  const staleBefore = v.now.getTime() - SENDING_STALE_AFTER_MS;
+  return draftsList(reader, v.now).map((d) => {
+    const parent = d.inReplyToMessageId;
+    /* THE ROW'S OWN READING OF "can this device open what it answers" — the webapp asks its shell
+       the same question (`repliesHere`) and for the same reason: the answer changes what the row
+       SAYS, not only what a press does, and promising a conversation this mirror does not hold is
+       worse than offering nothing. */
+    const repliesHere = parent !== null && reader.get<EngineMessage>("message", parent) !== undefined;
+    return {
+      id: d.id,
+      subject: d.subject.trim() === "" ? Copy.scheduledNoSubject : d.subject,
+      to: [...d.to, ...d.cc, ...d.bcc].map((a) => a.name ?? a.address).join(", "),
+      preview: (d.body ?? "").replace(/\s+/g, " ").trim().slice(0, 140),
+      when: messageDisplayTime({ date: d.updatedAt }, v.now, v.zone, v.locale ?? "en"),
+      state: d.status === "unverified"
+        ? "held"
+        : d.status === "sending" && (d.updatedAt ? Date.parse(d.updatedAt) : 0) < staleBefore
+          ? "interrupted"
+          : "open",
+      bodyKnown: draftBodyKnown(d),
+      body: d.body ?? "",
+      repliesHere,
+      inReplyToMessageId: repliesHere ? parent : null,
+      failure: d.sendError ?? null,
+    };
+  });
 }
 
 /**
@@ -1759,6 +1847,15 @@ export async function flushQueued(engine: OhmailEngine): Promise<Map<string, Flu
  * value: this app cannot import the webapp, and two windows for one gesture is how "Undo" comes
  * to mean two different promises on two surfaces.
  */
+/**
+ * HOW A DISCARD ENDED — four, because three of them are not failures. `discarded` is the
+ * confirmed delete. `held` is the server's `send_recorded` refusal: the row has a send on record
+ * and its question has to be answered first, so the screen turns to that row's pair of verbs
+ * rather than reporting a fault. `queued` is a wire that could not be reached — the row is still
+ * there and the request is still owed. `refused` is everything else.
+ */
+export type DraftDiscardOutcome = "discarded" | "held" | "queued" | "refused";
+
 export const UNDO_MS = 8000;
 
 /**
@@ -1996,6 +2093,21 @@ export interface LiveWorldActions {
    * only `confirmed` may say "cancelled".
    */
   cancelSchedule(draftId: string): Promise<boolean>;
+  /**
+   * DISCARD A DRAFT — `draft_discard`, the Drafts screen's destructive verb. The ceremony (two
+   * presses) is the screen's; this arm dispatches and reports. `false` covers every ending that
+   * is not a confirmed delete, and each one gets its own sentence — including the server's
+   * `send_recorded` refusal, which is not a failure but the answer "this row has a send on
+   * record, tell us whether it arrived first".
+   */
+  draftDiscard(draftId: string): Promise<DraftDiscardOutcome>;
+  /**
+   * ANSWER FOR A SEND THIS SERVER COULD NOT CONFIRM — `draft_resolve`. `arrived` writes `sent`
+   * and the row leaves the list; `not_arrived` writes an ordinary `draft` and clears the stale
+   * explanation. The one way out of a held row, and the reason this screen exists on the phone
+   * at all: until it did, a `send_unverified` answer was said once in a toast and then nowhere.
+   */
+  draftResolve(draftId: string, outcome: "arrived" | "not_arrived"): Promise<boolean>;
   /** Put a tag on / take it off — `tag_assign`. */
   tagToggle(messageId: string, tag: WorldTag, assigned: boolean): Promise<boolean>;
   /** Tag-or-create: a name that does not exist yet, minted and put on this message in one act. */
@@ -2912,6 +3024,63 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return status === "confirmed";
   };
 
+  /**
+   * DISCARD A DRAFT — `draft_discard`, and four endings rather than two. The server refuses the
+   * delete by name for a row with a send on record (`send_recorded`), which is an ANSWER and not
+   * a fault: the only copy of a message that may have gone out is not deleted on a press, and the
+   * screen turns to that row's "Did this message arrive?" pair. A `queued` mutation is reported as
+   * still owed — the row is on screen either way, so silence would read as a delete that happened.
+   */
+  const draftDiscard = async (draftId: string): Promise<DraftDiscardOutcome> => {
+    const r = await engine
+      .mutate({ kind: "draft_discard", draftId })
+      .then((res) => pressVerdict(res), () => PRESS_THREW);
+    switch (r.kind) {
+      case "applied":
+        return "discarded";
+      case "queued":
+        /* `organizer` is the SERVER's record — the optimistic paint went back and the row is on
+           screen while the install that organizes this mailbox does the delete; `retry` is this
+           phone's own outbox. "Not yet" either way, never as done. */
+        toast(r.wait === "organizer" ? refuse("draftsDiscardAwaitingOrganizer") : refuse("draftsDiscardQueued"));
+        return "queued";
+      case "refused": {
+        /* THE SERVER'S `send_recorded` IS AN ANSWER, NOT A FAULT: the only copy of a message that
+           may have gone out is not deleted on a press, and the screen turns to that row's "Did
+           this message arrive?" pair instead of reporting a failure with no way out. */
+        if (r.refusal?.code === "send_recorded") {
+          toast(refuse("draftsHeldDiscardBlocked"));
+          return "held";
+        }
+        const reason = r.refusal?.message?.trim();
+        toast(reason ? refuse("draftsDiscardRefused", reason) : refuse("draftsDiscardRefusedUnnamed"));
+        return "refused";
+      }
+      default: {
+        /* The gate is the BINDING, evaluated by `tsc` — the webapp's own rule at this seam: a
+           fourth verdict makes this line a type error rather than a silent fall-through. */
+        const unhandled: never = r;
+        void unhandled;
+        toast(refuse("draftsDiscardRefusedUnnamed"));
+        return "refused";
+      }
+    }
+  };
+
+  /**
+   * ANSWER FOR A HELD SEND — `draft_resolve`. Only a CONFIRMED answer is one: the row is the only
+   * record that a message may be undelivered, so a queued or rolled-back attempt leaves the
+   * question standing and says so rather than clearing it on screen.
+   */
+  const draftResolve = async (draftId: string, outcome: "arrived" | "not_arrived"): Promise<boolean> => {
+    const r = await engine
+      .mutate({ kind: "draft_resolve", draftId, outcome })
+      .then((res) => res, () => null);
+    if (r?.status === "confirmed") return true;
+    toast(refuse("draftsResolveFailed"));
+    return false;
+  };
+
   const sendForward = async (messageId: string, to: EmailAddress[], body: string, sig: string | null = null, attachments: ComposeAttachment[] = []): Promise<SendResult> => {
     const m = messageOf(messageId);
     // The `no_forward` refusal is client-side courtesy AND server-side law — the sheet never
@@ -3157,6 +3326,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, markAllSeen, move,
     deleteMessage, trashList, trashRestore,
     sendReply, sendForward, sendNew, withdrawSend, cancelSchedule, tagToggle, tagCreate, screenSender,
+    draftDiscard, draftResolve,
     folderCreate, folderRename, folderDelete, folderDismiss,
   };
 }
@@ -3245,6 +3415,10 @@ export interface WorldActions {
   withdrawSend(key: string): Promise<WithdrawOutcome>;
   /** Cancel a scheduled send — resolves `true` only on the server's CONFIRMED cancellation. */
   cancelSchedule(draftId: string): Promise<boolean>;
+  /** Discard a draft — see {@link LiveWorldActions.draftDiscard} for the four endings. */
+  draftDiscard(draftId: string): Promise<DraftDiscardOutcome>;
+  /** Answer for a held send — see {@link LiveWorldActions.draftResolve}. */
+  draftResolve(draftId: string, outcome: "arrived" | "not_arrived"): Promise<boolean>;
   /** What became of a queued send's key — how a locked composer settles. See `World.sendOutcome`. */
   sendOutcome(key: string): "pending" | "confirmed" | "rolled_back" | "unverified" | "unknown";
   tagToggle(messageId: string, tag: WorldTag, assigned: boolean): void;
@@ -3299,6 +3473,8 @@ export function stableActions(current: () => WorldActions): WorldActions {
     sendNew: (mailboxId, to, subject, body, sig, sendAt, attachments) => current().sendNew(mailboxId, to, subject, body, sig, sendAt, attachments),
     withdrawSend: (key) => current().withdrawSend(key),
     cancelSchedule: (draftId) => current().cancelSchedule(draftId),
+    draftDiscard: (draftId) => current().draftDiscard(draftId),
+    draftResolve: (draftId, outcome) => current().draftResolve(draftId, outcome),
     sendOutcome: (key) => current().sendOutcome(key),
     tagToggle: (id, tag, assigned) => void current().tagToggle(id, tag, assigned),
     tagCreate: (id, name) => void current().tagCreate(id, name),

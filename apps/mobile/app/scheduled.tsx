@@ -1,12 +1,11 @@
 /**
- * Scheduled — messages waiting for their appointment (Send later, mail 0077).
- * This app composes only replies and forwards and has no Drafts view, so the
- * appointments get their own destination in the More tab's idiom. The row's
- * stamp is when it sends, in the reader's own clock, not when it was written.
- * One verb — Cancel send — and only a confirmed cancellation says "cancelled"
- * (`live.ts#cancelSchedule` holds the three outcomes). The webapp's Edit
- * (cancel-then-open) is absent: no draft editor to open a cancelled row into,
- * so the screen says where the message goes instead (`Copy.scheduledEditNote`).
+ * Scheduled — messages waiting for their appointment (Send later, mail 0077). Its own
+ * destination beside Drafts rather than inside it: this screen answers "what will send, and
+ * when", and the row's stamp is when it sends, in the reader's own clock. One verb — Cancel
+ * send — and only a confirmed cancellation says "cancelled" (`live.ts#cancelSchedule` holds the
+ * three outcomes). The webapp's Edit (cancel-then-open) is absent: this app has no draft editor
+ * to open a cancelled row into, so the screen says where the message goes instead
+ * (`Copy.scheduledEditNote`).
  */
 import { useState } from "react";
 import { View } from "react-native";
