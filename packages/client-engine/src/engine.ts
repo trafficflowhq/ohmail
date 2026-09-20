@@ -7710,11 +7710,10 @@ export class OhmailEngine {
    * RENDERABLE_MIME}. The re-typing happens at construction because that is the only point that governs every
    * consumer: a call site can forget to check a type, and the two the server sets (`Content-Disposition`, `nosniff`)
    * describe the RESPONSE and do not survive into a Blob made from its body. The TYPED BLOB is returned ALWAYS;
-   * the URL only where `URL.createObjectURL` exists AND can answer (SSR and node lack it; a React Native phone
-   * carries a runtime-installed one that may throw, and the ledger reads a throw as absence): the URL is
-   * a browser convenience, never the byte carrier — dropping the blob with it left every phone's `ready` item
-   * byte-less while HTTP answered 200, measured on a paired device. The typed Blob rides beside the URL so the
-   * bytes a consumer holds are the ones a browser would render or save, at the same downgraded type.
+   * the URL only where `URL.createObjectURL` exists AND can answer (SSR and node lack it; a phone carries a
+   * runtime-installed one that may throw, which the ledger reads as absence): the URL is a browser convenience,
+   * never the byte carrier — dropping the blob with it left every phone's `ready` item byte-less while HTTP
+   * answered 200, measured on a paired device. The typed Blob rides at the same downgraded type.
    */
   private mintObjectUrl(owner: string, blob: Blob, declaredMime: string): { url: string | undefined; blob: Blob } {
     const safeType = RENDERABLE_MIME.has(declaredMime.toLowerCase()) ? declaredMime : "application/octet-stream";
