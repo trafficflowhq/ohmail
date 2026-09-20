@@ -33,8 +33,7 @@ export interface WiredPanes {
  * that makes the app SEND mail on its own — earns a named entry); Rules BEFORE Tags (the product
  * made the rule on the reader's behalf, so it has to be findable); the desktop install ahead of
  * the account group (on that surface it IS the account); Security and Account near the bottom,
- * where a mis-click is not one row from a mail setting; About last — it acts on nothing.
- * `t` is scoped to the `settings` namespace, the nav labels' home.
+ * away from the mail settings; About last — it acts on nothing. `t` is `settings`-scoped.
  */
 export function settingsPanes(w: WiredPanes, t: (key: string) => string): Array<[PaneId, string]> {
   return [
