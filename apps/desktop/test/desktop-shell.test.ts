@@ -1971,13 +1971,15 @@ describe("the auto-updater", () => {
       "flatpak",
       "windowsSetup",
       "macBundle",
+      "macAppStore",
       "unpackaged",
     ];
     for (const kind of kinds) {
       expect(updater, `the shell does not answer ${kind}`).toContain(`"${kind}"`);
       expect(window, `the window does not know ${kind}`).toContain(`"${kind}"`);
     }
-    // Both lists are CLOSED: neither side may carry a ninth name the other has never heard of.
+    // Both lists are CLOSED: neither side may carry a name the other has never heard of. The
+    // count is not spelled here — it moves with the kinds and a figure in a comment would rot.
     const shellNames = [...updater.matchAll(/InstallKind::\w+ => "(\w+)"/g)].map((m) => m[1]);
     expect(shellNames.sort()).toEqual([...kinds].sort());
     const windowList = /export const INSTALL_KINDS = \[([\s\S]*?)\] as const;/.exec(window)?.[1];
