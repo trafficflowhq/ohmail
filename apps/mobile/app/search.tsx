@@ -10,9 +10,10 @@
 import { useEffect, useState } from "react";
 import { TextInput, View } from "react-native";
 import { router } from "expo-router";
-import type { AddressDirection } from "@ohmail/client-engine";
 import { Copy } from "../src/copy";
-import { addressShaped } from "../src/state/live";
+/* The engine is reached through the seam, never from a screen — `privacy.test.ts`'s
+   allow-list is the rule, and the direction union rides out with the rest. */
+import { addressShaped, type AddressDirection } from "../src/state/live";
 import { useWorld } from "../src/state/world";
 import { useTheme } from "../src/theme";
 import { Empty, Panel, Screen, Scroller, Section, Tap, Txt } from "../src/ui/base";

@@ -3715,6 +3715,6 @@ export function firstSyncContinuesSaid(
    and a second derivation here would be a second answer to one question. */
 export { destDone, isPlace, SIG_FOLLOWING, effectiveSignature, folderNameError, sendingMailboxId };
 export type {
-  Destination, FolderEntity, FolderNameError, Held, Mail, PileItem, PileKind, Place, Scope,
-  SignatureState,
+  AddressDirection, Destination, FolderEntity, FolderNameError, Held, Mail, PileItem, PileKind,
+  Place, Scope, SignatureState,
 };
