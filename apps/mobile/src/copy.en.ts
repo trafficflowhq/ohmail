@@ -1824,6 +1824,15 @@ const TABLE = {
    */
   draftsTitle: "Drafts",
   draftsExplainer: "Messages you started and haven't sent.",
+  /**
+   * PHONE-ONLY: the head's number as a sentence — every list head here speaks its meta
+   * (`metaUnreadOf`), and this one carries the fact the screen exists for: how many of these
+   * are sends nobody has confirmed.
+   */
+  draftsMeta: (total: number, held: number): string => {
+    const drafts = total === 1 ? "1 draft" : `${total} drafts`;
+    return held === 0 ? drafts : `${drafts} · ${held} not confirmed`;
+  },
   draftsEmptyTitle: "Nothing half-written",
   draftsEmptyHint: "They're saved to your account, so they're here on every device you read your mail on.",
   draftsIsReply: "Reply",

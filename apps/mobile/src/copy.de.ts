@@ -1175,6 +1175,10 @@ export const DE: Deck = {
 
   draftsTitle: "Entwürfe",
   draftsExplainer: "Nachrichten, die du begonnen und nicht gesendet hast.",
+  draftsMeta: (total: number, held: number): string => {
+    const drafts = total === 1 ? "1 Entwurf" : `${total} Entwürfe`;
+    return held === 0 ? drafts : `${drafts} · ${held} nicht bestätigt`;
+  },
   draftsEmptyTitle: "Nichts Halbfertiges",
   draftsEmptyHint: "Sie liegen in deinem Konto und sind deshalb auf jedem Gerät da, auf dem du deine Mail liest.",
   draftsIsReply: "Antwort",

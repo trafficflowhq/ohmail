@@ -141,13 +141,15 @@ export function DraftReader({
               <View style={{ flexDirection: "row", gap: 10 }}>
                 <Button
                   label={Copy.draftsResolveArrived}
-                  variant={busy ? "plain" : "quiet"}
-                  onPress={busy ? undefined : () => void resolve("arrived")}
+                  variant="quiet"
+                  disabled={busy}
+                  onPress={() => void resolve("arrived")}
                 />
                 <Button
                   label={Copy.draftsResolveNotArrived}
-                  variant={busy ? "plain" : "quiet"}
-                  onPress={busy ? undefined : () => void resolve("not_arrived")}
+                  variant="quiet"
+                  disabled={busy}
+                  onPress={() => void resolve("not_arrived")}
                 />
               </View>
             </View>
@@ -180,8 +182,9 @@ export function DraftReader({
                     <View style={{ flexDirection: "row", gap: 10 }}>
                       <Button
                         label={Copy.draftsDiscardConfirm}
-                        variant={busy ? "plain" : "quiet"}
-                        onPress={busy ? undefined : () => void discard()}
+                        variant="quiet"
+                        disabled={busy}
+                        onPress={() => void discard()}
                       />
                       <Button
                         label={Copy.draftsDiscardCancel}

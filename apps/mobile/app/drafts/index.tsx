@@ -47,8 +47,12 @@ function DraftsBody() {
       <Scroller bounded refresh={pull}>
         <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 16 }}>
           <Txt variant="h1">{Copy.draftsTitle}</Txt>
+          {/* A sentence, not a bare figure — and the held count is the fact this screen
+              exists for, so the head carries it where a person scans first. */}
           <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>
-            {w.boot.settled ? `${rows.length}` : " "}
+            {w.boot.settled
+              ? Copy.draftsMeta(rows.length, rows.filter((r) => r.state !== "open").length)
+              : " "}
           </Txt>
         </View>
 
