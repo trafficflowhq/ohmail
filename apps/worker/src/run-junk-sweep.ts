@@ -16,7 +16,7 @@ import { makeDrizzleRepo, type WorkerRepo } from "@trafficflow/core/adapters/dri
 import { loadMailboxCreds } from "./mailboxes.js";
 import { checkedDial, dialHostGuardFromEnv } from "./dial-host-guard.js";
 import { junkSweepPass } from "./junk-sweep.js";
-import { cliFlag, cliOpt, readOperatorMailbox } from "./run-cli.js";
+import { cliFlag, cliOpt, readOperatorMailbox } from "./operator-cli.js";
 import {
   CLOUD_DISPLAY_NAME, LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit,
   assertNoLiveTwin, mailboxHasRequestKey, resolveCloudInstallId, type LeasePermit,

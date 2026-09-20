@@ -10,6 +10,7 @@ import {
 } from "@trafficflow/core";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { carryDialect, dialect, type Dialect } from "@trafficflow/db/dialect";
+import { upsertDesiredFolder } from "./desired-intent.js";
 
 /* RE-ROUTING THE OHBOX BACKLOG — mail `people_only` (migration 0042) was turned on too late to catch.
  * The engine (`rules.ts#evaluateRules`) demotes NEW mail under the posture, but a rule is consulted at
@@ -415,7 +416,7 @@ export async function ohboxTidyPass(
           }
           const to = placement.to;
 
-          await upsertDesired(tx, c, to, now());
+          await upsertDesiredFolder(tx, c, to, now());
           // The optimistic, user-wins `move` delta the client mirror converges on, carrying the TRUE
           // previous desired folder so a later undo needs nothing extra written.
           await recordChange(tx, {
@@ -685,24 +686,6 @@ async function stillCandidates(
   return new Set(rows.map((r) => r.messageId));
 }
 
-/**
- * Write the INTENT and nothing else: the new desired folder, observed untouched. `reconcile_status`
- * is DERIVED (desired ≠ observed ⇒ `pending`), so a row can never claim a convergence it does not
- * have, and `pending` is what makes the worker's reconciler perform the physical move.
- */
-async function upsertDesired(t: Tx, row: TidyRow, destination: string, now: Date): Promise<void> {
-  const reconcileStatus = destination === row.observedFolder ? "reconciled" : "pending";
-  await t.insert(folderState).values({
-    messageId: row.messageId, desiredFolder: destination, observedFolder: row.observedFolder,
-    lastSetBy: "us", reconcileStatus, conflict: false,
-  }).onConflictDoUpdate({
-    target: folderState.messageId,
-    set: {
-      desiredFolder: destination, observedFolder: row.observedFolder, lastSetBy: "us",
-      reconcileStatus, conflict: false, updatedAt: now,
-    },
-  });
-}
 
 /**
  * The persisted row in the shape `evaluateRules` reads — sender, subject, headers, and (since

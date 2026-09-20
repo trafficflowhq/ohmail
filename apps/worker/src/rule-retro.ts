@@ -9,6 +9,7 @@ import {
 } from "@trafficflow/core";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
+import { upsertDesiredFolder } from "./desired-intent.js";
 
 /* APPLYING A NEW RULE TO MAIL ALREADY FILED — writes desired-state intent, never opens IMAP.
    The set is every message the mirror holds (`/sync` replays `change_log` from seq 0 in
@@ -364,7 +365,7 @@ export async function ruleRetroPass(
             continue;
           }
 
-          await upsertDesired(tx, c, to, now);
+          await upsertDesiredFolder(tx, c, to, now);
           // `meta` carries the TRUE previous desired folder, exactly as `sensitive-rescreen`
           // does. That single field is what makes a later undo possible without this pass
           // writing anything extra: the origin is durably recorded per message, in the journal
@@ -705,28 +706,6 @@ function matchPredicate(rule: OwedRule) {
   return sql`false`;
 }
 
-/**
- * Write the INTENT and nothing else: the new desired folder, observed untouched.
- *
- * `reconcile_status` is derived here rather than passed in, exactly as `upsertFolderState`
- * derives it, so a row can never claim a convergence it does not have: desired ≠ observed ⇒
- * `pending`, and `pending` is what makes the worker's reconciler pick it up. `conflict` is reset
- * for the same reason the folder reconciler resets it — this is a fresh statement of where the
- * message belongs.
- */
-async function upsertDesired(t: Tx, row: RetroRow, destination: string, now: Date): Promise<void> {
-  const reconcileStatus = destination === row.observedFolder ? "reconciled" : "pending";
-  await t.insert(folderState).values({
-    messageId: row.messageId, desiredFolder: destination, observedFolder: row.observedFolder,
-    lastSetBy: "us", reconcileStatus, conflict: false,
-  }).onConflictDoUpdate({
-    target: folderState.messageId,
-    set: {
-      desiredFolder: destination, observedFolder: row.observedFolder, lastSetBy: "us",
-      reconcileStatus, conflict: false, updatedAt: now,
-    },
-  });
-}
 
 /**
  * The persisted row in the shape `evaluateRules` reads — NOTHING else is invented.

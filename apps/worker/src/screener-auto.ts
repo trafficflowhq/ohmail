@@ -6,6 +6,7 @@ import {
   migrationBulkPlacement, silentLogger,
   type Destination, type Logger, type NormalizedMessage,
 } from "@trafficflow/core";
+import { upsertDesiredFolder } from "./desired-intent.js";
 
 /* SCREENER AUTO-APPLY — file the OBVIOUS bulk out of the Screener when the account opted in. The Screener
  * stays a consent gate for first-contact strangers; this OPT-IN clears the newsletters and receipts a
@@ -193,7 +194,7 @@ export async function screenerAutoApplyPass(
         // moves; keeping it means a stranger's login code stays at the gate for a human. ──────────
         if (isSensitivityFlagged(c)) { sensitivityExcluded++; kept++; continue; }
 
-        await upsertDesired(tx, c, to, now());
+        await upsertDesiredFolder(tx, c, to, now());
         // The optimistic, user-wins `move` delta the client mirror converges on, carrying the TRUE
         // previous folder so a later undo needs nothing extra written.
         await recordChange(tx, {
@@ -376,25 +377,6 @@ async function selectCandidates(
   }));
 }
 
-/**
- * Write the INTENT and nothing else: the new desired folder, observed untouched. `reconcile_status`
- * is DERIVED (desired ≠ observed ⇒ `pending`), so a row can never claim a convergence it does not
- * have, and `pending` is what makes the worker's reconciler perform the physical move. This is an
- * UPSERT, never a delete — the placement is durable and the user can drag it back.
- */
-async function upsertDesired(t: Tx, row: AutoRow, destination: string, now: Date): Promise<void> {
-  const reconcileStatus = destination === row.observedFolder ? "reconciled" : "pending";
-  await t.insert(folderState).values({
-    messageId: row.messageId, desiredFolder: destination, observedFolder: row.observedFolder,
-    lastSetBy: "us", reconcileStatus, conflict: false,
-  }).onConflictDoUpdate({
-    target: folderState.messageId,
-    set: {
-      desiredFolder: destination, observedFolder: row.observedFolder, lastSetBy: "us",
-      reconcileStatus, conflict: false, updatedAt: now,
-    },
-  });
-}
 
 /**
  * The persisted row in the shape the router reads — sender, subject, headers, all on disk. No IMAP,

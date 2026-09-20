@@ -16,7 +16,7 @@ import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { loadMailboxCreds } from "./mailboxes.js";
 import { checkedDial, dialHostGuardFromEnv } from "./dial-host-guard.js";
 import { redactedRestorePass } from "./redacted-restore.js";
-import { cliFlag, cliOpt, readOperatorMailbox } from "./run-cli.js";
+import { cliFlag, cliOpt, readOperatorMailbox } from "./operator-cli.js";
 import {
   CLOUD_DISPLAY_NAME, LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit,
   assertNoLiveTwin, mailboxHasRequestKey, resolveCloudInstallId,
