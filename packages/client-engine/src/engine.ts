@@ -27,6 +27,7 @@ import { flattenResponse } from "./apply.js";
 import { CASCADE_TYPES } from "./mirror-bounds.js";
 import { countNotify } from "./client-vitals.js";
 import { ObjectUrlLedger } from "./object-urls.js";
+import { bytesBlob, retypedBlob } from "./bytes-blob.js";
 import { MemoryMirrorStore, type EntityReader, type MirrorStore } from "./store.js";
 // THE SHARED DRAIN POLICY — the staleness threshold, the dense-page limit and the two
 // derivations over the drain stamp, held in one module with the desktop sidecar's mirror
@@ -6259,17 +6260,10 @@ export class OhmailEngine {
     const composeItems: AttachmentItem[] = attachments.map((a, i) => {
       const bytes = base64ToBytes(a.contentBase64);
       const mimeType = a.contentType || "application/octet-stream";
-      // React Native cannot BUILD a Blob from bytes (`createFromParts` throws on any
-      // ArrayBufferView part), so on a phone this seed keeps the metadata-alone posture the
-      // unreadable-base64 case above already has, instead of throwing the send's overlay away.
-      let minted: { url: string | undefined; blob: Blob } | undefined;
-      try {
-        minted = bytes
-          ? this.mintObjectUrl(messageId, new Blob([bytes as BlobPart], { type: mimeType }), mimeType)
-          : undefined;
-      } catch {
-        minted = undefined;
-      }
+      // `bytesBlob`, not `new Blob`: React Native refuses to build one from bytes, and the seed
+      // holds the copy's only bytes — a phone that dropped them showed a sent picture it could
+      // never open again. The carrier answers `arrayBuffer()`, which is what the share path reads.
+      const minted = bytes ? this.mintObjectUrl(messageId, bytesBlob(bytes, mimeType), mimeType) : undefined;
       return {
         // A local id, namespaced so it can never collide with a server row id. It is only ever
         // resolved against this held list; `openAttachment` short-circuits on `ready` with the
@@ -7717,7 +7711,7 @@ export class OhmailEngine {
    */
   private mintObjectUrl(owner: string, blob: Blob, declaredMime: string): { url: string | undefined; blob: Blob } {
     const safeType = RENDERABLE_MIME.has(declaredMime.toLowerCase()) ? declaredMime : "application/octet-stream";
-    const typed = blob.type === safeType ? blob : new Blob([blob], { type: safeType });
+    const typed = retypedBlob(blob, safeType);
     const url = this.objectUrls.mint(owner, typed);
     return { url, blob: typed };
   }

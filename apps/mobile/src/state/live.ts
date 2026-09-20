@@ -74,6 +74,7 @@ import {
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
 import { blobToBase64 } from "../mail/blob-base64";
+import { logAttachmentRefusal } from "../engine/engine-log";
 import { refuse, type Refusal, type RefusalArg } from "../refusal";
 import { folderLeafOf, folderUnreadCounts } from "./folders";
 import type { ScreeningAnswer } from "../net/consent";
@@ -1993,7 +1994,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
 
   const loadInlineImages = (messageId: string, contentIds: string[]): void => {
     if (contentIds.length === 0) return;
-    void engine.loadInlineImages(messageId, contentIds).catch(() => undefined);
+    // `loadInlineImages` never rejects, so a `catch` here could not fire; what a blank box needs
+    // stated is that the pass minted NOTHING for a document that asked for pictures.
+    void engine.loadInlineImages(messageId, contentIds).then(() => {
+      if (engine.inlineImagesOf(messageId).size === 0) logAttachmentRefusal("inline_images_none");
+    });
   };
 
   const openAttachmentBytes = async (messageId: string, attachmentId: string): Promise<WorldAttachmentBytes> => {
@@ -2002,15 +2007,23 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const EVERY_PART = { includeInlineImages: true, includeInlineParts: true };
     const list = engine.attachmentsOf(messageId, EVERY_PART);
     const item = list.state === "ready" ? list.items.find((i) => i.id === attachmentId) : undefined;
-    if (!item) return { state: "unavailable" };
+    if (!item) {
+      logAttachmentRefusal("bytes_unavailable");
+      return { state: "unavailable" };
+    }
+    // `too_large` is an ANSWER, not a refusal: the sentence names the ceiling and no retry helps.
     if (item.state === "too_large") return { state: "too_large" };
     const blob = engine.attachmentBlobOf(messageId, attachmentId);
-    if (item.state !== "ready" || !blob) return { state: "failed" };
+    if (item.state !== "ready" || !blob) {
+      logAttachmentRefusal("bytes_failed");
+      return { state: "failed" };
+    }
     try {
       return { state: "ready", base64: await blobToBase64(blob), mime: item.mimeType, filename: item.filename };
     } catch {
       // The one non-engine failure: the byte read itself. Same sentence as a failed fetch —
       // the tile's retry re-asks `openAttachment`, which short-circuits on the held Blob.
+      logAttachmentRefusal("bytes_unreadable");
       return { state: "failed" };
     }
   };

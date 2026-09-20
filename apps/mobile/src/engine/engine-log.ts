@@ -30,3 +30,27 @@ export function consoleEngineLogSink(): EngineLogSink {
     }
   };
 }
+
+/**
+ * WHY AN ATTACHMENT PRESS ANSWERED NOTHING — the closed set, and the whole of what its line says.
+ */
+export type AttachmentRefusal =
+  /** No such part on this message — the list never carried it. */
+  | "bytes_unavailable"
+  /** The engine asked for the bytes and the read refused. */
+  | "bytes_failed"
+  /** The bytes are in hand and this device could not read them. */
+  | "bytes_unreadable"
+  /** Embedded pictures were asked for and none were minted. */
+  | "inline_images_none";
+
+/**
+ * ONE LINE FOR A PRESS THAT ANSWERED NOTHING. A refused attachment wrote nowhere at all: a person
+ * read "Couldn't open this file." and a device run read an empty log, which is how a phone byte
+ * path stayed broken through a fix proven on the other door. This is not the second logger the
+ * banner refuses — the line has NO variable field, only a member of the union above, so there is
+ * nothing about a message, a sender or a file in it to redact.
+ */
+export function logAttachmentRefusal(reason: AttachmentRefusal): void {
+  consoleEngineLogSink()(JSON.stringify({ service: "app", event: "attachment_refused", reason }));
+}

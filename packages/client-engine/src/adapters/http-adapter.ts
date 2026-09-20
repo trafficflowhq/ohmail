@@ -32,6 +32,7 @@ import type {
   MutationAnswer, MutationOutcome, MutationQueued, SyncParams,
 } from "./adapter.js";
 import { retryAfterMsOf, retryingRead } from "./retrying-read.js";
+import { responseBlob } from "../bytes-blob.js";
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -957,7 +958,7 @@ export class HttpAdapter implements EngineAdapter {
   async fetchAttachment(attachmentId: string): Promise<Blob> {
     const res = await this.request("GET", `/attachments/${encodeURIComponent(attachmentId)}`);
     if (!res.ok) throw await this.rejectionOf(res);
-    return await res.blob();
+    return await responseBlob(res);
   }
 
   /**
@@ -972,7 +973,7 @@ export class HttpAdapter implements EngineAdapter {
   async fetchAllAttachments(messageId: string): Promise<Blob> {
     const res = await this.request("POST", `/messages/${encodeURIComponent(messageId)}/attachments/download-all`);
     if (!res.ok) throw await this.rejectionOf(res);
-    return await res.blob();
+    return await responseBlob(res);
   }
 
   // ── mutations ────────────────────────────────────────────────────────────
