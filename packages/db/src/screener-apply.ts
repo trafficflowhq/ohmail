@@ -38,11 +38,25 @@ const NO_FOLDER = "ohmail/Screened";
  * (`organizer-role.ts#CAPABILITY_REQUESTS` has the direction argument). The set is closed and
  * stable, and `screener-apply.test.ts` holds this copy equal to `effectForDestination`'s answer
  * for every member. `ohmail/Screener` is deliberately ABSENT: it is where mail is HELD, never a
- * place a decision may file to. The allow members are {@link YES_FOLDER}, `ohmail/Reads`,
+ * place a decision may file to. The allow members are {@link YES_FOLDER}, `ohmail/News`,
  * `ohmail/Receipts`; the deny members are {@link NO_FOLDER} and `ohmail/Quarantine`.
  */
+/**
+ * The News pile's two spellings, duplicated from `@trafficflow/core/folder-name` for the header's
+ * reason (this package must not depend on core); `screener-apply.test.ts` holds each pair equal.
+ * Stored decisions and pre-0.22 clients still say `ohmail/Reads`; both mean the News pile, and a
+ * door that admits one admits the other.
+ */
+export const NEWS_FOLDER = "ohmail/News";
+export const LEGACY_NEWS_FOLDER = "ohmail/Reads";
+
+/** `@trafficflow/core`'s `canonicalDestination`, restated for the import direction above. */
+export function canonicalNewsSpelling(folder: string): string {
+  return folder === LEGACY_NEWS_FOLDER ? NEWS_FOLDER : folder;
+}
+
 export const DECIDABLE_FOLDERS: ReadonlySet<string> = new Set([
-  YES_FOLDER, "ohmail/Reads", "ohmail/Receipts", NO_FOLDER, "ohmail/Quarantine",
+  YES_FOLDER, NEWS_FOLDER, LEGACY_NEWS_FOLDER, "ohmail/Receipts", NO_FOLDER, "ohmail/Quarantine",
 ]);
 
 /**
@@ -59,7 +73,7 @@ const MARK_READ_ON_DECIDE: ReadonlySet<string> = new Set([NO_FOLDER, "ohmail/Qua
 
 /** `effectForDestination(dest) === "allow"` for the {@link DECIDABLE_FOLDERS} set, duplicated for the same reason. */
 export function admitsDestination(dest: string): boolean {
-  return dest === YES_FOLDER || dest === "ohmail/Reads" || dest === "ohmail/Receipts";
+  return dest === YES_FOLDER || dest === NEWS_FOLDER || dest === LEGACY_NEWS_FOLDER || dest === "ohmail/Receipts";
 }
 
 /**

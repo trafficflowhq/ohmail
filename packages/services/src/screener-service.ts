@@ -31,7 +31,7 @@ import type {
   SenderSignals,
 } from "@trafficflow/core/mail";
 import {
-  applyReconcileAction, askScreeningQuestion, capSuggestion, createLogger,
+  applyReconcileAction, askScreeningQuestion, canonicalDestination, capSuggestion, createLogger,
   effectForDestination,
   resolveOhboxPolicy, senderCheckAll, senderFacts,
 } from "@trafficflow/core/mail";
@@ -87,7 +87,7 @@ const NO_FOLDER: Destination = "ohmail/Screened";
  * it through on any `no`.
  */
 const DECIDABLE_FOLDERS: ReadonlySet<string> = new Set<Destination>([
-  YES_FOLDER, "ohmail/Reads", "ohmail/Receipts", NO_FOLDER, "ohmail/Quarantine",
+  YES_FOLDER, "ohmail/News", "ohmail/Receipts", NO_FOLDER, "ohmail/Quarantine",
 ]);
 
 /**
@@ -1015,9 +1015,10 @@ export class ScreenerReadService {
       throw new ServiceError("validation_failed", 400, "applyRetro must be a boolean");
     }
     const applyRetro = b.applyRetro ?? true;
-    const dest = b.dest;
-    if (dest !== undefined) {
-      if (typeof dest !== "string" || !DECIDABLE_FOLDERS.has(dest)) {
+    // A pre-0.22 client's decision still names the News pile `ohmail/Reads` — the same pile.
+    const destRaw = typeof b.dest === "string" ? canonicalDestination(b.dest) : b.dest;
+    if (destRaw !== undefined) {
+      if (typeof destRaw !== "string" || !DECIDABLE_FOLDERS.has(destRaw)) {
         throw new ServiceError(
           "validation_failed", 400,
           `dest must be one of ${[...DECIDABLE_FOLDERS].join(", ")}`,
@@ -1026,14 +1027,16 @@ export class ScreenerReadService {
       // `effectForDestination` and not a second hand-written table: it is exhaustive over
       // `Destination`, so a seventh folder is a compile error there until somebody decides
       // which side of the consent gate it is on.
-      const admits = effectForDestination(dest) === "allow";
+      const admits = effectForDestination(destRaw as Destination) === "allow";
       if (admits !== (decision === "yes")) {
         throw new ServiceError(
           "validation_failed", 400,
-          `dest '${dest}' does not belong to decision '${decision}'`,
+          `dest '${destRaw}' does not belong to decision '${decision}'`,
         );
       }
     }
+    // Validated as a member of the canonical set above, or absent.
+    const dest = destRaw as Destination | undefined;
     // ONE INDEXED READ, NOT THE WHOLE QUEUE. This used to be `heldRows(ctx)` — every held
     // message, thousands of rows each carrying `subject` and `snippet`, pulled into a serverless
     // function before the decision did any work; a delay scaling with the backlog is

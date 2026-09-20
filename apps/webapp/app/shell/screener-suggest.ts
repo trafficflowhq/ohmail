@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { senderKey } from "@ohmail/client-engine";
+import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/folder-name";
 import type { ToastFn } from "@ohmail/ui";
 import {
   account, ApiError, apiConfigured, OFFLINE_CODE, screener as screenerApi,
@@ -1331,7 +1332,9 @@ export function batchSizes(available: number, maxPerRequest: number): number[] {
  */
 const VIEW_DEST: Record<string, SenderSuggestion["dest"]> = {
   "INBOX": "ohbox",
-  "ohmail/Reads": "reads",
+  "ohmail/News": "reads",
+  // The News pile's pre-0.22 spelling, still on stored suggestions — same pile.
+  [LEGACY_NEWS_FOLDER]: "reads",
   "ohmail/Receipts": "receipts",
   "ohmail/Screened": "screened",
   "ohmail/Quarantine": "spam",

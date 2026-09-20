@@ -5,6 +5,7 @@ import {
   accountSettings, contacts, folderState, learningSignals, messages, recordChanges, recordRuleDelta,
   routingDecisions, rules, type Tx,
 } from "@trafficflow/db";
+import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/mail";
 import { bridgeTx, type ServiceContext } from "./context.js";
 import { fenceErasedAccount } from "./erasure-fence.js";
 
@@ -43,8 +44,13 @@ export interface ResetResult {
   lastSeq: number | null;
 }
 
-/** The folders a screening decision can have moved mail INTO. INBOX is where mail already was. */
-const DECISION_PILES = ["ohmail/Screener", "ohmail/Reads", "ohmail/Receipts", "ohmail/Screened", "ohmail/Quarantine"];
+/**
+ * The folders a screening decision can have moved mail INTO. INBOX is where mail already was.
+ * Both News spellings: a decision filed before the 0.22 rename moved mail into `ohmail/Reads`.
+ */
+const DECISION_PILES = [
+  "ohmail/Screener", "ohmail/News", LEGACY_NEWS_FOLDER, "ohmail/Receipts", "ohmail/Screened", "ohmail/Quarantine",
+];
 
 /**
  * Count what past decisions physically moved. Read-only, and safe to call before deciding to reset.

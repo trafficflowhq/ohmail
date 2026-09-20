@@ -34,7 +34,7 @@ export const SHOWCASE_FOLDERS: readonly ShowcaseFolder[] = [
   { path: "Junk", label: "Junk", group: "top", role: "untouched", noteKey: "junk" },
   { path: "Sent", label: "Sent", group: "top", role: "untouched", noteKey: "sent" },
   { path: "ohmail/Screener", label: "Screener", group: "ohmail", role: "organizer", noteKey: "screener" },
-  { path: "ohmail/Reads", label: "Reads", group: "ohmail", role: "organizer", noteKey: "reads" },
+  { path: "ohmail/News", label: "News", group: "ohmail", role: "organizer", noteKey: "reads" },
   { path: "ohmail/Receipts", label: "Receipts", group: "ohmail", role: "organizer", noteKey: "receipts" },
   { path: "ohmail/Screened", label: "Screened", group: "ohmail", role: "organizer", noteKey: "screened" },
   { path: "ohmail/Quarantine", label: "Quarantine", group: "ohmail", role: "organizer", noteKey: "quarantine" },

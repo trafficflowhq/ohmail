@@ -14,6 +14,7 @@
 import { useMemo } from "react";
 import { useTranslations } from "next-intl";
 import { DECISION_KEY, DECISION_QUIET, type DecisionBarCopy, type DecisionDestination } from "@ohmail/ui";
+import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/folder-name";
 
 export const PILE_KEY: Record<DecisionDestination, string> = {
   ohbox: "pileOhbox",
@@ -33,7 +34,9 @@ export const PILE_KEY: Record<DecisionDestination, string> = {
  */
 export const PILE_KEY_OF_FOLDER: Readonly<Record<string, string>> = {
   INBOX: PILE_KEY.ohbox,
-  "ohmail/Reads": PILE_KEY.reads,
+  "ohmail/News": PILE_KEY.reads,
+  // Rows written before the 0.22 folder rename spell the News pile the old way — same pile.
+  [LEGACY_NEWS_FOLDER]: PILE_KEY.reads,
   "ohmail/Receipts": PILE_KEY.receipts,
   "ohmail/Screened": PILE_KEY.screened,
   "ohmail/Quarantine": PILE_KEY.spam,

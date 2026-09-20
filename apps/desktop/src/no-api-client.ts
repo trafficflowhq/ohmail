@@ -668,7 +668,7 @@ export interface AwayResponderWire {
     audience: "screened_in" | "everyone";
     throttle: "always" | "per_message" | "per_day" | "per_week";
     /** Folder names. `ohmail/Screener` is storable only beside `audience: "everyone"`. */
-    piles: ("INBOX" | "ohmail/Reads" | "ohmail/Receipts" | "ohmail/Screener")[];
+    piles: ("INBOX" | "ohmail/News" | "ohmail/Receipts" | "ohmail/Screener")[];
     updatedAt: string | null;
 }
 

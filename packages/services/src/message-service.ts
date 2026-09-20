@@ -7,7 +7,10 @@ import {
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import type { Destination, NativeLocator } from "@trafficflow/core/mail";
-import { createLogger, httpsUnsubscribeUri, unsubscribeHeaderState } from "@trafficflow/core/mail";
+import {
+  createLogger, httpsUnsubscribeUri, unsubscribeHeaderState,
+  NEWS_FOLDER, LEGACY_NEWS_FOLDER, canonicalDestination,
+} from "@trafficflow/core/mail";
 import { bridgeTx, bridgeDb, type Db, type ServiceContext } from "./context.js";
 import { foldersEnabled, userFolderById } from "./folders.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
@@ -50,10 +53,21 @@ const asDb = (tx: Tx): Db => bridgeDb(tx);
 
 /** The six canonical folders a message may live in / be moved to (core `Destination`). */
 const FOLDERS: Destination[] = [
-  "INBOX", "ohmail/Screener", "ohmail/Reads",
+  "INBOX", "ohmail/Screener", "ohmail/News",
   "ohmail/Receipts", "ohmail/Screened", "ohmail/Quarantine",
 ];
 const FOLDER_SET = new Set<string>(FOLDERS);
+
+/**
+ * The stored-row match for a view's folder: rows written before the 0.22 rename spell the News
+ * pile `ohmail/Reads`, and a feed view that matched only the canonical name would silently
+ * empty for exactly the mailboxes the rename exists for. One helper, so every list, count and
+ * snapshot filter asks the same question.
+ */
+const desiredFolderMatches = (folder: Destination): SQL =>
+  (folder as string) === NEWS_FOLDER
+    ? inArray(folderState.desiredFolder, [NEWS_FOLDER, LEGACY_NEWS_FOLDER])
+    : eq(folderState.desiredFolder, folder);
 
 /**
  * The seven client "views". Five map directly to a `folder_state.desiredFolder`;
@@ -65,7 +79,7 @@ export type MessageView =
 
 const VIEW_FOLDER: Record<MessageView, Destination> = {
   imbox: "INBOX",
-  feed: "ohmail/Reads",
+  feed: "ohmail/News",
   paper_trail: "ohmail/Receipts",
   screened: "ohmail/Screened",
   quarantine: "ohmail/Quarantine",
@@ -425,7 +439,7 @@ export class MessageService {
 
     const filters = [
       eq(messages.accountId, ctx.accountId),
-      eq(folderState.desiredFolder, desiredFolder),
+      desiredFolderMatches(desiredFolder),
       // Mail 0065: a tombstoned row keeps its folder_state (the reaper stamps `deleted_at` and
       // touches nothing else), so without this predicate an expunged message kept appearing in
       // its former view from THIS endpoint while `/sync` had already tombstoned it and a fresh
@@ -535,7 +549,8 @@ export class MessageService {
     ctx: ServiceContext, mailboxId: string, trashedFrom: string | null,
   ): Promise<string> {
     if (trashedFrom === null || trashedFrom === "") return "INBOX";
-    if (FOLDER_SET.has(trashedFrom)) return trashedFrom;
+    // A row trashed before the 0.22 rename says `ohmail/Reads`; it restores to the News pile.
+    if (FOLDER_SET.has(canonicalDestination(trashedFrom))) return canonicalDestination(trashedFrom);
     const [live] = await ctx.db.select({ id: mailboxFolders.id })
       .from(mailboxFolders)
       .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
@@ -1379,10 +1394,13 @@ export class MessageService {
   }
 
   private validFolder(v: unknown): Folder {
-    if (typeof v !== "string" || !FOLDER_SET.has(v)) {
+    // Canonicalized first: a pre-0.22 client still names the News pile `ohmail/Reads`, and its
+    // ask is the same pile — admitted, and answered in the one spelling new rows carry.
+    const canon = typeof v === "string" ? canonicalDestination(v) : v;
+    if (typeof canon !== "string" || !FOLDER_SET.has(canon)) {
       throw new ServiceError("validation_failed", 400, "folder is not a canonical folder");
     }
-    return v as Folder;
+    return canon as Folder;
   }
 
 

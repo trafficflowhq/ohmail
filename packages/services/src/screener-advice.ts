@@ -1,5 +1,5 @@
 import type { Destination, OhboxPolicy, SenderSignals } from "@trafficflow/core/mail";
-import { CLASSIFY_DESTINATIONS, rationaleHoldsAtGate } from "@trafficflow/core/mail";
+import { CLASSIFY_DESTINATIONS, canonicalDestination, rationaleHoldsAtGate } from "@trafficflow/core/mail";
 
 /**
  * How a stored classifier verdict reads as Screener advice — the derivation, in ONE place, for
@@ -24,7 +24,7 @@ export type ScreenDecision = "yes" | "no" | "hold";
  */
 export const SCREEN_DISPOSITION: Record<Destination, ScreenDecision> = {
   "INBOX": "yes",
-  "ohmail/Reads": "yes",        // posture may tighten this to "no" — see suggestionDecision
+  "ohmail/News": "yes",         // posture may tighten this to "no" — see suggestionDecision
   "ohmail/Receipts": "yes",     // idem
   "ohmail/Screened": "no",
   "ohmail/Quarantine": "no",
@@ -49,11 +49,13 @@ export function suggestionDecision(
 ): ScreenDecision {
   // Spam is the model's own hard "no" and outranks everything, including the label.
   if (spam) return "no";
-  const disposition = SCREEN_DISPOSITION[destination as Destination] ?? "hold";
+  // Stored or cached suggestions can predate the 0.22 rename: one spelling before the table.
+  const dest = canonicalDestination(destination);
+  const disposition = SCREEN_DISPOSITION[dest as Destination] ?? "hold";
   if (disposition !== "yes") return disposition;
   if (rationaleHoldsAtGate(rationale)) return "hold";
   if (ohboxPolicy === "people_only"
-    && (destination === "ohmail/Reads" || destination === "ohmail/Receipts")) return "no";
+    && (dest === "ohmail/News" || dest === "ohmail/Receipts")) return "no";
   return "yes";
 }
 

@@ -935,7 +935,7 @@ export interface AwayResponderDTO {
    * Never null; an EMPTY array is a responder that answers nobody — a state, not an absence.
    * `ohmail/Screener` is only ever stored beside `audience: 'everyone'`.
    */
-  piles: ("INBOX" | "ohmail/Reads" | "ohmail/Receipts" | "ohmail/Screener")[];
+  piles: ("INBOX" | "ohmail/News" | "ohmail/Receipts" | "ohmail/Screener")[];
   /**
    * HOW OFTEN ONE PERSON MAY BE ANSWERED — `'per_day'` when omitted by a client, which is both the
    * column default and what every row migrated by 0087 carries.

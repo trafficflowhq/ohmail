@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { awayResponders } from "@trafficflow/db";
-import { createLogger } from "@trafficflow/core/mail";
+import { canonicalDestination, createLogger } from "@trafficflow/core/mail";
 import {
   AWAY_ANSWERABLE_PILES, AWAY_PILES_DEFAULT, AWAY_SCREENER_FOLDER, awayScopeFitsAudience,
   DRAFT_BODY_MAX_BYTES, draftBodyOverCeiling, readAwayPiles, utf8ByteLength,
@@ -89,9 +89,11 @@ function toDTO(row: typeof awayResponders.$inferSelect): AwayResponderDTO {
      * The stored piles, narrowed for the same reason `audience` is: the column's CHECK makes a
      * non-member unrepresentable, so this is an assertion rather than a fallback. A FILTER here
      * would be worse than either — it would report a narrower scope than the pass acts on, and
-     * the surface would then state a scope that is not the one sending mail.
+     * the surface would then state a scope that is not the one sending mail. Canonicalized, not
+     * filtered: the CHECK admits the News pile's pre-0.22 spelling (mail 0123), and the wire
+     * carries one spelling for the same tick.
      */
-    piles: row.piles as AwayPile[],
+    piles: [...new Set(row.piles.map(canonicalDestination))] as AwayPile[],
     // Same narrowing and the same reason as `audience` above: a stored value outside the closed
     // set cannot reach here through this service or through the CHECK, so this is an assertion and
     // not a fallback. Inventing `per_day` for an unrecognised member would report a RATE the pass

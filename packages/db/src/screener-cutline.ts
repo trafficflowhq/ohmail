@@ -1,5 +1,6 @@
 import { sql, type SQL } from "drizzle-orm";
 import type { Dialect } from "./dialect/index.js";
+import { NEWS_FOLDER, LEGACY_NEWS_FOLDER } from "./screener-apply.js";
 
 /**
  * The cutline, as SQL — one implementation of "is this sender still worth a decision", for every
@@ -12,9 +13,13 @@ import type { Dialect } from "./dialect/index.js";
  * twin. Casts and timestamps go through the {@link Dialect}.
  */
 
-/** Every folder the product presents. Activity is measured over all six. */
+/**
+ * Every folder the product presents. Activity is measured over all six — plus the News pile's
+ * pre-0.22 spelling, because these lists reach SQL membership over STORED rows and a row filed
+ * before the folder rename still says `ohmail/Reads`.
+ */
 export const CUTLINE_PRESENTED_FOLDERS: readonly string[] = [
-  "INBOX", "ohmail/Screener", "ohmail/Reads", "ohmail/Receipts", "ohmail/Screened", "ohmail/Quarantine",
+  "INBOX", "ohmail/Screener", NEWS_FOLDER, LEGACY_NEWS_FOLDER, "ohmail/Receipts", "ohmail/Screened", "ohmail/Quarantine",
 ];
 
 /**
@@ -146,7 +151,9 @@ export function senderIsActiveSql(
  * amount to a DECISION is {@link CUTLINE_DECIDED_DESTINATIONS}, a wider list, and the two were one
  * list until 0.19.2 — see that constant for what that cost.
  */
-export const CUTLINE_ALLOW_DESTINATIONS: readonly string[] = ["INBOX", "ohmail/Reads", "ohmail/Receipts"];
+export const CUTLINE_ALLOW_DESTINATIONS: readonly string[] = [
+  "INBOX", NEWS_FOLDER, LEGACY_NEWS_FOLDER, "ohmail/Receipts",
+];
 
 /** The gate itself. Pinned equal to `screener-apply.ts#SCREENER_FOLDER` by the one-owner test. */
 export const CUTLINE_GATE_FOLDER = "ohmail/Screener";

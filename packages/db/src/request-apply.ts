@@ -6,6 +6,7 @@ import {
 import { recordChange, recordRuleDelta, type LedgerTx, type Tx } from "./change-log.js";
 import { dialect } from "./dialect/index.js";
 import { insertOrganizerRequest, TERMINAL_REQUEST_STATES } from "./organizer-requests.js";
+import { NEWS_FOLDER, canonicalNewsSpelling } from "./screener-apply.js";
 
 /**
  * `recordChange` wants `LedgerTx` (`PgTransaction`, narrower than `Tx`/`PgDatabase`) because it is
@@ -38,7 +39,7 @@ const ledger = (tx: Tx): LedgerTx => tx as unknown as LedgerTx;
 export const MOVE_DESTINATIONS: ReadonlyMap<string, string | null> = new Map([
   ["inbox", "INBOX"],
   ["screener", "ohmail/Screener"],
-  ["reads", "ohmail/Reads"],
+  ["reads", NEWS_FOLDER],
   ["receipts", "ohmail/Receipts"],
   ["screened", "ohmail/Screened"],
   ["quarantine", "ohmail/Quarantine"],
@@ -238,7 +239,7 @@ const AWAY_THROTTLES: ReadonlySet<string> = new Set(["always", "per_message", "p
  * `AWAY_THROTTLES` have no such guard — both are closed by a CHECK as well.
  */
 export const AWAY_PILES: ReadonlySet<string> = new Set([
-  "INBOX", "ohmail/Reads", "ohmail/Receipts", "ohmail/Screener",
+  "INBOX", NEWS_FOLDER, "ohmail/Receipts", "ohmail/Screener",
 ]);
 /**
  * The one member that needs the wider audience — `AWAY_SCREENER_FOLDER`, restated for the import
@@ -378,8 +379,12 @@ export function validateProfileUpdatePayload(payload: unknown): ValidatedProfile
       const p = r.piles;
       if (!Array.isArray(p)) return null;
       const piles: string[] = [];
-      for (const member of p) {
-        if (typeof member !== "string" || !AWAY_PILES.has(member)) return null;
+      for (const raw of p) {
+        if (typeof raw !== "string") return null;
+        // A pre-0.22 install still spells the News pile `ohmail/Reads`; canonicalized before the
+        // membership so its ask is admitted, and stored canonical so new rows carry one spelling.
+        const member = canonicalNewsSpelling(raw);
+        if (!AWAY_PILES.has(member)) return null;
         /* DUPLICATES COLLAPSED, exactly as the local door's `validPiles` collapses them. The value
            is a SET ("which piles"), the CHECK is containment and admits `{INBOX,INBOX}`, and the
            two write paths producing different rows for the same ask is a diff nobody can read. */

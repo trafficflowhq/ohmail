@@ -761,8 +761,8 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // mail 0122_change_log_retention — the retention floor. `seqBounds` reads it on EVERY resuming
   // `/sync`, so an API deployed ahead of the migration answers 42703 on the whole delta surface:
   // every open client's poll loop fails at once. The marker makes that deployment name the
-  // missing migration instead of leaving a 500 nobody can attribute. It is the NEWEST entry in
-  // the mail journal. Deploy order migration → API → worker (the pass only raises the floor).
+  // missing migration instead of leaving a 500 nobody can attribute. (0123, the newest entry,
+  // is probed by its CHECK definition below.) Deploy order migration → API → worker.
   ["account_sync_state", "pruned_through_seq"],
 ] as const;
 
@@ -1035,7 +1035,12 @@ export const SCHEMA_FK_MARKERS: ReadonlyArray<ForeignKeyMarker> = [
  * since a database carrying it carries every earlier member too.
  */
 export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker> = [
-  ["away_responders_piles_closed", "ohmail/Screener"],
+  /* Mail 0123 — `ohmail/News` joins the away scope's members (the 0.22 folder rename). The
+     needle MOVED from 0101's `ohmail/Screener`: one constraint, one definition, and against a
+     0122 database a 0.22 build's scope save is refused by the old CHECK — the loud direction,
+     on a settings pane somebody is using. A database carrying `ohmail/News` carries every
+     earlier member too. */
+  ["away_responders_piles_closed", "ohmail/News"],
   /* Mail 0105 — `clock_off`, so an install whose clock disagrees with its mail server says that
      rather than reporting a folder it could not read. The needle MOVED from 0102's `read_limited`
      rather than being added beside it: this is one constraint with one definition, and against a
@@ -1070,7 +1075,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0122_change_log_retention";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0123_news_pile_check";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud

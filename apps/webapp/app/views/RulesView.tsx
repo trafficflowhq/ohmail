@@ -48,7 +48,7 @@ import "./rules.css";
  */
 export const RULE_DESTINATIONS: readonly Folder[] = [
   "INBOX",
-  "ohmail/Reads",
+  "ohmail/News",
   "ohmail/Receipts",
   "ohmail/Screener",
   "ohmail/Screened",

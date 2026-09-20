@@ -1,5 +1,5 @@
 import { sql, type SQL } from "drizzle-orm";
-import { DEFAULT_DORMANCY_DAYS, type ScreeningScope } from "@trafficflow/core/mail";
+import { DEFAULT_DORMANCY_DAYS, LEGACY_NEWS_FOLDER, type ScreeningScope } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import {
@@ -32,7 +32,9 @@ export type { ScreeningScope };
 
 /** Folders the product presents. A Sent folder, or any of the user's own, is not one of them. */
 const PRESENTED_FOLDERS = [
-  "INBOX", "ohmail/Screener", "ohmail/Reads", "ohmail/Receipts", "ohmail/Screened", "ohmail/Quarantine",
+  "INBOX", "ohmail/Screener", "ohmail/News", "ohmail/Receipts", "ohmail/Screened", "ohmail/Quarantine",
+  // The News pile's pre-0.22 spelling: activity in rows filed before the rename still counts.
+  LEGACY_NEWS_FOLDER,
 ];
 
 /**

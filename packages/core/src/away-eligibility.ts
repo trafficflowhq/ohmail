@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { autoReplySuppression, type AutoReplySuppression } from "./rules.js";
 import { AWAY_SCREENER_FOLDER } from "./away-scope.js";
+import { canonicalDestination } from "./types.js";
 
 /**
  * May the away responder answer this message? — the whole suppression set as one pure function
@@ -246,8 +247,10 @@ export function awayEligibility(
   // where the two disagree is not representable. A row with NO placement is refused: mail whose
   // pile nobody has decided is not mail known to be in an answered pile, and absent evidence may
   // not select the branch that sends mail. An EMPTY `piles` answers nobody — fail-closed, not "no
-  // filter".
-  if (!piles.includes(placed ?? "")) return "wrong_pile";
+  // filter". Both sides canonicalized: a stored scope member and a `desired_folder` row can each
+  // still spell the News pile the pre-0.22 way, and either spelling is the same tick.
+  const placedPile = canonicalDestination(placed ?? "");
+  if (!piles.some((p) => canonicalDestination(p) === placedPile)) return "wrong_pile";
 
   // ── WHAT MAY NEVER EARN A REPLY, WHATEVER THE SETTINGS ────────────────────────────────────
   //

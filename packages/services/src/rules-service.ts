@@ -1,6 +1,7 @@
 import { and, asc, eq } from "drizzle-orm";
 import { rules, recordRuleDelta, claimIdempotencyKey, type OrganizedBy, type Tx } from "@trafficflow/db";
 import type { Destination } from "@trafficflow/core/mail";
+import { canonicalDestination } from "@trafficflow/core/mail";
 import type { RequestKind } from "@trafficflow/core/adapters/organizer-lease";
 import { bridgeTx, bridgeDb, withAccountTx, type Db, type ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
@@ -17,7 +18,7 @@ const asDb = (tx: Tx): Db => bridgeDb(tx);
 const KINDS = new Set(["sender", "domain", "header"]);
 /** The six canonical folders a rule may route to (core `Destination`). */
 const FOLDERS: Destination[] = [
-  "INBOX", "ohmail/Screener", "ohmail/Reads",
+  "INBOX", "ohmail/Screener", "ohmail/News",
   "ohmail/Receipts", "ohmail/Screened", "ohmail/Quarantine",
 ];
 const FOLDER_SET = new Set<string>(FOLDERS);
@@ -176,14 +177,15 @@ export interface RuleRemoval {
 const RULE_DESTINATION_WORDS: ReadonlyMap<string, string> = new Map([
   ["INBOX", "inbox"],
   ["ohmail/Screener", "screener"],
-  ["ohmail/Reads", "reads"],
+  ["ohmail/News", "reads"],
   ["ohmail/Receipts", "receipts"],
   ["ohmail/Screened", "screened"],
   ["ohmail/Quarantine", "quarantine"],
 ]);
 
 function ruleDestinationWord(folder: string): string {
-  const word = RULE_DESTINATION_WORDS.get(folder);
+  // A rule stored before the 0.22 rename says `ohmail/Reads`; its word is the News pile's.
+  const word = RULE_DESTINATION_WORDS.get(canonicalDestination(folder));
   if (word === undefined) {
     // Unreachable from a validated request — `validDestination` admits exactly these six. A throw
     // rather than a fallback for `destinationWord`'s reason: the fallback would put whatever
@@ -717,10 +719,12 @@ export class RulesService {
     return v;
   }
   private validDestination(v: unknown): Folder {
-    if (typeof v !== "string" || !FOLDER_SET.has(v)) {
+    // A pre-0.22 client's `ohmail/Reads` is the News pile: admitted, stored canonical.
+    const canon = typeof v === "string" ? canonicalDestination(v) : v;
+    if (typeof canon !== "string" || !FOLDER_SET.has(canon)) {
       throw new ServiceError("validation_failed", 400, "destination is not a canonical folder");
     }
-    return v as Folder;
+    return canon as Folder;
   }
   private validMatch(v: unknown): string {
     if (typeof v !== "string" || v.length === 0) {

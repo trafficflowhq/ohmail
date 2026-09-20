@@ -2212,7 +2212,7 @@ export interface AwayResponderWire {
    * `ohmail/Screener` is only storable beside `audience: "everyone"` — the server answers 400 for the other pair, and
    * the control disables that box.
    */
-  piles: ("INBOX" | "ohmail/Reads" | "ohmail/Receipts" | "ohmail/Screener")[];
+  piles: ("INBOX" | "ohmail/News" | "ohmail/Receipts" | "ohmail/Screener")[];
   updatedAt: string | null;
 }
 
