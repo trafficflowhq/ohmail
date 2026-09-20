@@ -1,14 +1,12 @@
 /**
  * BYTES INTO A BLOB, ON A RUNTIME THAT CANNOT BUILD ONE.
  *
- * React Native's Blob is native-backed and `BlobManager.createFromParts` throws on every
- * ArrayBuffer and ArrayBufferView part, so a phone can HOLD a Blob the platform made and can
- * never MAKE one of its own. That is invisible on a paired door — the bytes arrive as a native
- * blob through XHR — and fatal on a standalone one, where the response is built inside the app
- * and `res.blob()` is the polyfill constructing a Blob from an ArrayBuffer. The bytes are the
- * carrier and the Blob is only the container every consumer agreed on, so where the container
- * cannot be built this hands back one shaped like it over the same bytes. Web, desktop and node
- * build the real thing and never meet the carrier.
+ * React Native's Blob is native-backed: `createFromParts` throws on every ArrayBuffer and view,
+ * so a phone can HOLD one the platform made and never MAKE its own. Invisible on a paired door
+ * (XHR delivers a native blob) and fatal on a standalone one, where the app builds the response
+ * itself and the fetch polyfill constructs the Blob. The bytes are the carrier and the Blob only
+ * the container consumers agreed on, so where it cannot be built this hands back one shaped like
+ * it over the same bytes. Web, desktop and node build the real thing and never meet the carrier.
  */
 
 /**
