@@ -71,4 +71,8 @@
 -- `octet_length(NULL)` is NULL and a CHECK passes on NULL, so the nullable column needs no
 -- special-casing: a message with no html, and a sensitive message whose html is deliberately
 -- never stored (sensitive mail is stored redacted), both satisfy this without an `IS NULL` arm.
+-- DROPPED FIRST so the entry is replayable: the adoption window re-executes everything above
+-- the baseline cutoff, and a bare `ADD CONSTRAINT` raises 42710 there. The pair leaves exactly
+-- this CHECK behind, whatever an earlier hand-applied one of the same name said.
+ALTER TABLE "message_bodies" DROP CONSTRAINT IF EXISTS "message_bodies_html_cap";--> statement-breakpoint
 ALTER TABLE "message_bodies" ADD CONSTRAINT "message_bodies_html_cap" CHECK (octet_length("html") <= 262144);

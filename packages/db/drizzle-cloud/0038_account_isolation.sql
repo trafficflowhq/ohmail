@@ -20,6 +20,12 @@ UPDATE "auth_events" SET "user_id" = NULL WHERE "user_id" IS NOT NULL AND NOT EX
 UPDATE "auth_events" SET "account_id" = NULL WHERE "account_id" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "accounts" a WHERE a."id" = "auth_events"."account_id");--> statement-breakpoint
 UPDATE "webauthn_challenges" SET "user_id" = NULL WHERE "user_id" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "users" u WHERE u."id" = "webauthn_challenges"."user_id");--> statement-breakpoint
 UPDATE "push_subscriptions" SET "device_id" = NULL WHERE "device_id" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "devices" d WHERE d."id" = "push_subscriptions"."device_id" AND d."account_id" = "push_subscriptions"."account_id");--> statement-breakpoint
+-- EACH KEY IS DROPPED BEFORE IT IS ADDED, the flat replayable form mail 0118 carries: the
+-- adoption window re-executes every entry above the baseline cutoff, and a bare
+-- `ADD CONSTRAINT` raises 42710 there. The drops are no-ops on a fresh database.
+ALTER TABLE "webauthn_challenges" DROP CONSTRAINT IF EXISTS "webauthn_challenges_user_id_users_id_fk";--> statement-breakpoint
 ALTER TABLE "webauthn_challenges" ADD CONSTRAINT "webauthn_challenges_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "users" ("id");--> statement-breakpoint
+ALTER TABLE "push_subscriptions" DROP CONSTRAINT IF EXISTS "push_subscriptions_device_id_account_fk";--> statement-breakpoint
 ALTER TABLE "push_subscriptions" ADD CONSTRAINT "push_subscriptions_device_id_account_fk" FOREIGN KEY ("device_id", "account_id") REFERENCES "devices" ("id", "account_id");--> statement-breakpoint
+ALTER TABLE "auth_events" DROP CONSTRAINT IF EXISTS "auth_events_user_id_account_fk";--> statement-breakpoint
 ALTER TABLE "auth_events" ADD CONSTRAINT "auth_events_user_id_account_fk" FOREIGN KEY ("user_id", "account_id") REFERENCES "users" ("id", "account_id");
