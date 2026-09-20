@@ -45,6 +45,7 @@ import {
   PRESS_THREW,
   pressVerdict,
   tallyVerdicts,
+  sendingMailboxId,
   type FolderNameError,
   type SignatureState,
   type AddressCounts,
@@ -1969,6 +1970,21 @@ export interface LiveWorldActions {
    */
   sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null, attachments?: ComposeAttachment[]): Promise<SendResult>;
   /**
+   * A MAIL THAT ANSWERS NOTHING — the same `mail_send` with no parent: `inReplyTo` null,
+   * no `forwardOf`, the sending mailbox named explicitly because there is no parent to derive
+   * it from. Everything after the envelope is the reply arm's — one signature derivation, one
+   * empty-content refusal, one Idempotency-Key, Send later on the same clock.
+   */
+  sendNew(
+    mailboxId: string | null,
+    to: EmailAddress[],
+    subject: string,
+    body: string,
+    sig?: string | null,
+    sendAt?: string | null,
+    attachments?: ComposeAttachment[],
+  ): Promise<SendResult>;
+  /**
    * WITHDRAW A QUEUED SEND — Cancel, on the intent. `withdrawn` is the cancellation;
    * `on_the_wire` withdrew nothing and the surface says so; `gone` is a key the queue no longer
    * holds. See {@link OhmailEngine.withdrawQueued}.
@@ -2923,6 +2939,48 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     );
   };
 
+  const sendNew = async (
+    mailboxId: string | null,
+    to: EmailAddress[],
+    subject: string,
+    body: string,
+    sig: string | null = null,
+    sendAt: string | null = null,
+    attachments: ComposeAttachment[] = [],
+  ): Promise<SendResult> => {
+    const text = body.trim();
+    // TOLD, all three arms — a return before `sent()` renders nothing, and a fresh mail has
+    // one more way to be unsendable than a reply: nothing to send it FROM. The empty-content
+    // rule is the reply arm's, judged before the signature joins; a subject alone is not
+    // content (the webapp's `sendNeedsContent`, which never reads the subject).
+    if (mailboxId === null) {
+      toast(refuse("composeNoMailbox"));
+      return { outcome: "failed" };
+    }
+    if (to.length === 0) {
+      toast(refuse("composeNeedRecipient"));
+      return { outcome: "failed" };
+    }
+    if (text === "" && attachments.length === 0) {
+      toast(refuse("composeNeedContent"));
+      return { outcome: "failed" };
+    }
+    return sent(
+      dispatchSend(withSignature({
+        kind: "mail_send" as const,
+        inReplyTo: null,
+        mailboxId,
+        subject: subject.trim(),
+        body: text,
+        to,
+        ...(sendAt ? { sendAt } : {}),
+        ...(attachments.length > 0 ? { attachments } : {}),
+      }, sig)),
+      sendAt ? Copy.scheduledFor(scheduleLabel(sendAt, now(), zone)) : Copy.composeSent,
+      Copy.composeEarlierWent,
+    );
+  };
+
   const tagToggle = async (messageId: string, tag: WorldTag, assigned: boolean): Promise<boolean> => {
     const m: EngineMutation = { kind: "tag_assign", messageId, tagId: tag.id, assigned };
     toast(
@@ -3098,7 +3156,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     sweepFeed, leaveFeed, decide, release, setPile,
     pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, markAllSeen, move,
     deleteMessage, trashList, trashRestore,
-    sendReply, sendForward, withdrawSend, cancelSchedule, tagToggle, tagCreate, screenSender,
+    sendReply, sendForward, sendNew, withdrawSend, cancelSchedule, tagToggle, tagCreate, screenSender,
     folderCreate, folderRename, folderDelete, folderDismiss,
   };
 }
@@ -3173,6 +3231,16 @@ export interface WorldActions {
     attachments?: ComposeAttachment[],
   ): Promise<SendResult>;
   sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null, attachments?: ComposeAttachment[]): Promise<SendResult>;
+  /** A mail with no parent — see {@link LiveWorldActions.sendNew}. */
+  sendNew(
+    mailboxId: string | null,
+    to: EmailAddress[],
+    subject: string,
+    body: string,
+    sig?: string | null,
+    sendAt?: string | null,
+    attachments?: ComposeAttachment[],
+  ): Promise<SendResult>;
   /** Withdraw a queued send — Cancel. See {@link LiveWorldActions.withdrawSend}. */
   withdrawSend(key: string): Promise<WithdrawOutcome>;
   /** Cancel a scheduled send — resolves `true` only on the server's CONFIRMED cancellation. */
@@ -3228,6 +3296,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     trashRestore: (id) => current().trashRestore(id),
     sendReply: (id, body, all, sig, sendAt, attachments) => current().sendReply(id, body, all, sig, sendAt, attachments),
     sendForward: (id, to, body, sig, attachments) => current().sendForward(id, to, body, sig, attachments),
+    sendNew: (mailboxId, to, subject, body, sig, sendAt, attachments) => current().sendNew(mailboxId, to, subject, body, sig, sendAt, attachments),
     withdrawSend: (key) => current().withdrawSend(key),
     cancelSchedule: (draftId) => current().cancelSchedule(draftId),
     sendOutcome: (key) => current().sendOutcome(key),
@@ -3642,7 +3711,9 @@ export function firstSyncContinuesSaid(
  * this seam, never from the package. `SIG_FOLLOWING`/`effectiveSignature` (the composer's
  * signature block) and `folderNameError` (the folder verbs' pre-wire honest sentence — the
  * SERVER's own rules, shared through the engine) ride through on the same terms. */
-export { destDone, isPlace, SIG_FOLLOWING, effectiveSignature, folderNameError };
+/* `sendingMailboxId` passes through UNCHANGED: the compose-from fallback is the engine's,
+   and a second derivation here would be a second answer to one question. */
+export { destDone, isPlace, SIG_FOLLOWING, effectiveSignature, folderNameError, sendingMailboxId };
 export type {
   Destination, FolderEntity, FolderNameError, Held, Mail, PileItem, PileKind, Place, Scope,
   SignatureState,

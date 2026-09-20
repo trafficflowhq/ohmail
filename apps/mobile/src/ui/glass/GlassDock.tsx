@@ -26,11 +26,14 @@ export function GlassDock({
   activeId,
   onItemPress,
   search,
+  compose,
 }: {
   items: readonly DockItem[];
   activeId: string | null;
   onItemPress: (id: string) => void;
   search: { label: string; onPress: () => void };
+  /** Starting a mail is a verb, not a destination — it rides the trailing pill beside search. */
+  compose?: { label: string; onPress: () => void };
 }) {
   const t = useTheme();
   const insets = useSafeAreaInsets();
@@ -62,6 +65,9 @@ export function GlassDock({
           ))}
         </GlassPill>
         <GlassPill horizontal level="l3">
+          {compose ? (
+            <GlassIconButton icon="pen" label={compose.label} onPress={compose.onPress} />
+          ) : null}
           <GlassIconButton icon="search" label={search.label} onPress={search.onPress} />
         </GlassPill>
       </View>

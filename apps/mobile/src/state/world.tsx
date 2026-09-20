@@ -66,6 +66,7 @@ import {
   liveScheduled,
   liveScreener,
   liveSearch,
+  sendingMailboxId,
   liveTags,
   mirrorSettled,
   phoneOrganizer,
@@ -212,6 +213,13 @@ export interface World {
      * Empty where nothing has been read, which `known` is what distinguishes.
      */
     rows: readonly PhoneMailbox[];
+    /**
+     * WHICH MAILBOX A MAIL WITH NO PARENT LEAVES FROM — the engine's own
+     * `sendingMailboxId`: the first mirrored mailbox, else the newest message's. A reply and a
+     * forward derive this from the message they answer; a fresh compose has nothing to derive
+     * it from, and `null` is what the composer refuses on rather than guessing an account.
+     */
+    sendingId: string | null;
   };
   ohbox: {
     resurfaced: WorldMail[];
@@ -457,6 +465,7 @@ const NO_ACTIONS: WorldActions = {
   // The empty world cannot send; the composer treats `failed` as the refusal it is.
   sendReply: () => Promise.resolve({ outcome: "failed" as const }),
   sendForward: () => Promise.resolve({ outcome: "failed" as const }),
+  sendNew: () => Promise.resolve({ outcome: "failed" as const }),
   // Nothing is connected, so nothing is queued: there is no send here to withdraw.
   withdrawSend: () => Promise.resolve("gone" as const),
   // Nor cancel: `false` is "not confirmed", which is exactly what nothing-connected means.
@@ -496,7 +505,7 @@ function emptyWorld(actions: WorldActions): World {
     standalone: false,
     // Nothing has been asked on the empty world, so `known` is false and the banner is withheld
     // — the same honest-unknown the boot facts keep between a teardown and the redirect.
-    mailboxes: { known: false, ownAddresses: [], organizer: null, rows: [] },
+    mailboxes: { known: false, ownAddresses: [], organizer: null, rows: [], sendingId: null },
     ohbox: { resurfaced: [], fresh: [], seen: [], unreadIds: [], unread: 0, total: 0, meta: "" },
     doorbell: { initials: [], count: 0 },
     reads: { items: [], waterlineAboveId: null, unreadIds: [], waterLabel: Copy.waterline, newCount: 0, meta: "" },
@@ -1186,6 +1195,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
              next widening; `compose-attach.test.ts` pins the binding and drives the chain. */
           sendReply: acts.sendReply,
           sendForward: acts.sendForward,
+          sendNew: acts.sendNew,
           withdrawSend: (key) => acts.withdrawSend(key),
           cancelSchedule: (draftId) => acts.cancelSchedule(draftId),
           sendOutcome: (key) => outcomeOf(key),
@@ -1321,6 +1331,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         /* The same value `known` and `organizer` are derived from, so the three cannot disagree:
            `freshestRead` keeps the last successful answer, and a failed read changes none of them. */
         rows: mailboxes ?? [],
+        /* The engine's mirror, not this read: a phone that has never reached `/mailboxes`
+           can still send from the mailbox its mirrored mail arrived in. */
+        sendingId: sendingMailboxId(base),
       },
       ohbox: { ...ohbox, meta: Copy.metaUnreadOf(ohbox.unread, ohbox.total) },
       doorbell: {

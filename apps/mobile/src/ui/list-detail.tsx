@@ -102,32 +102,57 @@ export function ListDetail({
     <PaneChromeContext.Provider value={plan.drawer ? { openDrawer: () => setDrawerOpen(true) } : null}>
       <View style={{ flex: 1 }}>
         <View style={{ flex: 1 }}>{list}</View>
-        {/* The search field at the list pane's foot — Mail's shape on the Duo/iPad (owner
-            rule 5 keeps search in every navigation; Android's rail already carries it). It
-            opens the mirror-search screen (`app/search.tsx`). */}
+        {/* The search field at the list pane's foot, with New mail beside it — Mail's shape on
+            the Duo/iPad (owner rule 5 keeps search in every navigation; Android's rail already
+            carries both). They open `app/search.tsx` and `app/compose.tsx`; on these
+            postures there is no dock to carry them. */}
         {platformName === "ios" ? (
-          <Tap
-            accessibilityRole="button"
-            accessibilityLabel={Copy.search}
-            onPress={() => router.push("/search")}
+          <View
             style={{
               flexDirection: "row",
               alignItems: "center",
-              gap: 9,
+              gap: 8,
               marginHorizontal: 14,
               marginTop: 8,
               marginBottom: Math.max(insets.bottom, 12),
-              paddingHorizontal: 14,
-              minHeight: 44,
-              borderRadius: t.radius.pill,
-              backgroundColor: t.c.tint,
             }}
           >
-            <Icon name="search" size={14} color={t.c.ink3} />
-            <Txt variant="meta" tone="ink3">
-              {Copy.search}
-            </Txt>
-          </Tap>
+            <Tap
+              accessibilityRole="button"
+              accessibilityLabel={Copy.search}
+              onPress={() => router.push("/search")}
+              style={{
+                flex: 1,
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 9,
+                paddingHorizontal: 14,
+                minHeight: 44,
+                borderRadius: t.radius.pill,
+                backgroundColor: t.c.tint,
+              }}
+            >
+              <Icon name="search" size={14} color={t.c.ink3} />
+              <Txt variant="meta" tone="ink3">
+                {Copy.search}
+              </Txt>
+            </Tap>
+            <Tap
+              accessibilityRole="button"
+              accessibilityLabel={Copy.composeNew}
+              onPress={() => router.push("/compose")}
+              style={{
+                alignItems: "center",
+                justifyContent: "center",
+                width: 44,
+                minHeight: 44,
+                borderRadius: t.radius.pill,
+                backgroundColor: t.c.tint,
+              }}
+            >
+              <Icon name="pen" size={14} color={t.c.ink3} />
+            </Tap>
+          </View>
         ) : null}
       </View>
     </PaneChromeContext.Provider>

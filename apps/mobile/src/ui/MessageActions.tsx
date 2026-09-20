@@ -687,13 +687,14 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
    removable, editable, serialized exactly as shown (SIG-MOB; `signature.ts` is the shared
    model, `SignatureBlock.tsx` the webapp reference). ─────────────────────────────────────── */
 
-function ComposeSheet({
+export function ComposeSheet({
   m,
   mode,
   onClose,
 }: {
-  m: WorldMail;
-  mode: "reply" | "replyAll" | "forward";
+  /** The message being answered — `null` for a mail with no parent (the `new` mode). */
+  m: WorldMail | null;
+  mode: "reply" | "replyAll" | "forward" | "new";
   onClose: () => void;
 }) {
   const t = useTheme();
@@ -705,6 +706,8 @@ function ComposeSheet({
   const locale = useLocale();
   const [body, setBody] = useState("");
   const [to, setTo] = useState("");
+  /** A parent-less mail's own subject. Reply and forward derive theirs; this one is typed. */
+  const [subject, setSubject] = useState("");
   /**
    * The composer's send phase. `queued` is TERMINAL for this composer: the text stands on
    * the engine's retry queue under its Idempotency-Key (the reconnect flush retries it, the
@@ -729,6 +732,15 @@ function ComposeSheet({
   const [sig, setSig] = useState<SignatureState>(SIG_FOLLOWING);
   const forward = mode === "forward";
   /**
+   * A MAIL WITH NO PARENT. It shares every rule below with the reply family — one
+   * signature derivation, one empty-content refusal, one key, the same Send later clock — and
+   * differs in exactly three facts: it asks for its recipients, it asks for its subject, and
+   * it names the mailbox it leaves from rather than inheriting one.
+   */
+  const fresh = mode === "new";
+  /** Addressed, so the To field is offered and its entries are the envelope. */
+  const addressed = forward || fresh;
+  /**
    * THE ATTACHMENTS — bytes in memory, nothing filed (`ComposeAttachment`'s contract); they ride
    * the same `mail_send` the webapp composer sends. The admit pipeline, the cap and the
    * needs-content rule live in `../compose/attach`; the pickers behind their native twin. Notes
@@ -744,7 +756,14 @@ function ComposeSheet({
   /* The ONE shared bound (`composeAttachCap`) of the sending mailbox's announced `SIZE` —
      the same pair the send will enforce. The phone declares no surface: its send rides one
      JSON request, so the strict constant is the other arm. */
-  const attachCap = phoneAttachCap(w.mailboxes.rows, m.mailboxId);
+  /* WHICH MAILBOX THIS LEAVES FROM — the parent's for a reply or forward (what `Engine.enrich`
+     would derive anyway, made explicit), the engine's `sendingMailboxId` for a parent-less
+     mail. `null` only where this phone has mirrored nothing, and the send refuses by name. */
+  const mailboxId = m?.mailboxId ?? w.mailboxes.sendingId;
+  /* The sending address, only where the phone has read the mailbox list — `null` is "not
+     asked yet", which states nothing rather than a guessed address. */
+  const fromAddress = w.mailboxes.rows.find((r) => r.id === mailboxId)?.address ?? null;
+  const attachCap = phoneAttachCap(w.mailboxes.rows, mailboxId ?? "");
   const pick = async (which: "files" | "photos") => {
     if (phase !== "idle") return;
     const picker = nativeAttachPicker();
@@ -813,13 +832,13 @@ function ComposeSheet({
   // told — so an invalid entry LOCKS Send rather than shrinking the list. Entries split on
   // commas/semicolons (never bare spaces: `Alice <alice@x.org>` is ONE entry), and a
   // display-named entry is validated on the address its angle brackets carry.
-  const recipients = forward ? parseRecipients(to) : [];
+  const recipients = addressed ? parseRecipients(to) : [];
   /* NOTHING TO SEND — the webapp's `sendNeedsContent`, mirrored: empty body AND no attachments,
      except a forward (its content is the forwarded message). A signature never lights Send up
      on its own — the rule reads the body and the files, never the block. */
   const needsContent = phoneSendNeedsContent({ forward, body, attachmentCount: attachments.length });
   const canSend =
-    phase === "idle" && !needsContent && (forward ? recipients !== null && recipients.length > 0 : true);
+    phase === "idle" && !needsContent && (addressed ? recipients !== null && recipients.length > 0 : true);
   /* CONTENT IS THE ONE THING MISSING — the webapp's told refusal: Send stays pressable, dressed
      unlit, and the press earns the sentence instead of doing nothing. Every stronger lock
      (sending, queued, unverified) keeps the dead press. */
@@ -833,7 +852,8 @@ function ComposeSheet({
    * mutation's, made visible. `w.signatures === null` (not yet server-confirmed) renders no
    * block and appends nothing: a signature is never drawn or serialized from a guess.
    */
-  const sigText = w.signatures === null ? null : effectiveSignature(sig, w.signatures, m.mailboxId);
+  const sigText =
+    w.signatures === null || mailboxId === null ? null : effectiveSignature(sig, w.signatures, mailboxId);
 
   /**
    * The three presets, computed off the frozen `openedAt`. The evening one is OFFERED ONLY
@@ -911,9 +931,11 @@ function ComposeSheet({
     setLater(null);
     setPhase("sending");
     const files = toComposeAttachments(attachments);
-    const result = forward
-      ? await w.actions.sendForward(m.id, recipients ?? [], body, sigText, files)
-      : await w.actions.sendReply(m.id, body, mode === "replyAll", sigText, sendAt, files);
+    const result = fresh
+      ? await w.actions.sendNew(mailboxId, recipients ?? [], subject, body, sigText, sendAt, files)
+      : forward
+        ? await w.actions.sendForward(m!.id, recipients ?? [], body, sigText, files)
+        : await w.actions.sendReply(m!.id, body, mode === "replyAll", sigText, sendAt, files);
     if (result.outcome === "sent") {
       onClose();
       return;
@@ -954,18 +976,28 @@ function ComposeSheet({
           {/* The head states the audience — the same statement the webapp editor opens with,
               and for reply-all the same envelope the send will carry, every name on it. */}
           <Txt variant="settingsLabel">
-            {forward
-              ? Copy.forwardHead
-              : mode === "replyAll" && m.replyAllHead
-                ? Copy.replyToAll(m.replyAllHead.to)
-                : Copy.replyTo(m.from.name)}
+            {fresh
+              ? Copy.composeNewHead
+              : forward
+                ? Copy.forwardHead
+                : mode === "replyAll" && m?.replyAllHead
+                  ? Copy.replyToAll(m.replyAllHead.to)
+                  : Copy.replyTo(m?.from.name ?? "")}
           </Txt>
-          {mode === "replyAll" && m.replyAllHead && m.replyAllHead.cc !== "" ? (
+          {/* WHICH ADDRESS IT LEAVES FROM — stated only where nothing else says it. A reply
+              carries the conversation's own mailbox and the head already names the audience;
+              a parent-less mail states its sender rather than letting a person guess. */}
+          {fresh && fromAddress !== null ? (
+            <Txt variant="caption" tone="ink3">
+              {Copy.composeFrom(fromAddress)}
+            </Txt>
+          ) : null}
+          {mode === "replyAll" && m?.replyAllHead && m.replyAllHead.cc !== "" ? (
             <Txt variant="caption" tone="ink3">
               {Copy.replyCcLine(m.replyAllHead.cc)}
             </Txt>
           ) : null}
-          {forward ? (
+          {addressed ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
               <Txt variant="caption" tone="ink3">
                 {Copy.forwardTo}
@@ -974,11 +1006,41 @@ function ComposeSheet({
                 value={to}
                 onChangeText={setTo}
                 editable={phase === "idle"}
-                placeholder={Copy.forwardToPlaceholder}
+                /* THE FIELD A NEW MAIL OPENS ON — a composer whose first keystroke lands in
+                   the body is a composer that asks for the message before the audience. */
+                autoFocus={fresh}
+                placeholder={fresh ? Copy.composeToPlaceholder : Copy.forwardToPlaceholder}
                 placeholderTextColor={t.c.ink3}
+                accessibilityLabel={Copy.forwardTo}
                 autoCapitalize="none"
                 autoCorrect={false}
                 keyboardType="email-address"
+                style={[
+                  t.type.body,
+                  {
+                    flex: 1,
+                    color: t.c.ink,
+                    backgroundColor: t.c.tint2,
+                    borderRadius: t.radius.pill,
+                    paddingHorizontal: 14,
+                    paddingVertical: 8,
+                  },
+                ]}
+              />
+            </View>
+          ) : null}
+          {fresh ? (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Txt variant="caption" tone="ink3">
+                {Copy.composeSubject}
+              </Txt>
+              <TextInput
+                value={subject}
+                onChangeText={setSubject}
+                editable={phase === "idle"}
+                placeholder={Copy.composeSubjectPlaceholder}
+                placeholderTextColor={t.c.ink3}
+                accessibilityLabel={Copy.composeSubject}
                 style={[
                   t.type.body,
                   {

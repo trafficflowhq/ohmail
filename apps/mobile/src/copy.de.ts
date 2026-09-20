@@ -1080,6 +1080,18 @@ export const DE: Deck = {
   forwardNotePlaceholder: "Notiz hinzufügen (optional)",
   forwarded: "Weitergeleitet.",
   forwardEarlierWent: "Diese Weiterleitung wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
+  /* NEUE NACHRICHT — derselbe Editor ohne Vorlage. */
+  composeNew: "Neue Nachricht",
+  composeNewHead: "Neue Nachricht",
+  composeSubject: "Betreff",
+  composeSubjectPlaceholder: "Worum es geht (optional)",
+  composeToPlaceholder: "name@beispiel.de, …",
+  composeFrom: (address: string) => `Von ${address}`,
+  composeSent: "Gesendet.",
+  composeEarlierWent: "Diese Nachricht wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
+  composeNeedRecipient: "Trag jemanden ein, an den sie gehen soll.",
+  composeNoMailbox: "Noch kann kein Postfach auf diesem Telefon senden.",
+  composeNoMailboxHint: "Sobald dieses Telefon Post hat, kannst du von diesem Postfach aus schreiben.",
 
   sendLater: "Später senden",
   sendLaterWhat: "Wann soll diese Nachricht gesendet werden?",

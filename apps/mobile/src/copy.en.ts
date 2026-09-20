@@ -1648,6 +1648,19 @@ const TABLE = {
   forwardNotePlaceholder: "Add a note (optional)",
   forwarded: "Forwarded.",
   forwardEarlierWent: "This forward had already been sent. Your newer text was not sent as a second copy.",
+  /* A MAIL THAT ANSWERS NOTHING — the same composer with no parent, so it asks the two
+     things a reply already knows: who it goes to, and what it is about. */
+  composeNew: "New mail",
+  composeNewHead: "New mail",
+  composeSubject: "Subject",
+  composeSubjectPlaceholder: "What it's about (optional)",
+  composeToPlaceholder: "name@example.org, …",
+  composeFrom: (address: string) => `From ${address}`,
+  composeSent: "Sent.",
+  composeEarlierWent: "This message had already been sent. Your newer text was not sent as a second copy.",
+  composeNeedRecipient: "Add someone to send it to.",
+  composeNoMailbox: "No mailbox on this phone can send yet.",
+  composeNoMailboxHint: "Once this phone has mail, you can write from that mailbox.",
   /*
    * SEND LATER (mail 0077) — the composer's second way for a message to end, and the
    * Scheduled screen that holds what it produced. Every sentence below is the webapp

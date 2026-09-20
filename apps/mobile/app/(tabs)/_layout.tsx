@@ -122,6 +122,8 @@ function GlassNav({ state, navigation }: NavProps) {
   /* Search, in the navigation on every posture — the pill opens the mirror-search screen
      (`app/search.tsx`). */
   const search = { label: Copy.search, onPress: () => router.push("/search") };
+  /* Starting a mail, in the navigation on every posture — the composer route. */
+  const compose = { label: Copy.composeNew, onPress: () => router.push("/compose") };
 
   /* THE TWO-PANE iOS POSTURES (the iPad, the unfolded-portrait Duo): no dock, no rail — the
      destinations live behind the list pane's sidebar toggle as a drawer and the search field
@@ -148,7 +150,10 @@ function GlassNav({ state, navigation }: NavProps) {
         role: "tab" as const,
         onPress: () => press(item.id),
       })),
-      [{ id: "__search", icon: "search" as const, label: search.label, fixed: true, onPress: search.onPress }],
+      [
+        { id: "__compose", icon: "pen" as const, label: compose.label, fixed: true, onPress: compose.onPress },
+        { id: "__search", icon: "search" as const, label: search.label, fixed: true, onPress: search.onPress },
+      ],
     ];
     const bottomPad = Math.max(insets.bottom, 12);
     return (
@@ -170,7 +175,7 @@ function GlassNav({ state, navigation }: NavProps) {
 
   return (
     <>
-      <GlassDock items={items} activeId={activeId} onItemPress={press} search={search} />
+      <GlassDock items={items} activeId={activeId} onItemPress={press} search={search} compose={compose} />
     </>
   );
 }
