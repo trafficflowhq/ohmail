@@ -42,7 +42,11 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button, Icon, formatFileSize } from "@ohmail/ui";
-import { COMPOSE_ATTACH_MAX_TOTAL_BYTES, type ComposeAttachment } from "@ohmail/client-engine";
+import {
+  COMPOSE_ATTACH_MAX_TOTAL_BYTES,
+  type ComposeAttachCapBinding,
+  type ComposeAttachment,
+} from "@ohmail/client-engine";
 import {
   DEFAULT_IMAGE_QUALITY_LEVEL,
   IMAGE_QUALITY_LEVELS,
@@ -76,6 +80,8 @@ export {
   COMPOSE_ATTACH_STAGED_SURFACE_BYTES,
   composeAttachBudgetFor,
   composeAttachCap,
+  composeAttachCapBinding,
+  type ComposeAttachCapBinding,
 } from "@ohmail/client-engine";
 
 /**
@@ -145,6 +151,7 @@ export function ComposeAttach({
   onAttaching,
   disabled,
   maxTotalBytes = COMPOSE_ATTACH_MAX_TOTAL_BYTES,
+  capBinding,
   dropZone,
 }: {
   attachments: ComposeAttachment[];
@@ -171,6 +178,17 @@ export function ComposeAttach({
    * un-updated caller behaves exactly as it did.
    */
   maxTotalBytes?: number;
+  /**
+   * WHY THE STATED CAP IS THE NUMBER IT IS — {@link composeAttachCapBinding} of the SAME two
+   * inputs the caller derived `maxTotalBytes` from. Only `"surface"` renders anything: it means
+   * this window's transport is the smaller ceiling and the mail server would take more, which is
+   * the one case a person cannot work out from the number. The paired desktop's Cloud door states
+   * 3 MB where the hosted browser states 38 MB for the same account and both are right; without
+   * the clause that reads as the product disagreeing with itself.
+   *
+   * ABSENT says nothing, so a caller that has not been taught it renders exactly what it did.
+   */
+  capBinding?: ComposeAttachCapBinding;
   /**
    * THE SURFACE WHOSE PASTES AND DROPS BELONG TO THIS SEND — the compose form, the reply panel.
    * A picture pasted into the editor and a file dropped on the surface both land in the
@@ -751,6 +769,10 @@ export function ComposeAttach({
             ? t("attachUsed", { used: formatSize(used), total: formatSize(maxTotalBytes) })
             : t("attachCap", { size: formatSize(maxTotalBytes) })}
         </span>
+        {/* Only where this window's transport is the smaller ceiling — see `capBinding`. */}
+        {capBinding === "surface"
+          ? <span className="compose-attach-why">{t("attachCapSurface")}</span>
+          : null}
         {/* THE DIAL — the account's, remembered: a move here is what the next compose on this
             account opens at, and it is the same per-account value the Settings row edits (see
             the header). It applies to the NEXT pick AND to the pictures already attached, which

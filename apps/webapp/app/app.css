@@ -2557,6 +2557,15 @@ textarea.c-input:read-only {
   font-size:calc(11.5px + var(--type-up));
   color: var(--ink2);
 }
+/* WHY THE CAP IS THE NUMBER IT IS, rendered only where this window's transport is the smaller
+   ceiling (`ComposeAttach.capBinding`). The cap sentence's register one step quieter: it
+   qualifies that sentence rather than standing beside it as a second claim. `flex-basis: 100%`
+   so it takes its own line under the cap instead of pushing the quality dial off the row. */
+.compose-attach-why {
+  flex-basis: 100%;
+  font-size:calc(11px + var(--type-up));
+  color: var(--ink3, var(--ink2));
+}
 /* THE SHRINK DIAL, IN THE ROW IT ACTS ON — the same stored preference Settings edits, worn
    small. Label and value sit in the cap sentence's register (11.5px) because they are the same
    class of statement: what this form will do with the files it is handed. The select carries the

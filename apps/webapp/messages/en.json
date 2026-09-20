@@ -1105,6 +1105,7 @@
     "forwardRefused": "This message can't be forwarded — it contains sensitive content.",
     "attach": "Attach files",
     "attachCap": "Up to {size} total",
+    "attachCapSurface": "Your mail server would take more; this is what ohmail can send from here.",
     "attachUsed": "{used} of {total}",
     "attachRefused": "Some files were not added — they would have put the total over {size}.",
     "attachUnreadable": "Some files couldn't be read and were not added.",

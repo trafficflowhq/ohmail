@@ -22,7 +22,9 @@ import type {
   EngineMessage,
 } from "@ohmail/client-engine";
 import { Button, Kbd, TextField } from "@ohmail/ui";
-import { ComposeAttach, composeAttachCap } from "../components/ComposeAttach";
+import {
+  ComposeAttach, composeAttachCap, composeAttachCapBinding,
+} from "../components/ComposeAttach";
 import { rowAddress, senderName } from "./format";
 import { displayAddress } from "./idn";
 import { sendRefusal, sendStateFor, sendVerb, type SendState } from "./mail-send";
@@ -783,6 +785,9 @@ export function InlineReply({
           onAttaching={setAttaching}
           disabled={inFlight}
           maxTotalBytes={composeAttachCap(from.maxMessageBytes, sendSurfaceMaxTotalBytes)}
+          /* The SAME two inputs, so the number and the clause beside it cannot
+             disagree about which ceiling bound. */
+          capBinding={composeAttachCapBinding(from.maxMessageBytes, sendSurfaceMaxTotalBytes)}
           /* The reply panel takes pastes and drops exactly as compose does — a pasted picture
              is an attachment, not a silent nothing (`ComposeAttach.dropZone`). */
           dropZone={box}

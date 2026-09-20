@@ -31,7 +31,9 @@ import {
   moveRecipient,
   type RecipientMove,
 } from "../shell/RecipientField";
-import { ComposeAttach, composeAttachCap } from "../components/ComposeAttach";
+import {
+  ComposeAttach, composeAttachCap, composeAttachCapBinding,
+} from "../components/ComposeAttach";
 import {
   composedLocalInput, localInputValue, nextWeekNine, scheduleLabel, todayEvening, tomorrowNine,
 } from "../shell/format";
@@ -904,6 +906,9 @@ export function ComposeView({
                  standalone door there is no request pipeline at all, and the mailbox's own
                  announcement is the number this form states. */
               maxTotalBytes={composeAttachCap(from.maxMessageBytes, sendSurfaceMaxTotalBytes)}
+              /* The SAME two inputs, so the number and the clause beside it cannot
+                 disagree about which ceiling bound. */
+              capBinding={composeAttachCapBinding(from.maxMessageBytes, sendSurfaceMaxTotalBytes)}
             />
             {/* WHY SEND IS WAITING, named. A live region because the press that reveals it is the
                 press it refuses. */}

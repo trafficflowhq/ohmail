@@ -523,6 +523,8 @@ export {
   COMPOSE_ATTACH_STAGED_SURFACE_BYTES,
   composeAttachBudgetFor,
   composeAttachCap,
+  composeAttachCapBinding,
+  type ComposeAttachCapBinding,
 } from "./attach-cap.js";
 
 /* The provider presets every connect surface reads. A leaf that imports nothing — see its header
