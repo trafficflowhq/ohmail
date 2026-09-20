@@ -13,6 +13,7 @@ import { useConnection } from "../net/connection";
 import { accessLock, onAccessLock } from "../net/access-lock";
 import { gateFor } from "../state/gate";
 import { AccountWall } from "./AccountWall";
+import { LifecycleStrip } from "./LifecycleStrip";
 import { BootShell } from "./Skeleton";
 
 /** The 402 sink's slot, subscribed — the transport writes it from outside React. */
@@ -40,5 +41,13 @@ export function Gated({ children }: { children: ReactNode }) {
      service has refused should not be reading mail behind it. It takes nothing away — the mirror
      on this phone is untouched and so is the mailbox. */
   if (verdict.to === "wall") return <AccountWall facts={verdict.facts} session={session} />;
-  return <>{children}</>;
+  /* THE STRIP ABOVE THE APP, in the one mount every gated screen shares: the deadline or the
+     catch-up is a fact about the ACCOUNT, not about a pile, so it is drawn once rather than by
+     each list. It renders nothing at all whenever there is nothing to say. */
+  return (
+    <>
+      <LifecycleStrip session={session} />
+      {children}
+    </>
+  );
 }

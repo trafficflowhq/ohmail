@@ -34,6 +34,17 @@ export interface PhoneMailbox {
    */
   organizerRole: "organizer" | "reader" | null;
   /**
+   * WHEN SOMEBODY AGREED to let ohmail organize this mailbox — `MailboxDTO.organizeConsentedAt`,
+   * `null` where nobody ever did and where a server older than the column answered.
+   *
+   * Read for one thing: `organizerRole === "reader"` alone cannot tell a mailbox ohmail HANDED
+   * BACK when the account closed from one nobody ever asked it to organize, and the catch-up
+   * strip offers to re-start only the first kind. An absent consent is therefore never a
+   * stood-down mailbox — the direction that cannot invite somebody to resume what they never
+   * began (`ui/lifecycle-strip.ts#stoodDown`).
+   */
+  organizeConsentedAt: string | null;
+  /**
    * WHO ORGANIZES IT, when it is not the server this phone is paired with — `null` when that
    * server organizes it itself, and `null` when nobody ever has.
    *
@@ -160,6 +171,12 @@ export async function readMailboxes(session: ConnectedSession): Promise<PhoneMai
           ? { displayName: r.displayName }
           : {}),
         organizerRole: roleOf(r.organizerRole),
+        /* A non-empty string or `null`, like every other optional stamp on this wire: an empty
+           string is not an instant, and a server that predates the column sends nothing. */
+        organizeConsentedAt:
+          typeof r.organizeConsentedAt === "string" && r.organizeConsentedAt !== ""
+            ? r.organizeConsentedAt
+            : null,
         organizedBy: holderOf(r.organizedBy),
         /* The server's own comparison, taken only as `true` — anything else, including a server
            that predates the field, is "not the answering install's", the safe direction. */
