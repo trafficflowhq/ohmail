@@ -1347,7 +1347,7 @@
       }
     },
     "notificationPrivacy": "Notifications carry no mail content — your device fetches privately.",
-    "badgeRule": "The numbers mean the same thing on every device: the app icon and the Ohbox count unread mail in your Ohbox, the Screener counts first-time senders waiting, and Reads and Receipts count what arrived since you last looked.",
+    "badgeRule": "The numbers mean the same thing on every device: the app icon and the Ohbox count unread mail in your Ohbox, the Screener counts first-time senders waiting, and News and Receipts count what arrived since you last looked.",
     "notifyMaster": "Notify me on this device",
     "notifyMasterWhy": "Off means ohmail draws nothing here — no notice for any of the events below.",
     "notifyReach": "These apply to this device. Your phone and your other computers keep their own.",

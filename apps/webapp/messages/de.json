@@ -1347,7 +1347,7 @@
       }
     },
     "notificationPrivacy": "Benachrichtigungen enthalten keine Inhalte — dein Gerät holt sie privat.",
-    "badgeRule": "Die Zahlen bedeuten auf jedem Gerät dasselbe: App-Symbol und Ohbox zählen ungelesene Post in deiner Ohbox, der Screener zählt wartende Erstabsender, und Reads und Receipts zählen, was seit deinem letzten Blick angekommen ist.",
+    "badgeRule": "Die Zahlen bedeuten auf jedem Gerät dasselbe: App-Symbol und Ohbox zählen ungelesene Post in deiner Ohbox, der Screener zählt wartende Erstabsender, und News und Belege zählen, was seit deinem letzten Blick angekommen ist.",
     "notifyMaster": "Auf diesem Gerät benachrichtigen",
     "notifyMasterWhy": "Aus heißt: ohmail zeigt hier nichts an — keine Meldung zu einem der Ereignisse unten.",
     "notifyReach": "Das gilt für dieses Gerät. Dein Telefon und deine anderen Rechner haben ihre eigenen Einstellungen.",
