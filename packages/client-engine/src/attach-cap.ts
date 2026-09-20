@@ -84,14 +84,13 @@ export type ComposeAttachCapBinding = "surface" | "mailbox" | "unmeasured";
 
 /**
  * WHICH OF THE TWO CEILINGS THE STATED NUMBER CAME FROM, so a surface can say why a small one is
- * small. The paired desktop's Cloud door states 3 MB where the hosted browser states 38 MB for
- * the same account, and both are correct: the browser stages attachment bytes straight to object
- * storage, the desktop forwards the send through its own process to the hosted API, whose request
- * body is the smaller ceiling. A number with no reason reads as a product that disagrees with
- * itself, which is how it was reported.
+ * small. The paired desktop's Cloud door states 3 MB where the hosted browser states 38 MB for one
+ * account and both are right: the browser stages bytes to object storage, the desktop forwards the
+ * send through its own process, and that request body is the smaller ceiling. A number with no
+ * reason reads as a product disagreeing with itself, which is how it was reported.
  *
- * `"surface"` ONLY on a strict inequality: on a tie the mail server's own limit binds just as
- * much, and a clause claiming the server would take more would be false.
+ * `"surface"` ONLY on a strict inequality: on a tie the mail server's limit binds just as much,
+ * and a clause claiming the server would take more would be false.
  */
 export function composeAttachCapBinding(
   mailboxMax: number | null | undefined,
