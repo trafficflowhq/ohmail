@@ -81,8 +81,9 @@ export interface AiKeyTransportOptions {
  * This is the sentence a person is shown when their key does not work, so two copies drifting
  * means the same 403 reads "your key was refused" on one provider and "the model answered
  * something we could not read" on the other, and only one of those tells them what to do.
+ * Module-private: the probe below is its only caller, and both providers reach it there.
  */
-export function statusFailure(status: number): ProbeFailure {
+function statusFailure(status: number): ProbeFailure {
   if (status === 401 || status === 403) return "unauthorized";
   if (status === 404) return "model_absent";
   if (status === 408 || status === 504) return "timeout";
