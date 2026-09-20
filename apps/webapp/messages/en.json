@@ -1051,6 +1051,7 @@
     "junkScope": "Search does not reach your mail server's own {folder} folder — ohmail does not mirror it.",
     "junkScopeUnnamed": "Search does not reach your mail server's own junk folder — ohmail does not mirror it.",
     "emptyTitleIndexing": "Still reading this device's mail.",
+    "emptyAddressScopes": "An address is its own search — everything {address} sent, or anything from or to them.",
     "scopeDevice": "This device holds subjects, senders and the first 200 characters of each message — not the full text.",
     "scopeIndexing": "Still indexing this device's mail — more results will appear.",
     "scopeSearching": "Searching the whole archive…",

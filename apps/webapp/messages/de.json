@@ -1051,6 +1051,7 @@
     "junkScope": "Die Suche erreicht den eigenen {folder}-Ordner deines Mailservers nicht — ohmail spiegelt ihn nicht.",
     "junkScopeUnnamed": "Die Suche erreicht den eigenen Junk-Ordner deines Mailservers nicht — ohmail spiegelt ihn nicht.",
     "emptyTitleIndexing": "Die Post auf diesem Gerät wird noch gelesen.",
+    "emptyAddressScopes": "Eine Adresse ist ihre eigene Suche — alles, was {address} gesendet hat, oder alles von und an sie.",
     "scopeDevice": "Auf diesem Gerät liegen Betreffzeilen, Absender und die ersten 200 Zeichen jeder Nachricht — nicht der vollständige Text.",
     "scopeIndexing": "Die Post auf diesem Gerät wird noch indiziert — es kommen noch Treffer dazu.",
     "scopeSearching": "Das gesamte Archiv wird durchsucht …",

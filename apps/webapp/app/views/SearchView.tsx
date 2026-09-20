@@ -30,6 +30,9 @@ import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useZoneNav } from "../shell/zone-nav";
 import { storageOwner } from "../shell/storage-owner";
 import { searchSortKey, usePersistedChoice } from "../shell/persisted-ui";
+
+/** One address and nothing else — the query shape whose empty state may offer the address door. */
+const ADDRESS_QUERY = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 import { endSearch } from "../shell/ui-vitals";
 import "./search-keys.css";
 
@@ -782,6 +785,16 @@ export function SearchView({
                     : t("emptyTitle")}
               </b>
               {scope}
+              {/* The address door, offered at the moment its two scopes apply. There is no typed
+                  operator: an address is searched through `#/address/<addr>`, whose toggle holds
+                  the scopes (All · From them · To them) — so the sentence names them and the link
+                  opens the door. Only for an address-shaped query; anywhere else the offer would
+                  be noise about a door the query cannot use. */}
+              {ADDRESS_QUERY.test(trimmed) ? (
+                <a className="empty-addr" data-testid="search-empty-address" href={addressHref(trimmed)}>
+                  {t("emptyAddressScopes", { address: displayAddress(trimmed) })}
+                </a>
+              ) : null}
               {/* …and the pass that does not exist. No arm of `scope` can name the provider's
                   Junk folder, because nothing here ever searched it (JUNK-INVISIBLE). */}
               {junkSaid !== null ? (
