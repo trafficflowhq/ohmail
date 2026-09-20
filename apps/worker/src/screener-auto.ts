@@ -7,6 +7,7 @@ import {
   type Destination, type Logger, type NormalizedMessage,
 } from "@trafficflow/core";
 import { upsertDesiredFolder } from "./desired-intent.js";
+import { asRuleInput } from "./rule-input.js";
 
 /* SCREENER AUTO-APPLY — file the OBVIOUS bulk out of the Screener when the account opted in. The Screener
  * stays a consent gate for first-contact strangers; this OPT-IN clears the newsletters and receipts a
@@ -187,7 +188,7 @@ export async function screenerAutoApplyPass(
 
         // THE ONLY DETERMINISTIC JUDGMENT A STRANGER GETS: the strong-bulk floor. Null ⇒ keep (a
         // plain stranger, a relevant alert). No model call, no spend, computed from headers on disk.
-        const to = migrationBulkPlacement(asRuleInput(c));
+        const to = migrationBulkPlacement(asRuleInput(c, ""));
         if (to === null) { kept++; continue; }
 
         // ── SENSITIVITY KEEP — this is `pipeline.ts:563-567`. Drop it and a flagged strong-bulk row
@@ -378,27 +379,3 @@ async function selectCandidates(
 }
 
 
-/**
- * The persisted row in the shape the router reads — sender, subject, headers, all on disk. No IMAP,
- * no MIME re-parse. The body fields are empty because this pass feeds `migrationBulkPlacement`
- * ONLY, which reads headers and the subject — it never runs `evaluateRules`, so `body_contains`
- * (mail 0052) has no reader here and an empty `textBody` is the truth rather than a lie. That is
- * a DIVERGENCE from the sibling passes' `asRuleInput` (`rule-retro.ts`, `ohbox-tidy.ts`,
- * `sensitive-rescreen.ts`), which do evaluate rules and therefore read `message_bodies.text`
- * back; if this pass ever grows a rule evaluation, thread the body in as they do.
- */
-function asRuleInput(row: AutoRow): NormalizedMessage {
-  return {
-    canonical: { messageIdHeader: null, bodyHash: "" },
-    subject: row.subject,
-    from: { name: null, address: row.fromAddress.toLowerCase() },
-    to: [],
-    cc: [],
-    date: null,
-    headers: row.headers,
-    textBody: "",
-    htmlBody: null,
-    hasAttachments: false,
-    attachments: [],
-  };
-}

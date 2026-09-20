@@ -10,6 +10,7 @@ import {
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import { upsertDesiredFolder } from "./desired-intent.js";
+import { asRuleInput } from "./rule-input.js";
 
 /* APPLYING A NEW RULE TO MAIL ALREADY FILED — writes desired-state intent, never opens IMAP.
    The set is every message the mirror holds (`/sync` replays `change_log` from seq 0 in
@@ -337,7 +338,7 @@ export async function ruleRetroPass(
           if (result.moved + moved >= budget) { capped = true; break; }
 
           const decision = evaluateRules({
-            msg: asRuleInput(c), rules, knownSenders: known,
+            msg: asRuleInput(c, c.bodyText), rules, knownSenders: known,
             auth: authVerdictFromHeaders(c.headers, c.fromAddress, await trustFor(c.mailboxId)),
             // LENIENT here, and deliberately: this pass acts ONLY on `source === "rule"` (below),
             // so the `people_only` demotion — which answers `source: "policy"` — could never change
@@ -707,27 +708,3 @@ function matchPredicate(rule: OwedRule) {
 }
 
 
-/**
- * The persisted row in the shape `evaluateRules` reads — NOTHING else is invented.
- * The rules layer looks at four things: sender, subject, headers, and — since `body_contains`
- * (mail 0052) — the plain text, all already on disk, so this opens no IMAP and re-parses no MIME.
- * `textBody` is `message_bodies.text` read back (the byte-identical string ingest matched), `""`
- * where no body row exists (a body rule then declines — fail-closed for a narrowing conjunct).
- * `htmlBody` stays empty because no rule reads it; if one ever does, this is where that becomes a
- * visible lie. Identical in shape to the sibling `asRuleInput` (`ohbox-tidy.ts`, `sensitive-rescreen.ts`).
- */
-function asRuleInput(row: RetroRow): NormalizedMessage {
-  return {
-    canonical: { messageIdHeader: null, bodyHash: "" },
-    subject: row.subject,
-    from: { name: null, address: row.fromAddress.toLowerCase() },
-    to: [],
-    cc: [],
-    date: null,
-    headers: row.headers,
-    textBody: row.bodyText,
-    htmlBody: null,
-    hasAttachments: false,
-    attachments: [],
-  };
-}

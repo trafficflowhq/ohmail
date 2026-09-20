@@ -11,6 +11,7 @@ import {
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { carryDialect, dialect, type Dialect } from "@trafficflow/db/dialect";
 import { upsertDesiredFolder } from "./desired-intent.js";
+import { asRuleInput } from "./rule-input.js";
 
 /* RE-ROUTING THE OHBOX BACKLOG — mail `people_only` (migration 0042) was turned on too late to catch.
  * The engine (`rules.ts#evaluateRules`) demotes NEW mail under the posture, but a rule is consulted at
@@ -382,7 +383,7 @@ export async function ohboxTidyPass(
           // Counted KEPT and the cursor still advances: the row was examined and decided about.
           if (!stillOurs.has(c.messageId)) { lastId = c.messageId; kept++; continue; }
 
-          const msg = asRuleInput(c);
+          const msg = asRuleInput(c, c.bodyText);
           const decision = evaluateRules({
             msg, rules, knownSenders: known,
             auth: authVerdictFromHeaders(c.headers, c.fromAddress, await trustFor(c.mailboxId)),
@@ -687,25 +688,3 @@ async function stillCandidates(
 }
 
 
-/**
- * The persisted row in the shape `evaluateRules` reads — sender, subject, headers, and (since
- * `body_contains`, mail 0052) the stored plain text, all on disk. No IMAP, no MIME re-parse:
- * `textBody` is `message_bodies.text` read back, `""` where no body row exists. `htmlBody` stays
- * empty because no rule reads it; if one ever does, this is where that becomes a visible lie.
- * Deliberately identical to the sibling passes' `asRuleInput`.
- */
-function asRuleInput(row: TidyRow): NormalizedMessage {
-  return {
-    canonical: { messageIdHeader: null, bodyHash: "" },
-    subject: row.subject,
-    from: { name: null, address: row.fromAddress.toLowerCase() },
-    to: [],
-    cc: [],
-    date: null,
-    headers: row.headers,
-    textBody: row.bodyText,
-    htmlBody: null,
-    hasAttachments: false,
-    attachments: [],
-  };
-}
