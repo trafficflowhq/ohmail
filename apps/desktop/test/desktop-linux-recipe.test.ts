@@ -286,12 +286,20 @@ describe("the Linux desktop entry", () => {
    * one of the two going quiet is not covered by the other.
    */
   it("is asked for in both Linux jobs' bundle lists", () => {
-    const bundles = buildWorkflow().match(/^\s*run: npm run app:build:engine -- --bundles (\S+)$/gm);
+    /* The bundles token is not the end of the line: every packaging step passes arguments through
+     * to the bundler after it (`-- -- --locked`, and the macOS job a `--target` besides). Both
+     * anchors here were `$`, so the day those tails arrived this guard matched NOTHING and read
+     * green while saying nothing about either Linux job — the shape a census's zero is refused for.
+     * So the list is read as a token followed by whatever the step passes on, and the .rpm is
+     * asserted at a word boundary rather than at the end of a line. */
+    const bundles = buildWorkflow().match(
+      /^\s*run: npm run app:build:engine -- --bundles (\S+)(?: .*)?$/gm,
+    );
     const linux = (bundles ?? []).filter((line) => line.includes("appimage"));
     expect(linux, "no Linux job in build.yml packages an appimage").toHaveLength(2);
     for (const line of linux) {
       expect(line, "a Linux job packages the AppImage and the .deb but not the .rpm")
-        .toMatch(/--bundles appimage,deb,rpm$/);
+        .toMatch(/--bundles appimage,deb,rpm(?: |$)/);
     }
   });
 });
