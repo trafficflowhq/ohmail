@@ -12,7 +12,23 @@ import type { EngineMessage, EngineMutation, MutationKind } from "./types.js";
  */
 export type UndoClass = "inverse" | "window" | "none";
 
-export const UNDO_CLASS: Record<MutationKind, UndoClass> = {
+/**
+ * A PLAN IS A SUBJECT TOO, and the routing verbs are why. Move, File and Junk are not one
+ * mutation: they are a screening PLAN — a rule written or retargeted, sometimes a Screener
+ * decision, and a capped pass over mail already filed — and the plan's undo class is not any
+ * member's. Every `rule_*` stays `"none"` because no rule mutation has a wire inverse; the PLAN
+ * is `"window"` because it is held before it is sent (`routing-window.ts`), which is a different
+ * question about a different thing. One table so a surface asks once, and the table is what
+ * decides whether a toast carries Undo — never a flag the call site passes.
+ */
+export type RoutingPlanKind = "routing_plan";
+
+/** What {@link UNDO_CLASS} can be asked about: one mutation, or one plan. */
+export type UndoSubject = MutationKind | RoutingPlanKind;
+
+export const UNDO_CLASS: Record<UndoSubject, UndoClass> = {
+  /** The routing plan — held for the undo window, then committed exactly as it always was. */
+  routing_plan: "window",
   move: "inverse",
   triage_set: "inverse",
   mark_seen: "inverse",

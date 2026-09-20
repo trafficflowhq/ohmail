@@ -364,7 +364,22 @@ export {
 } from "./mutations.js";
 
 // Undo semantics — every verb's undo class, and the wire's own reversal for the "inverse" kinds.
-export { inverseMutations, UNDO_CLASS, type UndoClass } from "./undo.js";
+export { inverseMutations, UNDO_CLASS, type UndoClass, type UndoSubject } from "./undo.js";
+
+// The routing verbs' delayed commit — the half of a screening plan the wire cannot reverse.
+export {
+  createRoutingWindow,
+  memoryRoutingDoor,
+  ROUTING_INTENT_TTL_MS,
+  ROUTING_INTENTS_MAX,
+  ROUTING_INTENTS_PREFIX,
+  routingIntentsKey,
+  type RoutingIntent,
+  type RoutingOpen,
+  type RoutingPress,
+  type RoutingWindow,
+  type RoutingWindowDeps,
+} from "./routing-window.js";
 
 // Adapters.
 export type { EngineAdapter, MutationAnswer, MutationOutcome, MutationQueued, SyncParams } from "./adapters/adapter.js";
