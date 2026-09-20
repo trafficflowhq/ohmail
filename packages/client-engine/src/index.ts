@@ -368,18 +368,28 @@ export { inverseMutations, UNDO_CLASS, type UndoClass, type UndoSubject } from "
 
 // The routing verbs' delayed commit — the half of a screening plan the wire cannot reverse.
 export {
-  createRoutingWindow,
-  memoryRoutingDoor,
+  armRoutingIntent,
+  disarmRoutingIntent,
+  isRoutingIntent,
+  ROUTING_INTENT_IDS_MAX,
   ROUTING_INTENT_TTL_MS,
   ROUTING_INTENTS_MAX,
   ROUTING_INTENTS_PREFIX,
   routingIntentsKey,
+  routingSubject,
+  takeRoutingIntents,
   type RoutingIntent,
+} from "./routing-intents.js";
+export {
+  createRoutingWindow,
+  memoryRoutingDoor,
   type RoutingOpen,
-  type RoutingPress,
   type RoutingWindow,
   type RoutingWindowDeps,
+  type TabWindows,
 } from "./routing-window.js";
+// The held press's presentation — a row shown where it was filed while its rule waits.
+export { presentAt } from "./present-at.js";
 
 // Adapters.
 export type { EngineAdapter, MutationAnswer, MutationOutcome, MutationQueued, SyncParams } from "./adapters/adapter.js";
