@@ -9,15 +9,32 @@
  * explain what happened. `mail`: live — the tabs render the mirror.
  */
 import type { ConnectionState } from "../net/connection";
+import type { AccessRefusedFacts } from "../net/access-lock";
 
 export type GateVerdict =
   | { to: "boot" }
+  | { to: "wall"; facts: AccessRefusedFacts }
   | { to: "welcome" }
   | { to: "connecting"; origin: string }
   | { to: "servers" }
   | { to: "mail" };
 
-export function gateFor(state: ConnectionState, profileCount: number): GateVerdict {
+export function gateFor(
+  state: ConnectionState,
+  profileCount: number,
+  /**
+   * What the 402 sink is holding, or `null`. THIRD ARGUMENT AND NOT A FOURTH STATE: a refused
+   * account still has a live session — the mirror is intact, the doors it may still reach answer
+   * — so this is not a connection that ended, and folding it into `ConnectionState` would put a
+   * billing fact in the module that owns the credential. Absent (every existing caller) reads as
+   * "no wall", so nothing that does not pass it changes.
+   */
+  lock: AccessRefusedFacts | null = null,
+): GateVerdict {
+  /* AHEAD OF `mail` AND BEHIND EVERYTHING ELSE. A wall over a boot instant would be a screen
+     about an account before the keystore has said which one; a wall over `welcome` would be one
+     about an account this phone is not paired with. Only a LIVE session can be refused. */
+  if (state.k === "live" && lock !== null) return { to: "wall", facts: lock };
   if (state.k === "live") return { to: "mail" };
   if (state.k === "starting") return { to: "boot" };
   if (state.k === "connecting") return { to: "connecting", origin: state.origin };

@@ -1871,6 +1871,64 @@ const TABLE = {
   mailRowThreadAria: (n: number) => `${n} message${n === 1 ? "" : "s"} in this conversation`,
   mailRowNewSinceAria: (n: number) =>
     `${n} message${n === 1 ? "" : "s"} since this came back`,
+
+  /* ───────────────────────────────────────────────── the managed account's wall and its strips
+
+     THE SAME SENTENCES THE BROWSER SHOWS, in the same order (`apps/webapp/messages/en.json`'s
+     `accessLock` and `accountLifecycle`): one account may not read two different accounts of
+     itself on two devices. `test/account-wall.test.ts` holds this block against that file.
+     A self-hosted install never sees any of it — there is no plane to refuse it. */
+
+  wallTitle: "This account is not active.",
+  wallSuspendedTitle: "This account is suspended.",
+  wallTrialEnded: (date: string) => `Your trial ended on ${date}.`,
+  wallCanceled: (date: string) => `Your subscription ended on ${date}.`,
+  wallUnpaid: (date: string) =>
+    `A payment failed and the time to fix it ran out on ${date}.`,
+  wallStopped: "ohmail has stopped organizing this account.",
+  wallMailboxUntouched: "Your mailbox is untouched.",
+  wallKept:
+    "Your mail and settings are kept. Nothing has been deleted, and your mail is on your own server either way.",
+  wallErasure: (date: string) =>
+    `The rules, Screener decisions and settings ohmail keeps for you are erased on ${date}. Your mail is in your mailbox and is not part of that.`,
+  wallErasureHeld:
+    "An operator is holding this account, so nothing is erased while that stands. Write to support@ohmail.app if this is unexpected.",
+  wallErasureUnknown:
+    "Nothing has been erased. Your mail is in your mailbox and is not ours to delete.",
+  wallSubscribe: "Subscribe",
+  wallOpenAccount: "Open your ohmail account",
+  wallManage: "Manage subscription",
+  wallMoveOut: "Move to self-hosted",
+  wallMoveOutHint:
+    "Hands over your rules, Screener decisions and settings as one file, which your own install reads when it takes over this mailbox.",
+  wallMoveOutGuide: "Read the self-host guide",
+  wallMoveOutFailed: "The file could not be made just now. Try again in a moment.",
+  wallDeleteNow: "Delete my account now",
+  /* WHY THIS ONE LEAVES. Deleting an account needs the second factor, and a phone paired by code
+     has never asserted one — the server refuses the erasure route to it by design. Saying so is
+     the honest control; a button that could only ever be refused is not. */
+  wallDeleteElsewhere:
+    "Deleting your account needs your second factor, so it happens on your account page in a browser. Your mailbox is not touched.",
+  wallOpenInBrowser:
+    "Open ohmail.app in a browser to subscribe again or delete your account.",
+
+  stripGraceEnds: (date: string) => `Your trial ended. ohmail keeps organizing until ${date}.`,
+  stripPaymentFailed: (date: string) =>
+    `Your last payment failed. Fix it by ${date} to keep ohmail organizing.`,
+  stripTrialEnds: (date: string) => `Your trial ends on ${date}.`,
+  stripSubscribe: "Subscribe",
+  stripFixPayment: "Fix payment",
+  stripLater: "Later",
+  stripCaughtUp: (count: number, date: string) =>
+    count === 0
+      ? `ohmail found nothing new since ${date}.`
+      : count === 1
+        ? `ohmail caught up 1 message that arrived since ${date}.`
+        : `ohmail caught up ${count} messages that arrived since ${date}.`,
+  stripHandedBack:
+    "ohmail handed these mailboxes back when the account closed. It does not take them again on its own — organizing starts when you start it.",
+  stripStartOrganizing: "Start organizing",
+  stripDismiss: "Got it",
 };
 
 /**

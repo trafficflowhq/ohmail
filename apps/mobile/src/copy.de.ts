@@ -1188,4 +1188,56 @@ export const DE: Deck = {
     `${n} ${n === 1 ? "Nachricht" : "Nachrichten"} in diesem Gespräch`,
   mailRowNewSinceAria: (n: number) =>
     `${n} ${n === 1 ? "Nachricht" : "Nachrichten"}, seit das wieder aufgetaucht ist`,
+
+  /* Der Wall des verwalteten Kontos und seine Streifen — dieselben Sätze wie im Browser. */
+
+  wallTitle: "Dieses Konto ist nicht aktiv.",
+  wallSuspendedTitle: "Dieses Konto ist gesperrt.",
+  wallTrialEnded: (date: string) => `Deine Testphase ist am ${date} abgelaufen.`,
+  wallCanceled: (date: string) => `Dein Abo ist am ${date} ausgelaufen.`,
+  wallUnpaid: (date: string) =>
+    `Eine Zahlung ist fehlgeschlagen, und die Frist dafür ist am ${date} abgelaufen.`,
+  wallStopped: "ohmail organisiert dieses Konto nicht mehr.",
+  wallMailboxUntouched: "Dein Postfach ist unberührt.",
+  wallKept:
+    "Deine Post und deine Einstellungen bleiben. Es wurde nichts gelöscht, und deine Post liegt ohnehin auf deinem eigenen Server.",
+  wallErasure: (date: string) =>
+    `Die Regeln, Screener-Entscheidungen und Einstellungen, die ohmail für dich behält, werden am ${date} gelöscht. Deine Post liegt in deinem Postfach und gehört nicht dazu.`,
+  wallErasureHeld:
+    "Ein Betreiber hält dieses Konto; solange das gilt, wird nichts gelöscht. Schreib an support@ohmail.app, falls das unerwartet ist.",
+  wallErasureUnknown:
+    "Es wurde nichts gelöscht. Deine Post liegt in deinem Postfach, und sie zu löschen steht uns nicht zu.",
+  wallSubscribe: "Abo abschliessen",
+  wallOpenAccount: "Dein ohmail-Konto öffnen",
+  wallManage: "Abo verwalten",
+  wallMoveOut: "Auf Selbsthosting umziehen",
+  wallMoveOutHint:
+    "Gibt deine Regeln, Screener-Entscheidungen und Einstellungen als eine Datei weiter, die deine eigene Installation liest, wenn sie dieses Postfach übernimmt.",
+  wallMoveOutGuide: "Zur Anleitung fürs Selbsthosten",
+  wallMoveOutFailed: "Die Datei konnte gerade nicht erstellt werden. Versuch es gleich noch einmal.",
+  wallDeleteNow: "Konto jetzt löschen",
+  wallDeleteElsewhere:
+    "Zum Löschen deines Kontos brauchst du deinen zweiten Faktor — das passiert auf deiner Kontoseite im Browser. Dein Postfach bleibt unberührt.",
+  wallOpenInBrowser:
+    "Öffne ohmail.app im Browser, um wieder ein Abo abzuschliessen oder dein Konto zu löschen.",
+
+  stripGraceEnds: (date: string) =>
+    `Deine Testphase ist abgelaufen. ohmail organisiert noch bis zum ${date}.`,
+  stripPaymentFailed: (date: string) =>
+    `Deine letzte Zahlung ist fehlgeschlagen. Bring sie bis zum ${date} in Ordnung, damit ohmail weiter organisiert.`,
+  stripTrialEnds: (date: string) => `Deine Testphase endet am ${date}.`,
+  stripSubscribe: "Abo abschliessen",
+  stripFixPayment: "Zahlung in Ordnung bringen",
+  stripLater: "Später",
+  stripCaughtUp: (count: number, date: string) =>
+    count === 0
+      ? `ohmail hat seit dem ${date} nichts Neues gefunden.`
+      : count === 1
+        ? `ohmail hat 1 Nachricht nachgeholt, die seit dem ${date} angekommen ist.`
+        : `ohmail hat ${count} Nachrichten nachgeholt, die seit dem ${date} angekommen sind.`,
+  stripHandedBack:
+    "ohmail hat diese Postfächer zurückgegeben, als das Konto geschlossen wurde. Es nimmt sie nicht von selbst wieder — das Organisieren beginnt, wenn du es startest.",
+  stripStartOrganizing: "Organisieren starten",
+  stripDismiss: "Verstanden",
+
 };
