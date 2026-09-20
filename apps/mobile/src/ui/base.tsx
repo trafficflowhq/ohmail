@@ -341,6 +341,7 @@ export function Button({
   onPress,
   style,
   accessibilityLabel,
+  disabled,
 }: {
   label: string;
   icon?: IconName;
@@ -348,15 +349,22 @@ export function Button({
   onPress?: () => void;
   style?: StyleProp<ViewStyle>;
   accessibilityLabel?: string;
+  /**
+   * A verb that cannot be taken right now keeps its FACE and dims, and says so to a screen
+   * reader. Before this, callers swapped VARIANTS to disarm a button (solid→plain, quiet→plain),
+   * which made the unavailable state look like a different, perfectly pressable verb.
+   */
+  disabled?: boolean;
 }) {
   const t = useTheme();
   const solid = variant === "solid";
   const fg = solid ? t.c.onAccent : variant === "quiet" ? t.c.ink2 : t.c.ink;
   return (
     <Tap
-      onPress={onPress}
+      onPress={disabled === true ? undefined : onPress}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel ?? label}
+      accessibilityState={disabled === true ? { disabled: true } : undefined}
       style={({ pressed }) => [
         {
           flexDirection: "row",
@@ -368,7 +376,7 @@ export function Button({
           paddingVertical: 8,
           borderRadius: t.radius.pill,
           backgroundColor: solid ? t.c.accent : variant === "quiet" ? "transparent" : t.c.panel,
-          opacity: pressed ? 0.86 : 1,
+          opacity: disabled === true ? 0.45 : pressed ? 0.86 : 1,
         },
         variant === "plain" ? t.lift("l0") : null,
         style,

@@ -1171,7 +1171,7 @@ export const DE: Deck = {
   awayPilesNone: "Keine Ablage bekommt eine Antwort, es wird also nichts gesendet.",
   awayWhereThisPhone: "Antworten werden gesendet, solange ohmail auf diesem Telefon läuft.",
   awayWhereHost: (host: string) => `Antworten werden gesendet, solange ohmail auf ${host} läuft.`,
-  awayChangedElsewhere: "Auf einem anderen Gerät geändert. Das sind die Abwesenheitseinstellungen, die es jetzt hält.",
+  awayChangedElsewhere: "Auf einem anderen Gerät geändert. Das sind die Abwesenheitseinstellungen, die jetzt gelten.",
 
   draftsTitle: "Entwürfe",
   draftsExplainer: "Nachrichten, die du begonnen und nicht gesendet hast.",

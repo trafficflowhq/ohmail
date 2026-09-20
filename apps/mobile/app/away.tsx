@@ -168,7 +168,7 @@ function AwayBody() {
             resurface chooser already made a list the phone's idiom for exactly this. */}
         <Panel style={{ paddingBottom: 16, marginBottom: 14 }}>
           <Section style={{ paddingTop: 16 }}>{Copy.awayUntilLabel}</Section>
-          <View style={{ paddingHorizontal: 16, gap: 10 }}>
+          <View style={{ paddingHorizontal: 20, gap: 10 }}>
             <Txt variant="note" tone={say === "expired" ? "ink" : "ink2"}>{untilLine}</Txt>
             {say === "expired" ? (
               <Txt variant="caption" tone="ink3">{Copy.awayUntilExpired}</Txt>
@@ -190,19 +190,19 @@ function AwayBody() {
             exactly as they were read, so they are facts about what will be sent and to whom. */}
         <Panel style={{ paddingBottom: 16, marginBottom: 14 }}>
           <Section style={{ paddingTop: 16 }}>{Copy.awayAudienceLabel}</Section>
-          <View style={{ paddingHorizontal: 16, gap: 4 }}>
+          <View style={{ paddingHorizontal: 20, gap: 4 }}>
             <Txt variant="note" tone="ink2">
               {read === null ? " " : awayAudienceWide(read.audience) ? Copy.awayEveryone : Copy.awayScreenedIn}
             </Txt>
           </View>
-          <Rule inset={16} />
+          <Rule inset={20} />
           <Section>{Copy.awayPilesLabel}</Section>
-          <View style={{ paddingHorizontal: 16, gap: 4 }}>
+          <View style={{ paddingHorizontal: 20, gap: 4 }}>
             <PileLines piles={read === null ? null : read.piles} />
           </View>
-          <Rule inset={16} />
+          <Rule inset={20} />
           <Section>{Copy.awayThrottleLabel}</Section>
-          <View style={{ paddingHorizontal: 16, gap: 4 }}>
+          <View style={{ paddingHorizontal: 20, gap: 4 }}>
             <Txt variant="note" tone="ink2">{read === null ? " " : throttleWord(read.throttle)}</Txt>
             <Txt variant="caption" tone="ink3" style={{ paddingTop: 6 }}>
               {Copy.awayScopeElsewhere}
@@ -214,8 +214,9 @@ function AwayBody() {
           <View style={{ flexDirection: "row" }}>
             <Button
               label={saving ? Copy.awaySaving : Copy.awaySave}
-              variant={canSave ? "solid" : "plain"}
-              onPress={canSave ? () => void save() : undefined}
+              variant="solid"
+              disabled={!canSave}
+              onPress={() => void save()}
             />
           </View>
           {/* WHAT THE LAST SAVE DID. `asked` is the 202 and is not a failure; `unreachable` is a
