@@ -9,6 +9,7 @@
  * no control when it does not — read from the device, never a build assumption.
  */
 import Constants from "expo-constants";
+import { router } from "expo-router";
 import { useCallback, useState, useSyncExternalStore } from "react";
 import { Platform, View } from "react-native";
 import { buildCommit, buildLabel } from "../src/build-info";
@@ -27,6 +28,7 @@ import { useWorld } from "../src/state/world";
 import { connectionSaid, firstSyncSaid } from "../src/state/live";
 import { Button, Chip, Panel, Rule, Screen, Scroller, Section, TapRow, Txt } from "../src/ui/base";
 import { Sheet, SheetRow } from "../src/ui/Sheet";
+import { Nav } from "../src/ui/MoreNav";
 import { Field } from "../src/ui/Field";
 import { useConnection } from "../src/net/connection";
 import { resupplyPassword } from "../src/net/mailboxes";
@@ -286,6 +288,21 @@ function SettingsBody() {
             setEnabled={w.folders.setEnabled}
           />
         ) : null}
+
+        {/*
+          THE AWAY RESPONDER — a row rather than the form, because the form is
+          three controls plus three facts it does not change and that is a screen, not a panel.
+          Where the webapp keeps it: in Settings, so one product has one home for the one thing
+          that sends mail on its own. Its own route so a person can be handed it directly.
+        */}
+        <Panel style={{ paddingBottom: 8, marginBottom: 14 }}>
+          <Nav
+            label={Copy.awayRow}
+            sub={Copy.awayRowSub}
+            chevron
+            onPress={() => router.push("/away")}
+          />
+        </Panel>
 
         {/* about — one sentence, true of the session on screen */}
         <Panel style={{ paddingVertical: 18, marginBottom: 10 }}>

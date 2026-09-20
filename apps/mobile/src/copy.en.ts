@@ -1738,6 +1738,83 @@ const TABLE = {
   scheduledNotOnThisPhone:
     "This phone organizes your mailbox only while ohmail is running on it, so it cannot hold a message for a later time. Send now, or schedule it from a computer or ohmail Cloud.",
   /*
+   * THE AWAY RESPONDER — the one thing this product does that sends mail on its
+   * own, and going away is a phone moment. Every sentence is the webapp catalogue's `away.*` word
+   * for word except the six marked PHONE-ONLY. This phone edits THREE fields — the switch, the
+   * message, the end date — and STATES the other three, because `PUT /away-responder` is a full
+   * replace and a surface that shows a person only what it can change lets them turn a standing
+   * order on without seeing who it answers.
+   */
+  awayTitle: "Away responder",
+  awayOn: "On. Replies to new mail, from the mailbox it arrived in.",
+  awayOff: "Off. Nothing is sent.",
+  awayBodyLabel: "Message",
+  /** The switch's two segments. Short, because a segment is a control and not a sentence. */
+  awaySwitchOn: "On",
+  awaySwitchOff: "Off",
+  awayAudienceLabel: "Who gets a reply",
+  awayScreenedIn: "People I've let in",
+  awayEveryone: "Everyone who writes",
+  awayThrottleLabel: "How often per person",
+  awayAlways: "Every message",
+  awayPerMessage: "Once, until you change the text",
+  awayPerDay: "At most once a day",
+  awayPerWeek: "At most once a week",
+  awayPilesLabel: "Which mail gets a reply",
+  awayPileOhbox: "Ohbox",
+  awayPileReads: "Reads",
+  awayPileReceipts: "Receipts",
+  awayPileScreener: "Screener",
+  awayNever:
+    "Never sent to mailing lists, no-reply addresses, a site or server's own notification "
+    + "mailbox, security mail, spam, senders you've screened out, your own addresses, or an "
+    + "address that bounced.",
+  awayUntilLabel: "Turn off automatically on",
+  awayUntilNone: "No end date",
+  awayUntilPick: "Pick a date",
+  awayUntilClear: "Remove the end date",
+  awayUntilOn: (date: string) => `On until ${date}.`,
+  awayUntilPast: (date: string) => `The end date passed on ${date}. Nothing is sent.`,
+  awayUntilExpired: "Pick a date in the future, or turn the responder off.",
+  awaySave: "Save",
+  awaySaving: "Saving…",
+  awaySaved: "Saved.",
+  awayAsked: "Not saved here — the machine that organizes this mailbox applies it on its next pass.",
+  awayFailed: "That did not save. Nothing changed.",
+  awayFailedStillOn: "Could not save — the responder is still on.",
+  awayFailedStillOff: "Could not save — the responder is still off.",
+  awayIncomplete: "Add a message before turning this on.",
+  awayUnreachable: "Your away settings could not be read just now. Nothing here has changed.",
+  /**
+   * PHONE-ONLY (1/6): the Settings row that opens this screen, and its second line — the rail's
+   * own idiom, and the one place a person looks for a standing order before a trip.
+   */
+  awayRow: "Away responder",
+  awayRowSub: "An automatic reply while you're away.",
+  /**
+   * PHONE-ONLY (2/6): the three fields this phone does not offer. Said rather than hidden — a
+   * switch that turns on a standing order without naming who it answers is a control with its
+   * consequence off screen, and the webapp's own audience note calls that a disclosure.
+   */
+  awayScopeElsewhere: "Set these on a computer or in ohmail Cloud. This phone sends them back unchanged.",
+  /**
+   * PHONE-ONLY (3/6): a pile this build has no word for. Named verbatim rather than dropped:
+   * filtering it would state a NARROWER scope than the responder acts on, which on a screen
+   * reads as a promise that mail is not being answered when it is.
+   */
+  awayPileOther: (folder: string) => `Also ${folder}`,
+  /** PHONE-ONLY (4/6): nobody is answered — the scope is stored empty. */
+  awayPilesNone: "No pile is set to get a reply, so nothing is sent.",
+  /**
+   * PHONE-ONLY (5/6): WHERE the replies come from. The webapp says "on this computer" or names
+   * the host; this phone says whichever of the two is true of it — the mailbox this app organizes
+   * itself, or the machine named on the More screen.
+   */
+  awayWhereThisPhone: "Replies are sent while ohmail is running on this phone.",
+  awayWhereHost: (host: string) => `Replies are sent while ohmail is running on ${host}.`,
+  /** PHONE-ONLY (6/6): the row moved under somebody else while this screen was open. */
+  awayChangedElsewhere: "Changed from another device. These are the away settings it holds now.",
+  /*
    * DRAFTS — what you started and have not sent, and the one way out of a send
    * this server could not confirm. Every sentence below is the webapp catalogue's `drafts.*` word
    * for word, except the four marked PHONE-ONLY, which say what this app does instead of a verb

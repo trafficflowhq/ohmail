@@ -18,6 +18,7 @@ import { useLocale } from "../i18n/LocaleProvider";
 import { useTheme } from "../theme";
 import { destLabel, DESTINATIONS, domainOf, type Destination, type Scope } from "../state/model";
 import {
+  calendarDayLabel,
   DAY_OFFSETS,
   dayAt,
   dayAtHour,
@@ -1453,18 +1454,9 @@ type LaterStep =
   | { step: "hours"; offset: number };
 
 /**
- * "Mon 1 Sep" — or "Mo., 1. Sept." — for the picked-day rows.
- *
- * The locale was the literal `"en"` and is now the app's. `Intl` is what decides how a language
- * shortens a weekday and a month, and that is not ours to invent: German writes "Di." with a stop
- * and "Sept." with one too, which a hand-written table gets wrong in a way nobody reviews. The
- * failure arm is unchanged and still English, because `toDateString()` is the platform's last
- * resort on a runtime with no ICU data at all — an unlocalised date beats no date.
+ * "Mon 1 Sep" — or "Mo., 1. Sept." — for the picked-day rows. The arithmetic moved to
+ * `state/live.ts#calendarDayLabel` when the away responder's end date became the second surface
+ * that names calendar days: one spelling, so two chooser lists cannot abbreviate a weekday
+ * differently in the same language.
  */
-function dayLabel(day: Date, locale: string): string {
-  try {
-    return new Intl.DateTimeFormat(locale, { weekday: "short", day: "numeric", month: "short" }).format(day);
-  } catch {
-    return day.toDateString();
-  }
-}
+const dayLabel = calendarDayLabel;

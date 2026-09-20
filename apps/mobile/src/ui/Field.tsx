@@ -36,7 +36,13 @@ export interface FieldProps {
   revealLabels?: { show: string; hide: string };
   revealed?: boolean;
   onReveal?: (next: boolean) => void;
-  /** Passed straight through: keyboard, autofill hint, return key, the autocapitalize arm. */
+  /**
+   * Passed straight through: keyboard, autofill hint, return key, the autocapitalize arm — and
+   * `multiline`, for the one field in this app that holds PROSE (the away responder's message).
+   * Widened here rather than answered with a second field component: this file's own rule is that
+   * two fields are two answers to "how does a form look here", and the second always misses the
+   * next accessibility fix.
+   */
   input?: Pick<
     TextInputProps,
     | "autoCapitalize"
@@ -44,6 +50,7 @@ export interface FieldProps {
     | "autoCorrect"
     | "inputMode"
     | "keyboardType"
+    | "multiline"
     | "onSubmitEditing"
     | "returnKeyType"
     | "textContentType"
@@ -77,7 +84,7 @@ export function Field({
       <View
         style={{
           flexDirection: "row",
-          alignItems: "center",
+          alignItems: input?.multiline === true ? "flex-start" : "center",
           gap: 8,
           borderBottomWidth: 1,
           borderBottomColor: t.c.hair,
@@ -92,7 +99,15 @@ export function Field({
           {...input}
           secureTextEntry={masked}
           accessibilityLabel={label}
-          style={[t.type.msgBody, { color: t.c.ink, paddingVertical: 10, flex: 1 }]}
+          /* A prose field grows: it starts at about five lines, aligns to the top rather than
+             centring one line in a tall box, and the row above it stops centring with it. */
+          multiline={input?.multiline === true}
+          textAlignVertical={input?.multiline === true ? "top" : "center"}
+          style={[
+            t.type.msgBody,
+            { color: t.c.ink, paddingVertical: 10, flex: 1 },
+            input?.multiline === true ? { minHeight: 112 } : null,
+          ]}
         />
         {secret === true && revealLabels !== undefined && onReveal !== undefined ? (
           <Tap

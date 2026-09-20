@@ -20,6 +20,7 @@ import {
   weekdayClock,
   composeZonedWallClock,
   zonedFields,
+  zonedInstant,
   zonedWeekday,
   feedPartition,
   ohboxView,
@@ -3697,6 +3698,38 @@ export function scheduleLabel(iso: string, now: Date, zone: string): string {
     // engine's own rule, with the caller that can carry on saying so.
     return iso;
   }
+}
+
+/**
+ * A CALENDAR DAY'S NAME, as this language shortens it — "Tue 22 Sept". `Intl` decides how a
+ * language abbreviates a weekday and a month and that is not ours to invent (German writes "Di."
+ * and "Sept." with stops, which a hand-written table gets wrong in a way nobody reviews). The
+ * failure arm is the platform's last resort on a runtime with no ICU data: an unlocalised date
+ * beats no date. Here rather than in a screen because two surfaces name days — the resurface
+ * chooser and the away responder's end date — and one spelling of this is the point.
+ */
+export function calendarDayLabel(day: Date, locale: string): string {
+  try {
+    return new Intl.DateTimeFormat(locale, { weekday: "short", day: "numeric", month: "short" }).format(day);
+  } catch {
+    return day.toDateString();
+  }
+}
+
+/**
+ * THE END OF A CALENDAR DAY WHERE THE READER IS — the instant an end date resolves to.
+ *
+ * The webapp's `dayEnd`, and the direction matters: a date is a DAY to the person choosing it and
+ * an INSTANT to the server, so "off on the 24th" has to mean the 24th's last second in their own
+ * zone. Resolved at 23:59:59 rather than the next midnight so the stored instant reads back as
+ * the day that was picked, whichever way a reader formats it.
+ */
+export function dayEndIso(from: Date, daysAhead: number, zone: string = readerZone()): string {
+  const base = new Date(from.getTime() + daysAhead * 86_400_000);
+  const f = zonedFields(base, zone);
+  return zonedInstant(
+    { year: f.year, month: f.month, day: f.day, hour: 23, minute: 59, second: 59 }, zone,
+  ).toISOString();
 }
 
 /**
