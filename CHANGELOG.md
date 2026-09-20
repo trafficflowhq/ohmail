@@ -91,7 +91,10 @@ was given up.
 - On a foldable's closed face and a phone held sideways the message list no longer runs under the
   navigation rail, so dates and the Screener pill stay readable.
 
-### The mailbox paints faster on a full account: the Screener queue derives just after the first paint instead of before it, and the Settings and Compose panes load when opened
+### Faster first paint
+
+The mailbox paints faster on a full account: the Screener queue derives just after the first
+paint instead of before it, and the Settings and Compose panes load when opened.
 
 
 ### Upgrades on large databases
@@ -117,7 +120,10 @@ strip names the failing mailbox's address.
 
 Answer Later, Park, Resurface, Done, tags and the bulk verbs raise one toast: a sentence naming what happened, with Undo beside it. Undo puts the mail back exactly where it was, and `z` presses it from the keyboard while the toast stands.
 
-### After you act on a message the reader moves to the next one, and the reading pane stays reachable while it is open
+### The reader moves on after you act
+
+After you act on a message the reader moves to the next one, and the reading pane stays
+reachable while it is open.
 
 
 ### The phone sends again when it organizes its own mailbox
