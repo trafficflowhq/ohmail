@@ -106,9 +106,18 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       process.stdout.write(`flathub-manifest: ${row.file} vs ${row.lock} — ${count} missing\n`);
       for (const checksum of row.missing.slice(0, 10)) process.stdout.write(`    ${checksum}\n`);
     }
-    if (mirror === null) {
-      process.stdout.write("flathub-manifest: the published root package-lock.json was not checked " +
-        "(pass --mirror <checkout>) — it is the one a Flathub build installs first\n");
+    /* A DERIVED FILE'S CHECK NAMES THE TREE IT DERIVES FROM (FLATHUB-NODE-SOURCES-DERIVE-AT-
+     * CEREMONY). node-sources.json is derived from the PUBLISHED root lockfile, which only a
+     * published checkout has and which the publisher rewrites at every ceremony — so the
+     * repo-local form reads two lockfiles, finds nothing wrong with either, and prints a green
+     * that says nothing about the one a Flathub build installs first. It left the file sixteen
+     * packages behind. Without a mirror this is NOT DERIVABLE, never a pass. */
+    if (mirror === null && !argv.includes("--local-only")) {
+      process.stderr.write("flathub-manifest: NOT DERIVABLE HERE — node-sources.json is derived from the " +
+        "PUBLISHED root package-lock.json, which only a published checkout has and which the publisher " +
+        "REWRITES at every ceremony. Pass --mirror <checkout>, or --local-only to read just the two " +
+        "repo-local lockfiles and have the verdict say so.\n");
+      process.exit(3);
     }
     if (stale > 0) {
       process.stderr.write("\nflathub-manifest: a generated source file is behind its lockfile. " +
@@ -116,7 +125,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         "time. Regenerate both files (apps/desktop/flatpak/REVIEW-NOTES.md names the commands).\n");
       process.exit(1);
     }
-    process.stdout.write("flathub-manifest: every checksum the lockfiles name is a declared source\n");
+    /* The green NAMES what it covered. A verdict that cannot say which trees it read covered
+     * whatever the reader assumes it did. */
+    process.stdout.write(`flathub-manifest: every checksum is a declared source, over ${rows.length} lockfile(s): `
+      + `${rows.map((r) => r.lock).join(", ")}`
+      + (mirror === null ? " — the PUBLISHED root package-lock.json was NOT covered (--local-only)\n" : "\n"));
     process.exit(0);
   }
   const tag = value("--tag");
