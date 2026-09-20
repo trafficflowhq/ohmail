@@ -47,6 +47,8 @@ import {
   tallyVerdicts,
   type FolderNameError,
   type SignatureState,
+  type AddressCounts,
+  type AddressDirection,
   type BodyState,
   type EmailAddress,
   type EngineDraft,
@@ -1354,6 +1356,81 @@ export function liveMessage(engine: OhmailEngine, id: string, v: WorldView): Wor
     }));
   }
   return row;
+}
+
+
+/* ─────────────────────────────────────────────────────────────────── search */
+
+/**
+ * Is this query one address? The door the search empty state offers hangs on it, so the rule
+ * is the narrow one: a single token carrying an `@` with something on both sides. It admits
+ * what a person pastes from a header and refuses anything the token search should answer.
+ */
+export function addressShaped(query: string): string | null {
+  const t = query.trim();
+  if (t.includes(" ") || t.includes(",")) return null;
+  const at = t.indexOf("@");
+  return at > 0 && at < t.length - 1 && !t.includes("@", at + 1) ? t : null;
+}
+
+/** One tier of the device answer, as the rows every list here renders. */
+export interface WorldSearchAnswer {
+  items: WorldMail[];
+  /** Typo-tolerant hits, under their own heading — non-empty only when `items` is empty. */
+  similar: WorldMail[];
+  /** What the answer is an answer OVER — the mirror's message count when the index was built. */
+  coverageMessages: number;
+  /** A newer index is still building: an empty list is "not yet", never "nothing". */
+  indexing: boolean;
+}
+
+/** The address view's device half — see {@link SearchIndex.messagesWith} in the engine. */
+export interface WorldAddressAnswer {
+  items: WorldMail[];
+  counts: AddressCounts;
+  indexing: boolean;
+}
+
+export interface WorldSearch {
+  /** The instant device answer — the engine's mirror index, synchronous, no wire. */
+  query(q: string, limit?: number): WorldSearchAnswer;
+  /** Every message on this device involving one address, by direction, with all three counts. */
+  address(addr: string, direction: AddressDirection): WorldAddressAnswer;
+  /** Build the index off the keystroke path — called when the search surface opens. */
+  warm(): void;
+  /** Which index answered — the provider re-derives the world when a build settles. */
+  revision: number;
+}
+
+/**
+ * THE PHONE'S SEARCH FACE — the engine's own instant index (`OhmailEngine.search` /
+ * `messagesWith`), projected to the rows every list renders. It reads the MIRROR, so it
+ * answers offline; body text is not in the index and `coverageMessages` is what the surface
+ * states its answer over. `base` is the same held-delete-hiding reader the lists derive from:
+ * a hit whose row left every list at the press must not survive in search for the window.
+ */
+export function liveSearch(engine: OhmailEngine, base: EntityReader, v: WorldView): WorldSearch {
+  const rows = (hits: readonly { message: EngineMessage }[]): WorldMail[] =>
+    hits
+      .filter((h) => base.get<EngineMessage>("message", h.message.id) !== undefined)
+      .map((h) => toMail(base, h.message, v));
+  return {
+    query(q, limit) {
+      const r = engine.search(q, limit === undefined ? {} : { limit });
+      return {
+        items: rows(r.items),
+        similar: rows(r.similar),
+        coverageMessages: r.coverage.messages,
+        indexing: r.indexing,
+      };
+    },
+    address(addr, direction) {
+      const r = engine.messagesWith(addr, direction);
+      return { items: rows(r.items), counts: r.counts, indexing: r.indexing };
+    },
+    warm: () => void engine.warmSearchIndex(),
+    revision: engine.searchIndexRevision(),
+  };
 }
 
 export function sizeLabel(bytes: number | null | undefined): string {

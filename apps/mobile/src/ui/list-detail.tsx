@@ -23,7 +23,6 @@ import { PaneChromeContext } from "./pane-chrome";
 import { usePosture } from "./posture";
 import { useReaderRail } from "./reader-rail";
 import { paneSplit, scaffoldPlan, RAIL_W } from "./scaffold/plan";
-import { Sheet } from "./Sheet";
 
 const platformName = Platform.OS === "ios" ? ("ios" as const) : ("android" as const);
 
@@ -74,7 +73,6 @@ export function ListDetail({
   const posture = usePosture();
   const plan = scaffoldPlan(posture, platformName);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
   const [box, setBox] = useState<{ w: number; h: number } | null>(null);
   const measure = (e: LayoutChangeEvent) =>
     setBox({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height });
@@ -105,13 +103,13 @@ export function ListDetail({
       <View style={{ flex: 1 }}>
         <View style={{ flex: 1 }}>{list}</View>
         {/* The search field at the list pane's foot — Mail's shape on the Duo/iPad (owner
-            rule 5 keeps search in every navigation; Android's rail already carries it). The
-            press answers with the same honest sentence the More screen states. */}
+            rule 5 keeps search in every navigation; Android's rail already carries it). It
+            opens the mirror-search screen (`app/search.tsx`). */}
         {platformName === "ios" ? (
           <Tap
             accessibilityRole="button"
             accessibilityLabel={Copy.search}
-            onPress={() => setSearchOpen(true)}
+            onPress={() => router.push("/search")}
             style={{
               flexDirection: "row",
               alignItems: "center",
@@ -217,15 +215,6 @@ export function ListDetail({
           </GlassSidebar>
         </View>
       ) : null}
-
-      <Sheet open={searchOpen} onClose={() => setSearchOpen(false)} label={Copy.search}>
-        <View style={{ paddingHorizontal: 20, paddingVertical: 16, gap: 4 }}>
-          <Txt variant="cardTitle">{Copy.search}</Txt>
-          <Txt variant="note" tone="ink3">
-            {Copy.searchLater}
-          </Txt>
-        </View>
-      </Sheet>
     </Screen>
   );
 }

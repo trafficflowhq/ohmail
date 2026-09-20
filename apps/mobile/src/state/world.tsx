@@ -65,6 +65,7 @@ import {
   liveReceipts,
   liveScheduled,
   liveScreener,
+  liveSearch,
   liveTags,
   mirrorSettled,
   phoneOrganizer,
@@ -93,6 +94,7 @@ import {
   type WorldScheduled,
   type ScreeningPosture,
   type WorldScreener,
+  type WorldSearch,
   type WorldTag,
   type WorldView,
   type ConnectionSay,
@@ -114,7 +116,7 @@ import {
 
 export type {
   FolderEntity, MoveTarget, PhoneOrganizer, ScreenerRow, WorldActions, WorldHistory, WorldMail,
-  WorldPile, WorldScheduled, WorldScreener, WorldTag,
+  WorldPile, WorldScheduled, WorldScreener, WorldSearch, WorldTag,
 } from "./live";
 
 export interface World {
@@ -375,6 +377,13 @@ export interface World {
   };
   message(id: string): WorldMail | undefined;
   /**
+   * THE DEVICE SEARCH — the engine's instant mirror index, projected to this world's rows
+   * (`live.ts#liveSearch`). Offline by construction: it reads the mirror, never the wire. The
+   * provider re-derives the world when a build settles (`searchRev`), so a screen holding a
+   * query re-renders into the finished index without polling.
+   */
+  search: WorldSearch;
+  /**
    * WHAT BECAME OF A QUEUED SEND — how a locked composer settles. `pending` while the key
    * still stands on the engine's queue; `confirmed`/`rolled_back` once a reconnect flush
    * resolved it (the ledger below); `unknown` for a key this session never queued (or after
@@ -525,6 +534,14 @@ function emptyWorld(actions: WorldActions): World {
     // to. `false` is "not confirmed", which is exactly what nothing-connected means.
     face: { account: null, known: false, pending: false, applyAll: () => Promise.resolve(false) },
     message: () => undefined,
+    // Nothing is connected, so there is nothing to search and no index owed: `indexing: false`
+    // with zero coverage is "an answer over nothing", never a build that will not come.
+    search: {
+      query: () => ({ items: [], similar: [], coverageMessages: 0, indexing: false }),
+      address: () => ({ items: [], counts: { any: 0, from: 0, to: 0 }, indexing: false }),
+      warm: () => undefined,
+      revision: 0,
+    },
     sendOutcome: () => "unknown",
     actions,
   };
@@ -546,6 +563,14 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   const version = useSyncExternalStore(
     useCallback((cb: () => void) => (engine ? engine.subscribe(cb) : () => undefined), [engine]),
     () => (engine ? engine.read().version() : 0),
+  );
+
+  /* WHICH SEARCH INDEX ANSWERED — the engine notifies when a build settles, with no record
+     moved and no version bump, so the mirror's version cannot stand in for this (the webapp's
+     `useSearchIndexRevision`, the same subscription one hook over). */
+  const searchRev = useSyncExternalStore(
+    useCallback((cb: () => void) => (engine ? engine.subscribe(cb) : () => undefined), [engine]),
+    () => (engine ? engine.searchIndexRevision() : 0),
   );
 
   /*
@@ -1374,13 +1399,17 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         now: new Date(), zone, locale, foldersEnabled: foldersOn,
         ownAddresses: addressesNow.current, mailboxes: mailboxes ?? [], screening: posture,
       }),
+      /* The same hiding reader and view the lists derive from — a held-deleted row must not
+         survive in search for the window. `searchRev` in this memo's deps is what re-derives
+         it when a build settles. */
+      search: liveSearch(engine, base, v),
       actions,
     };
     // `version` IS the dependency that re-derives this projection on every mirror change; the
     // reader itself is stable across drains, so it cannot stand in for it. The connection's
     // state is deliberately NOT here — see the header, and the assembly below, which carries it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine, session, scopes, zone, locale, actions, version, freshBeat,
+  }, [engine, session, scopes, zone, locale, actions, version, freshBeat, searchRev,
     foldersOn, foldersPending, foldersStorable, setFoldersEnabled, signatures,
     resurfaceTime, rememberResurfaceTime, screening, screenerServer, heldDeletes, heldPlaces]);
 

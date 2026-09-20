@@ -1099,8 +1099,28 @@ const TABLE = {
   /* ---------------------------------------------------------------- search */
 
   search: "Search",
-  /** More's one honest sentence about it — there is no search screen to route to yet. */
-  searchLater: "Arrives in a later update",
+  /* SEARCH — the webapp's `search` namespace, sentence for sentence where the surface is
+     the same: the box, the two tiers, the honest coverage sentence, and the address door the
+     empty state offers (the web's own empty-state fix, mirrored). */
+  searchPlaceholder: "Search everything — typos welcome",
+  searchResultsHead: (n: number) => (n === 1 ? "1 result" : `${n} results`),
+  searchSimilarHead: "Similar",
+  searchSimilarHint: "Nothing matched exactly, so these are the closest words.",
+  searchEmptyTitle: "Nothing on this device.",
+  searchIndexing: "Still reading this device's mail.",
+  searchScopeDevice:
+    "This device holds subjects, senders and the first 200 characters of each message — not the full text.",
+  searchEmptyAddressScopes: (address: string) =>
+    `An address is its own search — everything ${address} sent, or anything from or to them.`,
+  searchAddressAll: "All",
+  searchAddressFrom: "From them",
+  searchAddressTo: "To them",
+  searchAddressToggleAria: "Which direction",
+  searchAddressCounts: (any: number, from: number, to: number) =>
+    `All ${any} · From them ${from} · To them ${to}`,
+  searchAddressEmptyAny: (address: string) => `Nothing from or to ${address}.`,
+  searchAddressEmptyFrom: (address: string) => `Nothing from ${address}.`,
+  searchAddressEmptyTo: (address: string) => `Nothing sent to ${address}.`,
 
   /* ------------------------------------------------- two panes (big screens) */
 
@@ -1190,7 +1210,7 @@ const TABLE = {
   buildCommit: (commit: string) => `Build ${commit}`,
   /** The About block — states what is real on this build, no more. */
   aboutLive: (origin: string) =>
-    `Paired with ${origin}. Mail syncs into an on-device mirror; reading, triage, reply, forward and tags are live. Compose from scratch and search arrive with later updates.`,
+    `Paired with ${origin}. Mail syncs into an on-device mirror; reading, triage, reply, forward, tags and search are live. Compose from scratch arrives with a later update.`,
   /**
    * What the on-device copy does and does not leave. The uninstall sentence is careful: on iOS
    * the Keychain item survives deleting the app and no code of ours runs at that moment, so the

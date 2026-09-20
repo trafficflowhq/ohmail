@@ -90,22 +90,8 @@ export function MoreNav({ onNavigate }: { onNavigate?: () => void }) {
           like History: a number here would claim attention deleted mail does not want. */}
       {w.trash.available ? <Nav label={Copy.trashTitle} onPress={() => go("/trash")} chevron /> : null}
 
-      {/* Search over the synced mirror is not built yet. Said in words, not a dead row. */}
-      <View
-        style={{
-          marginHorizontal: 8,
-          paddingHorizontal: 12,
-          paddingVertical: 12,
-          minHeight: 46,
-          flexDirection: "row",
-          alignItems: "center",
-          gap: 10,
-        }}
-      >
-        <Txt variant="navLabel" tone="ink3">{Copy.search}</Txt>
-        <View style={{ flex: 1 }} />
-        <Txt variant="caption" tone="ink3">{Copy.searchLater}</Txt>
-      </View>
+      {/* Search over the synced mirror — a destination like the rail's. */}
+      <Nav label={Copy.search} onPress={() => go("/search")} chevron />
       <Nav label={Copy.settings} onPress={() => go("/settings")} chevron />
       {/* The pairing door: the server picker (QR scan, own-server, managed). */}
       <Nav label={Copy.serversRow} onPress={() => go("/servers")} chevron />

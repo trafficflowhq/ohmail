@@ -7,16 +7,13 @@
  *
  * NO WORDMARK here: the chrome is navigation, and the space is the app's.
  */
-import { Tabs } from "expo-router";
-import { useState } from "react";
+import { router, Tabs } from "expo-router";
 import { Platform, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../../src/theme";
 import { useWorld } from "../../src/state/world";
 import { Gated } from "../../src/ui/Gated";
 import { type IconName } from "../../src/ui/Icon";
-import { Txt } from "../../src/ui/base";
-import { Sheet } from "../../src/ui/Sheet";
 import { GlassDock, GlassRail, type DockItem, type RailAction } from "../../src/ui/glass";
 import { usePosture } from "../../src/ui/posture";
 import { useReaderRail } from "../../src/ui/reader-rail";
@@ -83,7 +80,6 @@ function GlassNav({ state, navigation }: NavProps) {
   const posture = usePosture();
   const plan = scaffoldPlan(posture, Platform.OS === "ios" ? "ios" : "android");
   const readerRail = useReaderRail();
-  const [searchOpen, setSearchOpen] = useState(false);
 
   /**
    * The engine's counts over the mirror, not a third derivation computed here.
@@ -123,20 +119,9 @@ function GlassNav({ state, navigation }: NavProps) {
     if (id !== activeId && !event.defaultPrevented) navigation.navigate(id);
   };
 
-  /* Search, in the navigation on every posture. There is no search screen on
-     the phone yet, and a silent control would be a lie — the press answers with the same
-     sentence the More screen states. */
-  const search = { label: Copy.search, onPress: () => setSearchOpen(true) };
-  const searchSheet = (
-    <Sheet open={searchOpen} onClose={() => setSearchOpen(false)} label={Copy.search}>
-      <View style={{ paddingHorizontal: 20, paddingVertical: 16, gap: 4 }}>
-        <Txt variant="cardTitle">{Copy.search}</Txt>
-        <Txt variant="note" tone="ink3">
-          {Copy.searchLater}
-        </Txt>
-      </View>
-    </Sheet>
-  );
+  /* Search, in the navigation on every posture — the pill opens the mirror-search screen
+     (`app/search.tsx`). */
+  const search = { label: Copy.search, onPress: () => router.push("/search") };
 
   /* THE TWO-PANE iOS POSTURES (the iPad, the unfolded-portrait Duo): no dock, no rail — the
      destinations live behind the list pane's sidebar toggle as a drawer and the search field
@@ -179,7 +164,6 @@ function GlassNav({ state, navigation }: NavProps) {
         }}
       >
         <GlassRail groups={groups} foldInto="none" />
-        {searchSheet}
       </View>
     );
   }
@@ -187,7 +171,6 @@ function GlassNav({ state, navigation }: NavProps) {
   return (
     <>
       <GlassDock items={items} activeId={activeId} onItemPress={press} search={search} />
-      {searchSheet}
     </>
   );
 }

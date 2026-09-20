@@ -714,7 +714,26 @@ export const DE: Deck = {
   /* ---------------------------------------------------------------- search */
 
   search: "Suche",
-  searchLater: "Kommt mit einem späteren Update",
+  /* SUCHE — der `search`-Namespace des Web-Katalogs, wo die Fläche dieselbe ist. */
+  searchPlaceholder: "Alles durchsuchen — Tippfehler sind erlaubt",
+  searchResultsHead: (n: number) => (n === 1 ? "Ein Treffer" : `${n} Treffer`),
+  searchSimilarHead: "Ähnlich",
+  searchSimilarHint: "Nichts stimmte genau überein — das sind die nächstliegenden Wörter.",
+  searchEmptyTitle: "Nichts auf diesem Gerät.",
+  searchIndexing: "Die Post auf diesem Gerät wird noch gelesen.",
+  searchScopeDevice:
+    "Auf diesem Gerät liegen Betreffzeilen, Absender und die ersten 200 Zeichen jeder Nachricht — nicht der vollständige Text.",
+  searchEmptyAddressScopes: (address: string) =>
+    `Eine Adresse ist ihre eigene Suche — alles, was ${address} geschickt hat, oder alles von oder an sie.`,
+  searchAddressAll: "Alle",
+  searchAddressFrom: "Von ihnen",
+  searchAddressTo: "An sie",
+  searchAddressToggleAria: "Welche Richtung",
+  searchAddressCounts: (any: number, from: number, to: number) =>
+    `Alle ${any} · Von ihnen ${from} · An sie ${to}`,
+  searchAddressEmptyAny: (address: string) => `Nichts von oder an ${address}.`,
+  searchAddressEmptyFrom: (address: string) => `Nichts von ${address}.`,
+  searchAddressEmptyTo: (address: string) => `Nichts an ${address} geschickt.`,
 
   /* ------------------------------------------------ zwei Bereiche (große Displays) */
 
@@ -761,7 +780,7 @@ export const DE: Deck = {
   buildVersionWithCode: (version: string, build: string) => `Version ${version} (${build})`,
   buildCommit: (commit: string) => `Build ${commit}`,
   aboutLive: (origin: string) =>
-    `Gekoppelt mit ${origin}. Post wird in einen Spiegel auf dem Gerät synchronisiert; Lesen, Sortieren, Antworten, Weiterleiten und Tags sind live. Neue Nachrichten schreiben und die Suche kommen mit späteren Updates.`,
+    `Gekoppelt mit ${origin}. Post wird in einen Spiegel auf dem Gerät synchronisiert; Lesen, Sortieren, Antworten, Weiterleiten, Tags und Suche sind live. Neue Nachrichten schreiben kommt mit einem späteren Update.`,
   aboutOnDevice:
     "Einen Server zu vergessen löscht seine Kopplung und die Post, die dieses Telefon kopiert "
     + "hatte. Die App zu löschen nimmt die kopierte Post mit; auf iPhone und iPad bleibt die "
