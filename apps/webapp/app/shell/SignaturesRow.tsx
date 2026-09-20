@@ -39,7 +39,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@ohmail/ui";
-import { RichEditor } from "./RichEditor";
+import { RichEditor } from "./RichEditorLazy";
 import { isRichEmpty, type RichValue } from "./rich-text";
 
 export function SignaturesRow({

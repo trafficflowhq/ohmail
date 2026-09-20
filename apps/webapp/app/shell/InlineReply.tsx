@@ -29,7 +29,7 @@ import { sendRefusal, sendStateFor, sendVerb, type SendState } from "./mail-send
 import { parseRecipients, type MailSend } from "./compose";
 import { forwardEnvelopePlan, forwardSend } from "./forward-send";
 import { HeldSendResolve } from "../components/HeldSendResolve";
-import { RichEditor } from "./RichEditor";
+import { RichEditor } from "./RichEditorLazy";
 import type { RichValue } from "./rich-text";
 import type { DraftReplyControl, DraftedReply } from "./draft-reply";
 import { SendStatus } from "./SendStatus";

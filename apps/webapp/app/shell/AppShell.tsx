@@ -170,7 +170,7 @@ import {
   type SignatureState,
 } from "./signature";
 import { useDraftReply, type DraftedReply } from "./draft-reply";
-import { RichEditor } from "./RichEditor";
+import { RichEditor, preloadRichEditor } from "./RichEditorLazy";
 import { TagPicker, placePicker, type TagPickerState } from "./TagPicker";
 /**
  * THE SCHEME CONTROL'S THREE STATES, as LOOKUP TABLES rather than comparisons. Light, dark and
@@ -290,8 +290,13 @@ import { durableSessionSet } from "./durable";
    the two modules may be named — the import-graph census
    (`test/first-load-defers-panes.test.ts`) refuses a static path back in. Both mount behind
    their existing `effectiveView` seams under one `Suspense` each. */
-const ComposeView = lazy(() =>
-  import("../views/ComposeView").then((m) => ({ default: m.ComposeView })));
+const ComposeView = lazy(() => {
+  /* THE EDITOR IN PARALLEL, not after it. Both chunks are needed the moment compose opens, and
+     asking for them one after the other is a waterfall of two round trips; `preloadRichEditor`
+     is the door's own factory, so this request is the one the `Suspense` inside it awaits. */
+  preloadRichEditor();
+  return import("../views/ComposeView").then((m) => ({ default: m.ComposeView }));
+});
 const SettingsView = lazy(() =>
   import("../views/SettingsView").then((m) => ({ default: m.SettingsView })));
 

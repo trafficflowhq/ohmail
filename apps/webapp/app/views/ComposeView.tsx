@@ -20,7 +20,7 @@ import { DRAFT_BODY_MAX_BYTES } from "@trafficflow/core/outbound-text";
 import { chordKeys, useBinding, useKeyBindings, useModGlyph, useWritingSurface } from "../shell/keymap";
 import { displayAddress } from "../shell/idn";
 import { canCancel, canSend, sendRefusal, sendStateFor, sendVerb, type SendState } from "../shell/mail-send";
-import { RichEditor } from "../shell/RichEditor";
+import { RichEditor } from "../shell/RichEditorLazy";
 import { SendStatus } from "../shell/SendStatus";
 import { HeldSendResolve } from "../components/HeldSendResolve";
 import {

@@ -24,7 +24,7 @@
 import { useTranslations } from "next-intl";
 import { TextField } from "@ohmail/ui";
 import { effectiveSignature, effectiveSignatureHtml, type SignatureState } from "./signature";
-import { RichEditor } from "./RichEditor";
+import { RichEditor } from "./RichEditorLazy";
 
 export function SignatureBlock({
   sig,
