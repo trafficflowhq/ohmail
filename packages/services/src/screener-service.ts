@@ -730,10 +730,10 @@ interface ScreenerRow {
 }
 
 /**
- * The columns a `ScreenerRow` is built from — named ONCE. Two queries produce this row:
- * `heldRows` (the whole bag, for `decide`) and `heldSenderPage` (one bounded page, for `list`);
- * they share this projection and `toScreenerRow` so the two cannot drift about what a held row
- * IS. `no_ai` and `sensitivity_category` used to be selected to compute an `aiEligible` flag;
+ * The columns a `ScreenerRow` is built from — named ONCE. ONE query produces this row:
+ * `heldSenderReps`, the representative-per-sender window that `list` pages and `suggest` narrows
+ * to the senders a person named. It and `toScreenerRow` are why nothing can drift about what a
+ * held row IS. (`decide` reads one row by id through `@trafficflow/db#heldRowById`.) `no_ai` and `sensitivity_category` used to be selected to compute an `aiEligible` flag;
  * both are gone under AI-OPEN, and the field was deleted rather than left unread: an unread
  * eligibility boolean is an invitation to gate on it again — `screener-ai-open.test.ts` plants
  * the old gate and watches it go red. The COLUMNS stay in the database and still drive stored
@@ -1442,32 +1442,51 @@ export class ScreenerReadService {
   }
 
   /**
-   * All messages currently held in the Screener (desired folder = ohmail/Screener). THE
-   * SENSITIVITY FLAGS NARROW NOTHING HERE, AND NEVER DID: `no_ai = false AND sensitivity_category
-   * IS NULL` (the `retrieveThreadContext` shape) would be wrong twice — it would HIDE a held
-   * sensitive message from the queue the user must triage, and `decide` reads the same rows, so
-   * that sender could never be screened (404) and their mail would stay stuck for ever. What
-   * changed is downstream: the SELECT used to compute an `aiEligible` flag so `suggest` could
-   * refuse; under AI-OPEN it asks about all of them and the credential material is redacted at
-   * the sink.
+   * ONE HELD MESSAGE PER SENDER, AS A WINDOW — the subquery both the page and the purchase read.
+   *
+   * `distinct on (k) … order by k, o` and `row_number() over (partition by k order by o) = 1`
+   * pick the same row: the first in `o` within each `k`. The first spelling exists only on the
+   * server; the second is standard and both stores have it, so the representative is chosen the
+   * same way everywhere instead of by a branch. The ordering lives INSIDE the window, where it
+   * belongs — a leading `k` in an outer ORDER BY satisfies the clause, not the answer.
+   *
+   * ONE EXPRESSION, TWO CALLERS, and that is the point. `list` and `suggest` must name the same
+   * message per sender or the page prices one and the purchase buys another; they used to agree
+   * because two pieces of code were written to the same rule, and now they agree because there is
+   * one rule. `extra` narrows which senders are considered and cannot change WHICH row represents
+   * one — the partition is per sender, so restricting the set leaves every partition's contents
+   * untouched.
    */
-  protected async heldRows(ctx: ServiceContext, extra?: SQL): Promise<ScreenerRow[]> {
+  // `account_id` LEADS the predicate rather than filtering a cross-account result (no cross-account disclosure).
+  // The return type is INFERRED: the subquery's row type is what makes `reps.fromAddress` and
+  // `reps.rank` typed at the two call sites, and any annotation wide enough to write by hand
+  // erases it to `{ [x: string]: any }`.
+  protected heldSenderReps(ctx: ServiceContext, extra?: SQL) {
+    const d = dialect(ctx.db);
+    // THE EPOCH THROUGH THE SEAM: `to_timestamp(0)` is the server's name for it and the device
+    // store has no such function — there the instant IS the number, which is what `d.ts` knows.
+    const sortKey = d.truncMs(sql`coalesce(${messages.date}, ${d.ts(EPOCH)})`) as SQL<Date>;
+    const sender = sql`lower(${messages.fromAddress})`;
     const filters: SQL[] = [
       eq(messages.accountId, ctx.accountId),
       eq(folderState.desiredFolder, SCREENER_FOLDER),
       // Mail 0065: a held message whose every watched copy was expunged is tombstoned by the
-      // reaper; the gate must not ask the user about mail the server no longer holds.
+      // reaper, applied where the representative is CHOSEN — a tombstoned newest message must not
+      // stand in for a sender whose older mail is live.
       isNull(messages.deletedAt),
     ];
     if (extra) filters.push(extra);
-
-    // scoped-by: `filters` above leads with eq(messages.accountId, ctx.accountId)
-    const rows = await ctx.db.select(HELD_COLUMNS).from(messages)
+    const reps = ctx.db.select({
+      ...HELD_COLUMNS,
+      sortKey: sortKey.as("sort_key"),
+      rank: sql<number>`row_number() over (
+        partition by ${sender} order by ${sortKey} desc, ${messages.id} desc
+      )`.as("rank"),
+    }).from(messages)
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
       .where(and(...filters))
-      .orderBy(desc(messages.date));
-
-    return rows.map(toScreenerRow);
+      .as("reps");
+    return { reps, sortKey, d };
   }
 
   /**
@@ -1493,38 +1512,7 @@ export class ScreenerReadService {
       cutline?: ResolvedCutline;
     },
   ): Promise<ScreenerRow[]> {
-    const d = dialect(ctx.db);
-    // THE EPOCH THROUGH THE SEAM: `to_timestamp(0)` is the server's name for it and the device
-    // store has no such function — there the instant IS the number, which is what `d.ts` knows.
-    const sortKey = d.truncMs(sql`coalesce(${messages.date}, ${d.ts(EPOCH)})`) as SQL<Date>;
-    const sender = sql`lower(${messages.fromAddress})`;
-
-    /**
-     * ONE HELD MESSAGE PER SENDER, AS A WINDOW. `distinct on (k) … order by k, o` and
-     * `row_number() over (partition by k order by o) = 1` pick the same row — the first in `o`
-     * within each `k`. The first spelling exists only on the server; the second is standard and
-     * both stores have it, so the representative is chosen the same way everywhere instead of by
-     * a branch. The ordering moves INSIDE the window, where it belonged: the leading `k` in the
-     * old ORDER BY satisfied the clause, not the answer. The OUTER order below is the caller's
-     * and is unchanged.
-     */
-    // `account_id` LEADS the predicate rather than filtering a cross-account result (no cross-account disclosure).
-    const reps = ctx.db.select({
-      ...HELD_COLUMNS,
-      sortKey: sortKey.as("sort_key"),
-      rank: sql<number>`row_number() over (
-        partition by ${sender} order by ${sortKey} desc, ${messages.id} desc
-      )`.as("rank"),
-    }).from(messages)
-      .innerJoin(folderState, eq(folderState.messageId, messages.id))
-      .where(and(
-        eq(messages.accountId, ctx.accountId),
-        eq(folderState.desiredFolder, SCREENER_FOLDER),
-        // Mail 0065: heldRows' exclusion, applied where the representative is CHOSEN — a
-        // tombstoned newest message must not stand in for a sender whose older mail is live.
-        isNull(messages.deletedAt),
-      ))
-      .as("reps");
+    const { reps, sortKey, d } = this.heldSenderReps(ctx);
 
     /* ── THE CUTLINE, WITH THE RANK AND BEFORE THE LIMIT ────────────────────────────────────
      *
@@ -1728,25 +1716,25 @@ export class ScreenerService extends ScreenerReadService {
      * MAILBOX — the same question `decide` asks, through the same function.
      */
 
-    // ONE query for the whole set, and the representative per sender chosen by the SAME rule
-    // `list` presents — otherwise the page prices one message and the purchase buys another.
-    const rows = await this.heldRows(
+    /**
+     * ONE ROW PER NAMED SENDER, CHOSEN BY POSTGRES — the same window `list` pages, so the page
+     * prices the message the purchase buys rather than merely agreeing with it.
+     *
+     * AND IT IS BOUNDED, which it was not. This read used to be `heldRows(…, in (senders))`: the
+     * whole held bag for up to {@link MAX_SUGGEST_SENDERS} senders, every row carrying its
+     * `subject` and `snippet` over the wire, so one sender with four thousand messages at the
+     * gate materialised four thousand rows to pick ONE. The representative is now decided in the
+     * database and at most one row per named sender comes back — a bound by construction rather
+     * than a limit somebody has to remember to raise. `screener-page.pg.test.ts` reads the SQL.
+     */
+    const { reps } = this.heldSenderReps(
       ctx, inArray(sql`lower(${messages.fromAddress})`, senders),
     );
-    // The tiebreak is the half that makes "the SAME rule" true. Without it this kept whichever
-    // row the driver returned first at a shared date — arbitrary, because `heldRows` orders by
-    // `date` alone — while `heldSenderPage` breaks the same tie on `id DESC`. The page would
-    // then price one message and this would buy a different one, which is the exact failure the
-    // paragraph above forbids: a suggestion stored against a message the row on screen is not
-    // about.
-    const rep = new Map<string, ScreenerRow>();
-    for (const r of rows) {
-      const key = r.fromAddress.toLowerCase();
-      const prev = rep.get(key);
-      const t = r.date?.getTime() ?? 0;
-      const p = prev?.date?.getTime() ?? 0;
-      if (!prev || t > p || (t === p && r.messageId > prev.messageId)) rep.set(key, r);
-    }
+    // scoped-by: `heldSenderReps` leads its predicate with eq(messages.accountId, ctx.accountId)
+    const rows = (await ctx.db.select().from(reps).where(eq(reps.rank, 1))).map(toScreenerRow);
+    const rep = new Map<string, ScreenerRow>(
+      rows.map((r) => [r.fromAddress.toLowerCase(), r]),
+    );
 
     /**
      * THE ELIGIBILITY GATE, BEFORE A SINGLE MODEL CALL. One read per DISTINCT mailbox in the set,
