@@ -1,13 +1,14 @@
 import type { Metadata } from "next";
 import { Wordmark } from "../components/Wordmark";
+import { legalRobots } from "../legal-robots";
 import { refuseOnSelfHost } from "../../self-host-marketing";
 
 export const metadata: Metadata = {
   title: "Imprint — ohmail",
-  // TODO at public launch: drop `robots`. The imprint is noindex only while the
-  // site is a pre-launch waitlist page; a published Swiss imprint is meant to be
-  // findable, and a search engine that cannot see it is not being served.
-  robots: { index: false },
+  // Noindex only while the site is a pre-launch waitlist page — `legalRobots` reads that off
+  // the deployment's own signup switch, so a published Swiss imprint is findable the day
+  // signup opens, with no launch-day edit owed here.
+  robots: legalRobots(),
 };
 
 /* Legal content is intentionally NOT routed through i18n — it is the binding

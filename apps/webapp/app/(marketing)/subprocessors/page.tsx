@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
 import { Wordmark } from "../components/Wordmark";
+import { legalRobots } from "../legal-robots";
 import { refuseOnSelfHost } from "../../self-host-marketing";
 
 export const metadata: Metadata = {
   title: "Subprocessors — ohmail",
-  robots: { index: false },
+  // Same rule as the imprint's: noindex only while the site is a pre-launch waitlist.
+  robots: legalRobots(),
 };
 
 /* Legal content is intentionally NOT routed through i18n — it is the binding legal text of the
