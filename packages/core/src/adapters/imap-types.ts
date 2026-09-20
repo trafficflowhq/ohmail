@@ -25,14 +25,16 @@ export type { Change, NativeLocator } from "../mail.js";
  * Canonical folders the worker watches. INBOX = Imbox. These are the six `Destination` strings
  * and nothing else: the set `ensureFolders()` creates, the set a reconcile may move a message
  * into, the set every list view filters on. Frozen — changing it is an IMAP data migration in the
- * customer's own mailbox. The Sent folder is watched too and deliberately NOT here: its path is
+ * customer's own mailbox: the News entry did exactly that in 0.22 (`ohmail/Reads` before it), so
+ * the adapter resolves it through `pileFolder` and the organizer renames on its next pass.
+ * The Sent folder is watched too and deliberately NOT here: its path is
  * server-specific and discovered at login (`ImapAdapter.findSentForScan`), we never create it or
  * move anything into or out of it, and it matches no view filter. See `ImapAdapter.changesSince`.
  */
 export const WATCHED_FOLDERS = [
   "INBOX",
   "ohmail/Screener",
-  "ohmail/Reads",
+  "ohmail/News",
   "ohmail/Receipts",
   "ohmail/Screened",
   "ohmail/Quarantine",

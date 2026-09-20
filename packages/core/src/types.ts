@@ -17,7 +17,7 @@ export interface CanonicalId {
 export type Destination =
   | "INBOX"
   | "ohmail/Screener"
-  | "ohmail/Reads"
+  | "ohmail/News"
   | "ohmail/Receipts"
   | "ohmail/Screened"
   | "ohmail/Quarantine";
@@ -35,11 +35,58 @@ export type Destination =
 export const DESTINATIONS: readonly Destination[] = [
   "INBOX",
   "ohmail/Screener",
-  "ohmail/Reads",
+  "ohmail/News",
   "ohmail/Receipts",
   "ohmail/Screened",
   "ohmail/Quarantine",
 ];
+
+/** The News pile's canonical folder — what is created, filed into and stored going forward. */
+export const NEWS_FOLDER = "ohmail/News";
+
+/**
+ * The News pile's PRE-0.22 folder name — the ONLY home of this literal outside fixtures
+ * (`test/news-folder-literal-census.test.ts` holds that closed, both ways). Mailboxes organized
+ * before the rename still carry it: the organizer renames it to {@link NEWS_FOLDER} on its next
+ * pass, and until that pass succeeds every reader and filer reaches the pile through
+ * {@link pileFolder} / {@link canonicalDestination}, so nothing breaks meanwhile.
+ */
+export const LEGACY_NEWS_FOLDER = "ohmail/Reads";
+
+/**
+ * A stored or wire folder name to its canonical spelling — the legacy News folder maps to
+ * {@link NEWS_FOLDER}, everything else is itself. Both spellings mean the News pile: rows
+ * written before 0.22 (database, mirrors, rules, profile piles) and requests from older
+ * clients carry the legacy name for ever, so every comparison and classification goes
+ * through this and never through string equality on the literal.
+ */
+export function canonicalDestination(folder: string): string {
+  return folder === LEGACY_NEWS_FOLDER ? NEWS_FOLDER : folder;
+}
+
+/** Is this folder name the News pile, in either spelling? */
+export function isNewsFolder(folder: string): boolean {
+  return canonicalDestination(folder) === NEWS_FOLDER;
+}
+
+/**
+ * THE pile → physical-folder resolver — News-first, Reads-fallback, canonical for creation.
+ *
+ * `listing` is canonical folder paths the server LISTed. For the News pile: `ohmail/News` when
+ * the mailbox has it; else the legacy `ohmail/Reads` when that is what the mailbox still has;
+ * else the canonical name, which is what a CREATE makes. Every other pile resolves to itself.
+ * This is the one place the two spellings meet a live mailbox: the IMAP adapter routes every
+ * select, scan, move and create through it, so an unrenamed mailbox keeps working unchanged.
+ */
+export function pileFolder(pile: Destination, listing: Iterable<string>): string {
+  if ((pile as string) !== NEWS_FOLDER) return pile;
+  let sawLegacy = false;
+  for (const f of listing) {
+    if (f === NEWS_FOLDER) return NEWS_FOLDER;
+    if (f === LEGACY_NEWS_FOLDER) sawLegacy = true;
+  }
+  return sawLegacy ? LEGACY_NEWS_FOLDER : NEWS_FOLDER;
+}
 
 /**
  * Does ohmail ORGANIZE this folder — is it one a decision may file mail into?
@@ -50,7 +97,9 @@ export const DESTINATIONS: readonly Destination[] = [
  * a mover.
  */
 export function isOrganizedFolder(folder: string): boolean {
-  return (DESTINATIONS as readonly string[]).includes(folder);
+  // Canonicalized first: a mailbox organized before 0.22 has mail FILED in the legacy News
+  // folder, and "is this one ohmail organizes" must answer the same for both spellings.
+  return (DESTINATIONS as readonly string[]).includes(canonicalDestination(folder));
 }
 
 /** One message, as much of it as the question below reads — the wire's own fields. */

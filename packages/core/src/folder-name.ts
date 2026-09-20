@@ -19,6 +19,18 @@ export {
   folderNameError,
   type FolderNameError,
   /**
+   * The News pile's resolver family (0.22, `ohmail/Reads` → `ohmail/News`): the canonical name,
+   * the pile→physical resolver over a live LISTing, and the both-spellings normalizer every
+   * stored row and wire value goes through. Browser-safe here for the same reason as the
+   * validator: the client mirrors classify folder strings that predate the rename and cannot
+   * reach `@trafficflow/core/mail`.
+   */
+  NEWS_FOLDER,
+  LEGACY_NEWS_FOLDER,
+  canonicalDestination,
+  isNewsFolder,
+  pileFolder,
+  /**
    * "IS THIS PATH THE MAILBOX'S SENT FOLDER" — the client mirrors' half of the folder vocabulary.
    *
    * Here for this leaf's whole reason: `packages/client-engine` has to tell the account's OWN
