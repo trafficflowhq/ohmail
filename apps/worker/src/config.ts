@@ -151,7 +151,13 @@ export interface WorkerConfig {
    * place this interface collapses two states on purpose, because `loadConfig` always writes one of the
    * two and a config assembled in code is a test seam, with no third thing "unfinished" could mean.
    */
-  entitlements?: { url: string; secret: string } | null;
+  entitlements?: {
+    url: string; secret: string;
+    /** Test-only, like the client's own `ttlMs`: `loadConfig` never writes it, so production
+     *  keeps `ACCESS_TTL_MS`. A worker e2e that flips an account's verdict mid-run needs the
+     *  flip observable inside its own budget rather than after a minute of cache. */
+    accessTtlMs?: number;
+  } | null;
   // accountId + mailboxId + imap are BOOTSTRAP-ONLY. The worker syncs ALL enabled mailboxes of ALL
   // accounts in its shard, reading credentials from `mailbox_credentials`. `accountId`
   // (`TF_ACCOUNT_ID`) CANNOT narrow the roster — it used to, and a stale production value would leave

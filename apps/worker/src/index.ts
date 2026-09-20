@@ -1150,7 +1150,10 @@ export async function startWorkerWithLock(
      * spend call sites are handed nothing and charge nothing. Composed UNCONDITIONALLY, before
      * any live model is: metering must exist before the spend does, not after. */
     const entitlements: EntitlementsComposition = config.entitlements
-      ? makeEntitlementsClient({ baseUrl: config.entitlements.url, secret: config.entitlements.secret })
+      ? makeEntitlementsClient({
+        baseUrl: config.entitlements.url, secret: config.entitlements.secret,
+        ...(config.entitlements.accessTtlMs !== undefined ? { ttlMs: config.entitlements.accessTtlMs } : {}),
+      })
       : UNMETERED;
     /** The spend half the call sites take — `undefined` where nothing meters. */
     const spend = isMetered(entitlements) ? entitlements : undefined;
