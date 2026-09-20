@@ -103,6 +103,7 @@
       "./plugins/wake-push-renderer",
       "./plugins/host-pinning-install",
       "./plugins/release-minification",
+      "./plugins/with-ios-scene-lifecycle",
       "./plugins/backup-exclusions"
     ],
     "locales": {
