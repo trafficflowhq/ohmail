@@ -1,5 +1,6 @@
 import { and, desc, eq, gt, sql } from "drizzle-orm";
-import { deleteAccount } from "@trafficflow/services";
+import { deleteAccount, withAccountTx } from "@trafficflow/services";
+import type { ServiceContext } from "@trafficflow/services";
 import { messages } from "@trafficflow/db";
 import type { ReleaseOutcome } from "@trafficflow/db";
 /* Hosted-only, like `internal.ts`'s cloud imports: `accountRoutes` is mounted by `routes/index.ts`
@@ -22,8 +23,9 @@ import type { Route } from "../router.js";
  * contract: the wall's read must never fail over its banner.
  */
 async function reopenedCatchUp(
-  deps: ApiDeps, accountId: string,
+  deps: ApiDeps, ctx: ServiceContext,
 ): Promise<{ since: string; count: number } | null> {
+  const accountId = ctx.accountId;
   try {
     const [closed] = await deps.db.select({ anchor: accountLifecycleNotices.anchor })
       .from(accountLifecycleNotices)
@@ -34,17 +36,20 @@ async function reopenedCatchUp(
       .orderBy(desc(accountLifecycleNotices.anchor))
       .limit(1);
     if (!closed) return null;
-    const inserted = await deps.db.insert(accountLifecycleNotices)
-      .values({ accountId, kind: "reopened", anchor: closed.anchor })
-      .onConflictDoNothing()
-      .returning();
+    // FENCED, like every session-holding writer of an account-owned row: a GET racing the
+    // caller's own erasure must not plant a notice after the Art. 17 sweep commits.
+    const inserted = await withAccountTx(ctx, async (tx) =>
+      tx.insert(accountLifecycleNotices)
+        .values({ accountId, kind: "reopened", anchor: closed.anchor })
+        .onConflictDoNothing()
+        .returning());
     if (inserted.length === 0) return null;
     const [row] = await deps.db.select({ n: sql<number>`count(*)::int` }).from(messages)
       .where(and(eq(messages.accountId, accountId), gt(messages.createdAt, closed.anchor)));
     return { since: closed.anchor.toISOString(), count: row?.n ?? 0 };
   } catch {
-    // A missing table (an API ahead of cloud 0040) or any read fault costs the banner, never
-    // the wall's read.
+    // A missing table (an API ahead of cloud 0040), a fenced refusal or any read fault costs
+    // the banner, never the wall's read.
     return null;
   }
 }
@@ -153,7 +158,7 @@ export const accountRoutes: Route[] = [
       // much arrived meanwhile. NO auto re-claim rides on this (DUAL-MODE §4): un-parking
       // resumes SYNC as reader, and organizing resumes per mailbox through the person's own
       // `POST /mailboxes/:id/organize` press.
-      const caughtUp = verdict.lifecycle ? await reopenedCatchUp(deps, ctx.accountId) : null;
+      const caughtUp = verdict.lifecycle ? await reopenedCatchUp(deps, ctx) : null;
       return json({
         metered: true,
         canAddMailbox: verdict.limits.canAddMailbox,
