@@ -939,11 +939,7 @@ export const auditLog = pgTable("audit_log", {
   payload: jsonb("payload"),
   inverse: jsonb("inverse"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-}, (t) => ({
-  // mail 0120 — the fixed-age retention prune (`retention.ts`) deletes by age; without this the
-  // hourly maintenance tick is a full scan of a table every workflow step and admin act grows.
-  ixCreatedAt: index("audit_log_created_at_idx").on(t.createdAt),
-}));
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Delta change-log. The single mechanism every client-visible

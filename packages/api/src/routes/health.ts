@@ -825,12 +825,6 @@ export const SCHEMA_INDEX_MARKERS: ReadonlyArray<string> = [
   // (`SCHEMA_FK_MARKERS`), which the CLOUD half of the same change — foreign keys and nothing
   // else — is what forced into existence.
   "messages_id_account_uq",
-  // mail 0120_change_log_retention. The silent class again: absent, the hourly audit_log
-  // retention prune's age-range DELETE is a sequential scan of a table every workflow step and
-  // admin act grows — no query wrong, every test green, the maintenance tick just stops being
-  // cheap. The migration's COLUMN marker (`account_sync_state.pruned_through_seq`) is the loud
-  // probe; this one covers its second statement.
-  "audit_log_created_at_idx",
 ];
 
 /**

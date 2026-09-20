@@ -3,11 +3,9 @@
 -- entities go; each live entity's FIRST row and the ohbox-tidy user-wins moves stay), so a
 -- resuming cursor at or below it cannot replay exactly and `GET /sync` answers 410
 -- cursor_expired -> re-bootstrap. Raised BEFORE any delete, monotone; 0 means nothing pruned,
--- which is the pre-migration truth for every account. The audit_log index makes the fixed-age
--- audit prune an indexed range scan, empty when nothing is due.
+-- which is the pre-migration truth for every account. The audit prune's index is NOT here: an
+-- index build on a growth table write-blocks it for the whole build and CONCURRENTLY cannot run
+-- in this transaction, so it lives in `packages/db/src/hot-path-indexes.ts`.
 -- ROLLBACK: ALTER TABLE account_sync_state DROP COLUMN pruned_through_seq;
---           DROP INDEX audit_log_created_at_idx.
 
 ALTER TABLE "account_sync_state" ADD COLUMN IF NOT EXISTS "pruned_through_seq" bigint NOT NULL DEFAULT 0;
---> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "audit_log_created_at_idx" ON "audit_log" ("created_at");

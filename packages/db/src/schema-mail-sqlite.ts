@@ -898,10 +898,7 @@ export const auditLog = sqliteTable("audit_log", {
   payload: text("payload", { mode: "json" }),
   inverse: text("inverse", { mode: "json" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
-}, (t) => ({
-  // mail 0120's twin — the pg side's retention-prune index, mirrored for schema parity.
-  ixCreatedAt: index("audit_log_created_at_idx").on(t.createdAt),
-}));
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Delta change-log. The single mechanism every client-visible

@@ -176,13 +176,6 @@
       "when": 1791328224222,
       "tag": "0039_screener_suggest_owed",
       "breakpoints": true
-    },
-    {
-      "idx": 25,
-      "version": "7",
-      "when": 1791328224223,
-      "tag": "0040_auth_events_at_idx",
-      "breakpoints": true
     }
   ]
 }

@@ -5,12 +5,12 @@ import {
 
 /**
  * The hot-path indexes, built CONCURRENTLY outside the migrator — `concurrent-index.ts` owns the
- * how, this file owns the WHICH. Three are built at any size: the profile-import "already
+ * how, this file owns the WHICH. Five are built at any size: the profile-import "already
  * resolved?" probe on `audit_log` (runs on every candidate, and an audit log only grows), the
  * storage-eviction victim read on `messages` (a Sort — no index offers `coalesce(date,
- * created_at), id` order), and the newest-first walk every list page and every sync-snapshot page
- * takes over the same table (a second Sort, on a different key). All three scan today, measured
- * with `EXPLAIN`.
+ * created_at), id` order), the newest-first walk every list page and every sync-snapshot page
+ * takes over the same table (a second Sort, on a different key), and the two retention prunes'
+ * age keys. The first three scan today, measured with `EXPLAIN`.
  */
 
 /**
@@ -29,6 +29,26 @@ export const HOT_PATH_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
     table: "audit_log",
     ddl: sql`create index concurrently if not exists "audit_log_account_action_idx"
       on public.audit_log using btree ("account_id","action")`,
+  },
+  {
+    // THE TWO RETENTION PRUNES' AGE KEYS, here rather than in a journal: a plain `CREATE INDEX`
+    // write-blocks a growth table for the whole build and CONCURRENTLY cannot run inside the
+    // migrator's transaction (25001) — the rule `migration-lock-cost.test.ts` enforces over both
+    // journals. Unconditional, both of them: a table that only ever grows is not the "might stay
+    // small" case the deferral protects. `retention.ts` deletes audit_log by `created_at`…
+    name: "audit_log_created_at_idx",
+    table: "audit_log",
+    ddl: sql`create index concurrently if not exists "audit_log_created_at_idx"
+      on public.audit_log using btree ("created_at")`,
+  },
+  {
+    // …and the login ledger by `at`. Neither `(user_id, at)` nor the reuse partial serves a bare
+    // age range. The cloud half lives in the same database; on one that has no `auth_events` yet
+    // the table probe defers it, like any other spec.
+    name: "auth_events_at_idx",
+    table: "auth_events",
+    ddl: sql`create index concurrently if not exists "auth_events_at_idx"
+      on public.auth_events using btree ("at")`,
   },
   {
     // `coalesce(date, created_at)` is the eviction order's own expression, so the index carries
