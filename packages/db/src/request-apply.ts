@@ -1015,9 +1015,11 @@ export async function exportPendingMovesOnStandDown(
     for (const row of rows) {
       if (row.dedupKey === null || row.dedupKey === "") { out.unmappable += 1; continue; }
       if (travelling.has(row.dedupKey)) { out.already += 1; continue; }
+      // Canonicalized: an intent written before the 0.22 rename desires `ohmail/Reads`, and
+      // reading it as "no word covers this" would strand the hand-over exactly where it matters.
       const destination = row.desiredFolder === trash && trash !== null
         ? "trash"
-        : DESTINATION_WORD.get(row.desiredFolder);
+        : DESTINATION_WORD.get(canonicalNewsSpelling(row.desiredFolder));
       if (destination === undefined) { out.unmappable += 1; continue; }
       await insertOrganizerRequest(tx, {
         id: input.mintId(),

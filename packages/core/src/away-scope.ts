@@ -95,9 +95,12 @@ export function readAwayPiles(v: unknown, door: AwayPilesDoor): AwayPilesReading
   const piles: string[] = [];
   for (const raw of v) {
     if (typeof raw !== "string") return { state: "unreadable", reason: "not_an_array" };
-    // The pre-0.22 spelling of the News pile means the News pile, whichever door: a stored
-    // scope or an older install's request must not narrow to "unreadable" over the rename.
-    const member = canonicalDestination(raw);
+    // The REQUEST door alone canonicalizes the News pile's pre-0.22 spelling: an older install's
+    // ask means the same pile. A DOCUMENT keeps its stored spelling — the v1/v2 canonical forms
+    // are frozen and fingerprinted over what the document SAYS, so rewriting a member here would
+    // change every old document's identity. Document consumers canonicalize at their own compare
+    // (`awayEligibility`, `awayEffectivePiles`), never the reader.
+    const member = door === "request" ? canonicalDestination(raw) : raw;
     if (door === "request" && !isAwayPile(member)) {
       return { state: "unreadable", reason: "not_a_member", member: raw };
     }
@@ -130,7 +133,10 @@ export function awayScopeFitsAudience(piles: readonly string[], audience: string
 export function awayEffectivePiles(
   piles: readonly string[], audience: string,
 ): readonly string[] {
-  return awayScopeFitsAudience(piles, audience)
-    ? piles
-    : piles.filter((p) => p !== AWAY_SCREENER_FOLDER);
+  // Canonicalized like the pass's own compare (`awayEligibility`): a stored scope from before
+  // the 0.22 rename spells the News pile the old way, and the surface must state what SENDS.
+  const canon = [...new Set(piles.map(canonicalDestination))];
+  return awayScopeFitsAudience(canon, audience)
+    ? canon
+    : canon.filter((p) => p !== AWAY_SCREENER_FOLDER);
 }
