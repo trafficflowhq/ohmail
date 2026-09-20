@@ -1041,12 +1041,12 @@ export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker>
      on a settings pane somebody is using. A database carrying `ohmail/News` carries every
      earlier member too. */
   ["away_responders_piles_closed", "ohmail/News"],
-  /* Mail 0105 — `clock_off`, so an install whose clock disagrees with its mail server says that
-     rather than reporting a folder it could not read. The needle MOVED from 0102's `read_limited`
-     rather than being added beside it: this is one constraint with one definition, and against a
-     0104 database the worker's `clock_off` write is refused by the old CHECK — which is the same
-     sentence the entry above it makes, one member on. */
-  ["mailboxes_sync_blocked_reason_closed", "clock_off"],
+  /* Mail 0124 — `account_closed`, the wall's park (the needle MOVED from 0105's `clock_off`,
+     which moved from 0102's `read_limited`: one constraint, one definition, and the newest member
+     is strictly the stronger probe — a database carrying it carries every earlier one). Against a
+     0123 database the roster's `account_closed` write is refused by the old CHECK, so a parked
+     mailbox reads as an ordinary connected one — the silence mail 0029 exists to remove. */
+  ["mailboxes_sync_blocked_reason_closed", "account_closed"],
   /* Mail 0103 — `mobile` joins the organizer kinds. TWO entries, because the kind reaches this
      table twice and the migration replaces BOTH constraints under their existing names, so a
      name-presence probe cannot tell an 0102 database from an 0103 one. What a missing entry costs
@@ -1075,7 +1075,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0123_news_pile_check";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0124_sync_blocked_reason_account_closed";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
