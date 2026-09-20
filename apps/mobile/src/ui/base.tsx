@@ -21,11 +21,14 @@ import {
   type TextStyle,
   type ViewStyle,
 } from "react-native";
+import { Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { topPad } from "./safe-area";
 import { useTheme, type Theme } from "../theme";
 import { MIN_SLOP, hitSlopFor } from "../theme/tokens";
 import { Icon, type IconName } from "./Icon";
+import { usePosture } from "./posture";
+import { listNavClearance, scaffoldPlan } from "./scaffold/plan";
 
 /* ------------------------------------------------------------------- text */
 
@@ -133,6 +136,11 @@ export function Scroller({
 }) {
   const t = useTheme();
   const insets = useSafeAreaInsets();
+  /* The flying nav's footprint, so the list insets from a side rail instead of running under it
+     (a closed foldable's rail, a landscape compact phone's left rail); a dock keeps its footer
+     clear as before. */
+  const plan = scaffoldPlan(usePosture(), Platform.OS === "ios" ? "ios" : "android");
+  const clr = listNavClearance(plan, t.space.tabClearance);
   return (
     <ScrollView
       {...rest}
@@ -150,8 +158,9 @@ export function Scroller({
       style={{ flex: 1 }}
       contentContainerStyle={[
         {
-          paddingHorizontal: t.space.deckCompact,
-          paddingBottom: t.space.tabClearance + insets.bottom,
+          paddingLeft: t.space.deckCompact + clr.left,
+          paddingRight: t.space.deckCompact + clr.right,
+          paddingBottom: clr.bottom + insets.bottom,
         },
         bounded ? { width: "100%", maxWidth: 640, alignSelf: "center" } : null,
         contentStyle,

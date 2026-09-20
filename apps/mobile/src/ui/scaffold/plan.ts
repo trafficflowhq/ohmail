@@ -63,6 +63,31 @@ const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.m
 
 export const RAIL_W = 62;
 
+/** What a one-pane list must reserve so the flying nav does not sit over its content. */
+export interface NavClearance {
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+/**
+ * The clearance a one-pane list scroller reserves for the flying navigation. The dock floats at
+ * the bottom, so the list keeps its footer clear (`dockClearance`, the caller's token). A rail
+ * hugs a side edge — a closed foldable's right rail, a compact-height landscape phone's left
+ * rail — so the list insets from THAT edge by the rail's own footprint (`RAIL_W + gutter`, the
+ * same room the two-pane scaffold leaves), or its rows run under the rail (dates and the
+ * Screener pill were clipped on the real Duo). The two-pane surfaces ("bars") reserve their own
+ * gutter in `AppScaffold`, so a list there asks for nothing here.
+ */
+export function listNavClearance(plan: ScaffoldPlan, dockClearance: number): NavClearance {
+  if (plan.nav === "rail") {
+    const w = RAIL_W + plan.gutter;
+    return { bottom: 0, left: plan.navSide === "left" ? w : 0, right: plan.navSide === "right" ? w : 0 };
+  }
+  if (plan.nav === "dock") return { bottom: dockClearance, left: 0, right: 0 };
+  return { bottom: 0, left: 0, right: 0 };
+}
+
 /**
  * The two panes' split along the plan's axis, in dp — the FIRST pane's size and the gap
  * between them. Row mode: list then reader, the list ending at the hinge when one crosses the
