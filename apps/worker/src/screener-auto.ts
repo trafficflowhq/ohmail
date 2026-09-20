@@ -6,8 +6,7 @@ import {
   migrationBulkPlacement, silentLogger,
   type Destination, type Logger, type NormalizedMessage,
 } from "@trafficflow/core";
-import { upsertDesiredFolder } from "./desired-intent.js";
-import { asRuleInput } from "./rule-input.js";
+import { ruleInputOf, upsertDesired } from "./rule-pass.js";
 
 /* SCREENER AUTO-APPLY — file the OBVIOUS bulk out of the Screener when the account opted in. The Screener
  * stays a consent gate for first-contact strangers; this OPT-IN clears the newsletters and receipts a
@@ -188,14 +187,14 @@ export async function screenerAutoApplyPass(
 
         // THE ONLY DETERMINISTIC JUDGMENT A STRANGER GETS: the strong-bulk floor. Null ⇒ keep (a
         // plain stranger, a relevant alert). No model call, no spend, computed from headers on disk.
-        const to = migrationBulkPlacement(asRuleInput(c, ""));
+        const to = migrationBulkPlacement(asRuleInput(c));
         if (to === null) { kept++; continue; }
 
         // ── SENSITIVITY KEEP — this is `pipeline.ts:563-567`. Drop it and a flagged strong-bulk row
         // moves; keeping it means a stranger's login code stays at the gate for a human. ──────────
         if (isSensitivityFlagged(c)) { sensitivityExcluded++; kept++; continue; }
 
-        await upsertDesiredFolder(tx, c, to, now());
+        await upsertDesired(tx, c, to, now());
         // The optimistic, user-wins `move` delta the client mirror converges on, carrying the TRUE
         // previous folder so a later undo needs nothing extra written.
         await recordChange(tx, {
@@ -378,4 +377,15 @@ async function selectCandidates(
   }));
 }
 
-
+/**
+ * The persisted row in the shape the router reads — sender, subject, headers, all on disk. No IMAP,
+ * no MIME re-parse. The body fields are empty because this pass feeds `migrationBulkPlacement`
+ * ONLY, which reads headers and the subject — it never runs `evaluateRules`, so `body_contains`
+ * (mail 0052) has no reader here and an empty `textBody` is the truth rather than a lie. That is
+ * a DIVERGENCE from the sibling passes' `asRuleInput` (`rule-retro.ts`, `ohbox-tidy.ts`,
+ * `sensitive-rescreen.ts`), which do evaluate rules and therefore read `message_bodies.text`
+ * back; if this pass ever grows a rule evaluation, thread the body in as they do.
+ */
+function asRuleInput(row: AutoRow): NormalizedMessage {
+  return ruleInputOf({ ...row, bodyText: "" });
+}

@@ -9,8 +9,7 @@ import {
 } from "@trafficflow/core";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
-import { upsertDesiredFolder } from "./desired-intent.js";
-import { asRuleInput } from "./rule-input.js";
+import { perMailboxAuthservTrust, ruleInputOf, upsertDesired } from "./rule-pass.js";
 
 /* APPLYING A NEW RULE TO MAIL ALREADY FILED — writes desired-state intent, never opens IMAP.
    The set is every message the mirror holds (`/sync` replays `change_log` from seq 0 in
@@ -198,18 +197,8 @@ export async function ruleRetroPass(
   const batch = deps.batch ?? RULE_RETRO_BATCH;
   const budget = deps.writesPerCycle ?? RULE_RETRO_WRITES_PER_CYCLE;
   const maxPages = deps.maxPages ?? RULE_RETRO_MAX_PAGES;
-  // Per-mailbox authserv trust, resolved at most once per mailbox per run. The value is
-  // configuration (which provider serves the mailbox), not row state, so caching across pages
-  // cannot go stale within a pass. The read is issued on the OUTER handle — it joins no page
-  // transaction and locks nothing a page holds; only its RESULT is used inside one.
-  const authservCache = new Map<string, ReadonlySet<string>>();
-  const trustFor = async (mailboxId: string): Promise<ReadonlySet<string>> => {
-    const hit = authservCache.get(mailboxId);
-    if (hit) return hit;
-    const ids = await deps.trustedAuthservIdsFor(db, mailboxId);
-    authservCache.set(mailboxId, ids);
-    return ids;
-  };
+  // Per-mailbox authserv trust, resolved once per mailbox — {@link perMailboxAuthservTrust}'s rule.
+  const trustFor = perMailboxAuthservTrust(db, deps.trustedAuthservIdsFor);
 
   // The owed set. `retro_requested_at IS NOT NULL AND retro_done_at IS NULL` is the ONE
   // definition of owed work — there is no queue and no second source of truth — and
@@ -338,7 +327,7 @@ export async function ruleRetroPass(
           if (result.moved + moved >= budget) { capped = true; break; }
 
           const decision = evaluateRules({
-            msg: asRuleInput(c, c.bodyText), rules, knownSenders: known,
+            msg: ruleInputOf(c), rules, knownSenders: known,
             auth: authVerdictFromHeaders(c.headers, c.fromAddress, await trustFor(c.mailboxId)),
             // LENIENT here, and deliberately: this pass acts ONLY on `source === "rule"` (below),
             // so the `people_only` demotion — which answers `source: "policy"` — could never change
@@ -366,7 +355,7 @@ export async function ruleRetroPass(
             continue;
           }
 
-          await upsertDesiredFolder(tx, c, to, now);
+          await upsertDesired(tx, c, to, now);
           // `meta` carries the TRUE previous desired folder, exactly as `sensitive-rescreen`
           // does. That single field is what makes a later undo possible without this pass
           // writing anything extra: the origin is durably recorded per message, in the journal
@@ -706,5 +695,4 @@ function matchPredicate(rule: OwedRule) {
   }
   return sql`false`;
 }
-
 
