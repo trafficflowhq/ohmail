@@ -13,6 +13,7 @@ import { bindApiOwner, blockApiOwner } from "./api-client";
 import { forgetOwner, markSignedOutPending } from "./shell/owner-cookie";
 import { SCREENER_INTENTS_PREFIX } from "./shell/screener-intents";
 import { DELETE_INTENTS_PREFIX } from "./shell/delete-intents";
+import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
 import { READING_ALONG_PREFIX } from "./shell/reading-along";
 import { SEND_LOCKS_PREFIX } from "./shell/send-lock";
 
@@ -129,6 +130,10 @@ export async function forgetThisBrowser(
     // next on this browser — a message deleted out of somebody else's mailbox because a previous
     // account pressed Backspace and closed the tab. See `delete-intents.ts`.
     DELETE_INTENTS_PREFIX,
+    // The ROUTING journal, for both of theirs: a held Move is a scheduled write against a
+    // mailbox — a rule that files a sender's future mail — and left behind it would be made on
+    // whoever signs in next. See `routing-intents.ts`.
+    ROUTING_INTENTS_PREFIX,
     COMPOSE_DRAFT_PREFIX,
     LEGACY_COMPOSE_DRAFT_KEY,
     // The compose session id, which names the message the scratch buffer holds. It goes with the

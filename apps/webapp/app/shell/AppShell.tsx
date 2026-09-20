@@ -29,6 +29,7 @@ import {
   ohboxView,
   resurfacedThreads,
   physicalFolderOf,
+  presentAt,
   presentationReader,
   feedPartition,
   receiptsByDay,
@@ -221,6 +222,9 @@ import {
 } from "./mail-state";
 /* Backspace/Delete → Trash, and the window in which it has not happened yet. See the module. */
 import { deleteKeyBindings, hideMessages, restoreDispatch, UNDO_MS, useDeleteIntentReplay, useDeleteUndo } from "./delete-undo";
+/* Move/File/Junk → the mail now, the sender's routing after the window. See the module. */
+import { useRoutingUndo } from "./routing-undo";
+import { createIntentWindows, intentWindowsChannel } from "./intent-windows";
 import { isModalOpen } from "./modal-gate";
 import { useStableCallback } from "./stable-callback";
 import { mailboxLabelKey, mailboxLabelResolver } from "./mailbox-label";
@@ -251,11 +255,14 @@ import {
   RETRO_DEFAULT_ON,
   dispatchScreeningChange,
   planScreeningChange,
+  screeningToast,
   senderScreening,
+  splitRoutingPlan,
   worstStatus,
   type ScreeningDest,
   type ScreeningPlan,
   type ScreeningScope,
+  type ScreeningToastKey,
 } from "./sender-screening";
 import { SubjectRuleSheet, type SubjectRuleState } from "./SubjectRuleSheet";
 import { planSubjectRule, subjectRuleContext, subjectRuleToast, type TermField } from "./subject-rule";
@@ -1515,6 +1522,42 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     }),
     [t],
   );
+  /**
+   * THE ROUTING VERBS' OWN WINDOW. Move, File and Junk write a sender's ROUTING, and no rule
+   * mutation has a wire inverse — so the mail moves at the press and the rule is HELD for
+   * `UNDO_MS`, cancelled by Undo, sent unchanged when the window closes. Demo excluded, for
+   * `useDeleteIntentReplay`'s reason.
+   */
+  /**
+   * ONE COORDINATOR ON ITS OWN CHANNEL. The journal is per ORIGIN, so a second tab's launch would
+   * otherwise commit a press this one is counting down and leave its Undo reporting success over
+   * a written rule. The channel is the Screener's SUFFIXED: a `BroadcastChannel` reaches every
+   * other channel object in the document, so two coordinators sharing a name would each answer
+   * the other's roll-call with rows it never heard of.
+   */
+  const routingWindows = useMemo(
+    () => (typeof BroadcastChannel === "undefined"
+      ? undefined
+      : createIntentWindows({ channel: `${intentWindowsChannel()}.routing` })),
+    [],
+  );
+  useEffect(() => () => routingWindows?.close(), [routingWindows]);
+  const routing = useRoutingUndo({
+    read: () => engine.read(),
+    /* THROUGH `fileAndRefresh`, LIKE EVERY OTHER FILING DISPATCH — a rule landing re-places the
+       sender's mail, so the filing strip's counts are stale until the facts are re-read. */
+    send: (m) => fileAndRefresh(engine.mutate(m)),
+    toast,
+    windows: routingWindows,
+    enabled: !demo,
+    copy: useMemo(() => ({
+      gone: t("screening.toastRuleSeedGone"),
+      expired: (count: number) => t("screening.toastRuleExpired", { count }),
+      correction: (key, note) =>
+        t(`screening.${key}`, { sender: note.sender, place: note.place, count: note.count }),
+    }), [t]),
+  });
+
 
   /**
    * THE REFUSAL, IN THE PERSON'S OWN LANGUAGE. `MutationRejectedError.message` is server English
@@ -1586,12 +1629,32 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     arm.fire();
     return true;
   });
-  const toastWithUndo = useStableCallback((sentence: string, inverses: readonly EngineMutation[]) => {
-    if (inverses.length === 0) { toast(sentence); return; }
+  /**
+   * AND A ROUTING PRESS TAKES BACK A SECOND THING, which is the one shape an inverse cannot
+   * carry: the rule it was about has not been sent yet, so Undo CANCELS it rather than reversing
+   * it (`routing-undo.ts`). `held.cancel` answers whether it actually took — a window that has
+   * already closed did not, and the sentence must not say "no rule was made" over a rule that
+   * was. Both halves ride ONE press, and `z` presses the same offer as the button.
+   */
+  const toastWithUndo = useStableCallback((
+    sentence: string,
+    inverses: readonly EngineMutation[],
+    held?: { cancel: () => boolean; undone: string },
+  ) => {
+    if (inverses.length === 0 && !held) { toast(sentence); return; }
     const fire = () => {
+      /* THE CANCEL GOES FIRST, and synchronously: the window is racing a timer, and a cancel
+         behind an awaited dispatch is a cancel that can lose to it. */
+      const cancelled = held ? held.cancel() : false;
+      if (inverses.length === 0) {
+        toast(cancelled && held ? held.undone : t("ohbox.toastUndoExpired"));
+        return;
+      }
       void Promise.all(inverses.map((mu) => dispatchPress(mu))).then((outs) => {
         const tally = tallyVerdicts(outs);
-        if (tally.applied > 0) { toast(t("ohbox.toastUndone")); return; }
+        /* THE MAIL CAME BACK. Only a cancel that TOOK may add "and no rule was made" — past the
+           window the rule is on its way and the honest sentence is the plain one. */
+        if (tally.applied > 0) { toast(cancelled && held ? held.undone : t("ohbox.toastUndone")); return; }
         if (tally.refused === 0 && organizerWaits(outs) > 0) { toast(queuedSentence(tally.holder)); return; }
         toast(refusalSentence(tally.firstRefusal));
       });
@@ -2013,8 +2076,15 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
        normal path pays nothing and keeps its memo identities. It is composed HERE and not into
        `reader` for `presentationReader`'s own reason: the mirror's reader is what every mutation,
        body open and search reads, and a delete that has not happened yet must still be there. */
-    () => hideMessages(consentView ? presentationReader(reader, consentView) : reader, deleting.held),
-    [reader, consentView, deleting.held],
+    /* …AND SHOWS A HELD ROUTING PRESS WHERE IT WAS FILED. A row's place comes from its sender's
+       rule, so a press whose rule is waiting out its undo window would move nothing on screen;
+       `presentAt` carries the named rows for the length of it and returns the reader unwrapped
+       the rest of the time, exactly as `hideMessages` does. */
+    () => presentAt(
+      hideMessages(consentView ? presentationReader(reader, consentView) : reader, deleting.held),
+      routing.places,
+    ),
+    [reader, consentView, deleting.held, routing.places],
   );
 
   /**
@@ -4694,9 +4764,23 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * second implementation of "move to a place" is what left the bulk arm writing folder moves
    * against the PRESENTED place — effectless, and its refusal discarded.
    */
+  /**
+   * What a Move press IS, in one shape: the plan, the name the sentence uses, the address the
+   * window's journal keeps, and the rows the press named. Named rather than inlined because both
+   * arms build it and one door consumes it — a second spelling is how the row that moves and the
+   * rule that is written come to be about different people.
+   */
+
+  interface RoutingPressPlan {
+    plan: ScreeningPlan;
+    who: string;
+    address: string;
+    named: string[];
+  }
+
   const planMoveToPlace = useStableCallback((
     seedId: string, view: OhmailView, only: ReadonlySet<string>,
-  ): { plan: ScreeningPlan; who: string } | null => {
+  ): RoutingPressPlan | null => {
     const sender = senderScreening(reader, seedId);
     if (!sender) return null;
     /* SENDER SCOPE AND NO RETRO: the press is about these messages, not a domain, and nobody
@@ -4740,7 +4824,75 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     const moved = decided ? planned.moved : named.length;
     /* The NAME on the row, and the address only when the row carries no name. */
     const who = sender.name && sender.name.trim() ? sender.name.trim() : displayAddress(sender.address);
-    return { plan: { ...planned, mutations, moved }, who };
+    /* AND WHO IT IS ABOUT, in the form the window's journal keeps: the address is what the
+       commit re-reads the ladder from, and the named ids are what the overlay shows moved. The
+       press does not re-derive either — a second derivation is how the row that moves and the
+       rule that is written come to be about different people. */
+    return { plan: { ...planned, mutations, moved }, who, address: sender.address, named: [...only] };
+  });
+
+  /** Whether a plan's routing half carries a Screener decision — see {@link fileThroughRouting}. */
+  const decidesAtGate = (plan: ScreeningPlan): boolean =>
+    splitRoutingPlan(plan).routing.some((mu) => mu.kind === "screener_decide");
+
+  /**
+   * ONE ROUTING PRESS — TWO HALVES AND ONE SENTENCE, and every Move arm comes through here. The
+   * MAIL moves now through the ordinary filing dispatch, with the engine's own reversal read off
+   * the mirror BEFORE it is sent. The ROUTING is HELD for the undo window (`routing-undo.ts`),
+   * one intent per SENDER, so a selection spanning six is six intents and ONE toast whose Undo
+   * takes back all of it. Nothing about a rule's wire changes; it is sent when the window closes,
+   * and only a differing answer earns a correction.
+   */
+  /**
+   * A PLAN CARRYING A `screener_decide` NEVER REACHES HERE, and that is not an omission: the
+   * Screener hides a decided sender from its queue through its OWN pending state, so a decision
+   * held here would leave that sender pressable at the gate for the length of the window — two
+   * consent records for one sender, the shape `screener-state.ts` refuses inside itself. The
+   * callers split those off onto the path they have always taken, with no Undo.
+   */
+  const fileThroughRouting = useStableCallback((input: {
+    plans: readonly RoutingPressPlan[];
+    view: OhmailView;
+    /** What the press says, in the caller's own vocabulary — one sentence for the whole press. */
+    sentence: string;
+    /** What Undo says once every held rule has been taken back. */
+    undone: string;
+  }): void => {
+    const place = PLACE_LABEL[input.view] ?? input.view;
+    /* ONE PRE-PRESS READ FOR THE WHOLE PRESS: the inverses name the state this press is about to
+       leave, and a read taken after the first dispatch would already describe the new one. */
+    const pre = engine.read();
+    const inverses: EngineMutation[] = [];
+    const subjects: string[] = [];
+    let lost = false;
+    for (const planned of input.plans) {
+      const { mail, routing: rules } = splitRoutingPlan(planned.plan);
+      for (const mu of mail) inverses.push(...inverseMutations(pre, mu));
+      for (const mu of mail) void fileAndRefresh(engine.mutate(mu));
+      if (rules.length === 0) continue;
+      const opened = routing.hold({
+        id: crypto.randomUUID(),
+        seedId: planned.named[0] ?? "",
+        address: planned.address,
+        dest: input.view as ScreeningDest,
+        messageIds: planned.named,
+        note: { sender: planned.who, place, count: planned.plan.moved },
+      });
+      if (opened.held) subjects.push(routing.subjectOf(planned.address));
+      else lost = true;
+    }
+    /* A JAR THAT REFUSED THE RECORD HAS ALREADY SENT THE RULE — and it refused for the BROWSER,
+       not for this press, so the whole sentence says the undo is not on offer rather than
+       offering one over the half that happened to land. `delete-undo.ts`'s degradation, same
+       words. */
+    if (lost) { toast(`${input.sentence} ${t("session.noUndoHere")}`); return; }
+    if (subjects.length === 0) { toastWithUndo(input.sentence, inverses); return; }
+    toastWithUndo(input.sentence, inverses, {
+      /* EVERY HELD SENDER, and `true` only if at least one window was still open: a press whose
+         windows have all closed took nothing back, and the sentence must not say otherwise. */
+      cancel: () => subjects.map((x) => routing.undo(x)).some(Boolean),
+      undone: input.undone,
+    });
   });
 
   const moveToPlace = useStableCallback((m: EngineMessage, view: OhmailView) => {
@@ -4750,14 +4902,30 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       toast(t("ohbox.moveGone"));
       return;
     }
-    const place = PLACE_LABEL[view] ?? view;
     /* NO EMPTY-PLAN SHORTCUT, deliberately: a plan with nothing in it dispatches nothing and
        `screeningToast` answers `toastAlreadyRuled` off `ruleState` alone, so the one path already
        speaks for the press that changes nothing. A branch here would be a second sentence on a
        state the strip's own filter makes all but unreachable — unwatchable, and the shape this
        arm shipped with. */
-    void dispatchScreeningChange(planned.plan, (mu) => fileAndRefresh(engine.mutate(mu))).then((key) => {
-      toast(t(`screening.${key}`, { sender: planned.who, place, count: planned.plan.moved }));
+    const place = PLACE_LABEL[view] ?? view;
+    const said = screeningToast(planned.plan, null);
+    const sentence = t(`screening.${said}`, {
+      sender: planned.who, place, count: planned.plan.moved,
+    });
+    /* A DECIDE KEEPS ITS OWN PATH — see `fileThroughRouting`'s note. Its sentence is the one the
+       server earned, awaited exactly as it always has been. */
+    if (decidesAtGate(planned.plan)) {
+      void dispatchScreeningChange(planned.plan, (mu) => fileAndRefresh(engine.mutate(mu)))
+        .then((key) => {
+          toast(t(`screening.${key}`, { sender: planned.who, place, count: planned.plan.moved }));
+        });
+      return;
+    }
+    fileThroughRouting({
+      plans: [planned],
+      view,
+      sentence,
+      undone: t("screening.toastRoutingUndone"),
     });
   });
 
@@ -5439,25 +5607,48 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       }
       const plans = [...bySender.values()]
         .map((picked) => planMoveToPlace(picked[0]!, view, new Set(picked)))
-        .filter((x): x is { plan: ScreeningPlan; who: string } => x !== null);
+        .filter((x): x is RoutingPressPlan => x !== null);
       if (plans.length === 0) {
         toast(t("ohbox.moveGone"));
         return false;
       }
       const place = PLACE_LABEL[view] ?? view;
-      /* ONE sentence for the press, raised when every sender's plan has answered — and the two
-         counts are what APPLIED, never what was picked. A sender whose rule the service refused
-         is not a sender whose mail goes there now. */
-      void Promise.all(plans.map((p) =>
-        dispatchScreeningChange(p.plan, (mu) => fileAndRefresh(engine.mutate(mu)))
-          .then((key) => ({ key, moved: p.plan.moved }))))
-        .then((answers) => {
-          const done = answers.filter((a) => a.key !== "toastRuleFailed");
-          const moved = done.reduce((n, a) => n + a.moved, 0);
-          toast(done.length === 0
-            ? t("ohbox.toastBulkMoveFailed")
-            : t("ohbox.toastBulkMovedSenders", { senders: done.length, count: moved, place }));
+      /* THE GATE'S OWN SENDERS KEEP THE PATH THEY HAVE ALWAYS TAKEN — `fileThroughRouting`'s
+         note says why a decision may not be held. A selection mixing the two is not one press
+         with two answers: the decided senders are dispatched and awaited as before, and the
+         rest ride the window. */
+      const decided = plans.filter((p) => decidesAtGate(p.plan));
+      const held = plans.filter((p) => !decidesAtGate(p.plan));
+      if (decided.length > 0) {
+        /* ONE sentence for these, raised when every one of them has answered — and the two
+           counts are what APPLIED, never what was picked. A sender whose rule the service
+           refused is not a sender whose mail goes there now. */
+        void Promise.all(decided.map((p) =>
+          dispatchScreeningChange(p.plan, (mu) => fileAndRefresh(engine.mutate(mu)))
+            .then((key) => ({ key, moved: p.plan.moved }))))
+          .then((answers) => {
+            const done = answers.filter((a) => a.key !== "toastRuleFailed");
+            const moved = done.reduce((n, a) => n + a.moved, 0);
+            toast(done.length === 0
+              ? t("ohbox.toastBulkMoveFailed")
+              : t("ohbox.toastBulkMovedSenders", { senders: done.length, count: moved, place }));
+          });
+      }
+      if (held.length > 0) {
+        /* AND THE REST SPEAK AT THE PRESS, because their rules have not been sent: the counts
+           are what this press NAMED, and the window corrects the sentence per sender if the
+           server has something to say when it closes. */
+        fileThroughRouting({
+          plans: held,
+          view,
+          sentence: t("ohbox.toastBulkMovedSenders", {
+            senders: held.length,
+            count: held.reduce((n, p) => n + p.plan.moved, 0),
+            place,
+          }),
+          undone: t("screening.toastRoutingUndone"),
         });
+      }
       return true;
     },
   );

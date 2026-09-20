@@ -462,6 +462,35 @@ export function planScreeningChange(
 }
 
 /**
+ * THE TWO HALVES OF A ROUTING PRESS, and the split is what makes the press reversible. The MAIL
+ * half is the plan's `move`s, which the engine reverses off the mirror, so they go now and the
+ * reader sees their mail arrive. The ROUTING half is the rule and the decide — no wire inverse
+ * between them — so it is HELD and sent unchanged when the window closes.
+ */
+/**
+ * Split by IDENTITY, not by kind: `ruleMutations` is an identity-shared prefix of `mutations`, so
+ * the two readings cannot disagree about what was dispatched — `dispatchScreeningChange`'s own
+ * property. A member that is none of the three goes to the ROUTING half: the conservative
+ * direction, because a new member with no inverse would otherwise be offered an Undo.
+ */
+export interface RoutingSplit {
+  /** Dispatched at the press. The engine reverses these. */
+  mail: EngineMutation[];
+  /** Held for the window, then dispatched in the planner's own order. */
+  routing: EngineMutation[];
+}
+
+export function splitRoutingPlan(plan: ScreeningPlan): RoutingSplit {
+  const mail: EngineMutation[] = [];
+  const routing: EngineMutation[] = [];
+  for (const m of plan.mutations) {
+    if (m.kind === "move" && !plan.ruleMutations.includes(m)) mail.push(m);
+    else routing.push(m);
+  }
+  return { mail, routing };
+}
+
+/**
  * Which sentence the shell is allowed to say, given what the server actually answered. Here and not
  * in `AppShell` for `RulesView`'s reason: a shell that must remember to branch on three statuses
  * can ship two — the rules surface's first cut printed "Rule revoked" over a 403 on a live account,

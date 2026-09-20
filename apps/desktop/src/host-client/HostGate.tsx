@@ -31,6 +31,8 @@ import { dropLocalStorageKeys, type LocalSweep } from "../../../webapp/app/shell
 import { COMPOSE_DRAFT_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "../../../webapp/app/shell/compose";
 import { REPLY_DRAFT_PREFIX, REPLY_META_PREFIX } from "../../../webapp/app/shell/mail-send";
 import { SCREENER_INTENTS_PREFIX } from "../../../webapp/app/shell/screener-intents";
+import { DELETE_INTENTS_PREFIX } from "../../../webapp/app/shell/delete-intents";
+import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
 import { SEND_LOCKS_PREFIX } from "../../../webapp/app/shell/send-lock";
 import { setStorageOwner } from "../../../webapp/app/shell/storage-owner";
 /* A type-only leaf (see `store-windows.ts`'s header): importing the constant costs this bundle
@@ -70,6 +72,11 @@ export const HOST_SCRATCH_PREFIXES: readonly string[] = [
   LEGACY_COMPOSE_DRAFT_KEY,
   SEND_LOCKS_PREFIX,
   SCREENER_INTENTS_PREFIX,
+  // The two journals beside it, and the delete one was MISSING: each is a scheduled write
+  // against a mailbox, owner-keyed, and a pairing that ends without them leaves a delete or a
+  // filing rule to be carried out for whoever pairs this browser next.
+  DELETE_INTENTS_PREFIX,
+  ROUTING_INTENTS_PREFIX,
   REPLY_DRAFT_PREFIX,
   REPLY_META_PREFIX,
 ];
