@@ -74,7 +74,7 @@ export const AWAY_NOTICE_COPY = {
    * pile needs one word and no new sentence.
    */
   noticePileOhbox: "in Ohbox",
-  noticePileReads: "in Reads",
+  noticePileReads: "in News",
   noticePileReceipts: "in Receipts",
   noticePileScreener: "in the Screener",
   /**
