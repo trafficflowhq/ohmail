@@ -12,6 +12,7 @@ import type {
   // default barrel re-exports the model half beside it — so naming it here would put the
   // classifier and the drafter into the import graph of every artifact that stores a message.
 } from "../mail.js";
+import { canonicalDestination } from "../types.js";
 import type { NormalizedMessage } from "../types.js";
 import {
   unhuskJunkFiledBody as unhuskJunkFiledBodyTx,
@@ -1708,7 +1709,9 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         asc(rulesTbl.id),
       );
     return rows.map((r) => {
-      const destination = r.destination as Rule["destination"];
+      // The cast is where a stored pre-0.22 `ohmail/Reads` row would smuggle a non-member into
+      // `Destination`: canonicalized here, every reader downstream sees one spelling.
+      const destination = canonicalDestination(r.destination) as Rule["destination"];
       return {
         id: r.id, kind: r.kind as Rule["kind"], match: r.match,
         destination,

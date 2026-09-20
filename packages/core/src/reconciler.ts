@@ -1,4 +1,5 @@
 import { permitsAdoption, type FolderStateRow, type MoveEvidence } from "./ports.js";
+import { canonicalDestination } from "./types.js";
 
 export type ReconcileAction =
   | { type: "none" }
@@ -31,8 +32,11 @@ export type ReconcileAction =
 export function reconcile(
   state: FolderStateRow, observedNow: string, evidence: MoveEvidence,
 ): ReconcileAction {
-  if (observedNow === state.desiredFolder) return { type: "none" };
-  if (observedNow !== state.observedFolder && permitsAdoption(evidence)) {
+  // Both spellings of the News pile are ONE place: a desired row written before the 0.22
+  // rename says `ohmail/Reads` while a fresh observation says `ohmail/News` — converged, not a
+  // move (the adapter would land it on the same physical folder anyway).
+  if (canonicalDestination(observedNow) === canonicalDestination(state.desiredFolder)) return { type: "none" };
+  if (canonicalDestination(observedNow) !== canonicalDestination(state.observedFolder) && permitsAdoption(evidence)) {
     return { type: "adopt_external", newDesired: observedNow };
   }
   return { type: "move", to: state.desiredFolder };

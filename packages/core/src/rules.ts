@@ -250,7 +250,7 @@ export function effectForDestination(destination: Destination): RuleEffect {
     case "ohmail/Quarantine":
       return "deny";
     case "INBOX":
-    case "ohmail/Reads":
+    case "ohmail/News":
     case "ohmail/Receipts":
       return "allow";
     default: {
@@ -738,7 +738,7 @@ function hasStrongBulkFloor(headers: Readonly<Record<string, unknown>>): boolean
  */
 export function migrationBulkPlacement(msg: NormalizedMessage): Destination | null {
   if (!hasStrongBulkFloor(msg.headers)) return null;
-  return isMoneySubject(msg.subject) ? "ohmail/Receipts" : "ohmail/Reads";
+  return isMoneySubject(msg.subject) ? "ohmail/Receipts" : "ohmail/News";
 }
 
 /**
@@ -1315,7 +1315,7 @@ function headerHeuristic(msg: NormalizedMessage): RuleDecision | null {
   // an automated message with no bulk marker and no money subject stays `unclear`, for the AI and
   // the account's Ohbox bar to weigh for RELEVANCE — the judgement header shape cannot make.
   if (isBulkSend(msg.headers)) {
-    return { destination: "ohmail/Reads", matchedRuleId: null, source: "header" };
+    return { destination: "ohmail/News", matchedRuleId: null, source: "header" };
   }
   return null;
 }

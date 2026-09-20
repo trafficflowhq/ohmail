@@ -79,6 +79,9 @@ import {
   type FolderSweepFence, type FolderSweepResult, type FolderDeleteOutcome,
   JUNK_BY_NAME, TRASH_BY_NAME, type SpecialFolders,
 } from "./imap-types.js";
+// The News pile's resolver (0.22): the adapter is the one place canonical names meet the live
+// tree, so `toServerPath` routes both spellings onto the folder the mailbox actually has.
+import { NEWS_FOLDER, LEGACY_NEWS_FOLDER, canonicalDestination, pileFolder } from "../types.js";
 // The SSRF gate's other half. `pinned-fetch.ts` owns it because a pin and a gate are one
 // mechanism (its header says so); this file is the mail-leg consumer — see `ImapConfig.pin`.
 import { pinnedLookup } from "../net/pinned-lookup.js";
@@ -889,6 +892,16 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   private delimiter = "/";
   private sentFolder: string | null = null;
   /**
+   * Where the News pile physically lives on THIS mailbox — `ohmail/News`, or the legacy
+   * `ohmail/Reads` on a mailbox the organizer has not renamed yet. Re-derived from every LIST
+   * (`learnPassiveFolders`) through `pileFolder`, consumed by `toServerPath`, so every select,
+   * scan, move and append reaches the pile whichever name the server still has.
+   */
+  private newsPhysical: string = NEWS_FOLDER;
+  /** What the last `ensureFolders` did about the News folder name — the cells' reading. */
+  private newsRename: { acted: "renamed" | "merged" | "none"; refused: string | null } =
+    { acted: "none", refused: null };
+  /**
    * The Sent path resolved by NAME for reads, memoised — see {@link findSentForScan}.
    *
    * Separate from {@link sentFolder} because that field is where the SEND path appends, and a
@@ -1331,9 +1344,49 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   }
 
   async ensureFolders(): Promise<void> {
-    const list = await this.listBounded();
+    let list = await this.listBounded();
     this.sentFolder = this.findSent(list);
     this.learnPassiveFolders(list);
+    /**
+     * THE ONE-TIME News RENAME (0.22) — an organizer act: `ensureFolders` runs only under the
+     * lease (the worker gates on role, the sidecar on `organizing`/`permitted`), so a reader
+     * install can never reach this. Reads-and-no-News is one atomic server RENAME; both present
+     * (a user-made News folder, or a rename a crash left half-recorded) is a sweep into News and
+     * a DELETE that `deleteFolderByPath` authorizes only against an empty, unchanged fence. Any
+     * refusal or throw leaves the mailbox exactly as found — `newsPhysical` still says Reads, so
+     * every read and filing keeps working, and the next cycle retries. A ceiling breach is the
+     * one thing that propagates: swallowing it here would re-pay it every cycle (`imap-bounds.ts`).
+     */
+    this.newsRename = { acted: "none", refused: null };
+    const canon = new Set(list.map((f) => this.toCanonical(f.path)));
+    const at = (c: string): string | null =>
+      canon.has(c) ? c : (canon.has(`INBOX/${c}`) ? `INBOX/${c}` : null);
+    const readsAt = at(LEGACY_NEWS_FOLDER);
+    const newsAt = at(NEWS_FOLDER);
+    if (readsAt !== null) {
+      try {
+        if (newsAt === null) {
+          const dst = readsAt.startsWith("INBOX/") ? `INBOX/${NEWS_FOLDER}` : NEWS_FOLDER;
+          await this.client.mailboxRename(this.toServerPathRaw(readsAt), this.toServerPathRaw(dst));
+          this.newsRename = { acted: "renamed", refused: null };
+        } else {
+          const swept = await this.moveAllByPath(this.toServerPathRaw(readsAt), this.toServerPathRaw(newsAt));
+          const outcome = await this.deleteFolderByPath(this.toServerPathRaw(readsAt), swept.fence);
+          if (outcome === "deleted" || outcome === "already") {
+            this.newsRename = { acted: "merged", refused: null };
+          } else {
+            // Mail moved through the window, or the fence could not be read: Reads stays until a
+            // cycle sees it empty and unchanged. The sweep itself already landed in News.
+            this.newsRename = { acted: "none", refused: `delete_${outcome}` };
+          }
+        }
+        list = await this.listBounded();
+        this.learnPassiveFolders(list); // the tree moved — re-derive `newsPhysical` from it
+      } catch (err) {
+        if (err instanceof ImapBoundExceeded) throw err;
+        this.newsRename = { acted: "none", refused: String((err as Error).message ?? err) };
+      }
+    }
     /**
      * A prefixed server's own folders are ours, and used to be invisible: on a personal-namespace
      * server `toServerPath("ohmail/Reads")` is `ohmail.Reads` while the LIST row reads
@@ -1345,6 +1398,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
      */
     const namespaces = personalNamespacesOf(this.client as unknown as MetaNamespaceSource);
     for (const canonical of OHMAIL_FOLDERS) {
+      // The pile still lives at the legacy name (the rename above was refused): creating
+      // `ohmail/News` beside it would fork the tree. The resolver reaches Reads meanwhile.
+      if (canonical === NEWS_FOLDER && this.newsPhysical !== NEWS_FOLDER) continue;
       /* `const`: the CREATE address is the adapter's own spelling and nothing may re-point it.
          A mutable binding here is the shape the defect had — `path = at.path` — so the next
          person to reach for it has to change the declaration first and think about why. */
@@ -1381,6 +1437,15 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         if (!/already exists/i.test(String((err as Error).message))) throw err;
       }
     }
+  }
+
+  /**
+   * The News rename as this connection saw it: where the pile physically lives, and what the
+   * last `ensureFolders` did or refused (`refused` carries the server's own words). Read by the
+   * rename cells and by anything that wants to surface a mailbox stuck on the legacy name.
+   */
+  newsFolderReport(): { physical: string; acted: "renamed" | "merged" | "none"; refused: string | null } {
+    return { physical: this.newsPhysical, ...this.newsRename };
   }
 
   // ---- FolderScanner (HEY migration folder-scan, §16) ----
@@ -1497,7 +1562,11 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * answer). The residual, stated: a delivery between the EXAMINE and the DELETE is still taken.
    */
   async deleteFolder(canonical: string, fence: FolderSweepFence | null): Promise<FolderDeleteOutcome> {
-    const path = this.toServerPath(canonical);
+    return this.deleteFolderByPath(this.toServerPath(canonical), fence);
+  }
+
+  /** {@link deleteFolder} on a SERVER path — the News merge's half, where resolving would re-point the source. */
+  private async deleteFolderByPath(path: string, fence: FolderSweepFence | null): Promise<FolderDeleteOutcome> {
     const list = await this.listBounded();
     if (!list.some((f) => f.path === path)) return "already";
     if (fence === null) return "unverified";
@@ -1535,8 +1604,11 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * deleteFolder} is authorized against that and nothing else.
    */
   async moveAll(folder: string, toFolder: string): Promise<FolderSweepResult> {
-    const src = this.toServerPath(folder);
-    const dst = this.toServerPath(toFolder);
+    return this.moveAllByPath(this.toServerPath(folder), this.toServerPath(toFolder));
+  }
+
+  /** {@link moveAll} on SERVER paths — the News merge's sweep, where resolving would collapse src and dst. */
+  private async moveAllByPath(src: string, dst: string): Promise<FolderSweepResult> {
     let lock: { release(): void };
     try {
       lock = await this.bounded(this.client.getMailboxLock(src));
@@ -1883,6 +1955,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * authority.
    */
   private learnPassiveFolders(list: ListResponse[]): void {
+    // Every LIST re-answers where the News pile lives (prefix stripped: a personal-namespace
+    // server files ours under INBOX, and the pile question is the same subtree either way).
+    this.newsPhysical = pileFolder(NEWS_FOLDER, list.map((e) => {
+      const c = this.toCanonical(e.path);
+      return c.startsWith("INBOX/") ? c.slice("INBOX/".length) : c;
+    }));
     const sent = this.sentFolder ?? this.scanSentFolder;
     // The ceiling bounds SELECTS PER CYCLE, not folders — see {@link DEFAULT_PASSIVE_FOLDERS_MAX}.
     // With LIST-STATUS a settled folder costs nothing at all, so the number that applies is the high
@@ -2110,7 +2188,18 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     return parent.toUpperCase() === "INBOX";
   }
 
+  /**
+   * Canonical → server path with the News pile RESOLVED: both spellings of the pile land on the
+   * folder this mailbox actually has (`newsPhysical`), so a not-yet-renamed mailbox keeps
+   * working and a stored legacy name still addresses the renamed folder. The rename act itself
+   * uses {@link toServerPathRaw} — resolving there would collapse its source and destination.
+   */
   toServerPath(canonical: string): string {
+    const resolved = canonicalDestination(canonical) === NEWS_FOLDER ? this.newsPhysical : canonical;
+    return this.toServerPathRaw(resolved);
+  }
+
+  private toServerPathRaw(canonical: string): string {
     if (canonical.toUpperCase() === "INBOX") return "INBOX";
     if (this.delimiter === "/") return canonical;
     return canonical.split("/").join(this.delimiter);

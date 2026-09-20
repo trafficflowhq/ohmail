@@ -1,6 +1,7 @@
 import {
   counterpartyEvidence, type CounterpartyEvidence, type CounterpartyMessage,
 } from "@trafficflow/core/sender-headers";
+import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/folder-name";
 import type { EntityReader } from "./store.js";
 import { ownAddressKeys } from "./own-address.js";
 import { isOwnSent, isResurfaced, messagesByDateDesc, rulesList, senderKey } from "./selectors.js";
@@ -27,8 +28,10 @@ import type { EngineMessage, Folder, RuleDTO } from "./types.js";
 export const DEFAULT_DORMANCY_DAYS = 60;
 
 /** Every folder the product presents. Anything else — a Sent folder, a user's own tree — is not a place. */
-const KNOWN_FOLDERS: ReadonlySet<string> = new Set<Folder>([
-  "INBOX", "ohmail/Screener", "ohmail/Reads", "ohmail/Receipts", "ohmail/Screened", "ohmail/Quarantine",
+const KNOWN_FOLDERS: ReadonlySet<string> = new Set<string>([
+  "INBOX", "ohmail/Screener", "ohmail/News", "ohmail/Receipts", "ohmail/Screened", "ohmail/Quarantine",
+  // Rows and rules written before the 0.22 folder rename still spell the News pile the old way.
+  LEGACY_NEWS_FOLDER,
 ]);
 
 /**
@@ -47,8 +50,10 @@ const UNDECIDED_RESIDENCES: ReadonlySet<string> = new Set<Folder>(["INBOX", "ohm
  * and Quarantine are the opposite, so a rule pointing at them is a decision that is not
  * consent, and the thread rule below must not treat it as one.
  */
-const CONSENTING_DESTINATIONS: ReadonlySet<string> = new Set<Folder>([
-  "INBOX", "ohmail/Reads", "ohmail/Receipts",
+const CONSENTING_DESTINATIONS: ReadonlySet<string> = new Set<string>([
+  "INBOX", "ohmail/News", "ohmail/Receipts",
+  // The pre-0.22 spelling: a rule filed to the News pile was consent then and stays consent.
+  LEGACY_NEWS_FOLDER,
 ]);
 
 export type SenderActivity = "active" | "dormant";

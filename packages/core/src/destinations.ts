@@ -10,5 +10,8 @@
  */
 export {
   DESTINATIONS, isOrganizedFolder, retroPassWouldMove,
+  // The News pile's resolver family (0.22) — same leaf, same reason: mirrors and views classify
+  // folder strings that predate the rename and cannot load the barrel.
+  NEWS_FOLDER, LEGACY_NEWS_FOLDER, canonicalDestination, isNewsFolder, pileFolder,
   type Destination, type RetroCandidateRow,
 } from "./types.js";

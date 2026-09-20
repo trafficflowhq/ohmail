@@ -30,7 +30,7 @@ export const DEMO_NOW = new Date("2026-07-29T12:00:00.000Z");
 
 const FIXTURE_FOLDER: Record<MessageFixture["folder"], Folder> = {
   ohbox: "INBOX",
-  reads: "ohmail/Reads",
+  reads: "ohmail/News",
   receipts: "ohmail/Receipts",
 };
 

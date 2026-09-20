@@ -4,10 +4,14 @@
  * pass decides with them, and the settings control and Ohbox banner DISPLAY with them — that file
  * imports `node:crypto` for {@link awayTextHash}, and the barrel is worse, conveying the whole
  * package's import closure into the published desktop artifact. So the vocabulary lives in a leaf
- * with NO imports, exported as `@trafficflow/core/away-scope`; `away-eligibility.ts` imports it,
- * which makes the set the engine refuses and the set the control offers the same object rather
- * than two lists that agree today.
+ * whose only import is the import-free `types.ts` (the exports map carries the `node` condition
+ * that relative import requires), exported as `@trafficflow/core/away-scope`;
+ * `away-eligibility.ts` imports it, which makes the set the engine refuses and the set the
+ * control offers the same object rather than two lists that agree today.
  */
+
+// Stored scopes and old installs still say `ohmail/Reads`; both spellings are the News pile.
+import { canonicalDestination } from "./types.js";
 
 /** Where a first-contact stranger waits. Its own name because two rules read it by name. */
 export const AWAY_SCREENER_FOLDER = "ohmail/Screener";
@@ -23,7 +27,7 @@ export const AWAY_SCREENER_FOLDER = "ohmail/Screener";
  * a pile the engine refuses appears to save and changes nothing.
  */
 export const AWAY_ANSWERABLE_PILES = [
-  "INBOX", "ohmail/Reads", "ohmail/Receipts", AWAY_SCREENER_FOLDER,
+  "INBOX", "ohmail/News", "ohmail/Receipts", AWAY_SCREENER_FOLDER,
 ] as const;
 
 export type AwayPile = (typeof AWAY_ANSWERABLE_PILES)[number];
@@ -50,7 +54,7 @@ export function isAwayPile(v: unknown): v is AwayPile {
  */
 export const AWAY_PILE_VIEW: Readonly<Record<AwayPile, "ohbox" | "reads" | "receipts" | "screener">> = {
   "INBOX": "ohbox",
-  "ohmail/Reads": "reads",
+  "ohmail/News": "reads",
   "ohmail/Receipts": "receipts",
   "ohmail/Screener": "screener",
 };
@@ -89,10 +93,13 @@ export function readAwayPiles(v: unknown, door: AwayPilesDoor): AwayPilesReading
   if (v === undefined || v === null) return { state: "unstated" };
   if (!Array.isArray(v)) return { state: "unreadable", reason: "not_an_array" };
   const piles: string[] = [];
-  for (const member of v) {
-    if (typeof member !== "string") return { state: "unreadable", reason: "not_an_array" };
+  for (const raw of v) {
+    if (typeof raw !== "string") return { state: "unreadable", reason: "not_an_array" };
+    // The pre-0.22 spelling of the News pile means the News pile, whichever door: a stored
+    // scope or an older install's request must not narrow to "unreadable" over the rename.
+    const member = canonicalDestination(raw);
     if (door === "request" && !isAwayPile(member)) {
-      return { state: "unreadable", reason: "not_a_member", member };
+      return { state: "unreadable", reason: "not_a_member", member: raw };
     }
     if (!piles.includes(member)) piles.push(member);
   }

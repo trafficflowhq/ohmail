@@ -326,7 +326,7 @@ export const CAP_CONFIDENCE = 0.9;
 /** The ceiling a soft signal leaves on an ADMITTING pile: below any surface's "believe this". */
 export const SOFT_CEILING = 0.5;
 /** The piles a soft cap bounds — the three that carry mail towards the reader. */
-const ADMITTING: readonly Destination[] = ["INBOX", "ohmail/Reads", "ohmail/Receipts"];
+const ADMITTING: readonly Destination[] = ["INBOX", "ohmail/News", "ohmail/Receipts"];
 
 /**
  * THE FACTS CAP THE ANSWER. A forged sender, one subject from a crowd of strangers, or a failed

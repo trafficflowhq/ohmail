@@ -39,20 +39,24 @@ export interface ComposeAttachment {
  * These five strings are the most durable copy the product writes: created
  * inside the customer's own mailbox, rendered by every client, forever —
  * including after the customer leaves. Renamed to `ohmail/…` on 2026-07-31
- * while zero real mailboxes were connected; changing them again is an IMAP
- * data migration, not an edit. Never render a raw folder string: map
- * through `VIEW_OF_FOLDER`, and fall back to `folderLeaf()` for a folder
- * this client does not know (contract §8).
+ * while zero real mailboxes were connected; changing one again IS an IMAP
+ * data migration — the 0.22 News rename did it, with the organizer renaming
+ * on its next pass and both spellings admitted meanwhile. Never render a raw
+ * folder string: map through `VIEW_OF_FOLDER`, and fall back to
+ * `folderLeaf()` for a folder this client does not know (contract §8).
  */
 export type Folder =
   | "INBOX"
   | "ohmail/Screener"
-  | "ohmail/Reads"
+  | "ohmail/News"
   | "ohmail/Receipts"
   | "ohmail/Screened"
   | "ohmail/Quarantine";
 
 import type { KnownMirrorEntityType } from "./mirror-bounds.js";
+// The News pile's pre-0.22 folder name: mirror rows written before the organizer renamed the
+// folder still carry it, so the view map admits both spellings (`VIEW_OF_FOLDER` below).
+import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/folder-name";
 
 export type ChangeOp = "create" | "update" | "move" | "delete";
 
@@ -927,7 +931,7 @@ export type OhmailView = "ohbox" | "reads" | "receipts" | "screener" | "screened
 
 export const FOLDER_OF_VIEW: Record<OhmailView, Folder> = {
   ohbox: "INBOX",
-  reads: "ohmail/Reads",
+  reads: "ohmail/News",
   receipts: "ohmail/Receipts",
   screener: "ohmail/Screener",
   screened: "ohmail/Screened",
@@ -958,9 +962,12 @@ export function folderLeaf(folder: string): string {
  */
 export type ScreenDest = Exclude<OhmailView, "screener">;
 
-export const VIEW_OF_FOLDER: Record<Folder, OhmailView> = {
+export const VIEW_OF_FOLDER: Record<Folder | typeof LEGACY_NEWS_FOLDER, OhmailView> = {
   "INBOX": "ohbox",
-  "ohmail/Reads": "reads",
+  "ohmail/News": "reads",
+  // Rows written before the 0.22 folder rename: both spellings are the News pile, and admitting
+  // the legacy key HERE keeps every lookup site whole on a mailbox the organizer has not renamed.
+  [LEGACY_NEWS_FOLDER]: "reads",
   "ohmail/Receipts": "receipts",
   "ohmail/Screener": "screener",
   "ohmail/Screened": "screened",

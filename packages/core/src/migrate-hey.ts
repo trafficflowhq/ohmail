@@ -70,7 +70,7 @@ export function defaultFolderMapper(serverFolder: string): Destination | null {
   if (/spam|junk|quarantine/i.test(leaf)) return "ohmail/Quarantine";
   if (/screen/i.test(leaf)) return "ohmail/Screened";
   if (/receipt|invoice|order|billing|paper\s*trail|statement|purchase/i.test(leaf)) return "ohmail/Receipts";
-  if (/feed|news|newsletter|bulk|promo|marketing|updates?|social|notif/i.test(leaf)) return "ohmail/Reads";
+  if (/feed|news|newsletter|bulk|promo|marketing|updates?|social|notif/i.test(leaf)) return "ohmail/News";
 
   // Unknown user folder → no inferable intent → skip.
   return null;
