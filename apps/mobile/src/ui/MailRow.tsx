@@ -183,7 +183,12 @@ export function MailRow({
   if (swipe !== true) return row;
 
   return (
-    <View>
+    /* THE CLIP LIVES HERE, on the box that does NOT move. A translated view clipped to its own
+       bounds clips nothing — the bounds travel with it — so `overflow: "hidden"` on the pan
+       handlers' own view left the row drawn over the page and cut by the SCREEN edge. This
+       parent stands still, at the row's own box inside the card, so the row disappears into the
+       list's edge the way a list row should. */
+    <View style={{ borderRadius: t.radius.row, overflow: "hidden" }}>
       {/* WHAT IS UNDER THE ROW — the verb the drag is landing on, on the side it came from, so
           the gesture names itself before it commits. Behind the row and never over it: an
           overlay would take the tap that opens the message. */}
@@ -191,9 +196,17 @@ export function MailRow({
         <SwipeFace side="leading" label={faceLabel(face)} icon={face === "markUnread" ? "x" : "check"} pan={pan} />
         <SwipeFace side="trailing" label={Copy.actionLater} icon="clock" pan={pan} />
       </View>
+      {/* AND THE ROW IS A SURFACE, not a transparent hole. Every list that offers the gesture
+          rests its rows on `Panel`'s l1, so the row carries that same token: without it the verb
+          behind is drawn straight through the sender and the subject and the two sentences
+          overlap while the drag is open. The press wash still paints over it (`TapRow`). */}
       <Animated.View
         {...responder.panHandlers}
-        style={{ transform: [{ translateX: pan.x }] }}
+        style={{
+          backgroundColor: t.c.panel,
+          borderRadius: t.radius.row,
+          transform: [{ translateX: pan.x }],
+        }}
       >
         {row}
       </Animated.View>
