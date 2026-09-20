@@ -38,10 +38,9 @@ export interface ComposeAttachment {
  * Real IMAP folders — identical to core `Destination` (contract §1.2).
  * These five strings are the most durable copy the product writes: created
  * inside the customer's own mailbox, rendered by every client, forever —
- * including after the customer leaves. Renamed to `ohmail/…` on 2026-07-31
- * while zero real mailboxes were connected; changing one again IS an IMAP
- * data migration — the 0.22 News rename did it, with the organizer renaming
- * on its next pass and both spellings admitted meanwhile. Never render a raw
+ * including after the customer leaves. Changing one is an IMAP data
+ * migration — the 0.22 News rename did it, the organizer renaming on its
+ * next pass with both spellings admitted meanwhile. Never render a raw
  * folder string: map through `VIEW_OF_FOLDER`, and fall back to
  * `folderLeaf()` for a folder this client does not know (contract §8).
  */

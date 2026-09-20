@@ -5,9 +5,8 @@
  * imports `node:crypto` for {@link awayTextHash}, and the barrel is worse, conveying the whole
  * package's import closure into the published desktop artifact. So the vocabulary lives in a leaf
  * whose only import is the import-free `types.ts` (the exports map carries the `node` condition
- * that relative import requires), exported as `@trafficflow/core/away-scope`;
- * `away-eligibility.ts` imports it, which makes the set the engine refuses and the set the
- * control offers the same object rather than two lists that agree today.
+ * that relative import requires), exported as `@trafficflow/core/away-scope`; the engine's
+ * refused set and the control's offered set are then the same object, not two agreeing lists.
  */
 
 // Stored scopes and old installs still say `ohmail/Reads`; both spellings are the News pile.
