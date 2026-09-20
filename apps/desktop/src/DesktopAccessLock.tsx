@@ -84,8 +84,12 @@ export function DesktopAccessLock(
         {lifecycle !== undefined
           ? (
             <>
-              <p>{t("mailboxUntouched")}</p>
-              <p>
+              {/* The one sentence a person has to believe wears the browser wall's own emphasis
+                  (`.gate-card .wall-master`, full ink) and the erasure clock its quiet
+                  (`.wall-fine`, ink3) — same stylesheet, same three-level hierarchy, so the
+                  window and the tab weigh the promise identically. */}
+              <p className="wall-master">{t("mailboxUntouched")}</p>
+              <p className="wall-fine">
                 {held
                   ? t("erasureHeld")
                   : erasureAt !== null

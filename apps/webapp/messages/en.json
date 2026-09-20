@@ -3629,7 +3629,7 @@
     "deleteHintUndated": "Erases everything ohmail keeps, today. Your mailbox is not touched.",
     "back": "Back",
     "openAccount": "Open your ohmail account",
-    "openInBrowser": "Open ohmail.app in a browser to subscribe again, export your settings or delete your account.",
+    "openInBrowser": "Open ohmail.app in a browser to manage or delete this account.",
     "manage": "Manage subscription",
     "signOut": "Sign out"
   },

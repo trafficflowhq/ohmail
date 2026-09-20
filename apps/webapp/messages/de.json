@@ -3629,7 +3629,7 @@
     "deleteHintUndated": "Löscht alles, was ohmail behält — noch heute. Dein Postfach bleibt unberührt.",
     "back": "Zurück",
     "openAccount": "Dein ohmail-Konto öffnen",
-    "openInBrowser": "Öffne ohmail.app im Browser, um wieder ein Abo abzuschließen, deine Einstellungen zu exportieren oder dein Konto zu löschen.",
+    "openInBrowser": "Öffne ohmail.app im Browser, um dieses Konto zu verwalten oder zu löschen.",
     "manage": "Abo verwalten",
     "signOut": "Abmelden"
   },

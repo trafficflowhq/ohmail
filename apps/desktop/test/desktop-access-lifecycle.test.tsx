@@ -137,6 +137,18 @@ describe("the distribution decides the button, and nothing else", () => {
     expect(text()).not.toContain(LOCK.openInBrowser);
     expect(text()).toContain(LOCK.mailboxUntouched);
   });
+
+  it("THE STORE FACE'S OWN SENTENCE ASKS NOBODY TO SUBSCRIBE", () => {
+    /* A store copy may not carry a call to action towards a purchase page (App Review 3.1.1),
+       and "open the site to subscribe again" is one. The phone's deck already keeps this rule
+       (its account-wall suite has the same arm); the desktop's store face reads THESE keys, so
+       the shared catalogue keeps it too. The DIRECT face's button vocabulary is not bound. */
+    const purchase = /\b(subscribe|subscription|abo|abos|abonnement\w*)\b/i;
+    for (const [name, sentence] of [["en", LOCK.openInBrowser], ["de", LOCK_DE.openInBrowser]] as const) {
+      expect(sentence, `the ${name} store sentence sends somebody to buy`).not.toMatch(purchase);
+      expect(sentence, `the ${name} store sentence names no site`).toContain("ohmail.app");
+    }
+  });
 });
 
 describe("the window says what the browser tab says", () => {
