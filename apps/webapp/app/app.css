@@ -739,6 +739,95 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   color: var(--ink2);
   background: var(--tint2);
 }
+/* ── THE ACCOUNT'S OWN STRIP, and the one after it reopens ────────────────────────────────────
+   `.upd-bar`'s shape and its slot: a fact about the whole app, said once, above everything, and
+   absent from the DOM when there is nothing to say. A separate class rather than a second
+   modifier on the update strip because the two can stand at once and must not merge into one
+   unreadable row — this one takes the accent tint so the eye tells them apart. */
+.acct-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 4px 9px;
+  padding: 5px 14px;
+  font-size:calc(11.5px + var(--type-up));
+  color: var(--ink);
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--hair);
+}
+.acct-bar button,
+.acct-note button {
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  border: 0;
+  cursor: pointer;
+  border-radius: var(--r-pill);
+  padding: 1px 9px;
+  background: transparent;
+}
+.acct-bar .acct-do {
+  color: var(--on-accent);
+  background: var(--accent);
+}
+.acct-bar .acct-do:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+.acct-bar .acct-do:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.acct-later {
+  color: var(--ink3);
+}
+.acct-later:hover {
+  color: var(--ink2);
+  background: var(--tint2);
+}
+/* THE CATCH-UP, which is a PANEL and not a strip: it carries a list of mailboxes ohmail handed
+   back, and a 22px row cannot hold one. Same slot, same "absent when silent" rule; it says a good
+   thing, so it is quieter than the strip above rather than louder. */
+.acct-note {
+  flex: none;
+  padding: 10px 14px 9px;
+  font-size:calc(11.5px + var(--type-up));
+  color: var(--ink2);
+  background: var(--tint);
+  border-bottom: 1px solid var(--hair);
+}
+.acct-note-line {
+  margin: 0 0 4px;
+  line-height: 1.55;
+}
+.acct-note-list {
+  list-style: none;
+  margin: 0 0 4px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.acct-note-list li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+/* The address never pushes the row wider than the app: a long one truncates, the verb stays. */
+.acct-note-mbx {
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: min(360px, 60vw);
+}
+.acct-note-go {
+  font-weight: 600;
+  color: var(--accent-ink);
+  text-decoration: underline;
+}
 
 /* ================= the same sentence, in the rail =================
    The rail's own copy of the sync line — `SyncBar variant="rail"`, rendered into the slot

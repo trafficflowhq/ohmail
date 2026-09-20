@@ -787,6 +787,7 @@ export function AppShell({
   mailboxSection,
   aiSection,
   billingSection,
+  accountNotice,
   invitesSection,
   securitySection,
   aboutSection,
@@ -903,6 +904,14 @@ export function AppShell({
    */
   aiSection?: ReactNode;
   billingSection?: ReactNode;
+  /**
+   * ONE STRIP ABOVE THE APP ABOUT THE ACCOUNT ITSELF — a trial running out, a payment that
+   * failed, a catch-up after the account reopened. Injected for the reason the panes above are:
+   * the sentences come from `GET /account/access`, which this shared shell may not call, and the
+   * desktop window has no hosted account to say any of it about. Absent ⇒ no strip, ever, which
+   * is what keeps billing words structurally out of the desktop bundle.
+   */
+  accountNotice?: ReactNode;
   /**
    * The host's Settings → Invites pane — who else may join a self-host server. Same seam as
    * {@link securitySection}; only the self-host Cloud client supplies one (the mint routes
@@ -1146,6 +1155,7 @@ export function AppShell({
             mailboxSection={mailboxSection}
             aiSection={aiSection}
             billingSection={billingSection}
+            accountNotice={accountNotice}
             invitesSection={invitesSection}
             securitySection={securitySection}
             aboutSection={aboutSection}
@@ -1217,7 +1227,7 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
   );
 }
 
-function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, olderBodyWire, junkWire, trashWire, suggestWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
+function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, accountNotice, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, olderBodyWire, junkWire, trashWire, suggestWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
   /** The pull settle watch's read — the same probe `MailStateHost` above provides the strip. */
   mailboxFacts?: MailboxProbe;
   /** See `AppShell`'s prop of this name — absent withholds the organizer notice. */
@@ -1230,6 +1240,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   mailboxSection?: ReactNode;
   aiSection?: ReactNode;
   billingSection?: ReactNode;
+  /** See `AppShell`'s prop of this name — absent withholds the account strip entirely. */
+  accountNotice?: ReactNode;
   invitesSection?: ReactNode;
   securitySection?: ReactNode;
   aboutSection?: ReactNode;
@@ -7483,6 +7495,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             strip above: a fact about the app rather than about a pile. Said once per session and
             absent from the DOM until a durable write has actually been refused. */}
         <DurabilityNotice />
+
+        {/* WHAT THE SERVICE SAYS ABOUT THIS ACCOUNT — the same slot and the same argument as the
+            two strips above, and the same absence rule: nothing at all where the host supplied
+            nothing, which is every desktop window and the demo. It is a NODE and not a state
+            because the facts come from a door this shell may not knock on. */}
+        {accountNotice}
 
         <div className="topbar">
           <button

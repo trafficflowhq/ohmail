@@ -32,7 +32,7 @@ export function SubscriptionSection({ onNowhere }: { onNowhere: () => void }) {
       // A URL is a non-empty STRING or it is nothing. `{ url: "" }`, a 200 with no `url` at all
       // and the `null` of a 404 say the same thing — there is no page — and the answer to that is
       // to take the pane away, never to leave a control standing that goes nowhere.
-      if (typeof url === "string" && url.length > 0) { leaveFor(url); return; }
+      if (typeof url === "string" && url.length > 0) { leaveForManagePage(url); return; }
       onNowhere();
     } catch {
       // A refused mint — an unverified address, a server that did not answer. On a MOUNT that was
@@ -70,7 +70,7 @@ export function SubscriptionSection({ onNowhere }: { onNowhere: () => void }) {
  * A detached anchor and not `location.assign` so the referrer stays off: `rel="noreferrer"` is the
  * only way to say it for a scripted navigation, and the address is minted for one account.
  */
-function leaveFor(url: string): void {
+export function leaveForManagePage(url: string): void {
   const a = document.createElement("a");
   a.href = url;
   a.rel = "noreferrer";

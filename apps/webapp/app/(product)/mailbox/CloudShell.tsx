@@ -17,6 +17,7 @@ import { AboutSection } from "./AboutSection";
 import { AccessLock } from "./AccessLock";
 import { AccountLocale } from "./AccountLocale";
 import { AiSection } from "./AiSection";
+import { LifecycleBanner } from "./LifecycleBanner";
 import { DevicesSection, useDevicePairing } from "./DevicesSection";
 import { InvitesSection, useUserInvites } from "./InvitesSection";
 import { SecuritySection } from "./SecuritySection";
@@ -229,6 +230,11 @@ export function CloudShell({ demo }: { demo: boolean }) {
            out. Same absence rule as `invitesSection` below — see `manageOffered`. `withdrawManage`
            is the press's other answer: a mint with nowhere to go takes the entry away. */
         billingSection={manageOffered ? <SubscriptionSection onNowhere={withdrawManage} /> : undefined}
+        /* THE ACCOUNT'S OWN STRIP — a trial running out, a payment that failed, the catch-up
+           after a closure lifts. Cloud-only by the same absence rule as the panes: the shared
+           shell renders the node and cannot read `GET /account/access` itself, and the demo has
+           no account to say anything about. */
+        accountNotice={demo ? undefined : <LifecycleBanner />}
         /* SELF-HOST ONLY — see `userInvites` above. `undefined` (managed, an old server, the
            answer still pending) means no nav entry, never an empty pane. */
         invitesSection={userInvites ? <InvitesSection /> : undefined}

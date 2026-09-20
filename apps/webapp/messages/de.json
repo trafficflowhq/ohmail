@@ -3585,6 +3585,18 @@
     "aiDisabled": "KI ist für dieses Konto ausgeschaltet.",
     "aiUnavailable": "KI ist gerade nicht verfügbar. Bitte versuche es noch einmal."
   },
+  "accountLifecycle": {
+    "graceEnds": "Deine Testphase ist abgelaufen. ohmail organisiert noch bis zum {date}.",
+    "paymentFailed": "Deine letzte Zahlung ist fehlgeschlagen. Bring sie bis zum {date} in Ordnung, damit ohmail weiter organisiert.",
+    "trialEnds": "Deine Testphase endet am {date}.",
+    "subscribe": "Abo abschlie\u00dfen",
+    "fixPayment": "Zahlung in Ordnung bringen",
+    "later": "Sp\u00e4ter",
+    "caughtUp": "{count, plural, =0 {ohmail hat seit dem {date} nichts Neues gefunden.} one {ohmail hat 1 Nachricht nachgeholt, die seit dem {date} angekommen ist.} other {ohmail hat # Nachrichten nachgeholt, die seit dem {date} angekommen sind.}}",
+    "handedBack": "ohmail hat diese Postf\u00e4cher zur\u00fcckgegeben, als das Konto geschlossen wurde. Es nimmt sie nicht von selbst wieder \u2014 das Organisieren beginnt, wenn du es startest.",
+    "startOrganizing": "Organisieren starten",
+    "dismiss": "Verstanden"
+  },
   "accessLock": {
     "title": "Dieses Konto ist nicht aktiv.",
     "suspendedTitle": "Dieses Konto ist gesperrt.",
