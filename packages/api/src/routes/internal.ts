@@ -17,7 +17,7 @@ import { UNSUB_DRAIN_RUN_BUDGET_MS, type SendAdapter } from "@trafficflow/core/m
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import { makeSendAdapter } from "../send-adapter.js";
 import { MAX_IMAP_PER_MAILBOX } from "../attachments-adapter.js";
-import { imapAdmission, unsubscribes } from "./shared.js";
+import { accessPortOf, imapAdmission, unsubscribes } from "./shared.js";
 import type { AlertsConfig } from "../deps-cloud.js";
 import type { AlertArmHealth, AlertSinkSummary, ApiDeps } from "../deps.js";
 import type {} from "../deps-cloud.js";
@@ -40,6 +40,21 @@ import { learnMissingSmtpSizes } from "../smtp-size.js";
  * `routes/admin.ts` became the second shared-secret caller. See that file for why a second
  * copy was the thing to avoid.
  */
+
+/**
+ * MAY THIS ACCOUNT'S AUTOMATION STILL FIRE — the wall's eligibility for the three sender passes
+ * (mail 0124), composed from the entitlements port ABOVE their claim transactions. The reader
+ * deliberately IGNORES the transaction handle the pass offers: it performs no database read (the
+ * deadlock rule on `ScheduledSendPassDeps.accountEligible`), it asks the client — whose 60 s
+ * cache and call budget bound what a claim can spend inside it — and a fault answers the last
+ * verdict else allow, so an entitlements outage never strands an appointment. `undefined` where
+ * nothing meters: the pass then defaults to eligible, which is the self-host truth.
+ */
+function accountEligibleFrom(deps: ApiDeps): ((accountId: string) => Promise<boolean>) | undefined {
+  const port = accessPortOf(deps);
+  if (!port) return undefined;
+  return async (accountId) => (await port.access(accountId)).ok;
+}
 
 /**
  * The PATH Vercel Cron is pointed at. Exported because the host deployment's cron config names
@@ -798,16 +813,15 @@ export const internalRoutes: Route[] = [
         return json(401, { error: { code: "unauthorized" } });
       }
       try {
+        const eligible = accountEligibleFrom(deps);
         const result = await runScheduledSendPass(deps.db, {
           openSendAdapter: deps.services?.sendAdapter
             ?? ((mailboxId: string) => makeSendAdapter(deps, mailboxId)),
           ...(deps.services?.storageCapOf ? { resolveStorageCap: deps.services.storageCapOf } : {}),
-          /* NO ELIGIBILITY GATE HERE, and the absence is a known window rather than a decision.
-           * The fact this read (`account_suspensions`) no longer lives in this database, and the
-           * entitlements port may not be dialled inside a claim transaction — a network hop there
-           * queues behind the transaction holding the connection and every poke times out. The
-           * pass defaults to ELIGIBLE, so a parked account's automation keeps firing until the
-           * port read is composed ABOVE the claim. */
+          // The wall's gate (mail 0124): a parked account's rows stay `scheduled`, dialled the
+          // cycle after the account reads open — see `accountEligibleFrom` for why the network
+          // read is safe where a database read through the outer handle was the deadlock.
+          ...(eligible ? { accountEligible: eligible } : {}),
           log,
           now: deps.now,
         });
@@ -851,15 +865,12 @@ export const internalRoutes: Route[] = [
         return json(401, { error: { code: "unauthorized" } });
       }
       try {
+        const eligible = accountEligibleFrom(deps);
         const result = await runSendReconcilePass(deps.db, {
           openSendAdapter: deps.services?.sendAdapter
             ?? ((mailboxId: string) => admittedSendAdapter(deps, mailboxId)),
-          /* NO ELIGIBILITY GATE HERE, and the absence is a known window rather than a decision.
-           * The fact this read (`account_suspensions`) no longer lives in this database, and the
-           * entitlements port may not be dialled inside a claim transaction — a network hop there
-           * queues behind the transaction holding the connection and every poke times out. The
-           * pass defaults to ELIGIBLE, so a parked account's automation keeps firing until the
-           * port read is composed ABOVE the claim. */
+          // The wall's gate (mail 0124) — `accountEligibleFrom` for the composition's terms.
+          ...(eligible ? { accountEligible: eligible } : {}),
           log,
           now: deps.now,
         });
@@ -902,6 +913,7 @@ export const internalRoutes: Route[] = [
         return json(401, { error: { code: "unauthorized" } });
       }
       try {
+        const eligible = accountEligibleFrom(deps);
         const result = await runAwayResponderPass(deps.db, {
           openSendAdapter: deps.services?.sendAdapter
             ?? ((mailboxId: string) => makeSendAdapter(deps, mailboxId)),
@@ -912,9 +924,10 @@ export const internalRoutes: Route[] = [
           // examined and nothing is recorded as decided, which is what lets the replies go out
           // promptly once the suspension lifts.
           //
-          // NO ELIGIBILITY GATE HERE — see the scheduled sender's note above. The pass defaults
-          // to ELIGIBLE, so a parked account's away replies keep going out until the port read
-          // is composed for these three passes.
+          // The wall's gate (mail 0124): a parked account's away replies do not go out, its
+          // candidates are not examined, and nothing is recorded as decided — the replies go
+          // promptly once the account reads open. `accountEligibleFrom` for the terms.
+          ...(eligible ? { accountEligible: eligible } : {}),
           log,
           now: deps.now,
         });
