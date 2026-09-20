@@ -53,6 +53,19 @@ const passThrough = argv.indexOf("--") >= 0 ? argv.slice(argv.indexOf("--") + 1)
 const own = argv.indexOf("--") >= 0 ? argv.slice(0, argv.indexOf("--")) : argv;
 const bundlesAt = own.indexOf("--bundles");
 const bundles = bundlesAt >= 0 ? own[bundlesAt + 1] : null;
+/**
+ * WHICH DISTRIBUTION THIS ARTIFACT IS, and ONE flag for it because it selects TWO halves that
+ * must never disagree: the window's `OHMAIL_DISTRIBUTION` literal and the shell's cargo feature.
+ * A window built as `direct` inside a shell built as `mas` would draw an update row over an
+ * updater that refuses; the reverse would withhold the row on a copy that does update itself.
+ * Absent means `direct`, which is every build but the Mac App Store's.
+ */
+const distAt = own.indexOf("--distribution");
+const distribution = distAt >= 0 ? own[distAt + 1] : "direct";
+if (!["direct", "mas"].includes(distribution)) {
+  process.stderr.write(`\nbuild-engine-app: unknown --distribution ${distribution} (direct | mas)\n`);
+  process.exit(1);
+}
 
 const say = (m) => process.stdout.write(`\n\x1b[1m${m}\x1b[0m\n`);
 function die(m) {
@@ -66,7 +79,7 @@ function run(cmd, args, cwd) {
   const shown = [cmd, ...args].join(" ");
   process.stdout.write(`  $ ${shown}\n`);
   try {
-    execFileSync(cmd, args, { cwd, stdio: "inherit", env: process.env });
+    execFileSync(cmd, args, { cwd, stdio: "inherit", env: { ...process.env, OHMAIL_DISTRIBUTION: distribution } });
   } catch (err) {
     die(`\`${shown}\` failed (status ${err.status ?? "unknown"})`);
   }
@@ -122,7 +135,7 @@ if (!existsSync(join(APP, "dist-host", "index.html"))) {
  * like its sibling above. */
 run(process.execPath, [join(APP, "scripts", "scan-artifact.mjs"), "--expect", "host-client"], APP);
 
-say("4/4 · build the app");
+say(`4/4 · build the app (${distribution})`);
 /* `tauri` from this package's own `node_modules/.bin`, resolved through node rather than named as a
  * shell command: the launcher is `tauri` on Unix and `tauri.cmd` on Windows, and reaching for it
  * through a shell to paper over that is the quoting problem `build-ui.mjs` exists to avoid. */
@@ -130,7 +143,9 @@ const cli = join(APP, "node_modules", "@tauri-apps", "cli", "tauri.js");
 if (!existsSync(cli)) die(`the Tauri CLI is not installed at ${cli} — run \`npm install\` in apps/desktop`);
 run(process.execPath, [
   cli, "build",
-  "--features", "local-engine",
+  /* ONE `--features`, comma-joined. Repeating the flag is not the same thing: whether a second
+     one appends or replaces is the CLI's business and not something an artifact should depend on. */
+  "--features", ["local-engine", ...(distribution === "mas" ? ["mas"] : [])].join(","),
   "--config", join(APP, "src-tauri", "tauri.engine.conf.json"),
   ...(bundles ? ["--bundles", bundles] : []),
   ...passThrough,

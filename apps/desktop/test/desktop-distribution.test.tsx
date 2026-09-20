@@ -104,6 +104,17 @@ describe("the distribution decides two surfaces, and nothing else does", () => {
     expect(calls("apps/desktop/src/DesktopUpdate.tsx")).toEqual([]);
   });
 
+  it("one flag moves BOTH halves, so a window and a shell cannot disagree about the distribution", () => {
+    const build = readFileSync("apps/desktop/scripts/build-engine-app.mjs", "utf8");
+    /* The window's literal is set from the same variable the cargo feature is appended from. */
+    expect(build).toContain("OHMAIL_DISTRIBUTION: distribution");
+    expect(build).toContain('["local-engine", ...(distribution === "mas" ? ["mas"] : [])].join(",")');
+    /* THE CONTROL: a second `--features` flag is what this replaced, and it must not come back —
+       whether a repeated flag appends or replaces is the CLI's business, not an artifact's. */
+    expect([...build.matchAll(/"--features"/g)]).toHaveLength(1);
+    expect(build).not.toContain("--features mas");
+  });
+
   it("the bundler folds the literal in, and the default is the ordinary app", () => {
     const vite = readFileSync("apps/desktop/vite.config.ts", "utf8");
     expect(vite).toContain("__OHMAIL_DISTRIBUTION__");
