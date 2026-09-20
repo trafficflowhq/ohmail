@@ -63,7 +63,7 @@ message is stripped before any model sees it, and automatic routing leaves
 that mail alone entirely.
 
 Configure nothing and the Screener still holds first contact, rules still file
-mail, and search still works — the suggestion and the draft are simply not
+mail, and search still works — the suggestion and the draft are not
 offered. Running ohmail on your own server instead? The provider list there is
 shorter today; [docs/self-host/README.md](docs/self-host/README.md) has the
 table.

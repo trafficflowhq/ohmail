@@ -30,13 +30,13 @@ the two files, in light and dark.
 
 Replies and forwards on the phone can now carry files and photos, picked from the phone's file
 picker or photo library, each shown with its size and removable before sending. The stated size
-limit is the one the send enforces, derived from the mail server's own announcement — the same
-rule the web and desktop composers read. A message with only an attachment sends without text;
-an empty one is refused with "Write something or attach a file."
+limit is the one the send enforces — the same rule the web and desktop composers read, and the
+mail server's own announced maximum can only lower it. A message with only an attachment sends
+without text; an empty one is refused with "Write something or attach a file."
 
 ### Undo and Trash on the phone
 
-- Every mail verb on the phone shows an Undo in its toast, Delete waits a few seconds before
+- Every filing verb on the phone shows an Undo in its toast, Delete waits a few seconds before
   it is sent, and a new Trash view under More lists what you deleted and puts it back with one
   press.
 
@@ -63,9 +63,9 @@ cleanly however many times it runs.
 
 ### Server hardening — isolation and admin checks held by tests
 
-The rules an internal review verified — account isolation on every query, one home for the
-operations console's second-factor read, the connection-test guard wired in every server build —
-are now enforced by tests. No behaviour changes.
+Account isolation on every query, one home for the operations console's second-factor read, and
+the connection-test guard wired in every server build are now enforced by tests. No behaviour
+changes.
 
 ### Storage
 
