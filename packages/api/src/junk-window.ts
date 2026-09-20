@@ -15,12 +15,11 @@ import {
  * is the same surface minus `ai/*`; every name below lives outside it. */
 import { LEGACY_NEWS_FOLDER, normalizeMime } from "@trafficflow/core/mail";
 import {
-  ServiceError, foldersEnabled, isUuid, requireImapUint32, requireUuid, IMAP_UINT32_MAX,
-  withAccountTx, type ServiceContext,
+  ServiceError, requireImapUint32, withAccountTx, type ServiceContext,
 } from "@trafficflow/services/mail";
 import {
-  FOLDER_WINDOW_CURSOR_MAX_CHARS, mergeFolderWindow, mintWindowCursor, parseWindowCursor,
-  requireRealEpoch, type CursorEntry,
+  WINDOW_CURSOR_MAX_CHARS, mergeWindowLanes, midKey, mintWindowCursor, parseWindowCursor,
+  requireRealEpoch, requireWindowFolders, windowMailboxesOf, type CursorEntry,
 } from "./folder-window.js";
 import { IMAP_DOOR_DEADLINE_MS, withinDoorBudget } from "./imap-door.js";
 import type { ApiDeps } from "./deps.js";
@@ -97,44 +96,25 @@ export interface JunkPage {
 }
 
 /**
- * How large a junk-window cursor may be on the wire — one ceiling for both provider windows,
- * stated here because `input-bounds-census` reads the bound each route declares by this name.
+ * How large a junk-window cursor may be on the wire — {@link WINDOW_CURSOR_MAX_CHARS}' argument,
+ * kept under this name because the route and its tests know the ceiling by it.
  */
-export const JUNK_CURSOR_MAX_CHARS = FOLDER_WINDOW_CURSOR_MAX_CHARS;
+export const JUNK_CURSOR_MAX_CHARS = WINDOW_CURSOR_MAX_CHARS;
+
+/** The opaque cursor: base64url JSON of {mailboxId → {v, s}}. Malformed input is a 400. */
+const parseCursor = (raw: string | undefined): Record<string, CursorEntry> =>
+  parseWindowCursor(raw, "junk-window", JUNK_CURSOR_MAX_CHARS);
 
 /** The foundation gate every junk route shares: the window exists only behind "Use folders". */
-async function requireFolders(deps: ApiDeps, accountId: string): Promise<void> {
-  if (!accountId || !(await foldersEnabled(deps.db, accountId))) {
-    throw new ServiceError("folders_disabled", 409, "the Junk window is part of the folders feature — turn on “Use folders” first");
-  }
-}
+const requireFolders = (deps: ApiDeps, accountId: string): Promise<void> =>
+  requireWindowFolders(deps, accountId, "the Junk window");
 
-/**
- * The account's CONNECTED mailboxes with their resolved junk paths — ownership by scoping,
- * never by trust, and `status = 'connected'` because a stood-down or disabled mailbox is not
- * Cloud's to dial: its organizer is elsewhere (the lease principle), even while its credential
- * rows remain stored for a later takeover.
- */
+/** The account's mailboxes with their resolved junk paths — {@link windowMailboxesOf}'s rule. */
 async function junkMailboxesOf(
   deps: ApiDeps, accountId: string, mailboxId?: string,
 ): Promise<Array<{ id: string; address: string; junkFolder: string | null }>> {
-  // `disabled` is the stood-down/lease state — another organizer's mailbox. `error` stays in:
-  // a transiently erroring mailbox is still Cloud's to read, and the read itself will state
-  // `unreachable` honestly when the dial fails.
-  // SHAPE before the predicate: `mailboxes.id` is a uuid column and `?mailboxId=` is caller-
-  // chosen, so a malformed one reached Postgres as 22P02 — a 500 for a bad query string. Here
-  // rather than in the routes, so every present and future caller of this function gets it, which
-  // is the argument `requireRealEpoch` makes about its own placement one function up.
-  if (mailboxId !== undefined) requireUuid(mailboxId, "mailboxId");
-  const scoped = and(eq(mailboxes.accountId, accountId), ne(mailboxes.status, "disabled"));
-  const rows = await deps.db
-    .select({ id: mailboxes.id, address: mailboxes.address, junkFolder: mailboxes.junkFolder })
-    .from(mailboxes)
-    .where(mailboxId === undefined ? scoped : and(scoped, eq(mailboxes.id, mailboxId)));
-  if (mailboxId !== undefined && rows.length === 0) {
-    throw new ServiceError("not_found", 404, "mailbox not found");
-  }
-  return rows;
+  const rows = await windowMailboxesOf(deps, accountId, mailboxes.junkFolder, mailboxId);
+  return rows.map((r) => ({ id: r.id, address: r.address, junkFolder: r.folder }));
 }
 
 /**
@@ -151,7 +131,7 @@ export async function listJunk(
   deps: ApiDeps, accountId: string, opts: { cursor?: string } = {},
 ): Promise<JunkPage> {
   await requireFolders(deps, accountId);
-  const before = parseWindowCursor(opts.cursor, "cursor is not a junk-window cursor");
+  const before = parseCursor(opts.cursor);
   const boxes = await junkMailboxesOf(deps, accountId);
 
   const states: JunkMailboxState[] = [];
@@ -193,7 +173,10 @@ export async function listJunk(
   });
   const pages = (await Promise.all(reads)).filter((p): p is { boxId: string; page: FolderPage } => p !== null);
 
-  const { taken, nextBefore } = mergeFolderWindow(pages, before);
+  // ── The k-way merge: newest date first, per-mailbox seq order enforced by taking each
+  // mailbox's rows through its own pointer. At most FOLDER_PAGE_MAX rows leave, whatever the
+  // mailbox count — the account-level page bound.
+  const { taken, nextBefore } = mergeWindowLanes(pages, before);
 
   const items: JunkItem[] = taken.map(({ boxId, uidValidity, row }) => {
     const { seq: _seq, ...header } = row;
@@ -226,14 +209,6 @@ export interface JunkSearchPage {
  * a mirror row parked at this mailbox's junk path was filed by US on the user's order. Bounded:
  * at most one IN() over the rows' mids. Mutates `origin` in place.
  */
-/**
- * A Message-ID as a comparable key: trimmed, angle brackets off. The live envelope (imapflow)
- * carries `<id@host>`; the mirror stores the id the parser kept, which is bare — so the two
- * sides of the attribution join never met for a sweep-filed row until this normalisation (the
- * first live proof of the sweep showed its own rows marked "filed by your mail server").
- */
-const midKey = (raw: string): string => raw.trim().replace(/^<|>$/g, "");
-
 async function attributeOrigin(
   deps: ApiDeps, accountId: string, items: JunkItem[],
   boxes: Array<{ id: string; junkFolder: string | null }>,
@@ -366,7 +341,16 @@ export async function searchJunk(
  * EPOCH-BOUND: the caller names the UIDVALIDITY its row came from, and a folder renumbered
  * since answers 410 — never the body of whatever message now wears the UID.
  */
-
+/**
+ * A UIDVALIDITY that arrived over the wire is only usable if it is a real epoch — a positive
+ * integer, no leading zero, no sign, no exponent, no whitespace. The verbs below build
+ * `${uidValidity}:${uid}` from it, and the adapter's epoch guard treats `"0"` as "never claimed
+ * an epoch" — correct for the worker's internally minted sentinels, wrong for a number a request
+ * chose: `uidValidity=0` would switch the guard off for the caller's own rescue. The boundary
+ * that accepts the value refuses it, here rather than per route, so every caller gets one rule.
+ * Not `Number(v) > 0`: that accepts `"1e9"`, `" 7 "`, `"0x7"` and `"Infinity"`, and the
+ * downstream comparison is a string one.
+ */
 export async function junkBody(
   deps: ApiDeps, accountId: string,
   args: { mailboxId: string; uid: number; uidValidity: string },

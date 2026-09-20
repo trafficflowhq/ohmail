@@ -1,4 +1,4 @@
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { folderState, mailboxes, messages } from "@trafficflow/db";
 import {
   FOLDER_PAGE_MAX, epochOf, sameEpoch,
@@ -8,12 +8,10 @@ import {
  * runner imports the db cloud barrel — so one barrel import here pulls the hosted schema into the
  * LOCAL ENGINE bundle this module is part of. The mail subpath is the same surface minus `ai/*`. */
 import { normalizeMime } from "@trafficflow/core/mail";
+import { ServiceError, requireImapUint32 } from "@trafficflow/services/mail";
 import {
-  ServiceError, foldersEnabled, isUuid, requireImapUint32, requireUuid, IMAP_UINT32_MAX,
-} from "@trafficflow/services/mail";
-import {
-  FOLDER_WINDOW_CURSOR_MAX_CHARS, mergeFolderWindow, mintWindowCursor, parseWindowCursor,
-  requireRealEpoch,
+  WINDOW_CURSOR_MAX_CHARS, mergeWindowLanes, midKey, mintWindowCursor, parseWindowCursor,
+  requireRealEpoch, requireWindowFolders, windowMailboxesOf, type CursorEntry,
 } from "./folder-window.js";
 import { IMAP_DOOR_DEADLINE_MS, withinDoorBudget } from "./imap-door.js";
 import type { ApiDeps } from "./deps.js";
@@ -52,8 +50,8 @@ export const TRASH_READ_TIMEOUT_MS = IMAP_DOOR_DEADLINE_MS;
 /** Longest search term the window accepts — a bound on what is handed to the provider's SEARCH. */
 export const TRASH_SEARCH_MAX_CHARS = 120;
 
-/** How large a trash-window cursor may be on the wire — {@link JUNK_CURSOR_MAX_CHARS}' argument. */
-export const TRASH_CURSOR_MAX_CHARS = FOLDER_WINDOW_CURSOR_MAX_CHARS;
+/** How large a trash-window cursor may be on the wire — {@link WINDOW_CURSOR_MAX_CHARS}' argument. */
+export const TRASH_CURSOR_MAX_CHARS = WINDOW_CURSOR_MAX_CHARS;
 
 /** One row of the merged window list, origin attributed. */
 export interface TrashItem extends Omit<FolderPageItem, "seq"> {
@@ -105,59 +103,22 @@ export interface TrashSearchPage {
   truncated: boolean;
 }
 
+/** The opaque cursor: base64url JSON of {mailboxId → {v, s}}. Malformed input is a 400. */
+const parseCursor = (raw: string | undefined): Record<string, CursorEntry> =>
+  parseWindowCursor(raw, "trash-window", TRASH_CURSOR_MAX_CHARS);
 
 /** The foundation gate every trash-window route shares — the view is part of folders. */
-async function requireFolders(deps: ApiDeps, accountId: string): Promise<void> {
-  if (!accountId || !(await foldersEnabled(deps.db, accountId))) {
-    throw new ServiceError(
-      "folders_disabled", 409,
-      "the Trash window is part of the folders feature — turn on “Use folders” first",
-    );
-  }
-}
+const requireFolders = (deps: ApiDeps, accountId: string): Promise<void> =>
+  requireWindowFolders(deps, accountId, "the Trash window");
 
-/**
- * The account's mailboxes with their resolved Trash paths — ownership by scoping, never by
- * trust. `disabled` is excluded because it is the stood-down state: that mailbox's organizer is
- * elsewhere. `error` stays in — a transiently erroring mailbox is still Cloud's to read, and the
- * read itself states `unreachable` honestly when the dial fails.
- */
+/** The account's mailboxes with their resolved Trash paths — {@link windowMailboxesOf}'s rule. */
 async function trashMailboxesOf(
   deps: ApiDeps, accountId: string, mailboxId?: string,
 ): Promise<Array<{ id: string; address: string; trashFolder: string | null }>> {
-  // SHAPE before the predicate: `mailboxes.id` is a uuid column and `?mailboxId=` is
-  // caller-chosen, so a malformed one would reach Postgres as 22P02 — a 500 for a bad query
-  // string. Here rather than in the routes, so every present and future caller gets it.
-  if (mailboxId !== undefined) requireUuid(mailboxId, "mailboxId");
-  const scoped = and(eq(mailboxes.accountId, accountId), ne(mailboxes.status, "disabled"));
-  const rows = await deps.db
-    .select({ id: mailboxes.id, address: mailboxes.address, trashFolder: mailboxes.trashFolder })
-    .from(mailboxes)
-    .where(mailboxId === undefined ? scoped : and(scoped, eq(mailboxes.id, mailboxId)));
-  if (mailboxId !== undefined && rows.length === 0) {
-    throw new ServiceError("not_found", 404, "mailbox not found");
-  }
-  return rows;
+  const rows = await windowMailboxesOf(deps, accountId, mailboxes.trashFolder, mailboxId);
+  return rows.map((r) => ({ id: r.id, address: r.address, trashFolder: r.folder }));
 }
 
-
-/**
- * A Message-ID as a comparable key: trimmed, angle brackets off. The live envelope carries
- * `<id@host>`; the mirror stores the id the parser kept, which is bare — so without this
- * normalisation the two sides of the attribution join never meet.
- */
-const midKey = (raw: string): string => raw.trim().replace(/^<|>$/g, "");
-
-/**
- * Origin attribution shared by the list and the search. A live Trash row whose message-id matches
- * a mirror row DESIRED at this mailbox's Trash path is one ohmail deleted; everything else is the
- * person's own delete elsewhere, or the provider's.
- *
- * The predicate is `folder_state.desired_folder = mailboxes.trash_folder` — the SAME spelling
- * `MessageService.listTrash` selects the mirrored population with, so the two lists cannot come to
- * disagree about which messages they each own. Bounded: at most one IN() over this page's mids.
- * Mutates `origin` in place; writes nothing.
- */
 async function attributeOrigin(
   deps: ApiDeps, accountId: string, items: TrashItem[],
 ): Promise<void> {
@@ -190,7 +151,16 @@ async function attributeOrigin(
   }
 }
 
-
+/**
+ * A UIDVALIDITY that arrived over the wire is only usable if it is a real epoch — a positive
+ * integer, no leading zero, sign, exponent or whitespace, inside the protocol's unsigned 32-bit
+ * range (RFC 3501 §2.3.1.1). `"0"` is refused for the Junk window's reason: the adapter's epoch
+ * guard treats zero as "this locator never claimed an epoch" — correct for the worker's
+ * internally minted sentinels, wrong for a number a request chose, which would switch the guard
+ * off for that caller. Not `Number(v) > 0`: that accepts `"1e9"`, `" 7 "`, `"0x7"` and
+ * `"Infinity"`, and the downstream comparison is a string one against the server's decimal
+ * digits.
+ */
 /**
  * THE LIST PAGE: each mailbox's next window read IN PARALLEL (deadline-raced), merged into ONE
  * account-level page of at most {@link FOLDER_PAGE_MAX} rows, origin-attributed against the
@@ -205,7 +175,7 @@ export async function listServerTrash(
   deps: ApiDeps, accountId: string, opts: { cursor?: string } = {},
 ): Promise<TrashPage> {
   await requireFolders(deps, accountId);
-  const before = parseWindowCursor(opts.cursor, "cursor is not a trash-window cursor");
+  const before = parseCursor(opts.cursor);
   const boxes = await trashMailboxesOf(deps, accountId);
 
   const states: TrashMailboxState[] = [];
@@ -242,7 +212,7 @@ export async function listServerTrash(
   const pages = (await Promise.all(reads))
     .filter((p): p is { boxId: string; page: FolderPage } => p !== null);
 
-  const { taken, nextBefore } = mergeFolderWindow(pages, before);
+  const { taken, nextBefore } = mergeWindowLanes(pages, before);
 
   const items: TrashItem[] = taken.map(({ boxId, uidValidity, row }) => {
     const { seq: _seq, ...header } = row;
