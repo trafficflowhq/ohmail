@@ -91,16 +91,11 @@ export function leaseUnreadableRefusal(voice: RunnerVoice, err: LeaseUnavailable
 
 /**
  * THE ORGANIZER LEASE, TAKEN BEFORE THE FIRST WRITE. Exactly one active organizer per mailbox is
- * enforced in `ohmail/_meta`, the only medium a LOCAL install and Cloud share, so a runner that
- * writes without one has both organizers filing the same mail.
- *
- * `assertNoLiveTwin` goes FIRST and the gate cannot replace it: a runner shares the always-on
- * worker's install id and arms no nonce, which tells `decideLease` to treat the worker's own fresh
- * claim as this process's, adopt the mailbox and expunge the claim. A takeover is not read from
- * the mailbox row either — that is a human decision an operator invoking a command has not made.
- *
- * Both refusals set an exit code and RETHROW, so the caller's `finally` still closes what it
- * opened and nothing downstream reads a refusal as a completed run.
+ * enforced in `ohmail/_meta`, so a runner that writes without one has both organizers filing the
+ * same mail. `assertNoLiveTwin` goes FIRST and the gate cannot replace it: a runner shares the
+ * worker's install id and arms no nonce, which tells `decideLease` to adopt the worker's own fresh
+ * claim as this process's and expunge it. Both refusals set an exit code and RETHROW, so the
+ * caller's `finally` closes what it opened and nothing reads a refusal as a completed run.
  */
 export async function takeRunnerLease(opts: {
   adapter: ImapAdapter;

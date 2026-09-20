@@ -151,14 +151,10 @@ export interface TakenWindowRow { boxId: string; uidValidity: string; row: Folde
 /**
  * THE K-WAY MERGE AND THE PER-MAILBOX CURSORS — newest date first, at most
  * {@link FOLDER_PAGE_MAX} rows whatever the mailbox count, with a PER-MAILBOX SEQ-PREFIX
- * invariant: a row is only ever taken after every newer-seq row of its own mailbox, so the cursor
- * (the lowest TAKEN seq) can never skip a row the cap cut. A lane with rows left resumes below
- * what was taken; an untouched lane keeps its incoming watermark verbatim.
- *
- * WHILE ANY LANE PAGINATES, EVERY READ LANE KEEPS AN EPOCH ENTRY — a DRAINED mailbox included.
- * Without one the next "Show older" re-reads that mailbox cursorless: a folder recreated in the
- * meantime would serve its new-epoch top page with NO reset stated, and the client, which trusts
- * the stated flag, would append fresh mail under stale rows. What matters is the `v`.
+ * invariant: a row is taken only after every newer-seq row of its own mailbox, so the cursor (the
+ * lowest TAKEN seq) can never skip a row the cap cut. WHILE ANY LANE PAGINATES, EVERY READ LANE
+ * KEEPS AN EPOCH ENTRY, a DRAINED mailbox included: without one the next "Show older" re-reads it
+ * cursorless, and a folder recreated meanwhile serves its new-epoch top page with NO reset stated.
  */
 export function mergeWindowLanes(
   pages: WindowLanePage[], before: Record<string, CursorEntry>,
