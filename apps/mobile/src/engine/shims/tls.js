@@ -18,6 +18,23 @@ const TcpSocket = require("react-native-tcp-socket");
 const { NativeSocketBridge } = require("./net.js");
 
 /**
+ * SNI IS A NAME OR IT IS ABSENT — never `false`.
+ *
+ * `imapflow` sets `servername: false` when the host is an IP literal (RFC 6066 forbids an IP in
+ * SNI). Node reads that falsy value as "no SNI"; the platform socket refuses it outright — `Value
+ * for servername cannot be cast from Boolean to String` — so a mailbox given by IP address died on
+ * a TypeError before the handshake. Dropped rather than stringified: "false" would go on the wire
+ * AS the server's name. Measured on a phone dialling a server by IP.
+ */
+function withNameOrNoSni(options) {
+  if (!options || !("servername" in options)) return options;
+  const name = options.servername;
+  if (typeof name === "string" && name.length > 0) return options;
+  const { servername: _dropped, ...rest } = options;
+  return rest;
+}
+
+/**
  * `tls.connect(options[, listener])`. `options.socket` present ⇒ the STARTTLS upgrade: take the
  * bridge's underlying native socket and hand it to the platform's TLS socket, which begins the
  * handshake on that same connection; absent ⇒ a fresh TLS dial. The returned bridge emits
@@ -35,9 +52,9 @@ function connect(options, listener) {
        than asserting one. */
     const underlying = existing instanceof NativeSocketBridge ? existing.native : existing;
     const { socket: _dropped, ...tlsOptions } = options;
-    native = new TcpSocket.TLSSocket(underlying, tlsOptions);
+    native = new TcpSocket.TLSSocket(underlying, withNameOrNoSni(tlsOptions));
   } else {
-    native = TcpSocket.connectTLS(options, () => undefined);
+    native = TcpSocket.connectTLS(withNameOrNoSni(options), () => undefined);
   }
 
   const bridge = new NativeSocketBridge(native);
@@ -59,6 +76,8 @@ function unsupported(name) {
 
 module.exports = {
   connect,
+  /* Exported for the guard that drives it with the shape the platform refuses. */
+  withNameOrNoSni,
   TLSSocket: NativeSocketBridge,
   /* `connect` handles both routes, so there is no second entry point to keep in step. */
   createServer: unsupported("createServer"),
