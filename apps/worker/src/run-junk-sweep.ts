@@ -7,26 +7,22 @@
  * no native \Junk. Invoked `TF_DB_URL=… <key ring> tsx apps/worker/src/run-junk-sweep.ts --mailbox <id>
  * [--execute --limit 5]`; `<key ring>` is the KEK environment `keyProviderFromEnvOptional` reads (packages/core).
  */
-import { eq } from "drizzle-orm";
 import { makeOwnedDb } from "@trafficflow/db/cloud";
-import { mailboxes, type Tx } from "@trafficflow/db";
+import { type Tx } from "@trafficflow/db";
 import { keyProviderFromEnvOptional } from "@trafficflow/core";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { makeDrizzleRepo, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { loadMailboxCreds } from "./mailboxes.js";
 import { checkedDial, dialHostGuardFromEnv } from "./dial-host-guard.js";
 import { junkSweepPass } from "./junk-sweep.js";
-import { cliFlag, cliOpt, readOperatorMailbox } from "./operator-cli.js";
-import {
-  CLOUD_DISPLAY_NAME, LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit,
-  assertNoLiveTwin, mailboxHasRequestKey, resolveCloudInstallId, type LeasePermit,
-} from "./lease.js";
+import { cliArgs, readRunnerMailbox, takeRunnerLease } from "./run-cli.js";
+import { type LeasePermit } from "./lease.js";
 
-const argv = process.argv.slice(2);
+const { flag, opt } = cliArgs(process.argv.slice(2));
 
-const mailboxId = cliOpt(argv, "mailbox");
-const execute = cliFlag(argv, "execute");
-const limit = cliOpt(argv, "limit") ? Number(cliOpt(argv, "limit")) : undefined;
+const mailboxId = opt("mailbox");
+const execute = flag("execute");
+const limit = opt("limit") ? Number(opt("limit")) : undefined;
 const dbUrl = process.env.TF_DB_URL ?? process.env.DATABASE_URL;
 if (!mailboxId) { console.error("refusing to run without --mailbox <id>"); process.exit(2); }
 if (!dbUrl) { console.error("set TF_DB_URL to the production session URL"); process.exit(2); }
@@ -37,9 +33,11 @@ if (!keyProvider) { console.error("no KEK ring in the environment — the sweep 
 const owned = makeOwnedDb(dbUrl);
 const db = owned.db as unknown as Tx;
 
-const read = await readOperatorMailbox(db, mailboxId);
-if ("refusal" in read) { console.error(read.refusal); await owned.close(); process.exit(2); }
-const mb = read.mailbox;
+/* The one-off runner's scaffold: the mailbox, and the refusal a pending release earns. */
+const found = await readRunnerMailbox(db, mailboxId);
+if (found === null) { console.error(`no mailbox ${mailboxId}`); await owned.close(); process.exit(2); }
+if ("refusal" in found) { console.error(found.refusal); await owned.close(); process.exit(2); }
+const mb = found.mailbox;
 
 const creds = await loadMailboxCreds(owned.db, mailboxId, keyProvider);
 if (!creds) { console.error("no imap credentials for this mailbox"); await owned.close(); process.exit(2); }
@@ -69,68 +67,14 @@ try {
   // expunges the old), so a dry run must not, and on a mailbox held elsewhere it would (correctly) refuse.
   let permit: LeasePermit | null = null;
   if (execute) {
-    try {
-      // ── FIRST: IS THE ALWAYS-ON WORKER RUNNING? ─────────────────────────────────────────────
-      //
-      // Asked BEFORE the gate, because the gate cannot answer it. This command shares the worker's
-      // install id (it must — see below) and arms no nonce, which tells `decideLease` to treat the
-      // worker's own fresh claim as this process's, adopt the mailbox and expunge the worker's
-      // claim. Two organizers, then a self-stand-down that empties `ohmail/_meta`. The whole
-      // sequence, and why a sentinel nonce is the wrong repair, is on `assertNoLiveTwin`.
-      await assertNoLiveTwin({
-        adapter,
-        installId: resolveCloudInstallId(process.env),
-        now: new Date(),
-      });
-
-      permit = await acquireLeasePermit({
-        adapter,
-        mailboxId,
-        // The SAME set the worker and the backstop advertise, for the same reason the install id
-        // below is the same one: this command RENEWS that shared claim, so a different capability
-        // set here would make `requests` blink out for readers for the length of a sweep.
-        hasRequestKey: mailboxHasRequestKey({ auth: creds.imap.auth, address: mb.address }),
-        self: {
-          // The SAME identity the always-on worker and the reconcile backstop claim with. A
-          // per-process id here would read as a new organizer arriving and stand the worker down
-          // — see `cloudInstallId`'s own docblock for why this constant is the dangerous one.
-          installId: resolveCloudInstallId(process.env),
-          kind: "cloud",
-          displayName: CLOUD_DISPLAY_NAME,
-          // `null` stands, and it is safe only because of the check above. A fresh process trusts
-          // its own install id exactly once, which is what lets this command repair a mailbox whose
-          // Cloud claim has gone stale — the case an operator actually runs it in. What must not
-          // happen is trusting a claim that is being renewed AS WE READ IT, and that is an
-          // absolute-time question `decideLease` deliberately does not ask (its liveness is
-          // folder-relative). `assertNoLiveTwin` asks it.
-          lastNonce: null,
-        },
-        // NOT `authorized`. A takeover is a human decision recorded on the mailbox row; an
-        // operator invoking a sweep has not made it, and reading the flag from the CLI would let
-        // this runner seize a mailbox back from the machine its owner moved it to.
-        takeover: null,
-        log: (event, detail) => { console.log(`${event} ${JSON.stringify(detail)}`); },
-      });
-    } catch (err) {
-      if (err instanceof OrganizerStandDownError) {
-        console.error(
-          `refusing to sweep: ${err.message}\n` +
-          `  held by: ${err.heldBy ?? "(unnamed)"} — ${err.state === "held" ? "still renewing" : "stopped, but not ours to take"}\n` +
-          `  reason:  ${err.reason}\n` +
-          `Nothing was moved. Exactly one organizer per mailbox; this process is not it.`,
-        );
-        process.exitCode = 3;
-        throw err;
-      }
-      if (err instanceof LeaseUnavailableError) {
-        // NOT a stand-down, and it must not be reported as one: an unreadable lease is our
-        // problem or the connection's, never evidence that somebody else holds the mailbox.
-        console.error(`refusing to sweep: the organizer lease could not be read — ${err.message}`);
-        process.exitCode = 4;
-        throw err;
-      }
-      throw err;
-    }
+    permit = await takeRunnerLease({
+      adapter, mailboxId, mailbox: mb, auth: creds.imap.auth, env: process.env,
+      voice: {
+        verb: "sweep",
+        nothingDone: "Nothing was moved. Exactly one organizer per mailbox; this process is not it.",
+      },
+      log: (line) => { console.log(line); },
+    });
   }
 
   const repo = makeDrizzleRepo(db) as unknown as WorkerRepo & {

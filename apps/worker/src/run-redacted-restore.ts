@@ -10,23 +10,19 @@
  */
 import { and, eq, like, sql } from "drizzle-orm";
 import { makeOwnedDb } from "@trafficflow/db/cloud";
-import { mailboxes, messageBodies, messages, type Tx } from "@trafficflow/db";
+import { messageBodies, messages, type Tx } from "@trafficflow/db";
 import { keyProviderFromEnvOptional } from "@trafficflow/core";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { loadMailboxCreds } from "./mailboxes.js";
 import { checkedDial, dialHostGuardFromEnv } from "./dial-host-guard.js";
 import { redactedRestorePass } from "./redacted-restore.js";
-import { cliFlag, cliOpt, readOperatorMailbox } from "./operator-cli.js";
-import {
-  CLOUD_DISPLAY_NAME, LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit,
-  assertNoLiveTwin, mailboxHasRequestKey, resolveCloudInstallId,
-} from "./lease.js";
+import { cliArgs, readRunnerMailbox, takeRunnerLease } from "./run-cli.js";
 
-const argv = process.argv.slice(2);
+const { flag, opt } = cliArgs(process.argv.slice(2));
 
-const mailboxId = cliOpt(argv, "mailbox");
-const apply = cliFlag(argv, "apply");
-const limit = cliOpt(argv, "limit") ? Number(cliOpt(argv, "limit")) : undefined;
+const mailboxId = opt("mailbox");
+const apply = flag("apply");
+const limit = opt("limit") ? Number(opt("limit")) : undefined;
 const dbUrl = process.env.TF_DB_URL ?? process.env.DATABASE_URL;
 if (!mailboxId) { console.error("refusing to run without --mailbox <id>"); process.exit(2); }
 if (!dbUrl) { console.error("set TF_DB_URL to the production session URL"); process.exit(2); }
@@ -37,9 +33,11 @@ if (!keyProvider) { console.error("set TF_KEK_V1 — the restore must decrypt IM
 const owned = makeOwnedDb(dbUrl);
 const db = owned.db as unknown as Tx;
 
-const read = await readOperatorMailbox(db, mailboxId);
-if ("refusal" in read) { console.error(read.refusal); await owned.close(); process.exit(2); }
-const mb = read.mailbox;
+/* The one-off runner's scaffold: the mailbox, and the refusal a pending release earns. */
+const found = await readRunnerMailbox(db, mailboxId);
+if (found === null) { console.error(`no mailbox ${mailboxId}`); await owned.close(); process.exit(2); }
+if ("refusal" in found) { console.error(found.refusal); await owned.close(); process.exit(2); }
+const mb = found.mailbox;
 
 const [{ n: candidates }] = await db.select({ n: sql<number>`count(*)::int` })
   .from(messages).innerJoin(messageBodies, eq(messageBodies.messageId, messages.id))
@@ -82,50 +80,11 @@ try {
   // folders in a mailbox it no longer organizes; NOT fixed here because the check would have to live in
   // `packages/core/src/adapters/imap.ts` (the same seam that bounds `moveMany` and `move`'s COPY-then-DELETE),
   // and creating a folder is additive where a move is destructive. The dry-run path returns before `connect()`.
-  try {
-    // Before the gate, and for the reason `assertNoLiveTwin` sets out: this runner shares the
-    // always-on worker's install id and holds no leader lock, so `lastNonce: null` would let it
-    // adopt a live worker's claim as its own and expunge it.
-    await assertNoLiveTwin({
-      adapter,
-      installId: resolveCloudInstallId(process.env),
-      now: new Date(),
-    });
-
-    await acquireLeasePermit({
-      adapter,
-      mailboxId,
-      // The SAME set the worker and the backstop advertise — this command renews their shared
-      // claim, so a narrower set here would make `requests` blink out for readers mid-repair.
-      hasRequestKey: mailboxHasRequestKey({ auth: creds.imap.auth, address: mb.address }),
-      self: {
-        installId: resolveCloudInstallId(process.env),
-        kind: "cloud",
-        displayName: CLOUD_DISPLAY_NAME,
-        // Safe only because of the check above — see `run-junk-sweep.ts`'s note at the same seam.
-        lastNonce: null,
-      },
-      // A takeover is a human decision recorded on the mailbox row; an operator invoking a repair
-      // has not made it.
-      takeover: null,
-      log: (event, detail) => { console.log(`${event} ${JSON.stringify(detail)}`); },
-    });
-  } catch (err) {
-    if (err instanceof OrganizerStandDownError) {
-      console.error(
-        `refusing to restore: ${err.message}\n` +
-        `  held by: ${err.heldBy ?? "(unnamed)"} — ${err.state === "held" ? "still renewing" : "stopped, but not ours to take"}\n` +
-        `  reason:  ${err.reason}\n` +
-        `Nothing was created and nothing was fetched.`,
-      );
-      process.exitCode = 3;
-    } else if (err instanceof LeaseUnavailableError) {
-      // NOT a stand-down: our problem or the connection's, never evidence about who holds it.
-      console.error(`refusing to restore: the organizer lease could not be read — ${err.message}`);
-      process.exitCode = 4;
-    }
-    throw err;
-  }
+  await takeRunnerLease({
+    adapter, mailboxId, mailbox: mb, auth: creds.imap.auth, env: process.env,
+    voice: { verb: "restore", nothingDone: "Nothing was created and nothing was fetched." },
+    log: (line) => { console.log(line); },
+  });
 
   await adapter.ensureFolders();
   for (;;) {
