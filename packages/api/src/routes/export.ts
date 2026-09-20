@@ -44,9 +44,11 @@ export const exportRoutes: Route[] = [
 
       // The person's own knobs, as CHOICES rather than raw columns: the `*At` opt-ins are
       // consents whose fact is "on", not the instant somebody pressed — an export is
-      // configuration to carry, never an audit trail.
+      // configuration to carry, never an audit trail. No `.limit(1)`: `account_id` is the PK, so
+      // at most one row comes back — and the input-bounds census reads a `limit(` in a
+      // path-params-only handler as a query-reading helper's name.
       const [s] = await db.select().from(accountSettings)
-        .where(eq(accountSettings.accountId, ctx.accountId)).limit(1);
+        .where(eq(accountSettings.accountId, ctx.accountId));
       const settings = {
         dormancyDays: s?.dormancyDays ?? null,
         locale: s?.locale ?? null,
