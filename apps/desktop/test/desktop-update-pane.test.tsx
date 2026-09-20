@@ -761,6 +761,7 @@ describe("the two pure mappings", () => {
         expect(on("rpm")).toBe("managedPackage");
         expect(on("linuxPackage")).toBe("managedPackage");
         expect(on("flatpak")).toBe("managedFlatpak");
+        expect(on("macAppStore")).toBe("managedAppStore");
         expect(on("unpackaged")).toBe("managedUnpackaged");
         // …and the three that CAN install are decided by the flow, exactly as before.
         for (const kind of ["appimage", "windowsSetup", "macBundle", "unknown"] as const) {
@@ -771,11 +772,15 @@ describe("the two pure mappings", () => {
     }
   });
 
-  it("exactly five of the kinds are updated by something other than ohmail", () => {
+  it("exactly six of the kinds are updated by something other than ohmail", () => {
     const managed = INSTALL_KINDS.filter((installKind) =>
       updateManagedElsewhere({ ...base, installKind }),
     );
-    expect(managed).toEqual(["deb", "rpm", "linuxPackage", "flatpak", "unpackaged"]);
+    /* `macAppStore` joined the five when the store build did: a copy the App Store installed is
+       updated by the App Store, exactly as a .deb is by its package manager. The list and the
+       classification are ONE edit — a pin left behind here would have the pane offering a check
+       on a build whose shell refuses one. */
+    expect(managed).toEqual(["deb", "rpm", "linuxPackage", "flatpak", "macAppStore", "unpackaged"]);
     // The three with an installer, and the shell that named none, keep the pane's control.
     for (const installKind of ["appimage", "windowsSetup", "macBundle", "unknown"] as const) {
       expect(updateManagedElsewhere({ ...base, installKind })).toBe(false);
