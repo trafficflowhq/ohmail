@@ -24,18 +24,12 @@ export interface OperatorMailbox { id: string; accountId: string; address: strin
 /**
  * THE MAILBOX A ONE-OFF TOOL MAY WRITE TO — or the sentence to print before exiting 2.
  *
- * "STOP ORGANIZING THIS MAILBOX" IS A REFUSAL FOR THESE TOOLS TOO (mail 0088). The lease gate
- * cannot answer it: a pending release leaves the row `organizer` on purpose (the claim is in the
- * customer's IMAP folder and expunging it belongs to the process holding that connection), so
- * every lease-shaped check passes and a runner would take the permit, renew the very claim the
- * person asked removed, and move their mail. REFUSED rather than honoured, on the reconcile
- * backstop's reasoning: releasing means expunging a claim, writing the row and closing
- * appointments, and a second copy of that sequence is a second answer to what stopping means.
- * The always-on gate performs it; these tools decline to act past a request they can see.
+ * "Stop organizing this mailbox" is a refusal for these tools too (mail 0088), and the LEASE
+ * cannot answer it: a pending release leaves the row `organizer` on purpose, so every
+ * lease-shaped check passes and a runner would renew the claim the person asked removed.
  *
- * A REFUSAL IS RETURNED, NOT THROWN AND NOT EXITED: the caller owns the database handle it must
- * close before it exits, and a helper that called `process.exit` would leave that connection to
- * the runtime.
+ * The refusal is RETURNED, never thrown or exited: the caller owns the database handle it must
+ * close first.
  */
 export async function readOperatorMailbox(
   db: Tx, mailboxId: string,
