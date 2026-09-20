@@ -51,7 +51,13 @@ async function lockAnchors(distribution: string): Promise<string[]> {
     selfUpdates: () => distribution !== "mas",
     linksOutToBilling: () => distribution !== "mas",
   }));
-  const { DesktopAccessLock } = await import("../src/DesktopAccessLock.js");
+  /* The module is mocked, so its export comes back as `any` and `createElement` has no overload
+     to match. Named at the seam rather than suppressed at the call: the component's real props are
+     asserted by the objects handed to it, three lines down. */
+  const mod = await import("../src/DesktopAccessLock.js") as {
+    DesktopAccessLock: (p: { facts: AccessRefusedFacts; onSignedOut: (s: never) => void }) => React.ReactElement;
+  };
+  const { DesktopAccessLock } = mod;
   const facts: AccessRefusedFacts = { reason: "payment_required", manageUrl: "https://example.invalid/billing" };
   /* A FRESH container per render: React refuses a second `createRoot` on one node, and the two
      arms of this file render twice on purpose. */
@@ -61,11 +67,14 @@ async function lockAnchors(distribution: string): Promise<string[]> {
   document.body.appendChild(host);
   root = createRoot(host as HTMLDivElement);
   await act(() => {
-    root?.render(h(
-      NextIntlClientProvider,
-      { locale: "en", messages },
-      h(DesktopAccessLock, { facts, onSignedOut: () => {} }),
-    ));
+    /* Children in the props and `messages as never`, the way every sibling desktop render test
+       hands the catalogue over: a JSON import widens past the provider's `AbstractIntlMessages`. */
+    root?.render(h(NextIntlClientProvider, {
+      locale: "en",
+      messages: messages as never,
+      timeZone: "UTC",
+      children: h(DesktopAccessLock, { facts, onSignedOut: () => {} }),
+    }));
   });
   return [...(host as HTMLDivElement).querySelectorAll("a")].map((a) => a.getAttribute("href") ?? "");
 }
