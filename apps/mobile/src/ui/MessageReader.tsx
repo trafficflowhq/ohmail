@@ -46,10 +46,18 @@ export function MessageReader({
   // still booting would otherwise open against the empty world's no-op and never re-run
   // when the session goes live — an unread message under an indefinitely loading snippet.
   const openMessage = w.actions.openMessage;
+  const releaseAttachments = w.actions.releaseAttachments;
   const worldKey = w.worldKey;
   useEffect(() => {
     if (id) openMessage(id);
-  }, [id, openMessage, worldKey]);
+    // AND THE LEAVING RELEASES. The engine holds this message's file list, its inline pictures
+    // and every Blob a tile press fetched until somebody drops them, and the phone mints no
+    // object URL whose revocation would do it — so the reader owes the release the web seam's
+    // cleanup owes, keyed on the same id it opened. Re-entering the message re-asks.
+    return () => {
+      if (id) releaseAttachments(id);
+    };
+  }, [id, openMessage, releaseAttachments, worldKey]);
 
   if (!m) {
     return (

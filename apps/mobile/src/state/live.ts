@@ -1728,6 +1728,13 @@ export interface LiveWorldActions {
    * own states, returned rather than thrown: the tile renders each one a sentence.
    */
   openAttachmentBytes(messageId: string, attachmentId: string): Promise<WorldAttachmentBytes>;
+  /**
+   * DROP ONE MESSAGE'S HELD FILE BYTES — the reader's cleanup, the web seam's own rule. Nothing
+   * else bounds them: the engine holds a list, its inline pictures and every opened Blob until
+   * somebody releases, and the phone mints no object URL whose revocation could stand in for it,
+   * so without this a session grows by every rich message it was shown.
+   */
+  releaseAttachments(messageId: string): void;
   /** An explicit re-ask for one message's full text (a card expand, a reopen). */
   hydrateMessage(id: string): void;
   /**
@@ -1978,6 +1985,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       await watched(engine.mutate({ kind: "mark_seen", messageIds: [id], unread: false, via: "glance" })),
       null, refuse("liveSaveFailed"),
     );
+  };
+
+  const releaseAttachments = (messageId: string): void => {
+    engine.releaseAttachments(messageId);
   };
 
   const loadInlineImages = (messageId: string, contentIds: string[]): void => {
@@ -2878,6 +2889,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       await engine.discardAbandoned(id);
     },
     openMessage, hydrateMessage, hydrateHeld, loadInlineImages, openAttachmentBytes,
+    releaseAttachments,
     sweepFeed, leaveFeed, decide, release, setPile,
     pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, move,
     deleteMessage, trashList, trashRestore,
@@ -2900,6 +2912,8 @@ export interface WorldActions {
   loadInlineImages(messageId: string, contentIds: string[]): void;
   /** One attachment's bytes for the share sheet — awaited; the tile renders each refusal. */
   openAttachmentBytes(messageId: string, attachmentId: string): Promise<WorldAttachmentBytes>;
+  /** The reader's cleanup — see {@link LiveWorldActions.releaseAttachments}. */
+  releaseAttachments(messageId: string): void;
   /** An explicit re-ask for one message's full text (a card expand, a reopen). */
   hydrateMessage(id: string): void;
   /**
@@ -2983,6 +2997,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     leaveFeed: (place) => current().leaveFeed(place),
     openMessage: (id) => current().openMessage(id),
     loadInlineImages: (id, contentIds) => current().loadInlineImages(id, contentIds),
+    releaseAttachments: (id) => current().releaseAttachments(id),
     openAttachmentBytes: (id, attachmentId) => current().openAttachmentBytes(id, attachmentId),
     hydrateMessage: (id) => current().hydrateMessage(id),
     retryAbandoned: (id) => current().retryAbandoned(id),
