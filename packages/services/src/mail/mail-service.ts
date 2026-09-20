@@ -425,6 +425,37 @@ export class MailService {
    * and hour: a re-driven invocation is one mail; a genuine second attempt an hour later is a
    * second mail — repeated attempts are what the account should be told about.
    */
+  /**
+   * A lifecycle notice (cloud 0040, the wall): the trial ending, the closure, the erasure week.
+   * The DEDUP is the caller's — `account_lifecycle_notices`' PK on (account, kind, anchor) —
+   * so the idempotency key here is the backstop for a re-driven invocation between that insert
+   * and this send, keyed on the same FACT (recipient, kind, anchor): a new closure is a new
+   * anchor and a new mail, a replay is one. `transactional`: the recipient is the account's own
+   * user, read from `users`, never a caller-chosen address.
+   */
+  async sendLifecycleNotice(
+    ctx: MailContext,
+    input: {
+      to: string;
+      kind: "trial_two_days" | "closed" | "erasure_week";
+      locale: "en" | "de";
+      anchor: Date;
+      erasureAt: Date | null;
+    },
+  ): Promise<MailSendResult> {
+    return this.guarded(ctx, input.to, "transactional", (to) =>
+      this.deps.mailer.send(to, "lifecycle_notice", {
+        kind: input.kind,
+        locale: input.locale,
+        anchorDate: formatUtc(input.anchor),
+        erasureDate: input.erasureAt ? formatUtc(input.erasureAt) : null,
+        accountUrl: `${trimSlash(this.cfg.appUrl)}/settings/account`,
+        supportEmail: this.cfg.supportEmail,
+      }, {
+        idempotencyKey: `lifecycle:${hashToken(`${to}|${input.kind}|${input.anchor.toISOString()}`)}`,
+      }));
+  }
+
   async sendAccountExists(ctx: MailContext, input: { to: string }): Promise<MailSendResult> {
     return this.guarded(ctx, input.to, "unsolicited", (to) =>
       this.deps.mailer.send(to, "account_exists", {

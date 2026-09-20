@@ -14,7 +14,8 @@ import { UNSUB_DRAIN_CEILING_MS } from "@trafficflow/core/mail";
 export interface ApiCronTarget {
   /** Closed name, stable across renames of the path — the key an operator greps for. */
   target: "sessions_reap" | "smtp_size" | "scheduled_send"
-    | "send_reconcile" | "away_responder" | "platform_signals" | "unsubscribe_drain";
+    | "send_reconcile" | "away_responder" | "platform_signals" | "unsubscribe_drain"
+    | "account_lifecycle";
   /** The API route, poked as `GET {baseUrl}{route}` with the bearer secret. */
   route: string;
   /** The cadence. Jitter (up to {@link jitterMs}) is ADDED per wait, never subtracted. */
@@ -186,6 +187,21 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     // Its body says how many screened-out unsubscribes the window still holds. Carried onto the
     // health row: a flat `ok` cannot tell a pass that is keeping up from one falling behind.
     readsRemaining: true,
+  },
+  {
+    // THE WALL'S NIGHTLY PASS (cloud 0040): the trial, closure and erasure-week notices, and the
+    // erasure once its anchor plus a day of slack has passed. On the API host because the pass
+    // sends customer mail through the transactional provider, which only that host holds. NIGHTLY
+    // — every deadline it acts on is measured in days, and idempotency lives in the plane's own
+    // anchors (the notices PK), so a missed poke costs a day of latency and never a double mail.
+    target: "account_lifecycle",
+    route: "/internal/account-lifecycle/run",
+    everyMs: 24 * 60 * 60 * 1000,
+    // Its own stagger, past the takeover window, distinct from every sibling's.
+    firstDelayMs: 11 * 60 * 1000,
+    // One plane read per live account at bounded concurrency plus a handful of mails: minutes
+    // of headroom for a pass that is seconds at beta scale, mirroring the route's own patience.
+    timeoutMs: 120 * 1000,
   },
 ];
 

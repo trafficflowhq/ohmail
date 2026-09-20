@@ -808,6 +808,28 @@ export const screenerSuggestOwed = pgTable("screener_suggest_owed", {
   owedAt: timestamp("owed_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+/**
+ * WHICH LIFECYCLE NOTICE AN ACCOUNT HAS BEEN SENT (cloud 0040, the wall). Idempotency is the
+ * PRIMARY KEY: `anchor` is the plane's ISO fact the notice is about (trialEndsAt, closedAt,
+ * erasureAt — never a clock read here), so a re-run inserts nothing and a NEW closure is a new
+ * anchor with its own notice. No state machine, no closure table. The `reopened` kind is the
+ * banner's row, inserted by `GET /account/access` on the first open read after a closure.
+ */
+export const accountLifecycleNotices = pgTable("account_lifecycle_notices", {
+  accountId: uuid("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(),
+  anchor: timestamp("anchor", { withTimezone: true }).notNull(),
+  sentAt: timestamp("sent_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  pk: primaryKey({ name: "account_lifecycle_notices_pk", columns: [t.accountId, t.kind, t.anchor] }),
+  // The closed set, at rest — the four kinds the pass and the access route write. Declared here
+  // to keep the TS schema honest; the constraint is created by the migration.
+  ckKind: check(
+    "account_lifecycle_notices_kind_closed",
+    sql`${t.kind} in ('trial_two_days', 'closed', 'erasure_week', 'reopened')`,
+  ),
+}));
+
 export const cloudSchema = {
   credentials, webauthnCredentials, webauthnChallenges, totpSecrets, recoveryCodes, loginTokens,
   oauthAuthCodes, authEvents, authThrottle, pushSubscriptions,
@@ -815,5 +837,5 @@ export const cloudSchema = {
   waitlist, staffUsers, staffSessions, staffAuditLog,
   mailboxOauthCeremonies, mailboxOauthDeviceCeremonies,
   oauthProviderConfig, attachmentStaging, invites,
-  creditRefundObligations, screenerSuggestOwed,
+  creditRefundObligations, screenerSuggestOwed, accountLifecycleNotices,
 };

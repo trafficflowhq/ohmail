@@ -6,7 +6,8 @@
  * is TEXT. (2) Text AND html for every one — the text part is the real message, not a stub. (3)
  * Every interpolation is escaped (`esc`) and every URL validated (`safeUrl`), because template
  * data carries user-controlled strings. (4) Factual microcopy — receipts and security signals, no
- * slogans. English only for beta.
+ * slogans. English for beta, except the lifecycle notices, which follow the account's own
+ * locale (en/de) because they are the one mail a person gets when they stopped paying attention.
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -521,6 +522,117 @@ function accountExists(d: AccountExistsData): RenderedEmail {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Template 7 — the account lifecycle notices (cloud 0040, the wall).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * ONE template, three notices: the trial ending, the closure, the erasure week. The data is
+ * dates, closed words and configuration — nothing a sender or a caller chose can enter the body.
+ * `locale` is the account's own (`account_settings.locale`, en when unset); the mailbox is the
+ * master and the copy says so every time, and no notice names a price or a plan.
+ */
+export interface LifecycleNoticeData {
+  kind: "trial_two_days" | "closed" | "erasure_week";
+  locale: "en" | "de";
+  /** The anchor's own date (trial end / closure / erasure), formatted by the caller as UTC. */
+  anchorDate: string;
+  /** The erasure forecast's date, or null while none exists (an operator hold, say). */
+  erasureDate: string | null;
+  /** Deep link to the app's account page — informational, changes nothing by itself. */
+  accountUrl: string;
+  supportEmail: string;
+}
+
+const LIFECYCLE_COPY: Record<LifecycleNoticeData["kind"], Record<"en" | "de", {
+  subject: string;
+  /** The button under the body — the one link, rendered as the shell's action. */
+  action: string;
+  body: (d: LifecycleNoticeData) => string[];
+}>> = {
+  trial_two_days: {
+    en: {
+      subject: "Your ohmail trial ends in two days",
+      action: "Open your ohmail account",
+      body: (d) => [
+        `Your trial ends on ${d.anchorDate}. To keep ohmail organizing your mailbox, choose a subscription on your account page.`,
+        "If you do nothing, organizing stops when the trial ends. Your mailbox is untouched and stays yours — everything ohmail filed stays where it is.",
+      ],
+    },
+    de: {
+      subject: "Deine ohmail-Testphase endet in zwei Tagen",
+      action: "Dein ohmail-Konto öffnen",
+      body: (d) => [
+        `Die Testphase endet am ${d.anchorDate}. Damit ohmail dein Postfach weiter organisiert, wähle auf deiner Kontoseite ein Abo.`,
+        "Tust du nichts, stoppt das Organisieren am Ende der Testphase. Dein Postfach bleibt unangetastet und gehört dir — alles Einsortierte bleibt, wo es ist.",
+      ],
+    },
+  },
+  closed: {
+    en: {
+      subject: "Your ohmail subscription has ended",
+      action: "Open your ohmail account",
+      body: (d) => [
+        `Your subscription ended on ${d.anchorDate}, so ohmail has stopped organizing and syncing. Your mailbox is untouched and stays yours — the mail lives on your own mail server.`,
+        "Sign in to subscribe again, export your settings, or delete your account.",
+        ...(d.erasureDate
+          ? [`If you do nothing, your ohmail account data — rules, Screener decisions and settings — is erased on ${d.erasureDate}.`]
+          : []),
+      ],
+    },
+    de: {
+      subject: "Dein ohmail-Abo ist beendet",
+      action: "Dein ohmail-Konto öffnen",
+      body: (d) => [
+        `Dein Abo ist am ${d.anchorDate} beendet worden; ohmail organisiert und synchronisiert nicht mehr. Dein Postfach bleibt unangetastet und gehört dir — die Mails liegen auf deinem eigenen Mailserver.`,
+        "Melde dich an, um wieder zu abonnieren, deine Einstellungen zu exportieren oder dein Konto zu löschen.",
+        ...(d.erasureDate
+          ? [`Tust du nichts, werden deine ohmail-Kontodaten — Regeln, Screener-Entscheidungen und Einstellungen — am ${d.erasureDate} gelöscht.`]
+          : []),
+      ],
+    },
+  },
+  erasure_week: {
+    en: {
+      subject: "Your ohmail account data is erased in a week",
+      action: "Open your ohmail account",
+      body: (d) => [
+        `On ${d.anchorDate} your ohmail account data is erased: rules, Screener decisions and settings. Your mailbox is untouched — the mail was never ours to hold.`,
+        "Sign in before then to keep the account, or export your settings first.",
+      ],
+    },
+    de: {
+      subject: "Deine ohmail-Kontodaten werden in einer Woche gelöscht",
+      action: "Dein ohmail-Konto öffnen",
+      body: (d) => [
+        `Am ${d.anchorDate} werden deine ohmail-Kontodaten gelöscht: Regeln, Screener-Entscheidungen und Einstellungen. Dein Postfach bleibt unangetastet — die Mails waren nie bei uns.`,
+        "Melde dich vorher an, um das Konto zu behalten, oder exportiere zuerst deine Einstellungen.",
+      ],
+    },
+  },
+};
+
+function lifecycleNotice(d: LifecycleNoticeData): RenderedEmail {
+  const url = safeUrl(d.accountUrl);
+  const copy = LIFECYCLE_COPY[d.kind][d.locale];
+  const blocks = copy.body(d);
+  const footer = [
+    d.locale === "de" ? `Einen Menschen erreichen: ${d.supportEmail}` : `Reach a human: ${d.supportEmail}`,
+    "TrafficFlow GmbH, Zürich, Switzerland",
+  ];
+  return {
+    subject: copy.subject,
+    // The text part carries the URL on its own line, the plain-text counterpart of the button.
+    text: textShell(copy.subject, [...blocks, url], footer),
+    html: shell({
+      title: copy.subject,
+      blocks: blocks.map(esc),
+      action: { label: copy.action, url },
+      footer,
+    }),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // The registry — the single place the set is enumerated.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -540,6 +652,7 @@ export interface TemplateDataMap {
   email_verification: EmailVerificationData;
   operator_alert: OperatorAlertData;
   account_exists: AccountExistsData;
+  lifecycle_notice: LifecycleNoticeData;
 }
 
 export type TemplateName = keyof TemplateDataMap;
@@ -551,6 +664,7 @@ const RENDERERS: { [K in TemplateName]: (data: TemplateDataMap[K]) => RenderedEm
   email_verification: emailVerification,
   operator_alert: operatorAlert,
   account_exists: accountExists,
+  lifecycle_notice: lifecycleNotice,
 };
 
 export const TEMPLATE_NAMES = Object.keys(RENDERERS) as TemplateName[];

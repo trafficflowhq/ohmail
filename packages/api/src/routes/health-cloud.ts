@@ -176,6 +176,16 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // per held ingest and the suggest cadence quietly falls back to the cycle, which is precisely
   // the symptom the table exists to remove. `503 schema_incomplete` at the deploy gate names it.
   ["screener_suggest_owed", "owed_at"],
+  // cloud 0040_account_lifecycle_notices — `sent_at` is the table's LAST column, on the rule
+  // above: only the last column's presence implies every object over it, so the composite PK and
+  // the kind CHECK are covered by this one probe.
+  //
+  // The loudness is the SWALLOWED kind: the nightly pass runs inside its own catch — a poke that
+  // faults answers 503 and sends nothing — so an API ahead of the migration 42P01s every run and
+  // no reminder mail ever leaves, while the deployment reports healthy. And the `reopened` insert
+  // on `GET /account/access` is best-effort by contract (a banner must not fail the wall's read),
+  // so its absence is silent twice over. `503 schema_incomplete` at the deploy gate names it.
+  ["account_lifecycle_notices", "sent_at"],
 ] as const;
 
 /**
@@ -292,7 +302,7 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * FOREIGN-KEY-only migration is probed by its KEY marker, which is what 0038 added the class for.
  * The tag asserts reconciliation against the newest entry.
  */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0039_screener_suggest_owed";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0040_account_lifecycle_notices";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

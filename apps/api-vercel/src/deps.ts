@@ -445,6 +445,11 @@ function buildServices(cfg: HostConfig): ApiServices {
   // waitlist its confirmation mail and costs the deployment nothing else.
   lazily(bag, "waitlist", () => makeWaitlistService({ mail: customerMailerFor(cfg) ?? undefined }));
 
+  // The account-lifecycle pass's mail door (cloud 0040, the wall) — the SAME cached `MailService`
+  // the waitlist and register use, never a bare `ResendMailer`. Absent with no mailer: the pass
+  // then reports owed notices as `unmailable` and claims nothing.
+  lazily(bag, "customerMail", () => customerMailerFor(cfg) ?? undefined);
+
   return bag as unknown as ApiServices;
 }
 

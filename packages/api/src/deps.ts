@@ -250,6 +250,26 @@ export interface ApiServices {
   // inject a fake/GreenMail spy here to count `send` calls + drive `messageInSent`.
   sendAdapter?: OpenSendAdapter;
   /**
+   * CUSTOMER MAIL for the account-lifecycle pass (cloud 0040, the wall) — the hosted
+   * composition's cached `MailService`, never a bare `MailerPort` (a route holding one has an
+   * unthrottled mail-bomb primitive). Declared STRUCTURALLY as the one method the pass needs,
+   * because this file is compiled by every host and may not name the hosted mail barrel; the
+   * types are erased and nothing new enters any bundle. Absent = a deployment with no mailer —
+   * the pass reports owed notices as `unmailable` and claims nothing.
+   */
+  customerMail?: {
+    sendLifecycleNotice(
+      ctx: { db: unknown; now: () => Date },
+      input: {
+        to: string;
+        kind: "trial_two_days" | "closed" | "erasure_week";
+        locale: "en" | "de";
+        anchor: Date;
+        erasureAt: Date | null;
+      },
+    ): Promise<{ status: "sent" | "skipped" | "failed" }>;
+  };
+  /**
    * This host's platform ceiling on total attachment bytes in one send — or `null` for a host
    * that has none, which is the local engine. Deps-level rather than a route constant because
    * `routes/drafts.ts` is the one send handler and both hosts mount it. The hosted deployment
