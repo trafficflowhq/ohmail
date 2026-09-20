@@ -100,6 +100,7 @@
           <li>The desktop build refuses a lockfile that drifted from its manifest</li>
           <li>The Flathub source check no longer passes over a lockfile it never opened</li>
           <li>The Reads pile is now called News</li>
+          <li>Reopening the web app shows your mail immediately</li>
         </ul>
       </description>
     </release>

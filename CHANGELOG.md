@@ -163,6 +163,12 @@ Newsletters now land in the News pile — the same pile under a new name, on eve
 surface and in both languages. The folder in your mailbox keeps its name, so
 other mail clients see the same folders as before.
 
+### Reopening the web app shows your mail immediately
+
+Reopening the web app on a device that already held your mail could show empty message lists for a
+minute or two — the stored mail is now visible the moment it loads, and a list still catching up
+says so instead of reading empty.
+
 ## [0.20.1] — 2026-09-19
 
 ### Removing a mailbox
