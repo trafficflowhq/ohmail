@@ -68,10 +68,59 @@ export const ACCOUNT_ACCESS_PATH = "/account/access";
 export const ACCESS_REFUSED_STATUS = 402;
 export const ACCESS_REFUSED_CODE = "subscription_required";
 
+/**
+ * WHERE THE ACCOUNT STANDS WITH THE SERVICE, as the API's own gate states it.
+ *
+ * A MIRROR of `apps/webapp/app/api-client.ts`'s type of the same name, not an import: this build
+ * aliases that module to a refusing stub, and a window cannot import the door it does not have.
+ * The field list is the 402's `details`, and the two copies drift only if somebody edits one.
+ */
+export interface AccountLifecycle {
+  state: "trialing" | "grace" | "past_due" | "active" | "closed" | "erased";
+  closedReason: null | "trial_ended" | "canceled" | "unpaid" | "suspended";
+  closedAt?: string | null;
+  erasureAt?: string | null;
+}
+
+/** The states this window knows. An unknown one is dropped — see {@link lifecycleOf}. */
+const LIFECYCLE_STATES = [
+  "trialing", "grace", "past_due", "active", "closed", "erased",
+] as const;
+
+const CLOSED_REASONS = ["trial_ended", "canceled", "unpaid", "suspended"] as const;
+
+const isoOrNull = (v: unknown): string | null =>
+  (typeof v === "string" && v.length > 0 ? v : null);
+
+/**
+ * Narrow a lifecycle block, or answer `undefined` — which is both "an older server said nothing"
+ * and "this build does not know that word". Both land in the same place: the screen says the
+ * undated thing it has always said rather than a date it made up.
+ */
+export function lifecycleOf(value: unknown): AccountLifecycle | undefined {
+  if (value === null || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  const state = raw.state;
+  if (typeof state !== "string") return undefined;
+  if (!(LIFECYCLE_STATES as readonly string[]).includes(state)) return undefined;
+  const reason = raw.closedReason;
+  return {
+    state: state as AccountLifecycle["state"],
+    closedReason:
+      typeof reason === "string" && (CLOSED_REASONS as readonly string[]).includes(reason)
+        ? (reason as AccountLifecycle["closedReason"])
+        : null,
+    closedAt: isoOrNull(raw.closedAt),
+    erasureAt: isoOrNull(raw.erasureAt),
+  };
+}
+
 /** Why access was refused, and where the customer can put it right. The API's words, narrowed. */
 export interface AccessRefusedFacts {
   reason: "payment_required" | "suspended";
   manageUrl?: string;
+  /** What happened and when. Absent from a server that predates the wall — see {@link lifecycleOf}. */
+  lifecycle?: AccountLifecycle;
 }
 
 type AccessRefusedSink = (facts: AccessRefusedFacts) => void;
@@ -107,12 +156,14 @@ function noticeAccessRefusal(status: number, body: Uint8Array): void {
     return; /* Not JSON. A 402 this client cannot read is not one it may act on. */
   }
   if (env?.code !== ACCESS_REFUSED_CODE) return;
-  const d = (env.details ?? {}) as { reason?: unknown; manageUrl?: unknown };
+  const d = (env.details ?? {}) as { reason?: unknown; manageUrl?: unknown; lifecycle?: unknown };
   const url = typeof d.manageUrl === "string" && d.manageUrl.length > 0 ? d.manageUrl : undefined;
+  const lifecycle = lifecycleOf(d.lifecycle);
   try {
     sink({
       reason: d.reason === "suspended" ? "suspended" : "payment_required",
       ...(url ? { manageUrl: url } : {}),
+      ...(lifecycle ? { lifecycle } : {}),
     });
   } catch { /* A sink that throws must not replace the refusal with its own failure. */ }
 }

@@ -343,10 +343,10 @@ const BASE_MESSAGE_NAMESPACES = [
  */
 export const WINDOW_ONLY_NAMESPACES = [
   "aiProvider", "onboarding", "desktopScreener", "desktopDoor",
-  // `accessLock` is the five sentences the window shows INSTEAD of the mail when the service
-  // refuses the account (`src/DesktopAccessLock.tsx`) — the same namespace the browser tab's
-  // lock screen reads, so the two surfaces say one thing in every language. WINDOW-ONLY: the
-  // served host client reaches a paired computer, not a hosted account, and has no refusal to
+  // `accessLock` is what the window shows INSTEAD of the mail when the service refuses the
+  // account (`src/DesktopAccessLock.tsx`) — the same namespace the browser tab's wall reads, so
+  // the two surfaces say one thing in every language and neither can drift a date. WINDOW-ONLY:
+  // the served host client reaches a paired computer, not a hosted account, and has no refusal to
   // meet. Without it the one screen a refused account ever sees renders `accessLock.title`.
   "accessLock",
 ] as const;

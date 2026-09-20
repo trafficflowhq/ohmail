@@ -955,9 +955,36 @@ export interface AuthorizeRequestDTO {
     expiresIn: number;
 }
 
+/**
+ * Where an account stands with the service, mirrored so shared `shell/` code resolves the name.
+ * A standalone install has no hosted account, so nothing here ever holds one.
+ */
+export interface AccountLifecycle {
+    state: "trialing" | "grace" | "past_due" | "active" | "closed" | "erased";
+    closedReason: null | "trial_ended" | "canceled" | "unpaid" | "suspended";
+    graceUntil?: string | null;
+    trialEndsAt?: string | null;
+    closedAt?: string | null;
+    erasureAt?: string | null;
+    erasedAt?: string | null;
+    formerlyPaid?: boolean;
+}
+
+/**
+ * ANSWERS rather than refuses, on this file's own rule: it is a pure narrowing with no door
+ * behind it, and a surface that calls it on this build is asking about a lifecycle that cannot
+ * exist. `undefined` is the same word the real client uses for "nothing said", so a caller
+ * reaching this takes the branch it would take against an older server.
+ */
+export function lifecycleOf(_value: unknown): AccountLifecycle | undefined {
+    return undefined;
+}
+
 export interface AccessRefusedFacts {
     reason: "payment_required" | "suspended";
     manageUrl?: string;
+    lifecycle?: AccountLifecycle;
+    exportPath?: string;
 }
 
 export function onAccessRefused(_sink: (facts: AccessRefusedFacts) => void): () => void {
