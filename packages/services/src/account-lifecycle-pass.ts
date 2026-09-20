@@ -114,9 +114,18 @@ export function noticesDue(lc: AccessLifecycle, now: Date): DueNotice[] {
   return out;
 }
 
-/** Whether the verdict's erasure is DUE — `erasureAt` + a day of slack has passed. */
+/**
+ * Whether the verdict's erasure is DUE — `erasureAt` + a day of slack has passed. THE ONE POINT
+ * that decides an erasure, so the suspended refusal lives here and nowhere else.
+ *
+ * An operator hold is never erased by this pass, whatever `erasureAt` says. The plane's contract
+ * already keeps that field null while suspended, but erasure is irreversible and so does not rest
+ * on the other program keeping its word: a suspended account carrying one is a drift between the
+ * two, refused here and reported by the caller.
+ */
 export function erasureDue(lc: AccessLifecycle, now: Date): boolean {
   if (lc.state !== "closed" || lc.erasureAt === null) return false;
+  if (lc.closedReason === "suspended") return false;
   return new Date(lc.erasureAt).getTime() + ERASURE_SLACK_MS <= now.getTime();
 }
 
@@ -161,6 +170,16 @@ export async function runAccountLifecyclePass(
 
           for (const due of noticesDue(lc, now())) {
             await claimAndSend(db, deps, id, due, result, log);
+          }
+
+          // The refusal above is silent by itself, and a drift nobody sees is a drift nobody
+          // fixes. Reported once per pass, never acted on — the hold stays a staff act.
+          if (lc.closedReason === "suspended" && lc.erasureAt !== null) {
+            log.warn("account_erasure_refused_suspended", {
+              accountId: id,
+              reason: "the plane sent an erasure date for an account it holds suspended, which " +
+                "its own contract keeps null; the pass refuses the erasure and changes nothing",
+            });
           }
 
           if (erasureDue(lc, now())) {
