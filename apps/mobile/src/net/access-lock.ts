@@ -54,6 +54,16 @@ const isoOrNull = (v: unknown): string | null =>
   (typeof v === "string" && v.length > 0 ? v : null);
 
 /**
+ * Which refusal this is. WIRE WORDS, not sentences — the copy census reads a `reason:` property
+ * as something a person will see, and these two are the service's own vocabulary, rendered
+ * nowhere. An unrecognised one is `payment_required`, the arm whose remedy is a door somebody can
+ * act on rather than one that reads as our fault.
+ */
+function reasonOf(value: unknown): AccessRefusedFacts["reason"] {
+  return value === "suspended" ? "suspended" : "payment_required";
+}
+
+/**
  * Narrow a lifecycle block, or answer `undefined`.
  *
  * `undefined` is the OLD-SERVER answer and the unknown-state answer alike, and both must land in
@@ -120,9 +130,7 @@ export function refusalFactsOf(status: number, bodyText: string): AccessRefusedF
   const exportPath =
     typeof d.exportPath === "string" && d.exportPath.startsWith("/") ? d.exportPath : undefined;
   return {
-    /* An unrecognised reason is `payment_required` — the arm whose remedy is a door the person
-       can act on, rather than one that reads as our fault. */
-    reason: d.reason === "suspended" ? "suspended" : "payment_required",
+    reason: reasonOf(d.reason),
     ...(url ? { manageUrl: url } : {}),
     ...(lifecycle ? { lifecycle } : {}),
     ...(exportPath ? { exportPath } : {}),
