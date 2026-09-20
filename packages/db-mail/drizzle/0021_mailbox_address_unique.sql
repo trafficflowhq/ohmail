@@ -81,15 +81,14 @@ UPDATE mailboxes SET status = 'disabled' WHERE id IN (SELECT id FROM losers);
 
 -- 2. And make it impossible from here on.
 --
--- DROPPED FIRST, AND STILL NO `IF NOT EXISTS`. Bookkeeping supplies idempotence on the ordinary
--- path, but the adoption window re-executes every entry above the baseline cutoff, so this one
--- has to be replayable — and `IF NOT EXISTS` is the wrong way to get there, because it FAILS
--- OPEN: a relation of this name left by a manual hotfix, non-unique or built on a different
--- expression or predicate, would be KEPT, the migration recorded as applied, and duplicate
--- inserts would keep succeeding with no 23505 and therefore no 409. Dropping first and building
--- unconditionally is replayable and leaves exactly this index behind, whatever was there before.
-DROP INDEX IF EXISTS "mailboxes_active_address_uq";
---> statement-breakpoint
+-- NO `IF NOT EXISTS`, deliberately, and it is a safety property rather than a style choice.
+-- Migration bookkeeping already supplies idempotence: drizzle records this tag and never
+-- replays it. What `IF NOT EXISTS` adds is a way to FAIL OPEN — if a relation of this name
+-- already exists from a manual hotfix, and it is non-unique, or invalid, or built on a
+-- different expression or predicate, Postgres emits a notice, the migration is recorded as
+-- applied, and duplicate inserts keep succeeding with no 23505 and therefore no 409. Every
+-- fresh-database test passes while the one database that matters is unprotected. A name
+-- collision here is a fact somebody must look at, so it stops the deploy.
 CREATE UNIQUE INDEX "mailboxes_active_address_uq"
   ON "mailboxes" ("account_id", lower("address"))
   WHERE "status" <> 'disabled';

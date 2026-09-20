@@ -48,6 +48,17 @@ export const MIGRATION_ALLOWANCES: readonly MigrationAllowance[] = [
       "same schema. The recorded side is the ONE released version of this file — production " +
       "applied it before the flat form was written, which is why this entry exists at all",
   },
+  {
+    journal: "cloud",
+    tag: "0038_account_isolation",
+    recorded: "78c3b141c13b785d03ecbe4788ab0618554dbe72d2ebe9f57527f656251abc81",
+    shipped: "13c93b9f771addc208fe17dae4a2db92131e7cae9f890a6552ba01d26bc2efd0",
+    reason:
+      "three DROP CONSTRAINT IF EXISTS statements added in front of the three ADD CONSTRAINTs " +
+      "after apply, so the entry can be re-executed the way mail 0118 — its other half — already " +
+      "can; the three keys, their names, their columns and their references are unchanged, and a " +
+      "drop of a constraint the next statement re-adds leaves the same schema",
+  },
 ] as const;
 
 /** The allowance admitting exactly this drift, or null. Every field must match. */
