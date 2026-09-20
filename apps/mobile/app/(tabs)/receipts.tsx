@@ -125,7 +125,7 @@ export default function ReceiptsScreen() {
                       {/* The line stands ABOVE the newest receipt already seen at the last
                           visit — this stream's own anchor, independent of Reads'. */}
                       {waterlineAboveId === m.id ? <Waterline label={waterLabel} meta="" /> : null}
-                      <MailRow m={m} onPress={() => openRow(m.id)} />
+                      <MailRow m={m} onPress={() => openRow(m.id)} swipe />
                     </View>
                   ))}
                 </View>

@@ -39,7 +39,7 @@ export default function OhboxScreen() {
   const group = (rows: WorldMail[]) => (
     <View style={{ paddingHorizontal: 6 }}>
       {rows.map((m) => (
-        <MailRow key={m.id} m={m} onPress={() => openRow(m.id)} />
+        <MailRow key={m.id} m={m} onPress={() => openRow(m.id)} swipe />
       ))}
     </View>
   );

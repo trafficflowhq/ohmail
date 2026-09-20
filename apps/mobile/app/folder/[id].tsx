@@ -103,7 +103,7 @@ function FolderBody() {
               <Panel style={{ marginBottom: 12 }}>
                 <Section style={{ paddingTop: 14 }}>{Copy.groupNew}</Section>
                 {fresh.map((m) => (
-                  <MailRow key={m.id} m={m} onPress={() => openRow(m.id)} />
+                  <MailRow key={m.id} m={m} onPress={() => openRow(m.id)} swipe />
                 ))}
               </Panel>
             ) : null}
@@ -111,7 +111,7 @@ function FolderBody() {
               <Panel>
                 <Section style={{ paddingTop: 14 }}>{Copy.groupSeen}</Section>
                 {seen.map((m) => (
-                  <MailRow key={m.id} m={m} onPress={() => openRow(m.id)} />
+                  <MailRow key={m.id} m={m} onPress={() => openRow(m.id)} swipe />
                 ))}
               </Panel>
             ) : null}

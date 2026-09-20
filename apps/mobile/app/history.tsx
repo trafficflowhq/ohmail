@@ -107,7 +107,7 @@ function HistoryBody() {
                 NEW half to split off, because an unread message is never here. */}
             <Panel style={{ paddingBottom: 4, marginTop: 8 }}>
               {items.map((m) => (
-                <MailRow key={m.id} m={m} onPress={() => openRow(m.id)} />
+                <MailRow key={m.id} m={m} onPress={() => openRow(m.id)} swipe />
               ))}
             </Panel>
             <Tail>{Copy.historyTail(total)}</Tail>
