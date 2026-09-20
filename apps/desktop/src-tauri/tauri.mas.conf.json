@@ -4,7 +4,8 @@
   "bundle": {
     "targets": ["app"],
     "macOS": {
-      "hardenedRuntime": false
+      "hardenedRuntime": false,
+      "minimumSystemVersion": "15.0"
     }
   }
 }
