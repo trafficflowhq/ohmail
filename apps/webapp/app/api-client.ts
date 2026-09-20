@@ -678,10 +678,80 @@ async function attempt<T>(
 export const ACCESS_REFUSED_STATUS = 402;
 export const ACCESS_REFUSED_CODE = "subscription_required";
 
+/**
+ * WHERE THIS ACCOUNT STANDS WITH THE SERVICE — the entitlements program's own statement, never a
+ * clock this client runs. Every field is a fact the server holds: a surface that worked out "two
+ * days left" from the browser's clock would say a different thing on a machine whose clock is off,
+ * and a sentence about somebody's account is the last place that may happen.
+ */
+export interface AccountLifecycle {
+  state: "trialing" | "grace" | "past_due" | "active" | "closed" | "erased";
+  /** Why it closed, or `null` — including for a closure the server could not attribute. */
+  closedReason: null | "trial_ended" | "canceled" | "unpaid" | "suspended";
+  /** While `grace` or `past_due`: when access stops. */
+  graceUntil?: string | null;
+  /** While `trialing`: when the trial ends. */
+  trialEndsAt?: string | null;
+  closedAt?: string | null;
+  /** When the kept settings are erased; `null` while an operator holds the account. */
+  erasureAt?: string | null;
+  erasedAt?: string | null;
+  formerlyPaid?: boolean;
+}
+
+/** The states this client knows. An unknown one is dropped — see {@link lifecycleOf}. */
+const LIFECYCLE_STATES = [
+  "trialing", "grace", "past_due", "active", "closed", "erased",
+] as const;
+
+/** The closure reasons this client has a sentence for. Anything else reads as "not attributed". */
+const CLOSED_REASONS = ["trial_ended", "canceled", "unpaid", "suspended"] as const;
+
+const isoOrNull = (v: unknown): string | null =>
+  (typeof v === "string" && v.length > 0 ? v : null);
+
+/**
+ * Narrow a lifecycle block, or answer `undefined`.
+ *
+ * `undefined` is the OLD-SERVER answer and the unknown-state answer alike, and both must land in
+ * the same place: the screens fall back to the undated sentences the lock has always shown. The
+ * alternative — rendering a state this build does not know — is a screen that says nothing a
+ * person can act on, which is worse than the honest older one.
+ */
+export function lifecycleOf(value: unknown): AccountLifecycle | undefined {
+  if (value === null || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  const state = raw.state;
+  if (typeof state !== "string") return undefined;
+  if (!(LIFECYCLE_STATES as readonly string[]).includes(state)) return undefined;
+  const reason = raw.closedReason;
+  return {
+    state: state as AccountLifecycle["state"],
+    closedReason:
+      typeof reason === "string" && (CLOSED_REASONS as readonly string[]).includes(reason)
+        ? (reason as AccountLifecycle["closedReason"])
+        : null,
+    graceUntil: isoOrNull(raw.graceUntil),
+    trialEndsAt: isoOrNull(raw.trialEndsAt),
+    closedAt: isoOrNull(raw.closedAt),
+    erasureAt: isoOrNull(raw.erasureAt),
+    erasedAt: isoOrNull(raw.erasedAt),
+    formerlyPaid: raw.formerlyPaid === true,
+  };
+}
+
 /** Why access was refused, and where the customer can put it right. */
 export interface AccessRefusedFacts {
   reason: "payment_required" | "suspended";
   manageUrl?: string;
+  /**
+   * WHAT HAPPENED AND WHEN. Absent from a server that predates the wall, and absent is not
+   * "nothing happened": the screen then says the undated thing it has always said rather than
+   * inventing a date for a person to plan around.
+   */
+  lifecycle?: AccountLifecycle;
+  /** Where the settings document is served. Absent = no export door on this server, so none shown. */
+  exportPath?: string;
 }
 
 type AccessRefusedSink = (facts: AccessRefusedFacts) => void;
@@ -701,12 +771,22 @@ export function onAccessRefused(sink: AccessRefusedSink): () => void {
 function notifyAccessRefused(details: unknown): void {
   const sink = accessRefusedSink;
   if (!sink) return;
-  const d = (details ?? {}) as { reason?: unknown; manageUrl?: unknown };
+  const d = (details ?? {}) as {
+    reason?: unknown; manageUrl?: unknown; lifecycle?: unknown; exportPath?: unknown;
+  };
   const reason = d.reason === "suspended" ? "suspended" : "payment_required";
   const url = typeof d.manageUrl === "string" && d.manageUrl.length > 0 ? d.manageUrl : undefined;
+  const lifecycle = lifecycleOf(d.lifecycle);
+  const exportPath =
+    typeof d.exportPath === "string" && d.exportPath.startsWith("/") ? d.exportPath : undefined;
   // A sink that throws must not replace the refusal with its own failure.
   try {
-    sink({ reason, ...(url ? { manageUrl: url } : {}) });
+    sink({
+      reason,
+      ...(url ? { manageUrl: url } : {}),
+      ...(lifecycle ? { lifecycle } : {}),
+      ...(exportPath ? { exportPath } : {}),
+    });
   } catch { /* the ApiError below is the answer either way */ }
 }
 
@@ -1716,6 +1796,20 @@ export type AccountAccess =
        * AI-off sentence in front of an account whose AI is on.
        */
       aiEnabled?: boolean;
+      /**
+       * WHERE THE ACCOUNT STANDS, for the banner above the app. Absent from a server that
+       * predates the wall, and absent draws nothing — the banner has no state to name.
+       */
+      lifecycle?: AccountLifecycle;
+      /** The subscription page, when the refused arm named one. */
+      manageUrl?: string;
+      /** Where the settings document is served, when this server serves one. */
+      exportPath?: string;
+      /**
+       * THE ONE-TIME CATCH-UP, answered on the first open read after a closure and never again.
+       * `since` is the moment the account closed; `count` is what arrived while it was shut.
+       */
+      caughtUp?: { since: string; count: number };
     };
 
 /** What `DELETE /account` answers. Every field is stated on the confirmation screen. */
@@ -2323,6 +2417,15 @@ export const account = {
    * outside this tab) and the connect presses. See {@link accessRead}.
    */
   access: (opts?: { fresh?: boolean }) => accessRead(opts?.fresh === true),
+  /**
+   * `GET /account/export` — the settings document a self-hosted install reads when it joins the
+   * mailbox: rules, Screener decisions, senders' standing, the account's own knobs. NO MAIL and NO
+   * CREDENTIALS, by the route's own construction. Reachable under the wall, because a door out
+   * that is behind the lock is not a door out. Handed back unparsed: the shape belongs to the
+   * install that reads it, and narrowing it here would be a second spelling of a document this
+   * app never inspects.
+   */
+  exportSettings: () => api<unknown>("/account/export"),
   manageLink: async (): Promise<{ url: string } | null> => {
     try {
       return await api<{ url: string }>("/account/manage-link", { method: "POST", body: {} });

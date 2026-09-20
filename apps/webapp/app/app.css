@@ -3124,6 +3124,87 @@ input.set-tag-input {
 .gate .btn {
   text-decoration: none;
 }
+/* ── THE WALL — the refused account's whole screen ────────────────────────────────────────────
+   `.gate-card`'s wider sibling: the lock used to be one sentence and two buttons, and the wall
+   carries a dated headline, three statements and three actions with a line under each. Wider by
+   100px, not a different box — the same card, the same rise, the same corners.
+   EVERY RULE BELOW IS WRITTEN UNDER `.gate-card`, and that is load-bearing rather than tidy:
+   `.gate-card p` sets colour, size, line-height and margin at specificity (0,1,1), so a bare
+   `.wall-lead` (0,1,0) LOSES and the one full-ink sentence on the screen would render at ink2
+   with the wrong spacing — the same "the sentences were right and the box was not" defect this
+   screen already has a case for, arriving through the cascade instead of through Tailwind. */
+.gate-card.wall-card {
+  width: min(520px, 100%);
+}
+/* The three statements, loudest in the middle. "Your mailbox is untouched" is the one a person
+   has to believe, so it is the only full-ink line on the screen that is not the headline; the
+   others sit at ink2 and ink3 around it. */
+.gate-card .wall-lead {
+  margin: 0 0 6px;
+}
+.gate-card .wall-master {
+  font-size:calc(13px + var(--type-up));
+  font-weight: 560;
+  color: var(--ink);
+  line-height: 1.6;
+  margin: 0 0 14px;
+}
+.gate-card .wall-fine {
+  font-size:calc(11.5px + var(--type-up));
+  color: var(--ink3);
+  line-height: 1.55;
+  margin: 0 0 20px;
+}
+/* ONE COLUMN, and the page's only emphasis. A row of three would make them look interchangeable;
+   two of the three cannot be undone by pressing again, so each gets its own line and its own
+   sentence underneath. The hairline is what separates "what happened" from "what you can do". */
+.gate-card .wall-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 18px 0 0;
+  margin: 0 0 18px;
+  border-top: 1px solid var(--hair);
+}
+.gate-card .wall-act {
+  width: 100%;
+  justify-content: center;
+  padding: 11px 18px;
+  font-size:calc(13.5px + var(--type-up));
+  text-decoration: none;
+  margin: 8px 0 0;
+}
+.gate-card .wall-hint {
+  font-size:calc(11.5px + var(--type-up));
+  color: var(--ink3);
+  line-height: 1.5;
+  margin: 6px 2px 2px;
+}
+.gate-card .wall-hint a {
+  color: var(--ink2);
+  text-decoration: underline;
+}
+/* The export's refusal, said where the press was — the one line on the screen reporting that
+   something did NOT happen, so it is the one that is not ink-coloured. `--danger` WITH ITS
+   FALLBACK: the token is defined by the ohmarchy theme and not by the base one, so a bare
+   `var(--danger)` leaves this sentence inheriting body ink on the default theme. `.rte-linkpop-err`
+   is the other reader and carries the same pair. */
+.gate-card .wall-warn {
+  font-size:calc(11.5px + var(--type-up));
+  color: var(--danger, #b3261e);
+  line-height: 1.55;
+  margin: 6px 2px 2px;
+}
+/* The erasure ceremony, in place. It is Settings → Account's own pane, so it brings its own
+   layout; all this does is give it the card's width back and put the way out under it. */
+.gate-card .wall-erase {
+  padding: 16px 0 0;
+  border-top: 1px solid var(--hair);
+}
+.gate-card .wall-erase .set-pane {
+  padding: 0;
+}
 .gate-foot,
 .login-foot {
   font-size:calc(11px + var(--type-up));
