@@ -14,7 +14,7 @@ import { Linking, View } from "react-native";
 import { useRouter } from "expo-router";
 import { Copy } from "../copy";
 import { useLocale } from "../i18n/LocaleProvider";
-import { Button, Panel, Txt } from "./base";
+import { Button, Panel, Txt, useTopPad } from "./base";
 import { dayStamp } from "./day-stamp";
 import { dismissKey, dismissed, noticeOf, remember, stoodDown, type Notice } from "./lifecycle-strip";
 import { readAccess } from "../net/account";
@@ -33,6 +33,10 @@ export function LifecycleStrip({ session }: { session: ConnectedSession | null }
      no button. */
   const [manageUrl, setManageUrl] = useState<string | null>(null);
   const [gone, setGone] = useState(false);
+  /* IT IS THE FIRST THING UNDER THE STATUS BAR whenever it draws — the shell mounts it above the
+     screen, outside the chrome that pays this everywhere else. Measured on a device with a fixed
+     8: the first line sat against the clock and the panel's top corners were cut off. */
+  const top = useTopPad(8);
 
   useEffect(() => {
     if (session === null || session.standalone) return;
@@ -69,7 +73,7 @@ export function LifecycleStrip({ session }: { session: ConnectedSession | null }
 
   if (notice.kind === "caughtUp") {
     return (
-      <Panel style={{ marginHorizontal: 16, marginTop: 8, padding: 14, gap: 8 }}>
+      <Panel style={{ marginHorizontal: 16, marginTop: top, padding: 14, gap: 8 }}>
         <Txt variant="body" accessibilityRole="summary">
           {Copy.stripCaughtUp(notice.count, dayStamp(notice.since, locale))}
         </Txt>
@@ -107,7 +111,7 @@ export function LifecycleStrip({ session }: { session: ConnectedSession | null }
     <Panel
       style={{
         marginHorizontal: 16,
-        marginTop: 8,
+        marginTop: top,
         padding: 14,
         gap: 8,
       }}
