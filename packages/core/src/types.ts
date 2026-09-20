@@ -125,7 +125,9 @@ export interface RetroCandidateRow {
 export function retroPassWouldMove(row: RetroCandidateRow, destination: string): boolean {
   const filed = row.physicalFolder ?? row.folder;
   if (!isOrganizedFolder(filed)) return false;
-  if (filed === destination) return false;
+  // Canonicalized: a row still filed at the pre-0.22 `ohmail/Reads` IS at the News pile, and
+  // the idempotency clause must read it as already-there, not as mail to move.
+  if (canonicalDestination(filed) === canonicalDestination(destination)) return false;
   return (row.triage?.state ?? "none") === "none";
 }
 
