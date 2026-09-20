@@ -1,10 +1,53 @@
+import { and, desc, eq, gt, sql } from "drizzle-orm";
 import { deleteAccount } from "@trafficflow/services";
+import { messages } from "@trafficflow/db";
 import type { ReleaseOutcome } from "@trafficflow/db";
+/* Hosted-only, like `internal.ts`'s cloud imports: `accountRoutes` is mounted by `routes/index.ts`
+   and deliberately NOT by the local door ("deleting the data directory IS the erasure"), so the
+   cloud table never enters a standalone bundle. */
+import { accountLifecycleNotices } from "@trafficflow/db/cloud";
 import { ServiceError } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { clearSessionCookies } from "../cookies.js";
 import { accessFor, cookieSurface, entitlementsPort, json } from "./shared.js";
+import type { ApiDeps } from "../deps.js";
 import type { Route } from "../router.js";
+
+/**
+ * THE REOPENING BANNER'S ONE FACT (cloud 0040) — an idempotent INSERT on a GET, deliberate and
+ * named here so nobody "fixes" it: the first open read after a closure claims the `reopened`
+ * notice (anchor = the newest `closed` notice's own anchor, ON CONFLICT DO NOTHING) and answers
+ * how much mail arrived while the account was closed. Exactly one read carries it — a replay
+ * conflicts on the PK and answers nothing, so dismissal needs no server state. Best-effort by
+ * contract: the wall's read must never fail over its banner.
+ */
+async function reopenedCatchUp(
+  deps: ApiDeps, accountId: string,
+): Promise<{ since: string; count: number } | null> {
+  try {
+    const [closed] = await deps.db.select({ anchor: accountLifecycleNotices.anchor })
+      .from(accountLifecycleNotices)
+      .where(and(
+        eq(accountLifecycleNotices.accountId, accountId),
+        eq(accountLifecycleNotices.kind, "closed"),
+      ))
+      .orderBy(desc(accountLifecycleNotices.anchor))
+      .limit(1);
+    if (!closed) return null;
+    const inserted = await deps.db.insert(accountLifecycleNotices)
+      .values({ accountId, kind: "reopened", anchor: closed.anchor })
+      .onConflictDoNothing()
+      .returning();
+    if (inserted.length === 0) return null;
+    const [row] = await deps.db.select({ n: sql<number>`count(*)::int` }).from(messages)
+      .where(and(eq(messages.accountId, accountId), gt(messages.createdAt, closed.anchor)));
+    return { since: closed.anchor.toISOString(), count: row?.n ?? 0 };
+  } catch {
+    // A missing table (an API ahead of cloud 0040) or any read fault costs the banner, never
+    // the wall's read.
+    return null;
+  }
+}
 
 /**
  * `DELETE /account` — Art. 17 erasure, self-serve; the screen is `AccountSection.tsx`. `stepUp:
@@ -105,6 +148,12 @@ export const accountRoutes: Route[] = [
           exportPath: "/account/export",
         }, 200);
       }
+      // The catch-up banner, only where a lifecycle exists to have reopened from: an OPEN
+      // verdict whose account has an unanswered `closed` notice claims `reopened` and says how
+      // much arrived meanwhile. NO auto re-claim rides on this (DUAL-MODE §4): un-parking
+      // resumes SYNC as reader, and organizing resumes per mailbox through the person's own
+      // `POST /mailboxes/:id/organize` press.
+      const caughtUp = verdict.lifecycle ? await reopenedCatchUp(deps, ctx.accountId) : null;
       return json({
         metered: true,
         canAddMailbox: verdict.limits.canAddMailbox,
@@ -117,6 +166,7 @@ export const accountRoutes: Route[] = [
         aiEnabled: verdict.limits.aiEnabled,
         ...(verdict.lifecycle ? { lifecycle: verdict.lifecycle } : {}),
         exportPath: "/account/export",
+        ...(caughtUp ? { caughtUp } : {}),
       }, 200);
     },
   },
