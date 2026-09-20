@@ -36,6 +36,18 @@ export const MIGRATION_ALLOWANCES: readonly MigrationAllowance[] = [
       "WHEN duplicate_object block); the constraint, its name and its predicate are unchanged, " +
       "so the resulting schema is identical",
   },
+  {
+    journal: "mail",
+    tag: "0120_held_release_dismissed",
+    recorded: "a6103bca59c94c095b92b5fd59e52b608c6fb34fce486ff02cf4d311e703bb65",
+    shipped: "70cc9398682838799a87387766416edd541e71dd92c06eaade3563e73b48cc7c",
+    reason:
+      "a DROP CONSTRAINT IF EXISTS added in front of the bare ADD CONSTRAINT after apply, so the " +
+      "entry can be re-executed the way the replay guards require; the CHECK, its name and its " +
+      "predicate are unchanged, and a drop of a constraint the next statement re-adds leaves the " +
+      "same schema. The recorded side is the ONE released version of this file — production " +
+      "applied it before the flat form was written, which is why this entry exists at all",
+  },
 ] as const;
 
 /** The allowance admitting exactly this drift, or null. Every field must match. */
