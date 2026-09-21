@@ -103,7 +103,7 @@ import {
 } from "./engine";
 import { PullNewMail, usePullNewMail } from "./PullNewMail";
 import { useOlderMail } from "./older-mail";
-import { PLACE_LABEL, avatarHue, hueOf, initialsOf, placeLabel, resurfaceLabel, tomorrowAt } from "./format";
+import { avatarHue, dayStamp, hueOf, initialsOf, PLACE_LABEL, placeLabel, resurfaceLabel, tomorrowAt } from "./format";
 import { useDayClock } from "./day-clock";
 import { activeFormatLocale, activeFormatZone } from "./locale";
 import { displayAddress, displayDomain } from "./idn";
@@ -5391,7 +5391,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             ];
             if (m.triage?.state === "bubbled_up"
               && !(await mutateAndReport({ kind: "triage_set", messageId: m.id, state: "none" }, null))) return;
-            if (await markSeen([m.id], false)) toastWithUndo(t("ohbox.toastResurfaceDone"), inverses);
+            /* WHERE IT WENT, named: Earlier is one chronology, so a ten-day-old row files ten
+               days down — "filed under Earlier" alone read as "gone" (owner, 2026-09-21). */
+            if (await markSeen([m.id], false)) {
+              toastWithUndo(t("ohbox.toastResurfaceDone", { when: dayStamp(m.date) }), inverses);
+            }
           };
           void release();
           break;
@@ -5553,7 +5557,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             );
             if (applied === 0) return;
           }
-          if (await markSeen(ids, false)) toastWithUndo(t("ohbox.toastResurfaceDone"), inverses);
+          if (await markSeen(ids, false)) {
+            // The conversation's newest member names the slot — the date its row wears.
+            const newest = rows.reduce<string | null>(
+              (best, r) => (r.date && (!best || r.date > best) ? r.date : best), null,
+            );
+            toastWithUndo(t("ohbox.toastResurfaceDone", { when: dayStamp(newest) }), inverses);
+          }
         })();
         return true;
       }

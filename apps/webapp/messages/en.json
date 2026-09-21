@@ -509,7 +509,7 @@
     "actionDone": "Done",
     "rowDoneAria": "Done — stops resurfacing and files under Earlier",
     "rowDoneScheduledAria": "Done — cancels the return and files under Earlier",
-    "toastResurfaceDone": "Done — filed under Earlier",
+    "toastResurfaceDone": "Done — filed under Earlier at {when}",
     "refusedOrganized": "Nothing changed — {name} organizes this mailbox, so piles and returns are set where it runs.",
     "refusedOrganizedUnknown": "Nothing changed — piles and returns are set where the install that organizes this mailbox runs.",
     "pressQueuedOrganized": "Queued for {name} — it happens on the next pass.",

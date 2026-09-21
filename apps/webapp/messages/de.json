@@ -509,7 +509,7 @@
     "actionDone": "Erledigt",
     "rowDoneAria": "Erledigt — taucht nicht mehr auf und liegt unter „Gesehen“",
     "rowDoneScheduledAria": "Erledigt — kommt nicht zurück und liegt unter „Gesehen“",
-    "toastResurfaceDone": "Erledigt — unter „Gesehen“ abgelegt",
+    "toastResurfaceDone": "Erledigt — unter „Gesehen“ abgelegt, {when}",
     "refusedOrganized": "Nichts geändert — {name} organisiert dieses Postfach, deshalb werden Stapel und Rückkehr dort gesetzt.",
     "refusedOrganizedUnknown": "Nichts geändert — Stapel und Rückkehr werden dort gesetzt, wo die Installation läuft, die dieses Postfach organisiert.",
     "pressQueuedOrganized": "Für {name} vorgemerkt — passiert beim nächsten Durchgang.",
