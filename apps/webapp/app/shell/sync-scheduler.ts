@@ -745,6 +745,15 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
           : {}),
 
         /**
+         * The window's own failed pull, reported to the door's log — forwarded, gated like a read,
+         * and spread. A request may not leave the browser under another account's session, even a
+         * content-free one; a contradicted loop is terminal and has nothing to report anyway.
+         */
+        ...(adapter.reportSyncFailure
+          ? { reportSyncFailure: gatedRead(adapter.reportSyncFailure.bind(adapter), "a window's sync-failure report") }
+          : {}),
+
+        /**
          * The one-click unsubscribe — forwarded, refused when contradicted, and spread. `POST
          * /messages/:id/unsubscribe`: RFC 8058, performed server-side so the reader's IP and reading time never reach
          * the sender. Forwarded at all is a REPAIR, the third on this list: `OhmailEngine.unsubscribe` reads the
@@ -1599,6 +1608,11 @@ export function startSyncScheduler(
         return;
       }
       failures += 1;
+      // INTO THE ENGINE'S OWN LOG, on every counted failure. `report` below reaches the window
+      // console alone; on the desktop that console is closed, and a drain that rejected on every
+      // attempt for a whole session left the engine log clean while the strip stayed red
+      // (2026-09-21). The record is content-free and the call never throws or waits.
+      engine.reportSyncFailure(err, failures);
       if (isTerminalRefusal(err)) {
         if (terminal || (refusedAt !== null && Date.now() - refusedAt >= REFUSAL_SUSTAIN_MS)) {
           // SUSTAINED (or a terminal-mode probe re-refused). The server has re-made this claim

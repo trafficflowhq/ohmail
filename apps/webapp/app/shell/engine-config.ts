@@ -190,8 +190,8 @@ export function createEngine(
        * the inline transport can carry mints an upload ticket per file, PUTs the bytes straight into storage, and
        * sends references. That is what lets this window's compose form promise the sending mailbox's own announced
        * limit rather than the ~4.5 MB serverless request cap expressed as 3 MB of raw bytes. It is set HERE and
-       * nowhere else. The desktop builds its adapter in `apps/desktop/src/bridge-fetch.ts` with no options beyond a
-       * base URL and a bridge fetch, so neither of its doors stages: the standalone door has no hosted storage behind
+       * nowhere else. The desktop builds its adapter in `apps/desktop/src/bridge-fetch.ts` with a base URL, a bridge
+       * fetch and a sink for its own failed pulls — no staging option — so neither of its doors stages: the standalone door has no hosted storage behind
        * it and no business writing into one, and the Cloud door forwards this request verbatim to the hosted API — a
        * shipped build must keep sending the shape it has always sent.
        */

@@ -317,8 +317,11 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
       };
 
     case "failing":
-      // Polite, and deliberately not re-announced: the text is constant for as long as the
-      // outage lasts, so the region updates once when it appears and once when it goes.
+      // THIS WINDOW's pull loop is failing — "Can't refresh. Retrying." — never "Sync failed":
+      // that sentence belongs to a mailbox whose own sync failed (`mailboxError`, named by
+      // address), and the ladder lets such a verdict outrank this arm. Polite, and deliberately
+      // not re-announced: the text is constant for as long as the outage lasts, so the region
+      // updates once when it appears and once when it goes.
       return { tone: "", role: "status", warn: true, busy: false, title: t("failing"), detail: null, link: null };
 
     case "stale":
@@ -341,7 +344,7 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
       // The confirm window for a coded refusal. Our API refused this session ONCE and we are
       // asking again to see if it holds (REFUSAL_CONFIRM_MS). Calm and busy — a spinner, no
       // warning triangle — because nothing is confirmed: this is NOT `stopped`'s alert and NOT
-      // `failing`'s "Sync failed." A coded refusal must never be answered with silence, so the
+      // `failing`'s refresh warning. A coded refusal must never be answered with silence, so the
       // strip says the one true calm thing meanwhile; if the refusal is re-made it becomes
       // `stopped`, and if a drain succeeds it withdraws to quiet.
       return { tone: "busy", role: "status", warn: false, busy: true, title: t("catchingUp"), detail: null, link: null };

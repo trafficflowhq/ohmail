@@ -1646,6 +1646,11 @@ export const OWES_NOTHING_KEYS: readonly MailStateKey[] = [
  * why the derivation can read `climb`'s KEY: the verdict exists before the
  * stamp does ({@link MailState.settled}).
  */
+/** A live mailbox the door has marked failing — the verdict that outranks this window's own pull. */
+function mailboxInError(mailboxes: MailStateInputs["mailboxes"]): boolean {
+  return mailboxes !== null && mailboxes.some((m) => m.status === "error");
+}
+
 export function deriveMailState(input: MailStateInputs): MailState {
   const state = climb(input);
   return {
@@ -1696,17 +1701,17 @@ function climb(input: MailStateInputs): MailState {
   // `terminal` first: the loop has disarmed itself and will not restart, so no count below
   // can move and no mailbox fact below can be refreshed.
   if (sync.terminal) return { ...QUIET, key: "stopped" };
-  // A SUSTAINED failing loop means the mirror is frozen — every state below
-  // would read a number that cannot change. The streak is what makes this
-  // sustained rather than a blip. `sync.refused` deliberately does NOT join
-  // it: a single coded 401/403 the server has not re-made is one request's
-  // evidence and routinely transient (cold function, warming session,
-  // deploy alias mid-roll — `sync-scheduler.ts`); rendering "failed" on it
-  // painted a false alarm over a healthy first sync. An unconfirmed refusal
-  // takes the calm `catchingUp` floor below — never "failed", never
-  // silence. What surfaces a failure banner is a sustained streak here, or
-  // a confirmed refusal latched `terminal` and rendered by `stopped`.
-  if (sync.failures >= failureStreak) return { ...QUIET, key: "failing" };
+  // A SUSTAINED failing loop means the mirror is frozen — every state below would read a number
+  // that cannot change, and the streak is what makes it sustained rather than a blip.
+  // `sync.refused` deliberately does NOT join it: a single coded 401/403 is one request's
+  // evidence and routinely transient (cold function, warming session, deploy alias mid-roll), and
+  // rendering "failed" on it painted a false alarm over a healthy first sync — an unconfirmed
+  // refusal takes the calm `catchingUp` floor below, a confirmed one latches `terminal`.
+  // AND THIS COUNTS THE WINDOW'S OWN PULL, NOT A MAILBOX'S SYNC: it renders the refresh sentence
+  // and steps aside for a mailbox the facts poll marks `error`, the one settled source for "Sync
+  // failed" — named by address, cleared by that mailbox's next served cycle. The shipped desktop
+  // said "Sync failed. Retrying." all session over a mailbox whose own drain was what failed.
+  if (sync.failures >= failureStreak && !mailboxInError(mailboxes)) return { ...QUIET, key: "failing" };
 
   // THIS WINDOW HAS LOST TRACK OF ITS ACCOUNT — the marker it was confirmed for changed, the
   // gate revoked, and the loop stood down. Above everything below it for the reason `failing` is:

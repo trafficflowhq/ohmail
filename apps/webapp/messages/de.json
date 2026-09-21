@@ -2773,7 +2773,7 @@
     "copied": "Kopiert"
   },
   "sync": {
-    "failing": "Synchronisierung fehlgeschlagen. Wird erneut versucht.",
+    "failing": "Aktualisieren nicht möglich. Wird erneut versucht.",
     "stopped": "Synchronisierung gestoppt — diese Sitzung ist nicht mehr berechtigt.",
     "stoppedLocal": "Synchronisierung gestoppt. Beende ohmail und öffne es neu, um wieder zu verbinden.",
     "ownerLost": "Dieses Fenster weiß nicht mehr, zu welchem Konto es gehört; deshalb wird nichts synchronisiert. Lade die Seite neu.",

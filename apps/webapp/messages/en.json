@@ -2773,7 +2773,7 @@
     "copied": "Copied"
   },
   "sync": {
-    "failing": "Sync failed. Retrying.",
+    "failing": "Can't refresh. Retrying.",
     "stopped": "Sync stopped — this session is no longer authorized.",
     "stoppedLocal": "Sync stopped. Quit and reopen ohmail to reconnect.",
     "ownerLost": "This window has lost track of which account it is for, so nothing is syncing. Reload the page.",
