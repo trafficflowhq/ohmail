@@ -129,6 +129,7 @@ export function InlineReply({
   onChange,
   onClose,
   onSend,
+  onSendAndDone = null,
   draftReply,
   envelope = null,
   onEnvelope,
@@ -175,6 +176,18 @@ export function InlineReply({
   onChange: (next: RichValue) => void;
   onClose: () => void;
   onSend: () => void;
+  /**
+   * SEND + DONE — the same send, and the message being answered filed in the same press.
+   *
+   * PRESENT IS THE WHOLE CONDITION. The shell passes it only where the engine's one rule says
+   * the second action would finish something (`sendAndDonePlanFor`): a reply or forward of a
+   * message that sits in the Ohbox now and is not already done. A fresh compose, a source in a
+   * bottom pile, a source nothing would move — and every mount with no shell behind it, the
+   * bare harnesses and the inert chrome — pass nothing and get the plain Send. The editor does
+   * not re-derive that judgement; two spellings of one rule is how the button and the act stop
+   * agreeing.
+   */
+  onSendAndDone?: (() => void) | null;
   /**
    * The AI drafter's offer, rendered above the editor the draft lands in. Deliberately not a modal:
    * compose was moved out of a dialog because the keyboard could not leave it, and a purchase
@@ -469,6 +482,8 @@ export function InlineReply({
       : replyEnvelopePlan(message, options.map((o) => o.address), replyAll, envelope);
   /** Is the send chord bound here (a provider stands above)? Gates the Send button's keycap. */
   const sendChord = useBinding("mod+Enter");
+  /** The second action's chord, read the same way — the shell binds it beside the first. */
+  const sendDoneChord = useBinding("mod+shift+Enter");
   const mod = useModGlyph();
   /**
    * THE MUTATION AS IT WOULD GO OUT RIGHT NOW — built once, judged by `canSend` and read by the
@@ -825,6 +840,26 @@ export function InlineReply({
               button wears its keycap always; a provider-less mount has no binding, no cap. */}
           {sendChord ? <Kbd>{chordKeys("mod+Enter", mod).join(" ")}</Kbd> : null}
         </Button>
+        {/* SEND + DONE — the same send, quieter, at Send's right edge. It wears the SAME lock as
+            Send (one predicate for both: a message that may not be sent may not be sent and
+            filed either) and the same told refusal, because the two are one act with a second
+            half. Absent entirely where the shell offers nothing — see `onSendAndDone`. */}
+        {onSendAndDone ? (
+          <Button
+            className="reply-send-done"
+            disabled={locked && !needsContent}
+            aria-disabled={needsContent || undefined}
+            title={needsContent ? tc("needContent") : undefined}
+            data-send-done={verb.attr}
+            onClick={() => {
+              if (needsContent) { setNeedNote(true); return; }
+              onSendAndDone();
+            }}
+          >
+            {t("sendAndDone")}
+            {sendDoneChord ? <Kbd>{chordKeys("mod+shift+Enter", mod).join(" ")}</Kbd> : null}
+          </Button>
+        ) : null}
         <Button variant="ghost" onClick={onClose}>
           {t("cancel")}
         </Button>

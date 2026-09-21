@@ -217,6 +217,16 @@ export interface MessageChrome {
    * outcome belongs to the message that was answered, not to whatever is on screen now.
    */
   sendReply: (messageId: string) => void;
+  /**
+   * SEND + DONE — is the second send action offered for this message, and what does it do?
+   *
+   * ONE READER, the engine's (`sendAndDonePlanFor`): `null` is the plain Send and carries every
+   * reason for it — the source is not in the Ohbox, it is already finished, nothing would move.
+   * ABSENT (the inert chrome, every mount with no engine behind it) is the same answer for the
+   * surface that cannot ask. The editor renders the second button on the presence of the
+   * callback alone and judges nothing itself.
+   */
+  sendReplyAndDone?: (messageId: string) => (() => void) | null;
   /** Where that message's send has got to — see `mail-send.ts` for why it has four states. */
   replySendState: (messageId: string) => SendState;
   /**

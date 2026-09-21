@@ -982,6 +982,7 @@ export const DE: Deck = {
   toastResurfaceCleared: "Taucht nicht wieder auf",
   toastResurfaceNow: "Wieder ganz oben",
   toastResurfaceDone: "Erledigt — unter „Älter“ abgelegt",
+  toastSentAndDone: "Gesendet · erledigt",
   /*
    * CASE-NEUTRAL, and this one diverges from the web client's German ON PURPOSE.
    *
@@ -1054,6 +1055,7 @@ export const DE: Deck = {
   replyCcLine: (names: string) => `Kopie an ${names}`,
   replyPlaceholder: "Schreib deine Antwort …",
   replySend: "Senden",
+  sendAndDone: "Senden + Erledigt",
   replyCancel: "Abbrechen",
   replySending: "Wird gesendet …",
   replySent: "Antwort gesendet.",

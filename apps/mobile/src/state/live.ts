@@ -74,6 +74,8 @@ import {
   inverseMutations,
   routingSubject,
   type RoutingIntent,
+  sendAndDone,
+  sendAndDonePlanFor,
   type TagDTO,
   type TrashRowWire,
   type WallClockVerdict,
@@ -1880,6 +1882,14 @@ export interface ToastOpts {
   holdMs?: number;
 }
 
+/**
+ * SEND + DONE's second half, as the send machine sees it: given whether the engine ACCEPTED the
+ * message, it answers with the one sentence the press earned — or `null`, which hands the
+ * sentence back to the send (a refused send, and a release the account was not allowed to make,
+ * are both told in their own words).
+ */
+type DoneHalf = (accepted: boolean) => Promise<{ say: RefusalArg; opts?: ToastOpts } | null>;
+
 export interface LiveDeps {
   engine: OhmailEngine;
   /** One plain sentence to the reader — the screens' toast. */
@@ -2069,7 +2079,21 @@ export interface LiveWorldActions {
     sig?: string | null,
     sendAt?: string | null,
     attachments?: ComposeAttachment[],
+    /**
+     * SEND + DONE — the composer's second send action. The send is this one, unchanged; the
+     * message being answered is filed only once the engine has ACCEPTED it, through the same
+     * release {@link LiveWorldActions.resurfaceDone} performs and the one rule the webapp
+     * composer reads (`@ohmail/client-engine`'s `sendAndDone`). The pill then says so once,
+     * with the Undo that puts the row back in the section it left.
+     */
+    andDone?: boolean,
   ): Promise<SendResult>;
+  /**
+   * IS THE SECOND SEND ACTION OFFERED for a reply or forward of this message? The engine's one
+   * rule (`sendAndDonePlanFor`): a source that sits in the Ohbox now and is not already done.
+   * `false` is the plain Send — a message in a bottom pile, filed elsewhere, or finished.
+   */
+  sendAndDoneOffered(messageId: string): boolean;
   /**
    * Forward — `mail_send` with `forwardOf`, recipients the USER typed, the user's note as
    * body. The signature seals into the NOTE; the server appends the quoted original after
@@ -2077,7 +2101,7 @@ export interface LiveWorldActions {
    * `attachments` on either verb ride the same mutation the webapp composer sends —
    * base64 on `POST /drafts/:id/send`, nothing stored (`ComposeAttachment`'s own contract).
    */
-  sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null, attachments?: ComposeAttachment[]): Promise<SendResult>;
+  sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null, attachments?: ComposeAttachment[], andDone?: boolean): Promise<SendResult>;
   /**
    * A MAIL THAT ANSWERS NOTHING — the same `mail_send` with no parent: `inReplyTo` null,
    * no `forwardOf`, the sending mailbox named explicitly because there is no parent to derive
@@ -2665,6 +2689,36 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return saidAll(await Promise.all(parts), null, refuse("liveSaveFailed"));
   };
 
+  /** Is the second send action offered for this source? The ENGINE's rule, nothing local. */
+  const sendAndDoneOffered = (messageId: string): boolean =>
+    sendAndDonePlanFor(engine.read(), messageId) !== null;
+
+  /**
+   * SEND + DONE — the release, armed at the press and run only on an accepted send.
+   *
+   * The plan is read HERE, before anything is dispatched: it names the section the source is in
+   * now, and the send itself releases a pin as it settles, so an inverse read afterwards would
+   * put the row back where the SEND left it rather than where the reader found it. The order,
+   * the release and the "only after acceptance" rule are the engine's one intent — the same
+   * `sendAndDone` the webapp composer takes — so the two surfaces cannot drift.
+   */
+  const doneHalf = (messageId: string): DoneHalf | undefined => {
+    const plan = sendAndDonePlanFor(engine.read(), messageId);
+    if (plan === null) return undefined;
+    return async (accepted) => {
+      const out = await sendAndDone({
+        plan,
+        send: () => Promise.resolve(accepted),
+        /* The row's own Done door — `engine.mutate` through the watched seam, exactly as
+           `resurfaceDone` dispatches it. */
+        dispatch: async (m) => (await watched(engine.mutate(m))).kind === "applied",
+      });
+      return out.kind === "sent_and_done"
+        ? { say: refuse("toastSentAndDone"), opts: undoable(plan.undo) }
+        : null;
+    };
+  };
+
   /**
    * ALREADY ASKED FOR? The sentence for a message whose press is still waiting on the install
    * that organizes the mailbox, or `null` when nothing of ours is waiting on it. Pressing again
@@ -2890,6 +2944,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     p: Promise<MutationResult>,
     sentToast: RefusalArg,
     earlierWentToast: RefusalArg,
+    /**
+     * SEND + DONE's second half, armed at the press and answered HERE, where the outcome is
+     * known. It takes the acceptance as its argument and OWNS the sentence when it fires: one
+     * press says one thing, rather than "Reply sent." replaced a beat later.
+     */
+    doneHalf?: DoneHalf,
   ): Promise<SendResult> => {
     const first = await p.then((r) => r, () => null);
     let settled: MutationResult | null = first;
@@ -2910,12 +2970,19 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
      */
     const earlierWent = outcome !== "queued" && earlierVersionWent(engine, settled);
     if (outcome !== "queued" && first !== null) forgetResumedOverOtherText(engine, first.key);
-    toast(
-      outcome === "sent" ? (earlierWent ? earlierWentToast : sentToast)
-        : outcome === "queued" ? refuse("replyQueued")
-          : outcome === "unverified" ? refuse("replyUnverified")
-            : refuse("replyFailed"),
-    );
+    /* The release runs on the OUTCOME, whatever it is: the intent is what refuses to dispatch
+       anything the engine did not accept, and it answers with the sentence it earned or `null`
+       for the ordinary one — a refused send is told in the send's own words and nothing else. */
+    const said = doneHalf ? await doneHalf(outcome === "sent") : null;
+    if (said) toast(said.say, said.opts);
+    else {
+      toast(
+        outcome === "sent" ? (earlierWent ? earlierWentToast : sentToast)
+          : outcome === "queued" ? refuse("replyQueued")
+            : outcome === "unverified" ? refuse("replyUnverified")
+              : refuse("replyFailed"),
+      );
+    }
     return { outcome, ...(outcome === "queued" && first ? { key: first.key } : {}) };
   };
 
@@ -2958,6 +3025,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     sig: string | null = null,
     sendAt: string | null = null,
     attachments: ComposeAttachment[] = [],
+    andDone = false,
   ): Promise<SendResult> => {
     const m = messageOf(messageId);
     const text = body.trim();
@@ -3002,6 +3070,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       // EARLIER press's reservation, so naming a time this press asked for would promise an
       // arrangement nobody made.
       Copy.replyEarlierWent,
+      /* SEND + DONE, armed BEFORE the dispatch — the plan the release inverts is the state the
+         reader is looking at, not the state the send leaves behind. An appointment finishes
+         nothing: `sendAt` is a message still on the account, and filing its source would say
+         it had been answered. */
+      andDone && sendAt === null ? doneHalf(messageId) : undefined,
     );
   };
 
@@ -3093,7 +3166,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return false;
   };
 
-  const sendForward = async (messageId: string, to: EmailAddress[], body: string, sig: string | null = null, attachments: ComposeAttachment[] = []): Promise<SendResult> => {
+  const sendForward = async (messageId: string, to: EmailAddress[], body: string, sig: string | null = null, attachments: ComposeAttachment[] = [], andDone = false): Promise<SendResult> => {
     const m = messageOf(messageId);
     // The `no_forward` refusal is client-side courtesy AND server-side law — the sheet never
     // offers the verb on such a message, and this arm refuses it too rather than trusting the
@@ -3117,6 +3190,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       }, sig)),
       Copy.forwarded,
       Copy.forwardEarlierWent,
+      /* SEND + DONE — armed before the dispatch, for the reply arm's reason. */
+      andDone ? doneHalf(messageId) : undefined,
     );
   };
 
@@ -3337,7 +3412,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     sweepFeed, leaveFeed, decide, release, setPile,
     pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, markAllSeen, move,
     deleteMessage, trashList, trashRestore,
-    sendReply, sendForward, sendNew, withdrawSend, cancelSchedule, tagToggle, tagCreate, screenSender,
+    sendReply, sendForward, sendNew, sendAndDoneOffered, withdrawSend, cancelSchedule, tagToggle, tagCreate, screenSender,
     draftDiscard, draftResolve,
     folderCreate, folderRename, folderDelete, folderDismiss,
   };
@@ -3411,8 +3486,11 @@ export interface WorldActions {
     sig?: string | null,
     sendAt?: string | null,
     attachments?: ComposeAttachment[],
+    andDone?: boolean,
   ): Promise<SendResult>;
-  sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null, attachments?: ComposeAttachment[]): Promise<SendResult>;
+  /** Is Send + Done offered for this source? See {@link LiveWorldActions.sendAndDoneOffered}. */
+  sendAndDoneOffered(messageId: string): boolean;
+  sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null, attachments?: ComposeAttachment[], andDone?: boolean): Promise<SendResult>;
   /** A mail with no parent — see {@link LiveWorldActions.sendNew}. */
   sendNew(
     mailboxId: string | null,
@@ -3480,9 +3558,12 @@ export function stableActions(current: () => WorldActions): WorldActions {
     deleteMessage: (id, opts) => void current().deleteMessage(id, opts),
     trashList: (cursor) => current().trashList(cursor),
     trashRestore: (id) => current().trashRestore(id),
-    sendReply: (id, body, all, sig, sendAt, attachments) => current().sendReply(id, body, all, sig, sendAt, attachments),
-    sendForward: (id, to, body, sig, attachments) => current().sendForward(id, to, body, sig, attachments),
+    sendReply: (id, body, all, sig, sendAt, attachments, andDone) =>
+      current().sendReply(id, body, all, sig, sendAt, attachments, andDone),
+    sendForward: (id, to, body, sig, attachments, andDone) =>
+      current().sendForward(id, to, body, sig, attachments, andDone),
     sendNew: (mailboxId, to, subject, body, sig, sendAt, attachments) => current().sendNew(mailboxId, to, subject, body, sig, sendAt, attachments),
+    sendAndDoneOffered: (id) => current().sendAndDoneOffered(id),
     withdrawSend: (key) => current().withdrawSend(key),
     cancelSchedule: (draftId) => current().cancelSchedule(draftId),
     draftDiscard: (draftId) => current().draftDiscard(draftId),

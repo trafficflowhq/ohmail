@@ -476,6 +476,8 @@ const NO_ACTIONS: WorldActions = {
   sendReply: () => Promise.resolve({ outcome: "failed" as const }),
   sendForward: () => Promise.resolve({ outcome: "failed" as const }),
   sendNew: () => Promise.resolve({ outcome: "failed" as const }),
+  // …and with no mirror there is no Ohbox row to finish: the plain Send is the whole control.
+  sendAndDoneOffered: () => false,
   // Nothing is connected, so nothing is queued: there is no send here to withdraw.
   withdrawSend: () => Promise.resolve("gone" as const),
   // Nor cancel: `false` is "not confirmed", which is exactly what nothing-connected means.
@@ -1209,6 +1211,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           sendReply: acts.sendReply,
           sendForward: acts.sendForward,
           sendNew: acts.sendNew,
+          /* BY REFERENCE for the reason above it. */
+          sendAndDoneOffered: acts.sendAndDoneOffered,
           withdrawSend: (key) => acts.withdrawSend(key),
           cancelSchedule: (draftId) => acts.cancelSchedule(draftId),
           draftDiscard: (draftId) => acts.draftDiscard(draftId),

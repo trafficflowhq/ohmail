@@ -1062,6 +1062,20 @@ export function useMailSend(
    * that was sent; applied to the draft now open it DELETES that draft's row.
    */
   onSettled: (key: string, m: MailSend, aboutThisCompose: boolean) => void,
+  /**
+   * THIS LANE'S SEND, ANSWERED ONCE — `true` the moment the engine CONFIRMS it, `false` on any
+   * terminal outcome that is not a delivery. The shell's Send + Done arm waits on this and
+   * dispatches nothing until it reads `true`; a lane nobody armed answers nowhere.
+   *
+   * Confirmation and nothing weaker, for the reason `onSettled` is confirmation-only: a queued
+   * or unverified send may never have left, and filing the message it answers would state "this
+   * was dealt with" about mail that is still on the account.
+   *
+   * Returning `true` means the CALLER has spoken for this send, so the lane raises no sentence of
+   * its own — one send, one toast. The answer is read on the confirmation alone; the `false` call
+   * is a notification and its return is ignored.
+   */
+  onOutcome?: (key: string, m: MailSend, accepted: boolean) => boolean,
 ): MailSendApi {
   const t = useTranslations();
   const [states, setStates] = useState<Record<string, SendState>>({});
@@ -1108,6 +1122,10 @@ export function useMailSend(
   const attempt = useRef(0);
   const settledRef = useRef(onSettled);
   settledRef.current = onSettled;
+  /* Held in a ref for `settledRef`'s reason: `settle` and `absorb` are memoized and an outcome
+     arrives long after the render that armed it. */
+  const outcomeRef = useRef(onOutcome);
+  outcomeRef.current = onOutcome;
 
   const setPhase = useCallback((key: string, next: SendState) => {
     setStates((prev) => {
@@ -1220,6 +1238,10 @@ export function useMailSend(
       // rather than convenient: nothing was sent, an appointment was made, and "Sent." over a
       // message that is still on the account would be exactly the false claim the four-phase
       // machine exists to prevent. The sentence carries the time, read where the reader is.
+      /* SEND + DONE TAKES THE SENTENCE. The confirmation is the moment the second action was
+         waiting for, and the caller answers whether it has spoken for this send — one press,
+         one toast, rather than "Reply sent." replaced a beat later by "Sent · marked done". */
+      if (outcomeRef.current?.(key, m, true) === true) return;
       toast(
         key === COMPOSE_SEND_KEY
           ? (m.sendAt
@@ -1372,7 +1394,13 @@ export function useMailSend(
       // is where all of it lives — so a confirmation from a flush minutes later clears the
       // draft and discharges the debt exactly as the first press would have.
       if (res.status === "confirmed") settle(key, m);
-      else setPhase(key, next);
+      else {
+        /* AND THE LANES THAT WILL NEVER CONFIRM SAY SO. A failed, duplicate or unverified send
+           is the end of this press; an arm still waiting on it would wait for ever. `queued` is
+           not terminal — the flush confirms it later and `settle` answers then. */
+        if (next.phase !== "queued") outcomeRef.current?.(key, m, false);
+        setPhase(key, next);
+      }
 
       /**
        * An accepted-pending send does not close the surface, and the first version did. It ran

@@ -1957,6 +1957,9 @@ export function MessagePane({
       onChange={chrome.onReplyBody}
       onClose={chrome.closeReply}
       onSend={() => chrome.sendReply(replyTarget.id)}
+      /* SEND + DONE, offered by the SHELL or not at all — the engine's one rule, asked about
+         the message this editor is answering. `null`/absent renders the plain Send. */
+      onSendAndDone={chrome.sendReplyAndDone?.(replyTarget.id) ?? null}
       /* THE HELD REPLY'S TWO VERBS — the row this message's unconfirmed reply left behind, and
          where the reader's answer goes. Only for a reply: a forward has no such row, and the
          editor renders the verbs only while its own sentence says the send is unconfirmed. */

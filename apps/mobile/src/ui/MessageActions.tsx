@@ -806,6 +806,12 @@ export function ComposeSheet({
      forward cannot wear an appointment, and the standalone door keeps none. Withheld rather than
      refused after the pick, and the sentence below says which it is. */
   const laterOffered = sendLaterOffered({ standalone: w.standalone, forward, hasAttachments: attachments.length > 0 });
+  /* SEND + DONE's own offer — the engine's rule about the SOURCE, asked through the world layer
+     so the paired door and the standalone door get the same answer from the same reader. */
+  /* A parent-less mail has no source to finish, and `m` is null in that mode — the offer asks
+     the engine only where there IS a source: the composer for a mail with no parent arrived
+     after this rule was written, and the rule is "a reply or forward of an Ohbox message". */
+  const andDoneOffered = m !== null && w.actions.sendAndDoneOffered(m.id);
   const [openedAt, setOpenedAt] = useState<Date>(() => new Date());
   /** The one refusal this picker can raise, said in place — the webapp's `role="status"` note. */
   const [pastNote, setPastNote] = useState(false);
@@ -933,7 +939,7 @@ export function ComposeSheet({
     })();
   };
 
-  const send = async (sendAt: string | null = null) => {
+  const send = async (sendAt: string | null = null, andDone = false) => {
     // The picker closes the moment ANY send is dispatched — a panel left standing over a
     // message that is already on its way offers rows for an act that may no longer happen.
     setLater(null);
@@ -942,8 +948,8 @@ export function ComposeSheet({
     const result = fresh
       ? await w.actions.sendNew(mailboxId, recipients ?? [], subject, body, sigText, sendAt, files)
       : forward
-        ? await w.actions.sendForward(m!.id, recipients ?? [], body, sigText, files)
-        : await w.actions.sendReply(m!.id, body, mode === "replyAll", sigText, sendAt, files);
+        ? await w.actions.sendForward(m!.id, recipients ?? [], body, sigText, files, andDone)
+        : await w.actions.sendReply(m!.id, body, mode === "replyAll", sigText, sendAt, files, andDone);
     if (result.outcome === "sent") {
       onClose();
       return;
@@ -1361,6 +1367,21 @@ export function ComposeSheet({
                 label={Copy.sendLater}
                 variant="plain"
                 onPress={canSend ? openLater : undefined}
+              />
+            ) : null}
+            {/* SEND + DONE — the same send, and the message being answered filed with it. Beside
+                Send under the SAME lock, like Send later: a message that may not be sent may not
+                be sent and filed either, and one predicate owns all three buttons. Offered only
+                where the ENGINE says the second action would finish something
+                (`sendAndDoneOffered`) — the webapp composer reads the same rule, and neither
+                surface judges it for itself. */}
+            {andDoneOffered ? (
+              <Button
+                label={Copy.sendAndDone}
+                variant="plain"
+                onPress={
+                  canSend ? () => void send(null, true) : contentOnlyMissing ? () => setNeedNote(true) : undefined
+                }
               />
             ) : null}
             <Button

@@ -1581,6 +1581,8 @@ const TABLE = {
   toastResurfaceCleared: "Resurface cancelled",
   toastResurfaceNow: "Back at the top",
   toastResurfaceDone: "Done — filed under Earlier",
+  /* SEND + DONE’s one sentence: the send happened AND the source was filed. */
+  toastSentAndDone: "Sent · marked done",
   toastMoved: (place: string) => `Moved to ${place}.`,
   /**
    * Said when a Move press has nothing to do — the mail is already in that place and no rule
@@ -1615,6 +1617,8 @@ const TABLE = {
   replyCcLine: (names: string) => `Cc ${names}`,
   replyPlaceholder: "Write your reply…",
   replySend: "Send",
+  /* SEND + DONE — the second send action, beside Send under the same lock. */
+  sendAndDone: "Send + Done",
   replyCancel: "Cancel",
   replySending: "Sending…",
   replySent: "Reply sent.",

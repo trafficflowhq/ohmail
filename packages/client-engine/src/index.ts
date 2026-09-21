@@ -393,6 +393,17 @@ export {
 // The held press's presentation — a row shown where it was filed while its rule waits.
 export { presentAt } from "./present-at.js";
 
+// Send + Done — the composer's second send action, as one rule every surface reads: whether it
+// is offered at all, what the release is, and that it runs only after an accepted send.
+export {
+  applySendAndDone,
+  sendAndDone,
+  sendAndDonePlanFor,
+  type OhboxSection,
+  type SendAndDoneOutcome,
+  type SendAndDonePlan,
+} from "./send-and-done.js";
+
 // Adapters.
 export type { EngineAdapter, MutationAnswer, MutationOutcome, MutationQueued, SyncParams } from "./adapters/adapter.js";
 export { DEMO_NOW, FixturesAdapter, parseFixtureTime, type FixturesAdapterOptions } from "./adapters/fixtures-adapter.js";

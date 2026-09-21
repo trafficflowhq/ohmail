@@ -5923,6 +5923,11 @@ input.set-tag-input {
   margin-top: 11px;
   flex-wrap: wrap;
 }
+/* SEND + DONE SITS AT SEND'S RIGHT EDGE — one control with two decisions, so the pair is tighter
+   than the row's own rhythm; the quieter face is what says which of the two is the second verb. */
+.reply-send-done {
+  margin-left: -4px;
+}
 .reply-hint {
   margin-left: auto;
   font-size:calc(10.5px + var(--type-up));

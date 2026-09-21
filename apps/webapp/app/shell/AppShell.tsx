@@ -43,6 +43,9 @@ import {
   replySubject,
   forwardSubject,
   inverseMutations,
+  sendAndDone,
+  sendAndDonePlanFor,
+  type SendAndDonePlan,
   tagsCrossView,
   threadOf,
   threadParticipantsIndex,
@@ -3755,7 +3758,52 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     });
     setFr({ ...fr, step: fr.step + 1 });
   });
-  const mailSend = useMailSend(engine, toast, onSendSettled);
+  /**
+   * SEND + DONE — THE ARMED LANES.
+   *
+   * A press of the second action records the release it earned, keyed by the send lane it
+   * pressed on; the send machine answers that lane when the engine confirms the message or when
+   * the send reaches a terminal outcome that is not a delivery, and the entry is spent either
+   * way. The PLAN is read at the press and not at the answer, which is the whole point of
+   * holding it: it names the section the source is in NOW, and the send itself releases a pin
+   * as it settles — an inverse read afterwards would put the row back where the send left it.
+   */
+  const sendDoneArm = useRef(new Map<string, SendAndDonePlan>());
+
+  /**
+   * The lane a reply or a forward of this message sends on — the same derivation
+   * `MessagePane` hands the editor and `sendKeyOf` builds the key from.
+   */
+  const replyLaneOf = useStableCallback((messageId: string): string =>
+    replyMode === "forward" ? inlineForwardKey(messageId) : messageId);
+
+  /**
+   * THE SEND MACHINE'S ANSWER FOR AN ARMED LANE. `accepted` is the engine's confirmation and
+   * nothing weaker; the intent is what refuses to dispatch anything without it, here as on the
+   * phone. Answering `true` tells the lane the shell has spoken for this send, so the ordinary
+   * "Reply sent." is not raised and replaced — one press, one sentence.
+   */
+  const onSendOutcome = useStableCallback((key: string, _m: MailSendMutation, accepted: boolean): boolean => {
+    const plan = sendDoneArm.current.get(key);
+    if (plan === undefined) return false;
+    sendDoneArm.current.delete(key);
+    void sendAndDone({
+      plan,
+      // The acceptance, read where the send machine knows it. A refused send reaches this
+      // door too, and the intent is what makes it dispatch nothing.
+      send: () => Promise.resolve(accepted),
+      // THE ROW'S OWN DONE DOOR — `mutateAndReport` with no sentence of its own, exactly as
+      // the `resurface_done` arm dispatches it, so a refusal is said in the same words.
+      dispatch: (mu) => mutateAndReport(mu, null),
+    }).then((out) => {
+      /* The one sentence this press earns, with the way back: Undo puts the row into the
+         section it left. A refused release has already said so in its own words. */
+      if (out.kind === "sent_and_done") toastWithUndo(t("reply.toastSentAndDone"), plan.undo);
+    });
+    return accepted;
+  });
+
+  const mailSend = useMailSend(engine, toast, onSendSettled, onSendOutcome);
   /**
    * The body comes from REACT STATE, not from `readReplyDraft`. Private mode refuses the
    * `localStorage` write, so re-reading the scratch buffer at press time would send an empty
@@ -3803,6 +3851,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const sendReply = useStableCallback((messageId: string) => {
     if (messageId !== replyTo) return;
+    /* A PLAIN SEND DISARMS THE LANE. Send + Done arms it again immediately after calling this
+       (see `pressSendAndDone`); a press that is refused at the door leaves an entry no answer
+       will ever spend, and the next plain Send on the same lane must not inherit it. */
+    sendDoneArm.current.delete(replyLaneOf(messageId));
     const parent = reader.get<EngineMessage>("message", messageId) ?? null;
     const parentMailbox = parent?.mailboxId ?? null;
     const from = resolveReplyFrom(fromOptions, parentMailbox, replyFromId);
@@ -3905,6 +3957,22 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       ...(replySubjectEdit !== null ? { subject: replySubjectEdit } : {}),
       ...replyEnvelopeOnWire(plan),
     }, sigText, sigHtml), { heldRow: heldReplyRow(messageId) });
+  });
+
+  /**
+   * SEND + DONE, PRESSED — the SAME send, and the release armed behind it.
+   *
+   * `sendReply` is called unchanged and unwrapped: there is one path to SMTP, and the lock, the
+   * empty-body guard and the whole failure surface belong to it. The plan is read BEFORE the
+   * press (the pre-press mirror is what Undo restores) and armed AFTER it, because `sendReply`
+   * disarms the lane on its way in. A source the engine's rule declines is an ordinary Send —
+   * the button is not offered there, and a keyboard press falls through to the same place.
+   */
+  const pressSendAndDone = useStableCallback((messageId: string) => {
+    const plan = sendAndDonePlanFor(reader, messageId);
+    const lane = replyLaneOf(messageId);
+    sendReply(messageId);
+    if (plan !== null) sendDoneArm.current.set(lane, plan);
   });
 
   /**
@@ -6664,6 +6732,18 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       run: () => replyTo && sendReply(replyTo),
     },
     {
+      /* SEND + DONE from the keyboard — the shifted variant of the verb it widens, the
+         convention `shift+r` and `shift+f` already follow. `inInput` for `mod+Enter`'s reason:
+         the editor holds focus. DISABLED where the second action is not offered, so the chord
+         cannot reach a release the button is not showing — one rule, two doors. */
+      chord: "mod+shift+Enter",
+      group: "message",
+      label: t("shortcuts.sendReplyAndDone"),
+      inInput: true,
+      disabled: replyTo == null || sendAndDonePlanFor(reader, replyTo) === null,
+      run: () => replyTo && pressSendAndDone(replyTo),
+    },
+    {
       chord: "s",
       group: "message",
       label: t("shortcuts.screen"),
@@ -7498,6 +7578,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       absoluteTime,
       onToggleAbsoluteTime: toggleAbsoluteTime,
       replyTo, replyAll, replyMode, replyBody, onReplyBody, closeReply, sendReply,
+      /* SEND + DONE — offered per message by the ENGINE's one rule, asked at every render so a
+         source that is filed or finished in another window stops offering it. The press reads
+         the mirror again: what is offered and what happens are the same question, asked twice
+         because a render and a press are different moments. */
+      sendReplyAndDone: (messageId: string) =>
+        (sendAndDonePlanFor(reader, messageId) === null ? null : () => pressSendAndDone(messageId)),
       // The audience edit and its book — held here for the mounted-twice reason the reply
       // body is, applied by `InlineReply`, sent by `sendReply` above from the same state.
       replyEnvelope,
