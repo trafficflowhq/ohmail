@@ -1,7 +1,6 @@
 /**
- * The open message's action bar, as arithmetic — the box numbers live here rather than inline in
- * the JSX because this workspace has no React Native renderer, so the layout is only measurable
- * where it is stated as data.
+ * The open message's action bar, as arithmetic: the box numbers live here because this workspace
+ * has no React Native renderer, so the layout is only measurable where it is stated as data.
  *
  * The law is ONE ROW. A scroller clipped the fourth verb mid-glyph; wrapping put a second row of
  * capsules over the message on the iPhone 18 Pro. So the bar MEASURES: a hidden copy of each
