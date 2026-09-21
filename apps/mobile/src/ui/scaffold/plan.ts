@@ -114,6 +114,9 @@ export function paneSplit(
     return { first: Math.max(0, Math.round(center - plan.foldGap / 2 - leadEdge)), gap: plan.foldGap };
   }
   const inner = containerW - 2 * plan.gutter - railW - plan.gutter;
+  /* The Duo's inner portrait (a horizontal hinge, panes side by side): the prototype's 46 %
+     list, clamped 280–340; the iPad and the Android tablets keep the canonical ~42 %. */
+  if (p.hasFold) return { first: clamp(Math.round(inner * 0.46), 280, 340), gap: plan.gutter };
   return { first: clamp(Math.round(inner * 0.42), 280, 400), gap: plan.gutter };
 }
 
@@ -164,7 +167,11 @@ export function scaffoldPlan(p: Posture, platform: PlatformName): ScaffoldPlan {
      compact-height landscape phone keeps a leading side rail for the vertical room; everything
      else is the bottom dock in Material's/Apple's position. */
   if (p.panes === 1) {
-    if (platform === "ios" && p.hasFold) return { ...base, nav: "rail", navSide: "right" };
+    /* The closed Duo: the ONE rail swaps to the reader's verbs over an open message (the
+       prototype's Mail shape on the outer display) — never a second bar at the foot. */
+    if (platform === "ios" && p.hasFold) {
+      return { ...base, nav: "rail", navSide: "right", railCarriesReaderVerbs: true };
+    }
     if (p.heightClass === "compact") return { ...base, nav: "rail", navSide: "left" };
     return base;
   }
@@ -204,3 +211,63 @@ export function scaffoldPlan(p: Posture, platform: PlatformName): ScaffoldPlan {
     drawer: true,
   };
 }
+
+/* ──────────────────────────────── where the rail lives ─────────────────────────────────── */
+
+export interface RailInsets {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
+export interface RailHome {
+  /** The column's left edge and width, window coordinates; the 62pt rail centres inside it. */
+  x: number;
+  width: number;
+  top: number;
+  bottom: number;
+  /** The rail sits in the safe-area strip the OS reserved for controls (the closed Duo). */
+  inStrip: boolean;
+}
+
+/**
+ * The closed Duo's status cluster (time · wifi · camera) sits in the right strip, read as
+ * ~155pt tall on iOS 27.1; when the module cannot read its frame, this is the floor the rail's
+ * first pill starts below. A top inset this small means no top bar — the cluster's signature.
+ */
+export const OUTER_CLUSTER_H = 160;
+export const OUTER_CLUSTER_TOP_FLOOR = 20;
+
+/**
+ * Where the vertical rail goes. iOS reserves the closed Duo's right strip for controls (safe
+ * area right 84, top 0 on iOS 27.1) — the rail lives IN that strip, centred, aligned with the
+ * camera (Apple: controls "move to the right side … aligned with the camera"), and its first
+ * pill starts below the status cluster; content keeps the safe area and never runs under it.
+ * Where the inset is narrower than the rail (the inner display, a landscape phone's left
+ * rail), the column hugs the inset as before. A left-mirrored rail carries no clock.
+ */
+export function railHome(
+  plan: Pick<ScaffoldPlan, "navSide">,
+  insets: RailInsets,
+  win: { w: number; h: number },
+  cluster: { bottom: number } | null,
+): RailHome {
+  const side = plan.navSide === "left" ? "left" : "right";
+  const inset = side === "left" ? insets.left : insets.right;
+  const inStrip = inset >= RAIL_W;
+  const width = inStrip ? inset : RAIL_W;
+  const x = side === "left" ? (inStrip ? 0 : inset) : win.w - (inStrip ? inset : inset + RAIL_W);
+  const clusterBottom =
+    side !== "right" ? 0
+    : cluster !== null ? cluster.bottom
+    : inStrip && insets.top < OUTER_CLUSTER_TOP_FLOOR ? OUTER_CLUSTER_H
+    : 0;
+  const top = Math.max(insets.top + 6, clusterBottom + 8);
+  const bottom = Math.max(insets.bottom, 12);
+  return { x, width, top, bottom, inStrip };
+}
+
+/** The tab roots — a rail over any other path leads with Back (the prototype's pushed rail). */
+const TAB_ROUTES = new Set(["/", "/index", "/screener", "/reads", "/receipts", "/more"]);
+export const isTabRoute = (pathname: string): boolean => TAB_ROUTES.has(pathname.replace(/\/+$/, "") || "/");

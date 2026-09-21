@@ -1,20 +1,18 @@
 /**
  * The tab navigation, in the flying-menu grammar — one glass material, positioned by posture
  * (`src/ui/scaffold/plan.ts`): compact phones get the bottom dock with the search pill beside
- * it (Material's/Apple's position); the closed Duo and a compact-height landscape get the
- * vertical rail on the edge the plan names; a split mirrors it to the app's half. The five
- * destinations, their routes and their badges are the ones the old dock carried, unchanged.
+ * it (Material's/Apple's position); the closed Duo, a compact-height landscape and a split get
+ * the vertical rail, which the ROOT renders (`src/ui/nav-rail.tsx`) so it stands on the pushed
+ * screens too. The five destinations, their routes and their badges are the old dock's.
  *
  * NO WORDMARK here: the chrome is navigation, and the space is the app's.
  */
 import { router, Tabs } from "expo-router";
-import { Platform, View, useWindowDimensions } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useTheme } from "../../src/theme";
+import { Platform } from "react-native";
 import { useWorld } from "../../src/state/world";
 import { Gated } from "../../src/ui/Gated";
 import { type IconName } from "../../src/ui/Icon";
-import { GlassDock, GlassRail, type DockItem, type RailAction } from "../../src/ui/glass";
+import { GlassDock, type DockItem } from "../../src/ui/glass";
 import { usePosture } from "../../src/ui/posture";
 import { useReaderRail } from "../../src/ui/reader-rail";
 import { scaffoldPlan } from "../../src/ui/scaffold/plan";
@@ -73,9 +71,6 @@ export default function TabsLayout() {
 }
 
 function GlassNav({ state, navigation }: NavProps) {
-  const t = useTheme();
-  const insets = useSafeAreaInsets();
-  const window = useWindowDimensions();
   const w = useWorld();
   const posture = usePosture();
   const plan = scaffoldPlan(posture, Platform.OS === "ios" ? "ios" : "android");
@@ -136,42 +131,9 @@ function GlassNav({ state, navigation }: NavProps) {
      The claim releases when the reader closes and the destinations return here. */
   if (plan.railCarriesReaderVerbs && readerRail !== null) return null;
 
-  if (plan.nav === "rail") {
-    /* This component mounts in the navigator's zero-height tab-bar slot at the window's foot,
-       so the rail is anchored from the BOTTOM and given its height explicitly. */
-    const groups: RailAction[][] = [
-      items.map((item) => ({
-        id: item.id,
-        icon: item.icon,
-        label: item.label,
-        badge: item.badge,
-        badgeHot: item.badgeHot,
-        on: item.id === activeId,
-        role: "tab" as const,
-        onPress: () => press(item.id),
-      })),
-      [
-        { id: "__compose", icon: "pen" as const, label: compose.label, fixed: true, onPress: compose.onPress },
-        { id: "__search", icon: "search" as const, label: search.label, fixed: true, onPress: search.onPress },
-      ],
-    ];
-    const bottomPad = Math.max(insets.bottom, 12);
-    return (
-      <View
-        pointerEvents="box-none"
-        style={{
-          position: "absolute",
-          bottom: bottomPad,
-          height: window.height - insets.top - 6 - bottomPad,
-          left: plan.navSide === "left" ? Math.max(insets.left, 0) : undefined,
-          right: plan.navSide !== "left" ? Math.max(insets.right, 0) : undefined,
-          zIndex: t.zLayer.tabBar,
-        }}
-      >
-        <GlassRail groups={groups} foldInto="none" />
-      </View>
-    );
-  }
+  /* THE RAIL IS THE ROOT'S (`src/ui/nav-rail.tsx`): it stands on the pushed screens too, where
+     Back leads it, and sits in the strip iOS reserves on the closed Duo. This slot yields. */
+  if (plan.nav === "rail") return null;
 
   return (
     <>

@@ -53,6 +53,12 @@ export interface Posture {
    * display while a plain iPhone keeps the bottom dock.
    */
   hasFold: boolean;
+  /**
+   * The Duo's OUTER display, either way up: the hardware has a fold, none crosses this window
+   * and both sides fit the closed panel — one pane with the side rail whatever the width class
+   * says (Apple: "on outer displays in landscape, controls remain at the side").
+   */
+  outer: boolean;
 }
 
 export interface PostureInput {
@@ -99,6 +105,9 @@ export function duoHeuristic(w: number, h: number): FoldFeature | null {
     : { bounds: { x: 0, y: (h - band) / 2, w, h: band }, state: "flat", orientation: "horizontal", occlusion: "none" };
 }
 
+/** The closed Duo is 466×678 either way up; the inner display's long side (951) is well past this. */
+export const OUTER_FACE_MAX = 700;
+
 export function derivePosture(input: PostureInput): Posture {
   const { width: w, height: h, platform } = input;
   const orientation: Orientation = w >= h ? "landscape" : "portrait";
@@ -123,6 +132,8 @@ export function derivePosture(input: PostureInput): Posture {
           : "flat";
   const hinge = feature === null ? null : feature.bounds;
   const hasFold = input.hasFold === true || feature !== null;
+  const outer =
+    platform === "ios" && input.hasFold === true && feature === null && Math.max(w, h) <= OUTER_FACE_MAX;
 
   /* Split-screen: the window is one half of a wider screen. The side is which edge it hugs. */
   let split: SplitSide = "full";
@@ -134,7 +145,8 @@ export function derivePosture(input: PostureInput): Posture {
   /* Panes, the prototype's own rule: compact width — or a compact height under 440 — is one
      pane; a split window is one pane; everything else holds two. A half-open horizontal fold
      (tabletop) is two panes stacked, which the width rule already admits. */
-  const onePane = split !== "full" || sizeClass === "compact" || (heightClass === "compact" && h < 440);
+  const onePane =
+    split !== "full" || outer || sizeClass === "compact" || (heightClass === "compact" && h < 440);
 
   return {
     sizeClass,
@@ -145,7 +157,24 @@ export function derivePosture(input: PostureInput): Posture {
     split,
     orientation,
     hasFold,
+    outer,
   };
+}
+
+/**
+ * The status bar's frame, classified: a CLUSTER is a narrow, tall frame at the window's side —
+ * the closed Duo's time · wifi · camera column the rail starts below; a full-width bar is the
+ * ordinary status bar, already counted in the top inset, so it answers null.
+ */
+export function statusClusterOf(
+  frame: { x: number; y: number; width: number; height: number } | null,
+  windowW: number,
+): { bottom: number } | null {
+  if (frame === null) return null;
+  if (frame.width <= 0 || frame.height <= 0) return null;
+  if (frame.width > windowW / 2) return null; // a bar across the top, not a side cluster
+  if (frame.height < 40) return null; // too short to be the cluster
+  return { bottom: frame.y + frame.height };
 }
 
 /* ─────────────────────────────── the OHMAIL_POSTURE debug override ─────────────────────── */
@@ -157,7 +186,17 @@ export function derivePosture(input: PostureInput): Posture {
  * (`SIMCTL_CHILD_OHMAIL_POSTURE=…` on the iOS simulator, `adb shell am start … --es
  * OHMAIL_POSTURE …` on Android).
  */
-export type PostureOverride = Omit<PostureInput, "platform"> & { platform?: PlatformName };
+export type PostureOverride = Omit<PostureInput, "platform"> & {
+  platform?: PlatformName;
+  /**
+   * `<preset>@canvas`: the app root renders at the pose's own width × height, scaled to fit the
+   * real window — the open face measured on a simulator that cannot open (the closed Duo shows
+   * the unfolded layout at 0.49, an iPad 13-inch at 1:1). The safe-area insets inside the
+   * canvas are the pose's, not the device's (`insets`, else the platform's default).
+   */
+  canvas?: boolean;
+  insets?: { top: number; right: number; bottom: number; left: number };
+};
 
 const duoV = (w: number, h: number, state: "flat" | "half"): FoldFeature => ({
   bounds: { x: (w - 9) / 2, y: 0, w: 9, h },
@@ -221,8 +260,13 @@ export function parsePostureOverride(raw: string | null | undefined): PostureOve
   if (raw === null || raw === undefined) return null;
   const s = raw.trim();
   if (s === "") return null;
-  const preset = POSTURE_PRESETS[s];
-  if (preset !== undefined) return preset;
+  /* `<name>@canvas` — the flag rides the preset name so one launch env carries both. */
+  const at = s.indexOf("@");
+  const name = at === -1 ? s : s.slice(0, at);
+  const flags = at === -1 ? [] : s.slice(at + 1).split("@");
+  const canvas = flags.includes("canvas");
+  const preset = POSTURE_PRESETS[name];
+  if (preset !== undefined) return canvas ? { ...preset, canvas: true } : preset;
   try {
     const v: unknown = JSON.parse(s);
     if (typeof v !== "object" || v === null) return null;

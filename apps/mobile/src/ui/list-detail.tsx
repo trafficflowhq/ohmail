@@ -20,9 +20,9 @@ import { GlassRail, GlassSidebar } from "./glass";
 import { Icon } from "./Icon";
 import { MoreNav, Nav } from "./MoreNav";
 import { PaneChromeContext } from "./pane-chrome";
-import { usePosture } from "./posture";
+import { useAppWindow, usePosture, useStatusCluster } from "./posture";
 import { useReaderRail } from "./reader-rail";
-import { paneSplit, scaffoldPlan, RAIL_W } from "./scaffold/plan";
+import { paneSplit, railHome, scaffoldPlan, RAIL_W } from "./scaffold/plan";
 
 const platformName = Platform.OS === "ios" ? ("ios" as const) : ("android" as const);
 
@@ -246,9 +246,9 @@ export function ListDetail({
 
 /**
  * The claimed reader rail, rendered wherever the reader can hold it: the list-detail pair AND
- * the pushed full-screen routes (gate-held and folder mail keep the full-screen reader on the
- * unfolded-landscape Duo, and their verbs must still stand somewhere — this is where). The
- * claim is `reader-rail`'s; the tab bar's nav yields to it; nothing renders twice.
+ * the pushed full-screen routes (the closed Duo's reader; gate-held and folder mail on the
+ * unfolded-landscape Duo — their verbs must still stand somewhere, and this is where). The
+ * claim is `reader-rail`'s; the root nav rail yields to it; nothing renders twice.
  */
 export function ReaderRailHost() {
   const t = useTheme();
@@ -256,15 +256,22 @@ export function ReaderRailHost() {
   const posture = usePosture();
   const plan = scaffoldPlan(posture, platformName);
   const readerRail = useReaderRail();
+  const win = useAppWindow();
+  const cluster = useStatusCluster();
   if (!(plan.railCarriesReaderVerbs && readerRail !== null)) return null;
+  /* The same home the nav rail takes (`railHome`): the closed Duo's reserved strip, below the
+     status cluster; the inner display's right edge. */
+  const home = railHome(plan, insets, { w: win.width, h: win.height }, cluster);
   return (
     <View
       pointerEvents="box-none"
       style={{
         position: "absolute",
-        top: insets.top + 6,
-        bottom: Math.max(insets.bottom, 12),
-        right: Math.max(insets.right, 0),
+        top: home.top,
+        bottom: home.bottom,
+        left: home.x,
+        width: home.width,
+        alignItems: "center",
         zIndex: t.zLayer.tabBar,
       }}
     >

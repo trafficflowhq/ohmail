@@ -6,13 +6,17 @@
  * env/intent extra — so a test run can drive every pose on any simulator. The provider only
  * collects; every decision is in `derive.ts`, where the suite measures it. Continuity is
  * structural: a posture change re-renders with new numbers, it never remounts — the open
- * message, the scroll position and focus stay where they were.
+ * message, the scroll position and focus stay where they were. Beside it: the status cluster
+ * the closed Duo's rail starts below, and the `@canvas` door that renders the app root at a
+ * pose's own size (the open face measured on a simulator whose open face is black).
  */
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Dimensions, Platform, useWindowDimensions } from "react-native";
+import { Dimensions, Platform, View, useWindowDimensions } from "react-native";
+import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 import {
   derivePosture,
   parsePostureOverride,
+  statusClusterOf,
   type FoldFeature,
   type PlatformName,
   type Posture,
@@ -94,4 +98,70 @@ export function PostureProvider({
   }, [override, dims.width, dims.height, folds, hasFold]);
 
   return <PostureContext.Provider value={value}>{children}</PostureContext.Provider>;
+}
+
+/* ─────────────────────────────────── the canvas door ────────────────────────────────────── */
+
+const CanvasContext = createContext<{ width: number; height: number } | null>(null);
+
+/** The window the layout is laid in — the canvas's size under `@canvas`, else the device's. */
+export function useAppWindow(): { width: number; height: number } {
+  const canvas = useContext(CanvasContext);
+  const dims = useWindowDimensions();
+  return canvas ?? { width: dims.width, height: dims.height };
+}
+
+/** The pose's own safe areas inside a canvas: the prototype's device table (Duo t14 · b34). */
+const CANVAS_INSETS: Record<PlatformName, { top: number; right: number; bottom: number; left: number }> = {
+  ios: { top: 14, right: 0, bottom: 34, left: 0 },
+  android: { top: 0, right: 0, bottom: 24, left: 0 },
+};
+
+/**
+ * `<pose>@canvas`: the app root at the pose's width × height, scaled to fit the real window and
+ * centred on black, with the pose's safe areas in place of the device's. Sheets are Modals and
+ * keep the window; everything laid out by `useAppWindow()` and the safe areas follows the pose.
+ * Without the flag this renders its children alone.
+ */
+export function PostureCanvas({ children }: { children: ReactNode }) {
+  const dims = useWindowDimensions();
+  const forced = launchOverride();
+  if (forced === null || forced.canvas !== true) return <>{children}</>;
+  const w = forced.width;
+  const h = forced.height;
+  const scale = Math.min(dims.width / w, dims.height / h, 1);
+  const insets = forced.insets ?? CANVAS_INSETS[forced.platform ?? platformName];
+  return (
+    <View style={{ flex: 1, backgroundColor: "#000", alignItems: "center", justifyContent: "center" }}>
+      <View style={{ width: w, height: h, overflow: "hidden", transform: [{ scale }] }}>
+        <CanvasContext.Provider value={{ width: w, height: h }}>
+          <SafeAreaInsetsContext.Provider value={insets}>
+            <>{children}</>
+          </SafeAreaInsetsContext.Provider>
+        </CanvasContext.Provider>
+      </View>
+    </View>
+  );
+}
+
+/* ────────────────────────────────── the status cluster ──────────────────────────────────── */
+
+let clusterResolved: { bottom: number } | null | undefined;
+
+/**
+ * The closed Duo's status cluster — the status bar's frame read once from the module and kept
+ * only where it is a right-strip cluster, not a top bar (`statusClusterOf`). Null inside a
+ * canvas (the simulated face has none) and wherever the module or the shape says no.
+ */
+export function useStatusCluster(): { bottom: number } | null {
+  const canvas = useContext(CanvasContext);
+  const dims = useWindowDimensions();
+  const [cluster, setCluster] = useState<{ bottom: number } | null>(clusterResolved ?? null);
+  useEffect(() => {
+    if (canvas !== null || clusterResolved !== undefined) return;
+    const frame = nativePosture()?.getStatusCluster?.() ?? null;
+    clusterResolved = statusClusterOf(frame, dims.width);
+    setCluster(clusterResolved);
+  }, [canvas, dims.width]);
+  return canvas !== null ? null : cluster;
 }

@@ -14,7 +14,8 @@ import { useMemo } from "react";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { PostureProvider } from "../src/ui/posture";
+import { PostureCanvas, PostureProvider } from "../src/ui/posture";
+import { NavRail } from "../src/ui/nav-rail";
 import { ThemeProvider, resolveFace, useTheme } from "../src/theme";
 import { ConnectionProvider } from "../src/net/connection";
 import { PrefsProvider, usePrefs } from "../src/state/store";
@@ -39,6 +40,8 @@ export default function RootLayout() {
       {/* The posture sits above every screen: one derivation (window + the fold API + the
           OHMAIL_POSTURE override) that the tab nav and every pane layout read. */}
       <PostureProvider>
+      {/* `<pose>@canvas` renders the whole app at the pose's size; without the flag, a no-op. */}
+      <PostureCanvas>
       <LocaleProvider kv={kv}>
       <PrefsProvider kv={kv}>
         {/* The connection layer sits at the root so a live session survives every screen.
@@ -58,6 +61,7 @@ export default function RootLayout() {
         </ConnectionProvider>
       </PrefsProvider>
       </LocaleProvider>
+      </PostureCanvas>
       </PostureProvider>
     </SafeAreaProvider>
   );
@@ -92,6 +96,9 @@ function Screens() {
       >
         <Stack.Screen name="(tabs)" />
       </Stack>
+      {/* The vertical rail, once, over every screen of the postures that own it (the closed
+          Duo, a split); the tab bar keeps the dock and yields the rail to this. */}
+      <NavRail />
       <Toast />
     </>
   );

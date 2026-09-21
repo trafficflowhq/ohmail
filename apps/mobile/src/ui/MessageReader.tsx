@@ -9,7 +9,7 @@
  * was — continuity as data, not as tree position.
  */
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import { ActivityIndicator, Platform, Pressable, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { useWorld, type WorldMail } from "../state/world";
@@ -19,7 +19,12 @@ import { DetailBar } from "./chrome";
 import { Icon } from "./Icon";
 import { MailBodyFrame } from "./MailBodyFrame";
 import { MessageActions } from "./MessageActions";
+import { usePosture } from "./posture";
+import { readerVerbMode } from "./reader-verbs";
+import { scaffoldPlan } from "./scaffold/plan";
 import { paneScrollOf, recordPaneScroll } from "./pane-memory";
+
+const platformName = Platform.OS === "ios" ? ("ios" as const) : ("android" as const);
 
 export function MessageReader({
   id,
@@ -35,6 +40,10 @@ export function MessageReader({
   const t = useTheme();
   const w = useWorld();
   const m = w.message(id);
+  /* The rail carries Back where it carries the verbs (the closed Duo, the unfolded landscape):
+     a detail bar above it would stand Back twice. */
+  const railBack = readerVerbMode(scaffoldPlan(usePosture(), platformName)) === "rail";
+  const bare = inPane || railBack;
   /** "Show as text" — this reading's own choice, per message; a new open renders rich again. */
   const [textFor, setTextFor] = useState<string | null>(null);
 
@@ -62,7 +71,7 @@ export function MessageReader({
   if (!m) {
     return (
       <Screen>
-        {inPane ? null : <DetailBar />}
+        {bare ? null : <DetailBar />}
         <Scroller>
           <Txt variant="note" tone="ink3" style={{ padding: 20 }}>
             {Copy.messageGone}
@@ -99,7 +108,7 @@ export function MessageReader({
           over the very mail the reader is being asked to decide about (`gateHeld`). History
           first — a dormant sender's held mail is in both, and History is the surface it was
           opened from. In a PANE the list is beside this view, so the bar and its Back yield. */}
-      {inPane ? null : (
+      {bare ? null : (
         <DetailBar
           title={m.historyPlace ? Copy.history : m.gateHeld ? Copy.screener : m.folderLeaf ?? placeName(m.place)}
         />

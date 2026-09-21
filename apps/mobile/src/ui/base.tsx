@@ -71,10 +71,26 @@ export function useTopPad(gap: number): number {
 
 /* ---------------------------------------------------------------- surfaces */
 
-/** The canvas. Every screen sits on it; nothing else paints a background. */
+/**
+ * The canvas. Every screen sits on it; nothing else paints a background. It pays the
+ * HORIZONTAL safe areas: iOS reserves the closed Duo's right strip for controls (inset 84),
+ * where the rail lives (`plan.ts#railHome`) and content never runs — a landscape phone's
+ * notch is the same inset on the other axis. Top and bottom stay the strips' and the
+ * Scroller's, as before.
+ */
 export function Screen({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
   const t = useTheme();
-  return <View style={[{ flex: 1, backgroundColor: t.c.canvas }, style]}>{children}</View>;
+  const insets = useSafeAreaInsets();
+  return (
+    <View
+      style={[
+        { flex: 1, backgroundColor: t.c.canvas, paddingLeft: insets.left, paddingRight: insets.right },
+        style,
+      ]}
+    >
+      {children}
+    </View>
+  );
 }
 
 /**
