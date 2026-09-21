@@ -2937,10 +2937,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   /* The surface first, then the mirror by the SAME id — the door `readerMessageFor` opens for
      every other route. Not a fallback to a different message: the cursor names an id, and a row
-     the mirror holds is never an empty pane. `null` only for no cursor or a mirror miss, which
-     `ohboxGone` then classifies. */
+     the mirror holds is never an empty pane. Asked of `presented` and never of `reader`: the
+     mirror's reader deliberately still holds a message inside its delete-undo window, and a
+     fallback on it kept the acted row "open" for the render in which the list drops it, so the
+     after-verb advance never fired (measured, `after-verb.test.tsx`). `null` only for no cursor
+     or a miss, which `ohboxGone` then classifies. */
   const selectedOhbox = allOhbox.find((m) => m.id === ohboxSel)
-    ?? (ohboxSel === null ? null : reader.get<EngineMessage>("message", ohboxSel) ?? null);
+    ?? (ohboxSel === null ? null : presented.get<EngineMessage>("message", ohboxSel) ?? null);
 
   /**
    * THE READING COLUMN'S OWN "GONE", and it needs its own question: the column renders from the
