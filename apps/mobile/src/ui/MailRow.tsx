@@ -12,26 +12,28 @@ import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import type { Mail } from "../state/model";
 import { useWorld } from "../state/world";
-import type { WorldPileState } from "../state/live";
+import { moveTargetsFor, type WorldMail, type WorldPileState } from "../state/live";
 import { Badge, TapRow, Txt } from "./base";
 import { Icon } from "./Icon";
 import { mailRowSpoken, threadOfRow, trackerShort } from "./row-spoken";
+import { faceLabel, rowActionVerb, rowActions, type RowActionVerb } from "./row-actions";
 import {
-  readFaceOf, swipeClaims, swipeOffset, swipeVerbFor, SWIPE_FIRE_DX, type ReadFace, type SwipeVerb,
+  readFaceOf, swipeClaims, swipeOffset, swipeVerbFor, SWIPE_FIRE_DX,
 } from "./row-swipe";
 
 export function MailRow({
   m,
   onPress,
   /**
-   * SWIPE SHORTCUTS — off unless a list asks for them. Trash does not: a
-   * deleted row has no Done and no Later, and a gesture that presses a verb the row cannot take
-   * is worse than no gesture. Every verb this offers is on the row's own sheet and reachable
-   * through the accessibility actions below, so the swipe is a shortcut and never the only door.
+   * THE ROW'S OWN VERBS — off unless a list asks for them. Trash does not: a
+   * deleted row has no Done, no Later and no Junk, and a verb the row cannot take is worse than
+   * no verb. Where they are on, they are on BOTH doors: the swipe gesture and the accessibility
+   * actions, which is the only one a screen reader can reach. Every verb is on the row's own
+   * sheet too, so the gesture is a shortcut and never the only way.
    */
   swipe,
 }: {
-  m: Mail & { pile?: WorldPileState };
+  m: Mail & { pile?: WorldPileState; presentedFolder?: WorldMail["presentedFolder"] };
   onPress: () => void;
   swipe?: boolean;
 }) {
@@ -50,11 +52,27 @@ export function MailRow({
      Done on a resurfaced row, otherwise Mark as read / Mark unread. The swipe must press the
      verb the sheet is showing — two spellings of this would let a gesture do the other one. */
   const face = readFaceOf({ pile: m.pile ?? null, unread: !!m.unread });
-  const press = (verb: SwipeVerb) => {
+  /* WHETHER THIS ROW CAN BE JUNKED, by the reader's own rule: the spam target is offered on
+     every message except one already presented there. A row whose list hands it no presented
+     folder is not offered it — an unanswered fact is never a yes. */
+  const facts = {
+    face,
+    junkOffered:
+      m.presentedFolder !== undefined
+      && moveTargetsFor({ presentedFolder: m.presentedFolder }).includes("spam"),
+  };
+  const press = (verb: RowActionVerb) => {
     /* The SAME acts the sheet presses, so the toast and its undo pill ride the verb's own arm
-       (`state/live.ts`: Later and the read slot both carry the engine's inverse). Nothing about
-       undo is re-implemented here — a second undo mechanism is a second contract. */
+       (`state/live.ts`: Later, Junk and the read slot all carry the engine's inverse where the
+       wire has one). Nothing about undo is re-implemented here — a second undo mechanism is a
+       second contract. Junk takes the world's projected row, because the move's retarget is
+       measured against where the message is PRESENTED, which only the projection knows. */
     if (verb === "later") { void w.actions.pileToggle(m.id, "replyLater"); return; }
+    if (verb === "junk") {
+      const row = w.message(m.id);
+      if (row) w.actions.move(row, "spam");
+      return;
+    }
     if (face === "done") { void w.actions.resurfaceDone(m.id); return; }
     w.actions.markSeen(m.id, face === "markUnread");
   };
@@ -94,19 +112,17 @@ export function MailRow({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={mailRowSpoken(m)}
-      /* THE SAME TWO VERBS, FOR A READER WHO CANNOT SWIPE. A gesture is invisible to a screen
-         reader, so the shortcut is published as actions on the row itself — VoiceOver's rotor and
-         TalkBack's actions menu reach them directly, and the row's sheet still holds the full
-         set. Absent where the list offers no swipe, for the same reason the gesture is. */
+      /* THE ROW'S VERBS, FOR A READER WHO CANNOT SWIPE. A gesture is invisible to a screen
+         reader, so they are published as actions on the row itself — VoiceOver's rotor and
+         TalkBack's actions menu reach them directly, Junk among them, which no gesture carries.
+         The list and the dispatch are one rule (`row-actions.ts`), so a name the row did not
+         publish cannot press anything. Absent where the list offers no verbs, as the gesture is. */
       {...(swipe === true
         ? {
-          accessibilityActions: [
-            { name: "readSlot", label: faceLabel(face) },
-            { name: "later", label: Copy.actionLater },
-          ],
+          accessibilityActions: rowActions(facts).map(({ name, label }) => ({ name, label })),
           onAccessibilityAction: (e: { nativeEvent: { actionName: string } }) => {
-            if (e.nativeEvent.actionName === "later") press("later");
-            else if (e.nativeEvent.actionName === "readSlot") press("read");
+            const verb = rowActionVerb(e.nativeEvent.actionName, facts);
+            if (verb !== null) press(verb);
           },
         }
         : {})}
@@ -254,13 +270,6 @@ function SwipeFace({
       <Txt variant="decision" tone="ink2">{label}</Txt>
     </Animated.View>
   );
-}
-
-/** The read slot's word, from its face — the sheet's own three labels, not a fourth spelling. */
-function faceLabel(face: ReadFace): string {
-  return face === "done" ? Copy.actionDone
-    : face === "markRead" ? Copy.actionMarkRead
-      : Copy.actionMarkUnread;
 }
 
 function firstLine(body: string): string {
