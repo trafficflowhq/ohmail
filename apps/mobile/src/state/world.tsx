@@ -45,6 +45,7 @@ import { PHONE_CLAIM_NAME, organizesHere } from "../engine/standalone-door";
 import { standaloneHereFor } from "../engine/organizer-session";
 import { readFolderSummary } from "../net/folder-ops";
 import * as Crypto from "expo-crypto";
+import type { EntityReader } from "@ohmail/client-engine";
 import type { FaceName } from "../theme/face";
 import { faceScope } from "./face-scope";
 import { foldersFlag, freshestRead } from "./folders-flag";
@@ -751,6 +752,13 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     () => (mailboxes ?? []).map((b) => b.address),
     [mailboxes],
   );
+  /**
+   * THE PROJECTION THE LISTS ARE DRAWN FROM, behind a ref for `addressesNow`'s reason: the
+   * actions facade keeps ONE identity for the session while this reader is rebuilt per mirror
+   * version. Written where it is built, below; read by Send + Done, which asks about the Ohbox
+   * ON SCREEN and not about the raw mirror's folders.
+   */
+  const presentedNow = useRef<EntityReader | null>(null);
   /** `conn.syncNow` behind a ref so the machine below keeps one identity across renders. */
   const syncNowRef = useRef(conn.syncNow);
   syncNowRef.current = conn.syncNow;
@@ -1041,6 +1049,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         // identity-stable while the consent read that carries the time lands later, so the
         // horizon-less verbs must ask at every use rather than capture a boot-time null.
         resurfaceTime: () => resurfaceTimeNow.current,
+        /* A GETTER for the same reason, and the fallback is the raw mirror for the one render
+           before the world memo below has run — see `LiveDeps.presented`. */
+        presented: () => presentedNow.current ?? engine.read(),
         /* THE CACHED QUEUE, RECONCILED AT THE DECIDE. `setScreenerServer` is `useState`'s own
            setter and identity-stable, and the update is FUNCTIONAL — this facade is built once
            per session by design, so a captured value would reconcile against the queue as it
@@ -1311,6 +1322,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
        reader that applies rules or the rule that has not been sent yet would win. Unwrapped when
        nothing is held, so the ordinary render pays nothing. */
     const pres = routingReader(world.reader, heldPlaces);
+    /* …and the same reader the verbs that ask about the Ohbox read — see `presentedNow`. */
+    presentedNow.current = pres;
     const ohbox = liveOhbox(pres, v);
     const reads = liveReads(pres, v);
     const receipts = liveReceipts(pres, v);

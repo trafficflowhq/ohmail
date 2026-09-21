@@ -1936,6 +1936,18 @@ export interface LiveDeps {
    */
   resurfaceTime?: () => string | null;
   /**
+   * THE READER THE LISTS ARE DRAWN FROM — `presentedWorld`'s projection, as a GETTER for
+   * `ownAddresses`' reason: the world rebuilds it per mirror version while this facade is
+   * identity-stable by design.
+   *
+   * Send + Done asks it and nothing else, because the Ohbox its rule is about is the one ON
+   * SCREEN: a message a rule presents under Reads or Receipts is not an Ohbox row, while the
+   * raw mirror still holds it in INBOX. Absent ⇒ the raw mirror, which is the right reading
+   * for a harness with no projection and the wrong one for a routed message; the world always
+   * supplies it.
+   */
+  presented?: () => EntityReader;
+  /**
    * A DECIDE THE SERVER CONFIRMED, HANDED BACK TO WHOEVER HOLDS THE CACHED QUEUE — the paired
    * door's waiting shelf is that cache, and without this it kept the decided sender until the
    * next drain (see {@link waitingAfterDecide}, which is the rule; this only carries the event).
@@ -2689,9 +2701,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return saidAll(await Promise.all(parts), null, refuse("liveSaveFailed"));
   };
 
+  /** The reader the Ohbox is drawn from — see {@link LiveDeps.presented}. */
+  const presentedReader = (): EntityReader => deps.presented?.() ?? engine.read();
+
   /** Is the second send action offered for this source? The ENGINE's rule, nothing local. */
   const sendAndDoneOffered = (messageId: string): boolean =>
-    sendAndDonePlanFor(engine.read(), messageId) !== null;
+    sendAndDonePlanFor(presentedReader(), messageId) !== null;
 
   /**
    * SEND + DONE — the release, armed at the press and run only on an accepted send.
@@ -2703,7 +2718,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * `sendAndDone` the webapp composer takes — so the two surfaces cannot drift.
    */
   const doneHalf = (messageId: string): DoneHalf | undefined => {
-    const plan = sendAndDonePlanFor(engine.read(), messageId);
+    const plan = sendAndDonePlanFor(presentedReader(), messageId);
     if (plan === null) return undefined;
     return async (accepted) => {
       const out = await sendAndDone({

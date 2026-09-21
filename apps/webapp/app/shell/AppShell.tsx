@@ -3969,7 +3969,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * the button is not offered there, and a keyboard press falls through to the same place.
    */
   const pressSendAndDone = useStableCallback((messageId: string) => {
-    const plan = sendAndDonePlanFor(reader, messageId);
+    const plan = sendAndDonePlanFor(presented, messageId);
     const lane = replyLaneOf(messageId);
     sendReply(messageId);
     if (plan !== null) sendDoneArm.current.set(lane, plan);
@@ -6740,7 +6740,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       group: "message",
       label: t("shortcuts.sendReplyAndDone"),
       inInput: true,
-      disabled: replyTo == null || sendAndDonePlanFor(reader, replyTo) === null,
+      disabled: replyTo == null || sendAndDonePlanFor(presented, replyTo) === null,
       run: () => replyTo && pressSendAndDone(replyTo),
     },
     {
@@ -7581,9 +7581,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       /* SEND + DONE — offered per message by the ENGINE's one rule, asked at every render so a
          source that is filed or finished in another window stops offering it. The press reads
          the mirror again: what is offered and what happens are the same question, asked twice
-         because a render and a press are different moments. */
+         because a render and a press are different moments.
+
+         `presented` and NOT `reader`: the Ohbox this rule asks about is the one on screen
+         (`ohboxView(presented)` above), where a message a rule presents under Reads or Receipts
+         is not an Ohbox row at all — the raw mirror still has it in INBOX and would offer the
+         action over a row the Ohbox does not show. */
       sendReplyAndDone: (messageId: string) =>
-        (sendAndDonePlanFor(reader, messageId) === null ? null : () => pressSendAndDone(messageId)),
+        (sendAndDonePlanFor(presented, messageId) === null ? null : () => pressSendAndDone(messageId)),
       // The audience edit and its book — held here for the mounted-twice reason the reply
       // body is, applied by `InlineReply`, sent by `sendReply` above from the same state.
       replyEnvelope,
