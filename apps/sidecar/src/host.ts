@@ -85,6 +85,18 @@ export function serveOverStdio(opts: StdioHostOptions): StdioHost {
         const res = await opts.handle(decodeRequest(header, body));
         const framed = await encodeResponse(header.id, res, maxBody);
         await writer.write(framed.header, framed.body);
+        /* AN ANSWERED REFUSAL IS A LINE TOO. `request_failed` below covers a handler that THREW;
+           a handler that answered 4xx/5xx wrote a frame and nothing else, so a window whose pull
+           was refused on every attempt left this log clean (2026-09-21). Status and route only —
+           the body is the client's, and a 404 is an optional route being probed, not a refusal. */
+        if (res.status >= 400 && res.status !== 404) {
+          log("request_refused", {
+            requestId: header.id,
+            method: describeMethod(header.method),
+            route: describeRoute(header.url),
+            status: res.status,
+          });
+        }
         if (describeRoute(header.url) === SNAPSHOT_ROUTE) {
           /* WHAT THE BOOTSTRAP COST, ONE LINE PER PAGE. The cold-start path logged NOTHING — a
              `snapshot` grep over a whole run's log read zero — so page count, page size and the

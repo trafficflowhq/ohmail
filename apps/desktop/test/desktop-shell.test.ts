@@ -2507,7 +2507,7 @@ describe("the UI bundle's build config", () => {
     // `fetch` appears only as the NAME of the option it satisfies, never as a call.
     expect(bridge).not.toMatch(/(?<![\w.])fetch\s*\(/);
     // The adapter it builds is addressed relative to the engine, so no base URL is composed here.
-    expect(bridge).toMatch(/new HttpAdapter\(\{ baseUrl: "", fetch: bridgeFetch \}\)/);
+    expect(bridge).toMatch(/new HttpAdapter\(\{ baseUrl: "", fetch: bridgeFetch, syncFailureSink: reportWindowSyncFailure \}\)/);
   });
 
   it("the no-fixtures stub declares every SYMBOL the barrel re-exports from fixtures-adapter", () => {

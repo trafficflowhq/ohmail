@@ -205,6 +205,7 @@ import {
 // this is the sidecar's job and not `MailboxService.delete`'s.
 import { mirroredFirstSyncFacts, mirroredMessageCount, wipeLocalMirror } from "./local-mirror.js";
 import { stampSynced } from "./sync-stamp.js";
+import { handleWindowSyncFailure, WINDOW_SYNC_FAILED_ROUTE } from "./window-report.js";
 import { createFirstSyncReporter, createFirstSyncTracker } from "./first-sync.js";
 import type { Diagnostic } from "./log.js";
 import { startEngineVitals } from "./vitals.js";
@@ -6988,6 +6989,19 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       world,
       sessionToken: session.token,
       handle: async (req) => {
+        /* THE WINDOW'S OWN PULL FAILURE, into this log. Its own door, ahead of the local-action
+           chain: it carries no mailbox, writes nothing, and is authorised by the same launch
+           bearer every local door reads. See `window-report.ts`. */
+        if (req.method === "POST" && new URL(req.url).pathname === WINDOW_SYNC_FAILED_ROUTE) {
+          return handleWindowSyncFailure(req, {
+            authorized: async (r) => {
+              const header = r.headers.get("authorization");
+              const token = header && /^Bearer\s+/i.test(header) ? header.replace(/^Bearer\s+/i, "").trim() : "";
+              return token !== "" && (await resolveSession(db, token, now())) !== null;
+            },
+            log,
+          });
+        }
         // Two routes ahead of the shared table, and why they are not in it. `DELETE
         // /local/stored-login` (forget the password sealed on THIS machine) and `POST
         // /local/organizer/takeover` (make THIS install the organizer of its own mailbox row) are

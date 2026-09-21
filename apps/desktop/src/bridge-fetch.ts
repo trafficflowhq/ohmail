@@ -19,7 +19,7 @@
  * loud — `HttpAdapter` falls back to global `fetch`, which the guard replaced with a thrower.
  */
 
-import { HttpAdapter, OhmailEngine, retryingRead } from "@ohmail/client-engine";
+import { HttpAdapter, OhmailEngine, retryingRead, type WindowSyncFailure } from "@ohmail/client-engine";
 import { DESKTOP_WINDOW } from "../../webapp/app/shell/store-windows.js";
 
 /**
@@ -631,7 +631,24 @@ export async function engineLogout(): Promise<EngineStatus> {
  * this — a preview reaching for the Cloud protocol fails loudly instead of opening a socket.
  */
 export function createEngineAdapter(): HttpAdapter {
-  return new HttpAdapter({ baseUrl: "", fetch: bridgeFetch });
+  return new HttpAdapter({ baseUrl: "", fetch: bridgeFetch, syncFailureSink: reportWindowSyncFailure });
+}
+
+/** The local engine's door for a window's failed pull — see {@link reportWindowSyncFailure}. */
+export const WINDOW_SYNC_FAILED_PATH = "/local/window/sync-failed";
+
+/**
+ * Carry the window's own pull failure to the engine, whose log is the one a support read or a
+ * guest cell can see. The record is closed and content-free (`@ohmail/client-engine`'s
+ * `WindowSyncFailure`); the shell adds the launch bearer as it does for every bridge request.
+ * A refused or failed report is dropped here: the retry is the scheduler's, the log a courtesy.
+ */
+export async function reportWindowSyncFailure(record: WindowSyncFailure): Promise<void> {
+  await bridgeFetch(WINDOW_SYNC_FAILED_PATH, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(record),
+  });
 }
 
 /**

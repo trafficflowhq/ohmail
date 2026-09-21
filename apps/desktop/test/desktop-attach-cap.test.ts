@@ -137,8 +137,11 @@ describe("neither desktop door stages attachment bytes to Cloud storage", () => 
     expect(src).toContain("export function createEngineAdapter()");
   });
 
-  it("the adapter is constructed with a base url and a fetch, and nothing else", () => {
-    expect(src).toContain('new HttpAdapter({ baseUrl: "", fetch: bridgeFetch })');
+  it("the adapter is constructed with a base url, a fetch and its own failure sink — no staging option", () => {
+    // The construction's PREFIX proves the census read the real site; the decision this file makes
+    // is the absence of `stageAttachments` (next case). The third option, `syncFailureSink`, is the
+    // window's own failed-pull report to the local engine's log, and stages nothing.
+    expect(src).toContain('new HttpAdapter({ baseUrl: "", fetch: bridgeFetch, syncFailureSink: reportWindowSyncFailure })');
   });
 
   it("the word `stageAttachments` does not appear anywhere in this app's source", () => {
