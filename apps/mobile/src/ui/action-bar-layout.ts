@@ -1,14 +1,13 @@
 /**
- * The open message's action bar, as arithmetic. The box numbers live here rather than inline in
- * the JSX so a test can lay the row out at a phone's width — this workspace has no React Native
- * renderer, so the layout is only measurable where it is stated as data.
+ * The open message's action bar, as arithmetic — the box numbers live here rather than inline in
+ * the JSX because this workspace has no React Native renderer, so the layout is only measurable
+ * where it is stated as data.
  *
- * The law is ONE ROW. A horizontal scroller clipped the fourth verb mid-glyph; wrapping showed
- * every verb but put a second row of capsules over the message on the iPhone 18 Pro. So the bar
- * MEASURES: a hidden copy of each capsule reports its width, the verbs are admitted greedily in
- * row order while they fit, and the tail stands behind ⋯ — in the row or in the sheet, never
- * both, never gone, never a second line. It is the glass ActionBar's law (`glass/fold.ts`),
- * which this module calls rather than restates.
+ * The law is ONE ROW. A scroller clipped the fourth verb mid-glyph; wrapping put a second row of
+ * capsules over the message on the iPhone 18 Pro. So the bar MEASURES: a hidden copy of each
+ * capsule reports its width, the verbs are admitted greedily in row order while they fit, and the
+ * tail stands behind ⋯ — in the row or in the sheet, never both, never gone. It is the glass
+ * ActionBar's law (`glass/fold.ts`), which this module calls rather than restates.
  */
 import { admitVerbs } from "./glass/fold";
 
