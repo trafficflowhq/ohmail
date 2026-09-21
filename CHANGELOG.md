@@ -18,7 +18,7 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
-## [0.21.0] — 2026-09-20
+## [0.21.0] — 2026-09-21
 
 ### The README opens with the features, and wears both faces
 
