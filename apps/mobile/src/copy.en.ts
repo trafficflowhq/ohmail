@@ -828,6 +828,8 @@ const TABLE = {
   readsEmptyHint: "Newsletters and long reads you file here arrive as they sync.",
   receiptsEmptyTitle: "No receipts yet.",
   receiptsEmptyHint: "Orders, invoices and tickets you file here arrive as they sync.",
+  /** The Receipts day heading for the current day (the shared selector capitalises it). */
+  today: "today",
   streamSeenHint: "scrolling past marks seen",
 
   /* ------------------------------------------------------------- protected */

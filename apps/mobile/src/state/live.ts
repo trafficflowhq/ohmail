@@ -1011,7 +1011,8 @@ export interface WorldReceipts {
 }
 
 export function liveReceipts(pres: EntityReader, v: WorldView): WorldReceipts {
-  const groups = receiptsByDay(pres, v.now, v.locale ?? "en", v.zone).map((g) => ({
+  // The phone's own word for today: Hermes has no Intl.RelativeTimeFormat to answer it.
+  const groups = receiptsByDay(pres, v.now, v.locale ?? "en", v.zone, { today: Copy.today }).map((g) => ({
     label: g.label,
     items: g.items.map((m) => toMail(pres, m, v)),
   }));

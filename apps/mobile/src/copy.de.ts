@@ -527,6 +527,7 @@ export const DE: Deck = {
   readsEmptyHint: "Newsletter und lange Texte, die du hier ablegst, kommen an, sobald sie synchronisiert werden.",
   receiptsEmptyTitle: "Noch keine Belege.",
   receiptsEmptyHint: "Bestellungen, Rechnungen und Tickets, die du hier ablegst, kommen an, sobald sie synchronisiert werden.",
+  today: "heute",
   streamSeenHint: "Vorbeiscrollen markiert als gesehen",
 
   /* ------------------------------------------------------------- protected */

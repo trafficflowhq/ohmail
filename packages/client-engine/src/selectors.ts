@@ -1045,24 +1045,37 @@ export interface ReceiptsDayGroup {
   items: EngineMessage[];
 }
 
+/** The one word this package has no catalogue for — a caller with one passes it. */
+export interface ReceiptsWords {
+  /** "today" in the reader's language; capitalised here to sit beside the weekday labels. */
+  today?: string;
+}
+
 /**
  * "Today" / "Thursday" / "2 Aug" — and their equivalents in the caller's language.
  *
- * `Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(0, "day")` is what gives the first
- * of the three: it is the platform's own word for the current day ("today", "heute"), which is
- * better than a catalogue entry here for the reason the whole of {@link named} is — this package
- * has no catalogue, and inventing one for one word would give it an i18n dependency. It answers
- * lower case in both languages, so the first letter is raised to match the weekday and date labels
- * beside it, which `Intl` capitalises itself.
+ * The first comes from the caller's word where it has one, else from the platform's own
+ * (`Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(0, "day")`, "today" / "heute")
+ * — this package has no catalogue. Hermes ships NO `Intl.RelativeTimeFormat`: on the phone the
+ * constructor is `undefined`, and a receipt dated today took the whole app down at its first live
+ * render (measured on the iPhone Duo and 18 Pro simulators, 2026-09-21). Without the API and
+ * without a word the weekday stands in. Lower-case answers get their first letter raised.
  */
-function dayLabel(date: Date, now: Date, locale: string, zone: string): string {
+function dayLabel(date: Date, now: Date, locale: string, zone: string, words: ReceiptsWords = {}): string {
   const ageDays = daysAgo(date, now, zone);
   if (ageDays === 0) {
-    const today = new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(0, "day");
-    return today.charAt(0).toUpperCase() + today.slice(1);
+    const today = words.today ?? platformToday(locale);
+    if (today !== null) return today.charAt(0).toUpperCase() + today.slice(1);
   }
   if (ageDays <= 6) return named(locale, { weekday: "long" }, date, zone);
   return `${zonedFields(date, zone).day} ${named(locale, { month: "short" }, date, zone)}`;
+}
+
+/** The platform's word for the current day, or null where the runtime has no relative formatter. */
+function platformToday(locale: string): string | null {
+  const Rtf = (Intl as { RelativeTimeFormat?: typeof Intl.RelativeTimeFormat }).RelativeTimeFormat;
+  if (typeof Rtf !== "function") return null;
+  return new Rtf(locale, { numeric: "auto" }).format(0, "day");
 }
 
 /**
@@ -1079,10 +1092,12 @@ export function receiptsByDay(
   locale = "en",
   /** Which zone the day boundaries fall in. */
   zone = "UTC",
+  /** The caller's own word for today, where it has one (the phone's catalogue). */
+  words: ReceiptsWords = {},
 ): ReceiptsDayGroup[] {
   const groups: ReceiptsDayGroup[] = [];
   for (const m of messagesIn(reader, FOLDER_OF_VIEW.receipts)) {
-    const label = dayLabel(m.date ? new Date(m.date) : now, now, locale, zone);
+    const label = dayLabel(m.date ? new Date(m.date) : now, now, locale, zone, words);
     const last = groups[groups.length - 1];
     if (last && last.label === label) last.items.push(m);
     else groups.push({ label, items: [m] });

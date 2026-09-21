@@ -291,6 +291,7 @@ export {
   feedPartition,
   readsPartition,
   receiptsByDay,
+  type ReceiptsWords,
   draftsList,
   // Whether a draft row carries its text at all — see {@link EngineDraft.body}. Exported so the
   // compose surfaces and autosave read the shipped rule rather than each testing for null.
