@@ -1,17 +1,11 @@
 /**
  * THE BOTTOM SHEET AND ITS ROWS — the phone's one disclosure idiom, shared by every surface
- * that needs a menu (the message verbs' sheets in `MessageActions.tsx`; the folders group's
- * verb and name sheets in `FoldersGroup.tsx`). A popover has nowhere honest to anchor on a
- * phone, so the panel rises where the thumb is and a backdrop press dismisses it.
- *
- * EVERY SHEET CARRIES A WAY OUT ON THE PANEL. The backdrop is `accessibilityViewIsModal`'s
- * sibling, so assistive technology never sees it: a sheet whose panel held only verbs read as
- * six buttons and no exit on the Duo, and the search sheet read as no controls at all. A
- * CancelRow, or a row of the sheet's own that dismisses, is the invariant
+ * that needs a menu (`MessageActions.tsx`, `FoldersGroup.tsx`). A popover has nowhere honest
+ * to anchor on a phone, so the panel rises where the thumb is and the backdrop dismisses it.
+ * EVERY SHEET CARRIES A WAY OUT ON THE PANEL: the backdrop is the modal panel's sibling, so
+ * assistive technology never sees it, and a sheet of verbs alone read as six buttons and no
+ * exit on the Duo. A CancelRow or a dismissing row of the sheet's own is the invariant
  * (`test/sheet-has-a-way-out.test.ts`).
- *
- * Lifted out of `MessageActions.tsx` when the folders group gained its verbs — one sheet, not
- * two drifting copies.
  */
 import type { ReactNode } from "react";
 import {

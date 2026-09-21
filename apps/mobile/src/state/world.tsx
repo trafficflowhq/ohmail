@@ -1254,15 +1254,13 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   const [freshBeat, setFreshBeat] = useState(0);
 
   /**
-   * THE ENGINE IS TOLD THE SAME CUTLINE THE PARTITION BELOW IS DRAWN WITH.
-   *
-   * This phone's mirror is a window (`MOBILE_WINDOW`), so it decides dormancy from the mail it
-   * kept while the server decides it from the whole account. They agree only while the mirror
-   * holds every message the cutline reads — and the dormancy dial reaches 365 days against a
-   * 90-day window, so a sender whose only mail the window evicted would be retired into History
-   * here and still queued there. The engine widens its retention to cover the answer; `maxRows`
-   * still decides the size. `null` (unanswered, and every session swap) is the pre-cutline
-   * window exactly, which is the same posture `presentedWorld` takes on the same value.
+   * THE ENGINE IS TOLD THE SAME CUTLINE THE PARTITION BELOW IS DRAWN WITH. This phone's mirror
+   * is a window (`MOBILE_WINDOW`), so it decides dormancy from the mail it kept while the
+   * server decides it from the whole account — and the dormancy dial reaches 365 days against
+   * a 90-day window, so a sender whose only mail the window evicted would be retired into
+   * History here and still queued there. The engine widens its retention to cover the answer;
+   * `maxRows` still decides the size. `null` is the pre-cutline window exactly, the posture
+   * `presentedWorld` takes on the same value.
    */
   useEffect(() => {
     if (engine === null) return;

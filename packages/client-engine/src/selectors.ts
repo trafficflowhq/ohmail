@@ -1648,16 +1648,13 @@ export function tagsCrossView(reader: EntityReader): TagGroup[] {
  * make.
  */
 /**
- * MAIL HELD AT THE GATE BEHIND A RULE ITS OWNER ALREADY WROTE — the release screen's rows.
- *
- * Largest group first, because that is the order somebody reads a list of "how much of my mail is
- * stuck where" in. The rows are a SERVER derivation kept in the mirror ({@link HELD_RELEASE_TYPE});
- * this selector does not recompute the predicate and must not — the deciding fact is WHO placed the
- * message at the gate, which `/sync` does not carry, so a client-side derivation would show one
- * number and release another.
- *
- * Empty means the door has not answered or has nothing to offer. Both render as no release row,
- * which is the same sentence; "zero held messages" is a claim this selector never makes.
+ * MAIL HELD AT THE GATE BEHIND A RULE ITS OWNER ALREADY WROTE — the release screen's rows,
+ * largest group first. The rows are a SERVER derivation kept in the mirror
+ * ({@link HELD_RELEASE_TYPE}); this selector does not recompute the predicate and must not —
+ * the deciding fact is WHO placed the message at the gate, which `/sync` does not carry, so a
+ * client-side derivation would show one number and release another. Empty means the door has
+ * not answered or has nothing to offer; both render as no release row, and "zero held
+ * messages" is a claim this selector never makes.
  */
 export function heldReleaseGroups(reader: EntityReader): HeldReleaseGroupDTO[] {
   return [...reader.list<HeldReleaseGroupDTO>(HELD_RELEASE_TYPE)]
