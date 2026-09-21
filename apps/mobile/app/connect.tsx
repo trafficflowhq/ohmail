@@ -87,7 +87,11 @@ export default function ConnectScreen() {
       pressed.current = true;
       void conn.pairConfirmed(current.admission, current.token).then((outcome) => {
         if (outcome.ok) {
-          router.replace("/servers");
+          /* A CONFIRMED PAIRING LANDS IN THE MAILBOX. Replacing with the Servers pane left the
+             person on a stack with nothing under it to pop into — from first run, welcome; from
+             Settings, servers under servers — so Back did nothing and only a relaunch left it.
+             "/" is what the standalone door already replaces with, for the same reason. */
+          router.replace("/");
           return;
         }
         setPhase({ k: "failed", reason: outcome.reason });
