@@ -1936,15 +1936,11 @@ export interface LiveDeps {
    */
   resurfaceTime?: () => string | null;
   /**
-   * THE READER THE LISTS ARE DRAWN FROM — `presentedWorld`'s projection, as a GETTER for
-   * `ownAddresses`' reason: the world rebuilds it per mirror version while this facade is
-   * identity-stable by design.
-   *
-   * Send + Done asks it and nothing else, because the Ohbox its rule is about is the one ON
-   * SCREEN: a message a rule presents under Reads or Receipts is not an Ohbox row, while the
-   * raw mirror still holds it in INBOX. Absent ⇒ the raw mirror, which is the right reading
-   * for a harness with no projection and the wrong one for a routed message; the world always
-   * supplies it.
+   * THE READER THE LISTS ARE DRAWN FROM — `presentedWorld`'s projection, a GETTER for
+   * `ownAddresses`' reason. Send + Done asks it and nothing else: the Ohbox its rule is about
+   * is the one ON SCREEN, and a message a rule presents under Reads sits in INBOX in the raw
+   * mirror. Absent ⇒ the raw mirror, right for a harness and wrong for a routed message; the
+   * world always supplies it.
    */
   presented?: () => EntityReader;
   /**
