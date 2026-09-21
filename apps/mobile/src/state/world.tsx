@@ -45,7 +45,6 @@ import { PHONE_CLAIM_NAME, organizesHere } from "../engine/standalone-door";
 import { standaloneHereFor } from "../engine/organizer-session";
 import { readFolderSummary } from "../net/folder-ops";
 import * as Crypto from "expo-crypto";
-import type { EntityReader } from "@ohmail/client-engine";
 import type { FaceName } from "../theme/face";
 import { faceScope } from "./face-scope";
 import { foldersFlag, freshestRead } from "./folders-flag";
@@ -88,6 +87,10 @@ import {
   type FolderEntity,
   type ScreenerRow,
   type AbandonedMutation,
+  /* THROUGH `live.ts`, not from the engine package: `privacy.test.ts#ENGINE_IMPORTERS` is a
+     short allow-list and this file is not on it — the type leaves by the door the phone
+     already has (the re-export beside `AbandonedMutation`). */
+  type EntityReader,
   type MutationResult,
   type WorldActions,
   type WorldHistory,

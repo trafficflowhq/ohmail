@@ -1966,7 +1966,9 @@ export interface LiveDeps {
  * nothing else; this file is already the phone's one door to the engine's vocabulary
  * (`WorldActions`, `WorldMail`, `WorldPile` leave through here), so the type leaves the same way.
  */
-export type { AbandonedMutation, MutationResult } from "@ohmail/client-engine";
+/* …and the reader type, for the same reason: the world holds the projection the lists are
+   drawn from and hands it back through {@link LiveDeps.presented}, so it has to name it. */
+export type { AbandonedMutation, EntityReader, MutationResult } from "@ohmail/client-engine";
 
 export interface LiveWorldActions {
   /** Opening a message marks it read and asks for its full text + conversation + files. */
