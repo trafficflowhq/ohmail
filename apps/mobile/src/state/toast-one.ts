@@ -1,19 +1,12 @@
 /**
- * WHICH SENTENCE IS ON SCREEN — the newest, always, and there is nowhere for a second to wait.
+ * WHICH SENTENCE IS ON SCREEN — the newest, always, and there is nowhere for a second to wait
+ * (owner ruling 2026-09-21, closing `MOBILE-TOAST-QUEUE-SILENTLY-DROPS-A-VERBS-SENTENCE`: a
+ * queue of four held each sentence for its turn and returned the fifth unrendered).
  *
- * The toast used to be a QUEUE of four: each sentence took its turn and a fifth was returned to
- * the caller unrendered, with no record that anything had been said. That was written for a
- * reconnect flush settling several intents at once, where a single slot showed only the last of
- * them. What it cost on a phone is worse than what it bought: three verbs pressed in a row put
- * the third's sentence — and its Undo — up to sixteen seconds away, and the fourth press was
- * answered by nothing at all (`MOBILE-TOAST-QUEUE-SILENTLY-DROPS-A-VERBS-SENTENCE`; owner ruling
- * 2026-09-21: the newest sentence wins).
- *
- * The displaced act is not lost, which is what makes this safe to say: a sentence is a REPORT of
- * a dispatch that already happened. A held delete commits on its own timer (`held-delete.ts`), an
- * undo offer dies on its own clock (`live.ts`'s `UNDO_MS`, read from the press), and neither
- * consults the pill. What a displaced sentence costs is the CHANCE to press Undo, and that is the
- * trade: the verb you just pressed is the one you are looking at.
+ * Safe because a sentence REPORTS a dispatch that already happened: a held delete commits on
+ * its own timer (`held-delete.ts`) and an undo offer dies on its own clock (`live.ts`'s
+ * `UNDO_MS`, read at the press); neither consults the pill. What a displaced sentence costs is
+ * the CHANCE to press Undo, and that is the trade.
  */
 import type { RefusalArg } from "../refusal";
 
