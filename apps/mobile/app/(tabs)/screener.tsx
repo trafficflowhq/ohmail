@@ -6,7 +6,7 @@
  * decision bar, full screen — you never decide about a sender you cannot see.
  * A row's AI suggestion badge renders only where the server sent one: no
  * classifier runs client-side, and a row without a suggestion honestly has
- * none.
+ * none. The shelf's rows go through `MailList`, which mounts a window of them.
  */
 import { useState } from "react";
 import { View } from "react-native";
@@ -17,9 +17,10 @@ import { destDone, type ScreenerSeg } from "../../src/state/model";
 import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
 import { useWorld, type ScreenerRow } from "../../src/state/world";
-import { Badge, Empty, Panel, Screen, Scroller, Tail, TapRow, Txt } from "../../src/ui/base";
+import { Badge, Empty, Screen, Tail, TapRow, Txt } from "../../src/ui/base";
 import { TopBar } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
+import { MailList } from "../../src/ui/MailList";
 import { SenderDetail } from "../../src/ui/SenderDetail";
 import { Segmented } from "../../src/ui/Segmented";
 import { SkeletonList } from "../../src/ui/Skeleton";
@@ -62,14 +63,15 @@ export default function ScreenerScreen() {
   const empty = emptyFor(seg);
   const { waiting, screened, spam, meta, waitingPending } = w.screener;
   // Unknown ≠ empty, per SEGMENT: the active shelf's own count against the one settled fact.
-  const counts: Record<ScreenerSeg, number> = { waiting: waiting.length, screened: screened.length, spam: spam.length };
+  const shelves: Record<ScreenerSeg, ScreenerRow[]> = { waiting, screened, spam };
+  const rows = shelves[seg];
   /* …and the WAITING shelf has a second way of being unknown over a settled mirror: this phone
      derived it, and the account's cutline answer has not landed, so it was withheld rather than
      guessed wide (`state/live.ts#WorldScreener.waitingPending`). Only that shelf — the other two
      are decided by rules the answer has no say in. */
   const surface = listSurface({
     settled: w.boot.settled,
-    count: counts[seg],
+    count: rows.length,
     pending: seg === "waiting" && waitingPending,
   });
   const shelfEmpty = surface === "empty" ? (
@@ -81,103 +83,84 @@ export default function ScreenerScreen() {
     />
   );
 
+  const renderRow = (row: ScreenerRow) => {
+    if (seg === "waiting") return <WaitingRow row={row} onPress={() => openRow(row.routeKey)} />;
+    if (seg === "screened") {
+      return (
+        <TapRow
+          onPress={() => openRow(row.routeKey)}
+          accessibilityRole="button"
+          style={{ paddingHorizontal: 12, paddingVertical: 12 }}
+        >
+          <Txt variant="rowSubject" numberOfLines={1}>
+            {row.address}
+          </Txt>
+          <Txt variant="hint" tone="ink3" style={{ marginTop: 4 }}>
+            {Copy.screenedNote(row.screenedOn, row.held.length)}
+          </Txt>
+        </TapRow>
+      );
+    }
+    return (
+      <TapRow
+        onPress={() => openRow(row.routeKey)}
+        accessibilityRole="button"
+        style={{ paddingHorizontal: 12, paddingVertical: 12 }}
+      >
+        <Txt variant="rowSubjectSeen" tone="ink2" numberOfLines={1}>
+          {row.address}
+        </Txt>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 7 }}>
+          {row.detection ? <Badge icon="shield">{row.detection}</Badge> : null}
+          <Badge>{Copy.heldCaption(row.held.length)}</Badge>
+        </View>
+      </TapRow>
+    );
+  };
+
   const list = (
     <Screen>
       <TopBar />
-      <Scroller refresh={pull}>
-        <View style={{ paddingHorizontal: 10, paddingTop: 8, paddingBottom: 14 }}>
-          <Txt variant="h1">{Copy.screener}</Txt>
-          <Txt variant="meta" tone="ink3" style={{ marginTop: 4 }}>
-            {metaWhen(surface, meta) ?? " "}
-          </Txt>
-        </View>
+      <MailList
+        groups={[{ key: seg, rows, padTop: 8 }]}
+        rowKey={(row) => row.routeKey}
+        renderRow={renderRow}
+        rowInset={6}
+        refresh={pull}
+        head={
+          <>
+            <View style={{ paddingHorizontal: 10, paddingTop: 8, paddingBottom: 14 }}>
+              <Txt variant="h1">{Copy.screener}</Txt>
+              <Txt variant="meta" tone="ink3" style={{ marginTop: 4 }}>
+                {metaWhen(surface, meta) ?? " "}
+              </Txt>
+            </View>
 
-        <Segmented
-          style={{ marginHorizontal: 10, marginBottom: 14 }}
-          value={seg}
-          onChange={(v) => {
-            // A routeKey is a fact only on its own shelf — a selection never crosses one.
-            if (open !== null) close();
-            setSeg(v);
-          }}
-          segments={[
-            // Counts speak only over a settled mirror — a "0" badge beside a shelf that is
-            // still rendering its skeleton would be an invented count (`state/surface.ts`).
-            { value: "waiting", label: Copy.segWaiting, ...(w.boot.settled ? { count: waiting.length } : {}) },
-            { value: "screened", label: Copy.segScreened, ...(w.boot.settled ? { count: screened.length } : {}) },
-            { value: "spam", label: Copy.segSpam, ...(w.boot.settled ? { count: spam.length } : {}) },
-          ]}
-        />
-
-        <Panel style={{ paddingBottom: 4 }}>
-          {seg === "waiting" ? (
-            waiting.length === 0 ? (
-              shelfEmpty
-            ) : (
-              <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>
-                {waiting.map((row) => (
-                  <WaitingRow key={row.id} row={row} onPress={() => openRow(row.routeKey)} />
-                ))}
-              </View>
-            )
-          ) : null}
-
-          {seg === "screened" ? (
-            screened.length === 0 ? (
-              shelfEmpty
-            ) : (
-              <>
-                <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>
-                  {screened.map((row) => (
-                    <TapRow
-                      key={row.id}
-                      onPress={() => openRow(row.routeKey)}
-                      accessibilityRole="button"
-                      style={{ paddingHorizontal: 12, paddingVertical: 12 }}
-                    >
-                      <Txt variant="rowSubject" numberOfLines={1}>
-                        {row.address}
-                      </Txt>
-                      <Txt variant="hint" tone="ink3" style={{ marginTop: 4 }}>
-                        {Copy.screenedNote(row.screenedOn, row.held.length)}
-                      </Txt>
-                    </TapRow>
-                  ))}
-                </View>
-                <Tail>{Copy.screenerNothingDeleted}</Tail>
-              </>
-            )
-          ) : null}
-
-          {seg === "spam" ? (
-            spam.length === 0 ? (
-              shelfEmpty
-            ) : (
-              <>
-                <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>
-                  {spam.map((row) => (
-                    <TapRow
-                      key={row.id}
-                      onPress={() => openRow(row.routeKey)}
-                      accessibilityRole="button"
-                      style={{ paddingHorizontal: 12, paddingVertical: 12 }}
-                    >
-                      <Txt variant="rowSubjectSeen" tone="ink2" numberOfLines={1}>
-                        {row.address}
-                      </Txt>
-                      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 7 }}>
-                        {row.detection ? <Badge icon="shield">{row.detection}</Badge> : null}
-                        <Badge>{Copy.heldCaption(row.held.length)}</Badge>
-                      </View>
-                    </TapRow>
-                  ))}
-                </View>
-                <Tail>{Copy.spamNote}</Tail>
-              </>
-            )
-          ) : null}
-        </Panel>
-      </Scroller>
+            <Segmented
+              style={{ marginHorizontal: 10, marginBottom: 14 }}
+              value={seg}
+              onChange={(v) => {
+                // A routeKey is a fact only on its own shelf — a selection never crosses one.
+                if (open !== null) close();
+                setSeg(v);
+              }}
+              segments={[
+                // Counts speak only over a settled mirror — a "0" badge beside a shelf that is
+                // still rendering its skeleton would be an invented count (`state/surface.ts`).
+                { value: "waiting", label: Copy.segWaiting, ...(w.boot.settled ? { count: waiting.length } : {}) },
+                { value: "screened", label: Copy.segScreened, ...(w.boot.settled ? { count: screened.length } : {}) },
+                { value: "spam", label: Copy.segSpam, ...(w.boot.settled ? { count: spam.length } : {}) },
+              ]}
+            />
+          </>
+        }
+        empty={shelfEmpty}
+        foot={
+          rows.length > 0 && seg === "screened" ? <Tail>{Copy.screenerNothingDeleted}</Tail>
+          : rows.length > 0 && seg === "spam" ? <Tail>{Copy.spamNote}</Tail>
+          : null
+        }
+      />
     </Screen>
   );
 

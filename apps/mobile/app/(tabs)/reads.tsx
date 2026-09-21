@@ -9,16 +9,17 @@
  * once per visit. Every issue the world answers renders; no "and 9 more".
  */
 import { useCallback, useRef, useState } from "react";
-import { AppState, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import { AppState, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { Copy } from "../../src/copy";
 import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
 import { useTheme } from "../../src/theme";
 import { useWorld, type WorldMail } from "../../src/state/world";
-import { Badge, Empty, Panel, Screen, Scroller, Tail, TapRow, Txt, Waterline } from "../../src/ui/base";
+import { Badge, Empty, Panel, Screen, Tail, TapRow, Txt, Waterline } from "../../src/ui/base";
 import { TopBar } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
+import { MailList, type RowFrame } from "../../src/ui/MailList";
 import { MessageReader } from "../../src/ui/MessageReader";
 import { FadeOut } from "../../src/ui/FadeOut";
 import { MarkAllRead } from "../../src/ui/MarkAllRead";
@@ -42,14 +43,11 @@ export default function ReadsScreen() {
   // Unknown ≠ empty — the stream shows card silhouettes until this mirror has settled once.
   const surface = listSurface({ settled: w.boot.settled, count: items.length });
 
+  /* A card's frame in scroll-content coordinates, as its cell lays out (`MailList#onRowFrame`). */
   const bounds = useRef<Record<string, { y: number; h: number }>>({});
-  const onCardLayout = useCallback(
-    (id: string) => (e: LayoutChangeEvent) => {
-      const { y, height } = e.nativeEvent.layout;
-      bounds.current[id] = { y, h: height };
-    },
-    [],
-  );
+  const onRowFrame = useCallback((m: WorldMail, frame: RowFrame) => {
+    bounds.current[m.id] = { y: frame.y, h: frame.height };
+  }, []);
 
   const onScroll = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -84,60 +82,67 @@ export default function ReadsScreen() {
   const list = (
     <Screen>
       <TopBar />
-      <Scroller onScroll={onScroll} scrollEventThrottle={64} refresh={pull}>
-        <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-            <Txt variant="h1">{Copy.reads}</Txt>
-            <Txt variant="meta" tone="ink3" tabular>
-              {metaWhen(surface, meta) ?? " "}
-            </Txt>
-            <View style={{ flex: 1 }} />
-            {/* The web's ReadsView press, both halves: flip the stream's unread AND commit the
-                waterline above the newest issue — a fresh-only stream ("2 new", nothing
-                unread) still gets its clearing control. */}
-            <MarkAllRead
-              unreadCount={unreadIds.length}
-              freshCount={newCount}
-              onPress={() =>
-                actions.markAllSeen(
-                  unreadIds,
-                  items[0] ? { place: "reads", upToId: items[0].id } : undefined,
-                )
-              }
-            />
-          </View>
-          <Txt variant="caption" tone="ink3" style={{ marginTop: 4 }}>
-            {Copy.streamSeenHint}
-          </Txt>
-        </View>
-
-        {surface === "skeleton" ? (
-          <SkeletonList kind="card" stalled={w.boot.syncFailure} />
-        ) : surface === "empty" ? (
-          <Empty title={Copy.readsEmptyTitle} hint={Copy.readsEmptyHint} />
-        ) : (
+      <MailList
+        groups={[{ key: "issues", rows: items }]}
+        rowKey={(m) => m.id}
+        renderRow={(m) => (
           <>
-            {items.map((m) => (
-              <View key={m.id} onLayout={onCardLayout(m.id)}>
-                {/* The line stands ABOVE the newest already-seen issue — the anchor was seen,
-                    so it sits below the line, with everything that arrived since above it. */}
-                {waterlineAboveId === m.id ? <Waterline label={waterLabel} meta="" /> : null}
-                <StreamCard
-                  m={m}
-                  // Expanding an issue is an explicit ask for its full text: the synced row
-                  // carries only the snippet until hydration, and a card that said "Read in
-                  // full" while showing the preview would be presenting a truncation as the
-                  // mail. Beside a reading pane the ask is the pane's own open instead.
-                  onExpand={() => actions.hydrateMessage(m.id)}
-                  onOpenBeside={twoPane ? () => openRow(m.id) : undefined}
-                />
-              </View>
-            ))}
-
-            <Tail>{Copy.readsTail(items.length)}</Tail>
+            {/* The line stands ABOVE the newest already-seen issue — the anchor was seen,
+                so it sits below the line, with everything that arrived since above it. */}
+            {waterlineAboveId === m.id ? <Waterline label={waterLabel} meta="" /> : null}
+            <StreamCard
+              m={m}
+              // Expanding an issue is an explicit ask for its full text: the synced row
+              // carries only the snippet until hydration, and a card that said "Read in
+              // full" while showing the preview would be presenting a truncation as the
+              // mail. Beside a reading pane the ask is the pane's own open instead.
+              onExpand={() => actions.hydrateMessage(m.id)}
+              onOpenBeside={twoPane ? () => openRow(m.id) : undefined}
+            />
           </>
         )}
-      </Scroller>
+        // Each issue is its own card: no panel under the stream.
+        surface={false}
+        onRowFrame={onRowFrame}
+        onScroll={onScroll}
+        scrollEventThrottle={64}
+        refresh={pull}
+        head={
+          <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+              <Txt variant="h1">{Copy.reads}</Txt>
+              <Txt variant="meta" tone="ink3" tabular>
+                {metaWhen(surface, meta) ?? " "}
+              </Txt>
+              <View style={{ flex: 1 }} />
+              {/* The web's ReadsView press, both halves: flip the stream's unread AND commit the
+                  waterline above the newest issue — a fresh-only stream ("2 new", nothing
+                  unread) still gets its clearing control. */}
+              <MarkAllRead
+                unreadCount={unreadIds.length}
+                freshCount={newCount}
+                onPress={() =>
+                  actions.markAllSeen(
+                    unreadIds,
+                    items[0] ? { place: "reads", upToId: items[0].id } : undefined,
+                  )
+                }
+              />
+            </View>
+            <Txt variant="caption" tone="ink3" style={{ marginTop: 4 }}>
+              {Copy.streamSeenHint}
+            </Txt>
+          </View>
+        }
+        empty={
+          surface === "skeleton" ? (
+            <SkeletonList kind="card" stalled={w.boot.syncFailure} />
+          ) : surface === "empty" ? (
+            <Empty title={Copy.readsEmptyTitle} hint={Copy.readsEmptyHint} />
+          ) : null
+        }
+        tail={surface === "content" ? <Tail>{Copy.readsTail(items.length)}</Tail> : null}
+      />
     </Screen>
   );
 

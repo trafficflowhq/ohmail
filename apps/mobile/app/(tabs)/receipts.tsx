@@ -3,23 +3,24 @@
  * a number is the point: amounts get their own right-aligned tabular column.
  * Scrolling past marks seen on the same read line as Reads; leaving commits
  * this stream's own waterline (`feedPartition` keeps the two views' lines
- * independent). The sweep measures in scroll-content coordinates: `onLayout`
- * answers a view's offset inside its direct parent and these rows sit four
- * levels deep, so {@link GroupedSweepLedger} sums each level's own offset and
- * answers only rows whose absolute foot has really cleared the line.
+ * independent). The sweep measures in scroll-content coordinates: `MailList`
+ * reports each row's cell frame there, so the {@link GroupedSweepLedger}'s
+ * chain above the row is zero and it answers only rows whose absolute foot has
+ * really cleared the line. The rows are a window, never the whole stream.
  */
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { AppState, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { Copy } from "../../src/copy";
 import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
 import { GroupedSweepLedger } from "../../src/state/sweep";
-import { useWorld } from "../../src/state/world";
+import { useWorld, type WorldMail } from "../../src/state/world";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
 import { MessageReader } from "../../src/ui/MessageReader";
-import { Empty, Panel, Screen, Scroller, Section, Tail, Txt, Waterline } from "../../src/ui/base";
+import { Empty, Screen, Tail, Txt, Waterline } from "../../src/ui/base";
 import { TopBar } from "../../src/ui/chrome";
+import { MailList, type ListGroup, type RowFrame } from "../../src/ui/MailList";
 import { MailRow } from "../../src/ui/MailRow";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { useLocale } from "../../src/i18n/LocaleProvider";
@@ -50,16 +51,36 @@ export default function ReceiptsScreen() {
   const surface = listSurface({ settled: w.boot.settled, count: total });
 
   const ledger = useRef(new GroupedSweepLedger()).current;
+  /* Which day a row belongs to, for the ledger — the cell reports a frame, not a group. */
+  const groupOfRow = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const g of groups) for (const item of g.items) m.set(item.id, groupKeyOf(g));
+    return m;
+  }, [groups]);
 
   // PRUNE the ledger against the rendered generation: a projection change (a consent or
   // rule re-home) removes rows from `groups` without any onLayout firing for them, and a
-  // stale measurement would sweep mail that is no longer on screen.
+  // stale measurement would sweep mail that is no longer on screen. The cells measure in
+  // scroll-content coordinates, so every level above the row is zero.
   useEffect(() => {
     ledger.retain(
       groups.flatMap((g) => g.items.map((m) => m.id)),
       groups.map(groupKeyOf),
     );
+    ledger.setPanel(0);
+    for (const g of groups) {
+      ledger.setGroup(groupKeyOf(g), 0);
+      ledger.setItems(groupKeyOf(g), 0);
+    }
   }, [groups, ledger]);
+
+  const onRowFrame = useCallback(
+    (m: WorldMail, frame: RowFrame) => {
+      const key = groupOfRow.get(m.id);
+      if (key !== undefined) ledger.setRow(m.id, key, frame.y, frame.height);
+    },
+    [groupOfRow, ledger],
+  );
 
   const onScroll = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -87,54 +108,50 @@ export default function ReceiptsScreen() {
     }, [actions]),
   );
 
+  const dayGroups: ListGroup<WorldMail>[] = groups.map((g) => ({
+    key: groupKeyOf(g),
+    title: g.label,
+    rows: g.items,
+  }));
+
   const list = (
     <Screen>
       <TopBar />
-      <Scroller onScroll={onScroll} scrollEventThrottle={64} refresh={pull}>
-        <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 14 }}>
-          <Txt variant="h1">{Copy.receipts}</Txt>
-          <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>
-            {metaWhen(surface, meta) ?? " "}
-          </Txt>
-        </View>
-
-        <View onLayout={(e) => ledger.setPanel(e.nativeEvent.layout.y)}>
-          <Panel style={{ paddingBottom: 4 }}>
-            {surface === "skeleton" ? (
-              <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>
-                <SkeletonList stalled={w.boot.syncFailure} />
-              </View>
-            ) : null}
-            {surface === "empty" ? (
-              <Empty title={Copy.receiptsEmptyTitle} hint={Copy.receiptsEmptyHint} />
-            ) : null}
-            {groups.map((g, gi) => (
-              <View key={groupKeyOf(g)} onLayout={(e) => ledger.setGroup(groupKeyOf(g), e.nativeEvent.layout.y)}>
-                <Section style={gi === 0 ? { paddingTop: 18 } : undefined}>{g.label}</Section>
-                <View
-                  style={{ paddingHorizontal: 6 }}
-                  onLayout={(e) => ledger.setItems(groupKeyOf(g), e.nativeEvent.layout.y)}
-                >
-                  {g.items.map((m) => (
-                    <View
-                      key={m.id}
-                      onLayout={(e) =>
-                        ledger.setRow(m.id, groupKeyOf(g), e.nativeEvent.layout.y, e.nativeEvent.layout.height)
-                      }
-                    >
-                      {/* The line stands ABOVE the newest receipt already seen at the last
-                          visit — this stream's own anchor, independent of Reads'. */}
-                      {waterlineAboveId === m.id ? <Waterline label={waterLabel} meta="" /> : null}
-                      <MailRow m={m} onPress={() => openRow(m.id)} swipe />
-                    </View>
-                  ))}
-                </View>
-              </View>
-            ))}
-            {total > 0 ? <Tail>{Copy.receiptsTail(total)}</Tail> : null}
-          </Panel>
-        </View>
-      </Scroller>
+      <MailList
+        groups={dayGroups}
+        rowKey={(m) => m.id}
+        renderRow={(m) => (
+          <>
+            {/* The line stands ABOVE the newest receipt already seen at the last
+                visit — this stream's own anchor, independent of Reads'. */}
+            {waterlineAboveId === m.id ? <Waterline label={waterLabel} meta="" /> : null}
+            <MailRow m={m} onPress={() => openRow(m.id)} swipe />
+          </>
+        )}
+        rowInset={6}
+        onRowFrame={onRowFrame}
+        onScroll={onScroll}
+        scrollEventThrottle={64}
+        refresh={pull}
+        head={
+          <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 14 }}>
+            <Txt variant="h1">{Copy.receipts}</Txt>
+            <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>
+              {metaWhen(surface, meta) ?? " "}
+            </Txt>
+          </View>
+        }
+        empty={
+          surface === "skeleton" ? (
+            <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>
+              <SkeletonList stalled={w.boot.syncFailure} />
+            </View>
+          ) : surface === "empty" ? (
+            <Empty title={Copy.receiptsEmptyTitle} hint={Copy.receiptsEmptyHint} />
+          ) : null
+        }
+        foot={total > 0 ? <Tail>{Copy.receiptsTail(total)}</Tail> : null}
+      />
     </Screen>
   );
 

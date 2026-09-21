@@ -15,9 +15,10 @@ import { Copy } from "../src/copy";
 import { usePullToSync } from "../src/state/pull";
 import { listSurface, metaWhen } from "../src/state/surface";
 import { useWorld } from "../src/state/world";
-import { Empty, Panel, Screen, Scroller, Tail, Tap, Txt } from "../src/ui/base";
+import { Empty, Screen, Tail, Tap, Txt } from "../src/ui/base";
 import { DetailBar } from "../src/ui/chrome";
 import { ListDetail, useListDetail } from "../src/ui/list-detail";
+import { MailList } from "../src/ui/MailList";
 import { MessageReader } from "../src/ui/MessageReader";
 import { Gated } from "../src/ui/Gated";
 import { MailRow } from "../src/ui/MailRow";
@@ -54,43 +55,53 @@ function HistoryBody() {
   const list = (
     <Screen>
       <DetailBar title={Copy.history} />
-      <Scroller refresh={pull}>
-        <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}>
-          <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
-            <Txt variant="h1" numberOfLines={1} style={{ flexShrink: 1 }}>
-              {Copy.history}
+      <MailList
+        /* ONE GROUP, and that is the read-by-construction rule showing through: there is no
+           NEW half to split off, because an unread message is never here. */
+        groups={[{ key: "history", rows: items }]}
+        rowKey={(m) => m.id}
+        renderRow={(m) => <MailRow m={m} onPress={() => openRow(m.id)} swipe />}
+        // The empty sentence stands on the canvas; the silhouette and the rows on the panel.
+        surface={surface !== "empty"}
+        gapAbove={surface === "content" ? 8 : 0}
+        refresh={pull}
+        head={
+          <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}>
+            <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
+              <Txt variant="h1" numberOfLines={1} style={{ flexShrink: 1 }}>
+                {Copy.history}
+              </Txt>
+              <Txt variant="meta" tone="ink3" tabular>
+                {metaWhen(surface, meta) ?? " "}
+              </Txt>
+            </View>
+            <Txt variant="note" tone="ink3" style={{ marginTop: 8 }}>
+              {Copy.historyExplainer}
             </Txt>
-            <Txt variant="meta" tone="ink3" tabular>
-              {metaWhen(surface, meta) ?? " "}
-            </Txt>
+            {/* The disclosure pattern this app already uses (`app/standalone.tsx`): a labelled
+                press in the accent ink, the body below it, `expanded` announced. Collapsed, not
+                deleted — a disclosure that is always in the same place is not a hint that
+                disappears. */}
+            <Tap
+              onPress={() => setMore((v) => !v)}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: more }}
+              accessibilityLabel={Copy.historyExplainerMoreLabel}
+              style={{ paddingVertical: 8 }}
+            >
+              <Txt variant="settingsLabel" tone="accent">
+                {Copy.historyExplainerMoreLabel}
+              </Txt>
+            </Tap>
+            {more ? (
+              <Txt variant="note" tone="ink3" style={{ paddingBottom: 4 }}>
+                {Copy.historyExplainerMore}
+              </Txt>
+            ) : null}
           </View>
-          <Txt variant="note" tone="ink3" style={{ marginTop: 8 }}>
-            {Copy.historyExplainer}
-          </Txt>
-          {/* The disclosure pattern this app already uses (`app/standalone.tsx`): a labelled
-              press in the accent ink, the body below it, `expanded` announced. Collapsed, not
-              deleted — a disclosure that is always in the same place is not a hint that
-              disappears. */}
-          <Tap
-            onPress={() => setMore((v) => !v)}
-            accessibilityRole="button"
-            accessibilityState={{ expanded: more }}
-            accessibilityLabel={Copy.historyExplainerMoreLabel}
-            style={{ paddingVertical: 8 }}
-          >
-            <Txt variant="settingsLabel" tone="accent">
-              {Copy.historyExplainerMoreLabel}
-            </Txt>
-          </Tap>
-          {more ? (
-            <Txt variant="note" tone="ink3" style={{ paddingBottom: 4 }}>
-              {Copy.historyExplainerMore}
-            </Txt>
-          ) : null}
-        </View>
-
-        {surface === "skeleton" || surface === "pending" ? (
-          <Panel style={{ paddingBottom: 4 }}>
+        }
+        empty={
+          surface === "skeleton" || surface === "pending" ? (
             <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>
               <SkeletonList
                 {...(surface === "pending"
@@ -98,22 +109,12 @@ function HistoryBody() {
                   : { stalled: w.boot.syncFailure })}
               />
             </View>
-          </Panel>
-        ) : surface === "empty" ? (
-          <Empty title={Copy.historyEmptyTitle} hint={Copy.historyEmptyHint} />
-        ) : (
-          <>
-            {/* ONE GROUP, and that is the read-by-construction rule showing through: there is no
-                NEW half to split off, because an unread message is never here. */}
-            <Panel style={{ paddingBottom: 4, marginTop: 8 }}>
-              {items.map((m) => (
-                <MailRow key={m.id} m={m} onPress={() => openRow(m.id)} swipe />
-              ))}
-            </Panel>
-            <Tail>{Copy.historyTail(total)}</Tail>
-          </>
-        )}
-      </Scroller>
+          ) : surface === "empty" ? (
+            <Empty title={Copy.historyEmptyTitle} hint={Copy.historyEmptyHint} />
+          ) : null
+        }
+        tail={surface === "content" ? <Tail>{Copy.historyTail(total)}</Tail> : null}
+      />
     </Screen>
   );
 

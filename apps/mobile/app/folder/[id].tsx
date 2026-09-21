@@ -15,9 +15,10 @@ import { folderLeafOf, folderParentOf } from "../../src/state/folders";
 import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
 import { useWorld } from "../../src/state/world";
-import { Empty, Panel, Screen, Scroller, Section, Tail, Txt } from "../../src/ui/base";
+import { Empty, Screen, Scroller, Tail, Txt } from "../../src/ui/base";
 import { DetailBar } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
+import { MailList } from "../../src/ui/MailList";
 import { MessageReader } from "../../src/ui/MessageReader";
 import { Gated } from "../../src/ui/Gated";
 import { MailRow } from "../../src/ui/MailRow";
@@ -70,55 +71,46 @@ function FolderBody() {
   const list = (
     <Screen>
       <DetailBar title={leaf} />
-      <Scroller refresh={pull}>
-        <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}>
-          <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
-            <Txt variant="h1" numberOfLines={1} style={{ flexShrink: 1 }}>
-              {leaf}
-            </Txt>
-            <Txt variant="meta" tone="ink3" tabular>
-              {metaWhen(surface, Copy.metaUnreadOf(unread, total)) ?? " "}
-            </Txt>
+      <MailList
+        groups={[
+          { key: "fresh", title: Copy.groupNew, rows: fresh },
+          { key: "seen", title: Copy.groupSeen, rows: seen },
+        ]}
+        rowKey={(m) => m.id}
+        renderRow={(m) => <MailRow m={m} onPress={() => openRow(m.id)} swipe />}
+        // The empty sentence stands on the canvas; the silhouette and the rows on the panel.
+        surface={surface !== "empty"}
+        refresh={pull}
+        head={
+          <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}>
+            <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
+              <Txt variant="h1" numberOfLines={1} style={{ flexShrink: 1 }}>
+                {leaf}
+              </Txt>
+              <Txt variant="meta" tone="ink3" tabular>
+                {metaWhen(surface, Copy.metaUnreadOf(unread, total)) ?? " "}
+              </Txt>
+            </View>
+            {/* The full path when the folder is nested, so "Q1" says where it lives — the
+                webapp's meta line, one namespace over. */}
+            {parent ? (
+              <Txt variant="caption" tone="ink3" numberOfLines={1} style={{ marginTop: 4 }}>
+                {folder.name}
+              </Txt>
+            ) : null}
           </View>
-          {/* The full path when the folder is nested, so "Q1" says where it lives — the
-              webapp's meta line, one namespace over. */}
-          {parent ? (
-            <Txt variant="caption" tone="ink3" numberOfLines={1} style={{ marginTop: 4 }}>
-              {folder.name}
-            </Txt>
-          ) : null}
-        </View>
-
-        {surface === "skeleton" ? (
-          <Panel style={{ paddingBottom: 4 }}>
+        }
+        empty={
+          surface === "skeleton" ? (
             <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>
               <SkeletonList stalled={w.boot.syncFailure} />
             </View>
-          </Panel>
-        ) : surface === "empty" ? (
-          <Empty title={Copy.folderEmptyTitle} hint={Copy.folderEmptyHint} />
-        ) : (
-          <>
-            {fresh.length > 0 ? (
-              <Panel style={{ marginBottom: 12 }}>
-                <Section style={{ paddingTop: 14 }}>{Copy.groupNew}</Section>
-                {fresh.map((m) => (
-                  <MailRow key={m.id} m={m} onPress={() => openRow(m.id)} swipe />
-                ))}
-              </Panel>
-            ) : null}
-            {seen.length > 0 ? (
-              <Panel>
-                <Section style={{ paddingTop: 14 }}>{Copy.groupSeen}</Section>
-                {seen.map((m) => (
-                  <MailRow key={m.id} m={m} onPress={() => openRow(m.id)} swipe />
-                ))}
-              </Panel>
-            ) : null}
-            <Tail>{Copy.folderTail(total)}</Tail>
-          </>
-        )}
-      </Scroller>
+          ) : surface === "empty" ? (
+            <Empty title={Copy.folderEmptyTitle} hint={Copy.folderEmptyHint} />
+          ) : null
+        }
+        tail={surface === "content" ? <Tail>{Copy.folderTail(total)}</Tail> : null}
+      />
     </Screen>
   );
 

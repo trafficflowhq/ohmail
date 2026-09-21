@@ -6,7 +6,7 @@
  *   Section (`.grouplabel`) · Badge (`.badge`) · TagChip (`.tagchip`) · Chip (`.chip`) ·
  *   Button (`.btn`) · Tail (`.tail-row`) · Waterline (`.waterline`)
  */
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useState, type ReactElement, type ReactNode } from "react";
 import {
   Pressable,
   RefreshControl,
@@ -16,19 +16,18 @@ import {
   View,
   type LayoutChangeEvent,
   type PressableProps,
+  type RefreshControlProps,
   type StyleProp,
   type TextProps,
   type TextStyle,
   type ViewStyle,
 } from "react-native";
-import { Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { listInsets, type ListInsets } from "./list-insets";
 import { topPad } from "./safe-area";
 import { useTheme, type Theme } from "../theme";
 import { MIN_SLOP, hitSlopFor } from "../theme/tokens";
 import { Icon, type IconName } from "./Icon";
-import { usePosture } from "./posture";
-import { listNavClearance, scaffoldPlan } from "./scaffold/plan";
 
 /* ------------------------------------------------------------------- text */
 
@@ -69,6 +68,16 @@ export function useTopPad(gap: number): number {
   return topPad(useSafeAreaInsets().top, gap);
 }
 
+/**
+ * {@link listInsets} over the live bottom inset — the ONE rule for a list's side gutter and its
+ * clearance under the flying nav, read by `Scroller` and `MailList` alike. A second spelling of
+ * either padding is what `test/list-insets-shared.test.ts` refuses.
+ */
+export function useListInsets(): ListInsets {
+  const t = useTheme();
+  return listInsets(t.space, useSafeAreaInsets().bottom);
+}
+
 /* ---------------------------------------------------------------- surfaces */
 
 /**
@@ -93,10 +102,24 @@ export function Screen({ children, style }: { children: ReactNode; style?: Style
   );
 }
 
+export type PanelLevel = "l0" | "l1" | "l2" | "l3";
+
 /**
- * A white surface floating on the canvas. Carries its own background *and*
- * radius, because RN shapes a shadow from the view's own border box.
+ * The panel's face — background, radius and lift as one style fragment, applied to the view
+ * that owns all three (RN shapes a shadow from the view's own border box). `Panel` wears it in
+ * flow; `MailList` paints it on the one surface behind its virtualized rows.
  */
+export function panelSurface(t: Theme, level: PanelLevel = "l1", radius?: number): StyleProp<ViewStyle> {
+  return [
+    {
+      backgroundColor: level === "l1" ? t.c.panel : t.c.float,
+      borderRadius: radius ?? t.radius.panel,
+    },
+    t.lift(level),
+  ];
+}
+
+/** A white surface floating on the canvas — {@link panelSurface} in flow. */
 export function Panel({
   children,
   level = "l1",
@@ -104,35 +127,45 @@ export function Panel({
   style,
 }: {
   children: ReactNode;
-  level?: "l0" | "l1" | "l2" | "l3";
+  level?: PanelLevel;
   radius?: number;
   style?: StyleProp<ViewStyle>;
 }) {
   const t = useTheme();
-  return (
-    <View
-      style={[
-        {
-          backgroundColor: level === "l1" ? t.c.panel : t.c.float,
-          borderRadius: radius ?? t.radius.panel,
-        },
-        t.lift(level),
-        style,
-      ]}
-    >
-      {children}
-    </View>
-  );
+  return <View style={[panelSurface(t, level, radius), style]}>{children}</View>;
+}
+
+export interface PullRefresh {
+  refreshing: boolean;
+  onRefresh: () => void;
 }
 
 /**
- * The scroller every list screen uses. Owns the side gutter and the clearance under the tab
- * bar so a panel's full shadow falloff is never clipped. `refresh` is the standard pull
- * gesture, themed once here so every refreshing list speaks the same voice: the spinner in
- * the quiet ink (iOS — `tintColor` on UIRefreshControl), the accent on the material indicator
- * (Android — `colors`/`progressBackgroundColor` on SwipeRefreshLayout). Screens hand in
- * `usePullToSync()`, whose spinner settles when the sync round actually completes
- * (`state/pull.ts`).
+ * The standard pull gesture, themed once so every refreshing list speaks the same voice: the
+ * spinner in the quiet ink (iOS — `tintColor` on UIRefreshControl), the accent on the material
+ * indicator (Android — `colors`/`progressBackgroundColor` on SwipeRefreshLayout). Screens hand
+ * in `usePullToSync()`, whose spinner settles when the sync round actually completes
+ * (`state/pull.ts`). Read by `Scroller` and `MailList`.
+ */
+export function pullRefreshControl(
+  t: Theme,
+  refresh: PullRefresh | undefined,
+): ReactElement<RefreshControlProps> | undefined {
+  return refresh ? (
+    <RefreshControl
+      refreshing={refresh.refreshing}
+      onRefresh={refresh.onRefresh}
+      tintColor={t.c.ink3}
+      colors={[t.c.accentInk]}
+      progressBackgroundColor={t.c.float}
+    />
+  ) : undefined;
+}
+
+/**
+ * The scroller the flow screens use (settings, onboarding, connect, the readers). The insets
+ * — side gutter, clearance under the nav so a panel's full shadow falloff is never clipped —
+ * are {@link useListInsets}', shared with `MailList`, which is what every mail LIST renders.
  */
 export function Scroller({
   children,
@@ -142,7 +175,7 @@ export function Scroller({
   ...rest
 }: React.ComponentProps<typeof ScrollView> & {
   contentStyle?: StyleProp<ViewStyle>;
-  refresh?: { refreshing: boolean; onRefresh: () => void };
+  refresh?: PullRefresh;
   /**
    * The flow screens' wide-window bound (settings, onboarding, connect): the content column
    * caps at a form width and centers, so an iPad or an unfolded phone reads a form instead
@@ -151,33 +184,14 @@ export function Scroller({
   bounded?: boolean;
 }) {
   const t = useTheme();
-  const insets = useSafeAreaInsets();
-  /* The flying nav's footprint, so the list insets from a side rail instead of running under it
-     (a closed foldable's rail, a landscape compact phone's left rail); a dock keeps its footer
-     clear as before. */
-  const plan = scaffoldPlan(usePosture(), Platform.OS === "ios" ? "ios" : "android");
-  const clr = listNavClearance(plan, t.space.tabClearance);
+  const insets = useListInsets();
   return (
     <ScrollView
       {...rest}
-      refreshControl={
-        refresh ? (
-          <RefreshControl
-            refreshing={refresh.refreshing}
-            onRefresh={refresh.onRefresh}
-            tintColor={t.c.ink3}
-            colors={[t.c.accentInk]}
-            progressBackgroundColor={t.c.float}
-          />
-        ) : undefined
-      }
+      refreshControl={pullRefreshControl(t, refresh)}
       style={{ flex: 1 }}
       contentContainerStyle={[
-        {
-          paddingLeft: t.space.deckCompact + clr.left,
-          paddingRight: t.space.deckCompact + clr.right,
-          paddingBottom: clr.bottom + insets.bottom,
-        },
+        insets,
         bounded ? { width: "100%", maxWidth: 640, alignSelf: "center" } : null,
         contentStyle,
       ]}

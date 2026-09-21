@@ -14,10 +14,11 @@ import { Copy } from "../../src/copy";
 import { type WorldTrashRow } from "../../src/state/live";
 import { holdTrashRows } from "../../src/state/trash-hold";
 import { useWorld } from "../../src/state/world";
-import { Empty, Panel, Screen, Scroller, TapRow, Tail, Txt } from "../../src/ui/base";
+import { Empty, Screen, Scroller, TapRow, Tail, Txt } from "../../src/ui/base";
 import { DetailBar } from "../../src/ui/chrome";
 import { Gated } from "../../src/ui/Gated";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
+import { MailList } from "../../src/ui/MailList";
 import { MailRow } from "../../src/ui/MailRow";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { TrashReader } from "../../src/ui/TrashReader";
@@ -106,61 +107,62 @@ function TrashBody() {
     );
   }
 
+  /* The failure wins over any rows already held; the skeleton stands while the server has
+     not finished answering — "Trash is empty" about a list nobody has heard back about is a
+     claim. Only a settled, empty answer earns the empty sentence, on the canvas. */
+  const failed = error !== null;
+  const waiting = !failed && items.length === 0 && (loading || !exhausted);
+  const settledEmpty = !failed && items.length === 0 && !waiting;
+
   const list = (
     <Screen>
       <DetailBar title={Copy.trashTitle} />
-      <Scroller>
-        <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}>
-          <Txt variant="h1">{Copy.trashTitle}</Txt>
-        </View>
-
-        {error !== null ? (
-          <Panel style={{ paddingHorizontal: 6, paddingVertical: 8 }}>
-            <Txt variant="note" tone="ink3" style={{ paddingHorizontal: 8, paddingBottom: 6 }}>
-              {error === "" ? Copy.trashListFailed : error}
-            </Txt>
-            <TapRow accessibilityRole="button" accessibilityLabel={Copy.trashRetry} onPress={loadMore} style={{ paddingHorizontal: 8, paddingVertical: 10 }}>
-              <Txt variant="button" tone="accent">{Copy.trashRetry}</Txt>
-            </TapRow>
-          </Panel>
-        ) : items.length > 0 ? (
-          <>
-            <Panel style={{ paddingBottom: 4 }}>
-              {items.map((r) => (
-                <MailRow key={r.mail.id} m={r.mail} onPress={() => openRow(r.mail.id)} />
-              ))}
-              {!exhausted ? (
-                <TapRow
-                  accessibilityRole="button"
-                  accessibilityLabel={Copy.trashShowOlder}
-                  onPress={loadMore}
-                  style={{ paddingHorizontal: 14, paddingVertical: 12 }}
-                >
-                  {/* The label holds while a page is in flight — `inFlight` makes the press a
-                      no-op, and a swapped-in word here would claim a state the row is not in. */}
-                  <Txt variant="button" tone="accent">
-                    {Copy.trashShowOlder}
-                  </Txt>
-                </TapRow>
-              ) : null}
-            </Panel>
-            <Tail>{Copy.trashFoot}</Tail>
-          </>
-        ) : loading || !exhausted ? (
-          /* Neither sentence may be said yet — the server has not finished answering, and
-             "Trash is empty" about a list nobody has heard back about is a claim. */
-          <Panel style={{ paddingBottom: 4 }}>
+      <MailList
+        groups={failed ? [] : [{ key: "trash", rows: items }]}
+        rowKey={(r) => r.mail.id}
+        renderRow={(r) => <MailRow m={r.mail} onPress={() => openRow(r.mail.id)} />}
+        surface={!settledEmpty}
+        head={
+          <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}>
+            <Txt variant="h1">{Copy.trashTitle}</Txt>
+          </View>
+        }
+        empty={
+          failed ? (
+            <View style={{ paddingHorizontal: 6, paddingVertical: 8 }}>
+              <Txt variant="note" tone="ink3" style={{ paddingHorizontal: 8, paddingBottom: 6 }}>
+                {error === "" ? Copy.trashListFailed : error}
+              </Txt>
+              <TapRow accessibilityRole="button" accessibilityLabel={Copy.trashRetry} onPress={loadMore} style={{ paddingHorizontal: 8, paddingVertical: 10 }}>
+                <Txt variant="button" tone="accent">{Copy.trashRetry}</Txt>
+              </TapRow>
+            </View>
+          ) : waiting ? (
             <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>
               <SkeletonList stalled={false} />
             </View>
-          </Panel>
-        ) : (
-          <>
+          ) : (
             <Empty title={Copy.trashEmptyTitle} hint={Copy.trashEmptyHint} />
-            <Tail>{Copy.trashFoot}</Tail>
-          </>
-        )}
-      </Scroller>
+          )
+        }
+        foot={
+          !failed && items.length > 0 && !exhausted ? (
+            <TapRow
+              accessibilityRole="button"
+              accessibilityLabel={Copy.trashShowOlder}
+              onPress={loadMore}
+              style={{ paddingHorizontal: 14, paddingVertical: 12 }}
+            >
+              {/* The label holds while a page is in flight — `inFlight` makes the press a
+                  no-op, and a swapped-in word here would claim a state the row is not in. */}
+              <Txt variant="button" tone="accent">
+                {Copy.trashShowOlder}
+              </Txt>
+            </TapRow>
+          ) : null
+        }
+        tail={!failed && !waiting ? <Tail>{Copy.trashFoot}</Tail> : null}
+      />
     </Screen>
   );
 
