@@ -1,4 +1,5 @@
 import { normalizeMessageId } from "./identity.js";
+import { baseSubject, SUBJECT_PREFIX_PATTERN } from "./reply-subject.js";
 import { isCorroboratedCounterparty, type CounterpartyEvidence } from "./sender-headers.js";
 import type { RepoPort } from "./ports.js";
 import type { EmailAddress } from "./types.js";
@@ -223,80 +224,12 @@ export async function resolveThread(
 }
 
 /**
- * The reply and forward subject prefixes localized mail clients emit — ONE table: a German
- * Outlook forward once kept its "WG:" prefix in the thread name while the same client's "AW:"
- * replies were stripped. The set is the documented Outlook/Thunderbird localization table.
- * Longest token first, so the alternation never stops at a prefix of a longer token. The short
- * entries ("R:", "I:", "PD:") are safe because the token must be the ENTIRE word before the colon
- * — "Item:" and "Password:" survive; the test table pins them. "WG:" is ambiguous in German
- * (Wohngemeinschaft) and the forward reading still wins: this only NAMES a thread at create, so
- * the worst case is a flat-share ad losing two letters, never a merge.
+ * The localized prefix table, {@link baseSubject} and the SQL-shaped {@link SUBJECT_PREFIX_PATTERN}
+ * live in `reply-subject.ts` — the dependency-free leaf the client engine can load — and are
+ * re-exported here so every existing importer of this module keeps its names. ONE table: the
+ * server names threads with it, the client faces its own forwards with it.
  */
-const SUBJECT_PREFIX_TOKENS = [
-  "doorst",           // nl forward (kept with its reply sibling "antw" for reviewability)
-  "antw",             // nl reply ("Antw.:")
-  "fwd", "fw",        // en forward
-  "res",              // pt reply
-  "enc",              // pt forward
-  "odp",              // pl reply
-  "ynt",              // tr reply
-  "ilt",              // tr forward ("İlt:" with the dotted İ does not case-fold to this; the
-                      //             ASCII form is what crosses locale boundaries)
-  "atb",              // cy reply
-  "yml",              // cy forward
-  "bls",              // id reply
-  "re",               // reply, international
-  "aw",               // de reply
-  "wg",               // de forward
-  "sv",               // sv/da/no/is reply
-  "vb",               // sv forward
-  "vs",               // fi reply; no/da forward
-  "vl",               // fi forward
-  "fs",               // is forward
-  "tr",               // fr forward
-  "rv",               // es forward
-  "pd",               // pl forward
-  "vá",               // hu reply
-  "r",                // it reply
-  "i",                // it forward
-  "回复", "回覆",      // zh-Hans / zh-Hant reply
-  "转发", "轉寄",      // zh-Hans / zh-Hant forward
-] as const;
-
-/**
- * One prefix occurrence: the token, an optional abbreviating dot ("Antw.:"), an optional
- * bracketed count ("RE[2]:"), optional space before the colon ("RE :" — fr Outlook), and
- * either the ASCII or the fullwidth colon (zh clients emit "：").
- *
- * EXPORTED AS A STRING because the anatomy has a second, non-JS consumer: the thread-name
- * heal pre-filters candidate rows in SQL (`subject ~* …`), and Postgres AREs understand this
- * exact syntax — `(?:…)`, `\s`, `\d` and the bracket expression included. One definition, two
- * engines; the JS regex below and the SQL predicate can never drift apart.
- */
-export const SUBJECT_PREFIX_PATTERN =
-  `^(?:${SUBJECT_PREFIX_TOKENS.join("|")})\\.?\\s*(?:\\[\\d+\\])?\\s*[:：]`;
-
-const SUBJECT_PREFIX_RE = new RegExp(`${SUBJECT_PREFIX_PATTERN}\\s*`, "i");
-
-/**
- * A conversation's subject without the reply/forward prefixes, for naming a thread whose first
- * ingested message happens to be a reply or a forward — which out-of-order arrival makes
- * ordinary. NAMING ONLY: thread identity is the header chain and nothing else (see the module
- * header), so an over- or under-stripped subject can never merge or split a conversation.
- *
- * Only ever used at CREATE. A thread's subject is never overwritten afterwards, because
- * `POST /threads/:id/rename` is a user write and ingest may not silently undo one.
- */
-export function baseSubject(subject: string): string {
-  let s = subject.trim();
-  // Iterated rather than a single greedy regex: real mail carries stacks like
-  // "Re: AW: AW: …", and the languages MIX — a Gmail "Re:" lands on top of Outlook's "AW:".
-  for (;;) {
-    const next = s.replace(SUBJECT_PREFIX_RE, "");
-    if (next === s) return s;
-    s = next;
-  }
-}
+export { baseSubject, SUBJECT_PREFIX_PATTERN };
 
 /**
  * The conversation-join rule — merge-time evidence, NOT ingest identity. For the conversation the

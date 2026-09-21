@@ -1183,14 +1183,14 @@ export type EngineMutation =
        */
       inReplyTo: string | null;
       /**
-       * The message being forwarded — the exclusive peer of {@link inReplyTo}: a forward
-       * carries no `In-Reply-To`, threads onto nothing, and goes to recipients the user picks;
-       * exactly one of the two is ever non-null. The client sends only the id. The server owns
-       * the rest: it refuses `no_forward` (a sensitive body must never leave through a quote
-       * block), appends the quoted original, and streams the attachments from IMAP — a
-       * client-built quote is exactly the seam a redacted body would escape through. The
-       * compose surface offers forward only for non-`no_forward` mail; this is the second
-       * check.
+       * The message being forwarded — the exclusive peer of {@link inReplyTo}: exactly one is
+       * ever non-null, and the recipients are the user's. A forward THREADS like a reply: the
+       * server mints `In-Reply-To`/`References` off the original, so the Sent copy stays in the
+       * original's conversation and a recipient's answer joins it. The client sends only the id;
+       * the server refuses `no_forward` (a sensitive body must never leave through a quote
+       * block), appends the quoted original and streams the attachments from IMAP — a
+       * client-built quote is the seam a redacted body would escape through. The compose
+       * surface offers forward only for non-`no_forward` mail; this is the second check.
        */
       forwardOf?: string | null;
       /**

@@ -309,6 +309,7 @@ export {
   triagePiles,
   tagsCrossView,
   threadOf,
+  isForwardedByUs,
   threadParticipants,
   threadParticipantsIndex,
   // HOW LONG A CONVERSATION IS, once — the server's length where the mirror holds the thread row.

@@ -113,8 +113,9 @@ export function sentOverlayMessage(
   const iso = ctx.now().toISOString();
   const to = m.to ?? (parent ? [parent.from] : []);
   const subject = m.subject ?? (parent ? replySubject(parent.subject) : "");
-  // Parent thread for a reply; a compose starts none — the same rule `effectsOf` follows so a
-  // compose never files onto a stranger's conversation in the mirror.
+  // Parent thread for a reply, the original's for a forward (`enrich` froze it on `m.threadId`);
+  // a compose starts none — the same rule `effectsOf` follows so a compose never files onto a
+  // stranger's conversation in the mirror.
   const threadId = m.threadId ?? parent?.threadId ?? null;
   // The account is single-tenant in a mirror, so any message names it; the parent is the direct
   // source when there is one.
@@ -742,7 +743,9 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         // NO PARENT ⇒ NO THREAD, and `?? null` rather than `?? parent?.threadId` would have
         // been the same thing written less plainly. A compose that inherited a thread id
         // would file a stranger's mail onto an existing conversation in our own mirror even
-        // though the outgoing headers were clean.
+        // though the outgoing headers were clean. A forward is the one `inReplyTo: null` send
+        // that DOES carry a thread — `enrich` set `m.threadId` to its original's, matching
+        // the In-Reply-To/References the server mints off that original.
         threadId: m.threadId ?? parent?.threadId ?? null,
         inReplyToMessageId: parent?.id ?? null,
         subject: m.subject ?? (parent ? replySubject(parent.subject) : ""),

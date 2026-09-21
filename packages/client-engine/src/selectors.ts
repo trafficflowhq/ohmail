@@ -1,4 +1,5 @@
 import { canonicalDestination, isSentFolderPath } from "@trafficflow/core/folder-name";
+import { opensWithForwardPrefix } from "@trafficflow/core/reply-subject";
 import { isAcknowledgementSubject } from "@trafficflow/core/ics";
 import { mayGroupByMessageId } from "@trafficflow/core/sender-headers";
 import type { EntityReader } from "./store.js";
@@ -368,6 +369,19 @@ export interface OhboxView {
  */
 export function isOwnSent(m: Pick<EngineMessage, "folder">): boolean {
   return isSentFolderPath(m.folder);
+}
+
+/**
+ * IS THIS THE ACCOUNT'S OWN FORWARD — an own-sent row (the ingested Sent copy, or the
+ * confirm-time overlay, which is `local: true` under the Sent folder) whose subject opens with an
+ * unambiguous forward prefix in any of the languages ONE table knows (`opensWithForwardPrefix`,
+ * core). A received "Fwd:" is somebody else's forward and answers false. DISPLAY ONLY, like
+ * {@link isItipAcknowledgement}: a conversation panel faces such a row "Forwarded to …" instead of
+ * its sender's name; nothing here reaches threading, naming or a merge, and the worst error is an
+ * own forward wearing its sender's name.
+ */
+export function isForwardedByUs(m: Pick<EngineMessage, "folder" | "subject" | "local">): boolean {
+  return (m.local === true || isOwnSent(m)) && opensWithForwardPrefix(m.subject);
 }
 
 /**

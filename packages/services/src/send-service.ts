@@ -1254,23 +1254,24 @@ export class SendService {
       }
 
       // RFC 5322 §3.6.4: References is a CHAIN, not a pointer. This used to send `references:
-      // inReplyTo` — the parent's Message-ID alone; a recipient whose client threads on the
-      // LEFTMOST reference then anchors our reply mid-chain and mints a SECOND conversation. Our
-      // own ingest keys on the leftmost entry (`threads.rootMessageIdHeader`), so we were sending
-      // mail we would have mis-threaded ourselves. ROOT+PARENT, not the full chain: the arriving
-      // `References` header is not stored (`messages` has no column), so the chain is not
-      // reconstructable — the root anchors the conversation, the parent places the reply; middle
-      // ancestors are informational, and losing them degrades order, not threading. The complete
-      // fix is to persist `References` at ingest; until then this is an approximation, stated as
-      // one.
+      // inReplyTo` — the parent alone; a recipient whose client threads on the LEFTMOST reference
+      // then anchors our reply mid-chain and mints a SECOND conversation, and our own ingest keys
+      // on the leftmost entry (`threads.rootMessageIdHeader`). ROOT+PARENT, not the full chain:
+      // the arriving `References` is not stored, so the root anchors and the parent places; the
+      // middle is informational (persisting `References` at ingest would complete this).
+      // A FORWARD threads the same way, off the message it forwards — the original's Message-ID
+      // is the parent, its thread root leads the chain — as every mainstream client does; without
+      // it the forward leaves as its own conversation and a recipient's reply lands beside the
+      // original. One parent lookup serves both, so the two can never mint different chains.
       let inReplyTo: string | undefined;
       let references: string | undefined;
-      if (d.inReplyToMessageId) {
+      const threadParentId = d.inReplyToMessageId ?? input.forwardOf ?? null;
+      if (threadParentId) {
         const [parent] = await tx
           .select({ h: messages.messageIdHeader, root: threads.rootMessageIdHeader })
           .from(messages)
           .leftJoin(threads, eq(threads.id, messages.threadId))
-          .where(and(eq(messages.id, d.inReplyToMessageId), eq(messages.accountId, ctx.accountId)))
+          .where(and(eq(messages.id, threadParentId), eq(messages.accountId, ctx.accountId)))
           .limit(1);
         inReplyTo = parent?.h ?? undefined;
         if (inReplyTo) {

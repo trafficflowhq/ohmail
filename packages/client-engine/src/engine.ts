@@ -4747,13 +4747,18 @@ export class OhmailEngine {
       // enriched mutation is what goes on the queue, a retry after a network failure sends
       // the SAME envelope rather than re-deriving it from a mirror that has since drained.
       if (m.inReplyTo === null) {
-        // A COMPOSE. The recipient and the subject are the USER's and are not derived from
-        // anything; the only unknown is which of the account's mailboxes it goes out from,
-        // and `threadId` is pinned to null so nothing downstream can wander into a thread.
+        // A COMPOSE, or a FORWARD. The recipient and the subject are the USER's and are not
+        // derived from anything; the only unknown is which of the account's mailboxes it goes
+        // out from. A compose pins `threadId` to null so nothing downstream can wander into a
+        // thread. A forward of a message this mirror holds takes THAT message's thread: the
+        // server mints its In-Reply-To/References off the original, so the Sent copy files
+        // under the original's conversation on every device — and the confirm-time overlay
+        // stands there from the first frame rather than as a conversation of its own.
+        const original = m.forwardOf ? this.read().get<EngineMessage>("message", m.forwardOf) : undefined;
         return {
           ...m,
           mailboxId: m.mailboxId ?? sendingMailboxId(this.read()) ?? undefined,
-          threadId: null,
+          threadId: original?.threadId ?? null,
         };
       }
       const parent = this.read().get<EngineMessage>("message", m.inReplyTo);
