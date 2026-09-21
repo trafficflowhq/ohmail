@@ -2889,6 +2889,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     () => ohboxSurfaceMessages(resurfacedRows, ohbox),
     [resurfacedRows, ohbox],
   );
+  /* WHAT THE RAIL COUNTS — the three groups, never the surface. The surface unions a resurfaced
+     conversation's other members in so the column can resolve them, and one of those is the Sent
+     copy of your own reply: counting it would make "N unread of M messages" say the Ohbox holds
+     mail it does not list. */
+  const ohboxCount = ohbox.resurfaced.length + ohbox.newForYou.length + ohbox.previouslySeen.length;
   /**
    * The conversation's people for a row's lead circles — bound to the
    * presented reader here (the views have no reader), mapped to
@@ -7014,7 +7019,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             hot: true,
             title: t("rail.ohboxTitle", {
               unread: ohbox.newForYou.length,
-              total: allOhbox.length,
+              total: ohboxCount,
             }),
           },
           /* The streams count "new since last visit" — the fresh side of each view's own
@@ -7216,7 +7221,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       },
     ],
     [
-      t, ohbox.newForYou.length, allOhbox.length, readsNew, receiptsNew, screener.waitingCount, piles,
+      t, ohbox.newForYou.length, ohboxCount, readsNew, receiptsNew, screener.waitingCount, piles,
       tagGroups, tags, createTagAlone, consent.foldersEnabled, consent.known, folders,
       folderUnread, folderVerbs, folderMailboxes, demo, syncStatus.bootstrapping, route.view,
       route.folderId, facts,
