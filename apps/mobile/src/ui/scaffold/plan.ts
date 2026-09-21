@@ -212,6 +212,16 @@ export function scaffoldPlan(p: Posture, platform: PlatformName): ScaffoldPlan {
   };
 }
 
+/**
+ * Whether the LIST PANE'S FOOT carries the search field. Search rides the navigation on every
+ * posture (owner rule 5), so where that navigation is the rail, the rail's own pill IS search
+ * and a second field at the pane foot is the same control twice — measured on the Duo in
+ * unfolded landscape, where "Search" matched twice. The foot keeps it only where the nav has
+ * no pill of its own: the iPad and the unfolded-portrait Duo, whose nav is the bars.
+ */
+export const paneFootSearch = (plan: Pick<ScaffoldPlan, "nav">, platform: PlatformName): boolean =>
+  platform === "ios" && plan.nav !== "rail";
+
 /* ──────────────────────────────── where the rail lives ─────────────────────────────────── */
 
 export interface RailInsets {

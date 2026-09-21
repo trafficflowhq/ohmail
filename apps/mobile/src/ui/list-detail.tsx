@@ -5,7 +5,7 @@
  * inside the tab navigator, whose nav the tab bar owns. The list ends at the hinge, the
  * reader begins past it (flat: no keep-out; half-open: the band with its hairline pair);
  * the sidebar toggle opens the destinations drawer over the list only — never across the
- * hinge; search sits at the list pane's foot on the Duo/iPad. CONTINUITY: the selection is
+ * hinge; search sits at the list pane's foot wherever the nav carries no pill. CONTINUITY: the selection is
  * the route's `open` param, and when the pane goes the reading migrates to the pushed route.
  */
 import { useEffect, useState, type ReactNode } from "react";
@@ -22,7 +22,7 @@ import { MoreNav, Nav } from "./MoreNav";
 import { PaneChromeContext } from "./pane-chrome";
 import { useAppWindow, usePosture, useStatusCluster } from "./posture";
 import { useReaderRail } from "./reader-rail";
-import { paneSplit, railHome, scaffoldPlan, RAIL_W } from "./scaffold/plan";
+import { paneFootSearch, paneSplit, railHome, scaffoldPlan, RAIL_W } from "./scaffold/plan";
 
 const platformName = Platform.OS === "ios" ? ("ios" as const) : ("android" as const);
 
@@ -103,10 +103,11 @@ export function ListDetail({
       <View style={{ flex: 1 }}>
         <View style={{ flex: 1 }}>{list}</View>
         {/* The search field at the list pane's foot, with New mail beside it — Mail's shape on
-            the Duo/iPad (owner rule 5 keeps search in every navigation; Android's rail already
-            carries both). They open `app/search.tsx` and `app/compose.tsx`; on these
-            postures there is no dock to carry them. */}
-        {platformName === "ios" ? (
+            the iPad and the Duo's inner portrait (owner rule 5 keeps search in every
+            navigation). They open `app/search.tsx` and `app/compose.tsx`. Where the nav IS the
+            rail its pill already carries both, so the foot stands down rather than render the
+            same controls twice (`paneFootSearch`). */}
+        {paneFootSearch(plan, platformName) ? (
           <View
             style={{
               flexDirection: "row",
