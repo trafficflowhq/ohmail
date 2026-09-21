@@ -1874,6 +1874,14 @@ export type DraftDiscardOutcome = "discarded" | "held" | "queued" | "refused";
 export const UNDO_MS = 8000;
 
 /**
+ * One turn of the event loop after a sentence is spoken, before the act that follows it is
+ * dispatched — `setImmediate`, which runs after the microtasks AND after any immediate React
+ * queued when the sentence set its state, whichever lane the press landed in. The pill's own
+ * commit therefore precedes the mirror's publish; `toast-before-the-mirror-moves.test.ts` holds it.
+ */
+export const paintFirst = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
+/**
  * What rides beside a toast sentence: an undo the pill offers (bounded, consumed at most once —
  * the callback itself enforces both), and how long the pill holds. Absent members mean what
  * every toast meant before: a sentence, 3.2 s, no verb.
@@ -2606,6 +2614,13 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   ): Promise<boolean> => {
     const m: EngineMutation = { kind: "triage_set", messageId, state, ...(bubbleUpAt ? { bubbleUpAt } : {}) };
     toast(say, undoable(inverseMutations(engine.read(), m)));
+    /* THE SENTENCE IS PAINTED BEFORE THE MIRROR MOVES. `mutate()` publishes before its first
+       await, so spoken in the same turn the pill's state and the mirror's change land in ONE
+       React pass — and every mirror reader re-renders in that pass. Measured on the 18 Pro
+       (FIX-022, 2026-09-21): a Park in the reader showed its pill 3–5 s after the tap, the same
+       moment the triage POST left the device, over a 2 157-row list. One turn lets React commit
+       the pill alone first; the act is read off the pre-press mirror above and lands unchanged. */
+    await paintFirst();
     return said(await watched(engine.mutate(m)), null, refuse("liveSaveFailed"));
   };
 

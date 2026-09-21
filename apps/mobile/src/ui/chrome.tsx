@@ -20,6 +20,7 @@ import { usePaneChrome } from "./pane-chrome";
 import { usePosture } from "./posture";
 import { scaffoldPlan } from "./scaffold/plan";
 import { Tap, Txt, useTopPad } from "./base";
+import { toastBottom, useBottomChromeExtent } from "./bottom-chrome";
 import { doorbellFaces } from "./doorbell-stack";
 import { GlassPill } from "./glass";
 import { UnsavedChanges } from "./UnsavedChanges";
@@ -286,6 +287,10 @@ export function Doorbell(
 export function Toast() {
   const t = useTheme();
   const insets = useSafeAreaInsets();
+  /* ABOVE WHATEVER STANDS AT THE FOOT. A fixed 74pt cleared the dock and nothing else: on the
+     18 Pro the reader's two-row verb bar is taller, and the pill covered Later and Park
+     (`bottom-chrome.ts` holds the measurement). The bars report; this reads. */
+  const chrome = useBottomChromeExtent();
   const { toast, dismiss } = useWorldToast();
   const anim = useRef(new Animated.Value(0)).current;
   const message = toast === null ? undefined : sayArg(toast.say);
@@ -336,7 +341,7 @@ export function Toast() {
         position: "absolute",
         left: 12,
         right: 12,
-        bottom: insets.bottom + 74,
+        bottom: toastBottom(insets.bottom, chrome),
         zIndex: t.zLayer.toast,
         opacity: anim,
         transform: [

@@ -22,6 +22,7 @@ import { PrefsProvider, usePrefs } from "../src/state/store";
 import { WorldProvider, useWorld } from "../src/state/world";
 import { WakeProvider } from "../src/state/wake";
 import { Toast } from "../src/ui/chrome";
+import { BottomChromeProvider } from "../src/ui/bottom-chrome";
 import { LocaleProvider, useLocale } from "../src/i18n/LocaleProvider";
 import { secureKV } from "../src/state/servers-native";
 import { registerBundledPhoneEngine } from "../src/engine/engine-bundle-native";
@@ -83,7 +84,9 @@ function Screens() {
      header would read — rebuild on a language switch along with everything below. */
   useLocale();
   return (
-    <>
+    /* The foot's chrome reports its height here and the toast reads it: the provider encloses
+       the navigator (where the dock and the reader's bar live) AND the pill, or the pill reads 0. */
+    <BottomChromeProvider>
       <StatusBar style={t.scheme === "dark" ? "light" : "dark"} />
       <Stack
         screenOptions={{
@@ -99,7 +102,9 @@ function Screens() {
       {/* The vertical rail, once, over every screen of the postures that own it (the closed
           Duo, a split); the tab bar keeps the dock and yields the rail to this. */}
       <NavRail />
+      {/* LAST, so it draws over every screen, the rail and the dock: an absolute sibling of the
+          navigator, outside every sheet's modal subtree. `toast-pill-placement.test.ts` holds it. */}
       <Toast />
-    </>
+    </BottomChromeProvider>
   );
 }

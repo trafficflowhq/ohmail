@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Copy } from "../copy";
 import { useLocale } from "../i18n/LocaleProvider";
 import { useTheme } from "../theme";
+import { useBottomChromeSlot } from "./bottom-chrome";
 import { destLabel, DESTINATIONS, domainOf, type Destination, type Scope } from "../state/model";
 import {
   calendarDayLabel,
@@ -147,6 +148,12 @@ export function MessageActions({
   const posture = usePosture();
   const plan = scaffoldPlan(posture, Platform.OS === "ios" ? "ios" : "android");
   const mode = readerVerbMode(plan);
+  /* This bar stands at the foot, so it reports how far up it reaches and the toast clears it
+     (`bottom-chrome.ts`); on the rail postures nothing stands here and the slot says so. */
+  const standing = useBottomChromeSlot("reader-bar");
+  useEffect(() => {
+    if (mode === "rail") standing(null);
+  }, [mode, standing]);
   const facts: ReaderVerbFacts = {
     canReplyAll: m.canReplyAll === true,
     noForward: m.noForward === true,
@@ -267,6 +274,7 @@ export function MessageActions({
            already keeps the last lines readable above it. */
         <View
           pointerEvents="box-none"
+          onLayout={(e) => standing(Math.max(insets.bottom, 12) + e.nativeEvent.layout.height)}
           style={{
             position: "absolute",
             left: 0,
@@ -286,7 +294,12 @@ export function MessageActions({
       ) : mode === "rail" ? null : (
       /* The compact bar, in the glass material (owner: one look on every device) — the same
          verbs, wrap and More it always carried; only the slab became the translucent pill. */
-      <View pointerEvents="box-none" style={{ paddingHorizontal: 8, paddingBottom: Math.max(insets.bottom, 8) }}>
+      <View
+        pointerEvents="box-none"
+        // This view ends at the window's foot, so its own height is how far the bar reaches.
+        onLayout={(e) => standing(e.nativeEvent.layout.height)}
+        style={{ paddingHorizontal: 8, paddingBottom: Math.max(insets.bottom, 8) }}
+      >
       <GlassPill
         horizontal
         level="l3"

@@ -9,6 +9,7 @@
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../../theme";
+import { useBottomChromeSlot } from "../bottom-chrome";
 import type { IconName } from "../Icon";
 import { GlassIconButton } from "./GlassIconButton";
 import { GlassPill } from "./GlassPill";
@@ -37,14 +38,19 @@ export function GlassDock({
 }) {
   const t = useTheme();
   const insets = useSafeAreaInsets();
+  const foot = Math.max(insets.bottom, 10);
+  /* The dock tells the toast how far up it reaches (`bottom-chrome.ts`): its foot plus its
+     measured height, so the pill clears it by the same rule that clears the reader's bar. */
+  const standing = useBottomChromeSlot("dock");
   return (
     <View
       pointerEvents="box-none"
+      onLayout={(e) => standing(foot + e.nativeEvent.layout.height)}
       style={{
         position: "absolute",
         left: 0,
         right: 0,
-        bottom: Math.max(insets.bottom, 10),
+        bottom: foot,
         alignItems: "center",
         zIndex: t.zLayer.tabBar,
       }}
