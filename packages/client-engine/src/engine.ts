@@ -7645,7 +7645,22 @@ export class OhmailEngine {
    * browser instead of the database. The minted `data:` URIs go with it — they pin the same bytes as base64 in a
    * string instead of behind a URL. The calendar texts too: they are decodings of the same released bytes.
    */
-  releaseAttachments(messageId: string): void {
+  /**
+   * `keepFailure` KEEPS A HELD FAILURE across the release, so the next open of this message reads
+   * the refusal it already has instead of asking again.
+   *
+   * The ENGINE cannot tell an answered refusal from one that expires with whatever caused it —
+   * that reading belongs to the surface deciding whether to offer a Retry at all. So the caller
+   * passes its verdict, exactly as {@link OhmailEngine.loadAttachments}'s `retry` carries "a
+   * person pressed it". Without the flag the failure goes with the byte state, which is what
+   * makes a fresh open ask again.
+   */
+  releaseAttachments(messageId: string, opts: { keepFailure?: boolean } = {}): void {
+    if (opts.keepFailure === true && this.attachmentLists.get(messageId)?.state === "failed") {
+      this.keepListFailure(messageId);
+      return;
+    }
+    this.keptListFailures.delete(messageId);
     // A LIVE sent-copy seed declines the release: the optimistic Sent copy is still standing in
     // the mirror, its id exists on no server, and dropping the seed would turn the next open of
     // that copy back into the 404 the seed exists to answer. The seed's own lifecycle frees it —
@@ -7676,6 +7691,7 @@ export class OhmailEngine {
    *  and seeds whose copy list was never published (a forward still waiting on its parent hold
    *  minted compose URLs with no `attachmentLists` entry to find them under). */
   releaseAllAttachments(): void {
+    this.keptListFailures.clear();
     const ids = new Set([...this.attachmentLists.keys(), ...this.sentAttachmentSeeds.keys()]);
     for (const messageId of ids) this.forceReleaseAttachments(messageId);
     // Whatever the per-message passes could not name: a URL whose fetch is still in flight, and
@@ -7683,8 +7699,44 @@ export class OhmailEngine {
     this.objectUrls.releaseAll();
   }
 
+  /**
+   * HOW MANY ANSWERED LIST REFUSALS ONE ENGINE REMEMBERS PAST A RELEASE.
+   *
+   * A kept failure is the only attachment state that outlives the message being closed, so it is
+   * the only one that can grow with a long session — every other entry goes with the release. Two
+   * hundred is a bound, not a measurement: a 404 or a "not yours" on an attachment list is rare
+   * enough that a reader will not reach it, and the cost of the oldest being forgotten is one
+   * extra request on one re-open.
+   */
+  private static readonly ANSWERED_LIST_FAILURES_KEPT = 200;
+  /** Insertion-ordered, so the oldest kept refusal is the one evicted. */
+  private readonly keptListFailures = new Set<string>();
+
+  /**
+   * Drop the message's byte state but LEAVE its failed list standing, under the bound above.
+   * The object URLs, inline images and calendar texts still go — a failed list minted none of
+   * them, and a live sent-copy seed may have, so the drain is unconditional.
+   */
+  private keepListFailure(messageId: string): void {
+    const held = this.attachmentLists.get(messageId);
+    this.objectUrls.releaseOwner(messageId);
+    this.inlineImages.delete(messageId);
+    this.calendarTexts.delete(messageId);
+    if (held) this.attachmentLists.set(messageId, held);
+    this.keptListFailures.delete(messageId);
+    this.keptListFailures.add(messageId);
+    while (this.keptListFailures.size > OhmailEngine.ANSWERED_LIST_FAILURES_KEPT) {
+      const oldest = this.keptListFailures.values().next();
+      if (oldest.done) break;
+      this.keptListFailures.delete(oldest.value);
+      this.attachmentLists.delete(oldest.value);
+    }
+    this.notify();
+  }
+
   /** The unconditional half of {@link OhmailEngine.releaseAttachments}. */
   private forceReleaseAttachments(messageId: string): void {
+    this.keptListFailures.delete(messageId);
     // ONE drain of the ledger, not a walk of the entries: it holds the seed's compose URLs (a
     // forward still waiting on its parent publishes no list to find them under), the ready items'
     // URLs, and any minted for this message while its entry was already gone. Each is revoked

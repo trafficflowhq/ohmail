@@ -215,6 +215,20 @@ export function isAuthListFailure(code: string | null): boolean {
   return code === "unauthorized" || code === "csrf_failed";
 }
 
+/**
+ * DOES THIS FAILURE GET A "TRY AGAIN"? — and therefore: may anything ask again on its own?
+ *
+ * One predicate for two decisions that must never disagree. The row below offers the press when
+ * this is true; `shell/attachments.ts` re-asks on a later open when it is true and keeps the
+ * refusal standing when it is false. A failure with no press is one the server ANSWERED — not
+ * this account's message, no such message — and re-asking it on every open polls a refusal that
+ * cannot change. `retryable` is the server's flag; the auth arm overrides it for the reason the
+ * row's own comment gives.
+ */
+export function listRetryIsOffered(code: string | null, retryable: boolean): boolean {
+  return retryable || isAuthListFailure(code);
+}
+
 /** The shared formatter, in the reader's own language — see `@ohmail/ui`'s `formatFileSize`. */
 function formatSize(bytes: number): string {
   return formatFileSize(bytes, activeFormatLocale());
@@ -528,7 +542,7 @@ export function AttachmentStrip({
           }
           title={items.error || undefined}
           working={false}
-          onRetry={items.retryable || authLoss ? items.onRetry : undefined}
+          onRetry={listRetryIsOffered(items.code, items.retryable) ? items.onRetry : undefined}
         />
       );
     }

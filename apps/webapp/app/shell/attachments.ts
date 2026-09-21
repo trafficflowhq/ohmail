@@ -21,7 +21,9 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { threadOf, type OhmailEngine } from "@ohmail/client-engine";
-import { isAuthListFailure, type AttachmentItem, type AttachmentsView } from "../components/AttachmentStrip";
+import {
+  isAuthListFailure, listRetryIsOffered, type AttachmentItem, type AttachmentsView,
+} from "../components/AttachmentStrip";
 import { desktopAttachmentsEnabled, saveAttachmentToDownloads } from "./open-attachment";
 import { probeSessionNow, subscribeSessionRevival } from "./session-truth";
 
@@ -390,7 +392,18 @@ export function useMessageAttachments(
       // The whole selection's worth — the focused message AND every sibling the effect below
       // asked for. `releaseAttachments` itself declines to drop a live sent-copy seed, so
       // sweeping the set is safe against the optimistic-copy lifecycle.
-      for (const id of loaded.current) engine.releaseAttachments(id);
+      //
+      // A FAILURE THE STRIP ANSWERED IS KEPT, and that is what makes the next open of this
+      // message honest either way: a failure with a Try again goes with the release, so a fresh
+      // open asks once more (the gesture a person makes when something did not load); a failure
+      // with no press — this message is not yours, there is no such message — stays, so a re-open
+      // renders the same answer instead of polling a refusal that cannot change. One predicate
+      // decides both, the same one the row's press reads.
+      for (const id of loaded.current) {
+        const held = engine.attachmentsOf(id);
+        const answered = held.state === "failed" && !listRetryIsOffered(held.code, held.retryable);
+        engine.releaseAttachments(id, answered ? { keepFailure: true } : {});
+      }
       loaded.current.clear();
     };
   }, [engine, messageId, available, ask]);
