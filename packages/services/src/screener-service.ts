@@ -1470,6 +1470,7 @@ export class ScreenerReadService {
       isNull(messages.deletedAt),
     ];
     if (extra) filters.push(extra);
+    // scoped-by: `filters` above leads with eq(messages.accountId, ctx.accountId)
     const reps = ctx.db.select({
       ...HELD_COLUMNS,
       sortKey: sortKey.as("sort_key"),
