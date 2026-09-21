@@ -1064,16 +1064,11 @@ export function useMailSend(
   onSettled: (key: string, m: MailSend, aboutThisCompose: boolean) => void,
   /**
    * THIS LANE'S SEND, ANSWERED ONCE — `true` the moment the engine CONFIRMS it, `false` on any
-   * terminal outcome that is not a delivery. The shell's Send + Done arm waits on this and
-   * dispatches nothing until it reads `true`; a lane nobody armed answers nowhere.
+   * terminal outcome that is not a delivery. Confirmation and nothing weaker, for the reason
+   * `onSettled` is confirmation-only: a queued or unverified send may never have left.
    *
-   * Confirmation and nothing weaker, for the reason `onSettled` is confirmation-only: a queued
-   * or unverified send may never have left, and filing the message it answers would state "this
-   * was dealt with" about mail that is still on the account.
-   *
-   * Returning `true` means the CALLER has spoken for this send, so the lane raises no sentence of
-   * its own — one send, one toast. The answer is read on the confirmation alone; the `false` call
-   * is a notification and its return is ignored.
+   * Returning `true` means the CALLER has spoken for this send, so the lane raises no sentence
+   * of its own — one send, one toast. Only the confirmation's answer is read.
    */
   onOutcome?: (key: string, m: MailSend, accepted: boolean) => boolean,
 ): MailSendApi {

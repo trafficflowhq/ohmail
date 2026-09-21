@@ -179,13 +179,10 @@ export function InlineReply({
   /**
    * SEND + DONE — the same send, and the message being answered filed in the same press.
    *
-   * PRESENT IS THE WHOLE CONDITION. The shell passes it only where the engine's one rule says
-   * the second action would finish something (`sendAndDonePlanFor`): a reply or forward of a
-   * message that sits in the Ohbox now and is not already done. A fresh compose, a source in a
-   * bottom pile, a source nothing would move — and every mount with no shell behind it, the
-   * bare harnesses and the inert chrome — pass nothing and get the plain Send. The editor does
-   * not re-derive that judgement; two spellings of one rule is how the button and the act stop
-   * agreeing.
+   * PRESENT IS THE WHOLE CONDITION: the shell passes it only where the engine's rule says the
+   * action would finish something (`sendAndDonePlanFor`), and a mount with no shell behind it
+   * passes nothing. The editor never re-derives that judgement — two spellings of one rule is
+   * how the button and the act stop agreeing.
    */
   onSendAndDone?: (() => void) | null;
   /**
