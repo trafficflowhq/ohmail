@@ -3,8 +3,9 @@
  * segment lifted out of it on a float surface. Used for the Screener's three
  * shelves and for the appearance preference.
  */
-import { View } from "react-native";
+import { Platform, View } from "react-native";
 import { useTheme } from "../theme";
+import { a11yRole } from "./a11y-role";
 import { Tap, Txt } from "./base";
 
 export interface Segment<T extends string> {
@@ -52,7 +53,7 @@ export function Segmented<T extends string>({
         return (
           <Tap
             key={seg.value}
-            accessibilityRole="tab"
+            accessibilityRole={a11yRole("tab", Platform.OS === "ios" ? "ios" : "android")}
             accessibilityState={{ selected: on }}
             onPress={() => onChange(seg.value)}
             style={[

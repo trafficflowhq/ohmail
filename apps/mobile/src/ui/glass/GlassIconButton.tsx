@@ -5,11 +5,12 @@
  * icons with no names is a rail a screen reader cannot drive — and the badge joins it through
  * the caller's label (the dock passes `Copy.ariaLabelCount`).
  */
-import { View } from "react-native";
+import { Platform, View } from "react-native";
 import { Text } from "react-native";
 import { useTheme } from "../../theme";
 import { Icon, type IconName } from "../Icon";
 import { Tap } from "../base";
+import { a11yRole } from "../a11y-role";
 
 export function GlassIconButton({
   icon,
@@ -44,7 +45,7 @@ export function GlassIconButton({
   const color = accent ? t.c.onAccent : on ? t.c.accentInk : t.c.ink2;
   return (
     <Tap
-      accessibilityRole={role}
+      accessibilityRole={a11yRole(role, Platform.OS === "ios" ? "ios" : "android")}
       accessibilityState={role === "tab" ? { selected: on === true } : undefined}
       accessibilityLabel={label}
       onPress={onPress}
