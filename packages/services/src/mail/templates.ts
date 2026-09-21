@@ -530,7 +530,7 @@ function accountExists(d: AccountExistsData): RenderedEmail {
  * `locale` is the account's own (`account_settings.locale`, en when unset); the mailbox is the
  * master and the copy says so every time, and no notice names a price or a plan.
  */
-export interface LifecycleNoticeData {
+interface LifecycleNoticeData {
   kind: "trial_two_days" | "closed" | "erasure_week";
   locale: "en" | "de";
   /** The anchor's own date (trial end / closure / erasure), formatted by the caller as UTC. */
