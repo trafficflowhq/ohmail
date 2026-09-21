@@ -1343,17 +1343,17 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       live: true,
       worldKey: session.ownerKey,
       /**
-       * Whose mail this is — and the standalone door has no address to name. On every paired
-       * door these two fields are a server address and the account it opens. On the standalone
-       * door the origin is `LOCAL_ENGINE_ORIGIN` — a name nothing dials — and the id is opaque,
-       * so the header read as a URL and a UUID to a person whose mailbox is on the phone in
-       * their hand (measured on a device). The same two facts in this door's words: the phone's
-       * own claim name, and the mailbox the engine says it serves. The address comes from the
-       * row, because the profile has never held one; an unread roster leaves it empty.
+       * Whose mail this is, in words a person reads. A paired door names the server it is paired
+       * with by its host and the mailbox the roster says it serves; the account id is a key, not
+       * a name, and the origin's scheme is wire (a URL and a UUID at the top of More and the
+       * drawer — measured on the iPhone and the iPad, 2026-09-21). The standalone door has the
+       * same shape in its own words: the phone's claim name and the mailbox the engine serves.
+       * The address comes from the row in both cases, because the profile has never held one;
+       * an unread roster leaves it empty.
        */
       account: organizesHere(session.profile)
         ? { name: PHONE_CLAIM_NAME, email: mailboxes?.[0]?.address ?? "" }
-        : { name: session.profile.origin, email: session.profile.accountId },
+        : { name: session.profile.origin.replace(/^https?:\/\//, ""), email: mailboxes?.[0]?.address ?? "" },
       // THE DOOR, derived once by the layer that composes the session. See the field.
       standalone: session.standalone,
       mailboxes: {
