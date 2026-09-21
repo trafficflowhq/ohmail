@@ -16,10 +16,12 @@ import { Copy } from "../src/copy";
 import { PHONE_CLAIM_NAME, organizesHere } from "../src/engine/standalone-door";
 import { useConnection } from "../src/net/connection";
 import { isPairEnded } from "../src/net/session-death";
+import { gateFor } from "../src/state/gate";
 import type { ServerProfile } from "../src/state/servers";
 import { useTheme } from "../src/theme";
-import { Button, Panel, Screen, Scroller, Section, TapRow, Txt } from "../src/ui/base";
+import { Button, Panel, Screen, Scroller, Section, Tap, TapRow, Txt } from "../src/ui/base";
 import { DetailBar } from "../src/ui/chrome";
+import { Icon } from "../src/ui/Icon";
 import { Doors } from "../src/ui/Doors";
 import { useLocale } from "../src/i18n/LocaleProvider";
 
@@ -28,12 +30,47 @@ export default function ServersScreen() {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   const conn = useConnection();
+  const t = useTheme();
   /** What a forget could not take back. Held HERE — see the note beside where it renders. */
   const [forgetFailure, setForgetFailure] = useState<Refusal | null>(null);
+
+  /* ── THIS PANE IS NEVER A DEAD END ──────────────────────────────────────────────────────────
+     With nothing paired the stack under it can be EMPTY — a first run, or the last pairing
+     forgotten, or a door that replaced its way here — and then `DetailBar` renders no Back
+     (`router.canGoBack()` is false) and the tabs are gone with the pairing: measured on the
+     iPhone 18 Pro as a pane three edge swipes and a relaunch could not leave. The way out is
+     stated rather than inherited, and it asks the GATE where this phone belongs rather than the
+     pairing count: with a pairing and no live session the gate sends every mail route back here,
+     so a Back keyed on the count alone would land on the pane it just left. */
+  const verdict = gateFor(conn.state, conn.profiles.length);
+  const leave = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace(verdict.to === "welcome" ? "/welcome" : "/");
+  };
+  /* Rendered where there is somewhere to go: the bar's own Back covers a stack that can pop, and
+     where the gate holds the phone here this pane IS the destination, with its own remedies —
+     a control that returns to the screen it was pressed on is worse than none. */
+  const stranded = !router.canGoBack() && verdict.to !== "servers";
 
   return (
     <Screen>
       <DetailBar title={Copy.serversTitle} />
+      {stranded ? (
+        <Tap
+          onPress={leave}
+          accessibilityRole="button"
+          accessibilityLabel={Copy.back}
+          style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 18, paddingBottom: 6 }}
+        >
+          <View style={{ transform: [{ rotate: "180deg" }] }}>
+            <Icon name="chev" size={15} color={t.c.ink2} />
+          </View>
+          <Txt variant="button" tone="ink2">{Copy.back}</Txt>
+        </Tap>
+      ) : null}
       <Scroller bounded>
         <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 14 }}>
           <Txt variant="h1">{Copy.serversTitle}</Txt>
