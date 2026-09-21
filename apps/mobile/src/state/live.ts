@@ -2226,6 +2226,102 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   const inflight = new Map<FeedView, Set<Promise<boolean>>>();
 
   /**
+   * ORDER IS A CONTRACT PER MESSAGE (FIX-022, measured twice on the iPhone 18 Pro 2026-09-21,
+   * closing `MOBILE-UNDO-CAN-BE-SENT-BEFORE-THE-VERB-IT-UNDOES`): an optimistic verb speaks,
+   * waits for its pill and only then dispatches, so on a busy thread its request left 3-8 s
+   * after the tap — an Undo pressed in that window reached the server FIRST, inverse then verb,
+   * and the message stayed filed while the person read "Undone.".
+   *
+   * The engine orders every dispatch it has been HANDED (`engine.ts#outboxGate`); the window
+   * this defect lived in is the one before `mutate` is called at all, which only this facade
+   * can see. So the slot is taken at the PRESS. Keyed per message because that window is the
+   * pill's, and one global chain would put every other message's press behind it.
+   */
+  const chains = new Map<string, Promise<void>>();
+  const quiet = (): void => undefined;
+
+  /**
+   * Enqueue on one message's chain. `run` may NOT enqueue again for the same id — it would
+   * await its own tail — so the verbs that write twice for one message dispatch inside their
+   * single slot rather than through {@link dispatch}.
+   */
+  const inOrder = <T>(messageId: string, run: () => Promise<T>): Promise<T> => {
+    const prior = chains.get(messageId);
+    /* NOTHING IN THE AIR FOR THIS MESSAGE ⇒ RUN IN THE PRESS'S OWN TURN. `mutate` applies
+       optimistically before its first await and the screens read the mirror straight after a
+       press, so a microtask's delay here would move the mirror out of the turn it happened in. */
+    const mine = prior === undefined ? run() : prior.then(run, run);
+    const tail: Promise<void> = mine.then(quiet, quiet).then(() => {
+      if (chains.get(messageId) === tail) chains.delete(messageId);
+    });
+    chains.set(messageId, tail);
+    return mine;
+  };
+
+  /** The one message a mutation names, or `null` where it names none or many — the chain's key. */
+  const chainKeyOf = (m: EngineMutation): string | null => {
+    switch (m.kind) {
+      case "move": case "message_delete": case "triage_set": case "tag_assign": return m.messageId;
+      case "mark_seen": return m.messageIds.length === 1 ? (m.messageIds[0] ?? null) : null;
+      default: return null;
+    }
+  };
+
+  /** A dispatch in its message's order; a mutation naming no one message passes straight through. */
+  const inMessageOrder = <T>(m: EngineMutation, run: () => Promise<T>): Promise<T> => {
+    const key = chainKeyOf(m);
+    return key === null ? run() : inOrder(key, run);
+  };
+
+  /** `watched(engine.mutate(m))`, in its message's order — the ordinary door for one write. */
+  const dispatch = (m: EngineMutation): Promise<PressVerdict> =>
+    inMessageOrder(m, () => watched(engine.mutate(m)));
+
+  /**
+   * THE LATCH A VERB AND ITS UNDO RACE FOR. An optimistic verb holds its chain slot from the
+   * press, through the pill's paint gate, to the instant it dispatches; whoever claims the latch
+   * first decides whether anything leaves the device. The verb claims it and sends; an Undo
+   * claims it and the verb is CANCELLED — `mutate` was never called, so the mirror never moved
+   * and there is nothing to roll back and nothing for the server to take back.
+   */
+  const oneShot = (): (() => boolean) => {
+    let open = true;
+    return () => { const mine = open; open = false; return mine; };
+  };
+
+  /**
+   * THE ONE DOOR EVERY OPTIMISTIC VERB DISPATCHES THROUGH — the sentence is already spoken, so
+   * this is where the order and the take-back live: the slot is taken at the press, the pill's
+   * paint gate is awaited INSIDE it, and a verb whose latch an Undo claimed first answers `null`
+   * with nothing sent. The writes of one press go in their given order, in the one slot: this
+   * run may not re-enter its own chain.
+   */
+  const gatedWrite = (
+    messageId: string,
+    ms: readonly EngineMutation[],
+    onScreen: Promise<void>,
+    leaving: () => boolean,
+  ): Promise<PressVerdict[] | null> =>
+    inOrder(messageId, async (): Promise<PressVerdict[] | null> => {
+      await onScreen;
+      if (!leaving()) return null;
+      const out: PressVerdict[] = [];
+      for (const m of ms) out.push(await watched(engine.mutate(m)));
+      return out;
+    });
+
+  /** The same, answered: a cancelled verb is `true` — nothing was sent, so nothing failed. */
+  const gatedSaid = async (
+    messageId: string,
+    ms: readonly EngineMutation[],
+    onScreen: Promise<void>,
+    leaving: () => boolean,
+  ): Promise<boolean> => {
+    const vs = await gatedWrite(messageId, ms, onScreen, leaving);
+    return vs === null ? true : saidAll(vs, null, refuse("liveSaveFailed"));
+  };
+
+  /**
    * WHAT A PRESS IS TOLD — the one place a verdict becomes a sentence on this surface.
    *
    * `done` is the caller's own completion sentence, or `null` where it already raised an
@@ -2307,7 +2403,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // sheet's Done, Mark as read — remain the acts that spend the pin.
     // `via: "glance"` — the involuntary read, so the server's pin semantics see it as such.
     return said(
-      await watched(engine.mutate({ kind: "mark_seen", messageIds: [id], unread: false, via: "glance" })),
+      await dispatch({ kind: "mark_seen", messageIds: [id], unread: false, via: "glance" }),
       null, refuse("liveSaveFailed"),
     );
   };
@@ -2553,8 +2649,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       return false;
     }
     const parts = [
-      ...retargets.map((m) => watched(engine.mutate(m))),
-      ...moveIds.map((id) => watched(engine.mutate({ kind: "move", messageId: id, folder: wanted }))),
+      ...retargets.map((m) => dispatch(m)),
+      ...moveIds.map((id) => dispatch({ kind: "move", messageId: id, folder: wanted })),
     ];
     // Two sentences, one true at a time: the retarget IS a statement about future mail.
     toast(
@@ -2576,7 +2672,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // The inverse off the pre-press mirror; this arm speaks on the ANSWER, so the offer rides
     // the success sentence rather than an optimistic one.
     const opts = undoable(inverseMutations(engine.read(), m));
-    const ok = await watched(engine.mutate(m));
+    const ok = await dispatch(m);
     return said(ok, refuse("livePileAdded", pileTitle(kind)), refuse("livePileFailed", pileTitle(kind)), opts);
   };
 
@@ -2594,7 +2690,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * consumed at most once: a late press takes nothing back and claims nothing (the Screener's
    * own rule). `[]` — no wire inverse, or a press that changes nothing — offers no verb.
    */
-  const undoable = (inv: readonly EngineMutation[]): ToastOpts | undefined => {
+  const undoable = (inv: readonly EngineMutation[], leaving?: () => boolean): ToastOpts | undefined => {
     if (inv.length === 0) return undefined;
     const at = now().getTime();
     let fired = false;
@@ -2603,7 +2699,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       undo: () => {
         if (fired || now().getTime() - at > UNDO_MS) return;
         fired = true;
-        void Promise.all(inv.map((mu) => watched(engine.mutate(mu)))).then((vs) => {
+        /* The cheapest and truest undo: the verb has not left the device, so claiming its latch
+           cancels it and NOTHING is sent — see {@link oneShot}. Past that, the inverse rides the
+           same chain and can no longer pass the verb it undoes. */
+        if (leaving?.() === true) { toast(refuse("toastUndone")); return; }
+        void Promise.all(inv.map((mu) => dispatch(mu))).then((vs) => {
           saidAll(vs, refuse("toastUndone"), refuse("liveSaveFailed"));
         });
       },
@@ -2623,15 +2723,18 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     bubbleUpAt?: string,
   ): Promise<boolean> => {
     const m: EngineMutation = { kind: "triage_set", messageId, state, ...(bubbleUpAt ? { bubbleUpAt } : {}) };
-    toast(say, undoable(inverseMutations(engine.read(), m)));
     /* THE SENTENCE IS PAINTED BEFORE THE MIRROR MOVES. `mutate()` publishes before its first
        await, so spoken in the same turn the pill's state and the mirror's change land in ONE
        React pass — and every mirror reader re-renders in that pass. Measured on the 18 Pro
        (FIX-022, 2026-09-21): a Park in the reader showed its pill 3–5 s after the tap, the same
        moment the triage POST left the device, over a 2 157-row list. One turn lets React commit
-       the pill alone first; the act is read off the pre-press mirror above and lands unchanged. */
-    await painted();
-    return said(await watched(engine.mutate(m)), null, refuse("liveSaveFailed"));
+       the pill alone first; the act is read off the pre-press mirror above and lands unchanged.
+       The wait now happens INSIDE the message's chain slot, taken at the press: that is the
+       window an Undo cancels, and the window nothing else for this message may overtake. */
+    const inv = inverseMutations(engine.read(), m);
+    const leaving = oneShot();
+    toast(say, undoable(inv, leaving));
+    return gatedSaid(messageId, [m], painted(), leaving);
   };
 
   const pileToggle = async (messageId: string, kind: "replyLater" | "setAside"): Promise<boolean> => {
@@ -2671,7 +2774,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const m: EngineMutation = { kind: "mark_seen", messageIds: [messageId], unread };
     const inv = inverseMutations(engine.read(), m);
     return said(
-      await watched(engine.mutate(m)),
+      await dispatch(m),
       refuse(unread ? "toastUnread" : "toastRead"), refuse("liveSaveFailed"),
       undoable(inv),
     );
@@ -2718,14 +2821,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     ];
     // Spoken FIRST and mounted alone (`paintFirst`), like every optimistic verb; the inverses
     // above were read off the pre-press mirror, so the order of the two changes nothing they say.
-    toast(refuse("toastResurfaceDone"), undoable(inv));
-    await painted();
-    const parts: Promise<PressVerdict>[] = [];
-    if (booked) {
-      parts.push(watched(engine.mutate({ kind: "triage_set", messageId, state: "none" })));
-    }
-    parts.push(watched(engine.mutate({ kind: "mark_seen", messageIds: [messageId], unread: false })));
-    return saidAll(await Promise.all(parts), null, refuse("liveSaveFailed"));
+    const leaving = oneShot();
+    toast(refuse("toastResurfaceDone"), undoable(inv, leaving));
+    // Both halves in the ONE slot and in order: the booking clears before the read lands.
+    const read: EngineMutation = { kind: "mark_seen", messageIds: [messageId], unread: false };
+    const clear: EngineMutation = { kind: "triage_set", messageId, state: "none" };
+    return gatedSaid(messageId, booked ? [clear, read] : [read], painted(), leaving);
   };
 
   /** The reader the Ohbox is drawn from — see {@link LiveDeps.presented}. */
@@ -2829,7 +2930,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        mailbox this phone only reads EVERY write here comes back that way (`move` is named in the
        202 census). Folding them would say "Moved" over a move nobody made. */
     const answers = await Promise.all(
-      mail.map((w) => engine.mutate(w).catch((): MutationResult | null => null)),
+      mail.map((w) => inMessageOrder(w, () => engine.mutate(w).catch((): MutationResult | null => null))),
     );
     if (answers.some((r) => r === null || r.status === "rolled_back")) {
       toast(refuse("liveSaveFailed"));
@@ -2898,7 +2999,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     if (waiting) { toast(waiting); return true; }
     // The same door as `move`: a reader's delete is a REQUEST, and "In den Papierkorb
     // verschoben." over a message still in place is the sentence this arm exists to stop.
-    const res = await engine.mutate({ kind: "message_delete", messageId }).catch(() => null);
+    const gone: EngineMutation = { kind: "message_delete", messageId };
+    const res = await inMessageOrder(gone, () => engine.mutate(gone).catch(() => null));
     if (res?.status === "awaiting_organizer") {
       const holder = res.queuedWith?.name ?? null;
       toast(holder ? refuse("toastDeleteQueued", holder) : refuse("toastDeleteQueuedUnknown"));
@@ -3281,12 +3383,13 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
 
   const tagToggle = async (messageId: string, tag: WorldTag, assigned: boolean): Promise<boolean> => {
     const m: EngineMutation = { kind: "tag_assign", messageId, tagId: tag.id, assigned };
+    const inv = inverseMutations(engine.read(), m);
+    const leaving = oneShot();
     toast(
       assigned ? refuse("tagTagged", tag.name) : refuse("tagUntagged", tag.name),
-      undoable(inverseMutations(engine.read(), m)),
+      undoable(inv, leaving),
     );
-    await painted();
-    return said(await watched(engine.mutate(m)), null, refuse("liveSaveFailed"));
+    return gatedSaid(messageId, [m], painted(), leaving);
   };
 
   const tagCreate = async (messageId: string, name: string): Promise<boolean> => {
@@ -3299,9 +3402,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // The undo UNASSIGNS; the minted tag row stands — deleting it is a different act with its
     // own verb and its own confirm (`inverseMutations`' tag arm states the same boundary).
     const m: EngineMutation = { kind: "tag_assign", messageId, tagId: deps.uuid(), assigned: true, createName: typed };
-    toast(refuse("tagTagged", typed), undoable(inverseMutations(engine.read(), m)));
-    await painted();
-    return said(await watched(engine.mutate(m)), null, refuse("liveSaveFailed"));
+    const inv = inverseMutations(engine.read(), m);
+    const leaving = oneShot();
+    toast(refuse("tagTagged", typed), undoable(inv, leaving));
+    return gatedSaid(messageId, [m], painted(), leaving);
   };
 
   /**
