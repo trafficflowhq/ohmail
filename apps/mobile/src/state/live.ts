@@ -1874,12 +1874,14 @@ export type DraftDiscardOutcome = "discarded" | "held" | "queued" | "refused";
 export const UNDO_MS = 8000;
 
 /**
- * One turn of the event loop after a sentence is spoken, before the act that follows it is
- * dispatched — `setImmediate`, which runs after the microtasks AND after any immediate React
- * queued when the sentence set its state, whichever lane the press landed in. The pill's own
- * commit therefore precedes the mirror's publish; `toast-before-the-mirror-moves.test.ts` holds it.
+ * One TASK of the event loop after a sentence is spoken, before the act that follows it is
+ * dispatched. A timer, deliberately: React Native's `setImmediate` is a `queueMicrotask` shim,
+ * and everything committed inside one JS task is mounted together at its end — measured on the
+ * 18 Pro (FIX-022, 2026-09-21), the pill drew 1.5–6 s after the tap, when the mirror's
+ * re-derivation in the same task finished. A timer ends the task; the pill mounts alone.
+ * `toast-before-the-mirror-moves.test.ts` holds the order.
  */
-export const paintFirst = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+export const paintFirst = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 /**
  * What rides beside a toast sentence: an undo the pill offers (bounded, consumed at most once —

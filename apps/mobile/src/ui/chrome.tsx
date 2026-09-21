@@ -300,15 +300,27 @@ export function Toast() {
   // confirmed by one flush), and an effect keyed on the string would never re-arm the
   // dismiss timer for the second — a toast that stands forever and blocks the queue.
   const toastId = toast?.id;
-
-  useEffect(() => {
-    if (!message) return;
+  /* THE HOLD COUNTS FROM THE SCREEN, NOT FROM THE COMMIT. Everything a JS task commits is
+     mounted at its end, and a task that also re-derives the mirror runs for seconds — measured
+     on the 18 Pro: "Undone." (3.2 s) expired before it was ever drawn. So the timer and the fade
+     start in `onLayout`, the first moment the pill is on screen, once per entry. */
+  const hold = useRef<{ id: number | undefined; timer: ReturnType<typeof setTimeout> | null }>({ id: undefined, timer: null });
+  const onScreen = () => {
+    if (hold.current.id === toastId) return;
+    if (hold.current.timer !== null) clearTimeout(hold.current.timer);
     Animated.timing(anim, {
       toValue: 1,
       duration: t.ms("base"),
       easing: Easing.bezier(...t.motion.easing.spring),
       useNativeDriver: true,
     }).start();
+    /* BY ID: a displaced sentence's timer must not take the one that replaced it off the
+       screen (`state/toast-one.ts#afterDismiss`). */
+    hold.current = { id: toastId, timer: setTimeout(() => dismiss(toastId), holdMs) };
+  };
+
+  useEffect(() => {
+    if (!message) return;
     /* AND IT IS SPOKEN, not merely drawn. A verb pressed from the reader answered with a pill
        nobody heard: a view that appears is silent to VoiceOver unless something announces it,
        and an assistive-tech walk of the 18 Pro read the press as having said nothing. Android
@@ -320,14 +332,12 @@ export function Toast() {
         undo ? Copy.ariaLabelDetail(message, Copy.undo) : message,
       );
     }
-    /* BY ID: a displaced sentence's timer must not take the one that replaced it off the
-       screen (`state/toast-one.ts#afterDismiss`). */
-    const timer = setTimeout(() => dismiss(toastId), holdMs);
     return () => {
-      clearTimeout(timer);
+      if (hold.current.timer !== null) clearTimeout(hold.current.timer);
+      hold.current = { id: undefined, timer: null };
       anim.setValue(0);
     };
-    // `message` is rendered; `toastId` is what re-arms the timer per queue entry.
+    // `message` is rendered; `toastId` is what re-arms the announcement per entry.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [toastId, anim, dismiss, t]);
 
@@ -335,6 +345,9 @@ export function Toast() {
 
   return (
     <Animated.View
+      // A new entry is a new view, so `onLayout` fires for it even at the same size.
+      key={toastId}
+      onLayout={onScreen}
       pointerEvents="box-none"
       accessibilityLiveRegion="polite"
       style={{
