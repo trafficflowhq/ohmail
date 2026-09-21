@@ -847,7 +847,6 @@ export function InlineReply({
             disabled={locked && !needsContent}
             aria-disabled={needsContent || undefined}
             title={needsContent ? tc("needContent") : undefined}
-            data-send-done={verb.attr}
             onClick={() => {
               if (needsContent) { setNeedNote(true); return; }
               onSendAndDone();
