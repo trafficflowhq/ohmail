@@ -61,9 +61,7 @@ export default function OhboxScreen() {
               <SkeletonList stalled={w.boot.syncFailure} />
             </View>
           ) : surface === "empty" ? (
-            <Empty
-              glyph="📭"
-              title={Copy.ohboxEmptyTitle}
+            <Empty title={Copy.ohboxEmptyTitle}
               /* NO MAIL AND NOTHING READABLE ARE NOT THE SAME EMPTY SCREEN. The hint below
                  promised that mail "lands here as it syncs", which is false for a mailbox whose
                  first sync produced nothing — and that mailbox looked exactly like a quiet one.

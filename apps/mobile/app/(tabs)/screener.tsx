@@ -34,11 +34,11 @@ import { useLocale } from "../../src/i18n/LocaleProvider";
  * below could not help, because there was nothing left to re-read. `test/copy-census.test.ts` now
  * fails on any module-scope `Copy.` read anywhere in the tree.
  */
-function emptyFor(seg: ScreenerSeg): { glyph: string; title: string; hint: string } {
+function emptyFor(seg: ScreenerSeg): { title: string; hint: string } {
   switch (seg) {
-    case "waiting": return { glyph: "🚪", title: Copy.waitingEmptyTitle, hint: Copy.waitingEmptyHint };
-    case "screened": return { glyph: "🚪", title: Copy.screenedEmptyTitle, hint: Copy.screenedEmptyHint };
-    case "spam": return { glyph: "🛡", title: Copy.spamEmptyTitle, hint: Copy.spamEmptyHint };
+    case "waiting": return { title: Copy.waitingEmptyTitle, hint: Copy.waitingEmptyHint };
+    case "screened": return { title: Copy.screenedEmptyTitle, hint: Copy.screenedEmptyHint };
+    case "spam": return { title: Copy.spamEmptyTitle, hint: Copy.spamEmptyHint };
   }
 }
 

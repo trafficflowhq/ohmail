@@ -96,7 +96,7 @@ function FolderBody() {
             </View>
           </Panel>
         ) : surface === "empty" ? (
-          <Empty glyph="📁" title={Copy.folderEmptyTitle} hint={Copy.folderEmptyHint} />
+          <Empty title={Copy.folderEmptyTitle} hint={Copy.folderEmptyHint} />
         ) : (
           <>
             {fresh.length > 0 ? (

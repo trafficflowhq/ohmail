@@ -509,11 +509,14 @@ export function Rule({ inset = 0 }: { inset?: number }) {
 
 /* -------------------------------------------------------------- empty state */
 
-export function Empty({ glyph, title, hint }: { glyph: string; title: string; hint: string }) {
-  const t = useTheme();
+/**
+ * An empty state is its sentence: a title and one hint, centred — the approved design's shape
+ * (the prototype's `.empty`). No glyph: the emoji vocabulary this once carried mixed pictures
+ * with type, and an iOS runtime without the emoji font drew a boxed "?" in its place.
+ */
+export function Empty({ title, hint }: { title: string; hint: string }) {
   return (
     <View style={{ alignItems: "center", paddingHorizontal: 32, paddingVertical: 56, gap: 8 }}>
-      <Text style={{ fontSize: 30, opacity: 0.9 }}>{glyph}</Text>
       <Txt variant="cardTitle" style={{ textAlign: "center" }}>
         {title}
       </Txt>

@@ -163,7 +163,7 @@ export function ListDetail({
       renderDetail(open, { inPane: true, onClose })
     ) : (
       <View style={{ flex: 1, justifyContent: "center" }}>
-        <Empty glyph="📨" title={Copy.paneNothingOpen} hint={Copy.paneNothingOpenHint} />
+        <Empty title={Copy.paneNothingOpen} hint={Copy.paneNothingOpenHint} />
       </View>
     );
 

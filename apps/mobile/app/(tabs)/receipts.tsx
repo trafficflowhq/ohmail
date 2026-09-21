@@ -106,7 +106,7 @@ export default function ReceiptsScreen() {
               </View>
             ) : null}
             {surface === "empty" ? (
-              <Empty glyph="🧾" title={Copy.receiptsEmptyTitle} hint={Copy.receiptsEmptyHint} />
+              <Empty title={Copy.receiptsEmptyTitle} hint={Copy.receiptsEmptyHint} />
             ) : null}
             {groups.map((g, gi) => (
               <View key={groupKeyOf(g)} onLayout={(e) => ledger.setGroup(groupKeyOf(g), e.nativeEvent.layout.y)}>

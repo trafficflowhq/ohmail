@@ -100,7 +100,7 @@ function TrashBody() {
       <Screen>
         <DetailBar title={Copy.trashTitle} />
         <Scroller>
-          <Empty glyph="🗑" title={Copy.trashUnavailable} hint={Copy.trashFoot} />
+          <Empty title={Copy.trashUnavailable} hint={Copy.trashFoot} />
         </Scroller>
       </Screen>
     );
@@ -156,7 +156,7 @@ function TrashBody() {
           </Panel>
         ) : (
           <>
-            <Empty glyph="🗑" title={Copy.trashEmptyTitle} hint={Copy.trashEmptyHint} />
+            <Empty title={Copy.trashEmptyTitle} hint={Copy.trashEmptyHint} />
             <Tail>{Copy.trashFoot}</Tail>
           </>
         )}

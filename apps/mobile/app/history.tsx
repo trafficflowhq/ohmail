@@ -100,7 +100,7 @@ function HistoryBody() {
             </View>
           </Panel>
         ) : surface === "empty" ? (
-          <Empty glyph="🕰" title={Copy.historyEmptyTitle} hint={Copy.historyEmptyHint} />
+          <Empty title={Copy.historyEmptyTitle} hint={Copy.historyEmptyHint} />
         ) : (
           <>
             {/* ONE GROUP, and that is the read-by-construction rule showing through: there is no

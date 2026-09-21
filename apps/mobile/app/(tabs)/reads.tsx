@@ -114,7 +114,7 @@ export default function ReadsScreen() {
         {surface === "skeleton" ? (
           <SkeletonList kind="card" stalled={w.boot.syncFailure} />
         ) : surface === "empty" ? (
-          <Empty glyph="📰" title={Copy.readsEmptyTitle} hint={Copy.readsEmptyHint} />
+          <Empty title={Copy.readsEmptyTitle} hint={Copy.readsEmptyHint} />
         ) : (
           <>
             {items.map((m) => (
