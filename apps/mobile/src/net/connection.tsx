@@ -21,7 +21,7 @@ import {
 import { consoleEngineLogSink } from "../engine/engine-log";
 import { clearAccessLock } from "./access-lock";
 import { decidedState, type DecidedState } from "./decided";
-import { deathRefusal } from "./session-death";
+import { deathRefusal, noteSessionDeath } from "./session-death";
 import {
   CLAIM_LAPSES_AFTER_MINUTES, PHONE_CLAIM_NAME, organizesHere, reopenStandaloneMailbox,
   type ReopenOutcome, type StandaloneEngine,
@@ -387,11 +387,12 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
          a server to judge and no `ended` state this session can reach. A faked manager here would
          have made this line compile and the state unreachable. */
       offDead.current = session.bearer?.onSessionDead((why) => {
-        // The server judged this family's token. Render mail no further: tear down and say the
-        // one-gesture remedy — and, where the door named a SWEPT family, say what happened. A
-        // person whose refresh answer was dropped used to be signed out with no reason at all;
-        // the reason is the difference between a bug they can report and a phone that just quit.
+        // The server judged this family's token. Render mail no further: tear down, write the
+        // cause to the device's log, and give the person the one sentence every door shows for
+        // this — which ends in the remedy, because "signed out" with no way back is what they
+        // used to meet (`net/session-death.ts`).
         teardown(session);
+        noteSessionDeath(why);
         enter({ k: "ended", reason: deathRefusal(why) });
         void refreshProfiles();
       }) ?? null;

@@ -15,6 +15,7 @@ import { router } from "expo-router";
 import { Copy } from "../src/copy";
 import { PHONE_CLAIM_NAME, organizesHere } from "../src/engine/standalone-door";
 import { useConnection } from "../src/net/connection";
+import { isPairEnded } from "../src/net/session-death";
 import type { ServerProfile } from "../src/state/servers";
 import { useTheme } from "../src/theme";
 import { Button, Panel, Screen, Scroller, Section, TapRow, Txt } from "../src/ui/base";
@@ -127,6 +128,11 @@ function StatusPanel() {
             <Txt variant="hint" tone="ink2">{sayRefusal(s.reason)}</Txt>
           </>
         ) : null}
+        {/* A SENTENCE WITH A REMEDY NEEDS THE VERB IN REACH. The row below re-pairs on a press,
+            which a person scrolling past this panel never learns; the same verb stands here. */}
+        {(s.k === "refused" || s.k === "ended") && isPairEnded(s.reason) ? (
+          <Button label={Copy.pairAgain} onPress={() => router.push("/scan")} />
+        ) : null}
         {s.k === "live" ? <LiveFacts /> : null}
       </View>
       {s.k === "live" ? (
@@ -233,7 +239,7 @@ function ProfileRow({ profile, active, onForgetFailed }: {
           <Txt variant="caption" tone="ink3">{profile.flavor}</Txt>
         </View>
         <Txt variant="caption" tone="ink3" numberOfLines={1}>
-          {here ? Copy.serversOrganizedHere : needsPair ? Copy.serversNeedsPair : profile.accountId}
+          {here ? Copy.serversOrganizedHere : needsPair ? Copy.pairEnded : profile.accountId}
         </Txt>
       </TapRow>
       <View style={{ flexDirection: "row", paddingHorizontal: 12, paddingBottom: 6 }}>
@@ -245,6 +251,9 @@ function ProfileRow({ profile, active, onForgetFailed }: {
           variant="quiet"
           onPress={() => void forget()}
         />
+        {/* The row press already re-pairs, and a gesture with no name is invisible to a screen
+            reader — the verb is spelled out, the same word the panel above uses. */}
+        {needsPair ? <Button label={Copy.pairAgain} variant="quiet" onPress={() => router.push("/scan")} /> : null}
       </View>
     </View>
   );

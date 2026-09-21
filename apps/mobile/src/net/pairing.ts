@@ -1271,7 +1271,7 @@ async function buildSession(
     return {
       kind: "refused",
       needsRepair: true,
-      reason: refuse("pairEndedRefused"),
+      reason: refuse("pairEnded"),
     };
   }
   /**

@@ -358,7 +358,6 @@ const TABLE = {
   serversActive: "Connected",
   serversProfiles: "Paired servers",
   serversAdd: "Add a server",
-  serversNeedsPair: "Pairing ended — scan a fresh QR to pair again.",
   /* The phone's own row in the list. It names what the row IS and promises nothing about what is
      happening right now: this phone files this mailbox only while the app is running, which the
      limitations screen and the Settings line both state, and a subtitle that said otherwise would
@@ -659,7 +658,17 @@ const TABLE = {
     `this phone could not store the pairing (${detail}), and the server could not be `
     + "reached to close the session it had just opened — revoke this device from its Devices "
     + "list, then mint a fresh code and try again",
-  pairEndedRefused: "this pairing ended — the server refused its token. Scan a fresh QR to pair again",
+  /**
+   * ONE SENTENCE FOR A PAIRING THAT ENDED, wherever it ended and however the server said so.
+   * Three spellings shipped — the refused token, the swept family, the pane's own line — and a
+   * person holding two phones was told a different thing on each for one cause, none of them
+   * saying what to do. The CAUSE is a maintainer's fact and goes to the log; what a person needs
+   * is that they are signed out here and that one scan puts it back.
+   */
+  pairEnded:
+    "This phone was signed out because its pairing ended on the server. Pair this phone again.",
+  /** The verb beside it, the same word at every site that shows that sentence. */
+  pairAgain: "Pair again",
   /*
    * FOUR MORE REDEEM-TIME REFUSALS. They sat inside `net/pairing.ts` behind a stretch of the file
    * the census could not see, and the second of them is the one a phone actually rendered under a
@@ -674,15 +683,6 @@ const TABLE = {
   pairOwedDeletion: (detail: string) =>
     "This phone still owes a deletion for that mailbox's copied mail and could not carry "
     + `it out (${detail}). Restart ohmail so it can finish, then pair again with a fresh code.`,
-  pairEndedOnServer: "this pairing ended on the server — scan a fresh QR to pair again",
-  /**
-   * The one death worth naming. A family is swept when a token it had already spent is
-   * presented, so this says what happened rather than leaving a person at "pair again" with
-   * no reason — which is what the reuse sweep used to mean on a phone whose refresh answer
-   * had simply been dropped.
-   */
-  pairKeyPresentedTwice:
-    "Signed out on this phone: this session's key was presented twice. Pair again.",
   notPairedHere: "that server is no longer paired on this phone",
   pairingsUnreadable: (detail: string) =>
     `could not read this phone's stored pairings — ${detail}`,

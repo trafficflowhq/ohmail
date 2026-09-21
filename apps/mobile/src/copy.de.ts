@@ -221,7 +221,6 @@ export const DE: Deck = {
   serversActive: "Verbunden",
   serversProfiles: "Gekoppelte Server",
   serversAdd: "Server hinzufügen",
-  serversNeedsPair: "Die Kopplung ist beendet — scanne einen frischen QR-Code, um erneut zu koppeln.",
   /* Die eigene Zeile des Telefons in der Liste. Sie benennt, was der Eintrag IST, und verspricht
      nichts über den Augenblick — siehe die englische Fassung. */
   serversOrganizedHere: "Das Postfach, das dieses Telefon selbst geöffnet hat.",
@@ -385,7 +384,10 @@ export const DE: Deck = {
     `dieses Telefon konnte die Kopplung nicht speichern (${detail}), und der Server war nicht `
     + "erreichbar, um die gerade geöffnete Sitzung zu schließen — widerrufe dieses Gerät in "
     + "seiner Geräteliste, erzeuge dann einen frischen Code und versuch es nochmal",
-  pairEndedRefused: "diese Kopplung ist beendet — der Server hat ihren Token abgelehnt. Scanne einen frischen QR-Code, um erneut zu koppeln",
+  pairEnded:
+    "Dieses Telefon wurde abgemeldet, weil seine Kopplung auf dem Server beendet wurde. "
+    + "Koppele dieses Telefon erneut.",
+  pairAgain: "Erneut koppeln",
   pairRedeemUnreachable: "dieser Server war nicht erreichbar, um die Kopplung einzulösen",
   pairCodeRejected: "dieser Kopplungscode wurde nicht angenommen — erzeuge einen frischen und scanne erneut",
   pairNoAccountName:
@@ -395,9 +397,6 @@ export const DE: Deck = {
     "Dieses Telefon schuldet für die kopierte Post dieses Postfachs noch eine Löschung und konnte "
     + `sie nicht ausführen (${detail}). Starte ohmail neu, damit es das abschließen kann, und `
     + "koppele dann mit einem frischen Code erneut.",
-  pairEndedOnServer: "diese Kopplung wurde auf dem Server beendet — scanne einen frischen QR-Code, um erneut zu koppeln",
-  pairKeyPresentedTwice:
-    "Auf diesem Telefon abgemeldet: der Schlüssel dieser Sitzung wurde zweimal vorgelegt. Koppele erneut.",
   notPairedHere: "dieser Server ist auf diesem Telefon nicht mehr gekoppelt",
   pairingsUnreadable: (detail: string) =>
     `die gespeicherten Kopplungen dieses Telefons ließen sich nicht lesen — ${detail}`,
