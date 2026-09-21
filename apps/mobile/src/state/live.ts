@@ -1874,12 +1874,12 @@ export type DraftDiscardOutcome = "discarded" | "held" | "queued" | "refused";
 export const UNDO_MS = 8000;
 
 /**
- * One TASK of the event loop after a sentence is spoken, before the act that follows it is
- * dispatched. A timer, deliberately: React Native's `setImmediate` is a `queueMicrotask` shim,
- * and everything committed inside one JS task is mounted together at its end — measured on the
- * 18 Pro (FIX-022, 2026-09-21), the pill drew 1.5–6 s after the tap, when the mirror's
- * re-derivation in the same task finished. A timer ends the task; the pill mounts alone.
- * `toast-before-the-mirror-moves.test.ts` holds the order.
+ * The stand-in for `LiveDeps.painted` where no pill exists (the node suite): one TIMER task after
+ * a sentence is spoken, before the act is dispatched. A timer rather than `setImmediate`, which is
+ * a microtask shim in React Native. Measured on the 18 Pro (FIX-022, 2026-09-21): neither a
+ * microtask nor a timer put the pill on screen before the mirror's re-derivation — only the
+ * pill's own layout report does, which is why the provider supplies `painted` and this is the
+ * fallback. `toast-before-the-mirror-moves.test.ts` holds the order for both.
  */
 export const paintFirst = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -1910,6 +1910,12 @@ export interface LiveDeps {
    * it followed a switch. The screen writes it out with `sayArg`.
    */
   toast: (say: RefusalArg, opts?: ToastOpts) => void;
+  /**
+   * Resolves once the sentence just spoken is ON SCREEN, or after `PAINT_BOUND_MS` — the pill's
+   * own layout report through `state/toast-one.ts#paintGate`. An optimistic door awaits it between
+   * speaking and dispatching, so the sentence never rides the mirror's re-derivation to the screen.
+   */
+  painted?: () => Promise<void>;
   now?: () => Date;
   /**
    * RFC 4122 v4 — the id a NEW tag is minted under (`tag_assign.createName`: the server uses the
@@ -2197,6 +2203,8 @@ export interface LiveWorldActions {
 
 export function liveActions(deps: LiveDeps): LiveWorldActions {
   const { engine, toast } = deps;
+  /** The sentence-on-screen gate the provider supplies; the timer stands in where there is none (tests). */
+  const painted = deps.painted ?? paintFirst;
   const now = deps.now ?? (() => new Date());
   /** Read at every use, never captured — see {@link LiveDeps.resurfaceTime}. */
   const resurfaceAtClock = (): string | null => deps.resurfaceTime?.() ?? null;
@@ -2622,7 +2630,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        (FIX-022, 2026-09-21): a Park in the reader showed its pill 3–5 s after the tap, the same
        moment the triage POST left the device, over a 2 157-row list. One turn lets React commit
        the pill alone first; the act is read off the pre-press mirror above and lands unchanged. */
-    await paintFirst();
+    await painted();
     return said(await watched(engine.mutate(m)), null, refuse("liveSaveFailed"));
   };
 
@@ -2708,12 +2716,15 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       ...inverseMutations(pre, { kind: "mark_seen", messageIds: [messageId], unread: false }),
       ...(booked ? inverseMutations(pre, { kind: "triage_set", messageId, state: "none" }) : []),
     ];
+    // Spoken FIRST and mounted alone (`paintFirst`), like every optimistic verb; the inverses
+    // above were read off the pre-press mirror, so the order of the two changes nothing they say.
+    toast(refuse("toastResurfaceDone"), undoable(inv));
+    await painted();
     const parts: Promise<PressVerdict>[] = [];
     if (booked) {
       parts.push(watched(engine.mutate({ kind: "triage_set", messageId, state: "none" })));
     }
     parts.push(watched(engine.mutate({ kind: "mark_seen", messageIds: [messageId], unread: false })));
-    toast(refuse("toastResurfaceDone"), undoable(inv));
     return saidAll(await Promise.all(parts), null, refuse("liveSaveFailed"));
   };
 
@@ -3274,6 +3285,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       assigned ? refuse("tagTagged", tag.name) : refuse("tagUntagged", tag.name),
       undoable(inverseMutations(engine.read(), m)),
     );
+    await painted();
     return said(await watched(engine.mutate(m)), null, refuse("liveSaveFailed"));
   };
 
@@ -3288,6 +3300,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // own verb and its own confirm (`inverseMutations`' tag arm states the same boundary).
     const m: EngineMutation = { kind: "tag_assign", messageId, tagId: deps.uuid(), assigned: true, createName: typed };
     toast(refuse("tagTagged", typed), undoable(inverseMutations(engine.read(), m)));
+    await painted();
     return said(await watched(engine.mutate(m)), null, refuse("liveSaveFailed"));
   };
 

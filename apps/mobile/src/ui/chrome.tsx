@@ -291,7 +291,7 @@ export function Toast() {
      18 Pro the reader's two-row verb bar is taller, and the pill covered Later and Park
      (`bottom-chrome.ts` holds the measurement). The bars report; this reads. */
   const chrome = useBottomChromeExtent();
-  const { toast, dismiss } = useWorldToast();
+  const { toast, dismiss, onScreen } = useWorldToast();
   const anim = useRef(new Animated.Value(0)).current;
   const message = toast === null ? undefined : sayArg(toast.say);
   const undo = toast?.undo;
@@ -305,7 +305,9 @@ export function Toast() {
      on the 18 Pro: "Undone." (3.2 s) expired before it was ever drawn. So the timer and the fade
      start in `onLayout`, the first moment the pill is on screen, once per entry. */
   const hold = useRef<{ id: number | undefined; timer: ReturnType<typeof setTimeout> | null }>({ id: undefined, timer: null });
-  const onScreen = () => {
+  const laidOut = () => {
+    // The doors waiting on this sentence (`LiveDeps.painted`) may dispatch now — it is on screen.
+    onScreen();
     if (hold.current.id === toastId) return;
     if (hold.current.timer !== null) clearTimeout(hold.current.timer);
     Animated.timing(anim, {
@@ -347,7 +349,7 @@ export function Toast() {
     <Animated.View
       // A new entry is a new view, so `onLayout` fires for it even at the same size.
       key={toastId}
-      onLayout={onScreen}
+      onLayout={laidOut}
       pointerEvents="box-none"
       accessibilityLiveRegion="polite"
       style={{

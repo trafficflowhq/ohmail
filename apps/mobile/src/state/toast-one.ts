@@ -39,3 +39,34 @@ export function afterDismiss(standing: ToastEntry | null, id?: number): ToastEnt
   if (id !== undefined && standing.id !== id) return standing;
   return null;
 }
+
+/** How long an act waits for its sentence to reach the screen before it goes ahead anyway. */
+export const PAINT_BOUND_MS = 400;
+
+/**
+ * THE ACT WAITS FOR ITS SENTENCE TO BE ON SCREEN. Measured on the iPhone 18 Pro (FIX-022,
+ * 2026-09-21): a verb that spoke and dispatched in one go had its pill drawn together with the
+ * mirror's re-derivation, 1.5–8 s after the tap, and neither a microtask nor a timer between the
+ * two changed that. So the order is a contract, not a scheduling hope: the pill reports its
+ * layout (`onScreen`) and the door awaits `painted()` — released by that report, or by the bound,
+ * whichever is first, because a sentence that never lays out may not hold an act hostage.
+ */
+export function paintGate(boundMs: number = PAINT_BOUND_MS): { onScreen(): void; painted(): Promise<void> } {
+  const waiting = new Set<() => void>();
+  return {
+    onScreen() {
+      for (const release of [...waiting]) release();
+    },
+    painted() {
+      return new Promise<void>((resolve) => {
+        const release = () => {
+          waiting.delete(release);
+          clearTimeout(bound);
+          resolve();
+        };
+        const bound = setTimeout(release, boundMs);
+        waiting.add(release);
+      });
+    },
+  };
+}

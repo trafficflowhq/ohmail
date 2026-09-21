@@ -23,7 +23,7 @@ import { AppState } from "react-native";
 
 import { Copy } from "../copy";
 import { refuse, type RefusalArg } from "../refusal";
-import { afterDismiss, nextToast, type ToastEntry } from "./toast-one";
+import { afterDismiss, nextToast, paintGate, type ToastEntry } from "./toast-one";
 import { useLocale } from "../i18n/LocaleProvider";
 import { activeLocale } from "../i18n/locale";
 import { useConnection } from "../net/connection";
@@ -434,9 +434,11 @@ export interface WorldToast {
   toast: ToastEntry | null;
   /** The pill's own id — see `state/toast-one.ts#afterDismiss` for why it is not optional there. */
   dismiss(id?: number): void;
+  /** The pill's layout report — releases every door waiting in `LiveDeps.painted` (`toast-one.ts#paintGate`). */
+  onScreen(): void;
 }
 
-const WorldToastContext = createContext<WorldToast>({ toast: null, dismiss: () => undefined });
+const WorldToastContext = createContext<WorldToast>({ toast: null, dismiss: () => undefined, onScreen: () => undefined });
 
 export function useWorldToast(): WorldToast {
   return useContext(WorldToastContext);
@@ -615,9 +617,11 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     setToastShown((standing) => nextToast(standing, { id, say, ...(opts ?? {}) }));
   }, []);
   const dismissToast = useCallback((id?: number) => setToastShown((standing) => afterDismiss(standing, id)), []);
+  /* The sentence-on-screen gate: the pill reports its layout here, the doors await it (below). */
+  const gate = useRef(paintGate()).current;
   const worldToast = useMemo<WorldToast>(
-    () => ({ toast: toastShown, dismiss: dismissToast }),
-    [toastShown, dismissToast],
+    () => ({ toast: toastShown, dismiss: dismissToast, onScreen: gate.onScreen }),
+    [toastShown, dismissToast, gate],
   );
 
   /* Per-sender scope choice (this sender / whole domain) — view state on the session,
@@ -1042,7 +1046,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
        exists to stop effects doing. */
     () => (engine
       ? liveActions({
-        engine, toast: showToast, uuid: () => Crypto.randomUUID(), zone,
+        engine, toast: showToast, painted: gate.painted, uuid: () => Crypto.randomUUID(), zone,
         // The register, not the hook's value: this facade is built once per session, and a
         // captured `locale` would stamp Trash rows in the mount-time language for ever.
         locale: () => activeLocale(),
