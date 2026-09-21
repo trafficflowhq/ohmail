@@ -210,11 +210,8 @@ export function Doors({
             <Button
               label={probe.k === "asking" ? Copy.doorSelfChecking : Copy.doorSelfGo}
               variant="solid"
-              onPress={
-                probe.k === "asking" || probe.k === "probed" || !address.trim()
-                  ? undefined
-                  : () => void check(address, true)
-              }
+              disabled={probe.k === "asking" || probe.k === "probed" || !address.trim()}
+              onPress={() => void check(address, true)}
             />
             <Result probe={probe} onScan={onScan} onTypeToken={onTypeToken} />
           </View>

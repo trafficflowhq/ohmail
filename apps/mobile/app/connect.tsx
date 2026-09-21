@@ -135,7 +135,8 @@ export default function ConnectScreen() {
             <Button
               label={phase.k === "probing" ? Copy.pairingBusy : Copy.connectGo}
               variant="solid"
-              onPress={phase.k === "probing" || !token.trim() ? undefined : () => void probe()}
+              disabled={phase.k === "probing" || !token.trim()}
+              onPress={() => void probe()}
             />
           </View>
         </Panel>

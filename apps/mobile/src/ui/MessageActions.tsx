@@ -422,7 +422,6 @@ export function MessageActions({
             <SheetRow icon="trash" label={Copy.actionDelete} onPress={() => setOpen("delete")} />
           </>
         ) : null}
-        <CancelRow onPress={close} />
       </Sheet>
 
       {/* ── Delete: the one destructive verb, behind its own stated confirm ─────────────── */}
@@ -609,7 +608,6 @@ function TagSheet({ m, tags, onClose }: { m: WorldMail; tags: WorldTag[]; onClos
       <Txt variant="caption" tone="ink3" style={{ paddingHorizontal: 14, paddingTop: 8 }}>
         {Copy.tagNotOnServer}
       </Txt>
-      <CancelRow onPress={onClose} />
     </Sheet>
   );
 }
@@ -678,7 +676,6 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
       <Txt variant="caption" tone="ink3" style={{ paddingHorizontal: 14, paddingTop: 8 }}>
         {applyRetro ? Copy.screeningNoteRetro(target) : Copy.screeningNote(target)}
       </Txt>
-      <CancelRow onPress={onClose} />
     </Sheet>
   );
 }
@@ -1175,12 +1172,12 @@ export function ComposeSheet({
                     {sizeLabel(file.sizeBytes)}
                   </Txt>
                   <Tap
-                    onPress={
-                      phase === "idle"
-                        ? () => setAttachments((list) => list.filter((a) => a !== file))
-                        : undefined
-                    }
+                    onPress={() => {
+                      if (phase !== "idle") return;
+                      setAttachments((list) => list.filter((a) => a !== file));
+                    }}
                     accessibilityRole="button"
+                    accessibilityState={phase === "idle" ? undefined : { disabled: true }}
                     accessibilityLabel={Copy.attachRemove(file.filename)}
                     style={{ padding: 8, marginRight: -8 }}
                   >
@@ -1193,12 +1190,14 @@ export function ComposeSheet({
                   label={Copy.attachFile}
                   icon="clip"
                   variant="quiet"
-                  onPress={phase === "idle" ? () => void pick("files") : undefined}
+                  disabled={phase !== "idle"}
+                  onPress={() => void pick("files")}
                 />
                 <Button
                   label={Copy.attachPhoto}
                   variant="quiet"
-                  onPress={phase === "idle" ? () => void pick("photos") : undefined}
+                  disabled={phase !== "idle"}
+                  onPress={() => void pick("photos")}
                 />
                 <View style={{ flex: 1 }} />
                 <Txt variant="caption" tone="ink3">
@@ -1366,7 +1365,8 @@ export function ComposeSheet({
               <Button
                 label={Copy.sendLater}
                 variant="plain"
-                onPress={canSend ? openLater : undefined}
+                disabled={!canSend}
+                onPress={openLater}
               />
             ) : null}
             {/* SEND + DONE — the same send, and the message being answered filed with it. Beside
@@ -1374,22 +1374,25 @@ export function ComposeSheet({
                 be sent and filed either, and one predicate owns all three buttons. Offered only
                 where the ENGINE says the second action would finish something
                 (`sendAndDoneOffered`) — the webapp composer reads the same rule, and neither
-                surface judges it for itself. */}
+                surface judges it for itself. It carries the same disabled/handler pair as Send:
+                an undefined handler takes the button role off the control. */}
             {andDoneOffered ? (
               <Button
                 label={Copy.sendAndDone}
                 variant="plain"
-                onPress={
-                  canSend ? () => void send(null, true) : contentOnlyMissing ? () => setNeedNote(true) : undefined
-                }
+                disabled={!canSend && !contentOnlyMissing}
+                onPress={canSend ? () => void send(null, true) : () => setNeedNote(true)}
               />
             ) : null}
+            {/* Send keeps its FACE and dims when it cannot be taken — `Button`'s own rule.
+                Swapping the variant made the unavailable state look like a different,
+                perfectly pressable verb, and dropping the handler took the button role off
+                it entirely (measured in the accessibility tree on the Duo). */}
             <Button
               label={phase === "sending" ? Copy.replySending : Copy.replySend}
-              variant={canSend ? "solid" : "plain"}
-              onPress={
-                canSend ? () => void send() : contentOnlyMissing ? () => setNeedNote(true) : undefined
-              }
+              variant="solid"
+              disabled={!canSend && !contentOnlyMissing}
+              onPress={canSend ? () => void send() : () => setNeedNote(true)}
             />
           </View>
         </View>

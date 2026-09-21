@@ -70,12 +70,14 @@ export function PairConfirm({
         <Button
           label={busy ? Copy.pairingBusy : Copy.pairConfirmGo}
           variant="solid"
-          onPress={busy ? undefined : onConfirm}
+          disabled={busy}
+          onPress={onConfirm}
         />
         <Button
           label={Copy.pairConfirmCancel}
           variant="quiet"
-          onPress={busy ? undefined : onCancel}
+          disabled={busy}
+          onPress={onCancel}
         />
       </View>
     </View>

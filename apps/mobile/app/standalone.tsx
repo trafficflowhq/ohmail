@@ -356,7 +356,8 @@ function Credentials() {
           <Button
             label={phase.k === "opening" ? Copy.phoneStandaloneConnecting : Copy.phoneStandaloneConnect}
             variant="solid"
-            onPress={ready ? () => void connect() : undefined}
+            disabled={!ready}
+            onPress={() => void connect()}
           />
         </View>
       </Panel>

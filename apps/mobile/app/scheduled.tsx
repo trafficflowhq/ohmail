@@ -150,15 +150,12 @@ function ScheduledRow({ row }: { row: WorldScheduled }) {
         <View style={{ flexDirection: "row", paddingTop: 6 }}>
           <Button
             label={Copy.scheduledCancel}
-            variant={asking ? "plain" : "quiet"}
-            onPress={
-              asking
-                ? undefined
-                : () => {
-                  setAsking(true);
-                  void w.actions.cancelSchedule(row.id).finally(() => setAsking(false));
-                }
-            }
+            variant="quiet"
+            disabled={asking}
+            onPress={() => {
+              setAsking(true);
+              void w.actions.cancelSchedule(row.id).finally(() => setAsking(false));
+            }}
           />
         </View>
       ) : null}

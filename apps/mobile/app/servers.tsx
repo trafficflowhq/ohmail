@@ -137,7 +137,7 @@ function StatusPanel() {
       </View>
       {s.k === "live" ? (
         <View style={{ paddingHorizontal: 16, paddingTop: 12, gap: 10 }}>
-          <Button label={Copy.connectSyncNow} onPress={conn.syncing ? undefined : conn.syncNow} />
+          <Button label={Copy.connectSyncNow} disabled={conn.syncing} onPress={conn.syncNow} />
           <Button label={Copy.connectDisconnect} variant="quiet" onPress={() => void conn.disconnect()} />
         </View>
       ) : null}
