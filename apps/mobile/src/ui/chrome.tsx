@@ -7,7 +7,7 @@
  * unsaved changes — which are state, not brand.
  */
 import { useEffect, useRef } from "react";
-import { Animated, Easing, Platform, View } from "react-native";
+import { AccessibilityInfo, Animated, Easing, Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { Copy } from "../copy";
@@ -304,6 +304,17 @@ export function Toast() {
       easing: Easing.bezier(...t.motion.easing.spring),
       useNativeDriver: true,
     }).start();
+    /* AND IT IS SPOKEN, not merely drawn. A verb pressed from the reader answered with a pill
+       nobody heard: a view that appears is silent to VoiceOver unless something announces it,
+       and an assistive-tech walk of the 18 Pro read the press as having said nothing. Android
+       has `accessibilityLiveRegion` on the view below; iOS has no live region, so the sentence
+       goes through the announcement door — one outcome, two platform doors. The Undo verb rides
+       the sentence, because a way back nobody is told about is no way back. */
+    if (Platform.OS === "ios") {
+      AccessibilityInfo.announceForAccessibility(
+        undo ? Copy.ariaLabelDetail(message, Copy.undo) : message,
+      );
+    }
     const timer = setTimeout(dismiss, holdMs);
     return () => {
       clearTimeout(timer);
@@ -318,6 +329,7 @@ export function Toast() {
   return (
     <Animated.View
       pointerEvents="box-none"
+      accessibilityLiveRegion="polite"
       style={{
         position: "absolute",
         left: 12,
