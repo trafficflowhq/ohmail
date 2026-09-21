@@ -13,7 +13,7 @@ import { Text, View, type LayoutChangeEvent } from "react-native";
 import { useTheme } from "../../theme";
 import { Copy } from "../../copy";
 import { Icon, type IconName } from "../Icon";
-import { Sheet, SheetRow } from "../Sheet";
+import { CancelRow, Sheet, SheetRow } from "../Sheet";
 import { Tap } from "../base";
 import { BAR_GAP, barAdmitted, nextRoom } from "./fold";
 import { GlassPill } from "./GlassPill";
@@ -202,6 +202,7 @@ export function GlassActionBar({
             }}
           />
         ))}
+        <CancelRow onPress={() => setMoreOpen(false)} />
       </Sheet>
     </View>
   );

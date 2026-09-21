@@ -23,7 +23,7 @@ import type { IconName } from "./Icon";
 import { useAppWindow, usePosture, useStatusCluster } from "./posture";
 import { useReaderRail } from "./reader-rail";
 import { isTabRoute, railHome, scaffoldPlan } from "./scaffold/plan";
-import { Sheet } from "./Sheet";
+import { CancelRow, Sheet } from "./Sheet";
 
 const platformName = Platform.OS === "ios" ? ("ios" as const) : ("android" as const);
 
@@ -113,6 +113,7 @@ export function NavRail() {
             {Copy.searchLater}
           </Txt>
         </View>
+        <CancelRow onPress={() => setSearchOpen(false)} />
       </Sheet>
     </View>
   );

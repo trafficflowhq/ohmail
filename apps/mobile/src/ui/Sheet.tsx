@@ -4,6 +4,12 @@
  * verb and name sheets in `FoldersGroup.tsx`). A popover has nowhere honest to anchor on a
  * phone, so the panel rises where the thumb is and a backdrop press dismisses it.
  *
+ * EVERY SHEET CARRIES A WAY OUT ON THE PANEL. The backdrop is `accessibilityViewIsModal`'s
+ * sibling, so assistive technology never sees it: a sheet whose panel held only verbs read as
+ * six buttons and no exit on the Duo, and the search sheet read as no controls at all. A
+ * CancelRow, or a row of the sheet's own that dismisses, is the invariant
+ * (`test/sheet-has-a-way-out.test.ts`).
+ *
  * Lifted out of `MessageActions.tsx` when the folders group gained its verbs — one sheet, not
  * two drifting copies.
  */

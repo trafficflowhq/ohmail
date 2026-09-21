@@ -12,7 +12,7 @@ import { View, type LayoutChangeEvent } from "react-native";
 import { useTheme } from "../../theme";
 import { Copy } from "../../copy";
 import type { IconName } from "../Icon";
-import { Sheet, SheetRow } from "../Sheet";
+import { CancelRow, Sheet, SheetRow } from "../Sheet";
 import { railFold, type RailEntry } from "./fold";
 import { GlassIconButton } from "./GlassIconButton";
 import { GlassPill } from "./GlassPill";
@@ -104,6 +104,7 @@ export function GlassRail({
             }}
           />
         ))}
+        <CancelRow onPress={() => setMoreOpen(false)} />
       </Sheet>
     </View>
   );

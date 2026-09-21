@@ -422,6 +422,7 @@ export function MessageActions({
             <SheetRow icon="trash" label={Copy.actionDelete} onPress={() => setOpen("delete")} />
           </>
         ) : null}
+        <CancelRow onPress={close} />
       </Sheet>
 
       {/* ── Delete: the one destructive verb, behind its own stated confirm ─────────────── */}
@@ -608,6 +609,7 @@ function TagSheet({ m, tags, onClose }: { m: WorldMail; tags: WorldTag[]; onClos
       <Txt variant="caption" tone="ink3" style={{ paddingHorizontal: 14, paddingTop: 8 }}>
         {Copy.tagNotOnServer}
       </Txt>
+      <CancelRow onPress={onClose} />
     </Sheet>
   );
 }
@@ -676,6 +678,7 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
       <Txt variant="caption" tone="ink3" style={{ paddingHorizontal: 14, paddingTop: 8 }}>
         {applyRetro ? Copy.screeningNoteRetro(target) : Copy.screeningNote(target)}
       </Txt>
+      <CancelRow onPress={onClose} />
     </Sheet>
   );
 }
