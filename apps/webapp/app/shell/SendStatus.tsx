@@ -81,6 +81,8 @@ export function SendStatus({
              */
             ? send.code === "mailbox_disabled"
               ? { tone: "error", text: t("statusMailboxDisabled") }
+              : send.code === "forward_original_unavailable"
+                ? { tone: "error", text: t("statusForwardOriginalUnavailable") }
               /**
                * ANOTHER WINDOW WROTE THIS DRAFT BETWEEN THE LAST SAVE AND THIS PRESS. `warn`, not
                * `error`: nothing failed and nothing left — the row simply is not the message this

@@ -19,7 +19,7 @@ import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { draftContentRevision } from "./draft-revision.js";
 import type { AttachmentAdapter, OpenAdapter } from "./attachments-service.js";
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
-import { sanitizeOutboundHtml } from "./outbound-html.js";
+import { htmlToPlainText, sanitizeOutboundHtml } from "./outbound-html.js";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
@@ -79,10 +79,12 @@ function forwardedQuote(
     ...(dateStr ? [`Date: ${dateStr}`] : []),
     `Subject: ${orig.subject}`,
   ];
-  const text = `${headerLines.join("\n")}\n\n${originalText}`;
-  const bodyHtml = originalHtml
-    ? sanitizeOutboundHtml(originalHtml)
-    : escapeHtml(originalText).replace(/\n/g, "<br>");
+  // An HTML-only original has an EMPTY stored text; the plain alternative derives it from the
+  // sanitized html, or a text-first reader gets the banner and headers over nothing (measured).
+  const safeHtml = originalHtml ? sanitizeOutboundHtml(originalHtml) : null;
+  const plain = originalText.trim() !== "" ? originalText : safeHtml ? htmlToPlainText(safeHtml) : "";
+  const text = `${headerLines.join("\n")}\n\n${plain}`;
+  const bodyHtml = safeHtml ?? escapeHtml(plain).replace(/\n/g, "<br>");
   const html =
     `<div>---------- Forwarded message ----------</div>` +
     `<div>From: ${escapeHtml(orig.from)}</div>` +
@@ -1335,11 +1337,24 @@ export class SendService {
           throw new ServiceError("forbidden", 403, "This message can't be forwarded — it contains sensitive content.");
         }
         // scoped-by: orig was loaded by (id, accountId) earlier in this send
-        const [body] = await tx.select({ text: messageBodies.text, html: messageBodies.html })
-          .from(messageBodies).where(eq(messageBodies.messageId, orig.id)).limit(1);
+        const [body] = await tx.select({
+          text: messageBodies.text, html: messageBodies.html, withheld: messageBodies.withheldReason,
+        }).from(messageBodies).where(eq(messageBodies.messageId, orig.id)).limit(1);
+        // THE ORIGINAL MUST BE LOADABLE. No body row (never ingested, snippet only), a body a
+        // policy emptied (storage cap, junk, expunge) or one with no content at all is refused
+        // here, before any byte leaves: a forward of the note alone over a banner is the empty
+        // mail a recipient reads as "nothing was attached". The composer renders the sentence.
+        const unloadable = !body || body.withheld !== null
+          || ((body.text ?? "").trim() === "" && (body.html ?? "").trim() === "");
+        if (unloadable) {
+          throw new ServiceError(
+            "forward_original_unavailable", 409,
+            "The original could not be loaded, so it was not forwarded.",
+          );
+        }
         const quoted = forwardedQuote(
           { from: orig.fromAddress, date: orig.date, subject: orig.subject },
-          body?.text ?? "", body?.html ?? null,
+          body.text ?? "", body.html ?? null,
         );
         fwdText = quoted.text;
         fwdHtml = quoted.html;
