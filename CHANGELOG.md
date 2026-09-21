@@ -108,13 +108,11 @@ paint instead of before it, and the Settings and Compose panes load when opened.
   fits the pane instead of folding them behind More, and re-fits itself when the device
   rotates or unfolds.
 
-### The desktop names the mailbox whose sync is failing
+### Each mailbox carries its own sync verdict
 
-A desktop with several mailboxes showed one anonymous "Sync failed. Retrying.", and a mailbox
-whose server had gone away could keep claiming health in Settings. Each mailbox now carries its
-own verdict — a refused sign-in says so at once, a connection dead for more than two minutes says
-the server is unreachable — and the sentence clears by itself when a sync completes. The sync
-strip names the failing mailbox's address.
+A mailbox whose server had gone away could keep claiming health in Settings. Each mailbox now
+carries its own verdict — a refused sign-in says so at once, a connection dead for more than two
+minutes says the server is unreachable.
 
 ### Every filing verb can now be taken back
 

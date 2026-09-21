@@ -91,7 +91,7 @@
           <li>Faster first paint</li>
           <li>Upgrades on large databases</li>
           <li>The tablet reader's toolbar fits its pane</li>
-          <li>The desktop names the mailbox whose sync is failing</li>
+          <li>Each mailbox carries its own sync verdict</li>
           <li>Every filing verb can now be taken back</li>
           <li>The reader moves on after you act</li>
           <li>The phone sends again when it organizes its own mailbox</li>
