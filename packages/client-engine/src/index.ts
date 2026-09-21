@@ -26,6 +26,20 @@ export { PRESS_THREW, pressVerdict, tallyVerdicts } from "./press-verdict.js";
 export type { PressAnswer, PressTally, PressVerdict } from "./press-verdict.js";
 
 /**
+ * A DEAD SESSION STOPS ASKING, and heals on a schedule. Barrel rather than a leaf for
+ * `press-verdict`'s reason: the two hosts that need it already compile the engine, and the
+ * module imports nothing, so a host that only reads `SESSION_HEAL_BACKOFF_MS` pays one file.
+ */
+export {
+  createSessionHeal,
+  SESSION_ENDED_CODE,
+  SESSION_HEAL_BACKOFF_MS,
+  sessionEndedResponse,
+  type SessionHeal,
+  type SessionHealTimers,
+} from "./session-gate.js";
+
+/**
  * UNKNOWN IS NOT EMPTY — one reading of what a message list may say about itself, for the phone
  * (which has rendered every list through it since `surface.ts`) and the web (which enforced the
  * same rule by hand per view, and the Ohbox missed). Barrel and not a leaf for `press-verdict`'s

@@ -11,6 +11,7 @@
     "./classifier-fault": "./src/classifier-fault.ts",
     "./bubble-up": "./src/bubble-up-pass.ts",
     "./screener-auto-suggest": "./src/screener-auto-suggest.ts",
+    "./screener-auto-act": "./src/screener-auto-act.ts",
     "./sender-name-backfill": "./src/sender-name-backfill.ts",
     "./thread-join-heal": "./src/thread-join-heal.ts",
     "./inbound-quiet": "./src/inbound-quiet.ts",

@@ -34,6 +34,7 @@ import type {
 import { retryAfterMsOf, retryingRead } from "./retrying-read.js";
 import type { WindowSyncFailure } from "../window-sync-failure.js";
 import { classifyRefusal, type RefusalKind } from "./refusal-shape.js";
+import { sessionEndedResponse } from "../session-gate.js";
 import { responseBlob } from "../bytes-blob.js";
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
@@ -72,6 +73,17 @@ export interface HttpAdapterOptions {
    * client, so `reportSyncFailure` is absent too and no request is ever made for it.
    */
   syncFailureSink?: (record: WindowSyncFailure) => Promise<void>;
+  /**
+   * MAY THIS CLIENT ASK AT ALL? Consulted before every request, and `false` answers it with
+   * {@link sessionEndedResponse} — the server's own 401 shape — without touching the wire.
+   *
+   * A client whose session is over has no door that can succeed and several that keep trying:
+   * sync drains, body reads, attachment lists, each classified and retried by machinery that is
+   * right about a server and wrong about a session. Default `true` for ever — the standalone
+   * desktop and the paired phone have no Cloud session to lose. The browser passes one
+   * (`engine-config.ts`).
+   */
+  mayAsk?: () => boolean;
 }
 
 function defaultGetCookie(name: string): string | null {
@@ -263,6 +275,8 @@ export class HttpAdapter implements EngineAdapter {
   private readonly extraHeaders: () => Record<string, string>;
   /** See {@link HttpAdapterOptions.stageAttachments}. `false` unless a host asked for it. */
   private readonly stageAttachments: boolean;
+  /** See {@link HttpAdapterOptions.mayAsk}. `() => true` unless a host supplied one. */
+  private readonly mayAsk: () => boolean;
   /** Highest X-Sync-Seq observed across mutations — converged once the /sync cursor reaches it. */
   lastSyncSeq: number | null = null;
   /**
@@ -354,6 +368,7 @@ export class HttpAdapter implements EngineAdapter {
       const sink = opts.syncFailureSink;
       this.reportSyncFailure = (record: WindowSyncFailure): Promise<void> => sink(record);
     }
+    this.mayAsk = opts.mayAsk ?? (() => true);
   }
 
   /** See {@link HttpAdapterOptions.syncFailureSink}; assigned in the constructor when one was given. */
@@ -380,6 +395,15 @@ export class HttpAdapter implements EngineAdapter {
    * HttpAdapter.withDeadline}.
    */
   private async request(method: string, path: string, init: { body?: unknown; idempotencyKey?: string; signal?: AbortSignal } = {}): Promise<Response> {
+    /*
+     * THE GATE, AHEAD OF EVERY DOOR AND AHEAD OF EVERY HEADER. A client whose session is
+     * confirmed over answers itself with the 401 the server would have sent (`sessionEndedResponse`,
+     * ohmail's own envelope) and asks nothing — measured need: three routes at twice a second for
+     * eight minutes under a dead session, each refusal starting a refresh that was refused the same
+     * way. It is here rather than per method because every method funnels through this one, and a
+     * per-door rule is a rule the next door forgets.
+     */
+    if (!this.mayAsk()) return sessionEndedResponse();
     const headers: Record<string, string> = { ...this.extraHeaders() };
     if (init.body !== undefined) headers["content-type"] = "application/json";
     if (init.idempotencyKey) headers["idempotency-key"] = init.idempotencyKey;

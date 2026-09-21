@@ -28,7 +28,18 @@
  * failure ask once more — bounded, at most once per successful refresh.
  */
 
+/**
+ * THE BOUNDED WAY BACK. A confirmed death used to leave every surface free to keep asking: a
+ * production tab polled three routes about twice a second for eight minutes, and each refusal
+ * started a refresh that was refused the same way. So the death arms a SCHEDULE — one refresh
+ * attempt per widening step (`SESSION_HEAL_BACKOFF_MS`) — and `sessionMayAsk` closes every other
+ * door until the schedule, or a sign-in in another tab, mints a session. The schedule is the
+ * engine's (`@ohmail/client-engine`, no transport, inert where nothing registers a probe), so the
+ * browser, the desktop and the phone all wait the same way.
+ */
+
 import { useSyncExternalStore } from "react";
+import { createSessionHeal, type SessionHeal } from "@ohmail/client-engine";
 
 let dead = false;
 let revivals = 0;
@@ -40,12 +51,23 @@ const revivalListeners = new Set<() => void>();
 let probe: (() => void) | null = null;
 
 /**
+ * Built once, lazily, and never rebuilt: a second schedule over one death is the hot loop this
+ * exists to end. It calls the probe the Cloud build registered; where none is registered every
+ * step is a no-op, which is the desktop's resting behaviour and costs one timer.
+ */
+let heal: SessionHeal | null = null;
+const healSchedule = (): SessionHeal => (heal ??= createSessionHeal(() => probe?.()));
+
+/**
  * CONFIRMED: the server ended this session. Only a writer holding the server's own statement
  * may call it — today that is `resumeSession` on a coded 401 from `POST /auth/refresh`.
  */
 export function markSessionDead(): void {
   if (dead) return;
   dead = true;
+  // Armed BEFORE the listeners run: a listener that reads the store must find the tab already in
+  // its settled dead state, schedule and all, rather than halfway into it.
+  healSchedule().arm();
   for (const l of deathListeners) l();
 }
 
@@ -55,6 +77,9 @@ export function markSessionDead(): void {
  * and the subscribers act only when they hold an auth-shaped failure to heal.
  */
 export function markSessionAlive(): void {
+  // Disarmed FIRST and unconditionally: an ordinary idle-lapse refresh is also a 204, and a
+  // schedule left running behind one would keep asking for a session this tab already holds.
+  healSchedule().disarm();
   if (dead) {
     dead = false;
     for (const l of deathListeners) l();
@@ -93,7 +118,28 @@ export function registerSessionProbe(fn: (() => void) | null): void {
  * where nothing is registered, and safe to call repeatedly — the Cloud probe is single-flight.
  */
 export function probeSessionNow(): void {
+  // A CONFIRMED DEATH OWNS ITS OWN ASKING. Every surface holding auth-shaped evidence calls this,
+  // and under a dead session every surface holds some — so answering each one with a refresh is
+  // the poll storm with a different name on it. The schedule armed by `markSessionDead` is the
+  // only thing that asks from here on, and it asks at most once per step.
+  if (dead) return;
   probe?.();
+}
+
+/**
+ * MAY THIS CLIENT ASK THE SERVER ANYTHING? — read by `api()` and handed to the engine's transport.
+ *
+ * `false` only under a CONFIRMED death, so every ordinary failure, including an unconfirmed 401,
+ * leaves every door exactly where it was. The sign-in ceremony and the refresh itself are not
+ * asked: they are how the answer changes (`api()` names them by the list it already keeps).
+ */
+export function sessionMayAsk(): boolean {
+  return !dead;
+}
+
+/** How many heal attempts the current death has made — exposed for assertions, not for rendering. */
+export function sessionHealAttempts(): number {
+  return heal?.attempts() ?? 0;
 }
 
 const getDead = (): boolean => dead;
@@ -107,6 +153,7 @@ export function useSessionDead(): boolean {
 
 /** Test seam: put the store back to its resting state between cases. */
 export function resetSessionTruthForTests(): void {
+  heal?.disarm();
   dead = false;
   revivals = 0;
   probe = null;

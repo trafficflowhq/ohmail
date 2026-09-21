@@ -62,6 +62,13 @@ export class ApiError extends Error {
 
 export const OFFLINE_CODE = "network_unreachable";
 
+/**
+ * The browser's word for a refusal it makes of itself once the session is confirmed over. This
+ * tier has no Cloud session to lose, so nothing here ever answers with it — the constant is
+ * carried because the census requires the two modules to export the same names.
+ */
+export const SESSION_ENDED_REFUSAL_CODE = "session_ended";
+
 interface RequestOptions {
     method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
     body?: unknown;

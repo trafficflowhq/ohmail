@@ -11,6 +11,7 @@
 
 import { csrfToken as readCsrfToken } from "./csrf";
 import { isRecoverable, mayRefreshFor, resumeSession, withSessionCookieLock } from "./session-refresh";
+import { sessionMayAsk } from "./shell/session-truth";
 import { readOwner, readOwnerMarker, rememberOwner } from "./shell/owner-cookie";
 
 /** The `/api` prefix the same-origin rewrite serves, or `null` on a build with no API armed. */
@@ -442,6 +443,19 @@ function checkAnswerOwner(path: string, seen: string | null | undefined, ceremon
  * and `res.json()` on an empty body throws.
  */
 export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
+  /*
+   * NOTHING LEAVES A TAB WHOSE SESSION IS OVER, except what can end that state.
+   *
+   * Measured: a browser with a dead session asked `/mailboxes`, `/screener` and `/consent` about
+   * twice a second for more than eight minutes — every poller answering its own 401 with another
+   * ask, and each of those starting a refresh that was refused the same way. The refusal here is
+   * the one the server would have sent, so every caller's error path is the path it already has;
+   * what changes is that no byte leaves and no refresh starts. The way back is the schedule
+   * `markSessionDead` armed, plus the revival every surface already subscribes to.
+   */
+  if (!sessionMayAsk() && !healablePath(path, opts.ceremony === true)) {
+    throw new ApiError(401, SESSION_ENDED_REFUSAL_CODE, "This browser's session has ended.");
+  }
   /** Refuse with the sentence this state has earned — see {@link ownerRefusal}. */
   const mustHold = (): void => {
     const verdict = apiOwnerVerdict(path, { ...(opts.ceremony === true ? { ceremony: true } : {}) });
@@ -584,6 +598,27 @@ const OWNER_REFUSALS: Readonly<Record<Exclude<OwnerVerdict, "holds">, readonly [
 function ownerRefusal(verdict: Exclude<OwnerVerdict, "holds">): ApiError {
   const [code, message] = OWNER_REFUSALS[verdict];
   return new ApiError(0, code, message, undefined, { coded: false });
+}
+
+/**
+ * THE CLOSED DOOR'S OWN REFUSAL — ohmail's word for a session that is over, with the status the
+ * server would have answered, so every classifier above reads exactly what it reads from the wire.
+ */
+export const SESSION_ENDED_REFUSAL_CODE = "session_ended";
+
+/**
+ * MAY THIS PATH STILL BE ASKED WITH THE SESSION CONFIRMED DEAD? — the sign-in ceremony and the
+ * refresh, and nothing else.
+ *
+ * It reads the SAME two lists {@link apiOwnerVerdict} reads: those already name every route a
+ * browser with no account of its own may reach, which is this question. A second hand-written
+ * census would be the one that drifts, and a route missing from it is a sign-in refused in
+ * silence.
+ */
+function healablePath(path: string, ceremony: boolean): boolean {
+  if (ceremony) return true;
+  if (OWNER_FREE_EXACT.some((p) => path === p)) return true;
+  return OWNER_FREE_PREFIXES.some((p) => path.startsWith(p));
 }
 
 /** Every code {@link ownerRefusal} can throw, for the surfaces that classify one. */

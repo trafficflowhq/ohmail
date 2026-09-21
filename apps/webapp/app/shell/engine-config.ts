@@ -7,6 +7,7 @@ import {
   type StorePolicy,
 } from "@ohmail/client-engine";
 import { createSyncGate, registerSyncGate, type WakeStreamLike } from "./sync-scheduler";
+import { sessionMayAsk } from "./session-truth";
 
 /**
  * The engine decision, extracted so it can be TESTED rather than described. Inside `engine.tsx` (a `"use client"`
@@ -195,7 +196,18 @@ export function createEngine(
        * it and no business writing into one, and the Cloud door forwards this request verbatim to the hosted API — a
        * shipped build must keep sending the shape it has always sent.
        */
-      adapter: gate.guard(new HttpAdapter({ baseUrl: apiBase, stageAttachments: true })),
+      /*
+       * `mayAsk` — THE ENGINE'S HALF OF THE DEAD-SESSION GATE. The sync gate above answers "is this
+       * mirror's account the one this browser is signed in to"; this answers the prior question,
+       * "is this browser signed in at all", and it is a different fact with a different remedy: a
+       * confirmed death closes every door in the adapter until a session is minted again, so the
+       * drain, the body reads and the attachment lists stop asking instead of each classifying its
+       * own 401. Supplied only here — the desktop's and the phone's adapters have no Cloud session
+       * to lose and get the permissive default.
+       */
+      adapter: gate.guard(
+        new HttpAdapter({ baseUrl: apiBase, stageAttachments: true, mayAsk: sessionMayAsk }),
+      ),
       ...(persist ? { store: new IndexedDbMirrorStore({ owner: owner! }) } : {}),
       storePolicy: BROWSER_WINDOW,
       /**
