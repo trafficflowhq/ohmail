@@ -50,7 +50,8 @@ public class OhmailPostureModule: Module {
 
     // The status bar's frame in window points — on the closed Duo the cluster in the right
     // strip; nil where no scene answers (app not yet in the foreground) or the frame is empty.
-    Function("getStatusCluster") { () -> [String: Double]? in
+    // Async so it can run on the main queue, where UIKit's scenes are read.
+    AsyncFunction("getStatusCluster") { () -> [String: Double]? in
       guard let scene = UIApplication.shared.connectedScenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene
         ?? UIApplication.shared.connectedScenes.first as? UIWindowScene,
         let bar = scene.statusBarManager else { return nil }

@@ -1,14 +1,11 @@
 /**
  * `usePosture()` — one posture in context, derived by `derive.ts` from what this file collects:
- * the window's dimensions (always), the native fold reading where the module answers
- * (`modules/ohmail-posture`), and the OHMAIL_POSTURE debug override through its three doors —
- * the provider prop (tests), `EXPO_PUBLIC_OHMAIL_POSTURE` at bundle time, the native launch
- * env/intent extra — so a test run can drive every pose on any simulator. The provider only
- * collects; every decision is in `derive.ts`, where the suite measures it. Continuity is
- * structural: a posture change re-renders with new numbers, it never remounts — the open
- * message, the scroll position and focus stay where they were. Beside it: the status cluster
- * the closed Duo's rail starts below, and the `@canvas` door that renders the app root at a
- * pose's own size (the open face measured on a simulator whose open face is black).
+ * the window's dimensions, the native fold reading where the module answers, and the
+ * OHMAIL_POSTURE override through its three doors (provider prop, `EXPO_PUBLIC_OHMAIL_POSTURE`,
+ * the native launch env) so a test run can drive every pose on any simulator. The provider only
+ * collects; every decision is in `derive.ts`. A posture change re-renders, never remounts, so
+ * the open message, scroll and focus survive. Beside it: the status cluster the closed Duo's
+ * rail starts below, and the `@canvas` door that renders the app root at a pose's own size.
  */
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Dimensions, Platform, View, useWindowDimensions } from "react-native";
@@ -159,9 +156,23 @@ export function useStatusCluster(): { bottom: number } | null {
   const [cluster, setCluster] = useState<{ bottom: number } | null>(clusterResolved ?? null);
   useEffect(() => {
     if (canvas !== null || clusterResolved !== undefined) return;
-    const frame = nativePosture()?.getStatusCluster?.() ?? null;
-    clusterResolved = statusClusterOf(frame, dims.width);
-    setCluster(clusterResolved);
+    const read = nativePosture()?.getStatusCluster?.();
+    if (read === undefined) {
+      clusterResolved = null;
+      return;
+    }
+    let live = true;
+    read
+      .then((frame) => {
+        clusterResolved = statusClusterOf(frame, dims.width);
+        if (live) setCluster(clusterResolved);
+      })
+      .catch(() => {
+        clusterResolved = null;
+      });
+    return () => {
+      live = false;
+    };
   }, [canvas, dims.width]);
   return canvas !== null ? null : cluster;
 }

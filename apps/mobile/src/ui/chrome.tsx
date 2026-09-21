@@ -7,7 +7,7 @@
  * unsaved changes — which are state, not brand.
  */
 import { useEffect, useRef } from "react";
-import { Animated, Easing, View } from "react-native";
+import { Animated, Easing, Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { Copy } from "../copy";
@@ -17,10 +17,14 @@ import { useWorld, useWorldToast } from "../state/world";
 import { connectionSaid, firstSyncContinuesSaid } from "../state/live";
 import { Icon } from "./Icon";
 import { usePaneChrome } from "./pane-chrome";
+import { usePosture } from "./posture";
+import { scaffoldPlan } from "./scaffold/plan";
 import { Tap, Txt, useTopPad } from "./base";
 import { doorbellFaces } from "./doorbell-stack";
 import { GlassPill } from "./glass";
 import { UnsavedChanges } from "./UnsavedChanges";
+
+const platformName = Platform.OS === "ios" ? ("ios" as const) : ("android" as const);
 
 /* ----------------------------------------------------------------- top bar */
 
@@ -124,7 +128,10 @@ export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
 export function DetailBar({ title, right }: { title?: string; right?: React.ReactNode }) {
   const t = useTheme();
   const top = useTopPad(6);
-  const canBack = router.canGoBack();
+  /* On the rail postures (the closed Duo) the root rail leads with Back on every pushed screen
+     (`nav-rail.tsx`); the bar keeps its title and yields the affordance, so Back stands once. */
+  const railBack = scaffoldPlan(usePosture(), platformName).nav === "rail";
+  const canBack = router.canGoBack() && !railBack;
   return (
     <View>
     {/* THE PUSHED SCREENS NEED IT TOO. A verb can be abandoned from the message, sender, triage,

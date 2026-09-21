@@ -19,7 +19,7 @@ export interface PostureNative {
   /** The launch override: SIMCTL_CHILD_OHMAIL_POSTURE / the intent extra, read once at launch. */
   getLaunchOverride(): string | null;
   /** The status bar's frame in window points — the closed Duo's right-strip cluster; iOS only. */
-  getStatusCluster?(): { x: number; y: number; width: number; height: number } | null;
+  getStatusCluster?(): Promise<{ x: number; y: number; width: number; height: number } | null>;
   addListener?(event: string, listener: (payload: { folds: FoldFeature[] }) => void): { remove(): void };
 }
 
