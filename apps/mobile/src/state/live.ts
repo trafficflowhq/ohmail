@@ -2226,16 +2226,14 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   const inflight = new Map<FeedView, Set<Promise<boolean>>>();
 
   /**
-   * ORDER IS A CONTRACT PER MESSAGE (FIX-022, measured twice on the iPhone 18 Pro 2026-09-21,
-   * closing `MOBILE-UNDO-CAN-BE-SENT-BEFORE-THE-VERB-IT-UNDOES`): an optimistic verb speaks,
-   * waits for its pill and only then dispatches, so on a busy thread its request left 3-8 s
-   * after the tap — an Undo pressed in that window reached the server FIRST, inverse then verb,
-   * and the message stayed filed while the person read "Undone.".
-   *
-   * The engine orders every dispatch it has been HANDED (`engine.ts#outboxGate`); the window
-   * this defect lived in is the one before `mutate` is called at all, which only this facade
-   * can see. So the slot is taken at the PRESS. Keyed per message because that window is the
-   * pill's, and one global chain would put every other message's press behind it.
+   * ORDER IS A CONTRACT PER MESSAGE (FIX-022, twice on the iPhone 18 Pro 2026-09-21, closing
+   * `MOBILE-UNDO-CAN-BE-SENT-BEFORE-THE-VERB-IT-UNDOES`): a verb speaks, waits for its pill and
+   * only then dispatches, so on a busy thread its request left 3-8 s after the tap and an Undo
+   * pressed in that window reached the server FIRST — inverse then verb, message still filed.
+   * The engine orders every dispatch it has been HANDED (`engine.ts#outboxGate`); this window is
+   * the one before `mutate` is called at all, which only this facade can see, so the slot is
+   * taken at the PRESS. Keyed per message: one global chain would put every other message's
+   * press behind one pill.
    */
   const chains = new Map<string, Promise<void>>();
   const quiet = (): void => undefined;
