@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { account, apiConfigured, mailboxes as mailboxApi, type AccountLifecycle, type MailboxDTO } from "../../api-client";
 import { dayStamp } from "../../shell/format";
+import { durableSessionSet } from "../../shell/durable";
 import { storageOwner } from "../../shell/storage-owner";
 import { leaveForManagePage } from "./SubscriptionSection";
 
@@ -80,9 +81,10 @@ function dismissed(key: string): boolean {
 }
 
 function remember(key: string): void {
-  try {
-    globalThis.sessionStorage?.setItem(key, "1");
-  } catch { /* a store that will not keep it is not a reason to keep the strip up */ }
+  /* Through the session door, like every other per-viewer convenience: the door owns the refusal
+     a private window or a full quota gives, and a store that will not keep this is not a reason
+     to keep the strip up. */
+  durableSessionSet(key, "1", "lifecycle.banner");
 }
 
 /** The mailboxes ohmail handed back while the account was closed, and has not been asked to retake. */
