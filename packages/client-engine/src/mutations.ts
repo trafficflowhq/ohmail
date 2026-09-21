@@ -1,3 +1,4 @@
+import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { replySubject } from "@trafficflow/core/reply-subject";
 import { senderKey } from "./selectors.js";
 import type { EntityReader } from "./store.js";
@@ -624,9 +625,13 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       // demands, and the waterline row is the VIEW'S own (`waterlineIdOf`), so leaving Receipts
       // can never move Reads' line.
       const view = m.view ?? "reads";
+      // Both spellings of the News folder are the News feed: until the organizer renames it, the
+      // pile's rows carry the pre-0.22 name, and a `===` here left the anchor unfindable and the
+      // line undrawn on exactly those mailboxes.
+      const want = canonicalDestination(FOLDER_OF_VIEW[view]);
       const feed = reader
         .list<EngineMessage>("message")
-        .filter((msg) => msg.folder === FOLDER_OF_VIEW[view]);
+        .filter((msg) => canonicalDestination(msg.folder) === want);
       const targets = m.messageIds
         ? feed.filter((msg) => m.messageIds!.includes(msg.id))
         : feed.filter((msg) => msg.unread);

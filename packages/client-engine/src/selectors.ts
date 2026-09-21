@@ -1,4 +1,4 @@
-import { isSentFolderPath } from "@trafficflow/core/folder-name";
+import { canonicalDestination, isSentFolderPath } from "@trafficflow/core/folder-name";
 import { isAcknowledgementSubject } from "@trafficflow/core/ics";
 import { mayGroupByMessageId } from "@trafficflow/core/sender-headers";
 import type { EntityReader } from "./store.js";
@@ -313,7 +313,13 @@ export function messagesByDateDesc(reader: EntityReader): readonly EngineMessage
 }
 
 export function messagesIn(reader: EntityReader, folder: Folder): EngineMessage[] {
-  return messagesByDateDesc(reader).filter((m) => m.folder === folder);
+  /* BOTH SPELLINGS OF THE NEWS FOLDER ANSWER HERE. `pileFolder` keeps filing to the pre-0.22
+     `ohmail/Reads` for as long as that folder exists, so on a mailbox the organizer has not
+     renamed yet every row in the pile carries the legacy name — and a `===` on the canonical
+     one emptied the News view while the mail was sitting there. `VIEW_OF_FOLDER` already reads
+     both ways; this is the same question asked in the other direction. */
+  const want = canonicalDestination(folder);
+  return messagesByDateDesc(reader).filter((m) => canonicalDestination(m.folder) === want);
 }
 
 /**
