@@ -23,6 +23,7 @@ import { AppState } from "react-native";
 
 import { Copy } from "../copy";
 import { refuse, type RefusalArg } from "../refusal";
+import { afterDismiss, nextToast, type ToastEntry } from "./toast-one";
 import { useLocale } from "../i18n/LocaleProvider";
 import { activeLocale } from "../i18n/locale";
 import { useConnection } from "../net/connection";
@@ -430,8 +431,9 @@ export function useWorld(): World {
  * fires at most once, so a queued entry rendered late can never take back a settled press.
  */
 export interface WorldToast {
-  toast: { id: number; say: RefusalArg; undo?: () => void; holdMs?: number } | null;
-  dismiss(): void;
+  toast: ToastEntry | null;
+  /** The pill's own id — see `state/toast-one.ts#afterDismiss` for why it is not optional there. */
+  dismiss(id?: number): void;
 }
 
 const WorldToastContext = createContext<WorldToast>({ toast: null, dismiss: () => undefined });
@@ -601,24 +603,21 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     () => (engine ? engine.searchIndexRevision() : 0),
   );
 
-  /*
-   * The toast: one sentence per rejected (or optimistically stated) act — QUEUED, not
-   * replaced. A reconnect flush can settle several intents in one continuation, and React
-   * batches the state updates: with a single slot, "Reply sent." followed by a rolled-back
-   * move rendered only the rollback. Each sentence now takes its turn (the Toast's own
-   * dismiss timer advances the queue), capped so a burst cannot backlog the screen.
-   */
-  const [toastQueue, setToastQueue] = useState<{ id: number; say: RefusalArg; undo?: () => void; holdMs?: number }[]>([]);
+  /* The toast: the NEWEST sentence, and nowhere for a second to wait — the rule and what it
+     costs are in `state/toast-one.ts`. A four-deep queue stood here and dropped the fifth
+     sentence with no record; the sentence a person wants is the one for the press they just
+     made. */
+  const [toastShown, setToastShown] = useState<ToastEntry | null>(null);
   const toastSeq = useRef(0);
   const showToast = useCallback((say: RefusalArg, opts?: ToastOpts) => {
     toastSeq.current += 1;
     const id = toastSeq.current;
-    setToastQueue((q) => (q.length >= 4 ? q : [...q, { id, say, ...(opts ?? {}) }]));
+    setToastShown((standing) => nextToast(standing, { id, say, ...(opts ?? {}) }));
   }, []);
-  const dismissToast = useCallback(() => setToastQueue((q) => q.slice(1)), []);
+  const dismissToast = useCallback((id?: number) => setToastShown((standing) => afterDismiss(standing, id)), []);
   const worldToast = useMemo<WorldToast>(
-    () => ({ toast: toastQueue[0] ?? null, dismiss: dismissToast }),
-    [toastQueue, dismissToast],
+    () => ({ toast: toastShown, dismiss: dismissToast }),
+    [toastShown, dismissToast],
   );
 
   /* Per-sender scope choice (this sender / whole domain) — view state on the session,
@@ -635,7 +634,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   const sessionKey = session?.ownerKey ?? null;
   useEffect(() => {
     setScopes({});
-    setToastQueue([]);
+    setToastShown(null);
     // Open delete windows commit into the session that armed them (each press captured its own
     // dispatch) — leaving a session is not asking for the deletes back, the webapp's unmount rule.
     flushHeldDeletes();

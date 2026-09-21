@@ -315,7 +315,9 @@ export function Toast() {
         undo ? Copy.ariaLabelDetail(message, Copy.undo) : message,
       );
     }
-    const timer = setTimeout(dismiss, holdMs);
+    /* BY ID: a displaced sentence's timer must not take the one that replaced it off the
+       screen (`state/toast-one.ts#afterDismiss`). */
+    const timer = setTimeout(() => dismiss(toastId), holdMs);
     return () => {
       clearTimeout(timer);
       anim.setValue(0);
@@ -357,7 +359,9 @@ export function Toast() {
             accessibilityLabel={Copy.undo}
             onPress={() => {
               undo();
-              dismiss();
+              // This handler belongs to the last PAINTED render; a sentence raised since is
+              // already in state, and an id-less dismiss would clear that one instead.
+              dismiss(toastId);
             }}
             style={{ paddingVertical: 4, paddingLeft: 4 }}
           >
