@@ -278,6 +278,7 @@ export {
   // ONE ROW PER CONVERSATION under Resurfaced, derived from the per-message pin already on the
   // wire — additive beside `ohboxView.resurfaced`, which stays per message. Exported because both
   // the web app and the phone render the same rows from it.
+  resurfacedFocus,
   resurfacedThreads,
   // The instant a row dates a message by (`Date:` else arrival) — exported so the surfaces order
   // and open by the rule the selector sorts by, rather than each re-spelling it.

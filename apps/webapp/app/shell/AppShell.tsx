@@ -202,6 +202,7 @@ import { KeymapProvider, useCursorPlacer, useKeyBindings, useModGlyph, type KeyB
 import { CURSOR_HINT_MS, placeFirstRow, useCursorHint, type CursorHost } from "./cursor-placer";
 import { createSeenBatcher } from "./seen-batch";
 import { readColumnHidden, readColumnHiddenFor, watchNarrow, watchZeroPushTier, zeroPushTier } from "./narrow";
+import { ohboxSurfaceMessages } from "./ohbox-surface";
 import type { ActedMarker } from "./after-verb";
 import { ZoneCursor, currentZone, setRailSummon } from "./zone-nav";
 import "./zone-cursor.css";
@@ -2881,9 +2882,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     }
   }, []);
 
+  /* The rows' MEMBERS and the three groups — see `ohbox-surface.ts`: a resurfaced conversation's
+     unpinned members are in none of the groups, and a column resolved from the groups alone
+     rested on "Nothing open." over a row on screen. */
   const allOhbox = useMemo(
-    () => [...ohbox.resurfaced, ...ohbox.newForYou, ...ohbox.previouslySeen],
-    [ohbox],
+    () => ohboxSurfaceMessages(resurfacedRows, ohbox),
+    [resurfacedRows, ohbox],
   );
   /**
    * The conversation's people for a row's lead circles — bound to the
@@ -2931,7 +2935,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * displayed; it may never drive seen-machinery — and here the display IS
    * an open, so there is nothing left for a fallback to be innocent of.
    */
-  const selectedOhbox = allOhbox.find((m) => m.id === ohboxSel) ?? null;
+  /* The surface first, then the mirror by the SAME id — the door `readerMessageFor` opens for
+     every other route. Not a fallback to a different message: the cursor names an id, and a row
+     the mirror holds is never an empty pane. `null` only for no cursor or a mirror miss, which
+     `ohboxGone` then classifies. */
+  const selectedOhbox = allOhbox.find((m) => m.id === ohboxSel)
+    ?? (ohboxSel === null ? null : reader.get<EngineMessage>("message", ohboxSel) ?? null);
 
   /**
    * THE READING COLUMN'S OWN "GONE", and it needs its own question: the column renders from the

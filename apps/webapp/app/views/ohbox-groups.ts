@@ -1,5 +1,5 @@
 import {
-  arrivalMs, isItipAcknowledgement, type EngineMessage, type ResurfacedThreadRow,
+  isItipAcknowledgement, resurfacedFocus, type EngineMessage, type ResurfacedThreadRow,
 } from "@ohmail/client-engine";
 
 /*
@@ -162,14 +162,19 @@ export function groupResurfaced(
     const members = membersOf.get(key)!;
     const row = rowOf.get(key);
     if (!row) return toGroup(key, members);
-    // The engine's open target, but only while it is still on screen: during a slide the
-    // displayed members are a subset, and a target the row cannot show is a click going nowhere.
+    // The engine's focus, but only while it is still on screen: during a slide the displayed
+    // members are a subset, and a target the row cannot show is a click going nowhere — so the
+    // same rule is re-asked over the members in hand. The FACE is the focus too: a resurfaced
+    // row shows what came back, not the account's own answer standing in for it (2026-09-21).
     const shown = new Set(members.map((m) => m.id));
+    const focus = shown.has(row.openTarget.id)
+      ? row.openTarget
+      : resurfacedFocus(members, row.pinned.filter((m) => shown.has(m.id)));
     return {
       key,
       members,
-      latest: facingMemberOf(members),
-      openTarget: shown.has(row.openTarget.id) ? row.openTarget : newestOf(members),
+      latest: focus,
+      openTarget: focus,
       unreadCount: members.filter((m) => m.unread).length,
       resurfaced: {
         count: row.count,
@@ -178,15 +183,4 @@ export function groupResurfaced(
       },
     };
   });
-}
-
-/** The newest member by {@link arrivalMs} — the engine's rule, for the fallback above. */
-function newestOf(members: readonly EngineMessage[]): EngineMessage {
-  let best = members[0]!;
-  let bestMs = arrivalMs(best);
-  for (const m of members) {
-    const t = arrivalMs(m);
-    if (t !== null && (bestMs === null || t > bestMs)) { best = m; bestMs = t; }
-  }
-  return best;
 }

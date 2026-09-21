@@ -668,7 +668,10 @@ export interface ResurfacedThreadRow {
   members: EngineMessage[];
   /** The members carrying the claim — `resurfaced` and `bubbled_up` alike. */
   pinned: EngineMessage[];
-  /** What opening the row lands on: the NEWEST member by {@link arrivalMs}. */
+  /**
+   * What opening the row lands on, and whose words it shows: the newest member somebody else
+   * wrote ({@link resurfacedFocus}) — never the account's own reply or the away responder's.
+   */
   openTarget: EngineMessage;
   count: number;
   /** Whether {@link count} is the server's thread length or the windowed mirror's. */
@@ -708,6 +711,34 @@ export function arrivalMs(m: Pick<EngineMessage, "sortAt" | "date" | "arrivedAt"
  */
 function isFromSomeone(m: EngineMessage): boolean {
   return !isOwnSent(m) && m.autoReplyByUs !== true && !isItipAcknowledgement(m);
+}
+
+/**
+ * WHAT A RESURFACED ROW SHOWS AND OPENS — the newest member somebody ELSE wrote. A person brings
+ * a conversation back to see what came in or what they parked, never their own reply or the away
+ * responder's answer; keyed on the newest member by arrival, a row whose last word was an
+ * out-of-office wore "Me → …: I'm out of the office" as its face and opened on the Sent copy
+ * (desktop and web, 2026-09-21). Newest by {@link arrivalMs} among {@link isFromSomeone}, then
+ * the newest PINNED member for a conversation of the account's own mail alone (what was parked),
+ * then the newest of all — a row with no focus is not a row. Ties break on the larger id.
+ */
+export function resurfacedFocus(
+  members: readonly EngineMessage[],
+  pinned: readonly EngineMessage[] = [],
+): EngineMessage {
+  const newest = (of: readonly EngineMessage[]): EngineMessage | null => {
+    let best: EngineMessage | null = null;
+    let bestMs: number | null = null;
+    for (const m of of) {
+      const t = arrivalMs(m);
+      if (best === null || (t !== null && (bestMs === null || t > bestMs || (t === bestMs && m.id > best.id)))) {
+        best = m;
+        bestMs = t;
+      }
+    }
+    return best;
+  };
+  return newest(members.filter(isFromSomeone)) ?? newest(pinned) ?? newest(members) ?? members[0]!;
 }
 
 const msOf = (iso: string | null): number | null => {
@@ -824,16 +855,9 @@ export function resurfacedThreads(reader: EntityReader): ResurfacedThreadRow[] {
     });
     if (!hasResurfaced && !written) continue;
 
-    let openTarget = group[0]!;
-    let openMs = arrivalMs(openTarget);
-    for (const m of group) {
-      const t = arrivalMs(m);
-      if (t === null) continue;
-      if (openMs === null || t > openMs || (t === openMs && m.id > openTarget.id)) {
-        openTarget = m;
-        openMs = t;
-      }
-    }
+    // The newest member somebody ELSE wrote — see {@link resurfacedFocus}; a row keyed on the
+    // account's own answer opened on the Sent copy (2026-09-21).
+    const openTarget = resurfacedFocus(group, pinned);
 
     // THE SAME COUNT THE PHONE'S ROWS CARRY — {@link threadSizeIndex}, not a second walk here: two
     // derivations of one number drift, and this row's badge and a list row's badge are the same
