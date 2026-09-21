@@ -1762,7 +1762,7 @@ const TABLE = {
   awayPerWeek: "At most once a week",
   awayPilesLabel: "Which mail gets a reply",
   awayPileOhbox: "Ohbox",
-  awayPileReads: "Reads",
+  awayPileReads: "News",
   awayPileReceipts: "Receipts",
   awayPileScreener: "Screener",
   awayNever:

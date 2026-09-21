@@ -1141,7 +1141,7 @@ export const DE: Deck = {
   awayPerWeek: "Höchstens einmal pro Woche",
   awayPilesLabel: "Welche Mail eine Antwort bekommt",
   awayPileOhbox: "Ohbox",
-  awayPileReads: "Reads",
+  awayPileReads: "News",
   awayPileReceipts: "Belege",
   awayPileScreener: "Screener",
   awayNever:

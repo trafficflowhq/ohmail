@@ -81,7 +81,7 @@ export function awaySaveBlocked(edits: AwayEdits, now: Date): boolean {
 /** The folder names the phone has words for, and the word for each. */
 const PILE_WORD: Readonly<Record<string, "ohbox" | "reads" | "receipts" | "screener">> = {
   "INBOX": "ohbox",
-  "ohmail/Reads": "reads",
+  "ohmail/News": "reads",
   "ohmail/Receipts": "receipts",
   "ohmail/Screener": "screener",
 };
