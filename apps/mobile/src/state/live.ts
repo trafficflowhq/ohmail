@@ -937,8 +937,10 @@ export function liveOhbox(pres: EntityReader, v: WorldView): WorldOhbox {
   /**
    * ONE ROW PER CONVERSATION, from the engine's own `resurfacedThreads` — the same rows the web
    * app draws. The pin is per message, so `box.resurfaced` lists a conversation parked as five
-   * messages five times; the row is what the reader asked to see again. The row opens on its
-   * newest member and carries the badge for what arrived since.
+   * messages five times; the row is what the reader asked to see again. The row faces and opens
+   * on the newest member somebody ELSE wrote (`resurfacedFocus`) and carries the badge for what
+   * arrived since — a conversation the away responder answered last showed the account's own
+   * mail as its face and opened on it (2026-09-21).
    */
   const rows = resurfacedThreads(pres);
   const resurfaced = rows.map((r) => {
