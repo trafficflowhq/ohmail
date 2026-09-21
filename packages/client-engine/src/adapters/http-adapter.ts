@@ -33,6 +33,7 @@ import type {
 } from "./adapter.js";
 import { retryAfterMsOf, retryingRead } from "./retrying-read.js";
 import type { WindowSyncFailure } from "../window-sync-failure.js";
+import { classifyRefusal, type RefusalKind } from "./refusal-shape.js";
 import { responseBlob } from "../bytes-blob.js";
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
@@ -450,17 +451,18 @@ export class HttpAdapter implements EngineAdapter {
     }
   }
 
-  private async rejectionOf(res: Response): Promise<MutationRejectedError> {
+  private async rejectionOf(res: Response, kind: RefusalKind = "write"): Promise<MutationRejectedError> {
     let wire: WireError = {};
     try {
       wire = (await res.json()) as WireError;
     } catch {
-      /* non-JSON body */
+      /* non-JSON body — classified by status, see classifyRefusal */
     }
+    const shape = classifyRefusal(res.status, wire.error, kind);
     return new MutationRejectedError(wire.error?.message ?? `HTTP ${res.status}`, {
       status: res.status,
-      code: wire.error?.code ?? null,
-      retryable: wire.error?.retryable ?? (res.status >= 500 || res.status === 429),
+      code: shape.code,
+      retryable: shape.retryable,
       retryAfterMs: retryAfterMsOf(res),
     });
   }
@@ -594,7 +596,7 @@ export class HttpAdapter implements EngineAdapter {
 
   private async readBody(messageId: string, signal: AbortSignal | undefined): Promise<MessageBodyWire> {
     const res = await this.request("GET", `/messages/${encodeURIComponent(messageId)}/body`, { signal });
-    if (!res.ok) throw await this.rejectionOf(res);
+    if (!res.ok) throw await this.rejectionOf(res, "read");
     return narrowBody((await res.json()) as Partial<MessageBodyWire>);
   }
 
@@ -609,7 +611,7 @@ export class HttpAdapter implements EngineAdapter {
   async fetchDraftBody(draftId: string): Promise<string | null> {
     return this.withDeadline(BODY_FETCH_TIMEOUT_MS, async (signal) => {
       const res = await this.request("GET", `/drafts/${encodeURIComponent(draftId)}`, { signal });
-      if (!res.ok) throw await this.rejectionOf(res);
+      if (!res.ok) throw await this.rejectionOf(res, "read");
       const wire = (await res.json()) as { body?: unknown };
       return typeof wire.body === "string" ? wire.body : null;
     });
@@ -636,7 +638,7 @@ export class HttpAdapter implements EngineAdapter {
     const ids = messageIds.map((id) => encodeURIComponent(id)).join(",");
     return this.withDeadline(BODY_FETCH_TIMEOUT_MS, async (signal) => {
       const res = await this.request("GET", `/messages/bodies?ids=${ids}`, { signal });
-      if (!res.ok) throw await this.rejectionOf(res);
+      if (!res.ok) throw await this.rejectionOf(res, "read");
       const page = (await res.json()) as { items?: unknown };
       if (!Array.isArray(page.items)) return [];
       const out: MessageBodyBatchWire[] = [];
@@ -944,7 +946,7 @@ export class HttpAdapter implements EngineAdapter {
   async listAttachments(messageId: string): Promise<AttachmentWire[]> {
     return this.withDeadline(ATTACHMENT_LIST_TIMEOUT_MS, async (signal) => {
       const res = await this.request("GET", `/messages/${encodeURIComponent(messageId)}/attachments`, { signal });
-      if (!res.ok) throw await this.rejectionOf(res);
+      if (!res.ok) throw await this.rejectionOf(res, "read");
       const wire = (await res.json()) as { items?: unknown };
       if (!Array.isArray(wire.items)) return [];
       return wire.items.map((raw): AttachmentWire => {
@@ -973,7 +975,7 @@ export class HttpAdapter implements EngineAdapter {
    */
   async fetchAttachment(attachmentId: string): Promise<Blob> {
     const res = await this.request("GET", `/attachments/${encodeURIComponent(attachmentId)}`);
-    if (!res.ok) throw await this.rejectionOf(res);
+    if (!res.ok) throw await this.rejectionOf(res, "read");
     return await responseBlob(res);
   }
 
