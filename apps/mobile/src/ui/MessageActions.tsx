@@ -11,6 +11,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import {
   Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, TextInput, View,
+  type LayoutChangeEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Copy } from "../copy";
@@ -48,9 +49,9 @@ import {
   type WorldTag,
 } from "../state/live";
 import { useWorld } from "../state/world";
-import { BAR, PILL } from "./action-bar-layout";
+import { BAR, PILL, compactFit } from "./action-bar-layout";
 import { Button, Rule, Tap, Txt } from "./base";
-import { GlassActionBar, GlassPill, type BarVerbSpec } from "./glass";
+import { GlassActionBar, GlassPill, nextRoom, type BarVerbSpec } from "./glass";
 import type { RailAction } from "./glass/GlassRail";
 import { usePosture } from "./posture";
 import { scaffoldPlan } from "./scaffold/plan";
@@ -161,7 +162,41 @@ export function MessageActions({
     junkOffered: moveTargetsFor(m).includes("spam"),
   };
   const placement = readerVerbPlacement(mode, facts);
-  const moreHas = (id: ReaderVerbId) => placement.behindMore.includes(id);
+
+  /* ── THE COMPACT BAR IS ONE ROW, AND IT MEASURES BEFORE IT SHOWS ────────────────────────────
+     A hidden copy of Reply and every capsule reports its width; the wrapper reports the room.
+     `compactFit` admits the verbs that fit in row order and the tail goes behind ⋯ — a second
+     row of capsules stood over the message on the iPhone 18 Pro, and a scroller before it cut
+     the fourth verb mid-glyph. Until both readings are in, the floor stands (Reply and ⋯) and
+     every verb is in the sheet: a bar with nothing measured must not guess. */
+  const [compactRoom, setCompactRoom] = useState<number | null>(null);
+  const [compactWidths, setCompactWidths] = useState<Record<string, number> | null>(null);
+  const measuredWidths = useRef<Record<string, number>>({});
+  const compactRow = mode !== "compact" ? [] : ([
+    { id: "later" as const, label: Copy.actionLater, icon: "clock" as IconName,
+      on: m.pile === "reply_later", onPress: () => a.pileToggle(m.id, "replyLater") },
+    { id: "aside" as const, label: Copy.actionSetAside, icon: "pause" as IconName,
+      on: m.pile === "set_aside", onPress: () => a.pileToggle(m.id, "setAside") },
+    /* Resurface asks "when?" — except on a message already scheduled, where the press is the
+       webapp's horizon-less toggle: it clears the booking rather than re-dating it. */
+    { id: "resurface" as const, label: Copy.actionResurface, icon: "up" as IconName,
+      on: m.pile === "bubbled_up",
+      onPress: () => (m.pile === "bubbled_up" ? a.resurfaceToggle(m.id) : setOpen("resurface")) },
+  ]).filter((v) => placement.standing.includes(v.id));
+  const recordWidth = (id: string) => (e: LayoutChangeEvent) => {
+    measuredWidths.current[id] = e.nativeEvent.layout.width;
+    if (Object.keys(measuredWidths.current).length >= compactRow.length + 1) {
+      setCompactWidths({ ...measuredWidths.current });
+    }
+  };
+  const barFit = compactFit({
+    verbs: compactRow.map((v) => v.id),
+    widths: compactWidths,
+    room: compactRoom,
+  });
+  /* A folded verb is in the sheet, so the row and ⋯ together always carry the whole set. */
+  const moreHas = (id: ReaderVerbId) =>
+    placement.behindMore.includes(id) || barFit.overflow.includes(id);
 
   /** The one three-faced read slot — the webapp's read switch, never empty and never two. */
   const readFace =
@@ -293,13 +328,35 @@ export function MessageActions({
         </View>
       ) : mode === "rail" ? null : (
       /* The compact bar, in the glass material (owner: one look on every device) — the same
-         verbs, wrap and More it always carried; only the slab became the translucent pill. */
+         verbs and More it always carried, on ONE row; only the slab became the translucent pill. */
       <View
         pointerEvents="box-none"
-        // This view ends at the window's foot, so its own height is how far the bar reaches.
-        onLayout={(e) => standing(e.nativeEvent.layout.height)}
-        style={{ paddingHorizontal: 8, paddingBottom: Math.max(insets.bottom, 8) }}
+        // This view ends at the window's foot, so its own height is how far the bar reaches —
+        // and its WIDTH is the room the verbs are admitted against (`nextRoom`: a zero reading
+        // is a layout in flight, not a room, so a transient 0 cannot fold a standing bar).
+        onLayout={(e) => {
+          standing(e.nativeEvent.layout.height);
+          setCompactRoom((r) => nextRoom(r, e.nativeEvent.layout.width));
+        }}
+        style={{ paddingHorizontal: BAR.outerPadH, paddingBottom: Math.max(insets.bottom, 8) }}
       >
+      {/* The hidden copy every width is read from — the same capsules, absolute and invisible,
+          out of the touch path and out of the accessibility tree. */}
+      <View
+        pointerEvents="none"
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        style={{ position: "absolute", opacity: 0, flexDirection: "row", left: 0, top: 0 }}
+      >
+        <View onLayout={recordWidth("__reply")}>
+          <Button label={Copy.actionReply} icon="pen" variant="solid" onPress={() => undefined} />
+        </View>
+        {compactRow.map((v) => (
+          <View key={v.id} onLayout={recordWidth(v.id)}>
+            <BarToggle label={v.label} icon={v.icon} on={false} onPress={() => undefined} />
+          </View>
+        ))}
+      </View>
       <GlassPill
         horizontal
         level="l3"
@@ -316,17 +373,15 @@ export function MessageActions({
           paddingVertical: 2,
         }}
       >
-        {/* THE VERBS WRAP; More is pinned OUTSIDE the wrap. A scroller stood here and a
-            horizontal ScrollView clips: at 1080 px / 420 dpi the fourth verb was cut mid-glyph
-            — "Resurface" at the pill's right edge, "Wieder auftauchen" as a bare "W". Wrapping
-            is what every other pill group on this phone already does. More is a sibling of the
-            wrap, not a member, so it can neither overlap a pill nor land alone on a line — the
-            shape the first release-binary walk produced and the scroller was answering. */}
+        {/* ONE ROW, MEASURED. More is pinned OUTSIDE it and never folds, so it can neither
+            overlap a capsule nor land alone on a line; what does not fit is a row in its sheet
+            (`barFit.overflow` feeds `moreHas`), so every verb is one press away at every width
+            and in every language. The three horizons are toggles, with the pile that holds the
+            message shown pressed. */}
         <View
           style={{
             flex: 1,
             flexDirection: "row",
-            flexWrap: "wrap",
             alignItems: "center",
             gap: BAR.gap,
             paddingVertical: PILL.padV,
@@ -339,27 +394,11 @@ export function MessageActions({
             style={{ maxWidth: "100%" }}
             onPress={() => setOpen({ compose: "reply" })}
           />
-          {/* The three horizons — toggles, with the pile that holds the message shown pressed. */}
-          <BarToggle
-            label={Copy.actionLater}
-            icon="clock"
-            on={m.pile === "reply_later"}
-            onPress={() => a.pileToggle(m.id, "replyLater")}
-          />
-          <BarToggle
-            label={Copy.actionSetAside}
-            icon="pause"
-            on={m.pile === "set_aside"}
-            onPress={() => a.pileToggle(m.id, "setAside")}
-          />
-          {/* Resurface asks "when?" — except on a message already scheduled, where the press is
-              the webapp's horizon-less toggle: it clears the booking rather than re-dating it. */}
-          <BarToggle
-            label={Copy.actionResurface}
-            icon="up"
-            on={m.pile === "bubbled_up"}
-            onPress={() => (m.pile === "bubbled_up" ? a.resurfaceToggle(m.id) : setOpen("resurface"))}
-          />
+          {compactRow
+            .filter((v) => barFit.standing.includes(v.id))
+            .map((v) => (
+              <BarToggle key={v.id} label={v.label} icon={v.icon} on={v.on} onPress={v.onPress} />
+            ))}
         </View>
         <Tap
           onPress={() => setOpen("more")}
@@ -404,6 +443,16 @@ export function MessageActions({
                 a.resurfaceToggle(m.id);
               } else setOpen("resurface");
             }}
+          />
+        ) : null}
+        {/* Park has a row here for the same reason: the compact bar folds it when the width
+            cannot carry it, and a folded verb is never gone. */}
+        {moreHas("aside") ? (
+          <SheetRow
+            icon="pause"
+            label={Copy.actionSetAside}
+            on={m.pile === "set_aside"}
+            onPress={() => { close(); a.pileToggle(m.id, "setAside"); }}
           />
         ) : null}
         {moreHas("tag") ? <SheetRow icon="tag" label={Copy.actionTag} onPress={() => setOpen("tag")} /> : null}
