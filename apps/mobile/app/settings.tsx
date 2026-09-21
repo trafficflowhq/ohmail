@@ -637,7 +637,7 @@ function ThisPhonePanel() {
       {/* THE CONSEQUENCE, THEN THE ONE DELIBERATE PRESS — the app's own destructive idiom
           (`FoldersGroup`'s delete confirm). The danger is on the confirm and nowhere else. */}
       {confirming !== null ? (
-        <Sheet open onClose={() => setConfirming(null)} label={Copy.settingsStopHere}>
+        <Sheet open onClose={() => setConfirming(null)} label={Copy.settingsStopHere} cancel="own">
           <Txt variant="note" tone="ink2" style={{ paddingHorizontal: 14, paddingBottom: 10 }}>
             {Copy.settingsStopHereWhat}
           </Txt>
@@ -672,7 +672,7 @@ function ThisPhonePanel() {
           exactly as it was — which is why the sheet stays open with the server's own words in it
           rather than closing on a send that changed nothing. */}
       {resupplying ? (
-        <Sheet open onClose={() => setResupplying(false)} label={Copy.signInAgain}>
+        <Sheet open onClose={() => setResupplying(false)} label={Copy.signInAgain} cancel="own">
           <Txt variant="note" tone="ink2" style={{ paddingHorizontal: 14, paddingBottom: 4 }}>
             {Copy.signInAgainLead}
           </Txt>

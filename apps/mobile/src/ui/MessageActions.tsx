@@ -75,7 +75,7 @@ import {
 import { nativeAttachPicker } from "../compose/attach-native";
 import { afterWithdraw, cancelAct } from "./send-cancel";
 import { Segmented } from "./Segmented";
-import { CancelRow, Sheet, SheetRow, useSheetPanelBounds } from "./Sheet";
+import { Sheet, SheetRow, useSheetPanelBounds } from "./Sheet";
 
 /**
  * One pick's verdicts, held as KINDS — the sentence is derived where it is shown, so a refusal
@@ -444,14 +444,13 @@ export function MessageActions({
               a.deleteMessage(m.id, { onCommitted: () => { if (mounted.current) onDeleted?.(); } });
             }}
           />
-          <CancelRow onPress={close} />
         </Sheet>
       ) : null}
 
       {/* ── Resurface: the horizon chooser — Now / Tomorrow / Next week / Pick a date ────── */}
       <Sheet
         open={open === "resurface" || open === "pick" || open === "time"}
-        onClose={close}
+        onClose={() => { close(); setPickedTime(null); }}
         label={open === "time" ? Copy.resurfaceTime : Copy.resurfaceWhen}
       >
         <Txt variant="sectionLabel" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
@@ -523,7 +522,6 @@ export function MessageActions({
             })}
           </ScrollView>
         )}
-        <CancelRow onPress={() => { close(); setPickedTime(null); }} />
       </Sheet>
 
       {/* ── Move: this message, relocated — every place except where it is ───────────────── */}
@@ -541,7 +539,6 @@ export function MessageActions({
             onPress={() => { close(); a.move(m, target); }}
           />
         ))}
-        <CancelRow onPress={close} />
       </Sheet>
 
       {open === "tag" ? <TagSheet m={m} tags={w.tags} onClose={close} /> : null}

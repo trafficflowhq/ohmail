@@ -20,7 +20,7 @@ import { fetchRemoteImages } from "../mail/remote-images";
 import { frameNavDecision } from "../mail/frame-nav";
 import { sanitizeMailHtmlPhone } from "../mail/sanitize";
 import { blockedNotice } from "../mail/notice";
-import { Sheet, SheetRow, CancelRow } from "./Sheet";
+import { Sheet, SheetRow } from "./Sheet";
 import { Txt } from "./base";
 
 export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText: () => void }) {
@@ -154,7 +154,6 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
             if (url !== null) void Linking.openURL(url).catch(() => undefined);
           }}
         />
-        <CancelRow onPress={() => setLinkAsk(null)} />
       </Sheet>
     </View>
   );

@@ -49,12 +49,20 @@ export function Sheet({
   onClose,
   label,
   avoidKeyboard,
+  cancel,
   children,
 }: {
   open: boolean;
   onClose: () => void;
   label: string;
   avoidKeyboard?: boolean;
+  /**
+   * `"own"` for a sheet that already renders its own dismissing row — a confirmation whose
+   * pair is the point (Stop / Cancel, Delete / Cancel). Anything else gets the primitive's
+   * row, so a sheet with nothing to press cannot be written. `sheet-has-a-cancel.test.ts`
+   * refuses an `"own"` whose children carry no such row.
+   */
+  cancel?: "own";
   children: ReactNode;
 }) {
   const t = useTheme();
@@ -80,6 +88,12 @@ export function Sheet({
         ]}
       >
         {children}
+        {/* THE WAY OUT IS THE PRIMITIVE'S, not each caller's. The reader's More sheet shipped
+            with six verbs and no dismiss control: a pointer drags the panel down, and a screen
+            reader, a switch or a keyboard has nothing to press. The row is rendered here so a
+            sheet without one cannot be written; `cancel="own"` is for the confirmations that
+            carry their own pair. */}
+        {cancel === "own" ? null : <CancelRow onPress={onClose} />}
       </View>
     </>
   );
@@ -149,6 +163,10 @@ export function SheetRow({
   );
 }
 
-export function CancelRow({ onPress }: { onPress: () => void }) {
+/**
+ * The way out, rendered by {@link Sheet} and by nobody else — unexported for that reason: a
+ * caller that could render one could render a second beside the primitive's.
+ */
+function CancelRow({ onPress }: { onPress: () => void }) {
   return <SheetRow icon="x" label={Copy.moveCancel} onPress={onPress} />;
 }

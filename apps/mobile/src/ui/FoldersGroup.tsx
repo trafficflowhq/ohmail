@@ -28,7 +28,7 @@ import { folderNameError } from "../state/live";
 import type { FolderEntity } from "../state/world";
 import { Rule, Section, Tap, TapRow, Txt } from "./base";
 import { Icon } from "./Icon";
-import { CancelRow, Sheet, SheetRow } from "./Sheet";
+import { Sheet, SheetRow } from "./Sheet";
 
 const branchKey = (mailboxId: string, path: string): string => `${mailboxId}|${path}`;
 
@@ -554,13 +554,12 @@ export function FoldersGroup({
               });
             }}
           />
-          <CancelRow onPress={close} />
         </Sheet>
       ) : null}
 
       {/* ── the delete confirm — the stated numbers, then the one deliberate press ────────── */}
       {open !== null && open.kind === "confirm" ? (
-        <Sheet open onClose={close} label={Copy.folderDelete}>
+        <Sheet open onClose={close} label={Copy.folderDelete} cancel="own">
           <Txt variant="sectionLabel" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
             {folderLeafOf(open.folder.name)}
           </Txt>
@@ -639,7 +638,6 @@ export function FoldersGroup({
             label={open.renaming ? Copy.folderRename : open.parent ? Copy.folderNewSub : Copy.folderNew}
             onPress={() => commitName(open)}
           />
-          <CancelRow onPress={close} />
         </Sheet>
       ) : null}
     </>

@@ -20,7 +20,7 @@ export function NotifyPermission({
   onAnswer: (go: boolean) => void;
 }) {
   return (
-    <Sheet open={open} onClose={() => onAnswer(false)} label={Copy.organizerNotifyTitle}>
+    <Sheet open={open} onClose={() => onAnswer(false)} label={Copy.organizerNotifyTitle} cancel="own">
       <Txt variant="note" tone="ink2" style={{ paddingHorizontal: 14, paddingBottom: 10 }}>
         {Copy.organizerNotifyWhy}
       </Txt>

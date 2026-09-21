@@ -24,7 +24,7 @@ import { DetailBar } from "../src/ui/chrome";
 import { Field } from "../src/ui/Field";
 import { Gated } from "../src/ui/Gated";
 import { Segmented } from "../src/ui/Segmented";
-import { Sheet, SheetRow, CancelRow } from "../src/ui/Sheet";
+import { Sheet, SheetRow } from "../src/ui/Sheet";
 
 /** How far ahead the end-date rows reach — a quarter, the resurface chooser's own horizon. */
 const END_DATE_DAYS = 90;
@@ -252,7 +252,6 @@ function AwayBody() {
             />
           );
         })}
-        <CancelRow onPress={() => setPicking(false)} />
       </Sheet>
     </Screen>
   );
