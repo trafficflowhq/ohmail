@@ -1571,6 +1571,7 @@
     "menuReply": "Reply",
     "menuReplyAll": "Reply all",
     "menuForward": "Forward",
+    "forwardedTo": "Forwarded to {name}",
     "rowProtected": "protected",
     "rowHeld": "{count} held",
     "rowUnread": "Unread",

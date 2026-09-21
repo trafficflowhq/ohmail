@@ -1647,6 +1647,7 @@ const TABLE = {
   forwardToPlaceholder: "name@example.org, …",
   forwardNotePlaceholder: "Add a note (optional)",
   forwarded: "Forwarded.",
+  forwardedTo: (name: string) => `Forwarded to ${name}`,
   forwardEarlierWent: "This forward had already been sent. Your newer text was not sent as a second copy.",
   /* A MAIL THAT ANSWERS NOTHING — the same composer with no parent, so it asks the two
      things a reply already knows: who it goes to, and what it is about. */

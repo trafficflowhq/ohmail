@@ -193,7 +193,7 @@ export function MessageReader({
                 <Panel key={h.id} radius={t.radius.card} style={{ padding: 18 }}>
                   <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
                     <Txt variant="rowSubject" style={{ flexShrink: 1 }}>
-                      {h.subject}
+                      {h.face ?? h.subject}
                     </Txt>
                     <View style={{ flex: 1 }} />
                     <Txt variant="caption" tone="ink3" tabular>

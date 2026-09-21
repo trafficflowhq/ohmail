@@ -13,7 +13,7 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Avatar, Badge, Button, Icon } from "@ohmail/ui";
-import { isProtectedMessage, type EngineMessage } from "@ohmail/client-engine";
+import { isForwardedByUs, isProtectedMessage, type EngineMessage } from "@ohmail/client-engine";
 import { AwayMark } from "./AwayMark";
 import { isPreviewable } from "../components/AttachmentPreview";
 import { AttachmentStrip } from "../components/AttachmentStrip";
@@ -24,6 +24,7 @@ import { replyAllRecipients } from "./compose-from";
 import {
   avatarHue,
   displayTime,
+  forwardedToNames,
   fullDateTime,
   initialsOf,
   rowAddress,
@@ -89,6 +90,13 @@ export function MessageHeader({
   // supplies it (default `[]`), so on every live path this is exactly `chrome.ownAddresses`.
   const ownAddresses = chrome.ownAddresses ?? [];
   const name = senderName(message);
+  /**
+   * THE FORWARD ROW'S FACE. The account's own forward stands inside the conversation it was
+   * forwarded FROM (its headers thread it there), and its panel says where it went rather than
+   * repeating the account's own name: "Forwarded to <recipient>", in the reader's language. Every
+   * other panel — a received message, the account's own reply — keeps the sender face.
+   */
+  const forwardedTo = isForwardedByUs(message) ? forwardedToNames(message) : null;
   const address = rowAddress(message);
   const rel = displayTime(message, now);
   const abs = fullDateTime(message);
@@ -175,7 +183,7 @@ export function MessageHeader({
           onClick={(e) => chrome.openSenderMenu(message.id, e.currentTarget)}
         >
           <Avatar initials={initialsOf(name)} hue={avatarHue(message.from.address)} size="s" />
-          <b>{name}</b>
+          <b>{forwardedTo !== null ? tm("forwardedTo", { name: forwardedTo }) : name}</b>
           {address ? <small>{address}</small> : null}
         </button>
         <span className="t num">

@@ -395,6 +395,17 @@ export function senderName(m: EngineMessage): string {
 }
 
 /**
+ * WHO A FORWARD WENT TO — the To recipients' display names, name first and the readable address
+ * where there is none, joined for the panel's "Forwarded to …" face. `null` for a row that names
+ * no recipient at all, so the caller falls back to the sender face rather than printing a
+ * sentence that ends in nothing.
+ */
+export function forwardedToNames(m: Pick<EngineMessage, "to">): string | null {
+  const names = m.to.map((a) => a.name || displayAddress(a.address)).filter((n) => n.length > 0);
+  return names.length > 0 ? names.join(", ") : null;
+}
+
+/**
  * THE SENDER CIRCLE — the same letter and the same colour for one person, in every list, on every device, forever.
  * The requirement: the small circle carrying the sender's or receiver's letter belongs on the mail list too, not only
  * in the Screener. The component already existed — it is what the Screener's rows and the doorbell stack — so the

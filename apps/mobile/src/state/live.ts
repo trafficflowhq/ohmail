@@ -39,6 +39,7 @@ import {
   screenerSegments,
   senderKey,
   threadOf,
+  isForwardedByUs,
   triagePiles,
   winningStates,
   withSignature,
@@ -1417,13 +1418,21 @@ export function liveMessage(engine: OhmailEngine, id: string, v: WorldView): Wor
   if (retired) row.historyPlace = physicalFolderOf(m);
   row.earlier = threadOf(pres, id)
     .filter((member) => member.id !== id)
-    .map((member) => ({
-      id: member.id,
-      subject: member.subject,
-      time: messageDisplayTime(member, v.now, v.zone, v.locale ?? "en"),
-      body: bodyOf(pres, member).text,
-      seen: !member.unread,
-    }));
+    .map((member) => {
+      // The account's own forward wears where it went, not the account's name — the same face
+      // the web panel gives it (`isForwardedByUs`), recipients named as every row names a person.
+      const forwardedTo = isForwardedByUs(member)
+        ? member.to.map((a) => a.name || a.address).filter((n) => n.length > 0).join(", ")
+        : "";
+      return {
+        id: member.id,
+        subject: member.subject,
+        time: messageDisplayTime(member, v.now, v.zone, v.locale ?? "en"),
+        body: bodyOf(pres, member).text,
+        seen: !member.unread,
+        ...(forwardedTo ? { face: Copy.forwardedTo(forwardedTo) } : {}),
+      };
+    });
   // The reading view's own facts, attached here and not in `toMail`: a list row never pays
   // for a document it will not draw. `EVERY_PART` is a variable on purpose — the engine's
   // option has two spellings (`includeInlineParts` widened from `includeInlineImages`), and a

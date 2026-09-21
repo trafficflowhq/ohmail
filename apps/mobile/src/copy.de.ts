@@ -1079,6 +1079,7 @@ export const DE: Deck = {
   forwardToPlaceholder: "name@beispiel.de, …",
   forwardNotePlaceholder: "Notiz hinzufügen (optional)",
   forwarded: "Weitergeleitet.",
+  forwardedTo: (name: string) => `Weitergeleitet an ${name}`,
   forwardEarlierWent: "Diese Weiterleitung wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
   /* NEUE NACHRICHT — derselbe Editor ohne Vorlage. */
   composeNew: "Neue Nachricht",

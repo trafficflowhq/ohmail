@@ -1571,6 +1571,7 @@
     "menuReply": "Antworten",
     "menuReplyAll": "Allen antworten",
     "menuForward": "Weiterleiten",
+    "forwardedTo": "Weitergeleitet an {name}",
     "rowProtected": "geschützt",
     "rowHeld": "{count} zurückgehalten",
     "rowUnread": "Ungelesen",

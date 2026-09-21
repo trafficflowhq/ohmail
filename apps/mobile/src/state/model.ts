@@ -30,6 +30,12 @@ export interface Held {
   body: string;
   trackerNote?: string;
   seen: boolean;
+  /**
+   * The row's lead line where it is not the subject: the account's own forward inside the
+   * conversation it was forwarded from reads "Forwarded to <recipient>" (the reader's language),
+   * the original standing above it. Absent on every other member — the subject leads.
+   */
+  face?: string;
 }
 
 /**
