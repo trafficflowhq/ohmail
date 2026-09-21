@@ -32,6 +32,7 @@ import type {
   MutationAnswer, MutationOutcome, MutationQueued, SyncParams,
 } from "./adapter.js";
 import { retryAfterMsOf, retryingRead } from "./retrying-read.js";
+import type { WindowSyncFailure } from "../window-sync-failure.js";
 import { responseBlob } from "../bytes-blob.js";
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
@@ -64,6 +65,12 @@ export interface HttpAdapterOptions {
    * neither passes options, so neither stages; the browser opts in.
    */
   stageAttachments?: boolean;
+  /**
+   * Where a window's failed pull is reported ({@link EngineAdapter.reportSyncFailure}). Set by the
+   * desktop's bridge adapter, which posts the record to the local engine; absent on the hosted
+   * client, so `reportSyncFailure` is absent too and no request is ever made for it.
+   */
+  syncFailureSink?: (record: WindowSyncFailure) => Promise<void>;
 }
 
 function defaultGetCookie(name: string): string | null {
@@ -340,7 +347,16 @@ export class HttpAdapter implements EngineAdapter {
     this.extraHeaders = opts.headers ?? (() => ({}));
     // `=== true` rather than `?? false`, so nothing truthy-but-not-boolean can turn this on.
     this.stageAttachments = opts.stageAttachments === true;
+    // The capability EXISTS only where a sink was given, so `typeof adapter.reportSyncFailure`
+    // answers the engine's question the way `requestPull` does: absent means "no door for this".
+    if (opts.syncFailureSink) {
+      const sink = opts.syncFailureSink;
+      this.reportSyncFailure = (record: WindowSyncFailure): Promise<void> => sink(record);
+    }
   }
+
+  /** See {@link HttpAdapterOptions.syncFailureSink}; assigned in the constructor when one was given. */
+  reportSyncFailure?: (record: WindowSyncFailure) => Promise<void>;
 
   /** The SSE wake-signal attach point (same origin/base as the sync API). */
   eventsUrl(): string {

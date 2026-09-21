@@ -25,6 +25,7 @@ import {
 import { oneSourceReader, sendingMailboxId, winningStates } from "./selectors.js";
 import { flattenResponse } from "./apply.js";
 import { CASCADE_TYPES } from "./mirror-bounds.js";
+import { classifyWindowSyncFailure, type WindowSyncFailure } from "./window-sync-failure.js";
 import { countNotify } from "./client-vitals.js";
 import { ObjectUrlLedger } from "./object-urls.js";
 import { bytesBlob, retypedBlob } from "./bytes-blob.js";
@@ -2378,6 +2379,19 @@ export class OhmailEngine {
    * regardless, so a refused or failed ring degrades to exactly the behaviour the gesture had before the doorbell
    * existed.
    */
+  /**
+   * The window's own pull failed: hand a content-free record to the door so it lands in the
+   * engine's log (`window_sync_failed`). Fire-and-forget by construction — the scheduler calls it
+   * from the drain's catch, and a sink that rejects or is absent changes nothing about the retry.
+   */
+  reportSyncFailure(err: unknown, attempt: number): void {
+    const sink = this.adapter.reportSyncFailure?.bind(this.adapter);
+    if (!sink) return;
+    let record: WindowSyncFailure;
+    try { record = classifyWindowSyncFailure(err, attempt); } catch { return; }
+    void sink(record).catch(() => { /* the log is a courtesy; the retry is the contract */ });
+  }
+
   async requestPull(): Promise<{
     requested: number; requestedAt: string;
     mailboxes: Array<{ id: string; requestedAt: string }>;
@@ -3655,8 +3669,13 @@ export class OhmailEngine {
       victims.push({ type: "message", id: row.id });
     }
     if (victims.length === 0) return pruned(false);
-    // EVERY ROW THAT NAMED AN EVICTED MESSAGE GOES WITH IT. See {@link cascadeVictims}.
-    victims.push(...this.cascadeVictims(victims, graceAbove));
+    // EVERY ROW THAT NAMED AN EVICTED MESSAGE GOES WITH IT. See {@link cascadeVictims}. Appended one
+    // by one, never spread: a first drain over a large mailbox lands the whole reachable mailbox
+    // before this prune runs, so the cascade is tens of thousands of rows, and `push(...cascade)`
+    // past the engine's argument ceiling threw `RangeError: Maximum call stack size exceeded` out of
+    // every drain — the strip read "Sync failed. Retrying." for a whole session while every sync
+    // succeeded (measured 2026-09-21).
+    for (const v of this.cascadeVictims(victims, graceAbove)) victims.push(v);
     await this.store.prune(victims); // hard delete + the `message_body` cascade
     return pruned(true);
   }

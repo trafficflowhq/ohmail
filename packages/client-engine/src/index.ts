@@ -422,6 +422,15 @@ export {
   retryingRead,
 } from "./adapters/retrying-read.js";
 
+// What a window says about its own failed pull — the closed record the desktop carries to the
+// local engine's log, and the classifier that builds it from a drain's rejection.
+export {
+  WINDOW_SYNC_FAILURE_REASONS,
+  classifyWindowSyncFailure,
+  type WindowSyncFailure,
+  type WindowSyncFailureReason,
+} from "./window-sync-failure.js";
+
 // The engine.
 export {
   OhmailEngine,

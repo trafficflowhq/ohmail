@@ -1,4 +1,5 @@
 import type { ServerAddressOpts, ServerAddressWire, ServerSearchOpts, ServerSearchWire } from "../engine.js";
+import type { WindowSyncFailure } from "../window-sync-failure.js";
 import type {
   EngineMutation, MessageBodyBatchWire, MessageBodyWire, SyncChange, SyncResponse, UnsubscribeResult,
 } from "../types.js";
@@ -179,6 +180,13 @@ export interface EngineAdapter {
    * pull. Optional — the FixturesAdapter must issue zero requests, and
    * callers read absence as "no doorbell here".
    */
+  /**
+   * Tell the door that THIS WINDOW's pull failed, so the failure reaches the engine's own log. A
+   * content-free record ({@link WindowSyncFailure}) and an optional capability: the desktop's
+   * bridge adapter carries it to the local engine; the hosted client has no sink and stays silent.
+   * Never awaited by the drain and never allowed to throw into it.
+   */
+  reportSyncFailure?(record: WindowSyncFailure): Promise<void>;
   requestPull?(): Promise<{
     requested: number;
     requestedAt: string;
