@@ -7,17 +7,6 @@ import { mailboxes, type Tx } from "@trafficflow/db";
  * copied per file until 0.21 — so a fix to one copy left the other one writing.
  */
 
-/** `--name` present. */
-export function cliFlag(argv: readonly string[], name: string): boolean {
-  return argv.includes(`--${name}`);
-}
-
-/** `--name <value>`, or `null` when absent or immediately followed by another flag. */
-export function cliOpt(argv: readonly string[], name: string): string | null {
-  const i = argv.indexOf(`--${name}`);
-  return i >= 0 && argv[i + 1] && !argv[i + 1]!.startsWith("--") ? argv[i + 1]! : null;
-}
-
 /** The three fields every runner reads off the mailbox it was pointed at. */
 export interface OperatorMailbox { id: string; accountId: string; address: string }
 
