@@ -305,15 +305,13 @@ export interface PendingRequestSet {
 }
 
 /**
- * THE SET DOOR: one press, N records, one key (the bulk half of mail 0094). The per-press shape
- * {@link writeReaderRequest} has no way to express, and the reason two move doors and one rules
- * door refused instead of travelling.
+ * THE SET DOOR: one press, N records, one key (the bulk half of mail 0094) — the shape
+ * {@link writeReaderRequest} cannot express, and the reason the many-from-one doors refused.
  *
  * The BOUND is asked here, where the count is known, and it refuses rather than emitting the
- * flood: {@link REQUEST_SET_MAX} is the folder's own read ceiling, so a press over it is a press
- * whose tail could never be read in one pass. The reader's cycle appends inside its own headroom
- * against that ceiling, so a set under the bound cannot make `ohmail/_meta` unreadable however
- * long it takes to drain.
+ * flood: {@link REQUEST_SET_MAX} is the folder's own read ceiling. The reader's cycle appends
+ * inside its own headroom against that ceiling, so a set under the bound cannot make
+ * `ohmail/_meta` unreadable however long it takes to drain.
  */
 export async function writeReaderRequestSet(
   tx: Tx, ctx: ServiceContext,
@@ -372,22 +370,16 @@ export interface BulkMoveTarget {
 }
 
 /**
- * WHAT A BULK MOVE ACTUALLY DOES, PER MAILBOX (mail 0094, bulk half). The ONE branch both
- * many-from-one-press move doors take — `WorkflowsService.undoRun` and the Hey migration's
- * re-route pass — replacing the refusal they shared while there was no set shape to travel in.
+ * WHAT A BULK MOVE DOES, PER MAILBOX (mail 0094, bulk half) — the ONE branch both
+ * many-from-one-press move doors take, replacing the refusal they shared.
  *
- * Three answers, and the split is the point. A mailbox this install ORGANIZES: its messages come
- * back in `organized` and the caller's own write path runs for them, unchanged. A mailbox it only
- * READS whose holder takes `message.move`: its messages come back as a target, and the caller
- * writes one record each through {@link writeReaderRequestSet}. A holder that will NOT take the
- * kind: refused WHOLE, by name — there is no channel for those, so travelling the rest would
- * leave a state nobody chose with nothing pending to explain it.
+ * Three answers. ORGANIZED here: the messages come back in `organized` and the caller's own write
+ * path runs. READ, with a holder that takes `message.move`: they come back as a target and the
+ * caller writes one record each. A holder that will NOT take the kind: refused WHOLE, by name —
+ * travelling the rest would leave a state nobody chose with nothing pending to explain it.
  *
- * The SET BOUND is asked over the total that would TRAVEL, before anything is written, which is
- * what keeps the largest mail-moving act in the product from becoming a queue no pass can drain:
- * an import whose re-route spans thousands of messages on a held mailbox is refused at the press
- * where the count is known, exactly as it was before — by the bound now, rather than by the
- * absence of a shape.
+ * The SET BOUND is asked over the total that would TRAVEL, before any write, so a re-route no
+ * pass could drain is refused at the press where the count is known.
  */
 export async function planBulkMoveOnReader(
   tx: Tx, accountId: string, messageIds: readonly string[],

@@ -561,20 +561,14 @@ export function OhboxView({
   const all = [...displayResurfaced, ...displayNew, ...displayPrev];
   const unreadIds = all.filter((m) => m.unread).map((m) => m.id);
   /**
-   * WHAT THIS LIST IS SHOWING — the three groups and the server-paged Older tail, in render
-   * order. The one list every VERB resolves against.
+   * WHAT THIS LIST IS SHOWING — the three groups and the server-paged Older tail, in render order.
+   * The one list every VERB resolves against.
    *
-   * `all` above stays the three groups, and the split is the point rather than a duplicate: `all`
-   * is what the pane's own CLAIMS are made of — the unread count, the empty sentence, the
-   * doorbell's "All clear" — and a row fetched from beyond the mirror window is not part of what
-   * this Ohbox holds. REACH is a different question from counting, and the two were one list:
-   * selection resolved against the groups alone, so a row `Load older` had just put on screen
-   * could not be selected, opened or picked, and the way to read it was to find it again through
-   * Search.
-   *
-   * Not a fourth group — these are the same rows the tail already renders, named once so
-   * `selected`, the pick set and the keyboard walk cannot disagree about which rows exist. And
-   * nothing here sorts: the sections decide what is where.
+   * `all` above stays the three groups, and the split is the point: `all` is what the pane's own
+   * CLAIMS are made of — the unread count, the empty sentence, the doorbell — and a row from
+   * beyond the mirror window is not part of what this Ohbox holds. Reach and counting were one
+   * list, so a row `Load older` had just put on screen could be looked at and nothing else.
+   * Nothing here sorts; the sections decide what is where.
    */
   const inGroups = new Set(all.map((m) => m.id));
   const olderShown = older.items.filter((m) => !inGroups.has(m.id));
