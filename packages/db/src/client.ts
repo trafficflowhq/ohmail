@@ -112,16 +112,34 @@ export const ROLE_DEFAULT_TIMEOUTS = {
 } as const;
 
 /**
- * How long a request may wait for the pooled handle's ONE connection before it is told no. The
- * only live statement ceiling in a pooled deployment is {@link ROLE_DEFAULT_TIMEOUTS}' 55 s, and
- * 55 s of holder plus any wait exceeds {@link API_MAX_DURATION_MS}. Measured: 47 504s in twenty
- * minutes; `HEAD /health` at 60 012 ms can only have WAITED. The driver does not queue in the
- * pool: `max: 1` PIPELINES up to 100 queries onto the one socket — everyone behind the head waits
- * for the head; `connect_timeout` bounds only the dial. 15 s leaves time to RETURN the refusal; a
- * fast 503 with `Retry-After` beats an unattributable 504. Residual: per-QUERY, not a request
- * budget.
+ * How long a request may wait for a pooled connection to begin its statement before it is told
+ * no. The only live statement ceiling in a pooled deployment is {@link ROLE_DEFAULT_TIMEOUTS}' 55 s,
+ * and 55 s of holder plus any wait exceeds {@link API_MAX_DURATION_MS}. Measured: 47 504s in twenty
+ * minutes; `HEAD /health` at 60 012 ms can only have WAITED. Once every connection is busy the
+ * driver PIPELINES up to 100 queries onto a busy socket — everyone behind that head waits for it;
+ * `connect_timeout` bounds only the dial. 15 s leaves time to RETURN the refusal; a fast 503 with
+ * `Retry-After` beats an unattributable 504. Residual: per-QUERY, not a request budget.
  */
 export const POOLED_ACQUIRE_TIMEOUT_MS = 15_000;
+
+/**
+ * The same wait, for the two SESSION doors — `GET /auth/session` and `POST /auth/refresh`, which
+ * carry `withSessionAcquireCeiling` in `packages/api`. Every caller of those two gives up sooner
+ * than 15 s (the edge gate's probe after 1.5 s; the resume splash and the desktop engine retry), so
+ * a longer wait only turns a retry into a timeout. Busy answers 503 `db_busy` with `Retry-After`
+ * in 5 s. It bounds the wait to BEGIN, never a statement: a rotation that started runs to its end.
+ */
+export const SESSION_ACQUIRE_TIMEOUT_MS = 5_000;
+
+/**
+ * Connections one warm serverless instance holds on the pooled URL. Fluid compute serves several
+ * requests from one instance, and at `max: 1` every second request queued behind the first: the
+ * `db_busy` the session doors answered. Four, bounded: the transaction-mode pooler multiplexes the
+ * server side, and the client connections it admits are instances × 4. A fifth concurrent
+ * statement still pipelines behind a busy connection and meets the acquire ceiling. The named
+ * hole in {@link PooledQuery} widens with it: up to four heads per instance can wait at the pooler.
+ */
+export const POOLED_MAX_CONNECTIONS = 4;
 
 /**
  * Thrown when a query spent {@link POOLED_ACQUIRE_TIMEOUT_MS} on the pooled handle without the
@@ -269,7 +287,7 @@ function withAcquireCeiling(
 // the POOLED connection string here, not the direct one. Small `max` + short `idle_timeout` keep
 // each instance's footprint tiny. `connection: POOLED_TIMEOUTS` reaches the backend ONLY on a
 // direct connection (self-host) — measured inert through a transaction-mode pooler; the mechanism
-// for a pooled deployment is ROLE_DEFAULT_TIMEOUTS. The wait for this one connection is bounded
+// for a pooled deployment is ROLE_DEFAULT_TIMEOUTS. The wait for a connection is bounded
 // client-side by POOLED_ACQUIRE_TIMEOUT_MS, because every server ceiling bounds a statement that
 // already HAS a connection.
 const pools = new Map<string, ReturnType<typeof postgres>>();
@@ -283,14 +301,16 @@ export function makePooledDb(
    * already gives one package over: a guard for this ceiling has to watch a caller actually be
    * refused, and it cannot spend the production duration doing it. Production passes nothing.
    * The ceiling is a property of the HANDLE, not of the pool, so two callers may hold different
-   * ones over the same module-cached connection.
+   * ones over the same module-cached connection. `max` narrows the pool for a caller whose reads
+   * are serialized anyway (the staff handle) or a guard that needs one connection.
    */
-  opts: { acquireTimeoutMs?: number } = {},
+  opts: { acquireTimeoutMs?: number; max?: number } = {},
 ): PostgresJsDatabase<typeof schema> {
   let pooled = pools.get(url);
   if (!pooled) {
+    // `max` is read when this URL's pool is FIRST built; a later handle over it shares that pool.
     pooled = postgres(url, {
-      prepare: false, max: 1, idle_timeout: 20, connect_timeout: 10,
+      prepare: false, max: opts.max ?? POOLED_MAX_CONNECTIONS, idle_timeout: 20, connect_timeout: 10,
       connection: POOLED_TIMEOUTS, onnotice: onNotice,
     });
     pools.set(url, pooled);

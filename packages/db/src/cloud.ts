@@ -27,7 +27,8 @@ export { schema } from "./schema.js";
 export {
   makeDb, closeDb, makeOwnedDb, makePooledDb, closePooledDbs, WORKER_TIMEOUTS, WORKER_POOL_MAX,
   POOLED_TIMEOUTS, API_MAX_DURATION_MS, ROLE_DEFAULT_TIMEOUTS,
-  POOLED_ACQUIRE_TIMEOUT_MS, DbAcquireTimeoutError, isDbAcquireTimeout,
+  POOLED_ACQUIRE_TIMEOUT_MS, SESSION_ACQUIRE_TIMEOUT_MS, POOLED_MAX_CONNECTIONS,
+  DbAcquireTimeoutError, isDbAcquireTimeout,
   type OwnedDb,
 } from "./client.js";
 
