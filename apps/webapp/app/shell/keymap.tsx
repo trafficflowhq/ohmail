@@ -96,10 +96,10 @@ export interface KeyBinding {
   /**
    * Fire even while a WRITING SURFACE is mounted — see {@link useWritingSurface}. Default
    * false: with the compose form on screen, a chord somebody could TYPE (a bare letter, a
-   * shifted one, `?`, a `g …` sequence) reaches no binding, because a blurred composer must
-   * not let prose file the message behind it. The opt-ins are the keys that belong to the
-   * writing surface's own chrome (the send-later digits) and the `?` sheet, which moves no
-   * mail and is the one place the composer's own chords are documented.
+   * shifted one, `?`, a `g …` sequence) or EDIT with (⌫, ⌦) reaches no binding, because a
+   * blurred composer must not let writing file the message behind it. The opt-ins are the keys
+   * that belong to the surface's own chrome (the send-later digits) and the `?` sheet, which
+   * moves no mail and is the one place the composer's own chords are documented.
    */
   inWriting?: boolean;
   /**
@@ -162,8 +162,8 @@ interface Registry {
   press: (chord: string) => boolean;
   /**
    * A writing surface is on screen — the compose form's claim. While at least one claim is held,
-   * the dispatcher refuses every chord a person could TYPE (see {@link KeyBinding.inWriting})
-   * unless focus is somewhere letters already mean letters. Returns the release; held for exactly
+   * the dispatcher refuses every chord a person could TYPE OR EDIT WITH (see
+   * {@link KeyBinding.inWriting}) unless focus is somewhere letters already mean letters. Returns the release; held for exactly
    * as long as the surface is mounted ({@link useWritingSurface}). A claim on the DISPATCHER, not a
    * layer of bindings: the `?` sheet keeps listing what the keys would do elsewhere (suspension is
    * not documentation), and `press` is untouched — a button click resolving through the registry is
@@ -204,14 +204,30 @@ export function chordPrefix(chord: string): string | null {
  * Could a person WRITING PROSE press this chord by accident? The test is whether the chord's
  * first gesture produces a character: a bare key of length 1 (`r`, `?`, `/`), a shifted one
  * (`shift+o` — Shift is how capitals are typed), or the opening key of a sequence (`g o`
- * begins with a typed `g`). `mod` chords are excluded — ⌘/Ctrl is never a typing gesture —
- * and NAMED keys (Escape, Enter, Tab, the arrows) have length > 1, so they pass: those are
- * the keys the writing-surface design lets through (see {@link Registry.claimWriting}).
+ * begins with a typed `g`). `mod` chords are excluded — ⌘/Ctrl is never a typing gesture.
+ * NAMED keys have length > 1, so they pass here; two of them are answered next.
  */
 function chordSpellsCharacter(chord: string): boolean {
   const first = chord.split(" ")[0]!;
   const parts = first.split("+");
   return !parts.includes("mod") && parts[parts.length - 1]!.length === 1;
+}
+
+/** The named keys that EDIT PROSE: ⌫ and ⌦ take a character back. */
+const EDITING_KEYS = new Set(["Backspace", "Delete"]);
+
+/**
+ * Would a mounted writing surface claim this chord? Two kinds, and the second was missing:
+ * chords a person could TYPE, and the EDITING keys. ⌫ and ⌦ are NAMED, so `chordSpellsCharacter`
+ * passed them — and they are exactly what the mailbox binds to "file this message to Trash", so
+ * one press at a blurred reply filed the message behind it. They belong to whoever is writing.
+ * Escape, Tab, Enter, the arrows and `mod` chords are not prose and still pass (see
+ * {@link Registry.claimWriting}).
+ */
+function chordBelongsToWriting(chord: string): boolean {
+  const parts = chord.split(" ")[0]!.split("+");
+  return chordSpellsCharacter(chord)
+    || (!parts.includes("mod") && EDITING_KEYS.has(parts[parts.length - 1]!));
 }
 
 /**
@@ -407,14 +423,14 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
       }
       const typing = isTypingTarget(e.target);
       /*
-       * A mounted composer suspends every typeable chord — measured on the deployed desktop: the
-       * compose form opened with nothing focused, and typing ran the mailbox's one-key verbs on the
-       * message selected behind the form, letter by letter. Focus-on-mount closes the common case;
-       * this closes the rest — focus is one blur away from nowhere, and a blurred composer must
-       * still read as "I am writing". Suspended at DISPATCH, as `modalIsOpen()` is: the registry
-       * and `?` sheet still know the keys. Only typeable chords are refused
-       * (`chordSpellsCharacter`); Escape, Enter, Tab and `mod` chords keep working, and a writing
-       * surface opts back in with `inWriting`.
+       * A mounted composer suspends every chord a writer could press — measured on the deployed
+       * desktop: the compose form opened with nothing focused, and typing ran the mailbox's
+       * one-key verbs on the message selected behind the form, letter by letter. Focus-on-mount
+       * closes the common case; this closes the rest — focus is one blur away from nowhere, and a
+       * blurred composer must still read as "I am writing". Suspended at DISPATCH, as
+       * `modalIsOpen()` is: the registry and `?` sheet still know the keys. Typeable chords and
+       * the editing keys are refused (`chordBelongsToWriting`); Escape, Enter, Tab and `mod`
+       * chords keep working, and a writing surface opts back in with `inWriting`.
        */
       const writing = writingSurfaces.current > 0;
       const all = ordered();
@@ -424,7 +440,7 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
          cursor either, so the filter is shared rather than restated. */
       const reachable = (b: KeyBinding) =>
         (b.inInput || !typing)
-        && !(writing && !typing && !b.inWriting && chordSpellsCharacter(b.chord));
+        && !(writing && !typing && !b.inWriting && chordBelongsToWriting(b.chord));
       const live = all.filter((b) => !b.disabled && reachable(b));
       /**
        * THE MESSAGE VERBS RESTING FOR WANT OF A CURSOR — see {@link DisabledReason}.
