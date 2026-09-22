@@ -18,7 +18,7 @@ const REASON = /^[a-z][a-z_]{0,31}$/;
 const CODE = /^[a-z][a-z0-9_]{0,63}$/;
 const KNOWN_KEYS = new Set(["attempt", "reason", "errorClass", "status", "code"]);
 
-export interface WindowSyncFailureReport {
+interface WindowSyncFailureReport {
   attempt: number;
   reason: string;
   errorClass: string;
@@ -50,7 +50,7 @@ export function parseWindowSyncFailure(raw: unknown): WindowSyncFailureReport | 
   return out;
 }
 
-export interface WindowReportDeps {
+interface WindowReportDeps {
   /** Does this request carry the install's live launch bearer? The same answer every local door gives. */
   authorized: (req: Request) => Promise<boolean>;
   log: Diagnostic;
