@@ -14,13 +14,35 @@ import {
  * subject/from_address.
  */
 
-export async function ensureSearchExtensions(db: SqlExecutor): Promise<void> {
+/**
+ * The fuzzy arm's trigram GIN indexes (subject + sender), built CONCURRENTLY: setup runs on the
+ * live database, where a plain build over `messages`, the schema's largest table, holds every
+ * write for the whole scan. So it needs an autocommit session, like every other prebuild here.
+ */
+export const TRIGRAM_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
+  {
+    name: "messages_subject_trgm_idx",
+    table: "messages",
+    ddl: sql`create index concurrently if not exists "messages_subject_trgm_idx"
+      on public.messages using gin ("subject" gin_trgm_ops)`,
+  },
+  {
+    name: "messages_from_address_trgm_idx",
+    table: "messages",
+    ddl: sql`create index concurrently if not exists "messages_from_address_trgm_idx"
+      on public.messages using gin ("from_address" gin_trgm_ops)`,
+  },
+];
+
+export async function ensureSearchExtensions(
+  db: SqlExecutor, opts: { log?: (msg: string) => void } = {},
+): Promise<void> {
   // The fuzzy arm's word_similarity()/`<%` operator lives in pg_trgm.
   await db.execute(sql`create extension if not exists pg_trgm`);
-  // Trigram GIN indexes backing the fuzzy arm (subject + sender). gin_trgm_ops
-  // accelerates the trigram similarity operators at scale.
-  await db.execute(sql`create index if not exists messages_subject_trgm_idx on messages using gin (subject gin_trgm_ops)`);
-  await db.execute(sql`create index if not exists messages_from_address_trgm_idx on messages using gin (from_address gin_trgm_ops)`);
+  await ensureConcurrentIndexes(db, TRIGRAM_INDEX_SPECS, {
+    label: "the trigram index build",
+    ...(opts.log ? { log: opts.log } : {}),
+  });
 }
 
 /**

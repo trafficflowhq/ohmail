@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { sql, type SQL } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
 import {
   migrationSqlHash, readJournalOf, type JournalEntry, type JournalSpec,
 } from "./baseline.js";
@@ -10,8 +9,7 @@ import {
   classifyDrift, driftAdmitted, driftSentence, gitProvenanceReader,
   type MigrationDrift, type ProvenanceReader,
 } from "./migration-provenance.js";
-import { onNotice } from "./notices.js";
-import { runMigrations, JOURNALS } from "./migrate.js";
+import { runMigrations, openMigrationSession, JOURNALS } from "./migrate.js";
 import { ROLE_DEFAULT_TIMEOUTS } from "./client.js";
 import { ensureSearchExtensions, ensureWithheldProvenanceIndex } from "./search-setup.js";
 import {
@@ -484,7 +482,10 @@ export async function setupProdDatabase(
   // Which migrations were already applied BEFORE this run — PER JOURNAL, out of each journal's
   // own pinned table — so the report can state what this invocation actually did, which is what
   // makes "idempotent" checkable (a second run must apply nothing to either half).
-  const pre = postgres(url, { max: 1, onnotice: onNotice });
+  // The migrator's own session shape: `ensureWithheldProvenanceIndex` takes the migration lock on
+  // it, so losing its backend must refuse the setup rather than carry on without the lock.
+  const preSession = await openMigrationSession(url);
+  const pre = preSession.sql;
   const preDb = drizzle(pre);
   let before: AppliedWhens;
   let hostRoles: string[];
@@ -550,8 +551,10 @@ export async function setupProdDatabase(
     // populations and the invalid-leftover cleanup.
     log("ensuring the withheld-provenance index (concurrently, ahead of the migrator)");
     await ensureWithheldProvenanceIndex(preDb, { log: (m) => log(m) });
+  } catch (err) {
+    throw preSession.lost() ?? err;
   } finally {
-    await pre.end({ timeout: 5 });
+    await preSession.end();
   }
 
   log(
@@ -561,7 +564,9 @@ export async function setupProdDatabase(
   );
   await runMigrations(url, { log: (m) => log(m) });
 
-  const client = postgres(url, { max: 1, onnotice: onNotice });
+  // Same shape as `pre`: the trigram and hot-path builds take the migration lock on this session.
+  const clientSession = await openMigrationSession(url);
+  const client = clientSession.sql;
   const db = drizzle(client);
   try {
     // Same reasoning as the `pre` session above: `ensureSearchExtensions` builds trigram GIN
@@ -899,7 +904,9 @@ export async function setupProdDatabase(
       throw new Error(`production database setup verification FAILED:\n  - ${problems.join("\n  - ")}`);
     }
     return report;
+  } catch (err) {
+    throw clientSession.lost() ?? err;
   } finally {
-    await client.end({ timeout: 5 });
+    await clientSession.end();
   }
 }

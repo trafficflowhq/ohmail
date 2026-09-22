@@ -1,7 +1,7 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { onNotice } from "./notices.js";
-import postgres from "postgres";
+import postgres, { type Sql } from "postgres";
 import { adoptBaseline, adoptReissuedOriginals } from "./baseline.js";
 import { assertNoActiveAddressDuplicates } from "./mailbox-dedup.js";
 import { JOURNALS } from "./journal-specs.js";
@@ -43,6 +43,95 @@ export const MIGRATION_LOCK_KEY = 4207279001n;
 export const MIGRATION_LOCK_TIMEOUT_MS = 120_000;
 
 /**
+ * The session a setup took the migration lock on closed while the setup was still using it. A
+ * session-level advisory lock dies with its backend, so nothing ran after the loss: re-run
+ * `pnpm db:setup:prod`, every pass is idempotent.
+ */
+export class MigrationSessionLostError extends Error {
+  constructor() {
+    super(
+      "the database session holding the migration lock was lost mid-setup, and the lock went " +
+        "with it, so nothing further ran. Re-run 'pnpm db:setup:prod' — every pass is idempotent.",
+    );
+    this.name = "MigrationSessionLostError";
+  }
+}
+
+/** A migration session: the guarded client, whether it was lost, and its own end. */
+interface MigrationSession {
+  readonly sql: Sql;
+  lost(): MigrationSessionLostError | null;
+  end(): Promise<void>;
+}
+
+/**
+ * ONE CONNECTION FOR THE LOCK AND EVERYTHING DONE UNDER IT, NEVER REPLACED. postgres.js reopens
+ * a closed connection on the next statement and recycles an idle one after 30-60 min on its own,
+ * so a lost backend ran the rest of a setup without the lock and without this session's SETs.
+ * Here a close after open marks the session lost and every later statement throws before it
+ * reaches the driver. A transaction is BEGIN/COMMIT on this connection rather than postgres.js
+ * `begin`, whose rollback after a lost backend writes to a closed socket and crashes the process.
+ */
+export async function openMigrationSession(url: string): Promise<MigrationSession> {
+  let open = false;
+  let ending = false;
+  let lost: MigrationSessionLostError | null = null;
+  const raw = postgres(url, {
+    max: 1, onnotice: onNotice, max_lifetime: null,
+    onclose: () => { if (open && !ending && lost === null) lost = new MigrationSessionLostError(); },
+  });
+  const refuse = (): void => { if (lost !== null) throw lost; };
+  let guarded: Sql | undefined;
+  const begin = async (...args: unknown[]): Promise<unknown> => {
+    const fn = args[0];
+    if (args.length !== 1 || typeof fn !== "function") {
+      throw new Error("the migration session's begin takes one callback and no options");
+    }
+    refuse();
+    await raw.unsafe("begin");
+    try {
+      const out: unknown = await (fn as (tx: Sql) => unknown)(guarded!);
+      refuse();
+      await raw.unsafe("commit");
+      return out;
+    } catch (err) {
+      if (lost === null) await raw.unsafe("rollback").catch(() => undefined);
+      throw lost ?? err;
+    }
+  };
+  const unsupported = (name: string) => (): never => {
+    throw new Error(`the migration session has no ${name}: everything runs on its one connection`);
+  };
+  guarded = new Proxy(raw, {
+    apply: (target, self, args) => { refuse(); return Reflect.apply(target, self, args) as unknown; },
+    get: (target, prop, receiver) => {
+      if (prop === "unsafe") {
+        return (...a: Parameters<Sql["unsafe"]>) => { refuse(); return target.unsafe(...a); };
+      }
+      if (prop === "begin") return begin;
+      if (prop === "reserve" || prop === "savepoint" || prop === "listen" || prop === "end") {
+        return unsupported(String(prop));
+      }
+      return Reflect.get(target, prop, receiver) as unknown;
+    },
+  });
+  try {
+    await raw`select 1`;
+  } catch (err) {
+    await raw.end({ timeout: 0 });
+    throw err;
+  }
+  open = true;
+  return {
+    sql: guarded,
+    lost: () => lost,
+    // A lost connection keeps its dead statement referenced, and a graceful end would wait out
+    // the whole timeout for it; there is nothing left to flush, so it is destroyed at once.
+    end: async () => { ending = true; await raw.end({ timeout: lost === null ? 5 : 0 }); },
+  };
+}
+
+/**
  * The mail pass committed and the cloud pass did not — reachable, and named here rather than
  * discovered in an incident. Two journals are two transactions, so a cloud failure leaves the
  * whole mail schema and a partial Cloud one. Shared-first makes that the RECOVERABLE direction:
@@ -72,7 +161,7 @@ export class PartialMigrationError extends Error {
 
 /**
  * Replay BOTH journals against `url`: adopt → mail → cloud, under one session advisory lock, on
- * one `max: 1` client. A LIBRARY function — production reaches it only through
+ * one {@link openMigrationSession}. A LIBRARY function — production reaches it only through
  * `setupProdDatabase`; no caller can run half of it. `adopt` runs before each pass — without it
  * the mail pass would REPLAY 21 migrations over a database built by the single journal.
  * Deliberately NO CLI here: the old one accepted a POOLER URL, skipped `ensureSearchExtensions`
@@ -85,7 +174,8 @@ export async function runMigrations(
   opts: { log?: (msg: string) => void } = {},
 ): Promise<void> {
   const log = opts.log ?? (() => {});
-  const sql = postgres(url, { max: 1, onnotice: onNotice });
+  const session = await openMigrationSession(url);
+  const sql = session.sql;
   // postgres.js takes bigint params at runtime; its published types omit bigint, so the cast
   // keeps the 64-bit advisory-lock key EXACT while satisfying the compiler. Same treatment as
   // `apps/worker/src/leader-lock.ts`, for the same reason.
@@ -117,6 +207,7 @@ export async function runMigrations(
     try {
       await sql`select pg_advisory_lock(${key})`;
     } catch (err) {
+      if (session.lost() !== null) throw session.lost()!;
       throw new Error(
         `could not take the migration advisory lock (${MIGRATION_LOCK_KEY}) within ` +
           `${MIGRATION_LOCK_TIMEOUT_MS}ms — another migration is running against this database. ` +
@@ -153,18 +244,25 @@ export async function runMigrations(
           // `REISSUED_ORIGINALS` in baseline.ts for the one case and the whole argument.
           await adoptReissuedOriginals(db, spec, log);
         } catch (err) {
-          if (done.length > 0) throw new PartialMigrationError(spec.name, done, err);
-          throw err;
+          const cause = session.lost() ?? err;
+          if (done.length > 0) throw new PartialMigrationError(spec.name, done, cause);
+          throw cause;
         }
         done.push(spec.name);
       }
     } finally {
-      await sql`select pg_advisory_unlock(${key})`.catch(() => {
-        /* the lock dies with the session two lines below; a failed unlock must not mask a
-         * migration error that is on its way up the stack. */
-      });
+      // A lost session has no lock to release, and asking would throw over the error on its way up.
+      if (session.lost() === null) {
+        await sql`select pg_advisory_unlock(${key})`.catch(() => {
+          /* the lock dies with the session two lines below; a failed unlock must not mask a
+           * migration error that is on its way up the stack. */
+        });
+      }
     }
+  } catch (err) {
+    // A partial pass already names the loss as its cause and keeps what committed before it.
+    throw err instanceof PartialMigrationError ? err : session.lost() ?? err;
   } finally {
-    await sql.end({ timeout: 5 });
+    await session.end();
   }
 }
