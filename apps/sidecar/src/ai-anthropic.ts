@@ -167,7 +167,9 @@ export function anthropicTransport(opts: AnthropicTransportOptions): AiTransport
         listUrl: `${ANTHROPIC_BASE}/v1/models?limit=100`,
         modelUrl: (m) => `${ANTHROPIC_BASE}/v1/models/${encodeURIComponent(m)}`,
         models: [opts.classifyModel, opts.draftModel],
-        // No name test: this vendor's catalogue is all chat models.
+        // No name test: this vendor's catalogue is all chat models. The shipped ids are named
+        // for the same reason as the other vendor's — this app chose them, not the person.
+        shipped: [DEFAULT_ANTHROPIC_MODELS.classify, DEFAULT_ANTHROPIC_MODELS.draft],
       });
     },
   };

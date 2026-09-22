@@ -219,6 +219,8 @@ export function openaiTransport(opts: OpenAiTransportOptions): AiTransport {
         listUrl: `${OPENAI_BASE}/v1/models`,
         modelUrl: (m) => `${OPENAI_BASE}/v1/models/${encodeURIComponent(m)}`,
         models: [opts.classifyModel, opts.draftModel],
+        // The two ids a fresh install asks for, so a retired one is named as OURS.
+        shipped: [DEFAULT_OPENAI_MODELS.classify, DEFAULT_OPENAI_MODELS.draft],
         // The picker offers what could actually answer, and a configured one is refused by name
         // before any round trip. See NOT_CHAT_MODELS — this vendor lists its whole catalogue.
         notChat: {

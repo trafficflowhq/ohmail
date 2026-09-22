@@ -151,6 +151,21 @@ export interface KeyedCatalogueProbe {
    * refused up front when one is configured. Absent where the whole catalogue is chat.
    */
   notChat?: { test: (id: string) => boolean; detail: (model: string) => string };
+  /**
+   * The ids THIS APP ships as its defaults. Nobody typed them, and a vendor may retire one at any
+   * time — nothing in this repository can tell whether they still resolve. So when the model a key
+   * cannot reach is one of these, the refusal says WHOSE choice it was and what to do about it
+   * rather than reading as a mistake the person made.
+   */
+  shipped?: readonly string[];
+}
+
+/** The unreachable model, said differently when this app is the one that chose it. */
+function unreachableModel(model: string, shipped: readonly string[] | undefined): string {
+  return shipped?.includes(model) === true
+    ? `"${model}" is this app's default model and this key cannot reach it — `
+      + "choose one from the list"
+    : `the key cannot reach the model "${model}"`;
 }
 
 /**
@@ -203,7 +218,7 @@ export async function probeKeyedCatalogue(opts: KeyedCatalogueProbe): Promise<Pr
         return {
           ok: false,
           reason: statusFailure(res.status),
-          detail: `the key cannot reach the model "${model}"`,
+          detail: unreachableModel(model, opts.shipped),
           models,
         };
       }
