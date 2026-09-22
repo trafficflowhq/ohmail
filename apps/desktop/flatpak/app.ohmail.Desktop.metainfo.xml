@@ -74,6 +74,55 @@
   </screenshots>
 
   <releases>
+    <release version="0.22.0" date="2026-09-22">
+      <description>
+        <ul>
+          <li>An account whose subscription has ended is told so at every door, and its mailbox is untouched</li>
+          <li>The phone's new surfaces read as one system</li>
+          <li>The closed-account screen reads the same on every surface</li>
+          <li>Search stands once on the unfolded phone</li>
+          <li>Controls tell a screen reader they can be pressed</li>
+          <li>Every sheet can be closed from the sheet</li>
+          <li>Forwards stay in their conversation</li>
+          <li>Search on the phone</li>
+          <li>A new message on the phone</li>
+          <li>Mark all read on the phone</li>
+          <li>Drafts on the phone</li>
+          <li>The away responder on the phone</li>
+          <li>Swipe a message to file it</li>
+          <li>Move, File and Junk can be taken back too</li>
+          <li>Send a reply and mark it done in one press</li>
+          <li>Buying Screener suggestions reads one message per sender</li>
+          <li>The phone stays up with a receipt from today</li>
+          <li>The phone on the iPhone Duo</li>
+          <li>Forwards carry the original</li>
+          <li>The attachment limit says why it is the number it is</li>
+          <li>The confirmation on the phone shows again</li>
+          <li>The iPhone app fills the screen it is given</li>
+          <li>Replaying the migration journal</li>
+          <li>Every phone screen verified on iPhone, iPad and Android</li>
+          <li>Pairing opens the mailbox</li>
+          <li>The phone's lists draw only what is on screen</li>
+          <li>Swiping a message</li>
+          <li>Undo on the phone always takes the action back</li>
+          <li>The phone answers every press, and every sheet closes</li>
+          <li>A resurfaced conversation that ends with your own message opens again</li>
+          <li>Server internals</li>
+          <li>An account on hold is not asked to subscribe again, and one reactivated before its erasure is kept</li>
+          <li>The sync strip clears when the sync recovers, and says "Sync failed" only for a mailbox whose sync failed</li>
+          <li>Search's empty state offers the address you typed — everything from or to it</li>
+          <li>The app says when it is offline</li>
+          <li>A view that fails to draw can copy its details</li>
+          <li>Every settings tab is reachable from the command palette</li>
+          <li>The phone says what happened to a closed account, and keeps every door open</li>
+          <li>The mailbox page loads less before the first paint: the editor arrives when you open the composer</li>
+          <li>The News folder in your mailbox is now called ohmail/News</li>
+          <li>Mailboxes on a phone</li>
+          <li>macOS</li>
+          <li>An account whose subscription has ended sees what happened, when, and three ways out</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.21.0" date="2026-09-21">
       <description>
         <ul>
@@ -202,13 +251,6 @@
           <li>A self-hosted install's health check names the unsubscribe drain's two tables</li>
           <li>A first import no longer re-reads the whole mailbox every cycle</li>
           <li>A long import tail says what it is doing</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.19.5" date="2026-09-17">
-      <description>
-        <ul>
-          <li>The Ohbox list no longer slides under the cursor after a jump</li>
         </ul>
       </description>
     </release>

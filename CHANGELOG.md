@@ -18,6 +18,328 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.22.0] — 2026-09-22
+
+### An account whose subscription has ended is told so at every door, and its mailbox is untouched
+<!-- changes: api-022-account-wall.md -->
+
+A hosted account whose subscription ends is refused with the reason, the dates and an export path;
+it keeps reading its status, its consent state and `GET /account/export`, the organizer stands down
+cleanly with the mailbox untouched, and reminder mails precede any erasure. Self-hosted installs
+are unaffected — there is no metering program, so nobody is ever parked.
+
+### The phone's new surfaces read as one system
+<!-- changes: design-022-phone-polish.md -->
+
+The swipe verb under a dragged row is legible in both themes, the away responder screen aligns
+its labels and values and dims Save when a save can't be taken, and Drafts' head counts its rows
+in words — with a held, unconfirmed send named in the count.
+
+### The closed-account screen reads the same on every surface
+<!-- changes: design-022-wall-polish.md -->
+
+The desktop lock now weighs "Your mailbox is untouched." the way the browser and the phone do, and
+sets the erasure date in the same quiet type. The store builds' pointer sentence names manage-or-
+delete only. The delete hint stops citing a date in the three states that show none. The phone's
+export button says what it is doing while it makes the file, and its delete verb takes the quiet
+weight the browser gives it.
+
+### Search stands once on the unfolded phone
+<!-- changes: device-022-duo-pass-2.md -->
+
+Unfolded on a foldable phone, search appeared both in the side rail and at the foot of the
+message list. It stands in one place per posture now.
+
+### Controls tell a screen reader they can be pressed
+<!-- changes: device-022-duo-pass-2.md#2 -->
+
+The side rail's destinations, the Screener's shelves, the appearance and language choosers and
+the sender scope switch were read out as plain text. They announce themselves as controls now,
+and a verb that is briefly unavailable dims and says so rather than going quiet.
+
+### Every sheet can be closed from the sheet
+<!-- changes: device-022-duo-pass-2.md#3 -->
+
+Sheets were dismissed by pressing outside them, which assistive technology is never shown — the
+message's ⋯ sheet and the search sheet had no way out at all. Every sheet carries Cancel.
+
+### Forwards stay in their conversation
+<!-- changes: feat-022-forward-threading.md -->
+
+A forwarded message now stays in the conversation it came from and carries the threading
+headers every mail client reads, so a reply to the forward joins that conversation too. Inside
+the conversation, the forward you sent reads "Forwarded to <recipient>" above the original's
+text. A new message that merely shares a subject is still its own conversation.
+
+### Search on the phone
+<!-- changes: feat-022-phone-parity-a.md -->
+
+The search pill in the dock, the rail, the More screen and the iPad list pane now open a search
+screen instead of a note saying it was coming. It answers from the mail the device already holds,
+so it works with no signal, and every answer states what that is: subjects, senders and the first
+200 characters of each message, not the full text. Close matches appear under "Similar" only when
+nothing matched exactly. An address that finds nothing offers the address view — everything from
+or to that person.
+
+### A new message on the phone
+<!-- changes: feat-022-phone-parity-a.md#2 -->
+
+The phone composes replies and forwards, and now new mail too. New mail stands beside search in
+the dock, the rail and the iPad list pane, and opens the composer you already know, with
+attachments, your signature and Send later, on the To field. The mailbox it is sent from is named
+above the recipients.
+
+### Mark all read on the phone
+<!-- changes: feat-022-phone-parity-a.md#3 -->
+
+The Ohbox and stream headers now carry "Mark all read", shown only when something is unread. The
+sentence names how many were marked and one undo puts them back.
+
+### Drafts on the phone
+<!-- changes: feat-022-phone-parity-b.md -->
+
+Messages you started and have not sent are on the phone, from every device you read your mail on. A
+send that could not be confirmed appears there and can be settled — you tell ohmail whether it
+arrived — with the text in full, because on that row it is the only copy.
+
+### The away responder on the phone
+<!-- changes: feat-022-phone-parity-b.md#2 -->
+
+The switch, the message and an end date, in Settings. Who gets a reply, which mail and how often
+are shown as they stand and are still set at a computer.
+
+### Swipe a message to file it
+<!-- changes: feat-022-phone-parity-b.md#3 -->
+
+Swipe right to mark read (or Done), left for Answer Later. The row's menu still holds every verb,
+and both are available to VoiceOver and TalkBack.
+
+### Move, File and Junk can be taken back too
+<!-- changes: feat-022-routing-verbs-undo.md -->
+
+The mail moves the moment you press, and the rule that decides where that sender's mail goes from now on waits while the toast stands. Undo brings the mail back and makes no rule; leave the toast alone and the rule is made exactly as before. `z` presses it from the keyboard, and the phone's pill does the same.
+
+### Send a reply and mark it done in one press
+<!-- changes: feat-022-send-and-done.md -->
+
+On a reply or forward of a message sitting in your Ohbox, the composer offers "Send + Done" beside
+Send (⌘⇧↩ / Ctrl+⇧↩, and beside Send on the phone). It sends the message and then marks the
+conversation done — only once the send has gone through; a refused send marks nothing. The
+confirmation carries Undo, which puts the conversation back where it was and unsends nothing.
+
+### Buying Screener suggestions reads one message per sender
+<!-- changes: fix-022-backend-remainder.md -->
+
+Asking the model about senders waiting at the gate used to read every message a sender had sent
+you in order to ask about one of them. It now reads the one it asks about — the same message the
+Screener shows you — so a sender with a long history at the gate costs no more than any other.
+
+### The phone stays up with a receipt from today
+<!-- changes: fix-022-duo-conformance.md -->
+
+The phone app could crash a few seconds after opening when the account held a receipt dated
+today; the Receipts day heading now takes its word from the app itself.
+
+### The phone on the iPhone Duo
+<!-- changes: fix-022-duo-conformance.md#2 -->
+
+The closed face carries its controls in a right-edge rail below the clock; an open message puts
+Back, Reply, Reply all, Forward, Done, Park and Junk in that rail; nothing runs under the status
+cluster; unfolded, the list keeps the approved width beside the reader.
+
+### Forwards carry the original
+<!-- changes: fix-022-forward-arrives-empty.md -->
+
+A forwarded message now carries the original message and its files in both the plain and the
+formatted part, and a forward whose original cannot be loaded is refused instead of sent empty.
+A message whose body or files were refused by a page in front of ohmail no longer stays
+"Couldn't load" for the session.
+
+### The attachment limit says why it is the number it is
+<!-- changes: fix-022-frontend-rows.md -->
+
+- The desktop app and a browser tab can offer different attachment limits for the same account,
+  because they send the files differently. Where the app's own limit is the smaller one, the
+  compose form and the reply editor now say so beside the number instead of stating it bare.
+
+### The confirmation on the phone shows again
+<!-- changes: fix-022-ios-toast-pill.md -->
+
+- After Park, Later, Done or Junk on the phone, the short confirmation with **Undo** shows
+  again — above the verb bar, and for its whole time. It used to arrive seconds late
+  under the bar's second row, and a short one could vanish before it was drawn.
+
+### The iPhone app fills the screen it is given
+<!-- changes: fix-022-ios-uiscene-adoption.md -->
+
+The iPhone app adopts the window model current iOS requires, so it builds and launches with the
+current iOS SDK and is handed its device's real screen instead of a scaled-up compatibility
+window. On a folding iPhone that is the difference between the app's own layout and a smaller one
+stretched to fit. Nothing changes for the person on an existing build.
+
+### Replaying the migration journal
+<!-- changes: fix-022-migration-replay-census.md -->
+
+- A database replaying its migration journal now applies the mailbox-address, body-cap and
+  account-isolation entries instead of stopping on an index or a key that is already there.
+
+### Every phone screen verified on iPhone, iPad and Android
+<!-- changes: fix-022-mobile-views.md -->
+
+- Every screen of the phone app was checked as rendered and working on iPhone, iPad and an
+  Android foldable against the approved design. Empty states are now a title and a hint without
+  an emoji, and the account line at the top of More names the server and your mailbox.
+
+### Pairing opens the mailbox
+<!-- changes: fix-022-paired-phone-stuck-on-servers.md -->
+
+After pairing, the phone opens the mailbox instead of stopping on the Servers page. Back and the
+edge swipe did nothing there, and the only way out was to restart the app.
+
+### The phone's lists draw only what is on screen
+<!-- changes: fix-022-phone-list-virtualization.md -->
+
+- The phone's mail lists draw only the rows on screen and a few screens around them, so a large
+  mailbox opens, scrolls and folds without running out of memory. Screen readers hear a list of
+  what is visible instead of every message at once.
+
+### Swiping a message
+<!-- changes: fix-022-phone-swipe-row-clip.md -->
+
+Swiping a message sideways drew the row outside the list it sits in, so its text ran across the
+page and was cut off at the screen edge, and the action revealed underneath was drawn through
+the row's own sender and subject. The row now stays inside the list and stays legible.
+
+### Undo on the phone always takes the action back
+<!-- changes: fix-022-phone-undo-order.md -->
+
+- **Undo** after Park, Later, Done or Junk on the phone now always takes the action back, even
+  when it is pressed the moment the confirmation appears. Pressed that quickly it used to reach
+  the mailbox before the action did, and the message stayed where the action had put it.
+
+### The phone answers every press, and every sheet closes
+<!-- changes: fix-022-phone-view-findings.md -->
+
+- The ⋯ sheet in the reader now has a Cancel row, like every other sheet. Dragging it down was
+  the only way to close it, which a keyboard or a screen reader cannot do.
+- When a verb files, parks or moves a message, VoiceOver and TalkBack now speak the confirmation
+  and its Undo, where the press used to be silent to them.
+- A phone whose pairing ended on the server says so in one sentence wherever you meet it, and
+  offers **Pair again** beside it.
+- The confirmation always belongs to the press you just made. Several verbs in a row used to
+  queue their sentences behind each other, and a fourth could vanish without being shown at all.
+
+### A resurfaced conversation that ends with your own message opens again
+<!-- changes: fix-022-resurfaced-row-opens-nothing.md -->
+
+Clicking a resurfaced conversation whose newest message was your own — a reply, or the away
+responder's answer — did nothing: the reading pane stayed empty. It now opens on the newest
+message you received, and the row shows that message rather than your own. Marking a resurfaced
+message Done also tells you the date it is filed under in Earlier.
+
+### Server internals
+<!-- changes: fix-022-review-backend-rows.md -->
+
+- The Junk and Trash windows, the two model providers and the three filing passes each share one
+  copy of the code they had duplicated. No behaviour changes.
+
+### An account on hold is not asked to subscribe again, and one reactivated before its erasure is kept
+<!-- changes: fix-022-suspended-notice.md -->
+
+The nightly pass mailed "Your ohmail subscription has ended … subscribe again" to every closed
+account, including one an operator had put on hold — where paying reopens nothing. A held account
+now gets no such mail, and is never erased by the pass whatever date it is handed. And the pass
+re-reads an account's state immediately before erasing it, so somebody who subscribes again in the
+meantime keeps their data.
+
+### The sync strip clears when the sync recovers, and says "Sync failed" only for a mailbox whose sync failed
+<!-- changes: fix-022-sync-strip-stays-red.md -->
+
+On a desktop connected to a large mailbox, the strip could read "Sync failed. Retrying." for a whole
+session while every sync succeeded, because the window's own first load of the mailbox was failing
+after it had already finished — a defect in the window, not in the mailbox. That load now
+completes. The strip says "Sync failed" only about a mailbox whose sync failed, names its address,
+and clears when that mailbox syncs again; a window that cannot refresh its own view says "Can't
+refresh. Retrying." instead. The desktop engine log now records a window's failed pull and any
+request it refused.
+
+### Search's empty state offers the address you typed — everything from or to it
+<!-- changes: fix-022-ux-rows.md -->
+
+There is no typed search operator; the scopes an address has live on its own list. When an
+address-shaped search finds nothing on the device, the empty state now says so and offers that
+list — everything the address sent, or anything from or to it — as one press.
+
+### The app says when it is offline
+<!-- changes: fix-022-ux-rows.md#2 -->
+
+"Catching up" over a dead network was a wrong claim. When syncing is failing and the browser
+itself reports offline, the app now says "Offline — showing what this device holds." — your
+mirrored mail stays readable, and the sentence says exactly what you are looking at.
+
+### A view that fails to draw can copy its details
+<!-- changes: fix-022-ux-rows.md#3 -->
+
+The in-pane error card now names the build beside the view and a "Copy details" press puts the
+error's class, the build and the view on the clipboard — never the message content.
+
+### Every settings tab is reachable from the command palette
+<!-- changes: fix-022-ux-rows.md#4 -->
+
+Type "Settings:" into ⌘K and every tab this surface offers opens by name.
+
+### The phone says what happened to a closed account, and keeps every door open
+<!-- changes: mobile-022-wall.md -->
+
+A phone paired to a hosted account whose subscription has ended now replaces the mail UI with one
+screen naming the closure and its date, stating that the mailbox is untouched, and saying when the
+settings ohmail keeps are erased — with the settings export and the account page under it. While an
+account is still open and a date is approaching, one strip above the list states the deadline; after
+a reopening, one strip says how much arrived meanwhile and lists the mailboxes ohmail handed back,
+each leading to the press that starts organizing again. A phone with no hosted account — standalone,
+or paired to a self-hosted server — sees none of it.
+
+### The mailbox page loads less before the first paint: the editor arrives when you open the composer
+<!-- changes: perf-022-editor-off-first-load.md -->
+
+
+### The News folder in your mailbox is now called ohmail/News
+<!-- changes: rename-022-imap-folder-news.md -->
+
+The folder the News pile files into is `ohmail/News`. A mailbox that still has
+`ohmail/Reads` is renamed once, automatically, on the organizer's next pass —
+messages, rules and settings all carry over, and if both folders exist their
+mail is merged into News. Until that pass runs, everything keeps working
+against the old name, and other mail clients simply see the folder change its
+name. An ohmail app still on an older version looks for the old folder, so its
+News pile reads empty until you update it — no mail is lost.
+
+### Mailboxes on a phone
+<!-- changes: rig-022-android-live-mail.md -->
+
+- A mailbox reached by IP address, or on a port that upgrades to encryption mid-conversation, now
+  connects on a phone. Both used to fail before the encrypted connection was established and
+  reported the mailbox as closed without a reason; an upgrade that cannot be completed is now
+  refused with one. What the phone accepts as a valid certificate is unchanged.
+
+### macOS
+<!-- changes: store-022-mac-app-store.md -->
+
+- ohmail can now be built for the Mac App Store. It is the same app: the store build simply does
+  not update itself — the App Store does that — and carries no link to a subscription page. The
+  app you downloaded from the releases page is unchanged and keeps its own updates.
+
+### An account whose subscription has ended sees what happened, when, and three ways out
+<!-- changes: web-022-wall.md -->
+
+The shared shell replaces the app with one screen that names the closure and its date, states that
+the mailbox is untouched, and says when the settings ohmail keeps are erased — with three actions:
+subscribe again, download those settings for a self-hosted install, or erase the account today. A
+trial in its last two days, a trial grace and a failed payment each raise one dismissible strip
+above the app with the deadline; when an account opens again, a strip says how much arrived while
+it was shut and lists the mailboxes ohmail handed back. A self-hosted install has no metering
+program and never sees any of it.
+
 ## [0.21.0] — 2026-09-21
 
 ### The README opens with the features, and wears both faces
@@ -7425,7 +7747,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.22.0
 [0.21.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.21.0
 [0.20.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.20.1
 [0.20.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.20.0
