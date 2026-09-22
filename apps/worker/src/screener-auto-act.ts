@@ -277,6 +277,10 @@ async function selectWaitingSenders(
     .where(and(
       eq(messages.accountId, opts.accountId),
       eq(folderState.desiredFolder, SCREENER_FOLDER),
+      // The apply door reads its bag with this filter, so a sender whose only held mail is a
+      // tombstone is not decidable by a press and must not be decidable by the act either — the
+      // rule would be promoted over an empty re-route.
+      isNull(messages.deletedAt),
     ))
     .as("reps");
 
