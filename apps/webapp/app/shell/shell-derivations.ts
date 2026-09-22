@@ -7,9 +7,8 @@
  * One module because they are one pass: the partition decides where a message is PRESENTED,
  * `presented` IS that mirror, and every memo below is keyed `[presented, derived]` so a new
  * projection is a new derivation and a body landing is not. Lifted out of `AppShell.tsx`
- * unchanged (ARCH-022). It holds no setter, no verb and no `toast` — a derivation answers a
- * question, it never acts — and it imports nothing from `routing-undo.ts`: the held presses
- * arrive as a map.
+ * unchanged (ARCH-022). It holds no setter, no verb and no `toast`, and imports nothing from
+ * `routing-undo.ts`: the held presses arrive as a map.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
