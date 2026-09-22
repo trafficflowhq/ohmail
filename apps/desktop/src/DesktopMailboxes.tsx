@@ -774,6 +774,31 @@ export function DesktopMailboxes(
    * the words stay in the catalogue.
    */
   const [released, setReleased] = useState<ReadonlyMap<string, string>>(() => new Map());
+  /**
+   * A STOP'S NOTE ENDS WHEN THE ROW ANSWERS, AND ITS MEMORY GOES WITH IT. `stopQueued` stopped
+   * rendering the note once the row carried the request, but the entry stayed in the map — so a
+   * countermand landing from ANOTHER window (the door clears the request, the stamp is spent a
+   * pass later) put "Stopping" back on a row that is organizing again, until Settings was
+   * reopened. The row has answered when it carries either stamp or its role moved; the entry is
+   * consumed then, and from there the row's own clock speaks. Only `requested` entries: the
+   * "was not organizing" answer is a line about a reader row and the role is what ends it.
+   */
+  useEffect(() => {
+    if (!facts) return;
+    setReleased((m) => {
+      let next: Map<string, string> | null = null;
+      for (const mb of facts) {
+        if (m.get(mb.id) !== "requested") continue;
+        const answered = (mb.releaseRequestedAt ?? null) !== null
+          || (mb.takeoverAuthorizedAt ?? null) !== null
+          || (mb.organizerRole !== undefined && mb.organizerRole !== "organizer");
+        if (!answered) continue;
+        next ??= new Map(m);
+        next.delete(mb.id);
+      }
+      return next ?? m;
+    });
+  }, [facts]);
   /** Mailboxes whose release is in flight, so the confirm debounces. */
   const [releasingIds, setReleasingIds] = useState<ReadonlySet<string>>(() => new Set());
   /** Which mailbox's release is asking whether you meant it, or `null` when none is. */
@@ -917,17 +942,9 @@ export function DesktopMailboxes(
           id,
           { outcome: takeoverOutcome(body.outcome), releasedAt, heldBy },
         ));
-        /* ── AND A TAKEOVER IS A NEWER PRESS ABOUT THE SAME MAILBOX ────────────────────────
-         *
-         * The mirror of the delete in `release()`. Without it a stop's own note came back onto
-         * the row the moment a takeover restored the role and cleared the request stamp — the
-         * pane promising a stop the person had just withdrawn, until Settings was reopened. */
-        setReleased((m) => {
-          if (!m.has(id)) return m;
-          const next = new Map(m);
-          next.delete(id);
-          return next;
-        });
+        /* No delete of the stop's memory here: the row has ANSWERED before this verb is even
+           offered (the countermand needs the request on the row; a released row is a reader),
+           and the effect on `facts` consumed the entry at that answer. One mechanism. */
         // The row's own state moved (`disabled` → `connected` with the stamp), so the pane must
         // re-read rather than keep rendering the stand-down it was showing.
         refresh();
@@ -1466,11 +1483,10 @@ export function DesktopMailboxes(
        note's while the row has not yet answered (`released` says requested, the role is still
        organizer, no stamp on the row); the row's own once the stamp is there. */
     /* No `!takeoverStanding(m)` term here, and its absence is measured rather than assumed: a
-       `reclaimed` entry is written only by `reclaim()`, which now deletes this row's `released`
-       entry in the same statement, so "a stop note standing while a takeover made here stands" is
-       unreachable. Removing the term changed no answer in 113 rows — a condition no fixture can
-       make matter reads as a guarantee to the next author. The map delete is the whole fix; a
-       reopen clears the map, which is why nothing durable is needed. */
+       takeover is offered only on a row that has ANSWERED the stop (it carries the request, or
+       it is a reader), and the effect on `facts` consumed this row's `released` entry at that
+       answer — so "a stop note standing while a takeover made here stands" is unreachable.
+       Removing the term changed no answer in 113 rows. The consumption is the whole fix. */
     const stopQueued = released.get(m.id) === "requested" && role === "organizer"
       && !m.releaseRequestedAt;
     const stopState: "queued" | "pending" | undefined =

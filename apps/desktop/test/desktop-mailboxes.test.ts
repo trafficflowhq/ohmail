@@ -1765,7 +1765,7 @@ describe("a standing stop request is on the row, and the pane's notes end when t
    * changed no answer here. The case below moves `organizerReleasedAt` so nothing but the delete
    * can answer it.
    */
-  it("a stop then a takeover leaves no stop note — the map's half, stamp moved", async () => {
+  it("a stop then a takeover leaves no stop note — consumed when the row answered, stamp moved", async () => {
     FACTS = [ORGANIZING];
     bridgeReply = () => new Response(JSON.stringify({ outcome: "requested" }), {
       status: 202, headers: { "content-type": "application/json" },
@@ -1792,7 +1792,7 @@ describe("a standing stop request is on the row, and the pane's notes end when t
     await act(async () => { buttonExactly(el, "Organize here")!.click(); });
 
     // The gate promoted. `organizerReleasedAt` has MOVED since the press, so the standing-takeover
-    // stamp cannot answer here and the map delete is the only thing that can.
+    // stamp cannot answer here; the stop's memory went when the row answered (a reader, above).
     FACTS = [{ ...ORGANIZING, organizerReleasedAt: "2026-09-07T10:30:00.000Z" }];
     await repaint("local");
     const said = el.textContent ?? "";
@@ -1811,6 +1811,101 @@ describe("a standing stop request is on the row, and the pane's notes end when t
     await act(async () => { buttonExactly(el, mailboxCopy.stopOrganizingConfirm!)!.click(); });
     expect(el.textContent ?? "", "the rule suppressed a stop note nothing had withdrawn")
       .toContain(mailboxCopy.stopOrganizingQueued!);
+  });
+
+  /**
+   * ── A COUNTERMAND FROM ANOTHER WINDOW ──────────────────────────────────────────────────────
+   * The door clears the request and stamps the authorization, the gate spends the stamp a pass
+   * later, and the row comes back a plain organizer — the exact shape `stopQueued` rendered
+   * "Stopping" for while this window's memory of its press stood (measured on the 0.16.0 candidate). The
+   * memory is consumed when the ROW ANSWERS, either stamp or the role moving, so the note is a
+   * promise about one press and ends the moment the row has spoken.
+   * Watched red: delete the consuming `useEffect` on `facts`; steps (3) and (4) read Stopping.
+   */
+  it("a countermand landing from ANOTHER window ends the stop's note — the memory is consumed when the row answers", async () => {
+    FACTS = [ORGANIZING];
+    bridgeReply = () => new Response(JSON.stringify({ outcome: "requested" }), {
+      status: 202, headers: { "content-type": "application/json" },
+    });
+    const el = await render("local");
+    const state = (): string | null => el.querySelector(".mbx-org")?.getAttribute("data-state") ?? null;
+    const chipLabel = (): string =>
+      (el.querySelector(".mbx-org .mbx-chip .gloss-cap")?.textContent ?? "").trim();
+
+    // (1) The press: this window's own memory says "requested" and the chip reads Stopping.
+    await act(async () => { buttonSaying(el, mailboxCopy.stopOrganizingHandBack!)!.click(); });
+    await act(async () => { buttonExactly(el, mailboxCopy.stopOrganizingConfirm!)!.click(); });
+    expect(state(), "the press did not arm the chip").toBe("queued");
+    expect(chipLabel()).toBe(mailboxCopy.chipStopping!);
+
+    // (2) The row answers: it carries the request, so the chip speaks from the row's clock.
+    FACTS = [{ ...ORGANIZING, releaseRequestedAt: "2026-09-07T09:00:00.000Z" }];
+    await repaint("local");
+    expect(state(), "the row's own stamp did not take the chip over").toBe("pending");
+
+    // (3) Another window presses "Organize here": the door cancels the request in the same write
+    //     it stamps the authorization with, and this pane's next poll sees a plain organizer with
+    //     the stamp standing.
+    FACTS = [{ ...ORGANIZING, releaseRequestedAt: null, takeoverAuthorizedAt: "2026-09-07T09:00:30.000Z" }];
+    await repaint("local");
+    expect(state(), "a countermand made elsewhere left this window promising a stop").toBeNull();
+    expect(chipLabel(), "the chip still read Stopping over a row that is organizing again")
+      .toBe(mailboxCopy.stateOrganizing!);
+    expect(el.textContent ?? "").not.toContain(mailboxCopy.stopOrganizingQueued!);
+    expect(buttonSaying(el, mailboxCopy.stopOrganizingHandBack!),
+      "the stop verb was withheld from a row nothing is stopping").not.toBeNull();
+
+    // (4) The gate spends the stamp; the row is byte-identical to the one this case started with,
+    //     and the note must NOT come back — this is where the unconsumed memory re-armed it.
+    FACTS = [ORGANIZING];
+    await repaint("local");
+    expect(state(), "the stop's memory re-armed the chip once every stamp was spent").toBeNull();
+    expect(chipLabel()).toBe(mailboxCopy.stateOrganizing!);
+  });
+
+  /**
+   * ── THE FIRST PRESS IS THE CEREMONY'S FIRST STEP, AND IT SENDS NOTHING ──────────────────────
+   * A 0.15.0 test run read a press with no engine event for seven minutes, then one authorized in
+   * 789 ms. Its record names the state after press one: the confirm well's own sentence and a
+   * Cancel button. The row's button opens the well and dispatches nothing; the well's confirm is
+   * ALSO labelled "Organize here", and the automated driver pressed the first button whose name
+   * starts with that phrase, so press two hit the confirm. Two presses for one request is the
+   * ceremony, not a lost press; the door's receipt line is pinned in `local-action-receipt.test.ts`.
+   * Watched red: make the row's button call `reclaim` directly and step (1) sends the request.
+   */
+  it("the FIRST press of Organize here opens the confirm well and sends nothing; the well's own Organize here sends the request", async () => {
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "reader",
+      organizeConsentedAt: "2026-08-01T09:00:00.000Z",
+      organizerReleasedAt: "2026-09-07T08:00:00.000Z",
+      releaseRequestedAt: null,
+    }];
+    bridgeReply = () => new Response(JSON.stringify({ outcome: "authorized" }), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+    const el = await render("local");
+    /* The automated driver's rule: the first button whose name STARTS WITH the phrase. */
+    const firstPrefixed = (): HTMLButtonElement | null =>
+      [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim().startsWith("Organize here")) ?? null;
+
+    // (1) Press one: the well opens, its sentence and Cancel are on screen, and NOTHING was sent.
+    await act(async () => { firstPrefixed()!.click(); });
+    expect(pressed(), "the first press dispatched a request the ceremony reserves for the confirm").toEqual([]);
+    expect(el.textContent ?? "", "the confirm well did not open on the first press")
+      .toContain(mailboxCopy.organizeHereWhatNobody!);
+    expect(buttonExactly(el, "Cancel"), "the well offers no way out").not.toBeNull();
+    /* And the sentence describes the CONFIRM, not a pass already under way: the 0.15.0 driver
+       read it as "the row promised within a minute" and waited for an engine event. */
+    expect(mailboxCopy.organizeHereWhatNobody!).toMatch(/^Nothing organizes this mailbox right now\. Confirm, and /);
+
+    // (2) Press two, by the same rule: the only "Organize here" left is the well's confirm.
+    const second = firstPrefixed();
+    expect(second, "no second Organize here button stood — the row's verb should have yielded to the well").not.toBeNull();
+    expect(second!.textContent!.trim()).toBe(mailboxCopy.organizeHereConfirm!);
+    await act(async () => { second!.click(); });
+    expect(pressed(), "the confirm did not reach the takeover door")
+      .toEqual([{ url: "/local/organizer/takeover", method: "POST" }]);
   });
 });
 
