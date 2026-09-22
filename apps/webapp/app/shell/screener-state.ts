@@ -19,6 +19,8 @@ import {
   heldReleaseFingerprintOf,
   heldReleaseGroups,
   heldReleaseTotalOf,
+  unscreenedGroups,
+  unscreenedTotalOf,
   screenerSegments,
   senderKey,
   pressVerdict,
@@ -29,6 +31,7 @@ import {
   type EntityReader,
   type Folder,
   type HeldReleaseGroupDTO,
+  type UnscreenedGroupDTO,
   type OhmailEngine,
   type PressTally,
   type ScreenDest,
@@ -142,6 +145,24 @@ export interface HeldReleaseOffer {
   dismiss: (() => void) | null;
 }
 
+/**
+ * OHBOX MAIL FROM SENDERS NOBODY EVER DECIDED ABOUT — the header's screening row.
+ *
+ * `null` when there is nothing to offer, and that covers two cases on purpose: no such mail, and a
+ * door that cannot say (a reader's mailbox answers no groups; an older server has no route). Both
+ * render as no row, which is the same sentence; "you have none" is a claim this never makes.
+ */
+export interface UnscreenedOffer {
+  /** Messages the shown groups hold — the number the row states. */
+  total: number;
+  /** One per sender, largest first: who wrote and how much of their mail is sitting there. */
+  groups: UnscreenedGroupDTO[];
+  /** A press is in flight; a second one is refused rather than queued. */
+  screening: boolean;
+  /** Screen every group shown, or just the named senders. Re-reads and says what it moved. */
+  screen: (addresses?: readonly string[]) => void;
+}
+
 export interface ScreenerState {
   /** Waiting rows to render (rows mid-exit carry `pendingOut`). */
   waiting: ScreenerSenderDTO[];
@@ -170,6 +191,12 @@ export interface ScreenerState {
    * so a derivation here would put one number on screen and release another.
    */
   heldRelease: HeldReleaseOffer | null;
+  /**
+   * The screening offer, or `null`. Read off the mirror for {@link heldRelease}'s reason: the fact
+   * that decides this set is what the ARRIVAL GATE would answer, and `/sync` does not carry it, so
+   * a derivation here would put one number on screen and move another.
+   */
+  unscreened: UnscreenedOffer | null;
   suggestedCount: number;
   /**
    * The distinct piles those rows would be filed into, in {@link APPLY_PILE_ORDER}.
@@ -1830,8 +1857,48 @@ export function useScreenerState(
         }
       : null;
 
+  /* ── OHBOX MAIL FROM SENDERS NOBODY EVER DECIDED ABOUT ────────────────────────────────────
+   *
+   * Asked of the door ONCE per mount, like the offer above and for its reason: the set changes
+   * only when a rule, a contact or a placement does, and re-asking on every mirror bump would put
+   * a request behind every body that lands during a drain. */
+  const [screening, setScreening] = useState(false);
+  useEffect(() => {
+    void engine.refreshUnscreened().catch(() => {
+      /* Silent, and deliberately: this is an OFFER, and a door that will not answer means there is
+         none to make — which the absent row already says. */
+    });
+  }, [engine]);
+
+  const unscreenedRows = useMemo(() => unscreenedGroups(engine.read()), [engine, version]);
+  const unscreenedTotal = useMemo(() => unscreenedTotalOf(engine.read()), [engine, version]);
+
+  /* NOT `useCallback`, for the press handler above's measured reason — see it for the render-scope
+     census and the idle-hour renderer that made it a rule. */
+  const pressUnscreened = (addresses?: readonly string[]): void => {
+    if (screening) return;
+    setScreening(true);
+    void engine.screenUnscreenedSenders(addresses)
+      .then((count) => {
+        // The count the SERVER moved, never the one on screen when the press happened: another
+        // door may have decided a sender in between, and the sentence names what actually moved.
+        toast(count > 0 ? t("unscreenedMoved", { count }) : t("unscreenedMovedNone"));
+      })
+      .catch(() => { toast(t("unscreenedFailed")); })
+      .finally(() => { setScreening(false); });
+  };
+
+  /* NO ROW WITHOUT MAIL TO SCREEN — and a reader never sees one either, because the server answers
+     no groups for a mailbox this install does not organize. The `blocked` check is the belt: a
+     mode that renders an inert press is its own small lie (the bulk strip's argument). */
+  const unscreened: UnscreenedOffer | null =
+    unscreenedTotal > 0 && unscreenedRows.length > 0 && role.mode !== "blocked"
+      ? { total: unscreenedTotal, groups: unscreenedRows, screening, screen: pressUnscreened }
+      : null;
+
   return {
     heldRelease,
+    unscreened,
     waiting: visibleWaiting,
     waitingCount,
     queueSettled,

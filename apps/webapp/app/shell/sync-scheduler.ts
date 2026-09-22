@@ -913,6 +913,16 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
         ...(adapter.dismissHeldRelease
           ? { dismissHeldRelease: gatedPress(adapter.dismissHeldRelease.bind(adapter), "dismissing the held-mail offer") }
           : {}),
+        /* OHBOX MAIL FROM SENDERS NOBODY DECIDED ABOUT — the pair, at the same two strengths and
+           for the same reason: the read is a summary of the caller's own Ohbox, the press moves
+           mail. Forwarded HERE rather than left to `satisfies`, which accepts an omission because
+           both are optional — the omission the derived census in `sync-owner-gate.test.ts` closes. */
+        ...(adapter.unscreened
+          ? { unscreened: gatedRead(adapter.unscreened.bind(adapter), "the undecided senders in your Ohbox") }
+          : {}),
+        ...(adapter.screenUnscreened
+          ? { screenUnscreened: gatedPress(adapter.screenUnscreened.bind(adapter), "screening mail from senders you have not decided about") }
+          : {}),
       } satisfies GatedAdapter & { transport: EngineAdapter };
     },
   };

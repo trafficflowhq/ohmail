@@ -1386,6 +1386,27 @@ export function ScreenerView({
                 ) : null}
               </div>
             ) : null}
+            {/* OHBOX MAIL FROM SENDERS NOBODY EVER DECIDED ABOUT.
+                A second row in this header, beside the release one and for its reasons: the mail
+                is not in this list, the whole of the decision is one press, and the row is absent
+                both when there is none and when the door cannot say — which render the same and
+                should. The Ohbox is arrival-ordered and a READ never moves a row; this is a
+                PRESS, which may. */}
+            {segment === "waiting" && state.unscreened ? (
+              <div className="scn-held scn-unscreened" role="note">
+                <p className="scn-held-lead">
+                  {t("unscreenedLead", { count: state.unscreened.total })}
+                </p>
+                <Button
+                  disabled={state.unscreened.screening}
+                  aria-busy={state.unscreened.screening || undefined}
+                  data-run={state.unscreened.screening ? "working" : undefined}
+                  onClick={() => state.unscreened?.screen()}
+                >
+                  {t("unscreenedAll", { count: state.unscreened.total })}
+                </Button>
+              </div>
+            ) : null}
             {/* A BULK CONTROL MAY NOT OUTLIVE THE THING IT ACTS ON — now the whole of the
                 strip's condition. It carried a second disjunct for the allowance line, which had
                 to appear on an EMPTY queue; that line has left this surface, so an empty queue
