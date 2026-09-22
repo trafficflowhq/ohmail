@@ -1567,7 +1567,7 @@ const MODELLED_WAIT_CODES = new Set([
   // was simply lost. A wait shorter than the wait it is waiting on is not a wait.
   "duplicate_send",
   // The desktop sidecar's DELIBERATE refusal while the hosted mailbox is unreachable
-  // (`apps/sidecar/src/cloud-proxy.ts#offlineResponse`): `503`, `retryable: true`, and NO
+  // (`apps/sidecar/src/cloud-auth.ts#offlineResponse`): `503`, `retryable: true`, and NO
   // `Retry-After`, because it does not know when the network returns. It is the offline case
   // wearing a server's clothes — an ordinary Cloud outage would otherwise abandon eight verbs'
   // worth of a person's work on reconnect, which is the exact loss the `network` carve-out

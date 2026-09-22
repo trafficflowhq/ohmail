@@ -1,5 +1,5 @@
 import { RELAY_ALLOWLIST, relayVerdict } from "@trafficflow/api/relay-allowlist";
-import type { CloudAuth } from "./cloud-auth.js";
+import { offlineResponse, OFFLINE_READ_ONLY, type CloudAuth } from "./cloud-auth.js";
 import type { CloudMirror } from "./cloud-mirror.js";
 import type { Diagnostic } from "./log.js";
 
@@ -18,7 +18,7 @@ import type { Diagnostic } from "./log.js";
 const ALLOWLIST_MIN = 100;
 
 /** The error `code` a forwarded route answers with while the hosted account is unreachable. */
-export const OFFLINE_READ_ONLY = "offline_read_only";
+export { OFFLINE_READ_ONLY };
 
 /** How long the echo-await drives the mirror before answering anyway. */
 export const DEFAULT_ECHO_DEADLINE_MS = 5_000;
@@ -51,21 +51,6 @@ export interface WriteThroughProxy {
 
 /** Hop-by-hop / re-authored headers that must not be relayed to Cloud. */
 const STRIP_HEADERS = ["authorization", "host", "content-length", "connection"];
-
-function offlineResponse(): Response {
-  return new Response(
-    JSON.stringify({
-      error: {
-        code: OFFLINE_READ_ONLY,
-        message:
-          "this install is offline — the hosted mailbox cannot be reached, so writes are paused " +
-          "until it returns; what is already mirrored keeps reading",
-        retryable: true,
-      },
-    }),
-    { status: 503, headers: { "content-type": "application/json" } },
-  );
-}
 
 /** Parse an `X-Sync-Seq` header to a cloud seq, or null when it is absent/unparseable. */
 function parseSeq(raw: string | null): bigint | null {

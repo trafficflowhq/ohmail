@@ -299,6 +299,13 @@ export interface OpenLocalDbOptions {
   onPhase?: (phase: LocalDbOpenPhase, progress?: MigrationProgress) => void;
   /** The {@link SLOW_MIGRATION_MS} floor, injectable so a test can drive both sides of it. */
   slowMigrationFloorMs?: number;
+  /**
+   * Run once the data directory's lock is held and before anything in it is read — the one place a
+   * caller may remove files beside the database (the cloud door's owner check discards a foreign
+   * mirror and its seal). Run before the lock, a second launch deleted a RUNNING engine's files and
+   * was refused only afterwards. A throw releases the lock and fails the open.
+   */
+  underLock?: () => void;
 }
 
 /**
@@ -1173,6 +1180,12 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
   const log = opts.log;
   mkdirSync(dataDir, { recursive: true });
   const unlock = lockDataDir(dataDir, log);
+  try {
+    opts.underLock?.();
+  } catch (err) {
+    unlock();
+    throw err;
+  }
   /* BEFORE `new PGlite`, because the record has to be read before recovery can hide what it is
      about — a store that replays a crash's log looks exactly like one that closed cleanly once
      it is up. Written back `open: true` immediately, so a kill from here on is seen as one. */

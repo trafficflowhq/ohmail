@@ -34,24 +34,63 @@ export interface CloudTokens {
 }
 
 /**
- * Raised when the session cannot be renewed — the refresh token is spent, rotated past, or reused.
- *
- * `status` is the hosted API's own answer when there was one (401/403 — the DEFINITIVE refusals:
- * the family is revoked or rotated past, and no retry can renew it), and null when the renewal
- * died in transport (offline, a 5xx) — the case a later retry may well survive. The two must not
- * be conflated: one means "sign in again", the other means "wait".
+ * WHERE THE SESSION STANDS — the reading `/health.session` carries. Only `refused` ends it, and
+ * only a coded 401 from the refresh door reaches it. `renewing` is an answer that was not a
+ * verdict (a firewall's 403, a busy 503, a 429, an uncoded 401); `unreachable` is no answer at
+ * all; `seal_failed` is a renewal withheld because its attempt could not be written to disk
+ * first. Every state but `refused` keeps the session and retries on its own clock.
  */
-export class CloudAuthError extends Error {
-  readonly status: number | null;
-  constructor(message: string, status: number | null = null) {
-    super(message);
-    this.name = "CloudAuthError";
-    this.status = status;
-  }
+export type CloudSessionState = "live" | "renewing" | "unreachable" | "refused" | "seal_failed";
+
+export interface CloudSessionReading {
+  state: CloudSessionState;
+  /** The refusal's code, a fault's code, or null. A vocabulary word, never a body or a token. */
+  code: string | null;
+  /** When this state began, ISO. */
+  since: string;
+}
+
+/**
+ * THE CODES THAT END A SESSION — the refresh door's own verdicts, read from our envelope. The
+ * legacy `unauthorized` stays until every server this build meets names the three; a 401 with no
+ * code of ours is a platform's answer and is retried like any other fault.
+ */
+export const REFUSAL_CODES: ReadonlySet<string> = new Set([
+  "refresh_missing", "refresh_expired", "refresh_revoked", "unauthorized",
+]);
+
+/** Renew at this share of the access window (jittered ±5 %), so expiry never meets a request. */
+export const RENEW_AHEAD_FRACTION = 0.8;
+/** A fault's retry: from a second, doubling, jittered, never more than a minute apart. */
+export const RETRY_BASE_MS = 1_000;
+export const RETRY_CAP_MS = 60_000;
+/** A server-named wait is honoured up to this; a longer header is read as a mistake. */
+export const RETRY_AFTER_MAX_MS = 300_000;
+
+export const OFFLINE_READ_ONLY = "offline_read_only";
+
+/**
+ * THE ANSWER WHEN CLOUD CANNOT BE USED RIGHT NOW — the proxy's offline refusal, and the answer a
+ * request gets when its renewal met a fault. A relayed hosted 401 there read as a sign-out to
+ * the window; this is the refusal the window's outbox already treats as a wait.
+ */
+export function offlineResponse(): Response {
+  return new Response(
+    JSON.stringify({
+      error: {
+        code: OFFLINE_READ_ONLY,
+        message:
+          "this install is offline — the hosted mailbox cannot be reached, so writes are paused " +
+          "until it returns; what is already mirrored keeps reading",
+        retryable: true,
+      },
+    }),
+    { status: 503, headers: { "content-type": "application/json" } },
+  );
 }
 
 export interface CloudAuthConfig {
-  /** e.g. `https://api.ohmail.app`. A trailing slash is trimmed. */
+  /** The door's base URL, as `cloud-origin.ts` resolves it. A trailing slash is trimmed. */
   baseUrl: string;
   /** The tokens this launch starts with — resolved store-wins-over-environment by the caller. */
   tokens: CloudTokens;
@@ -79,14 +118,15 @@ export interface CloudAuthConfig {
    */
   requestDeadlineMs?: number;
   /**
-   * Called (at most once) when the hosted API DEFINITIVELY refused to renew the session —
-   * `POST /auth/refresh` answered 401/403, which is a revoked or rotated-past family, not a
-   * blip. This is the engine's cue to surface "signed out" instead of serving a silently
-   * frozen mirror behind a session that no longer exists — measured live: a revoked desktop
-   * retried into 401s every five minutes for a day while its window showed week-old mail with
-   * no notice anywhere. Fire-and-forget; the fetch that triggered it still returns its 401.
+   * Called at most once, when the refresh door REFUSED — a 401 carrying a code in
+   * {@link REFUSAL_CODES}. The engine's cue to return to sign-in. Nothing else calls it: a 403,
+   * an uncoded 401, a 5xx or a dead network is retried and the session stays.
    */
-  onSessionRefused?: () => void;
+  onSessionRefused?: (code: string) => void;
+  /** Told each new {@link CloudSessionReading}, and each fault's retry, for `/health` and the log. */
+  onSessionState?: (reading: CloudSessionReading, next: { attempt: number; retryInMs: number | null }) => void;
+  /** The jitter's source, injectable so a test can pin the schedule. */
+  random?: () => number;
 }
 
 /**
@@ -123,6 +163,12 @@ export interface CloudAuth {
   currentTokens(): CloudTokens;
   /** {@link SealState} — read by `/health`, so the window can say it rather than only the log. */
   sealState(): SealState;
+  /** {@link CloudSessionReading} as it stands. */
+  session(): CloudSessionReading;
+  /** Renew now — the window's Try again — and answer the reading that leaves. */
+  renewNow(): Promise<CloudSessionReading>;
+  /** Cancel every scheduled renewal and stop reporting. Nothing is sent and nothing is removed. */
+  stop(): void;
 }
 
 interface SealedTokenFile {
@@ -175,17 +221,62 @@ export async function loadSealedTokens(path: string, keyProvider: KeyProvider): 
   }
 }
 
+/** One renewal's outcome. `fault` keeps the session; only `refused` ends it. */
+type Renewal =
+  | { kind: "minted"; expiresInMs: number | null }
+  | { kind: "refused"; code: string }
+  | { kind: "fault"; state: "renewing" | "unreachable" | "seal_failed"; code: string; retryAfterMs: number | null };
+
+/** A code fit for a state line: our envelope's vocabulary shape. Anything else is dropped. */
+const CODE_SHAPE = /^[a-z][a-z0-9_]{0,47}$/;
+
+/** The error code our envelope names, or null — an HTML page, an empty body, a foreign shape. */
+async function envelopeCode(res: Response): Promise<string | null> {
+  try {
+    const body = (await res.json()) as { error?: { code?: unknown } } | null;
+    const code = body?.error?.code;
+    return typeof code === "string" && CODE_SHAPE.test(code) ? code : null;
+  } catch {
+    return null;
+  }
+}
+
+/** `Retry-After` in milliseconds — seconds or an HTTP date — or null when absent or unreadable. */
+export function retryAfterMs(res: Response, nowMs: number): number | null {
+  const raw = res.headers.get("retry-after")?.trim() ?? "";
+  if (raw === "") return null;
+  const seconds = Number(raw);
+  const ms = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(raw) - nowMs;
+  if (!Number.isFinite(ms)) return null;
+  return Math.min(Math.max(ms, 0), RETRY_AFTER_MAX_MS);
+}
+
+/** A transport failure's word: the deadline, or the network. Never the message. */
+function transportCode(err: unknown): string {
+  const name = (err as { name?: unknown } | null)?.name;
+  return name === "TimeoutError" || name === "AbortError" ? "timeout" : "network";
+}
+
 export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
   const fetchImpl = cfg.fetchImpl ?? fetch;
   const base = cfg.baseUrl.replace(/\/+$/, "");
   const deadlineMs = cfg.requestDeadlineMs ?? REQUEST_DEADLINE_MS;
+  const now = cfg.now ?? ((): Date => new Date());
+  const random = cfg.random ?? Math.random;
   let tokens = cfg.tokens;
-  /** The clone defence, single-flight: one in-flight refresh serves every concurrent 401. */
-  let refreshing: Promise<CloudTokens> | null = null;
-  /** The definitive-refusal latch: {@link CloudAuthConfig.onSessionRefused} fires at most once. */
+  /** The clone defence, single-flight: one in-flight renewal serves every caller. */
+  let renewing: Promise<Renewal> | null = null;
+  /** The refusal latch: {@link CloudAuthConfig.onSessionRefused} fires at most once. */
   let sessionRefusedTold = false;
   /** {@link SealState}'s reason — the class of the last refused seal, cleared by the next one. */
   let sealFailure: string | null = null;
+  let reading: CloudSessionReading = { state: "live", code: null, since: now().toISOString() };
+  /** Consecutive faults, for the backoff. A mint resets it. */
+  let faults = 0;
+  /** The ONE scheduled renewal — ahead of expiry, or a fault's retry — and which of the two. */
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let timerIsRetry = false;
+  let stopped = false;
 
   /**
    * Bound a request that nobody else is bounding. A caller-supplied `signal` wins untouched —
@@ -198,74 +289,149 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
     return { ...init, signal: AbortSignal.timeout(deadlineMs) };
   };
 
-  const tellSessionRefused = (): void => {
+  const tellSessionRefused = (code: string): void => {
     if (sessionRefusedTold) return;
     sessionRefusedTold = true;
     try {
-      cfg.onSessionRefused?.();
+      cfg.onSessionRefused?.(code);
     } catch {
       /* the cue must never break the fetch it rode in on */
     }
   };
 
-  const persist = async (next: CloudTokens): Promise<void> => {
-    if (!cfg.keyProvider || !cfg.sealPath) return;
+  /** Write `next` to the seal. False when the disk refused it; the class is kept for `/health`. */
+  const persist = async (next: CloudTokens, reason: string): Promise<boolean> => {
+    if (!cfg.keyProvider || !cfg.sealPath) return true;
     try {
       await sealTokens(cfg.sealPath, cfg.keyProvider, next);
       sealFailure = null;
+      return true;
     } catch (err) {
-      /* RECORDED, NOT ONLY LOGGED. The log line stays and says the same thing; what is new is
-         that the state outlives it, so `/health` can carry the refusal and the window can say
-         "your sign-in could not be saved" instead of reporting a rotation that did not land. */
       sealFailure = describeError(err).errorClass;
-      cfg.log?.("cloud_refresh_failed", {
-        err,
-        reason: "the rotated session could not be sealed to disk; it is held in memory for this " +
-          "launch and the next launch reads the environment token instead",
-      });
+      cfg.log?.("cloud_refresh_failed", { err, reason });
+      return false;
     }
   };
 
-  const refresh = async (): Promise<CloudTokens> => {
-    // THE NAME GOES DOWN BEFORE THE REQUEST GOES OUT, and a retry of an attempt whose answer never
-    // arrived carries the SAME one — resumed from the seal this launch loaded, so a process killed
-    // between submit and adopt still retries as itself. Where there is no seal the name lives for
-    // this process only, which is every retry this client makes without dying. The seal write is
-    // AWAITED: a name on the wire that is not yet on disk is the one ordering a retry cannot
-    // recover from, and `persist` swallows its own failure exactly as it does after a rotation.
+  const refresh = async (): Promise<Renewal> => {
+    /* THE NAME GOES DOWN BEFORE THE REQUEST GOES OUT, and a retry of an unanswered attempt carries
+       the same one, resumed from the seal after a relaunch. When the name cannot be written the
+       request does not go out: a rotation the disk does not know about leaves the next launch
+       presenting a spent token under a new name, which the server treats as theft and answers by
+       revoking every device of the family. The token on disk stays the live one instead. */
     const attemptId = tokens.refreshAttempt ?? mintAttemptId();
-    tokens = { ...tokens, refreshAttempt: attemptId };
-    await persist(tokens);
-    const res = await fetchImpl(`${base}/auth/refresh`, withDeadline({
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ refreshToken: tokens.refreshToken, attemptId }),
-    }));
-    if (res.status === 401 || res.status === 403) {
-      // DEFINITIVE: the family is revoked, rotated past, or reused — no retry renews it.
-      tellSessionRefused();
-      throw new CloudAuthError(`the hosted API refused to renew the session (HTTP ${res.status})`, res.status);
+    const staged: CloudTokens = { ...tokens, refreshAttempt: attemptId };
+    const written = await persist(staged,
+      "the next renewal could not be written to disk, so it was not sent; the saved session stays live");
+    if (!written) return { kind: "fault", state: "seal_failed", code: "seal_write_failed", retryAfterMs: null };
+    tokens = staged;
+    let res: Response;
+    try {
+      res = await fetchImpl(`${base}/auth/refresh`, withDeadline({
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ refreshToken: staged.refreshToken, attemptId }),
+      }));
+    } catch (err) {
+      return { kind: "fault", state: "unreachable", code: transportCode(err), retryAfterMs: null };
     }
-    if (!res.ok) throw new CloudAuthError(`the hosted API could not renew the session right now (HTTP ${res.status})`);
-    const wire = (await res.json()) as { tokens?: { accessToken?: string; refreshToken?: string } };
+    if (!res.ok) {
+      /* THE ONE VERDICT: a 401 naming one of our refusal codes. A 403 here is a platform's (the
+         native refresh takes no CSRF), and an uncoded 401 or a 5xx is not a statement about this
+         session — each is retried with the attempt's name, so a retry is a replay, not a reuse. */
+      const code = await envelopeCode(res);
+      if (res.status === 401 && code !== null && REFUSAL_CODES.has(code)) return { kind: "refused", code };
+      return {
+        kind: "fault", state: "renewing", code: code ?? `http_${res.status}`,
+        retryAfterMs: retryAfterMs(res, now().getTime()),
+      };
+    }
+    let wire: { tokens?: { accessToken?: string; refreshToken?: string; expiresIn?: unknown } };
+    try {
+      wire = (await res.json()) as typeof wire;
+    } catch {
+      return { kind: "fault", state: "renewing", code: "unreadable_response", retryAfterMs: null };
+    }
     const next = wire.tokens;
     if (!next?.accessToken || !next?.refreshToken) {
-      throw new CloudAuthError("the refresh response carried no token pair");
+      return { kind: "fault", state: "renewing", code: "no_token_pair", retryAfterMs: null };
     }
     // THE ATTEMPT IS ANSWERED, and the pair that replaces it carries no name — one seal write, so
     // there is no window where a fresh token stands beside a spent attempt's name.
     tokens = { accessToken: next.accessToken, refreshToken: next.refreshToken };
-    await persist(tokens);
-    return tokens;
+    /* A refusal HERE leaves the disk one rotation behind, holding the spent token beside the name
+       that spent it — which the server answers as a replay of that attempt, so the next launch
+       resumes. The next renewal cannot move further ahead: its own name must land first. */
+    await persist(tokens,
+      "the renewed session could not be written to disk; the saved one resumes it on the next launch");
+    const expiresIn = typeof next.expiresIn === "number" && next.expiresIn > 0 ? next.expiresIn * 1000 : null;
+    return { kind: "minted", expiresInMs: expiresIn };
   };
 
-  const refreshOnce = (): Promise<CloudTokens> => {
+  const clearTimer = (): void => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+  };
+
+  const schedule = (delayMs: number, retry: boolean): void => {
+    if (stopped) return;
+    clearTimer();
+    timerIsRetry = retry;
+    timer = setTimeout(() => {
+      timer = null;
+      void renewOnce();
+    }, delayMs);
+    timer.unref?.();
+  };
+
+  const report = (state: CloudSessionState, code: string | null, retryInMs: number | null): void => {
+    const changed = reading.state !== state || reading.code !== code;
+    if (changed) reading = { state, code, since: now().toISOString() };
+    if (!changed && retryInMs === null) return;
+    try {
+      cfg.onSessionState?.(reading, { attempt: faults, retryInMs });
+    } catch {
+      /* a listener must not break the renewal it is told about */
+    }
+  };
+
+  /** Apply one renewal's outcome: the state, and the ONE timer that follows from it. */
+  const settle = (r: Renewal): void => {
+    if (stopped) return;
+    if (r.kind === "minted") {
+      faults = 0;
+      report("live", null, null);
+      if (r.expiresInMs !== null) {
+        schedule(Math.round(r.expiresInMs * (RENEW_AHEAD_FRACTION + (random() - 0.5) * 0.1)), false);
+      }
+      return;
+    }
+    if (r.kind === "refused") {
+      clearTimer();
+      report("refused", r.code, null);
+      tellSessionRefused(r.code);
+      return;
+    }
+    faults += 1;
+    const backoff = Math.min(RETRY_CAP_MS, RETRY_BASE_MS * 2 ** Math.min(faults - 1, 16));
+    const delay = r.retryAfterMs ?? Math.round(backoff * (0.5 + random() / 2));
+    report(r.state, r.code, delay);
+    schedule(delay, true);
+  };
+
+  const renewOnce = (): Promise<Renewal> => {
     // `??=` is the single-flight: the first caller installs the promise, everyone else awaits it,
-    // and `finally` clears it so the NEXT expiry starts a fresh one.
-    refreshing ??= refresh().finally(() => {
-      refreshing = null;
-    });
-    return refreshing;
+    // and `finally` clears it so the NEXT renewal starts a fresh one.
+    renewing ??= refresh()
+      .catch((): Renewal => ({ kind: "fault", state: "renewing", code: "renewal_threw", retryAfterMs: null }))
+      .then((r) => {
+        settle(r);
+        return r;
+      })
+      .finally(() => {
+        renewing = null;
+      });
+    return renewing;
   };
 
   const withBearer = (init: RequestInit | undefined, access: string): RequestInit => {
@@ -274,27 +440,49 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
     return { ...init, headers };
   };
 
+  const discard = (res: Response): void => {
+    void res.body?.cancel().catch(() => undefined);
+  };
+
   const authedFetch = async (path: string, init?: RequestInit): Promise<Response> => {
-    const bounded = withDeadline(init);
-    const res = await fetchImpl(`${base}${path}`, withBearer(bounded, tokens.accessToken));
+    const sentWith = tokens.accessToken;
+    const res = await fetchImpl(`${base}${path}`, withBearer(withDeadline(init), sentWith));
     if (res.status !== 401) return res;
-    let renewed: CloudTokens;
-    try {
-      renewed = await refreshOnce();
-    } catch (err) {
-      cfg.log?.("cloud_refresh_failed", {
-        err,
-        reason: "the session could not be renewed, so the mirror pauses until the shell supplies a " +
-          "fresh token; nothing local is lost",
-      });
-      return res;
+    /* A 401 HERE SAYS THE ACCESS TOKEN IS STALE, never that the session is over — only the
+       refresh door says that. So: a session already refused answers as it is; a token renewed
+       while this was in flight is simply used; a fault already being retried on its own clock
+       is not hurried by every request that meets it; anything else joins the one renewal. */
+    if (reading.state === "refused") return res;
+    const again = (): Promise<Response> =>
+      fetchImpl(`${base}${path}`, withBearer(withDeadline(init), tokens.accessToken));
+    if (tokens.accessToken !== sentWith) {
+      discard(res);
+      return again();
     }
-    return fetchImpl(`${base}${path}`, withBearer(withDeadline(init), renewed.accessToken));
+    if (timer !== null && timerIsRetry) {
+      discard(res);
+      return offlineResponse();
+    }
+    const r = await renewOnce();
+    if (r.kind === "refused") return res;
+    discard(res);
+    return r.kind === "minted" ? again() : offlineResponse();
   };
 
   return {
     authedFetch,
     currentTokens: () => tokens,
     sealState: () => ({ sealed: sealFailure === null, reason: sealFailure }),
+    session: () => reading,
+    renewNow: async () => {
+      if (stopped || reading.state === "refused") return reading;
+      clearTimer();
+      await renewOnce();
+      return reading;
+    },
+    stop: () => {
+      stopped = true;
+      clearTimer();
+    },
   };
 }

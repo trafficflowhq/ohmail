@@ -10,7 +10,8 @@ import {
 } from "./db.js";
 import { ensureLocalWorld, mintLaunchSession, type LocalWorld } from "./identity.js";
 import {
-  createCloudAuth, loadSealedTokens, sealTokens, type CloudAuth, type CloudTokens,
+  createCloudAuth, loadSealedTokens, sealTokens,
+  type CloudAuth, type CloudSessionReading, type CloudTokens,
 } from "./cloud-auth.js";
 import {
   cloudIdentity,
@@ -280,7 +281,7 @@ function readMirrorRecordRaw(dataDir: string): string | null {
  * DIFFERENT hosted address would reopen a database holding the previous account's mail under the
  * `accountId` the new session reads by — the worst failure shape this product has (measured). The
  * mirror is a CACHE, so the answer is to discard and re-bootstrap, never reconcile two accounts (the
- * sealed session and cursor go with it). Called before {@link openLocalDb}, idempotent, marker-less
+ * sealed session and cursor go with it). Called under the directory's lock, idempotent, marker-less
  * installs adopted. A mirror belongs to an account on a SERVER, so `cloudUrl` is compared as hard as the
  * address; sign-in and pair-redeem re-ask after the database is open (this settles only a launch).
  */
@@ -785,12 +786,14 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
   const tBoot = Date.now();
 
   // The mirror belongs to exactly one hosted account ON ONE SERVER; discard it whole if either has
-  // changed. Must run before the database is opened — see {@link enforceMirrorOwner}.
-  enforceMirrorOwner(config.dataDir, config.address, cloudBase, log);
-
+  // changed. Run UNDER the data directory's lock and before the database opens — a second engine
+  // is refused before it can remove a running one's seal or store (see {@link enforceMirrorOwner}).
   const opened: OpenLocalDb = await openLocalDb(config.dataDir, {
     ...(log ? { log } : {}),
     ...(config.onPhase ? { onPhase: config.onPhase } : {}),
+    underLock: () => {
+      enforceMirrorOwner(config.dataDir, config.address, cloudBase, log);
+    },
   });
   config.onPhase?.("preparing");
   try {
@@ -816,6 +819,10 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     const sealPath = join(config.dataDir, "cloud-tokens.seal");
 
     const sealed = keyProvider ? await loadSealedTokens(sealPath, keyProvider) : null;
+    /* A SEAL ON DISK THAT THIS KEY CANNOT OPEN is the one seal fault a sign-in is owed for — the
+       key ring changed or the file was damaged — and the dialog says so rather than greeting the
+       person as a first run. Read before anything else can write the path. */
+    const sealUnreadable = sealed === null && existsSync(sealPath);
 
     /**
      * THE AUTHED HALF, assembled from a token pair — at construction when there is one, and from
@@ -854,13 +861,12 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     const declaredDeviceKind = desktopDeviceKind(process.platform);
 
     /**
-     * TRUE from the moment the hosted API definitively refuses to renew the session (401/403 on
-     * `/auth/refresh` — a revoked or rotated-past family) until the next successful activation.
-     * `/health` carries it beside `signedIn`, so the shell can say "your session ended — sign in
-     * again" instead of the plain first-run sign-in. The measured alternative was a desktop that
-     * retried into 401s every five minutes for a day while its window showed week-old mail.
+     * THE HOSTED SESSION'S READING, kept past a refusal's teardown so `/health` can name the cause
+     * (`cloud-auth.ts`). `null` is no session — a first run, or a sign-out the person asked for.
+     * `sessionExpired` is DERIVED from it (`refused` and nothing else), so no second flag can say a
+     * session ended that the refresh door never refused.
      */
-    let sessionExpired = false;
+    let hostedSession: CloudSessionReading | null = null;
     /**
      * A pairing finished here and cannot take effect until this process is replaced. Set by a
      * `startOver` redeem, which seals the new world's session and stages the old mirror's discard —
@@ -882,7 +888,6 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     let sessionTeardown: Promise<void> | null = null;
 
     const activate = (tokens: CloudTokens): Authed => {
-      sessionExpired = false;
       const auth = createCloudAuth({
         baseUrl: cloudBase,
         tokens,
@@ -891,22 +896,30 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         sealPath,
         now,
         ...(log ? { log } : {}),
-        onSessionRefused: () => {
-          // The session is DEAD server-side; nothing this process can send will renew it. Tear
-          // down to the pre-auth state (stop the pulls, drop the spent seal) so the window
-          // renders the sign-in surface instead of a silently frozen mirror. Fire-and-forget:
-          // this fires from inside a pull's own refresh, and the teardown's stop() resolves
-          // only after that pull fails out — awaiting it here would be the deadlock.
-          sessionExpired = true;
+        onSessionState: (reading, next) => {
+          hostedSession = reading;
+          log?.("cloud_session_state", {
+            state: reading.state, code: reading.code, attempt: next.attempt, retryInMs: next.retryInMs,
+          });
+          // BACK FROM A FAULT: the mirror's own backoff may be minutes long by now.
+          if (reading.state === "live") authed?.mirror.kick();
+        },
+        onSessionRefused: (code) => {
+          // The refresh door REFUSED; nothing this process can send will renew it. Tear down to the
+          // pre-auth state (stop the pulls, drop the spent seal) so the window renders the sign-in
+          // surface. Fire-and-forget: this fires from inside a pull's own refresh, and the
+          // teardown's stop() resolves only after that pull fails out — awaiting is the deadlock.
           log?.("cloud_session_renewal_failed", {
-            reason: "the hosted API refused to renew the session (revoked or rotated past); " +
-              "the engine returns to sign-in and the mirror keeps serving what it holds",
+            code,
+            reason: "the hosted API refused to renew the session; the engine returns to sign-in " +
+              "and the mirror keeps serving what it holds",
           });
           sessionTeardown = signOut().catch(() => undefined).finally(() => {
             sessionTeardown = null;
           });
         },
       });
+      hostedSession = auth.session();
 
       const mirror: CloudMirror = createCloudMirror({
         db,
@@ -964,6 +977,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       // check has just adopted or emptied.
       activate(launchTokens);
     } else {
+      if (sealUnreadable) hostedSession = { state: "seal_failed", code: "seal_unreadable", since: now().toISOString() };
       // NOT A FAILURE. See the pre-auth section in this file's header: the engine serves
       // `/health` and `/cloud/signin`, and the shell renders a sign-in surface rather than an
       // error about a process that would not start.
@@ -1012,7 +1026,8 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         });
       }
       // The wake next — a frame arriving mid-sign-out must not kick a pull into a mirror that
-      // is being asked to leave.
+      // is being asked to leave — and the renewal clock with it.
+      live?.auth.stop();
       live?.wake.stop();
       // AWAITED. A drain that outlived the sign-out would go on writing the previous account's mail
       // into a database this process has just declared signed out.
@@ -1049,7 +1064,9 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           online: authed !== null && authed.mirror.online(),
           // The reason `signedIn` is false, when the reason is the server ending the session
           // rather than nobody having signed in yet. The shell words its sign-in surface off it.
-          sessionExpired,
+          sessionExpired: hostedSession?.state === "refused",
+          // Where the session stands and why — the dialog's cause and the rail's notice.
+          session: hostedSession,
           // …and the OTHER reason it can be false: a pairing that has succeeded and is waiting for
           // a relaunch. See the declaration — without this the shell shows a password form or a
           // "no longer paired" card, and both are false statements about a pairing that worked.
@@ -1641,7 +1658,17 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         return json({ status: "paired", mailboxId: world.mailboxId, address: config.address });
       }
 
+      /* THE WINDOW'S TRY AGAIN — renew now rather than on the fault's own clock (the disk may
+         have room again). Answers the reading it leaves; refuses nothing but a missing session. */
+      if (req.method === "POST" && path === "/cloud/session/renew") {
+        if (!authed) {
+          return json({ error: { code: "not_signed_in", message: "there is no session to renew" } }, 409);
+        }
+        return json({ session: await authed.auth.renewNow() });
+      }
+
       if (req.method === "DELETE" && path === "/cloud/session") {
+        hostedSession = null;
         const teardown = signOut();
         sessionTeardown = teardown.catch(() => undefined).finally(() => {
           sessionTeardown = null;
@@ -1800,6 +1827,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         // FIRST: a reading taken during teardown would describe a process that has stopped
         // serving as though it were.
         stopVitals();
+        authed?.auth.stop();
         authed?.wake.stop();
         // THE AWAIT IS THE FIX. `opened.close()` hands PGlite a close that queues behind whatever
         // the mirror has already asked it to do, so closing while a drain was still enqueuing pages
