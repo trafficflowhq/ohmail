@@ -86,6 +86,37 @@ export function firstRunCounts(
 }
 
 /**
+ * THE SCREENER ROWS THAT BELONG TO ONE MAILBOX — the guided decision's candidates.
+ *
+ * The first decision a run offers is a real decision on a real sender, and on a second mailbox's
+ * setup it could be about somebody who wrote to the FIRST one. The row's own DTO carries no
+ * mailbox, so the answer comes from the mirror: the representative message, then any held message,
+ * whichever the mirror can speak for first.
+ *
+ * `many` is the install holding more than one mailbox, and it is what makes this safe to apply at
+ * all: on a single-mailbox install every sender is that mailbox's by construction, so the list is
+ * returned untouched and no lookup can drop a row a person is waiting to decide about. Where it
+ * DOES apply, a row the mirror cannot place is left out rather than guessed at — the screen's whole
+ * claim is that this sender wrote to this mailbox.
+ */
+export function screenerForMailbox<R extends { id: string; held: readonly { id: string }[] }>(
+  rows: readonly R[],
+  mailboxOf: (messageId: string) => string | undefined,
+  mailboxId: string | null,
+  many: boolean,
+): R[] {
+  if (!many) return [...rows];
+  if (mailboxId === null) return [];
+  return rows.filter((row) => {
+    for (const id of [row.id, ...row.held.map((m) => m.id)]) {
+      const mb = mailboxOf(id);
+      if (mb !== undefined) return mb === mailboxId;
+    }
+    return false;
+  });
+}
+
+/**
  * WHO ORGANIZES THIS ACCOUNT'S MAIL, when anybody does — the one state the connect form can read about a
  * mailbox that does not exist yet. A mailbox connected here becomes a consent-less READER and stays one while
  * somebody else holds the lease, and the only place that said so was Settings → Mailboxes.
