@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -28,9 +28,15 @@ const read = (rel: string): string => readFileSync(join(here, rel), "utf8");
 
 describe("the served browser client's secure-context dependencies (the API-only premise)", () => {
   it("the shared shell calls crypto.randomUUID() bare in the tag flows — absent on an insecure origin, so the flow would throw", () => {
-    const shell = read("../../webapp/app/shell/AppShell.tsx");
     // `crypto.randomUUID` is [SecureContext]: on `http://<lan-ip>` it is undefined and the call
-    // is a TypeError. Two call sites at the time of the audit (createTag, createTagAlone).
+    // is a TypeError. The shell was ONE file at the audit; the 0.22.1 extraction cut it into
+    // app/shell/*.ts{,x} and carried these calls verbatim into shell-verbs.ts, leaving this pin
+    // reading a file its subject had left. So the subject is the DIRECTORY, asked once.
+    const dir = join(here, "../../webapp/app/shell");
+    const files = readdirSync(dir).filter((f) => /\.tsx?$/.test(f));
+    // A zero-file read is not an answer: it would pass this pin for an empty directory.
+    expect(files.length).toBeGreaterThan(0);
+    const shell = files.map((f) => readFileSync(join(dir, f), "utf8")).join("\n");
     expect(shell).toMatch(/crypto\.randomUUID\(\)/);
   });
 
