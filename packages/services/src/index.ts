@@ -1,6 +1,7 @@
 export const SERVICES_VERSION = "0.0.0";
 
 export { ServiceError, IdempotencyRaceLost, OAuthCodeReplayed, SettleFailed, TransientDialRefusal } from "./errors.js";
+export { readInstant, instantRefusal, type InstantReading } from "./instant.js";
 /* The read ceilings on STORED cardinality — the axis the input-bounds census cannot see, because
  * the request that triggers one of these reads carries a single scalar. See `read-bounds.ts`. */
 export {

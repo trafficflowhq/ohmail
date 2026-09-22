@@ -46,6 +46,7 @@ export { jsonResponse, errorResponse, type JsonResponseInit } from "./responses.
 // names only the credential table, the adapter and the shared errors, all of which the engine
 // already carries.
 export { makeSendAdapter } from "./send-adapter.js";
+export { sendConnections } from "./send-adapter.js";
 // The per-request ServiceContext builder, for engine-side route modules (the sidecar's own
 // tables — AI settings, the stdio pairing mint) that call services exactly as the shared
 // handlers do. Mail-safe: it reads `deps.session` and the platform IP headers, nothing hosted.

@@ -5,6 +5,7 @@ import { assertOrganizerRole, drafts, mailboxes, recordChange, type Tx } from "@
 import type { EmailAddress } from "@trafficflow/core/mail";
 import { bridgeTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
+import { instantRefusal, readInstant } from "./instant.js";
 import { materializeDraft } from "./dto/materialize.js";
 import type { DraftMutation } from "./drafts-service.js";
 
@@ -163,17 +164,18 @@ export class ScheduleService {
     if (typeof raw !== "string" || raw.length === 0) {
       throw new ServiceError("validation_failed", 400, "sendAt is required (an ISO 8601 timestamp)");
     }
-    const t = Date.parse(raw);
-    if (!Number.isFinite(t)) {
-      throw new ServiceError("validation_failed", 400, "sendAt must be an ISO 8601 timestamp");
-    }
+    // TOTAL, and refused BY NAME. `Date.parse` rolled February 30 into March 2 and read a time
+    // with no offset in the server's zone, so a message left at a moment the person never chose.
+    const read = readInstant(raw);
+    if (!read.ok) throw new ServiceError("validation_failed", 400, instantRefusal("sendAt", read.why));
+    const t = read.at.getTime();
     if (t <= now.getTime()) {
       throw new ServiceError("validation_failed", 400, "sendAt is in the past; pick a future time");
     }
     if (t > now.getTime() + SCHEDULE_MAX_AHEAD_MS) {
       throw new ServiceError("validation_failed", 400, "sendAt is more than a year away; pick a closer time");
     }
-    return new Date(t);
+    return read.at;
   }
 
   /** Re-materialize the DTO (post-commit) and pair it with the emitted seq — `DraftsService.finish`. */

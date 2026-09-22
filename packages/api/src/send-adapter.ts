@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { mailboxCredentials } from "@trafficflow/db";
 import { ImapAdapter, buildImapAuth, type CredMetaAuth } from "@trafficflow/core/adapters/imap";
 import type { NetTimeouts } from "@trafficflow/core/adapters/imap";
-import type { SendAdapter } from "@trafficflow/core/mail";
+import { SendConnections, type SendAdapter, type WarmSendAdapter } from "@trafficflow/core/mail";
 import { ServiceError } from "@trafficflow/services/mail";
 import { clearedFor } from "./dial-host-guard.js";
 import type { ApiDeps } from "./deps.js";
@@ -21,6 +21,13 @@ interface CredMeta extends CredMetaAuth {
 }
 
 /**
+ * THE PROCESS-WIDE KEEPER every production send door dials through — the hosted API, the
+ * self-host server and the desktop engine all reach `makeSendAdapter`, so one instance here is
+ * one instance everywhere. The hosts close it at shutdown; tests hand the factory their own.
+ */
+export const sendConnections = new SendConnections();
+
+/**
  * Build the API's send adapter. Unlike `makeOpenAdapter` (attachments), this reads both
  * credential rows, decrypts each, and constructs a connected `ImapAdapter` with `smtp` populated
  * so it can SMTP-send and IMAP-append to Sent; credentials never leave the server. No dedicated
@@ -37,6 +44,8 @@ export async function makeSendAdapter(
   /* FOURTH, not third, so every existing caller keeps the position it passes `opts` in. */
   newAdapter: (cfg: ConstructorParameters<typeof ImapAdapter>[0]) => ImapAdapter =
     (cfg) => new ImapAdapter(cfg),
+  /* FIFTH: the keeper. Production dials through the process-wide one; a test hands in its own. */
+  keep: SendConnections = sendConnections,
 ): Promise<SendAdapter> {
   const rows = await deps.db.select().from(mailboxCredentials)
     .where(eq(mailboxCredentials.mailboxId, mailboxId));
@@ -45,128 +54,138 @@ export async function makeSendAdapter(
   if (!imapRow) throw new ServiceError("upstream_unavailable", 502, "mailbox has no IMAP credentials");
   const smtpRow = rows.find((r) => r.transport === "smtp");
 
-  const imapMeta = (imapRow.meta ?? {}) as CredMeta;
-  const imapPort = imapMeta.port ?? 993;
-  // BEFORE the secret is decrypted, and before any transport exists: a server this deployment
-  // will not dial should cost no key material, and a refusal that arrives after the adapter is
-  // built is a refusal that arrives after a socket may have opened. See {@link clearedFor}.
-  const imapPin = await clearedFor(deps, imapMeta.host ?? "", imapPort, "imap");
-  const imapSecret = await deps.keyProvider.decrypt(imapRow.secretEnc, imapRow.keyVersion);
-  // The IMAP auth goes through the SHARED builder — an oauth2 row becomes the token callback here,
-  // never a password. `imapSecret` is a REFRESH TOKEN for oauth, a password otherwise.
-  const imapAuth = buildImapAuth(imapMeta, imapSecret, deps.oauth?.forMailbox(mailboxId));
+  // AFTER the credential read and BEFORE anything else: a live connection kept from an earlier
+  // press serves this one with no decrypt, no host check and no socket. A mailbox whose rows are
+  // gone still refuses above, so nothing is sent through a connection its owner has removed.
+  return keep.open(mailboxId, async (): Promise<WarmSendAdapter> => {
 
-  // Resolve the SMTP transport. For OAUTH there is no smtp row and no static SMTP auth: one refresh
-  // token covers both transports, so the host/port/secure come from `meta.smtp` and `ImapAdapter.send`
-  // fetches a token per message. For PASSWORD, the dedicated smtp row when present, else the imap
-  // host/user + imap secret (shared-credential providers, e.g. GreenMail).
-  let smtpConfig: { host: string; port: number; secure: boolean; auth?: { user: string; pass: string } };
-  if (imapMeta.authType === "oauth2") {
-    const s = imapMeta.smtp ?? {};
-    smtpConfig = {
-      host: s.host ?? "smtp.office365.com",
-      port: s.port ?? 587,
-      secure: s.secure ?? false,
-    };
-  } else {
-    let smtpMeta: CredMeta;
-    let smtpPass: string;
-    if (smtpRow) {
-      smtpMeta = (smtpRow.meta ?? {}) as CredMeta;
-      smtpPass = await deps.keyProvider.decrypt(smtpRow.secretEnc, smtpRow.keyVersion);
+    const imapMeta = (imapRow.meta ?? {}) as CredMeta;
+    const imapPort = imapMeta.port ?? 993;
+    // BEFORE the secret is decrypted, and before any transport exists: a server this deployment
+    // will not dial should cost no key material, and a refusal that arrives after the adapter is
+    // built is a refusal that arrives after a socket may have opened. See {@link clearedFor}.
+    const imapPin = await clearedFor(deps, imapMeta.host ?? "", imapPort, "imap");
+    const imapSecret = await deps.keyProvider.decrypt(imapRow.secretEnc, imapRow.keyVersion);
+    // The IMAP auth goes through the SHARED builder — an oauth2 row becomes the token callback here,
+    // never a password. `imapSecret` is a REFRESH TOKEN for oauth, a password otherwise.
+    const imapAuth = buildImapAuth(imapMeta, imapSecret, deps.oauth?.forMailbox(mailboxId));
+
+    // Resolve the SMTP transport. For OAUTH there is no smtp row and no static SMTP auth: one refresh
+    // token covers both transports, so the host/port/secure come from `meta.smtp` and `ImapAdapter.send`
+    // fetches a token per message. For PASSWORD, the dedicated smtp row when present, else the imap
+    // host/user + imap secret (shared-credential providers, e.g. GreenMail).
+    let smtpConfig: { host: string; port: number; secure: boolean; auth?: { user: string; pass: string } };
+    if (imapMeta.authType === "oauth2") {
+      const s = imapMeta.smtp ?? {};
+      smtpConfig = {
+        host: s.host ?? "smtp.office365.com",
+        port: s.port ?? 587,
+        secure: s.secure ?? false,
+      };
     } else {
-      /**
-       * No `smtp` row: the guess, and the one case where guessing is dishonest. `imap host:587`
-       * with the imap secret is the convention and right for most providers. Not when the
-       * submission server was tried and refused: the local door marks the outgoing half unsettled
-       * precisely so a working mailbox is not held hostage to a blocked port — and the fallback
-       * would dial a server somebody was already told does not work and report the result as a
-       * fresh failure. The absence of a row is read together with the marker: no marker, guess; a
-       * marker, refuse with its reason. 502 `smtp_not_settled` keeps it out of the retry ladder.
-       */
-      if (imapMeta.smtpUnsettled) {
-        throw new ServiceError(
-          "smtp_not_settled", 502,
-          "Sending is not set up for this mailbox: its outgoing (SMTP) server has not been "
-            + "settled. Receiving works. Set the outgoing server in Settings → Mailboxes.",
-        );
+      let smtpMeta: CredMeta;
+      let smtpPass: string;
+      if (smtpRow) {
+        smtpMeta = (smtpRow.meta ?? {}) as CredMeta;
+        smtpPass = await deps.keyProvider.decrypt(smtpRow.secretEnc, smtpRow.keyVersion);
+      } else {
+        /**
+         * No `smtp` row: the guess, and the one case where guessing is dishonest. `imap host:587`
+         * with the imap secret is the convention and right for most providers. Not when the
+         * submission server was tried and refused: the local door marks the outgoing half unsettled
+         * precisely so a working mailbox is not held hostage to a blocked port — and the fallback
+         * would dial a server somebody was already told does not work and report the result as a
+         * fresh failure. The absence of a row is read together with the marker: no marker, guess; a
+         * marker, refuse with its reason. 502 `smtp_not_settled` keeps it out of the retry ladder.
+         */
+        if (imapMeta.smtpUnsettled) {
+          throw new ServiceError(
+            "smtp_not_settled", 502,
+            "Sending is not set up for this mailbox: its outgoing (SMTP) server has not been "
+              + "settled. Receiving works. Set the outgoing server in Settings → Mailboxes.",
+          );
+        }
+        smtpMeta = { host: imapMeta.host, port: 587, secure: false, user: imapMeta.user };
+        smtpPass = imapSecret;
       }
-      smtpMeta = { host: imapMeta.host, port: 587, secure: false, user: imapMeta.user };
-      smtpPass = imapSecret;
+      const smtpUser = smtpMeta.user ?? imapMeta.user ?? "";
+      smtpConfig = {
+        host: smtpMeta.host ?? imapMeta.host ?? "",
+        port: smtpMeta.port ?? 587,
+        secure: smtpMeta.secure ?? false,
+        // GreenMail runs with auth disabled; omit auth when there is no user to bind.
+        ...(smtpUser ? { auth: { user: smtpUser, pass: smtpPass } } : {}),
+      };
     }
-    const smtpUser = smtpMeta.user ?? imapMeta.user ?? "";
-    smtpConfig = {
-      host: smtpMeta.host ?? imapMeta.host ?? "",
-      port: smtpMeta.port ?? 587,
-      secure: smtpMeta.secure ?? false,
-      // GreenMail runs with auth disabled; omit auth when there is no user to bind.
-      ...(smtpUser ? { auth: { user: smtpUser, pass: smtpPass } } : {}),
-    };
-  }
 
-  // The submission server is its own name on its own transport — its own check, its own pin. The
-  // no-smtp-row fallback dials the IMAP host on 587, which is a second transport on one name and
-  // is checked as one rather than borrowing the IMAP leg's verdict.
-  const smtpPin = await clearedFor(deps, smtpConfig.host, smtpConfig.port, "smtp");
+    // The submission server is its own name on its own transport — its own check, its own pin. The
+    // no-smtp-row fallback dials the IMAP host on 587, which is a second transport on one name and
+    // is checked as one rather than borrowing the IMAP leg's verdict.
+    const smtpPin = await clearedFor(deps, smtpConfig.host, smtpConfig.port, "smtp");
 
-  const adapter = newAdapter({
-    host: imapMeta.host ?? "",
-    port: imapPort,
-    secure: imapMeta.secure ?? true,
-    // The cleared addresses, so the socket goes where the check went. `host` above is untouched:
-    // the pin narrows the ADDRESS and nothing else — see `ImapConfig.pin`.
-    ...(imapPin ? { pin: imapPin } : {}),
-    // SHORTER DEADLINES FOR A CALLER THAT HAS LESS TIME, threaded rather than raced.
-    //
-    // The reconciling pass runs three dials inside the same 60-second invocation the default
-    // 15 s connect + 15 s greeting were chosen for ONE send to fit in. Racing them from outside
-    // was tried and is worse than useless: an abandoned operation still owns imapflow's command
-    // queue, so the caller learns nothing and the socket lives on. Handing the ADAPTER a shorter
-    // deadline means a breach is the adapter's own honest "this mailbox did not answer" — which
-    // is a fact the caller can act on, and which its give-up may legitimately act on after a day.
-    ...(opts.timeouts ? { timeouts: opts.timeouts } : {}),
-    // The connect-time plaintext consent, threaded like the worker threads it — an IMAP append
-    // to the Sent folder of a consented no-TLS mailbox must dial the way the probe proved.
-    ...(imapMeta.insecureConsent === true ? { allowInsecure: true } : {}),
-    auth: imapAuth,
-    smtp: { ...smtpConfig, ...(smtpPin ? { pin: smtpPin } : {}) },
-    sentDomain: domainOf(imapMeta.user),
-  });
-  // Same reason as `makeOpenAdapter`: `connect()` logs in and LISTs, so a failure after login
-  // leaves an authenticated socket open that the caller has no handle to close. Close it here
-  // and rethrow the original error — on the SEND path a leaked socket is worse than elsewhere,
-  // because the retry that follows is a retry of a send.
-  try {
-    await adapter.connect();
-  } catch (err) {
-    await adapter.close().catch(() => { /* the connection is already broken */ });
-    throw err;
-  }
-
-  return {
-    send: async (msg) => {
-      const res = await adapter.send(msg);
-      // `appended` carries the Sent-folder APPEND this send just made — the UID the server answered
-      // with, and the exact bytes at it. Dropping it here (which this wrapper used to do) is what
-      // left the just-sent message discoverable only by the sync worker's next pass over Sent, a
-      // poll interval later. `SendService.projectSentCopy` writes the row from it immediately.
+    const adapter = newAdapter({
+      host: imapMeta.host ?? "",
+      port: imapPort,
+      secure: imapMeta.secure ?? true,
+      // The cleared addresses, so the socket goes where the check went. `host` above is untouched:
+      // the pin narrows the ADDRESS and nothing else — see `ImapConfig.pin`.
+      ...(imapPin ? { pin: imapPin } : {}),
+      // SHORTER DEADLINES FOR A CALLER THAT HAS LESS TIME, threaded rather than raced.
       //
-      // The bytes are NOT stored: they are fingerprinted and parsed into the same columns any
-      // ingested message gets, and the Buffer is garbage after the request. See `SendResult.raw`
-      // for why the projection may not use anything else as its content source.
-      return { providerMessageId: res.providerMessageId, appended: { locator: res.sentLocator, raw: res.raw } };
-    },
-    messageInSent: (messageId) => adapter.messageInSent(messageId),
-    close: () => adapter.close(),
-    // FORWARDED, and without it the seam is decorative. `SendAdapter.forceClose` exists for a
-    // caller that has abandoned a timed-out operation: imapflow serialises commands, so a
-    // graceful LOGOUT queues behind the hung one and the polite path waits out the very hang it
-    // is escaping. This wrapper is a hand-written literal, so an `ImapAdapter` method that is not
-    // named here simply does not exist to the caller — which is how the reconciler's abandonment
-    // path was silently taking the fallback in production while its test passed against a spy
-    // that did define it.
-    forceClose: () => { adapter.forceClose(); },
-  };
+      // The reconciling pass runs three dials inside the same 60-second invocation the default
+      // 15 s connect + 15 s greeting were chosen for ONE send to fit in. Racing them from outside
+      // was tried and is worse than useless: an abandoned operation still owns imapflow's command
+      // queue, so the caller learns nothing and the socket lives on. Handing the ADAPTER a shorter
+      // deadline means a breach is the adapter's own honest "this mailbox did not answer" — which
+      // is a fact the caller can act on, and which its give-up may legitimately act on after a day.
+      ...(opts.timeouts ? { timeouts: opts.timeouts } : {}),
+      // The connect-time plaintext consent, threaded like the worker threads it — an IMAP append
+      // to the Sent folder of a consented no-TLS mailbox must dial the way the probe proved.
+      ...(imapMeta.insecureConsent === true ? { allowInsecure: true } : {}),
+      auth: imapAuth,
+      smtp: { ...smtpConfig, ...(smtpPin ? { pin: smtpPin } : {}) },
+      sentDomain: domainOf(imapMeta.user),
+    });
+    // Same reason as `makeOpenAdapter`: `connect()` logs in and LISTs, so a failure after login
+    // leaves an authenticated socket open that the caller has no handle to close. Close it here
+    // and rethrow the original error — on the SEND path a leaked socket is worse than elsewhere,
+    // because the retry that follows is a retry of a send.
+    try {
+      await adapter.connect();
+    } catch (err) {
+      await adapter.close().catch(() => { /* the connection is already broken */ });
+      throw err;
+    }
+
+    return {
+      send: async (msg) => {
+        const res = await adapter.send(msg);
+        // `appended` carries the Sent-folder APPEND this send just made — the UID the server answered
+        // with, and the exact bytes at it. Dropping it here (which this wrapper used to do) is what
+        // left the just-sent message discoverable only by the sync worker's next pass over Sent, a
+        // poll interval later. `SendService.projectSentCopy` writes the row from it immediately.
+        //
+        // The bytes are NOT stored: they are fingerprinted and parsed into the same columns any
+        // ingested message gets, and the Buffer is garbage after the request. See `SendResult.raw`
+        // for why the projection may not use anything else as its content source.
+        return { providerMessageId: res.providerMessageId, appended: { locator: res.sentLocator, raw: res.raw } };
+      },
+      messageInSent: (messageId) => adapter.messageInSent(messageId),
+      close: () => adapter.close(),
+      // FORWARDED, and without it the seam is decorative. `SendAdapter.forceClose` exists for a
+      // caller that has abandoned a timed-out operation: imapflow serialises commands, so a
+      // graceful LOGOUT queues behind the hung one and the polite path waits out the very hang it
+      // is escaping. This wrapper is a hand-written literal, so an `ImapAdapter` method that is not
+      // named here simply does not exist to the caller — which is how the reconciler's abandonment
+      // path was silently taking the fallback in production while its test passed against a spy
+      // that did define it.
+      forceClose: () => { adapter.forceClose(); },
+      // THE KEEPER'S ADMISSION. Only a real adapter can say whether its socket is still there;
+      // the hand-written doubles have no `isLive`, so they are handed back uncached and dialled
+      // fresh every time, exactly as before.
+      ...(typeof adapter.isLive === "function" ? { isLive: (): boolean => adapter.isLive() } : {}),
+    };
+  });
 }
 
 function domainOf(address: string | undefined): string | undefined {

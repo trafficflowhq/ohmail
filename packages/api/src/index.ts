@@ -58,6 +58,7 @@ export { makeOpenAdapter } from "./attachments-adapter.js";
 
 // Send adapter factory — decrypt BOTH imap+smtp creds → connected ImapAdapter.
 export { makeSendAdapter } from "./send-adapter.js";
+export { sendConnections } from "./send-adapter.js";
 
 // The add-time IMAP/SMTP probe's SSRF/port gate. The hosted deployment wires the enforcing policy
 // on `ApiServices.probeHostGuard`; the desktop engine wires ALLOW_ANY (a LAN mail server is

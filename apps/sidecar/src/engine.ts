@@ -69,7 +69,7 @@ import {
 import { makeSessionLifecycle } from "@trafficflow/services/auth";
 import {
   API_VERSION, ALLOW_ANY_PROBE_HOST, createApp, DEFAULT_SSE, errorResponse, localRoutes, makeImapProbe,
-  makeSendAdapter, makeSmtpProbe, matchRoute,
+  makeSendAdapter, makeSmtpProbe, matchRoute, sendConnections,
   type ProbeDialer, type SmtpProbeOptions,
   type ApiDeps, type ApiServices, type App, type Route,
 } from "@trafficflow/api/local";
@@ -8259,6 +8259,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            stop. `detach()` sets `stopped` first and releases after the queue has settled, which is
            the only ordering where both are true. */
         await Promise.allSettled(runtimes.all().map((r) => r.detach()));
+        // The send door's kept connections go with the install: nothing outlives the stop.
+        await sendConnections.closeAll();
         await opened.close();
       },
     };

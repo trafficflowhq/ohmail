@@ -2,7 +2,7 @@ import { setNoticeSink, noticeSinkFor, type Tx } from "@trafficflow/db";
 import { setupProdDatabase } from "@trafficflow/db/admin";
 import { makeOwnedDb, makeChangeWakeHub } from "@trafficflow/db/cloud";
 import { createLogger, UNMETERED_STORAGE_CAP } from "@trafficflow/core";
-import { makeSendAdapter } from "@trafficflow/api";
+import { makeSendAdapter, sendConnections } from "@trafficflow/api";
 import {
   runAwayResponderPass, runScheduledSendPass, runSendReconcilePass, SEND_RECONCILE_NET_TIMEOUTS,
 } from "@trafficflow/services";
@@ -258,6 +258,8 @@ async function main(): Promise<void> {
         // A send mid-flight finishes BEFORE the database goes: the finalize is what records
         // a delivered message as delivered, and the pool must outlive it.
         if (sendPassInFlight) await sendPassInFlight.catch(() => { /* its own catch logged */ });
+        // The send door's kept IMAP connections: closed here, never left to their idle clock.
+        await sendConnections.closeAll();
         await hub.end();
         await owned.close();
         logger.info("shutdown_complete", {});

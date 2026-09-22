@@ -1326,6 +1326,17 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     await this.client.noop();
   }
 
+  /**
+   * Whether this connection can still carry a command: connected, not retired, not closing, and
+   * imapflow's own `usable` — cleared the moment its socket closes or ends, before any listener
+   * here runs. The send door reuses a connection only on `true`; a double without `usable`
+   * reads `false` and is dialled fresh every time.
+   */
+  isLive(): boolean {
+    return this.established && !this.closing && this.retiredBecause === null
+      && (this.client as unknown as { usable?: unknown } | undefined)?.usable === true;
+  }
+
   async capabilities(): Promise<ImapCapabilities> {
     const c = this.client.capabilities;
     const base: ImapCapabilities = {
@@ -3899,7 +3910,13 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const raw = await buildRaw(mail);
 
     const sentCanonical = await this.resolveSentFolder();
-    const appended = await this.client.append(this.toServerPath(sentCanonical), raw, ["\\Seen"]);
+    // Under the read deadline like every other wait on the server: an APPEND the server never
+    // answers would otherwise hold this connection — and a released connection is now kept for
+    // the next press, so a hang here would be handed on. A breach retires it; the keeper reads
+    // it dead and dials again.
+    const appended = await this.bounded(
+      this.client.append(this.toServerPath(sentCanonical), raw, ["\\Seen"]), sentCanonical,
+    );
     const sentLocator: NativeLocator = appended && typeof appended !== "boolean" && appended.uid != null && appended.uidValidity != null
       ? { folder: sentCanonical, ref: makeRef(appended.uidValidity, appended.uid) }
       : { folder: sentCanonical, ref: "0:0" };

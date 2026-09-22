@@ -5,6 +5,7 @@ import { dialect, pgOnly, type Dialect } from "@trafficflow/db/dialect";
 import { materializeMessages } from "./dto/materialize.js";
 import { clampLimit } from "./pagination.js";
 import { ServiceError } from "./errors.js";
+import { instantRefusal, readInstant } from "./instant.js";
 import type { MessageDTO } from "./dto/types.js";
 
 /**
@@ -544,20 +545,18 @@ export class SearchService {
   // ── filter → WHERE (account scope always first) ───────────────────────
 
   /**
-   * The two date bounds are the only filter values CAST rather than compared.
-   * `${f.dateFrom}::timestamptz` is parameterized — no injection — but the cast is evaluated by
-   * Postgres, and a non-instant raises 22007, reaching `withErrorEnvelope` as a 500 `internal`
-   * for a plainly bad request (`dateFrom=notadate`). Refused HERE rather than in
-   * `routes/search.ts` because the route is not the only door: `apps/sidecar/src/cloud-read.ts`
-   * calls `searchService.search` directly, so a route check guards the hosted door and not the
-   * desktop one. The message matches `MessageService.list`'s for `beforeDate` — the same refusal
-   * about the same kind of value.
+   * The two date bounds are the only filter values CAST rather than compared: a non-instant
+   * raises 22007 in Postgres and reached `withErrorEnvelope` as a 500 for a plainly bad request.
+   * Refused HERE, not in `routes/search.ts`: `apps/sidecar/src/cloud-read.ts` calls
+   * `searchService.search` directly, so a route check guards one door of two. TOTAL, through
+   * the same `readInstant` as `MessageService.list`'s `beforeDate` and the schedule door's
+   * `sendAt`: `new Date()` rolled February 30 into March 2 and read an offset-less time in the
+   * server's zone, so a bound was a window nobody asked for.
    */
-  private static instantOr400(value: string, field: string): string {
-    if (Number.isNaN(new Date(value).getTime())) {
-      throw new ServiceError("validation_failed", 400, `${field} must be an ISO instant`);
-    }
-    return value;
+  private static instantOr400(value: string, field: string): Date {
+    const read = readInstant(value);
+    if (!read.ok) throw new ServiceError("validation_failed", 400, instantRefusal(field, read.why));
+    return read.at;
   }
 
   private whereSql(d: Dialect, accountId: string, f: SearchFilters): SQL {
@@ -569,10 +568,10 @@ export class SearchService {
     if (f.unread !== undefined) preds.push(sql`m.unread = ${f.unread}`);
     if (f.hasAttachments !== undefined) preds.push(sql`m.has_attachments = ${f.hasAttachments}`);
     if (f.dateFrom !== undefined) {
-      preds.push(sql`m.date >= ${d.ts(new Date(SearchService.instantOr400(f.dateFrom, "dateFrom")))}`);
+      preds.push(sql`m.date >= ${d.ts(SearchService.instantOr400(f.dateFrom, "dateFrom"))}`);
     }
     if (f.dateTo !== undefined) {
-      preds.push(sql`m.date <= ${d.ts(new Date(SearchService.instantOr400(f.dateTo, "dateTo")))}`);
+      preds.push(sql`m.date <= ${d.ts(SearchService.instantOr400(f.dateTo, "dateTo"))}`);
     }
     return sql.join(preds, sql` and `);
   }

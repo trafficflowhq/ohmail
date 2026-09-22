@@ -27,6 +27,7 @@ export * from "./ai/workflows/executor.js";
 export * from "./ai/workflows/propose.js";
 export * from "./ai/workflows/proposals.js";
 export * from "./send.js";
+export * from "./send-connections.js";
 export * from "./sent-record.js";
 export * from "./outbound-text.js";
 export * from "./migrate-hey.js";

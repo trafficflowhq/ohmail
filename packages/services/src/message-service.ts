@@ -16,6 +16,7 @@ import {
 import { bridgeTx, bridgeDb, type Db, type ServiceContext } from "./context.js";
 import { foldersEnabled, userFolderById } from "./folders.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
+import { instantRefusal, readInstant } from "./instant.js";
 import {
   materializeMessage, materializeMessages, materializeMessagesInOrder,
 } from "./dto/materialize.js";
@@ -449,9 +450,13 @@ export class MessageService {
         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(opts.before.id)) {
           throw new ServiceError("validation_failed", 400, "beforeId must be a message id");
         }
-        const bd = opts.before.date === null ? null : new Date(opts.before.date);
-        if (bd !== null && Number.isNaN(bd.getTime())) {
-          throw new ServiceError("validation_failed", 400, "beforeDate must be an ISO instant");
+        let bd: Date | null = null;
+        if (opts.before.date !== null) {
+          // Total, by the same reader as the schedule door: a date that normalises is a page
+          // boundary nobody named.
+          const read = readInstant(opts.before.date);
+          if (!read.ok) throw new ServiceError("validation_failed", 400, instantRefusal("beforeDate", read.why));
+          bd = read.at;
         }
         filters.push(afterKeyset({ date: bd, id: opts.before.id }));
       }
