@@ -147,47 +147,18 @@
    and unchanged, and simply appears under "Earlier" on the render the timer schedules. The move
    still happens — it is the information — and only the travel is dropped. */
 
-/* the trailing action slot — MessageRow's `actions`, a SIBLING of the row button.
-   The wrapper adds no height of its own, so a row mid-exit still collapses to nothing:
-   `.row.out` shrinks the button and the slot's own contents are gone by then.
-
-   THE SLOT OVERLAYS THE ROW; IT DOES NOT SIT BESIDE IT. The controls used to be an in-flow
-   flex sibling (`.row-actions{flex:none}` inside a flex `.row-slot`), which reserved a chip's
-   width of inline space for them at all times — and because they only fade with `opacity:0`,
-   which keeps an element in flow, that space was reserved even while they were invisible. So
-   every waiting row's preview was truncated by that width whether or not the pointer was near
-   it. Now `.row-actions` is absolutely positioned over the row's trailing end: it takes ZERO
-   layout width, and the row (and its preview) keeps the full width whether a row has actions or
-   not. The far edge of the preview is briefly covered only while the controls are revealed. */
-.row-slot{position:relative;display:block}
-.row-slot>.row{width:100%}
-.row-actions{
-  position:absolute;top:0;bottom:0;right:0;z-index:2;
-  display:flex;align-items:center;
-  /* click-through until a control is revealed: the container never intercepts a click meant
-     for the row underneath (a bare press selects the row); the revealed buttons/menu opt back
-     in with `pointer-events:auto` — see `.scn-act` and `.scn-act-menu` in app.css. */
-  pointer-events:none;
-  /* `--edge` tracks the row's own background, so the fade below is seamless in both themes,
-     both faces and the hover / selected states. */
-  --edge:var(--panel);
-}
-/* THE FADE IS THE CONTROLS' OWN BACKDROP AND MAY ONLY BE AS TALL AS THEY ARE. On the
-   full-height wrapper it covered the row's FIRST LINE as well, and on a touch screen — where the
-   controls stand at rest, because a press there raises the reading sheet rather than revealing
-   them — that was a permanent overlay over the stamp, the one column a queue is scanned by
-   (measured at 390px, both faces, both catalogues: the stamp's band is the row's first line, the
-   controls' band is below it). On its own box the fade masks exactly what the controls sit on. */
-.row-actions-in{
-  display:flex;align-items:center;gap:4px;
-  padding:0 12px 0 28px;
-  background:transparent;
-  transition:background .14s var(--swift);
-}
+/* THE TRAILING ACTION SLOT — MessageRow's `actions`, a SIBLING of the row button.
+   IT IS A COLUMN OF ITS OWN AND NEVER FLOATS OVER THE ROW. It floated for one release (absolute,
+   zero width) so an untouched row kept its whole preview, and the price was the control drawn ON
+   the subject's tail and the trailing glyphs the moment a row was hovered. The slot is now the
+   grid's second track: as wide as the controls, reserved whether they are visible or not so hover
+   moves nothing, and ZERO where the slot is empty (`.row-actions-in:empty` — a row with no action,
+   and a row mid-exit, which is what keeps a collapsing row's track from being held open). The row
+   button's track is `minmax(0,1fr)`, whose ZERO minimum is also the button's own automatic one, so
+   subject, badges and preview clip BEFORE the slot rather than pushing it off the row's edge. */
+.row-slot{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto}
+/* Click-through where nothing is revealed: the reserved column is not a target, and a revealed
+   control opts back in with `pointer-events:auto` (`.scn-act`, `.rsf-done`, `.scn-act-menu`). */
+.row-actions{display:flex;align-items:center;pointer-events:none}
+.row-actions-in{display:flex;align-items:center;gap:4px;padding:0 12px 0 8px}
 .row-actions-in:empty{display:none}
-.row-slot:hover .row-actions{--edge:var(--tint)}
-.row-slot:has(.row.sel) .row-actions{--edge:var(--float)}
-.row-slot:hover .row-actions-in,
-.row-slot:focus-within .row-actions-in,
-.row-slot:has(.row.sel) .row-actions-in{background:linear-gradient(to right,transparent,var(--edge) 24px)}
-@media (hover:none){.row-actions-in{background:linear-gradient(to right,transparent,var(--edge) 24px)}}

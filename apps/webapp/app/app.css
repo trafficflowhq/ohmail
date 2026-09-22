@@ -1418,9 +1418,9 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   cursor: pointer;
   white-space: nowrap;
   opacity: 0;
-  /* The controls float OVER the row's trailing end (`.row-actions` is an absolute overlay —
-     see row.css), so a hidden control sitting invisibly over the preview must not swallow a
-     click meant for the row. It is inert until revealed, and only then clickable. */
+  /* The controls stand in the row's OWN trailing column (`.row-actions`, row.css), never over
+     it: the column is reserved whether they show or not, and a hidden control stays inert so the
+     empty gutter is not a click target. It is clickable only once revealed. */
   pointer-events: none;
   transition: opacity 0.14s var(--swift), background 0.14s var(--swift), color 0.14s var(--swift);
 }
@@ -1467,7 +1467,7 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   border: 1px solid var(--line);
   background: var(--float);
   box-shadow: var(--lift-2);
-  /* opened from a revealed control; the popover itself lives inside the click-through overlay
+  /* opened from a revealed control; the popover itself lives inside the click-through slot
      (`.row-actions`), so it opts back into pointer events or its own items are not clickable. */
   pointer-events: auto;
 }
@@ -1499,8 +1499,8 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
  *
  * The same rules as `.scn-act` above and for the same reasons, stated once more rather than
  * shared through a class the Screener owns: hidden until the row is hovered, focused-within or
- * selected — and INERT while hidden, because `.row-actions` floats over the row's trailing end
- * and an invisible control must not swallow a click meant for the row; revealed unconditionally
+ * selected — and INERT while hidden, because the row's trailing column is reserved whether a
+ * control shows in it or not and an empty gutter is not a target; revealed unconditionally
  * where hover does not exist. The hover face borrows the accept button's affirmative tint —
  * pressing it completes something, it does not merely adjust it. */
 .rsf-done {
