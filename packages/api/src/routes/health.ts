@@ -1406,6 +1406,13 @@ export const healthRoutes: Route[] = [
       // `version`/`buildError` on every branch, like `dbProvider`, so a consumer never has to
       // infer provenance from the presence or absence of a fault.
       const buildSource = injected?.buildSource ?? null;
+      // The artifact's own commit, where the host was handed one — the desktop shell's, baked at
+      // build time and passed at spawn. Published only when it is there: a hosted deployment is
+      // identified by `version`, and a null key would read as "this host reports a build commit
+      // and has none". `unknown` IS published, because a build that cannot name itself is a
+      // different state from one nobody asked.
+      const buildCommit = injected?.buildCommit?.trim() || null;
+      const artifact = buildCommit ? { buildCommit } : {};
       // NOT a `healthFault` — see `HealthConfig.adminError` for why an unarmed staff
       // console must not darken the product host. It is published because with the surface
       // unarmed there is no `/admin/*` endpoint left that could report its own absence.
@@ -1500,6 +1507,7 @@ export const healthRoutes: Route[] = [
           ok: false,
           version,
           buildSource,
+          ...artifact,
           dbLatencyMs: probe.dbLatencyMs,
           error: "database_unreachable",
           errorCode: probe.errorCode,
@@ -1512,7 +1520,7 @@ export const healthRoutes: Route[] = [
       }
       if (probe.kind === "empty") {
         return healthResponse(503, {
-          ok: false, version, buildSource, dbLatencyMs: probe.dbLatencyMs, error: "database_probe_empty", kek,
+          ok: false, version, buildSource, ...artifact, dbLatencyMs: probe.dbLatencyMs, error: "database_probe_empty", kek,
           dbProvider,
           entitlements,
           ...pager,
@@ -1537,6 +1545,7 @@ export const healthRoutes: Route[] = [
           ok: liveFault === null,
           version,
           buildSource,
+          ...artifact,
           dbLatencyMs: probe.dbLatencyMs,
           cookieAuth: deps.allowCookieAuth !== false,
           kek,
@@ -1555,6 +1564,7 @@ export const healthRoutes: Route[] = [
         ok: fault === null,
         version,
         buildSource,
+        ...artifact,
         dbLatencyMs: probe.dbLatencyMs,
         pgTrgm: probe.pgTrgm,
         schemaOk: probe.schemaOk,

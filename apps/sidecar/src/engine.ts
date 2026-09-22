@@ -475,6 +475,16 @@ export interface SidecarConfig {
    * pre-LAN composition.
    */
   lanBind?: string;
+  /**
+   * WHICH BUILD THIS ENGINE IS — the commit the SHELL that spawned it was built from, handed
+   * over at spawn (`OHMAIL_BUILD_COMMIT`) and published at `/health` as `buildCommit`. The
+   * desktop download is one artifact with two halves, and until this existed only the window
+   * could name a commit: the engine's reproducibility gate could compare two local builds and
+   * never the shipped pair. Absent ⇒ nothing spawned this with a build identity (a dev run, an
+   * older shell) and `/health` says nothing about it; the literal `unknown` ⇒ a shell that was
+   * built without one — a different answer, and the gate refuses it by name.
+   */
+  buildCommit?: string;
 }
 
 /**
@@ -1879,6 +1889,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // `schema_incomplete` for ever — about a database that is complete for what it is.
       health: {
         version: API_VERSION, kek: kekIdentity, schemaTier: "mail",
+        /* The shell's baked commit, forwarded verbatim — see `SidecarConfig.buildCommit`. */
+        ...(config.buildCommit?.trim() ? { buildCommit: config.buildCommit.trim() } : {}),
         /**
          * Which store this install actually opened, named rather than left null. Null was
          * harmless with one possible answer and stops being harmless with two: `/health` on a

@@ -99,6 +99,34 @@ fn the_password_is_never_composed_by_either_door() {
 }
 
 #[test]
+fn every_door_hands_the_engine_the_commit_this_shell_was_built_from() {
+    // ── DESKTOP-ENGINE-CANNOT-REPORT-ITS-BUILD-SHA-WITHOUT-THE-RUST-SHELL ────────────────────
+    //
+    // The download is one artifact with two halves and only the window could name its commit.
+    // With this pair the engine publishes the same value at `/health`, so the shipped shell and
+    // the shipped engine can be compared with each other instead of taken on trust.
+    //
+    // Watch it fail: remove the push from `env_for_door` and both doors compose no commit.
+    for config in [local_door(), cloud_door()] {
+        let env = env_map(&env_for(&config, Path::new("/data")));
+        let commit = env
+            .get(crate::engine::BUILD_COMMIT_VAR)
+            .unwrap_or_else(|| panic!("no build commit was composed for {config:?}"));
+        // 40 hex from a stamped build, `unknown` from a tree that could not know — and NEVER
+        // empty, which is the one answer that would read as "this key is not in use".
+        assert!(
+            commit == "unknown"
+                || (commit.len() == 40 && commit.bytes().all(|b| b.is_ascii_hexdigit())),
+            "the composed build commit is neither a commit nor `unknown`: {commit:?}"
+        );
+    }
+    // The candidate walk's composition carries it too — a candidate engine is the same build.
+    let dir = std::env::temp_dir().join(format!("ohmail-build-commit-{}", std::process::id()));
+    let env = env_map(&env_for_in(&cloud_door(), &dir, &candidate_data_dir(&dir)).expect("composed"));
+    assert!(env.contains_key(crate::engine::BUILD_COMMIT_VAR));
+}
+
+#[test]
 fn the_two_doors_never_share_a_data_directory() {
     let root = Path::new("/data");
     let local = env_map(&env_for(&local_door(), root));

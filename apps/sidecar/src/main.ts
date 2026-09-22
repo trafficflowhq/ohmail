@@ -233,6 +233,11 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SidecarConf
     // no-validation rule again: `resolveLanBind` (engine-side) is the one place that rules on
     // the value, and a refusal degrades the LAN half alone with `host_lan_config_invalid`.
     ...(env.OHMAIL_LAN_BIND?.trim() ? { lanBind: env.OHMAIL_LAN_BIND.trim() } : {}),
+    // WHICH BUILD THE SHELL THAT SPAWNED THIS IS. Not validated here either: `/health` publishes
+    // it as it stands, including the literal `unknown` a shell built from an identity-less tree
+    // bakes, because a build that cannot name itself and a launch that was never told are
+    // different answers and the reader of `/health` is owed both.
+    ...(env.OHMAIL_BUILD_COMMIT?.trim() ? { buildCommit: env.OHMAIL_BUILD_COMMIT.trim() } : {}),
   };
 }
 

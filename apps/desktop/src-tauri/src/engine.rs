@@ -132,6 +132,16 @@ pub const NODE_PATH_VAR: &str = "OHMAIL_NODE";
 /// Where the local mirror lives. Supplied by the shell when the environment does not name one.
 pub const DATA_DIR_VAR: &str = "OHMAIL_DATA_DIR";
 
+/// The commit this build was made from, handed to the engine so its `/health` can say which
+/// build is serving. See [`build_commit`] and `config::env_for`.
+pub const BUILD_COMMIT_VAR: &str = "OHMAIL_BUILD_COMMIT";
+
+/// The value baked by `build.rs` — a 40-hex commit, or the literal `unknown` where the build had
+/// no way to know (a source tree with no `.git` and nothing in the environment). Never empty: an
+/// absent value and an unidentifiable build are different answers and both get said.
+pub fn build_commit() -> &'static str {
+    env!("OHMAIL_BUILD_COMMIT")
+}
 
 /// What the shell refuses to spawn the engine without. Naming them beats starting a process whose
 /// only outcome is a failed start or an install that can never store a credential.

@@ -813,6 +813,19 @@ fn env_for_door(config: &Config, root: &Path, adopt: bool) -> Vec<(OsString, OsS
         dir.into_os_string(),
     )];
 
+    // ── WHICH BUILD THE ENGINE IS, ANSWERED BY THE SHELL THAT SPAWNED IT ────────────────────
+    //
+    // The download is one artifact with two halves: this shell and the engine it runs. The
+    // window has always named its own commit (`build-id.ts`), the engine could name none, and
+    // `verify-engine-repro.mjs` could therefore compare two local builds and never the shipped
+    // pair. Baked by `build.rs` from the same variable the window's label is folded from, handed
+    // over here, published at `/health` — so the two halves of one download either name one
+    // commit or say `unknown`, and the repro gate refuses both disagreement and `unknown`.
+    env.push(pair(
+        crate::engine::BUILD_COMMIT_VAR,
+        crate::engine::build_commit().to_string(),
+    ));
+
     // ── THE OPERATOR'S OWN CERTIFICATE AUTHORITY, IF THEY HAVE PUT ONE HERE ─────────────────
     //
     // A person running their own ohmail server on a private name — `ohmail.test`, `mail.lan`,

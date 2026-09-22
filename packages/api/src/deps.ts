@@ -432,6 +432,16 @@ export interface HealthConfig {
    */
   buildSource?: BuildIdentitySource | null;
   /**
+   * THE COMMIT THE ARTIFACT AROUND THIS HOST WAS BUILT FROM, where the host was told one —
+   * distinct from {@link version}, the DEPLOYMENT's identity as the platform reports it. The
+   * desktop download is one artifact with two halves, a Rust shell and this engine: the shell
+   * bakes its commit and hands it over at spawn, so `/health` can be compared with the window's
+   * build label and with the source the engine is reproduced from. Absent ⇒ nothing told this
+   * host; the literal `unknown` ⇒ a build that could not identify itself, published as it
+   * stands rather than folded into absence.
+   */
+  buildCommit?: string | null;
+  /**
    * Which schema this host is supposed to have. Absent means both journals — every hosted
    * deployment. `"mail"` is the local engine: it migrates the mail journal alone and has no
    * billing ledger, no passkey challenge store, no staff directory; probed against the full

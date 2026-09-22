@@ -134,7 +134,43 @@ fn main() {
         "cargo:rustc-env=OHMAIL_WINDOW_COMMANDS={}",
         if engine { WINDOW_COMMANDS.join(",") } else { String::new() }
     );
+    // WHICH COMMIT THIS SHELL WAS BUILT FROM, baked so the engine it spawns can say the same
+    // thing. See [`build_commit`].
+    println!("cargo:rustc-env=OHMAIL_BUILD_COMMIT={}", build_commit());
     tauri_build::try_build(attributes).expect("ohmail: failed to build the Tauri context");
+}
+
+/// THE COMMIT THIS ARTIFACT WAS BUILT FROM — one value, baked into the shell and handed to the
+/// engine at every spawn (`config::env_for`), so `/health` and the About pane name the same
+/// build. Without it the two halves of one download could only be compared by trusting that
+/// whoever built them built them together.
+///
+/// The order is the ONE SOURCE first: `OHMAIL_BUILD_SHA` is what `vite.config.ts` folds into the
+/// window's own build label, and the release workflow sets it once for the whole job — so asking
+/// it here makes About's commit and the engine's the same value by construction rather than by
+/// two variables that happen to agree. `OHMAIL_BUILD_COMMIT` is the explicit override for a build
+/// that sets this variable alone; `GITHUB_SHA` is the platform's own. `git rev-parse HEAD` is the
+/// developer's checkout — and it is LAST because a `git archive` extraction has no `.git` and a
+/// packager's tree may be a different commit from the environment's. `unknown` when nothing
+/// answers, spelled out rather than left empty: the repro gate refuses that word by name, which
+/// is a different verdict from a health document that names no build at all.
+fn build_commit() -> String {
+    for var in ["OHMAIL_BUILD_SHA", "OHMAIL_BUILD_COMMIT", "GITHUB_SHA"] {
+        println!("cargo:rerun-if-env-changed={var}");
+        if let Some(value) = std::env::var(var).ok().map(|v| v.trim().to_string()) {
+            if !value.is_empty() {
+                return value;
+            }
+        }
+    }
+    std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .filter(|sha| !sha.is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 /// Fail the build unless `plugins.updater.pubkey` in tauri.conf.json is a

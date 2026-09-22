@@ -9,6 +9,7 @@
  * mode shows up. What it does NOT claim: reproducible for a FIXED environment, not every one — the bundle is
  * not minified (a stack trace is worth more), so it carries a path comment per module and two package
  * managers lay a tree out differently, so the honest statement is environment-qualified (`npm ci` then the pinned bundler, the way its CI does). The metafile (written beside the layout) and modification times are outside the comparison by construction. It refuses on an EMPTY layout (two empty dirs compare equal): a three-item floor and a file count, and both output roots passed explicitly and asserted different. */
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -73,6 +74,100 @@ function floorOrDie(rows, label) {
   }
 }
 
+/**
+ * WHICH BUILD THE HEALTH DOCUMENT IS TALKING ABOUT. The reproduction below is evidence about
+ * THIS source, so a document naming another commit makes it evidence about nothing. Three
+ * refusals: no build named at all, `unknown` (a tree that could not identify itself), or a
+ * different commit.
+ *
+ * @param {unknown} health the parsed `/health` body
+ * @param {string} expected the commit this checkout is
+ * @returns {{ ok: boolean, reason: string }}
+ */
+export function checkAgainst(health, expected) {
+  const named = health && typeof health === "object" ? health.buildCommit : undefined;
+  if (typeof named !== "string" || named.trim() === "") {
+    return {
+      ok: false,
+      reason: "the health document names no buildCommit, so nothing ties it to this source " +
+        "(an engine spawned by a shell that bakes no build identity)",
+    };
+  }
+  const got = named.trim().toLowerCase();
+  if (got === "unknown") {
+    return {
+      ok: false,
+      reason: "the running engine reports its build commit as `unknown` — it was built from a " +
+        "tree that could not name itself, and a reproduction cannot be pinned to it",
+    };
+  }
+  const want = String(expected).trim().toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(want)) {
+    return { ok: false, reason: `this checkout names no commit to compare against (${expected || "nothing"})` };
+  }
+  if (got !== want) {
+    return {
+      ok: false,
+      reason: `the running engine was built from ${got}, and this source is ${want}: ` +
+        "two builds of the same source is a claim about THIS source",
+    };
+  }
+  return { ok: true, reason: "" };
+}
+
+/**
+ * The commit this checkout is, in the ORDER `apps/desktop/src-tauri/build.rs` resolves it — one
+ * rule in two languages, so the gate and the shell cannot disagree about which build is which.
+ * A `git archive` extraction has no `.git`, which is why the environment is asked first.
+ */
+function expectedCommit() {
+  for (const name of ["OHMAIL_BUILD_SHA", "OHMAIL_BUILD_COMMIT", "GITHUB_SHA"]) {
+    const value = (process.env[name] ?? "").trim();
+    if (value) return value;
+  }
+  try {
+    return execFileSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  } catch {
+    return "";
+  }
+}
+
+/** The health document, from a file or from a running engine. */
+async function readHealth(source) {
+  if (/^https?:\/\//.test(source)) {
+    const res = await fetch(source);
+    return await res.json();
+  }
+  return JSON.parse(readFileSync(source, "utf8"));
+}
+
+const ARGV = process.argv.slice(2);
+if (ARGV.includes("--selftest")) process.exit(selftest());
+
+const againstAt = ARGV.indexOf("--against");
+if (againstAt !== -1) {
+  const source = ARGV[againstAt + 1];
+  if (!source || source.startsWith("--")) {
+    console.error("REFUSED: --against needs a path or URL to a /health document");
+    process.exit(2);
+  }
+  /* FIRST, before the two builds: a reproduction of the wrong source is minutes spent proving
+     nothing, and the refusal is the same either way. */
+  let health;
+  try {
+    health = await readHealth(source);
+  } catch (err) {
+    console.error(`REFUSED: the health document at ${source} could not be read (${err})`);
+    process.exit(1);
+  }
+  const verdict = checkAgainst(health, expectedCommit());
+  if (!verdict.ok) {
+    console.error(`REFUSED: ${verdict.reason}`);
+    process.exit(1);
+  }
+  console.log(`the running engine names this source's commit (${expectedCommit().trim()})`);
+}
+
 const scratch = mkdtempSync(join(tmpdir(), "ohmail-engine-repro-"));
 try {
   const outA = join(scratch, "a");
@@ -118,4 +213,43 @@ try {
   rmSync(scratch, { recursive: true, force: true });
   /* The bundler writes its build record beside the output root, so the two scratch roots leave
    * two files one level up from themselves — inside `scratch`, which has just gone. */
+}
+
+// ── SELFTEST ─────────────────────────────────────────────────────────────────────────────────
+//
+// The arms of the `--against` half alone: it is a pure function over a parsed document, so every
+// case is drivable here with no engine, no network and no build. The two builds are NOT run — a
+// selftest that took minutes and a bundler would be a selftest nobody runs between releases.
+function selftest() {
+  let pass = 0;
+  let fail = 0;
+  const arm = (cond, msg) => {
+    if (cond) { pass += 1; console.log(`  ok   ${msg}`); }
+    else { fail += 1; console.log(`  BAD  ${msg}`); }
+  };
+  const SHA = "a".repeat(39) + "1";
+  const OTHER = "b".repeat(39) + "2";
+
+  // ARM 1 — THE POSITIVE CONTROL: the ordinary case is admitted, or every refusal below could
+  // pass by refusing everything.
+  arm(checkAgainst({ buildCommit: SHA }, SHA).ok === true, "ARM 1 green: the matching commit is admitted");
+  // ARM 2 — a different build refuses: the reproduction is about THIS source.
+  arm(checkAgainst({ buildCommit: OTHER }, SHA).ok === false, "ARM 2 red: another commit refuses");
+  // ARM 3 — `unknown` refuses BY NAME, and the reason says which of the three things is wrong.
+  const unknown = checkAgainst({ buildCommit: "unknown" }, SHA);
+  arm(unknown.ok === false && unknown.reason.includes("unknown"), "ARM 3 red: `unknown` refuses by name");
+  // ARM 4 — a document naming no build at all is its own refusal, never a silent pass.
+  arm(checkAgainst({ ok: true, version: "0.23.0" }, SHA).ok === false, "ARM 4 red: no buildCommit refuses");
+  // ARM 5 — and neither is an empty string, which is the shape a trimmed-away value takes.
+  arm(checkAgainst({ buildCommit: "   " }, SHA).ok === false, "ARM 5 red: a blank buildCommit refuses");
+  // ARM 6 — a checkout that cannot name its own commit refuses rather than comparing nothing to
+  // nothing: two unidentifiable halves are not a match.
+  arm(checkAgainst({ buildCommit: SHA }, "").ok === false, "ARM 6 red: no expected commit refuses");
+  // ARM 7 — case and whitespace are not a difference; a sha is a sha.
+  arm(checkAgainst({ buildCommit: ` ${SHA.toUpperCase()} ` }, SHA).ok === true,
+    "ARM 7 green: case and surrounding space are not a mismatch");
+
+  if (fail === 0) { console.log(`SELFTEST_OK verify-engine-repro.mjs ${pass}/${pass}`); return 0; }
+  console.log(`SELFTEST_FAIL verify-engine-repro.mjs ${pass}/${pass + fail}`);
+  return 1;
 }
