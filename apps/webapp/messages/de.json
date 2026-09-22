@@ -65,6 +65,7 @@
     "useRecovery": "Wiederherstellungscode verwenden",
     "startOver": "Neu anfangen",
     "inviteOnly": "Neu bei ohmail? Du kannst dich registrieren — ein Einladungscode ist nicht nötig.",
+    "inviteOnlyBeta": "Neu bei ohmail? In der Beta gibt es Konten nur mit Einladung.",
     "inviteOnlySelfhost": "Neu hier? Konten auf diesem Server entstehen per Einladung — frag die Person, die ihn betreibt.",
     "haveInvite": "Du hast einen Einladungscode?"
   },

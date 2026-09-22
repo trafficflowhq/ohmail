@@ -21,6 +21,7 @@ import {
   type TwofaChallenge,
 } from "../../api-client";
 import { SELF_HOST_BUILD, serverHello } from "../../hello";
+import { LOGIN_INVITE_KEY, signupPosture } from "../../invite-posture";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "../../shell/confirm-schedule";
 import { refreshSettled } from "../../session-refresh";
 import { resolveOwnerOutcome } from "../session-outcome";
@@ -45,8 +46,12 @@ function loginError(err: unknown, tried: FactorTried, t: (key: string) => string
   return messageOf(err);
 }
 
-export function LoginScreen() {
+export function LoginScreen({ publicSignup = false }: { publicSignup?: boolean }) {
   const t = useTranslations("login");
+  /* WHAT THIS DEPLOYMENT ASKS A STRANGER FOR. Read on the server and handed down, the same seam
+     as `/join/page.tsx`: this is a client component and `TF_PUBLIC_SIGNUP` is a server decision.
+     Defaulted `false` — an invite-only reading is the safe one to be wrong about. */
+  const posture = signupPosture(SELF_HOST_BUILD, publicSignup);
   const router = useRouter();
 
   const [stage, setStage] = useState<Stage>("password");
@@ -326,11 +331,13 @@ export function LoginScreen() {
                 before the account's methods are known, and for a TOTP account it was a promise
                 the very next step broke. It renders in the webauthn branch below, where the
                 ceremony it describes is the one on screen. */}
-            {/* Claims-are-contracts: "you can sign up — an invite code is not required" is the
-                MANAGED deployment's truth. A self-host server never opens signup — accounts
-                arrive by invitation from whoever runs the box — so that build says so. */}
+            {/* Claims-are-contracts. "You can sign up — an invite code is not required" is the
+                truth of ONE posture, and this line stated it on every managed build: a beta
+                deployment with `TF_PUBLIC_SIGNUP` off answered here that no code was needed and
+                on `/join` that one was. Three postures, one table, both screens — see
+                `invite-posture.ts`. */}
             <p className="login-invite-note">
-              {SELF_HOST_BUILD ? t("inviteOnlySelfhost") : t("inviteOnly")}{" "}
+              {t(LOGIN_INVITE_KEY[posture])}{" "}
               <Link href="/join">{t("haveInvite")}</Link>
             </p>
           </form>

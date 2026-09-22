@@ -34,6 +34,7 @@ import { hostsFor, providerById, type ProviderPreset } from "../../shell/provide
 import { displayAddress } from "../../shell/idn";
 import { ProviderPicker } from "../../shell/ProviderPicker";
 import { SELF_HOST_BUILD } from "../../hello";
+import { JOIN_INVITE_KEY, signupPosture } from "../../invite-posture";
 
 type Step = "invite" | "account" | "sent" | "factor" | "codes" | "verify" | "plan" | "mailbox" | "done";
 
@@ -627,17 +628,12 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
 
       {step === "invite" && (
         <form onSubmit={submitInvite}>
-          {/* Three leads, because the sentence "ohmail is invite-only during the beta" is a
-              claim about the deployment: false on an open one (publicSignup), and false on a
-              self-host box, where invitation is the permanent design, not a beta condition
-              — same compiled flag the login screen's `inviteOnlySelfhost` reads. */}
-          <p className="sub">{t(
-            publicSignup
-              ? "step_invite_lead_open"
-              : SELF_HOST_BUILD
-                ? "step_invite_lead_selfhost"
-                : "step_invite_lead",
-          )}</p>
+          {/* Three leads, because "ohmail is invite-only during the beta" is a claim about the
+              deployment: false on an open one, and false on a self-host box where invitation is
+              the permanent design rather than a beta condition. The posture and its key come from
+              the one table the login note also reads (`invite-posture.ts`), so a surface cannot
+              gain a fourth spelling of the same fact. */}
+          <p className="sub">{t(JOIN_INVITE_KEY[signupPosture(SELF_HOST_BUILD, publicSignup)])}</p>
           <label className="join-label" htmlFor="join-code">{t("inviteLabel")}</label>
           <input
             id="join-code"

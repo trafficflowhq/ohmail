@@ -65,6 +65,7 @@
     "useRecovery": "Use a recovery code",
     "startOver": "Start over",
     "inviteOnly": "New to ohmail? You can sign up — an invite code is not required.",
+    "inviteOnlyBeta": "New to ohmail? Accounts are by invitation during the beta.",
     "inviteOnlySelfhost": "New here? Accounts on this server are created by invitation — ask the person who runs it.",
     "haveInvite": "Have an invite code?"
   },
