@@ -635,6 +635,139 @@ fn an_operator_ca_reaches_only_the_self_hosted_door() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A SECOND self-hosted door, at somebody else's server — the door the authority above may not
+/// reach. Both are "not the managed service", which is exactly why a KIND could not tell them apart.
+fn another_self_hosted_door() -> Config {
+    Config::Cloud(CloudDoor {
+        cloud_url: "https://mail.other.example/api".to_string(),
+        address: Some("someone@other.example".to_string()),
+        flavor: None,
+        host_pin: None,
+    })
+}
+
+/// A self-hosted door at a given address, for the spellings that name one server.
+fn door_at(cloud_url: &str) -> Config {
+    Config::Cloud(CloudDoor {
+        cloud_url: cloud_url.to_string(),
+        address: Some("someone@example.com".to_string()),
+        flavor: None,
+        host_pin: None,
+    })
+}
+
+#[test]
+fn an_operator_ca_is_composed_only_for_the_server_it_was_installed_for() {
+    // THE FINDING. The scoping above is a KIND — "not the managed service" — so an authority
+    // installed for server A was handed to a door at server B, and whoever holds A's key could
+    // then issue a certificate for B's name and receive B's bearer traffic. The record beside the
+    // file is what turns that kind into a NAME.
+    let dir = std::env::temp_dir().join(format!("ohmail-config-ca-id-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("mkdir");
+    let ca = dir.join(OPERATOR_CA_FILE);
+    let record = dir.join(OPERATOR_CA_RECORD_FILE);
+    fs::write(&ca, "-----BEGIN CERTIFICATE-----\nthe operator's own root\n").expect("write");
+
+    // THE UPGRADE PATH, MEASURED RATHER THAN ASSUMED: a file installed before this build has no
+    // record, and it is ADOPTED ONCE for the door configured at that moment. A working self-host
+    // survives the upgrade; an adopt-once that could drop one would be the worse bug.
+    assert!(!record.exists(), "the fixture wrote a record the upgrade path must not have");
+    assert_eq!(
+        env_map(&env_for(&self_hosted_door(), &dir))
+            .get("NODE_EXTRA_CA_CERTS")
+            .map(String::as_str),
+        Some(ca.to_string_lossy().as_ref()),
+        "a legacy file was not adopted for the door configured at the first launch after upgrade",
+    );
+    let written = fs::read_to_string(&record).expect("the adoption wrote no record");
+    assert!(written.contains("https://ohmail.example.com"), "the record names no origin: {written}");
+
+    // THE ROW ITSELF: a later door change to another origin gets no authority.
+    assert!(
+        !env_map(&env_for(&another_self_hosted_door(), &dir)).contains_key("NODE_EXTRA_CA_CERTS"),
+        "the authority installed for one server reached a door at another",
+    );
+    // …and nothing was DROPPED on the way: the file is still there and its own door still gets it.
+    assert!(ca.is_file(), "the file was removed rather than withheld");
+    assert!(
+        env_map(&env_for(&self_hosted_door(), &dir)).contains_key("NODE_EXTRA_CA_CERTS"),
+        "the door the authority belongs to lost it",
+    );
+    assert_eq!(
+        fs::read_to_string(&record).expect("record"),
+        written,
+        "the door that was refused rewrote the record",
+    );
+
+    // THE SPELLINGS THAT NAME ONE SERVER keep it: the default port, a folded case, a trailing root
+    // dot and a composed `/api` are the same machine, and a record that did not fold them would
+    // withhold a working authority over a character somebody retyped.
+    for spelling in [
+        "https://ohmail.example.com",
+        "https://OHMAIL.example.com:443/api",
+        "https://ohmail.example.com./api",
+        "  https://ohmail.example.com/api/  ",
+    ] {
+        assert!(
+            env_map(&env_for(&door_at(spelling), &dir)).contains_key("NODE_EXTRA_CA_CERTS"),
+            "{spelling:?} lost the authority installed for that server",
+        );
+    }
+    // A PORT IS PART OF THE IDENTITY, though it is not part of the trust width: two ports on one
+    // machine are two servers to whoever runs them.
+    assert!(
+        !env_map(&env_for(&door_at("https://ohmail.example.com:8443"), &dir))
+            .contains_key("NODE_EXTRA_CA_CERTS"),
+        "a door at another port on that host was given the record's authority",
+    );
+
+    // A FILE WHOSE BYTES CHANGED is not the file the record was written for, so the record is no
+    // longer a statement about it.
+    fs::write(&ca, "-----BEGIN CERTIFICATE-----\nsomebody else's root\n").expect("write");
+    assert!(
+        !env_map(&env_for(&self_hosted_door(), &dir)).contains_key("NODE_EXTRA_CA_CERTS"),
+        "a replaced file was composed under the previous file's record",
+    );
+    // THE REMEDY THE SENTENCE NAMES: remove the RECORD, never the file. The next launch adopts
+    // what is there now, for the door in front of it.
+    fs::remove_file(&record).expect("rm record");
+    assert!(
+        env_map(&env_for(&self_hosted_door(), &dir)).contains_key("NODE_EXTRA_CA_CERTS"),
+        "removing the record did not re-install the authority for the door in front of it",
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_candidate_walk_never_adopts_the_operator_ca() {
+    // A candidate is a question about somebody else's machine rather than a door (see
+    // `CANDIDATE_DIR_NAME`), so a walk must not bind this install's authority to the machine it is
+    // asking about — the real door chosen afterwards would then be refused an authority nobody
+    // withdrew, by a record nobody wrote on purpose.
+    let dir = std::env::temp_dir().join(format!("ohmail-config-ca-cand-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("mkdir");
+    fs::write(dir.join(OPERATOR_CA_FILE), "-----BEGIN CERTIFICATE-----\nroot\n").expect("write");
+    let record = dir.join(OPERATOR_CA_RECORD_FILE);
+    let candidate = candidate_data_dir(&dir);
+
+    let env = env_map(&env_for_in(&self_hosted_door(), &dir, &candidate).expect("composed"));
+    assert!(!env.contains_key("NODE_EXTRA_CA_CERTS"), "a candidate walk adopted the authority");
+    assert!(!record.exists(), "a candidate walk wrote a record binding the file to its question");
+
+    // A record the install itself made composes for the candidate like any other launch: what the
+    // walk may not do is CREATE one.
+    env_for(&self_hosted_door(), &dir);
+    assert!(record.exists(), "the door's own launch wrote no record");
+    let env = env_map(&env_for_in(&self_hosted_door(), &dir, &candidate).expect("composed"));
+    assert!(
+        env.contains_key("NODE_EXTRA_CA_CERTS"),
+        "a candidate at the recorded origin was refused the authority the install already adopted",
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn the_managed_base_is_recognised_through_its_harmless_spellings() {
     // A trailing slash, a folded case, the DEFAULT PORT SPELLED OUT and the DNS root dot are all
@@ -865,12 +998,15 @@ fn a_self_hosted_server_still_gets_the_certificate_authority_it_installed() {
     // The other arm of the same comparison. Teaching it the managed base's harmless spellings must
     // not make every port-carrying, upper-cased or similarly-named address equal to it as well —
     // that would silently take the private CA away from the only door it belongs to.
-    let dir = std::env::temp_dir().join(format!("ohmail-config-ca-sh-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).expect("mkdir");
-    fs::write(dir.join(OPERATOR_CA_FILE), "-----BEGIN CERTIFICATE-----\n").expect("write");
+    //
+    // ONE INSTALL PER SPELLING, because these are ten DIFFERENT servers and an authority is now
+    // bound to the one it was installed for: sharing a directory would be asking whether a record
+    // written for the first of them reaches the other nine, which is the row next door and whose
+    // answer is no.
+    let root = std::env::temp_dir().join(format!("ohmail-config-ca-sh-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
 
-    for spelling in [
+    for (n, spelling) in [
         "https://ohmail.example.com/api",
         "https://OHMAIL.example.com:8443/api",
         "https://ohmail.example.com:443/api",
@@ -882,7 +1018,13 @@ fn a_self_hosted_server_still_gets_the_certificate_authority_it_installed() {
         "https://my_server.local/api",
         "https://[2001:db8::1]/api",
         "https://xn--ida.example/api",
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let dir = root.join(format!("install-{n}"));
+        fs::create_dir_all(&dir).expect("mkdir");
+        fs::write(dir.join(OPERATOR_CA_FILE), "-----BEGIN CERTIFICATE-----\n").expect("write");
         let door = Config::Cloud(CloudDoor {
             cloud_url: spelling.to_string(),
             address: Some("someone@example.com".to_string()),
@@ -894,7 +1036,7 @@ fn a_self_hosted_server_still_gets_the_certificate_authority_it_installed() {
             "{spelling:?} lost the certificate authority its operator installed"
         );
     }
-    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&root);
 }
 
 #[test]

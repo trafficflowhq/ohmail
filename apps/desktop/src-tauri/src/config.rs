@@ -399,6 +399,166 @@ fn is_self_hosted_cloud(cloud_url: &str) -> bool {
 /// See {@link env_for} for what it does and why it is a file rather than a switch.
 pub const OPERATOR_CA_FILE: &str = "cloud-ca.pem";
 
+/// The record beside the file above: the origin the authority was installed for, and its digest.
+///
+/// A certificate authority is a statement about a NAME, so the file alone cannot say whose server
+/// it belongs to — and the shell handed it to whatever self-hosted door was configured, which is
+/// the finding this record closes. See [`operator_ca_for`].
+pub const OPERATOR_CA_RECORD_FILE: &str = "cloud-ca.json";
+
+/// A door's ORIGIN — scheme, host and non-default port, lower-cased, with no path.
+///
+/// [`door_host`] is the reader that decides whether an address can be read at all, and it
+/// deliberately DISCARDS the port: no port can make a forged certificate safe, so trust WIDTH is a
+/// question about the host. Identity is a different question — two ports on one machine are two
+/// servers to whoever runs them — so the record keeps the port that function throws away. The
+/// scheme's own default (`:443` on https, `:80` on http) and the DNS root dot are folded, as they
+/// are in [`is_self_hosted_cloud`]: they name the same server, and a record that did not fold them
+/// would withhold a working authority over a character somebody retyped.
+fn door_origin(cloud_url: &str) -> Option<String> {
+    let host = door_host(cloud_url)?;
+    let host = host.trim_end_matches('.').to_string();
+    let trimmed = cloud_url.trim();
+    let (scheme, rest) = match trimmed.strip_prefix("https://") {
+        Some(rest) => ("https", rest),
+        None => ("http", trimmed.strip_prefix("http://")?),
+    };
+    // The authority's port, read the way `door_host` reads it — that function VALIDATED it (digits,
+    // 1..=65535) and then dropped it, so nothing unreadable reaches the parse below.
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let port_text = if authority.starts_with('[') {
+        let close = authority.find(']')?;
+        match authority.split_at(close + 1).1 {
+            "" => None,
+            tail => Some(tail.strip_prefix(':')?),
+        }
+    } else {
+        match authority.split_once(':') {
+            None => None,
+            Some((_, p)) if !p.contains(':') => Some(p),
+            Some(_) => return None,
+        }
+    };
+    let port = match port_text {
+        None | Some("") => None,
+        Some(p) => Some(p.parse::<u32>().ok()?),
+    };
+    let port = match (scheme, port) {
+        ("https", Some(443)) | ("http", Some(80)) => None,
+        (_, p) => p,
+    };
+    Some(match port {
+        Some(p) => format!("{scheme}://{host}:{p}"),
+        None => format!("{scheme}://{host}"),
+    })
+}
+
+/// What a launch does with the operator's certificate authority, and why.
+enum OperatorCa {
+    /// Compose it: the record names this door, and the file is the one the record was written for.
+    Compose(PathBuf),
+    /// Withhold it, carrying the sentence that says whose authority it is and what to do next.
+    Withhold(String),
+    /// None is installed here. The ordinary case, and it says nothing.
+    Absent,
+}
+
+/// Decide the authority for `cloud_url`: composed only for the origin it was installed for.
+///
+/// A file with NO record predates this build, so it is ADOPTED ONCE — the record is written for the
+/// door configured at that moment and the authority composed, which is what carries a working
+/// self-host through the upgrade. A later door change to another origin gets no authority and the
+/// sentence names whose it is. The file is never removed; the RECORD is the thing to remove, and
+/// the sentence says so, because re-installing an authority for the door you are on is the one
+/// case where re-adopting is what the person means.
+///
+/// `adopt` is false on the candidate walk: a candidate is a question about somebody else's machine
+/// rather than a door, and binding this install's authority to one would be a record nobody chose.
+fn operator_ca_for(root: &Path, cloud_url: &str, adopt: bool) -> OperatorCa {
+    let ca = root.join(OPERATOR_CA_FILE);
+    if !ca.is_file() {
+        return OperatorCa::Absent;
+    }
+    let Some(origin) = door_origin(cloud_url) else {
+        return OperatorCa::Withhold(format!(
+            "this door's address names no server this app can read, so {OPERATOR_CA_FILE} is not \
+             being used to check the server's identity"
+        ));
+    };
+    let digest = match fs::read(&ca) {
+        Ok(bytes) => sha256_hex(&bytes),
+        Err(err) => {
+            return OperatorCa::Withhold(format!(
+                "{OPERATOR_CA_FILE} could not be read ({err}), so it is not being used to check \
+                 this server's identity"
+            ))
+        }
+    };
+    let record = root.join(OPERATOR_CA_RECORD_FILE);
+    match read_ca_record(&record) {
+        Some((installed_for, installed_sha)) if installed_for == origin && installed_sha == digest => {
+            OperatorCa::Compose(ca)
+        }
+        Some((installed_for, _)) if installed_for != origin => OperatorCa::Withhold(format!(
+            "the certificate authority installed here belongs to {installed_for}, and this door is \
+             {origin}, so it is not being used to check this server's identity. Remove \
+             {OPERATOR_CA_RECORD_FILE} from this app's data folder to install the authority for \
+             the door you are on."
+        )),
+        Some((installed_for, _)) => OperatorCa::Withhold(format!(
+            "{OPERATOR_CA_FILE} has changed since it was installed for {installed_for}, so it is \
+             not being used to check this server's identity. Remove {OPERATOR_CA_RECORD_FILE} from \
+             this app's data folder to install the file that is there now."
+        )),
+        None if !adopt => OperatorCa::Withhold(format!(
+            "{OPERATOR_CA_FILE} names no server it was installed for, and a candidate walk does \
+             not claim one"
+        )),
+        None => match write_ca_record(&record, &origin, &digest) {
+            Ok(()) => OperatorCa::Compose(ca),
+            Err(reason) => OperatorCa::Withhold(format!(
+                "{OPERATOR_CA_FILE} names no server it was installed for and the record could not \
+                 be written ({reason}), so it is not being used to check this server's identity"
+            )),
+        },
+    }
+}
+
+/// The file's digest, lower-case hex. The record's other half: an origin on its own would be a
+/// statement about whatever bytes happen to be in the file now.
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut out = String::with_capacity(64);
+    for byte in Sha256::digest(bytes) {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
+/// The record, or `None` when there is none or it cannot be read.
+///
+/// Unreadable reads as ABSENT — the rule [`read`] keeps for the door file. A record is a note this
+/// app wrote to itself, and a corrupt byte in it must not strand somebody's own server behind a
+/// refusal they cannot see; adopting again for the door in front of them is the same decision the
+/// upgrade makes, and anyone who can rewrite this file can write a record of their own anyway.
+fn read_ca_record(path: &Path) -> Option<(String, String)> {
+    let raw = fs::read_to_string(path).ok()?;
+    let value = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
+    let map = value.as_object()?;
+    Some((string_at(map, "origin")?, string_at(map, "sha256")?))
+}
+
+/// Write the record. `0600` and replaced rather than truncated, like every other file this module
+/// keeps — a torn record reads as absent, which would adopt the file again for the door of the day.
+fn write_ca_record(path: &Path, origin: &str, sha256: &str) -> Result<(), String> {
+    let body = serde_json::to_vec_pretty(&serde_json::json!({
+        "origin": origin,
+        "sha256": sha256,
+    }))
+    .map_err(|err| format!("the record could not be encoded ({err})"))?;
+    write_private(path, &body)
+}
+
 /// Field names a configuration may never carry.
 ///
 /// Matched as SUBSTRINGS of the lower-cased key, at every depth, and the refusal is a hard error
@@ -623,7 +783,7 @@ pub fn env_for_in(
     dir: &Path,
 ) -> Result<Vec<(OsString, OsString)>, String> {
     let key = OsString::from(crate::engine::DATA_DIR_VAR);
-    let mut env = env_for(config, root);
+    let mut env = env_for_door(config, root, false);
     let mut replaced = 0;
     for pair in env.iter_mut() {
         if pair.0 == key {
@@ -640,6 +800,12 @@ pub fn env_for_in(
 }
 
 pub fn env_for(config: &Config, root: &Path) -> Vec<(OsString, OsString)> {
+    env_for_door(config, root, true)
+}
+
+/// [`env_for`], with the one decision the candidate walk takes differently: whether a record-less
+/// operator CA may be ADOPTED for the door being composed. See [`operator_ca_for`].
+fn env_for_door(config: &Config, root: &Path, adopt: bool) -> Vec<(OsString, OsString)> {
     let pair = |k: &str, v: String| (OsString::from(k), OsString::from(v));
     let dir = data_dir(root, config.mode());
     let mut env = vec![(
@@ -692,15 +858,29 @@ pub fn env_for(config: &Config, root: &Path) -> Vec<(OsString, OsString)> {
     // TLS dispatcher threaded through the bearer client, the mirror and the write-through proxy;
     // said plainly rather than implied, because the sentence above is the bound that actually holds
     // today.
-    let self_hosted_cloud = match config {
-        Config::Cloud(c) => is_self_hosted_cloud(&c.cloud_url),
-        Config::Local(_) => false,
+    //
+    // ── AND ONLY FOR THE SERVER IT WAS INSTALLED FOR. THE SCOPE ABOVE IS A KIND, NOT A NAME ──
+    //
+    // Everything above narrows the authority to self-hosted doors as a CLASS, which leaves the
+    // second half of the same finding open: an operator who moves this install from server A to
+    // server B keeps a file installed for A, and A's authority can then issue a certificate for
+    // B's name and receive B's bearer traffic. So the file is bound to the origin it was installed
+    // for by a record beside it, and `operator_ca_for` composes it for that origin and no other.
+    let authority = match config {
+        Config::Cloud(c) if is_self_hosted_cloud(&c.cloud_url) => {
+            operator_ca_for(root, &c.cloud_url, adopt)
+        }
+        _ => OperatorCa::Absent,
     };
-    if self_hosted_cloud {
-        let ca = root.join(OPERATOR_CA_FILE);
-        if ca.is_file() {
+    match authority {
+        OperatorCa::Compose(ca) => {
             env.push((OsString::from("NODE_EXTRA_CA_CERTS"), ca.into_os_string()));
         }
+        // LOGGED, not rendered: this shell has no seam for a sentence about a file, and the engine
+        // refuses the handshake a moment later with a message about the server. This line is what
+        // says which of the two servers the authority on disk belongs to.
+        OperatorCa::Withhold(why) => crate::engine::log_line(format_args!("{why}")),
+        OperatorCa::Absent => {}
     }
     match config {
         Config::Local(l) => {

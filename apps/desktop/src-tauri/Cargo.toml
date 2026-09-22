@@ -185,6 +185,15 @@ base64 = "0.22"
 # meant to be the only copyleft in it.
 serde_json = "1"
 
+# THE DIGEST IN THE OPERATOR CA'S RECORD (`config.rs`'s `sha256_hex`).
+#
+# The record binds a certificate authority file to the one server it was installed for, and an
+# origin on its own would be a statement about whatever bytes are in the file now. Named here
+# rather than reached for transitively — `wry` already depends on this exact crate, and `keyring`
+# does behind `local-engine` — so the binary's dependency graph and the `strings` audit are
+# unchanged; only the manifest names it directly. MIT OR Apache-2.0.
+sha2 = "0.10"
+
 # THE ONE PER-INSTALL KEY, AND WHY IT NEEDS A CRATE AT ALL.
 #
 # A local install has to be able to store a mailbox password and still have it
