@@ -104,6 +104,12 @@ export interface AuthConfig {
    * anything. See `config.ts` for why two minutes and not less.
    */
   desktopLinkTtlMs: number;
+  /**
+   * How long a desktop's approval request (`POST /auth/desktop-approval`) waits for the browser's
+   * confirm and the desktop's claim. Nothing in it is read off a screen; the verifier stays in the
+   * desktop's engine, so this bounds a forgotten tab, not a guessable secret.
+   */
+  desktopApprovalTtlMs: number;
   stepUpWindowMs: number;      // 5 min
   /**
    * Hard ceiling on a rolling COOKIE session, measured from `sessions.created_at` —
@@ -173,6 +179,12 @@ export interface AuthConfig {
    * bounds an anonymous caller's ability to make this endpoint do database work.
    */
   maxDesktopClaimsPerWindow: number;
+  /**
+   * How many approval requests plus failed approval claims (an unknown request or a wrong
+   * verifier) one client may make per `failureWindowMs`: a slot claim answering 429, shared by
+   * both doors. A pending poll with the right verifier costs no slot.
+   */
+  maxDesktopApprovalsPerWindow: number;
   // TOTP
   totpIssuer: string;
   totpWindow: number;          // ± steps of clock-skew tolerance

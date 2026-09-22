@@ -177,6 +177,11 @@ export interface AuthAuditEvent {
     // credential. Seeing the pair — an issue here, a login from elsewhere moments later — is
     // what tells the account's owner whether that machine was theirs.
     | "desktop_link_issued"
+    // A desktop's approval request was CONFIRMED in a step-up-cleared browser (`POST
+    // /auth/desktop-approval/:id/confirm`), DENIED there ("Not me"), or REFUSED — killed by its
+    // fifth wrong verifier. The confirm is the moment a second machine was let in, so it is on
+    // the account's own trail beside the `login` row the desktop's claim writes moments later.
+    | "desktop_approval_confirmed" | "desktop_approval_denied" | "desktop_approval_refused"
     // Refresh-token REUSE DETECTION revoked a whole session family: a consumed token was
     // presented again outside the concurrency grace (`rotateRefresh`'s reuse branch). Recorded
     // because the sweep is otherwise SILENT on every surface — the client just starts getting

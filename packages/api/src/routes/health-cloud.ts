@@ -192,6 +192,10 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // deploy gate. The CHECK beside it is not probed separately: it is created in the same
   // migration as the column, so the column's presence implies it.
   ["attachment_staging", "content_sha256"],
+  // cloud 0042_desktop_approval — `attempts`, the last of its six columns; one migration runs in
+  // one transaction, so its presence implies the other five, the dropped NOT NULL and the CHECK.
+  // Loud already (a desktop's approval request 42703s), but the deploy gate names it first.
+  ["login_tokens", "attempts"],
 ] as const;
 
 /**
@@ -308,7 +312,7 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * FOREIGN-KEY-only migration is probed by its KEY marker, which is what 0038 added the class for.
  * The tag asserts reconciliation against the newest entry.
  */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0041_attachment_staging_digest";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0042_desktop_approval";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

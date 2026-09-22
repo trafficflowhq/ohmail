@@ -491,7 +491,8 @@ export class MailService {
         gt(loginTokens.expiresAt, now),
       ))
       .returning({ userId: loginTokens.userId });
-    return row ? { userId: row.userId } : null;
+    // Bound by construction (cloud 0041's CHECK admits a NULL user for the approval purpose only).
+    return row && row.userId !== null ? { userId: row.userId } : null;
   }
 
   /**

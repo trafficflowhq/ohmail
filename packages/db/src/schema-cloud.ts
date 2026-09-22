@@ -96,7 +96,9 @@ export const recoveryCodes = pgTable("recovery_codes", {
 
 export const loginTokens = pgTable("login_tokens", {
   id: uuid("id").defaultRandom().primaryKey(),
-  userId: uuid("user_id").notNull().references(() => users.id),
+  // NULL only on a `desktop_approval` row nobody has confirmed yet (cloud 0042); the CHECK below
+  // keeps every other purpose bound. Readers of the other purposes filter on purpose first.
+  userId: uuid("user_id").references(() => users.id),
   tokenHash: text("token_hash").notNull(),         // the 5-min first-factor token
   methods: jsonb("methods").notNull().default(sql`'[]'::jsonb`),
   // 'login' | 'oauth' | 'email_verify'. The verification flow stores the mailed
@@ -114,7 +116,20 @@ export const loginTokens = pgTable("login_tokens", {
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   consumedAt: timestamp("consumed_at", { withTimezone: true }),   // single-use
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-}, (t) => ({ ixToken: index("login_tokens_token_idx").on(t.tokenHash) }));
+  // The desktop approval (cloud 0042): what the confirming page names the computer by, a CLASS of
+  // the address it asked from (never the address), the confirm, the denial or wrong-verifier kill,
+  // and the wrong-verifier count. Every other purpose leaves them at their defaults.
+  label: text("label").notNull().default(""),
+  platform: text("platform").notNull().default(""),
+  ipClass: text("ip_class").notNull().default(""),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  attempts: integer("attempts").notNull().default(0),
+}, (t) => ({
+  ixToken: index("login_tokens_token_idx").on(t.tokenHash),
+  ckUnbound: check("login_tokens_unbound_is_approval",
+    sql`${t.userId} is not null or ${t.purpose} = 'desktop_approval'`),
+}));
 
 export const oauthAuthCodes = pgTable("oauth_auth_codes", {
   id: uuid("id").defaultRandom().primaryKey(),

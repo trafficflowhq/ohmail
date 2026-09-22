@@ -192,7 +192,10 @@ export const RELAY_ALLOWLIST: readonly RelaySpec[] = [
 ];
 
 /** The two hand-off routes, which earn their own sentence rather than a bare refusal. */
-const HANDOFF = new Set(["POST /auth/desktop-claim", "POST /auth/desktop-link"]);
+const HANDOFF = new Set([
+  "POST /auth/desktop-claim", "POST /auth/desktop-link",
+  "POST /auth/desktop-approval", "POST /auth/desktop-approval/claim",
+]);
 
 /**
  * What the relay should do with this request. `handoff` is a refusal too — it selects the wording,

@@ -94,6 +94,9 @@ export const DEFAULT_AUTH_CONFIG: Omit<AuthConfig, "rpID" | "rpName" | "origin">
   // is not possible — a human has to retype this one — and longer turns a shoulder-surfed or
   // screen-shared value into something worth going back for.
   desktopLinkTtlMs: 2 * MIN,
+  // FIVE MINUTES for a desktop's approval request: long enough to find the browser tab and press
+  // one button, well inside the ten-minute bound, and nothing is shown that could be copied.
+  desktopApprovalTtlMs: 5 * MIN,
   stepUpWindowMs: 5 * MIN,          // step-up window
   maxFailures: 5,
   lockoutMs: 15 * MIN,
@@ -101,6 +104,7 @@ export const DEFAULT_AUTH_CONFIG: Omit<AuthConfig, "rpID" | "rpName" | "origin">
   maxRegistrationsPerWindow: 20,
   maxPublicRegistrationsPerWindow: 5,
   maxDesktopClaimsPerWindow: 10,
+  maxDesktopApprovalsPerWindow: 10,
   // THE NAME A PERSON SEES IN THEIR AUTHENTICATOR APP, for ever. "TrafficFlow Mail" is the
   // pre-rename product name and appears nowhere else in the product; the company is
   // TrafficFlow GmbH but the thing being signed into is ohmail — the brand is "ohmail", never

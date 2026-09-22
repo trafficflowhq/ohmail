@@ -1,7 +1,7 @@
 import { randomInt, randomUUID } from "node:crypto";
 // `lt` is imported UNDER AN ALIAS: `lt` is the local name every 2FA verify uses for its
 // login-token row, and the shadowing turns a comparison into "call an object".
-import { and, count, desc, eq, gt, inArray, isNull, lt as lessThan, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, gt, inArray, isNotNull, isNull, lt as lessThan, or, sql } from "drizzle-orm";
 import {
   accounts, users, devices, sessions, readAccountErasedAt, type Tx,
 } from "@trafficflow/db";
@@ -25,6 +25,7 @@ import { bridgeTx, type ServiceContext } from "../context.js";
 import { OAuthCodeReplayed, ServiceError } from "../errors.js";
 import { consumeInvite, inviteError, normalizeInviteCode } from "../invites.js";
 import { reserveIpSlot } from "../ip-throttle.js";
+import { ipClassOf } from "./ip-class.js";
 import { clampPageLimit } from "../pagination.js";
 // The ONE definition of "a valid address" — see {@link requireEmail} for why registration
 // borrows the mailer's predicate instead of growing a second one.
@@ -377,6 +378,91 @@ const invalidDesktopChallenge = (): ServiceError => new ServiceError(
   "invalid_challenge", 400,
   "That link request is not one this browser can complete. Open the page again from the app.",
 );
+
+/**
+ * The `purpose` a desktop APPROVAL request is stored under — the fourth value, mutually invisible
+ * to the other three by the same query rule. The only purpose whose row may carry no user (cloud
+ * 0042's CHECK): the desktop asks before anybody has confirmed, and the confirm binds it.
+ */
+export const DESKTOP_APPROVAL_PURPOSE = "desktop_approval";
+
+/** Every purpose but the approval is bound (cloud 0042's CHECK), so a NULL user is a broken row. */
+function boundUserId(userId: string | null): string {
+  if (userId === null) throw new ServiceError("internal", 500, "a sign-in token names no user");
+  return userId;
+}
+
+/** Wrong verifiers a request survives; the fifth kills it (`revoked_at`), audited. */
+export const DESKTOP_APPROVAL_MAX_ATTEMPTS = 5;
+
+/** How long a pending claim asks the desktop to wait before it polls again. */
+export const DESKTOP_APPROVAL_POLL_MS = 2_000;
+
+/** The request id is the row's uuid: 122 random bits, shape-checked before any query. */
+const APPROVAL_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The device-row label when the desktop sent no name — the auto-mint spellings. */
+const APPROVAL_DEVICE_LABELS: Readonly<Record<string, string>> = {
+  "macos": "ohmail for Mac", "desktop-macos": "ohmail for Mac",
+  "desktop-linux": "ohmail for Linux", "desktop-windows": "ohmail for Windows",
+};
+
+/** What the page calls the computer's platform, from the claim kind's closed set — never caller text. */
+const APPROVAL_PLATFORM: Readonly<Record<string, string>> = {
+  "macos": "macOS", "desktop-macos": "macOS", "desktop-linux": "Linux", "desktop-windows": "Windows",
+};
+
+/** The desktop's own name for itself, made safe to show: no control or bidi characters, 64 at most. */
+function approvalLabel(raw: unknown): string {
+  if (raw !== undefined && raw !== null && typeof raw !== "string") {
+    throw new ServiceError("validation_failed", 400, "label must be text");
+  }
+  const clean = (typeof raw === "string" ? raw : "")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return [...clean].slice(0, 64).join("");
+}
+
+/** The claimant's kind — `claimDesktopLink`'s closed set and its legacy default. */
+function desktopClaimKind(raw: unknown): DeviceKind {
+  if (raw === undefined) return "macos";
+  if (typeof raw !== "string" || !DESKTOP_CLAIM_KINDS.has(raw)) throw invalidDeviceKind(DESKTOP_CLAIM_KINDS);
+  return raw as DeviceKind;
+}
+
+/**
+ * The approval's refusals, one sentence each, keyed as the page and the desktop word them. A row
+ * bound to ANOTHER account is `approvalNotFound` whatever its state, so no answer tells a second
+ * account anything about a request it does not hold.
+ */
+const approvalNotFound = (): ServiceError => new ServiceError(
+  "not_found", 404, "There is no sign-in request here for this account.",
+);
+const approvalExpired = (): ServiceError => new ServiceError(
+  "approval_expired", 410, "This request has expired. Start again from your computer.",
+);
+const approvalUsed = (): ServiceError => new ServiceError(
+  "approval_used", 410, "This request was already used.",
+);
+const approvalDenied = (): ServiceError => new ServiceError(
+  "approval_denied", 410, "This request was declined in the browser.",
+);
+const approvalWrongVerifier = (): ServiceError => new ServiceError(
+  "invalid_approval", 400, "This request cannot be completed from here.",
+);
+
+/** The state a request row is in, read in one order by every door (read, confirm, deny, claim). */
+type ApprovalRow = {
+  userId: string | null; approvedAt: Date | null; consumedAt: Date | null;
+  revokedAt: Date | null; expiresAt: Date; attempts: number;
+};
+function approvalRefusal(row: ApprovalRow, now: Date): ServiceError | null {
+  if (row.revokedAt) return row.attempts >= DESKTOP_APPROVAL_MAX_ATTEMPTS ? approvalExpired() : approvalDenied();
+  if (row.consumedAt) return approvalUsed();
+  if (row.expiresAt.getTime() <= now.getTime()) return approvalExpired();
+  return null;
+}
 
 /**
  * The open path's "this address already has an account" signal — thrown INSIDE the registering
@@ -745,7 +831,7 @@ export class AuthService extends SessionLifecycle {
       .limit(1);
     if (!row) throw invalidVerification();
 
-    const user = await this.loadUser(db, row.userId);
+    const user = await this.loadUser(db, boundUserId(row.userId));
 
     // The lockout, on BOTH keys `login` uses — see the header. Ahead of the scrypt verify, so a
     // locked-out attacker does not even get to spend our CPU, and RESERVED rather than merely
@@ -1068,7 +1154,7 @@ export class AuthService extends SessionLifecycle {
           gt(loginTokens.expiresAt, now),
           binding,
         )).limit(1);
-      if (peek) refuseCrossAccountCredential(ctx, (await this.loadUser(db, peek.userId)).accountId);
+      if (peek) refuseCrossAccountCredential(ctx, (await this.loadUser(db, boundUserId(peek.userId))).accountId);
     }
 
     const ip = (ctx.ip ?? "").trim();
@@ -1095,7 +1181,7 @@ export class AuthService extends SessionLifecycle {
       .returning({ userId: loginTokens.userId });
     if (!row) throw invalidDesktopCode();
 
-    const user = await this.loadUser(db, row.userId);
+    const user = await this.loadUser(db, boundUserId(row.userId));
     // The device row is labelled for the app — the claimant's declared kind, or legacy `"macos"`
     // when it said nothing — so `GET /devices` shows the machine and `DELETE /devices/:id` can
     // take it away; that revocation path is what makes the handoff safe to offer. `surface:
@@ -1110,6 +1196,229 @@ export class AuthService extends SessionLifecycle {
     // that would turn a code displayed on a screen into a browser session, are both things
     // this route deliberately does not hand back. The route sets no cookies either.
     return { tokens: established.tokens! };
+  }
+
+  // ── Signing a desktop in by confirming in the browser ───────────────────────
+
+  /**
+   * The desktop asks: one `desktop_approval` row, unbound, committed to the PKCE challenge whose
+   * verifier stays in the desktop's engine. Public; the per-IP slot (shared with failed claims)
+   * bounds it. The label is the desktop's own hostname made safe to show, the platform comes from
+   * the kind's closed set, and the network is stored as a class. The id goes in the page's URL;
+   * it is worth nothing without a signed-in browser's confirm AND the verifier.
+   */
+  async issueDesktopApproval(
+    ctx: ServiceContext, b: { challenge?: unknown; kind?: unknown; label?: unknown },
+  ): Promise<{ approvalId: string; expiresIn: number }> {
+    const db = asTx(ctx);
+    const now = ctx.now();
+    const challenge = typeof b?.challenge === "string" ? b.challenge.trim() : "";
+    if (!DESKTOP_CHALLENGE_RE.test(challenge)) throw invalidDesktopChallenge();
+    const kind = desktopClaimKind(b?.kind);
+    const label = approvalLabel(b?.label);
+    const ip = (ctx.ip ?? "").trim();
+    if (ip.length > 0) {
+      const admitted = await reserveIpSlot(db, {
+        namespace: "desktop_approval:ip", ip, now,
+        max: this.cfg.maxDesktopApprovalsPerWindow, windowMs: this.cfg.failureWindowMs,
+      });
+      if (!admitted) throw desktopClaimRateLimited();
+    }
+    const approvalId = randomUUID();
+    await db.insert(loginTokens).values({
+      id: approvalId,
+      userId: null,
+      tokenHash: hashToken(approvalId),
+      methods: [],
+      purpose: DESKTOP_APPROVAL_PURPOSE,
+      challengeHash: challenge,
+      label,
+      platform: APPROVAL_PLATFORM[kind] ?? "",
+      ipClass: ipClassOf(ip),
+      expiresAt: new Date(now.getTime() + this.cfg.desktopApprovalTtlMs),
+      createdAt: now,
+    });
+    return { approvalId, expiresIn: Math.floor(this.cfg.desktopApprovalTtlMs / 1000) };
+  }
+
+  /** The request row, or null — by id and purpose, never by anything the caller could widen. */
+  private async approvalRow(db: Tx, approvalId: string) {
+    if (!APPROVAL_ID_RE.test(approvalId)) return null;
+    const [row] = await db.select().from(loginTokens)
+      .where(and(eq(loginTokens.id, approvalId), eq(loginTokens.purpose, DESKTOP_APPROVAL_PURPOSE)))
+      .limit(1);
+    return row ?? null;
+  }
+
+  /**
+   * What the page shows before the press. Session-gated. A row bound to another user is 404
+   * whatever its state; an unbound or own row answers its state's sentence, or the facts.
+   */
+  async readDesktopApproval(
+    ctx: ServiceContext, approvalId: string,
+  ): Promise<{ label: string; platform: string; requestedAt: string; ipClass: string; expiresIn: number; approved: boolean }> {
+    const userId = this.requireUser(ctx);
+    const now = ctx.now();
+    const row = await this.approvalRow(asTx(ctx), approvalId);
+    if (!row || (row.userId !== null && row.userId !== userId)) throw approvalNotFound();
+    const refusal = approvalRefusal(row, now);
+    if (refusal) throw refusal;
+    return {
+      label: row.label, platform: row.platform, ipClass: row.ipClass,
+      requestedAt: row.createdAt.toISOString(),
+      expiresIn: Math.max(0, Math.floor((row.expiresAt.getTime() - now.getTime()) / 1000)),
+      approved: row.approvedAt !== null,
+    };
+  }
+
+  /**
+   * The confirm — the route carries `stepUp: true`. One guarded UPDATE binds the row to this user
+   * and stamps `approved_at`; a second press by the same user is the same answer. Nothing is
+   * minted here: the desktop's claim, holding the verifier, is what spends the approval.
+   */
+  async confirmDesktopApproval(ctx: ServiceContext, approvalId: string): Promise<{ approved: true }> {
+    const userId = this.requireUser(ctx);
+    const db = asTx(ctx);
+    const now = ctx.now();
+    if (!APPROVAL_ID_RE.test(approvalId)) throw approvalNotFound();
+    const [bound] = await db.update(loginTokens)
+      .set({ userId, approvedAt: now })
+      .where(and(
+        eq(loginTokens.id, approvalId),
+        eq(loginTokens.purpose, DESKTOP_APPROVAL_PURPOSE),
+        or(isNull(loginTokens.userId), eq(loginTokens.userId, userId)),
+        isNull(loginTokens.approvedAt),
+        isNull(loginTokens.consumedAt),
+        isNull(loginTokens.revokedAt),
+        gt(loginTokens.expiresAt, now),
+      ))
+      .returning({ id: loginTokens.id });
+    if (!bound) {
+      const row = await this.approvalRow(db, approvalId);
+      if (!row || (row.userId !== null && row.userId !== userId)) throw approvalNotFound();
+      const refusal = approvalRefusal(row, now);
+      if (refusal) throw refusal;
+      return { approved: true };
+    }
+    await this.audit(db, await this.loadUser(db, userId), "desktop_approval_confirmed", undefined, ctx);
+    return { approved: true };
+  }
+
+  /** "Not me": the request is dead for the desktop that made it, confirmed or not, until claimed. */
+  async denyDesktopApproval(ctx: ServiceContext, approvalId: string): Promise<{ denied: true }> {
+    const userId = this.requireUser(ctx);
+    const db = asTx(ctx);
+    const now = ctx.now();
+    if (!APPROVAL_ID_RE.test(approvalId)) throw approvalNotFound();
+    const [killed] = await db.update(loginTokens)
+      .set({ userId, revokedAt: now })
+      .where(and(
+        eq(loginTokens.id, approvalId),
+        eq(loginTokens.purpose, DESKTOP_APPROVAL_PURPOSE),
+        or(isNull(loginTokens.userId), eq(loginTokens.userId, userId)),
+        isNull(loginTokens.consumedAt),
+        isNull(loginTokens.revokedAt),
+        gt(loginTokens.expiresAt, now),
+      ))
+      .returning({ id: loginTokens.id });
+    if (!killed) {
+      const row = await this.approvalRow(db, approvalId);
+      if (!row || (row.userId !== null && row.userId !== userId)) throw approvalNotFound();
+      throw approvalRefusal(row, now) ?? approvalDenied();
+    }
+    await this.audit(db, await this.loadUser(db, userId), "desktop_approval_denied", undefined, ctx);
+    return { denied: true };
+  }
+
+  /**
+   * The desktop polls with the verifier. Pending answers `{status: "pending"}` and costs nothing;
+   * an unknown request or a wrong verifier costs an IP slot, and the fifth wrong verifier kills the
+   * row. Approved: ONE guarded UPDATE is the burn (`approved_at IS NOT NULL` is the confirm, the
+   * challenge the binding), then a device row named by the label and a native session, all in one
+   * transaction. `twofaAt` is the confirm's stamp: the factor was asserted within the step-up
+   * window before it, on the browser that pressed.
+   */
+  async claimDesktopApproval(
+    ctx: ServiceContext, b: { approvalId?: unknown; verifier?: unknown; kind?: unknown },
+  ): Promise<{ status: "pending"; retryAfterMs: number } | { tokens: OAuthTokens }> {
+    const db = asTx(ctx);
+    const now = ctx.now();
+    const kind = desktopClaimKind(b?.kind);
+    const approvalId = typeof b?.approvalId === "string" ? b.approvalId.trim() : "";
+    const verifier = typeof b?.verifier === "string" ? b.verifier.trim() : "";
+    if (verifier.length === 0 || verifier.length > 512) throw approvalWrongVerifier();
+
+    const chargeSlot = async (): Promise<void> => {
+      const ip = (ctx.ip ?? "").trim();
+      if (ip.length === 0) return;
+      const admitted = await reserveIpSlot(db, {
+        namespace: "desktop_approval:ip", ip, now,
+        max: this.cfg.maxDesktopApprovalsPerWindow, windowMs: this.cfg.failureWindowMs,
+      });
+      if (!admitted) throw desktopClaimRateLimited();
+    };
+
+    const row = await this.approvalRow(db, approvalId);
+    if (!row) {
+      await chargeSlot();
+      throw approvalExpired();
+    }
+    if (row.challengeHash !== hashToken(verifier)) {
+      await chargeSlot();
+      const [hit] = await db.update(loginTokens)
+        .set({
+          attempts: sql`${loginTokens.attempts} + 1`,
+          revokedAt: sql`case when ${loginTokens.attempts} + 1 >= ${DESKTOP_APPROVAL_MAX_ATTEMPTS} then ${now.toISOString()}::timestamptz else ${loginTokens.revokedAt} end`,
+        })
+        .where(and(eq(loginTokens.id, row.id), isNull(loginTokens.revokedAt), isNull(loginTokens.consumedAt)))
+        .returning({ attempts: loginTokens.attempts });
+      if (hit && hit.attempts === DESKTOP_APPROVAL_MAX_ATTEMPTS) {
+        const owner = row.userId ? await this.loadUser(db, row.userId) : null;
+        await this.audit(db, owner, "desktop_approval_refused", undefined, ctx);
+      }
+      throw approvalWrongVerifier();
+    }
+    // Before the burn, for `claimDesktopLink`'s reason: a claimant holding another account's
+    // session must be refused while the approval can still be spent by the right desktop.
+    if (ctx.accountId && row.userId) {
+      refuseCrossAccountCredential(ctx, (await this.loadUser(db, row.userId)).accountId);
+    }
+
+    // THE BURN DECIDES, and every other answer is read off the row after it missed: pending,
+    // used, denied, expired. So `approved_at IS NOT NULL` and `expires_at > now` below are the
+    // only places those rules live, and the concurrent loser reads `approval_used`.
+    return this.inTransaction(ctx, async (txCtx) => {
+      const tx = asTx(txCtx);
+      const [spent] = await tx.update(loginTokens)
+        .set({ consumedAt: now })
+        .where(and(
+          eq(loginTokens.id, row.id),
+          eq(loginTokens.purpose, DESKTOP_APPROVAL_PURPOSE),
+          eq(loginTokens.challengeHash, hashToken(verifier)),
+          isNotNull(loginTokens.approvedAt),
+          isNull(loginTokens.consumedAt),
+          isNull(loginTokens.revokedAt),
+          gt(loginTokens.expiresAt, now),
+        ))
+        .returning({ userId: loginTokens.userId, label: loginTokens.label, approvedAt: loginTokens.approvedAt });
+      if (!spent) {
+        const again = await this.approvalRow(tx, approvalId);
+        if (!again) throw approvalExpired();
+        const refusal = approvalRefusal(again, now);
+        if (refusal) throw refusal;
+        return { status: "pending" as const, retryAfterMs: DESKTOP_APPROVAL_POLL_MS };
+      }
+      if (spent.userId === null) throw approvalUsed();
+      const user = await this.loadUser(tx, spent.userId);
+      const [dev] = await tx.insert(devices).values({
+        accountId: user.accountId, userId: user.id, kind,
+        label: spent.label || (APPROVAL_DEVICE_LABELS[kind] ?? "ohmail for desktop"), ip: txCtx.ip ?? "",
+      }).returning();
+      const established = await this.establish(txCtx, user, {
+        kind, deviceId: dev!.id, twofaAt: spent.approvedAt, surface: "native",
+      });
+      return { tokens: established.tokens! };
+    });
   }
 
   // ── WebAuthn (primary 2FA) ──────────────────────────────────────────────────
@@ -2134,7 +2443,7 @@ export class AuthService extends SessionLifecycle {
     if (!row || row.consumedAt || row.expiresAt.getTime() <= ctx.now().getTime()) {
       throw new ServiceError("unauthorized", 401, "login session expired");
     }
-    return { id: row.id, userId: row.userId, methods: (row.methods as Method[]) ?? [] };
+    return { id: row.id, userId: boundUserId(row.userId), methods: (row.methods as Method[]) ?? [] };
   }
 
   /**

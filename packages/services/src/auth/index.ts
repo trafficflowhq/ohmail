@@ -1,5 +1,6 @@
 export {
   AuthService, makeAuthService, DESKTOP_LINK_PURPOSE,
+  DESKTOP_APPROVAL_PURPOSE, DESKTOP_APPROVAL_MAX_ATTEMPTS, DESKTOP_APPROVAL_POLL_MS,
   type AuthorizeQuery, type TokenBodyAuthCode, type TokenBodyRefresh,
 } from "./auth-service.js";
 // The session MACHINERY `AuthService` extends — carved out in Phase 3 so the desktop engine
