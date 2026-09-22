@@ -981,11 +981,9 @@ describe("the Rust side", () => {
        ONLY value the window may contribute to an address, it reaches ONE key, and a malformed one
        is a refusal rather than a page opened without it — all four properties are asserted in
        `engine_tests.rs`. A THIRD parameter, or a rename that let something else through, still
-       fails here.
-
-       THE THIRD IS NAMED TOO: `request`, the approval page's request id, exact-shape (36
-       characters, hex and hyphens) and admitted for the `approve` key alone — `open_target`
-       refuses it for every other key and refuses a challenge for that one (`engine_tests.rs`). */
+       fails here. */
+    // The third is `request`: the approval page's exact-shape id, admitted for `approve` alone
+    // (`open_target` refuses it elsewhere and a challenge there — `engine_tests.rs`).
     expect(engine).toMatch(/fn open_link\(key: String, challenge: Option<String>, request: Option<String>\)/);
     expect(engine).toMatch(/fn is_request_id\(value: &str\) -> bool/);
     expect(engine).toMatch(/fn open_target\(key: &str, challenge: Option<&str>, request: Option<&str>\)/);

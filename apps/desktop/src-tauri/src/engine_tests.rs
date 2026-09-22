@@ -2855,7 +2855,7 @@ fn the_approval_page_takes_one_request_id_and_nothing_else() {
         format!("{ID}a"),
         ID.replace('-', "_"),
         ID.replacen('4', "g", 1),
-        format!("{}&next=x", &ID[..28]),
+        format!("{}&next=x", &ID[..29]),
         format!("{}#frag", &ID[..31]),
         format!("{}%2F", &ID[..33]),
     ] {

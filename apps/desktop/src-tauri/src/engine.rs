@@ -4326,11 +4326,16 @@ pub fn approval_url_for(request: Option<&str>) -> Result<String, String> {
     Ok(format!("{url}?request={request}"))
 }
 
+/// A value was offered at all: present and not blank, the reading [`link_url_for`] gives a challenge.
+#[cfg(feature = "local-engine")]
+fn named(value: Option<&str>) -> bool {
+    value.map(str::trim).is_some_and(|v| !v.is_empty())
+}
+
 /// What `open_link` opens: the approval page by its request, every other key by [`link_url_for`].
 /// A value offered to the wrong key is refused, so neither parameter can reach the other's page.
 #[cfg(feature = "local-engine")]
 pub fn open_target(key: &str, challenge: Option<&str>, request: Option<&str>) -> Result<String, String> {
-    let named = |v: Option<&str>| v.map(str::trim).is_some_and(|v| !v.is_empty());
     if key == APPROVE_KEY {
         if named(challenge) {
             return Err("ohmail: the approval page does not take a sign-in commitment".to_string());
