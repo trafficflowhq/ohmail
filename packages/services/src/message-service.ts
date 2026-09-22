@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, notExists, or, sql, type SQL } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import {
   assertOrganizerRole,
@@ -26,7 +26,7 @@ import {
   moveDestinationWord, routeMailboxWrite, writeReaderRequest, type PendingRequest,
 } from "./reader-request.js";
 import type {
-  Folder, MessageBodyBatchItem, MessageBodyDTO, MessageDTO, Page, TrashRowDTO, WithheldMarker,
+  Folder, MessageBodyBatchItem, MessageBodyDTO, MessageDTO, Page, TrashRowDTO, TriageState, WithheldMarker,
 } from "./dto/types.js";
 
 /**
@@ -91,6 +91,49 @@ const VIEW_UNREAD: Partial<Record<MessageView, boolean>> = {
   new_for_you: true,
   previously_seen: false,
 };
+
+/**
+ * THE STATES THAT TAKE A ROW OUT OF "NEW FOR YOU" — the same four the client's Ohbox holds out,
+ * named once here because the server now has to ask the same question.
+ *
+ * Three are the bottom piles (`pileOfState` in `client-engine/src/selectors.ts`): putting a
+ * message away takes it out of the Ohbox, and the pile it went to is the only place it is. The
+ * fourth, `resurfaced`, is not a pile — it is pinned ABOVE the group, so counting it here would
+ * render it twice. `muted` and `none` are absent deliberately: no group holds them out.
+ */
+const NOT_NEW_FOR_YOU: readonly TriageState[] = ["reply_later", "set_aside", "bubbled_up", "resurfaced"];
+
+/**
+ * THE "NEW FOR YOU" PREDICATE — ONE DEFINITION, and the reason it is exported.
+ *
+ * The screen and the acts over it must agree about WHICH mail is in it, or a control clears a
+ * pile the person is not looking at. `powerThrough` was the measured case: its own three
+ * predicates were unread + INBOX + this account, so it served and counted mail this screen
+ * excludes — tombstoned rows, and every message the reader had already parked or resurfaced.
+ * Those are not a bound on how much it does; they are a statement about WHICH mail it is about.
+ *
+ * A caller composes its own cursor onto these and nothing else. A second spelling anywhere is
+ * the defect: `test/new-for-you-one-predicate.test.ts` refuses one.
+ */
+export function newForYouFilters(db: Db, accountId: string): SQL[] {
+  return [
+    eq(messages.accountId, accountId),
+    desiredFolderMatches(VIEW_FOLDER.new_for_you),
+    eq(messages.unread, VIEW_UNREAD.new_for_you!),
+    // A tombstoned row keeps its `folder_state` (the reaper stamps `deleted_at` and touches
+    // nothing else) — see `list`'s own note for the three answers that cost.
+    isNull(messages.deletedAt),
+    // NOT EXISTS and not a join: `message_states` is unique per message, so either shape is
+    // exact, and a predicate composes into a caller's filter list while a join does not.
+    notExists(
+      db.select({ one: sql`1` }).from(messageStates).where(and(
+        eq(messageStates.messageId, messages.id),
+        eq(messageStates.accountId, accountId),
+        inArray(messageStates.state, NOT_NEW_FOR_YOU as string[]),
+      )),
+    ),
+  ];
+}
 
 export interface ListMessagesOptions {
   view: string;          // validated against MessageView (400 on unknown), or "folder" + folderId
@@ -437,7 +480,10 @@ export class MessageService {
     const desiredFolder = VIEW_FOLDER[view];
     const unread = VIEW_UNREAD[view];
 
-    const filters = [
+    /* `new_for_you` IS {@link newForYouFilters} and nothing else — the screen's own predicate,
+       which `TriageService.powerThrough` imports so an act over this group cannot be about a
+       different set of mail than the group shows. Every other view keeps the three below. */
+    const filters = view === "new_for_you" ? newForYouFilters(ctx.db, ctx.accountId) : [
       eq(messages.accountId, ctx.accountId),
       desiredFolderMatches(desiredFolder),
       // Mail 0065: a tombstoned row keeps its folder_state (the reaper stamps `deleted_at` and
@@ -446,7 +492,7 @@ export class MessageService {
       // snapshot excluded it — three answers to one question.
       isNull(messages.deletedAt),
     ];
-    if (unread !== undefined) filters.push(eq(messages.unread, unread));
+    if (view !== "new_for_you" && unread !== undefined) filters.push(eq(messages.unread, unread));
     if (opts.cursor) {
       // Keyset for `date desc nulls last, id desc`: strictly "older" rows than the cursor tuple,
       // including the undated tail, which sorts after every dated row.

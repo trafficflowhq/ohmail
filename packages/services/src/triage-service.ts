@@ -6,6 +6,7 @@ import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import {
   materializeMessage, materializeMessageState, materializeMessagesInOrder,
 } from "./dto/materialize.js";
+import { newForYouFilters } from "./message-service.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
 import type { MessageDTO, MessageStateDTO, Page, TriageState } from "./dto/types.js";
 
@@ -280,21 +281,22 @@ export class TriageService {
   }
 
   /**
-   * Power Through — one-by-one over the "New" group (unread Ohbox / INBOX). TWO BOUNDED QUERIES,
-   * AND THE REASON IS THE PILE THIS FEATURE IS FOR. This was one query with NO `limit`: every
-   * unread INBOX id sent to the process, for two uses — `rows[0]` and `rows.length`. The pile is
-   * the point: Power Through exists to clear a large inbox, so the user with the most unread mail
-   * paid the most for every screen, and advancing repeated it — a big enough mailbox could not
-   * open the feature at all. `remaining` is now a scalar `count(*)` over the same predicates, and
-   * the page query takes `limit(2)` — "is there another after this one" is exactly what the
-   * cursor needs. Same three answers, same values, off the same index.
+   * Power Through — one-by-one over the "New for you" group. TWO BOUNDED QUERIES, AND THE REASON
+   * IS THE PILE THIS FEATURE IS FOR. This was one query with NO `limit`: every unread INBOX id
+   * sent to the process, for two uses — `rows[0]` and `rows.length`. The pile is the point: Power
+   * Through exists to clear a large inbox, so the user with the most unread mail paid the most
+   * for every screen, and advancing repeated it — a big enough mailbox could not open the feature
+   * at all. `remaining` is now a scalar `count(*)` over the same predicates, and the page query
+   * takes `limit(2)` — "is there another after this one" is exactly what the cursor needs.
+   *
+   * AND IT IS THE SCREEN'S OWN PREDICATE, imported. It used to spell three of its own — unread,
+   * INBOX, this account — which is neither the screen it claims to read nor bounded by it: it
+   * served and counted tombstoned mail, and every message the reader had already parked or
+   * resurfaced, none of which is in the group in front of them. One import, so the shown count
+   * and the acted set cannot drift; the cursor is the only thing composed onto it.
    */
   async powerThrough(ctx: ServiceContext, opts: ListOptions = {}): Promise<PowerThroughView> {
-    const filters = [
-      eq(messages.accountId, ctx.accountId),
-      eq(messages.unread, true),
-      eq(folderState.desiredFolder, "INBOX"),
-    ];
+    const filters = newForYouFilters(ctx.db, ctx.accountId);
     if (opts.cursor) filters.push(gt(messages.id, decodeListCursor(opts.cursor)));
 
     // `limit(2)`: the row on screen, plus the sentinel that decides whether a cursor is owed.
