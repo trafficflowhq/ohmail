@@ -507,6 +507,14 @@ function installShellStub(window) {
         if (url === "/screener/held-releases" && (payload?.method ?? "GET") === "GET") {
           return Promise.resolve(frame(200, "OK", { groups: [], total: 0, max: 200 }));
         }
+        /* UNDECIDED SENDERS — `GET /screener/unscreened`, asked at mount by the Screener so the
+           "screen the Ohbox mail nobody decided about" card knows whether it has anything to
+           offer. Same resting answer and the same reason as the entry above: no groups, no mail,
+           and the server's REAL ceiling (`OHBOX_UNSCREENED_GROUPS_MAX`, 200). GET only — the
+           press is a POST this boot never takes. Added AFTER the check named it red. */
+        if (url === "/screener/unscreened" && (payload?.method ?? "GET") === "GET") {
+          return Promise.resolve(frame(200, "OK", { groups: [], total: 0, max: 200 }));
+        }
         /* The profile-import PROBE — the "we found your ohmail settings on this mailbox" card
            asks once per mailbox at mount (`useProfileImport`), on both doors, since the desktop
            wired its transport. `state: "none"` is the honest resting answer — this stub's
