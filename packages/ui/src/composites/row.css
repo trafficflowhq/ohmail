@@ -5,11 +5,15 @@
    the row at roughly the moment the selection appears under it. The row is a `<button>`, so
    there is no text selection to suppress and this is the only half that bites. Harmless
    everywhere else: no other browser implements it, and no other surface holds a row. */
-.row{display:block;width:100%;text-align:left;padding:12px 14px;border-radius:calc(var(--r-card) * 16 / 14);border:0;cursor:pointer;
-  background:none;font:inherit;color:inherit;-webkit-touch-callout:none;
+.row{display:block;width:100%;text-align:left;padding:12px 14px;border:0;cursor:pointer;
+  background:none;font:inherit;color:inherit;-webkit-touch-callout:none}
+/* THE ROW'S SURFACE IS THE WHOLE SLOT WHERE A ROW HAS ONE, so a revealed control stands on the
+   row and not beside it, and the paint keys on the same box the reveal already does. Declared
+   once for both: a row with no `actions` prop renders no slot and is the bare button. */
+.row,.row-slot{border-radius:calc(var(--r-card) * 16 / 14);
   transition:background .16s var(--swift), box-shadow .2s var(--swift), transform .2s var(--swift)}
-.row:hover{background:var(--tint)}
-.row.sel{
+.row:hover,.row-slot:hover{background:var(--tint)}
+.row.sel,.row-slot:has(.row.sel){
   background:var(--float);
   box-shadow:var(--lift-2);
   /* The 1px lift is paper's: a raised object comes toward the light. A ring face raises
@@ -20,6 +24,8 @@
   transform:translateY(calc(-1px * (1 - var(--teach))));
   position:relative;z-index:1;
 }
+/* …and the button inside a slot draws none of it, or the slot's tint would be laid twice. */
+.row-slot>.row:hover,.row-slot>.row.sel{background:none;box-shadow:none;transform:none}
 .row-top{display:flex;align-items:baseline;gap:8px}
 .row-top .who{font-weight:600;font-size:calc(13px + var(--type-up));letter-spacing:-.005em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto;min-width:0;max-width:58%}
 .row.seen .who{font-weight:500;color:var(--ink2)}
@@ -103,8 +109,8 @@
 .row .thread-circles .av.s{width:18px;height:18px;font-size:8.5px;font-weight:600;
   margin-left:-6px;box-shadow:0 0 0 1.5px var(--edge)}
 .row .thread-circles .av.s:first-child{margin-left:0}
-.row:hover .thread-circles{--edge:var(--tint)}
-.row.sel .thread-circles{--edge:var(--float)}
+.row:hover .thread-circles,.row-slot:hover .thread-circles{--edge:var(--tint)}
+.row.sel .thread-circles,.row-slot:has(.row.sel) .thread-circles{--edge:var(--float)}
 
 /* screener rows — standard anatomy + initial-avatar + suggestion chips */
 .row.srow{display:flex;gap:11px;align-items:flex-start}
