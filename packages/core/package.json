@@ -25,6 +25,7 @@
     "./pair-link": "./src/pair-link.ts",
     "./sender-headers": "./src/sender-headers.ts",
     "./outbound-text": "./src/outbound-text.ts",
+    "./model-name": "./src/model-name.ts",
     "./transport-frame": "./src/transport-frame.ts"
   },
   "dependencies": {

@@ -73,6 +73,13 @@ const DECIDE_LEGEND: Array<{ key: string; copy: "decideOhbox" | "decideReads" | 
   { key: "x", copy: "decideSpam" },
 ];
 
+/**
+ * HOW LONG A WRITE WAITS FOR THE READ THAT MAKES IT VISIBLE. One budget, entered at the top of
+ * every write, so no segment of this flow is unbounded: past it the stage paints over whatever
+ * the facts say, which is the behaviour before this wait existed.
+ */
+const SETTLE_MS = 4_000;
+
 /** The history-depth options. `365` is the default and wears the word for it. */
 const WINDOWS = ["90", "180", "365", "all"] as const;
 type WindowChoice = (typeof WINDOWS)[number];
@@ -95,8 +102,13 @@ export interface FirstRunProps {
    * RE-READ THE FACTS. Called after every write, and the reason the stage needs no local copy
    * of anything it just stored: the next render's step comes from the same place the first
    * one's did.
+   *
+   * IT MAY ANSWER WITH A PROMISE, AND THE STAGE WAITS FOR IT. Fire-and-forget, the cursor was
+   * cleared and `busy` dropped while the read was still out, so the derivation got one render
+   * over the facts from BEFORE the write — a successful create deriving back to the connect
+   * form it had just left. A caller that returns nothing is unchanged and unblocked.
    */
-  onRefresh: () => void;
+  onRefresh: () => void | Promise<void>;
   /** Leave the stage — the caller returns the route to the app. */
   onLeave: () => void;
   /**
@@ -140,6 +152,18 @@ export interface FirstRunProps {
    * IS THIS A RE-RUN from Settings — `#/first-run/again`. See {@link firstRunStep}.
    */
   rerun?: boolean;
+  /**
+   * THE ROUTE NAMES A MAILBOX THIS INSTALL DOES NOT HOLD — `firstRunSubject`'s `vanished` state.
+   * The stage cannot derive it: `facts.mailbox` is null both for a run whose row left and for an
+   * install that has never connected one, and those two want opposite screens.
+   */
+  subjectVanished?: boolean;
+  /**
+   * WHO ORGANIZES THIS ACCOUNT'S MAIL, when anybody does — read from the rows the install already
+   * holds (`accountOrganizer`), because the connect form is about a mailbox that does not exist yet
+   * and has no holder of its own to read. Absent when nothing names one.
+   */
+  accountOrganizer?: { kind: string | null; name: string | null } | null;
   /**
    * IS THIS AN "ADD A MAILBOX" RUN — `#/first-run/add`. See {@link Route.firstRunAdd}, which
    * carries the whole argument, and {@link onboardingPath}, which drops four screens for it.
@@ -214,6 +238,24 @@ export function raiseStamp(floor: string | null, seen?: string | null): string |
   return at > base ? (seen ?? null) : floor;
 }
 
+/**
+ * THE NEXT SCREEN ALONG THE WALK — and it is never `undefined` for a step the walk does not hold.
+ *
+ * A cursor can sit outside its own run's path: `onboardingPath` drops `welcome` for an ADD run, and
+ * "Start over" used to put the cursor exactly there. `indexOf` answered -1, `path[-1 + 1]` answered
+ * `undefined`, and the intro's one control — "Set up a mailbox" — did nothing at all, every press,
+ * on every driver, until the app was restarted. A step outside the walk has no next, so the honest
+ * destination is the walk's START. Only a genuinely LAST step moves nowhere, which is what the
+ * summary is.
+ */
+export function nextStep(
+  path: readonly OnboardingStep[], step: OnboardingStep,
+): OnboardingStep | undefined {
+  const i = path.indexOf(step);
+  const next = i >= 0 ? path[i + 1] : path[0];
+  return next === step ? undefined : next;
+}
+
 export function firstRunStep(
   facts: OnboardingFacts, at: OnboardingStep | null, rerun = false, claimAnswered = false,
   add = false,
@@ -235,7 +277,23 @@ export function firstRunStep(
    * asked.
    */
   asked = false,
+  /**
+   * THE RUN NAMES A MAILBOX THIS INSTALL DOES NOT HOLD — `firstRunSubject`'s `vanished`. See the arm
+   * below: it is answered before everything else, cursor included, because every other answer this
+   * function can give for a null mailbox is a screen that acts on one.
+   */
+  vanished = false,
 ): OnboardingStep | null {
+  /* ── FIRST, AND BEFORE THE CURSOR ──────────────────────────────────────────────────────────
+   * A run about a mailbox that is not there has nothing to re-run, and the fall-through was not a
+   * dead end but a LIVE one: the re-run arm below answers `mailbox` for a null mailbox, the mailbox
+   * step is a FORM, and its connect mode is `seed` because only `add === true` selects `add` — so a
+   * re-run whose row had left the facts offered a connect form that reconfigures the whole install.
+   * Ahead of the cursor too: a cursor carried in from an earlier screen would walk straight back
+   * onto that form. `add` is not this arm's business — its hash carries an id the facts have not
+   * caught up with yet, and its form writes a row beside the others rather than replacing them.
+   */
+  if (vanished) return "vanished";
   const derived = deriveOnboardingStep(facts);
   /**
    * Is there a claim question outstanding — read from the FACTS, not from `derived`, which
@@ -331,6 +389,7 @@ export function firstRunStep(
 export function FirstRun({
   host, facts: wireFacts, onRefresh, onLeave, pull, serverMessageCount, decide, resumed,
   mailboxId, organizedSince, rerun, add, screening, mailboxAddress, onConnected,
+  subjectVanished, accountOrganizer,
 }: FirstRunProps) {
   const t = useTranslations("onboarding");
   const tm = useTranslations("mailboxes");
@@ -402,7 +461,7 @@ export function FirstRun({
   const asked = heldStampRef.current !== null && heldStampRef.current.mailboxId === mailboxId;
   const step = firstRunStep(
     facts, at, rerun === true, mailboxId !== null && claimAnsweredFor === mailboxId,
-    add === true, heldStamp, asked,
+    add === true, heldStamp, asked, subjectVanished === true,
   );
   useEffect(() => {
     /* ONLY WHILE THE QUESTION IS ACTUALLY ON SCREEN WITH A HOLDER ON IT. The floor is about what
@@ -447,8 +506,27 @@ export function FirstRun({
     const here = step;
     setBusy(true);
     setProblem(null);
+    /* ── RECORD, THEN PAINT ─────────────────────────────────────────────────────────────────
+     * The re-read happens BEFORE the cursor is cleared and before `busy` drops, and both of those
+     * are what paint. Fire-and-forget, the order was the other way round: a successful create
+     * cleared the cursor over facts still saying `mailbox: null`, and the derivation — correctly,
+     * over what it was given — answered `mailbox`, putting somebody back on the connect form they
+     * had just completed. AND THE WAIT IS BOUNDED: a read that fails, or never answers, may not
+     * hold a screen whose every control is disabled while it is out. The write's own outcome
+     * decides where the cursor goes either way; this only decides when it is safe to paint.
+     */
+    const settle = async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          Promise.resolve(onRefresh()),
+          new Promise<void>((r) => { timer = setTimeout(r, SETTLE_MS); }),
+        ]);
+      } catch { /* a read that failed is not a write that failed */ } finally { clearTimeout(timer); }
+    };
     try {
       await write();
+      await settle();
       setAt(keepCursor ?? null);
     } catch (err) {
       // The CURSOR still moves on a first run — the derivation is entitled to answer over the
@@ -456,10 +534,10 @@ export function FirstRun({
       if (testSeq.current === mine) {
         setProblem(host.probeMessage(err) ?? String((err as { message?: string })?.message ?? err));
       }
+      await settle();
       setAt(rerun === true ? here : null);
     } finally {
       setBusy(false);
-      onRefresh();
     }
   }, [host, onRefresh, rerun, step]);
 
@@ -471,8 +549,7 @@ export function FirstRun({
   }, []);
   const forward = useCallback(() => {
     if (step === null) return;
-    const i = path.indexOf(step);
-    const next = i >= 0 ? path[i + 1] : undefined;
+    const next = nextStep(path, step);
     if (next) goTo(next);
   }, [goTo, path, step]);
   const backStep = step === null ? undefined : path[path.indexOf(step) - 1];
@@ -779,8 +856,11 @@ export function FirstRun({
           {t("cancel")} <Kbd>esc</Kbd>
         </button>
       )}
+      {/* START OVER GOES TO THIS RUN'S FIRST SCREEN, not to `welcome` by name: an ADD run has no
+          welcome, so naming it parked the cursor off the walk with a forward verb that could not
+          move. See {@link forward}. */}
       <button type="button" className="join-alt" disabled={busy}
-        onClick={() => (mailboxId ? setConfirm("restart") : goTo("welcome"))}>
+        onClick={() => (mailboxId ? setConfirm("restart") : goTo(path[0] ?? "mailbox"))}>
         {t("restart")}
       </button>
       <span className="ob-spacer" />
@@ -813,7 +893,10 @@ export function FirstRun({
         aria-labelledby={`${ids}-title`}>
         <span className="wordmark"><b><em>oh</em>mail</b></span>
 
-        {step === "welcome" ? null : (
+        {/* NO RAIL ON EITHER SCREEN THAT IS NOT A PHASE. `vanished` is not in the walk, so
+            `railFound` answers -1 and the clamp below would light the LAST phase — a progress
+            readout for a run that is not going anywhere. */}
+        {step === "welcome" || step === "vanished" ? null : (
           <>
             <ol className="join-rail" aria-label={t("rail_mailbox")}>
               {rail.map((r, i) => (
@@ -829,6 +912,20 @@ export function FirstRun({
             </p>
           </>
         )}
+
+        {/* ── THE RUN'S MAILBOX IS NOT THERE ───────────────────────────────────────────────────
+            A NAMED REFUSAL AND NOTHING ELSE. No connect form (this run's mode is `seed`, which
+            reconfigures the install), no Start over (it would come back here, which is a dead
+            control), no rail. One verb, and it leaves. */}
+        {step === "vanished" ? screen(onLeave, (
+          <>
+            <h1 id={`${ids}-title`}>{t("vanishedTitle")}</h1>
+            <p className="sub">{t("vanishedLead")}</p>
+            <SettingsActions>
+              <Button variant="primary" type="submit" kbdHint="↵">{t("vanishedLeave")}</Button>
+            </SettingsActions>
+          </>
+        )) : null}
 
         {step === "welcome" ? screen(forward, (
           <>
@@ -912,6 +1009,21 @@ export function FirstRun({
                   {foot({ back: true, primary: next(t("continue")) })}
                 </>
               ) : (<>
+              {/* ── WHAT THIS CONNECTION WILL BE, BEFORE IT IS MADE ────────────────────────────
+                  A mailbox connected here is a consent-less READER, and while something else
+                  organizes this account's mail it stays one. The only surface that said so was
+                  Settings → Mailboxes, which nobody setting up a mailbox has a reason to open —
+                  so the door says it. Shown only when a holder is actually NAMED (`kind || name`,
+                  the derivation's own rule): with nobody organizing anything there is no second
+                  state to warn about, and a warning about nothing teaches people to skip them. */}
+              {accountOrganizer ? (
+                <SettingsBanner
+                  label={t("doorReader")}
+                  description={accountOrganizer.name && accountOrganizer.name.trim()
+                    ? t("doorReaderWhy", { name: accountOrganizer.name })
+                    : t("doorReaderWhyLegacy")}
+                />
+              ) : null}
               {/* EVERY PRESET, not a shortened list. The picker is the only way to reach a
                   provider's hosts without typing them, and a truncated one silently tells
                   somebody their provider is unsupported when it is in the table. */}
@@ -1503,10 +1615,13 @@ export function FirstRun({
               <Button variant="primary" onClick={() => goTo("mailbox")} disabled={busy}>
                 {t("restartKeep")}
               </Button>
+              {/* AND SO DOES FORGETTING IT — the same rule as the foot's verb above: this run's
+                  first screen, which on an ADD run is the connect form and not a welcome the
+                  walk does not contain. */}
               {host.forgetMailbox && mailboxId ? (
                 <Button variant="ghost" disabled={busy}
                   onClick={() => void run(async () => { await host.forgetMailbox!(mailboxId); })
-                    .then(() => goTo("welcome"))}>
+                    .then(() => goTo(path[0] ?? "mailbox"))}>
                   {t("restartForget")}
                 </Button>
               ) : null}

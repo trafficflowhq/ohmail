@@ -317,6 +317,12 @@ export function parseHash(hash: string): Route {
   // `#/first-run` — the setup stage, OVER whatever the shell would otherwise show. The view is
   // the Ohbox because that is where leaving the stage lands, and because a route must name one;
   // the flag is what puts the dialog on top of it. See {@link Route.firstRun}.
+  //
+  // THE ID IS NOT RESOLVED HERE AND MUST BE RESOLVED SOMEWHERE. `firstRunMailboxId` is a claim off
+  // the hash; whether this install holds that mailbox is data, which this function has none of.
+  // `firstRunSubject` answers it at the mount, and `vanished` is the arm that used to be missing:
+  // a re-run whose row had left the facts fell through to the mailbox step, whose connect mode is
+  // `seed` — reconfiguring the whole install from a hash that named a mailbox it no longer had.
   if (raw === "first-run" || raw === "first-run/again" || raw === "first-run/add") {
     return {
       view: "ohbox", tagId: null, folderId: null, address: null, screenerSegment: "waiting",

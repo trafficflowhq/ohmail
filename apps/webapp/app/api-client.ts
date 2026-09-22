@@ -10,7 +10,9 @@
  */
 
 import { csrfToken as readCsrfToken } from "./csrf";
-import { isRecoverable, mayRefreshFor, resumeSession, withSessionCookieLock } from "./session-refresh";
+import {
+  isRecoverable, mayRefreshFor, resumeSession, retryAfterMsOf, withSessionCookieLock,
+} from "./session-refresh";
 import { sessionMayAsk } from "./shell/session-truth";
 import { readOwner, readOwnerMarker, rememberOwner } from "./shell/owner-cookie";
 
@@ -65,24 +67,6 @@ export interface ApiWire {
   retryable?: boolean;
   /** `Retry-After`, in milliseconds, when the header named integer seconds. */
   retryAfterMs?: number;
-}
-
-/**
- * `Retry-After` → milliseconds, or `undefined`. Integer seconds only: RFC
- * 9110 also allows an HTTP-date, and parsing one means trusting the client
- * clock to subtract it — a machine minutes out yields a negative or absurd
- * delay from a correct header. Every `Retry-After` this API sends is
- * delta-seconds (`packages/api/src/middleware.ts`), so the date form is
- * refused and the caller falls back to its own backoff. `0` and negatives
- * are `undefined` too — "retry immediately" from a server that just refused
- * would spin a backoff seeded with 0. No upper clamp: the ceiling belongs to the consumer (`confirm-schedule.ts`).
- */
-function retryAfterMsOf(res: Response): number | undefined {
-  const raw = res.headers.get("retry-after");
-  if (raw === null || !/^\s*\d+\s*$/.test(raw)) return undefined;
-  const seconds = Number.parseInt(raw.trim(), 10);
-  if (!Number.isSafeInteger(seconds) || seconds <= 0) return undefined;
-  return seconds * 1000;
 }
 
 /** The one network failure that is not a refusal: we never reached the server. */
@@ -1317,7 +1301,36 @@ export const auth = {
     api<{ redirect: string }>("/oauth/authorize", {
       method: "POST", body: { request: handle }, ceremony: true,
     }),
+
+  /**
+   * The one-confirm desktop sign-in, the browser's three calls. The read describes the request
+   * and spends nothing; the confirm is step-up gated at the route (a 403 `step_up_required` is
+   * the page's cue to ask for the factor inline); "Not me" ends the request. No `ceremony` flag:
+   * these act AS the signed-in account, so the account boundary applies to them.
+   */
+  desktopApproval: (id: string, opts: { signal?: AbortSignal } = {}) =>
+    api<DesktopApprovalDTO>(`/auth/desktop-approval/${encodeURIComponent(id)}`, opts),
+
+  confirmDesktopApproval: (id: string) =>
+    api<{ approved: true }>(`/auth/desktop-approval/${encodeURIComponent(id)}/confirm`, {
+      method: "POST", body: {},
+    }),
+
+  denyDesktopApproval: (id: string) =>
+    api<{ denied: true }>(`/auth/desktop-approval/${encodeURIComponent(id)}/deny`, {
+      method: "POST", body: {},
+    }),
 };
+
+/** What the approval page shows. `ipClass` is a network class, never an address. */
+export interface DesktopApprovalDTO {
+  label: string;
+  platform: string;
+  requestedAt: string;
+  ipClass: string;
+  expiresIn: number;
+  approved: boolean;
+}
 
 /** What the confirmation page shows. The address arrives MASKED — the server does the masking. */
 export interface AuthorizeRequestDTO {
@@ -2572,7 +2585,7 @@ export interface ScreenerWirePage {
  * making.
  */
 export type ScreenerSkipReason =
-  | "not_held" | "out_of_credits" | "spend_unavailable" | "model_unavailable";
+  | "not_held" | "out_of_credits" | "over_quote" | "spend_unavailable" | "model_unavailable";
 
 export interface ScreenerSuggestWire {
   dryRun: boolean;
@@ -2583,7 +2596,7 @@ export interface ScreenerSuggestWire {
   /** Credits actually moved. Lower than the quote when a sender's answer was already bought. */
   charged: number;
   /** Set when the spend gate stopped the run PART-WAY; absent on a run that served everything. */
-  stopped?: "out_of_credits" | "spend_unavailable";
+  stopped?: "out_of_credits" | "over_quote" | "spend_unavailable";
   /**
    * WHAT IS LEFT ON THE ACCOUNT after this request — the server's ledger read, never ours. The one number a person
    * wants after being told what a run cost, and the one this client is categorically not allowed to compute.
@@ -2635,10 +2648,17 @@ export const screener = {
    * so a retry after a lost response replays the answer instead of buying twice; the caller
    * owns the key, because the thing being made idempotent is one press of one button.
    */
-  suggest: (senders: string[], opts: { dryRun?: boolean; idempotencyKey?: string } = {}) =>
+  suggest: (
+    senders: string[],
+    opts: { dryRun?: boolean; idempotencyKey?: string; maxCredits?: number } = {},
+  ) =>
     api<ScreenerSuggestWire>("/screener/suggest", {
       method: "POST",
-      body: opts.dryRun ? { senders, dryRun: true } : { senders },
+      // `maxCredits` is the ceiling the CONFIRM carries — the figure this client showed beside the
+      // button. Never on a dry run: a price check has nothing to bound.
+      body: opts.dryRun
+        ? { senders, dryRun: true }
+        : { senders, ...(typeof opts.maxCredits === "number" ? { maxCredits: opts.maxCredits } : {}) },
       ...(opts.idempotencyKey ? { headers: { "Idempotency-Key": opts.idempotencyKey } } : {}),
     }),
 

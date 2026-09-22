@@ -173,8 +173,16 @@ interface MailStateBinding {
    * one consumer, and needs it for exactly that distinction.
    */
   freshness: FreshnessFacts;
-  /** Re-read the mailbox facts now. The Settings pane calls it after a connect or a resync. */
-  refresh: () => void;
+  /**
+   * Re-read the mailbox facts now. The Settings pane calls it after a connect or a resync.
+   *
+   * IT ANSWERS WITH THE READ. A caller may await it and paint AFTER, which is the only way a
+   * surface that just wrote can avoid one render over the facts from before the write — the
+   * first-run stage cleared its cursor on a fire-and-forget refresh and derived back to the
+   * connect form it had just completed. The promise settles when the read does, and it never
+   * rejects: a failed read leaves the published state to say so, as it always did.
+   */
+  refresh: () => Promise<void>;
 }
 
 const MailStateContext = createContext<MailStateBinding | null>(null);
@@ -477,7 +485,7 @@ export function MailStateProvider({
    */
   const readRef = useRef(read);
   useEffect(() => { readRef.current = read; }, [read]);
-  const refresh = useCallback(() => { void readRef.current(); }, []);
+  const refresh = useCallback(() => readRef.current().catch(() => { /* the state says so */ }), []);
 
   const binding = useMemo<MailStateBinding>(
     () => ({
