@@ -10,9 +10,10 @@
  */
 
 import { useState } from "react";
-import { Button, SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } from "@ohmail/ui";
+import { Button, SettingsBanner, SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } from "@ohmail/ui";
 
 import { engineLogout, type EngineStatus } from "./bridge-fetch.js";
+import { renewCloudSession } from "./cloud-session.js";
 import type { HostedSession } from "./doors.js";
 import { DOOR_COPY, machineWord } from "./door-copy.js";
 import { hostLabelOf, hostViaOf, isDesktopHost } from "./doors.js";
@@ -251,6 +252,18 @@ export function DesktopSettings({
   const [mode, setMode] = useState<"rest" | "confirm">("rest");
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  /* Try again after a refused save: the engine renews now rather than on its own clock. The gate's
+     next probe carries whatever that leaves; nothing here decides the session. */
+  const retrySeal = async (): Promise<void> => {
+    if (retrying) return;
+    setRetrying(true);
+    try {
+      await renewCloudSession();
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   /* What this install's door is called. Built in the render for the reason `DesktopAbout`'s is:
      both halves are catalogue reads, and a module constant would freeze the locale that was set
@@ -302,8 +315,18 @@ export function DesktopSettings({
         description={credential.description}
         value={credential.value}
       />
-      {/* Under the session row it is about, and only while the engine says so. */}
-      {sealFailed ? <SettingsNote>{DOOR_COPY.credSealFailedNote(machineWord())}</SettingsNote> : null}
+      {/* Under the session row it is about, and only while the engine says so — with its one verb. */}
+      {sealFailed ? (
+        <SettingsBanner
+          label={DOOR_COPY.cloudSealPausedTitle(machineWord())}
+          description={DOOR_COPY.credSealFailedNote(machineWord())}
+          action={
+            status.mode === "cloud" && session === "live" ? (
+              <Button onClick={() => void retrySeal()} disabled={retrying}>{DOOR_COPY.gateTryAgain}</Button>
+            ) : null
+          }
+        />
+      ) : null}
       {/* ── IS THE OTHER COMPUTER REACHABLE — a PERMANENT row on this door ─────────────────
           Present in every state, `Reachable` included, unlike the Mail engine row below it. The
           engine row is about a fault and says nothing on a healthy install by design; this one

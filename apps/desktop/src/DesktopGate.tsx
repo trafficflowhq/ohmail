@@ -36,6 +36,7 @@ import {
 } from "../../webapp/app/shell/host-connection";
 import { BootStatus } from "./BootStatus.js";
 import { bridgeAvailable, bridgeFetch, engineUnlockRetry } from "./bridge-fetch.js";
+import { cloudNoticeDue, cloudSessionNotice, sessionOf, signInCauseOf, type CloudSessionWire } from "./cloud-session.js";
 import { DoorChooser } from "./DoorChooser.js";
 import { DesktopAbout } from "./DesktopAbout.js";
 import { DesktopMailboxes, readMirrorFreshness } from "./DesktopMailboxes.js";
@@ -118,6 +119,46 @@ export const LIFECYCLE_POLL_MS = 5_000;
  * and only on the cloud door — the standalone door has no hosted session to lose.
  */
 const HOSTED_SESSION_PROBE_MS = 60_000;
+/** …and while the session is renewing or not answering: the notice should leave when it does. */
+const HOSTED_SESSION_DEGRADED_PROBE_MS = 5_000;
+
+/** What the gate keeps from one `/health` answer, under the key it was earned under. */
+interface HostedAuth {
+  key: string; gone: boolean; preAuth: boolean; restartRequired: boolean; sealFailed: boolean;
+  /** `/health.session` — the dialog's cause and the rail's notice. Null from an older engine. */
+  session: CloudSessionWire | null;
+  /** Has the fault in `session` lasted long enough to say so (`cloud-session.ts`)? */
+  noticeDue: boolean;
+}
+
+/**
+ * ONE READING OF `/health` for both probes below. `gone` is the engine's verdict alone
+ * (`sessionExpired`, set only by a coded refusal); `preAuth` is signed out WITHOUT that verdict;
+ * `restartRequired` is read first where it is used, because its shape is `preAuth`'s. An older
+ * engine sends no `sealed` and no `session`, and an absent field is not a fault.
+ */
+function hostedAuthOf(key: string, health: {
+  signedIn?: boolean; sessionExpired?: boolean; restartRequired?: boolean; sealed?: boolean; session?: unknown;
+}): HostedAuth {
+  const session = sessionOf(health.session);
+  return {
+    key,
+    restartRequired: health.restartRequired === true,
+    sealFailed: health.sealed === false,
+    gone: health.sessionExpired === true,
+    preAuth: health.sessionExpired !== true && health.signedIn === false,
+    session,
+    noticeDue: cloudNoticeDue(session, Date.now()),
+  };
+}
+
+/** Keep the held answer when a new one says the same: a repaint of the whole window for nothing. */
+function sameHostedAuth(a: HostedAuth | null, b: HostedAuth): boolean {
+  return a !== null && a.key === b.key && a.gone === b.gone && a.preAuth === b.preAuth
+    && a.restartRequired === b.restartRequired && a.sealFailed === b.sealFailed
+    && a.noticeDue === b.noticeDue && a.session?.state === b.session?.state
+    && a.session?.code === b.session?.code && a.session?.since === b.session?.since;
+}
 
 /**
  * How often a PAIRED window re-asks the engine how old its copy of the other computer's mail
@@ -333,9 +374,7 @@ export function DesktopGate() {
    */
   const [authEpoch, setAuthEpoch] = useState(0);
   const authKey = door === "cloud" && bridgeAvailable() ? `cloud:${authEpoch}` : null;
-  const [hostedAuth, setHostedAuth] = useState<
-    { key: string; gone: boolean; preAuth: boolean; restartRequired: boolean; sealFailed: boolean } | null
-  >(null);
+  const [hostedAuth, setHostedAuth] = useState<HostedAuth | null>(null);
   /** TRUE once the CURRENT engine's first `/health` answer has been read — pending otherwise.
       Until then the mail app is withheld: React would otherwise commit `AppShell` once, before
       the asynchronous probe responds, over an engine whose mail routes refuse. Non-cloud doors
@@ -421,6 +460,8 @@ export function DesktopGate() {
     // key already reads as pending.
     setSignInAfterExpiry(false);
   }, [authKey]);
+  /** Not live: renewing, unreachable or unable to save. The probe then asks every few seconds. */
+  const hostedDegraded = hostedAuthKnown && hostedAuth.session !== null && hostedAuth.session.state !== "live";
   useEffect(() => {
     if (authKey === null) return;
     let cancelled = false;
@@ -430,32 +471,11 @@ export function DesktopGate() {
         if (!res.ok) return; // a dead ENGINE is the status path's story, not this one's
         // `sessionExpired` and never bare `signedIn: false` decides the WORDING: an ordinary
         // pre-auth engine also answers signedIn:false, and the engine latches sessionExpired
-        // only on the hosted API's definitive refusal to renew. Both states leave the mail
-        // client — the difference is the sentence over the sign-in, never whether it shows.
-        const health = (await res.json()) as {
-          signedIn?: boolean;
-          sessionExpired?: boolean;
-          restartRequired?: boolean;
-          sealed?: boolean;
-        };
+        // only on the hosted API's coded refusal to renew. Both states leave the mail client —
+        // the difference is the sentence over the sign-in, never whether it shows.
+        const next = hostedAuthOf(authKey, (await res.json()) as Parameters<typeof hostedAuthOf>[1]);
         if (cancelled) return;
-        setHostedAuth({
-          key: authKey,
-          /* THE THIRD REASON `signedIn` CAN BE FALSE, and it is read FIRST because the other two
-             are wrong about it. A pairing that succeeded and is waiting for a relaunch answers
-             `signedIn: false` with `sessionExpired: false` — which is `preAuth`'s exact shape, so
-             without this the window draws the hosted PASSWORD FORM for an account that does not
-             exist, at the moment the pairing worked. Had the engine set `sessionExpired` instead
-             it would be worse: "no longer paired with {host}", the precise opposite of what
-             happened. Neither is a wording problem; both are the window having no third reading
-             available. `restartRequired` is that reading. */
-          restartRequired: health.restartRequired === true,
-          /* THE ROTATION THE DISK REFUSED. An older engine sends no `sealed` at all, and an
-             absent field is not a refusal — only an explicit `false` is. */
-          sealFailed: health.sealed === false,
-          gone: health.sessionExpired === true,
-          preAuth: health.sessionExpired !== true && health.signedIn === false,
-        });
+        setHostedAuth((held) => (sameHostedAuth(held, next) ? held : next));
       } catch {
         /* engine unreachable — the status path owns that; the fast first-answer loop retries */
       }
@@ -463,12 +483,15 @@ export function DesktopGate() {
     // Once at mount — a relaunch onto a signed-out engine must land on sign-in now, not a
     // minute from now — then on the slow steady cadence.
     void probe();
-    const timer = setInterval(() => void probe(), HOSTED_SESSION_PROBE_MS);
+    const timer = setInterval(
+      () => void probe(),
+      hostedDegraded ? HOSTED_SESSION_DEGRADED_PROBE_MS : HOSTED_SESSION_PROBE_MS,
+    );
     return () => {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [authKey]);
+  }, [authKey, hostedDegraded]);
   /* UNTIL THE FIRST ANSWER, ask fast: the door's auth state is pending and the app is withheld,
      and the ask is one local stdio call answered in milliseconds once the engine serves. This
      loop exists only while the state is unknown — the flip to known unmounts it, and a new
@@ -480,30 +503,9 @@ export function DesktopGate() {
       try {
         const res = await bridgeFetch("/health");
         if (!res.ok) return;
-        const health = (await res.json()) as {
-          signedIn?: boolean;
-          sessionExpired?: boolean;
-          restartRequired?: boolean;
-          sealed?: boolean;
-        };
+        const next = hostedAuthOf(authKey, (await res.json()) as Parameters<typeof hostedAuthOf>[1]);
         if (cancelled) return;
-        setHostedAuth({
-          key: authKey,
-          /* THE THIRD REASON `signedIn` CAN BE FALSE, and it is read FIRST because the other two
-             are wrong about it. A pairing that succeeded and is waiting for a relaunch answers
-             `signedIn: false` with `sessionExpired: false` — which is `preAuth`'s exact shape, so
-             without this the window draws the hosted PASSWORD FORM for an account that does not
-             exist, at the moment the pairing worked. Had the engine set `sessionExpired` instead
-             it would be worse: "no longer paired with {host}", the precise opposite of what
-             happened. Neither is a wording problem; both are the window having no third reading
-             available. `restartRequired` is that reading. */
-          restartRequired: health.restartRequired === true,
-          /* THE ROTATION THE DISK REFUSED. An older engine sends no `sealed` at all, and an
-             absent field is not a refusal — only an explicit `false` is. */
-          sealFailed: health.sealed === false,
-          gone: health.sessionExpired === true,
-          preAuth: health.sessionExpired !== true && health.signedIn === false,
-        });
+        setHostedAuth(next);
       } catch {
         /* engine still starting — the next tick asks again */
       }
@@ -872,6 +874,7 @@ export function DesktopGate() {
       <DoorChooser
         start="cloud"
         cloudAction="signIn"
+        signInCause={signInCauseOf(hostedAuth?.session ?? null)}
         onEntered={(r) => {
           /* Back to PENDING, never to "signed in": the fresh probe against the engine the
              sign-in just touched is the only thing allowed to say what its session is. The
@@ -925,6 +928,7 @@ export function DesktopGate() {
         <DoorChooser
           start="cloud"
           cloudAction="signIn"
+          signInCause={signInCauseOf(hostedAuth?.session ?? null)}
           onEntered={(r) => {
             setAuthEpoch((n) => n + 1);
             setSignInAfterExpiry(false);
@@ -985,6 +989,14 @@ export function DesktopGate() {
     }
     return undefined;
   })();
+
+  /* THE CLOUD DOOR'S OWN LINE, in the same slot: Cloud is not answering or the sign-in cannot be
+     saved, and the session is still there. A notice over the mail, never the dialog. Not on the
+     paired door, whose line above already says the other computer is not answering. */
+  const cloudConnection = !paired && door === "cloud" && hostedAuthKnown && hostedAuth.noticeDue
+    ? cloudSessionNotice(hostedAuth.session)
+    : undefined;
+  const railConnection = hostConnection ?? cloudConnection;
 
   const suggestDoor = suggestDoorFor(status, hostedSession);
 
@@ -1060,7 +1072,7 @@ export function DesktopGate() {
            only when there is something wrong to say; it also silences the sync strip's "catching
            up" arm, which would otherwise claim activity that is not happening. See the derivation
            above and `host-connection.ts` for the grace. */
-        {...(hostConnection ? { hostConnection } : {})}
+        {...(railConnection ? { hostConnection: railConnection } : {})}
         /* WHAT A SEND FROM THIS WINDOW RIDES. On the STANDALONE door the compose form, the
            send handler and the SMTP dial are one process — the mail engine's own service bag
            makes the same declaration, `sendSurfaceMaxTotalBytes: null` — so the attach

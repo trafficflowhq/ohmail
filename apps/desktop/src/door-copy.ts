@@ -140,6 +140,24 @@ const EN = {
     `The copy of your mail on this ${machine} is where you left it. Signing in happens in the `
     + "mail engine on this machine — the password and the code go straight there and are not "
     + "kept anywhere else.",
+  /* THE DIALOG SAYS WHY IT IS OPEN when the engine knows (`/health.session`): the server refused
+     this install's session with a code, or the saved sign-in cannot be read. Without a cause the
+     ordinary lead above is said. No window length in the expiry sentence: a server can set its own. */
+  cloudLeadRevoked: (machine: string) =>
+    `This ${machine} was signed out — from another device, or after a security check. The copy `
+    + "of your mail here is where you left it.",
+  cloudLeadExpired: (machine: string) =>
+    `Your sign-in on this ${machine} expired after a long time without use. The copy of your mail `
+    + "here is where you left it.",
+  cloudLeadSealFailed: (machine: string) =>
+    `The sign-in saved on this ${machine} could not be read, so it has to be made again. The copy `
+    + "of your mail here is where you left it.",
+  /* The rail's line while ohmail Cloud is not answering or the sign-in cannot be saved — a notice
+     over the mail, never the dialog: the session is still there and the engine keeps retrying. */
+  cloudUnreachableTitle: "ohmail Cloud could not be reached — retrying.",
+  cloudUnreachableWhy: "The mail already here keeps reading; new mail arrives once it answers.",
+  cloudSealPausedTitle: (machine: string) => `This ${machine} would not save your sign-in.`,
+  cloudSealPausedWhy: "New mail waits until it can; you stay signed in.",
   cloudLead:
     "Your account is organized on our servers and this app keeps a copy. Signing in happens in "
     + "the mail engine on this machine — the password and the code go straight there and are not "
@@ -399,8 +417,8 @@ const EN = {
      password prompt after the next restart. Said here, where the session is described, and only
      while the engine says so. */
   credSealFailedNote: (machine: string) =>
-    `Your sign-in could not be saved on this ${machine} — you will be asked to sign in again `
-    + "after a restart.",
+    `Your sign-in could not be saved on this ${machine}. ohmail keeps the one it has and tries `
+    + "again, so you stay signed in.",
   credReadyValue: "Stored",
   /* ── WHERE THE KEY ACTUALLY IS, BOTH PLACES ─────────────────────────────────────────────
      `resolve_install_key` asks the FILE first and returns from it; a key read from the keystore
@@ -682,6 +700,10 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   serverSignInLead: ["machine"],
   serverReached: ["server", "address"],
   cloudLeadSignIn: ["machine"],
+  cloudLeadRevoked: ["machine"],
+  cloudLeadExpired: ["machine"],
+  cloudLeadSealFailed: ["machine"],
+  cloudSealPausedTitle: ["machine"],
   noBrowser: ["machine"],
   linkNoBrowser: ["machine", "address"],
   mailboxWhyReadsNamed: ["name"],

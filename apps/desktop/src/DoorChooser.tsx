@@ -45,6 +45,7 @@ import {
   signInToSelfHost,
 } from "./self-host.js";
 import { DOOR_COPY, machineWord } from "./door-copy.js";
+import { signInLead, type SignInCause } from "./cloud-session.js";
 import { DoorProblem } from "./DoorProblem.js";
 import { offLinkCode, onLinkCode, openWeb } from "./native.js";
 
@@ -84,12 +85,15 @@ export function DoorChooser({
    * for the length of a restart to change nothing.
    */
   cloudAction = "configure",
+  /** Why the sign-in is asked for, when the engine knows — the dialog's first sentence says it. */
+  signInCause = null,
   /** Offered only when there is already a door to go back to. */
   onCancel,
 }: {
   onEntered: (result: DoorResult) => void;
   start?: Step;
   cloudAction?: "configure" | "signIn";
+  signInCause?: SignInCause;
   roster?: { address: string; id: string }[] | null | undefined;
   host?: string | null;
   onCancel?: () => void;
@@ -427,6 +431,7 @@ export function DoorChooser({
             onBack={() => { setProblem(null); setStep("doors"); }}
             onCancel={onCancel}
             signInOnly={cloudAction === "signIn"}
+            signInCause={signInCause}
             onSubmit={(address, password, totp) =>
               attempt(() =>
                 cloudAction === "signIn" && !mustSwitch
@@ -1087,6 +1092,7 @@ function CloudDoor({
   busy,
   problem,
   signInOnly,
+  signInCause = null,
   onBack,
   onCancel,
   onSubmit,
@@ -1097,6 +1103,7 @@ function CloudDoor({
   problem: string | null;
   /** The door is already chosen; this is only the session coming back. */
   signInOnly?: boolean;
+  signInCause?: SignInCause;
   onBack: () => void;
   onCancel?: () => void;
   onSubmit: (address: string, password: string, totp: string) => void;
@@ -1155,7 +1162,7 @@ function CloudDoor({
       }}
     >
       <h1>{DOOR_COPY.cloudTitle}</h1>
-      <p>{signInOnly ? DOOR_COPY.cloudLeadSignIn(machineWord()) : DOOR_COPY.cloudLead}</p>
+      <p>{signInOnly ? signInLead(signInCause) : DOOR_COPY.cloudLead}</p>
 
       {problem ? <p className="join-error">{problem}</p> : null}
 

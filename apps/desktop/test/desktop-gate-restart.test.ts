@@ -62,10 +62,13 @@ describe("the relaunch arm outranks the two that would lie about it", () => {
 
   /* THE FIELD IS READ AT BOTH PROBES. The gate has two `/health` readers — one on the slow steady
      cadence, one on the fast loop that runs until the first answer lands. A field added to only
-     one of them works on a warm window and not on a cold start, or the reverse. */
-  it("both /health readers parse it", () => {
+     one of them works on a warm window and not on a cold start, or the reverse — so both hand the
+     answer to ONE parser, and neither probe reads a field itself. */
+  it("both /health readers parse it, through the one parser", () => {
     const reads = GATE.split("restartRequired: health.restartRequired === true").length - 1;
-    expect(reads, "only one of the two /health readers learned the field").toBe(2);
+    expect(reads, "the field is parsed in one place").toBe(1);
+    expect(GATE.split("hostedAuthOf(authKey, ").length - 1, "both probes call the one parser").toBe(2);
+    expect(GATE.split("health.restartRequired").length - 1, "no probe reads the field on its own").toBe(1);
   });
 
   it("the card says the pairing worked and names the one action", () => {
