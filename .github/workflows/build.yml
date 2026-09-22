@@ -77,9 +77,13 @@ name: build
 # HTTP adapter was a throwing stub and that constructor runs inside a React
 # render. Nothing this file smoked at the time could have seen it.
 #
-# Nothing here is signed: no Apple Developer ID, no Authenticode certificate.
-# See the per-platform "unsigned" notes in the README; the macOS artifact is
-# ad-hoc signed only, the Windows and Linux ones are not signed at all.
+# Signing is macOS-only and conditional. The macOS job signs with a Developer ID
+# and notarizes WHEN this repository holds the Apple secrets, and produces the
+# same ad-hoc artifact as before when it does not — one decision, taken once, in
+# "Import the Developer ID certificate, if there is one". Windows and Linux are
+# not signed at all: no Authenticode certificate, no Linux signing. The README's
+# per-platform notes describe the artifacts a release has actually shipped, which
+# is the ad-hoc one until the certificate exists.
 #
 # ── THE ARTIFACT NAMES ARE A CONTRACT ─────────────────────────────────────
 #
@@ -232,6 +236,186 @@ jobs:
       - name: Vendor the Node runtime
         run: node scripts/vendor-node.mjs --platform darwin
 
+      # ── 3b · the signing identity, and the ONE rule that keeps this workflow green ──
+      #
+      # WHEN THE SECRETS ARE UNSET THIS JOB KEEPS PRODUCING THE AD-HOC BUILD, byte
+      # for byte what it produces today. Everything notarization-shaped below is
+      # guarded on `SIGNED`, which is decided here and nowhere else, from whether
+      # the certificate secret has a value. A fork, a pull request from one, and
+      # this repository before the certificate exists all take the ad-hoc path and
+      # stay green: a workflow is not allowed to go red for want of a secret it was
+      # never given, because a red that means "not configured" trains everyone to
+      # ignore the red that means "broken".
+      #
+      # The mode is a plain environment variable written once to $GITHUB_ENV rather
+      # than a `secrets.*` expression repeated in eight `if:` conditions. One
+      # decision, one place, and the later steps read a variable instead of each
+      # re-deciding what "configured" means.
+      - name: Import the Developer ID certificate, if there is one
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APPLE_CERTIFICATE:-}" ]; then
+            echo "SIGNED=0" >> "$GITHUB_ENV"
+            echo "no APPLE_CERTIFICATE — this run produces the ad-hoc build, as before"
+            exit 0
+          fi
+          # EVERY TOOL THE SIGNING HALF SPAWNS, ASSERTED HERE — after the ad-hoc
+          # return, so a run that signs nothing is never red for a tool it never
+          # uses, and before the forty-minute build, so a runner image missing one
+          # says so in the first minute rather than the last. These are Xcode's own
+          # tools: there is nothing to download and no version to pin, so what a run
+          # CAN say is which ones signed it, and it prints them.
+          for t in security codesign ditto spctl xcrun; do
+            command -v "$t" > /dev/null || { echo "the signing half needs $t and this runner has none" >&2; exit 1; }
+          done
+          for t in notarytool stapler; do
+            xcrun --find "$t" > /dev/null || { echo "this runner's Xcode carries no $t" >&2; exit 1; }
+          done
+          echo "signing tools: $(xcodebuild -version 2>/dev/null | head -1) · notarytool $(xcrun notarytool --version 2>&1 | head -1)"
+          # HALF-CONFIGURED IS A HARD FAILURE, not a silent fall back to ad-hoc. A
+          # certificate with no password is somebody midway through setting this up,
+          # and quietly shipping the unsigned artifact under a tag they believe is
+          # signed is the worse of the two outcomes.
+          test -n "${APPLE_CERTIFICATE_PASSWORD:-}" || { echo "APPLE_CERTIFICATE is set but APPLE_CERTIFICATE_PASSWORD is not" >&2; exit 1; }
+          test -n "${KEYCHAIN_PASSWORD:-}" || { echo "APPLE_CERTIFICATE is set but KEYCHAIN_PASSWORD is not" >&2; exit 1; }
+          # A job-scoped keychain, never the login one: the runner is disposable but
+          # the default keychain is shared with whatever else the image does.
+          KC="$RUNNER_TEMP/ohmail-signing.keychain-db"
+          /usr/bin/security create-keychain -p "$KEYCHAIN_PASSWORD" "$KC"
+          /usr/bin/security set-keychain-settings -lut 3600 "$KC"
+          /usr/bin/security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KC"
+          CERT_FILE="$RUNNER_TEMP/certificate.p12"
+          # Created empty under a tight umask and removed on the way out however
+          # this step ends: the file never exists with a mode wider than 600, and a
+          # failed import leaves no certificate behind on the runner's disk.
+          ( umask 077 && : > "$CERT_FILE" )
+          trap 'rm -f "$CERT_FILE"' EXIT INT TERM
+          /usr/bin/base64 -d <<< "$APPLE_CERTIFICATE" > "$CERT_FILE"
+          /usr/bin/security import "$CERT_FILE" -k "$KC" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$CERT_FILE"
+          /usr/bin/security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KC" > /dev/null
+          # The job keychain must be ON THE SEARCH LIST or codesign cannot find the
+          # identity; the existing list is kept so system roots still resolve.
+          /usr/bin/security list-keychains -d user -s "$KC" $(/usr/bin/security list-keychains -d user | tr -d '"')
+          # READ the identity out of the keychain rather than take it from a secret.
+          # A mistyped APPLE_SIGNING_IDENTITY surfaces as `no identity found` deep
+          # inside the bundler, where it reads as a Tauri failure and not as a typo.
+          IDS="$(/usr/bin/security find-identity -v -p codesigning "$KC")"
+          printf '%s\n' "$IDS"
+          # `|| true` because this runs under `set -euo pipefail`: a grep that
+          # matches nothing kills the step AT THE ASSIGNMENT, and the named refusal
+          # below never prints — a wrong certificate would read as rc 1 and no
+          # words at all. Measured on this exact line before it carried the guard.
+          IDENTITY="$(printf '%s\n' "$IDS" | /usr/bin/grep -m1 'Developer ID Application' | sed 's/.*"\(.*\)"/\1/' || true)"
+          test -n "$IDENTITY" || { echo "the imported certificate is not a Developer ID Application certificate" >&2; exit 1; }
+          echo "SIGNED=1" >> "$GITHUB_ENV"
+          echo "OHMAIL_KEYCHAIN=$KC" >> "$GITHUB_ENV"
+          # Read by the Tauri bundler, and it OVERRIDES bundle.macOS.signingIdentity
+          # ("-") in tauri.conf.json — which is why that file needs no change and the
+          # ad-hoc default stays the default everywhere else.
+          echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          echo "signing identity: $IDENTITY"
+
+      # The App Store Connect API key, in the shape Tauri and notarytool both want.
+      # Two of the three values are IDENTIFIERS and one is the private key; the key
+      # is handed over as a FILE because that is the only form either tool accepts,
+      # and it lives in the job-scoped RUNNER_TEMP for the life of the job.
+      - name: Stage the notarization key, if there is one
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_P8_B64: ${{ secrets.APPLE_API_KEY_P8_B64 }}
+        run: |
+          set -euo pipefail
+          if [ "${SIGNED:-0}" != "1" ]; then
+            echo "not signing — no notarization key needed"
+            exit 0
+          fi
+          # Signed but not notarizable is the same half-configured failure as above,
+          # and worse: a Developer ID signature WITHOUT notarization is refused by
+          # Gatekeeper on every Mac since Catalina, so the artifact would be less
+          # installable than the ad-hoc one it replaced.
+          test -n "${APPLE_API_KEY:-}" || { echo "signing is configured but APPLE_API_KEY is not" >&2; exit 1; }
+          test -n "${APPLE_API_ISSUER:-}" || { echo "signing is configured but APPLE_API_ISSUER is not" >&2; exit 1; }
+          test -n "${APPLE_API_KEY_P8_B64:-}" || { echo "signing is configured but APPLE_API_KEY_P8_B64 is not" >&2; exit 1; }
+          NOTARY_KEY_FILE="$RUNNER_TEMP/AuthKey.p8"
+          # It outlives this step — notarytool reads it by path further down — so
+          # it gets the tight mode at creation rather than a trap.
+          ( umask 077 && : > "$NOTARY_KEY_FILE" )
+          /usr/bin/base64 -d <<< "$APPLE_API_KEY_P8_B64" > "$NOTARY_KEY_FILE"
+          chmod 600 "$NOTARY_KEY_FILE"
+          # Shape check, not a use: an empty or newline-mangled secret decodes to
+          # something that is not a key, and notarytool's error for that arrives
+          # after the build rather than here.
+          /usr/bin/grep -q "BEGIN PRIVATE KEY" "$NOTARY_KEY_FILE" || { echo "APPLE_API_KEY_P8_B64 did not decode to a PEM private key" >&2; exit 1; }
+          # All three are read by the Tauri bundler AND by the notarytool calls
+          # later in this job. The identifiers are not secret; the file is.
+          echo "APPLE_API_KEY=$APPLE_API_KEY" >> "$GITHUB_ENV"
+          echo "APPLE_API_ISSUER=$APPLE_API_ISSUER" >> "$GITHUB_ENV"
+          echo "APPLE_API_KEY_PATH=$NOTARY_KEY_FILE" >> "$GITHUB_ENV"
+          echo "notarization key staged"
+
+      # THE VENDORED NODE IS THE ONE NESTED MACH-O NOTARIZATION WILL JUDGE, AND IT
+      # ARRIVES UNSIGNED. `vendor-node.mjs` `lipo -create`s the two official Node
+      # builds into one universal binary at `build/vendor/node`, and lipo does not
+      # carry a signature across — whatever Node's own release signing had is gone
+      # by the time this file exists. Notarization refuses a bundle that contains an
+      # unsigned Mach-O, and it refuses at the END of a forty-minute build.
+      #
+      # SIGNED HERE, before `tauri build` copies it into Contents/Resources, because
+      # code signing is inside-out: the bundler's signature over the .app seals this
+      # binary's own signature along with everything else. Signing it afterwards
+      # would break the seal it is nested inside.
+      #
+      # PGlite is WebAssembly (`postgres.wasm`), not a native addon, so this is the
+      # ONLY extra Mach-O in the bundle. If a `.node` or `.dylib` ever enters the
+      # engine payload it needs the same treatment — and notarization is what will
+      # say so, which is why the failure is worth understanding before it happens.
+      #
+      # The entitlements belong to the JavaScript engine, not to us. A hardened-runtime
+      # process may not map memory that is both writable and executable without them, so
+      # an un-entitled node is signed successfully, notarized successfully, and then dies
+      # on its first JIT — which the packaged-engine check further down would catch, on
+      # the runner, which is the right place but a slow way to learn it.
+      - name: Sign the vendored Node runtime
+        if: env.SIGNED == '1'
+        run: |
+          set -euo pipefail
+          ENT="$RUNNER_TEMP/node.entitlements.plist"
+          cat > "$ENT" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>com.apple.security.cs.allow-jit</key><true/>
+            <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+          </dict>
+          </plist>
+          PLIST
+          codesign --force --timestamp --options runtime \
+            --entitlements "$ENT" \
+            --keychain "$OHMAIL_KEYCHAIN" \
+            --sign "$APPLE_SIGNING_IDENTITY" \
+            build/vendor/node
+          codesign --verify --strict --verbose=2 build/vendor/node
+          # NOT "is it signed" — WHICH key, and with the hardened runtime on. An
+          # ad-hoc signature satisfies --verify and fails notarization; a Developer
+          # ID signature without the runtime flag does the same.
+          INFO="$(codesign --display --verbose=2 build/vendor/node 2>&1 || true)"
+          printf '%s\n' "$INFO"
+          case "$INFO" in
+            *"Authority=Developer ID Application"*) echo "vendored node: Developer ID" ;;
+            *) echo "the vendored node is not Developer ID signed" >&2; exit 1 ;;
+          esac
+          case "$INFO" in
+            *"(runtime)"*) echo "vendored node: hardened runtime on" ;;
+            *) echo "the vendored node was signed without the hardened runtime" >&2; exit 1 ;;
+          esac
+
       # ── 4 · the app ───────────────────────────────────────────────────────
       # `app:build:engine` stages the engine and its runtime, rebuilds the UI
       # with the bridge, SMOKES that bundle, and only then bundles the app. The
@@ -266,17 +450,110 @@ jobs:
           codesign --verify --verbose=2 "$B/macos/ohmail.app"
           # No pipe: under `set -o pipefail` a reader that closes early SIGPIPEs
           # the producer, and the step fails for a reason that is not the check.
-          SIG_INFO="$(codesign --display --verbose=2 "$B/macos/ohmail.app" 2>&1)"
+          # `|| true` for the reason the identity read carries one: `--display`
+          # exits non-zero on a binary it finds no signature on, `2>&1` has already
+          # taken its words into the variable, and set -e would end the step here
+          # with nothing printed — where the whole point is to print what it found
+          # and then refuse by name.
+          SIG_INFO="$(codesign --display --verbose=2 "$B/macos/ohmail.app" 2>&1 || true)"
           printf '%s\n' "$SIG_INFO"
-          # Ad-hoc and nothing else: a real Developer ID here would mean the
-          # workflow had acquired signing material it is not supposed to have.
-          case "$SIG_INFO" in
-            *"Signature=adhoc"*) echo "ad-hoc signed, as the README says" ;;
-            *) echo "the .app is not ad-hoc signed — see bundle.macOS.signingIdentity" >&2; exit 1 ;;
-          esac
+          # WHAT THE SIGNATURE MUST BE, AND IT DEPENDS ON THE MODE.
+          #
+          # Ad-hoc mode keeps the original assertion unchanged and for the original
+          # reason: a real Developer ID appearing on a run that was given no
+          # certificate would mean the workflow had acquired signing material it is
+          # not supposed to have.
+          #
+          # Signed mode asserts the opposite, and asserts the hardened runtime with
+          # it, because notarization refuses a bundle signed without it and refuses
+          # at the end of the build rather than here.
+          if [ "${SIGNED:-0}" = "1" ]; then
+            case "$SIG_INFO" in
+              *"Authority=Developer ID Application"*) echo "Developer ID signed" ;;
+              *) echo "the .app is not Developer ID signed — the identity did not reach the bundler" >&2; exit 1 ;;
+            esac
+            case "$SIG_INFO" in
+              *"(runtime)"*) echo "hardened runtime on" ;;
+              *) echo "the .app was signed without the hardened runtime; notarization would refuse it" >&2; exit 1 ;;
+            esac
+          else
+            case "$SIG_INFO" in
+              *"Signature=adhoc"*) echo "ad-hoc signed, as the README says" ;;
+              *) echo "the .app is not ad-hoc signed — see bundle.macOS.signingIdentity" >&2; exit 1 ;;
+            esac
+          fi
           DMG="$(ls "$B"/dmg/*.dmg | head -1)"
           test -s "$DMG"
           mv "$DMG" build/ohmail.dmg
+          # ── NOTARIZATION: VERIFIED, NOT ASSUMED ───────────────────────────
+          #
+          # With APPLE_API_* in the environment the bundler notarizes and staples on
+          # its way past. Whether it staples the .app BEFORE it cuts the DMG is not
+          # something this workflow should depend on: if it does, the two checks
+          # below are cheap no-ops; if it does not, they do the work. Either way
+          # what ships is asserted rather than inferred from who ran first.
+          #
+          # THE ORDER IS LOAD-BEARING, TWICE.
+          #
+          # Stapling REWRITES the artifact — that is what a stapled ticket is, a
+          # ticket embedded so Gatekeeper can validate with no network. So the .app
+          # is stapled BEFORE the tar below is cut, or the updater payload ships
+          # without its ticket and the first offline launch after an update is
+          # refused.
+          #
+          # And nothing may be stapled AFTER `release-feeds.yml` has signed it. That
+          # job signs the BYTES of ohmail.app.tar.gz — minisign for latest.json,
+          # EdDSA for the Sparkle appcast — and a staple afterwards makes every
+          # signature it published wrong, which every updater reads as tampering and
+          # refuses, silently and for good. A ticket that arrives late is not a
+          # late improvement; it is a broken release. Rebuild instead.
+          if [ "${SIGNED:-0}" = "1" ]; then
+            APP="$B/macos/ohmail.app"
+            staple_or_submit() {
+              what="$1"; upload="$2"; log="$RUNNER_TEMP/notary-$3.log"
+              if xcrun stapler validate "$what" > /dev/null 2>&1; then
+                echo "$what already carries a notarization ticket"
+                return 0
+              fi
+              echo "$what has no ticket — submitting"
+              set +e
+              xcrun notarytool submit "$upload" --wait --timeout 45m \
+                --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" \
+                > "$log" 2>&1
+              rc=$?
+              set -e
+              cat "$log"
+              # The exit code AND the status word. notarytool exits 0 for a
+              # submission that completed and was REJECTED, so the code alone would
+              # ship an Invalid build; and a status line with no exit code would
+              # miss a transport failure. Both, or neither is enough.
+              test "$rc" -eq 0 || { echo "notarytool exited $rc for $what" >&2; return 1; }
+              /usr/bin/grep -q "status: Accepted" "$log" || {
+                echo "notarization did not end Accepted for $what" >&2
+                echo "  xcrun notarytool log <id> --key ... prints Apple's reasons" >&2
+                return 1
+              }
+              xcrun stapler staple "$what"
+            }
+            # An .app is a directory; notarytool takes an archive. `ditto -c -k
+            # --keepParent` is the zip Apple's own documentation names, and the zip
+            # is a submission vehicle only — the artifact that ships is the .app the
+            # ticket gets stapled to.
+            ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/ohmail-app.zip"
+            staple_or_submit "$APP" "$RUNNER_TEMP/ohmail-app.zip" app
+            staple_or_submit build/ohmail.dmg build/ohmail.dmg dmg
+            xcrun stapler validate "$APP"
+            xcrun stapler validate build/ohmail.dmg
+            # Proof from the tool that decides at launch, rather than from our own
+            # bookkeeping: spctl is what Gatekeeper runs. "source=Notarized
+            # Developer ID" is the only answer that means a double-click works.
+            SPCTL="$(spctl -a -t exec -vv "$APP" 2>&1)"
+            printf '%s\n' "$SPCTL"
+            case "$SPCTL" in
+              *"source=Notarized Developer ID"*) echo "Gatekeeper accepts the app as notarized" ;;
+              *) echo "spctl does not see a notarized Developer ID app" >&2; exit 1 ;;
+            esac
+          fi
           # The updater payload. A GZIPPED TAR and not a zip: Tauri's macOS
           # updater unpacks with GzDecoder + tar and has no zip path at all, and
           # Sparkle — which the handover feed serves to installed SwiftUI
@@ -322,6 +599,22 @@ jobs:
           test "$BUILD_VER" -gt 291
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist"
           codesign --verify --verbose=2 "$APP"
+          # In signed mode, report the state of the app INSIDE the image. This is
+          # NOT a hard failure and the asymmetry is deliberate: the DMG carries its
+          # own stapled ticket, which is what Gatekeeper reads when the image is
+          # opened, and an app copied out of it that has no ticket of its own gets
+          # an online notarization check on first launch — the ordinary outcome for
+          # DMG distribution. The .app in `ohmail.app.tar.gz` is the one that MUST
+          # carry a ticket, because it replaces an installed app that may never see
+          # a network again, and that one is asserted above rather than reported.
+          if [ "${SIGNED:-0}" = "1" ]; then
+            if xcrun stapler validate "$APP" > /dev/null 2>&1; then
+              echo "the app inside the image is stapled too"
+            else
+              echo "note: the app inside the image has no ticket of its own; the DMG's ticket covers opening it, and first launch after a copy is an online check"
+            fi
+            spctl -a -t exec -vv "$APP" || true
+          fi
           hdiutil detach "$MNT"
 
       # THE PACKAGED APP'S OWN ENGINE, STARTED FROM THE PACKAGED LAYOUT, with a
@@ -452,8 +745,22 @@ jobs:
       - name: Run summary
         if: always()
         run: |
+          # WHAT THIS SUMMARY SAYS ABOUT THE ARTIFACT FOLLOWS THE SAME ONE
+          # DECISION AS THE SIGNATURE ITSELF, and defaults to the ad-hoc words:
+          # this step is `if: always()`, so it also runs when the import step
+          # failed and SIGNED was never written, and the sentence a reader must
+          # never see is one claiming a notarized build nobody notarized. The
+          # ad-hoc sentence keeps the right-click instructions; the signed one
+          # has no instructions to give, which is the point of the change.
+          if [ "${SIGNED:-0}" = "1" ]; then
+            HEADING='### ohmail for macOS — signed and notarized (engine-bearing, universal)'
+            CLOSING='Signed with a Developer ID and notarized by Apple: double-click to open it.'
+          else
+            HEADING='### ohmail for macOS — unsigned build (engine-bearing, universal)'
+            CLOSING='Ad-hoc signed, **not** notarized. First launch: the double-click is blocked, then approve it under System Settings › Privacy & Security › "Open Anyway".'
+          fi
           {
-            echo '### ohmail for macOS — unsigned build (engine-bearing, universal)'
+            echo "$HEADING"
             echo
             echo "| | |"
             echo "|---|---|"
@@ -465,7 +772,7 @@ jobs:
               echo "| $(basename "$f") | \`$(shasum -a 256 "$f" | cut -d' ' -f1)\` · $(du -h "$f" | cut -f1) |"
             done
             echo
-            echo 'Ad-hoc signed, **not** notarized. First launch: the double-click is blocked, then approve it under System Settings › Privacy & Security › "Open Anyway".'
+            echo "$CLOSING"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ==========================================================================
