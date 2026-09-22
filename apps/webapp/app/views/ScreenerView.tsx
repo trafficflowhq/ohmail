@@ -8,7 +8,7 @@
  * stay reversible; auto-detected spam is held viewable, never deleted
  * silently. On mobile the preview opens full-screen.
  */
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import type {
   BodyState,
@@ -549,6 +549,7 @@ export function ScreenerView({
   remoteImages,
   onUnsubscribe,
   junk,
+  mailboxLabelOf,
   full,
   onFull,
 }: {
@@ -639,12 +640,42 @@ export function ScreenerView({
    * the mirror's quarantine rows (§16.7's flag-off parity).
    */
   junk?: JunkWindowControl;
+  /**
+   * WHICH OF THE ACCOUNT'S MAILBOXES A STRANGER WROTE TO — `mailboxLabelResolver` over the
+   * shell's `GET /mailboxes` facts, which this view has none of. The SAME prop `ReadsView`
+   * takes, resolved by the same function: the `> 1` gate is inside it, so a one-mailbox account
+   * is answered null and nothing is drawn. Optional; absent, nothing is named.
+   *
+   * This queue was the surface that could not answer the question at all — the Junk pane beside
+   * it has always been per-mailbox, and a row here named the sender and not the address they
+   * wrote to.
+   */
+  mailboxLabelOf?: (mailboxId: string) => string | null;
   full: boolean;
   onFull: (full: boolean) => void;
 }) {
   const t = useTranslations("screener");
+  /* The delivery badge's own words, from the namespace that already owns them — "Delivered to
+     Work" is one sentence across the product and this surface does not get a second spelling. */
+  const tm = useTranslations("message");
   const piles = usePileNames();
   const rowBadge = useRowBadgeCopy();
+  /**
+   * The delivery badge for one sender row, or nothing. A sender's mailbox rides the row
+   * ({@link ScreenerSenderDTO.mailboxId}); the resolver decides whether there is anything to say.
+   */
+  const mailboxBadge = useCallback(
+    (w: ScreenerSenderDTO): { mailbox?: string; mailboxTitle?: string } => {
+      const label = w.mailboxId ? mailboxLabelOf?.(w.mailboxId) ?? null : null;
+      return label ? { mailbox: label, mailboxTitle: tm("deliveredToTitle", { label }) } : {};
+    },
+    [mailboxLabelOf, tm],
+  );
+  /** The same fact as a sentence, for the sheet — which states it rather than wearing a badge. */
+  const mailboxLabelFor = useCallback(
+    (w: ScreenerSenderDTO): string | null => (w.mailboxId ? mailboxLabelOf?.(w.mailboxId) ?? null : null),
+    [mailboxLabelOf],
+  );
   const [scopes, setScopes] = useState<Map<string, DecisionScope>>(() => new Map());
   const [choosing, setChoosing] = useState<"allow" | "notspam" | null>(null);
   /**
@@ -1143,6 +1174,7 @@ export function ScreenerView({
           id={w.id}
           from={displayAddressee(w.from.name, w.from.address)}
           address={displayAddressUnder(w.from.name, w.from.address)}
+          {...mailboxBadge(w)}
           time={newest?.time ?? w.time}
           subject={newest?.subject ?? ""}
           avatarInitial={w.initial}
@@ -1238,7 +1270,8 @@ export function ScreenerView({
              genuinely nameless sender still shows exactly one line. */
           from={displayAddressee(w.from.name, w.from.address)}
           address={displayAddressUnder(w.from.name, w.from.address)}
-          time={screenedDate(w, t("today"))}
+          {...mailboxBadge(w)}
+          time={screenedDate(w)}
           subject={newestHeld(w)?.subject ?? ""}
           avatarInitial={w.initial}
           avatarHue={avatarHue(w.from.address)}
@@ -1268,6 +1301,7 @@ export function ScreenerView({
         id={r.sender.id}
         from={displayAddressee(r.sender.from.name, r.sender.from.address)}
         address={displayAddressUnder(r.sender.from.name, r.sender.from.address)}
+        {...mailboxBadge(r.sender)}
         time={newestHeld(r.sender)?.time ?? r.sender.time}
         subject={newestHeld(r.sender)?.subject ?? ""}
         avatarInitial={r.sender.initial}
@@ -1562,6 +1596,7 @@ export function ScreenerView({
             remoteImages={remoteImages}
             onBack={() => onFull(false)}
             role={state.role}
+            mailboxLabel={mailboxLabelFor(current as ScreenerSenderDTO)}
             standing={noSuggestionStanding}
             autoSuggest={autoSuggest}
             {...(decisionFor(current as ScreenerSenderDTO) !== undefined
@@ -1583,6 +1618,7 @@ export function ScreenerView({
             remoteImages={remoteImages}
             onUnsubscribe={onUnsubscribe}
             onBack={() => onFull(false)}
+            mailboxLabel={mailboxLabelFor(current as ScreenerSenderDTO)}
             reader={state.role.mode === "organizer" ? null : { name: state.role.name }}
           />
         ) : (
@@ -1613,9 +1649,15 @@ export function ScreenerView({
   );
 }
 
-function screenedDate(w: ScreenerSenderDTO, today: string): string {
-  const d = w.screenedOn ?? w.time;
-  return /^\d{4}-/.test(d) ? today : d;
+/**
+ * ONE VOCABULARY, SO NOTHING HAS TO GUESS WHICH. This read `/^\d{4}-/` and substituted the word
+ * "today" — a sniff at the SHAPE of the string, because the two producers minted two of them, and
+ * a guess with no expiry: the optimistic entity is durable, so a sender screened out last month
+ * still said "today". Both producers now mint through `messageStamp` or not at all, so the row's
+ * stamp is read, never inspected.
+ */
+function screenedDate(w: ScreenerSenderDTO): string {
+  return w.screenedOn ?? w.time;
 }
 
 /** Rows summarise the newest held message; previews render every one of them. */
@@ -2118,6 +2160,7 @@ function WaitingPreview({
   onBack,
   role,
   decision,
+  mailboxLabel,
   standing,
   autoSuggest,
 }: {
@@ -2147,12 +2190,20 @@ function WaitingPreview({
   bodyStall: (messageId: string) => HeldBodyStall | null;
   remoteImages?: RemoteImagesChrome;
   onBack: () => void;
+  /**
+   * WHICH OF THE ACCOUNT'S ADDRESSES THIS STRANGER WROTE TO, resolved — `null` on an account
+   * with one mailbox (the gate is inside the resolver) and on any surface that cannot name them.
+   * A decision here writes a rule for every mailbox on the account, so which one was written to
+   * is evidence for the decision, not decoration.
+   */
+  mailboxLabel: string | null;
   /** See `ScreenerViewProps.noSuggestionStanding` — the row's sentence is derived from it. */
   standing: SuggestStanding | null;
   /** See `ScreenerViewProps.autoSuggest` — the opt-in fact behind the "coming" sentence. */
   autoSuggest: boolean;
 }) {
   const t = useTranslations("screener");
+  const tm = useTranslations("message");
   const piles = usePileNames();
   // What the decision bar SAYS the rule will cover. Display only — the rule the decision writes
   // keys on the stored address (`screener-state.ts` → `decide`), which is why this may be decoded.
@@ -2201,6 +2252,14 @@ function WaitingPreview({
         </>
       )}
       <div className="scn-mails">
+        {/* WHICH OF YOUR ADDRESSES THIS STRANGER WROTE TO. Above the mail and under the bar,
+            because it is evidence for the decision the bar takes: the rule the press writes
+            covers the whole account, and on an account holding more than one address the reader
+            could not see which of them was in play. One mailbox, one sentence's worth of
+            silence — the resolver answers null and nothing is drawn. */}
+        {mailboxLabel ? (
+          <div className="scn-caption">{tm("deliveredToTitle", { label: mailboxLabel })}</div>
+        ) : null}
         {/* ── AND WHAT HAPPENED TO THIS ONE, if it has already been decided ─────────────────
             Under the bar rather than in place of it: the bar still works for every other sender,
             and this is a finding about the one on screen — the same slot and the same kind of
@@ -2336,6 +2395,7 @@ function ScreenedPreview({
   remoteImages,
   onUnsubscribe,
   onBack,
+  mailboxLabel,
   reader,
 }: {
   sender: ScreenerSenderDTO;
@@ -2349,6 +2409,8 @@ function ScreenedPreview({
   remoteImages?: RemoteImagesChrome;
   onUnsubscribe?: (id: string) => Promise<UnsubscribeResult | null>;
   onBack: () => void;
+  /** See {@link WaitingPreview}'s prop of the same name — the address the stranger wrote to. */
+  mailboxLabel: string | null;
   /**
    * NON-NULL ON EVERY READER, in BOTH modes — the release verb is a MOVE, and no organizer takes
    * a move from a reader whatever else it offers. See `screener-state.ts`'s `guardMove`.
@@ -2356,6 +2418,7 @@ function ScreenedPreview({
   reader: { name: string | null } | null;
 }) {
   const t = useTranslations("screener");
+  const tm = useTranslations("message");
   return (
     <>
       <div className="decide">
@@ -2384,7 +2447,7 @@ function ScreenedPreview({
         <div className="d-sub">
           <span className="d-note num">
             {t("screenedNote", {
-              date: screenedDate(sender, t("today")),
+              date: screenedDate(sender),
               count: sender.held.length,
             })}
           </span>
@@ -2392,6 +2455,11 @@ function ScreenedPreview({
       </div>
       {/* NO-COLLAPSE: every held message renders, oldest first. */}
       <div className="scn-mails">
+        {/* The same statement the waiting sheet makes, for the same reason: releasing this
+            sender writes a rule over the whole account. Null on a one-mailbox account. */}
+        {mailboxLabel ? (
+          <div className="scn-caption">{tm("deliveredToTitle", { label: mailboxLabel })}</div>
+        ) : null}
         <div className="scn-caption num">
           {t("heldCaptionAll", { count: sender.held.length })}
         </div>

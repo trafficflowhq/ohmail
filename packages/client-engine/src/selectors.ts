@@ -1483,6 +1483,11 @@ export function screenerSegments(
         id: rep.id,
         segment,
         from: rep.from,
+        /* WHICH OF THE ACCOUNT'S MAILBOXES THE STRANGER WROTE TO — the representative's own, the
+           same fact `ScreenerItem.mailboxId` puts on the wire. Off the message and never its
+           To/Cc: a header answer is absent on a Bcc, names the list on list mail, and misses a
+           plus or catch-all address (`shell/mailbox-label.ts`, which resolves it). */
+        mailboxId: rep.mailboxId,
         initial: (name.trim()[0] ?? "?").toUpperCase(),
         time: messageDisplayTime(rep, now, zone, locale),
         scope: "sender",
@@ -1497,12 +1502,13 @@ export function screenerSegments(
         ...(rep.sensitivity?.no_ai ? { noAi: true as const } : {}),
         // Oldest first — the order every preview renders, and ALL of them.
         held: [...newestFirst].reverse().map((m) => heldOf(reader, m, now, locale, zone, day)),
+        /* THROUGH {@link messageStamp}, like every row stamp on this screen. It used to mint
+           `${day} ${month}` of its own, which is a FOURTH band: no clock for today, no weekday
+           inside this week, and no year for a sender screened out last year — so one Screener
+           could show two stamp vocabularies, and a shape change to the row stamp reached the
+           messages and not the senders. Same inputs, same function, one vocabulary. */
         ...(segment === "screened_out" && repDate
-          ? {
-              screenedOn:
-                `${zonedFields(repDate, zone).day} ` +
-                `${named(locale, { month: "short" }, repDate, zone)}`,
-            }
+          ? { screenedOn: messageDisplayTime(rep, now, zone, locale) }
           : {}),
         derived: true,
         gatePhysical,

@@ -47,7 +47,19 @@ export interface MessageStateDTO {
 export interface ScreenerItem {
   id: string;                     // the screener entry id (the representative message id when derived)
   messageId: string;
+  /**
+   * WHICH OF THE ACCOUNT'S MAILBOXES THE STRANGER WROTE TO. The id, never the address: a sheet
+   * resolves it through the roster it already holds, and the "more than one mailbox" gate lives
+   * in that resolver so no surface re-derives it. Absent from the wire until now, so a client
+   * could not label the row if it wanted to — the Junk pane beside it has always been per-mailbox.
+   */
+  mailboxId: string;
   threadId: string | null;
+  /**
+   * `name` is the display name the sender chose, as the mirror parsed it — screening signal, and
+   * the reason this is not the bare address: a stranger's asserted identity is half of what the
+   * decision is taken on. Null where the mail carried none.
+   */
   sender: EmailAddress;
   subject: string;
   snippet: string;

@@ -460,13 +460,18 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         // No → the sender moves to the screened-out ledger (reversible; the
         // fixture world keeps the entry, segment-flipped). The whole held bag
         // travels with it — screening out holds mail, it never discards it.
+        /* NO STAMP MINTED HERE. This wrote `iso.slice(0, 10)` — `2026-09-22`, a shape no other
+           stamp on the screen wears — and the sheet then guessed the vocabulary back by regex
+           and printed the word "today". The guess had no expiry: the entity is durable, so the
+           row still said "today" on any later day. A mutation has no zone and no locale and
+           cannot form a display stamp; the row keeps the one it already has, derived, which is
+           also the one the re-derived row will show. */
         effects.push({
           type: "screener_sender",
           id: sender.id,
           entity: {
             ...sender,
             segment: "screened_out",
-            screenedOn: iso.slice(0, 10),
             updatedAt: iso,
           } satisfies ScreenerSenderDTO,
         });

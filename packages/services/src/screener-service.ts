@@ -2354,13 +2354,21 @@ function parseConfirmedCeiling(body: ScreenerSuggestBody): number | null {
   return raw;
 }
 
-/** A row, plus whatever suggestion is on record for it. No I/O, and nothing to spend. */
+/**
+ * A row, plus whatever suggestion is on record for it. No I/O, and nothing to spend.
+ *
+ * It used to drop two facts the row already carried: `mailboxId`, so no client could say which of
+ * the account's addresses a stranger wrote to, and `fromName`, the display name the sender
+ * asserted — screening signal the sheet renders where it has it. Both are selected by
+ * `HELD_COLUMNS` and were thrown away here, which is why the gap was invisible from every surface.
+ */
 function toItem(r: ScreenerRow, aiSuggestion: ScreenerItem["aiSuggestion"]): ScreenerItem {
   return {
     id: r.messageId,
     messageId: r.messageId,
+    mailboxId: r.mailboxId,
     threadId: r.threadId,
-    sender: { name: null, address: r.fromAddress },
+    sender: { name: r.fromName, address: r.fromAddress },
     subject: r.subject,
     snippet: r.snippet,
     receivedAt: (r.date ?? r.updatedAt).toISOString(),

@@ -808,6 +808,14 @@ export interface ScreenerSenderDTO {
   id: string;
   segment: ScreenerSegment;
   from: EmailAddress;
+  /**
+   * WHICH OF THE ACCOUNT'S MAILBOXES THE STRANGER WROTE TO — the representative's own
+   * `mailboxId`, the same fact `ScreenerItem.mailboxId` carries on the wire. The id and never the
+   * address: the sheet resolves it through the roster it already holds, and the "more than one
+   * mailbox" gate lives in that resolver so no surface re-derives it. Optional because a FIXTURE
+   * row has no mailbox behind it — absent means "nothing to name", which is what the demo is.
+   */
+  mailboxId?: string;
   initial: string;
   time: string;
   scope: "sender" | "domain";
@@ -853,7 +861,11 @@ export interface ScreenerSenderDTO {
    * "not that", which is what a fixture row and an older mirror both are.
    */
   noAi?: true;
-  /** screened_out only */
+  /**
+   * screened_out only — the row's stamp, minted through {@link messageStamp} like every other
+   * stamp on this screen and never by a caller's own formatting. Absent where no producer can
+   * form one (a mutation has no zone or locale), and the row's own `time` answers.
+   */
   screenedOn?: string;
   /** spam only */
   detection?: { source: string; confidence: number; reason: string; label: string };
