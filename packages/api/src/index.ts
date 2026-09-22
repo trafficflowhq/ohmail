@@ -103,6 +103,7 @@ export { jsonResponse, errorResponse, type JsonResponseInit } from "./responses.
 // Middleware.
 export {
   withRequestId, withErrorEnvelope, withRequestGuard, withSession, withStepUp, withSpendGate,
+  withSessionAcquireCeiling,
   // The busy-connection answer and its predicate. Exported because `withErrorEnvelope` is in
   // FULL_PIPELINE only — a raw or anonymous route's throw never reaches it, so the HOST needs the
   // same answer as a backstop rather than a second, differently-worded one.

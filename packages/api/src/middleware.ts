@@ -402,6 +402,19 @@ export const withErrorEnvelope: Middleware = (next, route) => async (req, deps, 
 };
 
 /**
+ * CARRIED by `GET /auth/session` and `POST /auth/refresh` (`options.middleware`), so it runs before
+ * `withSession` resolves a token — the first query either door makes. It hands the request the
+ * host's shorter-ceiling handle over the same pool: a busy pool answers these two in seconds with
+ * 503 `db_busy` and `Retry-After`, and their callers, which all give up or retry sooner than the
+ * write ceiling, retry. A host without {@link ApiDeps.sessionDb} keeps its handle.
+ */
+export const withSessionAcquireCeiling: Middleware = (next) => async (req, deps, params) => {
+  const session = deps.sessionDb?.();
+  if (session) deps.db = session;
+  return next(req, deps, params);
+};
+
+/**
  * Resolve the session token and attach `deps.session`; 401 on protected routes with none. Then
  * enforce scope structurally — an enrollment-scoped session is a password-only credential: an
  * `enrollmentOk` route admits it; a protected route without the flag answers 403

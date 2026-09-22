@@ -4,6 +4,7 @@ import { serviceContext } from "../context.js";
 import { clearSessionCookies, ownerCookieValue, sessionCookies, OWNER_COOKIE } from "../cookies.js";
 import { csrfTokenFor } from "../csrf.js";
 import type { ApiDeps } from "../deps.js";
+import { withSessionAcquireCeiling } from "../middleware.js";
 import type { Route } from "../router.js";
 import { cookieSurface, json, noContent, parseCookies, readBody } from "./shared.js";
 
@@ -63,7 +64,8 @@ export const sessionLifecycleRoutes: Route[] = [
     pattern: "/auth/refresh",
     relay: false,  /* resolves a credential from the request body */
     cost: "ceremony",
-    options: { public: true, credentialSubject: true },
+    // A busy pool answers this door fast — see `withSessionAcquireCeiling`.
+    options: { public: true, credentialSubject: true, middleware: [withSessionAcquireCeiling] },
     handler: async (req, deps) => {
       const jar = parseCookies(req.headers.get("cookie"));
       const cookieRefresh = cookieSurface(deps) ? jar["tf_refresh"] : undefined;

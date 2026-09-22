@@ -2,6 +2,7 @@ import { silentLogger } from "@trafficflow/core";
 import { serviceContext } from "../context.js";
 import { ownerCookie, OWNER_COOKIE } from "../cookies.js";
 import type { ApiDeps } from "../deps.js";
+import { withSessionAcquireCeiling } from "../middleware.js";
 import type { Route } from "../router.js";
 import { cookieSurface, json, parseCookies, readBody } from "./shared.js";
 import { auth, enrollmentSession } from "./shared-cloud.js";
@@ -133,7 +134,8 @@ export const coreRoutes: Route[] = [
     pattern: "/auth/session",
     relay: true,
     cost: "ceremony",
-    options: { enrollmentOk: true },
+    // A busy pool answers this door fast — see `withSessionAcquireCeiling`.
+    options: { enrollmentOk: true, middleware: [withSessionAcquireCeiling] },
     handler: async (req, deps) => {
       const result = await auth(deps).getSession(serviceContext(deps, req));
       // An enrollment session owns no mailbox and gets no marker — the same rule

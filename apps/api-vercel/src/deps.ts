@@ -4,7 +4,7 @@ import {
 } from "@trafficflow/db";
 import {
   API_MAX_DURATION_MS, makePooledDb, recordApiFault, entitlementsFaultRow,
-  makeEntitlementsClient, refundObligationsOn,
+  makeEntitlementsClient, refundObligationsOn, SESSION_ACQUIRE_TIMEOUT_MS,
 } from "@trafficflow/db/cloud";
 import { adminDbFor, attestStaffDbFault, resetAdminDbs, webhookAlertSink, telegramAlertSink, acquireImapSlot, releaseImapSlot, resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER, // The staging BUCKET client. It sits beside the `attachment_staging` rows rather than with the
   // send path, because the retention sweep's caller is the worker, which may not depend on
@@ -562,6 +562,9 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
   const db = makePooledDb(cfg.databaseUrlPooled);
   return {
     db,
+    // The two session doors' handle: the same module-cached pool, a 5 s wait to begin instead of
+    // 15 s. A property of the HANDLE, so it costs no connection (see `makePooledDb`).
+    sessionDb: () => makePooledDb(cfg.databaseUrlPooled, { acquireTimeoutMs: SESSION_ACQUIRE_TIMEOUT_MS }),
     now: () => new Date(),
     requestId: "",                 // `withRequestId` assigns one
     session: null,                 // `withSession` resolves it
