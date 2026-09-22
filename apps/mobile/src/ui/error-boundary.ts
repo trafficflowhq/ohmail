@@ -10,7 +10,7 @@
  */
 import { Component, createElement, Fragment, type ErrorInfo, type ReactNode } from "react";
 import { Copy } from "../copy";
-import { consoleEngineLogSink, type EngineLogSink } from "../engine/engine-log";
+import { engineLogSink, type EngineLogSink } from "../engine/engine-log";
 
 /** Every boundary names the surface it guards; the closed set is what the census reads. */
 export const SURFACES = [
@@ -92,7 +92,7 @@ export function noteRenderError(
   surface: Surface,
   err: unknown,
   componentStack: string | null | undefined,
-  sink: EngineLogSink = consoleEngineLogSink(),
+  sink: EngineLogSink = engineLogSink(),
   now: () => Date = () => new Date(),
 ): void {
   sink(renderErrorLine(surface, describeCaught(err, componentStack), now));

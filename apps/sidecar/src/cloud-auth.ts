@@ -109,7 +109,7 @@ export const REQUEST_DEADLINE_MS = 90_000;
  * nobody was told it would need. `reason` is the thrown value's CLASS and never its message —
  * the same grammar every log site uses; a filesystem message quotes paths and is not a state.
  */
-export interface SealState {
+interface SealState {
   /** False once a seal write threw and until one succeeds. True where there is no seal to write. */
   sealed: boolean;
   /** The class of the last seal refusal, or null while nothing is owed. */
