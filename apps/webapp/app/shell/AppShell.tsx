@@ -1392,16 +1392,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * calling it every render is free.
    */
   const autoOptIn = suggestions.autoOptIn(screener.unsuggestedSenders);
-  /* The first-run flow's facts, gathered from the four places they live: the polled
-   * `GET /mailboxes` row, `GET /consent`, the door's AI posture, and the Screener queue —
-   * `deriveOnboardingStep` is pure over them. Which mailbox the run is about, and the three
-   * different nothings, are `first-run-subject.ts`'s.
-   */
-  /**
-   * THE MAILBOX THIS RUN IS ABOUT, and — the part that used to be one undifferentiated `null` —
-   * WHICH KIND OF NOTHING it is when there is none. `firstRunSubject` holds the rule and the four
-   * answers; the one this mount could not make before is `vanished`, a hash naming a mailbox this
-   * install does not hold. That fell through to the connect form, whose mode is `seed`.
+  /* The first-run flow's facts, from the polled `GET /mailboxes` row, `GET /consent`, the door's
+   * AI posture and the Screener queue — `deriveOnboardingStep` is pure over them. WHICH mailbox
+   * the run is about, and which of the four nothings it is when there is none, are
+   * `first-run-subject.ts`'s: the answer this mount could not make before is `vanished`, and it
+   * used to fall through to the connect form, whose mode is `seed`.
    */
   const firstRunSubjectNow = firstRunSubject(facts, route.firstRunMailboxId, route.firstRunAdd);
   const firstRunMailbox = firstRunSubjectNow.mailbox;
@@ -1415,31 +1410,20 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       dateStyle: "medium", timeZone: activeFormatZone(),
     });
   }, [firstRunMailbox]);
-  /**
-   * THE RUN'S OWN SCREENER QUEUE — the senders who wrote to THIS mailbox. The guided decision took
-   * `screener.waiting[0]` whatever mailbox it belonged to, so a second mailbox's setup could ask a
-   * person to decide about somebody who had written to the first one, and then report that
-   * decision as this mailbox's work. `screenerForMailbox` returns the list untouched on a
-   * single-mailbox install, which is every install this shipped on before 0.14 and the reason the
-   * lookup can never cost anybody a row they are waiting to decide.
-   */
+  /* THE RUN'S OWN SCREENER QUEUE. The guided decision took `screener.waiting[0]` whatever mailbox
+   * that sender wrote to; `screenerForMailbox` carries the rule and its single-mailbox exemption. */
   const firstRunQueue = useMemo(() => screenerForMailbox(
     screener.waiting,
     (id) => reader.get<EngineMessage>("message", id)?.mailboxId,
     firstRunMailbox?.id ?? null,
     (facts?.length ?? 0) > 1,
   ), [screener.waiting, reader, derived, firstRunMailbox, facts]);
-  /**
-   * THE TWO COUNTERS THE PULL SCREEN PRINTS AND THE SUMMARY REPORTS — about the mailbox this run
-   * is about, not about the install. They were `mirroredCount - history.length` and
-   * `history.length`, both over the whole mirror, so the second mailbox's setup printed the
-   * first's work as its own — usually "already finished", seconds after the create. Same two
-   * projections over the same reader, filtered to the one row the screen is naming.
+  /* THE PULL SCREEN'S TWO COUNTERS, AND THE SUMMARY'S TWO ROWS. They were `mirroredCount -
+   * history.length` and `history.length` — the install's — on a screen naming one mailbox.
+   * ONLY WHILE THE STAGE IS OPEN: `reader.list("message")` materialises the whole mirror, which is
+   * the cost the windowing work exists to keep off the render path.
    */
   const firstRunPull = useMemo(
-    /* ONLY WHILE THE STAGE IS OPEN. `reader.list("message")` materialises the whole mirror, which
-       on a large mailbox is the cost the windowing work exists to keep off the render path — and
-       the two numbers are read by one dialog nobody has open the rest of the time. */
     () => (route.firstRun && firstRunMailbox !== null
       ? firstRunCounts(reader.list<EngineMessage>("message"), history, firstRunMailbox.id)
       : { screened: 0, history: 0 }),
@@ -1466,11 +1450,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       },
       account: { onboardingCompletedAt: consent.onboardingCompletedAt },
       ai: firstRun.ai,
-      /* THE COUNT AND THE CARD COME FROM ONE LIST. `queuedSenders > 0` is what puts the guided
-         decision in the walk and `firstRunDecide` is what fills it, so a count taken over a
-         different set can put an empty card on screen — the dead end the plan forbids. Untouched
-         on a single-mailbox install: there `screenerForMailbox` returns the whole queue and the
-         Screener's own count is the sharper one (it subtracts rows mid-exit). */
+      /* THE COUNT AND THE CARD COME FROM ONE LIST, or an empty guided-decision card reaches the
+         screen. Untouched on a single-mailbox install, where the Screener's own count is sharper
+         (it subtracts rows mid-exit). */
       queuedSenders: (facts.length ?? 0) > 1 ? firstRunQueue.length : screener.waitingCount,
     };
   }, [firstRun, facts, firstRunMailbox, firstRunQueue, consent.onboardingCompletedAt,
@@ -3569,15 +3551,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             pulled,
           }}
           decide={firstRunDecide}
-          /* THE RUN NAMES A MAILBOX THIS INSTALL DOES NOT HOLD. The shell knows and the stage
-             cannot: `facts.mailbox` is null both for a row that left and for an install that has
-             never connected one, and those two want opposite screens — a named refusal, and the
-             connect form. */
+          /* THE RUN NAMES A MAILBOX THIS INSTALL DOES NOT HOLD — the stage cannot derive it:
+             `facts.mailbox` is null for a row that LEFT and for an install that never had one, and
+             those two want opposite screens. */
           subjectVanished={firstRunSubjectNow.state === "vanished"}
-          /* WHO ORGANIZES THIS ACCOUNT'S MAIL, for the connect form, which is about a mailbox that
-             does not exist yet and has no holder of its own to read. Where something else holds
-             the lease, a mailbox connected here starts as a reader — and Settings → Mailboxes was
-             the only place that said so. */
+          /* WHO ORGANIZES THIS ACCOUNT'S MAIL — the one holder the connect form can read, since the
+             mailbox it is about does not exist yet. */
           accountOrganizer={accountOrganizer(facts)}
           /* THE RE-RUN INTENT, off the route. See `Route.firstRunRerun`: it cannot be derived,
              because a finished account derives to "nothing to do" — which is right for a boot
