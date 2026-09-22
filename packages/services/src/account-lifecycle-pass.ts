@@ -16,7 +16,8 @@ import type { MailContext } from "./mail/index.js";
  * own ISO instant — never a clock read here. No state machine, no closure table: a re-run
  * inserts nothing, a NEW closure is a new anchor. The ERASURE runs here and in `DELETE /account`
  * and NOWHERE ELSE: when `erasureAt + 24 h <= now` (a day of slack against plane↔API clock skew)
- * it stops the money and calls `deleteAccount` as the route does; `erased_at` is the skip.
+ * and the date clears the plane's own lifecycle epoch, it stops the money and calls
+ * `deleteAccount` as the route does; `erased_at` is the skip.
  */
 
 /** How far ahead the trial reminder looks — "two days left", the flow's own words. */
@@ -115,17 +116,39 @@ export function noticesDue(lc: AccessLifecycle, now: Date): DueNotice[] {
 }
 
 /**
+ * Whether the erasure forecast clears the program's OWN epoch — the belt under a date derived
+ * from history. The program floors `erasureAt` at the instant its lifecycle went live, so a
+ * closure older than the feature gets a full retention from there rather than a date already
+ * past; this asks the same question on this side, because erasure is irreversible and does not
+ * rest on the other program keeping its word.
+ *
+ * Three answers, all reachable: no epoch stated (an older program) admits, as today; a stated
+ * epoch admits only a forecast at least a day past it; a stamp this side cannot read is drift
+ * and refuses, which is the direction that loses nobody's mail.
+ */
+export function erasureClearsEpoch(lc: AccessLifecycle): boolean {
+  const epoch = lc.lifecycleEpoch ?? null;
+  if (epoch === null) return true;
+  const epochMs = Date.parse(epoch);
+  const erasureMs = lc.erasureAt === null ? Number.NaN : Date.parse(lc.erasureAt);
+  if (!Number.isFinite(epochMs) || !Number.isFinite(erasureMs)) return false;
+  return erasureMs >= epochMs + ERASURE_SLACK_MS;
+}
+
+/**
  * Whether the verdict's erasure is DUE — `erasureAt` + a day of slack has passed. THE ONE POINT
  * that decides an erasure, so the suspended refusal lives here and nowhere else.
  *
  * An operator hold is never erased by this pass, whatever `erasureAt` says. The plane's contract
  * already keeps that field null while suspended, but erasure is irreversible and so does not rest
  * on the other program keeping its word: a suspended account carrying one is a drift between the
- * two, refused here and reported by the caller.
+ * two, refused here and reported by the caller. The epoch belt above is the same argument about
+ * the date itself.
  */
 export function erasureDue(lc: AccessLifecycle, now: Date): boolean {
   if (lc.state !== "closed" || lc.erasureAt === null) return false;
   if (lc.closedReason === "suspended") return false;
+  if (!erasureClearsEpoch(lc)) return false;
   return new Date(lc.erasureAt).getTime() + ERASURE_SLACK_MS <= now.getTime();
 }
 
@@ -179,6 +202,14 @@ export async function runAccountLifecyclePass(
               accountId: id,
               reason: "the plane sent an erasure date for an account it holds suspended, which " +
                 "its own contract keeps null; the pass refuses the erasure and changes nothing",
+            });
+          }
+          if (lc.state === "closed" && lc.erasureAt !== null && !erasureClearsEpoch(lc)) {
+            log.warn("account_erasure_refused_before_epoch", {
+              accountId: id, erasureAt: lc.erasureAt, lifecycleEpoch: lc.lifecycleEpoch ?? null,
+              reason: "the erasure date is not a day past the plane's own lifecycle epoch, so " +
+                "it was derived from history rather than floored; the pass refuses and changes " +
+                "nothing",
             });
           }
 

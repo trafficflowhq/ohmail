@@ -298,7 +298,7 @@ export {
 // The wall's nightly pass (cloud 0040): the reminder mails, idempotent by the notices PK, and
 // the erasure through the same path DELETE /account runs.
 export {
-  runAccountLifecyclePass, noticesDue, erasureDue,
+  runAccountLifecyclePass, noticesDue, erasureDue, erasureClearsEpoch,
   TRIAL_REMINDER_AHEAD_MS, ERASURE_REMINDER_AHEAD_MS, ERASURE_SLACK_MS,
   type AccountLifecyclePassDeps, type AccountLifecyclePassResult, type LifecycleNoticeMailer,
 } from "./account-lifecycle-pass.js";
