@@ -114,6 +114,15 @@
      A wrapped label is TALLER, not free: `.btn` is line-height 1.5 with 7px of vertical padding,
      so a second line adds ~19px and the capsule passes the 44px floor rather than sitting in it.
      That is the trade being made — a taller control inside its panel beats a shorter one that
-     leaves it — and it grows the row it is in, which is why this is scoped to phone width. */
-  .scn-bulk .btn{white-space:normal}
+     leaves it — and it grows the row it is in, which is why this is scoped to phone width.
+
+     AND A CEILING, BECAUSE WRAPPING ALONE IS NOT ONE. A flex item's `min-width` is `auto`, which
+     is its LONGEST WORD, so `normal` holds only while every word fits: one unbreakable run wider
+     than the panel puts the capsule back outside it whatever the white-space says — measured at
+     +99px at 360 and +69px at 390, which is the positive control the zero above needs. `max-width`
+     is the ceiling, `min-width:0` is what lets the item reach it, `overflow-wrap:anywhere` is the
+     only wrap mode that lowers min-content width (`break-word` does not), and `flex-wrap` lets
+     the keycap drop under the label instead of pinning both to one line. Not the pill's SIZE:
+     the control keeps its own type and padding and grows taller, which is the trade above. */
+  .scn-bulk .btn{white-space:normal;max-width:100%;min-width:0;overflow-wrap:anywhere;flex-wrap:wrap}
 }
