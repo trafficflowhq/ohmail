@@ -1,13 +1,11 @@
 /**
- * WHICH MAILBOX A FIRST-RUN IS ABOUT, and how much of THAT mailbox this device holds.
+ * WHICH MAILBOX A FIRST RUN IS ABOUT, and how much of THAT mailbox this device holds.
  *
- * Two pure functions in their own file because both were expressions at the shell's first-run mount, where
- * neither could be driven: the first decides a screen (a re-run whose row is gone used to fall through to the
- * SEED connect form, which reconfigures the install), the second decides two numbers the pull screen and the
- * summary both print about a mailbox while they were counted over the whole install.
- *
- * Structurally typed — no DTO import — so the shell's row type can grow without touching this and so the
- * cases can drive it with three-field rows.
+ * Expressions at the shell's first-run mount, where none of them could be driven: one decides a
+ * SCREEN (a re-run whose row is gone used to fall through to the seed connect form, which
+ * reconfigures the install), the others decide numbers and a sender that were the install's while
+ * the screen printing them named one mailbox. Structurally typed — no DTO import — so the shell's
+ * row type can grow without touching this.
  */
 
 /** The unresolvable arm, named: a run that names a mailbox this install does not hold. */
@@ -86,18 +84,14 @@ export function firstRunCounts(
 }
 
 /**
- * THE SCREENER ROWS THAT BELONG TO ONE MAILBOX — the guided decision's candidates.
+ * THE SCREENER ROWS THAT BELONG TO ONE MAILBOX — the guided decision's candidates. The row's own
+ * DTO carries no mailbox, so the answer comes from the mirror: the representative message, then any
+ * held one, whichever it can speak for first.
  *
- * The first decision a run offers is a real decision on a real sender, and on a second mailbox's
- * setup it could be about somebody who wrote to the FIRST one. The row's own DTO carries no
- * mailbox, so the answer comes from the mirror: the representative message, then any held message,
- * whichever the mirror can speak for first.
- *
- * `many` is the install holding more than one mailbox, and it is what makes this safe to apply at
- * all: on a single-mailbox install every sender is that mailbox's by construction, so the list is
- * returned untouched and no lookup can drop a row a person is waiting to decide about. Where it
- * DOES apply, a row the mirror cannot place is left out rather than guessed at — the screen's whole
- * claim is that this sender wrote to this mailbox.
+ * `many` — the install holds more than one mailbox — is what makes this safe: on a single-mailbox
+ * install every sender is that mailbox's, the list is returned untouched, and no lookup can drop a
+ * row somebody is waiting to decide. Where it applies, a row the mirror cannot place is left out
+ * rather than guessed at.
  */
 export function screenerForMailbox<R extends { id: string; held: readonly { id: string }[] }>(
   rows: readonly R[],
