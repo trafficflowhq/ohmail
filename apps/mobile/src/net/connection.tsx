@@ -18,7 +18,7 @@ import {
   discardStandaloneLaunch, endStandaloneHere, holdStandaloneDoor, organizerDoor, sayOrganizeRefused,
   takeConsentPress, sayOrganizerRestricted, standaloneHere, standaloneLaunchGeneration,
 } from "../engine/organizer-session";
-import { consoleEngineLogSink } from "../engine/engine-log";
+import { engineLogSink } from "../engine/engine-log";
 import { clearAccessLock } from "./access-lock";
 import { decidedState, type DecidedState } from "./decided";
 import { deathRefusal, noteSessionDeath } from "./session-death";
@@ -225,7 +225,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
             installId: async () => (await installGeneration(nativeEngineDeps())) ?? "",
             /* THE ENGINE'S OWN LOG — `engine-log.ts`. A relaunch has no screen in front of it, so
                this is the only place a dial that comes up and then files nothing can be read. */
-            logSink: consoleEngineLogSink(),
+            logSink: engineLogSink(),
           }),
           /* AND THE TAKE-BACK'S ENGINE HALF. Behind the same dynamic import the platform is:
              `local-engine-native` reaches expo-sqlite and the keystore, neither loadable by the

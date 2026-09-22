@@ -14,7 +14,7 @@ import { router } from "expo-router";
 import { Copy } from "../src/copy";
 import { refuse, sayRefusal, type Refusal } from "../src/refusal";
 import { phoneEngineStart } from "../src/engine/engine-artifact";
-import { consoleEngineLogSink } from "../src/engine/engine-log";
+import { engineLogSink } from "../src/engine/engine-log";
 import {
   armConsentPress, holdStandaloneDoor, releaseStandaloneLaunch, sayOrganizerRestricted,
   standaloneLaunchGeneration, takeStandaloneLaunch,
@@ -173,7 +173,7 @@ function Credentials() {
         /* THE ENGINE'S OWN LOG, to the platform's log — `engine-log.ts` for what this is and is
            not. Without it a dial that authenticated and then filed nothing wrote no line anywhere,
            which is how three device-only defects had to be diagnosed off a mail server's wire. */
-        logSink: consoleEngineLogSink(),
+        logSink: engineLogSink(),
       });
       if (outcome.ok) {
         /* The app goes live through the path a paired connect takes:

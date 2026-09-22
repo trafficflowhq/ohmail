@@ -1,5 +1,5 @@
 import { refuse, type Refusal } from "../refusal";
-import { consoleEngineLogSink } from "../engine/engine-log";
+import { engineLogSink } from "../engine/engine-log";
 import type { SessionDeath } from "./bearer";
 
 /**
@@ -19,7 +19,7 @@ export function deathRefusal(_why: SessionDeath): Refusal {
  * nothing else — no interpolation, no free text, no identity — so it raises none of the
  * questions the engine's own logger answers (`engine/engine-log.ts`).
  */
-export function noteSessionDeath(why: SessionDeath, sink = consoleEngineLogSink()): void {
+export function noteSessionDeath(why: SessionDeath, sink = engineLogSink()): void {
   sink(why === "revoked"
     ? '{"service":"pairing","event":"session_dead","why":"revoked"}'
     : '{"service":"pairing","event":"session_dead","why":"refused"}');

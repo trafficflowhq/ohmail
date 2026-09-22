@@ -27,11 +27,17 @@ import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 import { LocaleProvider, useLocale } from "../src/i18n/LocaleProvider";
 import { secureKV } from "../src/state/servers-native";
 import { registerBundledPhoneEngine } from "../src/engine/engine-bundle-native";
+import { installNativeEngineLogWriter } from "../src/engine/engine-log-native";
 
 /* Before the first render, for the reason in the header. The answer is the registry's — `false`
    would mean a second engine, which one artifact cannot produce — and it is read by nothing, so
    the call stands alone rather than pretending to a decision. */
 registerBundledPhoneEngine();
+
+/* THE ENGINE'S LOG GETS ITS PLATFORM SINK before anything can write a line. Module scope, not an
+   effect: a Release iOS build drops `console` entirely, so a line written before this install is a
+   line nobody can read off a shipped phone. `engine-log-native.ts` for what is behind it. */
+installNativeEngineLogWriter();
 
 export default function RootLayout() {
   /* One keystore binding for the app's lifetime, like the profile store's. The provider holds it
