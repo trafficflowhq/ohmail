@@ -3,7 +3,9 @@ import { randomUUID } from "node:crypto";
 import {
   assertOrganizerRole,
   mailboxes, mailboxFolders, messages, folderState, messageBodies, messageStates, claimIdempotencyKey,
-  recordChange, upsertDesiredSeen, ringFilingDoorbell, type LedgerTx, type OrganizedBy, type Tx,
+  recordChange, recordRouteOverride, recordRuleDelta, routeOverrideActionId,
+  senderPatternFromAddress,
+  upsertDesiredSeen, ringFilingDoorbell, type LedgerTx, type OrganizedBy, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import type { Destination, NativeLocator } from "@trafficflow/core/mail";
@@ -1028,6 +1030,9 @@ export class MessageService {
     const answer = await asTx(ctx).transaction(async (tx) => {
       const [msg] = await tx.select({
         id: messages.id, nativeLocator: messages.nativeLocator,
+        // The sender the route keyed on, for the override below. Read HERE rather than in a
+        // second statement: this select already loads the row the move is about.
+        fromAddress: messages.fromAddress,
         // Mail 0083 — which mailbox this message is in, so the role is asked about the right row.
         mailboxId: messages.mailboxId,
         // Mail 0094 — the name BOTH installs have for this message. A request travels between two
@@ -1065,7 +1070,7 @@ export class MessageService {
       // Write DESIRED state only. observedFolder is the worker's truth — read
       // and PRESERVE it (never overwrite on conflict); the worker flips it when the
       // physical IMAP move lands. NO adapter, NO IMAP here.
-      const observed = await this.observedFolder(tx, id, msg.nativeLocator);
+      const { observed, desired } = await this.placement(tx, id, msg.nativeLocator);
       filed = msg.mailboxId;
       // `null` — see the `patch` arm above and `upsertDesired`'s parameter block: a move CLEARS
       // the delete origin, which is what makes a second delete from a new folder honest.
@@ -1074,6 +1079,27 @@ export class MessageService {
         accountId: ctx.accountId, entityType: "message", entityId: id, op: "move",
         meta: { from: observed, to: folder },
       });
+      /* ── THE MOVE MADE IN OHMAIL FEEDS THE ROUTE THAT FILED IT ────────────────────────────
+       * The commonest way a person corrects a rule is this press, and it used to teach the
+       * rule nothing: only the move observed from another mail client reached the predicate.
+       * Same function, same operands, same window as the ingest's adopt arm — read
+       * `@trafficflow/db#recordMoveOverride`. The route contradicted is the DESIRED folder,
+       * never the observed one: a message the organizer filed and the server has not moved yet
+       * sits in the arrival folder, and asking about that folder asks about nothing. `null`
+       * desired means nothing ever filed it, and a person's first placement contradicts no
+       * route. This arm holds the ledger transaction, so the demotion's deltas are owed here —
+       * a rule switched off that no client is told about reads as having done nothing. */
+      const override = desired === null || desired === folder ? null : await recordRouteOverride(
+        tx, ctx.accountId, {
+          ...senderPatternFromAddress(msg.fromAddress),
+          filedTo: desired,
+          triggeringActionId: routeOverrideActionId(id, String(seqBig)),
+        },
+      );
+      // Through the DOOR, not an inline `recordChange`: `rule-state-delta-census` refuses a second
+      // spelling of this row, and the op is the whole contract.
+      const ruleSeqs = await recordRuleDelta(tx, ctx.accountId, override?.ruleIds ?? [], "update");
+      if (ruleSeqs.length > 0) seqBig = ruleSeqs[ruleSeqs.length - 1]!;
       // Re-filing spends the resurface (see `spendResurface`) — BEFORE the materialize below,
       // so the DTO this route answers (and stores for idempotent replay) already says `none`.
       const spent = await this.spendResurface(tx, ctx, [id]);
@@ -1348,12 +1374,28 @@ export class MessageService {
 
   /** The observed folder: the folder_state truth, else the message's native locator, else INBOX. */
   private async observedFolder(tx: Tx, id: string, nativeLocator: unknown): Promise<string> {
+    return (await this.placement(tx, id, nativeLocator)).observed;
+  }
+
+  /**
+   * Where this message IS and where it was last DESIRED — one statement, because the move door
+   * needs both and they are one row.
+   *
+   * `desired` is `null` when no `folder_state` row exists, and that is not the same as "desired
+   * into the folder it sits in": nothing has ever filed this message, so there is no placement
+   * for the person's move to contradict. Collapsing the two would hand the override seam the
+   * arrival folder as though a route had chosen it.
+   */
+  private async placement(
+    tx: Tx, id: string, nativeLocator: unknown,
+  ): Promise<{ observed: string; desired: string | null }> {
     // scoped-by: every caller passes an id it loaded by (id, accountId) in this transaction
-    const [fs] = await tx.select({ observedFolder: folderState.observedFolder }).from(folderState)
-      .where(eq(folderState.messageId, id)).limit(1);
-    if (fs) return fs.observedFolder;
+    const [fs] = await tx
+      .select({ observedFolder: folderState.observedFolder, desiredFolder: folderState.desiredFolder })
+      .from(folderState).where(eq(folderState.messageId, id)).limit(1);
+    if (fs) return { observed: fs.observedFolder, desired: fs.desiredFolder };
     const loc = (nativeLocator as NativeLocator | null) ?? null;
-    return loc?.folder ?? "INBOX";
+    return { observed: loc?.folder ?? "INBOX", desired: null };
   }
 
   // The `flag_state` intent writer lives in `@trafficflow/db` (`flag-intent.ts`) now — the

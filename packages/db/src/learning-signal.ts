@@ -308,3 +308,24 @@ export async function recordRouteOverride(
   }
   return null;
 }
+
+/** The two pattern columns a move's sender is asked about, from the address on the row. */
+export interface SenderPattern { senderAddress: string | null; senderDomain: string | null; }
+
+/**
+ * A `From` address, taken apart the way {@link recordRouteOverride} asks about it — the LAST `@`,
+ * lower-cased by the predicate itself.
+ *
+ * Here, and not at each door, because the two doors onto one move must contradict the same route:
+ * the ingest's adopt arm and the in-app move both read the address off the row, and a door
+ * spelling the domain its own way would find a domain-keyed route the other one missed. A plain
+ * string in, so this leaf still reads no table.
+ */
+export function senderPatternFromAddress(from: string | null | undefined): SenderPattern {
+  const address = from ?? "";
+  const at = address.lastIndexOf("@");
+  return {
+    senderAddress: address || null,
+    senderDomain: at > 0 ? address.slice(at + 1) : null,
+  };
+}

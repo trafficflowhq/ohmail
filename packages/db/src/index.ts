@@ -50,10 +50,11 @@ export {
   recordLearningSignal, patternKeyFor, parsePatternKey,
   GRADUATION_THRESHOLD, DEMOTION_THRESHOLD,
   // The override: one predicate, one effect, one action-id shape. See the module header.
-  recordRouteOverride, demoteGraduatedRoute, routeOverrideActionId,
+  recordRouteOverride, demoteGraduatedRoute, routeOverrideActionId, senderPatternFromAddress,
   OVERRIDE_DEMOTION_THRESHOLD, OVERRIDE_WINDOW_MS,
   type LearningKind, type LearningLabel, type LearningSignalInput,
   type ParsedPattern, type RouteOverrideInput, type RouteOverrideOutcome,
+  type SenderPattern,
 } from "./learning-signal.js";
 
 // The erasure fence's READ primitive — same argument again, one level down: the drain's applied

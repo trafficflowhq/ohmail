@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass } from "@trafficflow/db";
+import { accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, ExternalOverrideInput, ExternalOverrideOutcome,
   StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
@@ -2083,10 +2083,11 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   /**
    * The override, resolved against the message's OWN sender rather than a sender the caller
    * carries down: the pipeline's adopt arm holds the folder state and the id, and reading the
-   * two columns here is what keeps the seam from having to thread an address through it.
+   * column here is what keeps the seam from having to thread an address through it.
    *
-   * The predicate itself is `@trafficflow/db#recordRouteOverride` — one definition, reachable
-   * from the worker, which may not import the services package.
+   * The predicate is `@trafficflow/db#recordRouteOverride` and the address is taken apart by
+   * `senderPatternFromAddress` — one definition of each, so the in-app door in
+   * `MessageService.move` contradicts the same route this one does for one act of the person's.
    */
   async recordExternalOverride(
     input: ExternalOverrideInput,
@@ -2096,15 +2097,11 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       .from(messages)
       .where(and(eq(messages.accountId, input.accountId), eq(messages.id, input.messageId)))
       .limit(1);
-    const from = msg?.from ?? "";
-    const at = from.lastIndexOf("@");
-    const outcome = await recordRouteOverride(this.db as unknown as Tx, input.accountId, {
-      senderAddress: from || null,
-      senderDomain: at > 0 ? from.slice(at + 1) : null,
+    return recordRouteOverride(this.db as unknown as Tx, input.accountId, {
+      ...senderPatternFromAddress(msg?.from),
       filedTo: input.filedTo,
       triggeringActionId: routeOverrideActionId(input.messageId, input.seq),
     });
-    return outcome;
   }
 
   async enqueueApproval(a: ApprovalInput): Promise<{ id: string }> {
