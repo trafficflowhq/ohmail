@@ -109,8 +109,9 @@ function Screens() {
             Duo, a split); the tab bar keeps the dock and yields the rail to this. */}
         <NavRail />
       </SurfaceBoundary>
-      {/* LAST, so it draws over every screen, the rail and the dock: an absolute sibling of the
-          navigator, outside every sheet's modal subtree. `toast-pill-placement.test.ts` holds it. */}
+      {/* LAST, so it draws over every screen, the rail and the dock: absolute, outside the shell
+          boundary that holds the navigator and the rail, outside every sheet's modal subtree.
+          `toast-pill-placement.test.ts` holds it. */}
       <Toast />
     </BottomChromeProvider>
   );
