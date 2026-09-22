@@ -104,16 +104,11 @@ const VIEW_UNREAD: Partial<Record<MessageView, boolean>> = {
 const NOT_NEW_FOR_YOU: readonly TriageState[] = ["reply_later", "set_aside", "bubbled_up", "resurfaced"];
 
 /**
- * THE "NEW FOR YOU" PREDICATE — ONE DEFINITION, and the reason it is exported.
- *
- * The screen and the acts over it must agree about WHICH mail is in it, or a control clears a
- * pile the person is not looking at. `powerThrough` was the measured case: its own three
- * predicates were unread + INBOX + this account, so it served and counted mail this screen
- * excludes — tombstoned rows, and every message the reader had already parked or resurfaced.
- * Those are not a bound on how much it does; they are a statement about WHICH mail it is about.
- *
- * A caller composes its own cursor onto these and nothing else. A second spelling anywhere is
- * the defect: `test/new-for-you-one-predicate.test.ts` refuses one.
+ * THE "NEW FOR YOU" PREDICATE — ONE DEFINITION, and the reason it is exported: the screen and
+ * every act over it must agree about WHICH mail is in the group, or a control clears a pile the
+ * person is not looking at. `powerThrough` spelled its own and served tombstoned, parked and
+ * resurfaced mail this screen excludes. A caller composes its cursor onto these and nothing
+ * else; a second spelling is the defect (`test/new-for-you-one-predicate.test.ts` refuses one).
  */
 export function newForYouFilters(db: Db, accountId: string): SQL[] {
   return [
