@@ -217,6 +217,9 @@ export function buildServerServices(cfg: ServerConfig, db: Db): ApiServices {
   const onUsage = (r: AnthropicCallReport): void => {
     console.log(JSON.stringify({ event: "ai_call", ...r }));
   };
+  /* ONE mailer for this composition: auth's ceremonies and the customer-mail key share it,
+     the way the managed side shares its cached `MailService`. */
+  const customerMail = customerMailerFor(cfg);
   const bag: Record<string, unknown> = {
     sync: syncService,
     // UnifiedPush wake registrations, with THIS install's endpoint policy. Strict by default; the
@@ -290,8 +293,13 @@ export function buildServerServices(cfg: ServerConfig, db: Db): ApiServices {
     // rides the consumed token's own record), and open signup does not exist here. See
     // customerMailerFor for what a mailer adds and why its failure refuses the boot.
     auth: makeAuthService({
-      config: authConfig, keyProvider, passwordHasher: scryptHasher, mail: customerMailerFor(cfg),
+      config: authConfig, keyProvider, passwordHasher: scryptHasher, mail: customerMail,
     }),
+    // The same `MailService` under the key the managed composition uses, so the two service bags
+    // carry one shape — `bag-parity.test.ts` reads them key for key. Nothing on this composition
+    // owes a lifecycle notice: no verdict, no wall, nothing to send. A deployment that ever
+    // carries one mails through the operator's own SMTP block rather than a second mailer.
+    customerMail: customerMail ?? undefined,
     // The `/pair/redeem` invite arm's bridge to the Cloud-half `invites` table — present HERE
     // because this composition's database holds that table (obligation 3, routes/self-host.ts);
     // absent on any deployment that lacks it, where the route answers `validation_failed`.
