@@ -42,8 +42,8 @@ export interface AccessLifecycle {
   formerlyPaid: boolean;
   /**
    * The instant the program's own lifecycle went live, which `erasureAt` is floored on there.
-   * ABSENT (or null) means the program states none — an older program, and today's behaviour.
-   * Present, it is what the erasure pass belts an irreversible act against.
+   * ABSENT (or null) means the program states none — an older program, and the erasure pass then
+   * erases nothing. Present, it is what that pass belts an irreversible act against.
    */
   lifecycleEpoch?: string | null;
 }

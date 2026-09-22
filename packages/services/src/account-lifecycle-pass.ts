@@ -114,22 +114,28 @@ export function noticesDue(lc: AccessLifecycle, now: Date): DueNotice[] {
   return out;
 }
 
+/** The program's stated lifecycle epoch as a positive instant, or why it is not one. */
+export function readLifecycleEpoch(
+  lc: AccessLifecycle,
+): { ms: number } | { absent: "not_stated" | "unparseable" | "not_positive" } {
+  if (lc.lifecycleEpoch == null) return { absent: "not_stated" };
+  const ms = Date.parse(lc.lifecycleEpoch);
+  if (!Number.isFinite(ms)) return { absent: "unparseable" };
+  return ms > 0 ? { ms } : { absent: "not_positive" };
+}
+
 /**
- * Whether the erasure forecast clears the program's OWN epoch. The program floors `erasureAt` at
- * the instant its lifecycle went live, so a closure older than the feature gets a full retention
- * from there rather than a date already past; this asks the same question here, because erasure
- * is irreversible and does not rest on the other program keeping its word.
- *
- * Three answers, all reachable: no epoch stated (an older program) admits, as today; a stated one
- * admits only a forecast a day past it; a stamp this side cannot read is drift and refuses.
+ * Whether the erasure forecast is a day past the program's OWN epoch, the instant it floors
+ * `erasureAt` on. Erasure is irreversible and does not rest on the other program keeping its
+ * word, so the belt FAILS CLOSED: an epoch that is missing, null, unparseable or not a positive
+ * instant clears nothing — a program that cannot state its floor (a rollback to a build without
+ * one) may be answering a date derived from history.
  */
 export function erasureClearsEpoch(lc: AccessLifecycle): boolean {
-  const epoch = lc.lifecycleEpoch ?? null;
-  if (epoch === null) return true;
-  const epochMs = Date.parse(epoch);
+  const epoch = readLifecycleEpoch(lc);
+  if ("absent" in epoch) return false;
   const erasureMs = lc.erasureAt === null ? Number.NaN : Date.parse(lc.erasureAt);
-  if (!Number.isFinite(epochMs) || !Number.isFinite(erasureMs)) return false;
-  return erasureMs >= epochMs + ERASURE_SLACK_MS;
+  return Number.isFinite(erasureMs) && erasureMs >= epoch.ms + ERASURE_SLACK_MS;
 }
 
 /**
@@ -161,6 +167,7 @@ export async function runAccountLifecyclePass(
     unmailable: 0, erased: 0, faults: 0,
   };
 
+  let epochAbsentSaid = false;
   // Keyset pages over the live accounts — the erased are out by the WHERE, and an account this
   // very run erases sets `erased_at` so no later page or run meets it again.
   let after: string | null = null;
@@ -201,7 +208,19 @@ export async function runAccountLifecyclePass(
                 "its own contract keeps null; the pass refuses the erasure and changes nothing",
             });
           }
-          if (lc.state === "closed" && lc.erasureAt !== null && !erasureClearsEpoch(lc)) {
+          // An unreadable epoch is a fact about the program's answer, not about this account: it
+          // closes every erasure, and is said once per pass.
+          const epoch = readLifecycleEpoch(lc);
+          if ("absent" in epoch) {
+            if (!epochAbsentSaid) {
+              epochAbsentSaid = true;
+              log.warn("lifecycle_epoch_absent", {
+                epoch: epoch.absent,
+                reason: "the plane states no lifecycle epoch this side can read, so no erasure " +
+                  "clears on this pass; nothing is erased until it states one",
+              });
+            }
+          } else if (lc.state === "closed" && lc.erasureAt !== null && !erasureClearsEpoch(lc)) {
             log.warn("account_erasure_refused_before_epoch", {
               accountId: id, erasureAt: lc.erasureAt, lifecycleEpoch: lc.lifecycleEpoch ?? null,
               reason: "the erasure date is not a day past the plane's own lifecycle epoch, so " +
