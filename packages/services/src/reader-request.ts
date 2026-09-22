@@ -1,14 +1,14 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { and, eq, inArray, ne } from "drizzle-orm";
 import {
-  insertOrganizerRequest, readRequestEligibility, readAccountErasedAt,
+  insertOrganizerRequest, insertOrganizerRequestSet, readRequestEligibility, readAccountErasedAt,
   AccountErasedError, OrganizedElsewhereError, MailboxNotFoundError, mailboxes,
   MOVE_DESTINATIONS, messages,
   type OrganizedBy, type RequestRefusalReason, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  capabilityForKind, REQUEST_PAYLOAD_MAX_BYTES, type RequestKind,
+  capabilityForKind, REQUEST_PAYLOAD_MAX_BYTES, REQUEST_SET_MAX, type RequestKind,
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
@@ -20,8 +20,10 @@ import { ServiceError } from "./errors.js";
  * (`request-drain.ts`). Exactly ONE branch — copies of a security branch drift. IT DOES NOT SIGN:
  * the key derives from the mailbox PASSWORD (`deriveRequestKey`), which the API tier does not
  * hold — the door writes `pending` and stops; the cycle signs KIND-AGNOSTICALLY, so a new kind
- * changes nothing here. TWO SHAPES: PER-MAILBOX (`routeMailboxWrite`) and FAN-OUT
- * (`planAccountFanOut` — one press can be a local write AND several requests).
+ * changes nothing here. THREE SHAPES: PER-MAILBOX (`routeMailboxWrite`), FAN-OUT
+ * (`planAccountFanOut` — one press can be a local write AND several requests), and the SET
+ * (`planBulkMoveOnReader` + `writeReaderRequestSet` — one press is N records on one mailbox,
+ * keyed so a retry writes the rows it already wrote and no others).
  */
 
 /**
@@ -128,57 +130,6 @@ export function moveDestinationWord(folder: string): string {
  * values fit in a statement" has one answer in this codebase.
  */
 const READ_CHUNK = 500;
-
-/**
- * REFUSE A BULK MOVE ON A READER, BY NAME, AND WHOLE (mail 0094). Two doors move MANY messages
- * from one press: `WorkflowsService.undoRun` (one per recorded step) and the Hey migration's
- * RE-ROUTE PASS (`rerouteToMatchRules` — not the UNDO, which moves no mail). They refuse rather
- * than travel: N `message.move` records from one press would sit half-appended across cycles or
- * drive `ohmail/_meta` to the ceiling — a folder past it is unreadable by EVERY install; the bulk
- * shape is owed a design (`messages.move_many`). WHOLE on a mixed account: if ANY message sits on
- * a read-only mailbox the whole operation refuses — half an undo leaves a state nobody chose —
- * and it runs before any write, so nothing is left behind.
- */
-export async function refuseBulkMoveOnReader(
-  tx: Tx, accountId: string, messageIds: readonly string[],
-): Promise<void> {
-  if (messageIds.length === 0) return;
-  /* The DISTINCT mailboxes of the affected messages, account-scoped — a message id is not an
-     authorisation. Distinct rather than per-message: an account holds one or two mailboxes, and
-     asking the role once per message would be N reads for a question with N-of-two answers.
-
-     READ IN CHUNKS, AND UNION THE ANSWERS. The question this asks — "which distinct mailboxes do
-     these ids sit on" — is answered exactly by asking it of each slice and taking the union, so
-     chunking costs a few round trips and changes no answer. The account fence is inside EVERY
-     chunk's `where` rather than hoisted anywhere: a chunk is a whole statement, and a statement
-     that asks about ids without saying whose account they belong to is the shape that leaks one
-     account's mailbox id into another's refusal. */
-  const mailboxIds = new Set<string>();
-  for (let i = 0; i < messageIds.length; i += READ_CHUNK) {
-    const chunk = messageIds.slice(i, i + READ_CHUNK);
-    const rows = await tx.selectDistinct({ mailboxId: messages.mailboxId })
-      .from(messages)
-      .where(and(eq(messages.accountId, accountId), inArray(messages.id, chunk)));
-    for (const { mailboxId } of rows) mailboxIds.add(mailboxId);
-  }
-
-  for (const mailboxId of mailboxIds) {
-    const e = await readRequestEligibility(
-      tx, accountId, mailboxId, capabilityForKind("message.move"),
-    );
-    // A row that vanished, or a tombstone: not a mailbox this operation can move mail on, and not
-    // a reason to refuse either — there is nothing there to organize or to read.
-    if (!e || e.status === "disabled") continue;
-    if (e.role === "organizer") continue;
-    /* NAMED. `by` carries kind/name/since, so the sentence names the machine that holds it —
-       "<that laptop> organizes this mailbox" — rather than "something else has one of these".
-       No `reason` is passed: this is not a
-       reader asking whether its press may become a request — there is no request shape for it yet —
-       so the finer `organizer_outdated` / `no_organizer` distinction would answer a question
-       nobody asked and would imply a channel that does not exist. */
-    throw new OrganizedElsewhereError(mailboxId, e.by);
-  }
-}
 
 /** A held mailbox whose holder will take this kind — one request goes to it. */
 export interface FanOutTarget { mailboxId: string; holder: OrganizedBy }
@@ -315,4 +266,175 @@ export async function writeReaderRequest(
     decidedAt: input.decidedAt ?? ctx.now(),
   });
   return { pending: true, requestId, holder: input.holder };
+}
+
+/**
+ * THE ID OF ONE RECORD IN A PRESS'S SET — derived, never minted.
+ *
+ * A retried press must write the rows it already wrote and no others, so the id cannot come from
+ * `randomUUID`: a second attempt would mint fresh ids, the organizer would apply both sets and
+ * somebody's mail would move twice. `sha256` over the press's key and the record's own member,
+ * folded into a version-8 UUID because the column is one. The two halves are joined through
+ * `JSON.stringify`, so no member string can be spelled to collide with a different pair.
+ */
+export function requestIdInSet(batchKey: string, member: string): string {
+  const h = createHash("sha256").update(JSON.stringify([batchKey, member]), "utf8").digest("hex");
+  // Version 8 (custom) and the RFC variant, so the value is a well-formed UUID and not merely
+  // 32 hex characters that happen to fit the column.
+  const v = `${h.slice(0, 12)}8${h.slice(13, 16)}${"89ab"[parseInt(h[16]!, 16) % 4]}${h.slice(17, 32)}`;
+  return `${v.slice(0, 8)}-${v.slice(8, 12)}-${v.slice(12, 16)}-${v.slice(16, 20)}-${v.slice(20, 32)}`;
+}
+
+/**
+ * WHAT A DOOR ANSWERS WHEN ONE PRESS BECAME N RECORDS. {@link PendingRequest} could not say it:
+ * it carries one id, and a caller handed one id for forty moves has no way to render "waiting on
+ * forty" or to tell a retry from a first attempt.
+ */
+export interface PendingRequestSet {
+  pending: true;
+  /** The press's own key. Every record's id derives from it, so a retry IS this same set. */
+  batchKey: string;
+  /** The record ids, in the order the caller named their members. */
+  requestIds: string[];
+  /** How many rows THIS attempt wrote. Below `of` means an earlier attempt had written the rest. */
+  written: number;
+  /** How many records the press is, written now or already standing — `requestIds.length`. */
+  of: number;
+  /** Who this is waiting on, so the sentence names a machine rather than "another install". */
+  holder: OrganizedBy;
+}
+
+/**
+ * THE SET DOOR: one press, N records, one key (the bulk half of mail 0094). The per-press shape
+ * {@link writeReaderRequest} has no way to express, and the reason two move doors and one rules
+ * door refused instead of travelling.
+ *
+ * The BOUND is asked here, where the count is known, and it refuses rather than emitting the
+ * flood: {@link REQUEST_SET_MAX} is the folder's own read ceiling, so a press over it is a press
+ * whose tail could never be read in one pass. The reader's cycle appends inside its own headroom
+ * against that ceiling, so a set under the bound cannot make `ohmail/_meta` unreadable however
+ * long it takes to drain.
+ */
+export async function writeReaderRequestSet(
+  tx: Tx, ctx: ServiceContext,
+  input: {
+    mailboxId: string; kind: RequestKind; holder: OrganizedBy;
+    /** The press's key — one string per press, stable across its retries. */
+    batchKey: string;
+    /** One per record: `key` identifies the member within the press, `payload` is the decision. */
+    members: readonly { key: string; payload: unknown }[];
+    decidedAt?: Date;
+  },
+): Promise<PendingRequestSet> {
+  assertSetFits(input.kind, input.members.length);
+  for (const m of input.members) assertPayloadFits(input.kind, m.payload);
+  const erasedAt = await readAccountErasedAt(tx, dialect(ctx.db), ctx.accountId);
+  if (erasedAt != null) throw new AccountErasedError(ctx.accountId);
+
+  const records = input.members.map((m) => ({
+    id: requestIdInSet(input.batchKey, m.key), payload: m.payload,
+  }));
+  const { written } = await insertOrganizerRequestSet(tx, {
+    accountId: ctx.accountId, mailboxId: input.mailboxId, kind: input.kind,
+    decidedAt: input.decidedAt ?? ctx.now(),
+    records,
+  });
+  return {
+    pending: true,
+    batchKey: input.batchKey,
+    requestIds: records.map((r) => r.id),
+    written: written.length,
+    of: records.length,
+    holder: input.holder,
+  };
+}
+
+/**
+ * THE QUEUE BOUND, asked at the door. Separate from the byte ceiling and for a different reason:
+ * that one is about one record being readable, this one is about the SET being drainable.
+ */
+function assertSetFits(kind: RequestKind, count: number): void {
+  if (count > REQUEST_SET_MAX) {
+    throw new ServiceError(
+      "validation_failed", 400,
+      `this press is ${count} ${kind} records, over the ${REQUEST_SET_MAX} one pass can carry to `
+      + "the install that organizes this mailbox — narrow it and try again",
+    );
+  }
+}
+
+/** A held mailbox in a bulk move: the messages on it, and the holder its records go to. */
+export interface BulkMoveTarget {
+  mailboxId: string;
+  holder: OrganizedBy;
+  /** Its messages — with `dedupKey`, because that is how a `message.move` record names one. */
+  messages: { id: string; dedupKey: string }[];
+}
+
+/**
+ * WHAT A BULK MOVE ACTUALLY DOES, PER MAILBOX (mail 0094, bulk half). The ONE branch both
+ * many-from-one-press move doors take — `WorkflowsService.undoRun` and the Hey migration's
+ * re-route pass — replacing the refusal they shared while there was no set shape to travel in.
+ *
+ * Three answers, and the split is the point. A mailbox this install ORGANIZES: its messages come
+ * back in `organized` and the caller's own write path runs for them, unchanged. A mailbox it only
+ * READS whose holder takes `message.move`: its messages come back as a target, and the caller
+ * writes one record each through {@link writeReaderRequestSet}. A holder that will NOT take the
+ * kind: refused WHOLE, by name — there is no channel for those, so travelling the rest would
+ * leave a state nobody chose with nothing pending to explain it.
+ *
+ * The SET BOUND is asked over the total that would TRAVEL, before anything is written, which is
+ * what keeps the largest mail-moving act in the product from becoming a queue no pass can drain:
+ * an import whose re-route spans thousands of messages on a held mailbox is refused at the press
+ * where the count is known, exactly as it was before — by the bound now, rather than by the
+ * absence of a shape.
+ */
+export async function planBulkMoveOnReader(
+  tx: Tx, accountId: string, messageIds: readonly string[],
+): Promise<{ organized: string[]; requestTo: BulkMoveTarget[] }> {
+  if (messageIds.length === 0) return { organized: [], requestTo: [] };
+  /* The mailbox each id sits on, account-scoped — a message id is not an authorisation. Read in
+     the same chunks `refuseBulkMoveOnReader` reads in, with the account fence inside EVERY chunk's
+     `where`: a statement that asks about ids without saying whose account they belong to is the
+     shape that leaks one account's mailbox id into another's refusal. */
+  const byMailbox = new Map<string, { id: string; dedupKey: string }[]>();
+  for (let i = 0; i < messageIds.length; i += READ_CHUNK) {
+    const chunk = messageIds.slice(i, i + READ_CHUNK);
+    const rows = await tx
+      .select({ id: messages.id, mailboxId: messages.mailboxId, dedupKey: messages.dedupKey })
+      .from(messages)
+      .where(and(eq(messages.accountId, accountId), inArray(messages.id, chunk)));
+    for (const { id, mailboxId, dedupKey } of rows) {
+      const held = byMailbox.get(mailboxId);
+      if (held) held.push({ id, dedupKey });
+      else byMailbox.set(mailboxId, [{ id, dedupKey }]);
+    }
+  }
+
+  const organized: string[] = [];
+  const requestTo: BulkMoveTarget[] = [];
+  for (const [mailboxId, rows] of byMailbox) {
+    const e = await readRequestEligibility(
+      tx, accountId, mailboxId, capabilityForKind("message.move"),
+    );
+    // A row that vanished, or a tombstone: nothing there to organize or to read, and not a reason
+    // to refuse either.
+    if (!e || e.status === "disabled") continue;
+    if (e.role === "organizer") { organized.push(...rows.map((r) => r.id)); continue; }
+    if (!e.capable) {
+      /* NAMED. `by` carries kind/name/since, so the sentence names the machine that holds it
+         rather than "something else has one of these". The finer reason travels too, now that
+         there IS a channel: `organizer_outdated` is a holder that could be updated, `no_organizer`
+         is a mailbox nothing holds — two sentences, two affordances. */
+      throw new OrganizedElsewhereError(
+        mailboxId, e.by, e.by.kind === null ? "no_organizer" : "organizer_outdated",
+      );
+    }
+    requestTo.push({ mailboxId, holder: e.by, messages: rows });
+  }
+  // The bound over what would TRAVEL, before any write: a press whose queue cannot be drained in
+  // one pass is refused where the count is known rather than half-appended across cycles.
+  const travelling = requestTo.reduce((n, t) => n + t.messages.length, 0);
+  assertSetFits("message.move", travelling);
+  return { organized, requestTo };
 }

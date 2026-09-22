@@ -14,7 +14,9 @@ import {
 import type { WorkflowInverse } from "@trafficflow/core/mail";
 import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
-import { refuseBulkMoveOnReader } from "./reader-request.js";
+import {
+  moveDestinationWord, planBulkMoveOnReader, writeReaderRequestSet,
+} from "./reader-request.js";
 import { clampLimit, decodeKeysetCursor, encodeListCursor } from "./pagination.js";
 import { requireUuid } from "./ids.js";
 import type { Page, WorkflowDTO, WorkflowRunDTO } from "./dto/types.js";
@@ -275,6 +277,8 @@ export class WorkflowsService {
       const [run] = await tx.select().from(workflowRuns)
         .where(and(eq(workflowRuns.id, runId), eq(workflowRuns.accountId, ctx.accountId))).limit(1);
       if (!run) throw new ServiceError("not_found", 404, "workflow run not found");
+      /** Steps whose move is waiting on another install — `n of m`, not a boolean. See the DTO. */
+      let pendingMoves = 0;
 
       // The canonical inverse home: this run's per-step audit rows, newest step first.
       const rows = await tx.select({ inverse: auditLog.inverse }).from(auditLog)
@@ -286,12 +290,12 @@ export class WorkflowsService {
         .orderBy(sql`${dialect(ctx.db).castInt(sql`${auditLog.payload}->>'stepIndex'`)} desc`);
 
       /**
-       * REFUSED WHOLE ON A READER, BEFORE THE FIRST INVERSE RUNS (mail 0094). `applyInverse`'s
+       * WHERE EACH INVERSE LANDS, DECIDED BEFORE THE FIRST ONE RUNS (mail 0094). `applyInverse`'s
        * `file_message` arm re-sets `folder_state.desired_folder` with `last_set_by: 'us'`, which
        * the reconciler turns into a physical IMAP move — an undo moves mail, once per recorded
-       * step, and asked nothing about who organizes. It REFUSES rather than travelling because N
-       * records from one press is a shape without a design yet; `refuseBulkMoveOnReader` carries
-       * that argument. Placed AHEAD of the loop so a refused undo leaves nothing half-applied —
+       * step. On a mailbox this install only reads, those steps TRAVEL now: one `message.move`
+       * record each, all under this run's own key, so a retried undo writes the rows it already
+       * wrote and no others. Planned AHEAD of the loop so a refusal leaves nothing half-applied —
        * inside it, the steps before the blocking one would already have been written.
        */
       const moved = rows.flatMap((r) => {
@@ -301,10 +305,43 @@ export class WorkflowsService {
            mailbox, so neither can block an undo. */
         return inv && inv.tool === "file_message" ? [inv.messageId] : [];
       });
-      await refuseBulkMoveOnReader(bridgeTx(tx), ctx.accountId, moved);
+      const route = await planBulkMoveOnReader(bridgeTx(tx), ctx.accountId, moved);
+
+      /* WHICH FOLDER EACH STEP RESTORES, from the inverses themselves — the record carries the
+         destination as a WORD, never an IMAP path, so the applier resolves it on the machine
+         actually connected (`moveDestinationWord`). A destination outside the closed set throws
+         here, before any write, rather than putting a raw path on the wire. */
+      const restoreTo = new Map<string, string>();
+      for (const r of rows) {
+        const inv = r.inverse as WorkflowInverse | null;
+        if (inv && inv.tool === "file_message") restoreTo.set(inv.messageId, inv.toFolder);
+      }
+      const travelled = new Set<string>();
+      for (const target of route.requestTo) {
+        const sent = await writeReaderRequestSet(bridgeTx(tx), ctx, {
+          mailboxId: target.mailboxId, kind: "message.move", holder: target.holder,
+          /* ONE KEY PER PRESS, and the press IS the run: undoing a run twice is the same set of
+             records, so the second attempt inserts nothing and the mail moves once. */
+          batchKey: `workflow-undo:${runId}`,
+          members: target.messages.map((m) => ({
+            key: m.id,
+            payload: {
+              dedupKey: m.dedupKey,
+              destination: moveDestinationWord(restoreTo.get(m.id)!),
+            },
+          })),
+        });
+        pendingMoves += sent.of;
+        for (const m of target.messages) travelled.add(m.id);
+      }
 
       for (const r of rows) {
-        if (r.inverse) await this.applyInverse(tx, ctx, r.inverse as WorkflowInverse);
+        const inv = r.inverse as WorkflowInverse | null;
+        if (!inv) continue;
+        // A step whose move travelled is DONE here: writing `folder_state` as well would be this
+        // install claiming a move it cannot make, and the organizer would then be asked twice.
+        if (inv.tool === "file_message" && travelled.has(inv.messageId)) continue;
+        await this.applyInverse(tx, ctx, inv);
       }
 
       // scoped-by: `run` was loaded by (id, accountId) at the top of this undo
@@ -312,7 +349,11 @@ export class WorkflowsService {
         .set({ status: "undone", reason: "undone", finishedAt: ctx.now() })
         .where(eq(workflowRuns.id, runId))
         .returning();
-      return toRunDTO(updated!);
+      /* `undone` either way, and the count is what makes that honest: the decision is taken and
+         recorded, and `pendingMoves` says how much of it is still in flight on another install.
+         A separate status would make every reader of this DTO learn a state that is not about the
+         run at all — it is about where the mailbox is organized. */
+      return { ...toRunDTO(updated!), pendingMoves };
     });
   }
 

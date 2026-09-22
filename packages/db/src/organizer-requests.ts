@@ -86,6 +86,39 @@ export async function insertOrganizerRequest(tx: Tx, input: {
 }
 
 /**
+ * WRITE N UNDER ONE PRESS'S KEY, IDEMPOTENTLY — the set shape {@link insertOrganizerRequest} has
+ * no way to express. Same fence, same columns; the difference is where the id comes from. The
+ * caller DERIVES each id from the press's key and the record's own member, so a retry of the same
+ * press mints the same ids and `onConflictDoNothing` writes nothing the first attempt wrote:
+ * without that, a retried press is somebody's mail moved twice.
+ *
+ * A row already there is REPORTED, never replaced — its `state` may have moved on to `sent` or
+ * `applied`, and an upsert would drag a decision the organizer has taken back to `pending`.
+ * `.returning()` names exactly the rows this statement inserted, which is what makes the two
+ * counts honest rather than inferred.
+ */
+export async function insertOrganizerRequestSet(tx: Tx, input: {
+  accountId: string; mailboxId: string; kind: string; decidedAt: Date;
+  records: readonly { id: string; payload: unknown }[];
+}): Promise<{ written: string[]; already: string[] }> {
+  if (input.records.length === 0) return { written: [], already: [] };
+  await fenceErased(tx, dialect(tx), {
+    accountId: input.accountId, mailboxId: input.mailboxId,
+  });
+  const rows = await tx.insert(organizerRequests).values(
+    input.records.map((r) => ({
+      id: r.id, accountId: input.accountId, mailboxId: input.mailboxId, kind: input.kind,
+      payload: r.payload, decidedAt: input.decidedAt, state: "pending",
+    })),
+  ).onConflictDoNothing().returning({ id: organizerRequests.id });
+  const written = new Set(rows.map((r) => r.id));
+  return {
+    written: input.records.filter((r) => written.has(r.id)).map((r) => r.id),
+    already: input.records.filter((r) => !written.has(r.id)).map((r) => r.id),
+  };
+}
+
+/**
  * Every `pending` request on one mailbox, oldest first — what the reader's cycle appends next.
  * `decidedAt` then `id`: two decisions made in the same instant (a fast double-press, or a client
  * clock with second resolution) still land in a STABLE order across repeated reads, which matters

@@ -172,7 +172,8 @@ export {
 /* THE READER'S WRITE-DOOR DISPATCH (mail 0094) — one branch for four families. See the module. */
 export {
   routeMailboxWrite, writeReaderRequest, planAccountFanOut,
-  type MailboxRoute, type PendingRequest,
+  writeReaderRequestSet, planBulkMoveOnReader, requestIdInSet,
+  type MailboxRoute, type PendingRequest, type PendingRequestSet, type BulkMoveTarget,
   type AccountFanOut, type FanOutTarget, type FanOutRefusal,
 } from "./reader-request.js";
 export {

@@ -82,7 +82,7 @@ export {
 // `organizer_requests` — the reader's own bookkeeping. See the module's own header for why it is
 // here: the worker's reader cycle writes these rows every poll and may not import services.
 export {
-  REQUEST_STATES, TERMINAL_REQUEST_STATES, REFUSAL_VISIBLE_FOR_MS, insertOrganizerRequest, listPendingRequests,
+  REQUEST_STATES, TERMINAL_REQUEST_STATES, REFUSAL_VISIBLE_FOR_MS, insertOrganizerRequest, insertOrganizerRequestSet, listPendingRequests,
   listSentRequests, listOutstandingForAccount, markRequestsSent, markRequestsApplied,
   markRequestsExpired, markRequestsRefused, listStaleSentRequests,
   type RequestState, type OrganizerRequestRow, type OutstandingMatch,

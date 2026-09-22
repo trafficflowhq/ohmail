@@ -1084,6 +1084,14 @@ export interface WorkflowRunDTO {
   reason: string | null;
   createdAt: ISODateTime;
   finishedAt: ISODateTime | null;
+  /**
+   * HOW MANY OF THIS UNDO'S MOVES ARE WAITING ON ANOTHER INSTALL — `n` of the steps, not a
+   * boolean. An undo on a mailbox this install only reads writes one `message.move` record per
+   * filing step instead of moving the mail here, so `undone` is true of the decision and this
+   * number is what is still in flight. Present only on the undo answer; `undefined` everywhere
+   * else means "this answer is not about an undo", which is a different thing from zero.
+   */
+  pendingMoves?: number;
 }
 
 // ── /sync wire shapes ──

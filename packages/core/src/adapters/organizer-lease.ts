@@ -5240,6 +5240,18 @@ export interface RawMetaMessage {
  */
 export const META_RECORDS_MAX_PER_FETCH = 500;
 
+/**
+ * HOW MANY RECORDS ONE PRESS MAY BECOME. A press that moves N messages on a mailbox this install
+ * only reads writes N records under one key, and the reader's cycle appends them inside its own
+ * headroom against {@link META_RECORDS_MAX_PER_FETCH} — so the folder cannot be driven over the
+ * read ceiling by a long queue whatever this says. What this bounds is the QUEUE: a press asking
+ * for more records than one readable folder could ever hold is a press whose tail would sit
+ * pending across cycles with nothing to show for it, and the door refuses it at the press where
+ * the count is known rather than emitting the flood and hoping. Derived from the ceiling so the
+ * two cannot drift.
+ */
+export const REQUEST_SET_MAX = META_RECORDS_MAX_PER_FETCH;
+
 /* `SEARCH_UIDS_MAX` is declared far above, beside the search it bounds, and must stay one past
  * this ceiling. Spelled as a literal there because this constant is declared later in the file;
  * pinned here so the two cannot drift apart silently — a cap BELOW the ceiling would make an

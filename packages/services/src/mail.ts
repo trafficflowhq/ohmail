@@ -158,7 +158,8 @@ export {
    that use them are mounted by the desktop engine as well as by the hosted API. */
 export {
   routeMailboxWrite, writeReaderRequest, planAccountFanOut,
-  type MailboxRoute, type PendingRequest,
+  writeReaderRequestSet, planBulkMoveOnReader, requestIdInSet,
+  type MailboxRoute, type PendingRequest, type PendingRequestSet, type BulkMoveTarget,
   type AccountFanOut, type FanOutTarget, type FanOutRefusal,
 } from "./reader-request.js";
 export {

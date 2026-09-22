@@ -8,7 +8,9 @@ import type {
 import { applyReconcileAction, scanFoldersForMigration, reconcile } from "@trafficflow/core";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { bridgeTx, type ServiceContext } from "./context.js";
-import { refuseBulkMoveOnReader } from "./reader-request.js";
+import {
+  moveDestinationWord, planBulkMoveOnReader, writeReaderRequestSet,
+} from "./reader-request.js";
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 const domainOf = (addr: string): string => { const i = addr.indexOf("@"); return i >= 0 ? addr.slice(i + 1) : ""; };
@@ -204,9 +206,13 @@ export class HeyMigrationService {
   private async rerouteToMatchRules(
     ctx: ServiceContext,
     observations: MigrationObservation[],
-  ): Promise<{ moved: number; deferred: number; superseded: number }> {
+  ): Promise<{
+    moved: number; deferred: number; superseded: number;
+    /** Rows whose move is waiting on the install that organizes their mailbox. */
+    requested: number;
+  }> {
     const adapter = this.deps.adapter;
-    if (!adapter) return { moved: 0, deferred: 0, superseded: 0 };
+    if (!adapter) return { moved: 0, deferred: 0, superseded: 0, requested: 0 };
 
     // Build sender/domain → destination lookups (sender wins over domain).
     const bySender = new Map<string, Destination>();
@@ -225,19 +231,44 @@ export class HeyMigrationService {
       .where(eq(messages.accountId, ctx.accountId));
 
     /**
-     * Refused WHOLE on a reader, before the first row is touched (mail 0094). This pass writes
-     * `folder_state.desired_folder` with `last_set_by: 'us'` for every matching message — a real
-     * IMAP move per row, the largest single mail-moving act in the product — and it asked nothing
-     * about who organizes. It REFUSES rather than travelling: one press is thousands of
-     * `message.move` records, a flood the drain guards against. Refused AHEAD of the loop — a
-     * refusal discovered mid-walk would already have moved somebody's mail. Only the messages
-     * this pass would TOUCH, computed with the same lookup the loop uses.
+     * WHERE EACH MATCHING ROW LANDS, DECIDED BEFORE THE FIRST ONE IS TOUCHED (mail 0094). This
+     * pass writes `folder_state.desired_folder` with `last_set_by: 'us'` for every matching
+     * message — a real IMAP move per row, the largest single mail-moving act in the product. On a
+     * mailbox this install only reads those rows TRAVEL: one `message.move` record each, under
+     * this import's own key. The BOUND is what keeps that safe and it is asked inside the plan —
+     * a re-route spanning more messages than one pass can carry is refused at the press where the
+     * count is known, which is the flood case this door used to refuse outright. Planned AHEAD of
+     * the loop — a refusal discovered mid-walk would already have moved somebody's mail. Only the
+     * messages this pass would TOUCH, computed with the same lookup the loop uses.
      */
     const willMove = rows.flatMap((r) => {
       const from = r.fromAddress.toLowerCase();
       return (bySender.get(from) ?? byDomain.get(domainOf(from))) ? [r.messageId] : [];
     });
-    await refuseBulkMoveOnReader(asTx(ctx), ctx.accountId, willMove);
+    const route = await planBulkMoveOnReader(asTx(ctx), ctx.accountId, willMove);
+    /* The destination each held row is asked for, from the same lookup the loop uses, as the WORD
+       the record carries — a raw path is an instruction to file mail outside ohmail's tree, and
+       `moveDestinationWord` refuses one before anything is written. */
+    const destOf = new Map(rows.map((r) => {
+      const from = r.fromAddress.toLowerCase();
+      return [r.messageId, bySender.get(from) ?? byDomain.get(domainOf(from))] as const;
+    }));
+    const travelled = new Set<string>();
+    let requested = 0;
+    for (const target of route.requestTo) {
+      const sent = await writeReaderRequestSet(asTx(ctx), ctx, {
+        mailboxId: target.mailboxId, kind: "message.move", holder: target.holder,
+        /* ONE KEY PER IMPORT RUN: re-running the opt-in re-route is the same set of records, so
+           the second run inserts nothing and no message is asked for twice. */
+        batchKey: `hey-reroute:${ctx.accountId}`,
+        members: target.messages.map((m) => ({
+          key: m.id,
+          payload: { dedupKey: m.dedupKey, destination: moveDestinationWord(destOf.get(m.id)!) },
+        })),
+      });
+      requested += sent.of;
+      for (const m of target.messages) travelled.add(m.id);
+    }
 
     const repo = makeDrizzleRepo(bridgeTx(ctx.db));
     let moved = 0;
@@ -247,6 +278,9 @@ export class HeyMigrationService {
       const from = r.fromAddress.toLowerCase();
       const dest = bySender.get(from) ?? byDomain.get(domainOf(from));
       if (!dest) continue;
+      // A row whose move TRAVELLED is done here: writing `folder_state` as well would be this
+      // install claiming a move it cannot make, and the organizer would then be asked twice.
+      if (travelled.has(r.messageId)) continue;
 
       const state = {
         desiredFolder: dest,
@@ -302,7 +336,7 @@ export class HeyMigrationService {
       if (applied.deferred) deferred++;
       else moved++;
     }
-    return { moved, deferred, superseded };
+    return { moved, deferred, superseded, requested };
   }
 }
 
