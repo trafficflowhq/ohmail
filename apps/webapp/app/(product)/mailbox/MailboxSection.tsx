@@ -648,6 +648,18 @@ export function MailboxSection() {
    */
   const [devicePollError, setDevicePollError] = useState<string | null>(null);
   /**
+   * WHICH CONSENT START IS THE NEWEST — `clearVerdict`'s rule applied to the two Microsoft doors.
+   * A start is a request in flight for as long as the server takes to answer, and Cancel and the
+   * provider picker stayed live over it: the answer then navigated to Microsoft, rendered a code
+   * or published its error over whatever the person had moved to. Advancing the sequence is what
+   * RETIRES a request rather than merely blanking the screen, so every landing below compares.
+   */
+  const oauthSeq = useRef(0);
+  const retireOauth = useCallback((): void => {
+    oauthSeq.current += 1;
+    setOauthBusy(null);
+  }, []);
+  /**
    * THE MICROSOFT TILE'S SECONDARY PATH, requested explicitly.
    *
    * When the Entra door is armed, picking the Microsoft tile connects by SIGN-IN — Continue enters
@@ -1098,6 +1110,9 @@ export function MailboxSection() {
      */
     if (!oauthAvailable && deviceAvailable) { startDeviceFlow(); return; }
     setOauthBusy("starting");
+    // BEFORE the first await, like the probe's. A start the person walked away from may not
+    // leave the origin: this is the one that ends up at Microsoft's sign-in page.
+    const seq = ++oauthSeq.current;
     void (async () => {
       try {
         const { authorizeUrl, state } = await mailboxApi.oauthStart({
@@ -1118,10 +1133,11 @@ export function MailboxSection() {
          * has to start over with nothing on screen saying why. Keyed by that same `state`; read and
          * removed by `beginOAuthReturn`.
          */
+        if (!alive.current || seq !== oauthSeq.current) return;
         rememberOAuthOwner(state, boundApiOwner());
         if (typeof window !== "undefined") window.location.assign(authorizeUrl);
       } catch (err) {
-        if (!alive.current) return;
+        if (!alive.current || seq !== oauthSeq.current) return;
         setOauthBusy(null);
         setError(messageOf(err));
       }
@@ -1144,12 +1160,19 @@ export function MailboxSection() {
     setDeviceEnded(null);
     setDevicePollError(null);
     setOauthBusy("starting");
+    const seq = ++oauthSeq.current;
     void (async () => {
       try {
         const started = await mailboxApi.deviceOAuthStart();
-        if (!alive.current) return;
+        if (!alive.current || seq !== oauthSeq.current) return;
         setOauthBusy(null);
         setOutlookOffer(false);
+        /* A STARTED FLOW RETIRES THE FORM. The code renders above the stage blocks and the form
+           does not go away on its own, so the two used to stand together with Continue live
+           again — and a second press starts a second ceremony on the server and drops the handle
+           to the first, which stays live until Microsoft expires it. The list block withholds
+           itself while a ceremony is on screen (`stage === "list" && !device`). */
+        setStage("list");
         const live = {
           state: started.state,
           userCode: started.userCode,
@@ -1178,7 +1201,7 @@ export function MailboxSection() {
         if (owner) rememberDevice({ ...live, accountId: owner });
         setDevice(live);
       } catch (err) {
-        if (!alive.current) return;
+        if (!alive.current || seq !== oauthSeq.current) return;
         setOauthBusy(null);
         setError(messageOf(err));
       }
@@ -1216,13 +1239,18 @@ export function MailboxSection() {
    * `setDevice((cur) => cur ?? resumed)` so a ceremony started by hand in the meantime always wins.
    */
   useEffect(() => {
-    if (!deviceAvailable || !accountId) return;
+    /* AND ONLY ONTO A RESTING PANE. Both reads can land after somebody has opened the connect
+       form, and a restore there put a live code underneath a form that was still taking input.
+       The record is not consumed by the skip: the stage is a dependency, so returning to the
+       list restores it. */
+    if (!deviceAvailable || !accountId || stage !== "list") return;
     const resumed = recallDevice(Date.now(), accountId);
     if (resumed) setDevice((cur) => cur ?? resumed);
-  }, [deviceAvailable, accountId]);
+  }, [deviceAvailable, accountId, stage]);
 
   /** Put the pane back where it was before a ceremony, without touching the mailbox list. */
   const clearDeviceFlow = (): void => {
+    retireOauth();
     forgetDevice(); setDevice(null); setDeviceEnded(null); setDevicePollError(null);
   };
 
@@ -1727,6 +1755,9 @@ export function MailboxSection() {
   };
 
   const pickProvider = (id: string): void => {
+    // A provider change retires a consent start in flight: its answer belongs to the door the
+    // person has just left, and landing it here would run a ceremony they did not ask for.
+    retireOauth();
     const p = providerById(id);
     // `hostsFor`, not the preset's hosts directly: the generic entry has none, and writing its
     // emptiness over a typed host is how the connect form used to lose one. See `providers.ts`.
@@ -2483,7 +2514,7 @@ export function MailboxSection() {
                 >
                   {oauthBusy === "starting" ? t("working") : t("oauthContinue")}
                 </Button>
-                <Button onClick={() => { setOutlookOffer(false); setError(null); }}>
+                <Button onClick={() => { retireOauth(); setOutlookOffer(false); setError(null); }}>
                   {t("cancel")}
                 </Button>
               </div>
@@ -2647,6 +2678,9 @@ export function MailboxSection() {
               </Button>
             ) : null}
             <Button onClick={() => {
+              // A consent start in flight goes with the form, for `clearVerdict`'s reason: the
+              // answer would otherwise navigate or render a code over a pane nobody is on.
+              retireOauth();
               setStage("list"); setTyped(emptyTyped()); setMsAppPassword(false); setError(null);
               setInsecureOffer(false); setSuggestion(null);
               // RETIRES, and it has to: cancelling mid-request used to reset the form and leave
