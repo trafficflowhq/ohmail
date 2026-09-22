@@ -794,10 +794,10 @@ export function useShellCompose({
    * WHICH ADDRESSES THIS ACCOUNT CAN SEND FROM. The rule is `compose-from.ts`; this is the one place the two sources
    * of mailboxes are reconciled. `GET /mailboxes` when we have it — it is the only source that knows an address is
    * `disabled`, and the only one with a `createdAt` to order by. The mirror's `"mailbox"` entities otherwise, which
-   * is the demo and the Desktop: `"mailbox"` is not an `EntityType` in the change log, so those rows exist only where
-   * the FixturesAdapter seeded them. An EMPTY list is "nothing can be named", and every consumer below renders no
-   * From line and puts nothing extra on the wire rather than guessing. That is the Desktop, and it is also a Cloud
-   * tab in the moment before its first poll lands.
+   * is the demo: `"mailbox"` is not an `EntityType` in the change log, so those rows exist only where the
+   * FixturesAdapter seeded them. An EMPTY list is "nothing can be named", and every consumer below renders no From
+   * line and puts nothing extra on the wire rather than guessing. That is the demo without fixtures, and a Cloud tab
+   * before its first poll lands — NOT the Desktop, whose window supplies the same probe on both doors.
    */
   const fromOptions = useMemo(
     () => (facts ? optionsFromFacts(facts) : optionsFromMirror(mailboxes)),
