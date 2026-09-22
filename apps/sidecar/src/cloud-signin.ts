@@ -482,3 +482,151 @@ export async function redeemPairingToken(
     accountId: named === "" ? null : named,
   };
 }
+
+// ── Signing in by confirming in the browser ───────────────────────────────────────────────────
+
+/**
+ * The browser-approval door. The engine asks the hosted service for a request committed to a PKCE
+ * challenge, the person confirms it on ohmail.app, and the engine polls the claim with the
+ * verifier it kept in memory. A busy server is a wait, never a refusal: the request retries on the
+ * server's `Retry-After`, and a busy or unreachable poll reads as still pending. A 404 means the
+ * hosted service predates the door, and the window falls back to the code path by name.
+ */
+interface ApprovalRequestOptions extends CloudSignInOptions {
+  /** This computer's name as the page will show it; the engine passes its own hostname. */
+  label: string;
+  /** Injected for tests; the retry waits otherwise. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/** What the window gets back: the id it puts in the page's URL and the request's lifetime. */
+interface ApprovalStart {
+  approvalId: string;
+  expiresIn: number;
+}
+
+/** One poll's answer: still waiting (and for how long), or the pair. */
+type ApprovalPoll =
+  | { status: "pending"; retryAfterMs: number; note?: "busy" | "unreachable" }
+  | { status: "approved"; tokens: CloudTokens };
+
+/** The request asks at most this many times while the server answers busy. */
+export const APPROVAL_BUSY_ATTEMPTS = 4;
+const APPROVAL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const clampWait = (ms: number): number => Math.min(8_000, Math.max(500, ms));
+
+/** The server's `Retry-After` seconds as a wait, bounded, or the fallback. */
+function retryAfterMs(res: Response, fallback: number): number {
+  const secs = Number(res.headers.get("retry-after"));
+  return clampWait(Number.isFinite(secs) && secs > 0 ? secs * 1000 : fallback);
+}
+
+/** Our envelope's busy answer, the same test the web client applies. */
+async function busyAnswer(res: Response): Promise<boolean> {
+  if (res.status !== 503) return false;
+  const body = (await readJson(res.clone())) as { error?: { code?: unknown } } | null;
+  return body?.error?.code === "db_busy";
+}
+
+const notOffered = (): CloudSignInError => new CloudSignInError(
+  "approval_not_offered", 409,
+  "Your ohmail Cloud does not offer browser approval yet. Type a code instead.",
+);
+
+/** Ask for an approval request. Retries a busy server on its own `Retry-After`, bounded. */
+export async function requestDesktopApproval(
+  opts: ApprovalRequestOptions, challenge: string,
+): Promise<ApprovalStart> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const base = opts.baseUrl.replace(/\/+$/, "");
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => { setTimeout(r, ms); }));
+  const body = JSON.stringify({
+    challenge, label: opts.label, ...(opts.deviceKind ? { kind: opts.deviceKind } : {}),
+  });
+  for (let attempt = 1; ; attempt += 1) {
+    let res: Response;
+    try {
+      res = await fetchImpl(`${base}/auth/desktop-approval`, {
+        method: "POST", headers: { "content-type": "application/json" }, body,
+      });
+    } catch (err) {
+      opts.log?.("cloud_signin_failed", { err, reason: "the hosted service could not be reached at approval" });
+      throw new CloudSignInError("cloud_unreachable", 502, "the hosted service could not be reached");
+    }
+    if (await busyAnswer(res)) {
+      if (attempt >= APPROVAL_BUSY_ATTEMPTS) {
+        throw new CloudSignInError("db_busy", 503, "The ohmail server is busy. Try again in a moment.");
+      }
+      await sleep(retryAfterMs(res, 2_000));
+      continue;
+    }
+    const answer = await readJson(res);
+    if (res.status === 404) throw notOffered();
+    if (res.status === 429) {
+      throw new CloudSignInError(
+        "rate_limited", 429, "too many attempts from this connection; give it a few minutes and try again",
+      );
+    }
+    const approvalId = trimmed((answer as { approvalId?: unknown } | null)?.approvalId);
+    const expiresIn = Number((answer as { expiresIn?: unknown } | null)?.expiresIn);
+    if (!res.ok || !APPROVAL_ID.test(approvalId) || !Number.isFinite(expiresIn) || expiresIn <= 0) {
+      opts.log?.("cloud_signin_refused", { status: res.status, reason: "the hosted service refused the approval request" });
+      throw new CloudSignInError("hosted_refused", 502, `the hosted service answered HTTP ${res.status} to the approval request`);
+    }
+    return { approvalId, expiresIn };
+  }
+}
+
+/** The claim's refusals, in the sentences the window shows. */
+const APPROVAL_REFUSALS: Readonly<Record<string, string>> = {
+  approval_expired: "This request has expired. Start again from your computer.",
+  approval_used: "This request was already used.",
+  approval_denied: "This request was declined in the browser.",
+  invalid_approval: "This request cannot be completed from here. Start again from your computer.",
+};
+
+/** One poll of the claim. Needs the verifier on the options; never throws for a wait. */
+export async function pollDesktopApproval(
+  opts: CloudSignInOptions, approvalId: string,
+): Promise<ApprovalPoll> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const base = opts.baseUrl.replace(/\/+$/, "");
+  const verifier = trimmed(opts.verifier);
+  if (!verifier || !APPROVAL_ID.test(approvalId)) {
+    throw new CloudSignInError("approval_expired", 410, APPROVAL_REFUSALS.approval_expired!);
+  }
+  let res: Response;
+  try {
+    res = await fetchImpl(`${base}/auth/desktop-approval/claim`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ approvalId, verifier, ...(opts.deviceKind ? { kind: opts.deviceKind } : {}) }),
+    });
+  } catch {
+    return { status: "pending", retryAfterMs: 2_000, note: "unreachable" };
+  }
+  if (await busyAnswer(res)) return { status: "pending", retryAfterMs: retryAfterMs(res, 2_000), note: "busy" };
+  const answer = await readJson(res);
+  if (res.status === 202) {
+    const wait = Number((answer as { retryAfterMs?: unknown } | null)?.retryAfterMs);
+    return { status: "pending", retryAfterMs: clampWait(Number.isFinite(wait) ? wait : 2_000) };
+  }
+  if (res.ok) {
+    const tokens = tokensFromResponse(answer, res);
+    if (!tokens) {
+      throw new CloudSignInError("no_session_returned", 502, "the hosted service approved the request and returned no session");
+    }
+    return { status: "approved", tokens };
+  }
+  if (res.status === 404) throw notOffered();
+  if (res.status === 429) {
+    throw new CloudSignInError(
+      "rate_limited", 429, "too many attempts from this connection; give it a few minutes and try again",
+    );
+  }
+  const refused = trimmed((answer as { error?: { code?: unknown } } | null)?.error?.code);
+  const sentence = APPROVAL_REFUSALS[refused];
+  opts.log?.("cloud_signin_refused", { status: res.status, reason: "the hosted service refused the approval claim" });
+  if (sentence) throw new CloudSignInError(refused, 410, sentence);
+  throw new CloudSignInError("hosted_refused", 502, `the hosted service answered HTTP ${res.status} to the approval claim`);
+}

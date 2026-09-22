@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import { StaticKeyProvider, type KeyProvider } from "@trafficflow/core/mail";
 import {
@@ -19,7 +20,9 @@ import {
   CloudSignInError,
   desktopDeviceKind,
   newDesktopLinkPair,
+  pollDesktopApproval,
   redeemPairingToken,
+  requestDesktopApproval,
   type CloudSignInRequest,
 } from "./cloud-signin.js";
 import { createCloudMirror, integrityLogFields, CLOUD_SYNC_TYPES, type CloudMirror } from "./cloud-mirror.js";
@@ -851,6 +854,13 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     let linkVerifier: string | null = null;
 
     /**
+     * THE BROWSER APPROVAL this install is waiting on — the request id and the verifier, in this
+     * process's memory only, beside `linkVerifier` and for its reason. A new request replaces it;
+     * a claim that returned the pair, or a refusal that ended the request, clears it.
+     */
+    let approval: { id: string; verifier: string } | null = null;
+
+    /**
      * WHAT THIS INSTALL IS, in the hosted device vocabulary — this process's own fact, read once
      * from the platform the binary runs on and carried on both sign-in paths so the hosted
      * account can name the install (`desktop-linux` / `desktop-macos` / `desktop-windows`).
@@ -1283,6 +1293,52 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         return json({ challenge: pair.challenge });
       }
 
+      /* THE ONE-CONFIRM SIGN-IN: ask the hosted service for a request this install can claim, and
+         hand the window the id for the page's URL. The same two refusals the challenge has, for its
+         reasons; the name the page shows is this machine's own hostname, never a bridge value. */
+      if (req.method === "POST" && path === "/cloud/signin/approval") {
+        if (baseIsForeign(cloudBase, config.handoffBase ?? MANAGED_CLOUD_BASE)) {
+          return json(
+            {
+              error: {
+                code: "handoff_not_available",
+                message:
+                  "Signing in through a browser only works with the hosted ohmail service. On " +
+                  "your own server, sign in with your password and authenticator code.",
+              },
+            },
+            409,
+          );
+        }
+        if (authed) {
+          return json(
+            { error: { code: "already_signed_in", message: "this install already holds a session" } },
+            409,
+          );
+        }
+        const pair = newDesktopLinkPair();
+        try {
+          const started = await requestDesktopApproval(
+            {
+              baseUrl: cloudBase,
+              label: hostname(),
+              ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
+              ...(log ? { log } : {}),
+              ...(declaredDeviceKind ? { deviceKind: declaredDeviceKind } : {}),
+            },
+            pair.challenge,
+          );
+          approval = { id: started.approvalId, verifier: pair.verifier };
+          log?.("cloud_approval_requested", { mailboxId: world.mailboxId });
+          return json(started);
+        } catch (err) {
+          if (err instanceof CloudSignInError) {
+            return json({ error: { code: err.code, message: err.message } }, err.status);
+          }
+          throw err;
+        }
+      }
+
       if (req.method === "POST" && path === "/cloud/signin") {
         // An expiry teardown may still be draining its last mirror request; its tail removes
         // the seal. Sealing a FRESH pair before that tail runs hands the new session to the
@@ -1332,9 +1388,53 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           );
         }
 
+        /* THE APPROVAL ARM: `{approval: true}` asks this install to poll the request it is holding
+           once. The id and the verifier come from memory, never the body; a pending answer goes
+           back to the window with the wait, and an approved one joins the tail below unchanged. */
+        const namesApproval = (body as { approval?: unknown }).approval === true;
+        if (namesApproval && baseIsForeign(cloudBase, config.handoffBase ?? MANAGED_CLOUD_BASE)) {
+          return json(
+            {
+              error: {
+                code: "handoff_not_available",
+                message:
+                  "Signing in through a browser only works with the hosted ohmail service. On " +
+                  "your own server, sign in with your password and authenticator code.",
+              },
+            },
+            409,
+          );
+        }
+        if (namesApproval && !approval) {
+          return json(
+            { error: { code: "approval_expired", message: "This request has expired. Start again from your computer." } },
+            410,
+          );
+        }
+
         let tokens: CloudTokens;
         try {
-          tokens = await cloudSignIn(
+          if (namesApproval && approval) {
+            const polled = await pollDesktopApproval(
+              {
+                baseUrl: cloudBase,
+                verifier: approval.verifier,
+                ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
+                ...(log ? { log } : {}),
+                ...(declaredDeviceKind ? { deviceKind: declaredDeviceKind } : {}),
+              },
+              approval.id,
+            );
+            if (polled.status === "pending") {
+              return json(
+                { status: "pending", retryAfterMs: polled.retryAfterMs, ...(polled.note ? { note: polled.note } : {}) },
+                202,
+              );
+            }
+            approval = null;
+            log?.("cloud_approval_claimed", { mailboxId: world.mailboxId });
+            tokens = polled.tokens;
+          } else tokens = await cloudSignIn(
             {
               baseUrl: cloudBase,
               ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
@@ -1351,6 +1451,8 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           );
         } catch (err) {
           if (err instanceof CloudSignInError) {
+            // A refused request is over: a new one starts from the window, never a retry of this.
+            if (namesApproval && err.status === 410) approval = null;
             return json({ error: { code: err.code, message: err.message } }, err.status);
           }
           throw err;
