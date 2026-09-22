@@ -23,6 +23,18 @@ import type { Page, WorkflowDTO, WorkflowRunDTO } from "./dto/types.js";
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
+/**
+ * THE RUN STATES AN UNDO MAY ACT ON — the ones nothing is stepping through. `running` and
+ * `awaiting_approval` belong to the drain: the inverses are the `audit_log` rows written SO FAR,
+ * so an undo there reverses a PREFIX and marks `undone` a run whose later steps land with no
+ * inverse. `pending` is admitted as a CANCEL: the run row is taken `FOR UPDATE`, so the drain's
+ * guarded `pending → running` claim cannot land between the undo's read and its write, and then
+ * finds nothing to take. The ADMITTED set, so a status added to the column is refused until
+ * somebody decides about it.
+ */
+export const UNDOABLE_RUN_STATUSES: ReadonlySet<string> =
+  new Set<string>(["pending", "succeeded", "failed", "undone"]);
+
 export interface CreateWorkflowBody {
   name?: unknown;
   trigger?: unknown;
@@ -269,14 +281,21 @@ export class WorkflowsService {
    *   - draft_reply → delete the draft ONLY IF still status='draft' (can't unsend — if the send
    *     path moved it to sending/sent it is skipped; emits a `draft` delete when it deletes);
    *   - add_kb_entry → delete the entry (REST-only, no change_log).
-   * Then marks the run `undone`. A cross-account/unknown run → 404. Idempotent: a second
-   * undo replays the same guarded (now mostly no-op) inverses.
+   * Then marks the run `undone`; a cross-account/unknown run → 404, a second undo replays the
+   * same guarded inverses, and a run still stepping is refused — {@link UNDOABLE_RUN_STATUSES}.
    */
   async undoRun(ctx: ServiceContext, runId: string): Promise<WorkflowRunDTO> {
     return asTx(ctx).transaction(async (tx) => {
-      const [run] = await tx.select().from(workflowRuns)
-        .where(and(eq(workflowRuns.id, runId), eq(workflowRuns.accountId, ctx.accountId))).limit(1);
+      const [run] = await dialect(ctx.db).forUpdate(tx.select().from(workflowRuns)
+        .where(and(eq(workflowRuns.id, runId), eq(workflowRuns.accountId, ctx.accountId))).limit(1));
       if (!run) throw new ServiceError("not_found", 404, "workflow run not found");
+      if (!UNDOABLE_RUN_STATUSES.has(run.status)) {
+        throw new ServiceError(
+          "run_in_flight", 409,
+          "This run is still being applied. Undo is available once it has finished.",
+          { status: run.status },
+        );
+      }
       /** Steps whose move is waiting on another install — `n of m`, not a boolean. See the DTO. */
       let pendingMoves = 0;
 
