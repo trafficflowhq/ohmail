@@ -39,7 +39,7 @@ function ComposeBody() {
     return (
       <Screen>
         <DetailBar title={Copy.composeNew} />
-        <Empty glyph="✉️" title={Copy.composeNoMailbox} hint={Copy.composeNoMailboxHint} />
+        <Empty title={Copy.composeNoMailbox} hint={Copy.composeNoMailboxHint} />
       </Screen>
     );
   }

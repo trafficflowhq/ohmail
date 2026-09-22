@@ -7,7 +7,6 @@
  * and the connect flow never sees it (`gateFor`). Placement is `plan.ts#railHome`'s: in the
  * safe-area strip iOS reserves on the closed Duo, below the status cluster. This file renders.
  */
-import { useState } from "react";
 import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router, usePathname } from "expo-router";
@@ -17,13 +16,11 @@ import { useConnection } from "../net/connection";
 import { gateFor } from "../state/gate";
 import { useWorld } from "../state/world";
 import { useTheme } from "../theme";
-import { Txt } from "./base";
 import { GlassRail, type RailAction } from "./glass";
 import type { IconName } from "./Icon";
 import { useAppWindow, usePosture, useStatusCluster } from "./posture";
 import { useReaderRail } from "./reader-rail";
 import { isTabRoute, railHome, scaffoldPlan } from "./scaffold/plan";
-import { CancelRow, Sheet } from "./Sheet";
 
 const platformName = Platform.OS === "ios" ? ("ios" as const) : ("android" as const);
 
@@ -48,7 +45,6 @@ export function NavRail() {
   const w = useWorld();
   const win = useAppWindow();
   const cluster = useStatusCluster();
-  const [searchOpen, setSearchOpen] = useState(false);
 
   if (plan.nav !== "rail") return null;
   if (gateFor(conn.state, conn.profiles.length).to !== "mail") return null;
@@ -87,7 +83,13 @@ export function NavRail() {
       };
     }),
   );
-  groups.push([{ id: "__search", icon: "search", label: Copy.search, fixed: true, onPress: () => setSearchOpen(true) }]);
+  /* The two fixed entries the dock carries, so a rail posture loses neither: both are routes
+     (`app/compose.tsx`, `app/search.tsx`). The search SCREEN exists now, and a pill that
+     answered "not yet" beside a dock that opens it is one control saying two things. */
+  groups.push([
+    { id: "__compose", icon: "pen", label: Copy.composeNew, fixed: true, onPress: () => router.push("/compose") },
+    { id: "__search", icon: "search", label: Copy.search, fixed: true, onPress: () => router.push("/search") },
+  ]);
 
   const home = railHome(plan, insets, { w: win.width, h: win.height }, cluster);
   return (
@@ -104,17 +106,6 @@ export function NavRail() {
       }}
     >
       <GlassRail groups={groups} foldInto="none" />
-      {/* Search rides the navigation on every posture; no search screen exists on the phone
-          yet, so the press answers with the sentence the More screen states. */}
-      <Sheet open={searchOpen} onClose={() => setSearchOpen(false)} label={Copy.search}>
-        <View style={{ paddingHorizontal: 20, paddingVertical: 16, gap: 4 }}>
-          <Txt variant="cardTitle">{Copy.search}</Txt>
-          <Txt variant="note" tone="ink3">
-            {Copy.searchLater}
-          </Txt>
-        </View>
-        <CancelRow onPress={() => setSearchOpen(false)} />
-      </Sheet>
     </View>
   );
 }

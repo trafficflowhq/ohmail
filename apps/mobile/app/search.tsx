@@ -124,7 +124,6 @@ function SearchBody() {
             </View>
             {around.items.length === 0 ? (
               <Empty
-                glyph="🔎"
                 title={
                   dir === "from"
                     ? Copy.searchAddressEmptyFrom(addr)
@@ -149,10 +148,10 @@ function SearchBody() {
               answer.indexing ? (
                 /* Not yet ≠ nothing: the index is still filling, and the two are different
                    sentences (`indexingResult`'s whole rule). */
-                <Empty glyph="🔎" title={Copy.searchIndexing} hint={Copy.searchScopeDevice} />
+                <Empty title={Copy.searchIndexing} hint={Copy.searchScopeDevice} />
               ) : (
                 <>
-                  <Empty glyph="🔎" title={Copy.searchEmptyTitle} hint={Copy.searchScopeDevice} />
+                  <Empty title={Copy.searchEmptyTitle} hint={Copy.searchScopeDevice} />
                   {door !== null ? (
                     /* THE ADDRESS DOOR — the web's empty-state sentence, and here it IS the
                        door: the press opens the two scopes it names. */

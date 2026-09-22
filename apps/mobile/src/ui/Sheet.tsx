@@ -5,7 +5,7 @@
  * EVERY SHEET CARRIES A WAY OUT ON THE PANEL: the backdrop is the modal panel's sibling, so
  * assistive technology never sees it, and a sheet of verbs alone read as six buttons and no
  * exit on the Duo. A CancelRow or a dismissing row of the sheet's own is the invariant
- * (`test/sheet-has-a-way-out.test.ts`).
+ * (`test/sheet-has-a-cancel.test.ts`).
  */
 import type { ReactNode } from "react";
 import {
