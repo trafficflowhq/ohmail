@@ -29,6 +29,7 @@ export const tagsRoutes: Route[] = [
     pattern: "/tags",
     relay: true,
     cost: "work",
+    replay: "guarded",
     handler: async (req, deps) => {
       const body = await readBody<TagBody>(req);
       const { dto, seq } = await tags(deps).create(serviceContext(deps, req), body);
@@ -40,6 +41,7 @@ export const tagsRoutes: Route[] = [
     pattern: "/tags/:id",
     relay: true,
     cost: "work",
+    replay: "state",
     handler: async (req, deps, params) => {
       const body = await readBody<TagBody>(req);
       const { dto, seq } = await tags(deps).update(serviceContext(deps, req), params.id!, body);
@@ -51,6 +53,7 @@ export const tagsRoutes: Route[] = [
     pattern: "/tags/:id",
     relay: true,
     cost: "work",
+    replay: "state",
     handler: async (req, deps, params) => {
       const { seq } = await tags(deps).remove(serviceContext(deps, req), params.id!);
       return new Response(null, {
@@ -64,6 +67,7 @@ export const tagsRoutes: Route[] = [
     pattern: "/messages/:id/tags",
     relay: true,
     cost: "work",
+    replay: "guarded",
     handler: async (req, deps, params) => {
       const body = await readBody<{ tagId: string; assigned: boolean; name?: string }>(req);
       const { labels, tagId, seq } = await tags(deps).assign(

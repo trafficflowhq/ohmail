@@ -1,6 +1,6 @@
 import { and, asc, eq, gt, ilike } from "drizzle-orm";
 import { contacts, contactNotes, threadNotes, threads } from "@trafficflow/db";
-import { withAccountTx, type ServiceContext } from "./context.js";
+import { claimOrLose, withAccountTx, type IdempotencyClaim, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
 import type { ContactDTO, NoteDTO, Page } from "./dto/types.js";
@@ -55,6 +55,14 @@ function contactToDTO(row: typeof contacts.$inferSelect): ContactDTO {
  * account-scoped UPDATE/DELETE tries `contact_notes` first, then `thread_notes`; only when
  * neither matches is it a 404.
  */
+/** ONE shape for a note, so the answer a retry replays and the first answer are the same text. */
+function noteDTO(
+  row: { id: string; body: string; updatedAt: Date },
+  target: NoteDTO["target"],
+): NoteDTO {
+  return { id: row.id, target, body: row.body, updatedAt: row.updatedAt.toISOString() };
+}
+
 export class ContactsService {
   async list(ctx: ServiceContext, opts: ListContactsOptions = {}): Promise<Page<ContactDTO>> {
     const limit = clampLimit(opts.limit);
@@ -121,14 +129,25 @@ export class ContactsService {
     return this.notePage(rows, limit, () => ({ kind: "contact", contactId }));
   }
 
-  async addContactNote(ctx: ServiceContext, contactId: string, body: string): Promise<NoteDTO> {
+  async addContactNote(
+    ctx: ServiceContext, contactId: string, body: string,
+    opts: { idempotency?: IdempotencyClaim | null } = {},
+  ): Promise<NoteDTO> {
     await this.assertContact(ctx, contactId);   // IDOR: the parent must belong to the account
     const validBody = this.validBody(body);
     const now = ctx.now();
-    const [row] = await withAccountTx(ctx, async (tx) => tx.insert(contactNotes).values({
-      accountId: ctx.accountId, contactId, body: validBody, createdAt: now, updatedAt: now,
-    }).returning());
-    return { id: row!.id, target: { kind: "contact", contactId }, body: row!.body, updatedAt: row!.updatedAt.toISOString() };
+    const row = await withAccountTx(ctx, async (tx) => {
+      const [created] = await tx.insert(contactNotes).values({
+        accountId: ctx.accountId, contactId, body: validBody, createdAt: now, updatedAt: now,
+      }).returning();
+      // The key commits WITH the note. Nothing about a note is unique — the same sentence twice
+      // on one contact is a legitimate thing to write — so only the key can tell a retry.
+      await claimOrLose(tx, ctx, opts.idempotency, {
+        status: 201, json: noteDTO(created!, { kind: "contact", contactId }),
+      });
+      return created;
+    });
+    return noteDTO(row!, { kind: "contact", contactId });
   }
 
   async listThreadNotes(ctx: ServiceContext, threadId: string, opts: ListNotesOptions = {}): Promise<Page<NoteDTO>> {
@@ -142,14 +161,23 @@ export class ContactsService {
     return this.notePage(rows, limit, () => ({ kind: "thread", threadId }));
   }
 
-  async addThreadNote(ctx: ServiceContext, threadId: string, body: string): Promise<NoteDTO> {
+  async addThreadNote(
+    ctx: ServiceContext, threadId: string, body: string,
+    opts: { idempotency?: IdempotencyClaim | null } = {},
+  ): Promise<NoteDTO> {
     await this.assertThread(ctx, threadId);
     const validBody = this.validBody(body);
     const now = ctx.now();
-    const [row] = await withAccountTx(ctx, async (tx) => tx.insert(threadNotes).values({
-      accountId: ctx.accountId, threadId, body: validBody, createdAt: now, updatedAt: now,
-    }).returning());
-    return { id: row!.id, target: { kind: "thread", threadId }, body: row!.body, updatedAt: row!.updatedAt.toISOString() };
+    const row = await withAccountTx(ctx, async (tx) => {
+      const [created] = await tx.insert(threadNotes).values({
+        accountId: ctx.accountId, threadId, body: validBody, createdAt: now, updatedAt: now,
+      }).returning();
+      await claimOrLose(tx, ctx, opts.idempotency, {
+        status: 201, json: noteDTO(created!, { kind: "thread", threadId }),
+      });
+      return created;
+    });
+    return noteDTO(row!, { kind: "thread", threadId });
   }
 
   /**

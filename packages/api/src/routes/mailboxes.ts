@@ -208,6 +208,7 @@ export const mailboxRoutes: Route[] = [
     // cheapest way to make the worker re-walk an entire mailbox: one POST, and every folder is
     // re-listed against the real IMAP server. Nothing about the verb or the path said so.
     cost: "work",
+    replay: "state",
     handler: async (req, deps, params) => {
       await mailbox(deps).requestResync(serviceContext(deps, req), params.id!);
       return jsonResponse({ status: "queued" }, { status: 202 });
@@ -222,6 +223,7 @@ export const mailboxRoutes: Route[] = [
     // second factor here would teach people the notice is dangerous — it is the opposite).
     // Naturally idempotent: a repeat press re-stamps the same dismissal.
     cost: "work",
+    replay: "state",
     handler: async (req, deps, params) => {
       const dto = await mailbox(deps).dismissInboundQuiet(serviceContext(deps, req), params.id!);
       return jsonResponse(dto);
@@ -238,6 +240,7 @@ export const mailboxRoutes: Route[] = [
     // acknowledgement, and the client's comparison is `eventAt > seenAt`. Mounted on the local
     // door too (`mailboxRoutes`): a standalone install shows the same notice off the same row.
     cost: "work",
+    replay: "state",
     handler: async (req, deps, params) => {
       const dto = await mailbox(deps).dismissOrganizerNotice(serviceContext(deps, req), params.id!);
       return jsonResponse(dto);
@@ -258,6 +261,7 @@ export const mailboxRoutes: Route[] = [
      * /local/mailboxes/:id/release`.
      */
     cost: "work",
+    replay: "state",
     handler: async (req, deps, params) => {
       const result = await mailbox(deps).release(serviceContext(deps, req), params.id!);
       // 202 for the one outcome that changed something, and it is an ACCEPTED rather than an OK on
@@ -370,6 +374,7 @@ export const mailboxRoutes: Route[] = [
     // is unreachable, because "keep what I have" is exactly the answer someone gives a prompt
     // they cannot re-verify.
     cost: "work",
+    replay: "state",
     handler: async (req, deps, params) => {
       const body = await readBody<{ fingerprint?: string; v?: number }>(req);
       await profileImport(deps).decline(serviceContext(deps, req), params.id!, body);
@@ -417,6 +422,7 @@ export const mailboxRoutes: Route[] = [
     // other end of the account pre-hijack chain `AuthService.verifyEmail`'s password binding
     // closes.
     cost: "work",
+    replay: "guarded",
     options: { stepUp: true },
     handler: async (req, deps) => {
       const body = await readBody<CreateMailboxBody>(req);
@@ -440,6 +446,7 @@ export const mailboxRoutes: Route[] = [
     pattern: "/mailboxes/:id",
     relay: true,
     cost: "work",
+    replay: "state",
     options: { stepUp: true },
     handler: async (req, deps, params) => {
       const body = await readBody<UpdateMailboxBody>(req);
@@ -462,6 +469,7 @@ export const mailboxRoutes: Route[] = [
     pattern: "/mailboxes/:id",
     relay: true,
     cost: "work",
+    replay: "state",
     options: { stepUp: true },
     handler: async (req, deps, params) => {
       /* ── `?erase=1` — REMOVE THE MAILBOX AND ERASE OHMAIL'S COPY OF ITS MAIL ────────────

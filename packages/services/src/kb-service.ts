@@ -1,6 +1,6 @@
 import { and, asc, eq, gt, sql } from "drizzle-orm";
 import { kbEntries } from "@trafficflow/db";
-import { withAccountTx, type ServiceContext, type Db } from "./context.js";
+import { claimOrLose, withAccountTx, type IdempotencyClaim, type ServiceContext, type Db } from "./context.js";
 import { dialect, pgOnly } from "@trafficflow/db/dialect";
 import { ServiceError } from "./errors.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
@@ -113,7 +113,9 @@ export class KbService {
     return toDTO(row);
   }
 
-  async create(ctx: ServiceContext, body: KbEntryBody): Promise<KbEntryDTO> {
+  async create(
+    ctx: ServiceContext, body: KbEntryBody, opts: { idempotency?: IdempotencyClaim | null } = {},
+  ): Promise<KbEntryDTO> {
     const title = this.validText(body.title, "title");
     const content = this.validText(body.content, "content");
     const tags = this.validTags(body.tags);
@@ -123,6 +125,9 @@ export class KbService {
       const [created] = await tx.insert(kbEntries).values({
         accountId: ctx.accountId, title, content, tags, createdAt: now, updatedAt: now,
       }).returning();
+      /* The key commits WITH the row. `kb_entries` is unique only on the WORKFLOW dedup key,
+         which a user-authored entry leaves null, so a retry has nothing else to resolve on. */
+      await claimOrLose(tx, ctx, opts.idempotency, { status: 201, json: toDTO(created!) });
       return created;
     });
     return toDTO(row!);

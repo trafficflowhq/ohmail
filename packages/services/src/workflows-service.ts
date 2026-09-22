@@ -12,7 +12,7 @@ import {
 // `ai/workflows/`, which calls the drafter; a type import is erased at emit, so naming it here
 // does not put that module — or any prompt — into an artifact built from this file.
 import type { WorkflowInverse } from "@trafficflow/core/mail";
-import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
+import { bridgeTx, claimOrLose, withAccountTx, type IdempotencyClaim, type ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import {
   moveDestinationWord, planBulkMoveOnReader, writeReaderRequestSet,
@@ -110,7 +110,10 @@ export class WorkflowsService {
     return toWorkflowDTO(row);
   }
 
-  async create(ctx: ServiceContext, body: CreateWorkflowBody): Promise<WorkflowDTO> {
+  async create(
+    ctx: ServiceContext, body: CreateWorkflowBody,
+    opts: { idempotency?: IdempotencyClaim | null } = {},
+  ): Promise<WorkflowDTO> {
     // A proposal id routes to the materialize path — the workflow is
     // built from the (account-scoped) proposal, provenance 'proposed', enabled=false.
     if (body.fromProposalId !== undefined && body.fromProposalId !== null) {
@@ -129,6 +132,9 @@ export class WorkflowsService {
         provenance: "user",   // AI-proposed workflows (provenance 'proposed', fromProposalId) arrive later
         createdAt: now, updatedAt: now,
       }).returning();
+      // The key commits WITH the row: `workflows` has no unique key, so a retry after a lost
+      // response would otherwise leave the account with two of the same automation.
+      await claimOrLose(tx, ctx, opts.idempotency, { status: 201, json: toWorkflowDTO(created!) });
       return created;
     });
     return toWorkflowDTO(row!);

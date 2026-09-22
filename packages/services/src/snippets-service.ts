@@ -1,6 +1,6 @@
 import { and, asc, eq, gt } from "drizzle-orm";
 import { snippets } from "@trafficflow/db";
-import { withAccountTx, type ServiceContext } from "./context.js";
+import { claimOrLose, withAccountTx, type IdempotencyClaim, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
 import type { Page, SnippetDTO } from "./dto/types.js";
@@ -46,7 +46,9 @@ export class SnippetsService {
     return toDTO(row);
   }
 
-  async create(ctx: ServiceContext, body: SnippetBody): Promise<SnippetDTO> {
+  async create(
+    ctx: ServiceContext, body: SnippetBody, opts: { idempotency?: IdempotencyClaim | null } = {},
+  ): Promise<SnippetDTO> {
     const title = this.validText(body.title, "title");
     const text = this.validText(body.body, "body");
     const shortcut = this.validShortcut(body.shortcut);
@@ -57,6 +59,9 @@ export class SnippetsService {
       const [created] = await tx.insert(snippets).values({
         accountId: ctx.accountId, title, body: text, shortcut, createdAt: now, updatedAt: now,
       }).returning();
+      // The key commits WITH the row: nothing here is unique, so only the key can tell a retry
+      // after a lost response from somebody deliberately writing the same snippet twice.
+      await claimOrLose(tx, ctx, opts.idempotency, { status: 201, json: toDTO(created!) });
       return created;
     });
     return toDTO(row!);

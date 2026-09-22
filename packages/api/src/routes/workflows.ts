@@ -31,9 +31,14 @@ export const workflowsRoutes: Route[] = [
     pattern: "/workflows",
     relay: true,
     cost: "work",
+    /* A CREATE THAT MINTS A ROW PER CALL: nothing about the row is unique, so a retry after a
+       lost response leaves two. The service claims the key inside its own insert transaction. */
+    options: { idempotent: true },
     handler: async (req, deps) => {
       const body = await readBody<CreateWorkflowBody>(req);
-      const dto = await workflows(deps).create(serviceContext(deps, req), body);
+      const dto = await workflows(deps).create(
+        serviceContext(deps, req), body, { idempotency: deps.idempotency ?? null },
+      );
       return jsonResponse(dto, { status: 201 });
     },
   },
@@ -52,6 +57,7 @@ export const workflowsRoutes: Route[] = [
     pattern: "/workflows/:id",
     relay: true,
     cost: "work",
+    replay: "state",
     handler: async (req, deps, params) => {
       const patch = await readBody<PatchWorkflowBody>(req);
       const dto = await workflows(deps).update(serviceContext(deps, req), params.id!, patch);
@@ -63,6 +69,7 @@ export const workflowsRoutes: Route[] = [
     pattern: "/workflows/:id",
     relay: true,
     cost: "work",
+    replay: "state",
     handler: async (req, deps, params) => {
       await workflows(deps).softDelete(serviceContext(deps, req), params.id!);
       return new Response(null, { status: 204 });
@@ -99,6 +106,7 @@ export const workflowsRoutes: Route[] = [
     pattern: "/workflow-runs/:id/undo",
     relay: true,
     cost: "work",
+    replay: "guarded",
     handler: async (req, deps, params) => {
       const dto = await workflows(deps).undoRun(serviceContext(deps, req), params.id!);
       return jsonResponse(dto, { status: 200 });

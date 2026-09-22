@@ -190,6 +190,7 @@ export const accountRoutes: Route[] = [
     pattern: "/account/manage-link",
     relay: true,
     cost: "paid",
+    replay: "ephemeral",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
       const port = entitlementsPort(deps);

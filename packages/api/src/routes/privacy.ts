@@ -142,6 +142,7 @@ export const privacyRoutes: Route[] = [
     pattern: "/messages/:id/load-remote",
     relay: true,
     cost: "work",
+    replay: "state",
     handler: async (req, deps, params) => {
       await privacy(deps).loadRemote(serviceContext(deps, req), params.id!);
       return jsonResponse({ remoteContent: "loaded" });

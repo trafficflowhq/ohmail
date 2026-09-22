@@ -55,6 +55,7 @@ export const pushRoutes: Route[] = [
     pattern: "/push/subscriptions/:id",
     relay: true,
     cost: "work",
+    replay: "state",
     handler: async (req, deps, params) => {
       await push(deps).unsubscribe(serviceContext(deps, req), params.id!);
       return noContent();

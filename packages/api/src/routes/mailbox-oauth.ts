@@ -270,6 +270,7 @@ export const mailboxOAuthRoutes: Route[] = [
      * ceremony, so this is a real choice, recorded.
      */
     cost: "work",
+    replay: "ephemeral",
     handler: async (req, deps) => {
       const cfg = await resolveConfig(deps);
       const redirectUri = webRedirectUri(cfg);
@@ -402,6 +403,7 @@ export const mailboxOAuthRoutes: Route[] = [
      * because this is the route that would otherwise be the way around the gate on `start`.
      */
     cost: "work",
+    replay: "guarded",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
       const body = await readBody<{ state?: unknown; code?: unknown }>(req);

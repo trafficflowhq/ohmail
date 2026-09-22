@@ -118,6 +118,7 @@ export const messageRoutes: Route[] = [
     pattern: "/messages/:id",
     relay: true,
     cost: "work",
+    replay: "state",
     handler: async (req, deps, params) => {
       const body = await readBody<MessagePatchBody>(req);
       const { dto, seq, pending } = await message(deps).patch(serviceContext(deps, req), params.id!, body);

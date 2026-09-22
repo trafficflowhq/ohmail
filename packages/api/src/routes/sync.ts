@@ -180,6 +180,7 @@ export const syncRoutes: Route[] = [
     pattern: "/sync/pull",
     relay: true,
     cost: "work",
+    replay: "state",
     handler: async (req, deps) => {
       const result = await mailbox(deps).requestPull(serviceContext(deps, req));
       return jsonResponse(result, { status: 202 });

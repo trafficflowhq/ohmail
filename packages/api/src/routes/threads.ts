@@ -43,6 +43,7 @@ export const threadRoutes: Route[] = [
     pattern: "/threads/:id",
     relay: true,
     cost: "work",
+    replay: "state",
     handler: async (req, deps, params) => {
       const body = await readBody<ThreadPatchBody>(req);
       const dto = await thread(deps).patch(serviceContext(deps, req), params.id!, body);
@@ -54,6 +55,7 @@ export const threadRoutes: Route[] = [
     pattern: "/threads/:id/rename",
     relay: true,
     cost: "work",
+    replay: "state",
     handler: async (req, deps, params) => {
       const body = await readBody<ThreadRenameBody>(req);
       const dto = await thread(deps).rename(serviceContext(deps, req), params.id!, body);

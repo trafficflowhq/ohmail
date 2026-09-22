@@ -37,6 +37,7 @@ export const aiSettingsRoutes: Route[] = [
     pattern: "/account/ai",
     relay: true,
     cost: "work",
+    replay: "state",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
       const body = await readBody<{ aiEnabled?: unknown }>(req);

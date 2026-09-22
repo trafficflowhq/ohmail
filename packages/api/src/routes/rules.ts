@@ -97,6 +97,7 @@ export const rulesRoutes: Route[] = [
     pattern: "/rules/:id",
     relay: true,
     cost: "work",
+    replay: "handler",
 
     // The key dance is done HERE rather than by `options: { idempotent: true }` for one reason:
     // the concurrent case ends in `not_found` more often than in a lost claim (the loser blocks on

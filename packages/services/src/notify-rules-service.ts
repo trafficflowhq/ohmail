@@ -1,6 +1,6 @@
 import { and, asc, eq, gt } from "drizzle-orm";
 import { notifyRules } from "@trafficflow/db";
-import { withAccountTx, type ServiceContext } from "./context.js";
+import { claimOrLose, withAccountTx, type IdempotencyClaim, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
 import type { NotifyRuleDTO, Page } from "./dto/types.js";
@@ -38,7 +38,10 @@ export class NotifyRulesService {
     return { items: pageRows.map(toDTO), nextCursor };
   }
 
-  async create(ctx: ServiceContext, body: CreateNotifyRuleBody): Promise<NotifyRuleDTO> {
+  async create(
+    ctx: ServiceContext, body: CreateNotifyRuleBody,
+    opts: { idempotency?: IdempotencyClaim | null } = {},
+  ): Promise<NotifyRuleDTO> {
     if (typeof body.target !== "string" || body.target.trim().length === 0) {
       throw new ServiceError("validation_failed", 400, "target is required");
     }
@@ -51,6 +54,9 @@ export class NotifyRulesService {
       const [created] = await tx.insert(notifyRules).values({
         accountId: ctx.accountId, target: body.target, kind, createdAt: ctx.now(),
       }).returning();
+      // The key commits WITH the row: `notify_rules` has no unique key, so two identical rules
+      // are legal and only the key tells a retry from a deliberate duplicate.
+      await claimOrLose(tx, ctx, opts.idempotency, { status: 201, json: toDTO(created!) });
       return created;
     });
     return toDTO(row!);

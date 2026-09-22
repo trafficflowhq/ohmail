@@ -70,6 +70,7 @@ export const screenerRoutes: Route[] = [
     pattern: "/screener/held-releases/dismiss",
     relay: true,
     cost: "work",
+    replay: "state",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
       const body = await readBody<{ fingerprint?: unknown }>(req);
@@ -89,6 +90,7 @@ export const screenerRoutes: Route[] = [
     pattern: "/screener/held-releases",
     relay: true,
     cost: "work",
+    replay: "guarded",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
       const body = await readBody<{ ruleIds?: unknown }>(req);
@@ -136,6 +138,7 @@ export const screenerRoutes: Route[] = [
     pattern: "/screener/unscreened",
     relay: true,
     cost: "work",
+    replay: "guarded",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
       const body = await readBody<{ addresses?: unknown }>(req);
@@ -275,6 +278,7 @@ export const screenerRoutes: Route[] = [
     pattern: "/screener/junk/sweep",
     relay: true,
     cost: "work",
+    replay: "state",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
       return jsonResponse(await requestJunkSweep(deps, ctx));
@@ -292,6 +296,7 @@ export const screenerRoutes: Route[] = [
     pattern: "/screener/junk/rescue",
     relay: true,
     cost: "work",
+    replay: "guarded",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
       const body = await readBody<{ mailboxId?: unknown; uid?: unknown; uidValidity?: unknown; allow?: unknown }>(req);

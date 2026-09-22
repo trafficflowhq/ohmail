@@ -77,6 +77,9 @@ export {
   // The lock's open doors, for the census that asserts every route is classified for it.
   ACCESS_REFUSED_MAY_REACH, ACCESS_REFUSED_MAY_REACH_ROUTES, accessRefusedMayReach,
   type CostClass,
+  // What a second arrival of a spending route costs — declared on the route, judged by
+  // `idempotency-census.test.ts`. Exported so the census reads the type rather than a copy of it.
+  type ReplayDisposition,
   type Route, type RouteOptions, type RouteParams, type Handler, type MatchResult,
 } from "./router.js";
 

@@ -196,6 +196,7 @@ export const draftsRoutes: Route[] = [
     pattern: "/drafts/:id",
     relay: true,
     cost: "work",
+    replay: "state",
     handler: async (req, deps, params) => {
       const patch = await readBody<PatchDraftBody>(req);
       const { draft, seq } = await drafts(deps).update(serviceContext(deps, req), params.id!, patch);
@@ -207,6 +208,7 @@ export const draftsRoutes: Route[] = [
     pattern: "/drafts/:id",
     relay: true,
     cost: "work",
+    replay: "state",
     handler: async (req, deps, params) => {
       const { seq } = await drafts(deps).remove(serviceContext(deps, req), params.id!);
       return new Response(null, { status: 204, headers: { "X-Sync-Seq": String(seq) } });
@@ -227,6 +229,7 @@ export const draftsRoutes: Route[] = [
     pattern: "/drafts/:id/resolve",
     relay: true,
     cost: "work",
+    replay: "guarded",
     handler: async (req, deps, params) => {
       const body = await readBody<{ outcome?: unknown }>(req);
       const { draft, seq } = await drafts(deps).resolve(
@@ -246,6 +249,7 @@ export const draftsRoutes: Route[] = [
     pattern: "/drafts/:id/schedule",
     relay: true,
     cost: "work",
+    replay: "state",
     handler: async (req, deps, params) => {
       const body = await readBody<{ sendAt?: unknown }>(req);
       const { draft, seq } = await schedules(deps).schedule(
@@ -262,6 +266,7 @@ export const draftsRoutes: Route[] = [
     pattern: "/drafts/:id/schedule",
     relay: true,
     cost: "work",
+    replay: "state",
     handler: async (req, deps, params) => {
       const { draft, seq } = await schedules(deps).cancel(serviceContext(deps, req), params.id!);
       return jsonResponse(draft, { status: 200, seq });

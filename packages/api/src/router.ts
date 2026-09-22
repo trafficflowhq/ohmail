@@ -114,6 +114,55 @@ export function unverifiedMayReach(cost: unknown): boolean {
   return typeof cost === "string" && UNVERIFIED_MAY_REACH.has(cost as CostClass);
 }
 
+/**
+ * WHAT A SECOND ARRIVAL OF THIS REQUEST COSTS — declared by every route that spends, beside the
+ * `cost` it qualifies.
+ *
+ * `POST /attachments/staging` minted a durable row and a grant to put bytes in a bucket somebody
+ * pays for, and it shipped with no key: a retry after a lost response minted a second ticket and
+ * uploaded a second copy. The route being wrong was the small half; the large half was that the
+ * disposition lived nowhere the next author would look. A frozen list in a test file is an
+ * inventory of what somebody once counted — this is a DECLARATION on the route itself, which the
+ * author of the next one has to write, and `idempotency-census.test.ts` refuses a spender that
+ * carries neither this nor `options.idempotent`.
+ *
+ * {@link Route.replay} is absent on a route marked `options.idempotent`: there, the middleware
+ * replays a stored response and the service claims the key inside its own transaction, which is
+ * the disposition. Two spellings of one fact are refused by the census.
+ */
+export type ReplayDisposition =
+  /**
+   * The handler reads `Idempotency-Key` ITSELF, because the middleware's replay-a-stored-response
+   * shape does not fit — a response carrying a signed URL with a lifetime of its own, or a verb
+   * that contends on the ROW before it ever reaches the claim.
+   */
+  | "handler"
+  /**
+   * The request names a resource and the value it should hold, and a replay reaches the same
+   * state: a `PATCH`/`PUT` that sets named fields, a `DELETE` that removes one row, a `POST` that
+   * stamps one timestamp on the caller's own row. Nothing is minted and nothing is counted.
+   */
+  | "state"
+  /**
+   * A constraint, a predicate or a compare-and-set makes the second arrival a no-op IN THE
+   * DATABASE — a UNIQUE the insert resolves on, a `WHERE status = …` the replay no longer
+   * matches. The guard is the mechanism, not the key.
+   */
+  | "guarded"
+  /**
+   * A replay mints an EQUIVALENT artefact that expires on its own and costs nothing durable — a
+   * short-lived link to the caller's own page, an OAuth ceremony row with a consumption stamp. A
+   * stored response would be worse than the replay: it would hand back the older, nearer-expiry
+   * one.
+   */
+  | "ephemeral"
+  /**
+   * A DURABLE ROW PER CALL, with nothing to resolve a second one on. Refused by the census: a
+   * route that mints must present a key before the effect. Declarable so the refusal has a
+   * reachable state to refuse — a route that really does mint says so and is told to key itself.
+   */
+  | "mints";
+
 export interface RouteOptions {
   /** Route needs no session; `withSession` populates it if a token is present but never 401s. */
   public?: boolean;
@@ -183,6 +232,11 @@ export interface Route {
    * `withSpendGate` refuses it for an unverified account.
    */
   cost: CostClass;
+  /**
+   * WHAT A SECOND ARRIVAL COSTS — required by the census for every `work`/`paid` route that is
+   * not `options.idempotent`, and refused beside it. See {@link ReplayDisposition}.
+   */
+  replay?: ReplayDisposition;
   /**
    * Required. May a Cloud-mode install's write-through relay forward this route to the server its
    * door names? `false` for a route that resolves a credential out of the request body

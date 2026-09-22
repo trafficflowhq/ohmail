@@ -41,6 +41,7 @@ export const screeningRoutes: Route[] = [
     pattern: "/account/screening",
     relay: true,
     cost: "work",
+    replay: "state",
     handler: async (req, deps) => {
       const body = await readBody<{ ohboxPolicy?: unknown; ohboxBar?: unknown; screenerAutoApply?: unknown }>(req);
       // Only the axes the caller ACTUALLY sent are forwarded: a body that names just `ohboxBar` must

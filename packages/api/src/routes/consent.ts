@@ -779,6 +779,7 @@ export const consentRoutes: Route[] = [
     pattern: "/consent/settings",
     relay: true,
     cost: "work",
+    replay: "state",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
       const body = await readBody<ConsentSettingsBody>(req);
@@ -819,6 +820,7 @@ export const consentRoutes: Route[] = [
     pattern: "/consent/seed",
     relay: true,
     cost: "work",
+    replay: "guarded",
     handler: async (req, deps) => {
       const body = await readBody<SeedConfirmBody>(req);
       const result = await confirmSeed(serviceContext(deps, req), seedAddresses(body));
@@ -858,6 +860,7 @@ export const consentRoutes: Route[] = [
     pattern: "/consent/reset",
     relay: true,
     cost: "work",
+    replay: "state",
     options: { stepUp: true },
     handler: async (req, deps) => {
       const result = await resetScreeningState(serviceContext(deps, req));

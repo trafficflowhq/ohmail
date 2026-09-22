@@ -33,6 +33,7 @@ export const proposalsRoutes: Route[] = [
     pattern: "/workflows/proposals/:id/dismiss",
     relay: true,
     cost: "work",
+    replay: "state",
     handler: async (req, deps, params) => {
       await proposals(deps).dismiss(serviceContext(deps, req), params.id!);
       return new Response(null, { status: 204 });

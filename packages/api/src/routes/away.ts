@@ -25,6 +25,7 @@ export const awayRoutes: Route[] = [
     pattern: "/away-responder",
     relay: true,
     cost: "work",
+    replay: "state",
     handler: async (req, deps) => {
       const body = await readBody<AwayResponderBody>(req);
       const result = await away(deps).put(serviceContext(deps, req), body);

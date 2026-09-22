@@ -30,9 +30,14 @@ export const notifyRoutes: Route[] = [
     pattern: "/notify-rules",
     relay: true,
     cost: "work",
+    /* A CREATE THAT MINTS A ROW PER CALL: nothing about the row is unique, so a retry after a
+       lost response leaves two. The service claims the key inside its own insert transaction. */
+    options: { idempotent: true },
     handler: async (req, deps) => {
       const body = await readBody<CreateNotifyRuleBody>(req);
-      const dto = await notify(deps).create(serviceContext(deps, req), body);
+      const dto = await notify(deps).create(
+        serviceContext(deps, req), body, { idempotency: deps.idempotency ?? null },
+      );
       return jsonResponse(dto, { status: 201 });
     },
   },
@@ -41,6 +46,7 @@ export const notifyRoutes: Route[] = [
     pattern: "/notify-rules/:id",
     relay: true,
     cost: "work",
+    replay: "state",
     handler: async (req, deps, params) => {
       await notify(deps).remove(serviceContext(deps, req), params.id!);
       return noContent();

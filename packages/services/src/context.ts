@@ -1,8 +1,9 @@
 import type { PgliteDatabase } from "drizzle-orm/pglite";
 import type { mailSchema } from "@trafficflow/db/mail";
 import { carryDialect, type LockMode } from "@trafficflow/db/dialect";
-import { fencedAccountWrite, type LedgerTx, type Tx } from "@trafficflow/db";
+import { claimIdempotencyKey, fencedAccountWrite, type LedgerTx, type Tx } from "@trafficflow/db";
 import { asServiceRefusal } from "./erasure-fence.js";
+import { IdempotencyRaceLost } from "./errors.js";
 
 /**
  * The database-handle registry — an interface, so a deployment can add its own member. A local
@@ -37,6 +38,41 @@ export function bridgeTx(handle: Db | Tx | LedgerTx): Tx {
 /** The other direction: a transaction handle asked the query surface `Db` types. */
 export function bridgeDb(handle: Db | Tx | LedgerTx): Db {
   return handle as unknown as Db;
+}
+
+/** The caller's `Idempotency-Key` and the hash of the request it was presented with. */
+export interface IdempotencyClaim {
+  key: string;
+  requestHash: string;
+}
+
+/**
+ * CLAIM THE KEY INSIDE THE MUTATION'S OWN TRANSACTION, or roll the mutation back.
+ *
+ * One reader for what was six copies. The order is the whole of it: the stored response commits
+ * with the effect, so a crash between them is impossible and a retry replays instead of running
+ * the mutation twice. A LOST claim means a concurrent same-key request committed first —
+ * throwing rolls THIS transaction back in full, and `withIdempotency` answers with the winner's
+ * stored response. `response` must be the body the route will return, materialized inside `tx`,
+ * or the replay and the first answer disagree.
+ */
+export async function claimOrLose(
+  tx: LedgerTx,
+  ctx: { accountId: string; now: () => Date },
+  claim: IdempotencyClaim | null | undefined,
+  response: { status: number; json: unknown; seq?: number | null },
+): Promise<void> {
+  if (!claim) return;
+  const claimed = await claimIdempotencyKey(tx, {
+    accountId: ctx.accountId,
+    key: claim.key,
+    requestHash: claim.requestHash,
+    responseStatus: response.status,
+    responseJson: response.json,
+    seq: response.seq ?? null,
+    now: ctx.now(),
+  });
+  if (!claimed) throw new IdempotencyRaceLost(ctx.accountId, claim.key);
 }
 
 /**

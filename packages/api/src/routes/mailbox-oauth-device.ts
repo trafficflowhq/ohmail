@@ -139,6 +139,7 @@ export const mailboxDeviceOAuthRoutes: Route[] = [
      * nothing else; if it finishes, what it attaches is the attacker's own mailbox.
      */
     cost: "work",
+    replay: "ephemeral",
     handler: async (req, deps) => {
       const client = deps.msDevice;
       const gate = deviceGate(client);
@@ -236,6 +237,7 @@ export const mailboxDeviceOAuthRoutes: Route[] = [
      * somewhere else.
      */
     cost: "work",
+    replay: "guarded",
     handler: async (req, deps) => {
       const client = deps.msDevice;
       const gate = deviceGate(client);

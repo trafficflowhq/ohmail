@@ -51,6 +51,7 @@ export const contactsRoutes: Route[] = [
     pattern: "/contacts/:id",
     relay: true,
     cost: "work",
+    replay: "state",
     handler: async (req, deps, params) => {
       const body = await readBody<PatchContactBody>(req);
       const dto = await contacts(deps).updateName(serviceContext(deps, req), params.id!, body.name ?? null);
@@ -72,9 +73,15 @@ export const contactsRoutes: Route[] = [
     pattern: "/contacts/:id/notes",
     relay: true,
     cost: "work",
+    /* A CREATE THAT MINTS A ROW PER CALL: nothing about the row is unique, so a retry after a
+       lost response leaves two. The service claims the key inside its own insert transaction. */
+    options: { idempotent: true },
     handler: async (req, deps, params) => {
       const body = await readBody<NoteBody>(req);
-      const dto = await contacts(deps).addContactNote(serviceContext(deps, req), params.id!, body.body as string);
+      const dto = await contacts(deps).addContactNote(
+        serviceContext(deps, req), params.id!, body.body as string,
+        { idempotency: deps.idempotency ?? null },
+      );
       return jsonResponse(dto, { status: 201 });
     },
   },
@@ -93,9 +100,15 @@ export const contactsRoutes: Route[] = [
     pattern: "/threads/:id/notes",
     relay: true,
     cost: "work",
+    /* A CREATE THAT MINTS A ROW PER CALL: nothing about the row is unique, so a retry after a
+       lost response leaves two. The service claims the key inside its own insert transaction. */
+    options: { idempotent: true },
     handler: async (req, deps, params) => {
       const body = await readBody<NoteBody>(req);
-      const dto = await contacts(deps).addThreadNote(serviceContext(deps, req), params.id!, body.body as string);
+      const dto = await contacts(deps).addThreadNote(
+        serviceContext(deps, req), params.id!, body.body as string,
+        { idempotency: deps.idempotency ?? null },
+      );
       return jsonResponse(dto, { status: 201 });
     },
   },
@@ -104,6 +117,7 @@ export const contactsRoutes: Route[] = [
     pattern: "/notes/:id",
     relay: true,
     cost: "work",
+    replay: "state",
     handler: async (req, deps, params) => {
       const body = await readBody<NoteBody>(req);
       const dto = await contacts(deps).updateNote(serviceContext(deps, req), params.id!, body.body as string);
@@ -115,6 +129,7 @@ export const contactsRoutes: Route[] = [
     pattern: "/notes/:id",
     relay: true,
     cost: "work",
+    replay: "state",
     handler: async (req, deps, params) => {
       await contacts(deps).deleteNote(serviceContext(deps, req), params.id!);
       return noContent();
