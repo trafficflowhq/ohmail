@@ -9,7 +9,7 @@ import {
 } from "@trafficflow/db";
 import { DESTINATIONS, isAwayPile, awayScopeFitsAudience, type AwayPile } from "@trafficflow/core/mail";
 import {
-  PROFILE_VERSION, ProfileUnavailableError, profileFingerprint,
+  PROFILE_LIST_MAX, PROFILE_VERSION, ProfileUnavailableError, profileFingerprint,
   type OrganizerProfileDoc, type ProfileReadResult, type ProfileRuleEntry,
 } from "@trafficflow/core/adapters/organizer-profile";
 import { serializeOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
@@ -173,21 +173,13 @@ const ruleKey = (r: { kind: string; match: string; subjectContains: string | nul
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
 /**
- * HOW LARGE A DOCUMENT `apply` WILL IMPORT, PER LIST. `apply` walks all four lists in ONE
- * transaction under the account advisory lock, and the counts come from a document on a mail
- * server we do not run — the transaction's size would otherwise be that server's choice; the
- * fingerprint proves the user saw the document, not that it is reasonable. A tight bound is
- * severe: `serializeOrganizerProfile` exports EVERYTHING an account holds and nothing caps an
- * account-wide total, so an account could export settings it cannot restore — each number sits
- * far above real accounts (`screener` largest, 20 000). REFUSED, not truncated: a partial import
+ * HOW LARGE A DOCUMENT `apply` WILL IMPORT, PER LIST — the format's {@link PROFILE_LIST_MAX},
+ * which the serializer publishes within, so a document ohmail wrote always fits. The counts come
+ * from a mail server we do not run and would otherwise size the one transaction `apply` walks.
+ * A document over it came from elsewhere: REFUSED, not truncated, because a partial import
  * silently omits rules. Refused in `candidate()` too — never offer what `apply` would 413.
  */
-export const PROFILE_IMPORT_MAX = {
-  screener: 20_000,
-  rules: 5_000,
-  notifyRules: 2_000,
-  tagNames: 2_000,
-} as const;
+export const PROFILE_IMPORT_MAX = PROFILE_LIST_MAX;
 
 /** The first list that is over its ceiling, or null. One answer, used by both entry points. */
 function oversizedList(doc: OrganizerProfileDoc): { list: string; count: number; max: number } | null {

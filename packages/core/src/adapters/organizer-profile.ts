@@ -36,6 +36,20 @@ export const PROFILE_VERSION = 2;
 /** The oldest format version this build reads. Every version from here to {@link PROFILE_VERSION}. */
 export const PROFILE_VERSION_MIN_READ = 1;
 
+/**
+ * THE LONGEST LIST ONE DOCUMENT CARRIES — the importer's per-list ceiling and the exporter's, so
+ * a document this product writes is one it can read back. The import applies all four lists in
+ * one transaction, sized otherwise by a server we do not run; the serializer keeps the newest of
+ * each, automatic rules going before deliberate ones, rather than publish a document the same
+ * product on another machine refuses. Every number sits far above real accounts.
+ */
+export const PROFILE_LIST_MAX = {
+  screener: 20_000,
+  rules: 5_000,
+  notifyRules: 2_000,
+  tagNames: 2_000,
+} as const;
+
 /** The canonical forms this build can take a fingerprint in. */
 export type ProfileCanonicalVersion = 1 | 2;
 
@@ -1580,7 +1594,7 @@ export type ProfileReadResult =
  * run after the parse, bounding the transaction and not the read. Generous, not tight, because
  * ohmail writes this message itself and a ceiling under what the product emits would turn a heavy
  * user's own settings into `unreadable`: the number is a multiple of the largest document the
- * import would ever ACCEPT (`PROFILE_IMPORT_MAX`'s four ceilings come to roughly 15 MB). 64 MiB
+ * import would ever ACCEPT (`PROFILE_LIST_MAX`'s four ceilings come to roughly 15 MB). 64 MiB
  * is >4x the largest useful document and still FINITE, which is the property being bought.
  */
 export const PROFILE_DOC_MAX_BYTES = 64 * 1024 * 1024;

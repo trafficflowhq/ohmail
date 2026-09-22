@@ -1,10 +1,10 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import {
   awayResponders, contacts, mailboxes as mailboxesTbl, notifyRules as notifyRulesTbl,
   rules as rulesTbl, tags as tagsTbl,
   type Tx,
 } from "@trafficflow/db";
-import type { OrganizerProfilePayload } from "./organizer-profile.js";
+import { PROFILE_LIST_MAX, type OrganizerProfilePayload } from "./organizer-profile.js";
 
 /**
  * The serializer — the organizer's store, read into the profile document's payload. It reads ONLY
@@ -37,15 +37,21 @@ export async function serializeOrganizerProfile(
   // to one snapshot; PGlite is real Postgres, so the same statement works on both stores.
   const [contactRows, ruleRows, notifyRows, awayRows, tagRows, mailboxRows] = await db.transaction(async (tx) => {
     return [
+      // Each list is the newest PROFILE_LIST_MAX of its kind, so the import on another machine
+      // takes what this one publishes; automatic (promoted) rules are the first to stay behind.
       await tx.select({ address: contacts.address, name: contacts.name })
-        .from(contacts).where(eq(contacts.accountId, accountId)),
+        .from(contacts).where(eq(contacts.accountId, accountId))
+        .orderBy(desc(contacts.createdAt), desc(contacts.id)).limit(PROFILE_LIST_MAX.screener),
       await tx.select({
         kind: rulesTbl.kind, match: rulesTbl.match, destination: rulesTbl.destination,
         priority: rulesTbl.priority, enabled: rulesTbl.enabled, provenance: rulesTbl.provenance,
         subjectContains: rulesTbl.subjectContains, bodyContains: rulesTbl.bodyContains,
-      }).from(rulesTbl).where(eq(rulesTbl.accountId, accountId)),
+      }).from(rulesTbl).where(eq(rulesTbl.accountId, accountId))
+        .orderBy(sql`${rulesTbl.provenance} = 'promoted'`, desc(rulesTbl.createdAt), desc(rulesTbl.id))
+        .limit(PROFILE_LIST_MAX.rules),
       await tx.select({ kind: notifyRulesTbl.kind, target: notifyRulesTbl.target })
-        .from(notifyRulesTbl).where(eq(notifyRulesTbl.accountId, accountId)),
+        .from(notifyRulesTbl).where(eq(notifyRulesTbl.accountId, accountId))
+        .orderBy(desc(notifyRulesTbl.createdAt), desc(notifyRulesTbl.id)).limit(PROFILE_LIST_MAX.notifyRules),
       // `subject` is not selected: the responder is reply-only since 0087 and the column is inert
       // until the 0.15 contract migration drops it. Reading it here would put a dead field back
       // into every published document.
@@ -55,7 +61,8 @@ export async function serializeOrganizerProfile(
         audience: awayResponders.audience, throttle: awayResponders.throttle,
         piles: awayResponders.piles,
       }).from(awayResponders).where(eq(awayResponders.accountId, accountId)),
-      await tx.select({ name: tagsTbl.name }).from(tagsTbl).where(eq(tagsTbl.accountId, accountId)),
+      await tx.select({ name: tagsTbl.name }).from(tagsTbl).where(eq(tagsTbl.accountId, accountId))
+        .orderBy(desc(tagsTbl.createdAt), desc(tagsTbl.id)).limit(PROFILE_LIST_MAX.tagNames),
       // THE SIXTH READ, inside the same snapshot as the other five for the reason the comment
       // above gives: a signature edit committing between two statements would serialize a
       // configuration no store ever held. Scoped by ACCOUNT as well as by mailbox — a predicate
