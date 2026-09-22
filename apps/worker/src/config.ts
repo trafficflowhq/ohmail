@@ -99,6 +99,13 @@ export const MIN_SERVING_NOTHING_MAX_MS = 60_000;
  * and it stays below `syncLagMs` (15 min) so `/health` turns amber before the pager fires. Wall clock.
  */
 export const DEFAULT_STALE_CYCLE_MAX_MS = 480_000;
+/**
+ * `POLL_INTERVAL_MS`'s default and its band. Below the floor the shard's cycle is queued
+ * continuously; at or above {@link DEFAULT_STALE_CYCLE_MAX_MS} an idle deployment reads
+ * `degraded` between two healthy cycles. {@link pollIntervalMsFrom} refuses both at boot.
+ */
+export const DEFAULT_POLL_INTERVAL_MS = 60_000;
+export const MIN_POLL_INTERVAL_MS = 1_000;
 /** Health-server port when the platform does not inject `PORT`. */
 export const DEFAULT_HEALTH_PORT = 8080;
 /** How often the leader re-reads the mailbox roster: registrations, disables, deletions. */
@@ -513,6 +520,25 @@ function cycleLanesFrom(env: NodeJS.ProcessEnv): number {
 }
 
 /**
+ * `POLL_INTERVAL_MS`, refused by name outside its band. It was `Number(raw)`, and `setInterval`
+ * runs an empty, zero, negative, non-numeric or oversized delay every millisecond — a
+ * misconfiguration presenting as a runaway. Unset is the default; set-but-empty is a refusal,
+ * because `POLL_INTERVAL_MS=` in a compose file names a value nobody wrote.
+ */
+function pollIntervalMsFrom(env: NodeJS.ProcessEnv): number {
+  const raw = env.POLL_INTERVAL_MS;
+  if (raw === undefined) return DEFAULT_POLL_INTERVAL_MS;
+  const ms = raw.trim() === "" ? Number.NaN : Number(raw);
+  if (!Number.isInteger(ms) || ms < MIN_POLL_INTERVAL_MS || ms >= DEFAULT_STALE_CYCLE_MAX_MS) {
+    throw new WorkerConfigError("POLL_INTERVAL_MS",
+      `POLL_INTERVAL_MS must be a whole number of milliseconds, at least ${MIN_POLL_INTERVAL_MS} ` +
+      `and below ${DEFAULT_STALE_CYCLE_MAX_MS} (the stale-cycle bound /health reads); unset means ` +
+      `${DEFAULT_POLL_INTERVAL_MS} (got "${raw}")`);
+  }
+  return ms;
+}
+
+/**
  * `TF_SERVING_NOTHING_MAX_MS`, with the floor that keeps the deploy manifest's claim true.
  *
  * A REFUSAL TO BOOT and not a clamp, for `loadAiPorts`' reason: silently raising somebody's 20 s
@@ -778,7 +804,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     // from the API's own variable so the two cannot disagree about one operator's network.
     dialHostGuard: dialHostGuardFromEnv(env),
     kek: kekEnvIdentity(env),
-    pollIntervalMs: Number(env.POLL_INTERVAL_MS ?? 60000),
+    pollIntervalMs: pollIntervalMsFrom(env),
     sentDomain: env.TF_SENT_DOMAIN ?? "trafficflow.ch",
     maxMailboxes: optInt(env, "TF_MAX_MAILBOXES", DEFAULT_MAX_MAILBOXES),
     cycleLanes: cycleLanesFrom(env),
