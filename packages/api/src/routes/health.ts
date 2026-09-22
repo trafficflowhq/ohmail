@@ -1035,14 +1035,15 @@ export const SCHEMA_FK_MARKERS: ReadonlyArray<ForeignKeyMarker> = [
  * since a database carrying it carries every earlier member too.
  */
 export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker> = [
-  /* Mail 0123 — `ohmail/News` joins the away scope's members (the 0.22 folder rename). The
-     needle MOVED from 0101's `ohmail/Screener`: one constraint, one definition, and against a
+  /* Mail 0123_news_pile_check — `ohmail/News` joins the away scope's members (the 0.22 folder
+     rename). The needle MOVED from 0101's `ohmail/Screener`: one constraint, one definition, and against a
      0122 database a 0.22 build's scope save is refused by the old CHECK — the loud direction,
      on a settings pane somebody is using. A database carrying `ohmail/News` carries every
      earlier member too. */
   ["away_responders_piles_closed", "ohmail/News"],
-  /* Mail 0124 — `account_closed`, the wall's park (the needle MOVED from 0105's `clock_off`,
-     which moved from 0102's `read_limited`: one constraint, one definition, and the newest member
+  /* Mail 0124_sync_blocked_reason_account_closed — `account_closed`, the wall's park (the needle
+     MOVED from 0105's `clock_off`, which moved from 0102's `read_limited`: one constraint, one
+     definition, and the newest member
      is strictly the stronger probe — a database carrying it carries every earlier one). Against a
      0123 database the roster's `account_closed` write is refused by the old CHECK, so a parked
      mailbox reads as an ordinary connected one — the silence mail 0029 exists to remove. */
