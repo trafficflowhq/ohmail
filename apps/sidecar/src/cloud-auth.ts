@@ -55,17 +55,17 @@ export interface CloudSessionReading {
  * legacy `unauthorized` stays until every server this build meets names the three; a 401 with no
  * code of ours is a platform's answer and is retried like any other fault.
  */
-export const REFUSAL_CODES: ReadonlySet<string> = new Set([
+const REFUSAL_CODES: ReadonlySet<string> = new Set([
   "refresh_missing", "refresh_expired", "refresh_revoked", "unauthorized",
 ]);
 
 /** Renew at this share of the access window (jittered ±5 %), so expiry never meets a request. */
-export const RENEW_AHEAD_FRACTION = 0.8;
+const RENEW_AHEAD_FRACTION = 0.8;
 /** A fault's retry: from a second, doubling, jittered, never more than a minute apart. */
-export const RETRY_BASE_MS = 1_000;
+const RETRY_BASE_MS = 1_000;
 export const RETRY_CAP_MS = 60_000;
 /** A server-named wait is honoured up to this; a longer header is read as a mistake. */
-export const RETRY_AFTER_MAX_MS = 300_000;
+const RETRY_AFTER_MAX_MS = 300_000;
 
 export const OFFLINE_READ_ONLY = "offline_read_only";
 
@@ -242,7 +242,7 @@ async function envelopeCode(res: Response): Promise<string | null> {
 }
 
 /** `Retry-After` in milliseconds — seconds or an HTTP date — or null when absent or unreadable. */
-export function retryAfterMs(res: Response, nowMs: number): number | null {
+function retryAfterMs(res: Response, nowMs: number): number | null {
   const raw = res.headers.get("retry-after")?.trim() ?? "";
   if (raw === "") return null;
   const seconds = Number(raw);

@@ -1,5 +1,5 @@
 import { RELAY_ALLOWLIST, relayVerdict } from "@trafficflow/api/relay-allowlist";
-import { offlineResponse, OFFLINE_READ_ONLY, type CloudAuth } from "./cloud-auth.js";
+import { offlineResponse, type CloudAuth } from "./cloud-auth.js";
 import type { CloudMirror } from "./cloud-mirror.js";
 import type { Diagnostic } from "./log.js";
 
@@ -16,9 +16,6 @@ import type { Diagnostic } from "./log.js";
 
 /** The relay carries this many routes. Read at construction so an empty projection cannot pass. */
 const ALLOWLIST_MIN = 100;
-
-/** The error `code` a forwarded route answers with while the hosted account is unreachable. */
-export { OFFLINE_READ_ONLY };
 
 /** How long the echo-await drives the mirror before answering anyway. */
 export const DEFAULT_ECHO_DEADLINE_MS = 5_000;

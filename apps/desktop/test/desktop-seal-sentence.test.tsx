@@ -13,14 +13,12 @@ import type { EngineStatus } from "../src/bridge-fetch.js";
 /**
  * A SEAL THAT DID NOT LAND IS A SENTENCE IN THE ACCOUNT PANE, not a line in the engine log.
  *
- * The engine's `persist` swallowed a refused seal while the door reported the rotation done, so
- * the first anybody heard of it was a password prompt after the next restart. `/health` carries
- * `sealed` now and the gate hands it here; this is the rendering half of that contract, asked of
- * the DOM rather than of this file's source.
+ * `/health` carries `sealed` and the gate hands it here; this is the rendering half, asked of the
+ * DOM. The note's claim is the engine's: a refused save withholds the renewal and a relaunch
+ * resumes the saved one, so nobody is asked to sign in again.
  *
- * MUTATIONS WATCHED RED: the pane rendering the note unconditionally → the healthy case reddens;
- * the note removed → the refused case reddens. The note's claim is the engine's: a refused save
- * withholds the renewal and a relaunch resumes the saved one, so nobody is asked to sign in again.
+ * MUTATIONS WATCHED RED: the note rendered unconditionally → the healthy case reddens; the note
+ * removed → the refused case; Try again not reaching the engine → the press case.
  */
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
