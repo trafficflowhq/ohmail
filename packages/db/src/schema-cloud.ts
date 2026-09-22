@@ -673,6 +673,13 @@ export const attachmentStaging = pgTable("attachment_staging", {
   contentType: text("content_type").notNull(),
   /** The DECLARED size the mint refused against. Re-measured after download; see the header. */
   sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
+  /**
+   * WHAT THE BYTES WERE DECLARED TO BE — `sha256(content)` as 64 lowercase hex (cloud 0041).
+   * NULL and a value are different states, not one: NULL is a client that stated no digest (every
+   * client predating the column), and the send then checks only the size it always checked; a
+   * value is a promise the download is hashed against, and a mismatch refuses the send.
+   */
+  contentSha256: text("content_sha256"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   /** The retention promise. The sweep's whole predicate, and what the privacy copy states. */
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
@@ -680,6 +687,12 @@ export const attachmentStaging = pgTable("attachment_staging", {
   uqPath: unique("attachment_staging_object_path_unique").on(t.objectPath),
   ixAccount: index("attachment_staging_account_idx").on(t.accountId),
   ixExpires: index("attachment_staging_expires_idx").on(t.expiresAt),
+  /* The shape, in the database: a malformed digest cannot be stored and then fail to match for
+     the wrong reason. Mirrors cloud 0041, which adds it NOT VALID (a growth table). */
+  ckDigest: check(
+    "attachment_staging_content_sha256_hex",
+    sql`${t.contentSha256} is null or ${t.contentSha256} ~ '^[0-9a-f]{64}$'`,
+  ),
 }));
 
 /**

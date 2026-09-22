@@ -186,6 +186,12 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // on `GET /account/access` is best-effort by contract (a banner must not fail the wall's read),
   // so its absence is silent twice over. `503 schema_incomplete` at the deploy gate names it.
   ["account_lifecycle_notices", "sent_at"],
+  // cloud 0041_attachment_staging_digest — the column the send's content check READS. Without it
+  // the mint's insert 42703s, so every staged send fails at the upload step on a deployment whose
+  // API has taken the change and whose database has not; the marker turns that into a 503 at the
+  // deploy gate. The CHECK beside it is not probed separately: it is created in the same
+  // migration as the column, so the column's presence implies it.
+  ["attachment_staging", "content_sha256"],
 ] as const;
 
 /**
@@ -302,7 +308,7 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * FOREIGN-KEY-only migration is probed by its KEY marker, which is what 0038 added the class for.
  * The tag asserts reconciliation against the newest entry.
  */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0040_account_lifecycle_notices";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0041_attachment_staging_digest";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

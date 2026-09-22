@@ -183,6 +183,13 @@
       "when": 1791328224223,
       "tag": "0040_account_lifecycle_notices",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1791328224224,
+      "tag": "0041_attachment_staging_digest",
+      "breakpoints": true
     }
   ]
 }

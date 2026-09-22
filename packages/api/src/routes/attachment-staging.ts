@@ -2,6 +2,7 @@ import {
   ServiceError, effectiveAttachmentCap, SEND_ATTACHMENT_FIELD_MAX_CHARS,
   SEND_STAGED_OBJECT_MAX_BYTES,
 } from "@trafficflow/services/mail";
+import { STAGED_CONTENT_DIGEST_RE } from "@trafficflow/db/cloud";
 import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
@@ -23,6 +24,7 @@ interface MintBody {
   filename?: unknown;
   contentType?: unknown;
   sizeBytes?: unknown;
+  contentSha256?: unknown;
 }
 
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
@@ -86,6 +88,18 @@ export const attachmentStagingRoutes: Route[] = [
       if (!Number.isFinite(sizeBytes) || sizeBytes <= 0 || !Number.isInteger(sizeBytes)) {
         throw new ServiceError("validation_failed", 400, "sizeBytes must be a positive integer");
       }
+      /**
+       * WHAT THE BYTES WILL BE (cloud 0041). OPTIONAL, and absent is a state of its own: a client
+       * that predates the column — or a runtime with no SHA-256 to hand — states none and is
+       * judged at the send on size alone, as it always was. A stated one is held: the send hashes
+       * what it downloads and refuses a mismatch. The shape is the column's own.
+       */
+      const digest = typeof body.contentSha256 === "string" ? body.contentSha256.trim() : null;
+      if (digest !== null && !STAGED_CONTENT_DIGEST_RE.test(digest)) {
+        throw new ServiceError(
+          "validation_failed", 400, "contentSha256 must be 64 lowercase hex characters",
+        );
+      }
 
       // THE SENDING MAILBOX DECIDES THE CEILING, so the client must name it. Read through
       // `MailboxService` rather than the table, so the account scoping is the one every other
@@ -105,7 +119,7 @@ export const attachmentStagingRoutes: Route[] = [
 
       const grant = await makeStaging(deps.db).mint({
         accountId: ctx.accountId, filename, contentType, sizeBytes, now: ctx.now(),
-        idempotencyKey,
+        idempotencyKey, contentSha256: digest,
       });
       return jsonResponse(grant, { status: 201 });
     },

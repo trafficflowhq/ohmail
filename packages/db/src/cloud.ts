@@ -235,7 +235,7 @@ export {
 export {
   createStagingTicket, createStagingTicketWithinQuota, outstandingStagingUsage, stagingTicketId,
   readStagingTickets, expiredStagingTickets, deleteStagingTickets,
-  attachmentStagingExpiry, ATTACHMENT_STAGING_TTL_MS,
+  attachmentStagingExpiry, ATTACHMENT_STAGING_TTL_MS, STAGED_CONTENT_DIGEST_RE,
   makeSupabaseStagingStorage, makeS3StagingStorage, s3StagingObjectUrl, stagingObjectPath,
   sweepExpiredStaging, drainExpiredStaging, sweepExpiredStagingFor,
   reconcileStagingOrphans, reconcileStagingOrphansFor, stagingTicketsPresent, stagingTicketIdOf,

@@ -83,6 +83,12 @@ export interface AttachmentStagingPort {
      * a second grant against a bucket somebody pays for.
      */
     idempotencyKey: string;
+    /**
+     * `sha256` of the bytes this client will upload, 64 lowercase hex, or null for "none stated"
+     * — every client predating cloud 0041. Held at the send: a stated digest is compared against
+     * what is downloaded and a mismatch refuses.
+     */
+    contentSha256?: string | null;
   }): Promise<StagedUploadGrantWire>;
   /**
    * The two-phase staged-bytes source `SendService` reads through — `declare` (metadata, so an
@@ -92,7 +98,10 @@ export interface AttachmentStagingPort {
   source: {
     declare(
       accountId: string, ids: readonly string[],
-    ): Promise<Array<{ id: string; sizeBytes: number; expiresAt: Date; filename: string; contentType: string }>>;
+    ): Promise<Array<{
+      id: string; sizeBytes: number; expiresAt: Date; filename: string; contentType: string;
+      contentSha256: string | null;
+    }>>;
     fetch(
       accountId: string, ids: readonly string[], now: Date,
     ): Promise<Array<{ filename: string; contentType: string; content: Buffer }>>;

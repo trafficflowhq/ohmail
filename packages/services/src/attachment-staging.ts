@@ -8,10 +8,10 @@
  * the declared total, downloads and RE-MEASURES — the declared size is a client assertion. SWEEP
  * deletes object then row, the only order that cannot orphan bytes.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   createStagingTicketWithinQuota, readStagingTickets, stagingObjectPath, stagingTicketId,
-  DEFAULT_STAGING_QUOTA,
+  DEFAULT_STAGING_QUOTA, STAGED_CONTENT_DIGEST_RE,
   StagedObjectTooLargeError,
   type AttachmentStagingStorage, type StagingQuota, type StagingQuotaRefusal,
 } from "@trafficflow/db/cloud";
@@ -60,7 +60,12 @@ export type StagedResolutionFailure =
     actual: number;
     /** The read was cut off at the ceiling, so `actual` is a floor rather than the size. */
     abandoned?: true;
-  };
+  }
+  /**
+   * The bytes at the object path are not the bytes the ticket declared. Only reachable for a
+   * ticket that DECLARED a digest — an older client states none and is judged on size alone.
+   */
+  | { reason: "digest_mismatch"; id: string };
 
 /**
  * Turn staged references into bytes. The declared total is checked by the caller; this is the
@@ -76,7 +81,7 @@ export async function resolveStagedAttachments(
   storage: AttachmentStagingStorage,
   tickets: ReadonlyArray<{
     id: string; objectPath: string; filename: string; contentType: string;
-    sizeBytes: number; expiresAt: Date;
+    sizeBytes: number; contentSha256: string | null; expiresAt: Date;
   }>,
   requestedIds: readonly string[],
   now: Date,
@@ -128,6 +133,17 @@ export async function resolveStagedAttachments(
         ok: false,
         failure: { reason: "size_mismatch", id, declared: t.sizeBytes, actual: bytes.byteLength },
       };
+    }
+    /**
+     * WHAT IS SENT IS WHAT WAS DECLARED. The size was the only thing re-measured, and a different
+     * file of the same length passes that — the presigned PUT signs the content type and nothing
+     * about the content, so between the mint and the send anything with a grant could put other
+     * bytes at the path. A stated digest is a promise; this is where it is held. Compared as a
+     * digest, not as bytes: the object is already in memory and hashing it costs one pass.
+     */
+    if (typeof t.contentSha256 === "string"
+      && createHash("sha256").update(bytes).digest("hex") !== t.contentSha256) {
+      return { ok: false, failure: { reason: "digest_mismatch", id } };
     }
     out.push({
       ticketId: t.id,
@@ -190,6 +206,12 @@ export function makeAttachmentStagingPort(deps: {
   mint(input: {
     accountId: string; filename: string; contentType: string; sizeBytes: number; now: Date;
     /**
+     * `sha256` of the bytes this client will upload, 64 lowercase hex — or null/absent for "this
+     * client states none", which is every client predating cloud 0041. Held at the send: the
+     * download is hashed and a mismatch refuses rather than delivering another file.
+     */
+    contentSha256?: string | null;
+    /**
      * THE CALLER'S `Idempotency-Key`, REQUIRED — see {@link stagingTicketId}. The ticket's id is
      * this key's digest, so a retry after a lost response resolves to the SAME row and the SAME
      * object path instead of minting a second grant against a bucket somebody pays for.
@@ -199,7 +221,10 @@ export function makeAttachmentStagingPort(deps: {
   source: {
     declare(
       accountId: string, ids: readonly string[],
-    ): Promise<Array<{ id: string; sizeBytes: number; expiresAt: Date; filename: string; contentType: string }>>;
+    ): Promise<Array<{
+      id: string; sizeBytes: number; expiresAt: Date; filename: string; contentType: string;
+      contentSha256: string | null;
+    }>>;
     fetch(accountId: string, ids: readonly string[], now: Date): Promise<SendAttachment[]>;
   };
 } {
@@ -217,6 +242,16 @@ export function makeAttachmentStagingPort(deps: {
       const idempotencyKey = (input.idempotencyKey ?? "").trim();
       if (!idempotencyKey) {
         throw new Error("attachment staging mint requires an idempotencyKey — it is the ticket's identity");
+      }
+      /* THE DECLARED DIGEST, VALIDATED HERE TOO. The route checks the shape, and so does this:
+         the column CHECKs it, so a caller that reached the port another way would otherwise take
+         a constraint violation instead of a refusal it can read. Absent is a state, not a
+         default — see the parameter. */
+      const digest = input.contentSha256 ?? null;
+      if (digest !== null && !STAGED_CONTENT_DIGEST_RE.test(digest)) {
+        throw new ServiceError(
+          "validation_failed", 400, "contentSha256 must be 64 lowercase hex characters",
+        );
       }
       // THE ID IS THE KEY'S DIGEST, not a fresh random. `newId` survives only as the test seam it
       // was introduced as — a fixture that wants a deterministic path without inventing a key.
@@ -236,6 +271,7 @@ export function makeAttachmentStagingPort(deps: {
           filename: input.filename,
           contentType: input.contentType,
           sizeBytes: input.sizeBytes,
+          contentSha256: digest,
           now: input.now,
         }, quota),
       );
@@ -267,9 +303,12 @@ export function makeAttachmentStagingPort(deps: {
         // stored and never content, and the send path folds them into its duplicate fingerprint —
         // which cannot use the ticket id, because a re-send under a fresh key re-stages and mints
         // new ids for the same files. See `StagedAttachmentSource.declare`.
+        /* The DECLARATION rides along too (cloud 0041). Nothing folds it into the duplicate
+           fingerprint yet — widening that claim is its own change, and a fingerprint that
+           silently changed shape would read every in-flight send as a new one. */
         return rows.map((r) => ({
           id: r.id, sizeBytes: r.sizeBytes, expiresAt: r.expiresAt,
-          filename: r.filename, contentType: r.contentType,
+          filename: r.filename, contentType: r.contentType, contentSha256: r.contentSha256,
         }));
       },
       async fetch(accountId, ids, now) {
@@ -306,6 +345,11 @@ export function makeAttachmentStagingPort(deps: {
             throw new ServiceError(
               "payload_too_large", 413,
               "an uploaded attachment is larger than it was declared to be",
+            );
+          case "digest_mismatch":
+            throw new ServiceError(
+              "conflict", 409,
+              "an uploaded attachment is not the file it was declared to be. Attach it again and resend.",
             );
           default:
             throw new ServiceError(

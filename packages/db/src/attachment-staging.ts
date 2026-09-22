@@ -27,6 +27,13 @@ import { dialect } from "./dialect/index.js";
 export const ATTACHMENT_STAGING_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** `expires_at` for a ticket minted now. */
+/**
+ * THE DIGEST SHAPE, IN ONE PLACE — what `content_sha256` is CHECKed to by cloud 0041, what the
+ * mint route validates a caller's declaration against, and what the send compares. Three readers,
+ * one rule: a route that accepted a looser spelling would store a value the column refuses.
+ */
+export const STAGED_CONTENT_DIGEST_RE = /^[0-9a-f]{64}$/;
+
 export function attachmentStagingExpiry(now: Date): Date {
   return new Date(now.getTime() + ATTACHMENT_STAGING_TTL_MS);
 }
@@ -64,16 +71,28 @@ export interface StagingTicketInput {
   contentType: string;
   /** The DECLARED size, already refused against the cap by the caller. */
   sizeBytes: number;
+  /**
+   * `sha256(content)` as 64 lowercase hex, or null/absent for "this caller stated none". The
+   * column is CHECKed to that shape, so the caller validates before it gets here. Optional
+   * because absent and null are the SAME state here — no declaration — and a fixture that has
+   * nothing to declare should not have to say so. See {@link StagingTicket}.
+   */
+  contentSha256?: string | null;
   now: Date;
 }
 
-/** One staged ticket as every reader sees it. */
+/**
+ * One staged ticket as every reader sees it. `contentSha256` is the DECLARATION and null is a
+ * state of its own — "no digest was stated" — never "the bytes hash to nothing": the send
+ * compares only when there is something to compare against.
+ */
 export interface StagingTicket {
   id: string;
   objectPath: string;
   filename: string;
   contentType: string;
   sizeBytes: number;
+  contentSha256: string | null;
   expiresAt: Date;
 }
 
@@ -101,6 +120,7 @@ export async function createStagingTicket(tx: Tx, i: StagingTicketInput): Promis
     filename: i.filename,
     contentType: i.contentType,
     sizeBytes: i.sizeBytes,
+    contentSha256: i.contentSha256 ?? null,
     createdAt: i.now,
     expiresAt: attachmentStagingExpiry(i.now),
   }).returning({
@@ -109,6 +129,7 @@ export async function createStagingTicket(tx: Tx, i: StagingTicketInput): Promis
     filename: attachmentStaging.filename,
     contentType: attachmentStaging.contentType,
     sizeBytes: attachmentStaging.sizeBytes,
+    contentSha256: attachmentStaging.contentSha256,
     expiresAt: attachmentStaging.expiresAt,
   });
   if (!row) throw new Error("attachment staging ticket insert returned no row");
@@ -255,6 +276,7 @@ export async function createStagingTicketWithinQuota(
     filename: attachmentStaging.filename,
     contentType: attachmentStaging.contentType,
     sizeBytes: attachmentStaging.sizeBytes,
+    contentSha256: attachmentStaging.contentSha256,
     expiresAt: attachmentStaging.expiresAt,
   }).from(attachmentStaging)
     .where(and(eq(attachmentStaging.id, i.id), eq(attachmentStaging.accountId, i.accountId)))
@@ -311,6 +333,7 @@ export async function readStagingTickets(
     filename: attachmentStaging.filename,
     contentType: attachmentStaging.contentType,
     sizeBytes: attachmentStaging.sizeBytes,
+    contentSha256: attachmentStaging.contentSha256,
     expiresAt: attachmentStaging.expiresAt,
   }).from(attachmentStaging)
     .where(and(
