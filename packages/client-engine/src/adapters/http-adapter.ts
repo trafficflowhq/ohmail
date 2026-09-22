@@ -2325,18 +2325,12 @@ export class HttpAdapter implements EngineAdapter {
   }
 
   /**
-   * HAS THIS KEY ALREADY BEEN PRESENTED TO THE SEND — a READ, before anything is re-uploaded.
-   *
-   * A retry used to re-upload every attachment first, so a storage refusal — an expired ticket, a
-   * throttled bucket — threw away the only handle on a message that may already have gone, and
-   * the person was invited to compose it again under a NEW key. Asking first turns that into the
-   * ordinary replay.
-   *
-   * EVERY UNCERTAIN ANSWER IS `false`, which is what this client did before the route existed: a
-   * server that predates it answers 404, an error answers nothing, and both mean "stage and
-   * send". The only reading that skips the upload is an explicit `found: true`, and skipping it
-   * is safe exactly then — the reservation exists, so the send below is answered from it rather
-   * than delivering a message without its files.
+   * HAS THIS KEY ALREADY BEEN PRESENTED TO THE SEND — asked before anything is re-uploaded, so a
+   * storage refusal on a retry cannot orphan a message that may already have gone. EVERY
+   * UNCERTAIN ANSWER IS `false` — a server predating the route answers 404, an error answers
+   * nothing — and `false` stages exactly as this client always did. Only an explicit `found:
+   * true` skips the upload, and skipping is safe exactly then: the reservation exists, so the
+   * send is answered from it rather than delivering a message without its files.
    */
   private async keyWasPresented(draftId: string, sendKey: string): Promise<boolean> {
     let res: Response;

@@ -116,19 +116,11 @@ export function unverifiedMayReach(cost: unknown): boolean {
 
 /**
  * WHAT A SECOND ARRIVAL OF THIS REQUEST COSTS — declared by every route that spends, beside the
- * `cost` it qualifies.
- *
- * `POST /attachments/staging` minted a durable row and a grant to put bytes in a bucket somebody
- * pays for, and it shipped with no key: a retry after a lost response minted a second ticket and
- * uploaded a second copy. The route being wrong was the small half; the large half was that the
- * disposition lived nowhere the next author would look. A frozen list in a test file is an
- * inventory of what somebody once counted — this is a DECLARATION on the route itself, which the
- * author of the next one has to write, and `idempotency-census.test.ts` refuses a spender that
- * carries neither this nor `options.idempotent`.
- *
- * {@link Route.replay} is absent on a route marked `options.idempotent`: there, the middleware
- * replays a stored response and the service claims the key inside its own transaction, which is
- * the disposition. Two spellings of one fact are refused by the census.
+ * `cost` it qualifies, so the author of the next spender writes it where they are typing and a
+ * reader of the route can check it. A frozen list in a test file only recorded what somebody
+ * once counted. `idempotency-census.test.ts` refuses a spender carrying neither this nor
+ * `options.idempotent` — which IS the disposition where it is set (the middleware replays a
+ * stored response, the service claims the key in its own transaction) — and refuses both.
  */
 export type ReplayDisposition =
   /**

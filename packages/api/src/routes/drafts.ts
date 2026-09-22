@@ -274,16 +274,11 @@ export const draftsRoutes: Route[] = [
   },
   {
     /**
-     * WHAT HAPPENED UNDER THIS KEY — the question a client asks BEFORE it re-uploads anything.
-     *
-     * A staged send's retry used to re-upload every attachment before the key was ever presented,
-     * so a storage refusal threw away the only handle on a message that may already have gone and
-     * invited a resend under a NEW key. This is how the key goes first. A READ: it writes
-     * nothing, reserves nothing and cannot send — which is why it is a route rather than a flag
-     * on the send, where a server predating it would have sent the message without its files. A
-     * server that predates THIS answers 404, and the client then does what it always did.
-     *
-     * The key is the `Idempotency-Key` header, as on the send itself; 400 without one.
+     * WHAT HAPPENED UNDER THIS KEY — asked BEFORE a staged retry re-uploads anything, so a storage
+     * refusal cannot throw away the only handle on a message that may already have gone. A READ:
+     * it writes nothing, reserves nothing and cannot send, which is why it is a route and not a
+     * flag on the send — a server predating a flag would have sent the message without its files,
+     * and one predating this answers 404. The key is the `Idempotency-Key` header; 400 without.
      */
     method: "GET",
     pattern: "/drafts/:id/send-attempt",
