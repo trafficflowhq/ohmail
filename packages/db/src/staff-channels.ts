@@ -113,6 +113,8 @@ export const AUDIT_LOG_ACTIONS: readonly string[] = [
   "workflow_step",
   // ── the Screener's held-release press (`packages/services/src/held-release-service.ts`) ───
   "screener.held_release",
+  // ── the Screener's undecided-sender press (`packages/services/src/ohbox-unscreened-service.ts`) ─
+  "screener.unscreened_sweep",
 ];
 
 const AUDIT_LOG_ACTION_SET: ReadonlySet<string> = new Set(AUDIT_LOG_ACTIONS);
