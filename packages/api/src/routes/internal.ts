@@ -955,11 +955,12 @@ export const internalRoutes: Route[] = [
     /**
      * `GET /internal/account-lifecycle/run` — the wall's nightly pass (cloud 0040): the trial,
      * closure and erasure-week notices, idempotent by the notices PK on the plane's own anchors,
-     * and the erasure once `erasureAt` + a day of slack has passed — through `deleteAccount`,
-     * exactly as `DELETE /account` runs it, the only other caller. The reaper's shape: GET,
-     * either secret, 404 unarmed. Unmetered hosts answer 200 `{skipped}` — no plane, no
-     * lifecycle, nothing owed. Overlapping pokes are safe: every notice is claimed by PK insert
-     * and the erasure is idempotent by `accounts.erased_at`.
+     * and the erasure once `erasureAt` + a day of slack has passed AND that date clears the
+     * plane's own lifecycle epoch — through `deleteAccount`, exactly as `DELETE /account` runs
+     * it, the only other caller. The reaper's shape: GET, either secret, 404 unarmed. Unmetered
+     * hosts answer 200 `{skipped}` — no plane, no lifecycle, nothing owed. Overlapping pokes are
+     * safe: every notice is claimed by PK insert and the erasure is idempotent by
+     * `accounts.erased_at`.
      */
     method: "GET",
     pattern: ACCOUNT_LIFECYCLE_CRON_PATH,
