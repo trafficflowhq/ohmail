@@ -1,11 +1,13 @@
-import { and, asc, eq, gt, sql } from "drizzle-orm";
+import { and, asc, eq, gt, sql, type SQL } from "drizzle-orm";
 import {
   accountSettings, approvals, auditLog, drafts, folderState, mailboxes,
-  messageBodies, messageStates, messages, rules as rulesTbl, recordChange, type Tx, auditAction,} from "@trafficflow/db";
+  messageBodies, messageStates, messages, rules as rulesTbl, recordChange,
+  weAnsweredThisSenderWhere, type Tx, auditAction,} from "@trafficflow/db";
 import {
   migrationBulkPlacement, silentLogger,
   type Destination, type Logger, type NormalizedMessage,
 } from "@trafficflow/core";
+import { dialect } from "@trafficflow/db/dialect";
 import { ruleInputOf, upsertDesired } from "./rule-pass.js";
 
 /* SCREENER AUTO-APPLY — file the OBVIOUS bulk out of the Screener when the account opted in. The Screener
@@ -319,17 +321,15 @@ async function selectCandidates(
        where a.message_id = ${messages.id} and a.status <> 'pending'
     )`,
   ];
-  // 5 — the user replied from their own mail client. Guarded on a non-empty list (`in ()` is a
-  // syntax error) and a non-NULL thread.
-  if (opts.ownAddresses.length > 0) {
-    filters.push(sql`not exists (
-      select 1 from ${messages} sent
-       where sent.account_id = ${messages.accountId}
-         and sent.thread_id = ${messages.threadId}
-         and ${messages.threadId} is not null
-         and lower(sent.from_address) in ${sql`(${sql.join(opts.ownAddresses.map((a) => sql`${a}`), sql`, `)})`}
-    )`);
-  }
+  /* 5 — THE USER ANSWERED THIS SENDER, through `weAnsweredThisSenderWhere` like its two siblings.
+   * This pass asked plain thread membership and did not exclude the away responder AT ALL, so a
+   * machine's reply on a thread counted as the person's engagement and held mail at the gate. */
+  filters.push(sql`not ${weAnsweredThisSenderWhere(dialect(t), {
+    accountId: messages.accountId as unknown as SQL,
+    threadId: messages.threadId as unknown as SQL,
+    fromAddress: messages.fromAddress as unknown as SQL,
+    ownAddresses: opts.ownAddresses,
+  })}`);
   if (opts.afterId) filters.push(gt(messages.id, sql`${opts.afterId}::uuid`));
 
   const rows = await t.select({

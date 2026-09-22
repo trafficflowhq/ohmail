@@ -18,6 +18,9 @@ export * from "./schema-mail.js";
 // the worker's pass both count by. A pure predicate over the mail schema, nothing more.
 export { junkSweepCandidateWhere, JUNK_SWEEP_SOURCE_PILE } from "./junk-sweep.js";
 export { autoReplyByUsWhere } from "./auto-reply-by-us.js";
+// "Did the person answer this sender" — ONE spelling, read by ohbox-tidy, rule-retro and
+// screener-auto. See the module: three copies asked thread membership instead.
+export { weAnsweredThisSenderWhere } from "./we-answered.js";
 export {
   readDrainCursor, writeDrainCursor, UNSUB_DRAIN_PASS, type DrainCursor,
 } from "./unsubscribe-drain-cursor.js";

@@ -1,7 +1,8 @@
-import { and, asc, eq, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, isNull, or, sql, type SQL } from "drizzle-orm";
 import {
-  accountSettings, approvals, auditLog, autoReplyByUsWhere, drafts, folderState, mailboxes,
-  messageBodies, messageStates, messages, recordChange, type Tx, auditAction,} from "@trafficflow/db";
+  accountSettings, approvals, auditLog, drafts, folderState, mailboxes,
+  messageBodies, messageStates, messages, recordChange, weAnsweredThisSenderWhere,
+  type Tx, auditAction,} from "@trafficflow/db";
 import {
   authVerdictFromHeaders, evaluateRules,
   migrationBulkPlacement, resolveOhboxPolicy, silentLogger,
@@ -627,30 +628,18 @@ function candidateFilters(d: Dialect, opts: { accountId: string; ownAddresses: r
        where a.message_id = ${messages.id} and a.status <> 'pending'
     )`,
   ];
-  /* 4 — THE USER replied from their own mail client. A MACHINE'S REPLY IS NOT THAT.
-   * Guarded on a non-empty list (`in ()` is a syntax error) and a non-NULL thread. The
-   * `and not autoReplyByUsWhere(...)` is the whole fix: this clause asks "did they already deal with
-   * this", and the away responder answering on their behalf is not them dealing with it. Without it every
-   * message the responder replied to became permanently untouchable — bulk mail pinned in the Ohbox
-   * because we answered it (the reported shape: Reads mail arriving in the Ohbox). It NARROWS the
-   * exclusion, so it can only admit more candidates; a thread carrying the person's OWN reply still
-   * excludes the message, and `auto-reply-not-engagement.pg.test.ts` pins both halves.
+  /* 4 — THE USER ANSWERED THIS SENDER. A MACHINE'S REPLY IS NOT THAT, AND NEITHER IS THE THREAD.
+   * `weAnsweredThisSenderWhere` is the ONE spelling — `rule-retro` and `screener-auto` ask the
+   * same question and each used to answer it its own way. It NARROWS this exclusion twice over
+   * (the away responder is not the person; a reply addressed to somebody else on the thread is
+   * not a reply to this sender), so it can only admit more candidates.
    */
-  if (opts.ownAddresses.length > 0) {
-    filters.push(sql`not exists (
-      select 1 from ${messages} sent
-       where sent.account_id = ${messages.accountId}
-         and sent.thread_id = ${messages.threadId}
-         and ${messages.threadId} is not null
-         and lower(sent.from_address) in ${sql`(${sql.join(opts.ownAddresses.map((a) => sql`${a}`), sql`, `)})`}
-         and not ${autoReplyByUsWhere(d, {
-           accountId: sql`sent.account_id`,
-           id: sql`sent.id`,
-           fromAddress: sql`sent.from_address`,
-           messageIdHeader: sql`sent.message_id_header`,
-         })}
-    )`);
-  }
+  filters.push(sql`not ${weAnsweredThisSenderWhere(d, {
+    accountId: messages.accountId as unknown as SQL,
+    threadId: messages.threadId as unknown as SQL,
+    fromAddress: messages.fromAddress as unknown as SQL,
+    ownAddresses: opts.ownAddresses,
+  })}`);
   return filters;
 }
 

@@ -1,7 +1,7 @@
-import { and, asc, eq, gt, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 import {
-  approvals, auditAction, auditLog, autoReplyByUsWhere, drafts, folderState, mailboxes, messageBodies,
-  messageStates, messages, recordChange, rules as rulesTbl, type Tx,
+  approvals, auditAction, auditLog, drafts, folderState, mailboxes, messageBodies,
+  messageStates, messages, recordChange, rules as rulesTbl, weAnsweredThisSenderWhere, type Tx,
 } from "@trafficflow/db";
 import {
   DEFAULT_OHBOX_POLICY, DESTINATIONS, authVerdictFromHeaders, evaluateRules,
@@ -618,30 +618,22 @@ async function selectCandidates(
        where a.message_id = ${messages.id} and a.status <> 'pending'
     )`,
   ];
-  /* 5 — THE USER replied from their own mail client. A MACHINE'S reply is not that.
-   * Guarded on a non-empty address list (`in ()` is a syntax error) and skipped for a NULL
-   * `thread_id`. `and not autoReplyByUsWhere(...)`: an automatic reply looks like a person's act
-   * and is not, so a pressed retro would otherwise skip exactly the mail the responder answered.
+  /* 5 — THE USER ANSWERED THIS SENDER, through the one question its two siblings ask.
+   * A machine's reply is not the person's, and neither is a reply they wrote to somebody else on
+   * the thread — `weAnsweredThisSenderWhere` carries both narrowings and the reasoning.
    * NOT ON A RELEASE RUN: those candidates are all gate-settled rows a person was shown by name
    * and count before pressing "Release N" — the press outranks a reply somewhere in the thread
    * (measured: this exclusion kept ALL 57 offered rows on a live account, 101 presses moved zero;
    * `heldReleaseSummary` never applies it, so skipping it here is what makes the number offered
    * the number that moves). The message-level exclusions above bind a release run unchanged.
    */
-  if (opts.ownAddresses.length > 0 && !isReleaseRun(rule)) {
-    filters.push(sql`not exists (
-      select 1 from ${messages} sent
-       where sent.account_id = ${messages.accountId}
-         and sent.thread_id = ${messages.threadId}
-         and ${messages.threadId} is not null
-         and lower(sent.from_address) in ${sql`(${sql.join(opts.ownAddresses.map((a) => sql`${a}`), sql`, `)})`}
-         and not ${autoReplyByUsWhere(dialect(t), {
-           accountId: sql`sent.account_id`,
-           id: sql`sent.id`,
-           fromAddress: sql`sent.from_address`,
-           messageIdHeader: sql`sent.message_id_header`,
-         })}
-    )`);
+  if (!isReleaseRun(rule)) {
+    filters.push(sql`not ${weAnsweredThisSenderWhere(dialect(t), {
+      accountId: messages.accountId as unknown as SQL,
+      threadId: messages.threadId as unknown as SQL,
+      fromAddress: messages.fromAddress as unknown as SQL,
+      ownAddresses: opts.ownAddresses,
+    })}`);
   }
   if (opts.afterId) filters.push(gt(messages.id, sql`${opts.afterId}::uuid`));
 
