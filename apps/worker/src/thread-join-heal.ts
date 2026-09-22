@@ -2,7 +2,8 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { drafts, mailboxes, messages, recordChanges, threadNotes, threads, type LedgerTx, type Tx } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  conversationJoinVerdict, counterpartyEvidence, isSentFolderPath, mergeCounterpartyEvidence,
+  asAuthVerdict, conversationJoinVerdict, counterpartyEvidence, isSentFolderPath,
+  mergeCounterpartyEvidence,
   silentLogger,
   type ConversationJoinFacts, type CounterpartyEvidence, type EmailAddress, type Logger,
 } from "@trafficflow/core/mail";
@@ -492,7 +493,7 @@ async function threadFactsOf(db: Tx, threadId: string): Promise<ConversationJoin
 
   const page = await db.select({
     from: messages.fromAddress, to: messages.toAddresses, cc: messages.ccAddresses,
-    locator: messages.nativeLocator,
+    locator: messages.nativeLocator, authVerdict: messages.authVerdict,
   }).from(messages)
     .where(living)
     .orderBy(sql`${messages.date} asc nulls last`, asc(messages.createdAt))
@@ -501,10 +502,13 @@ async function threadFactsOf(db: Tx, threadId: string): Promise<ConversationJoin
   // WHO put each address on this conversation, not merely that it appears — `sender-headers.ts`
   // carries the rule. `ownAuthored` reads the SERVER's own locator: a message the mailbox filed
   // in Sent is one we wrote, so its recipients are our record of who we write to. The `From`
-  // header is never asked, because a sender writes it.
+  // header is never asked, because a sender writes it — and `auth_verdict` is what the sending
+  // side said about that header, so a message whose own provider called the author forged
+  // contributes a claim rather than a correspondent.
   const correspondents = counterpartyEvidence(page.map((m) => ({
     ownAuthored: isSentFolderPath((m.locator as { folder?: string } | null)?.folder ?? ""),
     from: m.from,
+    authVerdict: asAuthVerdict(m.authVerdict),
     recipients: [
       ...((m.to as EmailAddress[] | null) ?? []),
       ...((m.cc as EmailAddress[] | null) ?? []),

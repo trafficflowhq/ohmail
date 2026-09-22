@@ -474,6 +474,11 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
       list.push({
         ownAuthored: isOwnSent(m),
         from: m.from?.address,
+        // NOBODY ASKED, and that is the honest value rather than a convenience: the wire
+        // `MessageDTO` carries no `authVerdict`, so a mirror row has no verdict to state. Gap row
+        // COUNTERPARTY-VERDICT-NOT-ON-THE-WIRE. `null` is the permissive member, so this reads
+        // exactly as it did before — and cannot be mistaken for "the provider said it was fine".
+        authVerdict: null,
         recipients: [...(m.to ?? []), ...(m.cc ?? [])].map((w) => w?.address),
       });
     }

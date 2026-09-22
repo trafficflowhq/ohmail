@@ -220,11 +220,16 @@ export function addressBook(
     ...rows.map((m) => ({
       ownAuthored: isOwnSent(m),
       from: m.from?.address,
+      // See `consent-cutline.ts`: the wire carries no verdict, so a mirror row has none to
+      // state. `null` is "nobody asked", never "the provider vouched for it".
+      authVerdict: null,
       recipients: [...(m.to ?? []), ...(m.cc ?? [])].map((w) => w?.address),
     })),
     ...sentDrafts.map((d) => ({
       ownAuthored: true,
       from: null,
+      // Our own draft: there is no claimed author to check.
+      authVerdict: null,
       recipients: [...(d.to ?? []), ...(d.cc ?? [])].map((w) => w?.address),
     })),
   ]);

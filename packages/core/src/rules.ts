@@ -27,6 +27,20 @@ export type RuleEffect = "allow" | "deny";
  */
 export type AuthVerdict = "unauthenticated" | "unavailable" | "pass" | "fail";
 
+/**
+ * `messages.auth_verdict` as this vocabulary, or `null` for "nobody stated one".
+ *
+ * The column is untyped `text` and has had TWO readers with different unions — routing's four
+ * members here, and `sender-check.ts`'s six, which overlap on `fail` and `unavailable` alone. So
+ * a narrowing that reads a word from the OTHER union as absent is the honest answer: unrecognised
+ * is not evidence, and the permissive direction is the only one this verdict may take by default.
+ */
+export function asAuthVerdict(raw: string | null | undefined): AuthVerdict | null {
+  return raw === "unauthenticated" || raw === "unavailable" || raw === "pass" || raw === "fail"
+    ? raw
+    : null;
+}
+
 export interface Rule {
   id: string;
   kind: RuleKind;

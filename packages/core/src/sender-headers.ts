@@ -3,10 +3,10 @@
  * Identity is `(account, mailbox, uidvalidity, uid)` or the content fingerprint. A header the
  * SENDER writes — Message-ID, In-Reply-To, References, To, Cc — may group or rank only when
  * something the sender does not control corroborates it: our own sent record, the person's own
- * reply, or the server's locator. Otherwise a stranger naming a colleague in Cc reads as that
- * colleague's correspondent. A spoofed `From` is NOT covered: no authentication result reaches
- * this seam, so an address that wrote to us is corroborated by the delivery and nothing stronger.
+ * reply, the server's locator, or the sending provider's own verdict on the `From`. Otherwise a
+ * stranger naming a colleague in Cc reads as that colleague's correspondent.
  */
+import type { AuthVerdict } from "./rules.js";
 
 /** How an address came to be on a conversation. `sender_named` is a claim, never evidence. */
 export type CounterpartyEvidence = "we_wrote" | "they_wrote" | "sender_named";
@@ -23,6 +23,16 @@ export interface CounterpartyMessage {
   from: string | null | undefined;
   /** `To` ∪ `Cc`. */
   recipients: readonly (string | null | undefined)[];
+  /**
+   * `messages.auth_verdict` for THIS message — what its own provider said about its claimed
+   * author, as `rules.ts#authVerdictFromHeaders` read it at ingest. `null` is "nobody asked":
+   * a store that does not carry the column, or a row written before anything wrote it.
+   *
+   * REQUIRED and never optional, because the two absent states are different answers and an
+   * optional collapses them: "not asked" is permissive, and a caller who simply forgot would
+   * inherit that silently. Required, every reader has to state which one it means.
+   */
+  authVerdict: AuthVerdict | null;
 }
 
 const STRENGTH: Record<CounterpartyEvidence, number> = {
@@ -35,8 +45,9 @@ const STRENGTH: Record<CounterpartyEvidence, number> = {
  * Classify every address these messages mention — the strongest evidence each one has.
  *
  * A message WE authored contributes its recipients as `we_wrote`: we chose to write to them. A
- * message we did not author contributes its author as `they_wrote` and its recipients as
- * `sender_named` — the To and Cc of somebody else's mail are that sender's claim about who else
+ * message we did not author contributes its author as `they_wrote` — unless its own provider
+ * said that author is forged, which makes it a claim like any other — and its recipients as
+ * `sender_named`, the To and Cc of somebody else's mail being that sender's claim about who else
  * is involved. Addresses are lowercased; the account's OWN addresses are not filtered here,
  * because who counts as "own" is the caller's question and every caller already answers it.
  */
@@ -55,7 +66,12 @@ export function counterpartyEvidence(
       for (const r of m.recipients) claim(r, "we_wrote");
       continue;
     }
-    claim(m.from, "they_wrote");
+    /* A FORGED `From` IS A CLAIM, NOT A CORRESPONDENT. `they_wrote` says the delivery corroborates
+       that this address wrote to us; where the sending side's own check says the author is forged,
+       it corroborates nothing and the address drops to the claim it is. ONLY an explicit `fail`
+       demotes — `pass` is never a precondition here (`pipeline.ts` states that rule), so a
+       provider that publishes nothing, or was never asked, is admitted exactly as before. */
+    claim(m.from, m.authVerdict === "fail" ? "sender_named" : "they_wrote");
     for (const r of m.recipients) claim(r, "sender_named");
   }
   return out;
