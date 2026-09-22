@@ -2104,9 +2104,14 @@ export class HttpAdapter implements EngineAdapter {
     // client working against an API that predates the field.
     const vouched = this.revisionForKey.get(idempotencyKey);
     if (vouched) sendBody.ifContentRevision = vouched;
-    const staged = await this.stagedIdsFor(m, idempotencyKey);
+    /* THE KEY GOES FIRST ON A STAGED SEND. A reservation under it means this press has already
+       been answered once, so nothing is re-uploaded: the request below carries no files and the
+       server answers from the reservation it already holds. See {@link keyWasPresented} for why
+       every uncertain answer stages instead. */
+    const alreadyPresented = this.willStage(m) && await this.keyWasPresented(draftId, idempotencyKey);
+    const staged = alreadyPresented ? null : await this.stagedIdsFor(m, idempotencyKey);
     if (staged) sendBody.stagedAttachmentIds = staged;
-    else if (m.attachments && m.attachments.length) sendBody.attachments = m.attachments;
+    else if (!alreadyPresented && m.attachments && m.attachments.length) sendBody.attachments = m.attachments;
     if (m.forwardOf) sendBody.forwardOf = m.forwardOf;
     const res = await this.request("POST", `/drafts/${draftId}/send`, {
       idempotencyKey,
@@ -2308,14 +2313,50 @@ export class HttpAdapter implements EngineAdapter {
    * so falling back would produce a request the server refuses — a second, more confusing failure in place of the
    * real one.
    */
+  /**
+   * DOES THIS SEND GO THROUGH STAGING — the three conditions, in one place because two callers
+   * need the answer: the upload loop below, and the key-first probe in {@link mailSend}, which
+   * must not cost an extra request on a send that was never going to stage.
+   */
+  private willStage(m: Extract<EngineMutation, { kind: "mail_send" }>): boolean {
+    const files = m.attachments ?? [];
+    if (!this.stageAttachments || files.length === 0) return false;
+    return files.reduce((n, a) => n + base64ByteLength(a.contentBase64), 0) > SEND_INLINE_MAX_TOTAL_BYTES;
+  }
+
+  /**
+   * HAS THIS KEY ALREADY BEEN PRESENTED TO THE SEND — a READ, before anything is re-uploaded.
+   *
+   * A retry used to re-upload every attachment first, so a storage refusal — an expired ticket, a
+   * throttled bucket — threw away the only handle on a message that may already have gone, and
+   * the person was invited to compose it again under a NEW key. Asking first turns that into the
+   * ordinary replay.
+   *
+   * EVERY UNCERTAIN ANSWER IS `false`, which is what this client did before the route existed: a
+   * server that predates it answers 404, an error answers nothing, and both mean "stage and
+   * send". The only reading that skips the upload is an explicit `found: true`, and skipping it
+   * is safe exactly then — the reservation exists, so the send below is answered from it rather
+   * than delivering a message without its files.
+   */
+  private async keyWasPresented(draftId: string, sendKey: string): Promise<boolean> {
+    let res: Response;
+    try {
+      res = await this.request("GET", `/drafts/${encodeURIComponent(draftId)}/send-attempt`, {
+        idempotencyKey: sendKey,
+      });
+    } catch { return false; }
+    if (!res.ok) return false;
+    try {
+      return ((await res.json()) as { found?: unknown }).found === true;
+    } catch { return false; }
+  }
+
   private async stagedIdsFor(
     m: Extract<EngineMutation, { kind: "mail_send" }>,
     sendKey: string,
   ): Promise<string[] | null> {
     const files = m.attachments ?? [];
-    if (!this.stageAttachments || files.length === 0) return null;
-    const total = files.reduce((n, a) => n + base64ByteLength(a.contentBase64), 0);
-    if (total <= SEND_INLINE_MAX_TOTAL_BYTES) return null;
+    if (!this.willStage(m)) return null;
     if (!m.mailboxId) {
       // The mint refuses the file against the SENDING MAILBOX's announced limit, so it needs to
       // know which mailbox. A send that could not resolve one cannot be staged — and it could not
@@ -2329,6 +2370,7 @@ export class HttpAdapter implements EngineAdapter {
     const ids: string[] = [];
     for (const [index, file] of files.entries()) {
       const bytes = base64ToBytes(file.contentBase64);
+      const declared = await sha256Hex(bytes);
       const minted = await this.request("POST", "/attachments/staging", {
         // THE UPLOAD TICKET'S KEY, DERIVED AND NOT MINTED: A mint writes a durable row and a grant to put bytes in
         // the server's storage, so a retry after a lost response would otherwise mint a second ticket and upload a
@@ -2351,6 +2393,10 @@ export class HttpAdapter implements EngineAdapter {
           filename: file.filename,
           contentType: file.contentType,
           sizeBytes: bytes.byteLength,
+          // WHAT THESE BYTES ARE, so the send can hold the upload to the file the composer showed.
+          // Omitted where this runtime has no SHA-256 to hand: the server reads absence as "none
+          // stated" and judges on size alone, which is what every client did before the column.
+          ...(declared === null ? {} : { contentSha256: declared }),
         },
       });
       if (!minted.ok) throw await this.rejectionOf(minted);
@@ -2419,6 +2465,27 @@ export class HttpAdapter implements EngineAdapter {
  * nothing accepts.
  */
 export const SEND_INLINE_MAX_TOTAL_BYTES = 3 * 1024 * 1024;
+
+/**
+ * `sha256(bytes)` as lowercase hex, or null where this runtime cannot compute one.
+ *
+ * WebCrypto and nothing else: this module is bundled for a browser, a Tauri webview and React
+ * Native, and `node:crypto` is not a thing in two of the three. `crypto.subtle` is absent in an
+ * insecure context and on runtimes that ship no WebCrypto, and null is the honest answer there —
+ * the mint reads absence as "no digest stated" and the send judges the upload on its size, which
+ * is what every client did before the column existed.
+ */
+async function sha256Hex(bytes: Uint8Array): Promise<string | null> {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) return null;
+  try {
+    const digest = await subtle.digest("SHA-256", bytes as unknown as BufferSource);
+    return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  } catch {
+    // A runtime that has `subtle` and refuses the call is the same state as one without it.
+    return null;
+  }
+}
 
 /** Decoded byte length of a base64 string, without decoding it. */
 function base64ByteLength(b64: string): number {

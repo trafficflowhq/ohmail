@@ -268,6 +268,32 @@ export const draftsRoutes: Route[] = [
     },
   },
   {
+    /**
+     * WHAT HAPPENED UNDER THIS KEY — the question a client asks BEFORE it re-uploads anything.
+     *
+     * A staged send's retry used to re-upload every attachment before the key was ever presented,
+     * so a storage refusal threw away the only handle on a message that may already have gone and
+     * invited a resend under a NEW key. This is how the key goes first. A READ: it writes
+     * nothing, reserves nothing and cannot send — which is why it is a route rather than a flag
+     * on the send, where a server predating it would have sent the message without its files. A
+     * server that predates THIS answers 404, and the client then does what it always did.
+     *
+     * The key is the `Idempotency-Key` header, as on the send itself; 400 without one.
+     */
+    method: "GET",
+    pattern: "/drafts/:id/send-attempt",
+    relay: true,
+    cost: "read",
+    handler: async (req, deps, params) => {
+      const key = req.headers.get("idempotency-key");
+      if (!key) throw new ServiceError("validation_failed", 400, "Idempotency-Key header is required");
+      const firstSend = await sends(deps).attemptUnderKey(serviceContext(deps, req), params.id!, key);
+      /* `found` is the answer and `firstSend` rides only with it: absent means "nothing has been
+         sent under this key", which is the one reading that licenses staging and sending. */
+      return jsonResponse(firstSend ? { found: true, firstSend } : { found: false });
+    },
+  },
+  {
     // §5 POST /drafts/:id/send — the GATED IDEMPOTENT send. Session +
     // CSRF (default pipeline); deliberately NOT idempotent-marked — the
     // generic verbatim idempotency cache can't model the `pending` reservation, so

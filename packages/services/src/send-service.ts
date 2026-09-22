@@ -729,6 +729,34 @@ type Reservation =
  * ambiguity. Every transition emits a `draft` change; a cross-account draft id is a 404.
  */
 export class SendService {
+  /**
+   * WHAT HAPPENED UNDER THIS KEY — a READ, and the reason it is not a flag on the send.
+   *
+   * The staged transport made a retry expensive: the client re-uploaded every attachment BEFORE
+   * the key was ever presented, so a storage refusal — an expired ticket, a throttled bucket —
+   * threw away the only handle on a message that may already have gone and invited a resend under
+   * a NEW key. This lets the client present the key FIRST. A flag on `POST /drafts/:id/send`
+   * would have done the same on a server that understood it and SENT the message without its
+   * attachments on one that did not; a route answers 404 there, which is a client's licence to do
+   * exactly what it does today.
+   *
+   * Scoped to the draft as well as the account: the question a client asks is about the message
+   * in front of it. A key whose reservation names another draft — or none, after a discard —
+   * answers `null`, and the client then does what it always did.
+   */
+  async attemptUnderKey(
+    ctx: ServiceContext, draftId: string, idempotencyKey: string,
+  ): Promise<FirstSendFacts | null> {
+    const [row] = await asTx(ctx).select().from(outboundSends)
+      .where(and(
+        eq(outboundSends.accountId, ctx.accountId),
+        eq(outboundSends.idempotencyKey, idempotencyKey),
+      ))
+      .limit(1);
+    if (!row || row.draftId !== draftId) return null;
+    return firstSendFacts(row.status, row.sentAt ?? row.createdAt);
+  }
+
   async send(
     ctx: ServiceContext,
     draftId: string,
