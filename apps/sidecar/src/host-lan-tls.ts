@@ -7,8 +7,9 @@ import {
   sign,
   type KeyObject,
 } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { writeAtomic } from "./fs-atomic.js";
 import type { Diagnostic } from "./log.js";
 
 /**
@@ -315,13 +316,3 @@ export function ensureLanIdentity(dataDir: string, log?: Diagnostic): LanIdentit
   }
 }
 
-/**
- * Write, atomically, with the mode on the temporary file rather than after the rename — the
- * `ai-provider.ts` idiom, and here the window it closes is the one that matters: a private key
- * must never exist at the final path in a readable mode, not even for a moment.
- */
-function writeAtomic(path: string, contents: string, mode: number): void {
-  const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, contents, { encoding: "utf8", mode });
-  renameSync(tmp, path);
-}

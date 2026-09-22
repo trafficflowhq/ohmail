@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
+import { describeError } from "@trafficflow/core/mail";
 import type { KeyProvider } from "@trafficflow/core/mail";
+import { writeAtomic } from "./fs-atomic.js";
 import type { Diagnostic } from "./log.js";
 
 /**
@@ -99,11 +101,28 @@ function mintAttemptId(): string {
 /** See {@link CloudAuthConfig.requestDeadlineMs}. Generous: a 500-row /sync page on a slow link. */
 export const REQUEST_DEADLINE_MS = 90_000;
 
+/**
+ * WHETHER THIS INSTALL'S SIGN-IN IS ON DISK — a STATE, not a log line.
+ *
+ * A seal that could not be written used to be a `cloud_refresh_failed` line while the rotation
+ * reported itself done: the session works until the quit and the next launch asks for a password
+ * nobody was told it would need. `reason` is the thrown value's CLASS and never its message —
+ * the same grammar every log site uses; a filesystem message quotes paths and is not a state.
+ */
+export interface SealState {
+  /** False once a seal write threw and until one succeeds. True where there is no seal to write. */
+  sealed: boolean;
+  /** The class of the last seal refusal, or null while nothing is owed. */
+  reason: string | null;
+}
+
 export interface CloudAuth {
   /** A bearer-authenticated fetch of `<baseUrl><path>`, with a single-flight refresh + retry on 401. */
   authedFetch(path: string, init?: RequestInit): Promise<Response>;
   /** The tokens currently in play, after any rotation. */
   currentTokens(): CloudTokens;
+  /** {@link SealState} — read by `/health`, so the window can say it rather than only the log. */
+  sealState(): SealState;
 }
 
 interface SealedTokenFile {
@@ -119,10 +138,14 @@ interface SealedTokenFile {
  */
 export async function sealTokens(path: string, keyProvider: KeyProvider, tokens: CloudTokens): Promise<void> {
   const sealed = await keyProvider.encrypt(JSON.stringify(tokens));
-  writeFileSync(
+  /* STAGED AND RENAMED (`fs-atomic.ts`), never written in place. This file is the only credential
+     a relaunch has: a process killed mid-write left a prefix of one envelope, which `loadSealed-
+     Tokens` reads as "this key does not open that file" — a session lost for a write that was
+     interrupted rather than refused. The previous complete seal survives instead. */
+  writeAtomic(
     path,
     JSON.stringify({ ciphertext: sealed.ciphertext, keyVersion: sealed.keyVersion } satisfies SealedTokenFile),
-    { mode: 0o600 },
+    0o600,
   );
 }
 
@@ -161,6 +184,8 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
   let refreshing: Promise<CloudTokens> | null = null;
   /** The definitive-refusal latch: {@link CloudAuthConfig.onSessionRefused} fires at most once. */
   let sessionRefusedTold = false;
+  /** {@link SealState}'s reason — the class of the last refused seal, cleared by the next one. */
+  let sealFailure: string | null = null;
 
   /**
    * Bound a request that nobody else is bounding. A caller-supplied `signal` wins untouched —
@@ -187,7 +212,12 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
     if (!cfg.keyProvider || !cfg.sealPath) return;
     try {
       await sealTokens(cfg.sealPath, cfg.keyProvider, next);
+      sealFailure = null;
     } catch (err) {
+      /* RECORDED, NOT ONLY LOGGED. The log line stays and says the same thing; what is new is
+         that the state outlives it, so `/health` can carry the refusal and the window can say
+         "your sign-in could not be saved" instead of reporting a rotation that did not land. */
+      sealFailure = describeError(err).errorClass;
       cfg.log?.("cloud_refresh_failed", {
         err,
         reason: "the rotated session could not be sealed to disk; it is held in memory for this " +
@@ -262,5 +292,9 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
     return fetchImpl(`${base}${path}`, withBearer(withDeadline(init), renewed.accessToken));
   };
 
-  return { authedFetch, currentTokens: () => tokens };
+  return {
+    authedFetch,
+    currentTokens: () => tokens,
+    sealState: () => ({ sealed: sealFailure === null, reason: sealFailure }),
+  };
 }

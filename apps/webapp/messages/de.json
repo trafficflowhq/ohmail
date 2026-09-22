@@ -3453,6 +3453,7 @@
     "credCloudOutWhy": "Für dieses Konto gibt es auf diesem Rechner keine Sitzung. Melde dich unten wieder an.",
     "credCloudCheckingValue": "Wird geprüft",
     "credCloudCheckingWhy": "Die Mail-Engine hat zur Sitzung dieses Kontos noch nichts gesagt.",
+    "credSealFailedNote": "Deine Anmeldung konnte auf diesem {machine} nicht gespeichert werden — nach einem Neustart wirst du dich erneut anmelden müssen.",
     "credReadyValue": "Gespeichert",
     "credReadyWhy": "Mit dem Schlüssel dieser Installation versiegelt — er liegt im Schlüsselbund dieses {machine} und in einer Datei neben den Daten der App — und es funktioniert.",
     "credAbsentValue": "Nicht gespeichert",

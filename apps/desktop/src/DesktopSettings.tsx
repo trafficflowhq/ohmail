@@ -213,6 +213,13 @@ export function DesktopSettings({
    */
   session,
   /**
+   * THIS ENGINE COULD NOT WRITE THE SESSION TO DISK (`/health.sealed === false`). A rotation the
+   * filesystem refused was a log line while the door reported it done, so the first anybody heard
+   * of it was a password prompt after the next restart. Handed down like `session`, from the one
+   * probe, so the pane cannot disagree with the window.
+   */
+  sealFailed = false,
+  /**
    * HOW OLD THE COPY FROM THE OTHER COMPUTER IS — the paired door's Connection row, handed down
    * from the gate rather than read again here.
    *
@@ -229,6 +236,7 @@ export function DesktopSettings({
 }: {
   status: EngineStatus;
   session: HostedSession;
+  sealFailed?: boolean;
   connection?: { state: "unknown" | "stale" | "current"; asOf: string | null } | null;
   onStatus: (next: EngineStatus) => void;
   onSwitchDoor: () => void;
@@ -294,6 +302,8 @@ export function DesktopSettings({
         description={credential.description}
         value={credential.value}
       />
+      {/* Under the session row it is about, and only while the engine says so. */}
+      {sealFailed ? <SettingsNote>{DOOR_COPY.credSealFailedNote(machineWord())}</SettingsNote> : null}
       {/* ── IS THE OTHER COMPUTER REACHABLE — a PERMANENT row on this door ─────────────────
           Present in every state, `Reachable` included, unlike the Mail engine row below it. The
           engine row is about a fault and says nothing on a healthy install by design; this one

@@ -1061,6 +1061,13 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           // in-flight discard as an ordinary signed-out engine the moment this process was not the
           // one that staged it.
           restartRequired: restartRequired || readMirrorDiscardPending(config.dataDir),
+          /* IS THIS INSTALL'S SIGN-IN ON DISK. A rotation whose seal could not be written leaves a
+             session that works until the quit and a next launch with no credential — reported here
+             as a state so the account pane can say it, rather than as a log line nobody reads.
+             `true` before any rotation and on an install with no key, which is honest: there is no
+             refused write. The reason is the thrown value's CLASS, never its message. */
+          sealed: authed === null ? true : authed.auth.sealState().sealed,
+          sealFailure: authed === null ? null : authed.auth.sealState().reason,
         });
       }
 

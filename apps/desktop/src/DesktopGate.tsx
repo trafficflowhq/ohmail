@@ -333,7 +333,7 @@ export function DesktopGate() {
   const [authEpoch, setAuthEpoch] = useState(0);
   const authKey = door === "cloud" && bridgeAvailable() ? `cloud:${authEpoch}` : null;
   const [hostedAuth, setHostedAuth] = useState<
-    { key: string; gone: boolean; preAuth: boolean; restartRequired: boolean } | null
+    { key: string; gone: boolean; preAuth: boolean; restartRequired: boolean; sealFailed: boolean } | null
   >(null);
   /** TRUE once the CURRENT engine's first `/health` answer has been read — pending otherwise.
       Until then the mail app is withheld: React would otherwise commit `AppShell` once, before
@@ -351,6 +351,8 @@ export function DesktopGate() {
    * would exist, read well, and never run.
    */
   const hostedRestartRequired = hostedAuthKnown && hostedAuth.restartRequired;
+  /** This engine could not write the session to disk — Settings → Desktop says so; see `/health`. */
+  const hostedSealFailed = hostedAuthKnown && hostedAuth.sealFailed;
   /**
    * THE ONE FACT EVERY ACCOUNT-SHAPED SURFACE BELOW IS DECIDED BY — this engine's own live
    * verdict on the hosted session, in the door rules' shape ({@link HostedSession}). Derived
@@ -433,6 +435,7 @@ export function DesktopGate() {
           signedIn?: boolean;
           sessionExpired?: boolean;
           restartRequired?: boolean;
+          sealed?: boolean;
         };
         if (cancelled) return;
         setHostedAuth({
@@ -446,6 +449,9 @@ export function DesktopGate() {
              happened. Neither is a wording problem; both are the window having no third reading
              available. `restartRequired` is that reading. */
           restartRequired: health.restartRequired === true,
+          /* THE ROTATION THE DISK REFUSED. An older engine sends no `sealed` at all, and an
+             absent field is not a refusal — only an explicit `false` is. */
+          sealFailed: health.sealed === false,
           gone: health.sessionExpired === true,
           preAuth: health.sessionExpired !== true && health.signedIn === false,
         });
@@ -477,6 +483,7 @@ export function DesktopGate() {
           signedIn?: boolean;
           sessionExpired?: boolean;
           restartRequired?: boolean;
+          sealed?: boolean;
         };
         if (cancelled) return;
         setHostedAuth({
@@ -490,6 +497,9 @@ export function DesktopGate() {
              happened. Neither is a wording problem; both are the window having no third reading
              available. `restartRequired` is that reading. */
           restartRequired: health.restartRequired === true,
+          /* THE ROTATION THE DISK REFUSED. An older engine sends no `sealed` at all, and an
+             absent field is not a refusal — only an explicit `false` is. */
+          sealFailed: health.sealed === false,
           gone: health.sessionExpired === true,
           preAuth: health.sessionExpired !== true && health.signedIn === false,
         });
@@ -1103,6 +1113,7 @@ export function DesktopGate() {
                   <DesktopSettings
                     status={status}
                     session={hostedSession}
+                    sealFailed={hostedSealFailed}
                     /* THE SAME READ THE RAIL LINE USES, handed down rather than taken again: two
                        clocks for one fact would let the pane and the rail disagree for up to a
                        poll about whether the other machine is answering. */

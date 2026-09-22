@@ -3453,6 +3453,7 @@
     "credCloudOutWhy": "There is no session for this account on this machine. Sign in again below.",
     "credCloudCheckingValue": "Checking",
     "credCloudCheckingWhy": "The mail engine has not answered about this account's session yet.",
+    "credSealFailedNote": "Your sign-in could not be saved on this {machine} — you will be asked to sign in again after a restart.",
     "credReadyValue": "Stored",
     "credReadyWhy": "Sealed under this install's key — kept in this {machine}'s keychain and mirrored to a file beside the app's data — and working.",
     "credAbsentValue": "Not stored",

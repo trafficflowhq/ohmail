@@ -394,6 +394,13 @@ const EN = {
   credCloudOutWhy: "There is no session for this account on this machine. Sign in again below.",
   credCloudCheckingValue: "Checking",
   credCloudCheckingWhy: "The mail engine has not answered about this account's session yet.",
+  /* THE SEAL THAT DID NOT LAND — `/health.sealed`. A rotation the disk refused used to be a log
+     line while the door reported the rotation done, so the first anybody heard of it was a
+     password prompt after the next restart. Said here, where the session is described, and only
+     while the engine says so. */
+  credSealFailedNote: (machine: string) =>
+    `Your sign-in could not be saved on this ${machine} — you will be asked to sign in again `
+    + "after a restart.",
   credReadyValue: "Stored",
   /* ── WHERE THE KEY ACTUALLY IS, BOTH PLACES ─────────────────────────────────────────────
      `resolve_install_key` asks the FILE first and returns from it; a key read from the keystore
@@ -653,6 +660,7 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   doorHostWhyLan: ["host", "machine"],
   doorHostWhyTs: ["host", "machine", "origin"],
   credHostLiveWhy: ["machine", "host"],
+  credSealFailedNote: ["machine"],
   credHostOutWhy: ["host", "machine"],
   connCurrentWhy: ["when"],
   connStaleWhy: ["when", "machine"],

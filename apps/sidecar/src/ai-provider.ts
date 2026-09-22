@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SensitivePayloadRefusal } from "@trafficflow/core/mail";
 import type {
@@ -10,6 +10,7 @@ import { ClassifierFaultError } from "@trafficflow/worker/classifier-fault";
 import { anthropicTransport, DEFAULT_ANTHROPIC_MODELS } from "./ai-anthropic.js";
 import { ollamaTransport, DEFAULT_OLLAMA } from "./ai-ollama.js";
 import { openaiTransport, DEFAULT_OPENAI_MODELS } from "./ai-openai.js";
+import { writeAtomicFile } from "./fs-atomic.js";
 import type { AiTransport, ProbeFailure, ProbeOutcome } from "./ai-transport.js";
 import type { Diagnostic } from "./log.js";
 
@@ -419,17 +420,13 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
   let store: StoredAi = await readStore();
 
   /**
-   * Write, atomically, readable only by this user.
-   *
-   * A `mode` on the write and a rename over the target. A half-written file here would read back
-   * as a missing provider on the next launch, which is a silent downgrade to rules-only rather
-   * than an error anybody sees.
+   * Write, atomically, readable only by this user — `fs-atomic.ts`, shared with the seal and the
+   * LAN door's key. A half-written file here would read back as a missing provider on the next
+   * launch, which is a silent downgrade to rules-only rather than an error anybody sees.
    */
   const persist = async (next: StoredAi): Promise<void> => {
     await mkdir(opts.dataDir, { recursive: true });
-    const tmp = `${path}.${process.pid}.tmp`;
-    await writeFile(tmp, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-    await rename(tmp, path);
+    await writeAtomicFile(path, `${JSON.stringify(next, null, 2)}\n`, 0o600);
     store = next;
   };
 
