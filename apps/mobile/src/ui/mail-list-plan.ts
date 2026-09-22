@@ -30,6 +30,9 @@ export interface ListGroup<T> {
   /** Rendered as a `Section` label above the rows; absent, no header is drawn. */
   title?: string;
   rows: readonly T[];
+  /** A caption under the title — a heading that needs a sentence to be honest (Search's SIMILAR
+   *  tier says what "similar" means there). Drawn only where there is a title. */
+  note?: string;
   /** An untitled group's room above its first row (the Screener's shelves). */
   padTop?: number;
 }
@@ -39,6 +42,7 @@ const SECTION: unique symbol = Symbol("mail-list-section");
 export interface PlannedSection<T> {
   key: string;
   title: string | null;
+  note: string | null;
   data: readonly T[];
   padTop: number;
   /** The first titled section wears {@link FIRST_GROUP_TOP}; the others the label's own 16. */
@@ -55,7 +59,10 @@ export function planSections<T>(groups: readonly ListGroup<T>[]): PlannedSection
     const title = g.title ?? null;
     const first = title !== null && !titled;
     if (title !== null) titled = true;
-    out.push({ key: g.key, title, data: g.rows, padTop: g.padTop ?? 0, first, [SECTION]: true });
+    out.push({
+      key: g.key, title, note: title === null ? null : g.note ?? null,
+      data: g.rows, padTop: g.padTop ?? 0, first, [SECTION]: true,
+    });
   }
   return out;
 }

@@ -32,7 +32,7 @@ import {
   type SectionListRenderItemInfo,
 } from "react-native";
 import { useTheme } from "../theme";
-import { Section, panelSurface, pullRefreshControl, useListInsets, type PullRefresh } from "./base";
+import { Section, Txt, panelSurface, pullRefreshControl, useListInsets, type PullRefresh } from "./base";
 import {
   FIRST_GROUP_TOP,
   LIST_WINDOW,
@@ -169,7 +169,14 @@ export function MailList<T>({
     ({ section }: { section: SectionListData<T, PlannedSection<T>> }) => {
       if (section.title !== null) {
         return (
-          <Section style={section.first ? { paddingTop: FIRST_GROUP_TOP } : undefined}>{section.title}</Section>
+          <>
+            <Section style={section.first ? { paddingTop: FIRST_GROUP_TOP } : undefined}>{section.title}</Section>
+            {section.note !== null ? (
+              <Txt variant="caption" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
+                {section.note}
+              </Txt>
+            ) : null}
+          </>
         );
       }
       return section.padTop > 0 ? <View style={{ height: section.padTop }} /> : null;
@@ -189,8 +196,8 @@ export function MailList<T>({
         style={[
           {
             position: "absolute",
-            left: insets.paddingHorizontal,
-            right: insets.paddingHorizontal,
+            left: insets.paddingLeft,
+            right: insets.paddingRight,
             top: headH,
             bottom: insets.paddingBottom + tailH,
           },

@@ -6,8 +6,21 @@
  * and `test/list-insets-shared.test.ts` refuses a list primitive that spells the padding itself.
  */
 export interface ListInsets {
-  paddingHorizontal: number;
+  paddingLeft: number;
+  paddingRight: number;
   paddingBottom: number;
+}
+
+/**
+ * What the flying nav leaves for the list — `scaffold/plan.ts`'s `listNavClearance`, passed in
+ * rather than read here so this stays dependency-free and a node test can drive every posture.
+ * A rail takes a SIDE, so the gutter is not the same on both edges and a single
+ * `paddingHorizontal` cannot say it; a dock takes the foot.
+ */
+export interface ListNav {
+  bottom: number;
+  left: number;
+  right: number;
 }
 
 export interface ListSpace {
@@ -17,6 +30,10 @@ export interface ListSpace {
   tabClearance: number;
 }
 
-export function listInsets(space: ListSpace, insetBottom: number): ListInsets {
-  return { paddingHorizontal: space.deckCompact, paddingBottom: space.tabClearance + insetBottom };
+export function listInsets(space: ListSpace, insetBottom: number, nav: ListNav): ListInsets {
+  return {
+    paddingLeft: space.deckCompact + nav.left,
+    paddingRight: space.deckCompact + nav.right,
+    paddingBottom: nav.bottom + insetBottom,
+  };
 }

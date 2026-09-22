@@ -16,9 +16,10 @@ import { Copy } from "../src/copy";
 import { addressShaped, type AddressDirection } from "../src/state/live";
 import { useWorld } from "../src/state/world";
 import { useTheme } from "../src/theme";
-import { Empty, Panel, Screen, Scroller, Section, Tap, Txt } from "../src/ui/base";
+import { Empty, Screen, Tap, Txt } from "../src/ui/base";
 import { DetailBar } from "../src/ui/chrome";
 import { Gated } from "../src/ui/Gated";
+import { MailList, type ListGroup } from "../src/ui/MailList";
 import { MailRow } from "../src/ui/MailRow";
 import { Segmented } from "../src/ui/Segmented";
 import { useLocale } from "../src/i18n/LocaleProvider";
@@ -62,13 +63,23 @@ function SearchBody() {
   const around = addr !== null ? w.search.address(addr, dir) : null;
   const door = answer !== null ? addressShaped(trimmed) : null;
 
-  const rows = (list: WorldMail[]) => (
-    <View style={{ paddingHorizontal: 6 }}>
-      {list.map((m) => (
-        <MailRow key={m.id} m={m} onPress={() => router.push(`/message/${m.id}`)} />
-      ))}
-    </View>
-  );
+  /* EVERY ROW GOES THROUGH THE WINDOW. One address can hold thousands of this mailbox's
+     messages — `messagesWith` returns all of them, unsliced — so the results are a `MailList`
+     like every other list on the phone rather than a scroll view that mounts the answer whole.
+     One list per screen: the branch below decides its groups, its head and its empty state. */
+  const groups: ListGroup<WorldMail>[] =
+    around !== null && addr !== null
+      ? [{ key: "around", rows: around.items }]
+      : answer !== null && trimmed !== "" && (answer.items.length > 0 || answer.similar.length > 0)
+        ? [
+            {
+              key: "results",
+              title: Copy.searchResultsHead(answer.items.length + answer.similar.length),
+              rows: answer.items,
+            },
+            { key: "similar", title: Copy.searchSimilarHead, note: Copy.searchSimilarHint, rows: answer.similar },
+          ]
+        : [];
 
   return (
     <Screen>
@@ -99,10 +110,15 @@ function SearchBody() {
           ]}
         />
       </View>
-      <Scroller>
-        {around !== null && addr !== null ? (
-          /* ── THE ADDRESS VIEW — the device's half, three directions, all three counts ───── */
-          <Panel style={{ paddingBottom: 8 }}>
+      <MailList
+        groups={groups}
+        rowKey={(m) => m.id}
+        renderRow={(m) => <MailRow m={m} onPress={() => router.push(`/message/${m.id}`)} />}
+        rowInset={6}
+        surface={around !== null || (answer !== null && trimmed !== "")}
+        head={
+          around !== null && addr !== null ? (
+            /* ── THE ADDRESS VIEW — the device's half, three directions, all three counts ───── */
             <View style={{ paddingHorizontal: 14, paddingTop: 12, paddingBottom: 4 }}>
               {/* The group carries the question; the three tabs carry the answers. */}
               <View accessibilityRole="tablist" accessibilityLabel={Copy.searchAddressToggleAria}>
@@ -122,75 +138,55 @@ function SearchBody() {
                 {Copy.searchAddressCounts(around.counts.any, around.counts.from, around.counts.to)}
               </Txt>
             </View>
-            {around.items.length === 0 ? (
-              <Empty
-                title={
-                  dir === "from"
-                    ? Copy.searchAddressEmptyFrom(addr)
-                    : dir === "to"
-                      ? Copy.searchAddressEmptyTo(addr)
-                      : Copy.searchAddressEmptyAny(addr)
-                }
-                hint={Copy.searchScopeDevice}
-              />
-            ) : (
-              rows(around.items)
-            )}
-          </Panel>
-        ) : answer !== null && trimmed === "" ? (
-          /* Resting: what a search HERE can answer, before any claim about the mailbox. */
-          <Txt variant="note" tone="ink3" style={{ paddingHorizontal: 14, paddingTop: 8 }}>
-            {Copy.searchScopeDevice}
-          </Txt>
-        ) : answer !== null ? (
-          <Panel style={{ paddingBottom: 8 }}>
-            {answer.items.length === 0 && answer.similar.length === 0 ? (
-              answer.indexing ? (
-                /* Not yet ≠ nothing: the index is still filling, and the two are different
-                   sentences (`indexingResult`'s whole rule). */
-                <Empty title={Copy.searchIndexing} hint={Copy.searchScopeDevice} />
-              ) : (
-                <>
-                  <Empty title={Copy.searchEmptyTitle} hint={Copy.searchScopeDevice} />
-                  {door !== null ? (
-                    /* THE ADDRESS DOOR — the web's empty-state sentence, and here it IS the
-                       door: the press opens the two scopes it names. */
-                    <Tap
-                      onPress={() => {
-                        setAddr(door);
-                        setDir("any");
-                      }}
-                      accessibilityRole="button"
-                      accessibilityLabel={Copy.searchEmptyAddressScopes(door)}
-                      style={{ paddingHorizontal: 16, paddingVertical: 10 }}
-                    >
-                      <Txt variant="note" tone="accent">
-                        {Copy.searchEmptyAddressScopes(door)}
-                      </Txt>
-                    </Tap>
-                  ) : null}
-                </>
-              )
+          ) : null
+        }
+        empty={
+          around !== null && addr !== null ? (
+            <Empty
+              title={
+                dir === "from"
+                  ? Copy.searchAddressEmptyFrom(addr)
+                  : dir === "to"
+                    ? Copy.searchAddressEmptyTo(addr)
+                    : Copy.searchAddressEmptyAny(addr)
+              }
+              hint={Copy.searchScopeDevice}
+            />
+          ) : answer !== null && trimmed === "" ? (
+            /* Resting: what a search HERE can answer, before any claim about the mailbox. */
+            <Txt variant="note" tone="ink3" style={{ paddingHorizontal: 14, paddingTop: 8 }}>
+              {Copy.searchScopeDevice}
+            </Txt>
+          ) : answer !== null ? (
+            answer.indexing ? (
+              /* Not yet ≠ nothing: the index is still filling, and the two are different
+                 sentences (`indexingResult`'s whole rule). */
+              <Empty title={Copy.searchIndexing} hint={Copy.searchScopeDevice} />
             ) : (
               <>
-                <Section style={{ paddingTop: 14 }}>
-                  {Copy.searchResultsHead(answer.items.length + answer.similar.length)}
-                </Section>
-                {rows(answer.items)}
-                {answer.similar.length > 0 ? (
-                  <>
-                    <Section>{Copy.searchSimilarHead}</Section>
-                    <Txt variant="caption" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
-                      {Copy.searchSimilarHint}
+                <Empty title={Copy.searchEmptyTitle} hint={Copy.searchScopeDevice} />
+                {door !== null ? (
+                  /* THE ADDRESS DOOR — the web's empty-state sentence, and here it IS the
+                     door: the press opens the two scopes it names. */
+                  <Tap
+                    onPress={() => {
+                      setAddr(door);
+                      setDir("any");
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={Copy.searchEmptyAddressScopes(door)}
+                    style={{ paddingHorizontal: 16, paddingVertical: 10 }}
+                  >
+                    <Txt variant="note" tone="accent">
+                      {Copy.searchEmptyAddressScopes(door)}
                     </Txt>
-                    {rows(answer.similar)}
-                  </>
+                  </Tap>
                 ) : null}
               </>
-            )}
-          </Panel>
-        ) : null}
-      </Scroller>
+            )
+          ) : null
+        }
+      />
     </Screen>
   );
 }

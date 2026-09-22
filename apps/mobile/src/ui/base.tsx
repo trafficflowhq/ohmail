@@ -22,8 +22,11 @@ import {
   type TextStyle,
   type ViewStyle,
 } from "react-native";
+import { Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { listInsets, type ListInsets } from "./list-insets";
+import { usePosture } from "./posture";
+import { listNavClearance, scaffoldPlan } from "./scaffold/plan";
 import { topPad } from "./safe-area";
 import { useTheme, type Theme } from "../theme";
 import { MIN_SLOP, hitSlopFor } from "../theme/tokens";
@@ -75,7 +78,8 @@ export function useTopPad(gap: number): number {
  */
 export function useListInsets(): ListInsets {
   const t = useTheme();
-  return listInsets(t.space, useSafeAreaInsets().bottom);
+  const plan = scaffoldPlan(usePosture(), Platform.OS === "ios" ? "ios" : "android");
+  return listInsets(t.space, useSafeAreaInsets().bottom, listNavClearance(plan, t.space.tabClearance));
 }
 
 /* ---------------------------------------------------------------- surfaces */
