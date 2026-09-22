@@ -88,14 +88,10 @@ interface UnscreenedRow {
 
 /**
  * THE PERSISTED ROW AS THE GATE READS IT. Shaped like the sibling passes' `asRuleInput`
- * (`rule-retro.ts`, `ohbox-tidy.ts`, `sensitive-rescreen.ts`) so no two of them can disagree about
- * what a stored message looks like to the router.
- *
- * The two widest columns on the row, `headers` and the plain text, are read only where a rule
- * READS them (see {@link unscreenedWalk}); where none does, `{}` and `""` are what the gate would
- * have seen anyway — a `header` rule needs its header and a body term needs its haystack, and
- * neither fires on an absent one. Fail-closed in the direction that matters: a rule that cannot
- * fire leaves its sender undecided, which is offered rather than taken.
+ * (`rule-retro.ts`, `ohbox-tidy.ts`, `sensitive-rescreen.ts`), so no two can disagree about what a
+ * stored message looks like to the router. The two wide columns are read only where a rule reads
+ * them ({@link unscreenedWalk}); where none does, `{}` and `""` are what the gate would have seen
+ * anyway, and a rule that cannot fire leaves its sender undecided — offered, never taken.
  */
 function asRuleInput(row: UnscreenedRow): NormalizedMessage {
   return {
@@ -114,22 +110,14 @@ function asRuleInput(row: UnscreenedRow): NormalizedMessage {
 }
 
 /**
- * THE PREDICATE, IN ONE PLACE, AND IT IS THE ARRIVAL GATE'S OWN.
- *
- * Every candidate goes back through the same {@link evaluateRules} a fresh delivery goes through,
- * and a message joins the set when the gate answers `screener` — no rule of the user's claims it,
- * no standing rule decides its sender, the sender is not a contact. `rule`, `header`, `policy` and
- * `unclear` are all answers about a sender already past the gate and stay in the Ohbox.
- *
- * `auth` is handed `"unavailable"` — the absence of evidence — because this screen asks about a
- * SENDER and an authentication verdict is a fact about ONE delivery. The gate's auth arm can only
- * push toward the Screener, so the set this produces is a SUBSET of what the gate screens today:
- * the press can never move mail the gate would admit. The delivery axis belongs to
- * `sensitive-rescreen.ts`, which exists and owns it.
- *
- * `ohboxPolicy` is the lenient default for the same reason: the `people_only` refinement is
- * reached only inside the winning-allow branch, so no posture can make an answer `screener` or
- * unmake one, and passing the default keeps this walk the same walk on every account.
+ * THE PREDICATE, IN ONE PLACE, AND IT IS THE ARRIVAL GATE'S OWN: a message joins the set when
+ * {@link evaluateRules} answers `screener` — no rule claims it, no standing rule decides its
+ * sender, the sender is no contact. `auth` is `"unavailable"` because a verdict is a fact about
+ * ONE delivery while this screen asks about a SENDER; that arm can only push toward the Screener,
+ * so the set is a SUBSET of what the gate screens today and the press can never move mail the gate
+ * would admit (the delivery axis is `sensitive-rescreen.ts`'s). `ohboxPolicy` is the lenient
+ * default: the `people_only` refinement sits inside the winning-allow branch, so no posture can
+ * make an answer `screener` or unmake one.
  */
 function gateWouldScreen(row: UnscreenedRow, rules: readonly Rule[], known: ReadonlySet<string>): boolean {
   return evaluateRules({
@@ -193,18 +181,13 @@ async function unscreenedWalk(
 
 /**
  * ONE page of the Ohbox this screen may offer — oldest id first, so the walk is monotone in
- * `messages.id` and a press never re-reads a prefix.
- *
- * CANDIDATES: `desired_folder = 'INBOX'` (also the idempotency — a pressed row is desired into the
- * Screener and drops out) in a live mailbox this install ORGANIZES (a reader's walk is empty by
- * construction, which is the reader's whole answer). EXCLUSIONS, the four a sibling pass applies
- * (`ohbox-tidy.ts`): no non-`none` triage row, no reply draft, no DECIDED approval, no reply of
- * the person's own in the thread — a message they already dealt with is not ours to offer. READ is
- * NOT an exclusion: reading is not deciding, which is the whole of the row this closes.
- *
- * `last_set_by` is deliberately NOT constrained: this mail was filed by a blanket default, by an
- * older install, or by the person's own client years ago, and every one of those is the backlog
- * this offers. What protects them is the PRESS, not a placement stamp.
+ * `messages.id`. CANDIDATES: `desired_folder = 'INBOX'` (also the idempotency) in a live mailbox
+ * this install ORGANIZES, so a reader's walk is empty by construction. EXCLUSIONS, the four
+ * `ohbox-tidy.ts` applies: no non-`none` triage row, no reply draft, no DECIDED approval, no reply
+ * of the person's own in the thread. READ is NOT one — reading is not deciding, which is the whole
+ * of the row this closes. `last_set_by` is NOT constrained either: a blanket default, an older
+ * install and the person's own client years ago are all this backlog, and what protects them is
+ * the PRESS rather than a placement stamp.
  */
 async function selectCandidates(
   t: Tx,
@@ -342,18 +325,12 @@ export async function unscreenedSummary(
 }
 
 /**
- * THE PRESS. Moves the named sender groups — or every group shown, when `addresses` is absent —
- * to the Screener, through the door a fresh arrival takes.
- *
- * It writes the INTENT and the delta, exactly as the arrival path does: `folder_state` desired
- * `ohmail/Screener` with `observed` untouched, so `reconcile_status` is DERIVED `pending` and the
- * organizer's reconciler performs the physical move. It opens no mailbox itself — one organizer
- * per mailbox is the lease's invariant, and a bulk mover with its own connection would be a
- * second one. One audit row per group carries the inverse, because this moves mail the person did
- * not name message by message.
- *
- * IDEMPOTENT BY THE PREDICATE, not by a key: a moved row is desired into the Screener, so it is no
- * longer a candidate and a second press finds nothing.
+ * THE PRESS. Moves the named sender groups — or every group shown, when `addresses` is absent — to
+ * the Screener, through the door a fresh arrival takes: the INTENT and the delta, `observed`
+ * untouched so `reconcile_status` DERIVES `pending` and the organizer's reconciler performs the
+ * move. It opens no mailbox — one organizer per mailbox is the lease's invariant. One audit row
+ * per group carries the inverse, because this moves mail nobody named message by message.
+ * IDEMPOTENT BY THE PREDICATE: a moved row is no longer a candidate.
  */
 export async function screenUnscreened(
   ctx: ServiceContext, opts: { addresses?: readonly string[] } = {},

@@ -4581,15 +4581,11 @@ export class OhmailEngine {
 
   /**
    * OHBOX MAIL FROM SENDERS NOBODY EVER DECIDED ABOUT — ask the door, put the answer in the mirror.
-   *
-   * The groups are a SERVER derivation: the deciding fact is what the ARRIVAL GATE would answer
-   * for each message, over rules and contacts the mirror holds only part of, so a shell that
-   * derived the number itself would show one figure and move another. The whole set is replaced
-   * under ONE version bump ({@link MirrorStore.commitLocal}), because a half-old list is a wrong
-   * number on screen.
-   *
-   * A door that cannot answer leaves the mirror EMPTY, which every surface reads as "no such row
-   * here" — never as "nothing undecided", which is a different sentence.
+   * The deciding fact is what the ARRIVAL GATE would answer, over rules and contacts the mirror
+   * holds only part of, so a shell deriving the number itself would show one figure and move
+   * another. The whole set is replaced under ONE version bump, because a half-old list is a wrong
+   * number on screen. A door that cannot answer leaves the mirror EMPTY, which every surface reads
+   * as "no such row here" — never as "nothing undecided", a different sentence.
    */
   async refreshUnscreened(): Promise<void> {
     const ask = this.adapter.unscreened;
