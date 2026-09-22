@@ -147,10 +147,16 @@ export function GlassActionBar({
        feedback loop the webapp's `bar-density.ts` names: the row's own width written back as
        its room admits nothing past the floor (measured on the iPad expanded reader, where
        only Reply · read · ⋯ ever stood). Every layout reading updates it (`nextRoom`), so a
-       posture flip or rotation re-admits; box-none keeps the strip out of the touch path. */
+       posture flip or rotation re-admits; box-none keeps the strip out of the touch path.
+       The width is read HERE and not inside the updater: React Native pools the layout event
+       and its release nulls `nativeEvent`, so a read deferred into a state updater runs after
+       the pool took it back and throws — which RN reports as FATAL and the app dies. */
     <View
       pointerEvents="box-none"
-      onLayout={(e) => setRoom((r) => nextRoom(r, e.nativeEvent.layout.width))}
+      onLayout={(e) => {
+        const w = e.nativeEvent.layout.width;
+        setRoom((r) => nextRoom(r, w));
+      }}
       style={{ alignSelf: "stretch", alignItems: "center" }}
     >
       {/* The hidden copy every width is read from — same capsules, absolute, invisible. */}
