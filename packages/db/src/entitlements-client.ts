@@ -136,8 +136,13 @@ function lifecycleOf(raw: unknown, syncEnabled: boolean): AccessLifecycle | null
     const v = l[field] ?? null;
     return v === null || typeof v === "string" ? v : { bad: `lifecycle.${field}` };
   };
-  const read: Partial<Record<"trialEndsAt" | "graceUntil" | "closedAt" | "erasureAt" | "erasedAt", string | null>> = {};
-  for (const field of ["trialEndsAt", "graceUntil", "closedAt", "erasureAt", "erasedAt"] as const) {
+  const read: Partial<Record<
+    "trialEndsAt" | "graceUntil" | "closedAt" | "erasureAt" | "erasedAt" | "lifecycleEpoch",
+    string | null
+  >> = {};
+  for (const field of [
+    "trialEndsAt", "graceUntil", "closedAt", "erasureAt", "erasedAt", "lifecycleEpoch",
+  ] as const) {
     const v = iso(field);
     if (typeof v === "object" && v !== null) return v;
     read[field] = v;
@@ -151,6 +156,9 @@ function lifecycleOf(raw: unknown, syncEnabled: boolean): AccessLifecycle | null
     erasureAt: read.erasureAt ?? null,
     erasedAt: read.erasedAt ?? null,
     formerlyPaid: l.formerlyPaid,
+    // The program's erasure floor. A program that sends none states none: the field is dropped
+    // rather than carried as a null, so "absent" reads the same here as it does on the wire.
+    ...(read.lifecycleEpoch != null ? { lifecycleEpoch: read.lifecycleEpoch } : {}),
   };
 }
 

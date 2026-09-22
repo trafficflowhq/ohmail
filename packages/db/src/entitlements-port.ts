@@ -36,10 +36,16 @@ export interface AccessLifecycle {
   /** The open-until deadline: dunning's 7 d, or cancel + 24 h for a never-paid cancel. */
   graceUntil: string | null;
   closedAt: string | null;
-  /** `closedAt` + retention (30 d never-paid / 90 d formerly paid); null while suspended. */
+  /** `max(closedAt, lifecycleEpoch)` + retention (30 d never-paid / 90 d paid); null if held. */
   erasureAt: string | null;
   erasedAt: string | null;
   formerlyPaid: boolean;
+  /**
+   * The instant the program's own lifecycle went live, which `erasureAt` is floored on there.
+   * ABSENT (or null) means the program states none — an older program, and today's behaviour.
+   * Present, it is what the erasure pass belts an irreversible act against.
+   */
+  lifecycleEpoch?: string | null;
 }
 
 /** May this account use the service, and within what limits. */
