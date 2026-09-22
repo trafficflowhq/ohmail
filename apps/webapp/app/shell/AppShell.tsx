@@ -1413,7 +1413,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   /* THE RUN'S OWN SCREENER QUEUE. The guided decision took `screener.waiting[0]` whatever mailbox
    * that sender wrote to; `screenerForMailbox` carries the rule and its single-mailbox exemption. */
   const firstRunQueue = useMemo(() => screenerForMailbox(
-    screener.waiting,
+    /* DECIDABLE ROWS ONLY, so the count below and the card cannot select different sets: the step
+       is chosen by `queuedSenders > 0` and filled by `firstRunDecide`, which skips a pinned row. */
+    screener.waiting.filter((row) => !("pinned" in row)),
     (id) => reader.get<EngineMessage>("message", id)?.mailboxId,
     firstRunMailbox?.id ?? null,
     (facts?.length ?? 0) > 1,
