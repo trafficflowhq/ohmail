@@ -1068,6 +1068,11 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
              refused write. The reason is the thrown value's CLASS, never its message. */
           sealed: authed === null ? true : authed.auth.sealState().sealed,
           sealFailure: authed === null ? null : authed.auth.sealState().reason,
+          /* THE MIRROR'S OWN STOP. `online: false` alone reads as a network blip a later poll
+             clears; this one says the hosted account was deleted and nothing more will arrive.
+             The mail already here stays readable — signing out never deletes mail, and neither
+             does this. */
+          accountErased: authed !== null && authed.mirror.accountErased(),
         });
       }
 

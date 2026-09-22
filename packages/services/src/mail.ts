@@ -16,6 +16,9 @@ export type { ServiceContext, Db } from "./context.js";
 // The fenced transaction door — see `context.ts`. On the mail leaf because the API's own
 // account-owned writers (the Junk window's rescue) reach it without the AI half.
 export { withAccountTx } from "./context.js";
+/* The fence itself, for a writer that already holds its transaction — the local install's consent
+   write is one, and it is on the mail leaf for the same reason the door above is. */
+export { fenceErasedAccount, fenceErasedScope, asServiceRefusal } from "./erasure-fence.js";
 export {
   SyncService, syncService, SNAPSHOT_WINDOW, SNAPSHOT_DRAFT_PAGE, assertSnapshotWindow,
   STALE_COALESCE_SPAN, COALESCE_SCAN_WINDOW,

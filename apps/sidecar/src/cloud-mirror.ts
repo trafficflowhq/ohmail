@@ -4,9 +4,10 @@ import { and, asc, desc, eq, gt, inArray, isNull, ne, notInArray, sql } from "dr
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import { recordChange, recordChanges, accountSettings, CAPABILITY_REQUESTS,
   SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS,
-  // The erasure fence's own read — the replay writes rows one mailbox owns, and SKIPS rather
-  // than throws on an erased one; see the folder arm for why a throw is the wrong verb here.
-  readMailboxErasedAt,
+  // The erasure fence's own reads — the replay writes rows the ACCOUNT owns and rows one
+  // MAILBOX owns, and SKIPS rather than throws on either stamp; see the folder arm for why a
+  // throw is the wrong verb here.
+  readAccountErasedAt, readMailboxErasedAt,
 } from "@trafficflow/db";
 import {
   approvals, attachments, awayReplies, drafts, flagState, folderOps, folderState,
@@ -411,6 +412,12 @@ export interface CloudMirror {
   online(): boolean;
   /** Report connectivity observed elsewhere — the proxy's own forward reaching Cloud, or not. */
   markConnectivity(reachable: boolean): void;
+  /**
+   * HAS THE HOSTED ACCOUNT BEEN DELETED. Latched by a `410 account_erased` from any hosted read
+   * and never cleared in this process: nothing is pulled and nothing is written after it. Distinct
+   * from `online()`, which is a network reading a later pull can reverse; this one cannot be.
+   */
+  accountErased(): boolean;
   /**
    * The hosted `change_log` seq the mirror has drained `/sync` up to, decoded from the cursor.
    * This is the CLOUD sequence — the one an `X-Sync-Seq` echo is expressed in — NOT the local
@@ -1006,7 +1013,17 @@ export async function applyMailboxRefresh(
   now: Date,
 ): Promise<MailboxRefreshOutcome> {
   const hostedIds = hosted.map((m) => m.id);
+  const dia = dialect(db);
   return db.transaction(async (tx) => {
+    /* THE ACCOUNT'S TOMBSTONE, FIRST. `mailboxes` is the account's own table, and an erasure
+       leaves the `accounts` row standing, so a refresh landing after the sweep would put every
+       mailbox back. Nothing is written and the caller is handed the ids it already has — the
+       drain's `known` set — so the page it is about skips every row instead of failing. */
+    if (await readAccountErasedAt(tx, dia, world.accountId) != null) {
+      const all = await tx.select({ id: mailboxes.id }).from(mailboxes)
+        .where(eq(mailboxes.accountId, world.accountId));
+      return { known: new Set(all.map((r) => r.id)), retired: [], dropped: [] };
+    }
     // (i) RETIRE what the hosted account does not name — the synthetic row on a first refresh, a
     //     mailbox somebody removed in the browser on any later one.
     const retired = await tx.update(mailboxes)
@@ -1057,29 +1074,66 @@ async function applyLabels(tx: Tx, world: LocalWorld, messageId: string, labels:
 }
 
 /**
- * Apply one non-delete change. Returns false when a foreign-key referent is missing and the row is
- * skipped — the cursor still advances (a later update re-emits it), the forward-compatible posture
- * `apply.ts` takes. That re-emission is true of the FK skips and FALSE of the mailbox one: a
- * message whose thread has not arrived changes again, but a message naming a MAILBOX this database
- * lacks does not (mail at rest emits nothing), which is why the refresh runs BEFORE the drain and
- * is a hard failure. `known` is every local mailbox id whatever its status (a tombstone satisfies
- * the FK), because attributing mail to a DIFFERENT mailbox is the one thing this may never do — a
- * message it cannot place honestly is better absent.
+ * THE HOSTED ACCOUNT IS GONE — the one refusal a mirror may not retry past.
+ *
+ * `410` alone does not say it: `/sync` already answers 410 for a cursor below the retention
+ * horizon, which is a re-bootstrap and not an ending. The discriminator is the error CODE the
+ * fence's own edge writes (`account_erased`, `packages/services/src/erasure-fence.ts`).
  */
-async function applyUpsert(
+class CloudAccountErased extends Error {
+  constructor() {
+    super("the hosted account has been deleted");
+    this.name = "CloudAccountErased";
+  }
+}
+
+/** Does this answer say the hosted account was erased? Reads a CLONE, so the caller keeps its body. */
+async function answersAccountErased(res: Response): Promise<boolean> {
+  if (res.status !== 410) return false;
+  try {
+    const body = (await res.clone().json()) as { error?: { code?: unknown } } | null;
+    return body?.error?.code === "account_erased";
+  } catch {
+    // An unparseable 410 is the cursor's, which the drain already knows how to answer.
+    return false;
+  }
+}
+
+/**
+ * The thread STUB two arms write before their own row, so an FK holds when the thread's own
+ * change has not arrived — its own function, and behind the account fence, because `threads` is
+ * a table the account alone owns. `false` means the account is erased and nothing was written:
+ * the caller SKIPS its own row too, or it would write a message pointing at a thread that is not
+ * there.
+ */
+async function insertThreadStub(
+  tx: Tx, dia: Dialect, world: LocalWorld, threadId: string, now: Date,
+): Promise<boolean> {
+  if (await readAccountErasedAt(tx, dia, world.accountId) != null) return false;
+  await tx.insert(threads)
+    .values({ id: threadId, accountId: world.accountId, updatedAt: now })
+    .onConflictDoNothing({ target: threads.id });
+  return true;
+}
+
+/**
+ * The replay's ACCOUNT-OWNED arms, behind the erasure fence.
+ *
+ * `accounts` survives Art. 17 erasure, so a row keyed to the account alone has no structural
+ * refusal for a writer arriving after the sweep — the same window `packages/services/src/
+ * erasure-fence.ts` was written about, and this store is swept by the same code. The stamp is
+ * read FIRST and the change is SKIPPED on one, never thrown: `applyPage` has no catch above it
+ * and the cursor moves only when it returns, so a throw would re-pull the same page for ever.
+ */
+async function applyAccountUpsert(
   tx: Tx,
-  /**
-   * This store's dialect, for the erasure fence's row read — a transaction object carries no
-   * brand. `dia` and not `d`: the draft arm below names its DTO `d`, and one letter reused
-   * across a switch that long is how the wrong value gets read.
-   */
   dia: Dialect,
   world: LocalWorld,
   ch: SyncChange,
   now: Date,
   gen: BootstrapGen | null,
-  known: ReadonlySet<string>,
 ): Promise<boolean | "partial"> {
+  if (await readAccountErasedAt(tx, dia, world.accountId) != null) return false;
   switch (ch.type) {
     case "settings": {
       /**
@@ -1112,6 +1166,155 @@ async function applyUpsert(
         .onConflictDoUpdate({ target: accountSettings.accountId, set: cols });
       return true;
     }
+    case "thread": {
+      const t = ch.entity as ThreadDTO | undefined;
+      if (!t) return false;
+      await tx.insert(threads).values({
+        id: t.id,
+        accountId: world.accountId,
+        subject: t.subject ?? "",
+        participants: t.participants ?? [],
+        lastMessageAt: asDate(t.lastMessageAt),
+        muted: !!t.muted,
+        updatedAt: asDate(t.updatedAt) ?? now,
+      }).onConflictDoUpdate({
+        target: threads.id,
+        set: {
+          subject: t.subject ?? "",
+          participants: t.participants ?? [],
+          lastMessageAt: asDate(t.lastMessageAt),
+          muted: !!t.muted,
+          updatedAt: asDate(t.updatedAt) ?? now,
+        },
+      });
+      gen?.thread.add(t.id);
+      return true;
+    }
+    case "tag": {
+      const t = ch.entity as TagDTO | undefined;
+      if (!t) return false;
+      const body = {
+        accountId: world.accountId,
+        name: t.name,
+        hue: t.hue ?? "moss",
+        updatedAt: asDate(t.updatedAt) ?? now,
+      };
+      /* ON CONFLICT on the ID, not on the account/name unique index. Two tags cannot share a name
+         on the hosted account either, so the index is satisfied by the source; targeting the id is
+         what makes a RENAME land as a rename instead of colliding with the row it is renaming. */
+      await tx.insert(tags).values({ id: t.id, createdAt: asDate(t.createdAt) ?? now, ...body })
+        .onConflictDoUpdate({ target: tags.id, set: body });
+      gen?.tag.add(t.id);
+      return true;
+    }
+    case "rule": {
+      const r = ch.entity as RuleDTO | undefined;
+      if (!r) return false;
+      const stats = r.stats ?? { hits: 0, lastHitAt: null, demotions: 0 };
+      const body = {
+        accountId: world.accountId,
+        kind: r.kind,
+        match: r.match,
+        destination: r.destination,
+        priority: r.priority ?? 0,
+        provenance: r.provenance ?? "manual",
+        enabled: r.enabled ?? true,
+        // The rule's second term. `?? null` and not omission: this object is ALSO the
+        // `onConflictDoUpdate` set, so leaving the key out would make a term that was CLEARED in
+        // Cloud persist for ever in the local mirror — the row would keep filing a narrow slice of
+        // the sender's mail after the user had widened the rule back to all of it. A mirror that
+        // cannot un-set a field is not a mirror.
+        subjectContains: r.subjectContains ?? null,
+        // The third term (mail 0052): `?? null` for the identical un-set reason.
+        bodyContains: r.bodyContains ?? null,
+        hits: stats.hits ?? 0,
+        lastHitAt: asDate(stats.lastHitAt),
+        demotions: stats.demotions ?? 0,
+        updatedAt: asDate(r.updatedAt) ?? now,
+      };
+      await tx.insert(rules).values({ id: r.id, ...body })
+        .onConflictDoUpdate({ target: rules.id, set: body });
+      gen?.rule.add(r.id);
+      return true;
+    }
+    case "approval": {
+      const a = ch.entity as ApprovalDTO | undefined;
+      if (!a) return false;
+      /* BOTH REFERENCES ARE FOREIGN KEYS since mail 0118, and both holders can be absent here (a
+         message this mirror skipped, a decision in a later page). The draft arm's rule: keep the
+         pointer only when its holder is mirrored, land the row DEGRADED as `"partial"` so the
+         stale-resume ledger leaves the replay free to re-deliver it whole once the holder lands.
+         Writing them unguarded was the released 0.20.0's first-pull 23503 wedge. */
+      const wantsMessage = Boolean(a.messageId);
+      const messageId = a.messageId && (await messagePresent(tx, a.messageId)) ? a.messageId : null;
+      const wantsDecision = Boolean(a.routingDecisionId);
+      const routingDecisionId =
+        a.routingDecisionId && (await routingDecisionPresent(tx, a.routingDecisionId))
+          ? a.routingDecisionId
+          : null;
+      const body = {
+        accountId: world.accountId,
+        kind: a.kind,
+        messageId,
+        routingDecisionId,
+        action: a.proposed?.action ?? "",
+        summary: a.proposed?.summary ?? "",
+        payload: (a.proposed?.payload ?? null) as unknown,
+        confidence: a.confidence ?? null,
+        status: a.status,
+        expiresAt: asDate(a.expiresAt),
+        updatedAt: asDate(a.updatedAt) ?? now,
+      };
+      await tx.insert(approvals).values({ id: a.id, ...body })
+        .onConflictDoUpdate({ target: approvals.id, set: body });
+      gen?.approval.add(a.id);
+      return (wantsMessage && messageId === null) || (wantsDecision && routingDecisionId === null)
+        ? "partial"
+        : true;
+    }
+    default:
+      return false;
+  }
+}
+
+/**
+ * Apply one non-delete change. Returns false when a foreign-key referent is missing and the row is
+ * skipped — the cursor still advances (a later update re-emits it), the forward-compatible posture
+ * `apply.ts` takes. That re-emission is true of the FK skips and FALSE of the mailbox one: a
+ * message whose thread has not arrived changes again, but a message naming a MAILBOX this database
+ * lacks does not (mail at rest emits nothing), which is why the refresh runs BEFORE the drain and
+ * is a hard failure. `known` is every local mailbox id whatever its status (a tombstone satisfies
+ * the FK), because attributing mail to a DIFFERENT mailbox is the one thing this may never do — a
+ * message it cannot place honestly is better absent.
+ */
+async function applyUpsert(
+  tx: Tx,
+  /**
+   * This store's dialect, for the erasure fence's row read — a transaction object carries no
+   * brand. `dia` and not `d`: the draft arm below names its DTO `d`, and one letter reused
+   * across a switch that long is how the wrong value gets read.
+   */
+  dia: Dialect,
+  world: LocalWorld,
+  ch: SyncChange,
+  now: Date,
+  gen: BootstrapGen | null,
+  known: ReadonlySet<string>,
+): Promise<boolean | "partial"> {
+  switch (ch.type) {
+    /* ── THE ROWS THE ACCOUNT OWNS — one door, one fence ───────────────────────────────────
+       These five write tables whose only owner is the account, so nothing structural refuses a
+       replay that lands after an Art. 17 sweep: they go through {@link applyAccountUpsert},
+       which reads the account's tombstone first and SKIPS on a stamp. They are in their own
+       function rather than fenced in place because the arms below write rows a MAILBOX owns and
+       ask that mailbox's stamp instead — a reach the erasure census distinguishes, and a fence
+       standing over both would describe the wrong erasure for the mailbox half. */
+    case "settings":
+    case "thread":
+    case "tag":
+    case "rule":
+    case "approval":
+      return applyAccountUpsert(tx, dia, world, ch, now, gen);
     case "folder": {
       // ONE OF THE MAILBOX'S OWN FOLDERS (the folders foundation). The local row takes the
       // HOSTED entity's id verbatim — the local /sync materializes folder entities BY ROW ID
@@ -1140,30 +1343,6 @@ async function applyUpsert(
       gen?.folder.add(ch.id);
       return true;
     }
-    case "thread": {
-      const t = ch.entity as ThreadDTO | undefined;
-      if (!t) return false;
-      await tx.insert(threads).values({
-        id: t.id,
-        accountId: world.accountId,
-        subject: t.subject ?? "",
-        participants: t.participants ?? [],
-        lastMessageAt: asDate(t.lastMessageAt),
-        muted: !!t.muted,
-        updatedAt: asDate(t.updatedAt) ?? now,
-      }).onConflictDoUpdate({
-        target: threads.id,
-        set: {
-          subject: t.subject ?? "",
-          participants: t.participants ?? [],
-          lastMessageAt: asDate(t.lastMessageAt),
-          muted: !!t.muted,
-          updatedAt: asDate(t.updatedAt) ?? now,
-        },
-      });
-      gen?.thread.add(t.id);
-      return true;
-    }
     case "message": {
       const m = ch.entity as MessageDTO | undefined;
       if (!m) return false;
@@ -1172,11 +1351,7 @@ async function applyUpsert(
       if (!known.has(m.mailboxId)) return false;
       // A thread STUB before the message, so the FK holds even when the thread's own change has
       // not arrived. A later `thread` change overwrites the stub with the real row.
-      if (m.threadId) {
-        await tx.insert(threads)
-          .values({ id: m.threadId, accountId: world.accountId, updatedAt: now })
-          .onConflictDoNothing({ target: threads.id });
-      }
+      if (m.threadId && !(await insertThreadStub(tx, dia, world, m.threadId, now))) return false;
       /* And the tombstone — the folder arm's note, same key and same verb. AFTER the stub and
          immediately before the mail: a thread row belongs to the ACCOUNT, and this arm asks about
          the MAILBOX, so guarding the stub on it would be a refusal aimed at the wrong erasure
@@ -1262,23 +1437,6 @@ async function applyUpsert(
       if (m.threadId) gen?.thread.add(m.threadId);
       return true;
     }
-    case "tag": {
-      const t = ch.entity as TagDTO | undefined;
-      if (!t) return false;
-      const body = {
-        accountId: world.accountId,
-        name: t.name,
-        hue: t.hue ?? "moss",
-        updatedAt: asDate(t.updatedAt) ?? now,
-      };
-      /* ON CONFLICT on the ID, not on the account/name unique index. Two tags cannot share a name
-         on the hosted account either, so the index is satisfied by the source; targeting the id is
-         what makes a RENAME land as a rename instead of colliding with the row it is renaming. */
-      await tx.insert(tags).values({ id: t.id, createdAt: asDate(t.createdAt) ?? now, ...body })
-        .onConflictDoUpdate({ target: tags.id, set: body });
-      gen?.tag.add(t.id);
-      return true;
-    }
     case "message_state": {
       const s = ch.entity as MessageStateDTO | undefined;
       if (!s) return false;
@@ -1316,47 +1474,13 @@ async function applyUpsert(
       gen?.message_state.add(stateId);
       return true;
     }
-    case "rule": {
-      const r = ch.entity as RuleDTO | undefined;
-      if (!r) return false;
-      const stats = r.stats ?? { hits: 0, lastHitAt: null, demotions: 0 };
-      const body = {
-        accountId: world.accountId,
-        kind: r.kind,
-        match: r.match,
-        destination: r.destination,
-        priority: r.priority ?? 0,
-        provenance: r.provenance ?? "manual",
-        enabled: r.enabled ?? true,
-        // The rule's second term. `?? null` and not omission: this object is ALSO the
-        // `onConflictDoUpdate` set, so leaving the key out would make a term that was CLEARED in
-        // Cloud persist for ever in the local mirror — the row would keep filing a narrow slice of
-        // the sender's mail after the user had widened the rule back to all of it. A mirror that
-        // cannot un-set a field is not a mirror.
-        subjectContains: r.subjectContains ?? null,
-        // The third term (mail 0052): `?? null` for the identical un-set reason.
-        bodyContains: r.bodyContains ?? null,
-        hits: stats.hits ?? 0,
-        lastHitAt: asDate(stats.lastHitAt),
-        demotions: stats.demotions ?? 0,
-        updatedAt: asDate(r.updatedAt) ?? now,
-      };
-      await tx.insert(rules).values({ id: r.id, ...body })
-        .onConflictDoUpdate({ target: rules.id, set: body });
-      gen?.rule.add(r.id);
-      return true;
-    }
     case "draft": {
       const d = ch.entity as DraftDTO | undefined;
       if (!d) return false;
       // The mailbox a draft SENDS FROM, same rule as a message's. A draft whose sender this mirror
       // cannot name is one the hosted API would refuse on send anyway.
       if (!known.has(d.mailboxId)) return false;
-      if (d.threadId) {
-        await tx.insert(threads)
-          .values({ id: d.threadId, accountId: world.accountId, updatedAt: now })
-          .onConflictDoNothing({ target: threads.id });
-      }
+      if (d.threadId && !(await insertThreadStub(tx, dia, world, d.threadId, now))) return false;
       // And the tombstone — the message arm's note, same key, verb and placement: a draft is the
       // person's own unsent words, and an erased mailbox is not where they go back.
       if (await readMailboxErasedAt(tx, dia, d.mailboxId) !== null) return false;
@@ -1419,41 +1543,6 @@ async function applyUpsert(
       gen?.draft.add(d.id);
       if (d.threadId) gen?.thread.add(d.threadId);   // the thread stub this draft pinned
       return !bodyCarried || !htmlCarried || (wantsReplyParent && inReplyTo === null)
-        ? "partial"
-        : true;
-    }
-    case "approval": {
-      const a = ch.entity as ApprovalDTO | undefined;
-      if (!a) return false;
-      /* BOTH REFERENCES ARE FOREIGN KEYS since mail 0118, and both holders can be absent here (a
-         message this mirror skipped, a decision in a later page). The draft arm's rule: keep the
-         pointer only when its holder is mirrored, land the row DEGRADED as `"partial"` so the
-         stale-resume ledger leaves the replay free to re-deliver it whole once the holder lands.
-         Writing them unguarded was the released 0.20.0's first-pull 23503 wedge. */
-      const wantsMessage = Boolean(a.messageId);
-      const messageId = a.messageId && (await messagePresent(tx, a.messageId)) ? a.messageId : null;
-      const wantsDecision = Boolean(a.routingDecisionId);
-      const routingDecisionId =
-        a.routingDecisionId && (await routingDecisionPresent(tx, a.routingDecisionId))
-          ? a.routingDecisionId
-          : null;
-      const body = {
-        accountId: world.accountId,
-        kind: a.kind,
-        messageId,
-        routingDecisionId,
-        action: a.proposed?.action ?? "",
-        summary: a.proposed?.summary ?? "",
-        payload: (a.proposed?.payload ?? null) as unknown,
-        confidence: a.confidence ?? null,
-        status: a.status,
-        expiresAt: asDate(a.expiresAt),
-        updatedAt: asDate(a.updatedAt) ?? now,
-      };
-      await tx.insert(approvals).values({ id: a.id, ...body })
-        .onConflictDoUpdate({ target: approvals.id, set: body });
-      gen?.approval.add(a.id);
-      return (wantsMessage && messageId === null) || (wantsDecision && routingDecisionId === null)
         ? "partial"
         : true;
     }
@@ -1807,7 +1896,7 @@ async function applyPage(
     // A page that moved the folder inventory also settles the local flag it is read behind —
     // same transaction, so the local /sync can never see rows the flag disowns or vice versa.
     if (changes.some((c) => c.type === "folder")) {
-      await reconcileLocalFoldersFlag(tx, world, now);
+      await reconcileLocalFoldersFlag(tx, dialect(db), world, now);
     }
     return applied;
   });
@@ -1877,7 +1966,7 @@ async function sweepPhantoms(db: LocalDb, world: LocalWorld, gen: BootstrapGen, 
       .where(eq(mailboxes.accountId, world.accountId)))
       if (!gen.folder.has(r.id)) await sweepOne("folder", r.id);
 
-    await reconcileLocalFoldersFlag(tx, world, now);
+    await reconcileLocalFoldersFlag(tx, dialect(db), world, now);
     return swept;
   });
 }
@@ -1892,7 +1981,12 @@ async function sweepPhantoms(db: LocalDb, world: LocalWorld, gen: BootstrapGen, 
  * NULL here, which serves the same empty answer the hosted /sync gives — the shell's own switch
  * reads the hosted /consent over the bridge and stays authoritative for the interface.)
  */
-async function reconcileLocalFoldersFlag(tx: Tx, world: LocalWorld, now: Date): Promise<void> {
+async function reconcileLocalFoldersFlag(
+  tx: Tx, dia: Dialect, world: LocalWorld, now: Date,
+): Promise<void> {
+  // `account_settings` is the account's own table — the replay's arms take this same read, and
+  // this writer runs at the end of a sweep, minutes after the page that armed it.
+  if (await readAccountErasedAt(tx, dia, world.accountId) != null) return;
   const [row] = await tx.select({ id: mailboxFolders.id }).from(mailboxFolders)
     .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
     .where(eq(mailboxes.accountId, world.accountId)).limit(1);
@@ -1977,6 +2071,22 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
      the "already announced" half is per launch. `cfg.log` is optional here, so an install with no
      logger reports nothing rather than needing a second code path. See `first-sync.ts`. */
   const firstSync = createFirstSyncReporter(cfg.log ?? ((): void => {}));
+  /**
+   * THE HOSTED ACCOUNT WAS DELETED and this mirror has stopped. Latched by the one answer that
+   * says so ({@link CloudAccountErased}); nothing is pulled and nothing is written afterwards.
+   * Process-local by design: the local rows stay exactly as they are, readable, and a relaunch
+   * asks the hosted account again rather than acting on a remembered verdict.
+   */
+  let accountErased = false;
+  /**
+   * EVERY HOSTED READ THIS MIRROR MAKES, through one door, so "a 410 `account_erased` on any of
+   * them stops the mirror" is a property of the door rather than of eight call sites.
+   */
+  const fetchCloud = async (path: string, init?: RequestInit): Promise<Response> => {
+    const res = await cfg.auth.authedFetch(path, init);
+    if (await answersAccountErased(res)) throw new CloudAccountErased();
+    return res;
+  };
   /** The single-flight pull: the poll timer and an echo-await share ONE drain. */
   let inflight: Promise<number> | null = null;
   /** Current reconnect delay; grows on failure, resets on success. See {@link scheduleAfter}. */
@@ -2113,7 +2223,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
          floor is protecting is the ACCOUNT's database, so what has to be recorded is the ASK. */
       countsAskedAt = now().getTime();
     }
-    const res = await cfg.auth.authedFetch(wantCounts ? "/mailboxes?counts=1" : "/mailboxes");
+    const res = await fetchCloud(wantCounts ? "/mailboxes?counts=1" : "/mailboxes");
     if (!res.ok) throw new Error(`the hosted /mailboxes answered HTTP ${res.status}`);
     const body = (await res.json()) as { items?: unknown };
     // A wire boundary, so the shape is checked rather than assumed — an answer that is not a list
@@ -2202,7 +2312,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     for (;;) {
       if (aborted) return { applied, cut: true };
       const q = new URLSearchParams({ since, limit: String(pageLimit), types: "rule" });
-      const res = await cfg.auth.authedFetch(`/sync?${q.toString()}`);
+      const res = await fetchCloud(`/sync?${q.toString()}`);
       if (!res.ok) throw new Error(`the hosted /sync answered HTTP ${res.status} to the rules-first pass`);
       const body = (await res.json()) as SyncResponse;
       applied += await applyPage(cfg.db, cfg.world, body, now(), gen, knownMailboxes);
@@ -2322,7 +2432,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       if (w.phase === "complete") return { applied, cut: false };
       const q = new URLSearchParams({ limit: String(pageLimit) });
       if (w.phase === "paging") q.set("cursor", w.next);
-      const res = await cfg.auth.authedFetch(`/sync/snapshot?${q.toString()}`);
+      const res = await fetchCloud(`/sync/snapshot?${q.toString()}`);
       if (res.status === 410 && w.phase === "paging" && !restarted) {
         restarted = true;
         cursor.window = { phase: "pending" };
@@ -2403,7 +2513,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     if (!mirrorStale(cursor.lastDrainAt, now())) return null;
     try {
       const q = new URLSearchParams({ limit: String(pageLimit) });
-      const res = await cfg.auth.authedFetch(`/sync/snapshot?${q.toString()}`);
+      const res = await fetchCloud(`/sync/snapshot?${q.toString()}`);
       let snap: SnapshotResponse | null = null;
       if (res.ok) {
         try {
@@ -2595,7 +2705,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         limit: String(drainPageLimit(freshened !== null && sweep === null, pageLimit)),
         types: CLOUD_SYNC_TYPES.join(","),
       });
-      const res = await cfg.auth.authedFetch(`/sync?${q.toString()}`);
+      const res = await fetchCloud(`/sync?${q.toString()}`);
       if (res.status === 410) {
         // The cursor fell behind the retention horizon (`sync-service.ts` — a malformed or
         // sub-horizon cursor). DELETE the cursor file and re-bootstrap from zero. A since=0 replay
@@ -2691,7 +2801,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     if (!pageCursor && snapshotPage1 !== undefined) return snapshotPage1;
     const q = new URLSearchParams({ limit: String(pageLimit) });
     if (pageCursor) q.set("cursor", pageCursor);
-    const res = await cfg.auth.authedFetch(`/sync/snapshot?${q.toString()}`);
+    const res = await fetchCloud(`/sync/snapshot?${q.toString()}`);
     if (!res.ok) {
       if (!pageCursor) snapshotPage1 = null;
       cfg.log?.("cloud_tag_backfill_deferred", {
@@ -2827,7 +2937,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
           appliedCount++;
         }
       }
-      await reconcileLocalFoldersFlag(tx, cfg.world, now());
+      await reconcileLocalFoldersFlag(tx, dialect(cfg.db), cfg.world, now());
     });
     cursor.folderBackfill = true;
     writeCursor(cfg.cursorPath, cursor);
@@ -2912,7 +3022,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       if (walk.phase !== "walking" || aborted) return written;
       const q = new URLSearchParams({ limit: String(DEFAULT_BODIES_LIMIT) });
       if (walk.after !== null) q.set("after", walk.after);
-      const res = await cfg.auth.authedFetch(`/messages/bodies?${q.toString()}`);
+      const res = await fetchCloud(`/messages/bodies?${q.toString()}`);
       if (!res.ok) throw new Error(`the hosted /messages/bodies answered HTTP ${res.status}`);
       const page = (await res.json()) as Page<MessageBodyBatchItem>;
       written += await storeBodies(page.items);
@@ -2959,7 +3069,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       let batch = wanted.slice(i, i + BODIES_IDS_MAX);
       for (let round = 0; batch.length > 0 && round < BODIES_IDS_MAX; round++) {
         if (aborted) return written;
-        const res = await cfg.auth.authedFetch(`/messages/bodies?ids=${batch.join(",")}`);
+        const res = await fetchCloud(`/messages/bodies?ids=${batch.join(",")}`);
         if (!res.ok) throw new Error(`the hosted /messages/bodies answered HTTP ${res.status}`);
         const page = (await res.json()) as Page<MessageBodyBatchItem>;
         written += await storeBodies(page.items);
@@ -3265,6 +3375,20 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       cfg.log?.("cloud_pull_applied", { count: applied });
       return applied;
     } catch (err) {
+      /* THE ONE REFUSAL THAT ENDS THE MIRROR. Not offline and not retryable: the account this
+         copy belongs to has been deleted, so every later pull would ask about rows that are gone
+         and every later apply would write for an account nobody has. Latched, said once, and the
+         pull reports nothing applied rather than throwing — a throw here would arm the reconnect
+         backoff, which is a schedule for an answer that will never change. */
+      if (err instanceof CloudAccountErased) {
+        accountErased = true;
+        reachable = false;
+        cfg.log?.("cloud_account_erased", {
+          reason: "the hosted account has been deleted; this copy of the mail stays on this " +
+            "computer, readable, and nothing more is mirrored into it",
+        });
+        return 0;
+      }
       // A failed pull is a bad network or a spent token — offline, not stopped. The proxy answers
       // `503 offline_read_only` off this flag; the poll keeps retrying and flips it back on success.
       reachable = false;
@@ -3278,6 +3402,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    * apply is an upsert), but one is cheaper and avoids two writers racing the cursor file.
    */
   const pullOnce = (): Promise<number> => {
+    // A stopped mirror asks nothing more — see {@link accountErased}.
+    if (accountErased) return Promise.resolve(0);
     inflight ??= runPull().finally(() => {
       inflight = null;
     });
@@ -3287,7 +3413,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   /** One queued follow-up, at most — see {@link CloudMirror.kick}. */
   let kickQueued = false;
   const kick = (): void => {
-    if (stopped) return;
+    if (stopped || accountErased) return;
     if (inflight) {
       kickQueued = true;
       return;
@@ -3332,7 +3458,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    * CURSOR FILE — the last committed page already wrote it — so no progress is re-fetched.
    */
   const scheduleAfter = (failed: boolean): void => {
-    if (stopped) return;
+    if (stopped || accountErased) return;
     let delay: number;
     if (failed) {
       delay = backoffMs;
@@ -3367,6 +3493,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     markConnectivity: (v: boolean) => {
       reachable = v;
     },
+    accountErased: () => accountErased,
     cloudSeq,
     awaitCloudSeq,
     // The live map, not a copy: the only caller reads it synchronously to decorate one response,

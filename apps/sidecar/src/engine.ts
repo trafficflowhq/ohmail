@@ -7225,11 +7225,19 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 { status: 200, headers: { "content-type": "application/json" } },
               );
             } catch (err) {
-              // A refused screening answer is a 400 with the refusal's own sentence; anything
-              // else is internal. Mapped by hand because this handler sits AHEAD of the route
-              // table and therefore ahead of `withErrorEnvelope`.
+              // A refused screening answer is a 400 with the refusal's own sentence; a fenced
+              // refusal answers its own status (410 `account_erased` — the consent write takes
+              // the erasure fence like every server door); anything else is internal. Mapped by
+              // hand because this handler sits AHEAD of the route table and therefore ahead of
+              // `withErrorEnvelope`.
               const refused = (err as { name?: string }).name === "LocalConsentRefusal";
               log("local_mailbox_organize_failed", { err });
+              if (err instanceof ServiceError && !refused) {
+                return new Response(
+                  JSON.stringify({ error: { code: err.code, message: err.message } }),
+                  { status: err.httpStatus, headers: { "content-type": "application/json" } },
+                );
+              }
               return new Response(
                 JSON.stringify({
                   error: refused
@@ -7954,9 +7962,21 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           }
           /* `"takeover"`, as the route's name says: this is the desktop's "take this mailbox back"
              button, the one verb the phone's door refuses to forward at all. */
-          const result = await requestOrganizerTakeover(db, {
-            mailboxId, now: now(), intent: "takeover",
-          });
+          let result;
+          try {
+            result = await requestOrganizerTakeover(db, {
+              mailboxId, now: now(), intent: "takeover",
+            });
+          } catch (err) {
+            /* The fenced refusal, answered here rather than escaping: the consent write inside
+               takes the erasure fence, and this handler sits ahead of `withErrorEnvelope`, so an
+               uncaught 410 would reach the window as a dead request. */
+            if (!(err instanceof ServiceError)) throw err;
+            return new Response(
+              JSON.stringify({ error: { code: err.code, message: err.message } }),
+              { status: err.httpStatus, headers: { "content-type": "application/json" } },
+            );
+          }
           log("organizer_takeover_authorized", {
             // `verdict` and not `outcome`: `ALLOWED_FIELDS` carries the former, and a field the
             // census drops is an instrumented line that says nothing in production.

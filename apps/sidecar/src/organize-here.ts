@@ -5,6 +5,7 @@ import { dialect, type Dialect } from "@trafficflow/db/dialect";
 // literal `60` and never a hand-written string union. `consent-cutline.ts` re-exports these from
 // core for the same reason and its header says so.
 import { DEFAULT_DORMANCY_DAYS, type ScreeningScope } from "@trafficflow/core/mail";
+import { fenceErasedAccount } from "@trafficflow/services/mail";
 import { openLocalDb, type LocalDb } from "./db.js";
 
 /**
@@ -268,6 +269,11 @@ async function writeConsentScreening(
     dials?: { days: number | undefined; scope: ScreeningScope };
   },
 ): Promise<void> {
+  /* THE FENCE, FIRST STATEMENT OF THE TRANSACTION — every call site below opens one and calls
+     this before anything else, which is the order `erasure-fence.ts` requires. `account_settings`
+     is a table the Art. 17 sweep empties, and this install's store is swept by the same code as
+     the server's, so a consent landing after an erasure would put the row back. 410, not 404. */
+  await fenceErasedAccount(tx, d, o.accountId);
   // NEVER STORE THE DEFAULT for the dial — `setDormancyDays`' rule and the hosted door's,
   // verbatim, so the product default can move without rewriting every install that never
   // chose. NULL here reads back as the default, and that is the point.
