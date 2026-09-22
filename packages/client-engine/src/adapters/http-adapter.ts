@@ -597,6 +597,10 @@ export class HttpAdapter implements EngineAdapter {
         // zero, and the two floors default to 0 only because a number is all their readers can use.
         ...(typeof wire.window?.maxRows === "number" ? { maxRows: wire.window.maxRows } : {}),
       },
+      // THE RUN OF THE STORE, when the server states one. The engine writes it into the delta
+      // cursor it commits, and a local store past its first run refuses a cursor naming none —
+      // dropping it here was a 410 on every drain for any install whose store ever ended uncleanly.
+      ...(typeof wire.storeGeneration === "number" ? { storeGeneration: wire.storeGeneration } : {}),
     };
   }
 
