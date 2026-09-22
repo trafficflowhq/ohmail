@@ -223,14 +223,12 @@ export function useShellDerivations({
   /**
    * …AND THE ENGINE IS TOLD THE SAME CUTLINE THE PARTITION BELOW IS DRAWN WITH.
    *
-   * A windowed mirror decides dormancy from the mail it kept; the server decides it from the
-   * whole account. They agree only while the mirror holds every message the cutline reads — and
-   * the dormancy dial offers 90, 180 and 365 days against a 90-day window, so two of its three
-   * rungs put the cutline past the window by one click. Past it, a sender whose only mail the
-   * window evicted is dormant here and active there: their mail is filed in History and the
-   * Screener never asks. So the engine widens its retention to cover the cutline (`maxRows` still
-   * decides the size); read from the SAME `consent` fields the partition is keyed on, so the two
-   * can never be measured from different windows.
+   * A windowed mirror decides dormancy from the mail it kept, the server from the whole account,
+   * and the dial offers 90, 180 and 365 days against a 90-day window — so two of its three rungs
+   * put the cutline past the window. Past it a sender whose only mail the window evicted is
+   * dormant here and active there: filed in History, never asked about. So the engine widens its
+   * retention to cover the cutline (`maxRows` still decides the size), read from the SAME
+   * `consent` fields the partition is keyed on, so the two cannot be measured differently.
    */
   useEffect(() => {
     if (demo || !(consent.known || consent.standalone)) return;
