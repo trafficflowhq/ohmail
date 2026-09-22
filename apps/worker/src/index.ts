@@ -4231,7 +4231,7 @@ export async function startWorkerWithLock(
             // promises to act on; the pass files nothing for an account that has not opted in.
             const acted = await screenerAutoActPass(db as unknown as Tx, { accountId, log }, new Date());
             if (acted.ran && (acted.filed > 0 || acted.failed > 0)) {
-              log.info("screener_auto_act_pass", { accountId, filed: acted.filed, failed: acted.failed });
+              log.info("screener_auto_act_pass", { accountId, applied: acted.filed, failed: acted.failed });
             }
           } catch (err) {
             noteIfSharedDatabaseFault(err);
@@ -4625,7 +4625,7 @@ export async function startWorkerWithLock(
           const acted = await screenerAutoActPass(db as unknown as Tx, { accountId, log }, new Date());
           if (acted.ran && (acted.filed > 0 || acted.failed > 0)) {
             log.info("screener_auto_act_pass", {
-              accountId, filed: acted.filed, failed: acted.failed, capped: acted.capped,
+              accountId, applied: acted.filed, failed: acted.failed, capped: acted.capped,
             });
           }
         } catch (err) {

@@ -2,7 +2,7 @@ import { and, asc, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import {
   accountSettings, folderState, messages,
-  applyScreenerDecision, AccountErasedError,
+  applyScreenerDecision,
   screenerSuggestionsBySender, resolveCutline, senderIsActiveSql, senderIsDecidedSql,
   decisionCanBeApplied, readRequestEligibility,
   DECIDABLE_FOLDERS, SCREENER_FOLDER,
@@ -206,7 +206,7 @@ export async function screenerAutoActPass(
       if (applied === null) {
         result.revoked = true;
         log.info("screener_auto_act_revoked", {
-          accountId, examined: result.examined, filed: result.filed,
+          accountId, examined: result.examined, applied: result.filed,
           reason: "the setting was switched off during this page; the remaining senders were not filed",
         });
         break;
@@ -218,28 +218,26 @@ export async function screenerAutoActPass(
       // erased account from a demoted organizer from a store fault.
       result.failed++;
       log.error("screener_auto_act_failed", {
-        accountId,
-        errorClass: err instanceof AccountErasedError ? "account_erased" : classOf(err),
-        err,
+        // `err` is a logger-owned slot and the class is derived there; a thrown STRING loses its
+        // payload at every such site, so that one value is carried in `code` as well.
+        accountId, err,
+        ...(typeof err === "string" ? { code: err.slice(0, 64) } : {}),
         reason: "this sender was not filed and stays in the Screener carrying the same suggestion, "
           + "so the person's own Apply still files them and the next cycle tries again",
       });
     }
   }
 
+  // FIELD NAMES THE HARDENED LOGGER KEEPS, asked of it rather than guessed: `filed`, `kept` and
+  // `destinations` are dropped by `ALLOWED_FIELDS`, and a counter the sink drops is a line that
+  // says nothing. The destinations live in the rules the act promoted, which is a durable record.
   if (result.filed > 0 || result.failed > 0) {
     log.info("screener_auto_act", {
-      accountId, examined: result.examined, filed: result.filed, kept: result.kept,
-      failed: result.failed, destinations: result.destinations, capped: result.capped,
+      accountId, examined: result.examined, applied: result.filed,
+      failed: result.failed, capped: result.capped,
     });
   }
   return result;
-}
-
-/** A thrown STRING loses its payload at every `errorClass` site — log the value when it is one. */
-function classOf(err: unknown): string {
-  if (typeof err === "string") return `String:${err.slice(0, 64)}`;
-  return err instanceof Error ? err.constructor.name : typeof err;
 }
 
 interface WaitingSender {

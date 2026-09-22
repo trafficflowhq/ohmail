@@ -2211,7 +2211,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         const { ran, filed, failed, capped } = await screenerAutoActPass(db as unknown as Tx, {
           accountId: world.accountId,
         });
-        if (ran && (filed > 0 || failed > 0)) log("screener_auto_act", { filed, failed, capped });
+        if (ran && (filed > 0 || failed > 0)) log("screener_auto_act", { applied: filed, failed, capped });
       } catch (err) {
         log("screener_auto_act_failed", {
           err,
