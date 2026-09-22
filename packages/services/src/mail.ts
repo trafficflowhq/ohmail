@@ -51,8 +51,8 @@ export {
   type HeldReleaseGroup, type HeldReleaseResult, type HeldReleaseSummary,
 } from "./held-release-service.js";
 export {
-  unscreenedSenderGroups, unscreenedSummary, screenUnscreened,
-  OHBOX_UNSCREENED_GROUPS_MAX, OHBOX_UNSCREENED_MESSAGES_MAX, OHBOX_UNSCREENED_AUDIT_ACTION,
+  unscreenedSummary, screenUnscreened,
+  OHBOX_UNSCREENED_GROUPS_MAX, OHBOX_UNSCREENED_AUDIT_ACTION,
   type UnscreenedSenderGroup, type UnscreenedSummary, type UnscreenedResult,
 } from "./ohbox-unscreened-service.js";
 export {

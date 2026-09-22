@@ -37,7 +37,7 @@ export const OHBOX_UNSCREENED_AUDIT_ACTION = auditAction("screener.unscreened_sw
 export const OHBOX_UNSCREENED_GROUPS_MAX = 200;
 
 /** Rows one page of the walk reads — the sibling passes' page, for their `recordChange` reason. */
-export const OHBOX_UNSCREENED_BATCH = 200;
+const OHBOX_UNSCREENED_BATCH = 200;
 
 /**
  * Pages the walk may read before it answers with what it has.
@@ -47,10 +47,10 @@ export const OHBOX_UNSCREENED_BATCH = 200;
  * the first page of a legacy Ohbox is usually a correspondent's — so the bound is on rows READ,
  * not on rows found, and the tail is reached by pressing what is shown and asking again.
  */
-export const OHBOX_UNSCREENED_MAX_PAGES = 25;
+const OHBOX_UNSCREENED_MAX_PAGES = 25;
 
 /** Messages one read offers and one press moves. The walk stops early once it has this many. */
-export const OHBOX_UNSCREENED_MESSAGES_MAX = 1000;
+const OHBOX_UNSCREENED_MESSAGES_MAX = 1000;
 
 /** One sender group: who wrote, how much of their mail is in the Ohbox undecided, and how recent. */
 export interface UnscreenedSenderGroup {
@@ -302,13 +302,6 @@ function groupsOf(rows: readonly UnscreenedRow[]): UnscreenedSenderGroup[] {
     .map(([address, g]) => ({ address, count: g.count, newestAt: new Date(g.newest).toISOString() }))
     .sort((a, b) => b.count - a.count || a.address.localeCompare(b.address))
     .slice(0, OHBOX_UNSCREENED_GROUPS_MAX);
-}
-
-/** The screen's rows. A read: it spends nothing, opens no mailbox and moves no mail. */
-export async function unscreenedSenderGroups(
-  db: Tx, accountId: string,
-): Promise<UnscreenedSenderGroup[]> {
-  return groupsOf(await unscreenedWalk(db, accountId, { lock: false }));
 }
 
 /**
