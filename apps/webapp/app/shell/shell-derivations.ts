@@ -111,6 +111,8 @@ export interface ShellDerivationsInput {
   /** The derived stamp every whole-mirror memo is keyed on (`useDerivedVersion`). */
   derived: number;
   demo: boolean;
+  /** The browser's own answer (`useResolvedDemoMode`): what a gate that READS or ISSUES asks. */
+  resolvedDemo: boolean;
   now: Date;
   /** `GET /mailboxes`, or null while it has not answered. */
   facts: MailboxFacts[] | null;
@@ -140,7 +142,7 @@ export interface ShellDerivationsInput {
 export type ShellDerivations = ReturnType<typeof useShellDerivations>;
 
 export function useShellDerivations({
-  engine, reader, derived, demo, now, facts, seedOwed, consent, route, trashWire,
+  engine, reader, derived, demo, resolvedDemo, now, facts, seedOwed, consent, route, trashWire,
   deleting, restoring, routing,
 }: ShellDerivationsInput) {
   /**
@@ -164,7 +166,10 @@ export function useShellDerivations({
    */
   const [rememberedOwn, setRememberedOwn] = useState<string[] | null>(null);
   useEffect(() => {
-    if (demo) return;
+    /* `resolvedDemo`, not `demo`: on a prerendered demo page the raw flag is false for one
+       render, and this one carries a PREVIOUS account's remembered addresses into the fixtures
+       world rather than issuing a request. */
+    if (resolvedDemo) return;
     const owner = readOwner();
     if (owner === null) return;
     if (facts) {
@@ -173,7 +178,7 @@ export function useShellDerivations({
     }
     const cached = readBootCache(OWN_ADDRESSES_BOOT_SCOPE, owner, acceptAddressList);
     if (cached !== null) setRememberedOwn(cached);
-  }, [demo, facts]);
+  }, [resolvedDemo, facts]);
   /**
    * Keyed on the addresses, not the facts row. `consentView` depends on nothing else about a
    * mailbox, and keyed on `facts` it rebuilt the whole-mirror partition whenever ANY field

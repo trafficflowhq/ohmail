@@ -1118,7 +1118,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     // `derived` is the subscription; the reader object is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, derived]);
-  const consent = useConsentState(!demo, consentTransport, settingsStamp);
+  /* `resolvedDemo`, NOT `demo` — the third gate in this file to take the correction, and the
+     same one-render-wide difference the wake registration and the away notice record above:
+     a prerendered `?demo=1` page hydrates with `serverDemo === false`, so this issued
+     `GET /consent` from a fixtures world, and an effect cleanup cannot recall a request. */
+  const consent = useConsentState(!resolvedDemo, consentTransport, settingsStamp);
   /**
    * The sync loop's posture, for the folders group's third render: `bootstrapping` is "no drain
    * has yet completed for this engine", which is exactly the window in which ZERO folder
@@ -1285,7 +1289,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     notifications, allOhbox, ohboxCount, participantsOf, threadCountOf, threadSubjectOf, fallbackMailboxId,
     drafts, scheduled,
   } = useShellDerivations({
-    engine, reader, derived, demo, now, facts, seedOwed, consent, route, trashWire,
+    engine, reader, derived, demo, resolvedDemo, now, facts, seedOwed, consent, route, trashWire,
     deleting, restoring, routing,
   });
 

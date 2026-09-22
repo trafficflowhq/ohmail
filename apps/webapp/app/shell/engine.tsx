@@ -1036,6 +1036,21 @@ export function useResolvedDemoMode(): boolean {
   return useBinding().demo;
 }
 
+/**
+ * The same answer for a component ABOVE the provider, which has only the server's word.
+ * `CloudShell` mounts `EngineProvider`, so it cannot read the binding — and it kept the
+ * server-derived prop for the life of the mount, which on a prerendered `?demo=1` page is
+ * permanently wrong rather than wrong for one render: `/hello` and `GET /account/ai` left a
+ * fixtures-only page and no corrected value ever arrived. Lazy state, not an effect: the
+ * initialiser runs on the client's first render, before any effect, so every gate below sees
+ * the real answer. For effects and capability gates only — never render output, for
+ * {@link useDemoMode}'s reason.
+ */
+export function useResolvedDemoModeFrom(serverDemo: boolean): boolean {
+  const [demo] = useState(() => resolveDemo(serverDemo));
+  return demo;
+}
+
 export function useDemoMode(): boolean {
   const { demo, serverDemo } = useBinding();
   return useSyncExternalStore(NEVER_CHANGES, () => demo, () => serverDemo);

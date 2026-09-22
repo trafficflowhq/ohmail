@@ -6,6 +6,7 @@ import type { MailboxFacts } from "../../shell/mail-state";
 import { toMailboxFacts } from "./mailbox-facts";
 import { buildToken } from "../../shell/app-update";
 import { startBuildWatch } from "../../shell/build-watch";
+import { useResolvedDemoModeFrom } from "../../shell/engine";
 import { COMPOSE_ATTACH_STAGED_SURFACE_BYTES } from "../../components/ComposeAttach";
 import {
   bindApiOwner, mailboxes as mailboxApi, onAccessRefused, pendApiOwner,
@@ -61,6 +62,16 @@ beginOAuthReturn();
  */
 export function CloudShell({ demo }: { demo: boolean }) {
   /**
+   * WHAT THE EFFECTS BELOW ASK, as opposed to what the shell RENDERS.
+   *
+   * `demo` is the SERVER's word, and a prerendered `?demo=1` page bakes `searchParams = {}` —
+   * so it is false here for the life of the mount, not for one render: the capability hooks
+   * called `/hello` and `GET /account/ai` from a fixtures world and no corrected value ever
+   * arrived. Every gate that ISSUES something reads this; `demo` keeps everything DRAWN, which
+   * is what stops the hydration mismatch `useDemoMode` exists to prevent.
+   */
+  const resolvedDemo = useResolvedDemoModeFrom(demo);
+  /**
    * Is this tab still the app this origin serves? A browser client is downloaded once and left
    * running, and nothing tells open tabs about a deployment. The watch asks `/version` occasionally
    * and raises the quiet strip — at most once a day per build. Armed here, not in `AppShell`: the
@@ -70,11 +81,11 @@ export function CloudShell({ demo }: { demo: boolean }) {
    * bundle, so it names the running build by construction.
    */
   useEffect(() => {
-    if (demo) return;
+    if (resolvedDemo) return;
     return startBuildWatch({
       token: buildToken(process.env.NEXT_PUBLIC_APP_VERSION, process.env.NEXT_PUBLIC_BUILD),
     });
-  }, [demo]);
+  }, [resolvedDemo]);
 
   /**
    * Does this deployment invite users? Two gates in one hook: the COMPILED flavor (the
@@ -94,11 +105,11 @@ export function CloudShell({ demo }: { demo: boolean }) {
    */
   const [refused, setRefused] = useState<AccessRefusedFacts | null>(null);
   useEffect(() => {
-    if (demo) return;
+    if (resolvedDemo) return;
     return onAccessRefused((facts) => setRefused((held) => held ?? facts));
-  }, [demo]);
+  }, [resolvedDemo]);
 
-  const userInvites = useUserInvites();
+  const userInvites = useUserInvites(resolvedDemo);
 
   /**
    * DOES THIS DEPLOYMENT OPERATE A SUBSCRIPTION PAGE — `false` on every install that has nowhere.
@@ -109,7 +120,7 @@ export function CloudShell({ demo }: { demo: boolean }) {
    * here and not at mount at all — the pane mints it when somebody presses; see
    * {@link useManageOffer}.
    */
-  const { manageOffered, withdrawManage } = useManageOffer(demo);
+  const { manageOffered, withdrawManage } = useManageOffer(resolvedDemo);
 
   /**
    * Does this server pair devices? ONE gate, the server's runtime `features.pairing` word —
@@ -120,7 +131,7 @@ export function CloudShell({ demo }: { demo: boolean }) {
    * round trip and grows no pane whose every verb mutates real credentials — the hook's own
    * header carries the measured leak this closed.
    */
-  const devicePairing = useDevicePairing(demo);
+  const devicePairing = useDevicePairing(resolvedDemo);
 
   /**
    * The first-run flow's door — the same seam as the panes below, one layer up. `AppShell` renders
@@ -130,7 +141,7 @@ export function CloudShell({ demo }: { demo: boolean }) {
    * panel rides along wherever this server pairs — the same `features.pairing` gate the Devices
    * pane is built on, so setup's last step exists exactly where the surface it links to does.
    */
-  const firstRun = useCloudFirstRun(demo, devicePairing ? <DevicesSection /> : undefined);
+  const firstRun = useCloudFirstRun(resolvedDemo, devicePairing ? <DevicesSection /> : undefined);
 
   /**
    * The shell's confirm — now nothing but a pass-through to the shared classifier. It used to hold
@@ -199,13 +210,18 @@ export function CloudShell({ demo }: { demo: boolean }) {
         /* The classifier answers; THIS commits. See `EngineProvider.onConfirmed` for why the
            binding cannot live inside `resolveOwnerOutcome`. */
         onConfirmed={bindApiOwner}
-        mailboxFacts={mailboxFacts}
+        /* WITHHELD ON THE DEMO, and this is the shared shell's own rule rather than a new one:
+           an absent probe already MEANS "no roster and never will be — the desktop, the demo",
+           and the host is the only thing that knows which it is. Handed over unconditionally,
+           a prerendered `?demo=1` page put `GET /mailboxes` on the wire and polled it. */
+        mailboxFacts={resolvedDemo ? undefined : mailboxFacts}
         /* ACKNOWLEDGING THE ORGANIZER NOTICE, which the shared shell cannot do for itself: the
            publish denies it `app/api-client`, so the route is reached from here on this door and
            from the window's own pipe on the desktop. One route, two transports, one sentence.
 
            `demo` keeps its own gate inside the shell — a fixture world has no row to stamp — so
-           this is handed over unconditionally, exactly as `mailboxFacts` above is. */
+           this is handed over unconditionally. `mailboxFacts` above is NOT: it is a read, and a
+           read is withheld rather than gated downstream. */
         organizerNoticeTransport={(id) => mailboxApi.dismissOrganizerNotice(id)}
         /* What a send from this window rides — the staging bucket's
            per-object ceiling. Declaring nothing meant the 3 MB constant,
@@ -233,8 +249,14 @@ export function CloudShell({ demo }: { demo: boolean }) {
         /* THE ACCOUNT'S OWN STRIP — a trial running out, a payment that failed, the catch-up
            after a closure lifts. Cloud-only by the same absence rule as the panes: the shared
            shell renders the node and cannot read `GET /account/access` itself, and the demo has
-           no account to say anything about. */
-        accountNotice={demo ? undefined : <LifecycleBanner />}
+           no account to say anything about.
+
+           `resolvedDemo`, although this gate is RENDERED: the strip is absent from the DOM until
+           its read answers, so both sides of the hydration render draw nothing and the markup
+           cannot disagree. That is what licenses it here and nowhere the node paints at once —
+           measured, not assumed: on a prerendered demo page this was a live `GET /account/access`
+           the row that found the other five never named. */
+        accountNotice={resolvedDemo ? undefined : <LifecycleBanner />}
         /* SELF-HOST ONLY — see `userInvites` above. `undefined` (managed, an old server, the
            answer still pending) means no nav entry, never an empty pane. */
         invitesSection={userInvites ? <InvitesSection /> : undefined}

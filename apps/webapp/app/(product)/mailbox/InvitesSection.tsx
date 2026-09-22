@@ -38,10 +38,14 @@ import { QrCode } from "../../shell/QrCode";
  * announce pairing gets no pane rather than one whose every verb would bounce. `false` while
  * pending: a nav entry appearing a beat after mount is cheaper than one that opens onto refusals.
  */
-export function useUserInvites(): boolean {
+export function useUserInvites(demo: boolean): boolean {
   const [pairing, setPairing] = useState(false);
   useEffect(() => {
-    if (!SELF_HOST_BUILD) return;
+    /* THE DEMO'S WORD FIRST, as on every other capability hook here. This one had no demo gate
+       at all, so a fixtures page on a self-host build paid a `/hello` round trip for a pane whose
+       every verb mints a real credential. The caller passes the RESOLVED answer — see
+       `CloudShell`. */
+    if (demo || !SELF_HOST_BUILD) return;
     let alive = true;
     void serverHello().then((h) => {
       if (alive) setPairing(h?.features?.pairing === true);
@@ -49,7 +53,7 @@ export function useUserInvites(): boolean {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [demo]);
   return pairing;
 }
 
