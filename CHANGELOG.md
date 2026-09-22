@@ -18,6 +18,138 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.22.1] — 2026-09-22
+
+### In the admin console, clearing the Microsoft secret asks first and never discards a secret you just typed; a console page that fails to load says so instead of staying blank
+<!-- changes: admin-023-console-truth.md -->
+
+"Clear the secret" now arms on the first press and clears on a confirmation that names what it
+costs, and it is refused outright while the secret field holds a replacement. Every console page
+is served with one line naming the build it is loading and what to do if the line is still there
+after a reload; the line goes when the console's first read answers, so a page that never renders
+cannot look like a page with nothing to show.
+
+### The desktop's own door
+<!-- changes: desktop-023-local-door-truth.md -->
+
+"Test connection" now checks the outgoing server as well as the incoming one and says what each
+answered, so a mailbox that is about to be refused for sending says so at the test, by name,
+instead of at the connect. A mailbox with no outgoing server set up is still a good answer and is
+stated as one.
+
+### Turning off same-network access keeps the port
+<!-- changes: desktop-023-stand-down-port-and-build-sha.md -->
+
+Turning off same-network access keeps the port until you turn it back on, so nothing else can be
+published on it; the app and its mail engine are checked to be the same build.
+
+### A signed-out tab stops hammering the server
+<!-- changes: fix-0221-dead-session-and-attachment-reask.md -->
+
+A tab whose session has ended stops asking the server for anything until it has a session again,
+and picks up on its own within five minutes of you signing in. Before, it kept polling several
+times a second for as long as it was open.
+
+### Files that failed to load are asked for again
+<!-- changes: fix-0221-dead-session-and-attachment-reask.md#2 -->
+
+A message's file list that failed to load is asked for again when you reopen the message. A list
+the server answered for good — a message that is not yours, or no longer exists — keeps that
+answer instead of being asked for on every open.
+
+### The phone's Servers screen, message bar and mail rows
+<!-- changes: fix-0221-phone-rows.md -->
+
+- The **Servers** screen always has a way back. With no server paired it could be left with no
+  Back and no tabs, and only restarting the app got you off it. It now returns to your mailbox,
+  or to the start screen when nothing is paired.
+- The verbs under an open message stand on **one row**. They used to wrap onto a second row that
+  covered the message; what does not fit is under **⋯**, one press away.
+- A mail row offers **Done, Later and Junk** to VoiceOver and TalkBack, so the verbs behind the
+  swipe can be reached without opening the message.
+
+### On the phone, an error on one screen no longer closes the app
+<!-- changes: fix-0221-render-error-boundary.md -->
+
+- The screen says so and can be retried.
+
+### A row's actions no longer sit on the row
+<!-- changes: fix-0221-resurfaced-done-overlap.md -->
+
+Hovering a Resurfaced row shows a Done action, and it was drawn over the end of the subject and
+over the row's attachment mark. It now stands in a slot of its own at the end of the row: the
+subject shortens before the slot, hovering moves nothing, and the keyboard reaches the action
+exactly as before, and the row's own highlight reaches under the slot so the action stands on the
+row rather than beside it. The Screener's accept and file controls moved with it.
+
+### Obvious spam is filed for you the moment it is recognised, when you have asked for that
+<!-- changes: fix-0221-screener-auto-act.md -->
+
+With Settings → Screener's "Act on suggestions for me" on, a waiting sender whose suggestion is
+confident is filed through the same door the Apply button uses: the sender leaves the Screener,
+the rule appears in your rules list to undo, and nothing changes for an account that has not asked
+for it. It runs on the hosted service and on an install that organizes its own mailbox.
+
+### On iPhone, the app's diagnostics reach the system log, so a shipped build can be read
+<!-- changes: fix-023-ios-engine-log-sink.md -->
+
+The app writes each of its diagnostic lines to the system log under its own subsystem
+(`app.ohmail.engine`), so a released build on a device or a simulator can be read with the
+platform's own log tools. Until now those lines existed only in a development build's terminal: a
+released iPhone build wrote nothing anybody could read, which is why an iPhone problem could only
+ever be described rather than shown. On Android the lines carry the tag `ohmail.engine`.
+
+### An account is never erased on a date the metering program worked out before it knew about it
+<!-- changes: fix-023-lifecycle-epoch-floor.md -->
+
+The nightly account pass refuses an erasure whose date is not at least a day past the metering
+program's own start instant, when the program states one. A program that states none is an older
+one and is read exactly as before; a self-hosted install has no metering program at all and never
+reaches this door.
+
+### Attaching a photo on the phone
+<!-- changes: fix-023-photo-attach-crash.md -->
+
+- Attaching a photo from the library no longer closes the app on the newest iOS. The composer and
+  its text stay where they were.
+
+### The Ohbox can be cleared of older mail from senders you never decided about
+<!-- changes: ohbox-023-unscreened-senders.md -->
+
+The Screener says how many messages in your Ohbox come from senders you never decided about — mail
+that arrived before screening existed — and one press moves them to the Screener, where you decide
+per sender as usual. Nothing moves until you press it.
+
+### On iPhone, the local copy of your mail stays out of the phone's backup, and Settings says so only where it is true
+<!-- changes: phone-023-ios-mirror-backup-exclusion.md -->
+
+The phone marks the folder its mail mirror lives in as excluded from the device's cloud and
+computer backups, then reads that mark back — and the About block in Settings states the exclusion
+only where the read-back confirmed it, states the opposite where it did not, and claims neither
+where nothing could be read. Android already kept the mirror out of its backup; both platforms now
+answer the same question through the same code, so the sentence cannot be true on one and written
+for the other.
+
+### A certificate authority is trusted for the server you installed it for
+<!-- changes: sec-023-door-ca-identity.md -->
+
+A certificate authority you installed for your own mail server is trusted for that server only,
+and signing out while switching servers can no longer leave a password behind.
+
+### A saved sign-in survives a crash in the middle of saving
+<!-- changes: sidecar-023-credential-store-integrity.md -->
+
+The desktop's saved sign-in survives a crash in the middle of saving, and the account pane tells
+you when it could not be saved instead of leaving you to find out at the next restart.
+
+### Backspace and Delete no longer file a message while you are writing
+<!-- changes: web-023-shell-keys-and-claims.md -->
+
+With a reply or a new message open and nothing focused, one press of Backspace or Delete moved
+the message selected behind it to Trash. Both keys belong to whoever is writing now and come
+back when the form closes. Typing is unchanged: Backspace in a field still edits the text, and
+in the To field it still takes the last recipient back.
+
 ## [0.22.0] — 2026-09-22
 
 ### An account whose subscription has ended is told so at every door, and its mailbox is untouched
@@ -7747,7 +7879,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.22.1...HEAD
+[0.22.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.22.1
 [0.22.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.22.0
 [0.21.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.21.0
 [0.20.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.20.1
