@@ -1,17 +1,12 @@
 /**
  * A RENDER ERROR IS CAUGHT, NOT FATAL. React Native hands an uncaught render throw to
- * `RCTExceptionsManager.reportFatal`, which in a release build aborts the process — 23 of the 27
- * crash reports on the build Mac were one `TypeError` taking that road. A boundary turns the throw
- * into a sentence with Retry, and writes ONE line through the app's one sink.
- *
- * This is the pure half: what the line carries, how a surface is named, and the class itself,
- * with no React Native in it so the node suite can drive `getDerivedStateFromError`,
- * `componentDidCatch` and `render()` as functions. `ErrorBoundary.tsx` draws the fallback.
- *
- * WHAT THE LINE MAY CARRY, by construction: the error's CLASS (held to an identifier grammar),
- * its MESSAGE (addresses and digit runs replaced, bounded), and the FIRST component frame's NAME.
- * A thrown non-Error is described by its type, never serialized — a thrown object could be
- * somebody's mail. No props, no children, no route params reach this module at all.
+ * `RCTExceptionsManager.reportFatal`, which aborts a release build — 23 of 27 crash reports on the
+ * build Mac were one `TypeError` taking that road. A boundary turns the throw into a sentence with
+ * Retry and writes ONE line through the app's one sink. This is the pure half — the line, the
+ * surface names, the class — with no React Native in it, so the node suite drives it as functions;
+ * `ErrorBoundary.tsx` draws the fallback. The line carries, by construction: the error's CLASS
+ * (identifier grammar), its MESSAGE (addresses and digit runs replaced, bounded) and the FIRST
+ * component frame's NAME. A thrown non-Error is named by type, never serialized — it could be mail.
  */
 import { Component, createElement, Fragment, type ErrorInfo, type ReactNode } from "react";
 import { Copy } from "../copy";

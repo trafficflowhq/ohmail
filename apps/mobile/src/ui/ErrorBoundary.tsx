@@ -3,11 +3,9 @@
  * pane, the composer — and when a render inside it throws, the person sees the app's own sentence
  * with Retry instead of losing the process (`error-boundary.ts` has the rule and the class). Retry
  * remounts the guarded subtree. A route's own hooks stand ABOVE its boundary; a throw there reaches
- * the shell's, which is the net under everything the navigator draws.
- *
- * `frame` is where the fallback stands: a `screen` fills the surface; a `sheet` is the composer's
- * shape, so the reader behind it stays readable and the sheet primitive's own way out applies;
- * `inline` is a pane's. The fallback reads the deck at render and subscribes to the language.
+ * the shell's, the net under everything the navigator draws. `frame` is where the fallback stands:
+ * `screen` fills the surface, `sheet` is the composer's shape (the reader behind it stays readable,
+ * the sheet primitive's way out applies), `inline` is a pane's. It reads the deck at render.
  */
 import type { ReactNode } from "react";
 import { View } from "react-native";
