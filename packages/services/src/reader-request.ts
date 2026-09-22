@@ -20,11 +20,13 @@ import { ServiceError } from "./errors.js";
  * (`request-drain.ts`). Exactly ONE branch — copies of a security branch drift. IT DOES NOT SIGN:
  * the key derives from the mailbox PASSWORD (`deriveRequestKey`), which the API tier does not
  * hold — the door writes `pending` and stops; the cycle signs KIND-AGNOSTICALLY, so a new kind
- * changes nothing here. THREE SHAPES: PER-MAILBOX (`routeMailboxWrite`), FAN-OUT
- * (`planAccountFanOut` — one press can be a local write AND several requests), and the SET
- * (`planBulkMoveOnReader` + `writeReaderRequestSet` — one press is N records on one mailbox,
- * keyed so a retry writes the rows it already wrote and no others).
+ * changes nothing here.
  */
+
+/* THREE SHAPES: PER-MAILBOX (`routeMailboxWrite`), FAN-OUT (`planAccountFanOut` — one press can
+   be a local write AND several requests), and the SET (`planBulkMoveOnReader` +
+   `writeReaderRequestSet` — one press is N records on one mailbox, keyed so a retry writes the
+   rows it already wrote and no others). */
 
 /**
  * WHAT A DOOR ANSWERS WHEN THE WRITE DID NOT HAPPEN HERE — the record was written instead, and
@@ -373,13 +375,10 @@ export interface BulkMoveTarget {
  * WHAT A BULK MOVE DOES, PER MAILBOX (mail 0094, bulk half) — the ONE branch both
  * many-from-one-press move doors take, replacing the refusal they shared.
  *
- * Three answers. ORGANIZED here: the messages come back in `organized` and the caller's own write
- * path runs. READ, with a holder that takes `message.move`: they come back as a target and the
- * caller writes one record each. A holder that will NOT take the kind: refused WHOLE, by name —
- * travelling the rest would leave a state nobody chose with nothing pending to explain it.
- *
- * The SET BOUND is asked over the total that would TRAVEL, before any write, so a re-route no
- * pass could drain is refused at the press where the count is known.
+ * Three answers. ORGANIZED here: the messages come back in `organized`. READ, with a holder that
+ * takes `message.move`: they come back as a target and the caller writes one record each. A
+ * holder that will NOT take the kind: refused WHOLE — travelling the rest would leave a state
+ * nobody chose. The SET BOUND is asked over the total that would TRAVEL, before any write.
  */
 export async function planBulkMoveOnReader(
   tx: Tx, accountId: string, messageIds: readonly string[],

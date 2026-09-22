@@ -86,16 +86,14 @@ export async function insertOrganizerRequest(tx: Tx, input: {
 }
 
 /**
- * WRITE N UNDER ONE PRESS'S KEY, IDEMPOTENTLY — the set shape {@link insertOrganizerRequest} has
- * no way to express. Same fence, same columns; the difference is where the id comes from. The
- * caller DERIVES each id from the press's key and the record's own member, so a retry of the same
- * press mints the same ids and `onConflictDoNothing` writes nothing the first attempt wrote:
- * without that, a retried press is somebody's mail moved twice.
+ * WRITE N UNDER ONE PRESS'S KEY, IDEMPOTENTLY — the set shape {@link insertOrganizerRequest}
+ * cannot express. Same fence, same columns; the id is the difference. The caller DERIVES each one
+ * from the press's key and the record's own member, so a retry mints the same ids and
+ * `onConflictDoNothing` writes nothing the first attempt wrote — without it, a retried press is
+ * somebody's mail moved twice.
  *
- * A row already there is REPORTED, never replaced — its `state` may have moved on to `sent` or
- * `applied`, and an upsert would drag a decision the organizer has taken back to `pending`.
- * `.returning()` names exactly the rows this statement inserted, which is what makes the two
- * counts honest rather than inferred.
+ * A row already there is REPORTED, never replaced: its `state` may have moved on to `sent` or
+ * `applied`, and an upsert would drag a taken decision back to `pending`.
  */
 export async function insertOrganizerRequestSet(tx: Tx, input: {
   accountId: string; mailboxId: string; kind: string; decidedAt: Date;

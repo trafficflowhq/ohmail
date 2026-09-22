@@ -232,14 +232,11 @@ export class HeyMigrationService {
 
     /**
      * WHERE EACH MATCHING ROW LANDS, DECIDED BEFORE THE FIRST ONE IS TOUCHED (mail 0094). This
-     * pass writes `folder_state.desired_folder` with `last_set_by: 'us'` for every matching
-     * message — a real IMAP move per row, the largest single mail-moving act in the product. On a
-     * mailbox this install only reads those rows TRAVEL: one `message.move` record each, under
-     * this import's own key. The BOUND is what keeps that safe and it is asked inside the plan —
-     * a re-route spanning more messages than one pass can carry is refused at the press where the
-     * count is known, which is the flood case this door used to refuse outright. Planned AHEAD of
-     * the loop — a refusal discovered mid-walk would already have moved somebody's mail. Only the
-     * messages this pass would TOUCH, computed with the same lookup the loop uses.
+     * pass writes `folder_state.desired_folder` with `last_set_by: 'us'` per matching message — a
+     * real IMAP move per row. On a mailbox this install only reads those rows TRAVEL: one
+     * `message.move` record each, under this import's own key, with the BOUND asked inside the
+     * plan so the flood case is still refused at the press. Planned AHEAD of the loop — a refusal
+     * discovered mid-walk would already have moved somebody's mail.
      */
     const willMove = rows.flatMap((r) => {
       const from = r.fromAddress.toLowerCase();
