@@ -10,7 +10,9 @@ import { AutoSuggestRow } from "../../webapp/app/shell/AutoSuggestRow";
 import { useConsentState } from "../../webapp/app/shell/consent-state";
 import { useScreenerSuggestions } from "../../webapp/app/shell/screener-suggest";
 import { accountDoorFor } from "../src/doors.js";
-import { CONSENT_PATH, CONSENT_SETTINGS_PATH, consentOverBridge } from "../src/local-consent.js";
+import {
+  CONSENT_PATH, CONSENT_SETTINGS_PATH, consentOverBridge, consentOverBridgeStandalone,
+} from "../src/local-consent.js";
 import { cloudSuggestWire } from "../src/cloud-suggest.js";
 import { DesktopWebSection } from "../src/DesktopWebSection.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
@@ -174,9 +176,14 @@ const wire = (): string[] =>
  * `active: false` on the suggestions hook is what the shell passes while the user is in Settings
  * rather than the Screener (`route.view === "screener"`), so this is the real configuration.
  */
-function OptInHarness({ transport }: { transport: boolean }) {
+function OptInHarness({ transport, standaloneDoor = false }: {
+  transport: boolean; standaloneDoor?: boolean;
+}) {
   const toast = useToast();
-  const consent = useConsentState(true, transport ? consentOverBridge : undefined);
+  const consent = useConsentState(
+    true,
+    transport ? (standaloneDoor ? consentOverBridgeStandalone : consentOverBridge) : undefined,
+  );
   const suggestions = useScreenerSuggestions({
     active: false,
     autoSuggest: consent.autoSuggest,
@@ -263,6 +270,22 @@ describe("the hosted door's auto-suggest opt-in, over the bridge", () => {
     expect(text(".probe-standalone")).toBe("false");
     expect(text(".probe-supported")).toBe("true");
     expect(el.textContent).toContain("Suggest for new senders automatically");
+  });
+
+  /**
+   * THE STANDALONE DOOR HAS A CONSENT ROW TOO, and that is the fact the unsubscribe promise
+   * hangs on. `consent.standalone` means "nothing to reach", not "no account": this door hands in
+   * its own wire (`consentOverBridgeStandalone`, the same ten calls one capability short), so the
+   * sheet may state the unsubscribe before a screen-out and Settings may offer the switch that
+   * turns it off — which the engine on this machine now honours. Watched fail by handing the
+   * harness no transport: `standalone` reads true and both halves withdraw.
+   */
+  it("the STANDALONE door is not `standalone` — it has a row to ask and to write", async () => {
+    await mount(h(OptInHarness, { transport: true, standaloneDoor: true }));
+
+    expect(wire(), "GET /consent never left the standalone door").toContain(`GET ${CONSENT_PATH}`);
+    expect(text(".probe-known")).toBe("true");
+    expect(text(".probe-standalone")).toBe("false");
   });
 
   it("prices the batch against the ACCOUNT before it will take a yes", async () => {

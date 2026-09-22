@@ -224,6 +224,7 @@ import {
   RETRO_DEFAULT_ON,
   dispatchScreeningChange,
   planScreeningChange,
+  autoUnsubscribeDoor,
   screeningToast,
   senderScreening,
   splitRoutingPlan,
@@ -1342,7 +1343,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * wires no unsubscribe service, so a warning there would name a request it cannot make. The
    * demo is not excluded: its job is to show what the product does.
    */
-  const autoUnsubscribeDiscloses = consent.autoUnsubscribe && !consent.standalone;
+  const autoUnsub = autoUnsubscribeDoor({
+    demo, known: consent.known, on: consent.autoUnsubscribe, standalone: consent.standalone,
+  });
+  const autoUnsubscribeDiscloses = autoUnsub.discloses;
   /**
    * WHAT THE SCREENER MAY DO HERE — organizer, pending, or blocked.
    *
@@ -3210,7 +3214,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                  * the standalone door hands in none and is still excluded. Withheld from the demo like every other
                  * injected pane.
                  */
-                autoUnsubscribeSection={demo || !consent.known || !autoOptIn.supported ? undefined : (
+                autoUnsubscribeSection={!autoUnsub.control ? undefined : (
                   <AutoUnsubscribeRow
                     on={consent.autoUnsubscribe}
                     setBlockAutoUnsubscribe={consent.setBlockAutoUnsubscribe}

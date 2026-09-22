@@ -608,3 +608,19 @@ export function holdingRules(reader: EntityReader, address: string, folder: Fold
     && (r.bodyContains ?? "").trim() === ""
     && ruleMatchesSender(r, address));
 }
+
+/**
+ * WHAT THIS BUILD DOES ABOUT UNSUBSCRIBING ON SCREEN-OUT — one rule, two readings, so the promise
+ * and the control can never come apart. `discloses` is what the sheet and the toasts say BEFORE a
+ * press; `control` is whether the Settings switch that turns it off is drawn. Both hang on there
+ * being a consent row to ask (`standalone` is "nothing to reach", and the desktop's own door hands
+ * one in), because a promise nobody can withdraw is worse than no promise. `known` gates the
+ * control alone: the switch rests ON, so drawing it before the row has answered would show it on
+ * to somebody who turned it off.
+ */
+export function autoUnsubscribeDoor(o: {
+  demo: boolean; known: boolean; on: boolean; standalone: boolean;
+}): { discloses: boolean; control: boolean } {
+  const reaches = !o.standalone;
+  return { discloses: o.on && reaches, control: !o.demo && o.known && reaches };
+}

@@ -937,16 +937,15 @@ function localServices(
     message: messageService,
     thread: threadService,
     // The classifier reaches the SUGGEST half only; the read half is constructed without one.
-    // `credits` stays absent — this tier is free, so an absent gate means unmetered, not
-    // ungated. No `unsubscribe` here, deliberately: the automatic screen-out pass stays OFF on
-    // this door until its consent surface exists. The engine CAN post (the port is on the bag
-    // for the user-initiated verb); what is missing is everything around an AUTOMATIC
-    // third-party request — the pre-click disclosure is mode-gated off here and
-    // `block_auto_unsubscribe_at` has no local route; arming without those would send
-    // third-party requests on a gesture whose UI never said it would.
-    // `landing-mailbox-truth.test.ts` reads this call site: while the pass is unwired the
-    // landing copy MUST carry the standalone qualifier; wiring `unsubscribe` here flips that.
-    screener: makeScreenerService(classifier ? { classifier } : {}),
+    // `credits` stays absent — this tier is free, so an absent gate means unmetered, not ungated.
+    // `unsubscribe` IS here now, and the two things it was waiting for are both in place: this
+    // door serves `consentRoutes`, so the account's off switch has a route and a surface, and the
+    // shared client's pre-click disclosure reads that row rather than the build. A screen-out
+    // states the unsubscribe before the press and then makes it, which is the self-host bag's
+    // wiring exactly. Only an ORGANIZER reaches this path: a consent-less reader's decision is a
+    // REQUEST, and requests carry no courtesy. `landing-mailbox-truth.test.ts` reads this call
+    // site — the landing's standalone qualifier comes out with it.
+    screener: makeScreenerService({ unsubscribe, ...(classifier ? { classifier } : {}) }),
     // `drafting` is ALWAYS present and `drafter` only when there is a model, which is the pairing
     // the route expects rather than an oversight. The two are different things: `drafting`
     // assembles the sensitivity-safe context and stores the result, `drafter` is the model. The
