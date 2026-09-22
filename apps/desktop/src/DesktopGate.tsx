@@ -26,6 +26,7 @@ import { useOptionalToast } from "@ohmail/ui";
 
 import { AppShell } from "../../webapp/app/shell/AppShell";
 import { setStorageOwner } from "../../webapp/app/shell/storage-owner";
+import { setComposerScope } from "../../webapp/app/shell/compose";
 import { BootSkeleton } from "../../webapp/app/shell/BootSkeleton";
 import { go, goFirstRun, goSettings, useHashRoute } from "../../webapp/app/shell/routing";
 import { setMailtoSink, setOpenFailureSink } from "../../webapp/app/shell/open-external";
@@ -655,6 +656,8 @@ export function DesktopGate() {
    * before the parent's — a module write during render is the ordering the shell needs.
    */
   setStorageOwner(mount.kind === "engine" ? mount.key : null);
+  // One window, one composer, across restarts — see `setComposerScope`.
+  setComposerScope("window");
   if (mount.kind === "engine" && live?.key !== mount.key) {
     setLive({ key: mount.key, engine: createLocalEngine() });
   } else if (mount.kind !== "engine" && live !== null) {

@@ -8,7 +8,7 @@
  */
 import type { ComposeAttachment, EmailAddress, EngineMutation } from "@ohmail/client-engine";
 import type { SignatureState } from "./signature";
-import { durableRemove, durableSet } from "./durable";
+import { durableRemove, durableSessionSet, durableSet } from "./durable";
 import { isDemoOwned, storageOwner } from "./storage-owner";
 
 /** The compose form, verbatim as typed. `to` is TEXT; `plan()` is what turns it into addresses. */
@@ -127,7 +127,103 @@ export interface ComposePrefill {
 export const COMPOSE_DRAFT_PREFIX = "ohmail.ui.compose.";
 
 export function composeDraftKey(owner: string | null = storageOwner()): string {
-  return `${COMPOSE_DRAFT_PREFIX}${owner ?? "local"}`;
+  return `${COMPOSE_DRAFT_PREFIX}${owner ?? "local"}.${composerId()}`;
+}
+
+/**
+ * WHICH COMPOSER THIS IS — one per tab. The scratch buffer, the session and the row were keyed per
+ * ACCOUNT, so every tab on the origin shared one message-in-progress, and a tab that delivered or
+ * replaced its message cleared the identity another tab was still holding. The id lives in
+ * `sessionStorage`, per tab and surviving a reload; a browser refusing it gets one per page.
+ */
+export const COMPOSER_KEY = "ohmail.compose.composer";
+let composerInMemory: string | null = null;
+let hostComposer: string | null = null;
+
+/**
+ * A COMPOSER THE HOST NAMES. The desktop is one window whose `sessionStorage` does not outlive the
+ * app, and a quit need not fire `pagehide`, so its window names itself the composer during render,
+ * as it names whose storage this is. Not id-shaped is treated as absent.
+ */
+export function setComposerScope(scope: string | null): void {
+  hostComposer = scope !== null && /^[A-Za-z0-9_-]{1,64}$/.test(scope) ? scope : null;
+}
+
+export function composerId(): string {
+  if (hostComposer !== null) return hostComposer;
+  try {
+    const held = window.sessionStorage.getItem(COMPOSER_KEY);
+    if (held !== null && held.length > 0) return held;
+    if (composerInMemory !== null) return composerInMemory;
+    const minted = crypto.randomUUID();
+    if (durableSessionSet(COMPOSER_KEY, minted, "compose.composer") === "stored") return minted;
+    composerInMemory = minted;
+    return minted;
+  } catch {
+    composerInMemory ??= crypto.randomUUID();
+    return composerInMemory;
+  }
+}
+
+/**
+ * THE ACCOUNT'S HANDOFF SLOT — the three keys as they were spelled before composers. A tab that
+ * closes moves its message here as ONE unit, and a composer holding nothing adopts it on its first
+ * read, so close-and-reopen restores as it did and a browser upgraded mid-message keeps it. A unit,
+ * never key by key: one tab's text beside another's row would autosave over somebody else's draft.
+ */
+const unitPrefixes = (): readonly string[] => [COMPOSE_DRAFT_PREFIX, COMPOSE_SESSION_PREFIX, COMPOSE_ROW_PREFIX];
+const UNIT_STORES = ["compose.draft", "compose.session", "compose.row"] as const;
+const adoptedOwners = new Set<string>();
+let handoffArmed = false;
+
+function moveUnit(from: readonly string[], to: readonly string[]): void {
+  for (let i = 0; i < from.length; i += 1) {
+    const v = window.localStorage.getItem(from[i]!);
+    if (v === null) durableRemove(to[i]!, UNIT_STORES[i]!);
+    else durableSet(to[i]!, v, UNIT_STORES[i]!);
+    durableRemove(from[i]!, UNIT_STORES[i]!);
+  }
+}
+
+function adoptHandoff(owner: string | null): void {
+  const o = owner ?? "local";
+  if (adoptedOwners.has(o)) return;
+  adoptedOwners.add(o);
+  armHandoff();
+  try {
+    const own = unitPrefixes().map((p) => `${p}${o}.${composerId()}`);
+    if (own.some((k) => window.localStorage.getItem(k) !== null)) return;
+    const slot = unitPrefixes().map((p) => `${p}${o}`);
+    if (slot.some((k) => window.localStorage.getItem(k) !== null)) moveUnit(slot, own);
+  } catch { /* a refused jar holds nothing to adopt */ }
+}
+
+/** A closing tab leaves its message for the next composer; a page kept for back/forward does not. */
+export function handOffComposer(): void {
+  try {
+    const suffix = `.${composerId()}`;
+    const owners = new Set<string>();
+    for (const k of Object.keys(window.localStorage)) {
+      const p = unitPrefixes().find((x) => k.startsWith(x));
+      if (p !== undefined && k.endsWith(suffix)) owners.add(k.slice(p.length, -suffix.length));
+    }
+    for (const o of owners) {
+      moveUnit(unitPrefixes().map((p) => `${p}${o}${suffix}`), unitPrefixes().map((p) => `${p}${o}`));
+    }
+  } catch { /* nothing to hand over from a refused jar */ }
+}
+
+function armHandoff(): void {
+  if (handoffArmed || typeof window === "undefined") return;
+  handoffArmed = true;
+  window.addEventListener("pagehide", (e) => { if (!(e as PageTransitionEvent).persisted) handOffComposer(); });
+}
+
+/** A fresh page, for a test: nothing adopted yet. The tab's id is the test's own sessionStorage. */
+export function resetComposerForTest(): void {
+  adoptedOwners.clear();
+  composerInMemory = null;
+  hostComposer = null;
 }
 
 /** The un-owned key this browser may still hold. Removed on clear, never read. */
@@ -143,6 +239,7 @@ export const LEGACY_COMPOSE_DRAFT_KEY = "ohmail.ui.compose";
  * composing, so every access is wrapped and a failure simply means the draft lives for as long as the tab does.
  */
 export function readComposeDraft(): ComposeFields {
+  adoptHandoff(storageOwner());
   try {
     const raw = window.localStorage.getItem(composeDraftKey());
     if (!raw) return EMPTY_COMPOSE;
@@ -246,10 +343,11 @@ export function writeComposeDraft(f: ComposeFields): void {
 export const COMPOSE_SESSION_PREFIX = "ohmail.compose.session.";
 
 export function composeSessionKey(owner: string | null = storageOwner()): string {
-  return `${COMPOSE_SESSION_PREFIX}${owner ?? "local"}`;
+  return `${COMPOSE_SESSION_PREFIX}${owner ?? "local"}.${composerId()}`;
 }
 
 export function composeSessionId(owner: string | null = storageOwner()): string | null {
+  adoptHandoff(owner);
   try {
     const held = window.localStorage.getItem(composeSessionKey(owner));
     if (held !== null && held.length > 0) return held;
@@ -297,7 +395,7 @@ export function writeComposeSession(session: string, owner: string | null = stor
 export const COMPOSE_ROW_PREFIX = "ohmail.compose.row.";
 
 export function composeRowKey(owner: string | null = storageOwner()): string {
-  return `${COMPOSE_ROW_PREFIX}${owner ?? "local"}`;
+  return `${COMPOSE_ROW_PREFIX}${owner ?? "local"}.${composerId()}`;
 }
 
 /**
@@ -316,6 +414,7 @@ export function forgetComposeRows(): void {
 }
 
 export function readComposeRow(owner: string | null = storageOwner()): string | null {
+  adoptHandoff(owner);
   try {
     const held = window.localStorage.getItem(composeRowKey(owner));
     return held !== null && held.length > 0 ? held : null;
