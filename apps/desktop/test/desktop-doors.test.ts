@@ -603,9 +603,10 @@ describe("the local door", () => {
    * answer — `smtpHost: ""` records "saved for a pair with nothing on the outgoing side", which
    * the case below proves still connects.
    *
-   * What it costs is that the flow's "Test connection" dials IMAP only, so a green tick can be
-   * followed by a refusal about a server the test never touched. The sentence therefore has to
-   * NAME the outgoing server, or the person is looking at the wrong field. That is the assertion.
+   * The flow's "Test connection" now dials both legs and states each — so an outgoing refusal is
+   * ordinarily met at the test rather than here. It can still arrive at the seal (a field edited
+   * after a green test, a server that changed its answer), so the sentence has to NAME the
+   * outgoing server or the person is looking at the wrong field. That is the assertion.
    */
   it("an SMTP refusal on the seal reaches the form NAMING the outgoing server", async () => {
     const asked = shellThatWorks(SERVING, 200);

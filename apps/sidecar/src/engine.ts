@@ -7305,9 +7305,17 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                `mailbox_probe_failed` with its `details.reason` — because the window's own
                classifier (`localProbeReason`) reads exactly that taxonomy and the connect form
                already renders every member of it. */
+            /* BOTH LEGS, because this door's connect dials both: the seal writes an `smtp`
+               credential beside the `imap` one and refuses the whole mailbox when the submission
+               server says no, so a test that asked only the incoming server reported a green
+               over a connect that was about to fail, naming no field to correct. The prober is
+               the pair the seal and the add already compose; a blank outgoing host is an answer
+               the service gives back rather than a dial. */
             try {
               const body = (await req.json()) as Record<string, unknown>;
               const imap = (body.imap && typeof body.imap === "object" ? body.imap : {}) as
+                Record<string, unknown>;
+              const smtp = (body.smtp && typeof body.smtp === "object" ? body.smtp : {}) as
                 Record<string, unknown>;
               const deps = depsFor();
               const dto = await deps.services!.mailbox.probeConnection(
@@ -7328,8 +7336,21 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                     ...(typeof imap.user === "string" ? { user: imap.user } : {}),
                     pass: typeof imap.pass === "string" ? imap.pass : "",
                   },
+                  /* The outgoing block by the same rule, and the password is deliberately not
+                     read from it: one form, one identity, and the service falls back to the
+                     incoming password exactly as `create` does. An absent block is a form with
+                     nothing typed on the outgoing side. */
+                  smtp: {
+                    host: typeof smtp.host === "string" ? smtp.host : "",
+                    ...(typeof smtp.port === "number" ? { port: smtp.port } : {}),
+                    ...(typeof smtp.secure === "boolean" ? { secure: smtp.secure } : {}),
+                    ...(typeof smtp.user === "string" ? { user: smtp.user } : {}),
+                  },
                 },
-                { probe: makeImapProbe(deps, { ...probeOpts, countFolders: true }) },
+                {
+                  probe: makeImapProbe(deps, { ...probeOpts, countFolders: true }),
+                  smtpProbe: makeSmtpProbe(deps, smtpProbeOpts),
+                },
               );
               return new Response(JSON.stringify(dto), {
                 status: 200, headers: { "content-type": "application/json" },

@@ -312,6 +312,37 @@ describe("the requests that leave this window", () => {
     expect(JSON.parse(call.body).imap.user).toBeUndefined();
   });
 
+  it("carries the OUTGOING server too, without a second copy of the password", async () => {
+    /* The connect dials both servers and refuses the whole mailbox when the submission one says
+       no, so the test has to ask both or its green describes a connect that is about to fail.
+       The outgoing block travels as the form's own fields — host, port, TLS mode, username — and
+       no password: the service falls back to the incoming one, exactly as the connect does, so
+       the test and the connect dial one identity. */
+    answer = {
+      status: 200,
+      body: JSON.stringify({
+        host: "imap.example.org", user: "me@example.org", folders: 12,
+        sending: { state: "refused", host: "smtp.example.org", reason: "auth" },
+      }),
+    };
+    const made = (await makeHost())!;
+    let ok: unknown;
+    await act(async () => {
+      ok = await made.probe({
+        address: "me@example.org", provider: "other",
+        imap: { host: "imap.example.org", port: 993, secure: true, pass: "pw" },
+        smtp: { host: "smtp.example.org", port: 465, secure: true, pass: "pw" },
+      });
+    });
+    const sent = JSON.parse(asked.at(-1)!.body) as { smtp?: Record<string, unknown> };
+    expect(sent.smtp, "the outgoing block never left the window").toEqual({
+      host: "smtp.example.org", port: 465, secure: true,
+    });
+    expect(sent.smtp).not.toHaveProperty("pass");
+    /* AND THE VERDICT COMES BACK WHOLE — both legs, so the stage can say which one refused. */
+    expect(ok).toMatchObject({ sending: { state: "refused", host: "smtp.example.org", reason: "auth" } });
+  });
+
   it("a refused call throws the ENGINE's sentence and the engine's taxonomy", async () => {
     answer = {
       status: 400,

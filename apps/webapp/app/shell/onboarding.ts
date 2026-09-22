@@ -284,3 +284,40 @@ export function ONBOARDING_STATUS_COUNTERS(facts: OnboardingFacts): boolean {
   // put a permanent pair of counters on the strip.
   return mb.initialImportCompletedAt === null;
 }
+
+/**
+ * WHAT A CONNECTION TEST FOUND ON THE OUTGOING SIDE — the door's own answer, absent where the
+ * door never asked. `not_configured` is a blank outgoing field, which is a legitimate pair with
+ * nothing to send through; `refused` carries the taxonomy member the incoming leg uses, and the
+ * HOST, so the field to correct can be named.
+ */
+export type ProbeSending =
+  | { state: "ok"; host: string }
+  | { state: "refused"; host: string; reason: string }
+  | { state: "not_configured" };
+
+/** The sending verdict as one line: which sentence, which mark, and the host it names. */
+export type SendingLine =
+  | { state: "ok"; key: "sendingOk"; host: string }
+  | { state: "bad"; key: "sendingRefused" | "sendingRefusedAuth" | "sendingRefusedTls"; host: string }
+  | { state: "off"; key: "sendingNotSet" };
+
+/**
+ * The line the stage renders for the submission leg, or `null` where there is nothing to say.
+ *
+ * `null` is a door that did not ask (the hosted probe tests the incoming server only), and it is
+ * NOT the same answer as `not_configured` — one is silence, the other is "nothing is set up to
+ * send through", which is a state somebody chose and the mark beside it is neither a tick nor a
+ * cross. The refusal classes collapse to the three things a person can act on: the login, the
+ * certificate, and the server itself; the incoming leg's own copy is not reused, because every
+ * sentence in it names an IMAP field that is fine.
+ */
+export function sendingLine(sending: ProbeSending | undefined): SendingLine | null {
+  if (sending === undefined) return null;
+  if (sending.state === "not_configured") return { state: "off", key: "sendingNotSet" };
+  if (sending.state === "ok") return { state: "ok", key: "sendingOk", host: sending.host };
+  const key = sending.reason === "auth"
+    ? "sendingRefusedAuth"
+    : sending.reason === "tls" ? "sendingRefusedTls" : "sendingRefused";
+  return { state: "bad", key, host: sending.host };
+}

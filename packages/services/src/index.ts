@@ -125,7 +125,7 @@ export {
   // by ADDRESS (the `id_token` claim), so these types carry no `mailboxId`.
   type ConnectOAuthMailboxInput, type ConnectOAuthOptions, type ConnectOAuthResult,
   type MailboxProbe, type MailboxProbeInput, type MailboxProbeVerdict,
-  type SmtpProbe, type SmtpProbeInput, type ProbeTransport,
+  type SmtpProbe, type SmtpProbeInput, type ProbeTransport, type SendingProbe,
   type ProbeTlsDetail, type ProbeTlsFailureKind, type ProvenEndpoint,
 } from "./mailbox-service.js";
 // The plan-limit gate the mailbox write path runs inside its transaction.

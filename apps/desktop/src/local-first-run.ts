@@ -285,11 +285,28 @@ export function useLocalFirstRun(opts: LocalFirstRunOptions): FirstRunHost | und
      * the service defaults that to the address, and `doorFields` applies the identical default
      * on the connect that follows, so the test and the connect dial the same identity.
      */
+    /* THE OUTGOING BLOCK RIDES WITH IT, because the connect dials that server too and refuses
+       the whole mailbox when it says no. Without the password: one form, one identity, and the
+       service falls back to the incoming one — a second copy of a secret buys nothing here. An
+       absent block is a form with nothing typed on the outgoing side, which is an answer. */
     return jsonOf<FirstRunProbeOk>(
       await bridgeFetch(PROBE_PATH, {
         method: "POST",
         headers: JSON_HEADERS,
-        body: JSON.stringify({ address: input.address, imap: input.imap }),
+        body: JSON.stringify({
+          address: input.address,
+          imap: input.imap,
+          ...(input.smtp
+            ? {
+                smtp: {
+                  host: input.smtp.host,
+                  ...(input.smtp.port === undefined ? {} : { port: input.smtp.port }),
+                  ...(input.smtp.secure === undefined ? {} : { secure: input.smtp.secure }),
+                  ...(input.smtp.user === undefined ? {} : { user: input.smtp.user }),
+                },
+              }
+            : {}),
+        }),
       }),
     );
   }, []);

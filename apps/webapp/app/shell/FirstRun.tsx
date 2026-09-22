@@ -24,7 +24,7 @@ import { useDecisionBarCopy } from "./decision-copy";
 import { useKeyBindings } from "./keymap";
 import { PROVIDERS, hostsFor, providerById, providerLabel, type ProviderPreset } from "./providers";
 import {
-  deriveOnboardingStep, onboardingPath,
+  deriveOnboardingStep, onboardingPath, sendingLine,
   type OnboardingFacts, type OnboardingStep,
 } from "./onboarding";
 import type { FirstRunHost, FirstRunMailboxInput, FirstRunProbeOk } from "./first-run-host";
@@ -975,6 +975,23 @@ export function FirstRun({
                   })}
                   detail={t("probeOkDetail")}
                 />
+              ) : null}
+              {/* THE OUTGOING SERVER'S OWN VERDICT, in its own block. The connect dials both and
+                  refuses the whole mailbox when this one says no, so a single green over the
+                  incoming leg promised a connect that was about to fail and named no field to
+                  correct. Its own block rather than a clause, because its MARK differs: a refused
+                  submission is a cross under a tick, and a mailbox with nothing outgoing gets
+                  neither. `null` is a door that did not ask and renders nothing (`sendingLine`). */}
+              {!testing && verdict !== null && "ok" in verdict && sendingLine(verdict.ok.sending) ? (
+                (() => {
+                  const line = sendingLine(verdict.ok.sending)!;
+                  return (
+                    <SettingsVerdict
+                      state={line.state}
+                      headline={line.state === "off" ? t(line.key) : t(line.key, { host: line.host })}
+                    />
+                  );
+                })()
               ) : null}
               {/* THE FAILURE SENTENCES ARE THE CONNECT FORM'S OWN (`mailboxes.probe_*`), not a
                   second set written for this screen. The endpoint throws the same refusal

@@ -381,6 +381,19 @@ export interface SmtpProbeInput {
 export type SmtpProbe = (input: SmtpProbeInput) => Promise<MailboxProbeVerdict>;
 
 /**
+ * WHAT A CONNECTION TEST FOUND ON THE OUTGOING SIDE — three answers, and the third is not a
+ * failure. `not_configured` is a blank outgoing field, which this product records as a pair with
+ * nothing to send through; `refused` carries the taxonomy member so a client renders the copy it
+ * already has for that class, and the HOST so the field to correct can be named. The whole value
+ * is absent from a test whose door injected no submission prober — see {@link
+ * MailboxService.probeConnection}.
+ */
+export type SendingProbe =
+  | { state: "ok"; host: string }
+  | { state: "refused"; host: string; reason: MailboxErrorCode }
+  | { state: "not_configured" };
+
+/**
  * Try an IMAP login. Implemented in `packages/api` — the layer that owns IMAP knowledge and the
  * connection budget — and injected per call, the same seam shape `AttachmentsService` takes its
  * `openAdapter` through.
@@ -991,9 +1004,13 @@ export class MailboxService {
    */
   async probeConnection(
     ctx: ServiceContext,
-    input: { address: string; imap: { host: string; port?: number; secure?: boolean; user?: string; pass: string } },
-    opts: { probe: MailboxProbe },
-  ): Promise<{ ok: true; host: string; user: string; folders: number | null }> {
+    input: {
+      address: string;
+      imap: { host: string; port?: number; secure?: boolean; user?: string; pass: string };
+      smtp?: { host?: string; port?: number; secure?: boolean; user?: string; pass?: string };
+    },
+    opts: { probe: MailboxProbe; smtpProbe?: SmtpProbe },
+  ): Promise<{ ok: true; host: string; user: string; folders: number | null; sending?: SendingProbe }> {
     const address = canonicalAddress(input.address ?? "");
     if (!address) throw new ServiceError("validation_failed", 400, "address is required");
     const host = (input.imap?.host ?? "").trim();
@@ -1032,7 +1049,50 @@ export class MailboxService {
       // option, or an adapter that cannot list. The COPY decides what to do with that; inventing a
       // zero here would render "0 folders" over a mailbox nobody counted.
       folders: verdict.folders ?? null,
+      // ABSENT where the door injected no submission prober: "this door did not ask" is not
+      // "sending is fine", and a client that renders the difference needs to see it.
+      ...(opts.smtpProbe ? { sending: await this.probeSending(ctx, address, user, input, opts.smtpProbe) } : {}),
     };
+  }
+
+  /**
+   * THE SUBMISSION LEG OF A CONNECTION TEST — what `create` would find, without writing anything.
+   *
+   * The connect dials BOTH servers and refuses the whole mailbox when the submission one says no,
+   * so a test that tried only the incoming leg reported a green over a connect that was about to
+   * fail — and the field to correct is the one the test never touched. A blank outgoing host is
+   * an ANSWER (`not_configured`): this product records a pair with nothing on the outgoing side.
+   * The identity is the one the connect will dial: the incoming login unless a submission user
+   * was typed, and the incoming password unless a submission one was.
+   */
+  private async probeSending(
+    ctx: ServiceContext,
+    address: string,
+    imapUser: string,
+    input: {
+      imap: { pass: string };
+      smtp?: { host?: string; port?: number; secure?: boolean; user?: string; pass?: string };
+    },
+    smtpProbe: SmtpProbe,
+  ): Promise<SendingProbe> {
+    const host = (input.smtp?.host ?? "").trim();
+    if (!host) return { state: "not_configured" };
+    const verdict = await smtpProbe({
+      accountId: ctx.accountId,
+      address,
+      smtp: {
+        host,
+        port: input.smtp?.port,
+        secure: input.smtp?.secure,
+        user: (input.smtp?.user ?? "").trim() || imapUser,
+        pass: input.smtp?.pass ?? input.imap.pass,
+      },
+    });
+    // `store_unverified` is a refusal HERE for `probeConnection`'s own reason: the question is
+    // "did this work", and a server that declined to serve has not answered it yes. An ok names
+    // the PROVEN rung; a refusal has none, so it names the host that was tried.
+    if (verdict.verdict === "ok") return { state: "ok", host: verdict.proven?.host ?? host };
+    return { state: "refused", host, reason: verdict.code };
   }
 
   async create(

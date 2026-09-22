@@ -12,7 +12,7 @@
  */
 
 import type { ReactNode } from "react";
-import type { OnboardingAi, OnboardingDoor } from "./onboarding";
+import type { OnboardingAi, OnboardingDoor, ProbeSending } from "./onboarding";
 
 /** What a successful `POST /mailboxes/probe` answers with. */
 export interface FirstRunProbeOk {
@@ -20,6 +20,14 @@ export interface FirstRunProbeOk {
   host: string;
   /** The identity the server accepted. */
   user: string;
+  /**
+   * The SUBMISSION leg's verdict, or absent on a door that tested only the incoming one.
+   *
+   * Absent and `not_configured` are different answers and the surface says different things
+   * about them: absent is "this door did not ask" and renders nothing, `not_configured` is
+   * "nothing is set up to send through", which is a state a person chose.
+   */
+  sending?: ProbeSending;
   /**
    * How many folders the LIST returned, or `null` when the probe was built without the count.
    *
