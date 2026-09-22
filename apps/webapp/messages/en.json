@@ -726,6 +726,7 @@
       "doneCount": "{count, plural, =0 {No suggestions returned} one {1 suggestion} other {# suggestions}} · {credits, plural, =0 {no credits} one {1 credit} other {# credits}} used.",
       "remaining": "{count, plural, one {1 credit} other {# credits}} left.",
       "stoppedCredits": "Stopped — credits ran out.",
+      "stoppedOverQuote": "Stopped at the number you confirmed. Press again to ask about the rest.",
       "stoppedUnavailable": "Stopped — AI spending is unavailable on this account.",
       "aria": "How many waiting senders to suggest for",
       "autoTitle": "Suggest for new senders automatically",
@@ -777,11 +778,13 @@
     },
     "aiSkip": {
       "out_of_credits": "The AI budget ran out before this sender was reached. It refills next cycle — deciding by hand costs nothing.",
+      "over_quote": "The run reached the number you confirmed before this sender was asked about. Press again to include them.",
       "spend_unavailable": "AI is switched off or unavailable for this account, so this sender was not asked about. Deciding by hand costs nothing.",
       "model_unavailable": "The model did not answer for this sender. Asking again costs nothing."
     },
     "aiSkipRow": {
       "out_of_credits": "No suggestion — the AI budget ran out. It refills next cycle.",
+      "over_quote": "No suggestion — the run stopped at the number you confirmed. Press again to include this sender.",
       "spend_unavailable": "No suggestion — AI is unavailable for this account right now.",
       "model_unavailable": "No suggestion — the model did not answer. Asking again costs nothing."
     },

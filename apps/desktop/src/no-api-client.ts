@@ -746,7 +746,7 @@ export interface ScreenerWirePage {
     };
 }
 
-export type ScreenerSkipReason = "not_held" | "out_of_credits" | "spend_unavailable" | "model_unavailable";
+export type ScreenerSkipReason = "not_held" | "out_of_credits" | "over_quote" | "spend_unavailable" | "model_unavailable";
 
 export interface ScreenerSuggestWire {
     dryRun: boolean;
@@ -754,7 +754,7 @@ export interface ScreenerSuggestWire {
     quoted: number;
     quotedCredits: number;
     charged: number;
-    stopped?: "out_of_credits" | "spend_unavailable";
+    stopped?: "out_of_credits" | "over_quote" | "spend_unavailable";
     remainingCredits?: number;
     suggestions: Array<{
         sender: string;

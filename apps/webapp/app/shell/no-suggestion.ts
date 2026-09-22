@@ -37,7 +37,7 @@ export type NoSuggestionReason =
   | "no_auto_ai";
 
 /** The stop a run reported, remembered until a later run contradicts it. */
-export type SuggestStanding = "out_of_credits" | "spend_unavailable";
+export type SuggestStanding = "out_of_credits" | "over_quote" | "spend_unavailable";
 
 /** The catalogue key each reason renders, under the `screener` namespace. */
 export const NO_SUGGESTION_KEY: Record<NoSuggestionReason, string> = {

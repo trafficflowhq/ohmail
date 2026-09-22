@@ -726,6 +726,7 @@
       "doneCount": "{count, plural, =0 {Keine Vorschläge zurückgekommen} one {1 Vorschlag} other {# Vorschläge}} · {credits, plural, =0 {kein Guthaben} one {1 Guthabenpunkt} other {# Guthabenpunkte}} verbraucht.",
       "remaining": "{count, plural, one {1 Guthabenpunkt} other {# Guthabenpunkte}} übrig.",
       "stoppedCredits": "Gestoppt — das Guthaben ist aufgebraucht.",
+      "stoppedOverQuote": "Gestoppt bei der Zahl, die du bestätigt hast. Drück noch einmal für den Rest.",
       "stoppedUnavailable": "Gestoppt — KI-Ausgaben sind für dieses Konto nicht verfügbar.",
       "aria": "Für wie viele wartende Absender vorgeschlagen wird",
       "autoTitle": "Für neue Absender automatisch vorschlagen",
@@ -777,11 +778,13 @@
     },
     "aiSkip": {
       "out_of_credits": "Das KI-Budget war aufgebraucht, bevor dieser Absender dran war. Es füllt sich im nächsten Zyklus — von Hand entscheiden kostet nichts.",
+      "over_quote": "Der Lauf hat die Zahl erreicht, die du bestätigt hast, bevor dieser Absender dran war. Drück noch einmal, um ihn einzuschließen.",
       "spend_unavailable": "KI ist für dieses Konto abgeschaltet oder nicht verfügbar, dieser Absender wurde also nicht geprüft. Von Hand entscheiden kostet nichts.",
       "model_unavailable": "Das Modell hat für diesen Absender nicht geantwortet. Nochmal fragen kostet nichts."
     },
     "aiSkipRow": {
       "out_of_credits": "Kein Vorschlag — das KI-Budget ist aufgebraucht. Es füllt sich im nächsten Zyklus.",
+      "over_quote": "Kein Vorschlag — der Lauf hat bei der bestätigten Zahl gestoppt. Drück noch einmal, um diesen Absender einzuschließen.",
       "spend_unavailable": "Kein Vorschlag — KI ist für dieses Konto gerade nicht verfügbar.",
       "model_unavailable": "Kein Vorschlag — das Modell hat nicht geantwortet. Nochmal fragen kostet nichts."
     },

@@ -300,7 +300,7 @@ export interface SuggestWire {
    */
   suggest: (
     senders: string[],
-    opts?: { dryRun?: boolean; idempotencyKey?: string },
+    opts?: { dryRun?: boolean; idempotencyKey?: string; maxCredits?: number },
   ) => Promise<ScreenerSuggestWire>;
   /**
    * The sentence to show for a refusal this transport produced.
@@ -557,6 +557,17 @@ export function useScreenerSuggestions(opts: {
    */
   const io = useRef({
     run: 0,
+    /**
+     * WHAT EACH CHUNK WAS QUOTED, in credits, in `chunksOf` order — the ceiling the confirm hands
+     * back per request (`maxCredits`).
+     *
+     * The quote and the purchase are two round trips, and a stored suggestion can lapse between
+     * them: the same chunk that priced at 30 can price at 40 by the time somebody presses, and
+     * the press would buy ten they were never quoted for. Kept per CHUNK because that is the unit
+     * the price was taken in; a total would let one chunk spend another's room. Cleared with
+     * every new `run`, so a stale price can never bound a newer press.
+     */
+    quotedChunks: [] as number[],
     /**
      * When the last stored-suggestion read STARTED (epoch ms), and the instant the queue last
      * gained a sender this session had not seen. Together they schedule the re-read below: never
@@ -1012,6 +1023,7 @@ export function useScreenerSuggestions(opts: {
       // A PRESS IS THE OTHER EVIDENCE. Whatever this run answers replaces the line, so the arm
       // comes down with it — including for `insufficient_credits`, which no access read speaks to.
       setRefused(false);
+      io.current.quotedChunks = [];
       void (async () => {
         let senders = 0;
         let credits = 0;
@@ -1044,6 +1056,7 @@ export function useScreenerSuggestions(opts: {
           }
           senders += res.quoted;
           credits += res.quotedCredits;
+          io.current.quotedChunks.push(res.quotedCredits);
         }
         if (io.current.run !== run) return;
         setPhase("ready");
@@ -1130,7 +1143,7 @@ export function useScreenerSuggestions(opts: {
           const gotSuggestions: ScreenerSuggestWire["suggestions"] = [];
           const gotSkipped: Array<{ reason: string }> = [];
           let charged = 0;
-          let stopped: "out_of_credits" | "spend_unavailable" | undefined;
+          let stopped: "out_of_credits" | "over_quote" | "spend_unavailable" | undefined;
           /**
            * The LATEST balance the server reported, across the chunks of one purchase.
            *
@@ -1141,10 +1154,21 @@ export function useScreenerSuggestions(opts: {
            * instead of inventing a figure.
            */
           let remainingCredits: number | undefined;
+          /* The position in `chunksOf(set)`, which is how a chunk finds the price it was quoted. */
+          let chunkIndex = -1;
           for (const chunk of chunksOf(set)) {
+            chunkIndex++;
             let res;
             try {
-              res = await wire.suggest(chunk, { idempotencyKey: newKey() });
+              /* THE CEILING THIS CHUNK WAS QUOTED AT. Absent only if the pricing loop never got
+                 this far, which cannot happen — the confirm is disabled without a whole quote —
+                 and the service then treats the run as unbounded by any quote, which is the
+                 honest reading of "no figure was shown". */
+              const quotedFor = io.current.quotedChunks[chunkIndex];
+              res = await wire.suggest(chunk, {
+                idempotencyKey: newKey(),
+                ...(typeof quotedFor === "number" ? { maxCredits: quotedFor } : {}),
+              });
             } catch (err) {
               // Stale — a newer press owns the state; paint nothing.
               if (io.current.run !== run) return;
@@ -1426,7 +1450,7 @@ function summarize(
   res: {
     suggestions: unknown[];
     charged: number;
-    stopped?: "out_of_credits" | "spend_unavailable";
+    stopped?: "out_of_credits" | "over_quote" | "spend_unavailable";
     remainingCredits?: number;
     skipped: Array<{ reason: string }>;
   },
@@ -1449,6 +1473,10 @@ function summarize(
       ? t("suggest.remaining", { count: res.remainingCredits })
       : null,
     res.stopped === "out_of_credits" ? t("suggest.stoppedCredits") : null,
+    // The QUOTE's own stop, and it is not a money refusal: the account is funded and the run
+    // reached the number the person pressed. Saying "credits ran out" here would be a bill
+    // for a bound they chose.
+    res.stopped === "over_quote" ? t("suggest.stoppedOverQuote") : null,
     res.stopped === "spend_unavailable" ? t("suggest.stoppedUnavailable") : null,
   ].filter(Boolean);
   return parts.join(" ");

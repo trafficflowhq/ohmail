@@ -826,7 +826,7 @@ export interface ScreenerSenderDTO {
     dest: OhmailView | "screened" | "spam";
     confidence: number;
     rationale: string;
-    noAnswer?: "out_of_credits" | "spend_unavailable" | "model_unavailable";
+    noAnswer?: "out_of_credits" | "over_quote" | "spend_unavailable" | "model_unavailable";
     /**
      * WHICH FACT OHMAIL CHECKED DECIDED THIS — a deterministic sender check the server ran before
      * the model, which may bound what the model's answer is allowed to say. A closed set, so the

@@ -492,6 +492,17 @@ export interface ScreenerSuggestBody {
    * the confirmation — and the answer comes from the same code path that will do the work.
    */
   dryRun?: unknown;
+  /**
+   * THE CEILING THE PERSON CONFIRMED, in credits — the figure the control showed beside the
+   * button, handed back so the run cannot cost more than it. Ruled 2026-09-22: a confirmed run is
+   * bounded by the QUOTE, with {@link MAX_SUGGEST_SENDERS} as the second and lower bound. The
+   * quote and the confirm are two requests, and a stored suggestion can lapse between them — so a
+   * set priced at 30 can price at 40 by the time somebody presses, and the press would buy ten
+   * nobody was quoted for. ABSENT means unbounded by any quote: an older client, or a caller that
+   * showed no figure. A present value that is not a non-negative integer is a 400 rather than an
+   * ignored field — a money bound that silently disappears is worse than none claimed.
+   */
+  maxCredits?: unknown;
 }
 
 export interface ScreenerSuggestion {
@@ -547,6 +558,7 @@ export interface ScreenerSuggestion {
 export type ScreenerSuggestSkip =
   | "not_held"            // no mail from this sender is at the gate
   | "out_of_credits"      // the balance ran out part-way through the set
+  | "over_quote"          // the run reached the number the person confirmed — see `maxCredits`
   | "spend_unavailable"   // see below — every "not now, ask again" the gate can produce
   | "model_unavailable";  // charged, the model faulted; the free retry honours it
 /**
@@ -593,7 +605,7 @@ export interface ScreenerSuggestResult {
    * served, and never the whole answer: a run that produced nothing because of the gate is a
    * 402/409/503 instead, because "you have no credits" is not a successful request.
    */
-  stopped?: "out_of_credits" | "spend_unavailable";
+  stopped?: "out_of_credits" | "over_quote" | "spend_unavailable";
   /**
    * WHAT IS LEFT ON THE ACCOUNT AFTER THIS REQUEST — read from the ledger, never inferred. The
    * summary states what the run cost; "how much is left?" had no answer on this path, and a
@@ -1678,6 +1690,8 @@ export class ScreenerService extends ScreenerReadService {
     const laneDeadline = admissionDeadline(this.invocationBudgetMs);
     const senders = parseSenderSet(body);
     const dryRun = body?.dryRun === true;
+    /* Read here, beside `dryRun`, so a malformed ceiling refuses before any read or spend. */
+    const ceiling = parseConfirmedCeiling(body);
     const classifier = this.classifier;
     if (!classifier) {
       // The same grammar as `drafter_unconfigured`: a host with no model is not broken,
@@ -1859,6 +1873,22 @@ export class ScreenerService extends ScreenerReadService {
           sender, messageId: r.messageId,
           ...withSenderCheck(already, checked.get(r.messageId), ohboxPolicy)!,
         };
+        return;
+      }
+      /**
+       * THE QUOTE IS THE CEILING — the first of two bounds, and the lower one is
+       * {@link MAX_SUGGEST_SENDERS}, which caps the set before this loop sees it.
+       *
+       * Checked BEFORE `quoted++`, so the number this request reports is the number it will
+       * actually buy: a sender past the ceiling is not priced, not charged and not asked about.
+       * It happens when a stored suggestion lapsed between the quote and the press, which makes
+       * the same set cost more the second time — and a run that costs more than the figure
+       * somebody pressed is the overstatement this whole surface exists to avoid.
+       */
+      if (ceiling !== null
+        && (quoted + 1) * AI_ACTION_WEIGHTS.debit_classify > ceiling) {
+        refused[index] = { sender, reason: "over_quote" };
+        stops[index] = "over_quote";
         return;
       }
       quoted++;
@@ -2308,6 +2338,20 @@ function parseSenderSet(body: ScreenerSuggestBody): string[] {
     throw new ServiceError("validation_failed", 400, "senders must name at least one sender");
   }
   return [...out];
+}
+
+/**
+ * The confirmed ceiling, or `null` for "no quote was shown". See {@link ScreenerSuggestBody.maxCredits}.
+ */
+function parseConfirmedCeiling(body: ScreenerSuggestBody): number | null {
+  const raw = body?.maxCredits;
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== "number" || !Number.isSafeInteger(raw) || raw < 0) {
+    throw new ServiceError(
+      "validation_failed", 400, "maxCredits must be a non-negative whole number of credits",
+    );
+  }
+  return raw;
 }
 
 /** A row, plus whatever suggestion is on record for it. No I/O, and nothing to spend. */
