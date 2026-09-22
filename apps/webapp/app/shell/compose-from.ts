@@ -74,8 +74,8 @@ interface MirrorShape {
 }
 
 /**
- * The mirror's `"mailbox"` entities → the options, in mirror order — the demo and the Desktop
- * (`/sync` never emits a mailbox entity; only the FixturesAdapter seeds these rows). `status` is
+ * The mirror's `"mailbox"` entities → the options, in mirror order — the demo (`/sync` never
+ * emits a mailbox entity; only the FixturesAdapter seeds these rows). `status` is
  * deliberately not read: the fixture shape carries a capitalised display label, not the lifecycle
  * union, so filtering on it would drop every demo mailbox and leave the demo with no From line —
  * the exact silence this gap is about; a seeded mailbox is one somebody put there on purpose.
@@ -104,8 +104,9 @@ export interface ResolvedFrom {
   /**
    * The id the send must carry, or `null` when the options cannot name one.
    *
-   * `null` is "we cannot see this account's mailboxes" (Desktop, demo without fixtures, a Cloud
-   * tab whose first poll has not landed) — NOT "there are none". The caller falls back to the
+   * `null` is "we cannot see this account's mailboxes" (the demo without fixtures, a Cloud tab
+   * whose first poll has not landed) — NOT "there are none". The desktop is NOT one of them: its
+   * window supplies the same probe on both doors. The caller falls back to the
    * mirror-derived id for the wire and renders no From line, which is what the surface did
    * before this change and is still the honest answer when nothing can be named.
    */
@@ -326,7 +327,7 @@ export function resolveReplyFrom(
  * one of `ownAddresses`, the reply goes to whom the message was addressed TO, with your own
  * addresses filtered out; a message to yourself alone leaves nothing, and there `[parent.from]` is
  * restored rather than a reply with no recipient. Returns `null` for the ordinary case (enrich
- * keeps owning it) and when `ownAddresses` is empty — the demo, the Desktop, a provider-less pane:
+ * keeps owning it) and when `ownAddresses` is empty — the demo, a provider-less pane:
  * no way to know the parent is self-authored, so the default stands rather than a guess.
  */
 export function replyRecipients(

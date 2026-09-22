@@ -39,7 +39,8 @@ import {
 } from "./mail-state";
 
 /**
- * `GET /mailboxes`, narrowed to {@link MailboxFacts}. Supplied by the Cloud client only.
+ * `GET /mailboxes`, narrowed to {@link MailboxFacts}. Supplied by the Cloud client and by the
+ * desktop window, which serves the same list off this machine on either door.
  *
  * MUST REJECT on failure. Returning `[]` from a catch would be indistinguishable from an
  * account with no mailboxes — see the file header.
@@ -130,19 +131,19 @@ interface MailStateBinding {
    * deliberately cannot answer. Published from here because this provider
    * already reads `GET /mailboxes` every 30 s, and two pollers is two
    * answers. `null` keeps its meaning exactly: we CANNOT SEE mailboxes (the
-   * desktop, the demo, a first poll not landed) — never "there are none".
+   * demo, a first poll not landed) — never "there are none".
    * The From surfaces render nothing rather than guess (`compose-from.ts`).
    */
   mailboxes: MailboxFacts[] | null;
   /**
    * Is there a roster to see at all — the state `mailboxes: null` collapses, and the collapse cost
-   * a regression. `null` means "we cannot see" for TWO reasons: no probe was given (the desktop,
-   * the demo — there is no roster and never will be), or the probe has not answered (a first poll,
-   * an outage). For rendering they are the same; for a WRITE GATE they are opposite — "not answered
-   * yet" is a reason to refuse a delete, "no probe" is not, because on those doors the wire has
-   * always been the only authority. A helper reading only `mailboxes` refused every delete on the
-   * desktop and demo, naming another install — false there (measured 2026-09-06). `false` here
-   * means NO PROBE: a property of the mount, stable from the first render.
+   * a regression. `null` means "we cannot see" for TWO reasons: no probe was given (the demo —
+   * there is no roster and never will be), or the probe has not answered (a first poll, an
+   * outage). For rendering they are the same; for a WRITE GATE they are opposite — "not answered
+   * yet" is a reason to refuse a delete, "no probe" is not, because there the wire has always
+   * been the only authority. `false` means NO PROBE: a property of the mount, stable from the
+   * first render. A helper reading only `mailboxes` once refused every delete on the desktop and
+   * the demo (2026-09-06); the desktop has supplied a probe since, so only its first poll lands there.
    */
   rosterProbed: boolean;
   /**
