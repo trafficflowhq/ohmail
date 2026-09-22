@@ -16,9 +16,15 @@ export const threadRoutes: Route[] = [
     pattern: "/threads/merge",
     relay: true,
     cost: "work",
+    /* A MERGE DELETES WHAT IT ABSORBS, so a retry after a lost response names ids that are gone
+       and the ownership gate answers 404 — a committed merge that reads like a rejection. The
+       service claims the key inside the merge transaction, so the retry replays this answer. */
+    options: { idempotent: true },
     handler: async (req, deps) => {
       const body = await readBody<ThreadMergeBody>(req);
-      const dto = await thread(deps).merge(serviceContext(deps, req), body);
+      const dto = await thread(deps).merge(
+        serviceContext(deps, req), body, { idempotency: deps.idempotency ?? null },
+      );
       return jsonResponse(dto);
     },
   },

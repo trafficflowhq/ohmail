@@ -1,12 +1,21 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
-import { drafts, messages, threadNotes, threads, recordChange, type Tx } from "@trafficflow/db";
-import { bridgeTx, type ServiceContext } from "./context.js";
-import { ServiceError } from "./errors.js";
+import {
+  drafts, messages, threadNotes, threads, claimIdempotencyKey, recordChange, type Tx,
+} from "@trafficflow/db";
+import { bridgeDb, bridgeTx, type Db, type ServiceContext } from "./context.js";
+import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { materializeThread } from "./dto/materialize.js";
 import type { ThreadDTO } from "./dto/types.js";
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
+const asDb = (tx: Tx): Db => bridgeDb(tx);
+
+/** The caller's `Idempotency-Key` and the request hash it was presented with. */
+export interface ThreadIdempotency {
+  key: string;
+  requestHash: string;
+}
 
 /** A thread id's shape, checked before it can reach a `uuid` column as 22P02. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -78,7 +87,10 @@ export class ThreadService {
     return this.reload(ctx, id);
   }
 
-  async merge(ctx: ServiceContext, body: ThreadMergeBody): Promise<ThreadDTO> {
+  async merge(
+    ctx: ServiceContext, body: ThreadMergeBody,
+    opts: { idempotency?: ThreadIdempotency | null } = {},
+  ): Promise<ThreadDTO> {
     const threadIds = body.threadIds;
     if (!Array.isArray(threadIds) || threadIds.length < 2) {
       throw new ServiceError("validation_failed", 400, "threadIds must contain at least two thread ids");
@@ -106,7 +118,7 @@ export class ThreadService {
       throw new ServiceError("validation_failed", 400, "subject must be a string");
     }
 
-    const targetId = await asTx(ctx).transaction(async (tx) => {
+    const merged = await asTx(ctx).transaction(async (tx) => {
       // Ownership gate: EVERY id must belong to the caller's account, else 404 — and the
       // gate LOCKS what it reads. Taking the thread rows first puts this transaction on the
       // one lock order every writer of a thread shares (thread rows, then message rows, then
@@ -180,10 +192,32 @@ export class ThreadService {
         await recordChange(tx, { accountId: ctx.accountId, ...c, meta: null });
       }
 
-      return target;
+      /* THE ANSWER IS MATERIALIZED IN HERE, reading this transaction's own uncommitted writes, so
+         the DTO stored below is byte-for-byte the one the route returns. */
+      const dto = await materializeThread(asDb(tx), ctx.accountId, target);
+      if (!dto) throw new ServiceError("internal", 500, "thread vanished after write");
+
+      /* THE KEY IS CLAIMED WITH THE MERGE, not after it. A merge DELETES the threads it absorbed,
+         so a retry after a lost response finds ids that no longer exist and the ownership gate
+         above answers 404 — a committed merge indistinguishable from a rejection. Claiming inside
+         this transaction makes the retry a replay of this answer; a lost claim rolls the whole
+         merge back and the winner's response is served. */
+      if (opts.idempotency) {
+        const claimed = await claimIdempotencyKey(tx, {
+          accountId: ctx.accountId,
+          key: opts.idempotency.key,
+          requestHash: opts.idempotency.requestHash,
+          responseStatus: 200,
+          responseJson: dto,
+          seq: null,
+          now: ctx.now(),
+        });
+        if (!claimed) throw new IdempotencyRaceLost(ctx.accountId, opts.idempotency.key);
+      }
+      return dto;
     });
 
-    return this.reload(ctx, targetId);
+    return merged;
   }
 
   private async reload(ctx: ServiceContext, id: string): Promise<ThreadDTO> {
