@@ -307,8 +307,11 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
       sealFailure = null;
       return true;
     } catch (err) {
+      // Said once per streak: a disk that keeps refusing is retried on the renewal's own clock,
+      // and the state line already carries each attempt.
+      const first = sealFailure === null;
       sealFailure = describeError(err).errorClass;
-      cfg.log?.("cloud_refresh_failed", { err, reason });
+      if (first) cfg.log?.("cloud_refresh_failed", { err, reason });
       return false;
     }
   };
