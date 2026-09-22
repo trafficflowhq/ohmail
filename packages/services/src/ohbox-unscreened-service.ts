@@ -261,16 +261,22 @@ async function selectCandidates(
          })}
     )`);
   }
-  if (opts.afterId) filters.push(gt(messages.id, sql`${opts.afterId}::uuid`));
+  if (opts.afterId) filters.push(gt(messages.id, d.castUuid(sql`${opts.afterId}`)));
 
   const q = t.select({
     messageId: messages.id,
     fromAddress: messages.fromAddress,
     subject: messages.subject,
     observedFolder: folderState.observedFolder,
-    headers: opts.needsHeaders ? messageBodies.headers : sql<unknown>`null::jsonb`,
-    bodyText: opts.needsBody ? messageBodies.text : sql<string | null>`null::text`,
-    at: sql<Date>`coalesce(${messages.date}, ${messages.createdAt})`,
+    /* THE TWO WIDE COLUMNS, OR WHAT THE GATE WOULD HAVE SEEN WITHOUT THEM — and each placeholder
+       is its own EXPRESSION, never the same cast twice. This module is loaded by the PHONE
+       bundle: `::jsonb` is a construct only the server accepts (`dialect-census.test.ts` refuses
+       it by name), and on the device store two columns spelled identically collapse into one,
+       because rows come back positionally — measured, both ways, in
+       `ohbox-unscreened-dialect.test.ts`. */
+    headers: opts.needsHeaders ? messageBodies.headers : sql<null>`null`,
+    bodyText: opts.needsBody ? messageBodies.text : sql<string>`''`,
+    at: sql<string>`coalesce(${messages.date}, ${messages.createdAt})`,
   }).from(folderState)
     .innerJoin(messages, eq(messages.id, folderState.messageId))
     .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
@@ -278,16 +284,20 @@ async function selectCandidates(
     .orderBy(asc(messages.id))
     .limit(opts.limit)
     .$dynamic();
-  const rows = await (opts.lock ? q.for("update", { of: folderState }) : q);
+  /* THE LOCK, THROUGH THE DIALECT. On the server this is `FOR UPDATE OF folder_state`, which is
+     what makes two presses move a message once; on the phone's single serialized connection there
+     is nothing for a row lock to add and {@link Dialect.forUpdate} is the identity. A press asks
+     for it and a read does not: a summary takes no rows hostage. */
+  const rows = await (opts.lock ? d.forUpdate(q, { of: folderState }) : q);
 
   return rows.map((r) => ({
     messageId: r.messageId,
     fromAddress: r.fromAddress,
     subject: r.subject,
-    bodyText: r.bodyText ?? "",
+    bodyText: (r.bodyText as string | null) ?? "",
     headers: (r.headers as Record<string, string[]> | null) ?? {},
     observedFolder: r.observedFolder,
-    at: new Date(r.at as unknown as string),
+    at: new Date(r.at),
   }));
 }
 
