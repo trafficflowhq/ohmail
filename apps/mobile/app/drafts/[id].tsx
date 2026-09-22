@@ -7,13 +7,16 @@ import { router, useLocalSearchParams } from "expo-router";
 import { DraftReader } from "../../src/ui/DraftReader";
 import { Gated } from "../../src/ui/Gated";
 import { useLocale } from "../../src/i18n/LocaleProvider";
+import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 
 export default function DraftScreen() {
   useLocale();
   const { id } = useLocalSearchParams<{ id: string }>();
   return (
-    <Gated>
-      <DraftReader id={String(id)} onClose={() => router.back()} />
-    </Gated>
+    <SurfaceBoundary surface="drafts">
+      <Gated>
+        <DraftReader id={String(id)} onClose={() => router.back()} />
+      </Gated>
+    </SurfaceBoundary>
   );
 }

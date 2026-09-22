@@ -10,6 +10,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { Gated } from "../../src/ui/Gated";
 import { TrashReader } from "../../src/ui/TrashReader";
 import { useLocale } from "../../src/i18n/LocaleProvider";
+import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 
 /** Gated like the tabs: a deep link can mount this route with the tabs layout never focusing. */
 export default function TrashMessageScreen() {
@@ -17,9 +18,11 @@ export default function TrashMessageScreen() {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   return (
-    <Gated>
-      <TrashMessageRoute />
-    </Gated>
+    <SurfaceBoundary surface="trash">
+      <Gated>
+        <TrashMessageRoute />
+      </Gated>
+    </SurfaceBoundary>
   );
 }
 

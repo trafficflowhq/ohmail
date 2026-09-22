@@ -24,8 +24,17 @@ import { DetailBar } from "../src/ui/chrome";
 import { Icon } from "../src/ui/Icon";
 import { Doors } from "../src/ui/Doors";
 import { useLocale } from "../src/i18n/LocaleProvider";
+import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 
 export default function ServersScreen() {
+  return (
+    <SurfaceBoundary surface="servers">
+      <ServersBody />
+    </SurfaceBoundary>
+  );
+}
+
+function ServersBody() {
   /* Subscribed to the language, so a switch in Settings redraws this screen instead of
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();

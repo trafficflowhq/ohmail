@@ -17,8 +17,17 @@ import { Screen, Scroller, Txt, useTopPad } from "../src/ui/base";
 import { Doors } from "../src/ui/Doors";
 import { Wordmark } from "../src/ui/Icon";
 import { useLocale } from "../src/i18n/LocaleProvider";
+import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 
 export default function WelcomeScreen() {
+  return (
+    <SurfaceBoundary surface="welcome">
+      <WelcomeBody />
+    </SurfaceBoundary>
+  );
+}
+
+function WelcomeBody() {
   /* Subscribed to the language, so a switch in Settings redraws this screen instead of
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();

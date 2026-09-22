@@ -23,6 +23,7 @@ import { MailRow } from "../../src/ui/MailRow";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { TrashReader } from "../../src/ui/TrashReader";
 import { useLocale } from "../../src/i18n/LocaleProvider";
+import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 
 /** Gated like the tabs: a restored route must land on the connect flow, not an empty list. */
 export default function TrashScreen() {
@@ -30,9 +31,11 @@ export default function TrashScreen() {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   return (
-    <Gated>
-      <TrashBody />
-    </Gated>
+    <SurfaceBoundary surface="trash">
+      <Gated>
+        <TrashBody />
+      </Gated>
+    </SurfaceBoundary>
   );
 }
 

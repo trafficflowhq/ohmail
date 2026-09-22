@@ -19,6 +19,7 @@ import { Gated } from "../src/ui/Gated";
 import { Icon, type IconName } from "../src/ui/Icon";
 import { SkeletonList } from "../src/ui/Skeleton";
 import { useLocale } from "../src/i18n/LocaleProvider";
+import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 
 const PILE_ICON: Record<string, IconName> = {
   replyLater: "clock",
@@ -32,9 +33,11 @@ export default function TriageScreen() {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   return (
-    <Gated>
-      <TriageBody />
-    </Gated>
+    <SurfaceBoundary surface="triage">
+      <Gated>
+        <TriageBody />
+      </Gated>
+    </SurfaceBoundary>
   );
 }
 

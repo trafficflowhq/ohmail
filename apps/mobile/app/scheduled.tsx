@@ -17,6 +17,7 @@ import { DetailBar } from "../src/ui/chrome";
 import { Gated } from "../src/ui/Gated";
 import { SkeletonList } from "../src/ui/Skeleton";
 import { useLocale } from "../src/i18n/LocaleProvider";
+import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 
 /** Gated like the tabs — a deep-linked route must not render the empty world. */
 export default function ScheduledScreen() {
@@ -24,9 +25,11 @@ export default function ScheduledScreen() {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   return (
-    <Gated>
-      <ScheduledBody />
-    </Gated>
+    <SurfaceBoundary surface="scheduled">
+      <Gated>
+        <ScheduledBody />
+      </Gated>
+    </SurfaceBoundary>
   );
 }
 

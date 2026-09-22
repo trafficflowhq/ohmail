@@ -25,6 +25,7 @@ import { SenderDetail } from "../../src/ui/SenderDetail";
 import { Segmented } from "../../src/ui/Segmented";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { useLocale } from "../../src/i18n/LocaleProvider";
+import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 
 /**
  * The three empty states, READ WHEN THE SCREEN RENDERS rather than when this module is imported.
@@ -44,6 +45,14 @@ function emptyFor(seg: ScreenerSeg): { title: string; hint: string } {
 }
 
 export default function ScreenerScreen() {
+  return (
+    <SurfaceBoundary surface="screener">
+      <ScreenerBody />
+    </SurfaceBoundary>
+  );
+}
+
+function ScreenerBody() {
   /* Subscribed to the language, so a switch in Settings redraws this screen instead of
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();

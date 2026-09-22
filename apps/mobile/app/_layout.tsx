@@ -23,6 +23,7 @@ import { WorldProvider, useWorld } from "../src/state/world";
 import { WakeProvider } from "../src/state/wake";
 import { Toast } from "../src/ui/chrome";
 import { BottomChromeProvider } from "../src/ui/bottom-chrome";
+import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 import { LocaleProvider, useLocale } from "../src/i18n/LocaleProvider";
 import { secureKV } from "../src/state/servers-native";
 import { registerBundledPhoneEngine } from "../src/engine/engine-bundle-native";
@@ -88,20 +89,26 @@ function Screens() {
        the navigator (where the dock and the reader's bar live) AND the pill, or the pill reads 0. */
     <BottomChromeProvider>
       <StatusBar style={t.scheme === "dark" ? "light" : "dark"} />
-      <Stack
-        screenOptions={{
-          headerShown: false,
-          contentStyle: { backgroundColor: t.c.canvas },
-          // The stack slides; the tab switch does not. Reduced motion turns the
-          // slide off entirely rather than slowing it down.
-          animation: t.reduceMotion ? "none" : "slide_from_right",
-        }}
-      >
-        <Stack.Screen name="(tabs)" />
-      </Stack>
-      {/* The vertical rail, once, over every screen of the postures that own it (the closed
-          Duo, a split); the tab bar keeps the dock and yields the rail to this. */}
-      <NavRail />
+      {/* THE NET UNDER EVERYTHING THE NAVIGATOR DRAWS: a render throw that escapes every screen's
+          own boundary ends here as a sentence with Retry, never as a process abort
+          (`src/ui/error-boundary.ts`). Inside the theme, the language and the chrome provider, so
+          the fallback has its copy and its colours; the toast stays outside and keeps drawing. */}
+      <SurfaceBoundary surface="shell">
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: t.c.canvas },
+            // The stack slides; the tab switch does not. Reduced motion turns the
+            // slide off entirely rather than slowing it down.
+            animation: t.reduceMotion ? "none" : "slide_from_right",
+          }}
+        >
+          <Stack.Screen name="(tabs)" />
+        </Stack>
+        {/* The vertical rail, once, over every screen of the postures that own it (the closed
+            Duo, a split); the tab bar keeps the dock and yields the rail to this. */}
+        <NavRail />
+      </SurfaceBoundary>
       {/* LAST, so it draws over every screen, the rail and the dock: an absolute sibling of the
           navigator, outside every sheet's modal subtree. `toast-pill-placement.test.ts` holds it. */}
       <Toast />

@@ -15,8 +15,17 @@ import { Panel, Screen, Scroller, Txt } from "../../src/ui/base";
 import { TopBar } from "../../src/ui/chrome";
 import { MoreNav } from "../../src/ui/MoreNav";
 import { useLocale } from "../../src/i18n/LocaleProvider";
+import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 
 export default function MoreScreen() {
+  return (
+    <SurfaceBoundary surface="more">
+      <MoreBody />
+    </SurfaceBoundary>
+  );
+}
+
+function MoreBody() {
   /* Subscribed to the language, so a switch in Settings redraws this screen instead of
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();

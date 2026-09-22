@@ -59,13 +59,16 @@ import { type AppLocale } from "../src/i18n/locale";
 import { DetailBar } from "../src/ui/chrome";
 import { Gated } from "../src/ui/Gated";
 import { Segmented } from "../src/ui/Segmented";
+import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 
 /** Gated like the tabs: the About block states a live session's facts, so it needs one. */
 export default function SettingsScreen() {
   return (
-    <Gated>
-      <SettingsBody />
-    </Gated>
+    <SurfaceBoundary surface="settings">
+      <Gated>
+        <SettingsBody />
+      </Gated>
+    </SurfaceBoundary>
   );
 }
 

@@ -18,6 +18,7 @@ import { Gated } from "../../src/ui/Gated";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { useLocale } from "../../src/i18n/LocaleProvider";
+import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 
 /** Gated like the tabs — a deep-linked route must not render the empty world. */
 export default function DraftsScreen() {
@@ -25,9 +26,11 @@ export default function DraftsScreen() {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   return (
-    <Gated>
-      <DraftsBody />
-    </Gated>
+    <SurfaceBoundary surface="drafts">
+      <Gated>
+        <DraftsBody />
+      </Gated>
+    </SurfaceBoundary>
   );
 }
 

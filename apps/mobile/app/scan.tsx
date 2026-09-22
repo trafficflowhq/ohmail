@@ -21,6 +21,7 @@ import { Button, Panel, Screen, Scroller, Txt } from "../src/ui/base";
 import { PairConfirm } from "../src/ui/PairConfirm";
 import { DetailBar } from "../src/ui/chrome";
 import { useLocale } from "../src/i18n/LocaleProvider";
+import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 
 type Phase =
   /** The camera is live. `badCode` = the last frame was not one of ours. */
@@ -37,6 +38,14 @@ type Phase =
   | { k: "failed"; reason: Refusal };
 
 export default function ScanScreen() {
+  return (
+    <SurfaceBoundary surface="scan">
+      <ScanBody />
+    </SurfaceBoundary>
+  );
+}
+
+function ScanBody() {
   /* Subscribed to the language, so a switch in Settings redraws this screen instead of
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();

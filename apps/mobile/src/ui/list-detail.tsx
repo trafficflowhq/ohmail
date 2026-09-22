@@ -16,6 +16,7 @@ import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { useWorld } from "../state/world";
 import { Empty, Rule, Screen, Tap, Txt } from "./base";
+import { SurfaceBoundary } from "./ErrorBoundary";
 import { GlassRail, GlassSidebar } from "./glass";
 import { Icon } from "./Icon";
 import { MoreNav, Nav } from "./MoreNav";
@@ -91,7 +92,15 @@ export function ListDetail({
 
   if (!twoPane) {
     /* The transition frame before the effect lands keeps the reader up — never a list flash. */
-    if (open !== null) return <Screen>{renderDetail(open, { inPane: false, onClose })}</Screen>;
+    if (open !== null) {
+      return (
+        <Screen>
+          <SurfaceBoundary surface="reader" key={open}>
+            {renderDetail(open, { inPane: false, onClose })}
+          </SurfaceBoundary>
+        </Screen>
+      );
+    }
     return <>{list}</>;
   }
 
@@ -159,9 +168,13 @@ export function ListDetail({
     </PaneChromeContext.Provider>
   );
 
+  /* The reading pane under its own boundary, keyed on the selection: a throw while drawing one
+     message leaves the list standing, and opening another message starts the pane afresh. */
   const readerPane =
     open !== null ? (
-      renderDetail(open, { inPane: true, onClose })
+      <SurfaceBoundary surface="reader" frame="inline" key={open}>
+        {renderDetail(open, { inPane: true, onClose })}
+      </SurfaceBoundary>
     ) : (
       <View style={{ flex: 1, justifyContent: "center" }}>
         <Empty title={Copy.paneNothingOpen} hint={Copy.paneNothingOpenHint} />

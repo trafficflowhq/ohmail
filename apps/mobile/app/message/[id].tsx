@@ -18,6 +18,8 @@ import { paneRouteFor } from "../../src/ui/pane-routes";
 import { usePosture } from "../../src/ui/posture";
 import { scaffoldPlan } from "../../src/ui/scaffold/plan";
 import { useLocale } from "../../src/i18n/LocaleProvider";
+import { DevRenderErrorTrigger } from "../../src/dev/render-error-trigger-door";
+import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 
 /**
  * Gated like the tabs: a deep link (`ohmail://message/<id>`) can mount this route with the
@@ -29,9 +31,11 @@ export default function MessageScreen() {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   return (
-    <Gated>
-      <MessageRoute />
-    </Gated>
+    <SurfaceBoundary surface="reader">
+      <Gated>
+        <MessageRoute />
+      </Gated>
+    </SurfaceBoundary>
   );
 }
 
@@ -59,6 +63,9 @@ function MessageRoute() {
       {/* Gate-held and folder mail keep the full-screen reader on the unfolded-landscape Duo
           (`paneRouteFor` answers null there) — the rail's claim still needs a renderer. */}
       <ReaderRailHost />
+      {/* A development bundle only (`render-error-trigger-door.ts`): the control that throws
+          under this route's boundary, so the catch can be watched on a device. `null` shipped. */}
+      {DevRenderErrorTrigger === null ? null : <DevRenderErrorTrigger />}
     </>
   );
 }

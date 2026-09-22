@@ -42,8 +42,17 @@ import {
   type StandaloneStep,
 } from "../src/ui/standalone-form";
 import { useLocale } from "../src/i18n/LocaleProvider";
+import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 
 export default function StandaloneScreen() {
+  return (
+    <SurfaceBoundary surface="standalone">
+      <StandaloneBody />
+    </SurfaceBoundary>
+  );
+}
+
+function StandaloneBody() {
   /* Subscribed to the language, so a switch in Settings redraws this screen rather than waiting
      for the next navigation — every other pushed screen does the same. */
   useLocale();

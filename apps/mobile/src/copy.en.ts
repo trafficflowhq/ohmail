@@ -2133,6 +2133,15 @@ const TABLE = {
     "ohmail handed these mailboxes back when the account closed. It does not take them again on its own — organizing starts when you start it.",
   stripStartOrganizing: "Start organizing",
   stripDismiss: "Got it",
+  /* A RENDER ERROR, CAUGHT — `ui/ErrorBoundary.tsx`. One sentence, the surface it took, one
+     verb. The cause goes to the device's log, never to the screen. */
+  renderErrorTitle: "Something went wrong on this screen.",
+  renderErrorWhere: (surface: string) => `${surface} could not be drawn.`,
+  renderErrorRetry: "Retry",
+  renderErrorSurfaceShell: "The whole app",
+  renderErrorSurfaceReader: "The message",
+  renderErrorSurfaceComposer: "The composer",
+  renderErrorSurfaceScreen: "This screen",
 };
 
 /**

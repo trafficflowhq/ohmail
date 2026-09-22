@@ -1374,4 +1374,11 @@ export const DE: Deck = {
   stripStartOrganizing: "Organisieren starten",
   stripDismiss: "Verstanden",
 
+  renderErrorTitle: "Auf diesem Bildschirm ist etwas schiefgegangen.",
+  renderErrorWhere: (surface: string) => `${surface} konnte nicht gezeichnet werden.`,
+  renderErrorRetry: "Erneut versuchen",
+  renderErrorSurfaceShell: "Die ganze App",
+  renderErrorSurfaceReader: "Die Nachricht",
+  renderErrorSurfaceComposer: "Das Schreibfenster",
+  renderErrorSurfaceScreen: "Dieser Bildschirm",
 };

@@ -24,6 +24,7 @@ import { Gated } from "../src/ui/Gated";
 import { MailRow } from "../src/ui/MailRow";
 import { SkeletonList } from "../src/ui/Skeleton";
 import { useLocale } from "../src/i18n/LocaleProvider";
+import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 
 /** Gated like the tabs — a deep-linked route must not render the empty world. */
 export default function HistoryScreen() {
@@ -31,9 +32,11 @@ export default function HistoryScreen() {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   return (
-    <Gated>
-      <HistoryBody />
-    </Gated>
+    <SurfaceBoundary surface="history">
+      <Gated>
+        <HistoryBody />
+      </Gated>
+    </SurfaceBoundary>
   );
 }
 

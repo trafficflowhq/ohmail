@@ -23,6 +23,7 @@ import { Button, Panel, Screen, Scroller, Section, Txt } from "../src/ui/base";
 import { PairConfirm } from "../src/ui/PairConfirm";
 import { DetailBar } from "../src/ui/chrome";
 import { useLocale } from "../src/i18n/LocaleProvider";
+import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 
 type Phase =
   | { k: "idle" }
@@ -33,6 +34,14 @@ type Phase =
   | { k: "failed"; reason: Refusal };
 
 export default function ConnectScreen() {
+  return (
+    <SurfaceBoundary surface="connect">
+      <ConnectBody />
+    </SurfaceBoundary>
+  );
+}
+
+function ConnectBody() {
   /* Subscribed to the language, so a switch in Settings redraws this screen instead of
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();

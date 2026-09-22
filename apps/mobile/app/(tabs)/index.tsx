@@ -22,8 +22,17 @@ import { MarkAllRead } from "../../src/ui/MarkAllRead";
 import { MessageReader } from "../../src/ui/MessageReader";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { useLocale } from "../../src/i18n/LocaleProvider";
+import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 
 export default function OhboxScreen() {
+  return (
+    <SurfaceBoundary surface="ohbox">
+      <OhboxBody />
+    </SurfaceBoundary>
+  );
+}
+
+function OhboxBody() {
   /* Subscribed to the language, so a switch in Settings redraws this screen instead of
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();

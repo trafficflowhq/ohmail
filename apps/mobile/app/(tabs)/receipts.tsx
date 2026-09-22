@@ -24,6 +24,7 @@ import { MailList, type ListGroup, type RowFrame } from "../../src/ui/MailList";
 import { MailRow } from "../../src/ui/MailRow";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { useLocale } from "../../src/i18n/LocaleProvider";
+import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 
 const READ_LINE = 0.62;
 
@@ -37,6 +38,14 @@ const groupKeyOf = (g: { label: string; items: { id: string }[] }): string =>
   g.items[0]?.id ?? g.label;
 
 export default function ReceiptsScreen() {
+  return (
+    <SurfaceBoundary surface="receipts">
+      <ReceiptsBody />
+    </SurfaceBoundary>
+  );
+}
+
+function ReceiptsBody() {
   /* Subscribed to the language, so a switch in Settings redraws this screen instead of
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();

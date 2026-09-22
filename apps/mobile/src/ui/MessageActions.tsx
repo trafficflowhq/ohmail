@@ -78,6 +78,7 @@ import { nativeAttachPicker } from "../compose/attach-native";
 import { afterWithdraw, cancelAct } from "./send-cancel";
 import { Segmented } from "./Segmented";
 import { Sheet, SheetRow, useSheetPanelBounds } from "./Sheet";
+import { SurfaceBoundary } from "./ErrorBoundary";
 
 /**
  * One pick's verdicts, held as KINDS — the sentence is derived where it is shown, so a refusal
@@ -605,8 +606,12 @@ export function MessageActions({
 
       {open === "tag" ? <TagSheet m={m} tags={w.tags} onClose={close} /> : null}
       {open === "screening" ? <ScreeningSheet m={m} onClose={close} /> : null}
+      {/* The composer under its own boundary, in the sheet's shape: a throw while composing
+          leaves the reader behind it readable and offers Retry, never the process. */}
       {open !== null && typeof open === "object" ? (
-        <ComposeSheet m={m} mode={open.compose} onClose={close} />
+        <SurfaceBoundary surface="composer" frame="sheet" onClose={close}>
+          <ComposeSheet m={m} mode={open.compose} onClose={close} />
+        </SurfaceBoundary>
       ) : null}
     </>
   );

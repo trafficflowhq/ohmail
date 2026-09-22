@@ -15,6 +15,7 @@ import { usePosture } from "../../../src/ui/posture";
 import { scaffoldPlan } from "../../../src/ui/scaffold/plan";
 import { SenderDetail } from "../../../src/ui/SenderDetail";
 import { useLocale } from "../../../src/i18n/LocaleProvider";
+import { SurfaceBoundary } from "../../../src/ui/ErrorBoundary";
 
 /** Gated like the tabs — a deep-linked or restored route must not render the empty world. */
 export default function SenderScreen() {
@@ -22,9 +23,11 @@ export default function SenderScreen() {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   return (
-    <Gated>
-      <SenderRoute />
-    </Gated>
+    <SurfaceBoundary surface="screener">
+      <Gated>
+        <SenderRoute />
+      </Gated>
+    </SurfaceBoundary>
   );
 }
 

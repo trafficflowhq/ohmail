@@ -25,11 +25,20 @@ import { FadeOut } from "../../src/ui/FadeOut";
 import { MarkAllRead } from "../../src/ui/MarkAllRead";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { useLocale } from "../../src/i18n/LocaleProvider";
+import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 
 /** The read line: a card counts as skimmed once its foot clears this fraction. */
 const READ_LINE = 0.62;
 
 export default function ReadsScreen() {
+  return (
+    <SurfaceBoundary surface="reads">
+      <ReadsBody />
+    </SurfaceBoundary>
+  );
+}
+
+function ReadsBody() {
   /* Subscribed to the language, so a switch in Settings redraws this screen instead of
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();

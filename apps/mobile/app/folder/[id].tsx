@@ -24,6 +24,7 @@ import { Gated } from "../../src/ui/Gated";
 import { MailRow } from "../../src/ui/MailRow";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { useLocale } from "../../src/i18n/LocaleProvider";
+import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 
 /** Gated like the tabs: a restored route must land on the connect flow, not an empty list. */
 export default function FolderScreen() {
@@ -31,9 +32,11 @@ export default function FolderScreen() {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   return (
-    <Gated>
-      <FolderBody />
-    </Gated>
+    <SurfaceBoundary surface="folder">
+      <Gated>
+        <FolderBody />
+      </Gated>
+    </SurfaceBoundary>
   );
 }
 

@@ -25,6 +25,7 @@ import { Field } from "../src/ui/Field";
 import { Gated } from "../src/ui/Gated";
 import { Segmented } from "../src/ui/Segmented";
 import { Sheet, SheetRow } from "../src/ui/Sheet";
+import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 
 /** How far ahead the end-date rows reach — a quarter, the resurface chooser's own horizon. */
 const END_DATE_DAYS = 90;
@@ -34,9 +35,11 @@ export default function AwayScreen() {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   return (
-    <Gated>
-      <AwayBody />
-    </Gated>
+    <SurfaceBoundary surface="away">
+      <Gated>
+        <AwayBody />
+      </Gated>
+    </SurfaceBoundary>
   );
 }
 
