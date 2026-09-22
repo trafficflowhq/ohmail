@@ -2,7 +2,7 @@ import { and, asc, eq, inArray, lt, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import {
   attachments, contacts, drafts, mailboxes, messageBodies, messages, outboundSends,
-  outboundSendFingerprints, recordChange, threads, type LedgerTx, type Tx,
+  outboundSendFingerprints, readAccountErasedAt, recordChange, threads, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import {
   createLogger, isMessageGone, mintMessageId, normalizeMessageId, recordSentMessage,
@@ -1948,6 +1948,10 @@ export class SendService {
   ): Promise<number | null> {
     const now = ctx.now();
     const seq = await asTx(ctx).transaction(async (tx) => {
+      /* The account's erasure stamp, FIRST — the fence's lock order against `deleteAccount`. Read,
+         never thrown on: a message already delivered must still finalize `sent`, and all it
+         decides is whether this send may teach the address book (the contacts write below). */
+      const erasedAt = await readAccountErasedAt(tx, dialect(ctx.db), ctx.accountId);
       // scoped-by: sendId names the reservation this request minted; the status predicate makes the CAS single-winner
       const won = await tx.update(outboundSends)
         .set({ status: "sent", providerMessageId, sentAt: now })
@@ -1971,7 +1975,17 @@ export class SendService {
         .where(and(
           eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId), eq(drafts.status, "sending"),
         ));
-      await this.learnRecipients(tx, ctx, draftId);
+      /* SOMEBODY YOU HAVE WRITTEN TO IS NOT A STRANGER. `contacts` is what routing reads as
+         "senders this account knows", and nothing kept it current. Here, not in the Sent
+         projection, which is best-effort and skipped for an adapter that cannot say what it
+         appended. Inside the CAS, so a lost race writes nothing; skipped for an erased account;
+         no delta — `contacts` is REST-only for the change log, like its other writers. */
+      const learned = erasedAt == null ? await this.recipientsOf(tx, ctx, draftId) : [];
+      if (learned.length > 0) {
+        await tx.insert(contacts)
+          .values(learned.map((address) => ({ accountId: ctx.accountId, address })))
+          .onConflictDoNothing();
+      }
       // See the note above: the doorbell is skipped rather than waited on, because waiting
       // strands a message already sent. `SKIP LOCKED` needs the row selected, so the update is
       // driven by a subquery rather than `where id = ...` directly. REVERTED TO THE STATEMENT'S
@@ -1994,31 +2008,19 @@ export class SendService {
   }
 
   /**
-   * SOMEBODY YOU HAVE WRITTEN TO IS NOT A STRANGER — the contacts write, at the send.
-   *
-   * `contacts` is what the routing layer reads as "senders this account knows", and its only
-   * writers were the consent seed and a connect-time pass that is retired, so nothing kept it
-   * current. Here and not in the Sent projection: that one is best-effort and is skipped for an
-   * adapter that cannot report what it appended, so learning would depend on which adapter
-   * delivered the mail. Inside the CAS, so a lost race writes nothing. No delta — `contacts` is
-   * REST-only for the change log, as its other writers already are.
+   * Every address this draft was sent to, lower-cased and once each — To, Cc and Bcc. A person you
+   * blind-copied is a person you wrote to: what Bcc keeps private is the list on the wire.
    */
-  private async learnRecipients(tx: LedgerTx, ctx: ServiceContext, draftId: string): Promise<void> {
+  private async recipientsOf(tx: LedgerTx, ctx: ServiceContext, draftId: string): Promise<string[]> {
     // scoped-by: draftId is the reservation's own draft, loaded by (id, accountId) upstream
     const [d] = await tx.select({ to: drafts.to, cc: drafts.cc, bcc: drafts.bcc })
       .from(drafts).where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId))).limit(1);
-    if (!d) return;
-    // Bcc is included: a person you blind-copied is a person you wrote to. What Bcc keeps private
-    // is the RECIPIENT LIST on the wire, not who you know.
-    const addresses = [...new Set(
+    if (!d) return [];
+    return [...new Set(
       [...(d.to as EmailAddress[]), ...(d.cc as EmailAddress[]), ...(d.bcc as EmailAddress[])]
         .map((a) => a?.address?.trim().toLowerCase())
         .filter((a): a is string => Boolean(a)),
     )];
-    if (addresses.length === 0) return;
-    await tx.insert(contacts)
-      .values(addresses.map((address) => ({ accountId: ctx.accountId, address })))
-      .onConflictDoNothing();
   }
 
   /**
