@@ -163,7 +163,7 @@ import {
 // second answer to "when is a resurface due", which is the one thing that must not differ.
 import { bubbleUpPass } from "@trafficflow/worker/bubble-up";
 import { screenerAutoSuggestPass } from "@trafficflow/worker/screener-auto-suggest";
-import { screenerAutoActPass } from "@trafficflow/worker/screener-auto-act";
+import { screenerAutoActPass, type ScreenerAutoActSettings } from "@trafficflow/worker/screener-auto-act";
 import { threadJoinHealPass, type ThreadJoinHealCursor } from "@trafficflow/worker/thread-join-heal";
 import { inboundQuietPass } from "@trafficflow/worker/inbound-quiet";
 // The HISTORICAL-NAME REPAIR, from the same package and for the fourth instance of the same
@@ -2079,7 +2079,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * files leniently and drops the bar: `people_only` is the strict posture, and defaulting to it on a blip
      * would demote a real person's mail. The event name is the hosted worker's.
      */
-    const screeningNow = async (): Promise<Pick<SyncDeps, "ohboxPolicy" | "ohboxBar" | "screeningCutoff">> => {
+    const screeningNow = async (): Promise<Pick<SyncDeps, "ohboxPolicy" | "ohboxBar" | "screeningCutoff">
+      & { actSettings?: ScreenerAutoActSettings }> => {
       try {
         const [row] = await db.select({
           policy: accountSettings.ohboxPolicy, bar: accountSettings.ohboxBar,
@@ -2096,6 +2097,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           baselineAt: accountSettings.screeningBaselineAt,
           dormancyDays: accountSettings.dormancyDays,
           scope: accountSettings.screeningScope,
+          // The auto-act opt-in, on this same row, so the tail's pass asks the store nothing more.
+          autoApplyAt: accountSettings.screenerAutoApplyAt,
         }).from(accountSettings).where(eq(accountSettings.accountId, world.accountId)).limit(1);
         const cutoff = resolveScreeningCutoff(row?.baselineAt, row?.dormancyDays, row?.scope);
         return {
@@ -2106,6 +2109,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // asks for. One state, reached two ways, and `resolveScreeningCutoff` is the single
           // place that decides which.
           ...(cutoff ? { screeningCutoff: cutoff } : {}),
+          actSettings: {
+            autoApplyAt: row?.autoApplyAt ?? null, screeningBaselineAt: row?.baselineAt ?? null,
+            dormancyDays: row?.dormancyDays ?? null, screeningScope: row?.scope ?? null,
+          },
         };
       } catch (err) {
         log("screening_pref_read_failed", {
@@ -2206,10 +2213,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * engine's own Apply button and its request drain reach. It reads advice and buys none, so it
      * needs no model and no credits gate; it files nothing for an install that has not opted in.
      */
-    const actOnSuggestions = async (): Promise<void> => {
+    const actOnSuggestions = async (settings?: ScreenerAutoActSettings): Promise<void> => {
       try {
         const { ran, filed, failed, capped } = await screenerAutoActPass(db as unknown as Tx, {
-          accountId: world.accountId,
+          accountId: world.accountId, ...(settings ? { settings } : {}),
         });
         if (ran && (filed > 0 || failed > 0)) log("screener_auto_act", { applied: filed, failed, capped });
       } catch (err) {
@@ -5035,7 +5042,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // let a mailbox change its mind halfway through its own backlog. It is NOT hoisted into
         // `syncDeps` above, which is built once per process — that would freeze the posture for the
         // life of the engine, so an edit in Settings would need a relaunch to take effect.
-        const screening = await screeningNow();
+        const { actSettings, ...screening } = await screeningNow();
         /* WHEN THIS DRAIN BEGAN, for the first-import clock. A drain is up to a hundred cycles, and
            the one that finds a first import open lands a large mailbox's first pages before it
            reports — 13.7 minutes of a 47.4-minute import on the reference rig, which the reported
@@ -5211,7 +5218,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              Inside the same once-per-account guard for `suggestNew`'s reason: the queue is per
              account, not per cycle. Behind the organizer gate, unlike `suggestNew`: filing a
              sender writes the rules the mailbox's organizer owns, so a reader never enters it. */
-          if (organizing) await onceForTheAccount(actOnSuggestions);
+          if (organizing) await onceForTheAccount(() => actOnSuggestions(actSettings));
           /* AND THE HISTORICAL-NAME REPAIR LAST OF ALL THE WORK, which is the ordering claim the
              suite pins rather than a preference. It is about rows that have been on this disk for as
              long as the install has existed, so nothing it does is urgent, and a cold launch's first

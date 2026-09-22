@@ -50,6 +50,22 @@ export interface ScreenerAutoActDeps {
   /** Test seams. Default {@link SCREENER_ACT_DENY_BAR} / {@link SCREENER_ACT_ADMIT_BAR}. */
   denyBar?: number;
   admitBar?: number;
+  /** The account_settings row the caller already read this cycle; absent ⇒ the pass reads it. */
+  settings?: ScreenerAutoActSettings;
+}
+
+type SettingsRow = typeof accountSettings.$inferSelect;
+
+/**
+ * The opt-in and the cutline's three answers — the one PK row this pass starts from. A caller that
+ * already read that row for the same drain hands it over, so an account with the setting off
+ * costs the drain no extra statement (the local engine's idle-drain ratchet counts it).
+ */
+export interface ScreenerAutoActSettings {
+  autoApplyAt: SettingsRow["screenerAutoApplyAt"];
+  screeningBaselineAt: SettingsRow["screeningBaselineAt"];
+  dormancyDays: SettingsRow["dormancyDays"];
+  screeningScope: SettingsRow["screeningScope"];
 }
 
 export interface ScreenerAutoActResult {
@@ -137,8 +153,9 @@ export async function screenerAutoActPass(
 
   // THE OPT-IN PROBE — one PK read, and the whole cost of this pass for every account that has not
   // turned the setting on. `screener_auto_apply_at IS NOT NULL` IS the opt-in, the same column and
-  // the same reading as `screener-auto.ts` and `getScreeningPreference`.
-  const [settings] = await db.select({
+  // the same reading as `screener-auto.ts` and `getScreeningPreference`. A caller that already read
+  // the row this cycle hands it over and the probe costs nothing.
+  const [settings] = deps.settings ? [deps.settings] : await db.select({
     autoApplyAt: accountSettings.screenerAutoApplyAt,
     // The cutline's three answers, on the PK read the opt-in probe already makes — the suggest
     // pass's own shape. A sender the cutline has retired is not a question, so acting on advice
