@@ -2167,7 +2167,9 @@
     "enrollCta": "Einrichtung abschließen",
     "unavailableTitle": "Hier nicht verfügbar",
     "unavailableBody": "An dieses Exemplar von ohmail ist kein Server angeschlossen, es gibt also kein Konto zum Verbinden.",
-    "footer": "Der Code gilt einmal und nur für ein paar Minuten."
+    "footer": "Der Code gilt einmal und nur für ein paar Minuten.",
+    "busyRetrying": "Der Server ist ausgelastet — neuer Versuch in {seconds} s.",
+    "busyGaveUp": "Der Server ist weiterhin ausgelastet. Drück den Knopf, um es erneut zu versuchen."
   },
   "account": {
     "title": "Konto löschen",

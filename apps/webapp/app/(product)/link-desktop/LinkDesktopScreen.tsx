@@ -51,6 +51,7 @@ import {
   webauthnAvailable,
   type TwofaChallenge,
 } from "../../api-client";
+import { isBusy, retryBusy } from "../../retry-busy";
 
 /** A live code and the moment it stops being one. */
 interface Minted {
@@ -108,7 +109,30 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
 
   /** The page can be navigated away from mid-flight; nothing may set state after that. */
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  /** Ends a busy wait on unmount, so no mint runs for a page nobody is looking at. */
+  const gone = useRef(new AbortController());
+  useEffect(() => () => { alive.current = false; gone.current.abort(); }, []);
+
+  /**
+   * A BUSY SERVER IS A WAIT, NOT A DEAD END. While `retryBusy` waits out a 503 `db_busy`, the page
+   * says so with a countdown and keeps its button live: a press ends the wait and retries now.
+   * `retryAt` is when the next ask goes out; `wake` ends the current wait early.
+   */
+  const [retryAt, setRetryAt] = useState<number | null>(null);
+  const [retryIn, setRetryIn] = useState(0);
+  const wake = useRef<(() => void) | null>(null);
+  const sleepOrPress = (ms: number): Promise<void> => new Promise((resolve) => {
+    const done = (): void => { clearTimeout(timer); wake.current = null; resolve(); };
+    const timer = setTimeout(done, ms);
+    wake.current = done;
+  });
+  useEffect(() => {
+    if (retryAt === null) return;
+    const tick = (): void => setRetryIn(Math.max(1, Math.ceil((retryAt - Date.now()) / 1000)));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [retryAt]);
 
   /**
    * THE CEREMONY'S GENERATION, the same one the account erase runs on. Cancelling the
@@ -144,7 +168,21 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
         // step-up ceremony — a retry that dropped it would silently hand back an UNBOUND code to
         // an app that is still holding a verifier, and the handoff would fail with nothing on
         // either screen saying why.
-        const { code: minted, expiresIn } = await auth.desktopLink({ challenge: commitment });
+        // `replaySafe`: a busy mint may have written a code nobody saw; it is one-use, bound to
+        // the same challenge and expires unspent, so asking again costs nothing.
+        const { code: minted, expiresIn } = await retryBusy(
+          () => auth.desktopLink({ challenge: commitment }),
+          {
+            replaySafe: true,
+            signal: gone.current.signal,
+            sleep: sleepOrPress,
+            onWait: (ms) => {
+              if (!alive.current) return;
+              setPhase("idle");
+              setRetryAt(Date.now() + ms);
+            },
+          },
+        );
         if (!alive.current) return;
         setMinted({ code: minted, expiresAtMs: Date.now() + expiresIn * 1000 });
         setRemaining(expiresIn);
@@ -155,11 +193,14 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
         // rather than by a trip to `/login` — see this file's header for the loop that trip was.
         if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
           await beginReauth();
+        } else if (isBusy(err)) {
+          // The server, never the session: the sign-in is fine and the button is still there.
+          setError(t("busyGaveUp"));
         } else {
           setError(messageOf(err));
         }
       } finally {
-        if (alive.current) setBusy(false);
+        if (alive.current) { setBusy(false); setRetryAt(null); }
       }
     })();
   };
@@ -388,10 +429,15 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
     );
   }
 
+  /** During a busy wait the button stays pressable and retries now; otherwise it mints. */
+  const waiting = retryAt !== null;
+  const press = (): void => { if (wake.current) wake.current(); else mint(); };
+
   return (
     <Shell title={t("title")}>
       <p className="sub">{t("lead")}</p>
       {error ? <p className="join-error" role="alert">{error}</p> : null}
+      {waiting ? <p className="join-hint" role="status">{t("busyRetrying", { seconds: retryIn })}</p> : null}
       {/* The check came back after Cancel and was thrown away. Said, because this screen looks
           identical whether a code was minted a second ago or never at all. */}
       {ceremony.discarded ? <p className="join-hint" role="status">{t("cancelledNothingMinted")}</p> : null}
@@ -420,13 +466,15 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
             <li>{t("step2")}</li>
           </ol>
           <div className="join-actions">
-            <Button onClick={mint} disabled={busy}>{busy ? t("working") : t("again")}</Button>
+            <Button onClick={press} disabled={busy && !waiting}>
+              {busy && !waiting ? t("working") : t("again")}
+            </Button>
           </div>
         </>
       ) : (
         <div className="join-actions">
-          <Button variant="primary" onClick={mint} disabled={busy}>
-            {busy ? t("working") : t("mint")}
+          <Button variant="primary" onClick={press} disabled={busy && !waiting}>
+            {busy && !waiting ? t("working") : t("mint")}
           </Button>
         </div>
       )}

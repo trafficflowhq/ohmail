@@ -2167,7 +2167,9 @@
     "enrollCta": "Finish setup",
     "unavailableTitle": "Not available here",
     "unavailableBody": "This copy of ohmail has no server attached, so there is no account to link.",
-    "footer": "The code works once, and only for a couple of minutes."
+    "footer": "The code works once, and only for a couple of minutes.",
+    "busyRetrying": "The server is busy — retrying in {seconds} s.",
+    "busyGaveUp": "The server is still busy. Press the button to try again."
   },
   "account": {
     "title": "Delete your account",
