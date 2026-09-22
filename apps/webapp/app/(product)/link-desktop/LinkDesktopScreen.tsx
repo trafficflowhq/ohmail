@@ -122,7 +122,12 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
   const [retryIn, setRetryIn] = useState(0);
   const wake = useRef<(() => void) | null>(null);
   const sleepOrPress = (ms: number): Promise<void> => new Promise((resolve) => {
-    const done = (): void => { clearTimeout(timer); wake.current = null; resolve(); };
+    // The wait is over either way: the retry that follows is in flight, so the button is not live.
+    const done = (): void => {
+      clearTimeout(timer); wake.current = null;
+      if (alive.current) setRetryAt(null);
+      resolve();
+    };
     const timer = setTimeout(done, ms);
     wake.current = done;
   });
@@ -179,6 +184,7 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
             onWait: (ms) => {
               if (!alive.current) return;
               setPhase("idle");
+              setRetryIn(Math.max(1, Math.ceil(ms / 1000)));
               setRetryAt(Date.now() + ms);
             },
           },
