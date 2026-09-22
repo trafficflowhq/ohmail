@@ -9,6 +9,8 @@
  * time — a module-scope read would bind whatever `console` was at import.
  */
 
+import type { BackupExclusion } from "./backup-exclusion";
+
 /** What the engine is handed: one finished line, already redacted by its own logger. */
 export type EngineLogSink = (line: string) => void;
 
@@ -53,4 +55,21 @@ export type AttachmentRefusal =
  */
 export function logAttachmentRefusal(reason: AttachmentRefusal): void {
   consoleEngineLogSink()(JSON.stringify({ service: "app", event: "attachment_refused", reason }));
+}
+
+/**
+ * ONE LINE PER MIRROR OPEN, SAYING WHETHER THE COPIED MAIL IS OUTSIDE THIS DEVICE'S BACKUP.
+ *
+ * Both fields, because one of them cannot answer alone: `backup_excluded` is the measurement and
+ * `state` tells a false reading apart from no reading at all. Not the second logger the banner
+ * refuses — every value is a member of a closed set, so there is nothing here to redact.
+ */
+export function logBackupExclusion(state: BackupExclusion, platform: string): void {
+  consoleEngineLogSink()(JSON.stringify({
+    service: "app",
+    event: "backup_exclusion",
+    backup_excluded: state === "excluded",
+    state,
+    platform,
+  }));
 }

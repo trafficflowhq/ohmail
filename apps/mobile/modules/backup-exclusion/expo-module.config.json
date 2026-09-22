@@ -1,0 +1,9 @@
+{
+  "platforms": ["android", "apple"],
+  "android": {
+    "modules": ["app.ohmail.backupexclusion.BackupExclusionModule"]
+  },
+  "apple": {
+    "modules": ["OhmailBackupExclusionModule"]
+  }
+}

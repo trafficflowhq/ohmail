@@ -32,6 +32,7 @@ import { Nav } from "../src/ui/MoreNav";
 import { Field } from "../src/ui/Field";
 import { useConnection } from "../src/net/connection";
 import { resupplyPassword } from "../src/net/mailboxes";
+import { backupExclusion, subscribeBackupExclusion } from "../src/engine/backup-exclusion";
 import { phoneEngineStart } from "../src/engine/engine-artifact";
 import {
   onOrganizerState, organizeRefusal, organizerHandedBack, organizerInstruction,
@@ -161,6 +162,9 @@ function SettingsBody() {
    * workflow from the commit it built; `dev` on anything else. The narrowing is `buildCommit`'s.
    */
   const commit = buildCommit(process.env.EXPO_PUBLIC_COMMIT);
+  /* What the mirror's open measured about this device's backup — the About block's last line
+     comes from it, so the claim and the reading cannot drift apart. */
+  const backupSays = useSyncExternalStore(subscribeBackupExclusion, backupExclusion, backupExclusion);
 
   return (
     <Screen>
@@ -329,10 +333,15 @@ function SettingsBody() {
             <Txt variant="note" tone="ink2">
               {Copy.aboutLive(w.account.name)}
             </Txt>
-            {/* What leaving actually leaves — including the one thing this build cannot yet
-                take back (an iOS backup carries the copied mail). See `Copy.aboutOnDevice`. */}
+            {/* What leaving actually leaves. The backup half is a SECOND line, derived from what
+                the mirror's open measured rather than written per platform: subscribed, because
+                the reading settles after the first open and a body-time read would freeze
+                whatever was true at the last paint. See `src/engine/backup-exclusion.ts`. */}
             <Txt variant="note" tone="ink3">
               {Copy.aboutOnDevice}
+            </Txt>
+            <Txt variant="note" tone="ink3">
+              {Copy.aboutOnDeviceBackup(backupSays)}
             </Txt>
           </View>
         </Panel>

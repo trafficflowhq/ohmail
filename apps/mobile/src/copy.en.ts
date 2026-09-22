@@ -9,6 +9,7 @@
  * compile — and `test/copy-parity.test.ts` adds what a type cannot see. No `as const`.
  */
 
+import type { BackupExclusion } from "./engine/backup-exclusion";
 import { isPinFailure } from "./net/host-pinning";
 
 /**
@@ -1218,19 +1219,32 @@ const TABLE = {
    * the Keychain item survives deleting the app and no code of ours runs at that moment, so the
    * credential is there until the next launch's install-generation purge — the remedy that works
    * immediately is the server-side revoke, and the sentence names it. The pairing credential
-   * stays out of every backup (`WHEN_UNLOCKED_THIS_DEVICE_ONLY`); Android's backup rules keep
-   * the mirror out too, while on iOS the mirror sits in Documents, which platform backups
-   * include unless marked excluded — that needs native code this build does not carry, so the
-   * copy says so (no brand name: the privacy census bans real brand strings in this source).
+   * stays out of every backup (`WHEN_UNLOCKED_THIS_DEVICE_ONLY`). What happens to the MAIL is
+   * no longer written down here: {@link TABLE.aboutOnDeviceBackup} states what the device
+   * measured, so the sentence cannot outlive the build it was true of (no brand name: the
+   * privacy census bans real brand strings in this source).
    */
   aboutOnDevice:
     "Forgetting a server deletes its pairing and the mail this phone had copied. Deleting the app "
     + "takes the copied mail with it; on iPhone and iPad the pairing stays in the phone's keychain "
     + "until ohmail is opened again, which discards it before opening anything — and refuses to "
     + "open anything at all if it cannot — so to end it straight away, revoke this device from "
-    + "the server's Devices list. The pairing is never included in a "
-    + "backup. On iPhone and iPad the copied mail is: it lives in this app's documents, which the "
-    + "phone's cloud and computer backups include. On Android it is excluded from both.",
+    + "the server's Devices list. The pairing is never included in a backup.",
+
+  /**
+   * AND THE MAIL — one sentence per measured state, chosen by what the device answered rather
+   * than by which platform this is. "Not measured" has its own line: an app that cannot read the
+   * exclusion has not earned the claim, and stating the opposite would be just as false.
+   */
+  aboutOnDeviceBackup: (state: BackupExclusion): string =>
+    state === "excluded"
+      ? "The copied mail is not in one either: this app's stored mail is marked to stay out of "
+        + "the phone's cloud and computer backups, and this build read that mark back."
+      : state === "included"
+        ? "The copied mail is: it lives in this app's stored files, which the phone's cloud and "
+          + "computer backups include."
+        : "Whether the copied mail is included in a backup could not be read on this build, so "
+          + "nothing here claims it either way.",
 
   /* --------------------------------------------- organizing in the background */
 

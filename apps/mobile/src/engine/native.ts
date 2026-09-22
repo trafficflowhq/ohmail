@@ -8,6 +8,7 @@ import * as Crypto from "expo-crypto";
 import * as SQLite from "expo-sqlite";
 import type { SqlExecutor, SqlValue } from "@ohmail/client-engine";
 import { dbFileName, type MobileEngineDeps } from "./boot";
+import { settleBackupExclusion } from "./backup-exclusion-native";
 import { serialSqlExecutor, type ExclusiveTxnDatabase } from "./sql-queue";
 
 /**
@@ -34,7 +35,14 @@ export function expoSqlExecutor(db: SQLite.SQLiteDatabase): SqlExecutor {
 /** What the connect screen hands to {@link bootEngine}. */
 export function nativeEngineDeps(): MobileEngineDeps {
   return {
-    openExecutor: async (dbName) => expoSqlExecutor(await SQLite.openDatabaseAsync(dbFileName(dbName))),
+    openExecutor: async (dbName) => {
+      const db = await SQLite.openDatabaseAsync(dbFileName(dbName));
+      // The mirror's directory marked and READ BACK, before a single row leaves it, and awaited
+      // under its own budget rather than fired and forgotten: the About block states what this
+      // answered, and a claim about where the mail can travel is not a thing to start and drop.
+      await settleBackupExclusion(db.databasePath);
+      return expoSqlExecutor(db);
+    },
     /**
      * The real deletion — the one call in this app that removes mail from the device.
      * `deleteDatabaseAsync` rejects on a name that is not there, and the seam's contract is

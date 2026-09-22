@@ -9,6 +9,7 @@
  * never Sie; plain statements, no slogans. Plurals are a ternary on the number.
  */
 
+import type { BackupExclusion } from "./engine/backup-exclusion";
 import { isPinFailure } from "./net/host-pinning";
 import type { Deck } from "./copy.en";
 
@@ -787,9 +788,18 @@ export const DE: Deck = {
     + "Kopplung im Schlüsselbund des Telefons, bis ohmail wieder geöffnet wird — dann wird sie "
     + "verworfen, bevor irgendetwas geöffnet wird, und wenn das nicht gelingt, wird gar nichts "
     + "geöffnet. Um sie sofort zu beenden, widerrufe dieses Gerät in der Geräteliste des Servers. "
-    + "Die Kopplung ist nie in einem Backup enthalten. Auf iPhone und iPad ist die kopierte Post "
-    + "es: Sie liegt in den Dokumenten dieser App, und die Cloud- und Computer-Backups des "
-    + "Telefons schließen sie ein. Auf Android ist sie aus beiden ausgenommen.",
+    + "Die Kopplung ist nie in einem Backup enthalten.",
+
+  aboutOnDeviceBackup: (state: BackupExclusion): string =>
+    state === "excluded"
+      ? "Die kopierte Post ist es auch nicht: Die gespeicherte Post dieser App ist so markiert, "
+        + "dass sie aus den Cloud- und Computer-Backups des Telefons herausbleibt, und dieser "
+        + "Build hat diese Markierung zurückgelesen."
+      : state === "included"
+        ? "Die kopierte Post ist es: Sie liegt in den gespeicherten Dateien dieser App, und die "
+          + "Cloud- und Computer-Backups des Telefons schließen sie ein."
+        : "Ob die kopierte Post in einem Backup enthalten ist, konnte auf diesem Build nicht "
+          + "gelesen werden — hier wird deshalb weder das eine noch das andere behauptet.",
 
   /* --------------------------------------------- organizing in the background */
 
