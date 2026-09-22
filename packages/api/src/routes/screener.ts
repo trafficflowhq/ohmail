@@ -1,5 +1,6 @@
 import {
   ServiceError, dismissHeldRelease, heldReleaseSummary, releaseHeld, HELD_RELEASE_GROUPS_MAX,
+  screenUnscreened, unscreenedSummary, OHBOX_UNSCREENED_GROUPS_MAX,
   type ScreenBody,
 } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
@@ -98,6 +99,52 @@ export const screenerRoutes: Route[] = [
         ruleIds: body.ruleIds as readonly string[] | undefined,
       });
       return jsonResponse(result);
+    },
+  },
+  {
+    /**
+     * OHBOX MAIL FROM SENDERS NOBODY EVER DECIDED ABOUT — the sender groups and the count beside
+     * each one. A read: it spends nothing, opens no mailbox and moves no row.
+     *
+     * NO STEP-UP, on either door, for the held-release pair's reason: the answer is a summary of
+     * the caller's own Ohbox against their own rules, and the local twin comes for free because
+     * `localRoutes` spreads this table whole.
+     */
+    method: "GET",
+    pattern: "/screener/unscreened",
+    relay: true,
+    cost: "read",
+    handler: async (req, deps) => {
+      const ctx = serviceContext(deps, req);
+      const { groups, total } = await unscreenedSummary(ctx.db, ctx.accountId);
+      // `total` is the SHOWN groups' messages: every message has one sender, so a list cut at the
+      // bound must not report the mail behind the cut as offered. `max` travels so a client learns
+      // the ceiling by READING it rather than carrying a constant of its own that drifts.
+      return jsonResponse({ groups, total, max: OHBOX_UNSCREENED_GROUPS_MAX });
+    },
+  },
+  {
+    /**
+     * THE PRESS. Sends the named sender groups — or every group shown, when `addresses` is absent
+     * — to the Screener, through the door a fresh arrival takes. It writes the intent and the
+     * delta and opens no mailbox: the organizer's reconciler performs the physical move.
+     *
+     * Idempotent by the predicate rather than by a key: a moved row is desired into the Screener
+     * and is no longer a candidate, so a replay moves nothing and says so.
+     */
+    method: "POST",
+    pattern: "/screener/unscreened",
+    relay: true,
+    cost: "work",
+    handler: async (req, deps) => {
+      const ctx = serviceContext(deps, req);
+      const body = await readBody<{ addresses?: unknown }>(req);
+      // Left `unknown` to the service on purpose: it refuses a non-array, a non-string member, an
+      // over-long address and more than `OHBOX_UNSCREENED_GROUPS_MAX` of them, and a route that
+      // pre-narrowed them would be a second, weaker copy of that rule.
+      return jsonResponse(await screenUnscreened(ctx, {
+        addresses: body.addresses as readonly string[] | undefined,
+      }));
     },
   },
   {
