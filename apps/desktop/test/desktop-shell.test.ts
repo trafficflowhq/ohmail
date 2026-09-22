@@ -1500,12 +1500,17 @@ describe("the Rust side", () => {
    * named here. A `copy`, a `read_dir` or a `remove_dir_all` appearing in it is a new capability
    * and has to be argued rather than absorbed; `remove_dir_all` in particular is the one that would
    * delete somebody's frozen mirror, which this app's door-switch rule says never happens.
+   *
+   * `fs::read` is the one addition since, argued rather than absorbed: the operator CA's record
+   * binds the file to one server by its digest, so the module reads that file's BYTES. It reads
+   * and never writes it, and the removal half of this list is unchanged.
    */
   it("keeps the settings module's filesystem reach to the two files it owns", () => {
     const config = read("src-tauri/src/config.rs");
     const allowed = new Set([
       "fs::create_dir_all", // the app's data directory, on first run
       "fs::read_to_string", // the settings file
+      "fs::read", // the operator CA's bytes, digested into the record that binds it to one server
       "fs::write", // named only in `write_private`'s prose now — see the assertion below
       "fs::set_permissions", // 0600 on it
       "fs::Permissions", // the mode it is set to
