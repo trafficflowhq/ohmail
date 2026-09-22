@@ -885,6 +885,7 @@ export default defineConfig({
       { find: "@trafficflow/core/pair-link", replacement: r("../../packages/core/src/pair-link.ts") },
       { find: "@trafficflow/core/sender-headers", replacement: r("../../packages/core/src/sender-headers.ts") },
       { find: "@trafficflow/core/outbound-text", replacement: r("../../packages/core/src/outbound-text.ts") },
+      { find: "@trafficflow/core/model-name", replacement: r("../../packages/core/src/model-name.ts") },
     ],
   },
 

@@ -11,6 +11,9 @@ import {
   fetchWithDeadline, failureOf, shortDetail,
   type AiTransport, type ProbeOutcome,
 } from "./ai-transport.js";
+// The ONE matcher this question has. The desktop's provider form imports the same module to
+// decide which name its picker shows; a copy here is how the picker and the verdict disagree.
+import { hasInstalledModel } from "@trafficflow/core/model-name";
 
 /**
  * A model running on this machine — the second way a standalone install gets AI. Ollama serves
@@ -51,23 +54,6 @@ export interface OllamaTransportOptions {
   draftModel: string;
   fetchImpl: typeof fetch;
   timeoutMs: number;
-}
-
-/**
- * Does the server have this model?
- *
- * Ollama names a model `family:tag` and reports the fully-qualified name, while a person types
- * the family alone far more often than not. `llama3.2` therefore has to match `llama3.2:latest`,
- * and it must NOT match `llama3.2-vision:latest` — so the comparison is on the family segment
- * and the tag, never a prefix.
- */
-export function ollamaHasModel(installed: readonly string[], wanted: string): boolean {
-  const [wantFamily, wantTag] = wanted.split(":", 2);
-  return installed.some((name) => {
-    const [family, tag] = name.split(":", 2);
-    if (family !== wantFamily) return false;
-    return wantTag === undefined ? true : tag === wantTag;
-  });
 }
 
 export function ollamaTransport(opts: OllamaTransportOptions): AiTransport {
@@ -203,7 +189,7 @@ export function ollamaTransport(opts: OllamaTransportOptions): AiTransport {
       }
 
       for (const wanted of new Set([opts.classifyModel, opts.draftModel])) {
-        if (!ollamaHasModel(models, wanted)) {
+        if (!hasInstalledModel(models, wanted)) {
           return {
             ok: false,
             reason: "model_absent",

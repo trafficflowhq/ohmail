@@ -121,7 +121,11 @@
          bundle, so the specifier has to resolve here. */
       "@trafficflow/core/pair-link": ["../../packages/core/src/pair-link.ts"],
       "@trafficflow/core/sender-headers": ["../../packages/core/src/sender-headers.ts"],
-      "@trafficflow/core/outbound-text": ["../../packages/core/src/outbound-text.ts"]
+      "@trafficflow/core/outbound-text": ["../../packages/core/src/outbound-text.ts"],
+      /* The one matcher that decides whether a configured model is on the endpoint's list —
+         imported by `AiProviderForm.tsx` and by the engine's Ollama probe, so the picker and
+         the verdict cannot disagree. Same story as the leaves above in the mirror. */
+      "@trafficflow/core/model-name": ["../../packages/core/src/model-name.ts"]
     }
   },
   "include": ["src", "vite.config.ts"]

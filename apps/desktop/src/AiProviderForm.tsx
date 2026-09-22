@@ -34,6 +34,8 @@ import {
   type SettingsVerdictState,
 } from "@ohmail/ui";
 
+import { installedModelName } from "@trafficflow/core/model-name";
+
 import { agoStamp } from "../../webapp/app/shell/format.js";
 import {
   clearAiProvider,
@@ -410,6 +412,12 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
    * can only ever ADD the list where the endpoint really sent one.
    */
   const models = status.probe?.models ?? [];
+  /* WHICH LISTED NAME EACH STORED MODEL IS — the ENGINE's matcher, imported, never a second copy.
+     `models.includes(classify)` asked for an EXACT name while the engine matches `llama3.2`
+     against `llama3.2:latest`, so a configuration it had just accepted rendered "Choose a model"
+     with Save disabled. `null` is genuinely absent, which is what that dead end should mean. */
+  const classifyOn = installedModelName(models, classify);
+  const draftOn = installedModelName(models, draft);
   const listed = models.length > 0 && choice !== "none";
   const stored = choice === "none" ? null : status.settings[choice];
   const dirty =
@@ -561,7 +569,7 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
             <SettingsField htmlFor="ai-classify" label={t("modelClassify")} hint={t("modelClassifyHint")}>
               <select
                 id="ai-classify"
-                value={models.includes(classify) ? classify : ""}
+                value={classifyOn ?? ""}
                 onChange={(e) => {
                   setClassify(e.target.value);
                   setSaved(false);
@@ -581,7 +589,7 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
             <SettingsField htmlFor="ai-draft" label={t("modelDraft")} hint={t("modelDraftHint")}>
               <select
                 id="ai-draft"
-                value={models.includes(draft) ? draft : ""}
+                value={draftOn ?? ""}
                 onChange={(e) => {
                   setDraft(e.target.value);
                   setSaved(false);
@@ -602,7 +610,7 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
           <SettingsActions>
             <Button
               variant="primary"
-              disabled={working || !dirty || !models.includes(classify) || !models.includes(draft)}
+              disabled={working || !dirty || classifyOn === null || draftOn === null}
               onClick={() =>
                 void run("save", choice, async () => {
                   const next = await saveAiSettings(
