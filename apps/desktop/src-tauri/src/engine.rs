@@ -1333,6 +1333,15 @@ pub struct Shell {
     /// the host door on the relaunch, which is a phone losing its mail mid-read over a settings
     /// edit. `crate::host` decides the value; this struct only carries it into each plan.
     host_spawn: Mutex<Option<crate::host::HostSpawn>>,
+    /// Serializes the two acts that change which door this install comes in by — a door switch
+    /// ([`Shell::configure`]) and a sign-out ([`Shell::logout`]).
+    ///
+    /// Both are `#[tauri::command(async)]`, so they genuinely overlap: a sign-out read the door
+    /// ONCE and then acted on that snapshot, and a switch landing in the same second sent the
+    /// clear at the other door's credential. Under this lock a sign-out re-reads the door it was
+    /// pressed on and refuses if it moved. Nothing takes it while holding another of this struct's
+    /// locks, which is what keeps the order trivial.
+    door: Mutex<()>,
     /// How far this app is through leaving.
     ///
     /// ── WHY A QUIT NO LONGER RUNS ON THE THREAD THAT DRAWS ──────────────────────────────────
@@ -1397,6 +1406,7 @@ impl Shell {
             },
             engine: Mutex::new(Arc::new(Engine::inert(EngineState::Stopped))),
             host_spawn: Mutex::new(None),
+            door: Mutex::new(()),
             leaving: Mutex::new(Leaving::NotStarted),
         }
     }
@@ -1409,6 +1419,7 @@ impl Shell {
             paths: ShellPaths { app_data: None, resources: None, downloads: None },
             engine: Mutex::new(Arc::new(engine)),
             host_spawn: Mutex::new(None),
+            door: Mutex::new(()),
             leaving: Mutex::new(Leaving::NotStarted),
         }
     }
@@ -1495,6 +1506,7 @@ impl Shell {
             paths,
             engine: Mutex::new(Arc::new(engine)),
             host_spawn: Mutex::new(host),
+            door: Mutex::new(()),
             leaving: Mutex::new(Leaving::NotStarted),
         }
     }
@@ -1852,6 +1864,9 @@ impl Shell {
     /// running engine and an unchanged file, which is the state somebody can retry from. The
     /// reverse order would take the app down to report a full disk.
     pub fn configure(&self, value: &serde_json::Value) -> Result<serde_json::Value, String> {
+        // UNDER THE DOOR LOCK, whole: a sign-out re-reads the door under it and acts on what it
+        // reads, so a switch landing between those two would be the race back by the other side.
+        let _door = self.door.lock().expect("shell door");
         let config = config::parse(value)?;
         let path = self.paths.config_path().ok_or_else(|| {
             "this computer named no place for the app to keep its settings".to_string()
@@ -1901,7 +1916,32 @@ impl Shell {
     /// The CLOUD door proceeds on both, and there that is sound: its credential is a sealed
     /// FILE this function removes itself a few lines down, and that removal is checked too.
     pub fn logout(&self) -> Result<serde_json::Value, String> {
+        // The door the PRESS was made on, read before the lock. Everything after this runs under
+        // it — see [`Shell::logout_of`].
+        self.logout_of(self.paths.config())
+    }
+
+    /// The sign-out, of the door the press was made on.
+    ///
+    /// ── THE DOOR IS RE-READ INSIDE THE LOCK, AND A DOOR THAT MOVED IS A REFUSAL ─────────────
+    ///
+    /// This read `config()` ONCE and acted on that snapshot for the whole function: the clear went
+    /// to one door's engine, the sealed session of another was removed, and a switch in the same
+    /// second decided which. Both commands are `#[tauri::command(async)]`, so the overlap is real
+    /// rather than theoretical. Now [`Shell::configure`] and this act take the same lock, and a
+    /// door that moved between the press and the act refuses having cleared NOTHING — carrying
+    /// [`LOGOUT_UNCHANGED`], because host mode must not stand down for a sign-out that did not
+    /// happen.
+    fn logout_of(&self, pressed: Option<Config>) -> Result<serde_json::Value, String> {
+        let _door = self.door.lock().expect("shell door");
         let config = self.paths.config();
+        if config != pressed {
+            return Err(format!(
+                "{LOGOUT_UNCHANGED}The door this install comes in by changed while you were \
+                 signing out, so nothing was cleared and you have NOT been signed out. Check which \
+                 mailbox ohmail is on and sign out again."
+            ));
+        }
 
         if let Some(config) = &config {
             let path = match config.mode() {

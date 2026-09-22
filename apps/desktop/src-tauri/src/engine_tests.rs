@@ -3728,6 +3728,7 @@ fn the_unlock_press_removes_the_stale_lock_and_starts_the_engine_again() {
             last: None,
         }))),
         host_spawn: Mutex::new(None),
+        door: Mutex::new(()),
         leaving: Mutex::new(Leaving::NotStarted),
     };
     // The lock sits where the PLAN says the engine's data directory is — read the way the press
@@ -3753,6 +3754,130 @@ fn the_unlock_press_removes_the_stale_lock_and_starts_the_engine_again() {
         Some("failed"),
         "the press removed the lock but never re-entered start"
     );
+    shell.stop();
+    let _ = fs::remove_dir_all(&root);
+}
+
+// ── Signing out acts on the door the press was made on ─────────────────────────────────────────
+//
+// `logout` read the door ONCE and acted on that snapshot for its whole length — the clear, the
+// sealed session's removal and the settings file. `engine_configure` and `engine_logout` are both
+// `#[tauri::command(async)]`, so a door switch in the same second decided which door's credential
+// a sign-out touched. Both acts take one lock now, and a door that moved between the press and the
+// act is a refusal that cleared nothing.
+
+/// A root carrying a cloud door and its sealed session — what a sign-out is meant to remove.
+fn signed_in_root(name: &str, cloud_url: &str) -> PathBuf {
+    let root = candidate_root(name);
+    let door = crate::config::Config::Cloud(crate::config::CloudDoor {
+        cloud_url: cloud_url.to_string(),
+        address: Some("someone@example.com".to_string()),
+        flavor: None,
+        host_pin: None,
+    });
+    crate::config::write(&root.join(crate::config::CONFIG_FILE_NAME), &door).expect("write door");
+    let mirror = root.join("engine-cloud");
+    fs::create_dir_all(&mirror).expect("mirror dir");
+    fs::write(mirror.join(crate::config::CLOUD_SESSION_SEAL), b"the sealed session").unwrap();
+    root
+}
+
+/// The door a root was made with, as `logout_of` takes it.
+fn door_of(root: &Path) -> Option<crate::config::Config> {
+    crate::config::read(&root.join(crate::config::CONFIG_FILE_NAME))
+}
+
+#[test]
+fn a_sign_out_whose_door_moved_refuses_and_clears_nothing() {
+    with_key_in_env();
+    let root = signed_in_root("logout-moved", "https://ohmail.example.com/api");
+    let seal = root.join("engine-cloud").join(crate::config::CLOUD_SESSION_SEAL);
+    let shell = Shell::rooted_for_tests(&root);
+
+    // The press was made on ANOTHER door — what a switch landing between the press and the act
+    // leaves behind. The act re-reads the door under the lock and the two disagree.
+    let pressed = crate::config::Config::Cloud(crate::config::CloudDoor {
+        cloud_url: "https://mail.other.example/api".to_string(),
+        address: Some("someone@other.example".to_string()),
+        flavor: None,
+        host_pin: None,
+    });
+    let refused = shell.logout_of(Some(pressed)).expect_err("a moved door must refuse");
+    assert!(
+        refused.starts_with(LOGOUT_UNCHANGED),
+        "the refusal did not mark itself as having changed nothing: {refused}",
+    );
+    // NOTHING WAS CLEARED — which is the whole of the finding: the credential of the door that was
+    // NOT pressed stayed sealed, and the door itself is still configured.
+    assert!(seal.is_file(), "a refused sign-out removed the other door's sealed session");
+    assert!(
+        root.join(crate::config::CONFIG_FILE_NAME).is_file(),
+        "a refused sign-out forgot the door",
+    );
+
+    // POSITIVE CONTROL: the same press, on the door it was made on, clears as it always has.
+    let out = shell.logout_of(door_of(&root)).expect("an unraced sign-out must act");
+    assert_eq!(out.get("state").and_then(|s| s.as_str()), Some("not_configured"));
+    assert!(!seal.exists(), "the sealed session outlived a sign-out");
+    assert!(!root.join(crate::config::CONFIG_FILE_NAME).exists(), "the door outlived a sign-out");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_sign_out_and_a_door_switch_do_not_overlap() {
+    // THE LOCK ITSELF. The re-read above is only worth anything while a switch cannot land between
+    // it and the act, so this holds the door lock the way `configure` holds it and asks whether a
+    // sign-out waits. Drop the `door.lock()` from either act and the sign-out finishes here.
+    with_key_in_env();
+    let root = signed_in_root("logout-lock", "https://ohmail.example.com/api");
+    let shell = std::sync::Arc::new(Shell::rooted_for_tests(&root));
+    let held = shell.door.lock().expect("door");
+
+    let (tx, rx) = mpsc::channel();
+    let signing_out = std::sync::Arc::clone(&shell);
+    let door = door_of(&root);
+    let thread = thread::spawn(move || {
+        let _ = tx.send(signing_out.logout_of(door).is_ok());
+    });
+    assert!(
+        rx.recv_timeout(Duration::from_millis(750)).is_err(),
+        "the sign-out ran while the door lock was held — a switch could land inside it",
+    );
+    drop(held);
+    assert!(
+        rx.recv_timeout(Duration::from_secs(10)).expect("the sign-out never finished"),
+        "the sign-out refused once the lock was free",
+    );
+    thread.join().expect("the sign-out thread panicked");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_door_switch_waits_for_a_sign_out_rather_than_landing_inside_it() {
+    // The other side of the same lock: `configure` is the act that MOVES the door, so it waits too.
+    with_key_in_env();
+    let root = signed_in_root("configure-lock", "https://ohmail.example.com/api");
+    let shell = std::sync::Arc::new(Shell::rooted_for_tests(&root));
+    let held = shell.door.lock().expect("door");
+
+    let (tx, rx) = mpsc::channel();
+    let switching = std::sync::Arc::clone(&shell);
+    let thread = thread::spawn(move || {
+        let _ = tx.send(switching.configure(&serde_json::json!({
+            "mode": "cloud",
+            "cloudUrl": "https://mail.other.example/api",
+            "address": "someone@other.example",
+        })));
+    });
+    assert!(
+        rx.recv_timeout(Duration::from_millis(750)).is_err(),
+        "a door switch ran while the door lock was held",
+    );
+    drop(held);
+    rx.recv_timeout(Duration::from_secs(10))
+        .expect("the door switch never finished")
+        .expect("the door switch refused once the lock was free");
+    thread.join().expect("the door-switch thread panicked");
     shell.stop();
     let _ = fs::remove_dir_all(&root);
 }
