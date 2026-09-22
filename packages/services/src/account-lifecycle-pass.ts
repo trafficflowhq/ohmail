@@ -16,8 +16,7 @@ import type { MailContext } from "./mail/index.js";
  * own ISO instant — never a clock read here. No state machine, no closure table: a re-run
  * inserts nothing, a NEW closure is a new anchor. The ERASURE runs here and in `DELETE /account`
  * and NOWHERE ELSE: when `erasureAt + 24 h <= now` (a day of slack against plane↔API clock skew)
- * and the date clears the plane's own lifecycle epoch, it stops the money and calls
- * `deleteAccount` as the route does; `erased_at` is the skip.
+ * and the date clears the plane's own epoch, it calls `deleteAccount` as the route does.
  */
 
 /** How far ahead the trial reminder looks — "two days left", the flow's own words. */
@@ -116,15 +115,13 @@ export function noticesDue(lc: AccessLifecycle, now: Date): DueNotice[] {
 }
 
 /**
- * Whether the erasure forecast clears the program's OWN epoch — the belt under a date derived
- * from history. The program floors `erasureAt` at the instant its lifecycle went live, so a
- * closure older than the feature gets a full retention from there rather than a date already
- * past; this asks the same question on this side, because erasure is irreversible and does not
- * rest on the other program keeping its word.
+ * Whether the erasure forecast clears the program's OWN epoch. The program floors `erasureAt` at
+ * the instant its lifecycle went live, so a closure older than the feature gets a full retention
+ * from there rather than a date already past; this asks the same question here, because erasure
+ * is irreversible and does not rest on the other program keeping its word.
  *
- * Three answers, all reachable: no epoch stated (an older program) admits, as today; a stated
- * epoch admits only a forecast at least a day past it; a stamp this side cannot read is drift
- * and refuses, which is the direction that loses nobody's mail.
+ * Three answers, all reachable: no epoch stated (an older program) admits, as today; a stated one
+ * admits only a forecast a day past it; a stamp this side cannot read is drift and refuses.
  */
 export function erasureClearsEpoch(lc: AccessLifecycle): boolean {
   const epoch = lc.lifecycleEpoch ?? null;
