@@ -1670,6 +1670,102 @@ export async function signInToCloudWithCode(
 }
 
 /**
+ * What starting a browser approval produced: the request id the page's URL carries and how long
+ * it lives, or a problem. `notOffered` is the hosted service predating the door — the window then
+ * shows the code path, by name, rather than a dead end.
+ */
+export interface ApprovalBegun {
+  approvalId: string | null;
+  expiresIn: number;
+  status: EngineStatus | null;
+  problem: string | null;
+  notOffered?: boolean;
+}
+
+/** The engine's reading of one poll: still waiting (and why, if the wire was the reason), or done. */
+export type ApprovalStep =
+  | { kind: "pending"; retryAfterMs: number; note: "busy" | "unreachable" | null }
+  | { kind: "signed-in"; result: DoorResult }
+  | { kind: "ended"; result: DoorResult };
+
+/** The engine's code for a hosted service with no approval door. */
+export const APPROVAL_NOT_OFFERED = "approval_not_offered";
+
+/**
+ * START THE ONE-CONFIRM SIGN-IN: configure the door if it is not already (the engine holds the
+ * verifier, so the order is {@link beginBrowserSignIn}'s), then ask the engine for a request. On a
+ * door already serving — the sign-in coming back — the address is not needed and not read.
+ */
+export async function beginBrowserApproval(address: string, configured = false): Promise<ApprovalBegun> {
+  let settled: EngineStatus | null = null;
+  if (!configured) {
+    const trimmedAddress = address.trim();
+    if (!trimmedAddress) return { approvalId: null, expiresIn: 0, status: null, problem: "Your ohmail address is missing." };
+    if (!trimmedAddress.includes("@")) {
+      return { approvalId: null, expiresIn: 0, status: null, problem: "That does not look like a mailbox address." };
+    }
+    try {
+      await engineConfigure({ mode: "cloud", cloudUrl: CLOUD_URL, address: trimmedAddress });
+    } catch (err) {
+      return { approvalId: null, expiresIn: 0, status: null, problem: sentence(err) };
+    }
+    settled = await settle();
+    if (settled.state !== "serving") return { approvalId: null, expiresIn: 0, status: settled, problem: stalled(settled) };
+  }
+  try {
+    const res = await bridgeFetch("/cloud/signin/approval", {
+      method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+    });
+    if (!res.ok) {
+      const { problem, code } = await refused(res);
+      return {
+        approvalId: null, expiresIn: 0, status: settled, problem,
+        ...(code === APPROVAL_NOT_OFFERED ? { notOffered: true } : {}),
+      };
+    }
+    const body = (await res.json()) as { approvalId?: unknown; expiresIn?: unknown };
+    const approvalId = typeof body.approvalId === "string" ? body.approvalId : "";
+    const expiresIn = typeof body.expiresIn === "number" ? body.expiresIn : 0;
+    if (!approvalId || expiresIn <= 0) {
+      return { approvalId: null, expiresIn: 0, status: settled, problem: "The mail engine did not start a browser sign-in." };
+    }
+    return { approvalId, expiresIn, status: settled, problem: null };
+  } catch (err) {
+    return { approvalId: null, expiresIn: 0, status: settled, problem: sentence(err) };
+  }
+}
+
+/**
+ * ASK THE ENGINE ONCE WHETHER THE BROWSER HAS CONFIRMED. Pending carries the server's wait; a
+ * signed-in answer is the code path's result; anything else ends the request with its sentence
+ * (and the account-switch flag the code path sets for the same refusal).
+ */
+export async function pollBrowserApproval(): Promise<ApprovalStep> {
+  let res: Response;
+  try {
+    res = await bridgeFetch("/cloud/signin", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ approval: true }),
+    });
+  } catch (err) {
+    return { kind: "ended", result: { status: null, problem: sentence(err) } };
+  }
+  if (res.status === 202) {
+    const body = (await res.json().catch(() => ({}))) as { retryAfterMs?: unknown; note?: unknown };
+    const wait = typeof body.retryAfterMs === "number" ? body.retryAfterMs : 2_000;
+    const note = body.note === "busy" || body.note === "unreachable" ? body.note : null;
+    return { kind: "pending", retryAfterMs: Math.min(8_000, Math.max(500, wait)), note };
+  }
+  if (!res.ok) {
+    const { problem, code } = await refused(res);
+    return {
+      kind: "ended",
+      result: { status: null, problem, ...(code === MIRROR_OWNER_MISMATCH ? { switchAccount: true } : {}) },
+    };
+  }
+  return { kind: "signed-in", result: { status: await engineStatus(), problem: null } };
+}
+
+/**
  * WHAT THE ENGINE IS DOING RIGHT NOW, or null when nothing can say.
  *
  * The reading {@link reconfiguresLocalDoor} decides from, and the reason it is a function here

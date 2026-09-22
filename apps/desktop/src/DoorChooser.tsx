@@ -20,6 +20,7 @@ import { hostsFor, providerById } from "../../webapp/app/shell/providers";
 import {
   EMPTY_LOCAL,
   PAIRED_DOOR_AVAILABLE,
+  beginBrowserApproval,
   beginBrowserSignIn,
   enterCloudDoor,
   enterCloudDoorWithCode,
@@ -27,6 +28,7 @@ import {
   enterLocalDoor,
   hostLinkProblem,
   pairAgainWithHost,
+  pollBrowserApproval,
   proveHostLink,
   signInToCloud,
   signInToCloudWithCode,
@@ -47,7 +49,7 @@ import {
 import { DOOR_COPY, machineWord } from "./door-copy.js";
 import { signInLead, type SignInCause } from "./cloud-session.js";
 import { DoorProblem } from "./DoorProblem.js";
-import { offLinkCode, onLinkCode, openWeb } from "./native.js";
+import { offLinkCode, onLinkCode, openApprovalPage, openWeb } from "./native.js";
 
 /**
  * Which card is on screen. `doors` is where a fresh install starts.
@@ -224,6 +226,82 @@ export function DoorChooser({
       }
     } finally {
       setBusy(false);
+    }
+  };
+
+  /**
+   * THE ONE-CONFIRM SIGN-IN'S WAIT. `null` is no request in flight; a value is "the browser is
+   * open, the engine is polling", with why the last poll could not tell (a busy server or no
+   * network — both a wait, never a refusal). `approvalRun` is its generation: Type a code
+   * instead, Back, a new request and unmount each bump it, and a loop from an older one stops.
+   */
+  const [approvalWait, setApprovalWait] = useState<{ note: "busy" | "unreachable" | null } | null>(null);
+  /** False once the hosted service answered that it has no approval door: the code path shows. */
+  const [approvalOffered, setApprovalOffered] = useState(true);
+  const approvalRun = useRef(0);
+  useEffect(() => () => { approvalRun.current += 1; }, []);
+
+  const stopApproval = (): void => {
+    approvalRun.current += 1;
+    setApprovalWait(null);
+  };
+
+  /**
+   * ASK, OPEN, WAIT. The engine makes the request (the door configured first on a fresh install,
+   * for `startHandoff`'s reason); the page opens by the request id; the loop polls at the server's
+   * cadence until the claim answers, and stops at the request's own lifetime.
+   */
+  const startApproval = async (address: string): Promise<void> => {
+    if (busy) return;
+    const run = ++approvalRun.current;
+    setBusy(true);
+    setProblem(null);
+    setSuggestion(null);
+    let begun;
+    try {
+      begun = await beginBrowserApproval(address, cloudAction === "signIn" && !mustSwitch);
+    } finally {
+      setBusy(false);
+    }
+    if (run !== approvalRun.current) return;
+    if (!begun.approvalId) {
+      if (begun.notOffered) setApprovalOffered(false);
+      setProblem(begun.problem ?? DOOR_COPY.browserSignInFailed);
+      return;
+    }
+    // The engine is configured and holding the request: a code typed afterwards must not restart it.
+    if (address.trim()) setHandedOff(address.trim());
+    try {
+      await openApprovalPage(begun.approvalId);
+    } catch {
+      setProblem(DOOR_COPY.noBrowser(machineWord()));
+    }
+    const ends = Date.now() + begun.expiresIn * 1000;
+    let wait = 2_000;
+    setApprovalWait({ note: null });
+    while (run === approvalRun.current) {
+      await new Promise<void>((resolve) => { setTimeout(resolve, wait); });
+      if (run !== approvalRun.current) return;
+      if (Date.now() >= ends) {
+        setApprovalWait(null);
+        setProblem(DOOR_COPY.cloudApproveExpired);
+        return;
+      }
+      const step = await pollBrowserApproval();
+      if (run !== approvalRun.current) return;
+      if (step.kind === "pending") {
+        wait = step.retryAfterMs;
+        setApprovalWait({ note: step.note });
+        continue;
+      }
+      setApprovalWait(null);
+      if (step.kind === "signed-in") {
+        onEntered(step.result);
+        return;
+      }
+      setProblem(step.result.problem);
+      if (step.result.switchAccount) setMustSwitch(true);
+      return;
     }
   };
 
@@ -428,10 +506,15 @@ export function DoorChooser({
           <CloudDoor
             busy={busy}
             problem={problem}
-            onBack={() => { setProblem(null); setStep("doors"); }}
-            onCancel={onCancel}
+            onBack={() => { stopApproval(); setProblem(null); setStep("doors"); }}
+            onCancel={onCancel ? () => { stopApproval(); onCancel(); } : undefined}
             signInOnly={cloudAction === "signIn"}
             signInCause={signInCause}
+            needsAddress={!(cloudAction === "signIn" && !mustSwitch)}
+            approvalWait={approvalWait}
+            approvalOffered={approvalOffered}
+            onApprove={(address) => void startApproval(address)}
+            onStopApproval={stopApproval}
             onSubmit={(address, password, totp) =>
               attempt(() =>
                 cloudAction === "signIn" && !mustSwitch
@@ -1093,17 +1176,30 @@ function CloudDoor({
   problem,
   signInOnly,
   signInCause = null,
+  needsAddress = true,
+  approvalWait = null,
+  approvalOffered = true,
   onBack,
   onCancel,
   onSubmit,
   onSubmitCode,
   onOpenBrowser,
+  onApprove,
+  onStopApproval,
 }: {
   busy: boolean;
   problem: string | null;
   /** The door is already chosen; this is only the session coming back. */
   signInOnly?: boolean;
   signInCause?: SignInCause;
+  /** False when the engine is already configured: the browser approval reads no address. */
+  needsAddress?: boolean;
+  /** The approval's wait, or null when none is in flight. */
+  approvalWait?: { note: "busy" | "unreachable" | null } | null;
+  /** False once the hosted service has no approval door: the browser path is the code path. */
+  approvalOffered?: boolean;
+  onApprove?: (address: string) => void;
+  onStopApproval?: () => void;
   onBack: () => void;
   onCancel?: () => void;
   onSubmit: (address: string, password: string, totp: string) => void;
@@ -1115,6 +1211,9 @@ function CloudDoor({
   const [totp, setTotp] = useState("");
   const [handoff, setHandoff] = useState("");
   const [viaBrowser, setViaBrowser] = useState(false);
+  /** The browser path asks for a code only when chosen, or when the service has no approval door. */
+  const [wantsCode, setWantsCode] = useState(false);
+  const byApproval = viaBrowser && approvalOffered && !wantsCode && onApprove !== undefined;
 
   /**
    * WHAT AN ACTIVATION NEEDS THAT AN ACTIVATION CANNOT CARRY: the address. The deep link
@@ -1157,7 +1256,8 @@ function CloudDoor({
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        if (viaBrowser) onSubmitCode(address, handoff);
+        if (byApproval) onApprove?.(address);
+        else if (viaBrowser) onSubmitCode(address, handoff);
         else onSubmit(address, password, totp);
       }}
     >
@@ -1166,18 +1266,51 @@ function CloudDoor({
 
       {problem ? <p className="join-error">{problem}</p> : null}
 
-      <label className="join-label" htmlFor="cloud-address">{DOOR_COPY.cloudAddress}</label>
-      <input
-        id="cloud-address"
-        className="join-input"
-        type="email"
-        autoComplete="username"
-        spellCheck={false}
-        value={address}
-        onChange={(e) => setAddress(e.target.value)}
-      />
+      {/* THE BROWSER APPROVAL READS NO ADDRESS on a door already chosen; a fresh door still names
+          the mailbox it will hold, labelled as that and never as a sign-in field. */}
+      {byApproval && !needsAddress ? null : (
+        <>
+          <label className="join-label" htmlFor="cloud-address">
+            {byApproval ? DOOR_COPY.cloudAddressForDoor(machineWord()) : DOOR_COPY.cloudAddress}
+          </label>
+          <input
+            id="cloud-address"
+            className="join-input"
+            type="email"
+            autoComplete="username"
+            spellCheck={false}
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+          />
+        </>
+      )}
 
-      {viaBrowser ? (
+      {byApproval ? (
+        <>
+          <p className="join-hint">{DOOR_COPY.cloudApproveHint(machineWord())}</p>
+          {approvalWait ? (
+            <p className="join-hint" role="status">
+              {approvalWait.note === "busy"
+                ? DOOR_COPY.cloudApproveBusy
+                : approvalWait.note === "unreachable"
+                  ? DOOR_COPY.cloudApproveUnreachable
+                  : DOOR_COPY.cloudApproveWaiting}
+            </p>
+          ) : null}
+          <div className="join-actions">
+            <Button variant="primary" type="button" onClick={() => onApprove?.(address)} disabled={busy}>
+              {DOOR_COPY.cloudOpenBrowser}
+            </Button>
+          </div>
+          <button
+            type="button"
+            className="join-alt"
+            onClick={() => { onStopApproval?.(); setWantsCode(true); }}
+          >
+            {DOOR_COPY.cloudTypeCodeInstead}
+          </button>
+        </>
+      ) : viaBrowser ? (
         <>
           <p className="join-hint">{DOOR_COPY.cloudBrowserHint}</p>
           <div className="join-actions">
@@ -1203,6 +1336,11 @@ function CloudDoor({
             onChange={(e) => setHandoff(e.target.value)}
           />
           <p className="join-hint">{DOOR_COPY.cloudHandoffHint}</p>
+          {approvalOffered && onApprove ? (
+            <button type="button" className="join-alt" onClick={() => setWantsCode(false)}>
+              {DOOR_COPY.cloudApproveInstead}
+            </button>
+          ) : null}
         </>
       ) : (
         <>
@@ -1230,9 +1368,13 @@ function CloudDoor({
       )}
 
       <div className="join-actions">
-        <Button variant="primary" type="submit" disabled={busy}>
-          {busy ? DOOR_COPY.signingIn : DOOR_COPY.signIn}
-        </Button>
+        {/* The approval's one action is the browser button above; a second starter here would
+            open a second request beside the first. */}
+        {byApproval ? null : (
+          <Button variant="primary" type="submit" disabled={busy}>
+            {busy ? DOOR_COPY.signingIn : DOOR_COPY.signIn}
+          </Button>
+        )}
         {/* The switch CLEARS the fields of the form being left. Otherwise a password typed and
             then abandoned sits in this component's state for as long as the window is open, and
             the whole argument for the browser path is that it never holds one. */}
@@ -1244,6 +1386,7 @@ function CloudDoor({
             setPassword("");
             setTotp("");
             setHandoff("");
+            onStopApproval?.();
             setViaBrowser((v) => !v);
           }}
         >

@@ -4195,7 +4195,7 @@ fn set_badge<R: tauri::Runtime>(app: tauri::AppHandle<R>, count: u32) -> Result<
 /// The table is also why the addresses live HERE rather than in the frontend: the bundle is
 /// asserted to name no host at all, which is the claim the whole preview artifact rests on.
 #[cfg(feature = "local-engine")]
-const LINKS: [(&str, &str); 8] = [
+const LINKS: [(&str, &str); 9] = [
     ("account", "https://ohmail.app/mailbox#/settings"),
     ("security", "https://ohmail.app/mailbox#/settings"),
     ("billing", "https://ohmail.app/mailbox#/settings"),
@@ -4220,6 +4220,9 @@ const LINKS: [(&str, &str); 8] = [
     // — and it carries no query for the same reason none of the others does: everything about
     // this address is fixed here, so no value from the page can shape where the browser goes.
     ("link-desktop", "https://ohmail.app/link-desktop"),
+    // The one-confirm sign-in: the page names this computer and the person confirms there. It
+    // opens ONLY with the request id the engine was given ([`approval_url_for`]); no bare page.
+    ("approve", "https://ohmail.app/approve"),
     ("privacy", "https://ohmail.app/privacy"),
     ("subprocessors", "https://ohmail.app/subprocessors"),
 ];
@@ -4274,6 +4277,9 @@ fn is_challenge(value: &str) -> bool {
 #[cfg(feature = "local-engine")]
 pub fn link_url_for(key: &str, challenge: Option<&str>) -> Result<String, String> {
     let url = link_for(key).ok_or_else(|| format!("ohmail: {key} is not a place this app opens"))?;
+    if key == APPROVE_KEY {
+        return Err("ohmail: the approval page opens only with the request this app made".to_string());
+    }
     let Some(challenge) = challenge.map(str::trim).filter(|c| !c.is_empty()) else {
         return Ok(url.to_string());
     };
@@ -4288,6 +4294,53 @@ pub fn link_url_for(key: &str, challenge: Option<&str>) -> Result<String, String
     // row a route too. A `?` appended after a fragment is part of the fragment and never reaches
     // the server, which would be a silently unbound page.
     Ok(format!("{url}?challenge={challenge}"))
+}
+
+/// The page a browser approval is confirmed on — the one key that takes a REQUEST ID, never a
+/// challenge, and never opens without one.
+#[cfg(feature = "local-engine")]
+const APPROVE_KEY: &str = "approve";
+
+/// A request id and nothing else: the hosted row's uuid, 36 characters, hex and four hyphens.
+/// EXACT, like [`is_challenge`], and for its reason: it admits no `%`, `&`, `=` or `#`.
+#[cfg(feature = "local-engine")]
+fn is_request_id(value: &str) -> bool {
+    value.len() == 36
+        && value.bytes().enumerate().all(|(i, b)| match i {
+            8 | 13 | 18 | 23 => b == b'-',
+            _ => b.is_ascii_hexdigit(),
+        })
+}
+
+/// The approval page for one request. A missing or malformed id is a refusal, never a plain page:
+/// a page with no request confirms nothing, and a value from the window must not shape the URL.
+#[cfg(feature = "local-engine")]
+pub fn approval_url_for(request: Option<&str>) -> Result<String, String> {
+    let url = link_for(APPROVE_KEY).ok_or_else(|| "ohmail: approve is not a place this app opens".to_string())?;
+    let Some(request) = request.map(str::trim).filter(|r| !r.is_empty()) else {
+        return Err("ohmail: the approval page opens only with the request this app made".to_string());
+    };
+    if !is_request_id(request) {
+        return Err("ohmail: that sign-in request is not one this app made".to_string());
+    }
+    Ok(format!("{url}?request={request}"))
+}
+
+/// What `open_link` opens: the approval page by its request, every other key by [`link_url_for`].
+/// A value offered to the wrong key is refused, so neither parameter can reach the other's page.
+#[cfg(feature = "local-engine")]
+pub fn open_target(key: &str, challenge: Option<&str>, request: Option<&str>) -> Result<String, String> {
+    let named = |v: Option<&str>| v.map(str::trim).is_some_and(|v| !v.is_empty());
+    if key == APPROVE_KEY {
+        if named(challenge) {
+            return Err("ohmail: the approval page does not take a sign-in commitment".to_string());
+        }
+        return approval_url_for(request);
+    }
+    if named(request) {
+        return Err(format!("ohmail: {key} is not a page that takes a sign-in request"));
+    }
+    link_url_for(key, challenge)
 }
 
 /// Hand ONE address to whatever this machine opens addresses with.
@@ -4521,8 +4574,8 @@ fn spawn_file_opener(path: &Path) -> Result<(), String> {
 /// after one parameter name of its own choosing, for one key.
 #[cfg(feature = "local-engine")]
 #[tauri::command(async)]
-fn open_link(key: String, challenge: Option<String>) -> Result<(), String> {
-    let target = link_url_for(&key, challenge.as_deref())?;
+fn open_link(key: String, challenge: Option<String>, request: Option<String>) -> Result<(), String> {
+    let target = open_target(&key, challenge.as_deref(), request.as_deref())?;
     spawn_opener(&target)
 }
 

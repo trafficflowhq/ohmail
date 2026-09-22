@@ -2811,7 +2811,8 @@ fn a_commitment_may_be_appended_to_one_page_and_must_be_one() {
     // And it is ONE page. Every other row administers an account and takes no parameter; a
     // commitment aimed at one of them is a caller doing something this app does not do.
     for (key, _) in LINKS {
-        if key == "link-desktop" {
+        // `approve` opens only by its request id — its own case below.
+        if key == "link-desktop" || key == "approve" {
             continue;
         }
         assert!(
@@ -2833,6 +2834,41 @@ fn a_commitment_may_be_appended_to_one_page_and_must_be_one() {
         !link_for("link-desktop").unwrap().contains('#'),
         "the link-desktop row grew a fragment; the query would land inside it",
     );
+}
+
+/// THE APPROVAL PAGE OPENS ONLY WITH ITS REQUEST, and the request reaches no other page.
+///
+/// Mutations these cases were written against: `is_request_id` accepting a 35- or 37-character
+/// value, or any non-hex character → the malformed block goes red; `open_target` passing a request
+/// to `link_url_for` or a challenge to the approval page → the cross-key block goes red.
+#[test]
+fn the_approval_page_takes_one_request_id_and_nothing_else() {
+    const ID: &str = "4f9a3c1e-2b7d-4e8f-9a01-23456789abcd";
+    assert_eq!(approval_url_for(Some(ID)).unwrap(), format!("https://ohmail.app/approve?request={ID}"));
+    assert_eq!(approval_url_for(Some(&format!(" {ID}\n"))).unwrap(), format!("https://ohmail.app/approve?request={ID}"));
+    assert_eq!(open_target("approve", None, Some(ID)).unwrap(), format!("https://ohmail.app/approve?request={ID}"));
+    assert!(approval_url_for(None).is_err(), "a bare approval page opened");
+    assert!(approval_url_for(Some("  ")).is_err(), "a blank request opened the page");
+    assert!(link_url_for("approve", None).is_err(), "the approval page opened through the plain door");
+    for bad in [
+        ID[..35].to_string(),
+        format!("{ID}a"),
+        ID.replace('-', "_"),
+        ID.replacen('4', "g", 1),
+        format!("{}&next=x", &ID[..28]),
+        format!("{}#frag", &ID[..31]),
+        format!("{}%2F", &ID[..33]),
+    ] {
+        assert!(approval_url_for(Some(&bad)).is_err(), "approval_url_for admitted {bad:?}");
+    }
+    // Neither value reaches the other's page.
+    const GOOD: &str = "0123456789abcdefghijklmnopqrstuvwxyzABCDEF_";
+    assert!(open_target("approve", Some(GOOD), Some(ID)).is_err(), "the approval page took a commitment");
+    assert!(open_target("link-desktop", None, Some(ID)).is_err(), "link-desktop took a request id");
+    assert!(open_target("privacy", None, Some(ID)).is_err(), "privacy took a request id");
+    assert_eq!(open_target("link-desktop", Some(GOOD), None).unwrap(), format!("https://ohmail.app/link-desktop?challenge={GOOD}"));
+    assert_eq!(open_target("privacy", None, None).unwrap(), "https://ohmail.app/privacy");
+    assert!(!link_for("approve").unwrap().contains('#'), "the approve row grew a fragment");
 }
 
 /// THE GATE ON THE ONE COMMAND THAT TAKES AN ADDRESS FROM A MESSAGE.

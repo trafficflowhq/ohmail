@@ -180,6 +180,17 @@ const EN = {
   linkNoBrowser: (machine: string, address: string) =>
     `This ${machine} would not open a browser. The address is ${address}.`,
   browserSignInFailed: "The browser sign-in could not be started.",
+  /* The one-confirm sign-in: the page names this machine and the person confirms there. The
+     address label is for a FRESH door only, and says what the address is for. */
+  cloudApproveHint: (machine: string) =>
+    `Your browser opens ohmail.app. Confirm this ${machine} there — nothing to type here.`,
+  cloudApproveWaiting: "Waiting for your browser…",
+  cloudApproveBusy: "The ohmail server is busy. Still waiting.",
+  cloudApproveUnreachable: "ohmail could not be reached. Still trying.",
+  cloudApproveExpired: "This request expired before it was confirmed. Start again.",
+  cloudTypeCodeInstead: "Type a code instead",
+  cloudApproveInstead: "Confirm in the browser instead",
+  cloudAddressForDoor: (machine: string) => `The ohmail mailbox this ${machine} will hold`,
 
   /* ── THE HOST-JOIN CARD: paste the link, see what answered, then pair ────────────────────
      Two phases in one card, the self-hosted door's shape and for its reason: everything that can
@@ -704,6 +715,8 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   cloudLeadExpired: ["machine"],
   cloudLeadSealFailed: ["machine"],
   cloudSealPausedTitle: ["machine"],
+  cloudApproveHint: ["machine"],
+  cloudAddressForDoor: ["machine"],
   noBrowser: ["machine"],
   linkNoBrowser: ["machine", "address"],
   mailboxWhyReadsNamed: ["name"],

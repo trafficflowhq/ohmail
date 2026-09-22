@@ -195,9 +195,13 @@ function bridged(): { url: string; body: string }[] {
     }));
 }
 
-/** Switch to the browser path and fill the address in. */
+/**
+ * Switch to the browser path's CODE arm and fill the address in. The browser path opens on the
+ * one-confirm approval (`desktop-approval.test.tsx`); the code arm is its fallback, one press away.
+ */
 async function browserPath(el: HTMLElement): Promise<void> {
   await click(buttonSaying(el, "Sign in with browser"));
+  await click(buttonSaying(el, "Type a code instead"));
   await type(el, "cloud-address", "mila@ohmail.app");
 }
 

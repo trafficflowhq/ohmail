@@ -103,6 +103,10 @@ export const WEB_PLACES = [
   // is the browser half of signing in, where the page mints a one-use code the person retypes
   // into the app. Same mechanism, same table, no exception to the no-URL rule.
   "link-desktop",
+  // `approve` is the one-confirm sign-in: the page names this computer and the person confirms
+  // there. Opened ONLY through {@link openApprovalPage}, with the request id the engine was
+  // given; the shell refuses the key without one.
+  "approve",
   "privacy", "subprocessors",
 ] as const;
 
@@ -122,6 +126,17 @@ export async function openWeb(place: WebPlace, challenge?: string): Promise<void
   const shell = internals();
   if (!shell) return;
   await shell.invoke(OPEN_COMMAND, challenge ? { key: place, challenge } : { key: place });
+}
+
+/**
+ * Open the approval page for the request the engine holds. `request` IS A VALUE, NOT A URL, for
+ * {@link openWeb}'s reason: the shell owns the address and admits exactly a request id (36
+ * characters, hex and hyphens) after its own parameter name. The verifier never leaves the engine.
+ */
+export async function openApprovalPage(request: string): Promise<void> {
+  const shell = internals();
+  if (!shell) return;
+  await shell.invoke(OPEN_COMMAND, { key: "approve", request });
 }
 
 interface TauriInternals {
