@@ -217,8 +217,21 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     triggers: ["cycle-tail"],
     cadence: "every cycle tail, per account with auto-apply on",
     budget: "SCREENER_AUTO_BATCH / SCREENER_AUTO_WRITES_PER_CYCLE / SCREENER_AUTO_MAX_PAGES",
-    owns: "accepted screener suggestions become decisions without a press, exactly as the press would",
-    fence: "leader lock; the decision path is the service's own (one decide implementation)",
+    // THIS ROW SAID "accepted screener suggestions become decisions without a press, exactly as
+    // the press would" and the pass has never read a suggestion: it judges each held message
+    // itself with the strong-bulk floor and files to News/Receipts only. What the row described
+    // is `screener_auto_act` below, which is why a Spam verdict at 0.95 waited for ever.
+    owns: "obvious strong-bulk mail leaves the Screener by the deterministic floor — no model, no spend, no rule",
+    fence: "leader lock; folder_state + change_log + an audit inverse, never IMAP",
+  },
+  {
+    name: "screener_auto_act",
+    module: `${W}/screener-auto-act.ts`, entry: "screenerAutoActPass",
+    triggers: ["cycle-tail", "sidecar-drain"],
+    cadence: "every cycle tail and every local drain tail, per account with auto-apply on",
+    budget: "SCREENER_ACT_SENDERS_PER_CYCLE senders per account per cycle; one transaction each",
+    owns: "a waiting sender whose stored suggestion is at or above the bar is filed exactly as the press files them",
+    fence: "leader lock; the decision path is `applyScreenerDecision` — the manual Apply's and the drain's one implementation",
   },
   {
     name: "screener_auto_suggest",

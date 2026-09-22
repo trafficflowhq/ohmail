@@ -93,6 +93,7 @@ import { apiFaultPrunePass } from "./api-fault-prune.js";
 import { retentionPrunePass } from "./retention-prune.js";
 import { ohboxTidyPass } from "./ohbox-tidy.js";
 import { screenerAutoApplyPass } from "./screener-auto.js";
+import { screenerAutoActPass } from "./screener-auto-act.js";
 import { screenerAutoSuggestPass } from "./screener-auto-suggest.js";
 import { refundObligationDrainPass } from "./refund-obligation-drain.js";
 import { syncKickPass } from "./sync-kick.js";
@@ -4225,6 +4226,13 @@ export async function startWorkerWithLock(
             // Cleared after ANY non-throwing pass, opted-in or not: a stale mark for an account
             // that opted out would otherwise lead every cycle for ever.
             await clearScreenerSuggestOwed(db as unknown as Tx, accountId, owedReadAt);
+            // AND ACT ON WHAT IS NOW STORED, for an account that asked us to. Here rather than a
+            // cycle later because the advice this serve just bought is the advice the setting
+            // promises to act on; the pass files nothing for an account that has not opted in.
+            const acted = await screenerAutoActPass(db as unknown as Tx, { accountId, log }, new Date());
+            if (acted.ran && (acted.filed > 0 || acted.failed > 0)) {
+              log.info("screener_auto_act_pass", { accountId, filed: acted.filed, failed: acted.failed });
+            }
           } catch (err) {
             noteIfSharedDatabaseFault(err);
             log.error("screener_suggest_owed_serve_failed", {
@@ -4601,6 +4609,31 @@ export async function startWorkerWithLock(
               "stored drops out of the candidate query, so the next cycle resumes at the next " +
               "unbought sender; a charge with no stored row is retried free (the ledger source " +
               "is the message, so the retry answers `duplicate`)",
+          });
+        }
+      }
+
+      // ── ACT ON THE STORED SUGGESTIONS, FOR OPTED-IN ACCOUNTS ────────────────────────────
+      //
+      // "Act on suggestions for me": the senders whose stored advice is confident are filed through
+      // `applyScreenerDecision`, the door a press uses. Its OWN try/catch and loop for the reason
+      // the blocks above have one. AFTER the suggest pass, so advice bought this cycle is acted on
+      // this cycle. It reads advice and never buys it — no model, no spend, no claim.
+      for (const accountId of passAccounts) {
+        if (stopped) return;
+        try {
+          const acted = await screenerAutoActPass(db as unknown as Tx, { accountId, log }, new Date());
+          if (acted.ran && (acted.filed > 0 || acted.failed > 0)) {
+            log.info("screener_auto_act_pass", {
+              accountId, filed: acted.filed, failed: acted.failed, capped: acted.capped,
+            });
+          }
+        } catch (err) {
+          log.error("screener_auto_act_failed", {
+            accountId, err,
+            reason: "no sender was filed past the failure and nothing is marked — a filed sender " +
+              "leaves the Screener and stops being a candidate, so the next cycle resumes at the " +
+              "next waiting sender and every one of them still carries its own Apply",
           });
         }
       }

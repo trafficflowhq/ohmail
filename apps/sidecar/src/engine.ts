@@ -163,6 +163,7 @@ import {
 // second answer to "when is a resurface due", which is the one thing that must not differ.
 import { bubbleUpPass } from "@trafficflow/worker/bubble-up";
 import { screenerAutoSuggestPass } from "@trafficflow/worker/screener-auto-suggest";
+import { screenerAutoActPass } from "@trafficflow/worker/screener-auto-act";
 import { threadJoinHealPass, type ThreadJoinHealCursor } from "@trafficflow/worker/thread-join-heal";
 import { inboundQuietPass } from "@trafficflow/worker/inbound-quiet";
 // The HISTORICAL-NAME REPAIR, from the same package and for the fourth instance of the same
@@ -2194,6 +2195,28 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           reason: "no suggestion was bought for the senders that just arrived; nothing is marked " +
             "and no cursor persists, so the next drain resumes at the next unanswered sender and " +
             "the Screener's own button still works in the meantime",
+        });
+      }
+    };
+
+    /**
+     * Act on what is stored, for an install that asked us to — "Act on suggestions for me". The
+     * worker's pass again, not a copy: a sender filed here has to mean what a sender filed on the
+     * hosted side means, and the decision itself is `applyScreenerDecision`, the same function this
+     * engine's own Apply button and its request drain reach. It reads advice and buys none, so it
+     * needs no model and no credits gate; it files nothing for an install that has not opted in.
+     */
+    const actOnSuggestions = async (): Promise<void> => {
+      try {
+        const { ran, filed, failed, capped } = await screenerAutoActPass(db as unknown as Tx, {
+          accountId: world.accountId,
+        });
+        if (ran && (filed > 0 || failed > 0)) log("screener_auto_act", { filed, failed, capped });
+      } catch (err) {
+        log("screener_auto_act_failed", {
+          err,
+          reason: "no waiting sender was filed; nothing is marked and no cursor persists, every " +
+            "one of them still carries the suggestion and its own Apply, and the next drain asks again",
         });
       }
     };
@@ -5183,6 +5206,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              the same queue a hundred times for one arrival. Before the checkpoint below, so the rows it
              writes are folded into the same fold. */
           await onceForTheAccount(() => suggestNew(screening.ohboxBar));
+          /* AND ACT ON WHAT IS STORED, immediately after — the advice just bought is the advice the
+             setting promises to act on, and a sender left waiting for a cycle is the whole defect.
+             Inside the same once-per-account guard for `suggestNew`'s reason: the queue is per
+             account, not per cycle. */
+          await onceForTheAccount(actOnSuggestions);
           /* AND THE HISTORICAL-NAME REPAIR LAST OF ALL THE WORK, which is the ordering claim the
              suite pins rather than a preference. It is about rows that have been on this disk for as
              long as the install has existed, so nothing it does is urgent, and a cold launch's first
