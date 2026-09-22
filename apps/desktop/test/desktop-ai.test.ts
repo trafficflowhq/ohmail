@@ -516,11 +516,17 @@ describe("the AI provider form never sends a key to the vendor it was not typed 
    *
    * The old pane offered free-text inputs with a `<datalist>` hint, so a model the endpoint does
    * not have could be typed, saved and verified into `model_absent` — a round trip to discover a
-   * typo. The `<select>`s are filled from `probe.models` and from nothing else. `READY` is the
-   * realistic awkward case: the endpoint reports `llama3.2:latest` while the stored setting says
-   * `llama3.2`, so nothing is selected and Save stays refused until somebody picks.
+   * typo. The `<select>`s are filled from `probe.models` and from nothing else.
+   *
+   * THIS CASE USED TO PIN THE DEFECT. `READY` is the ordinary Ollama install — the endpoint
+   * reports `llama3.2:latest` and the stored setting says `llama3.2`, which the ENGINE accepts
+   * (it matches a family against its tag) — and the assertion here was that nothing is selected
+   * and Save stays refused. That is *Choose a model* over a configuration the engine has just
+   * verified. The form asks the engine's own question now
+   * (`@trafficflow/core/model-name`), so the listed name is shown as chosen; a model the endpoint
+   * genuinely does not have is the case below, where the placeholder is still what renders.
    */
-  it("offers only the models the endpoint reported, and refuses a save until one is chosen", async () => {
+  it("offers only the models the endpoint reported, and shows the one it resolved", async () => {
     const { el } = await paneWith(READY);
     const classify = el.querySelector("#ai-classify") as HTMLSelectElement;
     expect(classify, "the model pickers are absent after a successful probe").toBeTruthy();
@@ -529,7 +535,9 @@ describe("the AI provider form never sends a key to the vendor it was not typed 
       .filter((o) => o.value !== "")
       .map((o) => o.value);
     expect(offered).toEqual(["llama3.2:latest"]);
-    expect(classify.value, "a stored model the endpoint does not have was shown as chosen").toBe("");
+    expect(classify.value, "the family name the engine accepted resolved to nothing").toBe("llama3.2:latest");
+    // Save stays refused because NOTHING HAS CHANGED, which is a different sentence from
+    // "your model is not there": the pickers are settled, not empty.
     expect(buttonSaying(el, /Save models/)!.disabled).toBe(true);
   });
 
