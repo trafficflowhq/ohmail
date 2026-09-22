@@ -5209,8 +5209,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           /* AND ACT ON WHAT IS STORED, immediately after — the advice just bought is the advice the
              setting promises to act on, and a sender left waiting for a cycle is the whole defect.
              Inside the same once-per-account guard for `suggestNew`'s reason: the queue is per
-             account, not per cycle. */
-          await onceForTheAccount(actOnSuggestions);
+             account, not per cycle. Behind the organizer gate, unlike `suggestNew`: filing a
+             sender writes the rules the mailbox's organizer owns, so a reader never enters it. */
+          if (organizing) await onceForTheAccount(actOnSuggestions);
           /* AND THE HISTORICAL-NAME REPAIR LAST OF ALL THE WORK, which is the ordering claim the
              suite pins rather than a preference. It is about rows that have been on this disk for as
              long as the install has existed, so nothing it does is urgent, and a cold launch's first
