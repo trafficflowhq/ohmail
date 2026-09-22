@@ -561,6 +561,25 @@ export function OhboxView({
   const all = [...displayResurfaced, ...displayNew, ...displayPrev];
   const unreadIds = all.filter((m) => m.unread).map((m) => m.id);
   /**
+   * WHAT THIS LIST IS SHOWING — the three groups and the server-paged Older tail, in render
+   * order. The one list every VERB resolves against.
+   *
+   * `all` above stays the three groups, and the split is the point rather than a duplicate: `all`
+   * is what the pane's own CLAIMS are made of — the unread count, the empty sentence, the
+   * doorbell's "All clear" — and a row fetched from beyond the mirror window is not part of what
+   * this Ohbox holds. REACH is a different question from counting, and the two were one list:
+   * selection resolved against the groups alone, so a row `Load older` had just put on screen
+   * could not be selected, opened or picked, and the way to read it was to find it again through
+   * Search.
+   *
+   * Not a fourth group — these are the same rows the tail already renders, named once so
+   * `selected`, the pick set and the keyboard walk cannot disagree about which rows exist. And
+   * nothing here sorts: the sections decide what is where.
+   */
+  const inGroups = new Set(all.map((m) => m.id));
+  const olderShown = older.items.filter((m) => !inGroups.has(m.id));
+  const shown = olderShown.length === 0 ? all : [...all, ...olderShown];
+  /**
    * WHAT THIS PANE MAY SAY ABOUT ITSELF — one reading, shared with the phone
    * (`@ohmail/client-engine`'s `listSurface`). Every claim below is derived from it: the empty
    * sentence, the header count, the doorbell's "All clear" and the older-mail tail. They were
@@ -617,7 +636,7 @@ export function OhboxView({
    * it read. A resting column is rendered instead (see {@link ReadColumn} below), which is a
    * state the product can be in rather than a message it chose for somebody.
    */
-  const selected = all.find((m) => m.id === selectedId) ?? null;
+  const selected = shown.find((m) => m.id === selectedId) ?? null;
 
   /**
    * AFTER A VERB: when MY verb takes the open row out of the list, apply the after-verb
@@ -743,11 +762,12 @@ export function OhboxView({
    *
    * A `Set`'s iteration order is insertion order, so a range built upwards and one built
    * downwards would dispatch in different orders for the same visible selection. Deriving it
-   * from `all` means the mutations follow what is on screen.
+   * from `shown` means the mutations follow what is on screen — including the Older tail, whose
+   * rows were dropped here and left a press acting on fewer messages than the bar counted.
    */
   const pickedIds = useMemo(
-    () => all.filter((m) => picked.has(m.id)).map((m) => m.id),
-    [all, picked],
+    () => shown.filter((m) => picked.has(m.id)).map((m) => m.id),
+    [shown, picked],
   );
 
   /**
@@ -790,11 +810,13 @@ export function OhboxView({
   useEffect(() => {
     setPicked((prev) => {
       if (prev.size === 0) return prev;
-      const live = new Set(all.map((m) => m.id));
+      // `shown`, not the three groups: an Older row picked and then pruned here left the bar
+      // counting rows it could not act on, and dropped the pick in the same frame it was made.
+      const live = new Set(shown.map((m) => m.id));
       const next = new Set([...prev].filter((id) => live.has(id)));
       return next.size === prev.size ? prev : next;
     });
-  }, [all]);
+  }, [shown]);
 
   /* ── read-state ────────────────────────────────────────────────────────── */
 
@@ -1200,8 +1222,23 @@ export function OhboxView({
    * selection standing on a member that stopped leading its row (a newer reply arrived) still
    * knows which row it is on.
    */
-  const order = navRows.map((g) => g.openTarget.id);
-  const at = rowIndexOf(selected?.id ?? null);
+  const order = olderShown.length === 0
+    ? navRows.map((g) => g.openTarget.id)
+    : [...navRows.map((g) => g.openTarget.id), ...olderShown.map((m) => m.id)];
+  /**
+   * Where the cursor stands in that walk. Row MEMBERSHIP for the three groups — so a selection on
+   * a member that stopped leading its row still knows which row it is on — and position for the
+   * Older tail, whose rows fold into nothing and are one keyboard stop each. Without the second
+   * half a cursor on an Older row read `-1`, which `stepDown` treats as ENTRY: `j` from the tail
+   * jumped back to the top of the list.
+   */
+  const orderIndexOf = (id: string | null): number => {
+    const row = rowIndexOf(id);
+    if (row >= 0) return row;
+    const k = id == null ? -1 : olderShown.findIndex((m) => m.id === id);
+    return k < 0 ? -1 : navRows.length + k;
+  };
+  const at = orderIndexOf(selected?.id ?? null);
   /**
    * ONE WALK, FOUR KEYCAPS. ↓/↑ are `j`/`k` — same steps, same entry moves, same
    * `selectByUser` and therefore the same dwell guard: an arrow flick down the list arms

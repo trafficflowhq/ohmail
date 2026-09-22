@@ -539,12 +539,13 @@ export function useShellDerivations({
     [reader, derived],
   );
 
-  /* The rows' MEMBERS and the three groups — see `ohbox-surface.ts`: a resurfaced conversation's
-     unpinned members are in none of the groups, and a column resolved from the groups alone
-     rested on "Nothing open." over a row on screen. */
+  /* The rows' MEMBERS, the three groups and the Older tail — see `ohbox-surface.ts`: a resurfaced
+     conversation's unpinned members are in none of the groups, and a row `Load older` fetched is
+     in none of them either, so a column resolved from the groups alone rested on "Nothing open."
+     over a row on screen. */
   const allOhbox = useMemo(
-    () => ohboxSurfaceMessages(resurfacedRows, ohbox),
-    [resurfacedRows, ohbox],
+    () => ohboxSurfaceMessages(resurfacedRows, ohbox, older.items),
+    [resurfacedRows, ohbox, older.items],
   );
   /* WHAT THE RAIL COUNTS — the three groups, never the surface. The surface unions a resurfaced
      conversation's other members in so the column can resolve them, and one of those is the Sent
