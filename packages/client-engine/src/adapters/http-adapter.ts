@@ -29,6 +29,7 @@ import type {
 } from "../engine.js";
 import type {
   AttachmentWire, EngineAdapter, HeldReleaseGroupWire, HeldReleaseResultWire, HeldReleaseWire,
+  UnscreenedGroupWire, UnscreenedResultWire, UnscreenedWire,
   MutationAnswer, MutationOutcome, MutationQueued, SyncParams,
 } from "./adapter.js";
 import { retryAfterMsOf, retryingRead } from "./retrying-read.js";
@@ -940,6 +941,53 @@ export class HttpAdapter implements EngineAdapter {
       max: typeof wire.max === "number" && Number.isFinite(wire.max) ? Math.trunc(wire.max) : 0,
       fingerprint: typeof wire.fingerprint === "string" ? wire.fingerprint : "",
       dismissed: wire.dismissed === true,
+    };
+  }
+
+  /**
+   * ONE UNDECIDED-SENDER GROUP OFF THE WIRE, or `null` — the same refusal shape as
+   * {@link heldGroupOf}: a row that cannot be read is dropped rather than rendered as a group
+   * with an empty address, because the address is what the press names.
+   */
+  private static unscreenedGroupOf(raw: unknown): UnscreenedGroupWire | null {
+    const r = raw as Partial<UnscreenedGroupWire>;
+    const count = typeof r.count === "number" && Number.isFinite(r.count) ? Math.trunc(r.count) : -1;
+    if (typeof r.address !== "string" || r.address === "" || count < 0) return null;
+    return {
+      address: r.address, count,
+      newestAt: typeof r.newestAt === "string" ? r.newestAt : "",
+    };
+  }
+
+  async unscreened(): Promise<UnscreenedWire> {
+    const res = await this.request("GET", "/screener/unscreened");
+    if (!res.ok) throw await this.rejectionOf(res);
+    const wire = (await res.json()) as { groups?: unknown; total?: unknown; max?: unknown };
+    const groups = Array.isArray(wire.groups)
+      ? wire.groups.map((g) => HttpAdapter.unscreenedGroupOf(g)).filter((g): g is UnscreenedGroupWire => g !== null)
+      : [];
+    // A server that states neither total nor ceiling gets no invented one: zero groups say
+    // "nothing to screen", and a zero ceiling reads as "this door cannot press".
+    return {
+      groups,
+      total: typeof wire.total === "number" && Number.isFinite(wire.total) ? Math.trunc(wire.total) : 0,
+      max: typeof wire.max === "number" && Number.isFinite(wire.max) ? Math.trunc(wire.max) : 0,
+    };
+  }
+
+  async screenUnscreened(addresses?: readonly string[]): Promise<UnscreenedResultWire> {
+    const res = await this.request("POST", "/screener/unscreened", {
+      // Omitted rather than `null`, for `releaseHeld`'s reason: absent means EVERY group shown.
+      body: addresses === undefined ? {} : { addresses: [...addresses] },
+    });
+    if (!res.ok) throw await this.rejectionOf(res);
+    const wire = (await res.json()) as { screened?: unknown; total?: unknown };
+    const screened = Array.isArray(wire.screened)
+      ? wire.screened.map((g) => HttpAdapter.unscreenedGroupOf(g)).filter((g): g is UnscreenedGroupWire => g !== null)
+      : [];
+    return {
+      screened,
+      total: typeof wire.total === "number" && Number.isFinite(wire.total) ? Math.trunc(wire.total) : 0,
     };
   }
 

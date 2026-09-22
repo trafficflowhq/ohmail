@@ -62,9 +62,11 @@ import {
   type UnsubscribeResult,
   type WithheldMarker,
   type HeldReleaseGroupDTO,
+  type UnscreenedGroupDTO,
   OUTBOX_TYPE,
   OUTBOX_ABANDONED_TYPE,
   HELD_RELEASE_TYPE,
+  UNSCREENED_TYPE,
 } from "./types.js";
 
 /**
@@ -4574,6 +4576,54 @@ export class OhmailEngine {
     if (!press) return 0;
     const out = await press.call(this.adapter, ruleIds);
     await this.refreshHeldReleases();
+    return out.total;
+  }
+
+  /**
+   * OHBOX MAIL FROM SENDERS NOBODY EVER DECIDED ABOUT — ask the door, put the answer in the mirror.
+   *
+   * The groups are a SERVER derivation: the deciding fact is what the ARRIVAL GATE would answer
+   * for each message, over rules and contacts the mirror holds only part of, so a shell that
+   * derived the number itself would show one figure and move another. The whole set is replaced
+   * under ONE version bump ({@link MirrorStore.commitLocal}), because a half-old list is a wrong
+   * number on screen.
+   *
+   * A door that cannot answer leaves the mirror EMPTY, which every surface reads as "no such row
+   * here" — never as "nothing undecided", which is a different sentence.
+   */
+  async refreshUnscreened(): Promise<void> {
+    const ask = this.adapter.unscreened;
+    if (!ask) return;
+    const wire = await ask.call(this.adapter);
+    const before = this.read().list<UnscreenedGroupDTO>(UNSCREENED_TYPE);
+    const keep = new Set(wire.groups.map((g) => g.address));
+    await this.store.commitLocal(
+      wire.groups.map((g) => ({
+        type: UNSCREENED_TYPE,
+        id: g.address,
+        entity: {
+          id: g.address, count: g.count, newestAt: g.newestAt, total: wire.total,
+        } satisfies UnscreenedGroupDTO,
+      })),
+      before.filter((g) => !keep.has(g.id)).map((g) => ({ type: UNSCREENED_TYPE, id: g.id })),
+    );
+    this.notify();
+  }
+
+  /**
+   * THE PRESS. Screens the named sender groups — or every group shown when `addresses` is omitted
+   * — and re-reads.
+   *
+   * The re-read is not a courtesy: the server moves nothing synchronously (it writes the intent
+   * and the organizer's reconciler carries it out), so the only honest thing the screen can say
+   * straight afterwards is what is left. Returns the message count the press screened, which is
+   * what a surface reports.
+   */
+  async screenUnscreenedSenders(addresses?: readonly string[]): Promise<number> {
+    const press = this.adapter.screenUnscreened;
+    if (!press) return 0;
+    const out = await press.call(this.adapter, addresses);
+    await this.refreshUnscreened();
     return out.total;
   }
 

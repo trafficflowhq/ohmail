@@ -30,6 +30,7 @@ export const MIRROR_ENTITY_TYPES = [
   "folder", "tag", "mailbox", "screener_suggestion",
   // Client-local: the demo world, view metadata, hydrated bodies, the held-release derivation.
   "screener_sender", "triage_item", "view_meta", "message_body", "held_release_group",
+  "unscreened_sender_group",
   // Client-local and DURABLE: the outbox and its abandoned half.
   "outbox_entry", "outbox_abandoned",
 ] as const;
@@ -163,6 +164,13 @@ export const MIRROR_BOUNDS: Record<KnownMirrorEntityType, MirrorBound> = {
     via: "OhmailEngine.refreshHeldReleases",
     why: "a server derivation over the caller's own rules, one row per rule; every refresh writes "
       + "the whole set and prunes the complement, so it is replaced rather than accumulated",
+  },
+  unscreened_sender_group: {
+    by: "replaced",
+    via: "OhmailEngine.refreshUnscreened",
+    why: "a server derivation over the caller's own Ohbox, one row per sender and bounded by the "
+      + "server's own group ceiling; every refresh writes the whole set and prunes the "
+      + "complement, so it is replaced rather than accumulated",
   },
   outbox_entry: {
     by: "person",

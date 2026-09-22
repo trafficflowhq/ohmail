@@ -1656,6 +1656,32 @@ export interface HeldReleaseGroupDTO {
   dismissed: boolean;
 }
 
+/**
+ * OHBOX MAIL FROM SENDERS NOBODY EVER DECIDED ABOUT — one row per sender group.
+ *
+ * A client-local type ({@link putLocal}, seq 0) and deliberately NOT a `/sync` entity, for
+ * {@link HELD_RELEASE_TYPE}'s reason: the set is a DERIVATION the server does over the caller's
+ * own Ohbox against the ARRIVAL GATE's own predicate, answered by a REST read the way the mailbox
+ * and tracker facts are. It lives in the mirror rather than in a shell's own state so the desktop,
+ * the web app and the phone read one selector instead of three derivations that agree today. The
+ * row `id` is the sender's ADDRESS, which is exactly what the press posts back.
+ */
+export const UNSCREENED_TYPE = "unscreened_sender_group";
+
+/** One group on the undecided-sender screen: who wrote, how much, and how recent. */
+export interface UnscreenedGroupDTO {
+  /** The sender's address, lower-cased — this row's own id, and what the press names. */
+  id: string;
+  count: number;
+  /** The newest of the group's messages, ISO, or "" from a server that does not send one. */
+  newestAt: string;
+  /**
+   * Messages across EVERY shown group, carried on each row because the mirror stores rows and not
+   * a document. Identical on every row of one refresh; a stale row is replaced wholesale.
+   */
+  total: number;
+}
+
 export const OUTBOX_TYPE = "outbox_entry";
 export const OUTBOX_ABANDONED_TYPE = "outbox_abandoned";
 

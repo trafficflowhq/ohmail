@@ -24,7 +24,9 @@ import {
   type OhmailView,
   type RuleDTO,
   type HeldReleaseGroupDTO,
+  type UnscreenedGroupDTO,
   HELD_RELEASE_TYPE,
+  UNSCREENED_TYPE,
   type ScreenerHeldMail,
   type ScreenerSegment,
   type ScreenerSenderDTO,
@@ -1688,6 +1690,29 @@ export function heldReleaseDismissedOf(reader: EntityReader): boolean {
 export function heldReleaseFingerprintOf(reader: EntityReader): string {
   const [first] = reader.list<HeldReleaseGroupDTO>(HELD_RELEASE_TYPE);
   return first?.fingerprint ?? "";
+}
+
+/**
+ * OHBOX MAIL FROM SENDERS NOBODY EVER DECIDED ABOUT — the screen's rows, largest group first.
+ *
+ * The rows are a SERVER derivation kept in the mirror ({@link UNSCREENED_TYPE}); this selector
+ * does not recompute the predicate and must not — the deciding fact is what the ARRIVAL GATE
+ * would answer over rules and contacts `/sync` carries only part of, so a client-side derivation
+ * would show one number and move another. Empty means the door has not answered or has nothing
+ * to offer; both render as no row, and "nothing undecided" is a claim this never makes.
+ */
+export function unscreenedGroups(reader: EntityReader): UnscreenedGroupDTO[] {
+  return [...reader.list<UnscreenedGroupDTO>(UNSCREENED_TYPE)]
+    .sort((a, b) => b.count - a.count || a.id.localeCompare(b.id));
+}
+
+/**
+ * THE NUMBER ON THE SCREEN — messages across every shown group, read off the rows rather than
+ * summed over them, so the figure is the SERVER's own and one arithmetic. Zero with no rows.
+ */
+export function unscreenedTotalOf(reader: EntityReader): number {
+  const [first] = reader.list<UnscreenedGroupDTO>(UNSCREENED_TYPE);
+  return first?.total ?? 0;
 }
 
 export function rulesList(reader: EntityReader): RuleDTO[] {

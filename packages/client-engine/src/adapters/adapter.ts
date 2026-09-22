@@ -150,6 +150,30 @@ export interface HeldReleaseResultWire {
   total: number;
 }
 
+/** One sender group as `GET /screener/unscreened` sends it. */
+export interface UnscreenedGroupWire {
+  /** The sender's address, lower-cased — this group's key, and what a press names. */
+  address: string;
+  count: number;
+  /** The newest of the group's messages, ISO. */
+  newestAt: string;
+}
+
+/** The read's answer: the groups, the messages they hold, and the server's own group ceiling. */
+export interface UnscreenedWire {
+  groups: UnscreenedGroupWire[];
+  /** Messages the SHOWN groups hold. Every message has one sender, so these do add up. */
+  total: number;
+  /** How many groups one press may name. Read rather than hardcoded, so the client cannot drift. */
+  max: number;
+}
+
+/** The press's answer: the groups it screened and how many messages they held. */
+export interface UnscreenedResultWire {
+  screened: UnscreenedGroupWire[];
+  total: number;
+}
+
 export interface AttachmentWire {
   id: string;
   filename: string | null;
@@ -327,6 +351,26 @@ export interface EngineAdapter {
    * RELEASED, not what has already moved, and a second press over the same groups releases nothing.
    */
   releaseHeld?(ruleIds?: readonly string[]): Promise<HeldReleaseResultWire>;
+
+  /**
+   * `GET /screener/unscreened` — the Ohbox's sender groups nobody ever decided about, with how
+   * much of each sender's mail is sitting there.
+   *
+   * A derivation the server does over the caller's own Ohbox against their own rules and
+   * contacts, asked rather than mirrored for `heldReleases`' reason: the deciding fact is the
+   * ARRIVAL GATE's answer, which `/sync` carries no vocabulary for.
+   */
+  unscreened?(): Promise<UnscreenedWire>;
+
+  /**
+   * `POST /screener/unscreened` — THE PRESS. Sends the named sender groups, or every group shown
+   * when `addresses` is omitted, to the Screener.
+   *
+   * It moves no mail itself: the server writes the intent a fresh arrival writes and the
+   * organizer's reconciler carries it to the mail host. So the answer is what was SCREENED, not
+   * what has already moved, and a second press over the same groups screens nothing.
+   */
+  screenUnscreened?(addresses?: readonly string[]): Promise<UnscreenedResultWire>;
 
   /**
    * `POST /screener/held-releases/dismiss` — "not now", persisted per ACCOUNT so the offer stays
