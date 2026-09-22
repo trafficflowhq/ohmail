@@ -6,33 +6,12 @@ import type { Dialect } from "./dialect/index.js";
 /**
  * DID THE PERSON ANSWER THIS SENDER — the one predicate, stated once in SQL.
  *
- * `ohbox-tidy`, `rule-retro` and `screener-auto` each leave a message alone when the person has
- * already dealt with it, and each carried its own spelling of "we replied". All three asked
- * thread MEMBERSHIP: any message of ours anywhere in the thread. A thread the account was copied
- * on and never answered satisfied that — we wrote to Alice, Alice's colleague joined and wrote
- * in, and their mail was excluded from every pass for ever by a reply that was never to them.
- * `sender-headers.ts#counterpartyEvidence` already carries the rule this asks: our own message
- * contributes its RECIPIENTS as evidence about who we write to, never the thread it sits in.
- *
- * Three conjuncts, each excluding a shape that is not the person answering: our own outbound in
- * the thread; not the away responder's reply, which is a machine and not them (that arm was
- * missing from `screener-auto` entirely); and ADDRESSED to this message's sender.
- *
- * "Addressed to them" has THREE admitting arms, and dropping any one of them takes protection
- * off a reply somebody really wrote:
- *
- *  · their address is in our `To` or `Cc`;
- *  · our reply's `In-Reply-To`/`References` names a message in this thread THEY wrote. A person
- *    answering a list thread writes to the list, not to the author, so the recipient arm alone
- *    would stop protecting every sender on every list conversation they take part in. The
- *    reference headers survive whoever the reply was addressed to — and they are OUR OWN
- *    writing about our own act, not a stranger's claim, which is what makes them admissible
- *    here at all (`sender-headers.ts` carries that rule);
- *  · we recorded no recipients at all. `to_addresses`/`cc_addresses` were columns before any
- *    ingest wrote them (`sender-name-backfill.ts`), so an older Sent row can hold `[]` — which
- *    means "we never recorded who this was addressed to", not "it was addressed to somebody
- *    else". Reading the two as one would drop the protection off a genuine reply on every
- *    account whose backfill has not run, and these passes MOVE mail. Unknown keeps the exclusion.
+ * `ohbox-tidy`, `rule-retro` and `screener-auto` each spelled it and each asked thread
+ * MEMBERSHIP: any own-address message anywhere in the thread. So a colleague who joined a
+ * conversation we were part of was excluded from all three for ever, by a reply that was never to
+ * them. Three conjuncts: our own outbound in this thread; not the away responder's, which is a
+ * machine and not them; and ADDRESSED to this message's sender, which has its own three arms at
+ * the site below — each keeps protection somebody would otherwise lose.
  */
 export function weAnsweredThisSenderWhere(d: Dialect, row: {
   /** The candidate's `account_id` — scopes the thread and the own-address lookup. */
@@ -54,6 +33,12 @@ export function weAnsweredThisSenderWhere(d: Dialect, row: {
   const to = d.jsonArrayElements(sql`sent.to_addresses`, "wa_to");
   const cc = d.jsonArrayElements(sql`sent.cc_addresses`, "wa_cc");
   const empty = d.castJsonb(sql`'[]'`);
+  /* THE THREE ARMS OF "ADDRESSED TO THEM", in the order they appear below. Their address in our
+     To/Cc. Our reply NAMING a message they wrote, because a person answering a list writes to the
+     list and not to the author. And a Sent row whose recipients were never recorded — the columns
+     predate the ingest writing them and `sender-name-backfill` is what fills them — where UNKNOWN
+     keeps the exclusion rather than reading as "addressed to somebody else" on every account whose
+     backfill has not run. These passes MOVE mail; the permissive reading is the recoverable one. */
   return sql`exists (
     select 1 from ${messages} sent
      where sent.account_id = ${row.accountId}

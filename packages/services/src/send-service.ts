@@ -1996,17 +1996,12 @@ export class SendService {
   /**
    * SOMEBODY YOU HAVE WRITTEN TO IS NOT A STRANGER — the contacts write, at the send.
    *
-   * `contacts` is what the routing layer reads as "senders this account knows", and it had
-   * exactly two writers: the consent seed, and a connect-time kickstart that is retired. So a
-   * person you first wrote to last week was still a stranger when they answered, and their reply
-   * was held at the Screener gate for consent you had already given by writing to them.
-   *
-   * Here rather than in the Sent projection: `projectSentCopy` is best-effort, never throws, and
-   * is skipped entirely for an adapter that cannot report what it appended — learning would then
-   * depend on which adapter delivered the mail. `finalizeSent`'s transaction is the one every
-   * successful send wins exactly once. Inside the CAS, so a lost race writes nothing.
-   *
-   * No delta: `contacts` is REST-only for the change log, as its other writers already are.
+   * `contacts` is what the routing layer reads as "senders this account knows", and its only
+   * writers were the consent seed and a connect-time pass that is retired, so nothing kept it
+   * current. Here and not in the Sent projection: that one is best-effort and is skipped for an
+   * adapter that cannot report what it appended, so learning would depend on which adapter
+   * delivered the mail. Inside the CAS, so a lost race writes nothing. No delta — `contacts` is
+   * REST-only for the change log, as its other writers already are.
    */
   private async learnRecipients(tx: LedgerTx, ctx: ServiceContext, draftId: string): Promise<void> {
     // scoped-by: draftId is the reservation's own draft, loaded by (id, accountId) upstream
