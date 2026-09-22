@@ -1301,36 +1301,7 @@ export const auth = {
     api<{ redirect: string }>("/oauth/authorize", {
       method: "POST", body: { request: handle }, ceremony: true,
     }),
-
-  /**
-   * The one-confirm desktop sign-in, the browser's three calls. The read describes the request
-   * and spends nothing; the confirm is step-up gated at the route (a 403 `step_up_required` is
-   * the page's cue to ask for the factor inline); "Not me" ends the request. No `ceremony` flag:
-   * these act AS the signed-in account, so the account boundary applies to them.
-   */
-  desktopApproval: (id: string, opts: { signal?: AbortSignal } = {}) =>
-    api<DesktopApprovalDTO>(`/auth/desktop-approval/${encodeURIComponent(id)}`, opts),
-
-  confirmDesktopApproval: (id: string) =>
-    api<{ approved: true }>(`/auth/desktop-approval/${encodeURIComponent(id)}/confirm`, {
-      method: "POST", body: {},
-    }),
-
-  denyDesktopApproval: (id: string) =>
-    api<{ denied: true }>(`/auth/desktop-approval/${encodeURIComponent(id)}/deny`, {
-      method: "POST", body: {},
-    }),
 };
-
-/** What the approval page shows. `ipClass` is a network class, never an address. */
-export interface DesktopApprovalDTO {
-  label: string;
-  platform: string;
-  requestedAt: string;
-  ipClass: string;
-  expiresIn: number;
-  approved: boolean;
-}
 
 /** What the confirmation page shows. The address arrives MASKED — the server does the masking. */
 export interface AuthorizeRequestDTO {

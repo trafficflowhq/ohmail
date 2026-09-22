@@ -2660,7 +2660,12 @@
   },
   "resume": {
     "failedTitle": "Please sign in again",
-    "failedBody": "Your session could not be restored.",
+    "revokedBody": "You were signed out on this browser.",
+    "expiredBody": "Your sign-in on this browser has expired.",
+    "absentBody": "This browser holds no sign-in.",
+    "busyTitle": "ohmail could not be reached",
+    "busyBody": "The server is busy right now. This browser has not been signed out.",
+    "tryAgain": "Try again",
     "signIn": "Sign in",
     "openDemo": "Open the demo"
   },

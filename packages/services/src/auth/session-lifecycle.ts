@@ -43,6 +43,14 @@ export function refuseCrossAccountCredential(ctx: ServiceContext, credentialAcco
  */
 export type RefreshFailure = "session_refused" | "request_refused" | "fault";
 
+/*
+ * THE REFRESH DOOR NAMES ITS REFUSAL IN THREE CODES, all 401: `refresh_missing` (no token was
+ * presented), `refresh_expired` (the idle window closed, or a recovery killed the row), and
+ * `refresh_revoked` for everything else — unknown, revoked, reused, a dead session, a capped
+ * one. Unknown and revoked share a code on purpose: a probe must not learn whether a token was
+ * ever minted. The messages stay as they were; the phone keys on the reuse sentence.
+ */
+
 export function classifyRefreshFailure(err: unknown): RefreshFailure {
   if (!(err instanceof ServiceError) || err.httpStatus >= 500) return "fault";
   return err.httpStatus === 401 ? "session_refused" : "request_refused";
@@ -215,7 +223,7 @@ export class SessionLifecycle {
     opts: { concurrentGrace?: boolean; surface?: SessionSurface } = {},
   ): Promise<{ tokens?: OAuthTokens }> {
     const token = b.refreshToken;
-    if (!token) throw new ServiceError("unauthorized", 401, "missing refresh token");
+    if (!token) throw new ServiceError("refresh_missing", 401, "missing refresh token");
     // `opts.surface` is passed STRAIGHT THROUGH, undefined included: the one default lives in
     // `surfaceTtls`, so there is no second place for the two to drift apart. `attemptId` is read
     // at this door, BEFORE the rotation, so a malformed one refuses without consuming anything.
@@ -695,7 +703,7 @@ export class SessionLifecycle {
       const [existing] = await db.select().from(refreshTokens)
         .where(eq(refreshTokens.tokenHash, tokenHash)).limit(1);
       if (!existing || existing.revokedAt) {
-        throw new ServiceError("unauthorized", 401, "invalid refresh token");
+        throw new ServiceError("refresh_revoked", 401, "invalid refresh token");
       }
       // Reuse detection: a consumed token presented again means it leaked — revoke the WHOLE
       // family. EXCEPT the concurrent rotation, which is not theft: indistinguishable at an
@@ -751,7 +759,7 @@ export class SessionLifecycle {
         // revoke the healthy line the recovery just re-established. Within the grace window
         // the arm above has already converged it, exactly like any fresh consumption.
         if (existing.expiresAt.getTime() <= existing.consumedAt.getTime()) {
-          throw new ServiceError("unauthorized", 401, "refresh token expired");
+          throw new ServiceError("refresh_expired", 401, "refresh token expired");
         }
         // The sweep leaves a ROW, and sweep + row are ONE TRANSACTION — with the sweep REDONE
         // ALONE if it cannot commit. It used to leave nothing: the client got 401s and the only
@@ -776,9 +784,9 @@ export class SessionLifecycle {
           // The audit write must not block the security action: reuse still revokes the family.
           await this.revokeFamily(db, existing.familyId, now);
         }
-        throw new ServiceError("unauthorized", 401, "refresh token reuse detected");
+        throw new ServiceError("refresh_revoked", 401, "refresh token reuse detected");
       }
-      throw new ServiceError("unauthorized", 401, "refresh token expired");
+      throw new ServiceError("refresh_expired", 401, "refresh token expired");
     }
 
     // The absolute cap, when a surface has one. Rotation rolls the refresh window forward every
@@ -799,12 +807,12 @@ export class SessionLifecycle {
     // the artifact at a single inert row.
     if (!session || session.revokedAt != null) {
       await this.revokeFamily(db, row.familyId, now);
-      throw new ServiceError("unauthorized", 401, "session is no longer active");
+      throw new ServiceError("refresh_revoked", 401, "session is no longer active");
     }
     if (ttls.absoluteTtlMs != null
       && now.getTime() - session.createdAt.getTime() > ttls.absoluteTtlMs) {
       await this.revokeFamily(db, row.familyId, now);
-      throw new ServiceError("unauthorized", 401, "session has reached its maximum lifetime");
+      throw new ServiceError("refresh_revoked", 401, "session has reached its maximum lifetime");
     }
 
     return this.mintRotation(ctx, db, row, now, ttls);

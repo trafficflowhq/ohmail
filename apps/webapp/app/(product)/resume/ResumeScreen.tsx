@@ -1,114 +1,165 @@
 "use client";
 
 /**
- * The resume splash — the half-second that turns a 15-minute session into a 90-day one. `tf_session` lives
- * fifteen minutes; `tf_refresh` lives ninety days but is scoped `Path=/auth/refresh`, invisible to a request
- * for `/` — seen live: an intact day-old account served the marketing page with no way back in. `tf_resume`
- * lets the gate send such a browser here, and this page does the one thing the edge cannot: a same-origin `POST
- * /auth/refresh` (widening the cookie's Path is forbidden). It must never loop: the server clears the whole jar
- * when a refresh fails, and a one-shot `sessionStorage` flag covers the 5xx/offline case. It RELOADS rather
- * than navigating: `location.replace("/" + hash)` computes a byte-identical URL, treated as a fragment change
- * and never re-requested (observed live — the splash sat for ever).
+ * The resume splash — the half-second that turns a 15-minute session into a 90-day one. `tf_refresh` is
+ * scoped `Path=/auth/refresh`, invisible to a request for `/`, so `tf_resume` lets the gate send such a
+ * browser here and this page makes the same-origin `POST /auth/refresh` the edge cannot (widening the
+ * cookie's Path is forbidden). It reads the refresh door's ANSWER, never its absence: a mint reloads; the
+ * door's three refusals go to `/login` with the sentence that names which; a fault — a busy database, a
+ * 429, no response — retries here with the jar untouched and ends on "could not be reached", never on
+ * a sign-in. It RELOADS rather than navigating: `location.replace("/" + hash)` is a fragment change.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import { REFRESH_ENDPOINT, resumeSession } from "../../session-refresh";
+import { REFRESH_ENDPOINT, lastRefreshReport, resumeSession, type RefreshReport } from "../../session-refresh";
 import { readOwner } from "../../shell/owner-cookie";
 import { durableSessionSet } from "../../shell/durable";
+import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "../../shell/confirm-schedule";
+import { REASON_BODY, isSignedOutReason, leaveSignedOutNote, type SignedOutReason } from "./signed-out-note";
 
 /** Survives the reload a successful resume performs; scoped to this tab. */
 const ONCE_KEY = "ohmail.resume-attempted";
 
 /**
- * How recent a previous attempt has to be to count as a LOOP rather than a later, legitimate
- * resume in the same tab.
- *
- * A timestamp, not a boolean. A boolean cleared on success cannot see a loop at all (each pass
- * erases the evidence of the last); a boolean left set breaks the honest case where a tab open
- * for hours lapses a second time. Ten seconds is far longer than a resume takes and far
- * shorter than any real interval between two of them.
+ * How recent the previous pass has to be to count as a LOOP rather than a later, legitimate resume
+ * in the same tab. A timestamp, not a boolean: a boolean cleared on success cannot see a loop, one
+ * left set breaks a tab that lapses twice in an afternoon.
  */
 const LOOP_WINDOW_MS = 10_000;
 
+/**
+ * Back here within the window right after a MINT means the gate refused a session this tab just
+ * renewed. The jar is live, so this reloads after a backoff rather than spending another rotation,
+ * and after this many says the server could not be reached.
+ */
+export const GATE_RELOADS = 3;
+
+/** What one pass learned from the refresh door. */
+export type ResumeAnswer = "minted" | SignedOutReason | "unavailable";
+
+/**
+ * THE ONE SWITCH. A refusal is a coded 401 (`outcome: "revoked"` in the report) and names its kind
+ * by code; everything else — 5xx, 429, status 0, an uncoded 401 — is a fault and decides nothing.
+ * A code this build does not know (the legacy `unauthorized` included) reads as revoked.
+ */
+export function answerOf(ok: boolean, report: RefreshReport | null): ResumeAnswer {
+  if (ok) return "minted";
+  if (report === null || report.outcome !== "revoked") return "unavailable";
+  if (report.code === "refresh_expired") return "expired";
+  if (report.code === "refresh_missing") return "absent";
+  return "revoked";
+}
+
+interface Stamp { at: number; answer: ResumeAnswer | null; reloads: number }
+
+function isAnswer(v: unknown): v is ResumeAnswer {
+  return v === "minted" || v === "unavailable" || isSignedOutReason(v);
+}
+
+/** The previous pass, or null. The previous build wrote a bare timestamp; it reads as no answer. */
+function readStamp(): Stamp | null {
+  try {
+    const raw = sessionStorage.getItem(ONCE_KEY);
+    if (raw === null) return null;
+    if (/^\d+$/.test(raw)) return { at: Number(raw), answer: null, reloads: 0 };
+    const v = JSON.parse(raw) as Partial<Stamp> | null;
+    if (typeof v?.at !== "number") return null;
+    return {
+      at: v.at,
+      answer: isAnswer(v.answer) ? v.answer : null,
+      reloads: typeof v.reloads === "number" ? v.reloads : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeStamp(answer: ResumeAnswer, reloads = 0): void {
+  durableSessionSet(ONCE_KEY, JSON.stringify({ at: Date.now(), answer, reloads }), "resume.once");
+}
+
+type View = { kind: "working" } | { kind: "busy" } | { kind: "signedOut"; reason: SignedOutReason };
+
 export function ResumeScreen({ initialOwner = null }: { initialOwner?: string | null }) {
   const t = useTranslations("resume");
-  const [failed, setFailed] = useState(false);
+  const [view, setView] = useState<View>({ kind: "working" });
   /** React 18 StrictMode double-invokes effects in dev; the refresh must fire once. */
   const started = useRef(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /*
+   * The account this splash was chosen for. `initialOwner` is the marker as the EDGE saw it; the jar
+   * can have changed hands since (hydration, then the lock's wait), and a refresh under somebody
+   * else's jar rotates THEIR session from a window that is not theirs. `null` means the edge saw no
+   * marker — a cross-site navigation that withheld the cookies — and nothing is compared.
+   */
+  const stillMine = useCallback(
+    (): boolean => initialOwner === null || readOwner() === initialOwner,
+    [initialOwner],
+  );
+
+  /**
+   * One pass of the ladder: ask, then act on the answer. `resumeSession` consults `stillMine` inside
+   * the lock, so no second check stands before the call.
+   */
+  const attempt = useCallback(async (n: number): Promise<void> => {
+    const ok = await resumeSession({ mayProceed: stillMine });
+    // The jar changed while this waited for the lock: the browser holds somebody else's session.
+    if (!ok && !stillMine()) { window.location.reload(); return; }
+    const report = lastRefreshReport();
+    const answer = answerOf(ok, report);
+    if (answer === "minted") {
+      // Stamped BEFORE the reload: the next pass reads it to tell the gate refusing a live jar.
+      writeStamp("minted");
+      window.location.reload();
+      return;
+    }
+    if (answer !== "unavailable") {
+      // The server cleared the jar (or held none). No `?next=`: nothing to pass that is not
+      // already in the fragment, and a redirect parameter is an open-redirect surface.
+      writeStamp(answer);
+      leaveSignedOutNote(answer);
+      window.location.replace("/login");
+      return;
+    }
+    if (n >= CONFIRM_ATTEMPTS) { setView({ kind: "busy" }); return; }
+    timer.current = setTimeout(() => void attempt(n + 1), nextConfirmDelay(n, report?.retryAfterMs ?? null));
+  }, [stillMine]);
 
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-
-    // Guard 2. If this tab has already tried and we are somehow back here, the resume is not
-    // working and the honest thing is to say so rather than bounce again.
-    let looping = false;
-    try {
-      const last = Number(sessionStorage.getItem(ONCE_KEY) ?? 0);
-      looping = Number.isFinite(last) && last > 0 && Date.now() - last < LOOP_WINDOW_MS;
-    } catch {
-      /* private mode, storage disabled — fall through and rely on guard 1 */
-    }
-    // A stamp that could not be written leaves guard 1 as the only loop defence, which is what
-    // the catch above already accepted; it is no longer accepted in silence.
-    durableSessionSet(ONCE_KEY, String(Date.now()), "resume.once");
-    if (looping) {
-      setFailed(true);
+    const prev = readStamp();
+    const looping = prev !== null && Date.now() - prev.at < LOOP_WINDOW_MS;
+    if (looping && prev.answer !== null && isSignedOutReason(prev.answer)) {
+      writeStamp(prev.answer);
+      setView({ kind: "signedOut", reason: prev.answer });
       return;
     }
+    if (looping && prev.answer === "minted") {
+      if (prev.reloads >= GATE_RELOADS) { setView({ kind: "busy" }); return; }
+      const reloads = prev.reloads + 1;
+      timer.current = setTimeout(() => {
+        writeStamp("minted", reloads);
+        window.location.reload();
+      }, nextConfirmDelay(reloads, null));
+      return;
+    }
+    void attempt(1);
+  }, [attempt]);
 
-    /*
-     * The account this splash was chosen for. `initialOwner` is the marker as the EDGE saw it when
-     * it decided to serve this page; the jar can have changed hands since — this effect runs after
-     * hydration, and the lock inside the refresh adds a second wait. A refresh under a jar that has
-     * become somebody else's rotates THEIR session from a window that is not theirs. `null` means
-     * the edge saw no marker — the ordinary shape of a cross-site navigation that withheld the
-     * cookies — so nothing is compared and the resume runs exactly as it always has.
-     */
-    const stillMine = (): boolean => initialOwner === null || readOwner() === initialOwner;
+  useEffect(() => () => { if (timer.current !== null) clearTimeout(timer.current); }, []);
 
-    void (async () => {
-      /*
-       * No second check before this call, deliberately. One stood here and was removed when its
-       * mutation could not be made to bite: `resumeSession` consults the same predicate inside the
-       * lock, so an early copy changed no outcome in any reachable sequence — a check nothing can
-       * watch fail is not defence in depth, it is decoration a later reader will trust. The one gap
-       * the predicate does not cover is `resumeSession`'s own `inFlight` dedupe: a refresh already
-       * running when this effect starts is returned as-is — an early check would not help there
-       * either, the request has left.
-       */
-      const ok = await resumeSession({ mayProceed: stillMine });
-      if (!ok) {
-        // The predicate refused: the jar changed while this waited for the lock. Same answer as
-        // above, and NOT `/login` — that would send a signed-in person to the front door.
-        if (!stillMine()) { window.location.reload(); return; }
-        // NOT the marketing page. This browser was signed in a moment ago; showing it the
-        // pitch would be answering "let me back in" with "here is what ohmail is". The server
-        // has already cleared the jar, so `/` would render marketing — so go where the person
-        // is actually trying to get to.
-        //
-        // No `?next=`: this is a single origin with fragment routing, so there is nothing to
-        // pass that is not already in the fragment, and a redirect parameter is an
-        // open-redirect surface this product has no reason to own.
-        window.location.replace("/login");
-        return;
-      }
-      // The stamp is deliberately LEFT IN PLACE across this reload — it is what lets the next
-      // pass recognise a loop. `LOOP_WINDOW_MS` is what stops it from being a permanent veto.
-      //
-      // Reload, not replace: the URL is already correct, fragment and all. Only the server's
-      // answer needs to change now that the jar holds a live session. See the header — the
-      // replace-to-the-same-URL version shipped and silently did nothing.
-      window.location.reload();
-    })();
-  }, []);
+  const tryAgain = useCallback(() => {
+    setView({ kind: "working" });
+    void attempt(1);
+  }, [attempt]);
 
-  // Deliberately silent while it works. This is normally 200-400ms, and a sentence that
-  // flashes for a third of a second is worse than a quiet frame — the same call
-  // `EngineProvider`'s "resolving" state makes.
-  if (!failed) return <div className="gate" aria-busy="true" aria-live="polite" />;
+  // Deliberately silent while it works: a sentence that flashes for a third of a second is worse
+  // than a quiet frame — the same call `EngineProvider`'s "resolving" state makes.
+  if (view.kind === "working") return <div className="gate" aria-busy="true" aria-live="polite" />;
 
   return (
     <div className="gate">
@@ -118,12 +169,24 @@ export function ResumeScreen({ initialOwner = null }: { initialOwner?: string | 
             <em>oh</em>mail
           </b>
         </span>
-        <h1>{t("failedTitle")}</h1>
-        <p>{t("failedBody")}</p>
-        <div className="gate-actions">
-          <Link className="btn primary" href="/login">{t("signIn")}</Link>
-          <Link className="btn" href="/?demo=1">{t("openDemo")}</Link>
-        </div>
+        {view.kind === "busy" ? (
+          <>
+            <h1>{t("busyTitle")}</h1>
+            <p>{t("busyBody")}</p>
+            <div className="gate-actions">
+              <button type="button" className="btn primary" onClick={tryAgain}>{t("tryAgain")}</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <h1>{t("failedTitle")}</h1>
+            <p>{t(REASON_BODY[view.reason])}</p>
+            <div className="gate-actions">
+              <Link className="btn primary" href="/login">{t("signIn")}</Link>
+              <Link className="btn" href="/?demo=1">{t("openDemo")}</Link>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

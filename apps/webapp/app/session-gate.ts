@@ -11,13 +11,11 @@
 
 /**
  * Every non-`full` answer means MARKETING — except where the resume marker (`tf_resume`, Lax,
- * credential-free) says otherwise. No marker ⇒ the landing. Marker + a 401 ⇒ resume (dead access
- * token, live refresh token). Marker + no answer (timeout, network, 5xx) ⇒ resume: the
- * {@link SESSION_TIMEOUT_MS} budget loses to a serverless cold start, and "marketing" there showed
- * a signed-in customer the pitch (observed live); the splash retries on the browser's own budget.
- * Marker + a clean non-401 refusal or non-`full` 200 ⇒ the landing: not something a refresh fixes.
- * The enrollment scope is a third state — `scope` is compared to the literal `"full"`, so a
- * password-only credential never gets the mail client. `?demo=1` is answered BEFORE the cookie is read.
+ * credential-free) says otherwise. THE GATE NEVER ROUTES A FAULT TO A WRITE: with the marker, no
+ * token or a CODED 401 means resume (the splash spends the refresh token); a present token the API
+ * could not vouch for — timeout, network, 5xx, 429, an uncoded 401 — means `app`, whose own check
+ * verifies with backoff and keeps the warm mirror. A throttled token-holder is served `app` without
+ * a probe. No marker: the landing, whatever the fault. `?demo=1` is answered before the cookie.
  */
 import { isDemoBuild, isDemoRequested } from "./demo-mode";
 
@@ -64,9 +62,9 @@ export const SESSION_ENDPOINT = "/auth/session";
  * How long the edge waits for the API before giving up. Short on purpose: this runs in front of the
  * first paint of the product's front door, so the budget is what a human tolerates before deciding
  * the site is broken. Deliberately SHORTER than a serverless cold start can be — blowing the budget
- * is no longer a dead end, because a browser holding the resume marker is routed to the splash,
- * whose refresh runs on the browser's own clock and can outwait the cold start. Raising this
- * instead would hold every signed-in first paint hostage to the slowest case.
+ * decides nothing, because a token-holder with the marker is served the app, whose own check runs
+ * on the browser's clock with backoff and outwaits the cold start. Raising this instead would hold
+ * every signed-in first paint hostage to the slowest case.
  */
 export const SESSION_TIMEOUT_MS = 1_500;
 
@@ -113,6 +111,12 @@ export interface GateInput {
   apiOrigin: string | null;
   /** The process environment, for `NEXT_PUBLIC_DEMO`. */
   env?: Record<string, string | undefined>;
+  /**
+   * The edge's burst cap tripped for this client (`middleware.ts`). A token-holder is then served
+   * the app WITHOUT a probe — the shell verifies — and never the splash: a refresh is a write, and
+   * being fast is not a reason to spend a rotation.
+   */
+  throttled?: boolean;
   /** Injectable so the tests can assert the ZERO-fetch branches by counting calls. */
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
@@ -165,6 +169,9 @@ export async function resolveSurface(input: GateInput): Promise<Surface> {
   //    on presence alone is the one shortcut this file refuses to take.
   if (!input.apiOrigin) return "marketing";
 
+  // 3b. Throttled: no probe, and never the splash. Only a token-holder reaches this line.
+  if (input.throttled === true) return resumable ? "app" : "marketing";
+
   const fetchImpl = input.fetchImpl ?? fetch;
   const timeoutMs = input.timeoutMs ?? SESSION_TIMEOUT_MS;
 
@@ -184,38 +191,24 @@ export async function resolveSurface(input: GateInput): Promise<Surface> {
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch {
-    // Timeout, DNS, TLS, an aborted edge invocation — indistinguishable from here, and all
-    // meaning the same thing: we cannot prove a session RIGHT NOW. With the marker that is a
-    // "resume", and the timeout is the case that forced it: the API is serverless, this gate's
-    // budget is {@link SESSION_TIMEOUT_MS}, and the first request after a deploy pays a cold
-    // start that can exceed it. The old answer was "marketing", so a signed-in customer hitting
-    // that first request was handed the pitch, and their manual reload (against the instance
-    // their attempt had just warmed) landed in the app — observed live as exactly that pattern.
-
-    // The splash can prove what this gate cannot: its `POST /auth/refresh` runs with the
-    // browser's own budget, not this 1.5s clamp (a resume guard pins the absence of an
-    // artificial timeout there), so a cold-but-alive API succeeds and `reload()` re-runs a
-    // now-warm gate. It cannot loop: a failed resume exits to `/login`, never back to `/`, and
-    // the splash's sessionStorage stamp turns a second pass inside ten seconds into an honest
-    // failure card (`ResumeScreen`). Worst case of resuming during a real outage: one quiet
-    // splash, then the truth; worst case of not resuming: every API blink logs the front door
-    // out. WITHOUT the marker there is nothing to resume and no standing to assume — the
-    // landing stays the answer, which also keeps this branch worthless to anyone spraying
-    // cookie-shaped values during an outage.
-    return resumable ? "resume" : "marketing";
+    // Timeout, DNS, TLS, an aborted edge invocation: the API did not ANSWER, so nothing about the
+    // session was learned. The shell asks again on the browser's own clock and keeps the warm
+    // mirror; the splash would spend a rotation the jar did not need and, while the API stays
+    // busy, loop into a sign-in card over a live session. Without the marker there is no
+    // standing to assume a session, which also keeps this branch worthless to a cookie sprayer.
+    return resumable ? "app" : "marketing";
   }
 
-  // 401 expired/revoked, 5xx, 404… A 401 with a marker is the CENTRAL case this exists for:
-  // the access token is genuinely dead and the refresh token is genuinely alive, which is
-  // every signed-in user fifteen minutes after they last loaded a page.
-  //
-  // A 5xx is the catch branch's failure wearing a status line — the API did not ANSWER the
-  // question, it reported that it couldn't — so with the marker it resumes for the same
-  // reasons (and with the same loop guards) as the timeout above. The other non-200s
-  // (403, 404, 400…) are clean refusals: the API answered, and what it said is not
-  // something a refresh fixes, so they stay on the landing marker or no marker.
-  if (response.status === 401 && resumable) return "resume";
-  if (response.status >= 500 && resumable) return "resume";
+  // A CODED 401 is the API saying this access token is dead — with the marker, the refresh token
+  // may well be alive, which is every signed-in user fifteen minutes after their last page. An
+  // uncoded 401 is a platform in front of the API, a 5xx or a 429 is a fault: no answer about the
+  // session, so the app (see the catch). Other refusals (400, 403, 404) are answers a refresh does
+  // not fix, and land on the landing.
+  if (response.status === 401) {
+    if (!resumable) return "marketing";
+    return (await codedRefusal(response)) ? "resume" : "app";
+  }
+  if ((response.status >= 500 || response.status === 429) && resumable) return "app";
   if (response.status !== 200) return "marketing";
 
   let body: SessionBody;
@@ -233,4 +226,14 @@ export async function resolveSurface(input: GateInput): Promise<Surface> {
   if (body?.scope !== "full") return "marketing";
   if (typeof body?.user?.userId !== "string") return "marketing";
   return "app";
+}
+
+/** Did this 401 come from OUR envelope (`{error: {code}}`) rather than from a platform? */
+async function codedRefusal(res: Response): Promise<boolean> {
+  try {
+    const body = (await res.json()) as { error?: { code?: unknown } } | null;
+    return typeof body?.error?.code === "string";
+  } catch {
+    return false;
+  }
 }

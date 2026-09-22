@@ -25,6 +25,7 @@ import { LOGIN_INVITE_KEY, signupPosture } from "../../invite-posture";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "../../shell/confirm-schedule";
 import { refreshSettled } from "../../session-refresh";
 import { resolveOwnerOutcome } from "../session-outcome";
+import { REASON_BODY, takeSignedOutNote, type SignedOutReason } from "../resume/signed-out-note";
 
 type Stage = "password" | "twofa";
 
@@ -48,6 +49,7 @@ function loginError(err: unknown, tried: FactorTried, t: (key: string) => string
 
 export function LoginScreen({ publicSignup = false }: { publicSignup?: boolean }) {
   const t = useTranslations("login");
+  const tr = useTranslations("resume");
   /* WHAT THIS DEPLOYMENT ASKS A STRANGER FOR. Read on the server and handed down, the same seam
      as `/join/page.tsx`: this is a client component and `TF_PUBLIC_SIGNUP` is a server decision.
      Defaulted `false` — an invite-only reading is the safe one to be wrong about. */
@@ -62,6 +64,12 @@ export function LoginScreen({ publicSignup = false }: { publicSignup?: boolean }
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Why the resume splash sent this tab here, read once after mount (never during render). */
+  const [signedOut, setSignedOut] = useState<SignedOutReason | null>(null);
+  useEffect(() => {
+    const note = takeSignedOutNote();
+    if (note !== null) setSignedOut(note);
+  }, []);
 
   const configured = apiConfigured();
 
@@ -285,6 +293,7 @@ export function LoginScreen({ publicSignup = false }: { publicSignup?: boolean }
             split across elements. */}
         <span className="wordmark"><b><em>oh</em>mail</b></span>
         <h1>{t("title")}</h1>
+        {signedOut && <p className="sub" role="status">{tr(REASON_BODY[signedOut])}</p>}
         {/* THE SUBTITLE FOLLOWS THE FACTS ON SCREEN — claims-are-contracts. The old fixed
             "Your password, then your passkey… nothing to type" stood over the TOTP step, which
             was at that moment asking the user to type a six-digit code — directly false for the

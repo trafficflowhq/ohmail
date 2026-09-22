@@ -133,33 +133,13 @@ async function serverNeedsSetup(apiOrigin: string): Promise<boolean> {
 }
 
 /**
- * A PER-INSTANCE BURST CAP on the one thing an anonymous request can make this origin
- * spend.
- *
- * Before the merge, `/` was a static marketing page on a separate deployment that touched
- * no backend. Now a request carrying any `tf_session` value at all forces an edge
- * invocation, a cross-host fetch held open for up to `SESSION_TIMEOUT_MS`, an API function
- * invocation and two indexed reads — all paid BEFORE anything can reject the cookie.
- * `packages/api/src/routes/index.ts` states plainly that there is deliberately no throttle
- * middleware and that a per-IP network limit is out of scope for that slice, and
- * `AuthService`'s per-key lockout does not apply to a session read. So between a trivial
- * request loop and real invocation cost there was nothing.
- *
- * `session-gate.ts`'s shape check removes the lazy version of that loop for free. This
- * removes the rest, and it is deliberately CRUDE:
- *
- *  - the window is per EDGE INSTANCE, not global. Module state survives between
- *    invocations on the same instance and nothing more; there is no KV in this
- *    deployment and inventing one inside a repair would be the wrong trade.
- *  - the threshold is generous by two orders of magnitude against a human. A person
- *    reloading the product's front door makes one gated fetch per navigation; a NAT'd
- *    office of fifty people cannot reach {@link BURST_MAX} in {@link BURST_WINDOW_MS}.
- *  - tripping it answers what a cookieless request gets: the landing for a stranger, the
- *    resume splash for a browser holding the marker. It never errors and never blocks.
- *
- * It is a floor under the cost, not a rate limiter. A real per-IP limit belongs in the
- * platform's firewall, in front of the function, where it can refuse before an invocation
- * is billed at all — recorded as the follow-up it is.
+ * A PER-INSTANCE BURST CAP on what a cookie-bearing request makes this origin spend: an edge
+ * invocation, a cross-host probe held open for up to `SESSION_TIMEOUT_MS`, an API invocation and two
+ * indexed reads, all before anything can reject the cookie. Deliberately crude: per EDGE INSTANCE
+ * (there is no KV here), two orders of magnitude above a person or an office behind one address.
+ * Tripping it skips the probe, never the session: a token-holder with the marker is served the app
+ * (its own check verifies), everyone else the landing — never the splash, never an error. A floor
+ * under the cost, not a rate limiter; a real per-IP limit belongs in the platform's firewall.
  */
 const BURST_WINDOW_MS = 10_000;
 const BURST_MAX = 30;
@@ -266,7 +246,8 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   }
 
   // A cookie-bearing request is the only one that can cost anything, so it is the only one
-  // the burst cap looks at — an anonymous flood already costs a static page and no fetch.
+  // the burst cap looks at — an anonymous flood already costs a static page and no fetch. A
+  // tripped cap skips the PROBE, never the session: the gate serves a token-holder the app.
   const throttled = token !== null && overBurst(clientKey(request), Date.now());
 
   // Presence only, and never sent to the gate as a credential — see `RESUME_COOKIE`. It is
@@ -274,7 +255,8 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   const marker = request.cookies.has(RESUME_COOKIE);
 
   const surface = await resolveSurface({
-    sessionToken: throttled ? null : token,
+    sessionToken: token,
+    throttled,
     resumeMarker: marker,
     search: request.nextUrl.searchParams,
     apiOrigin: API_ORIGIN,

@@ -10,7 +10,12 @@
  */
 
 import { csrfToken } from "./csrf";
-import { markSessionAlive, markSessionDead, registerSessionProbe } from "./shell/session-truth";
+import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "./shell/confirm-schedule";
+import { readOwner } from "./shell/owner-cookie";
+import {
+  markSessionAlive, markSessionDead, registerSessionProbe, sessionIsDead, subscribeSessionRevival,
+  subscribeSessionTruth,
+} from "./shell/session-truth";
 
 /** The one path that carries `tf_refresh`. Must equal `REFRESH_PATH` in `next.config.mjs`. */
 export const REFRESH_ENDPOINT = "/auth/refresh";
@@ -49,6 +54,8 @@ export interface RefreshReport {
   code: string | null;
   /** The class of a thrown value — with its VALUE appended when that class is `String`. */
   errorClass: string | null;
+  /** The server's `Retry-After`, in ms, when a fault named one — the backoff seeds from it. */
+  retryAfterMs: number | null;
 }
 
 let lastReport: RefreshReport | null = null;
@@ -319,14 +326,14 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> 
       // latch additionally requires OUR error envelope: a 401
       // with no parseable `error.code` is a platform interposing itself.
       if (res.status === 204) {
-        recordRefresh({ outcome: "minted", status: 204, code: null, errorClass: null });
+        recordRefresh({ outcome: "minted", status: 204, code: null, errorClass: null, retryAfterMs: null });
         markSessionAlive();
         return true;
       }
       // Read ONCE, for both facts: whether the envelope is ours, and which refusal it names.
       const code = res.status === 401 ? await refusalCode(res) : null;
       if (code !== null) {
-        recordRefresh({ outcome: "revoked", status: 401, code, errorClass: null });
+        recordRefresh({ outcome: "revoked", status: 401, code, errorClass: null, retryAfterMs: null });
         markSessionDead();
         return false;
       }
@@ -335,11 +342,14 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> 
       // session — which is a different fact from "revoked" and is recorded as one.
       recordRefresh({
         outcome: "unavailable", status: res.status, code: await faultCode(res), errorClass: null,
+        retryAfterMs: retryAfterMsOf(res) ?? null,
       });
       return false;
     } catch (err) {
       // Offline, aborted, DNS — not resumable right now, and no answer to read a code from.
-      recordRefresh({ outcome: "unavailable", status: 0, code: null, errorClass: classOf(err) });
+      recordRefresh({
+        outcome: "unavailable", status: 0, code: null, errorClass: classOf(err), retryAfterMs: null,
+      });
       return false;
     }
   });
@@ -379,6 +389,21 @@ async function faultCode(res: Response): Promise<string | null> {
 }
 
 /**
+ * `Retry-After` → milliseconds, or `undefined`. Integer seconds only: the HTTP-date form means
+ * trusting this client's clock to subtract it, and every `Retry-After` this API sends is
+ * delta-seconds (`packages/api/src/middleware.ts`). `0` and negatives are `undefined` too — a
+ * backoff seeded with 0 spins. No upper clamp here: the ceiling is `confirm-schedule.ts`'s. The one
+ * reader, shared with `api-client.ts`, which already depends on this module.
+ */
+export function retryAfterMsOf(res: Response): number | undefined {
+  const raw = res.headers.get("retry-after");
+  if (raw === null || !/^\s*\d+\s*$/.test(raw)) return undefined;
+  const seconds = Number.parseInt(raw.trim(), 10);
+  if (!Number.isSafeInteger(seconds) || seconds <= 0) return undefined;
+  return seconds * 1000;
+}
+
+/**
  * THE PROBE, WIRED AT IMPORT TIME. `shell/session-truth.ts` may not import this module — the
  * shell ships in the public desktop mirror, which has no `/auth/refresh` — so the wiring runs
  * the other way: any build that loads the Cloud session client (every `api-client` importer
@@ -391,6 +416,87 @@ async function faultCode(res: Response): Promise<string | null> {
 registerSessionProbe(() => {
   void resumeSession();
 });
+
+/**
+ * RENEWAL AHEAD OF EXPIRY. The access cookie lives fifteen minutes, and waiting for a request to
+ * meet its 401 puts the refresh, and any fault it meets, in front of the person. So every minted or
+ * confirmed session arms ONE renewal at ~80% of the window, jittered, while the tab is visible,
+ * through `resumeSession` — the one refresh path, with its lock, its single flight and its verdicts.
+ * A fault retries on the confirm ladder; past it `api()`'s refresh-on-401 is the belt. `tf_csrf` is
+ * re-minted with every session, so a changed value inside the lock means another tab renewed.
+ */
+export const ACCESS_WINDOW_MS = 15 * 60_000;
+export const RENEW_AT_FRACTION = 0.8;
+export const RENEW_JITTER_MS = 60_000;
+
+let renewTimer: ReturnType<typeof setTimeout> | null = null;
+/** What the jar held when the renewal was armed: a skip is decided against it. */
+let armed: { owner: string; csrf: string | null } | null = null;
+/** The timer fired while the tab was hidden; the next `visible` pays it. */
+let renewOwed = false;
+let watchingVisibility = false;
+
+function tabHidden(): boolean {
+  return typeof document !== "undefined" && document.visibilityState === "hidden";
+}
+
+function stopRenewal(): void {
+  if (renewTimer !== null) clearTimeout(renewTimer);
+  renewTimer = null;
+  armed = null;
+  renewOwed = false;
+}
+
+function armRenewal(): void {
+  stopRenewal();
+  if (typeof window === "undefined") return;
+  const owner = readOwner();
+  if (owner === null) return;
+  armed = { owner, csrf: csrfToken() };
+  const due = ACCESS_WINDOW_MS * RENEW_AT_FRACTION - Math.random() * RENEW_JITTER_MS;
+  renewTimer = setTimeout(() => { renewTimer = null; void renew(1); }, Math.max(1, due));
+  if (!watchingVisibility && typeof document !== "undefined") {
+    watchingVisibility = true;
+    document.addEventListener("visibilitychange", () => {
+      if (renewOwed && !tabHidden()) { renewOwed = false; void renew(1); }
+    });
+  }
+}
+
+/**
+ * Still this jar's renewal to make? The same account, and a CSRF value that is either the one
+ * armed with or gone (the access cookie lapsed while the tab slept — renew now). A different
+ * value is another tab's fresh session.
+ */
+function renewalOwed(): boolean {
+  if (armed === null || readOwner() !== armed.owner) return false;
+  const csrf = csrfToken();
+  return csrf === null || csrf === armed.csrf;
+}
+
+async function renew(attempt: number): Promise<void> {
+  if (armed === null || sessionIsDead()) return;
+  if (tabHidden()) { renewOwed = true; return; }
+  const owner = armed.owner;
+  // A 204 publishes a revival, and the revival re-arms from its own moment.
+  if (await resumeSession({ mayProceed: renewalOwed })) return;
+  if (!renewalOwed()) {
+    if (armed !== null && readOwner() === owner) armRenewal();
+    return;
+  }
+  const report = lastRefreshReport();
+  if (report?.outcome !== "unavailable" || attempt >= CONFIRM_ATTEMPTS) return;
+  renewTimer = setTimeout(() => { renewTimer = null; void renew(attempt + 1); },
+    nextConfirmDelay(attempt, report.retryAfterMs));
+}
+
+subscribeSessionRevival(armRenewal);
+subscribeSessionTruth(() => { if (sessionIsDead()) stopRenewal(); });
+
+/** Test seam: is a renewal armed right now? */
+export function renewalArmedForTests(): boolean {
+  return armed !== null;
+}
 
 /**
  * Should this failure be retried after a refresh? 401 is not the whole

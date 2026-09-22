@@ -2660,7 +2660,12 @@
   },
   "resume": {
     "failedTitle": "Bitte melde dich neu an",
-    "failedBody": "Deine Sitzung konnte nicht wiederhergestellt werden.",
+    "revokedBody": "Du wurdest in diesem Browser abgemeldet.",
+    "expiredBody": "Deine Anmeldung in diesem Browser ist abgelaufen.",
+    "absentBody": "In diesem Browser ist keine Anmeldung gespeichert.",
+    "busyTitle": "ohmail ist gerade nicht erreichbar",
+    "busyBody": "Der Server ist ausgelastet. Dieser Browser wurde nicht abgemeldet.",
+    "tryAgain": "Erneut versuchen",
     "signIn": "Anmelden",
     "openDemo": "Demo öffnen"
   },
