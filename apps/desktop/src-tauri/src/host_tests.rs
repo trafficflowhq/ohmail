@@ -33,7 +33,7 @@ fn the_armed_spawn_composes_exactly_three_variables_with_the_frozen_spellings() 
     // the contract; the frozen three never move.
     let spawn =
         HostSpawn { port: 3311, origin: Some("https://mac.tail1234.ts.net".to_string()), lan: None, assets: None };
-    let pairs = env_for(&spawn);
+    let pairs = env_for(&HostPlan::Armed(spawn.clone()));
     assert_eq!(pairs.len(), 3);
     let env = env_map(&pairs);
     // "1" EXACTLY — the engine arms on that string and nothing else, so "true" here would be a
@@ -55,7 +55,7 @@ fn a_packaged_host_client_adds_the_assets_variable_and_only_that() {
         lan: None,
         assets: Some(PathBuf::from("/bundle/resources/host-client")),
     };
-    let pairs = env_for(&spawn);
+    let pairs = env_for(&HostPlan::Armed(spawn.clone()));
     assert_eq!(pairs.len(), 4);
     let env = env_map(&pairs);
     assert_eq!(
@@ -87,7 +87,7 @@ fn the_origin_is_passed_through_verbatim_and_never_validated_here() {
     // The engine owns validation and degrades host mode over garbage with a logged reason; a
     // shell-side check would be a second copy of the engine's rules. So garbage crosses AS IS.
     let spawn = HostSpawn { port: 1, origin: Some("not a url at all".to_string()), lan: None, assets: None };
-    let env = env_map(&env_for(&spawn));
+    let env = env_map(&env_for(&HostPlan::Armed(spawn.clone())));
     assert_eq!(env.get("OHMAIL_HOST_ORIGIN").map(String::as_str), Some("not a url at all"));
 }
 
@@ -143,13 +143,14 @@ fn with_no_stored_door_the_plan_is_still_byte_identical() {
     // Some(Local) and is covered above. Equality, so any drift fails here.
     let plan = Plan::Spawn(a_launch());
     assert_eq!(extend_plan(plan.clone(), None, None), plan);
-    assert_eq!(extend_plan(plan.clone(), None, Some(&a_spawn())), plan);
+    assert_eq!(extend_plan(plan.clone(), None, Some(&HostPlan::Armed(a_spawn()))), plan);
 }
 
 #[test]
 fn an_armed_plan_grows_the_three_variables_on_the_local_door_only() {
     let spawn = a_spawn();
-    let extended = extend_plan(Plan::Spawn(a_launch()), Some(config::Mode::Local), Some(&spawn));
+    let extended =
+        extend_plan(Plan::Spawn(a_launch()), Some(config::Mode::Local), Some(&HostPlan::Armed(spawn)));
     let Plan::Spawn(launch) = extended else { panic!("the plan stopped spawning") };
     assert_eq!(launch.env.len(), a_launch().env.len() + 3);
     let env = env_map(&launch.env);
@@ -167,7 +168,8 @@ fn the_cloud_door_never_gets_a_host_door_even_armed() {
     // environment, which is why this now asserts cleared-and-nothing-added rather than
     // byte-identity. No host pair is composed for it under any spawn.
     let spawn = a_spawn();
-    let extended = extend_plan(Plan::Spawn(a_launch()), Some(config::Mode::Cloud), Some(&spawn));
+    let extended =
+        extend_plan(Plan::Spawn(a_launch()), Some(config::Mode::Cloud), Some(&HostPlan::Armed(spawn)));
     let Plan::Spawn(launch) = extended else { panic!("the plan stopped spawning") };
     assert_eq!(launch.env, a_launch().env, "the cloud door composes no host pair");
     for var in HOST_ENV_VARS {
@@ -176,9 +178,87 @@ fn the_cloud_door_never_gets_a_host_door_even_armed() {
 }
 
 #[test]
+fn a_disarmed_local_plan_HOLDS_the_port_host_mode_published() {
+    // ── A DOOR THAT STOPPED SAYS SO, RATHER THAN LEAVING A FREE PORT ────────────────────────
+    //
+    // The engine has held a stood-down port since `maybeHoldStoodDownPort` existed, and nothing
+    // ever armed it: a disarm cleared every `OHMAIL_HOST_*` variable and added none, so the
+    // loopback port went back to the kernel while a `tailscale serve` registration that outlived
+    // its withdrawal still pointed at it — and whatever bound that port next inherited a
+    // published route to somebody's tailnet.
+    //
+    // Watch it fail: drop the `HostPlan::Held` arm from `env_for`, or the `Held` composition
+    // from the disarm's world step, and this reads no knob.
+    let extended =
+        extend_plan(Plan::Spawn(a_launch()), Some(config::Mode::Local), Some(&HostPlan::Held(3311)));
+    let Plan::Spawn(launch) = extended else { panic!("the plan stopped spawning") };
+    let env = env_map(&launch.env);
+    assert_eq!(env.get(HOST_STAND_DOWN_VAR).map(String::as_str), Some("3311"));
+    // ONE pair, and never the arming flag: the engine refuses the knob beside `OHMAIL_HOST_MODE`
+    // by name, because the armed door would bind that port itself.
+    assert_eq!(launch.env.len(), a_launch().env.len() + 1);
+    assert_eq!(env.get(HOST_MODE_VAR), None);
+    assert_eq!(env.get(HOST_PORT_VAR), None);
+    // …and the contract's variables are still CLEARED first, so an inherited knob for a port
+    // this install never published cannot survive into the child.
+    for var in HOST_ENV_VARS {
+        assert!(launch.unset.iter().any(|k| k == var), "{var} must be cleared before the hold");
+    }
+}
+
+#[test]
+fn nothing_is_held_for_an_install_that_never_armed_or_for_the_cloud_door() {
+    // THE POSITIVE CONTROL for the case above, both halves of it. A launch that composes no host
+    // plan adds no knob — an install that never armed published no port, and holding one would
+    // bind a port on nobody's behalf. And the CLOUD door composes none either, armed or held:
+    // it mirrors a hosted account and has no host door of this install's to stand down from.
+    let never_armed =
+        extend_plan(Plan::Spawn(a_launch()), Some(config::Mode::Local), None);
+    let Plan::Spawn(launch) = never_armed else { panic!("the plan stopped spawning") };
+    assert_eq!(launch.env, a_launch().env, "a never-armed install holds nothing");
+
+    let cloud =
+        extend_plan(Plan::Spawn(a_launch()), Some(config::Mode::Cloud), Some(&HostPlan::Held(3311)));
+    let Plan::Spawn(launch) = cloud else { panic!("the plan stopped spawning") };
+    assert_eq!(launch.env, a_launch().env, "the cloud door holds no port of the local door's");
+    assert!(launch.unset.iter().any(|k| k == HOST_STAND_DOWN_VAR));
+}
+
+#[test]
+fn the_setting_carries_the_published_port_across_a_quit_and_an_arming_clears_it() {
+    // The hold has to survive the app closing — a route outlives a process — so the port lives
+    // in `host.json` beside the one re-arming offers back, and `HostBoot` reads it on the
+    // DISARMED branch, which is the only branch it can be true on.
+    let stood_down =
+        config::HostSettings { enabled: false, port: 3311, lan: None, published: Some(3311) };
+    let boot = HostBoot::detect_with(Some(stood_down), Some(config::Mode::Local), &probe_ok, None);
+    assert!(!boot.armed, "a stood-down install is not armed");
+    assert_eq!(boot.held, Some(3311));
+    assert_eq!(boot.plan(), Some(HostPlan::Held(3311)));
+
+    // An install that never armed has no file at all, and one whose file predates this field
+    // reads `published: None` — both hold nothing.
+    assert_eq!(HostBoot::detect_with(None, Some(config::Mode::Local), &probe_ok, None).plan(), None);
+    let legacy = config::HostSettings { enabled: false, port: 3311, lan: None, published: None };
+    assert_eq!(
+        HostBoot::detect_with(Some(legacy), Some(config::Mode::Local), &probe_ok, None).plan(),
+        None
+    );
+
+    // ARMED wins, always: a door that is serving is never also a door that has stopped.
+    let on = config::HostSettings { enabled: true, port: 3311, lan: None, published: Some(3311) };
+    let boot = HostBoot::detect_with(Some(on), Some(config::Mode::Local), &probe_ok, None);
+    assert_eq!(boot.held, None);
+    assert!(matches!(boot.plan(), Some(HostPlan::Armed(_))));
+}
+
+#[test]
 fn an_inert_plan_stays_inert() {
     let inert = Plan::Inert(EngineState::Stopped);
-    assert_eq!(extend_plan(inert.clone(), Some(config::Mode::Local), Some(&a_spawn())), inert);
+    assert_eq!(
+        extend_plan(inert.clone(), Some(config::Mode::Local), Some(&HostPlan::Armed(a_spawn()))),
+        inert
+    );
 }
 
 // ── The invocations: serve, never funnel ─────────────────────────────────────────────────────
@@ -498,14 +578,14 @@ fn no_setting_and_a_disabled_setting_both_boot_disarmed() {
     let boot = HostBoot::detect_with(None, Some(config::Mode::Local), &probe_ok, None);
     assert!(!boot.armed);
     assert!(boot.spawn.is_none() && boot.problem.is_none());
-    let off = config::HostSettings { enabled: false, port: 3311, lan: None };
+    let off = config::HostSettings { enabled: false, port: 3311, lan: None, published: None };
     let boot = HostBoot::detect_with(Some(off), Some(config::Mode::Local), &probe_ok, None);
     assert!(!boot.armed && boot.spawn.is_none());
 }
 
 #[test]
 fn enabled_on_the_wrong_door_is_off_with_its_reason_and_probes_nothing() {
-    let on = config::HostSettings { enabled: true, port: 3311, lan: None };
+    let on = config::HostSettings { enabled: true, port: 3311, lan: None, published: None };
     let probe_must_not_run = || -> Result<TailnetIdentity, Problem> {
         panic!("the probe ran for a door that has no host mode")
     };
@@ -519,7 +599,7 @@ fn enabled_on_the_wrong_door_is_off_with_its_reason_and_probes_nothing() {
 
 #[test]
 fn enabled_on_the_local_door_arms_with_the_probed_origin() {
-    let on = config::HostSettings { enabled: true, port: 3311, lan: None };
+    let on = config::HostSettings { enabled: true, port: 3311, lan: None, published: None };
     let boot = HostBoot::detect_with(Some(on), Some(config::Mode::Local), &probe_ok, None);
     assert!(boot.armed);
     assert_eq!(
@@ -531,7 +611,7 @@ fn enabled_on_the_local_door_arms_with_the_probed_origin() {
 
 #[test]
 fn the_packaged_assets_ride_the_armed_spawn() {
-    let on = config::HostSettings { enabled: true, port: 3311, lan: None };
+    let on = config::HostSettings { enabled: true, port: 3311, lan: None, published: None };
     let assets = Some(PathBuf::from("/bundle/resources/host-client"));
     let boot =
         HostBoot::detect_with(Some(on), Some(config::Mode::Local), &probe_ok, assets.clone());
@@ -544,7 +624,7 @@ fn a_failed_probe_arms_degraded_and_spawns_the_safe_branch() {
     // — while the engine spawns WITHOUT the host variables, because a host door with no origin
     // to guard against is a door the engine would refuse anyway. The problem is what the tray
     // and the window report.
-    let on = config::HostSettings { enabled: true, port: 3311, lan: None };
+    let on = config::HostSettings { enabled: true, port: 3311, lan: None, published: None };
     let boot = HostBoot::detect_with(Some(on), Some(config::Mode::Local), &|| {
         Err(Problem::NotLoggedIn)
     }, None);
@@ -781,7 +861,7 @@ fn a_lan_only_spawn_composes_mode_port_and_lan_and_no_origin() {
         lan: Some("192.168.1.23".to_string()),
         assets: None,
     };
-    let pairs = env_for(&spawn);
+    let pairs = env_for(&HostPlan::Armed(spawn.clone()));
     assert_eq!(pairs.len(), 3);
     let env = env_map(&pairs);
     assert_eq!(env.get("OHMAIL_HOST_MODE").map(String::as_str), Some("1"));
@@ -798,7 +878,7 @@ fn a_tailnet_spawn_with_a_lan_choice_carries_both_doors() {
         lan: Some("10.0.0.7".to_string()),
         assets: None,
     };
-    let env = env_map(&env_for(&spawn));
+    let env = env_map(&env_for(&HostPlan::Armed(spawn.clone())));
     assert_eq!(
         env.get("OHMAIL_HOST_ORIGIN").map(String::as_str),
         Some("https://mac.tail1234.ts.net")
@@ -815,6 +895,7 @@ fn a_failed_probe_with_a_lan_choice_still_spawns_the_lan_door_and_keeps_the_prob
         enabled: true,
         port: 3311,
         lan: Some("192.168.1.23".to_string()),
+        published: None,
     };
     let boot = HostBoot::detect_with(Some(on), Some(config::Mode::Local), &|| {
         Err(Problem::NoCli)
@@ -838,7 +919,7 @@ fn a_failed_probe_without_a_lan_choice_still_spawns_nothing() {
     // The pre-LAN contract, re-pinned beside its new sibling: with neither a tailnet identity
     // nor a LAN choice there is no door anybody could reach, so the safe branch spawns the
     // engine with no host variables at all.
-    let on = config::HostSettings { enabled: true, port: 3311, lan: None };
+    let on = config::HostSettings { enabled: true, port: 3311, lan: None, published: None };
     let boot = HostBoot::detect_with(Some(on), Some(config::Mode::Local), &|| {
         Err(Problem::NoCli)
     }, None);
@@ -852,6 +933,7 @@ fn the_lan_choice_rides_a_healthy_tailnet_boot_too() {
         enabled: true,
         port: 3311,
         lan: Some("10.0.0.7".to_string()),
+        published: None,
     };
     let boot = HostBoot::detect_with(Some(on), Some(config::Mode::Local), &probe_ok, None);
     let spawn = boot.spawn.expect("armed");
@@ -952,7 +1034,8 @@ fn an_armed_spawn_unsets_every_host_variable_it_does_not_define() {
         lan: Some("192.168.1.23".to_string()),
         assets: None,
     };
-    let extended = extend_plan(Plan::Spawn(a_launch()), Some(config::Mode::Local), Some(&lan_only));
+    let extended =
+        extend_plan(Plan::Spawn(a_launch()), Some(config::Mode::Local), Some(&HostPlan::Armed(lan_only)));
     let Plan::Spawn(launch) = extended else { panic!("the plan stopped spawning") };
     for var in ["OHMAIL_HOST_MODE", "OHMAIL_HOST_PORT", "OHMAIL_HOST_ORIGIN", "OHMAIL_LAN_BIND", "OHMAIL_HOST_ASSETS"] {
         assert!(
@@ -970,7 +1053,7 @@ fn an_armed_spawn_unsets_every_host_variable_it_does_not_define() {
 //
 // The acceptance for turning hosting off is THE LISTENER — a connect to the port refused — and
 // never `host.json` and never the armed flag. The world step the real stand-down fills with
-// `set_host_spawn(None)` + `replan()` is filled here with a real socket being closed, so a body
+// `set_host_plan(Held)` + `replan()` is filled here with a real socket being closed, so a body
 // that returns on a failed write leaves that socket answering and the case names it. Two things
 // are held: the world goes away in EVERY case, and what is on disk when it goes is a file that
 // does not host — so the crash the order is chosen for cannot bring hosting back. The engine's
@@ -1008,7 +1091,7 @@ fn a_settings_dir(case: &str) -> (PathBuf, PathBuf) {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("mkdir");
     let path = dir.join("host.json");
-    config::write_host(&path, &config::HostSettings { enabled: true, port: 3311, lan: None })
+    config::write_host(&path, &config::HostSettings { enabled: true, port: 3311, lan: None, published: None })
         .expect("seed the armed setting");
     (dir, path)
 }
@@ -1087,8 +1170,8 @@ fn a_stand_down_whose_setting_cannot_be_saved_still_takes_the_listener_away() {
         &host,
         &|_| ran(0, ""),
         &|| {},
-        &|| {
-            // What the real one does here is `set_host_spawn(None)` + `replan()`; what this one
+        &|_held| {
+            // What the real one does here is `set_host_plan(Held)` + `replan()`; what this one
             // does is close the socket. Both answer the same question: is anything listening?
             drop(world.borrow_mut().take());
         },
@@ -1126,7 +1209,7 @@ fn an_ordinary_stand_down_stops_serving_and_says_nothing_it_does_not_have_to() {
         &host,
         &|_| ran(0, ""),
         &|| {},
-        &|| {
+        &|_held| {
             /* WHAT THE PANE WOULD BE TOLD WHILE THE LISTENER IS GOING. `host_state` answers off
                on the armed flag, and the pane polls it: the flag may not flip until the world
                step has returned, or the window is told hosting is off about an install still
@@ -1152,6 +1235,46 @@ fn an_ordinary_stand_down_stops_serving_and_says_nothing_it_does_not_have_to() {
         Some(false),
         "the setting was not written"
     );
+    unseal_and_remove(&dir);
+}
+
+#[test]
+fn a_stand_down_records_the_published_port_and_hands_it_to_the_world_step() {
+    // The runtime half of the hold. The record is what carries the port across a quit, and the
+    // world step is what carries it into the replacement engine — so both are measured here,
+    // from one real `stand_down_with` over a writable settings file.
+    //
+    // Watched failing: write `published: None` in the record block and the file reads nothing;
+    // pass `None` to `world_off` and the world step is handed no port.
+    let (dir, path) = a_settings_dir("holds-the-port");
+    let host = Arc::new(armed_runtime_at(Some(path.clone())));
+    let (socket, port) = a_live_socket();
+    let world = RefCell::new(Some(socket));
+    let handed: RefCell<Option<Option<u16>>> = RefCell::new(None);
+
+    let _ = stand_down_with(
+        &host,
+        &|_| ran(0, ""),
+        &|| {},
+        &|held| {
+            *handed.borrow_mut() = Some(held);
+            drop(world.borrow_mut().take());
+        },
+    );
+
+    // 3311 is the port `armed_runtime_at` is serving on — the runtime's own, not a constant
+    // repeated here: a stand-down holds what THIS install published.
+    assert_eq!(handed.borrow().expect("the world step never ran"), Some(3311));
+    let settings = config::read_host(&path).expect("the setting was not written");
+    assert_eq!(settings.enabled, false);
+    assert_eq!(settings.published, Some(3311));
+    // …and what the NEXT launch does with exactly that file: hold the port, arm nothing.
+    assert_eq!(
+        HostBoot::detect_with(Some(settings), Some(config::Mode::Local), &probe_ok, None).plan(),
+        Some(HostPlan::Held(3311))
+    );
+    assert!(!socket_answers(port), "the listener outlived the stand-down");
+
     unseal_and_remove(&dir);
 }
 
@@ -1183,7 +1306,7 @@ fn the_record_is_written_before_the_world_so_a_crash_between_them_cannot_host() 
         &host,
         &|_| ran(0, ""),
         &|| {},
-        &|| {
+        &|_held| {
             *at_the_world_step.borrow_mut() = Some(config::read_host(&path));
             drop(world.borrow_mut().take());
         },
@@ -1221,7 +1344,7 @@ fn the_shell_transition_stands_down_in_the_same_order_and_leaves_a_disarmed_inst
         &host,
         &|_| ran(0, ""),
         &|| {},
-        &|| { drop(world.borrow_mut().take()); },
+        &|_held| { drop(world.borrow_mut().take()); },
         "the install is switching to a door with no host listener",
     );
     assert!(stood, "an armed install must stand down on a shell transition");
@@ -1242,7 +1365,7 @@ fn the_shell_transition_stands_down_in_the_same_order_and_leaves_a_disarmed_inst
         &quiet,
         &|_| -> CliResult { panic!("the CLI ran for an install that was not hosting") },
         &|| { panic!("the app was asked to change for an install that was not hosting"); },
-        &|| { drop(untouched.borrow_mut().take()); },
+        &|_held| { drop(untouched.borrow_mut().take()); },
         "a door switch on an install that never hosted",
     );
     assert!(!stood);

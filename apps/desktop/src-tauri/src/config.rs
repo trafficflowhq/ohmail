@@ -1166,6 +1166,16 @@ pub struct HostSettings {
     /// garbage value degrades the LAN half over there with a logged reason. `None` is off,
     /// which is the default: same-network access is opt-in on top of host mode's own opt-in.
     pub lan: Option<String>,
+    /// THE PORT A STAND-DOWN LEFT BEHIND, and the reason this file has a second port field.
+    ///
+    /// [`port`](Self::port) is the port to offer back when the person arms again. This one is
+    /// the port host mode actually PUBLISHED and has now stopped serving: a `tailscale serve`
+    /// registration points at a fixed loopback port, the withdrawal can refuse or the CLI can
+    /// be gone, so the port must stay held rather than fall to whatever binds it next. The
+    /// engine holds it on `OHMAIL_HOST_STAND_DOWN` (`host-listener.ts`), and this field is what
+    /// carries the fact across a quit. `None` on every install that never armed, and cleared
+    /// again the moment host mode is armed — the armed door binds the port itself.
+    pub published: Option<u16>,
 }
 
 /// Read the host-mode setting. Absent, unreadable, malformed, or carrying port 0 all read as
@@ -1200,7 +1210,21 @@ pub fn read_host(path: &Path) -> Option<HostSettings> {
         }
         _ => return None,
     };
-    Some(HostSettings { enabled, port: port as u16, lan })
+    // The stood-down port: absent and null are "nothing is held" — every file written before
+    // this field existed, and every install that never armed. A number outside 1..=65535 refuses
+    // the WHOLE file, the same rule `enabled` and `lan` follow: a port this cannot read must not
+    // be half-honoured, and the recovery is identical to "never configured".
+    let published = match map.get("published") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(v) => {
+            let n = v.as_u64()?;
+            if n == 0 || n > u16::MAX as u64 {
+                return None;
+            }
+            Some(n as u16)
+        }
+    };
+    Some(HostSettings { enabled, port: port as u16, lan, published })
 }
 
 /// Write the host-mode setting. Same discipline as {@link write}: the directory is created if it
@@ -1211,6 +1235,7 @@ pub fn write_host(path: &Path, settings: &HostSettings) -> Result<(), String> {
         "enabled": settings.enabled,
         "port": settings.port,
         "lan": settings.lan,
+        "published": settings.published,
     }))
     .map_err(|err| format!("the host-mode setting could not be encoded ({err})"))?;
     // Replaced rather than truncated, for the identical reason: `read_host` reads a file that does

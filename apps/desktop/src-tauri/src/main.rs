@@ -152,7 +152,7 @@ fn main() {
         host::HostBoot::detect(&engine::Shell::paths(&app))
     };
     #[cfg(feature = "local-engine")]
-    let shell = std::sync::Arc::new(engine::Shell::start(&app, host_boot.spawn.clone()));
+    let shell = std::sync::Arc::new(engine::Shell::start(&app, host_boot.plan()));
     #[cfg(feature = "local-engine")]
     engine::manage(&app, std::sync::Arc::clone(&shell));
     // The tray, the serve re-assertion, and the state the window reads — armed installs only;

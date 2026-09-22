@@ -3727,7 +3727,7 @@ fn the_unlock_press_removes_the_stale_lock_and_starts_the_engine_again() {
             reason: "four starts in a row died on the lock".to_string(),
             last: None,
         }))),
-        host_spawn: Mutex::new(None),
+        host_plan: Mutex::new(None),
         door: Mutex::new(()),
         leaving: Mutex::new(Leaving::NotStarted),
     };

@@ -428,9 +428,9 @@ fn the_settings_file_is_replaced_rather_than_truncated_in_place() {
     // The host-mode file carries the identical hazard — an unreadable file there reads as "host
     // mode off", which silently un-publishes a running install — and the identical fix.
     let host_path = dir.join(HOST_FILE_NAME);
-    write_host(&host_path, &HostSettings { enabled: true, port: 3311, lan: None }).expect("write");
+    write_host(&host_path, &HostSettings { enabled: true, port: 3311, lan: None, published: None }).expect("write");
     let host_before = fs::metadata(&host_path).expect("stat").ino();
-    write_host(&host_path, &HostSettings { enabled: false, port: 3311, lan: None }).expect("write");
+    write_host(&host_path, &HostSettings { enabled: false, port: 3311, lan: None, published: None }).expect("write");
     assert_ne!(
         host_before,
         fs::metadata(&host_path).expect("stat").ino(),
@@ -480,7 +480,7 @@ fn writing_repeatedly_leaves_only_the_files_it_owns() {
     for _ in 0..5 {
         write(&path, &local_door()).expect("write");
         write(&path, &cloud_door()).expect("write");
-        write_host(&host_path, &HostSettings { enabled: true, port: 3311, lan: None })
+        write_host(&host_path, &HostSettings { enabled: true, port: 3311, lan: None, published: None })
             .expect("write");
     }
 
@@ -509,10 +509,10 @@ fn the_host_setting_round_trips_and_everything_broken_reads_as_disabled() {
     assert_eq!(read_host(&path), None);
 
     for settings in [
-        HostSettings { enabled: true, port: 3311, lan: None },
+        HostSettings { enabled: true, port: 3311, lan: None, published: None },
         // Disabled keeps its port, so re-arming can offer the same one back.
-        HostSettings { enabled: false, port: 3311, lan: None },
-        HostSettings { enabled: true, port: 65535, lan: None },
+        HostSettings { enabled: false, port: 3311, lan: None, published: None },
+        HostSettings { enabled: true, port: 65535, lan: None, published: None },
     ] {
         write_host(&path, &settings).expect("write");
         assert_eq!(read_host(&path), Some(settings));
@@ -541,13 +541,14 @@ fn the_host_setting_round_trips_and_everything_broken_reads_as_disabled() {
         enabled: true,
         port: 3311,
         lan: Some("192.168.1.23".to_string()),
+        published: None,
     };
     write_host(&path, &with_lan).expect("write");
     assert_eq!(read_host(&path), Some(with_lan));
     fs::write(&path, r#"{ "enabled": true, "port": 3311 }"#).expect("write");
     assert_eq!(
         read_host(&path),
-        Some(HostSettings { enabled: true, port: 3311, lan: None }),
+        Some(HostSettings { enabled: true, port: 3311, lan: None, published: None }),
         "a file from before the LAN option must read with the LAN half off"
     );
     fs::write(&path, r#"{ "enabled": true, "port": 3311, "lan": null }"#).expect("write");
@@ -557,12 +558,38 @@ fn the_host_setting_round_trips_and_everything_broken_reads_as_disabled() {
     fs::write(&path, r#"{ "enabled": true, "port": 3311, "lan": 42 }"#).expect("write");
     assert_eq!(read_host(&path), None, "a mistyped lan value must refuse the whole file");
 
+    // ── The stood-down port ──────────────────────────────────────────────────────────────
+    // Same three rules as the LAN choice, for the field that decides whether a disarmed install
+    // keeps holding the loopback port a tailnet route may still point at: it round-trips, an
+    // older file reads as nothing held, and a value this cannot read refuses the whole file
+    // rather than being half-honoured into a bind on some other port.
+    let stood_down =
+        HostSettings { enabled: false, port: 3311, lan: None, published: Some(3311) };
+    write_host(&path, &stood_down).expect("write");
+    assert_eq!(read_host(&path), Some(stood_down));
+    fs::write(&path, r#"{ "enabled": false, "port": 3311 }"#).expect("write");
+    assert_eq!(
+        read_host(&path).map(|s| s.published),
+        Some(None),
+        "a file from before the hold must read as nothing held"
+    );
+    fs::write(&path, r#"{ "enabled": false, "port": 3311, "published": null }"#).expect("write");
+    assert_eq!(read_host(&path).map(|s| s.published), Some(None));
+    for broken in [
+        r#"{ "enabled": false, "port": 3311, "published": 0 }"#,
+        r#"{ "enabled": false, "port": 3311, "published": 70000 }"#,
+        r#"{ "enabled": false, "port": 3311, "published": "3311" }"#,
+    ] {
+        fs::write(&path, broken).expect("write");
+        assert_eq!(read_host(&path), None, "{broken} was read as a port to hold");
+    }
+
     // Private at rest, like the door file: which port an install publishes on is nobody else's
     // business on a shared machine.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        write_host(&path, &HostSettings { enabled: true, port: 3311, lan: None }).expect("write");
+        write_host(&path, &HostSettings { enabled: true, port: 3311, lan: None, published: None }).expect("write");
         let mode = fs::metadata(&path).expect("stat").permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
     }

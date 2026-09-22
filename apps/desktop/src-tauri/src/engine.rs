@@ -132,6 +132,7 @@ pub const NODE_PATH_VAR: &str = "OHMAIL_NODE";
 /// Where the local mirror lives. Supplied by the shell when the environment does not name one.
 pub const DATA_DIR_VAR: &str = "OHMAIL_DATA_DIR";
 
+
 /// What the shell refuses to spawn the engine without. Naming them beats starting a process whose
 /// only outcome is a failed start or an install that can never store a credential.
 ///
@@ -1332,7 +1333,7 @@ pub struct Shell {
     /// reconfigure that replaced the engine without knowing about host mode would silently drop
     /// the host door on the relaunch, which is a phone losing its mail mid-read over a settings
     /// edit. `crate::host` decides the value; this struct only carries it into each plan.
-    host_spawn: Mutex<Option<crate::host::HostSpawn>>,
+    host_plan: Mutex<Option<crate::host::HostPlan>>,
     /// Serializes the two acts that change which door this install comes in by — a door switch
     /// ([`Shell::configure`]) and a sign-out ([`Shell::logout`]).
     ///
@@ -1405,7 +1406,7 @@ impl Shell {
                 downloads: None,
             },
             engine: Mutex::new(Arc::new(Engine::inert(EngineState::Stopped))),
-            host_spawn: Mutex::new(None),
+            host_plan: Mutex::new(None),
             door: Mutex::new(()),
             leaving: Mutex::new(Leaving::NotStarted),
         }
@@ -1418,7 +1419,7 @@ impl Shell {
         Shell {
             paths: ShellPaths { app_data: None, resources: None, downloads: None },
             engine: Mutex::new(Arc::new(engine)),
-            host_spawn: Mutex::new(None),
+            host_plan: Mutex::new(None),
             door: Mutex::new(()),
             leaving: Mutex::new(Leaving::NotStarted),
         }
@@ -1486,10 +1487,11 @@ impl Shell {
 
     /// Open the log, work out the plan, and start whatever it says.
     ///
-    /// `host` is the host-mode spawn the launch decided on (`crate::host::HostBoot`), or `None`
-    /// for every install that has not armed it — and `None` composes the launch BYTE-IDENTICALLY
+    /// `host` is what the launch decided about host mode (`crate::host::HostBoot::plan`) — the
+    /// armed spawn, or the port a previous stand-down published and this launch must hold, or
+    /// `None` for every install that has not armed it. `None` composes the launch BYTE-IDENTICALLY
     /// to the builds that predate host mode, which `extend_plan`'s tests hold by equality.
-    pub fn start(app: &tauri::App, host: Option<crate::host::HostSpawn>) -> Shell {
+    pub fn start(app: &tauri::App, host: Option<crate::host::HostPlan>) -> Shell {
         Shell::open_log(app);
         let paths = Shell::paths(app);
         let stored = paths.config();
@@ -1505,7 +1507,7 @@ impl Shell {
         Shell {
             paths,
             engine: Mutex::new(Arc::new(engine)),
-            host_spawn: Mutex::new(host),
+            host_plan: Mutex::new(host),
             door: Mutex::new(()),
             leaving: Mutex::new(Leaving::NotStarted),
         }
@@ -1526,7 +1528,7 @@ impl Shell {
         crate::host::extend_plan(
             self.paths.plan_now(config),
             config.map(Config::mode),
-            self.host_spawn.lock().expect("host spawn").as_ref(),
+            self.host_plan.lock().expect("host plan").as_ref(),
         )
     }
 
@@ -1536,11 +1538,11 @@ impl Shell {
         self.paths.config().map(|c| c.mode())
     }
 
-    /// Set the host-mode variables the NEXT spawn composes. Takes effect on [`Shell::replan`] or
-    /// on any later reconfigure — never retroactively, because an engine's environment is fixed
-    /// at its spawn.
-    pub fn set_host_spawn(&self, next: Option<crate::host::HostSpawn>) {
-        *self.host_spawn.lock().expect("host spawn") = next;
+    /// Set the host-mode variables the NEXT spawn composes — armed, holding a stood-down port,
+    /// or neither. Takes effect on [`Shell::replan`] or on any later reconfigure — never
+    /// retroactively, because an engine's environment is fixed at its spawn.
+    pub fn set_host_plan(&self, next: Option<crate::host::HostPlan>) {
+        *self.host_plan.lock().expect("host plan") = next;
     }
 
     /// Restart the engine from the stored configuration and the current host-mode decision —

@@ -93,6 +93,15 @@ pub const HOST_ASSETS_VAR: &str = "OHMAIL_HOST_ASSETS";
 /// honest explainer to any browser that lands there.
 pub const HOST_LAN_VAR: &str = "OHMAIL_LAN_BIND";
 
+/// THE STAND-DOWN'S OWN VARIABLE, and it is deliberately not a sixth arming one. It names the
+/// port host mode PUBLISHED and has stopped serving, so the engine binds it and answers "this
+/// computer has stopped serving mail here" (`host-listener.ts`'s `maybeHoldStoodDownPort`)
+/// instead of releasing it to whatever binds it next — a `tailscale serve` registration that
+/// outlived its withdrawal proxies a free port to somebody's tailnet. The engine REFUSES it
+/// beside `OHMAIL_HOST_MODE=1`, so armed-and-holding cannot be composed here either: the two
+/// live in different arms of [`HostPlan`].
+pub const HOST_STAND_DOWN_VAR: &str = "OHMAIL_HOST_STAND_DOWN";
+
 /// The values one armed spawn composes. Derived fresh each launch, never stored whole —
 /// the PORT is the persisted setting, the ORIGIN is whatever the tailnet says today (`None`
 /// when the tailnet had nothing to say and the LAN choice is what keeps host mode useful),
@@ -109,10 +118,33 @@ pub struct HostSpawn {
     pub assets: Option<PathBuf>,
 }
 
-/// The environment pairs, exactly — the whole of what an armed spawn adds. The mode and port
-/// always; the origin iff the tailnet probe found one; the LAN address iff the operator chose
-/// one; the assets pair iff this bundle packages a host client.
-pub fn env_for(spawn: &HostSpawn) -> Vec<(OsString, OsString)> {
+/// WHAT THIS LAUNCH ASKS OF THE ENGINE ABOUT HOST MODE — armed, or holding a port it stopped
+/// serving on. One type with two arms rather than a spawn plus a port, because the engine refuses
+/// the two together by name: the armed door binds that port itself, so a launch asking for both
+/// races itself at the bind. Here the contradiction cannot be written down.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HostPlan {
+    /// Host mode is on: the engine opens its host door with [`HostSpawn`]'s values.
+    Armed(HostSpawn),
+    /// Host mode is off and this port was published: the engine binds it and answers that this
+    /// computer no longer serves mail there.
+    Held(u16),
+}
+
+/// The environment pairs, exactly — the whole of what a host-mode launch adds, and the one door
+/// both arms go through. ARMED: the mode and port always; the origin iff the tailnet probe found
+/// one; the LAN address iff the operator chose one; the assets pair iff this bundle packages a
+/// host client. HELD: one pair, the stood-down port, and never the arming flag.
+pub fn env_for(plan: &HostPlan) -> Vec<(OsString, OsString)> {
+    let spawn = match plan {
+        HostPlan::Armed(spawn) => spawn,
+        HostPlan::Held(port) => {
+            return vec![(
+                OsString::from(HOST_STAND_DOWN_VAR),
+                OsString::from(port.to_string()),
+            )];
+        }
+    };
     let mut pairs = vec![
         (OsString::from(HOST_MODE_VAR), OsString::from("1")),
         (OsString::from(HOST_PORT_VAR), OsString::from(spawn.port.to_string())),
@@ -138,9 +170,20 @@ pub fn packaged_host_client(resources: Option<&Path>) -> Option<PathBuf> {
 }
 
 /// Every environment variable the host contract owns — the arming flag, the two endpoints, the
-/// LAN choice and the assets path. What an armed spawn UNSETS before its own pairs apply.
-pub const HOST_ENV_VARS: [&str; 5] =
-    [HOST_MODE_VAR, HOST_PORT_VAR, HOST_ORIGIN_VAR, HOST_LAN_VAR, HOST_ASSETS_VAR];
+/// LAN choice, the assets path and the stand-down's port. What a host-mode launch UNSETS before
+/// its own pairs apply.
+///
+/// The stand-down knob is on this list for the reason the other five are: an inherited
+/// `OHMAIL_HOST_STAND_DOWN` would make the engine hold a port THIS install never published, and
+/// an armed launch inheriting it would be refused by the engine as the contradiction it is.
+pub const HOST_ENV_VARS: [&str; 6] = [
+    HOST_MODE_VAR,
+    HOST_PORT_VAR,
+    HOST_ORIGIN_VAR,
+    HOST_LAN_VAR,
+    HOST_ASSETS_VAR,
+    HOST_STAND_DOWN_VAR,
+];
 
 /// Compose a spawning plan's host environment: CLEAR the contract's variables, then add the
 /// armed spawn's own pairs.
@@ -166,13 +209,20 @@ pub const HOST_ENV_VARS: [&str; 5] =
 ///
 /// The CLOUD door clears them and adds nothing: it mirrors a hosted account, has no host door,
 /// and an armed setting left over from the local door must not follow the user through a door
-/// switch — which it did, through the environment, for the same reason the disarm did.
-pub fn extend_plan(mut plan: Plan, mode: Option<config::Mode>, spawn: Option<&HostSpawn>) -> Plan {
+/// switch — which it did, through the environment, for the same reason the disarm did. That
+/// covers the HELD port too: a cloud-door engine is not this install's host door and must not
+/// bind a port on its behalf.
+///
+/// A HELD port is composed on the local door with no spawn — which is what a disarm leaves
+/// behind, and what every launch after it composes until the person arms again. Before this,
+/// a disarm cleared the five arming variables and added nothing, so the published loopback port
+/// was released while a `tailscale serve` registration could still point at it.
+pub fn extend_plan(mut plan: Plan, mode: Option<config::Mode>, host: Option<&HostPlan>) -> Plan {
     let Some(mode) = mode else { return plan };
     if let Plan::Spawn(launch) = &mut plan {
         launch.unset.extend(HOST_ENV_VARS.iter().map(OsString::from));
-        if let (config::Mode::Local, Some(spawn)) = (mode, spawn) {
-            launch.env.extend(env_for(spawn));
+        if let (config::Mode::Local, Some(host)) = (mode, host) {
+            launch.env.extend(env_for(host));
         }
     }
     plan
@@ -778,13 +828,28 @@ pub struct HostBoot {
     /// Why the tailnet half is absent (or the mode inapplicable), when it is. With a LAN choice
     /// this coexists with a spawn: armed, serving same-network, tailnet degraded — three truths.
     pub problem: Option<Problem>,
+    /// The port a previous stand-down published and this launch must HOLD — the persisted
+    /// `HostSettings::published`, carried only where host mode is off. Never `Some` beside a
+    /// spawn: [`HostBoot::plan`] would have to choose, and the engine refuses the pair anyway.
+    pub held: Option<u16>,
 }
 
 impl HostBoot {
     /// Host mode off — the launch every install without the setting gets, byte-identical to the
     /// builds that predate host mode.
     pub fn disarmed() -> HostBoot {
-        HostBoot { armed: false, port: None, lan: None, spawn: None, problem: None }
+        HostBoot { armed: false, port: None, lan: None, spawn: None, problem: None, held: None }
+    }
+
+    /// What the engine's launch is asked for: the armed spawn, or the port to hold, or nothing.
+    /// The spawn wins where both are somehow set — a door that is serving is never also a door
+    /// that has stopped — and `detect_with` never produces that pair.
+    pub fn plan(&self) -> Option<HostPlan> {
+        match (&self.spawn, self.held) {
+            (Some(spawn), _) => Some(HostPlan::Armed(spawn.clone())),
+            (None, Some(port)) => Some(HostPlan::Held(port)),
+            (None, None) => None,
+        }
     }
 
     /// Decide from the stored setting, the stored door, an injected probe, and the packaged
@@ -796,9 +861,14 @@ impl HostBoot {
         probe: &dyn Fn() -> Result<TailnetIdentity, Problem>,
         assets: Option<PathBuf>,
     ) -> HostBoot {
-        let Some(settings) = settings.filter(|s| s.enabled) else {
-            return HostBoot::disarmed();
-        };
+        // OFF — and that is where the stood-down port lives. A setting file with `enabled:false`
+        // is the record a disarm left; the port it published is held until the person arms again
+        // (which binds it) or the install's setting file goes. No file at all is an install that
+        // never armed: nothing was ever published, so there is nothing to hold.
+        let Some(settings) = settings else { return HostBoot::disarmed() };
+        if !settings.enabled {
+            return HostBoot { held: settings.published, ..HostBoot::disarmed() };
+        }
         if mode != Some(config::Mode::Local) {
             // Enabled in settings, inapplicable at this door. NOT armed: the lifecycle and the
             // tray follow the door that is actually open, and the setting waits in its file.
@@ -808,6 +878,9 @@ impl HostBoot {
                 lan: settings.lan,
                 spawn: None,
                 problem: Some(Problem::LocalDoorRequired),
+                // Enabled, on the wrong door: nothing of this install's is serving and nothing
+                // of its is held. The cloud door composes no host pair of any kind.
+                held: None,
             };
         }
         match probe() {
@@ -822,6 +895,7 @@ impl HostBoot {
                     assets,
                 }),
                 problem: None,
+                held: None,
             },
             // Armed with the tailnet degraded. WITH a LAN choice the engine still spawns its
             // doors — origin absent, LAN present — because same-network access is exactly the
@@ -841,6 +915,7 @@ impl HostBoot {
                     assets,
                 }),
                 problem: Some(problem),
+                held: None,
             },
         }
     }
@@ -1400,7 +1475,13 @@ pub fn tailscale_serve_arm<R: tauri::Runtime>(
         .settings_path
         .clone()
         .ok_or_else(|| "this computer named no place for the app to keep its settings".to_string())?;
-    config::write_host(&path, &config::HostSettings { enabled: true, port, lan: lan.clone() })?;
+    // `published: None` — the armed door binds this port itself, so there is nothing for a later
+    // launch to HOLD. It is also what ends a previous stand-down's hold: arming replaces the
+    // `tailscale serve` registration with one pointing at this port.
+    config::write_host(
+        &path,
+        &config::HostSettings { enabled: true, port, lan: lan.clone(), published: None },
+    )?;
     /* The setting is on disk, so a previous stand-down's "hosting may come back at the next
        start" is no longer about anything — it described a file this write has just replaced. */
     host.set_notice(None);
@@ -1434,12 +1515,12 @@ pub fn tailscale_serve_arm<R: tauri::Runtime>(
     // environment as the host client's assets root. One spelling with `ShellPaths`, so the two
     // independent resolutions of the same directory cannot disagree.
     let assets = packaged_host_client(engine::resource_dir_of(&app).as_deref());
-    host.shell.set_host_spawn(Some(HostSpawn {
+    host.shell.set_host_plan(Some(HostPlan::Armed(HostSpawn {
         port,
         origin: identity.as_ref().map(|i| i.origin.clone()),
         lan,
         assets,
-    }));
+    })));
     host.shell.replan();
     stand_up_tray(&app, host.inner());
 
@@ -1529,7 +1610,7 @@ fn stand_down_with<R: tauri::Runtime>(
     host: &Arc<HostRuntime<R>>,
     run: &dyn Fn(&[String]) -> CliResult,
     app_side: &dyn Fn(),
-    world_off: &dyn Fn(),
+    world_off: &dyn Fn(Option<u16>),
 ) -> Option<Problem> {
     host.generation.fetch_add(1, Ordering::SeqCst);
     let withdraw = {
@@ -1551,13 +1632,18 @@ fn stand_down_with<R: tauri::Runtime>(
 
     // ── THE RECORD, FIRST — so that anything which kills the app from here on leaves a file
     //    that does not host. A failure is carried, never returned. ────────────────────────────
+    // WHICH PORT THIS INSTALL WAS PUBLISHING. `None` on a stand-down of something that never
+    // armed (nothing was published, so nothing is held); otherwise the runtime's own port, which
+    // a stand-down deliberately does not clear — the pane offers it back at the next arming.
+    let published = *host.port.lock().expect("host port");
     if let Some(path) = host.settings_path.as_deref() {
-        let port = host.port.lock().expect("host port").unwrap_or(1);
+        let port = published.unwrap_or(1);
         // The port and the LAN choice survive a disarm so re-arming offers the same ones back.
         let lan = host.lan.lock().expect("host lan").clone();
-        if let Err(reason) =
-            config::write_host(path, &config::HostSettings { enabled: false, port, lan })
-        {
+        if let Err(reason) = config::write_host(
+            path,
+            &config::HostSettings { enabled: false, port, lan, published },
+        ) {
             engine::log_line(format_args!(
                 "host mode is being turned off and the setting could not be written ({reason}); \
                  the listener goes anyway and the next launch reads a file that still says \
@@ -1567,8 +1653,11 @@ fn stand_down_with<R: tauri::Runtime>(
         }
     }
 
-    // ── THE WORLD, IN EVERY CASE. Past this line this install holds no listener. ─────────────
-    world_off();
+    /* ── THE WORLD, IN EVERY CASE. Past this line this install serves nothing — and it holds the
+       port it published, because releasing it would leave any route that outlived its withdrawal
+       pointing at whatever binds that port next. The port is an ARGUMENT rather than something
+       the step reads for itself, so the order and the value are both measurable. ────────────── */
+    world_off(published);
 
     /* AND ONLY THEN THE FLAG. `host_state` is polled by the pane while all this runs, and it
        reports off on this flag: flipped before the listener went, it would answer "hosting is
@@ -1608,13 +1697,16 @@ fn stand_down<R: tauri::Runtime>(
         host,
         &|args| run_tailscale(args),
         &|| app_side_of_stand_down(app),
-        &|| {
-            host.shell.set_host_spawn(None);
-            /* THE LISTENER, TAKEN AWAY. `replan` stops the engine before it spawns the
-               replacement, so when this returns the host door of this install is gone rather
-               than scheduled to go. The door-switch caller replaces the engine again a moment
-               later with the new door's plan; one extra restart is what the invariant costs on
-               that path, and it is paid while the person is already watching a door change. */
+        &|held| {
+            /* THE DOOR, TAKEN AWAY — and the PORT, KEPT. The replacement engine is launched with
+               the stand-down knob instead of the arming ones, so it binds that port and answers
+               that this computer no longer serves mail there. */
+            host.shell.set_host_plan(held.map(HostPlan::Held));
+            /* `replan` stops the engine before it spawns the replacement, so when this returns
+               the host door of this install is gone rather than scheduled to go. The door-switch
+               caller replaces the engine again a moment later with the new door's plan; one extra
+               restart is what the invariant costs on that path, and it is paid while the person
+               is already watching a door change. */
             host.shell.replan();
         },
     )
@@ -1634,8 +1726,8 @@ pub fn stand_down_on_shell_transition<R: tauri::Runtime>(
         host,
         &|args| run_tailscale(args),
         &|| app_side_of_stand_down(app),
-        &|| {
-            host.shell.set_host_spawn(None);
+        &|held| {
+            host.shell.set_host_plan(held.map(HostPlan::Held));
             host.shell.replan();
         },
         why,
@@ -1650,7 +1742,7 @@ fn stand_down_on_shell_transition_with<R: tauri::Runtime>(
     host: &Arc<HostRuntime<R>>,
     run: &dyn Fn(&[String]) -> CliResult,
     app_side: &dyn Fn(),
-    world_off: &dyn Fn(),
+    world_off: &dyn Fn(Option<u16>),
     why: &str,
 ) -> bool {
     if !host.armed() {
