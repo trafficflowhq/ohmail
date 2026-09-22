@@ -127,6 +127,9 @@ export const OWN_ROUTES = Object.freeze(/** @type {OwnRoute[]} */ ([
   // bounces here with a request handle, and the press on this page is what mints. The API builds
   // this address from its own config, so the path is a contract with `routes/oauth.ts`.
   { path: "/authorize-desktop", edge: true },
+  // `/approve` is the one-confirm desktop sign-in: the desktop opens it with a request id, the
+  // page names the computer, and one press (step-up gated at the API) lets it in.
+  { path: "/approve", edge: true },
   // `/setup` is the self-host FIRST-RUN ceremony (`app/(product)/setup`). Mounted on every
   // deployment — one route tree, one bundle — and gated by the SERVER: the form renders only
   // while `GET /hello` answers `needsSetup: true`, which the managed API never does. It takes

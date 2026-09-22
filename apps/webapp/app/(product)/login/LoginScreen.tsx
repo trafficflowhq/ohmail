@@ -26,6 +26,8 @@ import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "../../shell/confirm-schedule
 import { refreshSettled } from "../../session-refresh";
 import { resolveOwnerOutcome } from "../session-outcome";
 import { REASON_BODY, takeSignedOutNote, type SignedOutReason } from "../resume/signed-out-note";
+// The approval page's way back after an ordinary sign-in: a request id, never a URL.
+import { takeApprovalReturn } from "../approve/approval-return";
 
 type Stage = "password" | "twofa";
 
@@ -136,7 +138,7 @@ export function LoginScreen({ publicSignup = false }: { publicSignup?: boolean }
       const outcome = await resolveOwnerOutcome({ signal: abort.signal }).catch(() => null);
       if (cancelled || outcome === null) return;
       if (outcome.kind === "owner") {
-        router.replace(`/${window.location.hash}`);
+        router.replace(takeApprovalReturn() ?? `/${window.location.hash}`);
         return;
       }
       // `none` is the server's own answer that there is nothing to forward to, which is
@@ -253,7 +255,7 @@ export function LoginScreen({ publicSignup = false }: { publicSignup?: boolean }
     const { options } = await auth.webauthnAssertOptions({ loginToken: challenge.loginToken });
     const credential = await assertPasskey(options);
     await auth.webauthnAssertVerify({ loginToken: challenge.loginToken, credential });
-    router.push("/");
+    router.push(takeApprovalReturn() ?? "/");
   }, "passkey");
 
   const finishWithCode = (e: React.FormEvent) => {
@@ -267,7 +269,7 @@ export function LoginScreen({ publicSignup = false }: { publicSignup?: boolean }
       } else {
         await auth.totpVerify({ loginToken: challenge.loginToken, code: code.trim() });
       }
-      router.push("/");
+      router.push(takeApprovalReturn() ?? "/");
     }, "code");
   };
 

@@ -210,6 +210,9 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
       // `/link-desktop`'s reasons — no cache may hold this document and no injected inline script
       // may read the handle out of the URL.
       pathname === "/authorize-desktop" ||
+      // `/approve` carries a desktop's request id and its press lets a computer in: the same
+      // three headers for `/authorize-desktop`'s reasons.
+      pathname === "/approve" ||
       // `/setup` takes the self-host first-run token in a FORM — a credential page exactly as
       // `/login` is, so it gets the strict nonce policy plus no-referrer/no-store.
       pathname === "/setup" ||
@@ -389,6 +392,6 @@ function withPathname(request: NextRequest, pathname: string): URL {
 export const config = {
   matcher: [
     "/", "/mailbox", "/resume", "/login", "/join", "/join/invite", "/setup", "/verify-email",
-    "/link-desktop", "/authorize-desktop", "/de", "/privacy", "/imprint", "/subprocessors",
+    "/link-desktop", "/authorize-desktop", "/approve", "/de", "/privacy", "/imprint", "/subprocessors",
   ],
 };
