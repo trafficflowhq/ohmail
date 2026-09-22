@@ -29,6 +29,10 @@ import messages from "../../webapp/messages/en.json";
  * press must come out, and the raw object must reach nobody.
  */
 
+/* @reads: apps/desktop/src-tauri/src/engine.rs apps/sidecar/src/db.ts
+   Read by a path built at runtime, so no landing pass selects this file when that source
+   moves — the shape `reads-list.mjs` exists for. */
+
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;

@@ -17,7 +17,7 @@ export const SURFACES = [
   "shell", "reader", "composer",
   "ohbox", "screener", "reads", "receipts", "more",
   "settings", "history", "scheduled", "triage", "trash", "drafts", "folder", "away",
-  "servers", "scan", "connect", "welcome", "standalone",
+  "servers", "scan", "connect", "welcome", "standalone", "search",
 ] as const;
 export type Surface = (typeof SURFACES)[number];
 
@@ -121,6 +121,7 @@ export function surfaceLabel(surface: Surface): string {
     case "scan": return Copy.scanTitle;
     case "connect": return Copy.connectTitle;
     case "standalone": return Copy.doorPhone;
+    case "search": return Copy.search;
     case "welcome": return Copy.renderErrorSurfaceScreen;
   }
 }

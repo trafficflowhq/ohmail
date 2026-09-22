@@ -336,8 +336,12 @@ export function MessageActions({
         // and its WIDTH is the room the verbs are admitted against (`nextRoom`: a zero reading
         // is a layout in flight, not a room, so a transient 0 cannot fold a standing bar).
         onLayout={(e) => {
-          standing(e.nativeEvent.layout.height);
-          setCompactRoom((r) => nextRoom(r, e.nativeEvent.layout.width));
+          /* READ THE POOLED EVENT HERE, NOT IN THE UPDATER. React Native nulls `nativeEvent`
+             when the handler returns, and a state updater runs after it — the same read that
+             aborted the app from `GlassActionBar`. */
+          const { height, width } = e.nativeEvent.layout;
+          standing(height);
+          setCompactRoom((r) => nextRoom(r, width));
         }}
         style={{ paddingHorizontal: BAR.outerPadH, paddingBottom: Math.max(insets.bottom, 8) }}
       >

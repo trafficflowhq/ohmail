@@ -23,6 +23,7 @@ import { MailList, type ListGroup } from "../src/ui/MailList";
 import { MailRow } from "../src/ui/MailRow";
 import { Segmented } from "../src/ui/Segmented";
 import { useLocale } from "../src/i18n/LocaleProvider";
+import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 import type { WorldMail } from "../src/state/world";
 
 /** Gated like the tabs — a deep-linked route must not render the empty world. */
@@ -31,9 +32,11 @@ export default function SearchScreen() {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   return (
-    <Gated>
-      <SearchBody />
-    </Gated>
+    <SurfaceBoundary surface="search">
+      <Gated>
+        <SearchBody />
+      </Gated>
+    </SurfaceBoundary>
   );
 }
 

@@ -14,6 +14,7 @@ import { DetailBar } from "../src/ui/chrome";
 import { Gated } from "../src/ui/Gated";
 import { ComposeSheet } from "../src/ui/MessageActions";
 import { useLocale } from "../src/i18n/LocaleProvider";
+import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 
 /** Gated like the tabs — a deep-linked route must not render the empty world. */
 export default function ComposeScreen() {
@@ -21,9 +22,11 @@ export default function ComposeScreen() {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   return (
-    <Gated>
-      <ComposeBody />
-    </Gated>
+    <SurfaceBoundary surface="composer">
+      <Gated>
+        <ComposeBody />
+      </Gated>
+    </SurfaceBoundary>
   );
 }
 
