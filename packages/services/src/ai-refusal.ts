@@ -98,6 +98,6 @@ export async function refuseAiSpend(facts: AiRefusalFacts, opts: AiRefusalOption
   // client tells "buy more" from "fix your subscription" with it, and an absent reason stays an
   // absent key rather than becoming a second shape.
   throw new ServiceError(
-    "insufficient_credits", 402, "no AI actions remain on this account", { reason: facts.reason },
+    "insufficient_credits", 402, "no AI credits remain on this account", { reason: facts.reason },
   );
 }

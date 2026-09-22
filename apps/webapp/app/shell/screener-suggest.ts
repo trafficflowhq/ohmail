@@ -1459,7 +1459,7 @@ function summarize(
  * {@link CLOUD_WIRE}'s half of {@link SuggestWire.messageFor}, never called
  * directly by the flow. An {@link ApiError} already carries the service's
  * own message ("no AI classifier connected", "managed AI is switched off",
- * "no AI actions remain") — each a different, actionable fact written by
+ * "no AI credits remain") — each a different, actionable fact written by
  * the code that decided. Re-deriving them from status codes is how a user
  * with an empty balance is told the model is down. Anything that is not an
  * `ApiError` is a bug in this client, with nothing true to say.

@@ -58,7 +58,7 @@ import type { Folder, Page, ScreenerItem } from "./dto/types.js";
  * `verdict` is the gate's own word — or this service's, for the two refusals it makes before the
  * gate is asked (`no_slot`, `inflight`) — and it exists because the log line is the only record
  * of WHY: a refusal nobody logged is a refusal nobody can attribute, which is what left an
- * account's "no AI actions remain" unexplainable on a four-figure balance.
+ * account's "no AI credits remain" unexplainable on a four-figure balance.
  */
 type GateRefusal = { refusal: AiRefusalClass; verdict: string; reason?: AiRefusalReason };
 
