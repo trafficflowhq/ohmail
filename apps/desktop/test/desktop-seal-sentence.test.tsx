@@ -41,14 +41,15 @@ async function mount(sealFailed: boolean): Promise<void> {
   document.body.append(hostEl);
   root = createRoot(hostEl);
   await act(async () => {
-    root.render(h(
-      NextIntlClientProvider,
-      { locale: "en", messages: messages as never, timeZone: "UTC" },
-      h(DesktopSettings, {
+    /* The child rides in `children` rather than as a third argument: this provider's props type
+       requires it, and the third-argument form is the shape the test-dirs ratchet counts. */
+    root.render(h(NextIntlClientProvider, {
+      locale: "en", messages: messages as never, timeZone: "UTC",
+      children: h(DesktopSettings, {
         status, session: "live", sealFailed,
         onStatus: () => undefined, onSwitchDoor: () => undefined, onSignIn: () => undefined,
       }),
-    ));
+    }));
   });
 }
 
