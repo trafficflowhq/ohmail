@@ -1437,10 +1437,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * projections over the same reader, filtered to the one row the screen is naming.
    */
   const firstRunPull = useMemo(
-    () => firstRunCounts(
-      reader.list<EngineMessage>("message"), history, firstRunMailbox?.id ?? null,
-    ),
-    [reader, derived, history, firstRunMailbox],
+    /* ONLY WHILE THE STAGE IS OPEN. `reader.list("message")` materialises the whole mirror, which
+       on a large mailbox is the cost the windowing work exists to keep off the render path — and
+       the two numbers are read by one dialog nobody has open the rest of the time. */
+    () => (route.firstRun && firstRunMailbox !== null
+      ? firstRunCounts(reader.list<EngineMessage>("message"), history, firstRunMailbox.id)
+      : { screened: 0, history: 0 }),
+    [route.firstRun, reader, derived, history, firstRunMailbox],
   );
   const onboardingFacts: OnboardingFacts | null = useMemo(() => {
     if (!firstRun || facts === null) return null;
