@@ -11,6 +11,7 @@
 import {
   createContext,
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
@@ -32,6 +33,13 @@ import { useSeenOnScroll } from "@ohmail/ui";
  */
 export const StreamCardWidth = createContext(0);
 
+/**
+ * A CARD IS ABOUT TO OPEN OR CLOSE — said by the card's own press, before React commits, so the
+ * hold loop takes its anchor from the geometry the change moves away from (see `pick`). The
+ * default is a no-op: a card outside a stream (a test, the reader) has nobody to tell.
+ */
+export const StreamCardToggled = createContext<(sid: string, open: boolean) => void>(() => {});
+
 export interface StreamHandle {
   /**
    * Bring one card to the reading line and keep it there until it IS there.
@@ -42,6 +50,13 @@ export interface StreamHandle {
    */
   scrollTo: (id: string, onLanded?: () => void) => void;
   element: () => HTMLDivElement | null;
+  /** Does this card reach into the port right now? `false` for a card that is not mounted. */
+  onScreen: (id: string) => boolean;
+  /**
+   * Call `cb` once, on the first scroll frame this card is out of the port or unmounted — the
+   * moment a change to it can no longer be seen (`stream-bar.ts` waits for it).
+   */
+  whenOffScreen: (id: string, cb: () => void) => void;
 }
 
 /**
@@ -180,6 +195,26 @@ export const StreamShell = forwardRef<
   const jumpRef = useRef<{ id: string; until: number } | null>(null);
   /** The anchoring loop's live frame — see {@link ANCHOR_FRAMES}. 0 when nothing is in flight. */
   const anchorRef = useRef(0);
+  /** `StreamHandle.whenOffScreen`'s waiters, by card id. */
+  const offScreenRef = useRef<Map<string, () => void>>(new Map());
+  /** Is this card in the port? Unmounted, or a stream with no layout yet, answers no. */
+  const inPort = (id: string): boolean => {
+    const el = divRef.current;
+    const c = el?.querySelector<HTMLElement>(`.scast[data-sid="${CSS.escape(id)}"]`);
+    if (!el || !c) return false;
+    const root = el.getBoundingClientRect();
+    const r = c.getBoundingClientRect();
+    return root.height > 0 && r.bottom > root.top && r.top < root.bottom;
+  };
+  const settleOffScreen = () => {
+    for (const [id, cb] of [...offScreenRef.current]) {
+      if (inPort(id)) continue;
+      offScreenRef.current.delete(id);
+      cb();
+    }
+  };
+  const settleOffScreenRef = useRef(settleOffScreen);
+  settleOffScreenRef.current = settleOffScreen;
   const onCurrentRef = useRef(onCurrentChange);
   onCurrentRef.current = onCurrentChange;
   const onSeenRef = useRef(onSeen);
@@ -262,6 +297,8 @@ export const StreamShell = forwardRef<
   useEffect(() => {
     observer.observe();
     measureRef.current();
+    // A slide of the window can unmount a card somebody is waiting on.
+    settleOffScreenRef.current();
   }, [observer, contentKey]);
 
   /** An anchoring loop must not outlive the stream it is scrolling. */
@@ -269,6 +306,7 @@ export const StreamShell = forwardRef<
     () => () => {
       if (anchorRef.current) cancelAnimationFrame(anchorRef.current);
       anchorRef.current = 0;
+      offScreenRef.current.clear();
     },
     [],
   );
@@ -382,6 +420,9 @@ export const StreamShell = forwardRef<
    * armed by change rather than by the clock — see the loop. */
   const holdRef = useRef<{ sid: string; offset: number; scrollTop: number } | null>(null);
   const holdRafRef = useRef(0);
+  /** The hold loop's half of {@link StreamCardToggled}, bound while the loop is mounted. */
+  const toggledRef = useRef<(sid: string, open: boolean) => void>(() => {});
+  const onCardToggled = useCallback((sid: string, open: boolean) => toggledRef.current(sid, open), []);
   /** Drift too small to be worth a `scrollTop` write yet — see the accumulator below. */
   const holdAccRef = useRef(0);
   useEffect(() => {
@@ -394,16 +435,29 @@ export const StreamShell = forwardRef<
      * card STRADDLES the top edge, so a change inside it leaves its own top where it was and moves
      * everything below — including the card being read (measured: the reference moved 63.25px while
      * the straddler's offset drifted 0, so holding the straddler reports no drift for exactly the
-     * shift readers complain about). A reader's own expand of the straddler is unaffected: clicking
-     * selects, the selection lands at the reading line, and `jumpRef` suspends this loop for the
-     * flight.
+     * shift readers complain about). The one exception is {@link opened}.
      */
     const pick = (rootTop: number): HTMLElement | null => {
+      if (opened) {
+        const c = el.querySelector<HTMLElement>(`.scast[data-sid="${CSS.escape(opened.sid)}"]`);
+        const r = c?.getBoundingClientRect();
+        const live = Date.now() <= opened.until || !!c?.classList.contains("pend");
+        if (live && c && r && r.top < rootTop - 0.5 && r.bottom > rootTop) return c;
+      }
       for (const c of el.querySelectorAll<HTMLElement>(".scast[data-sid]")) {
         if (c.getBoundingClientRect().top >= rootTop - 0.5) return c;
       }
       return null;
     };
+    /**
+     * THE CARD THE READER OPENED IS ITS OWN ANCHOR WHILE IT GROWS. Held by the card below, a card
+     * straddling the top edge was pushed up by its whole growth — measured in Chromium, 147-5 303px
+     * at 390 and 164-1 374px at 1440. Its own top is the one point its growth cannot move, so it
+     * holds while it reaches into the port and keeps changing ({@link HOLD_QUIET_MS} after the last
+     * change, or for as long as its body is still on the way — `pend`). A close re-anchors below,
+     * so the pill stays under the pointer; a card wholly above the port is compensated as before.
+     */
+    let opened: { sid: string; until: number; h: number } | null = null;
     const remember = (rootTop: number) => {
       const c = pick(rootTop);
       holdRef.current = c
@@ -452,6 +506,12 @@ export const StreamShell = forwardRef<
         el.scrollTo({ top: el.scrollTop + holdAccRef.current, behavior: "instant" });
         holdAccRef.current = 0;
       }
+      if (opened) {
+        const oc = el.querySelector<HTMLElement>(`.scast[data-sid="${CSS.escape(opened.sid)}"]`);
+        const oh = oc ? oc.getBoundingClientRect().height : -1;
+        if (Math.abs(oh - opened.h) > 0.5) opened = { ...opened, h: oh, until: Date.now() + HOLD_QUIET_MS };
+        else if (Date.now() > opened.until && !oc?.classList.contains("pend")) opened = null;
+      }
       /* Re-anchor every frame, from the state AFTER any correction: the anchor is a running
          reference, not a fixed one, and a card scrolled off the top must hand over to the next
          one or the offset it is compared against grows without bound. */
@@ -482,6 +542,21 @@ export const StreamShell = forwardRef<
     window.addEventListener("resize", arm);
     document.addEventListener("visibilitychange", arm);
     arm(); // mounting IS a change: the first cards are arriving as this runs.
+    /* The press, before its commit — see {@link opened}. The anchor is taken NOW, from the
+       geometry the change moves away from; the loop measures the change against it. */
+    toggledRef.current = (sid, open) => {
+      const rootRect = el.getBoundingClientRect();
+      if (rootRect.height <= 0) return;
+      if (open) {
+        const c = el.querySelector<HTMLElement>(`.scast[data-sid="${CSS.escape(sid)}"]`);
+        opened = { sid, until: Date.now() + HOLD_QUIET_MS, h: c ? c.getBoundingClientRect().height : -1 };
+      } else if (opened?.sid === sid) {
+        opened = null;
+      }
+      holdAccRef.current = 0;
+      remember(rootRect.top);
+      arm();
+    };
 
     return () => {
       if (holdRafRef.current) cancelAnimationFrame(holdRafRef.current);
@@ -495,6 +570,8 @@ export const StreamShell = forwardRef<
       el.removeEventListener("load", arm, true);
       window.removeEventListener("resize", arm);
       document.removeEventListener("visibilitychange", arm);
+      toggledRef.current = () => {};
+      opened = null;
       holdRef.current = null;
       holdAccRef.current = 0;
     };
@@ -509,6 +586,7 @@ export const StreamShell = forwardRef<
       rafRef.current = requestAnimationFrame(() => {
         rafRef.current = 0;
         measureRef.current(); // keep the leave-commit's visible range current
+        if (offScreenRef.current.size) settleOffScreenRef.current();
         const cards = Array.from(el.querySelectorAll<HTMLElement>(".scast[data-sid]"));
         if (!cards.length) return;
         // A jump in flight owns the cursor — see {@link jumpRef}.
@@ -582,6 +660,10 @@ export const StreamShell = forwardRef<
 
   useImperativeHandle(ref, () => ({
     element: () => divRef.current,
+    onScreen: inPort,
+    whenOffScreen: (id: string, cb: () => void) => {
+      offScreenRef.current.set(id, cb);
+    },
     scrollTo: (id: string, onLanded?: () => void) => {
       const el = divRef.current;
       if (!el) return;
@@ -688,7 +770,9 @@ export const StreamShell = forwardRef<
 
   return (
     <div className="stream" ref={divRef} aria-label={ariaLabel}>
-      <StreamCardWidth.Provider value={cardWidth}>{children}</StreamCardWidth.Provider>
+      <StreamCardWidth.Provider value={cardWidth}>
+        <StreamCardToggled.Provider value={onCardToggled}>{children}</StreamCardToggled.Provider>
+      </StreamCardWidth.Provider>
     </div>
   );
 });

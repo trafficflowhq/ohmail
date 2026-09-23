@@ -37,6 +37,7 @@ import { StreamShell, type StreamHandle, type StreamLeaveState } from "../shell/
 import { StreamCardMemo } from "../shell/StreamCardMemo";
 import type { RemoteImagesChrome } from "../shell/remote-images";
 import { useStreamWindow } from "../shell/stream-window";
+import { useStreamBar } from "../shell/stream-bar";
 import { useBodyStamp } from "../shell/body-slice";
 import { waterlineStamp } from "../shell/format";
 
@@ -145,7 +146,7 @@ export function ReadsView({
    * asks this view to CLOSE because the URL no longer claims that reading (Back walked out of a
    * stream reading in place). `onClosed` acknowledges it, as `onJumped` acknowledges a jump, so the
    * request is state the shell clears, not a standing prop to diff. A REQUEST, not a mirror of
-   * expansion: `StreamCard` owns the visual open and this view owns `expandedId` — an expanded card
+   * expansion: `StreamCard` owns the visual open and this view owns the verb bar — an expanded card
    * stays scroll posture, the shell's standing ruling; the shell may close the ONE card it claimed,
    * never enumerate what is open. Optional: no shell, no channel.
    */
@@ -189,12 +190,12 @@ export function ReadsView({
   /** Dedup for the per-card sweep — a card marks itself once per visit. No longer any visual. */
   const [justSeen, setJustSeen] = useState<Set<string>>(() => new Set());
   /**
-   * THE CARD WHOSE VERBS ARE SHOWING — the one the reader has EXPANDED, not the scroll-spy's
+   * THE CARDS WHOSE VERBS ARE SHOWING — the one the reader EXPANDED last, not the scroll-spy's
    * `current`. Gating the bar on `current` made it pop in on every card a scroll settled on; it
-   * now follows expansion, and a click select-AND-expands (see `StreamCard`). Single, so the
-   * stream still mounts one bar, not two hundred.
+   * follows expansion, and a click select-AND-expands (see `StreamCard`). One bar at rest; an
+   * earlier holder keeps its bar while it is still on screen (`stream-bar.ts`).
    */
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const bar = useStreamBar(streamRef);
 
   const all = useMemo(
     () => [...partition.fresh, ...partition.seen],
@@ -323,7 +324,7 @@ export function ReadsView({
   /**
    * The controlled close, driven through the card's OWN PILL (`closeTo`). The pill is the one
    * definition of close: it runs the collapse animation, flips `StreamCard`'s `open`, and reports
-   * `onToggle(id, false)`, which clears `expandedId` and takes the verbs down in the same motion.
+   * `onToggle(id, false)`, which takes the card's verbs down in the same motion.
    * The pill and NOT the card: clicking the card selects and EXPANDS, so a card-click would re-open
    * the reading Back just left. Synchronous, no `requestAnimationFrame` (a close has no mount
    * ordering); `[closeTo]` is the whole dependency list, callbacks read through a ref. A request
@@ -595,18 +596,15 @@ export function ReadsView({
 
   /* Expanding a card that holds only a snippet IS the request for the rest of it — and the retry
      after a failure, which is why the failed copy says to expand again. It is also what raises the
-     verbs, so record which card is open. STABLE (keyed only on `hydrateBody`) so `StreamCardMemo`
-     can skip a card whose inputs did not change across a version bump — see its header. */
+     verbs (`stream-bar.ts`, which also keeps a close from stripping another card's bar). STABLE
+     so `StreamCardMemo` can skip a card whose inputs did not change across a version bump. */
+  const barToggled = bar.toggled;
   const onToggle = useCallback(
     (id: string, open: boolean) => {
-      /* CLOSING CLEARS THE BAR ONLY IF THE BAR IS THIS CARD'S. Expansion is per-card and
-         multi-card — opening B never collapses A — so once the shell can close A on its own,
-         "collapse A while the bar sits on B" is a real sequence, and the unguarded
-         `open ? id : null` stripped B's verbs while B stayed open. */
-      setExpandedId((prev) => (open ? id : prev === id ? null : prev));
+      barToggled(id, open);
       if (open) hydrateBody(id, { retry: true });
     },
-    [hydrateBody],
+    [hydrateBody, barToggled],
   );
   const loadingLabel = tb("loading");
   const failedLabel = tb("failed");
@@ -632,7 +630,7 @@ export function ReadsView({
         m={m}
         now={now}
         current={current === m.id}
-        expanded={expandedId === m.id}
+        expanded={bar.hasBar(m.id)}
         /* Presented, exactly as the row above — one message drawn twice must not be drawn
            two ways. See the row for why the sweep is unaffected. */
         unread={presentsUnread(m)}

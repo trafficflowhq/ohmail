@@ -30,6 +30,7 @@ import { StreamShell, type StreamHandle, type StreamLeaveState } from "../shell/
 import { StreamCardMemo } from "../shell/StreamCardMemo";
 import type { RemoteImagesChrome } from "../shell/remote-images";
 import { useStreamWindow } from "../shell/stream-window";
+import { useStreamBar } from "../shell/stream-bar";
 import { useBodyStamp } from "../shell/body-slice";
 
 export function ReceiptsView({
@@ -149,9 +150,10 @@ export function ReceiptsView({
    * scroll-spy happens to have made `current`. Scrolling moves `current` (selection, the dwell
    * seen-authority), and gating the reply bar on it made the bar pop in on every card a reader
    * scrolled past. The bar now follows expansion: a click select-AND-expands (see `StreamCard`),
-   * which is the one gesture that surfaces it. Single, so the stream still mounts one bar.
+   * which is the one gesture that surfaces it. One bar at rest; an earlier holder keeps its bar
+   * while it is still on screen (`stream-bar.ts`).
    */
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const bar = useStreamBar(streamRef);
 
   const all = messages;
   const allRef = useRef(all);
@@ -397,13 +399,13 @@ export function ReceiptsView({
   /* Expanding is the request for the rest of the receipt, and the retry — and it raises the verbs,
      so record which card is open. STABLE so `StreamCardMemo` can skip an unchanged card across a
      version bump; see its header. */
+  const barToggled = bar.toggled;
   const onToggle = useCallback(
     (id: string, open: boolean) => {
-      /* Closing clears the bar only if the bar is THIS card's — see `ReadsView.onToggle`. */
-      setExpandedId((prev) => (open ? id : prev === id ? null : prev));
+      barToggled(id, open);
       if (open) hydrateBody(id, { retry: true });
     },
-    [hydrateBody],
+    [hydrateBody, barToggled],
   );
   const loadingLabel = tb("loading");
   const failedLabel = tb("failed");
@@ -420,7 +422,7 @@ export function ReceiptsView({
         m={m}
         now={now}
         current={current === m.id}
-        expanded={expandedId === m.id}
+        expanded={bar.hasBar(m.id)}
         /* Presented, exactly as the row below — see it for why `isUnread` still decides
            every ACT and every count in this view. */
         unread={presentsUnread(m)}

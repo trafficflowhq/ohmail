@@ -19,7 +19,7 @@ import { senderName, displayTime } from "./format";
 import { displayAddress } from "./idn";
 import { MessageActionBar, type MessageAction } from "./MessagePane";
 import { MessageRecipients } from "./MessageRecipients";
-import { FoldTableArt, StreamCardWidth } from "./StreamShell";
+import { FoldTableArt, StreamCardToggled, StreamCardWidth } from "./StreamShell";
 import type { RemoteImagesChrome } from "./remote-images";
 import { MessageBody as MessageBodyView } from "../components/MessageBody";
 import { BlockNoticeGloss, type BlockNotice } from "../components/BlockNotice";
@@ -94,6 +94,9 @@ function StreamCardMemoInner({
      width arrives once, after the stream has measured it — a context read re-renders the mounted
      cards for that one change and leaves the comparator alone. */
   const estWidthPx = useContext(StreamCardWidth);
+  /* The stream hears the press FIRST, while the card still has the height it is leaving — the
+     hold loop's anchor is taken from that geometry (`StreamCardToggled`). Stable, like the width. */
+  const toggled = useContext(StreamCardToggled);
   /**
    * WHAT THIS MESSAGE HAD REFUSED, as the viewer reports it (`MessageBody.onNotice`) — carried to
    * the card's HEAD as a glyph rather than said as a bar above the body. Internal state, not a
@@ -174,7 +177,10 @@ function StreamCardMemoInner({
       unread={unread}
       current={current}
       onSelect={onSelect}
-      onToggle={(open) => onToggle(m.id, open)}
+      onToggle={(open) => {
+        toggled(m.id, open);
+        onToggle(m.id, open);
+      }}
       actions={
         onAction && expanded ? (
           <MessageActionBar message={m} now={now} onAction={(a) => onAction(a, m)} />
