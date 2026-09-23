@@ -12,7 +12,7 @@ import type { CloudSessionReading } from "./cloud-auth.js";
 export const SESSION_WAIT_HOLD_MS = 45_000;
 
 /** The reading the window holds, as it sent it back: `state` null is "no session". */
-export interface HeldReading {
+interface HeldReading {
   state: string | null;
   code: string | null;
   since: string | null;
@@ -35,7 +35,7 @@ export function sameReading(now: CloudSessionReading | null, held: HeldReading):
   return now.state === held.state && now.code === held.code && now.since === held.since;
 }
 
-export interface SessionWatch {
+interface SessionWatch {
   /** The reading changed: answer every held question. */
   moved(): void;
   /** Stop holding: answer every held question now, and every later one at once. */
