@@ -1262,9 +1262,12 @@ async function syncCycleWithin(
   // network). The physical IMAP move runs afterwards in reconcileMailbox, outside
   // the transaction. Only content-bearing changes (create/move carrying RFC822) are
   // ingested; a FLAG is a cursor-only signal, and a DELETE is the move evidence recorded above.
+  // Read only when this page holds one of the account's own Sent copies — the one plan that
+  // uses it — so an idle cycle and an inbound-only page pay no statement for it.
+  const correspondenceSince = await consentPointFor(deps, readerMode, batch.creates);
   for (const ch of [...batch.creates, ...batch.moves]) {
     await attempt(ch, async () => {
-      const plan = await planChange(ch, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, importDecisionOpen, readerMode });
+      const plan = await planChange(ch, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, correspondenceSince, importDecisionOpen, readerMode });
       await fencedIngest(deps, async (txRepo) => {
         // The mailbox is asked about INSIDE this transaction, never before it: `planChange` above
         // ran outside any transaction and may have spent a classifier call there, which is exactly
@@ -1475,6 +1478,19 @@ async function syncCycleWithin(
  * it unreclassified, neither about the message: a lost lease, and a mailbox removed under the
  * re-read, both meaning every later write in the cycle would be illegitimate.
  */
+/**
+ * `PlanDeps.correspondenceSince` for one page: absent for a reader (it teaches nothing — the
+ * organizer decides who is known), for a page holding none of the account's own Sent copies, and
+ * for a repo that cannot say, which is the direction that grants no consent.
+ */
+async function consentPointFor(
+  deps: SyncDeps, readerMode: boolean, creates: readonly { ownAuthored?: boolean }[],
+): Promise<Date | undefined> {
+  if (readerMode || !creates.some((c) => c.ownAuthored === true)) return undefined;
+  if (typeof deps.repo.correspondenceSince !== "function") return undefined;
+  return (await deps.repo.correspondenceSince(deps.accountId, deps.mailboxId)) ?? undefined;
+}
+
 async function retryFailedMessages(
   deps: SyncDeps, deadLetters: DeadLetterLedger, version: string,
 ): Promise<void> {
@@ -1594,7 +1610,8 @@ async function retryFailedMessages(
       // dual-key lookup answers `duplicate` for a message a previous attempt already committed, and
       // `own_copy` for a Sent twin of mail we hold.
       try {
-        const plan = await planChange(change, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, importDecisionOpen, readerMode });
+        const correspondenceSince = await consentPointFor(deps, readerMode, [change]);
+        const plan = await planChange(change, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, correspondenceSince, importDecisionOpen, readerMode });
         // THROUGH THE INGEST'S OWN COMMIT DOOR, and never a second fence. `planChange` above ran
         // outside every transaction exactly as the ordinary path's does, so a removal lands in the
         // same gap and this commit needs the same question asked inside the same transaction —
@@ -1883,7 +1900,40 @@ async function reconcileFolders(deps: SyncDeps, at: CyclePageCursor): Promise<bo
       for (const p of chunk) reopened = (await fileOne(deps, p, special, at)) || reopened;
     }
   }
+  await refillLeftJunk(deps, groups, special);
   return owesMore || reopened;
+}
+
+/**
+ * LEAVING JUNK BY A PRESS REFILLS AT THE PRESS. A move this pass made out of the provider's Junk —
+ * a triage verb, a folder move, a rule — re-reads its body through the rescue's own verify and
+ * rewrite now, in the cycle that moved it, rather than leaving a husk the reader would describe
+ * as still filed until the next pass. Only moves that landed are found: the husk read needs the
+ * primary instance the completion just wrote. A fence refusal leaves unreclassified.
+ */
+async function refillLeftJunk(
+  deps: SyncDeps, groups: ReadonlyMap<string, PendingPhysical[]>, special: SpecialFolderMap,
+): Promise<void> {
+  if (special.junkFolder === null) return;
+  const ids = [...groups.values()].flat()
+    .filter((p) => p.nativeLocator?.folder === special.junkFolder && p.physical !== special.junkFolder)
+    .map((p) => p.messageId);
+  if (ids.length === 0) return;
+  const { repo, adapter, accountId, mailboxId, storageCap, log } = deps;
+  try {
+    await junkRestorePass({
+      repo, adapter, accountId, mailboxId, storageCap, messageIds: ids,
+      ...(log !== undefined ? { log } : {}),
+      write: (fn) => fencedLiveGroup(deps, fn),
+    });
+  } catch (err) {
+    rethrowRefusal(err);
+    log?.warn("junk_refill_at_move_failed", {
+      mailboxId, accountId, err,
+      reason: "the moves out of Junk landed and their bodies could not be re-read now; the "
+        + "junk restore pass refills them on a later cycle",
+    });
+  }
 }
 
 /** A pending row plus the physical destination its group was keyed on (mail 0065). */

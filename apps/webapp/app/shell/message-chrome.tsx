@@ -9,7 +9,7 @@
  * props because the read column's pane is three components deep inside a view that already takes
  * fifteen.
  */
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   BODY_FETCH_TIMEOUT_MS,
   type AddressBookEntry,
@@ -479,4 +479,32 @@ export function useBodyStalled(key: string, waiting: boolean): boolean {
     return () => clearTimeout(timer);
   }, [key, waiting]);
   return stalled;
+}
+
+/**
+ * A HUSK MOVED OUT OF JUNK, WATCHED WHILE IT IS READ. `leaving`: the reader is showing a
+ * `junk_filed` body for a message no longer in the spam pile. The mirror sheds such a husk on the
+ * message's next change (the move, then the refill); `shed` is the body gone back to waiting, and
+ * the reader asks again then, once per husk seen, so the refilled text lands where it is read.
+ * Past `boundMs` of `leaving` the answer is `true` and the reader says the text could not be
+ * read instead of loading for ever.
+ */
+export function useJunkRefill(
+  key: string, leaving: boolean, shed: boolean, reask: () => void, boundMs: number,
+): boolean {
+  const [expired, setExpired] = useState(false);
+  const owedFor = useRef<string | null>(null);
+  useEffect(() => {
+    setExpired(false);
+    if (!leaving) return;
+    owedFor.current = key;
+    const timer = setTimeout(() => setExpired(true), boundMs);
+    return () => clearTimeout(timer);
+  }, [key, leaving, boundMs]);
+  useEffect(() => {
+    if (!shed || owedFor.current !== key) return;
+    owedFor.current = null;
+    reask();
+  }, [key, shed, reask]);
+  return expired;
 }

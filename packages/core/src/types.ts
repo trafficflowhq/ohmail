@@ -187,6 +187,20 @@ export function isSentFolderPath(path: string): boolean {
 }
 
 /**
+ * {@link SENT_SHAPED_CANONICAL}'s whole language, lower-cased — for SQL, where the device store
+ * has no regex: a statement asks `lower(folder) in (…)`. Finite by construction, four prefixes by
+ * fourteen leaves; a test checks every member against the regex and pins the regex's source, so
+ * the two cannot change apart.
+ */
+export const SENT_SHAPED_PATHS: readonly string[] = (() => {
+  const prefixes = ["", "inbox/", "[gmail]/", "[google mail]/"];
+  const sent = ["sent", ...["items", "messages", "mail"].flatMap((w) => [`sent ${w}`, `sent-${w}`])];
+  const gesendet = ["gesendet",
+    ...["objekte", "elemente", "nachrichten"].flatMap((w) => [`gesendete ${w}`, `gesendete-${w}`])];
+  return prefixes.flatMap((p) => [...sent, ...gesendet].map((leaf) => `${p}${leaf}`));
+})();
+
+/**
  * Why this canonical path may NOT be a user folder's name, or `null` when it may — every refusal
  * is a sentence keyed by a CLOSED code so both catalogues can carry it. `empty` — no name, or
  * empty segments (`a//b`); `spaces` — leading/trailing whitespace in a segment (IMAP keeps it,

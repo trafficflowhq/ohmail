@@ -8,7 +8,9 @@ import {
   composeZonedWallClock,
   dateClock,
   folderLeaf,
+  isJunkHuskLeaving,
   isOwnSent,
+  JUNK_REFILL_BOUND_MS,
   fullDateTime as stampFullDateTime,
   messageDisplayTime,
   VIEW_OF_FOLDER,
@@ -69,21 +71,23 @@ export function placeLabel(folder: string): string {
 }
 
 /**
- * Which sentence a withheld body gets — the `body.*` catalogue key per marker. `MessageBody.withheld`
- * is the server's closed set (mail 0065 widened it beyond the storage cap), and the selector carries
- * the member through so each member owes its own sentence: the storage cap names the space, the junk
- * filing names the verdict, the expunge says the copies are gone. One resolver for the three
- * rendering surfaces (focused pane, conversation sibling, stream card) — a per-surface copy is three
- * ways for one marker to get two sentences. An absent marker degrades to the storage sentence (the
- * only member that predates the widening); a new member is a type error at this mapping until it
- * gets its own sentence — the parameter is the engine's closed `WithheldMarker`.
+ * Which sentence a withheld body gets — the `body.*` catalogue key per marker AND where the
+ * message is now. `MessageBody.withheld` is the server's closed set (mail 0065), and each member
+ * owes its own sentence: the storage cap names the space, the junk filing names the verdict, the
+ * expunge says the copies are gone. The verdict's sentence is true only while the message is IN
+ * the spam pile: a `junk_filed` husk anywhere else has been moved out, its text is being refilled
+ * from the mail server, and saying the verdict filed it would be false — so it reads "loading"
+ * (`withheldJunkLoading`, `isJunkHuskLeaving`), bounded by the engine's JUNK_REFILL_BOUND_MS. One resolver for every
+ * surface; a new member is a type error at this mapping until it gets its own sentence.
  */
 export function withheldCopyKey(
   marker: WithheldMarker | null | undefined,
-): "withheld" | "withheldJunk" | "withheldExpunged" {
+  folder: string | null | undefined,
+): "withheld" | "withheldJunk" | "withheldJunkLoading" | "withheldExpunged" {
   switch (marker) {
     case "junk_filed":
-      return "withheldJunk";
+      return isJunkHuskLeaving({ state: "withheld", withheld: marker }, folder)
+        ? "withheldJunkLoading" : "withheldJunk";
     case "expunged":
       return "withheldExpunged";
     case "storage_cap":
@@ -97,6 +101,13 @@ export function withheldCopyKey(
     }
   }
 }
+
+/**
+ * How long "loading from your mail server" may stand over a husk moved out of Junk — the engine's
+ * one number, so the phone and this reader give up at the same moment. The refill happens in the
+ * move's own completion; past this the organizer did not reach the server.
+ */
+export { JUNK_REFILL_BOUND_MS };
 
 
 function pad(n: number): string {

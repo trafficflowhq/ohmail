@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass } from "@trafficflow/db";
+import { accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, ExternalOverrideInput, ExternalOverrideOutcome,
   StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
@@ -39,6 +39,11 @@ import { SENT_SHAPED_CANONICAL } from "./imap-types.js";
    names the folder), `FolderBudgetStop` what one folder's row HOLDS (the row names it). */
 import type { BudgetStop, FolderBudgetStop } from "./imap-types.js";
 import { providerAuthservIds } from "../authserv-ids.js";
+import { correspondentsAmong, type CorrespondentEvidence } from "../correspondent.js";
+// The one correspondent predicate, on the leaf the worker passes and the services already import.
+export {
+  correspondentsAmong, recipientsOfOwnWriting, CORRESPONDENT_SCAN_ROWS, type CorrespondentEvidence,
+} from "../correspondent.js";
 
 export interface PersistedFolderCursor {
   uidValidity: string; uidNext: number; highestModseq: string;
@@ -352,10 +357,12 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
   /** Record that the kickstart COMPLETED. Returns false when it had already run. */
   markKickstarted(mailboxId: string, at: Date): Promise<boolean>;
   /**
-   * Upsert known correspondents. Returns how many rows were genuinely NEW, which is what makes
-   * "a second connect does not re-import" observable rather than merely asserted.
+   * THE CONSENT POINT FOR WRITING — `PlanDeps.correspondenceSince`: the later of this mailbox's
+   * connect and the account's sent-mail seed answer. `null` for a mailbox this account does not
+   * hold. Optional so a fake without it teaches nothing, which is the direction that grants no
+   * consent.
    */
-  upsertContacts(accountId: string, addresses: readonly string[]): Promise<number>;
+  correspondenceSince?(accountId: string, mailboxId: string): Promise<Date | null>;
   /**
    * One page of the Screener backlog the re-route pass may reconsider, locked FOR UPDATE. Both
    * halves of the never-override-a-user-decision rule live in the statement: the sender (or
@@ -516,7 +523,8 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * reads as no candidates, never a wrong restore.
    */
   listJunkFiledHusks?(
-    accountId: string, mailboxId: string, opts: { limit: number; afterId?: string },
+    accountId: string, mailboxId: string,
+    opts: { limit: number; afterId?: string; messageIds?: readonly string[] },
   ): Promise<JunkFiledHuskRow[]>;
   /**
    * VERIFY + REWRITE one `junk_filed` husk from bytes the caller re-read off the mail server —
@@ -1262,8 +1270,10 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
 
   /** See the interface doc — the instance witness is the predicate, mail 0071's index the read. */
   async listJunkFiledHusks(
-    accountId: string, mailboxId: string, opts: { limit: number; afterId?: string },
+    accountId: string, mailboxId: string,
+    opts: { limit: number; afterId?: string; messageIds?: readonly string[] },
   ): Promise<JunkFiledHuskRow[]> {
+    if (opts.messageIds !== undefined && opts.messageIds.length === 0) return [];
     const rows = await this.db.select({
       messageId: messages.id,
       dedupKey: messages.dedupKey,
@@ -1283,6 +1293,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         eq(messages.mailboxId, mailboxId),
         isNull(messages.deletedAt),
         ...(opts.afterId !== undefined ? [sql`${messages.id} > ${this.d.castUuid(opts.afterId)}`] : []),
+        ...(opts.messageIds !== undefined ? [inArray(messages.id, [...opts.messageIds])] : []),
       ))
       .orderBy(asc(messages.id))
       .limit(opts.limit);
@@ -1738,6 +1749,17 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     return new Set(rows.map((r) => r.address.toLowerCase()));
   }
 
+  /** {@link RepoPort.isCorrespondent} — the reply arm of the one predicate, on this connection. */
+  async isCorrespondent(
+    accountId: string, sender: string, references: readonly string[],
+  ): Promise<CorrespondentEvidence | null> {
+    const key = sender.trim().toLowerCase();
+    const found = await correspondentsAmong(this.db as unknown as Tx, {
+      accountId, senders: [key], references: new Map([[key, references]]), arms: "reply",
+    });
+    return found.get(key) ?? null;
+  }
+
   /**
    * `action` is a bare `string` on the port and always will be — the callers are passes, not a
    * union. `auditAction` is what makes it closed: a word outside `AUDIT_LOG_ACTIONS`
@@ -2166,6 +2188,16 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * `markMailboxFailed` is — this is not a lifecycle claim that a stale leader could get wrong,
    * it is "the work happened", and the work HAS happened whoever performed it.
    */
+  async correspondenceSince(accountId: string, mailboxId: string): Promise<Date | null> {
+    const [row] = await this.db.select({ connected: mailboxes.createdAt, seed: accountSettings.seedConfirmedAt })
+      .from(mailboxes)
+      .leftJoin(accountSettings, eq(accountSettings.accountId, mailboxes.accountId))
+      .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId)))
+      .limit(1);
+    if (!row) return null;
+    return row.seed && row.seed > row.connected ? row.seed : row.connected;
+  }
+
   async markKickstarted(mailboxId: string, at: Date): Promise<boolean> {
     const rows = await this.db.update(mailboxes).set({ kickstartAt: at })
       .where(and(eq(mailboxes.id, mailboxId), sql`${mailboxes.kickstartAt} is null`))

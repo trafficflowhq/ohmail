@@ -768,13 +768,15 @@
       "impersonation": "Die Absenderadresse geh\u00f6rt nicht zu {brand}",
       "campaign": "Dieselbe Mail kam von {count} fremden Absendern",
       "auth_fail": "Diese Mail hat die Absender-Authentifizierung nicht bestanden",
-      "brand_mismatch": "Die Absenderadresse passt nicht zum Namen in dieser Mail"
+      "brand_mismatch": "Die Absenderadresse passt nicht zum Namen in dieser Mail",
+      "correspondent": "Du hast diesem Absender zuerst geschrieben, oder er antwortet auf deine Mail"
     },
     "aiReasonChip": {
       "impersonation": "Nicht {brand}",
       "campaign": "{count} Fremde",
       "auth_fail": "Authentifizierung fehlgeschlagen",
-      "brand_mismatch": "Name passt nicht"
+      "brand_mismatch": "Name passt nicht",
+      "correspondent": "Du hast zuerst geschrieben"
     },
     "aiSkip": {
       "out_of_credits": "Das KI-Budget war aufgebraucht, bevor dieser Absender dran war. Es füllt sich im nächsten Zyklus — von Hand entscheiden kostet nichts.",
@@ -1558,6 +1560,7 @@
     "retry": "Erneut versuchen",
     "withheld": "Hier nicht gespeichert — innerhalb deines Speicherplatzes weichen ältere gespeicherte Kopien neuerer Post, und diese ist gewichen (oder der Platz war beim Eintreffen voll). Die Nachricht selbst liegt sicher in deinem Postfach auf deinem Mailserver; das hier ist die Vorschau. Ein größerer Tarif bringt mehr Speicherplatz.",
     "withheldJunk": "Hier nicht gespeichert — dein Spam-Urteil hat diese Nachricht in den Junk-Ordner deines eigenen Mailservers einsortiert. Dort lebt sie weiter; das hier ist die Vorschau.",
+    "withheldJunkLoading": "Diese Nachricht wird von deinem Mailserver geladen…",
     "withheldExpunged": "Keine gespeicherte Kopie mehr — jede Kopie dieser Nachricht ist aus den Ordnern verschwunden, die ohmail auf deinem Mailserver liest: dort gelöscht oder von einem anderen Mailprogramm verschoben. Diese Vorschau ist, was bleibt.",
     "invitationWithoutEvent": "Das ist eine Besprechungseinladung; das Mailsystem des Absenders hat den Termin nicht angehängt."
   },
@@ -2099,7 +2102,7 @@
   },
   "siteScreener": {
     "title": "Du entscheidest, wer reinkommt.",
-    "body": "Wenn dir jemand zum ersten Mal schreibt, wartet er am Screener — nicht in deinem Posteingang. Ein Klick wählt die Tür, einmal, für jede Mail, die dieser Absender je schreibt: Ohbox für Menschen, News für Newsletter, Belege für den Papierkram. Oder nie wieder — was dich auch abmeldet, wo die Liste einen Klick dafür anbietet. Spam ist auch ein Klick: die Mail wandert in den Junk-Ordner deines Mailservers, und dieser Absender fragt nie wieder. Du willst Hilfe beim Entscheiden? Schalte Vorschläge ein, und ohmail schlägt für jeden neuen Absender eine Tür vor, sobald seine Post ankommt, zu einem Preis, der vorher dasteht; schlichte Newsletter und Belege kann es selbst einsortieren, und ein Muster, das du oft genug bestätigt hast, läuft ohne Nachfrage — Spam eingeschlossen. Von sich aus löscht ohmail nichts.",
+    "body": "Wenn dir ein Fremder zum ersten Mal schreibt, wartet er am Screener — nicht in deinem Posteingang. Ein Klick wählt die Tür, einmal, für jede Mail, die dieser Absender je schreibt: Ohbox für Menschen, News für Newsletter, Belege für den Papierkram. Oder nie wieder — was dich auch abmeldet, wo die Liste einen Klick dafür anbietet. Spam ist auch ein Klick: die Mail wandert in den Junk-Ordner deines Mailservers, und dieser Absender fragt nie wieder. Du willst Hilfe beim Entscheiden? Schalte Vorschläge ein, und ohmail schlägt für jeden neuen Absender eine Tür vor, sobald seine Post ankommt, zu einem Preis, der vorher dasteht; schlichte Newsletter und Belege kann es selbst einsortieren, und ein Muster, das du oft genug bestätigt hast, läuft ohne Nachfrage — Spam eingeschlossen. Von sich aus löscht ohmail nichts.",
     "pointA": "Erstabsender warten, bis du es sagst",
     "pointB": "Ein Klick wählt die Tür — dauerhaft",
     "pointC": "Spam ist ein Klick — in den Junk deines Mailservers, und der Absender fragt nie wieder",

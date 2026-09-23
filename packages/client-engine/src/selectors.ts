@@ -100,6 +100,21 @@ function byDateAsc(a: EngineMessage, b: EngineMessage): number {
  * except `withheld: "storage_cap"`, which reports `state: "withheld"` with the snippet: no
  * Retry, no completeness claim.
  */
+/**
+ * A spam verdict's husk on a message that is no longer in the spam pile — moved out, its text
+ * being refilled from the mail server. The one decision every reader makes before choosing a
+ * sentence: the verdict's is false here, "loading" is true for {@link JUNK_REFILL_BOUND_MS}.
+ */
+export function isJunkHuskLeaving(
+  body: Pick<MessageBody, "state" | "withheld">, folder: string | null | undefined,
+): boolean {
+  if (body.state !== "withheld" || body.withheld !== "junk_filed") return false;
+  return folder == null || (VIEW_OF_FOLDER as Record<string, string | undefined>)[folder] !== "spam";
+}
+
+/** How long a reader may say "loading from your mail server" over such a husk before it says it could not. */
+export const JUNK_REFILL_BOUND_MS = 15_000;
+
 export function bodyOf(
   reader: EntityReader,
   m: Pick<EngineMessage, "id" | "snippet"> & { body?: string },
@@ -1305,7 +1320,8 @@ function suggestionAi(s: ScreenerSuggestionEntity | undefined): ScreenerSenderDT
     ? ("screener" as const)
     : named ?? (s.decision === "yes" ? ("ohbox" as const) : ("screened" as const));
   const code = s.reasonCode === "impersonation" || s.reasonCode === "campaign"
-    || s.reasonCode === "auth_fail" || s.reasonCode === "brand_mismatch" ? s.reasonCode : undefined;
+    || s.reasonCode === "auth_fail" || s.reasonCode === "brand_mismatch"
+    || s.reasonCode === "correspondent" ? s.reasonCode : undefined;
   return {
     dest,
     confidence: s.confidence,

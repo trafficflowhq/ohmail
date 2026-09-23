@@ -841,7 +841,7 @@ export interface ScreenerSenderDTO {
      * row renders one sentence per code out of its own catalogue rather than a server string.
      * Absent on every ordinary suggestion, on a fixture row, and from any server that predates it.
      */
-    reasonCode?: "impersonation" | "campaign" | "auth_fail" | "brand_mismatch";
+    reasonCode?: "impersonation" | "campaign" | "auth_fail" | "brand_mismatch" | "correspondent";
     /** The brand named for `impersonation` — ohmail's own dictionary word, never the sender's. */
     reasonBrand?: string;
     /** How many unrelated senders carried this subject, for `campaign`. */

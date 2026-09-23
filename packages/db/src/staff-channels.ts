@@ -115,6 +115,9 @@ export const AUDIT_LOG_ACTIONS: readonly string[] = [
   "screener.held_release",
   // ── the Screener's undecided-sender press (`packages/services/src/ohbox-unscreened-service.ts`) ─
   "screener.unscreened_sweep",
+  // ── a correspondent let through: at ingest (`pipeline.ts`) and by the retro
+  //    (`apps/worker/src/screener-correspondent-retro.ts`), which also retires the auto-act's rule ─
+  "screener.correspondent_admitted", "screener.correspondent_rule_retired",
 ];
 
 const AUDIT_LOG_ACTION_SET: ReadonlySet<string> = new Set(AUDIT_LOG_ACTIONS);

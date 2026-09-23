@@ -246,6 +246,9 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   "getFolderState", "listRules", "knownSenders", "findThreadParent", "listThreadBacklog",
   // `away_replies`, one column, `LIMIT 1` — a table this projection does not join at all.
   "isOwnAwayReply",
+  /* The correspondent predicate's reply arm and the consent point it is read from: reads of
+     Sent copies, `mailboxes.created_at` and the seed stamp — nothing this projection remembers. */
+  "isCorrespondent", "correspondenceSince",
   /* `away_sender_state.undeliverable_at` — a write, and a table this projection does not join
      either. It is the away responder's own state about a PERSON; no locator, no flag, no
      `messages` column the memo reads. */

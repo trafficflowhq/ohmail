@@ -2,6 +2,7 @@ import type { MailboxMustBeLive, SpendOutcome, SpendPort } from "@trafficflow/db
 import type { NormalizedMessage, Destination, AttachmentMeta, EmailAddress } from "./types.js";
 import type { AuthVerdict, Rule } from "./rules.js";
 import type { ClassifierPort } from "./classifier-port.js";
+import type { CorrespondentEvidence } from "./correspondent.js";
 
 export interface NativeLocator { folder: string; ref: string; } // IMAP ref = `${uidvalidity}:${uid}`
 
@@ -453,6 +454,20 @@ export interface RepoPort {
   setFolderConflict(messageId: string, s: FolderStateRow): Promise<void>;
   listRules(accountId: string): Promise<Rule[]>;
   knownSenders(accountId: string): Promise<Set<string>>;
+  /**
+   * Has this account written to `sender` — `correspondent.ts#correspondentsAmong`, its REPLY arm:
+   * `references` (bracket-free, as `threadKeyOf` parses them) name a Sent copy this account wrote
+   * after its consent point. The `wrote` arm reaches ingest as {@link knownSenders}, taught when
+   * the Sent copy was ingested; the passes that can afford it ask both arms.
+   */
+  isCorrespondent(
+    accountId: string, sender: string, references: readonly string[],
+  ): Promise<CorrespondentEvidence | null>;
+  /**
+   * Upsert known correspondents. Returns how many rows were genuinely NEW, which is what makes
+   * "a second connect does not re-import" observable rather than merely asserted.
+   */
+  upsertContacts(accountId: string, addresses: readonly string[]): Promise<number>;
   recordAudit(accountId: string, action: string, payload: unknown, inverse: unknown): Promise<void>;
   /** Append a client-visible change to the delta log in the ambient transaction. */
   recordChange(input: RepoChangeInput): Promise<bigint>;

@@ -5,8 +5,9 @@ import {
 } from "./identity.js";
 import { classifySensitivity, type SensitivityResult } from "./sensitive.js";
 import {
-  NO_TRUSTED_AUTHSERV_IDS, DEFAULT_OHBOX_POLICY, authVerdictFromHeaders, dsnVerdict,
-  effectForDestination, evaluateRules, screenerAdmits, type AuthVerdict, type OhboxPolicy,
+  NO_TRUSTED_AUTHSERV_IDS, DEFAULT_OHBOX_POLICY, authVerdictFromHeaders, autoReplySuppression,
+  dsnVerdict, effectForDestination, evaluateRules, gateAuthor, screenerAdmits, type AuthVerdict,
+  type OhboxPolicy,
 } from "./rules.js";
 import { classifyDedup, type DedupOutcome } from "./dedup.js";
 // The leaf predicate, not `adapters/imap.js`: this module is the model layer and naming the
@@ -23,7 +24,8 @@ import { reconcile, type ReconcileAction } from "./reconciler.js";
 // conditional completion is declared on `WorkerRepo` and the apply path REQUIRES it — see
 // {@link ReconcileApplyDeps}.
 import type { WorkerRepo } from "./adapters/drizzle-repo.js";
-import { resolveThread } from "./threading.js";
+import { resolveThread, threadKeyOf } from "./threading.js";
+import type { CorrespondentEvidence } from "./correspondent.js";
 // The LEAF, not `/cloud` and not the root barrel: this module runs inside the desktop engine, and
 // `/cloud` is billing, the credit ledger, the staff handle and the whole hosted schema.
 // `classifyAttemptKey` is a pure template over its two arguments and lives on a leaf both halves
@@ -363,6 +365,17 @@ export interface NewPlan {
    */
   awayBounceOf?: readonly string[];
   ai?: AiPlan;
+  /**
+   * The sender is a CORRESPONDENT ({@link CorrespondentEvidence}) and the gate admitted them for
+   * it. The commit teaches `contacts` and writes the admission's audit row, so every pass that
+   * reads `knownSenders` agrees with this routing and the Screener can say why.
+   */
+  correspondentAdmission?: CorrespondentEvidence;
+  /**
+   * The recipients of a Sent copy written after the consent point — {@link
+   * PlanDeps.correspondenceSince} — which the commit teaches `contacts`. Absent for anything else.
+   */
+  learnCorrespondents?: readonly string[];
 }
 
 export interface ExistingPlan {
@@ -525,6 +538,14 @@ export interface PlanDeps {
    */
   screeningCutoff?: Date;
   /**
+   * THE CONSENT POINT FOR WRITING — the later of this mailbox's connect and the account's
+   * sent-mail seed answer, resolved once per cycle. A Sent copy the server holds, arrived after
+   * it and not written by a machine, teaches its recipients as correspondents. ABSENT teaches
+   * nothing: history before the point is the seed's question, and consent is never read off a
+   * folder listing (the retired kickstart).
+   */
+  correspondenceSince?: Date;
+  /**
    * A foreign organizer profile's import decision is open — the routing half of the write-behind
    * HOLD; ABSENT means inert. Measured in a takeover drill: the profile answered for every
    * screened sender, the write-behind held it and asked — and the sync loop ran at full authority
@@ -668,6 +689,45 @@ function readerAdoption(arrivalFolder: string): { adoption?: "peer" } {
  * untouched: a never-held message carries no placement of ours.
  */
 
+/**
+ * The gate's correspondent question — the reply arm, the one this path can afford per message:
+ * the `wrote` arm is `known` already, taught when the Sent copy was ingested. Asked only for a
+ * gate fall-through ({@link evaluateRules}' `screened` with no rule) about a single usable author
+ * who did not fail authentication and whose mail names at least one message id.
+ */
+async function correspondentAtGate(
+  repo: RepoPort, accountId: string, msg: NormalizedMessage,
+  decision: { source: string; matchedRuleId: string | null }, auth: AuthVerdict,
+  known: ReadonlySet<string>,
+): Promise<{ author: string; evidence: CorrespondentEvidence } | null> {
+  if (decision.source !== "screener" || decision.matchedRuleId !== null || auth === "fail") return null;
+  const author = gateAuthor(msg)?.toLowerCase() ?? null;
+  if (author === null || known.has(author)) return null;
+  const refs = threadKeyOf(msg.canonical.messageIdHeader, msg.headers).candidates;
+  if (refs.length === 0) return null;
+  const evidence = await repo.isCorrespondent(accountId, author, refs);
+  return evidence ? { author, evidence } : null;
+}
+
+/**
+ * Who one of the account's own Sent copies was written to, when it teaches — To, Cc and a Bcc
+ * the copy kept, lower-cased. Nothing before the consent point ({@link
+ * PlanDeps.correspondenceSince}) and nothing a machine wrote: an out-of-office copy addressed to
+ * every stranger who wrote is not the person writing to them.
+ */
+function sentCopyRecipients(
+  msg: NormalizedMessage, internalDate: Date | null, since: Date | undefined,
+): string[] {
+  const at = internalDate ?? msg.date;
+  if (since === undefined || at === null || at.getTime() <= since.getTime()) return [];
+  if (autoReplySuppression(msg.headers, msg.from.address) !== null) return [];
+  const bcc = (msg.headers["bcc"] ?? []).flatMap((line) => line.split(","))
+    .map((part) => /<([^<>@\s]+@[^<>\s]+)>/.exec(part)?.[1] ?? part.trim());
+  return [...new Set([...msg.to.map((a) => a.address), ...msg.cc.map((a) => a.address), ...bcc]
+    .map((a) => a.trim().toLowerCase())
+    .filter((a) => /^[^\s@<>,"]+@[^\s@<>,"]+$/.test(a)))];
+}
+
 /** A tiny, sensitivity-safe digest of routing-relevant headers (never the body). */
 function headersDigest(normalized: NormalizedMessage): string {
   const h = normalized.headers;
@@ -763,6 +823,7 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
     // regardless of the server: nothing the user wrote is new to them, and a client that appends
     // to Sent without `\Seen` would put their own outbox into the unread count.
     if (change.ownAuthored) {
+      const learn = sentCopyRecipients(normalized, change.internalDate ?? null, deps.correspondenceSince);
       return {
         outcome: "new",
         new: {
@@ -778,6 +839,7 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
           // call at all, so the user's own Sent mail cannot be demoted by its own provider's
           // report no matter what that report says.
           authVerdict,
+          ...(learn.length > 0 ? { learnCorrespondents: learn } : {}),
         },
       };
     }
@@ -841,9 +903,20 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
 
     const rules = await repo.listRules(accountId);
     const known = await repo.knownSenders(accountId);
-    const decision = evaluateRules({
+    let decision = evaluateRules({
       msg: normalized, rules, knownSenders: known, auth: authVerdict, ohboxPolicy,
     });
+    /* A CORRESPONDENT IS NEVER FIRST CONTACT. Asked only where the gate would hold for want of a
+       known author — a rule, a standing denial and a failed authentication all stand — and
+       before any AI question, which a correspondent's mail never reaches: the gate re-runs with
+       the author known, so rules and the header heuristic still place it. */
+    const correspondent = await correspondentAtGate(repo, accountId, normalized, decision, authVerdict, known);
+    if (correspondent !== null) {
+      decision = evaluateRules({
+        msg: normalized, rules, knownSenders: new Set([...known, correspondent.author]),
+        auth: authVerdict, ohboxPolicy,
+      });
+    }
 
     // Sensitivity refines placement. It never establishes consent. The old `sensitivity.sensitive
     // ? "INBOX"` ternary is the defect `rules.ts#headerHeuristic` names: a sender-chosen signal
@@ -953,6 +1026,7 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
       !sensitivity.flags.no_ai &&
       classifier &&
       routing &&
+      correspondent === null &&
       decision.destination == null &&
       // `{ mailboxId }` ONLY. This used to pass `dedupKey: key`, and `key` is
       // `mid:${messageIdHeader}` — the raw Message-ID, chosen by the sending server, carrying the
@@ -1034,6 +1108,7 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
            ours — an empty array would be a third state meaning the same as absent, and it cannot
            arise: the predicate requires `isOwnAwayReply`, which requires at least one id. */
         ...(fileBounceAsReceipt ? { awayBounceOf: dsn!.originalMessageIds } : {}),
+        ...(correspondent !== null ? { correspondentAdmission: correspondent.evidence } : {}),
         ai,
       },
     };
@@ -1361,6 +1436,21 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     if (p.awayBounceOf) {
       await repo.markAwayReplyUndeliverable(accountId, p.awayBounceOf, new Date())
         .catch(() => 0);
+    }
+
+    /* WRITING TO SOMEBODY MAKES THEM KNOWN, in the same transaction as the row that proves it:
+       the recipients of a Sent copy past the consent point, or the correspondent the gate just
+       admitted. `contacts` is what every re-screening pass reads, so they all agree with this
+       routing. The admission's audit row is what the Screener shows the reason from. */
+    const learned = [...(p.learnCorrespondents ?? [])];
+    const author = p.correspondentAdmission ? gateAuthor(p.normalized) : null;
+    if (author) learned.push(author);
+    if (learned.length > 0) await repo.upsertContacts(accountId, learned);
+    if (p.correspondentAdmission) {
+      await repo.recordAudit(accountId, "screener.correspondent_admitted", {
+        messageId: stored.id, via: p.correspondentAdmission.via,
+        sentAt: p.correspondentAdmission.sentAt.toISOString(),
+      }, null);
     }
 
     // Optimistic, user-wins move change at local commit. The physical

@@ -110,6 +110,12 @@ export interface JunkRestoreDeps {
   capDeferred?: Map<string, number>;
   /** Test seam for the rotation cursor (mailboxId → resume-after keyset position). */
   resume?: Map<string, string>;
+  /**
+   * AT THE PRESS: refill exactly these messages, which this cycle's reconcile just moved out of
+   * Junk — the move's own completion, not the next pass. The rotation cursor is neither read nor
+   * written, so a targeted run never moves the belt's place in its walk.
+   */
+  messageIds?: readonly string[];
 }
 
 export interface JunkRestoreResult {
@@ -160,7 +166,9 @@ export async function junkRestorePass(deps: JunkRestoreDeps): Promise<JunkRestor
   const capBytes = deps.storageCap === UNMETERED_STORAGE_CAP ? null : deps.storageCap;
   const refused = deps.refused ?? refusedFor(mailboxId);
   const capDeferred = deps.capDeferred ?? capDeferredFor(mailboxId);
-  const resume = deps.resume ?? resumeAfterByMailbox;
+  const targeted = deps.messageIds;
+  const resume = targeted !== undefined ? new Map<string, string>() : deps.resume ?? resumeAfterByMailbox;
+  if (targeted !== undefined && targeted.length === 0) return { ...EMPTY };
 
   const result: JunkRestoreResult = { ...EMPTY };
   // THE ROTATION — see {@link resumeAfterByMailbox}: a bounded exit left a cursor, resume there.
@@ -173,6 +181,7 @@ export async function junkRestorePass(deps: JunkRestoreDeps): Promise<JunkRestor
     const pageStart = after;
     const page = await listHusks(accountId, mailboxId, {
       limit: pageSize, ...(after !== undefined ? { afterId: after } : {}),
+      ...(targeted !== undefined ? { messageIds: targeted } : {}),
     });
     if (page.length === 0) break;
     result.examined += page.length;

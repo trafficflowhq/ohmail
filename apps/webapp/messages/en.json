@@ -768,13 +768,15 @@
       "impersonation": "The sender's address is not {brand}'s",
       "campaign": "The same mail came from {count} unrelated senders",
       "auth_fail": "This mail failed the sender's own authentication",
-      "brand_mismatch": "The sender's address does not match the name this mail gives"
+      "brand_mismatch": "The sender's address does not match the name this mail gives",
+      "correspondent": "You wrote to this sender first, or they are answering mail you sent"
     },
     "aiReasonChip": {
       "impersonation": "Not {brand}",
       "campaign": "{count} strangers",
       "auth_fail": "Failed authentication",
-      "brand_mismatch": "Name does not match"
+      "brand_mismatch": "Name does not match",
+      "correspondent": "You wrote first"
     },
     "aiSkip": {
       "out_of_credits": "The AI budget ran out before this sender was reached. It refills next cycle — deciding by hand costs nothing.",
@@ -1558,6 +1560,7 @@
     "retry": "Retry",
     "withheld": "Not stored here — within your storage space, older stored copies give way to newer mail, and this one gave way (or space was full when it arrived). The message itself is safe in your mailbox on your mail server; this is the preview. A bigger plan adds storage space.",
     "withheldJunk": "Not stored here — your spam verdict filed this message to the Junk folder on your own mail server. It lives on there; this is the preview.",
+    "withheldJunkLoading": "Loading this message from your mail server…",
     "withheldExpunged": "No stored copy left — every copy of this message is gone from the folders ohmail reads on your mail server: deleted there, or moved elsewhere by another mail app. This preview is what remains.",
     "invitationWithoutEvent": "This is a meeting invitation; the sender’s mail system did not attach the event."
   },
@@ -2099,7 +2102,7 @@
   },
   "siteScreener": {
     "title": "You decide who gets in.",
-    "body": "The first time someone writes to you, they wait at the Screener — not in your inbox. One click picks the door, once, for every mail that sender ever writes: Ohbox for people, News for newsletters, Receipts for the paperwork. Or never again — which also unsubscribes you, where the list offers one click. Spam is one press too: the message moves to your mail server's own Junk folder, and that sender never asks again. Want help deciding? Switch on suggestions and ohmail proposes a door for each new sender as their mail arrives, at a price you see up front; plain newsletters and receipts it can file by itself, and a pattern you have confirmed often enough runs without asking — spam included. It deletes nothing on its own.",
+    "body": "The first time a stranger writes to you, they wait at the Screener — not in your inbox. One click picks the door, once, for every mail that sender ever writes: Ohbox for people, News for newsletters, Receipts for the paperwork. Or never again — which also unsubscribes you, where the list offers one click. Spam is one press too: the message moves to your mail server's own Junk folder, and that sender never asks again. Want help deciding? Switch on suggestions and ohmail proposes a door for each new sender as their mail arrives, at a price you see up front; plain newsletters and receipts it can file by itself, and a pattern you have confirmed often enough runs without asking — spam included. It deletes nothing on its own.",
     "pointA": "First-time senders held until you say so",
     "pointB": "One click picks the door — for good",
     "pointC": "Spam is one press — into your mail server's Junk, and the sender never asks again",

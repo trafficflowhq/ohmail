@@ -649,6 +649,11 @@ function authorAddress(msg: NormalizedMessage): string | null {
   return claimed;
 }
 
+/** The author the gate asks about — {@link authorAddress}, for a caller that widens `knownSenders`. */
+export function gateAuthor(msg: NormalizedMessage): string | null {
+  return authorAddress(msg);
+}
+
 /**
  * The gate, as a positive statement: this account has an author address it recognises.
  *

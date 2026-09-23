@@ -432,7 +432,7 @@ export function ReceiptsView({
         loadingLabel={loadingLabel}
         failedLabel={failedLabel}
         /* Per MARKER (`withheldCopyKey`): which policy emptied the body decides the sentence. */
-        withheldLabel={tb(withheldCopyKey(body.withheld))}
+        withheldLabel={tb(withheldCopyKey(body.withheld, m.folder))}
         onSelect={onCur}
         onToggle={onToggle}
         onAction={onAction}

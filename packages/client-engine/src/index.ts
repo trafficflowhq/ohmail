@@ -338,6 +338,9 @@ export {
   threadSizeIndex,
   threadSubject,
   THREAD_PARTICIPANTS_MAX,
+  // A verdict's husk moved out of the spam pile, and how long "loading" may stand over it.
+  isJunkHuskLeaving,
+  JUNK_REFILL_BOUND_MS,
   type OhboxView,
   type ResurfacedThreadRow,
   type ThreadSize,

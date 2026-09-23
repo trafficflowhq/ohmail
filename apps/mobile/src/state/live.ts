@@ -56,7 +56,9 @@ import {
   type SignatureState,
   type AddressCounts,
   type AddressDirection,
+  isJunkHuskLeaving,
   type BodyState,
+  type WithheldMarker,
   type EmailAddress,
   type EngineDraft,
   type EngineMessage,
@@ -322,9 +324,16 @@ export type WorldPileState = "reply_later" | "set_aside" | "bubbled_up" | "resur
  * the webapp resolves in one place (reply-all visibility, the forward refusal, the pressed
  * pile, the folder the move panel excludes).
  */
+/** How long the reader may say "loading" over a husk moved out of Junk — the engine's number. */
+export { JUNK_REFILL_BOUND_MS } from "@ohmail/client-engine";
+
 export type WorldMail = Mail & {
   attachments?: WorldAttachment[];
   bodyState?: BodyState;
+  /** WHICH policy emptied a `withheld` body — the reader owes each marker its own sentence. */
+  bodyWithheld?: WithheldMarker;
+  /** A spam verdict's husk on a message no longer in the spam pile — the engine's `isJunkHuskLeaving`. */
+  bodyJunkLeaving?: true;
   /**
    * The hydrated html part, exactly as `bodyOf` reports it — non-null only on a `full` body
    * that carries one. Attached by {@link liveMessage} alone (the reading view is its one
@@ -461,6 +470,8 @@ function toMail(reader: EntityReader, m: EngineMessage, v: WorldView): WorldMail
     time: messageDisplayTime(m, v.now, v.zone, v.locale ?? "en"),
     body: body.text,
     bodyState: body.state,
+    ...(body.state === "withheld" && body.withheld ? { bodyWithheld: body.withheld } : {}),
+    ...(isJunkHuskLeaving(body, physical) ? { bodyJunkLeaving: true as const } : {}),
     snippet: m.snippet,
     /* READ STATE AS DRAWN, not as stored — the one shared derivation, so the phone bolds
        exactly the rows the desktop and the browser do (owner ruling 2026-08-31: a resurfaced

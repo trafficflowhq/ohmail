@@ -46,7 +46,9 @@ import { aiRefusalKey, clearedByAccess } from "./ai-refusal-copy";
  * `screener-sender-reason.test.tsx` pins this list, the catalogues and the renderer together so
  * the three cannot drift.
  */
-export const REASON_CODES = ["impersonation", "campaign", "auth_fail", "brand_mismatch"] as const;
+export const REASON_CODES = [
+  "impersonation", "campaign", "auth_fail", "brand_mismatch", "correspondent",
+] as const;
 export type SenderReasonCode = (typeof REASON_CODES)[number];
 
 export interface SenderSuggestion {

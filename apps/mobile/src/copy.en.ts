@@ -1433,6 +1433,17 @@ const TABLE = {
    */
   liveBodyWithheld:
     "Not stored — your storage space was full when this arrived. This is the preview; the message itself is safe in your mailbox on your mail server.",
+  /**
+   * The other two markers, and the one that is not terminal. A spam verdict's husk is the verdict's
+   * sentence ONLY while the message is in the spam pile; moved out, its text is on its way back
+   * from the mail server and the reader says that ({@link liveBodyJunkLoading}), bounded.
+   * The web reader's sentences, word for word.
+   */
+  liveBodyWithheldJunk:
+    "Not stored here — your spam verdict filed this message to the Junk folder on your own mail server. It lives on there; this is the preview.",
+  liveBodyWithheldExpunged:
+    "No stored copy left — every copy of this message is gone from the folders ohmail reads on your mail server: deleted there, or moved elsewhere by another mail app. This preview is what remains.",
+  liveBodyJunkLoading: "Loading this message from your mail server…",
 
   /* ------------------------------------------------- the mail body's frame */
 

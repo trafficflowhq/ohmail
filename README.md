@@ -42,7 +42,7 @@ account.
 <div align="center"><sub>The demo mailbox — fictional people, fictional brands.</sub></div>
 
 ## The Ohbox holds only mail you said yes to
-The first time someone writes to you, they wait at the Screener — not in your
+The first time a stranger writes to you, they wait at the Screener — not in your
 inbox. The Ohbox holds the people you said yes to, every message names the rule
 that filed it, and a tracking pixel is never requested.
 

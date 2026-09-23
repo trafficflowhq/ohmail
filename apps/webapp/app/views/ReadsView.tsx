@@ -644,7 +644,7 @@ export function ReadsView({
         loadingLabel={loadingLabel}
         failedLabel={failedLabel}
         /* Per MARKER (`withheldCopyKey`): which policy emptied the body decides the sentence. */
-        withheldLabel={tb(withheldCopyKey(body.withheld))}
+        withheldLabel={tb(withheldCopyKey(body.withheld, m.folder))}
         /* The same fact the row above carries, resolved to a STRING here so the memo's comparator
            keeps comparing primitives. */
         mailboxLabel={mailboxLabelOf?.(m.mailboxId) ?? undefined}

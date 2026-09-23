@@ -94,6 +94,9 @@ import { retentionPrunePass } from "./retention-prune.js";
 import { ohboxTidyPass } from "./ohbox-tidy.js";
 import { screenerAutoApplyPass } from "./screener-auto.js";
 import { screenerAutoActPass } from "./screener-auto-act.js";
+import {
+  CORRESPONDENT_RETRO_EVERY_MS, screenerCorrespondentRetroPass,
+} from "./screener-correspondent-retro.js";
 import { screenerAutoSuggestPass } from "./screener-auto-suggest.js";
 import { refundObligationDrainPass } from "./refund-obligation-drain.js";
 import { syncKickPass } from "./sync-kick.js";
@@ -796,6 +799,8 @@ export async function startWorkerWithLock(
      * cycle, not one {@link BUBBLE_UP_EVERY_MS} after the takeover.
      */
     let lastBubbleUpAt = 0;
+    /** When each served account last had its correspondent retro — due at a new leader's first cycle. */
+    const correspondentRetroAt = new Map<string, number>();
     /**
      * Time-gate for the thread-join heal. Starts "due" like `lastBubbleUpAt`, and here the
      * reason is survival rather than latency: a deployment cadence shorter than
@@ -4540,6 +4545,27 @@ export async function startWorkerWithLock(
             accountId, err,
             reason: "each round is one transaction, so a failure loses nothing durable; the " +
               "counter and the husks move together or not at all, and the next cycle re-probes",
+          });
+        }
+      }
+
+      // ── NOBODY THIS ACCOUNT WROTE TO WAITS AT THE GATE ──────────────────────────────────
+      //
+      // Before the three Screener passes below, so a held correspondent is released rather than
+      // bought a suggestion or acted on. Hourly per account: its evidence moves when somebody
+      // writes, and the ingest already admits their new mail at once. Its own try/catch.
+      for (const accountId of passAccounts) {
+        if (stopped) return;
+        if (Date.now() - (correspondentRetroAt.get(accountId) ?? 0) < CORRESPONDENT_RETRO_EVERY_MS) continue;
+        correspondentRetroAt.set(accountId, Date.now());
+        try {
+          await screenerCorrespondentRetroPass(db as unknown as Tx, { accountId, log });
+        } catch (err) {
+          noteIfSharedDatabaseFault(err);
+          log.error("screener_correspondent_retro_failed", {
+            accountId, err,
+            reason: "each sender is released in its own transaction and nothing is marked, so the "
+              + "next hour re-reads the same evidence; new mail from them is admitted at ingest meanwhile",
           });
         }
       }

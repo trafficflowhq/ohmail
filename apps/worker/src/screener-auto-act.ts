@@ -9,6 +9,7 @@ import {
   type ResolvedCutline, type Tx,
 } from "@trafficflow/db";
 import { capabilityForKind } from "@trafficflow/core/adapters/organizer-lease";
+import { correspondentsAmong } from "@trafficflow/core/adapters/drizzle-repo";
 import {
   canonicalDestination, effectForDestination, silentLogger,
   type Destination, type Logger,
@@ -89,11 +90,13 @@ export interface ScreenerAutoActResult {
   capped: boolean;
   /** True ⇒ the account switched the setting OFF part-way through; the rest was NOT filed. */
   revoked: boolean;
+  /** Senders left waiting because this account wrote to them — counted inside {@link kept}. */
+  correspondents: number;
 }
 
 const EMPTY = (): ScreenerAutoActResult => ({
   ran: false, examined: 0, filed: 0, kept: 0, failed: 0, destinations: {}, capped: false,
-  revoked: false,
+  revoked: false, correspondents: 0,
 });
 
 /** A waiting sender and the decision their stored advice amounts to. */
@@ -180,8 +183,19 @@ export async function screenerAutoActPass(
   // The ONE read path for stored advice, the one the Screener surface itself reads through:
   // newest-per-sender, decided in the database rather than in a loop here.
   const advice = await screenerSuggestionsBySender(db, accountId, waiting.map((w) => w.address));
+  /* THE CORRESPONDENT GATE, ABOVE THE BARS: the model's 1.0 does not outrank the person having
+     written to them. A sender this account wrote to is never filed by this pass, whatever the
+     advice says or how sure it is; the Screener's retro admits them instead. One read per page. */
+  const correspondents = await correspondentsAmong(db, {
+    accountId, senders: waiting.map((w) => w.address), references: "held",
+  });
 
   for (const sender of waiting) {
+    if (correspondents.has(sender.address)) {
+      result.kept++;
+      result.correspondents++;
+      continue;
+    }
     const plan = plannedDecision(sender.address, advice.get(sender.address), bars);
     if (!plan) { result.kept++; continue; }
 
@@ -245,6 +259,13 @@ export async function screenerAutoActPass(
     }
   }
 
+  if (result.correspondents > 0) {
+    log.info("screener_auto_act_correspondent", {
+      accountId, skipped: result.correspondents,
+      reason: "these senders were not filed: this account wrote to them, and no suggestion "
+        + "outranks that however confident it is",
+    });
+  }
   // FIELD NAMES THE HARDENED LOGGER KEEPS, asked of it rather than guessed: `filed`, `kept` and
   // `destinations` are dropped by `ALLOWED_FIELDS`, and a counter the sink drops is a line that
   // says nothing. The destinations live in the rules the act promoted, which is a durable record.

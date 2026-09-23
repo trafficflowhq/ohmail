@@ -13,7 +13,8 @@ import { BRANDS, type Brand } from "./brands.js";
  */
 
 /** Which fact decided a capped suggestion. A closed set — the row renders one sentence per code. */
-export type SenderReasonCode = "impersonation" | "campaign" | "auth_fail" | "brand_mismatch";
+export type SenderReasonCode =
+  | "impersonation" | "campaign" | "auth_fail" | "brand_mismatch" | "correspondent";
 
 /**
  * The offline DKIM verdict, as `messages.auth_verdict` spells it. NULL/absent is PERMISSIVE.
@@ -56,6 +57,13 @@ export interface SenderSignals {
   urgency: boolean;
   /** The authentication verdict, when the column carries one. */
   auth?: SenderAuthVerdict;
+  /**
+   * This account WROTE to the sender, or their mail answers a message it sent — a fact the
+   * caller reads from the mailbox (`correspondent.ts`), never from anything the sender wrote.
+   * {@link capSuggestion} refuses a denying answer over it; only a failed authentication, which
+   * says this message is not from them, outranks it.
+   */
+  correspondent?: { sentAt: string };
   /**
  * Set ⇒ {@link capSuggestion} will bound the answer, and this is the sentence the row renders.
  * Only these four values ever leave this module towards a surface or a model — with the brand
@@ -300,11 +308,13 @@ export function senderCheck(input: SenderCheckInput): SenderSignals {
 
 /**
  * WHICH FACT DECIDES, when more than one fired. Ordered by how much it says about THIS sender:
- * the forged identity first, then the sender's own authentication, then the crowd, then the
- * unverifiable claim. Only the first three cap hard; `brand_mismatch` needs urgency beside it,
- * which is checked here so `capSuggestion` and the rendered reason can never disagree.
+ * having been written to by this account first (short of a failed authentication), then the
+ * forged identity, the sender's own authentication, the crowd, the unverifiable claim. Only
+ * those three cap hard; `brand_mismatch` needs urgency beside it, checked here so
+ * `capSuggestion` and the rendered reason can never disagree.
  */
 function decideReason(s: SenderSignals): SenderReasonCode | undefined {
+  if (s.correspondent && s.auth !== "fail") return "correspondent";
   if (s.impersonation) return "impersonation";
   if (s.auth === "fail") return "auth_fail";
   if (s.campaign && s.campaign.count >= 2) return "campaign";
@@ -338,8 +348,18 @@ const ADMITTING: readonly Destination[] = ["INBOX", "ohmail/News", "ohmail/Recei
  * including the absence of `reasonCode`: today's behaviour for every ordinary sender.
  */
 export function capSuggestion(model: CheckedSuggestion, s: SenderSignals): CheckedSuggestion {
-  const reason = s.reasonCode;
+  // The signal is read, not the stored code: a caller that attaches the fact after the check ran
+  // is still bounded, and a correspondent is re-decided whatever code the check computed.
+  const reason = s.correspondent && s.auth !== "fail" ? "correspondent" : s.reasonCode;
   if (reason === undefined) return model;
+  /* SOMEBODY THIS ACCOUNT WROTE TO IS NOT SPAM, however sure the model sounded. An admitting
+     answer stands with the reason beside it; anything else becomes the Ohbox, and the model's
+     sentence goes with it — a rationale arguing spam must not print under an Ohbox verdict. */
+  if (reason === "correspondent") {
+    if (ADMITTING.includes(model.destination) && !model.spam) return { ...model, reasonCode: reason };
+    // The fact's confidence, never the model's: its 1.0 was about spam, not about the Ohbox.
+    return { destination: "INBOX", confidence: CAP_CONFIDENCE, rationale: "", spam: false, reasonCode: reason };
+  }
   if (reason === "brand_mismatch") {
     if (!ADMITTING.includes(model.destination) || model.confidence <= SOFT_CEILING) {
       return { ...model, reasonCode: reason };
@@ -367,9 +387,10 @@ export function senderFacts(s: SenderSignals): string | undefined {
   // a block on every mail that says "renew" would change the question for a large share of
   // ordinary mail for no added fact. The block appears only where ohmail checked something the
   // model cannot see; urgency then rides along inside it.
-  if (!s.impersonation && !s.brandMismatch && !s.campaign && !s.auth) return undefined;
+  if (!s.impersonation && !s.brandMismatch && !s.campaign && !s.auth && !s.correspondent) return undefined;
   const lines: string[] = [];
   if (s.senderDomain) lines.push(`- the sender's address is at ${s.senderDomain}`);
+  if (s.correspondent) lines.push("- this account wrote to this sender, or their mail answers a message it sent");
   if (s.impersonation) {
     lines.push(`- the mail names ${s.impersonation.brand}, whose own addresses are at `
       + `${s.impersonation.brandDomains.join(", ")}`);

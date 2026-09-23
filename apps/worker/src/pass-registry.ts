@@ -234,6 +234,15 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "leader lock; the decision path is `applyScreenerDecision` — the manual Apply's and the drain's one implementation",
   },
   {
+    name: "screener_correspondent_retro",
+    module: `${W}/screener-correspondent-retro.ts`, entry: "screenerCorrespondentRetroPass",
+    triggers: ["cycle-tail"],
+    cadence: "CORRESPONDENT_RETRO_EVERY_MS (hourly) per served account, due at a new leader's first cycle",
+    budget: "CORRESPONDENT_RETRO_SENDERS held senders and auto-act rules per run; CORRESPONDENT_SCAN_ROWS Sent copies; one transaction per sender",
+    owns: "nobody this account wrote to after its consent point waits at the gate or stays under a spam rule the auto-act promoted",
+    fence: "leader lock; folder_state + change_log + an audit inverse per message, one rule delta per retired rule, never IMAP",
+  },
+  {
     name: "screener_auto_suggest",
     module: `${W}/screener-auto-suggest.ts`, entry: "screenerAutoSuggestPass",
     triggers: ["cycle-tail", "sidecar-drain"],

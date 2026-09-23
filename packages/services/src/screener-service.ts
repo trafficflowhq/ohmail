@@ -38,7 +38,7 @@ import {
 /* The verdict derivation moved to its own leaf when `materializeScreenerSuggestion` became its
    third reader — one reading for the page, the purchase and the `/sync` entity. */
 import { reasonDetail, suggestionAdvice } from "./screener-advice.js";
-import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import { correspondentsAmong, makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 /* `capabilityForKind` — the ONE map from a request kind to the capability its holder must
    advertise (mail 0094). Imported rather than spelled as a constant here so that this door and
    the record it writes cannot disagree about what `screener.decide` requires. */
@@ -941,6 +941,7 @@ export class ScreenerReadService {
     // `senderSignalsByMessage`. Free (no query, no model) and applied to advice that is already
     // on record, so a suggestion bought before this shipped says why it was wrong here too.
     const checked = senderSignalsByMessage(pageRows);
+    await markCorrespondents(ctx, pageRows, checked);
     const items = pageRows.map((r) => toItem(r, withSenderCheck(
       stored.get(r.fromAddress.toLowerCase()) ?? null, checked.get(r.messageId), posture,
     )));
@@ -1845,6 +1846,7 @@ export class ScreenerService extends ScreenerReadService {
     // path asks the same question about the same mail, so withholding the facts here would leave
     // the defect standing on the path a person pays for.
     const checked = senderSignalsByMessage([...rep.values()]);
+    await markCorrespondents(ctx, [...rep.values()], checked);
 
     // ── PASS 1 — RESOLUTION ONLY ────────────────────────────────────────────────────────────
     senders.forEach((sender, index) => {
@@ -2281,6 +2283,27 @@ function senderSignalsByMessage(rows: readonly ScreenerRow[]): Map<string, Sende
     authVerdict: r.authVerdict,
   })));
   return new Map(rows.map((r, i) => [r.messageId, signals[i] as SenderSignals]));
+}
+
+/**
+ * WHO OF THESE THIS ACCOUNT WROTE TO — `correspondent.ts`, one read for the set, onto the signals
+ * the check already produced. The fact is the mailbox's, never the sender's, and it decides the
+ * reason unless the message failed authentication: then it is not evidence about this message.
+ */
+async function markCorrespondents(
+  ctx: ServiceContext, rows: readonly ScreenerRow[], checked: Map<string, SenderSignals>,
+): Promise<void> {
+  if (rows.length === 0) return;
+  const found = await correspondentsAmong(asTx(ctx), {
+    accountId: ctx.accountId, senders: rows.map((r) => r.fromAddress), references: "held",
+  });
+  for (const r of rows) {
+    const evidence = found.get(r.fromAddress.trim().toLowerCase());
+    const signals = checked.get(r.messageId);
+    if (!evidence || !signals) continue;
+    signals.correspondent = { sentAt: evidence.sentAt.toISOString() };
+    if (signals.auth !== "fail") signals.reasonCode = "correspondent";
+  }
 }
 
 /**

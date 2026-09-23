@@ -895,6 +895,11 @@ export const DE: Deck = {
   liveBodyFailed: "Nur die Vorschau ließ sich laden. Öffne sie erneut, um es nochmal zu versuchen.",
   liveBodyWithheld:
     "Nicht gespeichert — dein Speicherplatz war voll, als sie ankam. Das hier ist die Vorschau; die Nachricht selbst liegt sicher in deinem Postfach auf deinem Mailserver.",
+  liveBodyWithheldJunk:
+    "Hier nicht gespeichert — dein Spam-Urteil hat diese Nachricht in den Junk-Ordner deines eigenen Mailservers einsortiert. Dort lebt sie weiter; das hier ist die Vorschau.",
+  liveBodyWithheldExpunged:
+    "Keine gespeicherte Kopie mehr — jede Kopie dieser Nachricht ist aus den Ordnern verschwunden, die ohmail auf deinem Mailserver liest: dort gelöscht oder von einem anderen Mailprogramm verschoben. Diese Vorschau ist, was bleibt.",
+  liveBodyJunkLoading: "Diese Nachricht wird von deinem Mailserver geladen…",
 
   /* ------------------------------------------------- the mail body's frame */
 

@@ -9,6 +9,7 @@ import {
   type RefundObligationPort, type RefundObligationReason, type SpendPort, type Tx,
 } from "@trafficflow/db";
 import { capabilityForKind } from "@trafficflow/core/adapters/organizer-lease";
+import { correspondentsAmong } from "@trafficflow/core/adapters/drizzle-repo";
 import {
   askScreeningQuestion, capSuggestion, senderCheckAll, senderFacts, silentLogger,
   type ClassifierPort, type Logger, type SenderSignals,
@@ -198,12 +199,24 @@ export async function screenerAutoSuggestPass(
    * read and the claim is the race this filter cannot see, and that charge is refunded.
    */
   const appliable = await appliableMailboxes(db, accountId, page);
-  const candidates = page.filter((c) => appliable.get(c.mailboxId) === true);
-  if (candidates.length < page.length) {
+  const organized = page.filter((c) => appliable.get(c.mailboxId) === true);
+  if (organized.length < page.length) {
     log.info("screener_auto_suggest_no_organizer", {
-      accountId, dropped: page.length - candidates.length,
+      accountId, dropped: page.length - organized.length,
       reason: "no install can apply a Screener decision on these mailboxes, so their advice is " +
         "not bought — the condition the manual purchase route refuses",
+    });
+  }
+  /* NOBODY THIS ACCOUNT WROTE TO IS BOUGHT A SUGGESTION: they are not a first contact, and the
+     Screener's retro lets them through. Asked once for the page, before the money question. */
+  const written = organized.length === 0 ? new Map() : await correspondentsAmong(db, {
+    accountId, senders: organized.map((c) => c.fromAddress), references: "held",
+  });
+  const candidates = organized.filter((c) => !written.has(c.fromAddress.trim().toLowerCase()));
+  if (candidates.length < organized.length) {
+    log.info("screener_auto_suggest_correspondent", {
+      accountId, skipped: organized.length - candidates.length,
+      reason: "these senders are people this account wrote to, so no advice about them is bought",
     });
   }
 

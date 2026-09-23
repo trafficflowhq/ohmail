@@ -8,7 +8,9 @@
  * to `pane-memory` per message, so a fold that remounts this tree resumes where the reader
  * was — continuity as data, not as tree position.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { JUNK_REFILL_BOUND_MS } from "../state/live";
+import { junkLeaving, withheldNote } from "./body-note";
 import { ActivityIndicator, Platform, Pressable, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
@@ -68,6 +70,27 @@ export function MessageReader({
     };
   }, [id, openMessage, releaseAttachments, worldKey]);
 
+  /* A VERDICT'S HUSK MOVED OUT OF JUNK: the mirror sheds it on the move's own changes, and the
+     reader asks again then, once per husk seen; past the engine's bound it says the text could
+     not be read. The web reader's rule (`useJunkRefill`), on this door's hydrate. */
+  const hydrateMessage = w.actions.hydrateMessage;
+  const leaving = m !== undefined && m !== null && junkLeaving(m);
+  const shed = m?.bodyState === "snippet" || m?.bodyState === "loading";
+  const [refillExpired, setRefillExpired] = useState(false);
+  const owedFor = useRef<string | null>(null);
+  useEffect(() => {
+    setRefillExpired(false);
+    if (!leaving) return;
+    owedFor.current = id;
+    const timer = setTimeout(() => setRefillExpired(true), JUNK_REFILL_BOUND_MS);
+    return () => clearTimeout(timer);
+  }, [id, leaving]);
+  useEffect(() => {
+    if (!shed || owedFor.current !== id) return;
+    owedFor.current = null;
+    hydrateMessage(id);
+  }, [id, shed, hydrateMessage]);
+
   if (!m) {
     return (
       <Screen>
@@ -83,11 +106,12 @@ export function MessageReader({
 
   // `withheld` is checked BEFORE the failure arm and never folded into it: the storage cap is an
   // answer the server gave, so "reopen to try again" would be false. See `Copy.liveBodyWithheld`.
+  // Per MARKER, and a verdict's husk outside the spam pile is text on its way — `withheldNote`.
   const bodyNote =
     !m.protected && (m.bodyState === "snippet" || m.bodyState === "loading")
       ? Copy.liveBodyLoading
       : !m.protected && m.bodyState === "withheld"
-        ? Copy.liveBodyWithheld
+        ? withheldNote(m, refillExpired)
         : !m.protected && m.bodyState === "failed"
           ? Copy.liveBodyFailed
           : null;
