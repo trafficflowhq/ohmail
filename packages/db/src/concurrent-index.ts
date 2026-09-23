@@ -1,5 +1,5 @@
-import { sql, type SQL } from "drizzle-orm";
-import { MIGRATION_LOCK_KEY, MIGRATION_LOCK_TIMEOUT_MS } from "./migrate.js";
+import { SQL, StringChunk, sql } from "drizzle-orm";
+import { MIGRATION_LOCK_KEY, MIGRATION_LOCK_TIMEOUT_MS } from "./migration-lock.js";
 
 /**
  * BUILDING AN INDEX `CONCURRENTLY` OUTSIDE THE MIGRATOR — the one implementation.
@@ -79,6 +79,21 @@ async function admit(
 }
 
 /**
+ * THE PLAIN FORM of a spec's statement: its one `create index concurrently` without the keyword.
+ * For a store nothing else writes to while it builds — the desktop's PGlite, before it serves — a
+ * concurrent build is two table scans for no one's benefit (measured at 74k messages: 2.6 s
+ * against 1.8 s). A statement with no such clause, or two, is refused rather than rewritten.
+ */
+export function plainIndexDdl(ddl: SQL): SQL {
+  let n = 0;
+  const chunks = ddl.queryChunks.map((c) => (c instanceof StringChunk
+    ? new StringChunk(c.value.map((v) => v.replace(/\bcreate index concurrently\b/gi, () => { n += 1; return "create index"; })))
+    : c));
+  if (n !== 1) throw new Error(`an index statement with ${n} "create index concurrently" clauses has no plain form`);
+  return new SQL(chunks);
+}
+
+/**
  * Build every admitted spec, idempotently, and safe against a database at any migration position.
  *
  * Admission runs BEFORE the lock: a run with nothing to build takes no lock at all, and a table
@@ -88,8 +103,9 @@ async function admit(
 export async function ensureConcurrentIndexes(
   db: SqlExecutor,
   specs: readonly ConcurrentIndexSpec[],
-  opts: { label: string; log?: (msg: string) => void },
+  opts: { label: string; log?: (msg: string) => void; concurrently?: boolean },
 ): Promise<void> {
+  const concurrently = opts.concurrently !== false;
   if (!Number.isInteger(MIGRATION_LOCK_TIMEOUT_MS) || MIGRATION_LOCK_TIMEOUT_MS < 0) {
     throw new Error("MIGRATION_LOCK_TIMEOUT_MS must be a non-negative integer");
   }
@@ -127,12 +143,12 @@ export async function ensureConcurrentIndexes(
         // concurrent build really does leave an invalid index that `IF NOT EXISTS` then treats as
         // present, permanently.
         opts.log?.(`${spec.name}: an INVALID leftover from a failed concurrent build — dropped and rebuilt`);
-        await db.execute(sql.raw(`drop index concurrently if exists public."${spec.name}"`));
+        await db.execute(sql.raw(`drop index ${concurrently ? "concurrently " : ""}if exists public."${spec.name}"`));
       } else if (ix !== undefined) {
         continue;   // present and valid — the ordinary re-run
       }
-      opts.log?.(`${spec.name}: building concurrently on ${spec.table}`);
-      await db.execute(spec.ddl);
+      opts.log?.(`${spec.name}: building ${concurrently ? "concurrently " : ""}on ${spec.table}`);
+      await db.execute(concurrently ? spec.ddl : plainIndexDdl(spec.ddl));
     }
   } finally {
     await db.execute(sql`select pg_advisory_unlock(${key})`);

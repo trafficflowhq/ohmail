@@ -53,3 +53,24 @@ export class AppointmentsRefused extends ScheduleService {
     throw new ServiceError("conflict", 409, NO_APPOINTMENTS_HERE);
   }
 }
+
+/**
+ * WHICH STORE-ONLY PASSES each composition schedules — work on this install's own store with no
+ * mailbox connection and no promise about a later moment. `search-index-backfill` is the
+ * `search_index_backfill` pass (`@trafficflow/core/mail`), gated on idle and power here
+ * (`search-backfill.ts`). The hosted deployment runs it at each visit's tail in the worker, never in
+ * this composition; the phone does not schedule it (search there reads rows without a document the
+ * older way, which stays complete).
+ */
+export type StorePass = "search-index-backfill";
+
+export const COMPOSITION_STORE_PASSES:
+  Readonly<Record<OrganizerKind, readonly StorePass[]>> = {
+  local: ["search-index-backfill"],
+  cloud: [],
+  mobile: [],
+};
+
+export function runsStorePass(kind: OrganizerKind, pass: StorePass): boolean {
+  return COMPOSITION_STORE_PASSES[kind].includes(pass);
+}

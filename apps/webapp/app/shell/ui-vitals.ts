@@ -463,6 +463,9 @@ export function takeUiVitals(): UiVitalsReport {
     deriveP95Ms: engine.deriveMsP95,
     deriveCount: engine.derives,
     notifiesPer5min: engine.notifies,
+    // A GAUGE beside the counters: how many messages the mirror holds now. History and Search read
+    // pages of the store and never write them here, so this stays under the window's bound.
+    mirrorMessages: engine.mirrorMessages,
     uptimeMin: at === null ? null : Math.floor(at / 60_000),
   };
   rings.open.sinceReport = 0;

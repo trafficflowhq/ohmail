@@ -401,6 +401,42 @@ export async function readMailboxReachVia(
   return { rows: out, state: "verdict", reason: null, status: res.status, detail: null, at: Date.now() };
 }
 
+/** The local engine's search index, as `GET /local/search-index` answers it. */
+export type SearchIndexReading =
+  | { state: "indexing"; done: number; total: number }
+  | { state: "built" }
+  | { state: "silent" };
+
+export const SEARCH_INDEX_ROUTE = "/local/search-index";
+
+/**
+ * HOW FAR THE LOCAL SEARCH INDEX HAS GOT — the store's own counts, read over the bridge. Any
+ * answer that is not one of the two shapes is SILENCE and renders nothing: an engine older than
+ * the route, a refusal, a body that is not a count. A progress sentence is only ever the engine's
+ * own numbers, never a guess.
+ */
+export async function readSearchIndexVia(
+  fetchImpl: (url: string, init?: unknown) => Promise<Response>,
+): Promise<SearchIndexReading> {
+  try {
+    const res = await fetchImpl(SEARCH_INDEX_ROUTE);
+    if (!res.ok) return { state: "silent" };
+    const b = (await res.json()) as { built?: unknown; done?: unknown; total?: unknown } | null;
+    if (b?.built === true) return { state: "built" };
+    const { done, total } = b ?? {};
+    if (b?.built !== false || !Number.isInteger(done) || !Number.isInteger(total)) return { state: "silent" };
+    if ((total as number) <= 0 || (done as number) >= (total as number) || (done as number) < 0) return { state: "built" };
+    return { state: "indexing", done: done as number, total: total as number };
+  } catch {
+    return { state: "silent" };
+  }
+}
+
+/** The whole percent shown: floored, and never 100 while a row is still unindexed. */
+export function indexingPercent(r: { done: number; total: number }): number {
+  return Math.min(99, Math.floor((r.done * 100) / r.total));
+}
+
 /**
  * THE DESKTOP'S FRESHNESS SOURCE — `GET /mirror/freshness` over the bridge, for the shared
  * shell's "As of <time> · catching up" arm (INSTANT-ARCH §6.6). The window's engine drains
@@ -694,6 +730,27 @@ export function DesktopMailboxes(
     read();
     const id = setInterval(() => { setNow(Date.now()); read(); }, REACH_POLL_MS);
     return () => { live = false; clearInterval(id); };
+  }, [door]);
+  /**
+   * HOW FAR THE LOCAL SEARCH INDEX HAS GOT — local door only, read at the reach cadence and no
+   * longer once the engine says it is built. The row's progress arm renders it; see
+   * {@link readSearchIndexVia}.
+   */
+  const [searchIndex, setSearchIndex] = useState<SearchIndexReading>({ state: "silent" });
+  useEffect(() => {
+    if (door !== "local") { setSearchIndex({ state: "silent" }); return; }
+    let live = true;
+    let id: ReturnType<typeof setInterval> | undefined;
+    const read = (): void => {
+      void readSearchIndexVia(retryingBridgeFetch).then((r) => {
+        if (!live) return;
+        setSearchIndex(r);
+        if (r.state === "built" && id !== undefined) { clearInterval(id); id = undefined; }
+      });
+    };
+    read();
+    id = setInterval(read, REACH_POLL_MS);
+    return () => { live = false; if (id !== undefined) clearInterval(id); };
   }, [door]);
   /** Mailboxes whose resync this pane has queued — a press the engine has not been given yet.
    *  The engine's own poll cycle never writes here. See {@link resync}. */
@@ -1411,6 +1468,12 @@ export function DesktopMailboxes(
     }
     if (m.lastSyncAt === null) return say(t("desktopStateFirstOpen"));
     if (m.initialImportCompletedAt === null) return say(t("desktopStateCatchingUp"));
+    /* OLDER MAIL STILL BEING INDEXED — below catching up (mail arriving outranks words being
+       indexed) and above "Up to date", which would otherwise be said of a search that is still
+       filling in. The store's own counts; gone at 100 %. */
+    if (searchIndex.state === "indexing") {
+      return say(t("desktopStateIndexing", { percent: indexingPercent(searchIndex) }));
+    }
     return say(t("desktopStateUpToDate"));
   };
 

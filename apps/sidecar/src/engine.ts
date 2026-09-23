@@ -17,6 +17,7 @@ import { ClaimReleaseError } from "@trafficflow/core/adapters/organizer-lease";
 // what an absent or unrecognised value means, and both hosts ask it the same question.
 import {
   DEFAULT_OHBOX_POLICY, providerAuthservIds, resolveOhboxPolicy, resolveScreeningCutoff,
+  searchIndexBackfillPass,
 } from "@trafficflow/core/mail";
 // After the `@trafficflow/core` block, matching every other file in this package: core first,
 // then the private half. `packages/core` → `@trafficflow/db` is a real edge (`pipeline.ts` imports
@@ -89,7 +90,7 @@ import { createSignOutFence, SIGN_OUT_FENCE_WAIT_MS, type SignOutFence } from ".
 import { requestOrganizerTakeover } from "./organize-here.js";
 // WHICH OUTBOUND PASSES THIS COMPOSITION RUNS — one table read by the pass and by the door, so
 // "a phone keeps no appointments" cannot be true in one of the two places. See its header.
-import { AppointmentsRefused, runsPass } from "./composition-passes.js";
+import { AppointmentsRefused, runsPass, runsStorePass } from "./composition-passes.js";
 import { hostPairRoutes } from "./host-pair-routes.js";
 // The static half of the host door — the built browser client the QR sends a phone to, served
 // beside the API out of one `handleHost`. The route table wins; this covers everything else.
@@ -178,7 +179,7 @@ import { dialect, dialectOf } from "@trafficflow/db/dialect";
 import {
   openLocalDb, type LocalDb, type LocalDbOpenPhase, type MigrationProgress, type OpenLocalDb,
 } from "./db.js";
-import { inStoreLane } from "./store-lanes.js";
+import { inStoreLane, ingestIsRunning } from "./store-lanes.js";
 import { awaitFirstPage } from "./first-page-gate.js";
 
 /**
@@ -207,6 +208,10 @@ import {
 import { mirroredFirstSyncFacts, mirroredMessageCount, wipeLocalMirror } from "./local-mirror.js";
 import { stampSynced } from "./sync-stamp.js";
 import { handleWindowSyncFailure, WINDOW_SYNC_FAILED_ROUTE } from "./window-report.js";
+import { createAttentionClock } from "./attention.js";
+import { createHostPower } from "./host-power.js";
+import { startSearchIndexBackfill } from "./search-backfill.js";
+import { SEARCH_INDEX_ROUTE, createSearchIndexDoor } from "./search-index-door.js";
 import { createFirstSyncReporter, createFirstSyncTracker } from "./first-sync.js";
 import type { Diagnostic } from "./log.js";
 import { startEngineVitals } from "./vitals.js";
@@ -274,6 +279,8 @@ export interface SidecarConfig {
    * second sets a small one. Below {@link pollIntervalMs} it simply means "never rest".
    */
   idlePollCeilingMs?: number;
+  /** TEST SEAM: the search backfill's clocks (`search-backfill.ts`); production takes its constants. */
+  searchBackfillTiming?: { waitMs?: number; tickMs?: number; quietMs?: number };
   /**
    * How long a connection has to answer an IMAP NOOP before it is treated as dead. Absent means
    * {@link DEFAULT_HEARTBEAT_TIMEOUT_MS}; a value that is not a positive number refuses the boot.
@@ -6955,6 +6962,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       adoptBaselineMs: opened.timings.adoptBaselineMs,
       migrateMs: opened.timings.migrateMs,
       compactMs: opened.timings.compactMs,
+      searchSetupMs: opened.timings.searchSetupMs,
       /* WHICH MIGRATION PAID, beside the pass it cost. `migrateMs` alone said 237 834 on a 1.2 GB
          store and named nothing inside it. `null` — not `0` — where the store did not migrate here
          at all (the phone's, whose schema is the platform's): "none pending" and "not this open's
@@ -6991,6 +6999,35 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * and forces a drain on every runtime if it has. A request that WROTE NOTHING moves no seq and
      * rings nothing, which is what stops a chatty door pinning the cadence at its base.
      */
+    /* WHETHER SOMEBODY IS USING THIS INSTALL, and whether the machine is on power — the two
+       questions a store-only pass asks before it takes the connection. Every door notes each
+       request; see `attention.ts` and `host-power.ts`. */
+    const attention = createAttentionClock();
+    const hostPower = createHostPower();
+    /** Does this request carry the install's live launch bearer — the check the window's report door reads. */
+    const launchBearerAuthorized = async (r: Request): Promise<boolean> => {
+      const header = r.headers.get("authorization");
+      const token = header && /^Bearer\s+/i.test(header) ? header.replace(/^Bearer\s+/i, "").trim() : "";
+      return token !== "" && (await resolveSession(db, token, now())) !== null;
+    };
+    /* THE SEARCH INDEX FILLS ITSELF IN — the store-only pass, one round per idle tick on power;
+       see `search-backfill.ts`. Local door only (`composition-passes.ts`). */
+    const searchBackfill = runsStorePass(organizerKind, "search-index-backfill")
+      ? startSearchIndexBackfill({
+          round: () => searchIndexBackfillPass({ db: db as unknown as Tx, accountId: world.accountId, rounds: 1 }),
+          quietForMs: () => attention.quietForMs(),
+          ingesting: ingestIsRunning,
+          power: hostPower,
+          log,
+          // PGlite has no autovacuum: the search table's statistics are the store's to keep.
+          maintain: () => opened.analyzeSearchIfStale(),
+          ...(config.searchBackfillTiming ?? {}),
+        })
+      : null;
+    const searchIndexDoor = createSearchIndexDoor({
+      authorized: launchBearerAuthorized, db: db as unknown as Tx, accountId: world.accountId,
+    });
+
     let lastDoorMark: string | null = null;
     let doorKickInFlight = false;
     const noteDoorWrite = (req: Request, res: Response): void => {
@@ -7036,18 +7073,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       world,
       sessionToken: session.token,
       handle: async (req) => {
+        attention.note(req.method, new URL(req.url).pathname);
         /* THE WINDOW'S OWN PULL FAILURE, into this log. Its own door, ahead of the local-action
            chain: it carries no mailbox, writes nothing, and is authorised by the same launch
            bearer every local door reads. See `window-report.ts`. */
         if (req.method === "POST" && new URL(req.url).pathname === WINDOW_SYNC_FAILED_ROUTE) {
-          return handleWindowSyncFailure(req, {
-            authorized: async (r) => {
-              const header = r.headers.get("authorization");
-              const token = header && /^Bearer\s+/i.test(header) ? header.replace(/^Bearer\s+/i, "").trim() : "";
-              return token !== "" && (await resolveSession(db, token, now())) !== null;
-            },
-            log,
-          });
+          return handleWindowSyncFailure(req, { authorized: launchBearerAuthorized, log });
+        }
+        // How far the local search index has got — the Mailboxes pane's progress arm.
+        if (req.method === "GET" && new URL(req.url).pathname === SEARCH_INDEX_ROUTE) {
+          return searchIndexDoor(req);
         }
         // Two routes ahead of the shared table, and why they are not in it. `DELETE
         // /local/stored-login` (forget the password sealed on THIS machine) and `POST
@@ -8088,6 +8123,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       ...(hostApp
         ? {
             handleHost: async (req: Request): Promise<Response> => {
+              attention.note(req.method, new URL(req.url).pathname);
               const match = matchRoute(desktopHostRoutes, req.method, new URL(req.url).pathname);
               if (match.matched || match.methodNotAllowed) return hostApp.handle(req, depsForHost());
               return hostStatic!.serve(req, new URL(req.url));
@@ -8099,6 +8135,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             ...(lan.address !== null
               ? {
                   handleLan: async (req: Request): Promise<Response> => {
+                    attention.note(req.method, new URL(req.url).pathname);
                     const match = matchRoute(desktopHostRoutes, req.method, new URL(req.url).pathname);
                     if (match.matched || match.methodNotAllowed) {
                       const answered = await hostApp.handle(req, depsForHost());
@@ -8253,6 +8290,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // engine, and one taken between the last detach and the store close would describe a
         // process mid-teardown as though it were serving.
         stopVitals();
+        // A round in flight finishes before the store closes under it.
+        await searchBackfill?.stop();
         /* AND THE CLAIM GOES BACK WITH EACH MAILBOX, inside `detach()` — see the block there.
            NOT a `handBack()` pass in front of this one: that queues BEHIND an in-flight cycle, so
            a gate parked in the lease read would run its whole drain before anything told it to

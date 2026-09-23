@@ -128,7 +128,8 @@ let sentBodies: { url: string; body: string }[] = [];
  * one thing they exist to catch.
  */
 const pressed = (): { url: string; method: string }[] =>
-  bridged.filter((c) => !(c.method === "GET" && c.url === "/local/mailboxes/connections"));
+  bridged.filter((c) => !(c.method === "GET"
+    && (c.url === "/local/mailboxes/connections" || c.url === "/local/search-index")));
 
 /** Shell commands the pane sent, in order. Today that is the sign-out and nothing else. */
 let shellCommands: string[] = [];
@@ -459,10 +460,13 @@ describe("the desktop mailbox pane and a mail server it cannot reach", () => {
       }],
     }), { status: 200, headers: { "content-type": "application/json" } });
 
-    /* EVERY READ PARKS, and the test releases them OUT OF ORDER — which is the only thing that
-       has to be true for this defect to happen in the field. */
+    /* EVERY REACH READ PARKS, and the test releases them OUT OF ORDER — which is the only thing
+       that has to be true for this defect to happen in the field. The pane's other poll (the
+       search index) answers at once: this case is about the reach reads alone. */
     const parked: Array<(r: Response) => void> = [];
-    bridgeReply = () => new Promise<Response>((resolve) => { parked.push(resolve); });
+    bridgeReply = () => (bridged[bridged.length - 1]?.url === "/local/mailboxes/connections"
+      ? new Promise<Response>((resolve) => { parked.push(resolve); })
+      : new Response(null, { status: 404 }));
 
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
@@ -518,6 +522,46 @@ describe("the desktop mailbox pane and a mail server it cannot reach", () => {
     const text = (await render("local")).textContent ?? "";
     expect(text).toContain("Up to date");
     expect(text).not.toContain("Can't reach the mail server");
+  });
+});
+
+/**
+ * OLDER MAIL STILL BEING INDEXED — the row's progress arm, from the engine's own counts
+ * (`GET /local/search-index`), read at the reach cadence on the local door and never elsewhere.
+ * Watched red: drop the arm in `stateOf` and the first case loses its sentence; read `done`
+ * where `total` belongs and the percentage moves.
+ */
+describe("the local search index's progress", () => {
+  /** The mock records each request before it replies, so the last entry names the one being answered. */
+  const replyFor = (index: () => unknown) => (): Response => new Response(
+    JSON.stringify(bridged[bridged.length - 1]?.url === "/local/search-index" ? index() : { items: [] }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+
+  it("says how far the index has got, from the engine's counts, and says Up to date at 100 %", async () => {
+    let index: unknown = { built: false, done: 42, total: 100 };
+    bridgeReply = replyFor(() => index);
+    const el = await render("local");
+    expect(bridged).toContainEqual({ url: "/local/search-index", method: "GET" });
+    expect(el.textContent ?? "").toContain("Indexing your older mail — 42 %.");
+    expect(el.textContent ?? "").not.toContain("Up to date");
+    index = { built: true, done: 0, total: 0 };
+    const again = await render("local");
+    expect(again.textContent ?? "").toContain("Up to date");
+    expect(again.textContent ?? "").not.toContain("Indexing your older mail");
+  });
+
+  it("never says 100 % while a message is still unindexed, and reads a foreign body as nothing to say", async () => {
+    let index: unknown = { built: false, done: 99_999, total: 100_000 };
+    bridgeReply = replyFor(() => index);
+    expect((await render("local")).textContent ?? "").toContain("Indexing your older mail — 99 %.");
+    index = { done: 1, total: 2 };
+    expect((await render("local")).textContent ?? "").toContain("Up to date");
+  });
+
+  it("is never asked on the hosted door", async () => {
+    await render("cloud");
+    expect(bridged.filter((c) => c.url === "/local/search-index")).toEqual([]);
   });
 });
 

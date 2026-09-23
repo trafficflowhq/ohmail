@@ -24,3 +24,10 @@ export {
   ActiveAddressDuplicatesError, ACTIVE_ADDRESS_UQ,
   type DuplicateGroup, type DuplicateMailbox, type ResolutionOutcome,
 } from "./mailbox-dedup.js";
+/**
+ * The search extensions' tail of a migration, for the desktop engine: `pg_trgm` and `btree_gin`
+ * and the trigram indexes, so a local store answers the substring and typo arms with the server's
+ * own indexes. The closure is `search-setup.ts` → `concurrent-index.ts` → `migration-lock.ts`,
+ * none of which opens a server connection or names the server driver.
+ */
+export { ensureSearchExtensions, TRIGRAM_INDEX_SPECS } from "./search-setup.js";

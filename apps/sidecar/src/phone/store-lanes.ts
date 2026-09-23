@@ -18,3 +18,12 @@ export function inStoreLane<T>(_lane: StoreLane, fn: () => Promise<T>): Promise<
 export function currentStoreLane(): StoreLane {
   return "interactive";
 }
+
+/**
+ * Whether a drain is taking mail in — the desktop scheduler's own count, which a phone has no
+ * scheduler to keep. The one reader is the desktop's search backfill, which the phone does not
+ * schedule (`composition-passes.ts`); the answer is here so the shared engine resolves.
+ */
+export function ingestIsRunning(): boolean {
+  return false;
+}

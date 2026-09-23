@@ -439,7 +439,8 @@ pub fn budget_line(total_rss_kb: u64) -> String {
 /// mirror's version moves, measured at 180–236 ms on a large mailbox. Four fields for it, because
 /// one number cannot answer both questions a slow mailbox raises: `deriveMs` is the WORST pass of
 /// the window, `deriveP50Ms`/`deriveP95Ms` what the window was usually like, `deriveCount` how many
-/// bumps paid it, and `notifiesPer5min` how many the shell was told about.
+/// bumps paid it, and `notifiesPer5min` how many the shell was told about. `mirrorMessages` is a
+/// gauge: the messages the window's mirror holds, whatever History and Search have paged.
 pub const UI_VITALS_FIELDS: &[&str] = &[
     "shellPaintedMs",
     "listUsableMs",
@@ -460,6 +461,7 @@ pub const UI_VITALS_FIELDS: &[&str] = &[
     "deriveP95Ms",
     "deriveCount",
     "notifiesPer5min",
+    "mirrorMessages",
     "uptimeMin",
 ];
 

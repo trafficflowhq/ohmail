@@ -4,11 +4,15 @@ import { uptime as osUptime } from "node:os";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { PGlite, type Transaction as PgliteTransaction } from "@electric-sql/pglite";
+import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
+import { btree_gin } from "@electric-sql/pglite/contrib/btree_gin";
 import { drizzle, type PgliteDatabase } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { readMigrationFiles, type MigrationConfig, type MigrationMeta } from "drizzle-orm/migrator";
 import { mailSchema } from "@trafficflow/db/mail";
-import { MAIL_JOURNAL, adoptBaseline, adoptReissuedOriginals, readJournalOf } from "@trafficflow/db/journal";
+import {
+  MAIL_JOURNAL, adoptBaseline, adoptReissuedOriginals, ensureSearchExtensions, readJournalOf,
+} from "@trafficflow/db/journal";
 import {
   INGEST_FOLD_WAL_BYTES, brandDialect, dialect,
   type LogBounds, type LogMark,
@@ -28,6 +32,14 @@ import type { Diagnostic } from "./log.js";
  */
 
 export type LocalDb = PgliteDatabase<typeof mailSchema>;
+
+/**
+ * THE SERVER'S SEARCH EXTENSIONS, LOADED INTO EVERY LOCAL STORE. PGlite ships both as contrib
+ * modules; loaded, `hasTrgm` probes true and the substring and typo arms read the same trigram
+ * indexes the server reads. ONE list: the opener and the test template's key read it. A store
+ * whose indexes use an operator class from these must be opened with them from then on.
+ */
+export const LOCAL_STORE_EXTENSIONS = { pg_trgm, btree_gin } as const;
 
 /**
  * THE INGEST'S OWN TRANSACTION DOES NOT WAIT FOR THE FLUSH — that transaction, and nothing else on
@@ -139,6 +151,8 @@ export interface OpenTimings {
   migrateMs: number;
   /** {@link reclaimBodyBloat} — ~a millisecond of ANALYZE on a healthy store, minutes ONCE on a bloated one. */
   compactMs: number;
+  /** {@link setUpLocalSearch} — the extensions plus any trigram index not built yet; once per index. */
+  searchSetupMs: number;
 }
 
 export interface OpenLocalDb {
@@ -199,6 +213,11 @@ export interface OpenLocalDb {
    * "not scheduled" would be the same answer to a reader; this way every store has to say which.
    */
   laneCensus(): StoreLaneCensus | null;
+  /**
+   * Refresh the search table's planner statistics when they are missing or stale — see
+   * {@link analyzeSearchIfStale}. `true` when an ANALYZE ran. The phone's store answers `false`.
+   */
+  analyzeSearchIfStale(): Promise<boolean>;
   /** Flush and release. Idempotent — shutdown paths call it from more than one place. */
   close(): Promise<void>;
 }
@@ -306,6 +325,11 @@ export interface OpenLocalDbOptions {
    * was refused only afterwards. A throw releases the lock and fails the open.
    */
   underLock?: () => void;
+  /**
+   * TEST SEAM: open WITHOUT the search extensions — the store that refused them, which searches
+   * through the ILIKE degrade. Only for a data directory that never had them.
+   */
+  withoutSearchExtensions?: true;
 }
 
 /**
@@ -401,6 +425,49 @@ export const BLOAT_COMPACT_MIN_BYTES = 1024 * 1024 * 1024;
  * and this never runs.
  */
 export const BLOAT_SAMPLE_ROWS = 64;
+
+/**
+ * THE SERVER'S SEARCH SETUP, RUN OVER THIS STORE after the migrator: the extensions, then every
+ * trigram index `ensureSearchExtensions` names. A present index costs a catalog read; a missing
+ * one is built once, here, before anything reads the handle. A store that refuses keeps serving:
+ * search reads through the ILIKE degrade (slower, never narrower) and the refusal is logged.
+ */
+export async function setUpLocalSearch(db: LocalDb, log?: Diagnostic): Promise<void> {
+  try {
+    // Plain builds: nothing else holds this store while it opens, so a concurrent build buys nothing.
+    await ensureSearchExtensions(db, { concurrently: false });
+  } catch (err) {
+    log?.("search_setup_failed", {
+      err,
+      reason: "the search extensions or their indexes could not be set up on this store; search "
+        + "reads through the unindexed arms, and the next launch tries again",
+    });
+  }
+}
+
+/**
+ * THE SEARCH TABLE'S PLANNER STATISTICS — what autovacuum keeps on the server and PGlite never
+ * does. Without them the store's search arms plan on defaults: measured at 74k messages, the page
+ * p95 for "invoice" was 242 ms unanalyzed and 62 ms analyzed. The server's own threshold decides,
+ * read from a count because PGlite does not flush its pgstat counters: never analyzed while it
+ * holds rows, or 50 + 10 % of its rows different since. A failed read or ANALYZE answers false.
+ */
+export async function analyzeSearchIfStale(client: PGlite): Promise<boolean> {
+  try {
+    const r = await client.query<{ n: number; rt: number }>(
+      `SELECT (SELECT count(*) FROM public.message_search)::int AS n,
+              COALESCE((SELECT c.reltuples FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
+                         WHERE ns.nspname = 'public' AND c.relname = 'message_search'), -1)::float8 AS rt`,
+    );
+    const n = Number(r.rows[0]?.n ?? 0);
+    const rt = Number(r.rows[0]?.rt ?? -1);
+    if (!(n > 0 && (rt < 0 || Math.abs(n - rt) > 50 + 0.1 * Math.max(rt, 0)))) return false;
+    await client.exec("ANALYZE public.message_search");
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Reclaim the body table's dead space, when — and only when — it dominates the table. On a real
@@ -1198,7 +1265,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     // and read from the directory rather than from PGlite, which says nothing until it is done.
     opts.onPhase?.(openPhaseFor(dataDir));
     const tOpen = Date.now();
-    client = new PGlite(pgDataDir);
+    client = new PGlite(pgDataDir, opts.withoutSearchExtensions ? {} : { extensions: LOCAL_STORE_EXTENSIONS });
     // AWAITED HERE ON PURPOSE, AND IT CHANGES NOTHING EXCEPT WHERE THE COST IS ATTRIBUTED.
     //
     // `new PGlite()` returns before the database is usable — the WASM instantiation, the data
@@ -1252,6 +1319,11 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     const tCompact = Date.now();
     await reclaimBodyBloat(client, log, opts.onPhase);
     const compactMs = Date.now() - tCompact;
+    // AFTER the migrator (the indexed tables must exist) and BEFORE serving, like the compaction.
+    const tSearch = Date.now();
+    if (!opts.withoutSearchExtensions) await setUpLocalSearch(db, log);
+    await analyzeSearchIfStale(client);
+    const searchSetupMs = Date.now() - tSearch;
     let closed = false;
     /**
      * The insert pointer as the last fold left it, or `null` for "unknown" — which is what an
@@ -1311,13 +1383,14 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
       db,
       dataDir,
       pgDataDir,
-      timings: { pgliteOpenMs, adoptBaselineMs, migrateMs, compactMs },
+      timings: { pgliteOpenMs, adoptBaselineMs, migrateMs, compactMs, searchSetupMs },
       migrations,
       checkpoint,
       foldIfLogGrew,
       storeGeneration,
       storeBytes: () => storeHeapBytes(client),
       laneCensus: () => lanes.census(),
+      analyzeSearchIfStale: () => (closed ? Promise.resolve(false) : analyzeSearchIfStale(client)),
       close: async () => {
         if (closed) return;
         closed = true;

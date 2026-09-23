@@ -538,7 +538,7 @@ export async function openPhoneStore(
     db: branded,
     dataDir: "",
     pgDataDir: "",
-    timings: { pgliteOpenMs: 0, adoptBaselineMs: 0, migrateMs: 0, compactMs: 0 },
+    timings: { pgliteOpenMs: 0, adoptBaselineMs: 0, migrateMs: 0, compactMs: 0, searchSetupMs: 0 },
     /* NO MIGRATOR RAN HERE, said rather than answered with zeros. The desktop's census counts the
        journal entries this open applied; the phone's schema is the platform's, brought up to date
        outside this handle, so a `0` here would be a reading nobody took. See `OpenLocalDb`. */
@@ -576,6 +576,8 @@ export async function openPhoneStore(
      * that gate without a rig that can measure the phone would be a change nobody has watched.
      */
     laneCensus: () => null,
+    // The planner statistics are a PGlite concern; the platform's SQLite plans for itself here.
+    analyzeSearchIfStale: async () => false,
     close: async () => { await exec.close(); },
   };
 }

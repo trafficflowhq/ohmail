@@ -648,6 +648,7 @@ export {
 export {
   beginDerive,
   countNotify,
+  noteMirrorMessages,
   peekClientEngineVitals,
   takeClientEngineVitals,
   type ClientEngineVitals,

@@ -45,8 +45,9 @@ export const TRIGRAM_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
   },
 ];
 
+/** `concurrently: false` — a store nothing else writes to while it builds; see `plainIndexDdl`. */
 export async function ensureSearchExtensions(
-  db: SqlExecutor, opts: { log?: (msg: string) => void } = {},
+  db: SqlExecutor, opts: { log?: (msg: string) => void; concurrently?: boolean } = {},
 ): Promise<void> {
   // The fuzzy arm's word_similarity()/`<%` operator lives in pg_trgm; btree_gin lets a trigram
   // index lead with the account.
@@ -55,6 +56,7 @@ export async function ensureSearchExtensions(
   await ensureConcurrentIndexes(db, TRIGRAM_INDEX_SPECS, {
     label: "the trigram index build",
     ...(opts.log ? { log: opts.log } : {}),
+    ...(opts.concurrently === false ? { concurrently: false } : {}),
   });
 }
 

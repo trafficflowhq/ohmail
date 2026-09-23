@@ -2002,6 +2002,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       adoptBaselineMs: opened.timings.adoptBaselineMs,
       migrateMs: opened.timings.migrateMs,
       compactMs: opened.timings.compactMs,
+      searchSetupMs: opened.timings.searchSetupMs,
       // The same four the local door carries, for the reason the line itself is on both doors:
       // this door opens the same store, and the upgrade it waits for is the same upgrade.
       migrationsPending: opened.migrations?.pending ?? null,

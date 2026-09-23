@@ -265,6 +265,12 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // …and `compactMs` rides `boot_phases` beside the other phase timings — a `Date.now()` delta
   // over the same pass, named for the same reason the attach-phase timings are.
   "compactMs",
+  // …and `searchSetupMs` beside it: the local store's search extensions and trigram index build,
+  // a `Date.now()` delta, milliseconds and nothing else.
+  "searchSetupMs",
+  // The desktop's search index backfill: `rounds` it took, beside `written` rows and `totalMs` —
+  // integers from local counters, named rather than folded into `count`.
+  "rounds",
   // The local store's schema upgrade, named. `migrateMs` above says the pass took four minutes;
   // these say how many migrations that was and WHICH one paid — `migration` and
   // `slowestMigration` carry a journal TAG (`0091_…`, this repository's own filename), never a

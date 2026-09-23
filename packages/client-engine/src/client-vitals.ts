@@ -38,6 +38,18 @@ let deriveRingLen = 0;
 /** Where the next timing goes — the ring overwrites the oldest once the window is past 100. */
 let deriveRingNext = 0;
 
+/**
+ * THE MIRROR'S MESSAGE COUNT at its last derivation — a GAUGE, so a take never resets it. The live
+ * reading that no History page and no search hit was written into the mirror: whatever those walk,
+ * its bound is the window's `maxRows`. `null` until the first derivation.
+ */
+let mirrorMessages: number | null = null;
+
+/** Record the mirror's message count; called by the derivation that already counts it. */
+export function noteMirrorMessages(n: number): void {
+  mirrorMessages = n;
+}
+
 /** One subscriber notification — every version bump the shell is told about. */
 export function countNotify(): void {
   notifies += 1;
@@ -99,6 +111,8 @@ export interface ClientEngineVitals {
   deriveMsP50: number | null;
   /** The p95 of the same hundred, or `null` when it derived nothing. */
   deriveMsP95: number | null;
+  /** Messages in the mirror at its last derivation — see {@link noteMirrorMessages}. */
+  mirrorMessages: number | null;
 }
 
 function snapshot(): ClientEngineVitals {
@@ -109,6 +123,7 @@ function snapshot(): ClientEngineVitals {
     deriveMsTotal: Math.round(deriveMsTotal),
     deriveMsP50: derivePercentile(50),
     deriveMsP95: derivePercentile(95),
+    mirrorMessages,
   };
 }
 

@@ -1,5 +1,5 @@
 import { applyToRecords, flattenResponse, maxSeqOf, recordKey, type MirrorRecord } from "./apply.js";
-import { beginDerive } from "./client-vitals.js";
+import { beginDerive, noteMirrorMessages } from "./client-vitals.js";
 import { MAILBOX_TYPE, isCarriedLocalType, isProtectedMessage } from "./types.js";
 import type { Cursor, EngineMessage, SyncChange, SyncResponse } from "./types.js";
 
@@ -547,6 +547,7 @@ export abstract class BaseMirrorStore implements MirrorStore {
         else byType.set(rec.type, [rec]);
       }
       this.typeBuckets = { v: this.ver, byType };
+      noteMirrorMessages(byType.get("message")?.length ?? 0);
       done?.();
     }
     return this.typeBuckets.byType.get(type) ?? [];

@@ -2448,6 +2448,7 @@
     "desktopStateFirstOpen": "Opening for the first time",
     "desktopStateCatchingUp": "Still catching up",
     "desktopStateUpToDate": "Up to date",
+    "desktopStateIndexing": "Indexing your older mail — {percent} %.",
     "desktopOrganizeHere_already_organizing": "This machine already organizes that mailbox. No takeover was authorized.",
     "desktopOrganizeHere_removed": "That mailbox was removed from this machine. Add it again in the Desktop settings pane instead.",
     "desktopOrganizeHere_no_mailbox": "This machine has no mailbox for that address.",
