@@ -6,19 +6,19 @@
 
 **Consent-first email, on the mailboxes you already have.**
 
-First-time senders wait at the Screener until you let them in, and everything
-you said yes to is organized in place — real folders on your own IMAP server,
-readable by any other mail app, kept when you leave. This repository is the
-free desktop app for macOS, Windows and Linux, and the server source behind
-ohmail.app beside it: the whole program, all of its source, AGPL-3.0, no
-account.
+New senders wait at the Screener until you let them in, unless you wrote to them
+first, and everything you said yes to is organized in place — real folders on
+your own IMAP server, readable by any other mail app, kept when you leave. This
+repository is the free desktop app for macOS, Windows and Linux, and the server
+source behind ohmail.app beside it: the whole program, all of its source,
+AGPL-3.0, no account.
 
 [**Download the latest release**](https://github.com/trafficflowhq/ohmail/releases/latest) ·
 [try the demo in your browser](https://ohmail.app/demo) ·
 [ohmail.app](https://ohmail.app)
 
 [![build](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml/badge.svg)](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml)
-[![latest release](https://img.shields.io/badge/download-v0.20.1-a3461c)](https://github.com/trafficflowhq/ohmail/releases/latest)
+[![latest release](https://img.shields.io/badge/download-v0.23.0-a3461c)](https://github.com/trafficflowhq/ohmail/releases/latest)
 [![licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-a3461c)](LICENSE)
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-111111)](#macos)
 [![Windows 10+](https://img.shields.io/badge/Windows-10%2B-111111)](#windows)
@@ -28,7 +28,7 @@ account.
 
 <div align="center">
 <sub>Choose your theme</sub><br>
-<a href="README.md"><picture>
+<a href="https://github.com/trafficflowhq/ohmail/"><picture>
 <source media="(prefers-color-scheme: dark)" srcset="docs/readme/toggle-ohmarchy-dark.svg">
 <img src="docs/readme/toggle-ohmarchy-light.svg" alt="paper / ohmarchy face switch — ohmarchy is active; opens this README in the paper face" width="178" height="40">
 </picture></a>
@@ -39,12 +39,11 @@ account.
   <img src="docs/assets/faces/hero-ohmarchy.webp" alt="ohmail's demo mailbox in the ohmarchy face: the folder rail, the Ohbox list, and an open message with the rule that filed it" width="100%">
 </picture>
 
-<div align="center"><sub>The demo mailbox — fictional people, fictional brands.</sub></div>
-
 ## The Ohbox holds only mail you said yes to
-The first time a stranger writes to you, they wait at the Screener — not in your
-inbox. The Ohbox holds the people you said yes to, every message names the rule
-that filed it, and a tracking pixel is never requested.
+Someone new who writes to you waits at the Screener — not in your inbox — unless
+you wrote to them first. The Ohbox holds the people you said yes to, the rules
+that file your mail are listed under Settings → Rules to change or revoke, and a
+tracking pixel is never requested unless you turn the blocker off.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/feature-wall-ohmarchy/01-ohbox-dark.webp">
@@ -53,17 +52,21 @@ that filed it, and a tracking pixel is never requested.
 
 ## The Screener
 
-First-time senders wait here until you decide where they go.
+New senders wait here until you decide where they go. Someone you have written
+to since you set up ohmail, or who answers a message you sent, goes straight to
+the Ohbox.
 
 With AI on — your own Anthropic or OpenAI key, or a local model through
 [Ollama](https://ollama.com), and off until you turn it on — the Screener
-proposes a door for each waiting sender, with a confidence and a reason, and
-one press accepts. Switch on auto-suggest and the proposal is already waiting
-as the mail arrives. Nothing applies itself until you have confirmed a pattern
-often enough for it to graduate; from then on that one pattern files itself,
-spam included, every move recorded and reversible. A one-time code inside a
-message is stripped before any model sees it, and automatic routing leaves
-that mail alone entirely.
+proposes a door for each waiting sender, with a confidence and a reason, and one
+press accepts. Switch on auto-suggest and the proposal is already waiting as the
+mail arrives. Nothing applies itself unless you ask: a pattern you have
+confirmed often enough graduates and files itself from then on, spam included;
+or switch on "Act on suggestions for me" and a sender whose suggestion is
+confident is filed for you — never someone you have written to — with the rule
+listed for you to undo. Every move is recorded and reversible. A one-time code
+inside a message is stripped before any model sees it, and automatic routing
+leaves that mail alone entirely.
 
 Configure nothing and the Screener still holds first contact, rules still file
 mail, and search still works — the suggestion and the draft are not
@@ -73,7 +76,8 @@ table.
 
 Spam needs no AI at all: one press files the message into your mailbox's own
 Junk folder — where the mailbox has one — and the sender rule remembers, so
-the next mail from that sender never reaches the gate. Screening out or
+the next mail from that sender never reaches the gate, and a message you move
+back out of Junk has its text again with the move. Screening out or
 marking spam also sends the list's one-click unsubscribe on your behalf, where
 one is offered (on by default; a switch turns it off). Plain newsletters and
 receipts can be filed out of the Screener by deterministic rules alone, once
@@ -90,8 +94,8 @@ Which model, what it is shown, and what leaves the machine:
 ## Ohbox · News · Receipts
 
 Three views instead of one pile: people in the Ohbox, newsletters in News with
-a waterline where you stopped, paperwork in Receipts with its numbers on the
-row. Each is backed by a real folder on your own mail server.
+a waterline where you stopped, paperwork in Receipts. Each is backed by a real
+folder on your own mail server.
 
 <img src="docs/assets/feature-wall/02-three-views.gif" alt="Switching between the three views: Ohbox, News with its seen-waterline, Receipts with amounts" width="100%">
 
@@ -99,17 +103,20 @@ row. Each is backed by a real folder on your own mail server.
 
 Gmail, Microsoft 365 and Outlook.com, iCloud, Fastmail, your own server — if it
 speaks IMAP, ohmail organizes it. One Screener stands in front of all of them,
-and every reply leaves from whichever of your addresses you choose.
+and every reply leaves from whichever of your addresses you choose. Removing a
+mailbox from your ohmail account can also erase ohmail's copy of its mail — you
+type its address and confirm with a second factor — and the mail on your own
+server is never touched.
 
 <img src="docs/assets/feature-wall/04-mailboxes.gif" alt="Several IMAP mailboxes in one client, and the From selector switching between their addresses" width="100%">
 
 ## Your mailbox stays the source of truth
 
-Every decision lands as a real folder in your own account, readable by any
-other mail app, forever. Leave anytime — cancel, sign out, or just open a
+Every filing decision lands as a real folder in your own account, readable by
+any other mail app, forever. Leave anytime — cancel, sign out, or just open a
 different client — and your mailbox is already organized.
 
-<img src="docs/assets/feature-wall/05-folders.gif" alt="The folder tree ohmail leaves on your own server: Inbox, your provider's untouched Junk and Sent, and a small ohmail/ tree" width="100%">
+<img src="docs/assets/feature-wall/05-folders.gif" alt="The folder tree ohmail leaves on your own server: Inbox, your provider's own Junk and Sent, and a small ohmail/ tree" width="100%">
 
 **Your settings travel with it.** The senders you've screened in, your rules, your notification choices, your
 away reply and your tag names are stored **in the mailbox itself** — a few
@@ -128,6 +135,12 @@ travels today: screener verdicts, rules, notification rules, the away
 responder and tag names — the settings you made, never credentials, never
 keys.
 
+**History is the whole mailbox.** Every message you own is listed there, newest
+first, back to the first one — on the web, the desktop and the phone — with the
+months and years on the right to jump anywhere, and any of them opens and can be
+deleted, moved or tagged like mail that came in today. Your provider's Junk,
+Trash and Drafts folders are the exception: ohmail does not read them.
+
 The folders ohmail creates, the lease that names the one active organizer,
 and exactly what travels with a mailbox and what stays with a deployment:
 [How ohmail organizes inside your mailbox](#how-ohmail-organizes-inside-your-mailbox),
@@ -135,13 +148,19 @@ under Going deeper.
 
 ## Fast search
 
-Search answers as you type, typo-tolerant, over a local mirror on your own
-machine — scoped by sender, folder or tag when you want it narrow. The full
-archive on your server is one keystroke further.
+Search answers as you type, typo-tolerant, over your whole mailbox: the words of
+every message, its subject, its sender, its recipients and its attachment names.
+What the app already holds shows at once and is replaced by the mailbox's
+answer; the first page is back in milliseconds, the line under the box says how
+long it took, and the count follows right behind — about how many, then the
+exact number. On a desktop that organizes its own mailbox, search reads the
+app's own store with the same indexes as the server. Narrow it by sender,
+folder, unread or attachments. Your provider's Junk, Trash and Drafts folders
+are the places it does not reach.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/feature-wall-ohmarchy/06-search-dark.webp">
-  <img src="docs/assets/feature-wall-ohmarchy/06-search.webp" alt="Search in the ohmarchy face: a query, its results and the refine facets, on this device" width="100%">
+  <img src="docs/assets/feature-wall-ohmarchy/06-search.webp" alt="Search in the ohmarchy face: a query, its results and the refine facets" width="100%">
 </picture>
 
 ## Dark mode
@@ -162,10 +181,9 @@ including the HEIC a modern iPhone writes, are sent exactly as they are.
 
 <img src="docs/assets/feature-wall/08-picture-quality.gif" alt="Dropping a photo into a message, the Quality dial beside the attach button, and the size the picture is sent at" width="100%">
 
-<sub>Every frame above is the shipped interface over a demo mailbox —
-fictional people, fictional brands, zero network. It is the same demo you can
-open at [ohmail.app/demo](https://ohmail.app/demo); the app itself carries no
-demo mail and opens empty until you connect a mailbox.</sub>
+<sub>The frames above were recorded over the demo mailbox at
+[ohmail.app/demo](https://ohmail.app/demo), in an earlier release; the app
+itself carries no demo mail and opens empty until you connect a mailbox.</sub>
 
 ## Host your own devices from your desktop
 
@@ -203,8 +221,7 @@ On a phone ohmail wears a navigation made for one hand: the views sit in a
 floating dock at the bottom of the screen, a tablet opens list and message
 side by side, and a foldable splits at the hinge with the verbs on an edge
 rail by your thumb. The renders below come from the design prototype the
-phone navigation is built from — invented mail, like every screenshot on
-this page.
+phone navigation is built from.
 
 <p align="center">
   <picture>
@@ -242,17 +259,30 @@ them.
 - **Search that sorts** — best match, newest, oldest, by mailbox or by sender.
 - **Attachments open natively.** One press opens a file in the app your
   computer already uses for it; Download all gives you files, not a zip.
+- **Every filing verb can be undone.** Move, file, Junk, Done, Later, Park,
+  delete and the bulk verbs raise one toast with Undo — `z` from the keyboard —
+  and a notice that arrives meanwhile shows beneath it instead of taking it
+  away.
+- **Send + Done.** A reply to a message in your Ohbox sends and marks the
+  conversation done in one press, and only once the send has gone through.
 - **Keyboard first.** `j`/`k` to move, one-key filing, `?` for the full sheet,
-  and a real menu bar.
-- **Drafts save themselves**, two seconds after you stop typing.
+  and a real menu bar where your desktop draws one.
+- **Drafts save themselves**, two seconds after you stop typing. Discard asks in
+  the place you pressed it, and a send that could not be confirmed says so,
+  looks in your Sent folder and offers to send again.
+- **A composer that stays out of the way** — a link ends where you stop typing
+  it, inline code ends at a space or a line break, and the toolbar lights the
+  marks the next letter carries.
 - **English and German**, throughout.
 
 ## Where your mail is, and what the app talks to
 
 **Local mode** — the default, no account: the engine connects to your IMAP
-server over TLS, mirrors your mailbox to a database on your own disk, and files
-mail into `ohmail/` folders on the server itself. Nothing leaves your computer
-but the IMAP connection to your provider, the signed update check, and — only
+server over TLS, mirrors your mailbox — every folder but Junk, Trash and Drafts
+— to a database on your own disk, and files mail into `ohmail/` folders on the
+server itself. Nothing leaves your computer but the connections to your provider
+(IMAP to read, SMTP to send), the signed update check, the one-click unsubscribe
+a screen-out sends where the list offers one (a switch turns it off), and — only
 if you turn it on — requests to whichever model provider you chose. Choose a
 local Ollama and that last one stays on your machine too. No telemetry, no
 analytics.
@@ -274,7 +304,12 @@ below.
 **Cloud mode** — optional: the same app can instead sign in to
 [ohmail Cloud](https://ohmail.app), the hosted service, and act as a viewer of
 a mailbox Cloud organizes on a machine that does not sleep — which is what
-push, mobile and screening-while-your-laptop-is-shut require. If you have a
+push, mobile and screening-while-your-laptop-is-shut require. Signing a
+computer in is one confirmation: **Sign in with browser** opens ohmail.app, you
+confirm there, and the app opens your mail — on a fresh install there is no
+address or code to type. A signed-in desktop stays signed in through a busy
+server or a dropped connection; only a refusal from ohmail Cloud ends the
+session. If you have a
 machine of your own that stays awake, host mode (above) gives your other
 devices the same mailbox without Cloud — though new-mail push for your phone
 is one job it leaves out: that takes a full server, ours or a self-hosted
@@ -287,7 +322,7 @@ the app, not by a different download. Prices and the full comparison are at
 [ohmail.app](https://ohmail.app).
 
 <div align="center">
-<a href="README.md"><picture>
+<a href="https://github.com/trafficflowhq/ohmail/"><picture>
 <source media="(prefers-color-scheme: dark)" srcset="docs/readme/toggle-ohmarchy-dark.svg">
 <img src="docs/readme/toggle-ohmarchy-light.svg" alt="paper / ohmarchy face switch — ohmarchy is active; opens this README in the paper face" width="178" height="40">
 </picture></a>
@@ -343,10 +378,11 @@ nothing to install first.
 `aarch64` for the second. macOS is one file for both architectures; Windows is
 x86_64 only — there is no arm64 Windows build.
 
-**Nothing is signed yet**, on any platform: code-signing certificates cost money
-ohmail has not spent, so first launch needs one manual approval, described per
-platform below, and the checksums are the checks that are actually available.
-Building from source is the option that requires trusting nobody.
+**Nothing carries a code-signing certificate yet**, on any platform: those
+certificates cost money ohmail has not spent, so first launch needs one manual
+approval, described per platform below, and the checksums are the checks that
+are actually available. Building from source is the option that requires
+trusting nobody.
 
 **Check what you downloaded.** Every release carries a **`SHA256SUMS`** listing
 every file on it, and every run's summary prints the SHA-256 of the artifacts
@@ -360,18 +396,17 @@ shasum -a 256 --check SHA256SUMS   # sha256sum --check on Linux
 the run summaries.
 
 **Updates.** The AppImage, the Windows setup and the macOS app check this
-repository's release feed once at launch and verify every update against a
-public key committed in this tree before it may install; a `.deb`, `.rpm` or
-Flatpak install updates through your package manager instead.
-[Updates](#updates), under Going deeper, has the rest.
+repository's release feed at launch and once a day while they stay open, and
+verify every update against a public key committed in this tree before it may
+install; a `.deb`, `.rpm` or Flatpak install updates through your package
+manager instead. [Updates](#updates), under Going deeper, has the rest.
 
 ### macOS
 
 > [!IMPORTANT]
-> **The DMG is unsigned and un-notarized.** Gatekeeper will refuse a
-> double-click and may claim the app "is damaged". It is not.
-> **Right-click (or Control-click) ohmail.app → Open → Open.** The same note is
-> in the DMG as *Read me first.txt*.
+> **The app has no Developer ID signature and is not notarized.** Gatekeeper
+> will refuse a double-click and may claim the app "is damaged". It is not.
+> **Right-click (or Control-click) ohmail.app → Open → Open.**
 
 ### Windows
 
@@ -421,7 +456,7 @@ Junk                     your provider's own — your spam verdicts file into it
 Sent                     your replies, left where your provider already keeps them
 ohmail/
 ├── Screener             new senders wait here until you decide where they go
-├── Reads                the News pile: newsletters, things you read when you have a minute
+├── News                 newsletters and things you read when you have a minute
 ├── Receipts             receipts, confirmations, orders
 ├── Screened             senders you keep, but out of the Inbox
 ├── Quarantine           spam the automatic patterns set aside, held for review
@@ -461,13 +496,14 @@ rename and delete them from ohmail and the same IMAP operations happen in your
 mailbox; deleting a folder files its mail to your provider's Trash first,
 never an expunge. (Not yet in the standalone desktop app.)
 
-**Spam and deletion use your provider's own folders.** A spam verdict files
-the message into the mailbox's native Junk folder — where its filter and your
-other clients expect spam — and "Not junk" moves it back out; the sender rule,
-stored with your settings, is the durable memory either way. Delete moves to
-native Trash, never expunges. Beyond those user-commanded acts, ohmail never
-acts in Junk or Trash on its own — no rule, no automatic pass and no AI
-proposal may name them.
+**Spam and deletion use your provider's own folders.** A spam verdict files the
+message into the mailbox's native Junk folder — where its filter and your other
+clients expect spam — and "Not junk" moves it back out; the sender rule, stored
+with your settings, is the durable memory either way. Delete moves to native
+Trash, never expunges. Beyond those user-commanded acts — and the Spam filing
+"Act on suggestions for me" does once you switch it on, the same move your press
+would make — ohmail never acts in Junk or Trash on its own: no rule, no other
+automatic pass and no AI proposal may name them.
 
 **What travels, and what stays.** Not a slogan — the architecture. ohmail's desktop app, the hosted service and
 a server you run never share a database; the only medium they all read is the
@@ -497,8 +533,8 @@ mail, its folders and the profile above are what travel.
 
 ### Model providers and keys
 
-Pick the model in **Settings → Suggestions and drafts**. Three options, and each
-model is yours to name:
+Pick the model in **Settings → Desktop**, under *AI for suggestions and drafts*.
+Three options, and each model is yours to name:
 
 - **Your Anthropic key** — requests go to `api.anthropic.com`, billed to your
   account.
@@ -582,9 +618,9 @@ this build does not read a mailbox another Linux build of ohmail already
 mirrored. Connect it to your mail server and it mirrors the mailbox itself; the
 server is the master copy either way.
 
-It asks for the network, a window, your login keyring and notifications, and
-nothing else — no access to your files. Attachments you open go out through the
-desktop portal. Start-at-login is not offered in this build.
+It asks for the network, a window, your login keyring, notifications and the
+tray, and nothing else — no access to your files. Attachments you open go out
+through the desktop portal. Start-at-login is not offered in this build.
 
 > [!NOTE]
 > **It is not on Flathub yet.** The manifest is here and it builds; the listing
@@ -627,7 +663,7 @@ desktop portal. Start-at-login is not offered in this build.
 > — or use the **AppImage**, which is the Linux build that applies its own
 > updates.
 >
-> It used to offer, and this release is where that stops. A packaged build asked
+> It used to offer, until 0.17.0. A packaged build asked
 > the feed for a package of its own kind, did not find one (the feed publishes
 > AppImages, one per architecture), fell back to the AppImage for its
 > architecture, downloaded it, and then reported *"ohmail could not install the
@@ -649,9 +685,9 @@ all spelled `ohmail`.
 ### Updates
 
 The app checks one pinned HTTPS address — the release feed of this repository —
-once per run at launch, plus whenever you ask, and every update payload is
-cryptographically verified against the public key committed in this tree before
-it may install. There is no repeating timer and no other phone-home.
+at launch, once a day while the app stays open, and whenever you ask, and every
+update payload is cryptographically verified against the public key committed in
+this tree before it may install. There is no other phone-home.
 `scripts/verify-feeds.mjs` checks both feeds offline; CI runs it on every
 release.
 
@@ -683,9 +719,9 @@ documentation link inside an error message, Microsoft's WebView2 download page
 `apps/desktop/README.md` goes through them one by one. The rest — every string
 that names ohmail or TrafficFlow — is a short list CI spells out entry by entry
 and **fails the run** on anything outside it: the pinned update feed,
-`https://api.ohmail.app` (contacted only after you sign in to Cloud), and five
-`ohmail.app` pages the app may hand to your own browser. Your mail server never
-appears in that list and cannot: it is not compiled in, it is whatever you
+`https://api.ohmail.app` (contacted only once you choose ohmail Cloud), and
+seven `ohmail.app` pages the app may hand to your own browser. Your mail server
+never appears in that list and cannot: it is not compiled in, it is whatever you
 typed, held in your own configuration file.
 
 **What's in this repository.** Everything ohmail runs on: the desktop app,
@@ -778,9 +814,8 @@ On Windows, the MSVC build tools and WebView2.
 The quickest verification, and it needs nothing but the repository and Node:
 build the app's UI bundle and render it headlessly — the render check draws the
 whole client against a stub engine channel and proves, on the built bundle, that
-the page itself opens no connection. (An earlier "interface preview" built a
-fictional mailbox here; it is retired — the app has no demo surface, it opens
-empty and you connect. The demo lives at ohmail.app/demo.)
+the page itself opens no connection. (The app has no demo mode: it opens empty
+until you connect a mailbox. The demo is at ohmail.app/demo.)
 
 ```bash
 cd apps/desktop
@@ -835,12 +870,16 @@ host section above describes, and nothing else.
 is `connect-src 'none'`, so `fetch`, XHR and WebSocket are refused before they
 are attempted. In the interface-only build the main window's capability list
 is literally empty (`"permissions": []`). In the build you download, the
-window can call sixteen commands and nothing else, every one declared in
-`src-tauri/build.rs`: the bridge to the mail engine, a notification and the
-icon's badge, opening a link or an attachment outside the app (validated by
-the shell, never fetched by the page), and host mode's controls — reading its
-state, probing and arming Tailscale, start-at-login, and opening Tailscale's
-download page as one more fixed address the shell owns. Mail does not travel
+window can call twenty-seven commands and nothing else, every one declared in
+`src-tauri/build.rs`: the bridge to the mail engine and its restart, a
+notification and the icon's badge, the window's own performance numbers,
+opening a link, a link from a message or an attachment outside the app and
+saving an attachment to your Downloads folder (validated by the shell, never
+fetched by the page), host mode's controls — reading its state, probing and
+arming Tailscale, start-at-login, and opening Tailscale's download page as one
+more fixed address the shell owns — the probe a pairing link starts, the
+default-mail-app registration, the active Omarchy theme, and the updater's
+state, press and daily check. Mail does not travel
 over the network from the page — it travels down a pipe to a process on the
 same machine. The engine holds the IMAP connection; the page holds no
 credential.
@@ -860,11 +899,7 @@ here. [CHANGELOG.md](CHANGELOG.md) records what has shipped.
 1. **Signed installers** — a notarized DMG with a real Apple Developer ID and
    an Authenticode-signed `.exe`. Updates are already signed and verified;
    this is about the first launch.
-2. **AI, first-class** — Screener suggestions and drafts via your own API key
-   or a local Ollama ship off by default; making them a first-class part of
-   the flow is the remaining work. Proposed, never applied; sensitive mail
-   structurally excluded.
-3. **A packaged Linux repository** — an apt source and a properly signed
+2. **A packaged Linux repository** — an apt source and a properly signed
    AppImage, so an install is a command rather than a download and a `chmod`.
 
 Dates are not promised. The order is.
