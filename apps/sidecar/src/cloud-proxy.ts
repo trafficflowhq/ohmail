@@ -10,8 +10,9 @@ import type { Diagnostic } from "./log.js";
  * (`/attachments/:id`, `/img`) — relays to `api.ohmail.app` over the mirror's `authedFetch` and
  * returns the answer verbatim. The echo-await matters because the client re-drains local `/sync`
  * after each write: on a 2xx echoing `X-Sync-Seq` the proxy WAITS until the mirror's cloud cursor
- * covers that seq (bounded ~5 s), or every mutation flickers as refused-then-applied. Offline is a
- * MODE not a fault: it forwards nothing and answers `503 offline_read_only`, touching NO local row.
+ * covers that seq, and on a 2xx write echoing none (triage, a Screener decision) for one pull begun
+ * after the answer — both bounded ~5 s — or the acted-on row comes back until the next poll.
+ * Offline is a MODE not a fault: it forwards nothing and answers `503 offline_read_only`.
  */
 
 /** The relay carries this many routes. Read at construction so an empty projection cannot pass. */
@@ -130,12 +131,15 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
       return offlineResponse();
     }
 
-    // THE ECHO-AWAIT. A 2xx mutation carries the hosted seq of the change it emitted; wait for the
-    // mirror to pull that far before answering, so the client's immediate local /sync re-drain
-    // already contains its own write.
+    // THE ECHO-AWAIT. A 2xx mutation carrying the hosted seq of its change waits for the mirror to
+    // pull that far; a 2xx write carrying none waits for one pull begun after this answer (hosted
+    // seq order is commit order). Either way the client's immediate local /sync holds its write.
     const target = res.ok ? parseSeq(res.headers.get("x-sync-seq")) : null;
-    if (target !== null) {
-      const covered = await cfg.mirror.awaitCloudSeq(target, echoDeadlineMs);
+    const write = res.ok && method !== "GET" && method !== "HEAD";
+    if (target !== null || write) {
+      const covered = target !== null
+        ? await cfg.mirror.awaitCloudSeq(target, echoDeadlineMs)
+        : await cfg.mirror.awaitFreshPull(echoDeadlineMs);
       // Only the miss earns a line: the mirror did not catch up within the bound, so the answer
       // goes back ahead of the local echo and the next poll reconciles it.
       if (!covered) {

@@ -432,6 +432,12 @@ export interface CloudMirror {
    */
   awaitCloudSeq(target: bigint, deadlineMs: number): Promise<boolean>;
   /**
+   * One pull that BEGAN after this call, within `deadlineMs`; true when it completed in time. The
+   * echo for a write whose answer names no seq: the pull already in flight may have read the
+   * hosted log before that write committed, so it is waited out and never counted.
+   */
+  awaitFreshPull(deadlineMs: number): Promise<boolean>;
+  /**
    * How many messages the hosted account holds, per hosted mailbox id — the numbers this mirror is
    * draining TOWARD, not the ones it holds. Empty until the first counted refresh (see {@link
    * HOSTED_COUNTS_TTL_MS}) and empty for ever on an account that answers no counts. An empty map
@@ -3451,6 +3457,24 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     }
   };
 
+  const awaitFreshPull = async (deadlineMs: number): Promise<boolean> => {
+    const end = Date.now() + Math.max(0, deadlineMs);
+    const within = async (p: Promise<unknown>): Promise<boolean> => {
+      const left = end - Date.now();
+      if (left <= 0) return false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const late = new Promise<boolean>((r) => { timer = setTimeout(() => r(false), left); });
+      try {
+        return await Promise.race([p.then(() => true, () => false), late]);
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    if (inflight && !(await within(inflight))) return false;
+    if (aborted) return false;
+    return within(pullOnce());
+  };
+
   /**
    * Schedule the next pull. A SUCCESS resets the backoff and polls at the steady cadence; a FAILURE
    * retries on an exponential backoff bounded by {@link RECONNECT_MAX_MS}, so a dropped network or a
@@ -3496,6 +3520,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     accountErased: () => accountErased,
     cloudSeq,
     awaitCloudSeq,
+    awaitFreshPull,
     // The live map, not a copy: the only caller reads it synchronously to decorate one response,
     // and the map is REPLACED rather than mutated on each counted refresh, so a reader can never
     // observe a half-built one.

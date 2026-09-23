@@ -14,6 +14,7 @@
 import { CALENDAR_FALLBACK_FILENAME, isCalendarMime } from "@trafficflow/core/ics";
 import type { AttachmentWire, EngineAdapter, MutationOutcome, MutationQueued } from "./adapters/adapter.js";
 import { messageIdKey, mutationEffects, replySubject, sentOverlayMessage, type MutationEffect } from "./mutations.js";
+import { SHADOW_DRAIN_BOUND, shadowAgrees, shadowKeysOf, type ShadowKey } from "./shadow.js";
 import {
   indexingAddressResult,
   indexingResult,
@@ -1869,7 +1870,16 @@ export class OhmailEngine {
    * lifetime is bound to the verb, not to any single drain attempt — the retry itself is the scheduler's ordinary
    * (bounded, backed-off) cadence, so no new retry loop exists here.
    */
-  private readonly awaitingEcho = new Map<string, number>();
+  private readonly awaitingEcho = new Map<string, { epoch: number; m: EngineMutation }>();
+  /**
+   * CONFIRMED VERBS WHOSE ROWS THE MIRROR HAS NOT SHOWN YET — overlay id → the rows it masks
+   * (`shadow.ts`). A successful drain is not proof: a door can answer /sync from a copy behind the
+   * server that took the write (the Cloud-paired desktop's mirror, measured). The overlay stands
+   * until the mirror agrees, a newer verb on one of its rows replaces it, or the drain bound passes.
+   */
+  private readonly shadows = new Map<string, { keys: ShadowKey[]; epoch: number; drains: number }>();
+  /** The mirror alone, park fact resolved — what a shadow is compared against. */
+  private readonly storeTruth: EntityReader;
   /**
    * MUTATIONS THE SERVER QUEUED FOR ANOTHER INSTALL — kept until a CHANGE confirms them.
    *
@@ -2281,6 +2291,7 @@ export class OhmailEngine {
     this.uuid = opts.uuid ?? (() => crypto.randomUUID());
     this.readerView = new OverlayReader(this.store, this.overlays, () => this.overlayRev);
     this.resolvedView = oneSourceReader(this.readerView);
+    this.storeTruth = oneSourceReader(this.store);
   }
 
   // ── lifecycle ────────────────────────────────────────────────────────────
@@ -2914,20 +2925,75 @@ export class OhmailEngine {
    * the log before their POST committed and proves nothing about them.
    */
   private sweepAwaitingEcho(epoch: number): void {
-    if (this.awaitingEcho.size === 0) return;
     let swept = false;
     for (const [overlayId, registered] of this.awaitingEcho) {
-      if (registered >= epoch) continue;
+      if (registered.epoch >= epoch) continue;
       this.awaitingEcho.delete(overlayId);
-      swept = this.overlays.delete(overlayId) || swept;
-      // The durable entry rode alongside the overlay for exactly this long — the echo is now
-      // provably applied, so the verb needs no replay on any future boot. Best-effort: an
-      // entry that survives a refused delete replays idempotently, the safe direction.
-      void this.dropOutbox(overlayId);
+      if (!this.overlays.has(overlayId)) continue;
+      // The drain proves the log was read, not that this mirror shows the rows: those stay
+      // masked until they agree (see `settleConfirmed`). The durable entry goes with the overlay;
+      // one that survives a refused delete replays idempotently, the safe direction.
+      if (this.settleConfirmed(overlayId, registered.m)) void this.dropOutbox(overlayId);
+      swept = true;
     }
+    swept = this.sweepShadows(epoch) || swept;
     if (swept) {
       this.overlayRev++;
       this.notify();
+    }
+  }
+
+  /**
+   * A CONFIRMED VERB'S ECHO IS IN — retire its overlay, unless the mirror still disagrees with a
+   * row it moved: then only the rows the mirror HOLDS stay masked (a created entity has no stale
+   * copy to hide) and the verb waits in {@link shadows}. True when the overlay retired, and the
+   * caller then drops the durable entry. The caller bumps the overlay rev.
+   */
+  private settleConfirmed(id: string, m: EngineMutation): boolean {
+    const effects = this.overlays.get(id);
+    const held = (type: string, eid: string): boolean => this.store.record(type, eid) !== undefined;
+    const keys = effects ? shadowKeysOf(m, effects, held) : [];
+    if (keys.length === 0 || shadowAgrees(keys, this.storeTruth)) {
+      this.shadows.delete(id);
+      this.overlays.delete(id);
+      return true;
+    }
+    this.overlays.set(id, effects!.filter((e) => held(e.type, e.id)));
+    this.shadows.set(id, { keys, epoch: this.drainEpoch, drains: 0 });
+    return false;
+  }
+
+  /**
+   * Each drain that began after a shadow stood asks again: the rows agree ⇒ the mirror is the
+   * truth; {@link SHADOW_DRAIN_BOUND} drains without agreement ⇒ the mirror is the truth anyway
+   * (a no-op, a divergence, another device's later change). Returns whether anything retired.
+   */
+  private sweepShadows(epoch: number): boolean {
+    let retired = false;
+    for (const [id, s] of this.shadows) {
+      if (!this.overlays.has(id)) { this.shadows.delete(id); continue; }
+      if (s.epoch >= epoch) continue;
+      s.drains += 1;
+      if (!shadowAgrees(s.keys, this.storeTruth) && s.drains < SHADOW_DRAIN_BOUND) continue;
+      this.shadows.delete(id);
+      this.overlays.delete(id);
+      void this.dropOutbox(id);
+      retired = true;
+    }
+    return retired;
+  }
+
+  /**
+   * A NEWER VERB ON A SHADOWED ROW replaces the shadow: its own overlay now carries the person's
+   * latest word, and a shadow outliving it would re-mask the row with the older one (an Undo
+   * shown undone). The older verb is confirmed, so its durable entry goes too.
+   */
+  private retireShadowsUnder(effects: readonly MutationEffect[]): void {
+    for (const [id, s] of this.shadows) {
+      if (!s.keys.some((k) => effects.some((e) => e.type === k.type && e.id === k.id))) continue;
+      this.shadows.delete(id);
+      this.overlays.delete(id);
+      void this.dropOutbox(id);
     }
   }
 
@@ -4869,6 +4935,7 @@ export class OhmailEngine {
       return { id, key, status: "rolled_back", seq: null, error };
     }
     const superseded = this.supersedeQueued(enriched);
+    this.retireShadowsUnder(effects);
     this.overlays.set(id, effects);
     this.overlayRev++;
     this.notify();
@@ -5999,7 +6066,7 @@ export class OhmailEngine {
           // committed mutation — the exact inversion this file's send path documents — so the
           // overlay stands as awaiting-echo instead, and the next successful drain (over a
           // store whose own recovery is a reload) retires it.
-          this.awaitingEcho.set(p.id, epochAtConfirm);
+          this.awaitingEcho.set(p.id, { epoch: epochAtConfirm, m: p.mutation });
           echoPending = true;
         }
       } else if (p.mutation.kind === "mail_send") {
@@ -6042,7 +6109,7 @@ export class OhmailEngine {
          * drain that began after this POST completes — bounded by the scheduler's ordinary cadence.
          */
         if (opts.deferReconcile) {
-          this.awaitingEcho.set(p.id, epochAtConfirm);
+          this.awaitingEcho.set(p.id, { epoch: epochAtConfirm, m: p.mutation });
           echoPending = true;
           opts.onReconcileDeferred?.("await");
         } else {
@@ -6051,7 +6118,7 @@ export class OhmailEngine {
           } catch {
             // The write landed; the mirror catches up on the next successful drain, and the
             // overlay stands until that drain proves the echo applied.
-            this.awaitingEcho.set(p.id, epochAtConfirm);
+            this.awaitingEcho.set(p.id, { epoch: epochAtConfirm, m: p.mutation });
             echoPending = true;
           }
         }
@@ -6080,10 +6147,7 @@ export class OhmailEngine {
       // Both are released together by {@link OhmailEngine.drain}'s sweep, and
       // a kill before that sweep replays the entry under its original key — the server's
       // idempotency machinery answers with the stored response, never a second effect.
-      if (!echoPending) {
-        this.overlays.delete(p.id);
-        await this.dropOutbox(p.id);
-      }
+      if (!echoPending && this.settleConfirmed(p.id, p.mutation)) await this.dropOutbox(p.id);
       // The Sent copy was materialised the instant the server confirmed, above — a rejection
       // reaches the `catch` below and never gets here, which is the "DROP on send rejection"
       // half, unchanged by moving the call up.
