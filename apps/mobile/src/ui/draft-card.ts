@@ -5,10 +5,13 @@
  * (one sentence, Keep, Discard; back keeps); a refused discard is said in the row, never a toast.
  */
 import { Copy } from "../copy";
-import type { DraftHeldSays, WorldDraft } from "../state/world";
+import type { DraftHeldSays, DraftSendAgainOutcome, WorldDraft } from "../state/world";
 
 /** Why a Discard did not happen, said in the row. One reason today: a send still running. */
 export type DraftDiscardRefusal = "stillSending";
+
+/** Why a Send again did not send, said in the row — never a toast. */
+export type DraftSendAgainRefusal = Exclude<DraftSendAgainOutcome, "sent">;
 
 /** The held row's sentence — the state line and the two acts' group label alike. */
 export function heldSentence(says: DraftHeldSays): string {
@@ -34,6 +37,17 @@ export function refusalSentence(why: DraftDiscardRefusal): string {
   }
 }
 
+export function sendAgainSentence(why: DraftSendAgainRefusal): string {
+  switch (why) {
+    case "stillRunning": return Copy.draftsResolveStillRunning;
+    case "notReached": return Copy.draftsResolveFailed;
+    case "bodyUnknown": return Copy.draftsBodyUnavailable;
+    case "queued": return Copy.replyQueued;
+    case "unverified": return Copy.replyUnverified;
+    case "failed": return Copy.replyFailed;
+  }
+}
+
 /** The card's controls, as a plan: what stands where, in the catalogue's words. */
 export interface DraftCardPlan {
   /** The held sentence, or `null` for an ordinary draft. */
@@ -52,11 +66,18 @@ export interface DraftCardPlan {
     | { kind: "confirm"; what: string; keep: string; discard: string };
   /** A refused discard's sentence, rendered in the row below the control. */
   refusal: string | null;
+  /** A Send again that did not send, said in the row where the acts are. */
+  sendRefusal: string | null;
 }
 
 export function draftCardPlan(
   row: Pick<WorldDraft, "heldSays">,
-  ui: { confirming: boolean; confirmingSendAgain: boolean; refusal: DraftDiscardRefusal | null },
+  ui: {
+    confirming: boolean;
+    confirmingSendAgain: boolean;
+    refusal: DraftDiscardRefusal | null;
+    sendRefusal?: DraftSendAgainRefusal | null;
+  },
 ): DraftCardPlan {
   const held = row.heldSays === null ? null : heldSentence(row.heldSays);
   return {
@@ -70,6 +91,7 @@ export function draftCardPlan(
       ? { kind: "confirm", what: Copy.draftsDiscardWhat, keep: Copy.draftsDiscardCancel, discard: Copy.draftsDiscardConfirm }
       : { kind: "button", label: Copy.draftsDiscard },
     refusal: ui.refusal === null ? null : refusalSentence(ui.refusal),
+    sendRefusal: ui.sendRefusal == null ? null : sendAgainSentence(ui.sendRefusal),
   };
 }
 

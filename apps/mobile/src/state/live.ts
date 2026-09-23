@@ -1889,6 +1889,14 @@ export async function flushQueued(engine: OhmailEngine): Promise<Map<string, Flu
  */
 export type DraftDiscardOutcome = "discarded" | "stillSending" | "queued" | "refused";
 
+/**
+ * HOW A SEND AGAIN ENDED — `sent`, or why not. Every ending but `sent` is said by the card IN THE
+ * ROW and by nothing else: `stillRunning` / `notReached` are the resolve's two refusals,
+ * `bodyUnknown` is a text this mirror never received, and the last three are the send's own.
+ */
+export type DraftSendAgainOutcome =
+  | "sent" | "stillRunning" | "notReached" | "bodyUnknown" | "queued" | "unverified" | "failed";
+
 export const UNDO_MS = 8000;
 
 /**
@@ -2190,9 +2198,9 @@ export interface LiveWorldActions {
   /**
    * SEND A HELD MESSAGE AGAIN — the web's two steps without an editor: `not_arrived` frees the
    * row, then the row is sent AS IT STANDS through the bound send (`draftId`). `sent` closes the
-   * card; every other ending has said its sentence and leaves the row on screen.
+   * card; every other ending is the card's to say, in the row.
    */
-  draftSendAgain(draftId: string): Promise<SendOutcome>;
+  draftSendAgain(draftId: string): Promise<DraftSendAgainOutcome>;
   /** Put a tag on / take it off — `tag_assign`. */
   tagToggle(messageId: string, tag: WorldTag, assigned: boolean): Promise<boolean>;
   /** Tag-or-create: a name that does not exist yet, minted and put on this message in one act. */
@@ -3114,6 +3122,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
      * press says one thing, rather than "Reply sent." replaced a beat later.
      */
     doneHalf?: DoneHalf,
+    /** `false` for a caller that says a refused send in its own place (the Drafts card). */
+    sayRefusals = true,
   ): Promise<SendResult> => {
     const first = await p.then((r) => r, () => null);
     let settled: MutationResult | null = first;
@@ -3139,7 +3149,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        for the ordinary one — a refused send is told in the send's own words and nothing else. */
     const said = doneHalf ? await doneHalf(outcome === "sent") : null;
     if (said) toast(said.say, said.opts);
-    else {
+    else if (outcome === "sent" || sayRefusals) {
       toast(
         outcome === "sent" ? (earlierWent ? earlierWentToast : sentToast)
           : outcome === "queued" ? refuse("replyQueued")
@@ -3331,15 +3341,17 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * adapter makes before `POST /drafts/:id/send` writes back what the server holds (html included:
    * a plain PUT over formatted text is refused) and the message that leaves is the one on the card.
    * A body this mirror never received is refused before anything moves: sending it would write an
-   * empty message over the only copy.
+   * empty message over the only copy. No refusal is toasted — the card says it in the row.
    */
-  const draftSendAgain = async (draftId: string): Promise<SendOutcome> => {
+  const draftSendAgain = async (draftId: string): Promise<DraftSendAgainOutcome> => {
     const d = engine.read().get<EngineDraft & { html?: string | null }>("draft", draftId);
-    if (!d || !draftBodyKnown(d)) {
-      toast(refuse("draftsBodyUnavailable"));
-      return "failed";
+    if (!d || !draftBodyKnown(d)) return "bodyUnknown";
+    const freed = await engine
+      .mutate({ kind: "draft_resolve", draftId, outcome: "not_arrived" })
+      .then((res) => res, () => null);
+    if (freed?.status !== "confirmed") {
+      return freed?.error?.code === "send_still_running" ? "stillRunning" : "notReached";
     }
-    if (!(await draftResolve(draftId, "not_arrived"))) return "failed";
     const html = typeof d.html === "string" && d.html !== "" ? d.html : null;
     const r = await sent(
       dispatchSend({
@@ -3357,6 +3369,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       }),
       Copy.composeSent,
       Copy.composeEarlierWent,
+      undefined,
+      false,
     );
     return r.outcome;
   };
@@ -3709,7 +3723,7 @@ export interface WorldActions {
   /** Answer for a held send — see {@link LiveWorldActions.draftResolve}. */
   draftResolve(draftId: string, outcome: "arrived" | "not_arrived"): Promise<boolean>;
   /** Send a held message again — see {@link LiveWorldActions.draftSendAgain}. */
-  draftSendAgain(draftId: string): Promise<SendOutcome>;
+  draftSendAgain(draftId: string): Promise<DraftSendAgainOutcome>;
   /** What became of a queued send's key — how a locked composer settles. See `World.sendOutcome`. */
   sendOutcome(key: string): "pending" | "confirmed" | "rolled_back" | "unverified" | "unknown";
   tagToggle(messageId: string, tag: WorldTag, assigned: boolean): void;

@@ -1200,7 +1200,7 @@ export const DE: Deck = {
   draftsHeldInterrupted: "Wir sind nicht sicher, ob diese Nachricht gesendet wurde — der Versand wurde unterbrochen.",
   draftsSendAgain: "Noch einmal senden",
   draftsItWasSent: "Sie wurde gesendet — ausblenden",
-  draftsSendAgainWhat: "Das sendet die Nachricht noch einmal.",
+  draftsSendAgainWhat: "Sendet diese Nachricht so, wie sie ist.",
   draftsResolveFailed: "Das hat den Server nicht erreicht. Die Nachricht wird hier weiterhin festgehalten.",
   draftsResolveStillRunning: "Dieser Versand läuft möglicherweise noch. Du kannst ihn beantworten, sobald er beendet ist.",
   draftsBodyUnavailable: "Der Text dieses Entwurfs hat dieses Gerät noch nicht erreicht. Versuch es gleich noch einmal.",

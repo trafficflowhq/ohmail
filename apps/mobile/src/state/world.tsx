@@ -125,6 +125,7 @@ import {
 export type {
   FolderEntity, MoveTarget, PhoneOrganizer, ScreenerRow, WorldActions, WorldHistory, WorldMail,
   WorldPile, WorldScheduled, WorldScreener, WorldSearch, WorldTag, WorldDraft, DraftHeldSays,
+  DraftSendAgainOutcome,
 } from "./live";
 
 export interface World {
@@ -492,7 +493,7 @@ const NO_ACTIONS: WorldActions = {
   cancelSchedule: () => Promise.resolve(false),
   draftDiscard: () => Promise.resolve("refused" as const),
   draftResolve: () => Promise.resolve(false),
-  draftSendAgain: () => Promise.resolve("failed" as const),
+  draftSendAgain: () => Promise.resolve("notReached" as const),
   sendOutcome: () => "unknown",
   tagToggle: () => undefined,
   tagCreate: () => undefined,

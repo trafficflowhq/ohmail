@@ -13,7 +13,8 @@ import { useWorld } from "../state/world";
 import { Button, Panel, Rule, Screen, Scroller, Txt } from "./base";
 import { DetailBar } from "./chrome";
 import {
-  backKeeps, discardDecision, draftCardPlan, refusalSentence, type DraftDiscardRefusal,
+  backKeeps, discardDecision, draftCardPlan, refusalSentence, sendAgainSentence,
+  type DraftDiscardRefusal, type DraftSendAgainRefusal,
 } from "./draft-card";
 
 /** Which question stands on the card — one at a time, a card of open questions is noise. */
@@ -35,6 +36,8 @@ export function DraftReader({
   const [asking, setAsking] = useState<Asking>(null);
   /** The last refused discard, stamped so a second refusal is announced again. */
   const [refusal, setRefusal] = useState<{ why: DraftDiscardRefusal; at: number } | null>(null);
+  /** The last Send again that did not send, stamped like the discard's. */
+  const [sendRefusal, setSendRefusal] = useState<{ why: DraftSendAgainRefusal; at: number } | null>(null);
 
   /* BACK KEEPS. Registered only while a question stands, so it runs before the navigator's own
      listener (RN calls the newest first) and the press closes the question, not the screen. */
@@ -62,6 +65,12 @@ export function DraftReader({
     // `refusedAt` re-arms per press; the sentence is read off the value it stamps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refusedAt]);
+  const sendRefusedAt = sendRefusal?.at ?? null;
+  useEffect(() => {
+    if (Platform.OS !== "ios" || sendRefusal === null) return;
+    AccessibilityInfo.announceForAccessibility(sendAgainSentence(sendRefusal.why));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sendRefusedAt]);
 
   if (!row) {
     /* Discarded, answered, or drained away while this route was open. The honest gone sentence,
@@ -82,6 +91,7 @@ export function DraftReader({
     confirming: asking === "discard",
     confirmingSendAgain: asking === "sendAgain",
     refusal: refusal?.why ?? null,
+    sendRefusal: sendRefusal?.why ?? null,
   });
 
   const leave = () => {
@@ -115,6 +125,7 @@ export function DraftReader({
     setBusy(true);
     const outcome = await w.actions.draftSendAgain(row.id);
     if (outcome === "sent") { leave(); return; }
+    setSendRefusal({ why: outcome, at: Date.now() });
     setBusy(false);
   };
 
@@ -197,7 +208,7 @@ export function DraftReader({
                     label={plan.acts.sendAgain}
                     variant="quiet"
                     disabled={busy || !row.bodyKnown}
-                    onPress={() => { setRefusal(null); setAsking("sendAgain"); }}
+                    onPress={() => { setRefusal(null); setSendRefusal(null); setAsking("sendAgain"); }}
                   />
                   <Button
                     label={plan.acts.itWasSent}
@@ -208,6 +219,19 @@ export function DraftReader({
                 </View>
               )}
             </View>
+          ) : null}
+
+          {/* A SEND AGAIN THAT DID NOT SEND, in the row — after a failed send the row is an ordinary
+              draft again and the acts are gone, so the sentence stands on its own. */}
+          {plan.sendRefusal !== null ? (
+            <Txt
+              variant="note"
+              tone="ink"
+              accessibilityLiveRegion="polite"
+              style={{ paddingHorizontal: 18, paddingVertical: 8 }}
+            >
+              {plan.sendRefusal}
+            </Txt>
           ) : null}
 
           {/* OPEN THE CONVERSATION — offered only where `liveDrafts` measured the parent present
@@ -252,7 +276,7 @@ export function DraftReader({
                   label={plan.discard.label}
                   variant="quiet"
                   disabled={busy}
-                  onPress={() => { setRefusal(null); setAsking("discard"); }}
+                  onPress={() => { setRefusal(null); setSendRefusal(null); setAsking("discard"); }}
                 />
               </View>
             )}

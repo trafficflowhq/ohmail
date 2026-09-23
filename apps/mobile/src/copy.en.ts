@@ -1864,7 +1864,7 @@ const TABLE = {
    * PHONE-ONLY (5/5): Send again's question. The web opens the message in its editor, where Send
    * is the second press; this card has no editor, so the second press is asked here.
    */
-  draftsSendAgainWhat: "This sends the message again.",
+  draftsSendAgainWhat: "Sends this message as it is.",
   draftsResolveFailed: "That didn't reach the server. The message is still held here.",
   draftsResolveStillRunning: "This send may still be running. You can answer for it once it has stopped.",
   draftsBodyUnavailable: "This draft's text hasn't reached this device yet. Try again in a moment.",
