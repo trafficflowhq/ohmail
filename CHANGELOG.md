@@ -18,7 +18,7 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
-## [0.22.1] — 2026-09-22
+## [0.22.1] — 2026-09-23
 
 ### In the admin console, clearing the Microsoft secret asks first and never discards a secret you just typed; a console page that fails to load says so instead of staying blank
 <!-- changes: admin-023-console-truth.md -->
