@@ -16,6 +16,22 @@ import { createCloudSidecar, readMirrorOwner, type CloudSidecar } from "../../si
 import { openLocalDb, PGDATA_SUBDIR } from "../../sidecar/src/db.js";
 import { approvalServer, FIXTURE_MESSAGE, type ApprovalServer } from "./fixtures/approval-server.js";
 
+/* jsdom's `Blob` has no `arrayBuffer()`, and the store this walk opens in-process now loads its
+   search extensions, which PGlite hands over as a Blob. Shimmed through jsdom's own FileReader, as
+   desktop-open-attachment.test.ts does: a gap in the TEST environment only — the engine runs under
+   Node in the app, where the method exists. */
+if (typeof (Blob.prototype as { arrayBuffer?: unknown }).arrayBuffer !== "function") {
+  (Blob.prototype as unknown as { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer =
+    function (this: Blob) {
+      return new Promise<ArrayBuffer>((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result as ArrayBuffer);
+        fr.onerror = () => reject(fr.error);
+        fr.readAsArrayBuffer(this);
+      });
+    };
+}
+
 /**
  * A FRESH INSTALL SIGNS IN TO OHMAIL CLOUD WITH NO ADDRESS TYPED ANYWHERE — the whole window
  * over the REAL cloud engine, against a fake ohmail Cloud answering the five approval routes. The
