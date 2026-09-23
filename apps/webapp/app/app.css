@@ -6435,6 +6435,11 @@ body.dnd-active * { cursor: grabbing !important; }
   padding: 24px;
   background: var(--scrim);
 }
+/* The desktop's refused-session card: the door's own sign-in form on the same layer. Its `.gate`
+   is a whole-window page elsewhere, so here it gives up the page height; `margin: auto` centres
+   it and still scrolls in a short window, where a centred flex item would lose its top. */
+.session-end.session-signin { overflow-y: auto; align-items: flex-start; }
+.session-end.session-signin > .gate { min-height: 0; padding: 0; margin: auto; }
 
 /* ── the signature block — every compose surface ──────────────────────────────────────────
    The removable tail of the outgoing message (`SignatureBlock.tsx`; `signature.ts` owns the
