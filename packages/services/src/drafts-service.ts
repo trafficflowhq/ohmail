@@ -573,15 +573,13 @@ export class DraftsService {
   async remove(ctx: ServiceContext, id: string): Promise<{ seq: number }> {
     const seq = await asTx(ctx).transaction(async (tx) => {
       /**
-       * ONLY A SEND STILL RUNNING HOLDS THE DRAFT. `pending` is an attempt that may be on the wire
-       * (or one the reconciler will settle within minutes) and is refused by name. `unverified`
-       * used to be refused too — "resolve it first" — and a person who did not understand the
-       * question pressed Discard on one reply for weeks. The words are theirs: the row goes, and
-       * the ledger keeps the attempt with `resolved_by = 'discard'` so a same-key replay is refused
-       * as discarded rather than answered with a draft that is gone. Nothing cascades: `draft_id`
-       * is `ON DELETE SET NULL` (mail 0095). The row is locked FIRST — only `FOR UPDATE`
-       * conflicts with `reserve`'s `FOR KEY SHARE`: the reserve committed first (409) or the
-       * delete did (404). An appointment is refused below with the way forward.
+       * ONLY A SEND STILL RUNNING HOLDS THE DRAFT. `pending` may be on the wire and is refused by
+       * name. `unverified` used to be refused too ("resolve it first"), and a person who did not
+       * understand the question pressed Discard on one reply for weeks: the row goes, and the ledger
+       * keeps the attempt with `resolved_by = 'discard'` so a same-key replay is refused as
+       * discarded. Nothing cascades (`draft_id` is `ON DELETE SET NULL`). The row is locked FIRST —
+       * only `FOR UPDATE` conflicts with `reserve`'s `FOR KEY SHARE`; an appointment is refused
+       * below with the way forward.
        */
       const [held] = await dialect(ctx.db).forUpdate(
         tx.select({ status: drafts.status, sendKey: drafts.sendKey }).from(drafts)
