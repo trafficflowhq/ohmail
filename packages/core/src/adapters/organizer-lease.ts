@@ -4116,18 +4116,31 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
   // The header's third rule: the displaced are not rivals. `ref` is compared by value identity
   // (a uid, or a fake harness's int); a claim with no ref cannot have been displaced.
   const displacedRefs = new Set(verdict.displace);
+  /* AND THE RECORDS THIS PROCESS WROTE ARE NOT RIVALS EITHER. The confirm arms the clone defence
+     on the nonce just appended, which the claim being replaced no longer bears; `coalesce` keeps
+     the newest record per install by the writer's stamp, so two gate runs inside one instant, or
+     a wall clock stepped back between them, left the superseded record "newest" and the defence
+     read this install's own claim as a live clone — every claim expunged, no organizer left.
+     `writtenByThisProcess`, never `bearsOurNonce`: with no armed nonce the latter admits every
+     record under our id and would hide a clone the next election is meant to see. */
+  const supersededOwn = (c: ClaimRecord): boolean =>
+    !isMalformed(c) && c.installId === self.installId && writtenByThisProcess(self, c.nonce);
   const confirmed = decideLease({
     self: { ...self, lastNonce: nonce },
-    claims: verifyClaims.filter((c) => c.ref === undefined || !displacedRefs.has(c.ref)),
+    claims: verifyClaims.filter((c) => (c.ref === undefined || !displacedRefs.has(c.ref)) && !supersededOwn(c)),
     now,
     ...(input.staleAfterMs !== undefined ? { staleAfterMs: input.staleAfterMs } : {}),
   });
 
   if (confirmed.verdict !== "organize") {
+    /* The loser releases its own claims and never the winner's — the election's rule, held here
+       too: a clone's winning claim carries our id, and an id-scoped expunge deleted the record that
+       had just beaten us, so the folder read empty to both sides. */
+    const winner = confirmed.verdict === "stand_down" ? confirmed.by?.ref : undefined;
     const ours = verifyClaims
       .filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId)
       .map((c) => c.ref)
-      .filter((r): r is unknown => r !== undefined);
+      .filter((r): r is unknown => r !== undefined && r !== winner);
     if (ours.length > 0) {
       try {
         await io.removeClaims(ours);
