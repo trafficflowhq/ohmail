@@ -2169,6 +2169,7 @@
     "missing": "This page opens from the ohmail app on your computer.",
     "busyRetrying": "The server is busy — retrying in {seconds} s.",
     "busyGaveUp": "The server is still busy. Press Confirm to try again.",
+    "signInUnchecked": "Your sign-in could not be checked just now. Reload this page to try again.",
     "stepUpDiscarded": "Nothing was confirmed.",
     "unavailableTitle": "Not available here",
     "unavailableBody": "This copy of ohmail has no server attached, so there is no account to sign in to.",

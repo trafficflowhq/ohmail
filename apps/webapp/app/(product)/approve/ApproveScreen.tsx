@@ -20,6 +20,7 @@ import { ApiError, apiConfigured, auth, messageOf, type DesktopApprovalDTO } fro
 import { isBusy, retryBusy } from "../../retry-busy";
 import { StepUpPrompt } from "../mailbox/StepUpPrompt";
 import { rememberApprovalRequest } from "./approval-return";
+import { sessionIsDead } from "../../shell/session-truth";
 
 type Phase = "idle" | "stepUp" | "done" | "denied";
 
@@ -81,10 +82,16 @@ export function ApproveScreen({ request = "" }: { request?: string }) {
     return messageOf(err);
   };
 
-  /** No session in this browser: sign in the ordinary way and come back to this request. */
-  const signInFirst = (): void => {
-    rememberApprovalRequest(request);
-    router.replace("/login");
+  /* No session in this browser: sign in the ordinary way and come back to this request — only
+     once the refresh door has CONFIRMED the session ended. A refresh that met a busy or
+     unreachable server leaves the browser signed in, and the page says so instead. */
+  const onUnauthorized = (): void => {
+    if (sessionIsDead()) {
+      rememberApprovalRequest(request);
+      router.replace("/login");
+      return;
+    }
+    setError(t("signInUnchecked"));
   };
 
   useEffect(() => {
@@ -101,7 +108,7 @@ export function ApproveScreen({ request = "" }: { request?: string }) {
         if (dto.approved) setPhase("done");
       } catch (err) {
         if (!alive.current || ctl.signal.aborted) return;
-        if (err instanceof ApiError && err.status === 401) { signInFirst(); return; }
+        if (err instanceof ApiError && err.status === 401) { onUnauthorized(); return; }
         setError(sentenceFor(err));
       } finally {
         if (alive.current) setLoading(false);
@@ -142,7 +149,7 @@ export function ApproveScreen({ request = "" }: { request?: string }) {
         if (err instanceof ApiError && err.status === 403 && err.code === "step_up_required") {
           setPhase("stepUp");
         } else if (err instanceof ApiError && err.status === 401) {
-          signInFirst();
+          onUnauthorized();
         } else {
           setError(sentenceFor(err));
           if (err instanceof ApiError && (err.status === 410 || err.status === 404)) setAsked(null);
@@ -164,7 +171,7 @@ export function ApproveScreen({ request = "" }: { request?: string }) {
         if (alive.current) setPhase("denied");
       } catch (err) {
         if (!alive.current) return;
-        if (err instanceof ApiError && err.status === 401) signInFirst();
+        if (err instanceof ApiError && err.status === 401) onUnauthorized();
         else setError(sentenceFor(err));
       } finally {
         if (alive.current) { setBusy(false); setRetryAt(null); }

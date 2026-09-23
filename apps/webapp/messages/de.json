@@ -2169,6 +2169,7 @@
     "missing": "Diese Seite öffnet sich aus der ohmail-App auf deinem Computer.",
     "busyRetrying": "Der Server ist ausgelastet — neuer Versuch in {seconds} s.",
     "busyGaveUp": "Der Server ist weiterhin ausgelastet. Drück auf „Bestätigen“, um es noch einmal zu versuchen.",
+    "signInUnchecked": "Deine Anmeldung konnte gerade nicht geprüft werden. Lade die Seite neu, um es noch einmal zu versuchen.",
     "stepUpDiscarded": "Es wurde nichts bestätigt.",
     "unavailableTitle": "Hier nicht verfügbar",
     "unavailableBody": "Diese ohmail-Kopie hat keinen Server, also gibt es kein Konto zum Anmelden.",
