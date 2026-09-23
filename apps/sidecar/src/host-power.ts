@@ -9,8 +9,8 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-export const POWER_SUPPLY_DIR = "/sys/class/power_supply";
-export type HostPowerState = "ac" | "battery" | "no-battery" | "unknown";
+const POWER_SUPPLY_DIR = "/sys/class/power_supply";
+type HostPowerState = "ac" | "battery" | "no-battery" | "unknown";
 
 /** How long one reading is reused; the pass asks at most once per tick. */
 export const HOST_POWER_READ_EVERY_MS = 60_000;
@@ -43,7 +43,7 @@ export function readPowerSupplies(root: string = POWER_SUPPLY_DIR): HostPowerSta
   return "ac";
 }
 
-export function powerVerdictOf(state: HostPowerState): PowerVerdict {
+function powerVerdictOf(state: HostPowerState): PowerVerdict {
   return { onPower: state !== "battery", state };
 }
 

@@ -8,9 +8,9 @@ import { searchIndexBuilt, searchIndexProgress } from "@trafficflow/core/mail";
 import type { Tx } from "@trafficflow/db";
 
 export const SEARCH_INDEX_ROUTE = "/local/search-index";
-export const SEARCH_INDEX_READ_EVERY_MS = 10_000;
+const SEARCH_INDEX_READ_EVERY_MS = 10_000;
 
-export interface SearchIndexAnswer {
+interface SearchIndexAnswer {
   built: boolean;
   done: number;
   total: number;

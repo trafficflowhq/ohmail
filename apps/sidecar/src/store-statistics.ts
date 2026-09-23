@@ -6,7 +6,7 @@
  */
 export const STATISTICS_INGEST_ROWS = 1_000;
 
-export interface StatisticsUpkeep {
+interface StatisticsUpkeep {
   /** A drain took `rows` changes. `true` when this call asked the store. */
   noteIngested(rows: number): Promise<boolean>;
 }

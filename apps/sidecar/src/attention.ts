@@ -36,7 +36,7 @@ export function isPersonRequest(method: string, pathname: string): boolean {
 /** How long after the last person's request a store-only pass may run. */
 export const PERSON_QUIET_MS = 60_000;
 
-export interface AttentionClock {
+interface AttentionClock {
   /** Every request any door serves passes through here. */
   note(method: string, pathname: string): void;
   /** Milliseconds since a person's last request; `Infinity` when none since boot. */

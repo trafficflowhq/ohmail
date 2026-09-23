@@ -4,7 +4,6 @@
  * table walk, re-exported so a services caller names it where it always did.
  */
 export {
-  ERASE_BATCH, stampMailboxErasure, sweepMailboxStep, sweepMailboxData, eraseOwedMailbox,
-  erasureRemaining,
-  type MailboxErasureStamp, type MailboxSweepStep, type MailboxSweepResult, type OwedErasureRun,
+  stampMailboxErasure, sweepMailboxData, erasureRemaining,
+  type MailboxErasureStamp,
 } from "@trafficflow/db";

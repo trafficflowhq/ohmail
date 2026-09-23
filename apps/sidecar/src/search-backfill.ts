@@ -10,11 +10,11 @@ import { PERSON_QUIET_MS } from "./attention.js";
 import type { PowerVerdict } from "./host-power.js";
 
 /** Between rounds while idle: a breather for the other lane, not a pacing of the work. */
-export const SEARCH_BACKFILL_TICK_MS = 2_000;
+const SEARCH_BACKFILL_TICK_MS = 2_000;
 /** Between looks while somebody is busy, draining or on battery. */
-export const SEARCH_BACKFILL_WAIT_MS = 15_000;
+const SEARCH_BACKFILL_WAIT_MS = 15_000;
 /** How often the finished schedule still refreshes the search table's statistics, when idle. */
-export const SEARCH_MAINTAIN_EVERY_MS = 10 * 60_000;
+const SEARCH_MAINTAIN_EVERY_MS = 10 * 60_000;
 
 export interface BackfillRound {
   /** False when the account's marker was already written — nothing was read. */
@@ -24,9 +24,9 @@ export interface BackfillRound {
   readonly marked: boolean;
 }
 
-export type TickOutcome = "ran" | "person" | "draining" | "battery" | "busy" | "done" | "failed";
+type TickOutcome = "ran" | "person" | "draining" | "battery" | "busy" | "done" | "failed";
 
-export interface SearchBackfillDeps {
+interface SearchBackfillDeps {
   /** ONE round of the pass over this install's account. */
   round: () => Promise<BackfillRound>;
   quietForMs: () => number;

@@ -486,7 +486,7 @@ export const DEFAULT_CLOUD_POLL_MS = 20_000;
  * 500 ms, 1 s and 2 s (each counted from the previous ask settling), never past 10 s from the cut,
  * then the poll. One chain per route; every ask is the single-flight pull, so it joins one running.
  */
-export const FOLLOW_UP_STEPS_MS: readonly number[] = [250, 500, 1_000, 2_000];
+const FOLLOW_UP_STEPS_MS: readonly number[] = [250, 500, 1_000, 2_000];
 export const FOLLOW_UP_CAP_MS = 10_000;
 
 /**

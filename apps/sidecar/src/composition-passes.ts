@@ -62,7 +62,7 @@ export class AppointmentsRefused extends ScheduleService {
  * this composition; the phone does not schedule it (search there reads rows without a document the
  * older way, which stays complete).
  */
-export type StorePass = "search-index-backfill";
+type StorePass = "search-index-backfill";
 
 export const COMPOSITION_STORE_PASSES:
   Readonly<Record<OrganizerKind, readonly StorePass[]>> = {

@@ -11,7 +11,7 @@ import { dialect } from "@trafficflow/db/dialect";
  */
 
 /** Steps one pass may run across every owed mailbox, each of `ERASE_BATCH` messages. */
-export const MAILBOX_ERASURE_STEPS_PER_PASS = 20;
+const MAILBOX_ERASURE_STEPS_PER_PASS = 20;
 
 /** Wall clock one pass may spend, checked between steps: the cycle it rides also syncs mail. */
 export const MAILBOX_ERASURE_PASS_BUDGET_MS = 10_000;
@@ -19,7 +19,7 @@ export const MAILBOX_ERASURE_PASS_BUDGET_MS = 10_000;
 /** How many owed stamps one pass reads; the index `mailboxes_erasure_owed_idx` holds only these. */
 const OWED_READ = 50;
 
-export interface MailboxErasurePassResult {
+interface MailboxErasurePassResult {
   /** Mailboxes this pass ran steps on. */
   mailboxes: number;
   steps: number;

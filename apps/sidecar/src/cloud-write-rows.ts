@@ -9,7 +9,7 @@ import type { RelaySpec } from "@trafficflow/api/relay-allowlist";
  * `SHADOWED_ROWS`), `[]` a direct call the echo-await alone covers. `mailboxes`: the local
  * `GET /mailboxes` rows, covered by a mailbox refresh begun after the answer.
  */
-export type WriteRows = "none" | "sync" | "mailboxes" | "sync+mailboxes";
+type WriteRows = "none" | "sync" | "mailboxes" | "sync+mailboxes";
 
 export interface WriteRoute {
   readonly rows: WriteRows;
