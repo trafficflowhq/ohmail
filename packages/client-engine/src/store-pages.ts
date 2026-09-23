@@ -5,7 +5,7 @@
  * Pages are held in ONE bounded cache ({@link HISTORY_PAGE_CACHE_ROWS}) and never written into the
  * mirror: a page row has no seq, so no delta could update or remove it there.
  */
-import type { EngineMessage } from "./types.js";
+import type { EngineMessage, SyncChange } from "./types.js";
 
 /** Rows one store page asks for — the server's own ceiling on `GET /messages`. */
 export const HISTORY_PAGE_ROWS = 50;
@@ -136,13 +136,15 @@ function distance(a: number, b: number): number {
 }
 
 /**
- * THE ONE BOUND ON PAGE ROWS IN MEMORY. A put evicts the page farthest from the page just put —
- * in the caller's slots where it named them, else in time; the least recently read on a tie —
- * until the rows fit the ceiling; the page just put is never the one evicted.
+ * THE ONE BOUND ON PAGE ROWS IN MEMORY, for History and Search alike. A put evicts the page
+ * farthest from the page just put — another list's pages first, then by the caller's slots where
+ * it named them, else in time; the least recently read on a tie — until the rows fit the
+ * ceiling; the page just put is never the one evicted.
  */
 export class StorePageCache {
-  private readonly pages = new Map<string, { page: StorePage; at: number; used: number }>();
+  private readonly pages = new Map<string, { page: StorePage; at: number; used: number; list: string }>();
   private tick = 0;
+  private rev = 0;
 
   constructor(private readonly ceiling: number) {}
 
@@ -153,16 +155,17 @@ export class StorePageCache {
     return held.page;
   }
 
-  put(key: string, page: StorePage, slot?: number): void {
+  put(key: string, page: StorePage, slot?: number, list = "all"): void {
     const at = positionOf(page.items, slot);
-    this.pages.set(key, { page, at, used: ++this.tick });
+    this.pages.set(key, { page, at, used: ++this.tick, list });
+    this.rev += 1;
     while (this.rows() > this.ceiling && this.pages.size > 1) {
       let victim: string | null = null;
       let far = -1;
       let used = Number.POSITIVE_INFINITY;
       for (const [k, p] of this.pages) {
         if (k === key) continue;
-        const d = distance(p.at, at);
+        const d = p.list === list ? distance(p.at, at) : Number.POSITIVE_INFINITY;
         if (d > far || (d === far && p.used < used)) {
           victim = k;
           far = d;
@@ -183,14 +186,48 @@ export class StorePageCache {
     return undefined;
   }
 
+  /**
+   * THE STORE'S LATER WORD ON A HELD ROW — a `/sync` change for an id a page holds replaces that
+   * row in place, so a page read before a move or a tag shows the mailbox's answer even after the
+   * mirror's window has pruned the row again. A delete needs nothing here: the mirror keeps its
+   * tombstone, and a page row reads it. Returns whether any row moved.
+   */
+  adopt(changes: readonly SyncChange[]): boolean {
+    let moved = false;
+    for (const ch of changes) {
+      if (ch.type !== "message" || ch.op === "delete") continue;
+      for (const [key, held] of this.pages) {
+        const k = held.page.items.findIndex((m) => m.id === ch.id);
+        if (k < 0) continue;
+        const was = held.page.items[k]!;
+        const next = (ch.entity ?? (ch.op === "move" && ch.move ? { ...was, folder: ch.move.to } : null)) as EngineMessage | null;
+        if (next === null) continue;
+        const items = held.page.items.slice();
+        items[k] = next;
+        this.pages.set(key, { ...held, page: { ...held.page, items } });
+        moved = true;
+      }
+    }
+    if (moved) this.rev += 1;
+    return moved;
+  }
+
+  /** Bumped on every put, eviction, adoption and clear — what a walker's memo keys on. */
+  revision(): number {
+    return this.rev;
+  }
+
   rows(): number {
     let n = 0;
     for (const p of this.pages.values()) n += p.page.items.length;
     return n;
   }
 
-  clear(): void {
-    this.pages.clear();
+  /** Drop every page, or one list's pages. */
+  clear(list?: string): void {
+    if (list === undefined) this.pages.clear();
+    else for (const [k, p] of this.pages) if (p.list === list) this.pages.delete(k);
+    this.rev += 1;
   }
 }
 
@@ -199,6 +236,25 @@ export function storePageKey(view: "all", opts: StorePageOpts, limit: number): s
   return JSON.stringify([
     view, opts.before ? [opts.before.date, opts.before.id] : null, opts.cursor ?? null, limit,
   ]);
+}
+
+/** One Search list — the question the store answers; its pages share this list in the cache. */
+export interface StoreSearchKey {
+  query: string;
+  sort?: string;
+  filters?: { folder?: string; sender?: string; hasAttachments?: boolean };
+}
+
+/** The cache's list id for one Search question — JSON, like every key here. */
+export function storeSearchList(k: StoreSearchKey): string {
+  const f = k.filters;
+  return JSON.stringify(["search", k.query.trim(), k.sort ?? null,
+    f ? [f.folder ?? null, f.sender ?? null, f.hasAttachments ?? null] : null]);
+}
+
+/** The cache key for one Search page: its list and the store's cursor that asked it. */
+export function storeSearchPageKey(k: StoreSearchKey, cursor: string | null, limit: number): string {
+  return JSON.stringify([storeSearchList(k), cursor, limit]);
 }
 
 /** A timeline as the wire sent it, read defensively; `null` when it is not one. */

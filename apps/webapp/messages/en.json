@@ -522,7 +522,6 @@
     "refusedPress": "Nothing changed — that did not go through. Try it again.",
     "moveLabel": "move to",
     "moveCancel": "Cancel",
-    "moveGone": "Nothing moved — that message is no longer here.",
     "actionDelete": "Delete",
     "deleteAsk": "Delete this message?",
     "deleteNote": "It moves to the Trash folder on your own mail server — ohmail never erases mail. Your mail server's Trash rules apply from there.",
@@ -592,6 +591,7 @@
     "toastBulkResurface": "{count, plural, one {1 message} other {# messages}} resurface {when}.",
     "toastBulkMovedSenders": "Mail from {senders, plural, one {1 sender} other {# senders}} now goes to {place} — {count, plural, =0 {nothing needed moving} one {1 message moved} other {# messages moved}}.",
     "toastBulkMoveFailed": "Nothing moved — that change could not be saved. Try it again.",
+    "toastBulkMovedPlain": "{place} — {count, plural, one {1 message} other {# messages}} moved.",
     "sentNote": "Your recent sent mail is included above. Older sent mail stays on your server — find it in Search."
   },
   "reads": {

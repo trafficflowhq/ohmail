@@ -688,8 +688,8 @@ export function useShellKeys({
        * gone ⇒ nothing to click). The gate is the strip's own render gate (the mirror holds the row), so the sheet
        * never advertises a delete the bar would refuse to draw. THIS `disabled` IS WHAT THE `?` SHEET PRINTS, so it
        * is half the defect and not a mirror of it: with "Use folders" off the sheet drew this row greyed and the
-       * strip could not be opened at all, while the same verb over a selection worked. It reads the mirror alone now,
-       * exactly like `canDeleteMessage` above and the strip itself.
+       * strip could not be opened at all, while the same verb over a selection worked. It reads the verb reader alone
+       * now, exactly like `canDeleteMessage` above and the strip itself.
        */
       chord: "d",
       group: "message",
@@ -697,7 +697,7 @@ export function useShellKeys({
         barPanel?.panel === "delete" ? t("shortcuts.deleteConfirm") : t("shortcuts.deleteAsk"),
       disabled:
         focused == null
-        || reader.get<EngineMessage>("message", focused.id) == null,
+        || engine.verbRead().get<EngineMessage>("message", focused.id) == null,
       ...noCursor,
       /* A HELD KEY IS ONE PRESS. Key auto-repeat would otherwise walk the whole ceremony on
          its own — the first repeat opens the ask, a later repeat confirms it — turning a
@@ -726,7 +726,7 @@ export function useShellKeys({
 
     /**
      * The gate is `d`'s own, deliberately: the sheet must not advertise on one row a delete the row beside it would
-     * refuse to draw. It is the mirror holding the row and nothing else — see `canDeleteMessage` for why "Use
+     * refuse to draw. It is the verb reader holding the row and nothing else — see `canDeleteMessage` for why "Use
      * folders" stopped being a term.
      */
     ...deleteKeyBindings({
@@ -734,7 +734,7 @@ export function useShellKeys({
       label: t("shortcuts.deleteKey"),
       canDelete:
         focused != null
-        && reader.get<EngineMessage>("message", focused.id) != null
+        && engine.verbRead().get<EngineMessage>("message", focused.id) != null
         /* NOT IN TRASH. The message is already there, so ⌫ has nothing to move it to, and
            deleting twice is not a thing this product can do — it never erases mail. Refused as
            `disabled` (with the reason, which the `?` sheet prints on the row) rather than by

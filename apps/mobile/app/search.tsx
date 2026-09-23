@@ -1,12 +1,12 @@
 /**
  * Search — ONE list, the webapp SearchView's contract in the one-pane shape: the mirror's instant
  * index paints first, the store's page (`state/store-views.ts#useStoreSearch`) then replaces it in
- * place, and scrolling near the end asks the store's next page. The SIMILAR tier stands under its
- * own heading and only when nothing matched exactly; the verdict line says what was searched —
- * your whole mailbox — and how fast. An address-shaped query that settles empty offers the
- * address door: All · From them · To them, the engine's `messagesWith` over this phone's mail.
+ * place, and the rest is History's list mechanism — fixed-height slots, pages by the store's
+ * cursor as they scroll into view, at most three held. The SIMILAR tier stands under its own
+ * heading and only when nothing matched exactly; the verdict says what was searched and how fast.
+ * An address-shaped query that settles empty offers the address door: All · From them · To them.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { Copy } from "../src/copy";
@@ -25,6 +25,12 @@ import { Segmented } from "../src/ui/Segmented";
 import { useLocale } from "../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 import type { WorldMail } from "../src/state/world";
+
+/** One store slot's height — History's, so a scroll offset is a slot without measuring. */
+const SLOT_PX = 84;
+
+/** A row of the one list: the device's own, or a store slot read at render. */
+type Row = { key: string; device: WorldMail } | { key: string; slot: number };
 
 /** Gated like the tabs — a deep-linked route must not render the empty world. */
 export default function SearchScreen() {
@@ -67,9 +73,14 @@ function SearchBody() {
   const deviceIds = useMemo(() => (answer?.items ?? []).map((m) => m.id), [answer]);
   /* THE WHOLE-MAILBOX PASS — its page replaces the device's paint, rows on screen first. */
   const store = useStoreSearch(addr === null ? q : "", deviceIds);
-  const shownItems = store.rows !== null ? (store.tier === "exact" ? store.rows : []) : answer?.items ?? [];
-  const shownSimilar = store.rows !== null ? (store.tier === "similar" ? store.rows : []) : answer?.similar ?? [];
-  const found = store.rows !== null && store.totalExact ? Math.max(store.total, store.rows.length) : shownItems.length + shownSimilar.length;
+  /* The store's slots, as positions only: a row is read per slot from the walker's cache. */
+  const slots = useMemo(() => Array.from({ length: store.length }, (_, i): Row => ({ key: `slot-${i}`, slot: i })), [store.length]);
+  const deviceRows = (list: readonly WorldMail[]): Row[] => list.map((m) => ({ key: m.id, device: m }));
+  const shownItems: Row[] = store.ready ? (store.tier === "exact" ? slots : []) : deviceRows(answer?.items ?? []);
+  const shownSimilar: Row[] = store.ready ? (store.tier === "similar" ? slots : []) : deviceRows(answer?.similar ?? []);
+  const found = store.ready && store.totalExact ? Math.max(store.total, store.length) : shownItems.length + shownSimilar.length;
+  /** Where slot 0 sits in the scroll content, learnt from its own frame. */
+  const top = useRef(0);
   const door = answer !== null ? addressShaped(trimmed) : null;
   const verdict = addr !== null ? null : store.verdict === "searching" ? Copy.searchWholeSearching
     : store.verdict === "ready"
@@ -80,9 +91,9 @@ function SearchBody() {
      messages — `messagesWith` returns all of them, unsliced — so the results are a `MailList`
      like every other list on the phone rather than a scroll view that mounts the answer whole.
      One list per screen: the branch below decides its groups, its head and its empty state. */
-  const groups: ListGroup<WorldMail>[] =
+  const groups: ListGroup<Row>[] =
     around !== null && addr !== null
-      ? [{ key: "around", rows: around.items }]
+      ? [{ key: "around", rows: deviceRows(around.items) }]
       : answer !== null && trimmed !== "" && (shownItems.length > 0 || shownSimilar.length > 0)
         ? [
             {
@@ -125,20 +136,38 @@ function SearchBody() {
       </View>
       <MailList
         groups={groups}
-        rowKey={(m) => m.id}
-        renderRow={(m) => (
-          <MailRow
-            m={m}
-            onPress={() => {
-              const src = store.sourceOf(m.id);
-              if (src) w.store.open(src);
-              router.push(`/message/${m.id}`);
-            }}
-          />
-        )}
-        /* Near the end of the list, the store's next page. */
+        rowKey={(r) => r.key}
+        renderRow={(r): ReactElement => {
+          if ("device" in r) {
+            return <MailRow m={r.device} onPress={() => router.push(`/message/${r.device.id}`)} />;
+          }
+          const m = store.rowAt(r.slot);
+          return (
+            <View style={{ height: m === "gone" ? 0 : SLOT_PX, overflow: "hidden" }}>
+              {m === "gone" ? null : m === null ? (
+                <View style={{ flex: 1, justifyContent: "center", gap: 8, paddingHorizontal: 12 }}>
+                  <View style={{ height: 10, width: "46%", borderRadius: 5, backgroundColor: t.c.tint2 }} />
+                  <View style={{ height: 10, width: "72%", borderRadius: 5, backgroundColor: t.c.tint2 }} />
+                </View>
+              ) : (
+                <MailRow
+                  m={m}
+                  onPress={() => {
+                    const src = store.sourceAt(r.slot);
+                    if (src) w.store.open(src);
+                    router.push(`/message/${m.id}`);
+                  }}
+                />
+              )}
+            </View>
+          );
+        }}
+        onRowFrame={(r, frame) => { if ("slot" in r && r.slot === 0) top.current = frame.y; }}
+        /* The slots on screen are asked for; near the end of the list, the store's next page. */
         onScroll={(e) => {
           const { contentOffset, layoutMeasurement, contentSize } = e.nativeEvent;
+          const first = Math.floor(Math.max(0, contentOffset.y - top.current) / SLOT_PX);
+          store.want(Math.max(0, first - 8), first + Math.ceil(layoutMeasurement.height / SLOT_PX) + 9);
           if (contentOffset.y + layoutMeasurement.height >= contentSize.height - 480) store.loadMore();
         }}
         scrollEventThrottle={100}
@@ -179,8 +208,8 @@ function SearchBody() {
               {store.indexedPercent !== null ? (
                 <Txt variant="note" tone="ink3">{Copy.searchIndexingProgress(store.indexedPercent)}</Txt>
               ) : null}
-              {store.bounded && store.rows !== null ? (
-                <Txt variant="note" tone="ink3">{Copy.searchBounded(store.rows.length)}</Txt>
+              {store.bounded ? (
+                <Txt variant="note" tone="ink3">{Copy.searchBounded(store.length)}</Txt>
               ) : null}
             </View>
           ) : null
@@ -198,7 +227,7 @@ function SearchBody() {
               hint=""
             />
           ) : answer !== null && trimmed === "" ? null : answer !== null ? (
-            answer.indexing && store.rows === null ? (
+            answer.indexing && !store.ready ? (
               /* Not yet ≠ nothing: the index is still filling (`indexingResult`'s whole rule). */
               <Empty title={Copy.searchIndexing} hint={verdict ?? ""} />
             ) : store.verdict === "searching" ? null : (

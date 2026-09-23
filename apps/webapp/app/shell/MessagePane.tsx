@@ -111,8 +111,8 @@ export type MessageAction =
   /**
    * DELETE — the one destructive verb, and it is a MOVE: the engine's `message_delete` files the message to the
    * provider's own \Trash folder and NEVER expunges (FOLDERS-SPEC.md §16.3; the product rule lives at
-   * `packages/core/src/adapters/imap-types.ts`, the third user-commanded write). Gated on the mirror holding the row
-   * (`chrome.mirrorHolds`) — and NOT on the folders foundation flag, which files nothing and never did — and
+   * `packages/core/src/adapters/imap-types.ts`, the third user-commanded write). Gated on the verb reader holding the
+   * row (`chrome.verbHolds`) — and NOT on the folders foundation flag, which files nothing and never did — and
    * dispatched ONLY from the confirm strip the ⋯ menu opens — there is no un-delete on the wire, so the ceremony is a
    * confirm, never an undo the product could not honour. The mobile reader ships the identical ceremony, and a parity
    * test on its side pins the two surfaces' wording to this catalogue, word for word.
@@ -326,10 +326,9 @@ function ActionBar({
    */
 
   /**
-   * `mirrorHolds` ABSENT is a shell with no mirror probe (the desktop, a bare mount) and `!== false` ADMITS there —
-   * "this shell has no such thing" is not "this shell answered no"; a shell that answers `false` (a Search hit the
-   * mirror deliberately does not hold) gets no strip, because offering a mutation over an absent local row is a
-   * control that always fails.
+   * `verbHolds` ABSENT is a shell with no probe (the desktop, a bare mount) and `!== false` ADMITS there — "this
+   * shell has no such thing" is not "this shell answered no"; a shell that answers `false` (a row neither the mirror
+   * nor a History or Search page holds) gets no strip.
    */
 
   /**
@@ -342,7 +341,7 @@ function ActionBar({
    * undrawn; `delete-confirm-ghost.test.tsx` keeps the flag sequence as the INVERTED case — the
    * strip must now survive it.
    */
-  const deleteConfirmAdmitted = chrome.mirrorHolds?.(message.id) !== false;
+  const deleteConfirmAdmitted = chrome.verbHolds?.(message.id) !== false;
 
   /** The delete confirm's focus target (Cancel — the safe answer) and its described note. */
   const deleteCancelRef = useRef<HTMLButtonElement>(null);

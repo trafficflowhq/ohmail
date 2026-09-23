@@ -14,7 +14,7 @@
 import { CALENDAR_FALLBACK_FILENAME, isCalendarMime } from "@trafficflow/core/ics";
 import type { AttachmentWire, EngineAdapter, MutationOutcome, MutationQueued } from "./adapters/adapter.js";
 import { messageIdKey, mutationEffects, replySubject, sentOverlayMessage, type MutationEffect } from "./mutations.js";
-import { SHADOW_DRAIN_BOUND, shadowAgrees, shadowKeysOf, type ShadowKey } from "./shadow.js";
+import { SHADOW_DRAIN_BOUND, shadowAgrees, shadowKeysOf, verbTargetsOf, type ShadowKey } from "./shadow.js";
 import {
   indexingAddressResult,
   indexingResult,
@@ -27,8 +27,8 @@ import { oneSourceReader, sendingMailboxId, winningStates } from "./selectors.js
 import { flattenResponse } from "./apply.js";
 import { CASCADE_TYPES } from "./mirror-bounds.js";
 import {
-  HISTORY_PAGE_CACHE_ROWS, HISTORY_PAGE_ROWS, StorePageCache, storePageKey,
-  type StorePageOpts, type StorePageOutcome, type StoreTimelineFn, type StoreTimelineOutcome,
+  HISTORY_PAGE_CACHE_ROWS, HISTORY_PAGE_ROWS, StorePageCache, storePageKey, storeSearchList, storeSearchPageKey,
+  type StorePageOpts, type StorePageOutcome, type StoreSearchKey, type StoreTimelineFn, type StoreTimelineOutcome,
 } from "./store-pages.js";
 import { classifyWindowSyncFailure, type WindowSyncFailure } from "./window-sync-failure.js";
 import { countNotify } from "./client-vitals.js";
@@ -1113,10 +1113,10 @@ export type ListOlderOutcome =
 // construction. A delete tombstones the row (`apply.ts` rule 4, `entity: null`), so the mirror holds NOTHING for a
 // deleted message on any door — there is no local list to filter, and this is not a projection over `reader`. It is
 // `listOlder`'s shape one verb over: the server answers a page, the view holds it in its own state, and it is gone
-// when the view changes. AND THE RESTORE IS NOT AN `EngineMutation`. It cannot be: `mutate` REJECTS a mutation whose
-// local effects are empty (404 `not_found`), and a mutation over a row the mirror does not hold has no local effects
-// by definition. So there is no optimistic overlay and no outbox entry here; the durable record of a pressed restore
-// is the intents journal the surface keeps (`delete-intents.ts`), exactly as the delete's own held window does.
+// when the view changes. AND THE RESTORE IS NOT AN `EngineMutation`: the row it brings back is a TOMBSTONE here,
+// which `mutate` refuses as a target (a held row whose effects are empty), and the route answers with where it went.
+// So there is no optimistic overlay and no outbox entry here; the durable record of a pressed restore is the intents
+// journal the surface keeps (`delete-intents.ts`), exactly as the delete's own held window does.
 
 /**
  * `GET /messages?view=trash&cursor=&limit=` as this client reads it.
@@ -1781,6 +1781,12 @@ class OverlayReader implements EntityReader {
     return this.store.get<T>(type, id);
   }
 
+  /** The newest overlay effect on this entity, if any verb in flight or shadowed has one. */
+  overlaid(type: string, id: string): { entity: unknown } | undefined {
+    const o = this.overlayFor(type, id);
+    return o ? { entity: o.entity } : undefined;
+  }
+
   entries<T = unknown>(type: string): Array<{ id: string; entity: T; seq: number }> {
     if (this.overlays.size === 0) return this.store.entries<T>(type);
     // An OVERLAID row keeps the STORE's seq, because the seq is a fact about the log and an
@@ -1823,6 +1829,33 @@ class OverlayReader implements EntityReader {
   stampExcept(ignore: readonly string[]): number {
     return this.store.stampExcept(ignore) * 1_000_003 + this.rev();
   }
+}
+
+/**
+ * WHAT A VERB READS ITS TARGET FROM — `base` (the mirror), and for a message the mirror has no
+ * record of, the row a History or Search page holds. A tombstone, or an overlay that removed the
+ * row, reads gone: the page's older copy never answers for a row this device saw deleted.
+ */
+class PageFallbackReader implements EntityReader {
+  constructor(
+    private readonly base: EntityReader,
+    private readonly overlay: OverlayReader | null,
+    private readonly store: MirrorStore,
+    private readonly pages: StorePageCache,
+  ) {}
+
+  get<T = unknown>(type: string, id: string): T | undefined {
+    const v = this.base.get<T>(type, id);
+    if (v !== undefined || type !== "message") return v;
+    if (this.overlay?.overlaid(type, id) !== undefined || this.store.record(type, id) !== undefined) return undefined;
+    return this.pages.find(id) as T | undefined;
+  }
+
+  list<T = unknown>(type: string): T[] { return this.base.list<T>(type); }
+  entries<T = unknown>(type: string): Array<{ id: string; entity: T; seq: number }> { return this.base.entries<T>(type); }
+  version(): number { return this.base.version(); }
+  stampOf(type: string): number { return this.base.stampOf(type); }
+  stampExcept(ignore: readonly string[]): number { return this.base.stampExcept(ignore); }
 }
 
 /**
@@ -1950,6 +1983,8 @@ export class OhmailEngine {
   private readonly shadows = new Map<string, { keys: ShadowKey[]; epoch: number; drains: number }>();
   /** The mirror alone, park fact resolved — what a shadow is compared against. */
   private readonly storeTruth: EntityReader;
+  /** {@link storeTruth}, and a page's row for a message the mirror has no record of. */
+  private readonly shadowTruth: EntityReader;
   /**
    * MUTATIONS THE SERVER QUEUED FOR ANOTHER INSTALL — kept until a CHANGE confirms them.
    *
@@ -2088,6 +2123,8 @@ export class OhmailEngine {
   private readonly readerView: OverlayReader;
   /** {@link oneSourceReader} over the overlay — what {@link OhmailEngine.read} hands out. */
   private readonly resolvedView: EntityReader;
+  /** {@link resolvedView} with the page rows behind it — what {@link OhmailEngine.verbRead} hands out. */
+  private readonly verbView: EntityReader;
   /**
    * THE INSTANT INDEX AND THE MIRROR IT IS AN INDEX OF. `version` is reassigned as the index is
    * refreshed in place, so the pair stays one fact — see {@link OhmailEngine.searchIndex}.
@@ -2241,7 +2278,7 @@ export class OhmailEngine {
   private readonly olderPages = new Map<string, Promise<ListOlderOutcome>>();
   /** `GET /messages/timeline`, or `null` when this adapter has none. */
   private readonly timelineFn: StoreTimelineFn | null;
-  /** The store's History pages — the one bound on page rows in memory ({@link HISTORY_PAGE_CACHE_ROWS}). */
+  /** The store's History and Search pages — the one bound on page rows in memory ({@link HISTORY_PAGE_CACHE_ROWS}). */
   private readonly storePages = new StorePageCache(HISTORY_PAGE_CACHE_ROWS);
   /** In-flight store pages by key, and the one in-flight timeline read. */
   private readonly storePageCalls = new Map<string, Promise<StorePageOutcome>>();
@@ -2370,6 +2407,8 @@ export class OhmailEngine {
     this.readerView = new OverlayReader(this.store, this.overlays, () => this.overlayRev);
     this.resolvedView = oneSourceReader(this.readerView);
     this.storeTruth = oneSourceReader(this.store);
+    this.verbView = new PageFallbackReader(this.resolvedView, this.readerView, this.store, this.storePages);
+    this.shadowTruth = new PageFallbackReader(this.storeTruth, null, this.store, this.storePages);
   }
 
   // ── lifecycle ────────────────────────────────────────────────────────────
@@ -2768,7 +2807,7 @@ export class OhmailEngine {
         // must not stamp its waterline (or any optimistic `updatedAt`) with boot time — the
         // effects are rebuilt under the clock the verb was expressed at.
         const asExpressed = () => new Date(e.at);
-        const effects = mutationEffects(this.read(), e.mutation, { now: asExpressed, uuid: this.uuid });
+        const effects = mutationEffects(this.verbView, e.mutation, { now: asExpressed, uuid: this.uuid });
         if (effects.length > 0) this.overlays.set(e.id, effects);
       } catch { /* a malformed or out-of-vocabulary mutation paints nothing; the wire decides */ }
       this.queue.push({
@@ -3025,17 +3064,18 @@ export class OhmailEngine {
 
   /**
    * A CONFIRMED VERB'S ECHO IS IN — retire its overlay, unless the mirror still disagrees with a
-   * row it moved: then only the rows the mirror HOLDS stay masked (a created entity has no stale
-   * copy to hide) and the verb waits in {@link shadows}. True when the overlay retired, and the
+   * row it moved: then only the rows the mirror or a History/Search page HOLDS stay masked (a
+   * created entity has no stale copy to hide) and the verb waits in {@link shadows}. True when the overlay retired, and the
    * caller then drops the durable entry. The caller bumps the overlay rev. `shadow: false` for a
    * confirm naming `pendingWith`: the server took it and another install applies it, so the
    * mirror is right to disagree and the surface shows it decided-and-waiting instead.
    */
   private settleConfirmed(id: string, m: EngineMutation, shadow = true): boolean {
     const effects = this.overlays.get(id);
-    const held = (type: string, eid: string): boolean => this.store.record(type, eid) !== undefined;
+    const held = (type: string, eid: string): boolean => this.store.record(type, eid) !== undefined
+      || (type === "message" && this.storePages.find(eid) !== undefined);
     const keys = effects && shadow ? shadowKeysOf(m, effects, held) : [];
-    if (keys.length === 0 || shadowAgrees(keys, this.storeTruth)) {
+    if (keys.length === 0 || shadowAgrees(keys, this.shadowTruth)) {
       this.shadows.delete(id);
       this.overlays.delete(id);
       return true;
@@ -3056,7 +3096,7 @@ export class OhmailEngine {
       if (!this.overlays.has(id)) { this.shadows.delete(id); continue; }
       if (s.epoch >= epoch) continue;
       s.drains += 1;
-      if (!shadowAgrees(s.keys, this.storeTruth) && s.drains < SHADOW_DRAIN_BOUND) continue;
+      if (!shadowAgrees(s.keys, this.shadowTruth) && s.drains < SHADOW_DRAIN_BOUND) continue;
       this.shadows.delete(id);
       this.overlays.delete(id);
       void this.dropOutbox(id);
@@ -3556,6 +3596,7 @@ export class OhmailEngine {
     this.countReceived(changes);
     this.settleOrganizerRequests(changes);
     this.noteMessagesRemoved(changes);
+    this.storePages.adopt(changes);
   }
 
   /**
@@ -4008,6 +4049,15 @@ export class OhmailEngine {
    */
   read(): EntityReader {
     return this.resolvedView;
+  }
+
+  /**
+   * WHAT A VERB IS ASKED OVER — {@link read}, and for a message the mirror has no record of, the
+   * row a History or Search page holds. The one reader `mutate` computes its effects from, so a
+   * surface gating a verb or building its Undo reads the same rows the door acts on.
+   */
+  verbRead(): EntityReader {
+    return this.verbView;
   }
 
   subscribe(listener: () => void): () => void {
@@ -5000,7 +5050,7 @@ export class OhmailEngine {
     // already dropped the mirror says "it is in INBOX", the reversal computes zero effects,
     // and mutate() would reject a verb the server absolutely needs (the queued move may have
     // COMMITTED with its response lost, and only the reversal on the wire can undo it).
-    const effects = mutationEffects(this.read(), enriched, { now: this.now, uuid: this.uuid });
+    const effects = mutationEffects(this.verbView, enriched, { now: this.now, uuid: this.uuid });
 
     // THEN supersession, still SYNCHRONOUS — the first frame after mutate() must already show the newer verb's
     // overlay (re-resurface-first-frame pins that mutate() publishes before its first await), and enrich above read
@@ -5010,7 +5060,9 @@ export class OhmailEngine {
     // effects is about to be REJECTED, and a rejected verb supersedes nothing. Re-pressing a queued move (the
     // optimistic destination makes the repeat a no-op) must not retire the queued original — that entry may be the
     // only copy of an intent whose first attempt never reached the server.
-    if (effects.length === 0) {
+    // A row in neither the mirror nor a page (a deep link) is still sent, with nothing to paint:
+    // only the server may say it is gone. Empty effects on a HELD row are a no-op, refused here.
+    if (effects.length === 0 && !this.namesOnlyUnheldRows(enriched)) {
       const error = new MutationRejectedError(`mutation target not found (${m.kind})`, {
         status: 404, code: "not_found",
       });
@@ -5147,6 +5199,13 @@ export class OhmailEngine {
       await this.settleReconcile(out.owed);
       return out.result;
     }
+  }
+
+  /** Does this verb name message rows by id, none of which the mirror or a page holds? */
+  private namesOnlyUnheldRows(m: EngineMutation): boolean {
+    const ids = verbTargetsOf(m);
+    return ids !== null && ids.every((mid) =>
+      this.store.record("message", mid) === undefined && this.storePages.find(mid) === undefined);
   }
 
   /**
@@ -5643,7 +5702,7 @@ export class OhmailEngine {
     try {
       // The cast is the point: the signature promises an array because the switch is exhaustive
       // over the KNOWN union, and a persisted row's kind is a plain string that need not be in it.
-      built = mutationEffects(this.read(), e.mutation, {
+      built = mutationEffects(this.verbView, e.mutation, {
         now: () => new Date(e.at), uuid: this.uuid,
       }) as MutationEffect[] | undefined;
     } catch {
@@ -6014,7 +6073,7 @@ export class OhmailEngine {
           if (lineSuperseded && narrowedMutation.kind === "feed_mark_seen") delete narrowedMutation.upToId;
           q.mutation = narrowedMutation;
           try {
-            const effects = mutationEffects(this.read(), q.mutation, {
+            const effects = mutationEffects(this.verbView, q.mutation, {
               now: () => new Date(q.at), uuid: this.uuid,
             });
             if (effects.length > 0) this.overlays.set(q.id, effects);
@@ -6056,7 +6115,7 @@ export class OhmailEngine {
     for (const { entry, mutation } of effect.undo) {
       entry.mutation = mutation;
       if (!this.queue.includes(entry)) this.queue.push(entry);
-      const effects = mutationEffects(this.read(), mutation, {
+      const effects = mutationEffects(this.verbView, mutation, {
         now: () => new Date(entry.at), uuid: this.uuid,
       });
       if (effects.length > 0) this.overlays.set(entry.id, effects);
@@ -7312,7 +7371,7 @@ export class OhmailEngine {
       .then((wire): StorePageOutcome => {
         if (wire === null) return { state: "unavailable" };
         const page = { items: Array.isArray(wire.items) ? wire.items : [], nextCursor: wire.nextCursor };
-        if (!opts.transient) this.storePages.put(key, page, opts.at);
+        if (!opts.transient) this.storePages.put(key, page, opts.at, "all");
         return { state: "ready", ...page };
       })
       .catch((err: unknown): StorePageOutcome => ({ state: "failed", errorClass: errorClassOf(err) }))
@@ -7330,14 +7389,16 @@ export class OhmailEngine {
   }
 
   /**
-   * A page row as it stands NOW: the mirror's own row where it holds one (read state, tags and
-   * triage stay live), `null` where the mirror records it gone (a tombstone, or a pending delete
-   * the overlay hides), else the page's row.
+   * A page row as it stands NOW: a verb's overlay first (moved, tagged, or gone at the press), the
+   * mirror's own row where it holds one (read state, tags and triage stay live), `null` where the
+   * mirror records it gone, else the cache's newest copy of the row — a later delta's, if one came.
    */
   storePageRow(item: EngineMessage): EngineMessage | null {
+    const pending = this.readerView.overlaid("message", item.id);
+    if (pending !== undefined) return (pending.entity as EngineMessage | null) ?? null;
     const live = this.readerView.get<EngineMessage>("message", item.id);
     if (live !== undefined) return live;
-    return this.store.record("message", item.id) !== undefined ? null : item;
+    return this.store.record("message", item.id) !== undefined ? null : this.storePages.find(item.id) ?? item;
   }
 
   /** The cached page row with this id, if a page holding it is still cached. */
@@ -7367,9 +7428,48 @@ export class OhmailEngine {
     return this.storePages.rows();
   }
 
-  /** Drop every cached page — a History visit starts from the store's present. */
-  resetStorePages(): void {
-    this.storePages.clear();
+  /** Moves with every page put, evicted, cleared or updated by a delta — a walker's memo key. */
+  storePagesRevision(): number {
+    return this.storePages.revision();
+  }
+
+  /** Drop the cached pages — a History visit starts from the store's present; `list` narrows it. */
+  resetStorePages(list?: string): void {
+    this.storePages.clear(list);
+  }
+
+  /**
+   * ONE PAGE OF A SEARCH — {@link searchServer}'s first-page read, its rows held in the same
+   * bounded page cache as History's, under the question's own list and the cursor that asked it.
+   * A cached page answers without a request; a `transient` step is answered, never cached.
+   */
+  async pageSearch(
+    key: StoreSearchKey, opts: { cursor?: string | null; at?: number; transient?: boolean } = {},
+  ): Promise<ServerSearchOutcome> {
+    const cursor = opts.cursor ?? null;
+    const pageKey = storeSearchPageKey(key, cursor, HISTORY_PAGE_ROWS);
+    const held = this.storePages.get(pageKey);
+    if (held !== undefined) {
+      return {
+        state: "ready", items: held.items, total: held.items.length, tier: "exact", totalExact: false, ms: null,
+        nextCursor: held.nextCursor, bounded: false, indexed: null, facets: null,
+      };
+    }
+    const out = await this.searchServer(key.query, {
+      limit: HISTORY_PAGE_ROWS, parts: "page",
+      ...(key.sort ? { sort: key.sort as ServerSearchSort } : {}),
+      ...(cursor !== null ? { cursor } : {}),
+      ...(key.filters ? { filters: key.filters } : {}),
+    });
+    if (out.state === "ready" && !opts.transient) {
+      this.storePages.put(pageKey, { items: out.items, nextCursor: out.nextCursor }, opts.at, storeSearchList(key));
+    }
+    return out;
+  }
+
+  /** The cached Search page for this cursor, or `undefined` — a render's synchronous read. */
+  peekSearchPage(key: StoreSearchKey, cursor: string | null): EngineMessage[] | undefined {
+    return this.storePages.get(storeSearchPageKey(key, cursor, HISTORY_PAGE_ROWS))?.items;
   }
 
   // ── Trash: mail this account deleted, and putting one back ───────────────
@@ -7492,8 +7592,8 @@ export class OhmailEngine {
    * the row may be gone for a reason the person had nothing to do with; the mailbox is master.
    *
    *   · a TOMBSTONE this device holds — the delete converged; settled, no round trip;
-   *   · the row is still here — the ordinary {@link OhmailEngine.mutate} road;
-   *   · any other absence — evicted, or never seen: ASK THE MAILBOX, idempotently.
+   *   · anything else — the one door, under the press's own key: {@link mutate} sends a row it
+   *     does not hold as well, and the mailbox's 404 is the outcome that was asked for.
    */
   async replayDelete(
     messageId: string,
@@ -7506,41 +7606,9 @@ export class OhmailEngine {
     if (this.store.isTombstoned("message", messageId)) {
       return { id: this.uuid(), key, status: "confirmed", seq: null };
     }
-    const res = await this.mutate({ kind: "message_delete", messageId });
-    // The LOCAL refusal is the only one absence produces (`mutationEffects` answers [] for a row
-    // the mirror does not hold) — and it is a statement about this device, never about the
-    // mailbox. Nothing went on the wire, so ask.
-    if (res.status !== "rolled_back" || (res.error?.code ?? null) !== "not_found") return res;
-    return this.reaskDelete(messageId, key);
-  }
-
-  /**
-   * THE MAILBOX'S OWN ANSWER about a message this mirror no longer keeps. No overlay and no
-   * outbox entry — there is no local row to hide and nothing to reconcile, exactly as
-   * {@link restoreFromTrash} has none; the durable record is the surface's journal, which is
-   * what clears on this result. The echo is deliberately NOT applied: the tombstone arrives on
-   * the next drain like every other server fact, and applying a change outside the drain would
-   * be a second writer of the log.
-   */
-  private async reaskDelete(messageId: string, key: string): Promise<MutationResult> {
-    try {
-      await this.adapter.mutate({ kind: "message_delete", messageId }, { idempotencyKey: key });
-      return { id: this.uuid(), key, status: "confirmed", seq: null };
-    } catch (err: unknown) {
-      const rejection = err instanceof MutationRejectedError ? err : null;
-      // ALREADY GONE IS THE OUTCOME THAT WAS ASKED FOR. A 404 here is the mailbox saying it does
-      // not have the message, which is the state the press wanted; keeping the record for it
-      // would strand a request nobody can ever settle.
-      if (rejection !== null && (rejection.status === 404 || rejection.code === "not_found")) {
-        return { id: this.uuid(), key, status: "confirmed", seq: null };
-      }
-      return {
-        id: this.uuid(), key, status: "rolled_back", seq: null,
-        error: rejection ?? new MutationRejectedError(
-          err instanceof Error ? err.message : String(err), { status: null, code: null, retryable: true },
-        ),
-      };
-    }
+    const res = await this.mutate({ kind: "message_delete", messageId }, { key });
+    const gone = res.status === "rolled_back" && (res.error?.status === 404 || res.error?.code === "not_found");
+    return gone ? { id: res.id, key, status: "confirmed", seq: null } : res;
   }
 
   // ── attachments ──────────────────────────────────────────────────────────

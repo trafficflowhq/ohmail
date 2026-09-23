@@ -597,7 +597,9 @@ export {
   segmentAt,
   readTimelineWire,
   StorePageCache,
+  storeSearchList,
   type StoreKeyset,
+  type StoreSearchKey,
   type StoreTimeline,
   type StoreTimelineMonth,
   type StoreTimelineOutcome,
@@ -606,11 +608,19 @@ export {
   type TimelineSegment,
 } from "./store-pages.js";
 export {
+  PagedWalk,
   StoreTimelineWalker,
+  StoreSearchWalker,
   STORE_ANSWER_TIMEOUT_MS,
   STORE_PAGE_RETRY_MS,
+  STORE_SEARCH_DEBOUNCE_MS,
+  type PageAnswer,
+  type PageSource,
+  type StoreSearchMeta,
+  type StoreSearchState,
   type StoreTimelineState,
 } from "./store-timeline.js";
+export { VERB_TARGETS, verbTargetsOf } from "./shadow.js";
 
 /* The one attach bound every compose surface states — the client mirror of the send service's
    cap rule, here because the webapp AND the phone composer read it. See its header. */

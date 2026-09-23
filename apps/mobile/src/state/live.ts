@@ -70,6 +70,7 @@ import {
   type FolderEntity,
   type MutationResult,
   type OhmailEngine,
+  StoreSearchWalker,
   StoreTimelineWalker,
   type ServerSearchOutcome,
   type ServerSearchOpts,
@@ -1508,7 +1509,7 @@ export function storeRowOf(engine: OhmailEngine, m: EngineMessage, v: WorldView,
   return row;
 }
 
-export type { EngineMessage as StoreMessage, ServerSearchOpts, ServerSearchOutcome, StoreTimelineWalker };
+export type { EngineMessage as StoreMessage, ServerSearchOpts, ServerSearchOutcome, StoreSearchWalker, StoreTimelineWalker };
 
 /** The mirror's rows in the store's reading order — History's first paint. */
 export function mirrorNewestFirst(engine: OhmailEngine): EngineMessage[] {
@@ -1523,6 +1524,11 @@ export function mirrorNewestFirst(engine: OhmailEngine): EngineMessage[] {
 /** History's walker for this engine — the one the browser renders too. */
 export function storeWalkerFor(engine: OhmailEngine): StoreTimelineWalker {
   return new StoreTimelineWalker(engine);
+}
+
+/** Search's walker for this engine — History's list mechanism, paged by the store's cursor. */
+export function storeSearchWalkerFor(engine: OhmailEngine): StoreSearchWalker {
+  return new StoreSearchWalker(engine);
 }
 
 /**
@@ -2798,7 +2804,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     };
     // The inverse off the pre-press mirror; this arm speaks on the ANSWER, so the offer rides
     // the success sentence rather than an optimistic one.
-    const opts = undoable(inverseMutations(engine.read(), m));
+    const opts = undoable(inverseMutations(engine.verbRead(), m));
     const ok = await dispatch(m);
     return said(ok, refuse("livePileAdded", pileTitle(kind)), refuse("livePileFailed", pileTitle(kind)), opts);
   };
@@ -2806,8 +2812,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   /* ── the open message's verbs ──────────────────────────────────────────────────────────── */
 
   const zone = deps.zone ?? readerZone();
+  /* THE VERB READER — the mirror, a History or Search page — and the row the reader opened past
+     its page: a verb on a store row goes through the one door exactly as on a mirror row. */
   const messageOf = (id: string): EngineMessage | undefined =>
-    engine.read().get<EngineMessage>("message", id);
+    engine.verbRead().get<EngineMessage>("message", id) ?? (offMirror?.row.id === id ? offMirror.row : undefined);
 
   /**
    * ONE UNDO FOR EVERY VERB (the 0.20 review, the phone half) — the pill carries Undo wherever the
@@ -2858,7 +2866,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        the pill alone first; the act is read off the pre-press mirror above and lands unchanged.
        The wait now happens INSIDE the message's chain slot, taken at the press: that is the
        window an Undo cancels, and the window nothing else for this message may overtake. */
-    const inv = inverseMutations(engine.read(), m);
+    const inv = inverseMutations(engine.verbRead(), m);
     const leaving = oneShot();
     toast(say, undoable(inv, leaving));
     return gatedSaid(messageId, [m], painted(), leaving);
@@ -2899,7 +2907,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // new with the undo (the 0.20 review): the flip is visible, but the pill is where the way back
     // lives, and a verb whose undo has no surface is a verb with no undo.
     const m: EngineMutation = { kind: "mark_seen", messageIds: [messageId], unread };
-    const inv = inverseMutations(engine.read(), m);
+    const inv = inverseMutations(engine.verbRead(), m);
     return said(
       await dispatch(m),
       refuse(unread ? "toastUnread" : "toastRead"), refuse("liveSaveFailed"),
@@ -2916,7 +2924,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * it — never an id, never an address.
    */
   const markAllSeen = async (ids: string[], feed?: { place: FeedView; upToId: string }): Promise<boolean> => {
-    const inv = chunkMarkSeen(inverseMutations(engine.read(), { kind: "mark_seen", messageIds: ids, unread: false }));
+    const inv = chunkMarkSeen(inverseMutations(engine.verbRead(), { kind: "mark_seen", messageIds: ids, unread: false }));
     const parts: Promise<PressVerdict>[] = [];
     for (let i = 0; i < ids.length; i += MARK_SEEN_MAX) {
       parts.push(watched(engine.mutate({ kind: "mark_seen", messageIds: ids.slice(i, i + MARK_SEEN_MAX), unread: false })));
@@ -2940,7 +2948,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     /* Both halves' inverses, off the pre-press mirror — the webapp release's own composition:
        the deliberate read's (re-pin a spent pin, unread back) and the booking clear's (re-book
        at its own date). A row is pinned OR booked, never both, so the reads cannot overlap. */
-    const pre = engine.read();
+    const pre = engine.verbRead();
     const booked = triageStateOf(pre, m) === "bubbled_up";
     const inv = [
       ...inverseMutations(pre, { kind: "mark_seen", messageIds: [messageId], unread: false }),
@@ -3018,10 +3026,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const messageId = row.id;
     // The RAW mirror for the LOCATION, exactly as `release` reads it: a move is about where the
     // mail actually is. The PRESENTED place is the caller's, because only the projection knows
-    // it — `messageOf` here is the raw mirror too, so reading it for both made the two values
+    // it — `messageOf` reads raw rows too (the mirror's, or a page's), so reading it for both made the two values
     // one and the retarget landed on the filed folder (measured at the K32 landing).
     const raw = engine.read();
-    const m = raw.get<EngineMessage>("message", messageId);
+    const m = messageOf(messageId);
     const folder = FOLDER_OF_VIEW[dest];
     if (!m || !folder) {
       toast(refuse("liveSaveFailed"));
@@ -3052,7 +3060,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        Junk rides this arm, so a spam filing is undone exactly like any other Move. */
     const rules = writes.filter((w) => w.kind === "rule_update");
     const mail = writes.filter((w) => w.kind !== "rule_update");
-    const inv = mail.flatMap((w) => inverseMutations(raw, w));
+    const inv = mail.flatMap((w) => inverseMutations(engine.verbRead(), w));
     /* RAW answers, never `watched`: it folds `awaiting_organizer` into landed-or-not, and on a
        mailbox this phone only reads EVERY write here comes back that way (`move` is named in the
        202 census). Folding them would say "Moved" over a move nobody made. */
@@ -3547,7 +3555,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
 
   const tagToggle = async (messageId: string, tag: WorldTag, assigned: boolean): Promise<boolean> => {
     const m: EngineMutation = { kind: "tag_assign", messageId, tagId: tag.id, assigned };
-    const inv = inverseMutations(engine.read(), m);
+    const inv = inverseMutations(engine.verbRead(), m);
     const leaving = oneShot();
     toast(
       assigned ? refuse("tagTagged", tag.name) : refuse("tagUntagged", tag.name),
@@ -3566,7 +3574,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // The undo UNASSIGNS; the minted tag row stands — deleting it is a different act with its
     // own verb and its own confirm (`inverseMutations`' tag arm states the same boundary).
     const m: EngineMutation = { kind: "tag_assign", messageId, tagId: deps.uuid(), assigned: true, createName: typed };
-    const inv = inverseMutations(engine.read(), m);
+    const inv = inverseMutations(engine.verbRead(), m);
     const leaving = oneShot();
     toast(refuse("tagTagged", typed), undoable(inv, leaving));
     return gatedSaid(messageId, [m], painted(), leaving);
@@ -3586,7 +3594,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     messageId: string, dest: Destination, scope: Scope, applyRetro = true,
   ): Promise<boolean> => {
     const raw = engine.read();
-    const m = raw.get<EngineMessage>("message", messageId);
+    const m = messageOf(messageId);
     if (!m) return false;
     const address = m.from.address.trim().toLowerCase();
     const domain = domainOf(address).toLowerCase();

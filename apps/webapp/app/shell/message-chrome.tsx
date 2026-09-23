@@ -55,15 +55,17 @@ export interface MessageChrome {
    */
   foldersEnabled?: boolean;
   /**
-   * Does the mirror hold this message — the Delete verb's ONLY gate now. The reader can show rows
-   * the mirror deliberately does not hold (an off-mirror archive hit from Search), and
-   * `message_delete` is an engine mutation over a local row: offered there it always fails. Absent
+   * Does the mirror hold this message — Forward's gate (`openForward` reads the mirror's row). Absent
    * and `false` are different answers, and absent decides: ABSENT means "this shell has no mirror
-   * probe" (the desktop shell, a bare mount) and ADMITS — `!== false`, `forwardAdmitted`'s reading;
-   * `false` means "answered no for this row" and refuses. A shell that cannot answer is not a shell
-   * whose mail may not be deleted — the mutation path still polices the row.
+   * probe" (the desktop shell, a bare mount) and ADMITS — `!== false`; `false` refuses.
    */
   mirrorHolds?: (messageId: string) => boolean;
+  /**
+   * Does the verb reader hold this message — the mirror, or the History or Search page the reader
+   * opened it from — the Delete verb's gate. `message_delete` acts on either through the one door.
+   * ABSENT admits (`!== false`), `mirrorHolds`'s reading.
+   */
+  verbHolds?: (messageId: string) => boolean;
   /**
    * Absolute-time display — a session-and-view-scoped preference on the reader's stamps. Clicking
    * any stamp flips ALL of them to the absolute form at once, so a reader comparing dates across a

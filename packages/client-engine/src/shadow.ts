@@ -37,6 +37,44 @@ export const SHADOWED_ROWS = {
 } as const satisfies Record<EngineMutation["kind"], readonly string[]>;
 
 /**
+ * THE MESSAGES A VERB NAMES BY ID — the rows a History or Search list can act on whether or not
+ * the mirror holds them. A verb whose every named row is in neither the mirror nor the page cache
+ * (a deep link) is still sent: it has no local effect to show, and only the server may answer
+ * that the row is gone. `null`: the verb names no message row, so empty effects stay a refusal.
+ */
+export const VERB_TARGETS = {
+  move: (m) => [m.messageId],
+  message_delete: (m) => [m.messageId],
+  triage_set: (m) => [m.messageId],
+  tag_assign: (m) => [m.messageId],
+  mark_seen: (m) => (m.messageIds.length > 0 ? m.messageIds : null),
+  screener_decide: () => null,
+  feed_mark_seen: () => null,
+  draft_accept: () => null,
+  draft_schedule_cancel: () => null,
+  draft_save: () => null,
+  draft_discard: () => null,
+  draft_resolve: () => null,
+  mail_send: () => null,
+  tag_create: () => null,
+  tag_rename: () => null,
+  tag_recolor: () => null,
+  tag_delete: () => null,
+  folder_create: () => null,
+  folder_rename: () => null,
+  folder_delete: () => null,
+  folder_op_dismiss: () => null,
+  rule_delete: () => null,
+  rule_update: () => null,
+  rule_create: () => null,
+} as const satisfies { [K in EngineMutation["kind"]]: (m: Extract<EngineMutation, { kind: K }>) => readonly string[] | null };
+
+/** {@link VERB_TARGETS} for one verb, by its own kind. */
+export function verbTargetsOf(m: EngineMutation): readonly string[] | null {
+  return (VERB_TARGETS[m.kind] as (x: EngineMutation) => readonly string[] | null)(m);
+}
+
+/**
  * How many successful drains after the confirm a DISAGREEING shadow survives. The overlay predicts
  * the server's answer; a no-op, a divergence or another device's later change never agrees, and
  * after this bound the mirror is the truth whatever it says. Counted in drains, never a clock.

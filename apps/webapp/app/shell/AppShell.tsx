@@ -1578,7 +1578,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const {
     absoluteTime, barPanel, chipState, closeCard, commitReadsSeen, commitReceiptsSeen, enterReader,
-    focused, fr, frDone, frValues, jump, markAllRead, markSeen, mirrorHolds, ohboxGone, openMessage,
+    focused, fr, frDone, frValues, jump, markAllRead, markSeen, mirrorHolds, verbHolds, ohboxGone, openMessage,
     picker, pickerIds, previewFor, railOpen, readerFor, readerGone, readerMessage, readsCur,
     readsMarkSeen, receiptsCur, receiptsMarkSeen, ribbonGone, scnSel, screenerFull, searchFrom,
     searchQuery, selectedOhbox, senderAudit, senderMenu, setBarPanel, setChipState, setCloseCard,
@@ -1908,6 +1908,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       // withheld there rather than offered and guaranteed to fail (review finding).
       // ONE definition, shared with `⇧F`'s own gate — see `mirrorHolds` above.
       mirrorHolds,
+      // Delete's gate: the verb reader, so a History or Search row is deleted like any other.
+      verbHolds,
       absoluteTime,
       onToggleAbsoluteTime: toggleAbsoluteTime,
       replyTo, replyAll, replyMode, replyBody, onReplyBody, closeReply, sendReply,
@@ -2029,7 +2031,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   // Resolved here rather than inside the popover so a sender whose last message has just
   // been moved out from under it closes the popover instead of rendering an empty one.
   const senderMenuFor = useMemo(
-    () => (senderMenu ? senderScreening(reader, senderMenu.messageId, senderMenu.address) : null),
+    () => (senderMenu ? senderScreening(engine.verbRead(), senderMenu.messageId, senderMenu.address) : null),
     [senderMenu, reader, derived],
   );
 
@@ -3458,7 +3460,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
              would remove it from the two that had it instead of adding it to the eight that
              did not. `pickerIds` is null for every single-message caller, which is the
              one-element case of the same rule. */
-          assigned={tagsOnAll(reader, pickerIds ?? [picker.forId])}
+          assigned={tagsOnAll(engine.verbRead(), pickerIds ?? [picker.forId])}
           onToggle={(tagId, assigned) =>
             bulkToggleTag(pickerIds ?? [picker.forId], tagId, assigned)
           }

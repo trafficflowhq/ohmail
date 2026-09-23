@@ -31,6 +31,15 @@
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
+/* A slot whose store page is not held yet keeps a row's height; a deleted row folds away. */
+.hit-w.hit-ghost {
+  min-height: 64px;
+}
+.hit-gone {
+  height: 0;
+  overflow: hidden;
+}
+
 /* NOTHING OVERRIDES `.hit` ITSELF, and the first draft of this file did. It set
    `background:none` on the child to stop a doubled fill — there is no doubled fill (the
    button is transparent at rest, and only `:hover` paints it), and at `0,2,0` the rule beat

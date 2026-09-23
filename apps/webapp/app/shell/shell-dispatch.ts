@@ -201,10 +201,9 @@ export function useShellDispatch({
     /* THROUGH `fileAndRefresh`, LIKE EVERY OTHER FILING DISPATCH: a replayed delete moves mail,
        so the count the filing strip renders is stale until the facts are re-read. */
     /* AND IT IS `replayDelete`, NOT `mutate`: by this launch the row may be gone from the mirror
-       because the WINDOW evicted it, and `mutate` refuses that locally with a 404 the replay used
-       to read as the mailbox agreeing. The door tells the two absences apart — a tombstone this
-       device holds settles with no round trip, anything else asks the mailbox. The press id goes
-       with it, so the re-ask is that press and not a second one. `filing-refresh-on-decision`
+       because the WINDOW evicted it. The door tells the two absences apart — a tombstone this
+       device holds settles with no round trip, anything else asks the mailbox under the press's
+       own id, so the re-ask is that press and not a second one. `filing-refresh-on-decision`
        reads this line by the CALL, since no `kind:` literal is left here to find it by. */
     mutate: (messageId, pressId) => fileAndRefresh(engine.replayDelete(messageId, { intentId: pressId })),
     now: () => Date.now(),
@@ -255,7 +254,7 @@ export function useShellDispatch({
    * `useDeleteIntentReplay`'s reason.
    */
   const routing = useRoutingUndo({
-    read: () => engine.read(),
+    read: () => engine.verbRead(),
     /* THROUGH `fileAndRefresh`, LIKE EVERY OTHER FILING DISPATCH — a rule landing re-places the
        sender's mail, so the filing strip's counts are stale until the facts are re-read. */
     send: (m) => fileAndRefresh(engine.mutate(m)),
@@ -382,7 +381,7 @@ export function useShellDispatch({
     (mutation: EngineMutation, okSentence: string | null): Promise<boolean> => {
       /* Read before the dispatch — the inverse names the state this press is about to leave.
          Skipped on the silent paths (`okSentence === null`): no toast, nothing to carry Undo. */
-      const inverses = okSentence !== null ? inverseMutations(engine.read(), mutation) : [];
+      const inverses = okSentence !== null ? inverseMutations(engine.verbRead(), mutation) : [];
       return dispatchPress(mutation).then((out) => {
         if (out.kind === "refused") { toast(refusalSentence(out.refusal)); return false; }
         if (out.kind === "queued" && out.wait === "organizer") { toast(queuedSentence(out.holder)); return false; }
@@ -404,7 +403,7 @@ export function useShellDispatch({
     (mutations: readonly EngineMutation[], say: (applied: number) => string | null): Promise<number> => {
       /* One pre-press read for the whole set; the undo covers exactly the mutations that APPLIED
          — an inverse of a refused press would change state the press never touched. */
-      const preRead = engine.read();
+      const preRead = engine.verbRead();
       const inversesOf = mutations.map((mu) => inverseMutations(preRead, mu));
       return Promise.all(mutations.map((mu) => dispatchPress(mu))).then((outs) => {
         const tally = tallyVerdicts(outs);

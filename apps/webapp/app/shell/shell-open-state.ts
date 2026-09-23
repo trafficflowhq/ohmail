@@ -1060,15 +1060,14 @@ export function useShellOpenState({
           : null);
 
   /**
-   * DOES THE LOCAL MIRROR HOLD THIS ROW? — one definition, two consumers. The reader can show rows the mirror
-   * deliberately does not hold: an archive-only hit opened from Search reaches past it. A verb whose implementation
-   * reads the local row must then be withheld rather than offered and guaranteed to fail — Delete (`message_delete`
-   * acts on a local row) and Forward (`openForward` reads the message out of the engine and returns silently when it
-   * is absent) both need exactly this question answered. Declared here rather than inline in the chrome because
-   * `⇧F`'s binding needs it too, and two spellings of "is this row in the mirror" is how the key and the button come
-   * to disagree — the same one-derivation rule `canSend` and `replyAllRecipients` are held to.
+   * DOES THE LOCAL MIRROR HOLD THIS ROW? — Forward's gate: `openForward` reads the message out of the mirror and
+   * returns silently when it is absent, so the verb is withheld rather than offered and guaranteed to fail. Declared
+   * here rather than inline in the chrome because `⇧F`'s binding needs it too, and two spellings of one question is
+   * how the key and the button come to disagree — the rule `canSend` and `replyAllRecipients` are held to.
    */
   const mirrorHolds = useStableCallback((id: string): boolean => reader.get<EngineMessage>("message", id) != null);
+  /** Does the VERB READER hold this row — the mirror, or a History/Search page (`engine.verbRead`)? Delete's gate. */
+  const verbHolds = useStableCallback((id: string): boolean => engine.verbRead().get<EngineMessage>("message", id) != null);
 
   /* A half-open destination strip must not carry over when the cursor moves — the same rule
      the pane enforced per mount while it owned the state (see `useBarPanel`). */
@@ -1126,6 +1125,7 @@ export function useShellOpenState({
     markAllRead,
     markSeen,
     mirrorHolds,
+    verbHolds,
     ohboxGone,
     openMessage,
     picker,

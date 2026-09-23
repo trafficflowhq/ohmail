@@ -53,6 +53,19 @@ import { useStableCallback } from "./stable-callback";
 import { planSubjectRule, subjectRuleContext, subjectRuleToast, type TermField } from "./subject-rule";
 import { placePicker } from "./TagPicker";
 
+/** `read`, answering `row` for its own id where `read` holds nothing — the pressed row as a seed. */
+function withRow(read: EntityReader, row: EngineMessage): EntityReader {
+  return {
+    get: <T,>(type: string, id: string) => read.get<T>(type, id)
+      ?? (type === "message" && id === row.id ? (row as unknown as T) : undefined),
+    list: (type) => read.list(type),
+    entries: (type) => read.entries(type),
+    version: () => read.version(),
+    stampOf: (type) => read.stampOf(type),
+    stampExcept: (ignore) => read.stampExcept(ignore),
+  };
+}
+
 export interface ShellVerbsInput {
   engine: OhmailEngine;
   /** The mirror as it is — `engine.read()` from the render, never re-read here. */
@@ -144,7 +157,7 @@ export function useShellVerbs({
     address?: string,
   ) => {
     setSenderMenu(null);
-    const sender = senderScreening(reader, messageId, address);
+    const sender = senderScreening(engine.verbRead(), messageId, address);
     if (!sender) return;
     const plan = planScreeningChange(sender, dest, scope, makeRule, applyRetro);
     const place = PLACE_LABEL[dest] ?? dest;
@@ -195,9 +208,12 @@ export function useShellVerbs({
   }
 
   const planMoveToPlace = useStableCallback((
-    seedId: string, view: OhmailView, only: ReadonlySet<string>,
+    seedId: string, view: OhmailView, only: ReadonlySet<string>, seed?: EngineMessage,
   ): RoutingPressPlan | null => {
-    const sender = senderScreening(reader, seedId);
+    /* The verb reader — a History or Search row the mirror does not hold is planned like any
+       other — and the pressed row itself, which a reading column can hold past its page. */
+    const read = seed ? withRow(engine.verbRead(), seed) : engine.verbRead();
+    const sender = senderScreening(read, seedId);
     if (!sender) return null;
     /* SENDER SCOPE AND NO RETRO: the press is about these messages, not a domain, and nobody
        asked the server to walk the backlog. */
@@ -228,7 +244,7 @@ export function useShellVerbs({
     const wanted = FOLDER_OF_VIEW[view];
     const decided = planned.mutations.some((x) => x.kind === "screener_decide");
     const named: EngineMutation[] = decided ? [] : [...only]
-      .map((id) => reader.get<EngineMessage>("message", id))
+      .map((id) => read.get<EngineMessage>("message", id))
       .filter((msg): msg is EngineMessage => msg != null && wanted != null && msg.folder !== wanted)
       .map((msg) => ({ kind: "move", messageId: msg.id, folder: wanted! }));
     const mutations = [
@@ -277,7 +293,7 @@ export function useShellVerbs({
     const place = PLACE_LABEL[input.view] ?? input.view;
     /* ONE PRE-PRESS READ FOR THE WHOLE PRESS: the inverses name the state this press is about to
        leave, and a read taken after the first dispatch would already describe the new one. */
-    const pre = engine.read();
+    const pre = engine.verbRead();
     const inverses: EngineMutation[] = [];
     const subjects: string[] = [];
     let lost = false;
@@ -319,12 +335,9 @@ export function useShellVerbs({
   });
 
   const moveToPlace = useStableCallback((m: EngineMessage, view: OhmailView) => {
-    const planned = planMoveToPlace(m.id, view, new Set([m.id]));
-    /* No sender to route means no place to route them to — said, never swallowed. */
-    if (!planned) {
-      toast(t("ohbox.moveGone"));
-      return;
-    }
+    const planned = planMoveToPlace(m.id, view, new Set([m.id]), m);
+    /* The pressed row is its own seed, so there is always a sender to route. */
+    if (!planned) return;
     /* NO EMPTY-PLAN SHORTCUT, deliberately: a plan with nothing in it dispatches nothing and
        `screeningToast` answers `toastAlreadyRuled` off `ruleState` alone, so the one path already
        speaks for the press that changes nothing. A branch here would be a second sentence on a
@@ -361,7 +374,7 @@ export function useShellVerbs({
    */
   const openSenderAudit = useStableCallback((messageId: string, scope: ScreeningScope, address?: string) => {
     setSenderMenu(null);
-    const sender = senderScreening(reader, messageId, address);
+    const sender = senderScreening(engine.verbRead(), messageId, address);
     if (!sender) return;
     setSenderAudit({
       title: scope === "domain" ? displayDomain(sender.domain) : displayAddress(sender.address),
@@ -398,8 +411,9 @@ export function useShellVerbs({
    * state this shell cannot see; two verbs are gated on facts that live here and nowhere else, so they are resolved
    * here and passed down rather than re-derived in three view files — which is how the `?` sheet comes to advertise a
    * delete the bar refuses to draw. `canDeleteMessage` is the delete strip's own render gate, verbatim from the `d`
-   * binding: the mirror actually holding the row. `canReplyAllTo` is `replyAllRecipients` against the account's
-   * addresses — the same call the bar's button and `⇧R` make, and the one `sendReply` resolves again at send time.
+   * binding: the verb reader holding the row (the mirror, or its History/Search page). `canReplyAllTo` is
+   * `replyAllRecipients` against the account's addresses — the same call the bar's button and `⇧R` make, and the one
+   * `sendReply` resolves again at send time.
    */
 
   /**
@@ -418,7 +432,7 @@ export function useShellVerbs({
    * and Move-to-folder.
    */
   const canDeleteMessage = useStableCallback((m: EngineMessage): boolean =>
-    reader.get<EngineMessage>("message", m.id) != null);
+    engine.verbRead().get<EngineMessage>("message", m.id) != null);
   const canReplyAllTo = useStableCallback((m: EngineMessage): boolean => replyAllRecipients(m, ownAddresses) !== null);
 
   /**
@@ -507,7 +521,7 @@ export function useShellVerbs({
   const bulkToggleTag = useStableCallback((ids: string[], tagId: string, assigned: boolean) => {
     const name = tags.find((x) => x.id === tagId)?.name ?? tagId;
     const targets = ids.filter((id) => {
-      const m = reader.get<EngineMessage>("message", id);
+      const m = engine.verbRead().get<EngineMessage>("message", id);
       return m != null && m.labels.includes(tagId) !== assigned;
     });
     if (targets.length === 0) return;
@@ -804,7 +818,7 @@ export function useShellVerbs({
             /* Both halves' inverses, off the pre-press mirror: the deliberate read's (re-pin a
                spent pin, unread back) and the booking clear's (re-book at its own date). A row
                is pinned OR booked, never both, so the two reads cannot overlap. */
-            const pre = engine.read();
+            const pre = engine.verbRead();
             const inverses = [
               ...inverseMutations(pre, { kind: "mark_seen", messageIds: [m.id], unread: false }),
               ...(m.triage?.state === "bubbled_up"
@@ -927,7 +941,7 @@ export function useShellVerbs({
            end. The ASK — the confirm strip for `d` and the menu item, nothing for ⌫/⌦ — has
            already happened in the view; the window is still the only dispatch site. */
         return deleting.remove(
-          ids.map((id) => ({ id, mailboxId: reader.get<EngineMessage>("message", id)?.mailboxId })),
+          ids.map((id) => ({ id, mailboxId: engine.verbRead().get<EngineMessage>("message", id)?.mailboxId })),
         );
       }
       if (action === "read" || action === "unread") {
@@ -935,7 +949,7 @@ export function useShellVerbs({
         // sentence now waits for its verdict, like every other press in this file. The inverse
         // is read before the dispatch, so Undo flips back exactly the ids this press flipped.
         const inverses = inverseMutations(
-          engine.read(),
+          engine.verbRead(),
           { kind: "mark_seen", messageIds: ids, unread: action === "unread" },
         );
         void markSeen(ids, action === "unread").then((ok) => {
@@ -960,13 +974,13 @@ export function useShellVerbs({
          * is worse than none, and a reader install cannot triage at all.
          */
         const rows = ids
-          .map((id) => reader.get<EngineMessage>("message", id))
+          .map((id) => engine.verbRead().get<EngineMessage>("message", id))
           .filter((m): m is EngineMessage => m != null);
         const booked = rows.filter((m) => m.triage?.state === "bubbled_up").map((m) => m.id);
         void (async () => {
           /* The single arm's composition over the set — both halves' inverses off the pre-press
              mirror, so one Undo re-books the booked and re-pins the pinned. */
-          const pre = engine.read();
+          const pre = engine.verbRead();
           const inverses = [
             ...inverseMutations(pre, { kind: "mark_seen", messageIds: ids, unread: false }),
             ...booked.flatMap((messageId) =>
@@ -1030,9 +1044,14 @@ export function useShellVerbs({
       /* The destination has to BE one — the single arm's own guard, asked here too. */
       if (!FOLDER_OF_VIEW[view]) return false;
       const bySender = new Map<string, string[]>();
+      const unheld: EngineMutation[] = [];
       for (const id of ids) {
-        const m = reader.get<EngineMessage>("message", id);
-        if (!m) continue;
+        const m = engine.verbRead().get<EngineMessage>("message", id);
+        /* A row neither the mirror nor a page holds is still moved, by id: the server answers. */
+        if (!m) {
+          unheld.push({ kind: "move", messageId: id, folder: FOLDER_OF_VIEW[view]! });
+          continue;
+        }
         const key = m.from.address.trim().toLowerCase();
         const held = bySender.get(key);
         if (held) held.push(id);
@@ -1041,11 +1060,12 @@ export function useShellVerbs({
       const plans = [...bySender.values()]
         .map((picked) => planMoveToPlace(picked[0]!, view, new Set(picked)))
         .filter((x): x is RoutingPressPlan => x !== null);
-      if (plans.length === 0) {
-        toast(t("ohbox.moveGone"));
-        return false;
-      }
       const place = PLACE_LABEL[view] ?? view;
+      if (plans.length === 0) {
+        void mutateSetAndReport(unheld, (applied) => t("ohbox.toastBulkMovedPlain", { count: applied, place }));
+        return true;
+      }
+      for (const mu of unheld) void fileAndRefresh(engine.mutate(mu));
       /* THE GATE'S OWN SENDERS KEEP THE PATH THEY HAVE ALWAYS TAKEN — `fileThroughRouting`'s
          note says why a decision may not be held. A selection mixing the two is not one press
          with two answers: the decided senders are dispatched and awaited as before, and the
@@ -1110,7 +1130,7 @@ export function useShellVerbs({
     let messages = 0;
     let rules = 0;
     for (const id of ids) {
-      const s = senderScreening(reader, id);
+      const s = senderScreening(engine.verbRead(), id);
       if (!s || seen.has(s.key)) continue;
       seen.add(s.key);
       /**

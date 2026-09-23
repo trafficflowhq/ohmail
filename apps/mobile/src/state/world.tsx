@@ -111,11 +111,11 @@ import {
   offMirrorRevision,
   openOffMirror,
   storeRowOf,
+  storeSearchWalkerFor,
   storeWalkerFor,
   subscribeOffMirror,
-  type ServerSearchOpts,
-  type ServerSearchOutcome,
   type StoreMessage,
+  type StoreSearchWalker,
   type StoreTimelineWalker,
 } from "./live";
 import type { Scope } from "./model";
@@ -417,10 +417,11 @@ export interface World {
    */
   store: {
     walker: StoreTimelineWalker | null;
+    /** Search's walker — the same list mechanism, one question at a time. */
+    searchWalker: StoreSearchWalker | null;
     mirrorRows(): StoreMessage[];
     rowOf(m: StoreMessage, inHistory: boolean): WorldMail;
     searchAvailable: boolean;
-    search(q: string, opts: ServerSearchOpts): Promise<ServerSearchOutcome>;
     /** The row the reader is about to open, when the mirror holds none for it. */
     open(m: StoreMessage): void;
   };
@@ -594,10 +595,10 @@ function emptyWorld(actions: WorldActions): World {
     message: () => undefined,
     store: {
       walker: null,
+      searchWalker: null,
       mirrorRows: () => [],
       rowOf: () => { throw new Error("no live engine"); },
       searchAvailable: false,
-      search: async () => ({ state: "unavailable" }),
       open: () => undefined,
     },
     // Nothing is connected, so there is nothing to search and no index owed: `indexing: false`
@@ -627,6 +628,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
 
   /* History's walker, one per engine; and the off-mirror reader's row, which re-derives `message`. */
   const walker = useMemo(() => (engine ? storeWalkerFor(engine) : null), [engine]);
+  const searchWalker = useMemo(() => (engine ? storeSearchWalkerFor(engine) : null), [engine]);
   const offMirrorRev = useSyncExternalStore(subscribeOffMirror, offMirrorRevision, offMirrorRevision);
 
   /* The engine's own change signal — the exact idiom `LiveFacts` (servers.tsx) established. */
@@ -1494,10 +1496,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       search: liveSearch(engine, base, v),
       store: {
         walker,
+        searchWalker,
         mirrorRows: () => mirrorNewestFirst(engine),
         rowOf: (m, inHistory) => storeRowOf(engine, m, v, inHistory),
         searchAvailable: engine.serverSearchAvailable(),
-        search: (q, o) => engine.searchServer(q, o),
         open: openOffMirror,
       },
       actions,
@@ -1506,7 +1508,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // reader itself is stable across drains, so it cannot stand in for it. The connection's
     // state is deliberately NOT here — see the header, and the assembly below, which carries it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine, session, scopes, zone, locale, actions, version, freshBeat, searchRev, walker, offMirrorRev,
+  }, [engine, session, scopes, zone, locale, actions, version, freshBeat, searchRev, walker, searchWalker, offMirrorRev,
     foldersOn, foldersPending, foldersStorable, setFoldersEnabled, signatures,
     resurfaceTime, rememberResurfaceTime, screening, screenerServer, heldDeletes, heldPlaces]);
 
