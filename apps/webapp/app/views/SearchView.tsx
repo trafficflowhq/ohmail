@@ -12,6 +12,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
+  errorClassOf,
   folderLeaf,
   SERVER_SEARCH_SORTS,
   VIEW_OF_FOLDER,
@@ -48,15 +49,31 @@ interface Filter {
  */
 type ServerOutcome = Awaited<ReturnType<OhmailEngine["searchServer"]>>;
 
-/** What the archive pass is doing FOR THE QUERY CURRENTLY IN THE BOX. */
+/** What the whole-mailbox pass is doing FOR THE QUERY CURRENTLY IN THE BOX. */
 type Archive =
   | { state: "searching" }
   /** `tier` says whether these rows are matches or typo-tolerant guesses — see the merge below. */
   | { state: "ready"; items: EngineMessage[]; total: number; tier: "exact" | "similar" }
-  | { state: "failed"; error: string }
-  /** The request has been out for {@link ARCHIVE_TIMEOUT_MS} and has not answered — see below. */
-  | { state: "timeout" }
+  /** A refusal, a rejection, or no answer inside {@link ARCHIVE_TIMEOUT_MS} — one sentence. */
+  | { state: "unanswered" }
   | { state: "unavailable" };
+
+/**
+ * EVERY WAY THE PASS ENDS IS ONE OF THREE VERDICTS — matched, nothing matched, or the server did
+ * not answer. A refusal renders the third, not the server's text: the text can carry what the
+ * person typed, so the log line takes the CLASS ({@link errorClassOf}) and the screen says what
+ * is on it — what this device holds.
+ */
+function unanswered(cause: string): Archive {
+  console.warn("[search] the whole-mailbox pass did not answer:", cause);
+  return { state: "unanswered" };
+}
+function verdictOf(outcome: ServerOutcome): Archive {
+  if (outcome.state === "ready") {
+    return { state: "ready", items: outcome.items, total: outcome.total, tier: outcome.tier };
+  }
+  return outcome.state === "failed" ? unanswered(outcome.errorClass) : { state: "unavailable" };
+}
 
 /** A hit and where it came from — the archive-only ones are marked on screen. */
 interface MergedHit {
@@ -77,7 +94,7 @@ interface MergedHit {
 const ARCHIVE_DEBOUNCE_MS = 250;
 
 /**
- * How long "Searching the whole archive…" may stand — the ceiling on the `searching` state.
+ * How long "Searching your whole mailbox…" may stand — the ceiling on the `searching` state.
  * Reported: the sentence never resolved — `searching` was a state only a SETTLED promise could
  * replace, and `searchServer` never rejects, which is no shape at all for a request that does not
  * come back (a dropped connection, a sleeping device). Fifteen seconds: several times the slowest
@@ -319,25 +336,19 @@ export function SearchView({
       if (!live) return;
       setArchive((prev) =>
         prev !== null && prev.q === trimmed && prev.outcome.state === "searching"
-          ? { q: trimmed, outcome: { state: "timeout" } }
+          ? { q: trimmed, outcome: unanswered("timeout") }
           : prev,
       );
     }, ARCHIVE_TIMEOUT_MS);
     const timer = setTimeout(() => {
-      // `searchServer` never rejects — the outcome is a value the UI renders, so there is no
-      // unhandled promise here and no error boundary over somebody's mailbox.
-      void engine.searchServer(trimmed, { sort }).then((outcome: ServerOutcome) => {
-        if (!live) return;
-        setArchive({
-          q: trimmed,
-          outcome:
-            outcome.state === "ready"
-              ? { state: "ready", items: outcome.items, total: outcome.total, tier: outcome.tier }
-              : outcome.state === "failed"
-                ? { state: "failed", error: outcome.error }
-                : { state: "unavailable" },
+      // BOTH ARMS. `searchServer` is written never to reject, and a rejection here once left the
+      // sentence on "Searching…" until the ceiling, as an unhandled rejection: the verdict does
+      // not depend on a promise keeping its contract.
+      void engine.searchServer(trimmed, { sort })
+        .then(verdictOf, (err: unknown) => unanswered(errorClassOf(err)))
+        .then((outcome) => {
+          if (live) setArchive({ q: trimmed, outcome });
         });
-      });
     }, ARCHIVE_DEBOUNCE_MS);
     return () => {
       live = false;
@@ -659,14 +670,12 @@ export function SearchView({
   useKeyBindings(keys);
 
   /**
-   * The honest sentence — one of seven, one always on screen while a query is. `scopeDevice` is load-bearing:
-   * what the view says while only local results are in hand, naming the three fields the index reads. It used
-   * to break at zero: "Nothing on this device." directly above "…plus the full text of none." — assembled, not
-   * written. So the device half is suppressed when the mirror is empty (`coverage.messages === 0`, not `full` —
-   * a device with 400 unhydrated messages still holds subjects and previews, and the sentence is worth saying).
-   * The opened-count is gone: Screener previews hydrate bodies too, so "the 6 you have opened" never matched
-   * what a reader would count — the fact stays, the arithmetic goes. The sixth arm, `timeout`, was the
-   * unrepresentable state ({@link ARCHIVE_TIMEOUT_MS}).
+   * The honest sentence, one always on screen while a query is. `scopeDevice` names the three
+   * fields the local index reads, and is suppressed when the mirror is empty (`coverage.messages
+   * === 0`) so "Nothing on this device." never sits above "…the full text of none.". The
+   * whole-mailbox pass then ends in exactly one of three verdicts ({@link verdictOf}); a query
+   * too short to ask about says nothing beyond this device, where it once said "Searching…" for
+   * ever while nothing was asked.
    */
   const device = indexing ? (
     /*
@@ -680,39 +689,26 @@ export function SearchView({
   ) : !result || result.coverage.messages === 0 ? null : (
     <>{t("scopeDevice")} </>
   );
-  const scope = !result ? null : current === null || current.state === "searching" ? (
+  const scope = !result ? null : trimmed.length < 2 ? device : current === null || current.state === "searching" ? (
     <>
       {device}
-      {t("scopeSearching")}
+      {t("scopeWholeSearching")}
     </>
   ) : current.state === "unavailable" ? (
     <>
       {device}
       {t("scopeNoArchive")}
     </>
-  ) : current.state === "failed" ? (
+  ) : current.state === "unanswered" ? (
+    /* The retry stays: a stated dead end with no way out of it is half a sentence. */
     <>
-      {t("scopeFailed", { reason: current.error })}{" "}
+      {t("scopeUnanswered")}{" "}
       <button type="button" className="btn ghost" onClick={() => setRetryTick((n) => n + 1)}>
-        {t("scopeRetry")}
-      </button>
-    </>
-  ) : current.state === "timeout" ? (
-    /*
-     * A SIXTH ARM, and it is the one that was missing. It carries the same retry the refusal
-     * arm does: a stated dead end with no way out of it is half a sentence. `device` is kept —
-     * the local results ARE what is on screen and the reader is entitled to know what they
-     * cover, exactly as in the `searching` and `unavailable` arms.
-     */
-    <>
-      {device}
-      {t("scopeArchiveTimeout")}{" "}
-      <button type="button" className="btn ghost" onClick={() => setRetryTick((n) => n + 1)}>
-        {t("scopeRetry")}
+        {t("scopeWholeRetry")}
       </button>
     </>
   ) : (
-    <>{t("scopeArchive", { total: current.total })}</>
+    <>{t("scopeWhole", { total: current.total })}</>
   );
 
   return (

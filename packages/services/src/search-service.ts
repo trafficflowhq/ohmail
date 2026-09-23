@@ -9,18 +9,32 @@ import { instantRefusal, readInstant } from "./instant.js";
 import type { MessageDTO } from "./dto/types.js";
 
 /**
- * Hybrid search (lexical + fuzzy). TWO SQL arms as TIERS, not one fused score: lexical —
- * `websearch_to_tsquery('english', q)` against `subject_tsv`/`body_tsv`, `ts_rank` — is THE
- * answer; fuzzy — pg_trgm `word_similarity`, so a typo ("invoce" → "Invoice") still surfaces the
- * message — runs ONLY when the lexical arm found nothing (ILIKE degrade without pg_trgm). RANK
- * FUSION IS GONE: RRF ranks by POSITION, so a fuzzy guess at rank one beat a real lexical match
- * at rank five — `graphite` returned mountain-ridge mail ("Grat") above the message whose body
- * says `graphite`. The tier rule lives in `@trafficflow/core/search-rank`, shared with the client
- * index. Search reads only subject / from_address / the STORED redacted body.
+ * Hybrid search in TWO TIERS. The EXACT tier fuses two literal arms by RRF: lexical
+ * (`websearch_to_tsquery` over `subject_tsv`/`body_tsv`, `ts_rank`) and substring (the query's
+ * characters inside the subject or sender, so `axa` finds `myAXA`). The SIMILAR tier — pg_trgm
+ * `word_similarity` typo guesses — runs ONLY when the exact tier found nothing, and is never
+ * fused: RRF ranks by position, so a guess at rank one beat a real match at rank five
+ * (`graphite` returned "Grat" mail above the body that says graphite). A substring row is not a
+ * guess — the characters are there. Tier rule: `@trafficflow/core/search-rank`, shared with the
+ * client index. Search reads only subject / from_address / the STORED redacted body.
  */
 
 /** pg_trgm word-similarity floor for the fuzzy arm (Postgres default is 0.3). */
 const FUZZY_THRESHOLD = 0.3;
+/** The RRF constant: an arm's row at position `r` contributes `1 / (RRF_K + r)`. */
+const RRF_K = 60;
+/** The substring arm's width floor — a trigram's, below which its index cannot select. */
+export const SUBSTRING_MIN_CHARS = 3;
+
+/**
+ * Does the substring arm run for this query? Shut for a quoted phrase or a `-term` — the reader
+ * asking for exactness, which the lexical arm gives — and below a trigram's width unless the
+ * query is punctuated (the verbatim case this arm grew out of: `pha/Bet` inside `Alpha/Beta`).
+ */
+export function substringOpen(q: string): boolean {
+  if (q.includes('"') || /(^|\s)-\S/.test(q)) return false;
+  return [...q].length >= SUBSTRING_MIN_CHARS || holdsPunctuation(q);
+}
 /** How many senders the sender facet returns. */
 const SENDER_FACET_LIMIT = 10;
 
@@ -281,55 +295,43 @@ export class SearchService {
     const fuzzRank = fuzz.rank;
 
     /**
-     * THE VERBATIM ARM: A PUNCTUATED QUERY IS ONE LEXEME, AND A LEXEME MATCH IS ALL-OR-NOTHING.
-     * `to_tsvector('english','Alpha/Beta merger')` is `'alpha/beta':1 'merger':2`, so `'pha/Bet'`
-     * matches NOTHING — the characters are matched as characters instead. Three bounds: GATED on
-     * punctuation (`holdsPunctuation`; `search-punctuation.pg.test.ts` case (d) tells the gate
-     * apart); NEVER the only arm — OR'd with `lexPred`, it can only ADD rows; RANKED BELOW the
-     * lexical arm, stated not inferred — `ts_rank` is NOT zero for a row the tsquery fails to
-     * match, so the tier is `1 + ts_rank` for lexical, `0` for verbatim-only. Subject only: the
-     * body has no index for this, and the query length is already bounded.
+     * THE SUBSTRING ARM — the query as characters inside the subject or the sender. A lexeme
+     * match is all-or-nothing, so `axa` never reached `myAXA Portal` or `news@axa.example`.
+     * ILIKE over the two columns the trigram GINs serve (`search-setup.ts`); the recipients have
+     * no index and stay out, and so does the body. Through the seam: `ilike` is the server's
+     * word, the device store folds both sides. Ordered by `fuzz.rank` — word similarity where
+     * pg_trgm exists, recency where it does not — so `AXA` as a whole word leads `myAXA`.
      */
-    // THROUGH THE SEAM, like the fuzzy degrade that used to share this line: `ilike` is the
-    // server's word for it and the device store has no such operator — it folds both sides
-    // instead, ASCII only, which is a narrower comparison and the one that store can make.
     const like = `%${q}%`;
-    const verbatimPred = holdsPunctuation(q) ? d.ilike(sql`m.subject`, like) : null;
-    const exactPred = verbatimPred === null ? lexPred : sql`(${lexPred} or ${verbatimPred})`;
-    const exactRank = verbatimPred === null
-      ? lexRank
-      : sql`(case when ${lexPred} then 1 + ${lexRank} else 0 end)`;
+    const subPred = substringOpen(q)
+      ? sql`(${d.ilike(sql`m.subject`, like)} or ${d.ilike(sql`m.from_address`, like)})`
+      : null;
+    const exactPred = subPred === null ? lexPred : sql`(${lexPred} or ${subPred})`;
 
     /**
-     * THE TIER IS DECIDED BEFORE A SINGLE ROW IS RANKED. The EXACT arm is counted first, and that
-     * count IS `total` whenever non-zero — the common case costs nothing: `total` was always
-     * going to be counted, now over one predicate. The fuzzy arm's count is paid only on a query
-     * the corpus does not literally answer — the case a reader is already waiting on a guess for.
-     * "Exact" is `lexPred` plus the verbatim arm on a punctuated query — deliberately the count
-     * over the predicate the ROWS come from: counting the lexical arm alone would put a query
-     * whose only answers are verbatim into the SIMILAR tier. `showSimilar` rather than `=== 0`,
-     * so the floor exists in exactly one place (`@trafficflow/core/search-rank`).
+     * THE TIER IS DECIDED BEFORE A SINGLE ROW IS RANKED. The exact tier's count IS `total`
+     * whenever non-zero — the union of both literal arms, over the whole store; the fuzzy count
+     * is paid only on a query the store does not literally answer. `showSimilar` rather than
+     * `=== 0`, so the floor lives in one place (`@trafficflow/core/search-rank`).
      */
     const exactTotal = await this.count(ctx, d, where, exactPred);
     const tier: SearchTier = showSimilar(exactTotal) ? "similar" : "exact";
     const matchPred = tier === "exact" ? exactPred : fuzzPred;
-    const rank = tier === "exact" ? exactRank : fuzzRank;
     const total = tier === "exact" ? exactTotal : await this.count(ctx, d, where, fuzzPred);
 
     /**
-     * THE RELEVANCE QUERY — one arm, the tier's own, over the tier's own predicate. No candidate
-     * window: the RRF version bounded each arm at 100 rows before fusing, so the final `limit`
-     * applied to a SELECTION rather than the match set — the row silently dropped was the one
-     * outside the window. With one arm the `order by` decides which `limit` rows come back, which
-     * is what a relevance ranking is. The key sequence is `SQL_RANK_ORDER`'s and the client
-     * comparator's: relevance, recency as tie-break, then id so ties never swap between calls;
-     * `nulls last` is the SQL spelling of "an undated message has no place on a timeline".
+     * THE RELEVANCE QUERY. The exact tier with both arms open is FUSED over each arm's WHOLE
+     * match set and paged after fusion — the old RRF bounded each arm at 100 rows first, so the
+     * row dropped was the one outside the window. One arm (a shut substring arm, or the similar
+     * tier) orders itself. Key sequence after the score: recency, then id, so ties never swap.
      */
-    const ranked = sql`
+    const ranked = tier === "exact" && subPred !== null
+      ? this.fusedArm(where, [{ pred: lexPred, rank: lexRank }, { pred: subPred, rank: fuzzRank }], limit)
+      : sql`
       select m.id
       ${this.from}
       where ${where} and ${matchPred}
-      order by ${rank} desc, m.date desc nulls last, m.id desc
+      order by ${tier === "exact" ? lexRank : fuzzRank} desc, m.date desc nulls last, m.id desc
       limit ${limit}`;
 
     /**
@@ -425,6 +427,29 @@ export class SearchService {
       if (dto) items.push(dto);
     }
     return { items, total, direction: opts.direction };
+  }
+
+  // ── the fused relevance order ────────────────────────────────────────────
+
+  /**
+   * RECIPROCAL-RANK FUSION over each arm's WHOLE match set: every arm ranks its own rows
+   * (`row_number()` by its rank, recency, id), a row scores `Σ 1 / (RRF_K + r)` over the arms
+   * that hold it, and `limit` applies to the fused order. A row both arms hold — an exact
+   * subject word — outranks one only the body holds. The cost is ranking every match of each
+   * arm, which the one-arm `order by … limit` already paid for the lexical arm.
+   */
+  private fusedArm(where: SQL, arms: Array<{ pred: SQL; rank: SQL }>, limit: number): SQL {
+    const ranked = arms.map((a) => sql`
+      select m.id as id, row_number() over (order by ${a.rank} desc, m.date desc nulls last, m.id desc) as r
+      ${this.from}
+      where ${where} and ${a.pred}`);
+    return sql`
+      with arms as (${sql.join(ranked, sql` union all `)}),
+      fused as (select id, sum(1.0 / (${sql.raw(String(RRF_K))} + r)) as score from arms group by id)
+      select m.id
+      from fused f join messages m on m.id = f.id
+      order by f.score desc, m.date desc nulls last, m.id desc
+      limit ${limit}`;
   }
 
   // ── the user-chosen orders ────────────────────────────────────────────────

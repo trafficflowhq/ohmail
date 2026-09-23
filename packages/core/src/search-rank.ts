@@ -137,11 +137,10 @@ export function compoundForms(text: string): string[] {
 }
 
 /**
- * Does this query hold a character no word-splitter keeps? The gate on the SQL door's verbatim
- * arm: an unconditional substring scan would widen every search to an unindexed `ILIKE` and
- * change what a match means — `pha` would start finding `Alpha/Beta`. A punctuated query is the
- * case where the lexical arm can be confidently wrong, and the only case that pays. Whitespace is
- * not punctuation: a two-word query is two lexemes and the lexical arm handles it.
+ * Does this query hold a character no word-splitter keeps? The SQL door's substring arm opens for
+ * any query of a trigram's width (`axa` inside `myAXA`, served by the trigram indexes) and for a
+ * punctuated one below it: there the lexical arm can be confidently wrong, since `pha/Bet` is one
+ * lexeme. Whitespace is not punctuation: a two-word query is two lexemes.
  */
 export function holdsPunctuation(q: string): boolean {
   return /[^\p{L}\p{N}\s]/u.test(q);

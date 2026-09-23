@@ -549,6 +549,7 @@ export {
   type TrashRowWire,
   type FetchBodiesFn,
   type ServerSearchOutcome,
+  errorClassOf,
   SERVER_ADDRESS_DIRECTIONS,
   SERVER_ADDRESS_DIRECTIONS_SERVED,
   type ServerAddressDirection,

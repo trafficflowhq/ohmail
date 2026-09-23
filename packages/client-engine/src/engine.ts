@@ -1001,7 +1001,20 @@ function olderFirst(a: { id: string; t: number }, b: { id: string; t: number }):
 export type ServerSearchOutcome =
   | { state: "unavailable" }
   | { state: "ready"; items: EngineMessage[]; total: number; tier: SearchTier }
-  | { state: "failed"; error: string };
+  /** `errorClass` is what a log line may carry ({@link errorClassOf}); `error` is the text. */
+  | { state: "failed"; error: string; errorClass: string };
+
+/**
+ * A failure's CLASS for a log line — its name, and a refusal's status and classified code —
+ * never its message, which can carry what the person typed or what the server said about them.
+ * A thrown non-Error is named by its type alone.
+ */
+export function errorClassOf(err: unknown): string {
+  if (!(err instanceof Error)) return typeof err;
+  const { status, code } = err as { status?: unknown; code?: unknown };
+  const parts = [err.name, typeof status === "number" ? String(status) : "", typeof code === "string" ? code : ""];
+  return parts.filter((x) => x !== "").join(" ");
+}
 
 /**
  * THE ARCHIVE'S ANSWER ABOUT ONE ADDRESS. It never rejects — the outcome is a value the UI
@@ -6959,7 +6972,10 @@ export class OhmailEngine {
     const inFlight = this.serverSearches.get(key);
     if (inFlight) return inFlight;
 
-    const request = fn(q, opts)
+    // Through a resolved promise, so a transport that throws SYNCHRONOUSLY lands in the `catch`
+    // below as a failed outcome — called bare, the throw rejected this method, which never rejects.
+    const request = Promise.resolve()
+      .then(() => fn(q, opts))
       .then((wire): ServerSearchOutcome => {
         // `null` ⇒ this transport serves no archive. Same shape as `fetchBody`'s `null`, and
         // it must not become an empty `ready`: "we searched everything and found nothing" is
@@ -6978,6 +6994,7 @@ export class OhmailEngine {
       .catch((err: unknown): ServerSearchOutcome => ({
         state: "failed",
         error: err instanceof Error ? err.message : String(err),
+        errorClass: errorClassOf(err),
       }))
       .finally(() => {
         this.serverSearches.delete(key);
