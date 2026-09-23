@@ -12,8 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   answerLeavesNotificationsOff,
   markOrganizerNotificationAsked,
-  notificationsOffHere,
-  readNotificationsEnabled,
+  recordLiveNotificationState,
   requestOrganizerNotification,
   shouldAskForOrganizerNotification,
 } from "../engine/notification-permission";
@@ -41,13 +40,10 @@ export function useNotifyPermission(): NotifyPermissionGate {
    */
   useEffect(() => {
     let alive = true;
-    void (async () => {
-      const host = nativeNotificationPermission();
-      const enabled = await readNotificationsEnabled(host);
-      if (!alive || enabled === null) return;
-      if (notificationsOffHere(host.platform, enabled)) sayNotificationsOff();
-      else sayNotificationsOn();
-    })();
+    void recordLiveNotificationState(nativeNotificationPermission(), {
+      off: () => { if (alive) sayNotificationsOff(); },
+      on: () => { if (alive) sayNotificationsOn(); },
+    });
     return () => { alive = false; };
   }, []);
   /* The press waiting on the sheet. A ref and not state: it is resolved from a callback, and a

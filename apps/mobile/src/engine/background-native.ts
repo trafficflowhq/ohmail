@@ -18,6 +18,8 @@ interface OrganizerServiceNative {
   stop(): Promise<void>;
   isRunning(): boolean;
   isRestricted(): boolean;
+  /** `OrganizerService.canPostNotification` — the gate `start` answers `false` from. */
+  canPostNotification(): boolean;
   /** Says this runtime is still running; answers whether the service is still up. */
   beat(): boolean;
   beatIntervalMs(): number;
@@ -26,6 +28,16 @@ interface OrganizerServiceNative {
 
 /** The event the Kotlin half emits for the action AND for a swipe-dismiss — one name, one act. */
 export const STOP_REQUESTED_EVENT = "onStopRequested";
+
+/**
+ * THE SERVICE'S OWN NOTIFICATION GATE, for the panel and the start press — the same Kotlin function
+ * `start` refuses on, so what Settings says and what the service does cannot come apart. `null`
+ * where the module is absent (iOS), which the caller reads as "could not ask", never as off.
+ */
+export function organizerCanPostNotification(): boolean | null {
+  const mod = requireOptionalNativeModule<OrganizerServiceNative>("OhmailOrganizerService");
+  return mod === null ? null : mod.canPostNotification();
+}
 
 export function nativeBackgroundService(): BackgroundService | null {
   const mod = requireOptionalNativeModule<OrganizerServiceNative>("OhmailOrganizerService");

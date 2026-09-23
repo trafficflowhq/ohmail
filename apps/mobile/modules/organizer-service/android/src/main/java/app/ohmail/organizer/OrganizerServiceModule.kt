@@ -22,7 +22,8 @@ import expo.modules.kotlin.modules.ModuleDefinition
  * of them is the same and it is not an error report: hand the mailbox back and organize only while
  * open.
  *
- *  · `POST_NOTIFICATIONS` refused (API 33+) — the service would run behind nothing;
+ *  · notifications off — `POST_NOTIFICATIONS` refused (API 33+), the app's switch below 33 — the
+ *    service would run behind nothing;
  *  · a background start refused (`ForegroundServiceStartNotAllowedException`, API 31+);
  *  · the system restricting background work at all (battery saver, per-app restriction).
  *
@@ -131,5 +132,12 @@ class OrganizerServiceModule : Module() {
     Function("isRunning") { OrganizerService.running }
 
     Function("isRestricted") { OrganizerService.isRestricted(context) }
+
+    /**
+     * THE GATE `start` REFUSES ON, for the panel's sentence and the start press. Below API 33 the
+     * permission does not exist, so JS cannot read this fact any other way; the same function
+     * answers both sides so "Notifications are off" is said only where `start` would refuse.
+     */
+    Function("canPostNotification") { OrganizerService.canPostNotification(context) }
   }
 }

@@ -178,9 +178,11 @@ class OrganizerService : Service() {
     }
 
     /**
-     * CAN THE NOTIFICATION BE SEEN? A refused `POST_NOTIFICATIONS` (API 33+) leaves the service
-     * running behind nothing, and "behind a notification you can see" would be false. The caller
-     * answers `false` to JS and the mailbox is handed back.
+     * CAN THE NOTIFICATION BE SEEN? A refused `POST_NOTIFICATIONS` (API 33+) or, below 33, the
+     * app's notifications switched off leaves the service running behind nothing, and "behind a
+     * notification you can see" would be false. The caller answers `false` to JS and the mailbox
+     * is handed back. From 33 Android answers this from the permission, so it is one fact on every
+     * level; JS reads this same function below 33 (`Function("canPostNotification")`).
      */
     fun canPostNotification(context: Context): Boolean =
       NotificationManagerCompat.from(context).areNotificationsEnabled()

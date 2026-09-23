@@ -5,7 +5,8 @@
  * refuses to start without it, so `background.ts` hands the mailbox back and the phone organizes
  * only while the app is open. Asked at the press that starts organizing here and nowhere else;
  * never at launch, where it would be a dialog in front of somebody who only opened their mail.
- * The rules live here and the four platform calls in `notification-permission-native.ts`, so the
+ * Below 33 there is nothing to ask: the app's notification switch is the fact, on by default.
+ * The rules live here and the platform calls in `notification-permission-native.ts`, so the
  * node suite drives every decision through {@link NotificationPermissionHost}.
  */
 
@@ -13,19 +14,21 @@
 export type NotificationAnswer = "granted" | "denied" | "blocked";
 
 /**
- * The platform calls, behind a seam. `enabled` and `request` are the OS's; `readAsked`/`writeAsked`
- * are the per-install record that stops the sentence below from being shown twice.
+ * The platform calls, behind a seam. `apiLevel`, the two reads and `request` are the OS's;
+ * `readAsked`/`writeAsked` are the per-install record that stops the sentence below from being
+ * shown twice. Both reads are live answers, never a copy: a remembered "off" goes stale the moment
+ * somebody switches notifications on in system settings.
  */
 export interface NotificationPermissionHost {
   /** `Platform.OS`. iOS has no organizer notification and therefore nothing to ask for. */
   readonly platform: string;
-  /**
-   * Are notifications enabled for this app RIGHT NOW — the OS's own live answer, never a copy.
-   * A remembered "denied" goes stale the moment somebody grants it in system settings, and a
-   * panel reading that copy would state a refusal the phone no longer holds.
-   */
-  enabled(): Promise<boolean>;
-  /** Show the OS prompt. Only {@link askForOrganizerNotification} may call it. */
+  /** Android's `SDK_INT`; `0` where the platform is not Android. */
+  readonly apiLevel: number;
+  /** `POST_NOTIFICATIONS` as `PermissionsAndroid.check` reads it. Undefined, so `false`, below 33. */
+  permissionGranted(): Promise<boolean>;
+  /** `OrganizerService.canPostNotification` — `areNotificationsEnabled()`, the service's own gate. */
+  switchOn(): Promise<boolean>;
+  /** Show the OS prompt. Only a press that {@link shouldAskForOrganizerNotification} admitted. */
   request(): Promise<NotificationAnswer>;
   /** The per-install record: `true` once this install has asked. Never un-written. */
   readAsked(): Promise<boolean>;
@@ -45,10 +48,29 @@ export function notificationBacksOrganizing(platform: string): boolean {
   return platform === "android";
 }
 
+/** The first Android level that has `POST_NOTIFICATIONS`, and so the only one with a prompt. */
+export const NOTIFICATION_PERMISSION_API = 33;
+
 /**
- * SHOULD THIS PRESS ASK? Three noes and one yes, and the noes are not the same no.
+ * CAN THIS PHONE SHOW THE ORGANIZER'S NOTIFICATION — the question `OrganizerService` asks before it
+ * starts, and the one answer the panel's sentence and the start press read.
+ *
+ * Below API 33 the permission does not exist and checking it answers `false` on every phone, so
+ * the fact is the app's notification switch: the service's own gate, read through the module. From
+ * 33 Android keeps the permission and that switch as one fact, so the permission is read once.
+ */
+export async function organizerNotificationEnabled(
+  host: NotificationPermissionHost,
+): Promise<boolean> {
+  if (host.apiLevel >= NOTIFICATION_PERMISSION_API) return host.permissionGranted();
+  return host.switchOn();
+}
+
+/**
+ * SHOULD THIS PRESS ASK? Four noes and one yes, and the noes are not the same no.
  *
  *  · not this platform — there is no notification to permit (iOS);
+ *  · below API 33 — there is no system prompt, so the sheet would lead to nothing;
  *  · already enabled — a prompt would be a dialog about nothing;
  *  · asked before — Android never shows the dialog twice, so re-requesting would put OUR
  *    sentence in front of an OS prompt that never appears: the re-prompt loop, made invisible.
@@ -59,8 +81,9 @@ export async function shouldAskForOrganizerNotification(
   host: NotificationPermissionHost,
 ): Promise<boolean> {
   if (!notificationBacksOrganizing(host.platform)) return false;
+  if (host.apiLevel < NOTIFICATION_PERMISSION_API) return false;
   try {
-    if (await host.enabled()) return false;
+    if (await organizerNotificationEnabled(host)) return false;
     return !(await host.readAsked());
   } catch {
     return false;
@@ -112,7 +135,7 @@ export function answerLeavesNotificationsOff(answer: NotificationAnswer): boolea
 }
 
 /**
- * IS THE OFF-STATE TRUE FOR THIS PHONE — `enabled` as the OS last answered it.
+ * IS THE OFF-STATE TRUE FOR THIS PHONE — {@link organizerNotificationEnabled} as last answered.
  *
  * `null` is "nobody has asked the OS yet" and is its own state: it is the value before the first
  * read settles, and reading it as "off" would put "Notifications are off" under a chip a second
@@ -132,8 +155,22 @@ export async function readNotificationsEnabled(
 ): Promise<boolean | null> {
   if (!notificationBacksOrganizing(host.platform)) return null;
   try {
-    return await host.enabled();
+    return await organizerNotificationEnabled(host);
   } catch {
     return null;
   }
+}
+
+/**
+ * THE PANEL'S RECORD, FROM THE LIVE ANSWER — what the hook runs when Settings or the door mounts.
+ * `null` ("could not ask") moves nothing; otherwise the record follows the phone both ways.
+ */
+export async function recordLiveNotificationState(
+  host: NotificationPermissionHost,
+  say: { off(): void; on(): void },
+): Promise<void> {
+  const enabled = await readNotificationsEnabled(host);
+  if (enabled === null) return;
+  if (notificationsOffHere(host.platform, enabled)) say.off();
+  else say.on();
 }
