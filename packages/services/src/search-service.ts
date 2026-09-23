@@ -1,7 +1,7 @@
 import { sql, type SQL } from "drizzle-orm";
 import { holdsPunctuation, showSimilar, type SearchTier } from "@trafficflow/core/search-rank";
 import type { ServiceContext, Db } from "./context.js";
-import { dialect, pgOnly, type Dialect } from "@trafficflow/db/dialect";
+import { boolLiteral, dialect, pgOnly, type Dialect } from "@trafficflow/db/dialect";
 import { materializeMessages } from "./dto/materialize.js";
 import { clampLimit } from "./pagination.js";
 import { ServiceError } from "./errors.js";
@@ -616,8 +616,9 @@ export class SearchService {
     const preds: SQL[] = [sql`m.account_id = ${accountId}`, sql`m.deleted_at is null`];
     if (f.folder !== undefined) preds.push(sql`${this.folderExpr} = ${f.folder}`);
     if (f.sender !== undefined) preds.push(sql`lower(m.from_address) = lower(${f.sender})`);
-    if (f.unread !== undefined) preds.push(sql`m.unread = ${f.unread}`);
-    if (f.hasAttachments !== undefined) preds.push(sql`m.has_attachments = ${f.hasAttachments}`);
+    // Literals, not bound booleans — see `boolLiteral`.
+    if (f.unread !== undefined) preds.push(sql`m.unread = ${boolLiteral(f.unread)}`);
+    if (f.hasAttachments !== undefined) preds.push(sql`m.has_attachments = ${boolLiteral(f.hasAttachments)}`);
     if (f.dateFrom !== undefined) {
       preds.push(sql`m.date >= ${d.ts(SearchService.instantOr400(f.dateFrom, "dateFrom"))}`);
     }

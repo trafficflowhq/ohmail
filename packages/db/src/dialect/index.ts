@@ -487,6 +487,16 @@ export function dialect(db: unknown): Dialect {
   return dialectOf(db) === "sqlite" ? sqliteDialect() : pgDialect();
 }
 
+/**
+ * A JavaScript boolean as the literal both stores read — never a bound parameter. `node:sqlite`
+ * refuses a boolean by position and a host that accepts one coerces it by its own rule, so a
+ * raw fragment comparing against a boolean column writes `TRUE`/`FALSE` (the device store has
+ * read them as 1/0 since 3.23). Not a {@link Dialect} member: the spelling is the same on both.
+ */
+export function boolLiteral(value: boolean): SQL {
+  return value ? sql`TRUE` : sql`FALSE`;
+}
+
 /** A fragment naming a column or expression, whatever the caller had in hand. */
 export function frag(value: SQL | unknown): SQL {
   return sql`${value}`;

@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { flagState } from "./schema-mail.js";
+import { boolLiteral } from "./dialect/index.js";
 import type { Tx } from "./change-log.js";
 
 /**
@@ -23,7 +24,8 @@ export async function upsertDesiredSeen(
     target: flagState.messageId,
     set: {
       desiredSeen, lastSetBy: "us", conflict: false, updatedAt: now,
-      reconcileStatus: sql`case when ${flagState.observedSeen} = ${desiredSeen} then 'reconciled' else 'pending' end`,
+      // A literal, not a bound boolean: the device store's test driver refuses one by position.
+      reconcileStatus: sql`case when ${flagState.observedSeen} = ${boolLiteral(desiredSeen)} then 'reconciled' else 'pending' end`,
     },
   });
 }
