@@ -3,11 +3,10 @@
  *
  * On Android 13+ `POST_NOTIFICATIONS` starts DENIED and the organizer's foreground service
  * refuses to start without it, so `background.ts` hands the mailbox back and the phone organizes
- * only while the app is open. Asked at the press that starts organizing here and nowhere else;
- * never at launch, where it would be a dialog in front of somebody who only opened their mail.
- * Below 33 there is nothing to ask: the app's notification switch is the fact, on by default.
- * The rules live here and the platform calls in `notification-permission-native.ts`, so the
- * node suite drives every decision through {@link NotificationPermissionHost}.
+ * only while the app is open. Asked at the press that starts organizing, never at launch; below
+ * 33 there is nothing to ask, and the app's notification switch is the fact. The rules live here
+ * and the platform calls in `notification-permission-native.ts`, so the node suite drives every
+ * decision through {@link NotificationPermissionHost}.
  */
 
 /** What the OS answered. `blocked` is Android's "never ask again". */
@@ -70,8 +69,7 @@ export async function organizerNotificationEnabled(
 /**
  * SHOULD THIS PRESS ASK? Four noes and one yes, and the noes are not the same no.
  *
- *  · not this platform — there is no notification to permit (iOS);
- *  · below API 33 — there is no system prompt, so the sheet would lead to nothing;
+ *  · not this platform (iOS), or below API 33 — there is no system prompt to put a sheet before;
  *  · already enabled — a prompt would be a dialog about nothing;
  *  · asked before — Android never shows the dialog twice, so re-requesting would put OUR
  *    sentence in front of an OS prompt that never appears: the re-prompt loop, made invisible.
