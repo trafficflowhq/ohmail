@@ -214,7 +214,7 @@ export interface OpenLocalDb {
    */
   laneCensus(): StoreLaneCensus | null;
   /**
-   * Refresh the search table's planner statistics when they are missing or stale — see
+   * Refresh the search's planner statistics, per table the arms read, when missing or stale — see
    * {@link analyzeSearchIfStale}. `true` when an ANALYZE ran. The phone's store answers `false`.
    */
   analyzeSearchIfStale(): Promise<boolean>;
@@ -445,25 +445,28 @@ export async function setUpLocalSearch(db: LocalDb, log?: Diagnostic): Promise<v
   }
 }
 
+/** The tables the search arms read, whose planner statistics the store keeps. */
+export const SEARCH_STATISTICS_TABLES = ["messages", "message_search", "message_bodies", "folder_state"] as const;
+
 /**
- * THE SEARCH TABLE'S PLANNER STATISTICS — what autovacuum keeps on the server and PGlite never
- * does. Without them the store's search arms plan on defaults: measured at 74k messages, the page
- * p95 for "invoice" was 242 ms unanalyzed and 62 ms analyzed. The server's own threshold decides,
- * read from a count because PGlite does not flush its pgstat counters: never analyzed while it
- * holds rows, or 50 + 10 % of its rows different since. A failed read or ANALYZE answers false.
+ * THE SEARCH'S PLANNER STATISTICS — what autovacuum keeps on the server and PGlite never does.
+ * Per table the arms read, stale when it holds rows and has no column statistics (an index build
+ * sets the row count and nothing else), or by the server's threshold read from a count, as PGlite
+ * does not flush its pgstat counters: 50 + 10 % of its rows different since. Measured on a large
+ * store, the page read up to a second with `messages` never analyzed. `true` when an ANALYZE ran.
  */
 export async function analyzeSearchIfStale(client: PGlite): Promise<boolean> {
   try {
-    const r = await client.query<{ n: number; rt: number }>(
-      `SELECT (SELECT count(*) FROM public.message_search)::int AS n,
-              COALESCE((SELECT c.reltuples FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
-                         WHERE ns.nspname = 'public' AND c.relname = 'message_search'), -1)::float8 AS rt`,
+    const r = await client.query<{ t: string; n: number; rt: number; read: boolean }>(
+      SEARCH_STATISTICS_TABLES.map((t) => `SELECT '${t}' AS t, (SELECT count(*) FROM public.${t})::int AS n,
+         COALESCE((SELECT c.reltuples FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
+                    WHERE ns.nspname = 'public' AND c.relname = '${t}'), -1)::float8 AS rt,
+         EXISTS (SELECT 1 FROM pg_stats s WHERE s.schemaname = 'public' AND s.tablename = '${t}') AS read`).join(" UNION ALL "),
     );
-    const n = Number(r.rows[0]?.n ?? 0);
-    const rt = Number(r.rows[0]?.rt ?? -1);
-    if (!(n > 0 && (rt < 0 || Math.abs(n - rt) > 50 + 0.1 * Math.max(rt, 0)))) return false;
-    await client.exec("ANALYZE public.message_search");
-    return true;
+    const stale = r.rows.filter(({ n, rt, read }) =>
+      n > 0 && (!read || rt < 0 || Math.abs(n - rt) > 50 + 0.1 * Math.max(rt, 0)));
+    for (const { t } of stale) await client.exec(`ANALYZE public.${t}`);
+    return stale.length > 0;
   } catch {
     return false;
   }

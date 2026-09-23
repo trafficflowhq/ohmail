@@ -211,6 +211,7 @@ import { handleWindowSyncFailure, WINDOW_SYNC_FAILED_ROUTE } from "./window-repo
 import { createAttentionClock } from "./attention.js";
 import { createHostPower } from "./host-power.js";
 import { startSearchIndexBackfill } from "./search-backfill.js";
+import { createStatisticsUpkeep } from "./store-statistics.js";
 import { SEARCH_INDEX_ROUTE, createSearchIndexDoor } from "./search-index-door.js";
 import { createFirstSyncReporter, createFirstSyncTracker } from "./first-sync.js";
 import type { Diagnostic } from "./log.js";
@@ -1604,6 +1605,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
   config.onPhase?.("preparing");
   try {
     const db = opened.db;
+    // The search's planner statistics after a drain took mail — PGlite has no autovacuum.
+    const statisticsUpkeep = createStatisticsUpkeep(() => opened.analyzeSearchIfStale());
     const tWorld = Date.now();
     const world = await ensureLocalWorld(db, { address, ...(config.displayName ? { displayName: config.displayName } : {}), now: now() });
     const session = await mintLaunchSession(db, world, now());
@@ -5186,6 +5189,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            mark across the WHOLE drain, so a cycle that only applied queued commands is caught
            there, on a read that drain already pays. */
         if (cycles > 0 && census.observed > 0 && (await opened.foldIfLogGrew()).folded) checkpoints += 1;
+        if (cycles > 0 && census.observed > 0) await statisticsUpkeep.noteIngested(census.observed);
         /* ONE LINE PER DRAIN, WRITTEN AT THE DRAIN'S END — a settled mailbox emits it every poll
            interval, so it stays quiet; a slow or spinning drain is the line that shows it.
            `slowestMs` above the poll interval is the signal to chase. It reports the WHOLE drain,
@@ -7019,7 +7023,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           ingesting: ingestIsRunning,
           power: hostPower,
           log,
-          // PGlite has no autovacuum: the search table's statistics are the store's to keep.
+          // PGlite has no autovacuum: the statistics of the tables search reads are the store's to keep.
           maintain: () => opened.analyzeSearchIfStale(),
           ...(config.searchBackfillTiming ?? {}),
         })

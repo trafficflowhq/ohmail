@@ -29,8 +29,12 @@ const RRF_SCALE = 1_000_000_000;
 const SUBSTRING_MIN_CHARS = 3;
 /** The page ceiling for search — each arm reads {@link SEARCH_ARM_FACTOR} pages' worth. */
 const SEARCH_PAGE_MAX = 50;
-/** Each arm's cut, in pages: RRF fuses the top `factor × page` of every arm, never a whole id set. */
-const SEARCH_ARM_FACTOR = 8;
+/**
+ * Each arm's cut, in pages: RRF fuses the top `factor × page` of every arm, never a whole id set.
+ * Four, the floor: a recency arm's walk and the typo tier's similarity checks are proportional to it.
+ * Paired against eight on the desktop's own store, the typo page went 95 to 59 ms p95.
+ */
+const SEARCH_ARM_FACTOR = 4;
 /**
  * A RANKED arm ranks only its newest `window × page` candidates: ranking every match of a broad
  * word costs one rank per match, where the newest window is read off the History index in order
@@ -102,10 +106,11 @@ export const SEARCH_QUERY_MAX_CHARS = 200;
 /**
  * WHAT ONE ANSWER CARRIES. `both` (the default) is the page, the exact `total` and the facets;
  * `page` is the first page alone, so a search answers at index speed — `total` is then the
- * fused candidates' count, exact only when `totalExact`; `summary` is the exact `total` and the
- * facets with no rows, the second answer a caller asks for when the first was cut.
+ * fused candidates' count, exact only when `totalExact`; `estimate` is the count and facets over
+ * those candidates with no rows — exact when `totalExact`, else `totalEstimate` says about how
+ * many; `summary` is the exact `total` and facets, asked only when the estimate was not exact.
  */
-export const SEARCH_PARTS = ["both", "page", "summary"] as const;
+export const SEARCH_PARTS = ["both", "page", "summary", "estimate"] as const;
 export type SearchParts = (typeof SEARCH_PARTS)[number];
 
 /** Narrow an untrusted string to a {@link SearchParts}. */
@@ -127,7 +132,7 @@ export interface SearchOptions {
 
 export interface SearchResult {
   items: MessageDTO[];
-  /** `null` when only the page was asked for (`parts: "page"`). */
+  /** `null` when only the page was asked for (`parts: "page"`); over the candidates for `estimate`. */
   facets: Facets | null;
   /** How many messages match, over the tier being returned — never over both tiers. */
   total: number;
@@ -136,8 +141,8 @@ export interface SearchResult {
   /** `false` when `total` is a lower bound: the page alone was asked for and an arm was cut. */
   totalExact: boolean;
   /**
-   * With `parts: "page"` and a cut arm: about how many match — the planner's estimate for each
-   * cut arm, the largest of them, read from statistics and no row. `parts: "summary"` is exact.
+   * With `parts: "page"` or `"estimate"` and a cut arm: about how many match — the planner's
+   * estimate for each cut arm, the largest of them, read from statistics and no row.
    */
   totalEstimate?: number;
   /** This answer's server time in milliseconds. */
@@ -172,6 +177,13 @@ interface SearchSummary {
   facets: Facets;
   tier: SearchTier;
   indexed?: { done: number; total: number };
+}
+
+/** The counts over the fused candidates: the whole match set exactly when no arm was cut. */
+interface SearchEstimate extends SearchSummary {
+  exact: boolean;
+  /** When cut: the planner's estimate of the match set, as the page's. */
+  estimate: number | null;
 }
 
 export interface Facets {
@@ -437,6 +449,40 @@ export class SearchService {
   }
 
   /**
+   * One tier's arms as the named statements `a0…` cut at K, their `(id, r)` rows and each one's
+   * size (named apart: positional rows collapse same-named columns on the server's driver). The
+   * typo tier ranks its newest K only: every candidate costs one similarity, and the tier is a
+   * guess list, where the closest recent guesses are the useful ones.
+   */
+  private fusedArms(d: Dialect, where: SQL, arms: readonly Arm[], tier: SearchTier, limit: number): {
+    k: number; named: SQL; all: SQL; sizes: SQL[];
+  } {
+    const k = SEARCH_ARM_FACTOR * limit;
+    const window = tier === "similar" ? k : SEARCH_RANK_WINDOW_FACTOR * limit;
+    const armSqls = arms.map((a) => this.armSql(where, a, k, window));
+    const a = (i: number): SQL => sql.raw("a" + String(i));
+    return {
+      k,
+      named: sql.join(armSqls.map((x, i) => sql`${a(i)} as (${x})`), sql`, `),
+      all: sql.join(armSqls.map((_, i) => sql`select id, r from ${a(i)}`), sql` union all `),
+      sizes: armSqls.map((_, i) => sql`${d.castInt(sql`(select count(*) from ${a(i)})`)} as ${sql.raw("n" + String(i))}`),
+    };
+  }
+
+  /**
+   * THE ESTIMATE of a cut match set, off the index and the statistics: an arm under its cut is
+   * counted exactly by its own size, a cut arm by the planner's expected rows; the union is at
+   * least its largest arm and at least the candidates it fused.
+   */
+  private async estimateOf(
+    ctx: ServiceContext, d: Dialect, where: SQL, arms: readonly Arm[], sizes: readonly number[], k: number, candidates: number,
+  ): Promise<number> {
+    const perArm = await Promise.all(arms.map(async (a, i) => (sizes[i]! < k ? sizes[i]!
+      : (await d.search.estimateRows(ctx.db, this.unionSql(where, [a]))) ?? sizes[i]!)));
+    return Math.max(candidates, ...perArm);
+  }
+
+  /**
    * ONE PAGE — the first response, with nothing counted on its path. Relevance: the arms' top-K,
    * fused by reciprocal rank and paged by `(score, date, id)`. A chosen order: the union of the
    * arms' predicates, walked by its own keyset. The tier is the exact tier unless it has no row.
@@ -480,22 +526,12 @@ export class SearchService {
       this.inSession(ctx, d, { tier, preferIndexes: true }, (db) => d.exec(db, statement));
     if (sort === "relevance") {
       if (cursor !== null && cursor.k !== "r") throw new ServiceError("validation_failed", 400, "cursor belongs to another order");
-      const k = SEARCH_ARM_FACTOR * limit;
-      // The typo tier ranks its newest K only: every candidate costs one similarity, and the
-      // tier is a guess list, where the closest recent guesses are the useful ones.
-      const window = tier === "similar" ? k : SEARCH_RANK_WINDOW_FACTOR * limit;
-      const armSqls = arms.map((a) => this.armSql(where, a, k, window));
-      const named = armSqls.map((a, i) => sql`${sql.raw("a" + String(i))} as (${a})`);
-      const all = sql.join(armSqls.map((_, i) => sql`select id, r from ${sql.raw("a" + String(i))}`), sql` union all `);
-      // Each arm's size, so the last page can say the fused set was cut. Uncorrelated: one read.
-      // Each named apart: positional rows collapse same-named columns on the server's driver.
-      const sizes = sql.join(armSqls.map((_, i) =>
-        sql`${d.castInt(sql`(select count(*) from ${sql.raw("a" + String(i))})`)} as ${sql.raw("n" + String(i))}`), sql`, `);
+      const { k, named, all, sizes } = this.fusedArms(d, where, arms, tier, limit);
       const after = cursor === null ? sql`` : sql`where (f.score < ${cursor.s} or (f.score = ${cursor.s} and ${afterDateDesc(d, cursor.d, cursor.i, sql`f.id`)}))`;
       const rows = await run(sql`
-        with ${sql.join(named, sql`, `)},
+        with ${named},
         fused as (select id, ${d.castInt(sql`sum(${sql.raw(String(RRF_SCALE))} / (${sql.raw(String(RRF_K))} + r))`)} as score from (${all}) x group by id)
-        select f.id, f.score, m.date, ${d.castInt(sql`(select count(*) from fused)`)} as fused, ${sizes}
+        select f.id, f.score, m.date, ${d.castInt(sql`(select count(*) from fused)`)} as fused, ${sql.join(sizes, sql`, `)}
         from fused f join messages m on m.id = f.id
         ${after}
         order by f.score desc, m.date desc nulls last, f.id desc
@@ -505,14 +541,7 @@ export class SearchService {
       const sizesOf = (rows[0] ?? []).slice(4).map((n) => Number(n));
       const cut = sizesOf.some((n) => n >= k);
       const candidates = Number(rows[0]?.[3] ?? 0);
-      // THE ESTIMATE, off the index and the statistics: an arm under its cut is counted exactly by
-      // its own size; a cut arm by the planner's expected rows. The union is at least its largest arm.
-      let estimate: number | null = null;
-      if (cut && cursor === null) {
-        const perArm = await Promise.all(arms.map(async (a, i) => (sizesOf[i]! < k ? sizesOf[i]!
-          : (await d.search.estimateRows(ctx.db, this.unionSql(where, [a]))) ?? sizesOf[i]!)));
-        estimate = Math.max(candidates, ...perArm);
-      }
+      const estimate = cut && cursor === null ? await this.estimateOf(ctx, d, where, arms, sizesOf, k, candidates) : null;
       return {
         rows: page.map((r) => ({ id: String(r[0]) })),
         next: rows.length > limit && last ? { k: "r", s: Number(last[1]), d: millisOf(last[2]), i: String(last[0]) } : null,
@@ -583,9 +612,44 @@ export class SearchService {
       counted = await this.facets(ctx, d, this.unionSql(where, await this.arms(ctx, d, q, "similar")), tier);
     }
     const { total, facets } = counted;
-    const built = await searchIndexBuilt(ctx.db as never, ctx.accountId);
-    const indexed = built ? undefined : await searchIndexProgress(ctx.db as never, ctx.accountId);
-    return { total, facets, tier, ...(indexed !== undefined && indexed.done < indexed.total ? { indexed } : {}) };
+    const indexed = await this.indexing(ctx);
+    return { total, facets, tier, ...(indexed ? { indexed } : {}) };
+  }
+
+  /**
+   * THE SUMMARY'S FIRST ANSWER, at the page's cost — the count and facets over the tier's fused
+   * candidates: the whole match set, exactly, when no arm was cut; otherwise the candidates as a
+   * lower bound, `estimate` from the statistics, and the facets over those candidates. The tier
+   * is the page's: exact unless it has no candidate.
+   */
+  async estimate(ctx: ServiceContext, opts: SearchOptions): Promise<SearchEstimate> {
+    const q = SearchService.termOf(opts.q);
+    if (!q) return { total: 0, facets: emptyFacets(), tier: "exact", exact: true, estimate: null };
+    const limit = SearchService.pageOf(opts.limit);
+    const d = dialect(ctx.db);
+    const where = this.whereSql(d, ctx.accountId, opts.filters ?? {});
+    const ofTier = async (t: SearchTier) => {
+      const arms = await this.arms(ctx, d, q, t);
+      const { k, named, all, sizes } = this.fusedArms(d, where, arms, t, limit);
+      const got = await this.facets(ctx, d, sql`select id from (${all}) x group by id`, t, { named, extras: sizes });
+      const cut = got.extras.some((n) => n >= k);
+      return { ...got, cut, estimate: cut ? await this.estimateOf(ctx, d, where, arms, got.extras, k, got.total) : null };
+    };
+    let tier: SearchTier = "exact";
+    let got = await ofTier(tier);
+    if (showSimilar(got.total)) {
+      tier = "similar";
+      got = await ofTier(tier);
+    }
+    const indexed = await this.indexing(ctx);
+    return { total: got.total, facets: got.facets, tier, exact: !got.cut, estimate: got.estimate, ...(indexed ? { indexed } : {}) };
+  }
+
+  /** This account's search documents while they are still being built, else nothing. */
+  private async indexing(ctx: ServiceContext): Promise<{ done: number; total: number } | undefined> {
+    if (await searchIndexBuilt(ctx.db as never, ctx.accountId)) return undefined;
+    const p = await searchIndexProgress(ctx.db as never, ctx.accountId);
+    return p.done < p.total ? p : undefined;
   }
 
   /**
@@ -605,6 +669,14 @@ export class SearchService {
       return {
         items: [], facets: s.facets, total: s.total, tier: s.tier, totalExact: true,
         nextCursor: null, bounded: false, ...(s.indexed ? { indexed: s.indexed } : {}), ms: ms(),
+      };
+    }
+    if (parts === "estimate") {
+      const e = await this.estimate(ctx, opts);
+      return {
+        items: [], facets: e.facets, total: e.total, tier: e.tier, totalExact: e.exact,
+        ...(e.estimate !== null ? { totalEstimate: e.estimate } : {}),
+        nextCursor: null, bounded: false, ...(e.indexed ? { indexed: e.indexed } : {}), ms: ms(),
       };
     }
     const page = await this.page(ctx, opts);
@@ -710,12 +782,15 @@ export class SearchService {
   }
 
   /**
-   * `total` and the facets over one tier's union — three passes, the first carrying the count, and
-   * the other two skipped when nothing matched.
+   * `total` and the facets over one tier's match set in ONE statement, the set read once — three
+   * statements read it three times, 0.3 s each for a broad word on the desktop's store. POSITIONAL
+   * rows `(kind, key, n, order, eight scalars, extras…)`: kind 0 the scalars and the caller's extra
+   * columns, 1 a folder, 2 a sender in the SQL's own order. `arms` names statements `ids` reads.
    */
   private async facets(
     ctx: ServiceContext, d: Dialect, ids: SQL, tier: SearchTier,
-  ): Promise<{ total: number; facets: Facets }> {
+    arms?: { named: SQL; extras: readonly SQL[] },
+  ): Promise<{ total: number; facets: Facets; extras: number[] }> {
     const now = ctx.now();
     const todayStart = new Date(now); todayStart.setUTCHours(0, 0, 0, 0);
     // The instant is a different literal on each store — an ISO string the server parses, a count
@@ -724,42 +799,46 @@ export class SearchService {
     const d7 = d.ts(new Date(todayStart.getTime() - 7 * 86_400_000));
     const d30 = d.ts(new Date(todayStart.getTime() - 30 * 86_400_000));
     const n = (e: SQL): SQL => d.castInt(e);
-    const base = sql`from (${ids}) u join messages m on m.id = u.id left join folder_state fs on fs.message_id = m.id`;
-    // Scalars (unread / hasAttachments / recency buckets) in one aggregate pass. POSITIONAL rows:
-    // the eight positions below are read by index, so a reorder here moves them together.
-    const scalarSql = sql`
-      select
-        ${n(sql`count(*) filter (where m.unread)`)} as unread_t,
-        ${n(sql`count(*) filter (where not m.unread)`)} as unread_f,
-        ${n(sql`count(*) filter (where m.has_attachments)`)} as att_t,
-        ${n(sql`count(*) filter (where not m.has_attachments)`)} as att_f,
-        ${n(sql`count(*) filter (where m.date >= ${today})`)} as d_today,
-        ${n(sql`count(*) filter (where m.date >= ${d7} and m.date < ${today})`)} as d_7,
-        ${n(sql`count(*) filter (where m.date >= ${d30} and m.date < ${d7})`)} as d_30,
-        ${n(sql`count(*) filter (where m.date is null or m.date < ${d30})`)} as d_older,
-        ${n(sql`count(*)`)} as total
-      ${base}`;
-    const folderSql = sql`select ${this.folderExpr} as folder, ${n(sql`count(*)`)} as c ${base} group by 1`;
-    const senderSql = sql`
-      select m.from_address as address, ${n(sql`count(*)`)} as c ${base}
-      group by 1 order by c desc, address asc limit ${SENDER_FACET_LIMIT}`;
-    const [scalarR, folderR, senderR] = await this.inSession(ctx, d, { tier, preferIndexes: true }, async (db) => {
-      const scalars = await d.exec(db, scalarSql);
-      if (Number(scalars[0]?.[8] ?? 0) === 0) return [scalars, [], []];
-      return [scalars, await d.exec(db, folderSql), await d.exec(db, senderSql)];
-    });
-    const s = (scalarR[0] ?? []).map((v) => Number(v ?? 0));
+    const extras = arms?.extras ?? [];
+    // Typed: a subquery's bare `null` reads as text on the server, and a union refuses the mix.
+    const nulls = sql.join(Array.from({ length: 8 + extras.length }, () => n(sql`null`)), sql`, `);
+    const scalars = [
+      sql`count(*) filter (where h.unread)`, sql`count(*) filter (where not h.unread)`,
+      sql`count(*) filter (where h.att)`, sql`count(*) filter (where not h.att)`,
+      sql`count(*) filter (where h.date >= ${today})`,
+      sql`count(*) filter (where h.date >= ${d7} and h.date < ${today})`,
+      sql`count(*) filter (where h.date >= ${d30} and h.date < ${d7})`,
+      sql`count(*) filter (where h.date is null or h.date < ${d30})`,
+    ].map((e, i) => sql`${n(e)} as ${sql.raw("c" + String(i))}`);
+    const statement = sql`
+      with ${arms ? sql`${arms.named}, ` : sql``}u as (${ids}),
+      h as (select m.unread as unread, m.has_attachments as att, m.date as date, m.from_address as addr, ${this.folderExpr} as folder
+            from u join messages m on m.id = u.id left join folder_state fs on fs.message_id = m.id)
+      select 0 as k, null as key, ${n(sql`count(*)`)} as n, 0 as o, ${sql.join([...scalars, ...extras], sql`, `)} from h
+      union all
+      select 1, folder, ${n(sql`count(*)`)}, 0, ${nulls} from h group by folder
+      union all
+      select * from (
+        select 2 as k, addr as key, ${n(sql`count(*)`)} as n, ${n(sql`row_number() over (order by count(*) desc, addr asc)`)} as o, ${nulls}
+        from h group by addr order by count(*) desc, addr asc limit ${SENDER_FACET_LIMIT}) s`;
+    const rows = await this.inSession(ctx, d, { tier, preferIndexes: true }, (db) => d.exec(db, statement));
+    const num = (v: unknown): number => Number(v ?? 0);
+    const head = rows.find((r) => num(r[0]) === 0) ?? [];
+    const s = head.slice(4, 12).map(num);
     const folder: Record<string, number> = {};
-    for (const row of folderR) folder[String(row[0])] = Number(row[1] ?? 0);
+    for (const r of rows) if (num(r[0]) === 1) folder[String(r[1])] = num(r[2]);
+    const sender = rows.filter((r) => num(r[0]) === 2).sort((a, b) => num(a[3]) - num(b[3]))
+      .map((r) => ({ address: String(r[1]), count: num(r[2]) }));
     return {
-      total: s[8] ?? 0,
+      total: num(head[2]),
       facets: {
         folder,
-        sender: senderR.map((r) => ({ address: String(r[0]), count: Number(r[1] ?? 0) })),
+        sender,
         unread: { true: s[0] ?? 0, false: s[1] ?? 0 },
         hasAttachments: { true: s[2] ?? 0, false: s[3] ?? 0 },
         date: { today: s[4] ?? 0, last7: s[5] ?? 0, last30: s[6] ?? 0, older: s[7] ?? 0 },
       },
+      extras: head.slice(12).map(num),
     };
   }
 
