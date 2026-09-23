@@ -117,8 +117,10 @@ async function render(): Promise<HTMLElement> {
   document.body.appendChild(mountPoint);
   root = createRoot(mountPoint);
   await act(async () => {
-    root!.render(h(IntlProvider, { locale: "en", messages: messages as never, timeZone: "UTC" },
-      h(ThemeProvider, { storageKey: "ohmail.theme" }, h(ToastHost, null, h(DesktopGate, null)))));
+    root!.render(h(IntlProvider, {
+      locale: "en", messages: messages as never, timeZone: "UTC",
+      children: h(ThemeProvider, { storageKey: "ohmail.theme", children: h(ToastHost, null, h(DesktopGate, null)) }),
+    }));
   });
   for (let i = 0; i < 20; i++) await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
   return mountPoint;
