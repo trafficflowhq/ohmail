@@ -18,6 +18,226 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.23.0] — 2026-09-23
+
+### Pressing send or retry after a lost answer replays the answer instead of doing the thing twice
+<!-- changes: api-023-keyed-effects.md -->
+
+A retried merge replays its answer instead of reporting that the conversations are gone; a workflow
+undo refuses a run the automation is still applying rather than half-reversing it; a send whose
+attachments are too large to carry inline presents its key before it re-uploads anything, so a
+storage hiccup no longer looks like a message that never left; and a staged attachment now says
+what its bytes are, which the send checks before the mail goes. Six creates that used to leave two
+rows on a retry now replay the first one.
+
+### Every sentence the app says about what you get is either true or gone
+<!-- changes: claims-023-false-promises.md -->
+
+The sign-in screen said an invite code was not needed even on a deployment that requires one, while
+the page it links to said the opposite. Both now say what the deployment actually asks for.
+
+A confirmed Screener run costs no more than the number you pressed. The price and the purchase are
+two steps, and a sender could go back to costing money in between; the run stops at the figure you
+confirmed and tells you which senders it did not reach.
+
+The demo reaches the network zero times, including on a page served from cache. Six reads went out
+before anything corrected it.
+
+And the product has one name for what it meters: credits, everywhere, including the message you get
+when they run out.
+
+### The model you have is the model the settings show
+<!-- changes: doors-023-provider-and-standalone.md -->
+
+The desktop's AI settings and the engine now agree about whether a configured model is present: an
+Ollama family name matches its installed tag on both sides, so a working configuration no longer
+reads as *Choose a model*. When a key cannot reach one of the model ids this app ships as defaults,
+the verification names the id and points at the list.
+
+### A Microsoft sign-in that has started takes the form with it
+<!-- changes: doors-023-provider-and-standalone.md#2 -->
+
+The connect form goes when the device code appears, so a second press cannot start a second
+sign-in. Cancelling or changing provider retires a sign-in that is still starting, and a ceremony
+restored after a reload waits for the mailbox list rather than opening under a form in use.
+
+### Screening a sender out unsubscribes on the standalone app
+<!-- changes: doors-023-provider-and-standalone.md#3 -->
+
+The standalone desktop app now sends the list's one-click unsubscribe on a screen-out, as the app
+has always said it would, with the switch in Settings to turn it off. Nothing is sent for a mailbox
+this install has not been allowed to organize.
+
+### Discarding a draft happens where you pressed it, and a send we could not confirm says so plainly
+<!-- changes: drafts-023-discard-and-delivery.md -->
+
+Discarding a draft asks and acts in the row you pressed, a discarded draft stays gone, and a
+message we could not confirm sending says so plainly — the app looks in your Sent folder itself for
+a day and offers to send again.
+
+### Composer: a space typed after a link no longer joins it, typing before a link never joins it, a web address before a full stop or comma is linked without the punctuation, inline code ends on a space and at a line break, arrow keys never type a space, and the toolbar lights exactly the marks the next letter carries.
+<!-- changes: editor-023-slack-feel.md -->
+
+A link ends where you stop typing it: the space after it, and everything after the space, is
+plain, and a letter typed before a link stays outside it even at the start of a line. Inline code
+behaves the same way at a space and at a line break, while bold, italic and strikethrough carry to
+the next line. The link button opens the address dialog and lights only while it is open.
+
+### Setup is about one mailbox at a time
+<!-- changes: firstrun-023-per-mailbox-truth.md -->
+
+Setting up a second mailbox showed the first one's numbers: the pull counters, the summary rows
+and the first decision it offered were counted over everything this device holds. They are this
+mailbox's now. Re-running setup for a mailbox that is no longer connected says so instead of
+showing the first-time connect form, which would have set the whole install up again. Connecting a
+mailbox while something else organizes your mail says at the door that it starts by reading, and
+"Start over" in Add mailbox lands on the connect form rather than an intro screen whose one button
+did nothing.
+
+### No account is erased while the metering program states no start instant
+<!-- changes: fix-023-epoch-belt-fails-closed.md -->
+
+The nightly account pass now erases nothing when the metering program's start instant is missing
+or unreadable. Before, a program that stated none was read as an older one and its erasure date
+was acted on alone. A self-hosted install has no metering program and never reaches this pass.
+
+### An install no longer stands itself down against its own renewed claim when two renewals land in the same instant or the clock steps back
+<!-- changes: fix-023-lapse-arm-race.md -->
+
+When two lease renewals of one install landed inside the same instant, or the computer's clock
+was set back between two polls, the install could read its own previous claim as another copy of
+itself, delete every claim it held and stop organizing — leaving the mailbox with no organizer
+until somebody pressed again. The renewal now recognises the record it is replacing, and an
+install that does lose the mailbox at that point leaves the winner's claim standing.
+
+### On Android 12 and older, the phone no longer says notifications are off while it organizes
+<!-- changes: fix-023-phone-notifications-below-api-33.md -->
+
+Android 12 and older has no notification permission, and the app read it anyway: Settings said
+notifications were off while organizing ran in the background, and starting organizing asked for
+a permission those versions do not have. On those versions the app now reads its notification
+setting, and it asks only on Android 13 and newer, where the system prompt exists.
+
+### Search finds a word inside another word, and always says whether your whole mailbox was searched
+<!-- changes: fix-023-search-verdict-and-substring.md -->
+
+Searching for part of a word now finds it inside a subject or a sender's address — "axa" finds
+"myAXA Portal" and mail from an axa address — and a phrase in quotes still matches only that
+phrase. The first page of results comes from the server in milliseconds and the line under the
+search box shows how long it took. That line always ends on one sentence: how many messages
+matched in your whole mailbox, that nothing matched, or that your server did not answer and the
+list shows what this device holds.
+
+### A message you act on leaves the list at once and stays gone
+<!-- changes: fix-023-stale-after-action.md -->
+
+On the desktop app paired to ohmail Cloud, a message you sent back to a later day, let in or
+screened out used to reappear in its old place for a few seconds before leaving for good. It now
+leaves when you press and does not come back, unless the action is refused — then it returns and
+the app says why.
+
+### A self-hosted server answers a busy sign-in in five seconds
+<!-- changes: fix-023-tier-reds.md -->
+
+On a self-hosted server, the sign-in check and the session refresh now answer "retry shortly" after
+five seconds when the database is busy, where they used to wait for as long as the work ahead of
+them ran.
+
+### Moving a message yourself teaches the rule that filed it, and being copied on a thread nobody answered no longer counts as knowing somebody
+<!-- changes: learn-023-what-a-move-teaches.md -->
+
+A message you move inside ohmail now corrects the rule that put it there, exactly as moving it in
+another mail client always did — two corrections inside a fortnight switch that rule off, through
+the counter that already existed. Three passes that used to leave a message alone because somebody
+on its thread had heard from you now ask whether you answered THIS sender, and none of them counts
+the away responder's automatic reply. Everyone you write to is added to your contacts at the send,
+so their first answer is not held at the Screener. And a message whose own provider says the
+sender address is forged can no longer become a correspondent on the strength of having arrived.
+
+### Older messages you load behave like any other, and a press that moves many now reaches a mailbox another install organizes
+<!-- changes: lists-023-older-rows-and-bulk.md -->
+
+A message fetched by "Load older" in the Ohbox can be selected, opened, picked and acted on like
+any row above it; before, it could only be looked at. A press that moves many messages at once —
+undoing a workflow run, or the opt-in re-route of an imported mailbox — now travels to the install
+that organizes the mailbox instead of being refused, as one record per message under one key, so
+pressing it twice moves nothing twice.
+
+### The mailbox row says what is true now: a stop you changed your mind about from another window stops reading Stopping, and the import card says what not answering costs
+<!-- changes: organizer-023-what-the-pane-says.md -->
+
+After you hand a mailbox back and then press "Organize here" on another computer or in another
+window, this window's row no longer keeps reading Stopping until Settings is reopened; the note a
+press leaves ends the moment the row answers. The confirm well under "Organize here" says that
+confirming is what starts the pass. The card that offers settings found on the mailbox says what
+happens while you leave it unanswered: the settings you make here stay here and do not travel with
+the mailbox.
+
+### A wrong setting is refused, and saved settings import back
+<!-- changes: robust-023-config-and-concurrency.md -->
+
+The worker refuses to start on a polling interval it cannot keep, naming the variable and the
+range. Database setup stops if it loses the connection holding its migration lock, and builds the
+fuzzy-search indexes without blocking writes. Saved settings fit the import on another computer:
+past 20 000 screened senders or a rule count of 5 000, they carry the newest, automatic rules left out first.
+Two browser tabs keep two separate messages in Compose.
+
+### A Screener row says which of your addresses a stranger wrote to, and Power Through works through the mail the screen shows
+<!-- changes: screener-023-the-screen-and-the-act.md -->
+
+On an account with more than one mailbox, every waiting sender now carries the address they wrote
+to, on the row and on the sheet where the decision is taken, and the sender's own display name
+travels with it. Power Through walks the "New for you" group as the screen shows it: mail you have
+put away, scheduled or resurfaced is no longer served or counted there, so the number on the
+screen and the mail behind the button are the same set. Stamps on the Screener now read the way
+stamps read everywhere else in the app.
+
+### Sending is quicker, and a message scheduled for a date that does not exist is refused instead of sent on another day
+<!-- changes: send-023-cold-dial-and-non-instants.md -->
+
+The connection ohmail opens to put a copy of a sent message in your Sent folder is kept for the
+next press instead of being opened again from nothing every time; on providers where opening it
+was the slowest part of sending, the second and later sends in a row skip that wait. A scheduled
+send is refused when its date does not exist (February 30) or names no time zone, rather than
+being moved to a date and time you did not choose.
+
+### A busy server is retried, not shown as a dead end
+<!-- changes: sessions-023-db-busy-door.md -->
+
+When the server's database is busy, the sign-in check and the session refresh stop waiting after
+five seconds instead of fifteen and answer with a "retry shortly"; the browser's session cookies
+are left exactly as they were.
+Each server instance now holds up to four database connections instead of one, so requests that
+arrive together are no longer queued behind a single connection. The page that links the desktop app
+retries a busy answer on its own, shows "The server is busy — retrying in N s", and keeps its
+button, where it used to stop on the server's message.
+
+### The desktop stays signed in to ohmail Cloud
+<!-- changes: sessions-023-desktop-cloud-durable.md -->
+
+A firewall page, a busy server or a dropped connection while the desktop app renews its ohmail Cloud
+session no longer signs it out. The app keeps showing the mail it has, says ohmail Cloud could not
+be reached, and retries on its own. Only a refusal from ohmail Cloud ends the session, and the
+sign-in form then says why. The session renews in the background before it lapses, and a computer
+that could not save its sign-in keeps the one it has.
+
+### Sign in on a new computer by confirming in your browser
+<!-- changes: sessions-023-device-approval.md -->
+
+"Sign in with browser" in the desktop app now opens ohmail.app on a page that names the computer
+asking to be signed in, with the network it asked from, and one Confirm signs it in; the app
+notices by itself, with no code to copy. On a desktop that was already set up for ohmail Cloud the
+app no longer asks for your address either. If your last second-factor check is more than a few
+minutes old, the page asks for one code or a passkey in place. "Not me" declines the request.
+Requests last five minutes and work once. A busy server makes the page and the app wait and try
+again rather than stop. The code you can type in is still there as the fallback.
+
+### Staying signed in on the web no longer depends on a busy server
+<!-- changes: sessions-023-web-durable.md -->
+
+When the server is busy or a connection drops, ohmail.app keeps you signed in and tries again
+instead of sending you to the sign-in form. When the form does appear, it says why.
+
 ## [0.22.1] — 2026-09-23
 
 ### In the admin console, clearing the Microsoft secret asks first and never discards a secret you just typed; a console page that fails to load says so instead of staying blank
@@ -7879,7 +8099,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.22.1...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.23.0
 [0.22.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.22.1
 [0.22.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.22.0
 [0.21.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.21.0

@@ -74,6 +74,36 @@
   </screenshots>
 
   <releases>
+    <release version="0.23.0" date="2026-09-23">
+      <description>
+        <ul>
+          <li>Pressing send or retry after a lost answer replays the answer instead of doing the thing twice</li>
+          <li>Every sentence the app says about what you get is either true or gone</li>
+          <li>The model you have is the model the settings show</li>
+          <li>A Microsoft sign-in that has started takes the form with it</li>
+          <li>Screening a sender out unsubscribes on the standalone app</li>
+          <li>Discarding a draft happens where you pressed it, and a send we could not confirm says so plainly</li>
+          <li>Composer: a space typed after a link no longer joins it, typing before a link never joins it, a web address before a full stop or comma is linked without the punctuation, inline code ends on a space and at a line break, arrow keys never type a space, and the toolbar lights exactly the marks the next letter carries.</li>
+          <li>Setup is about one mailbox at a time</li>
+          <li>No account is erased while the metering program states no start instant</li>
+          <li>An install no longer stands itself down against its own renewed claim when two renewals land in the same instant or the clock steps back</li>
+          <li>On Android 12 and older, the phone no longer says notifications are off while it organizes</li>
+          <li>Search finds a word inside another word, and always says whether your whole mailbox was searched</li>
+          <li>A message you act on leaves the list at once and stays gone</li>
+          <li>A self-hosted server answers a busy sign-in in five seconds</li>
+          <li>Moving a message yourself teaches the rule that filed it, and being copied on a thread nobody answered no longer counts as knowing somebody</li>
+          <li>Older messages you load behave like any other, and a press that moves many now reaches a mailbox another install organizes</li>
+          <li>The mailbox row says what is true now: a stop you changed your mind about from another window stops reading Stopping, and the import card says what not answering costs</li>
+          <li>A wrong setting is refused, and saved settings import back</li>
+          <li>A Screener row says which of your addresses a stranger wrote to, and Power Through works through the mail the screen shows</li>
+          <li>Sending is quicker, and a message scheduled for a date that does not exist is refused instead of sent on another day</li>
+          <li>A busy server is retried, not shown as a dead end</li>
+          <li>The desktop stays signed in to ohmail Cloud</li>
+          <li>Sign in on a new computer by confirming in your browser</li>
+          <li>Staying signed in on the web no longer depends on a busy server</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.22.1" date="2026-09-23">
       <description>
         <ul>
@@ -200,21 +230,6 @@
           <li>Suggestion copy and badges agree on every device</li>
           <li>A Screener decision covers the sender everywhere</li>
           <li>Suggestions appear everywhere the moment they are made</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.20.0" date="2026-09-19">
-      <description>
-        <ul>
-          <li>Resurfaced conversations appear once, with a badge when new mail arrived since</li>
-          <li>A device organizing one mailbox no longer resurfaces mail in a mailbox it has handed to another organizer</li>
-          <li>Change a mailbox's password without removing it</li>
-          <li>The Ohbox keeps arrival order on every device</li>
-          <li>A message keeps its place in the Ohbox when you read it</li>
-          <li>The phone reads out a conversation's badges — thread count, protection, history and new mail</li>
-          <li>A device that has handed its mailbox to another organizer no longer resurfaces mail on its own</li>
-          <li>Conversations show and read out their message count in every list, on the phone and in the web app</li>
-          <li>Screener suggestions arrive while you look</li>
         </ul>
       </description>
     </release>
