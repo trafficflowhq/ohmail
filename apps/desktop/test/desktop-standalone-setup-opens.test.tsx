@@ -272,6 +272,9 @@ describe("connecting on the standalone door opens guided setup", () => {
     const el = await render();
 
     await openDoor(el, "ohmail Cloud");
+    /* The first-run Cloud door opens on the browser approval; the password form is one press away,
+       and it is the one path here that signs in without a browser. */
+    await press(el, "Use my password instead");
     await type(el, "cloud-address", "someone@ohmail.app");
     await type(el, "cloud-password", "a-password-long-enough");
     await type(el, "cloud-totp", "123456");
