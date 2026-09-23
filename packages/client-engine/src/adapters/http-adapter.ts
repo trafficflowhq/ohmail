@@ -735,9 +735,10 @@ export class HttpAdapter implements EngineAdapter {
      * refused by the route rather than coerced, which is what makes that silence safe.
      */
     if (opts.sort !== undefined && opts.sort !== "relevance") q.set("sort", opts.sort);
+    if (opts.parts !== undefined) q.set("parts", opts.parts);
     const res = await this.request("GET", `/search?${q.toString()}`);
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json()) as { items?: EngineMessage[]; total?: number; tier?: string };
+    const wire = (await res.json()) as { items?: EngineMessage[]; total?: number; tier?: string; totalExact?: unknown; ms?: unknown };
     // Forward-compatible (§8): `facets` is deliberately unread — its folder keys are raw IMAP
     // paths, and the client keys its own facets by view id.
     return {
@@ -747,6 +748,8 @@ export class HttpAdapter implements EngineAdapter {
       // string, a deploy that predates the field — is `exact`. Read `ServerSearchWire.tier`
       // for why the unknown case takes that side rather than the cautious-looking one.
       tier: wire.tier === "similar" ? "similar" : "exact",
+      ...(wire.totalExact === false ? { totalExact: false } : {}),
+      ...(typeof wire.ms === "number" ? { ms: wire.ms } : {}),
     };
   }
 

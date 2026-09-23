@@ -23,6 +23,12 @@ import type { MessageDTO } from "./dto/types.js";
 const FUZZY_THRESHOLD = 0.3;
 /** The RRF constant: an arm's row at position `r` contributes `1 / (RRF_K + r)`. */
 const RRF_K = 60;
+/** Each arm's cut is `max(FUSE_K_MIN, page × FUSE_K_PER_PAGE)` rows. */
+export const FUSE_K_PER_PAGE = 4;
+export const FUSE_K_MIN = 200;
+
+/** A page of ids and what it says about the rest of the match set. */
+interface Page { ids: string[]; seen: number; cut: boolean }
 /** The substring arm's width floor — a trigram's, below which its index cannot select. */
 export const SUBSTRING_MIN_CHARS = 3;
 
@@ -88,12 +94,28 @@ export const SEARCH_QUERY_MAX_CHARS = 200;
  * so `JSON_BODY_MAX_BYTES` (a BODY ceiling) is not it.
  */
 
+/**
+ * WHAT ONE ANSWER CARRIES. `both` (the default) is the page, the exact `total` and the facets;
+ * `page` is the first page alone, so a search answers at index speed — `total` is then the
+ * fused candidates' count, exact only when `totalExact`; `summary` is the exact `total` and the
+ * facets with no rows, the second answer a caller asks for when the first was cut.
+ */
+export const SEARCH_PARTS = ["both", "page", "summary"] as const;
+export type SearchParts = (typeof SEARCH_PARTS)[number];
+
+/** Narrow an untrusted string to a {@link SearchParts}. */
+export function isSearchParts(v: unknown): v is SearchParts {
+  return typeof v === "string" && (SEARCH_PARTS as readonly string[]).includes(v);
+}
+
 export interface SearchOptions {
   q: string;
   filters?: SearchFilters;
   limit?: number;
   /** Absent means `relevance` — the fused ranking, byte-identical to passing it explicitly. */
   sort?: SearchSort;
+  /** Absent means `both`. */
+  parts?: SearchParts;
 }
 
 export interface Facets {
@@ -109,7 +131,8 @@ export interface Facets {
 
 export interface SearchResult {
   items: MessageDTO[];
-  facets: Facets;
+  /** `null` when only the page was asked for (`parts: "page"`). */
+  facets: Facets | null;
   /**
    * How many messages match — COUNTED OVER THE TIER THAT IS BEING RETURNED, never over both
    * arms. It used to count `lexical or fuzzy`, so a query with five real answers reported ten
@@ -125,6 +148,10 @@ export interface SearchResult {
    * empty-looking list.
    */
   tier: SearchTier;
+  /** `false` when `total` is a lower bound: the page alone was asked for and an arm was cut. */
+  totalExact: boolean;
+  /** This answer's server time in milliseconds. */
+  ms: number;
 }
 
 /**
@@ -192,6 +219,8 @@ function emptyResult(): SearchResult {
     },
     total: 0,
     tier: "exact",
+    totalExact: true,
+    ms: 0,
   };
 }
 
@@ -235,6 +264,7 @@ export class SearchService {
   private readonly folderExpr = sql`coalesce(fs.desired_folder, m.native_locator->>'folder', 'INBOX')`;
 
   async search(ctx: ServiceContext, opts: SearchOptions): Promise<SearchResult> {
+    const started = performance.now();
     // THE CEILING IS CONSULTED BEFORE ANYTHING SCANS THE STRING. `.length` is O(1); `.trim()` is
     // O(n) and would scan a ten-megabyte caller string before the ceiling ran — and an
     // all-whitespace one would pay the scan and return a silent empty result. So the RAW length
@@ -271,107 +301,86 @@ export class SearchService {
       );
     }
     const limit = clampLimit(opts.limit);
-    // The DEFAULT BRANCH, stated once. An absent `sort` is `relevance` and takes the fused
-    // query below with nothing changed — see the `hitQuery` ternary.
+    // The DEFAULT BRANCHES, stated once: `relevance` and `both` are what an absent option means.
     const sort: SearchSort = opts.sort ?? "relevance";
+    const parts: SearchParts = opts.parts ?? "both";
 
-    // ── shared predicates ──────────────────────────────────────────────────
-    // BOTH ARMS THROUGH THE SEAM. The two stores index this text in ways that share no syntax —
-    // a generated `tsvector` column on the row here, separate full-text tables joined by `rowid`
-    // there — and neither spelling parses on the other. `"mail"` names the corpus because the
-    // device arm needs TABLE NAMES this file has no reason to know.
+    // BOTH STORES THROUGH THE SEAM: a generated `tsvector` column here, full-text tables joined by
+    // `rowid` on the device, and neither spelling parses on the other.
     const d = dialect(ctx.db);
     const where = this.whereSql(d, ctx.accountId, opts.filters ?? {});
-
     const trgm = await hasTrgm(ctx.db);
-    const lex = d.search.lexical(q, "mail");
-    // Typo tolerance where the extension exists, and where it does not the seam's degrade — the
-    // same substring shape this file used to spell inline, ranked by RECENCY for the reason the
-    // old comment gave: offline there is no relevance signal left.
+    // Typo tolerance where the extension exists; without it the seam's substring degrade, ranked
+    // by recency — offline there is no relevance signal left.
     const fuzz = d.search.fuzzy(q, "mail", { trigram: trgm, threshold: FUZZY_THRESHOLD });
-    const lexRank = lex.rank;
-    const fuzzPred = fuzz.pred;
-    const fuzzRank = fuzz.rank;
 
     /**
-     * EVERY ARM IS AN ID SET under the account's scope, and the match set is their UNION — never
-     * an OR across the body join, which no index serves (a sequential scan on a large mailbox).
-     * The word arm is two sets, subject and body, each on its own index. The SUBSTRING arm is the
-     * query as characters inside the subject or the sender — `axa` in `myAXA Portal` or
-     * `news@axa.example` — ILIKE over the two columns the trigram GINs serve (`search-setup.ts`);
-     * recipients have no index and stay out. Its order is `fuzz.rank`: word similarity where
-     * pg_trgm exists, recency where it does not, so `AXA` as a whole word leads `myAXA`.
+     * EVERY ARM READS ITS OWN INDEX: the word arm is two arms (subject tsv, body tsv), and the
+     * SUBSTRING arm is the query as characters inside the subject or the sender — `axa` in
+     * `myAXA Portal` or `news@axa.example` — ILIKE over the two columns the trigram GINs serve
+     * (`search-setup.ts`); recipients have no index and stay out. The match set is their UNION,
+     * never an OR across the body join, which no index serves (a sequential scan on a large
+     * mailbox). The fs join is there for the folder filter and is removed when none is given.
      */
-    const scope = sql`m.account_id = ${ctx.accountId} and m.deleted_at is null`;
-    const lexIds = sql.join(d.search.lexicalIds(q, scope), sql` union `);
+    const armFrom = sql`from messages m left join folder_state fs on fs.message_id = m.id`;
     const like = `%${q}%`;
-    const subIds = substringOpen(q)
-      ? sql`select m.id from messages m where ${scope}
-          and (${d.ilike(sql`m.subject`, like)} or ${d.ilike(sql`m.from_address`, like)})`
-      : null;
-    const lexPred = sql`m.id in (${lexIds})`;
-    const subPred = subIds === null ? null : sql`m.id in (${subIds})`;
-    const exactPred = subIds === null ? lexPred : sql`m.id in (${lexIds} union ${subIds})`;
+    const arms = [
+      ...d.search.lexicalArms(q, armFrom, where),
+      ...(substringOpen(q)
+        ? [sql`select m.id, m.date ${armFrom} where ${where}
+            and (${d.ilike(sql`m.subject`, like)} or ${d.ilike(sql`m.from_address`, like)})`]
+        : []),
+    ];
+    const exactPred = sql`m.id in (select u.id from (${sql.join(arms, sql` union `)}) u)`;
+    const guessPage = (): SQL => (sort === "relevance"
+      ? sql`select m.id ${this.from} where ${where} and ${fuzz.pred}
+          order by ${fuzz.rank} desc, m.date desc nulls last, m.id desc limit ${limit}`
+      : this.orderedArm(where, fuzz.pred, sort, limit));
+    const exactPage = (): Promise<Page> => (sort === "relevance"
+      ? this.fusedPage(ctx, d, arms, limit)
+      : this.plainPage(ctx, d, this.orderedArm(where, exactPred, sort, limit), limit));
 
-    /**
-     * THE TIER IS DECIDED BEFORE A SINGLE ROW IS RANKED. The exact tier's count IS `total`
-     * whenever non-zero — the union of both literal arms, over the whole store; the fuzzy count
-     * is paid only on a query the store does not literally answer. `showSimilar` rather than
-     * `=== 0`, so the floor lives in one place (`@trafficflow/core/search-rank`).
-     */
-    const exactTotal = await this.count(ctx, d, where, exactPred);
-    const tier: SearchTier = showSimilar(exactTotal) ? "similar" : "exact";
-    const matchPred = tier === "exact" ? exactPred : fuzzPred;
-    const total = tier === "exact" ? exactTotal : await this.count(ctx, d, where, fuzzPred);
-
-    /**
-     * THE RELEVANCE QUERY. The exact tier with both arms open is FUSED over each arm's WHOLE
-     * match set and paged after fusion — the old RRF bounded each arm at 100 rows first, so the
-     * row dropped was the one outside the window. One arm (a shut substring arm, or the similar
-     * tier) orders itself. Key sequence after the score: recency, then id, so ties never swap.
-     */
-    const ranked = tier === "exact" && subPred !== null
-      ? this.fusedArm(where, [{ pred: lexPred, rank: lexRank }, { pred: subPred, rank: fuzzRank }], limit)
-      : sql`
-      select m.id
-      ${this.from}
-      where ${where} and ${matchPred}
-      order by ${tier === "exact" ? lexRank : fuzzRank} desc, m.date desc nulls last, m.id desc
-      limit ${limit}`;
-
-    /**
-     * THE ONE THING THIS FEATURE MUST NOT DO: a user-chosen order is a DIFFERENT QUERY, never an
-     * `order by` bolted onto the ranked one. Sorting a ranked SELECTION by date answers "of the
-     * most relevant few, which is newest" — not the question — and the row dropped is exactly the
-     * one asked for: the newest match outside the relevance window. A non-relevance sort runs
-     * over the SAME predicates (`where` + `matchPred`, the identical match set) with a different
-     * order key; `search-sort.r12.test.ts` plants a low-relevance newest match and watches.
-     * `matchPred` IS THE TIER'S PREDICATE: ordering by date over `lexical or fuzzy` re-admits
-     * every typo guess the tier just excluded — "Newest first" brings the noise back.
-     */
-    const hitQuery = sort === "relevance" ? ranked : this.orderedArm(where, matchPred, sort, limit);
-    // Positional rows on both stores — the seam's one shape, and this statement selects one
-    // column, so position 0 is the id.
-    const hitRows = (await d.exec(ctx.db, hitQuery)).map((r) => ({ id: String(r[0]) }));
+    let tier: SearchTier;
+    let total: number;
+    let totalExact = true;
+    let facets: Facets | null = null;
+    let ids: string[] = [];
+    if (parts === "page") {
+      /* THE PAGE ALONE, at index speed: no count and no facets on this answer. The tier is read
+         off the fused candidates themselves, and `total` is their count — exact only when no arm
+         was cut at its K; the caller asks `summary` for the rest. */
+      const page = await exactPage();
+      tier = showSimilar(page.seen) ? "similar" : "exact";
+      const got = tier === "exact" ? page : await this.plainPage(ctx, d, guessPage(), limit);
+      ids = got.ids;
+      total = got.seen;
+      totalExact = !got.cut;
+    } else {
+      /* THE TIER IS DECIDED BEFORE A ROW IS RANKED: the exact union's count is `total` whenever
+         non-zero, and the fuzzy count is paid only on a query the store does not literally
+         answer. `showSimilar` holds the floor in one place (`@trafficflow/core/search-rank`). */
+      const exactTotal = await this.count(ctx, d, where, exactPred);
+      tier = showSimilar(exactTotal) ? "similar" : "exact";
+      const matchPred = tier === "exact" ? exactPred : fuzz.pred;
+      total = tier === "exact" ? exactTotal : await this.count(ctx, d, where, fuzz.pred);
+      facets = await this.facets(ctx, d, where, matchPred);
+      if (parts === "both") {
+        ids = (tier === "exact" ? await exactPage() : await this.plainPage(ctx, d, guessPage(), limit)).ids;
+      }
+    }
 
     /**
      * Re-materialize the hits into canonical MessageDTOs, preserving order; `materializeMessages`
-     * re-checks accountId, exactly as the singular form (a one-element wrapper). WHY THE BATCH
-     * FORM: this was `for … await materializeMessage(...)` — four queries each, so a page of 50
-     * hits was 200 statements awaited serially on a `max: 1` pool. Invisible while `GET /search`
-     * had zero callers; wiring the client makes it a hot path, so it is fixed in the same change:
-     * 4 statements per page, regardless of size. NOT parallelised — batched: firing per-hit calls
-     * concurrently is the shape that deadlocked the admin console on the same `max: 1` pool.
+     * re-checks accountId. The BATCH form — 4 statements per page on a `max: 1` pool, never 4 per
+     * hit awaited serially, and never fired concurrently (the admin console deadlock's shape).
      */
-    const byId = await materializeMessages(ctx.db, ctx.accountId, hitRows.map((h) => h.id));
+    const byId = ids.length === 0 ? new Map<string, MessageDTO>() : await materializeMessages(ctx.db, ctx.accountId, ids);
     const items: MessageDTO[] = [];
-    for (const h of hitRows) {
-      const dto = byId.get(h.id);
+    for (const id of ids) {
+      const dto = byId.get(id);
       if (dto) items.push(dto);
     }
-
-    const facets = await this.facets(ctx, d, where, matchPred);
-    return { items, facets, total, tier };
+    return { items, facets, total, tier, totalExact, ms: Math.round(performance.now() - started) };
   }
 
   /**
@@ -437,24 +446,33 @@ export class SearchService {
   // ── the fused relevance order ────────────────────────────────────────────
 
   /**
-   * RECIPROCAL-RANK FUSION over each arm's WHOLE match set: every arm ranks its own rows
-   * (`row_number()` by its rank, recency, id), a row scores `Σ 1 / (RRF_K + r)` over the arms
-   * that hold it, and `limit` applies to the fused order. A row both arms hold — an exact
-   * subject word — outranks one only the body holds. The cost is ranking every match of each
-   * arm, which the one-arm `order by … limit` already paid for the lexical arm.
+   * RECIPROCAL-RANK FUSION over each arm's TOP K. Every arm is cut at K by the reading order
+   * (`messages_account_msg_order_idx`), so it reads its own index and stops — never its whole
+   * match set, which for a broad word is most of the mailbox; a row scores `Σ 1 / (RRF_K + r)`
+   * over the arms that hold it, recency then id breaking ties. A subject word is in two arms
+   * (word and substring), so it leads a body-only hit. `seen` is the fused candidates' count and
+   * `cut` says an arm stopped at K, so `seen` is then a lower bound on the match set.
    */
-  private fusedArm(where: SQL, arms: Array<{ pred: SQL; rank: SQL }>, limit: number): SQL {
+  private async fusedPage(ctx: ServiceContext, d: Dialect, arms: SQL[], limit: number): Promise<Page> {
+    const k = Math.max(FUSE_K_MIN, limit * FUSE_K_PER_PAGE);
     const ranked = arms.map((a) => sql`
-      select m.id as id, row_number() over (order by ${a.rank} desc, m.date desc nulls last, m.id desc) as r
-      ${this.from}
-      where ${where} and ${a.pred}`);
-    return sql`
+      select x.id, x.date, row_number() over (order by x.date desc nulls last, x.id desc) as r
+      from (${a} order by m.date desc nulls last, m.id desc limit ${k}) x`);
+    const rows = await d.exec(ctx.db, sql`
       with arms as (${sql.join(ranked, sql` union all `)}),
-      fused as (select id, sum(1.0 / (${sql.raw(String(RRF_K))} + r)) as score from arms group by id)
-      select m.id
-      from fused f join messages m on m.id = f.id
-      order by f.score desc, m.date desc nulls last, m.id desc
-      limit ${limit}`;
+      fused as (select id, max(date) as date, sum(1.0 / (${sql.raw(String(RRF_K))} + r)) as score from arms group by id)
+      select f.id, (select count(*) from fused) as seen, (select max(r) from arms) as deepest
+      from fused f
+      order by f.score desc, f.date desc nulls last, f.id desc
+      limit ${limit}`);
+    const seen = Number(rows[0]?.[1] ?? 0);
+    return { ids: rows.map((r) => String(r[0])), seen, cut: Number(rows[0]?.[2] ?? 0) >= k };
+  }
+
+  /** One statement's ids, in its order; `cut` when the page came back full. */
+  private async plainPage(ctx: ServiceContext, d: Dialect, statement: SQL, limit: number): Promise<Page> {
+    const ids = (await d.exec(ctx.db, statement)).map((r) => String(r[0]));
+    return { ids, seen: ids.length, cut: ids.length >= limit };
   }
 
   // ── the user-chosen orders ────────────────────────────────────────────────

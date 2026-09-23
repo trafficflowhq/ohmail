@@ -1,7 +1,9 @@
 import {
   ADDRESS_DIRECTIONS,
   isAddressSearchDirection,
+  SEARCH_PARTS,
   SEARCH_SORTS,
+  isSearchParts,
   isSearchSort,
   type AddressSearchOptions,
   type SearchFilters,
@@ -81,6 +83,12 @@ export const searchRoutes: Route[] = [
         );
       }
 
+      // Refused by name, as `sort` is: an unknown value would silently answer `both`.
+      const partsRaw = url.searchParams.get("parts");
+      if (partsRaw !== null && !isSearchParts(partsRaw)) {
+        return errorResponse("validation_failed", 400, `parts must be one of ${SEARCH_PARTS.join(", ")}`);
+      }
+
       const filters: SearchFilters = {};
       const folder = url.searchParams.get("folder");
       const sender = url.searchParams.get("sender");
@@ -98,7 +106,11 @@ export const searchRoutes: Route[] = [
       // Spread rather than `sort: sortRaw ?? undefined`: the service's default lives in the
       // service, and an omitted property is the only way to say "I did not ask" under
       // `exactOptionalPropertyTypes`.
-      const opts: SearchOptions = { q, filters, limit, ...(sortRaw !== null ? { sort: sortRaw } : {}) };
+      const opts: SearchOptions = {
+        q, filters, limit,
+        ...(sortRaw !== null ? { sort: sortRaw } : {}),
+        ...(partsRaw !== null ? { parts: partsRaw } : {}),
+      };
       const result = await search(deps).search(serviceContext(deps, req), opts);
       return jsonResponse(result);
     },

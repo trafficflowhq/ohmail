@@ -352,10 +352,10 @@ export function sqliteDialect(): Dialect {
           rank: sql`-COALESCE((SELECT bm25(messages_fts) FROM messages_fts WHERE messages_fts MATCH ${q} AND rowid = m.rowid), 0)`,
         };
       },
-      lexicalIds: (q: string, scope: SQL): SQL[] => [
-        sql`select m.id from messages m where ${scope}
+      lexicalArms: (q: string, from: SQL, where: SQL): SQL[] => [
+        sql`select m.id, m.date ${from} where ${where}
               and m.rowid IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ${q})`,
-        sql`select m.id from messages m join message_bodies b on b.message_id = m.id where ${scope}
+        sql`select m.id, m.date ${from} join message_bodies b on b.message_id = m.id where ${where}
               and b.rowid IN (SELECT rowid FROM message_bodies_fts WHERE message_bodies_fts MATCH ${q})`,
       ],
       fuzzy: (q: string, corpus: SearchCorpus, _opts): SearchArm => {

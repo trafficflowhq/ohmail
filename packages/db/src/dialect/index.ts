@@ -462,12 +462,13 @@ export interface Dialect {
     /** Word-based search over one {@link SearchCorpus}'s indexed text. */
     lexical(q: string, corpus: SearchCorpus): SearchArm;
     /**
-     * The mail corpus's word match as ID SETS, one per indexed text, each selecting `m.id` under
-     * the caller's `scope` (a predicate over `m`); a caller UNIONS them. Same rows as `lexical(q,
-     * "mail").pred`, whose OR across the body join neither text's index can serve: on a large
-     * mailbox that OR is a sequential scan of seconds, where the id sets answer in milliseconds.
+     * The mail corpus's word match as ARMS, one per indexed text, each `select m.id, m.date` over
+     * the caller's `from` (which aliases `messages m`) and `where`; a caller unions them or cuts
+     * each at its own `order by … limit`. Same rows as `lexical(q, "mail").pred`, whose OR across
+     * the body join neither text's index can serve: on a large mailbox that OR is a sequential
+     * scan of seconds, where each arm reads its own index in milliseconds.
      */
-    lexicalIds(q: string, scope: SQL): SQL[];
+    lexicalArms(q: string, from: SQL, where: SQL): SQL[];
     /**
      * Typo-tolerant search over one corpus, and what it degrades to when trigrams are absent.
      * `trigram` is the caller's own probe of the deployment, not a guess made here: the same

@@ -52,8 +52,11 @@ type ServerOutcome = Awaited<ReturnType<OhmailEngine["searchServer"]>>;
 /** What the whole-mailbox pass is doing FOR THE QUERY CURRENTLY IN THE BOX. */
 type Archive =
   | { state: "searching" }
-  /** `tier` says whether these rows are matches or typo-tolerant guesses — see the merge below. */
-  | { state: "ready"; items: EngineMessage[]; total: number; tier: "exact" | "similar" }
+  /**
+   * `tier` says whether these rows are matches or typo-tolerant guesses — see the merge below.
+   * `totalExact` is false while `total` is the first page's lower bound; `ms` is the server's.
+   */
+  | { state: "ready"; items: EngineMessage[]; total: number; tier: "exact" | "similar"; totalExact: boolean; ms: number | null }
   /** A refusal, a rejection, or no answer inside {@link ARCHIVE_TIMEOUT_MS} — one sentence. */
   | { state: "unanswered" }
   | { state: "unavailable" };
@@ -70,7 +73,8 @@ function unanswered(cause: string): Archive {
 }
 function verdictOf(outcome: ServerOutcome): Archive {
   if (outcome.state === "ready") {
-    return { state: "ready", items: outcome.items, total: outcome.total, tier: outcome.tier };
+    const { items, total, tier, totalExact, ms } = outcome;
+    return { state: "ready", items, total, tier, totalExact, ms };
   }
   return outcome.state === "failed" ? unanswered(outcome.errorClass) : { state: "unavailable" };
 }
@@ -344,10 +348,20 @@ export function SearchView({
       // BOTH ARMS. `searchServer` is written never to reject, and a rejection here once left the
       // sentence on "Searching…" until the ceiling, as an unhandled rejection: the verdict does
       // not depend on a promise keeping its contract.
-      void engine.searchServer(trimmed, { sort })
+      void engine.searchServer(trimmed, { sort, parts: "page" })
         .then(verdictOf, (err: unknown) => unanswered(errorClassOf(err)))
         .then((outcome) => {
-          if (live) setArchive({ q: trimmed, outcome });
+          if (!live) return;
+          setArchive({ q: trimmed, outcome });
+          // THE PAGE FIRST, THE COUNT SECOND: a cut page says "at least N" until the exact count
+          // lands, and keeps saying it if the count never does — both sentences are true.
+          if (outcome.state !== "ready" || outcome.totalExact) return;
+          void engine.searchServer(trimmed, { parts: "summary" }).then((sum) => {
+            if (!live || sum.state !== "ready" || !sum.totalExact) return;
+            setArchive((prev) => (prev !== null && prev.q === trimmed && prev.outcome.state === "ready"
+              ? { q: trimmed, outcome: { ...prev.outcome, total: sum.total, totalExact: true } }
+              : prev));
+          }, () => {});
         });
     }, ARCHIVE_DEBOUNCE_MS);
     return () => {
@@ -708,7 +722,10 @@ export function SearchView({
       </button>
     </>
   ) : (
-    <>{t("scopeWhole", { total: current.total })}</>
+    <>
+      {current.totalExact ? t("scopeWhole", { total: current.total }) : t("scopeWholeAtLeast", { total: current.total })}
+      {current.ms !== null ? <> · {t("scopeServerMs", { ms: current.ms })}</> : null}
+    </>
   );
 
   return (

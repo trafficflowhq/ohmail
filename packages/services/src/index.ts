@@ -182,10 +182,10 @@ export {
   type ThreadPatchBody, type ThreadRenameBody, type ThreadMergeBody,
 } from "./thread-service.js";
 export {
-  SearchService, searchService, SEARCH_SORTS, isSearchSort,
+  SearchService, searchService, SEARCH_SORTS, isSearchSort, SEARCH_PARTS, isSearchParts,
   SEARCH_QUERY_MAX_CHARS,
   ADDRESS_DIRECTIONS, ADDRESS_DIRECTIONS_SERVED, isAddressSearchDirection,
-  type SearchOptions, type SearchFilters, type SearchResult, type Facets, type SearchSort,
+  type SearchOptions, type SearchFilters, type SearchResult, type Facets, type SearchSort, type SearchParts,
   type AddressSearchDirection, type AddressSearchOptions, type AddressSearchResult,
 } from "./search-service.js";
 export {

@@ -682,6 +682,10 @@ export interface ServerSearchWire {
    * client and a server ship in the same wave, so the window is short.
    */
   tier?: SearchTier;
+  /** `false` when `total` is a lower bound (the page alone was asked for). Absent ⇒ exact. */
+  totalExact?: boolean;
+  /** The server's own time for this answer, in milliseconds. Absent on an older server. */
+  ms?: number;
 }
 
 /**
@@ -702,6 +706,12 @@ export interface ServerSearchOpts {
   limit?: number;
   /** Absent ⇒ `relevance`, and nothing is put on the wire. */
   sort?: ServerSearchSort;
+  /**
+   * `page` asks for the first page alone, at index speed (its `total` exact only when
+   * `totalExact`); `summary` for the exact count with no rows. Absent ⇒ both, and nothing is put
+   * on the wire, so an older server is asked what it always was.
+   */
+  parts?: "page" | "summary";
 }
 
 /**
@@ -1000,7 +1010,7 @@ function olderFirst(a: { id: string; t: number }, b: { id: string; t: number }):
  */
 export type ServerSearchOutcome =
   | { state: "unavailable" }
-  | { state: "ready"; items: EngineMessage[]; total: number; tier: SearchTier }
+  | { state: "ready"; items: EngineMessage[]; total: number; tier: SearchTier; totalExact: boolean; ms: number | null }
   /** `errorClass` is what a log line may carry ({@link errorClassOf}); `error` is the text. */
   | { state: "failed"; error: string; errorClass: string };
 
@@ -6958,7 +6968,7 @@ export class OhmailEngine {
     const fn = this.serverSearchFn;
     if (fn === null) return { state: "unavailable" };
     const q = query.trim();
-    if (q === "") return { state: "ready", items: [], total: 0, tier: "exact" };
+    if (q === "") return { state: "ready", items: [], total: 0, tier: "exact", totalExact: true, ms: null };
 
     /**
      * THE SORT IS PART OF THE KEY, and omitting it would be a defect rather than a missed
@@ -6968,7 +6978,7 @@ export class OhmailEngine {
      * appear to do nothing — but only inside the debounce window, which is the shape that gets
      * filed as flakiness and never reproduced.
      */
-    const key = `${opts.limit ?? ""}\u0000${opts.sort ?? ""}\u0000${q}`;
+    const key = `${opts.limit ?? ""}\u0000${opts.sort ?? ""}\u0000${opts.parts ?? ""}\u0000${q}`;
     const inFlight = this.serverSearches.get(key);
     if (inFlight) return inFlight;
 
@@ -6989,6 +6999,8 @@ export class OhmailEngine {
           // treated the same way. See {@link ServerSearchWire.tier}: the unknown case must not
           // file a real hit under a "Similar" heading.
           tier: wire.tier === "similar" ? "similar" : "exact",
+          totalExact: wire.totalExact !== false,
+          ms: typeof wire.ms === "number" ? wire.ms : null,
         };
       })
       .catch((err: unknown): ServerSearchOutcome => ({

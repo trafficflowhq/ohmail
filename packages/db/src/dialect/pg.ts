@@ -194,11 +194,11 @@ export function pgDialect(): Dialect {
           rank: sql`greatest(ts_rank(m.subject_tsv, ${tsq}), ts_rank(coalesce(b.body_tsv, to_tsvector('')), ${tsq}))`,
         };
       },
-      lexicalIds: (q: string, scope: SQL): SQL[] => {
+      lexicalArms: (q: string, from: SQL, where: SQL): SQL[] => {
         const tsq = sql`websearch_to_tsquery(${TEXT_SEARCH_CONFIG}, ${q})`;
         return [
-          sql`select m.id from messages m where ${scope} and m.subject_tsv @@ ${tsq}`,
-          sql`select m.id from messages m join message_bodies b on b.message_id = m.id where ${scope} and b.body_tsv @@ ${tsq}`,
+          sql`select m.id, m.date ${from} where ${where} and m.subject_tsv @@ ${tsq}`,
+          sql`select m.id, m.date ${from} join message_bodies b on b.message_id = m.id where ${where} and b.body_tsv @@ ${tsq}`,
         ];
       },
       fuzzy: (q: string, corpus: SearchCorpus, opts): SearchArm => {
