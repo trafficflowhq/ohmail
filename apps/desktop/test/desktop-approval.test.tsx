@@ -190,6 +190,25 @@ describe("the browser path is one confirm, not a code", () => {
     expect(pollsMade()).toBe(made);
   });
 
+  it("each ending of a request is this window's own sentence, whatever the engine's words were", async () => {
+    for (const [code, said] of [
+      ["approval_used", "This request was already used. Start again."],
+      ["approval_expired", "This request expired before it was confirmed. Start again."],
+      ["approval_denied", "This request was declined in the browser."],
+    ] as const) {
+      polls = [encode(410, JSON.stringify({ error: { code, message: `engine words for ${code}` } }), "Gone")];
+      const { el } = await mount("signIn");
+      await click(buttonSaying(el, "Sign in with browser"));
+      await click(buttonSaying(el, "Open ohmail.app"));
+      await elapse(2000);
+      expect(el.textContent).toContain(said);
+      expect(el.textContent).not.toContain("engine words");
+      await act(async () => { root!.unmount(); });
+      root = null;
+      mountPoint?.remove();
+    }
+  });
+
   it("no approval door on the hosted side: the code path, by name", async () => {
     approval = () => encode(409, JSON.stringify({
       error: { code: "approval_not_offered", message: "Your ohmail Cloud does not offer browser approval yet. Type a code instead." },
