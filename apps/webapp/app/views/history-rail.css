@@ -1,0 +1,59 @@
+/* History's month rail: a sticky, zero-height anchor at the top of the list scroller, so the
+   rail stays on the right edge while the rows scroll under it and takes no row's space. */
+.view-history .history-rail-anchor {
+  position: sticky;
+  top: 0;
+  height: 0;
+  z-index: 2;
+}
+.view-history .history-rail {
+  position: absolute;
+  top: 8px;
+  right: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: var(--r-control, 8px);
+  background: var(--panel);
+  box-shadow: var(--lift-1);
+}
+.view-history .history-rail-item {
+  font: inherit;
+  font-size: calc(11.5px + var(--type-up));
+  line-height: 1.2;
+  color: var(--ink3);
+  background: none;
+  border: 0;
+  padding: 3px 6px;
+  border-radius: 6px;
+  text-align: right;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.view-history .history-rail-item.year { color: var(--ink2); font-weight: 600; }
+.view-history .history-rail-item:hover,
+.view-history .history-rail-item:focus-visible { color: var(--ink); background: var(--tint2, rgba(0, 0, 0, 0.05)); }
+.view-history .history-rail-item.cur { color: var(--ink); font-weight: 600; }
+/* An unfetched slot: the row's own box, two quiet bars, until its page lands. */
+.view-history .history-ghost {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  height: 72px;
+  padding: 0 16px;
+  pointer-events: none;
+}
+.view-history .history-ghost-bar {
+  display: block;
+  height: 10px;
+  width: 46%;
+  border-radius: 5px;
+  background: var(--tint2, rgba(0, 0, 0, 0.06));
+}
+.view-history .history-ghost-bar.short { width: 72%; }
+/* A slot deleted since its page was read folds away. */
+.view-history .history-gone { height: 0; overflow: hidden; }

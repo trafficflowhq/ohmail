@@ -33,6 +33,8 @@ export const MIRROR_ENTITY_TYPES = [
   "unscreened_sender_group",
   // Client-local and DURABLE: the outbox and its abandoned half.
   "outbox_entry", "outbox_abandoned",
+  // Client-local and IN MEMORY: the store's History pages — never written to the store.
+  "store_page",
 ] as const;
 
 export type KnownMirrorEntityType = (typeof MIRROR_ENTITY_TYPES)[number];
@@ -177,6 +179,13 @@ export const MIRROR_BOUNDS: Record<KnownMirrorEntityType, MirrorBound> = {
     growsWith: "the verbs this device issued that the server has not taken",
     why: "a queued verb IS the user's intent and leaves on its outcome; the replay deadline "
       + "(OUTBOX_REPLAY_DEADLINE_MS) retires what no longer can be sent",
+  },
+  store_page: {
+    by: "ceiling",
+    at: "HISTORY_PAGE_CACHE_ROWS",
+    why: "the store's History pages, held in the engine's memory and never in the store; a put "
+      + "evicts the page farthest in time until the rows fit, so History reaching the first message "
+      + "leaves the mirror's own count where the window put it",
   },
   outbox_abandoned: {
     by: "person",

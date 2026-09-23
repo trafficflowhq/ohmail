@@ -107,6 +107,16 @@ import {
   type WorldView,
   type ConnectionSay,
   type FirstSyncSay,
+  mirrorNewestFirst,
+  offMirrorRevision,
+  openOffMirror,
+  storeRowOf,
+  storeWalkerFor,
+  subscribeOffMirror,
+  type ServerSearchOpts,
+  type ServerSearchOutcome,
+  type StoreMessage,
+  type StoreTimelineWalker,
 } from "./live";
 import type { Scope } from "./model";
 import {
@@ -401,6 +411,20 @@ export interface World {
   };
   message(id: string): WorldMail | undefined;
   /**
+   * THE STORE'S DOORS — History's walker and Search's whole-mailbox pass, with the row mapping
+   * both lists share. History and Search read these, never the mirror's window; the mirror only
+   * paints first. `walker` is `null` where no engine is live.
+   */
+  store: {
+    walker: StoreTimelineWalker | null;
+    mirrorRows(): StoreMessage[];
+    rowOf(m: StoreMessage, inHistory: boolean): WorldMail;
+    searchAvailable: boolean;
+    search(q: string, opts: ServerSearchOpts): Promise<ServerSearchOutcome>;
+    /** The row the reader is about to open, when the mirror holds none for it. */
+    open(m: StoreMessage): void;
+  };
+  /**
    * THE DEVICE SEARCH — the engine's instant mirror index, projected to this world's rows
    * (`live.ts#liveSearch`). Offline by construction: it reads the mirror, never the wire. The
    * provider re-derives the world when a build settles (`searchRev`), so a screen holding a
@@ -568,6 +592,14 @@ function emptyWorld(actions: WorldActions): World {
     // to. `false` is "not confirmed", which is exactly what nothing-connected means.
     face: { account: null, known: false, pending: false, applyAll: () => Promise.resolve(false) },
     message: () => undefined,
+    store: {
+      walker: null,
+      mirrorRows: () => [],
+      rowOf: () => { throw new Error("no live engine"); },
+      searchAvailable: false,
+      search: async () => ({ state: "unavailable" }),
+      open: () => undefined,
+    },
     // Nothing is connected, so there is nothing to search and no index owed: `indexing: false`
     // with zero coverage is "an answer over nothing", never a build that will not come.
     search: {
@@ -592,6 +624,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
 
   const session = conn.state.k === "live" ? conn.state.session : null;
   const engine = session?.engine ?? null;
+
+  /* History's walker, one per engine; and the off-mirror reader's row, which re-derives `message`. */
+  const walker = useMemo(() => (engine ? storeWalkerFor(engine) : null), [engine]);
+  const offMirrorRev = useSyncExternalStore(subscribeOffMirror, offMirrorRevision, offMirrorRevision);
 
   /* The engine's own change signal — the exact idiom `LiveFacts` (servers.tsx) established. */
   const version = useSyncExternalStore(
@@ -1456,13 +1492,21 @@ export function WorldProvider({ children }: { children: ReactNode }) {
          survive in search for the window. `searchRev` in this memo's deps is what re-derives
          it when a build settles. */
       search: liveSearch(engine, base, v),
+      store: {
+        walker,
+        mirrorRows: () => mirrorNewestFirst(engine),
+        rowOf: (m, inHistory) => storeRowOf(engine, m, v, inHistory),
+        searchAvailable: engine.serverSearchAvailable(),
+        search: (q, o) => engine.searchServer(q, o),
+        open: openOffMirror,
+      },
       actions,
     };
     // `version` IS the dependency that re-derives this projection on every mirror change; the
     // reader itself is stable across drains, so it cannot stand in for it. The connection's
     // state is deliberately NOT here — see the header, and the assembly below, which carries it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine, session, scopes, zone, locale, actions, version, freshBeat, searchRev,
+  }, [engine, session, scopes, zone, locale, actions, version, freshBeat, searchRev, walker, offMirrorRev,
     foldersOn, foldersPending, foldersStorable, setFoldersEnabled, signatures,
     resurfaceTime, rememberResurfaceTime, screening, screenerServer, heldDeletes, heldPlaces]);
 

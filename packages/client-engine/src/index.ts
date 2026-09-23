@@ -563,6 +563,8 @@ export {
   SERVER_SEARCH_SORTS,
   type ServerSearchSort,
   type ServerSearchOpts,
+  type ServerSearchFacets,
+  type ServerSearchFilters,
   type SnapshotFn,
   type StorePolicy,
   DEFAULT_STORE_POLICY,
@@ -584,6 +586,31 @@ export {
   type KnownMirrorEntityType,
   type MirrorBound,
 } from "./mirror-bounds.js";
+
+/* THE STORE'S TIMELINE — History's pages and month rail, read from the store, never the mirror. */
+export {
+  HISTORY_PAGE_ROWS,
+  HISTORY_PAGE_CACHE_ROWS,
+  UUID_MAX,
+  uuidSuccessor,
+  timelineSegments,
+  segmentAt,
+  readTimelineWire,
+  StorePageCache,
+  type StoreKeyset,
+  type StoreTimeline,
+  type StoreTimelineMonth,
+  type StoreTimelineOutcome,
+  type StorePageOpts,
+  type StorePageOutcome,
+  type TimelineSegment,
+} from "./store-pages.js";
+export {
+  StoreTimelineWalker,
+  STORE_ANSWER_TIMEOUT_MS,
+  STORE_PAGE_RETRY_MS,
+  type StoreTimelineState,
+} from "./store-timeline.js";
 
 /* The one attach bound every compose surface states — the client mirror of the send service's
    cap rule, here because the webapp AND the phone composer read it. See its header. */

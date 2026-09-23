@@ -1,19 +1,19 @@
 /**
- * Search — the mirror's instant index on the phone, the webapp SearchView's contract in
- * the one-pane shape: results are the rows every list here renders, the SIMILAR tier stands
- * under its own heading and only when nothing matched exactly, and every answer states what it
- * is an answer over (subjects, senders, the first 200 characters — never body text, which is
- * the archive's). It reads the mirror, so it answers OFFLINE. An address-shaped query that
- * settles empty offers the address door — the web's own empty-state sentence — and the door
- * opens the device's address view: All · From them · To them, the engine's `messagesWith`.
+ * Search — ONE list, the webapp SearchView's contract in the one-pane shape: the mirror's instant
+ * index paints first, the store's page (`state/store-views.ts#useStoreSearch`) then replaces it in
+ * place, and scrolling near the end asks the store's next page. The SIMILAR tier stands under its
+ * own heading and only when nothing matched exactly; the verdict line says what was searched —
+ * your whole mailbox — and how fast. An address-shaped query that settles empty offers the
+ * address door: All · From them · To them, the engine's `messagesWith` over this phone's mail.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { Copy } from "../src/copy";
 /* The engine is reached through the seam, never from a screen — `privacy.test.ts`'s
    allow-list is the rule, and the direction union rides out with the rest. */
 import { addressShaped, type AddressDirection } from "../src/state/live";
+import { useStoreSearch } from "../src/state/store-views";
 import { useWorld } from "../src/state/world";
 import { useTheme } from "../src/theme";
 import { Empty, Screen, Tap, Txt } from "../src/ui/base";
@@ -64,7 +64,17 @@ function SearchBody() {
   const trimmed = q.trim();
   const answer = addr === null ? w.search.query(q) : null;
   const around = addr !== null ? w.search.address(addr, dir) : null;
+  const deviceIds = useMemo(() => (answer?.items ?? []).map((m) => m.id), [answer]);
+  /* THE WHOLE-MAILBOX PASS — its page replaces the device's paint, rows on screen first. */
+  const store = useStoreSearch(addr === null ? q : "", deviceIds);
+  const shownItems = store.rows !== null ? (store.tier === "exact" ? store.rows : []) : answer?.items ?? [];
+  const shownSimilar = store.rows !== null ? (store.tier === "similar" ? store.rows : []) : answer?.similar ?? [];
+  const found = store.rows !== null && store.totalExact ? Math.max(store.total, store.rows.length) : shownItems.length + shownSimilar.length;
   const door = answer !== null ? addressShaped(trimmed) : null;
+  const verdict = addr !== null ? null : store.verdict === "searching" ? Copy.searchWholeSearching
+    : store.verdict === "ready"
+      ? `${store.totalExact ? Copy.searchWhole(store.total) : Copy.searchWholeAtLeast(store.total)}${store.ms !== null ? ` · ${Copy.searchServerMs(store.ms)}` : ""}`
+      : store.verdict === "unanswered" ? Copy.searchUnanswered : null;
 
   /* EVERY ROW GOES THROUGH THE WINDOW. One address can hold thousands of this mailbox's
      messages — `messagesWith` returns all of them, unsliced — so the results are a `MailList`
@@ -73,14 +83,14 @@ function SearchBody() {
   const groups: ListGroup<WorldMail>[] =
     around !== null && addr !== null
       ? [{ key: "around", rows: around.items }]
-      : answer !== null && trimmed !== "" && (answer.items.length > 0 || answer.similar.length > 0)
+      : answer !== null && trimmed !== "" && (shownItems.length > 0 || shownSimilar.length > 0)
         ? [
             {
               key: "results",
-              title: Copy.searchResultsHead(answer.items.length + answer.similar.length),
-              rows: answer.items,
+              title: Copy.searchResultsHead(found),
+              rows: shownItems,
             },
-            { key: "similar", title: Copy.searchSimilarHead, note: Copy.searchSimilarHint, rows: answer.similar },
+            { key: "similar", title: Copy.searchSimilarHead, note: Copy.searchSimilarHint, rows: shownSimilar },
           ]
         : [];
 
@@ -116,7 +126,22 @@ function SearchBody() {
       <MailList
         groups={groups}
         rowKey={(m) => m.id}
-        renderRow={(m) => <MailRow m={m} onPress={() => router.push(`/message/${m.id}`)} />}
+        renderRow={(m) => (
+          <MailRow
+            m={m}
+            onPress={() => {
+              const src = store.sourceOf(m.id);
+              if (src) w.store.open(src);
+              router.push(`/message/${m.id}`);
+            }}
+          />
+        )}
+        /* Near the end of the list, the store's next page. */
+        onScroll={(e) => {
+          const { contentOffset, layoutMeasurement, contentSize } = e.nativeEvent;
+          if (contentOffset.y + layoutMeasurement.height >= contentSize.height - 480) store.loadMore();
+        }}
+        scrollEventThrottle={100}
         rowInset={6}
         surface={around !== null || (answer !== null && trimmed !== "")}
         head={
@@ -141,6 +166,23 @@ function SearchBody() {
                 {Copy.searchAddressCounts(around.counts.any, around.counts.from, around.counts.to)}
               </Txt>
             </View>
+          ) : verdict !== null ? (
+            /* ── THE VERDICT — what was searched, and how fast ──────────────────────────── */
+            <View style={{ paddingHorizontal: 14, paddingTop: 8, paddingBottom: 4, gap: 4 }}>
+              {store.verdict === "unanswered" ? (
+                <Tap onPress={store.retry} accessibilityRole="button">
+                  <Txt variant="note" tone="ink3">{verdict} <Txt variant="note" tone="accent">{Copy.searchWholeRetry}</Txt></Txt>
+                </Tap>
+              ) : (
+                <Txt variant="note" tone="ink3" tabular>{verdict}</Txt>
+              )}
+              {store.indexedPercent !== null ? (
+                <Txt variant="note" tone="ink3">{Copy.searchIndexingProgress(store.indexedPercent)}</Txt>
+              ) : null}
+              {store.bounded && store.rows !== null ? (
+                <Txt variant="note" tone="ink3">{Copy.searchBounded(store.rows.length)}</Txt>
+              ) : null}
+            </View>
           ) : null
         }
         empty={
@@ -153,21 +195,15 @@ function SearchBody() {
                     ? Copy.searchAddressEmptyTo(addr)
                     : Copy.searchAddressEmptyAny(addr)
               }
-              hint={Copy.searchScopeDevice}
+              hint=""
             />
-          ) : answer !== null && trimmed === "" ? (
-            /* Resting: what a search HERE can answer, before any claim about the mailbox. */
-            <Txt variant="note" tone="ink3" style={{ paddingHorizontal: 14, paddingTop: 8 }}>
-              {Copy.searchScopeDevice}
-            </Txt>
-          ) : answer !== null ? (
-            answer.indexing ? (
-              /* Not yet ≠ nothing: the index is still filling, and the two are different
-                 sentences (`indexingResult`'s whole rule). */
-              <Empty title={Copy.searchIndexing} hint={Copy.searchScopeDevice} />
-            ) : (
+          ) : answer !== null && trimmed === "" ? null : answer !== null ? (
+            answer.indexing && store.rows === null ? (
+              /* Not yet ≠ nothing: the index is still filling (`indexingResult`'s whole rule). */
+              <Empty title={Copy.searchIndexing} hint={verdict ?? ""} />
+            ) : store.verdict === "searching" ? null : (
               <>
-                <Empty title={Copy.searchEmptyTitle} hint={Copy.searchScopeDevice} />
+                <Empty title={Copy.searchEmptyTitle} hint="" />
                 {door !== null ? (
                   /* THE ADDRESS DOOR — the web's empty-state sentence, and here it IS the
                      door: the press opens the two scopes it names. */

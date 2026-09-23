@@ -3,6 +3,7 @@ import {
   type EngineAdapter,
   type ListOlderFn,
   type ListTrashFn,
+  type StoreTimeline,
   type MessageBodyWire,
   type MutationAnswer,
   type OhmailEngine,
@@ -274,6 +275,8 @@ type GatedAdapter = EngineAdapter & {
      Trash view whose every Restore button is dead — on the live path only. */
   listTrash?: ListTrashFn;
   restoreFromTrash?: RestoreFromTrashFn;
+  /* History's month rail — structural like the rest; forgetting it leaves History on the mirror. */
+  timeline?: () => Promise<StoreTimeline | null>;
 };
 
 /**
@@ -834,6 +837,10 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
          */
         ...(adapter.listMessages
           ? { listMessages: gatedRead(adapter.listMessages.bind(adapter), "a page of older mail") }
+          : {}),
+        /* History's total and months: gated like the pages it places, spread like them. */
+        ...(adapter.timeline
+          ? { timeline: gatedRead(adapter.timeline.bind(adapter), "the mailbox's timeline") }
           : {}),
 
         /**

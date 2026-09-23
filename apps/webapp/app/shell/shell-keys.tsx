@@ -1157,7 +1157,7 @@ export function useShellKeys({
            * badge saying nothing is there. `rail-history.test.tsx` asserts the key is missing, because a future edit
            * adding `count: history.length` would look like an improvement.
            */
-          { id: "history", label: t("rail.history"), title: t("rail.historyTitle") },
+          { id: "history", label: t("rail.history"), title: t("rail.historySubtitle") },
           { id: "search", label: t("rail.search"), kbdHint: "/" },
           /* DRAFTS CARRIES A COUNT and History deliberately does not, and the difference is what
              the number would mean. History's count would be the size of the past — always there,

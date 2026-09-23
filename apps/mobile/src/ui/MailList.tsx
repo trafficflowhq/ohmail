@@ -13,6 +13,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactElement,
   type ReactNode,
@@ -75,6 +76,8 @@ export interface MailListProps<T> {
   scrollEventThrottle?: number;
   /** A row's frame in scroll-content coordinates, as its cell lays out — the sweeps' geometry. */
   onRowFrame?: (row: T, frame: RowFrame) => void;
+  /** Filled with a scroll to a content offset — History's year strip jumps with it. */
+  scrollTo?: { current: ((y: number) => void) | null };
 }
 
 interface CellRules {
@@ -140,8 +143,11 @@ export function MailList<T>({
   onScroll,
   scrollEventThrottle,
   onRowFrame,
+  scrollTo,
 }: MailListProps<T>) {
   const t = useTheme();
+  const listRef = useRef<SectionList<T, PlannedSection<T>>>(null);
+  if (scrollTo) scrollTo.current = (y) => listRef.current?.getScrollResponder()?.scrollTo({ y, animated: false });
   const insets = useListInsets();
   const sections = useMemo(() => planSections(groups), [groups]);
 
@@ -220,6 +226,7 @@ export function MailList<T>({
   return (
     <CellRulesContext.Provider value={rules}>
       <SectionList<T, PlannedSection<T>>
+        ref={listRef}
         accessibilityRole="list"
         sections={sections}
         keyExtractor={rowKey}

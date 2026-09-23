@@ -2361,9 +2361,7 @@ export function OhboxView({
                     somebody's whole mailbox, and it is said only because the server answered a
                     page with no cursor after it. An empty page, a refusal and a network failure
                     are all different, and none of them says this. */}
-                {older.items.length > 0
-                  ? t("olderShowing", { count: older.items.length })
-                  : t("olderPrompt")}{" "}
+                {older.items.length > 0 ? <>{t("olderShowing", { count: older.items.length })}{" "}</> : null}
                 {older.exhausted ? (
                   t("olderEnd")
                 ) : (

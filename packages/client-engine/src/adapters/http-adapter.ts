@@ -23,6 +23,7 @@ import type {
   RestoreFromTrashWire,
   ServerAddressOpts,
   ServerAddressWire,
+  ServerSearchFacets,
   ServerSearchOpts,
   ServerSearchWire,
   TrashRowWire,
@@ -37,6 +38,27 @@ import type { WindowSyncFailure } from "../window-sync-failure.js";
 import { classifyRefusal, type RefusalKind } from "./refusal-shape.js";
 import { sessionEndedResponse } from "../session-gate.js";
 import { responseBlob } from "../bytes-blob.js";
+import { readTimelineWire, type StoreTimeline } from "../store-pages.js";
+
+/** The store's facets, read defensively; `null` when the answer carried none (the page part). */
+function facetsOf(wire: unknown): ServerSearchFacets | null {
+  if (typeof wire !== "object" || wire === null) return null;
+  const w = wire as { folder?: unknown; sender?: unknown; hasAttachments?: unknown; unread?: unknown };
+  const pair = (x: unknown) => {
+    const p = x as { true?: unknown; false?: unknown } | null;
+    return { true: typeof p?.true === "number" ? p.true : 0, false: typeof p?.false === "number" ? p.false : 0 };
+  };
+  const folder: Record<string, number> = {};
+  if (typeof w.folder === "object" && w.folder !== null) {
+    for (const [k, v] of Object.entries(w.folder as Record<string, unknown>)) if (typeof v === "number") folder[k] = v;
+  }
+  const sender = Array.isArray(w.sender)
+    ? (w.sender as { address?: unknown; count?: unknown }[])
+      .filter((x) => typeof x?.address === "string" && typeof x?.count === "number")
+      .map((x) => ({ address: x.address as string, count: x.count as number }))
+    : [];
+  return { folder, sender, hasAttachments: pair(w.hasAttachments), unread: pair(w.unread) };
+}
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -736,11 +758,17 @@ export class HttpAdapter implements EngineAdapter {
      */
     if (opts.sort !== undefined && opts.sort !== "relevance") q.set("sort", opts.sort);
     if (opts.parts !== undefined) q.set("parts", opts.parts);
+    if (opts.cursor) q.set("cursor", opts.cursor);
+    if (opts.filters?.folder) q.set("folder", opts.filters.folder);
+    if (opts.filters?.sender) q.set("sender", opts.filters.sender);
+    if (opts.filters?.hasAttachments !== undefined) q.set("hasAttachments", String(opts.filters.hasAttachments));
     const res = await this.request("GET", `/search?${q.toString()}`);
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json()) as { items?: EngineMessage[]; total?: number; tier?: string; totalExact?: unknown; ms?: unknown };
-    // Forward-compatible (§8): `facets` is deliberately unread — its folder keys are raw IMAP
-    // paths, and the client keys its own facets by view id.
+    const wire = (await res.json()) as {
+      items?: EngineMessage[]; total?: number; tier?: string; totalExact?: unknown; ms?: unknown;
+      nextCursor?: unknown; bounded?: unknown; indexed?: unknown; facets?: unknown;
+    };
+    // `facets` is read as the store keys it (folder paths, sender addresses); the view labels it.
     return {
       items: Array.isArray(wire.items) ? wire.items : [],
       total: typeof wire.total === "number" ? wire.total : (wire.items?.length ?? 0),
@@ -750,6 +778,11 @@ export class HttpAdapter implements EngineAdapter {
       tier: wire.tier === "similar" ? "similar" : "exact",
       ...(wire.totalExact === false ? { totalExact: false } : {}),
       ...(typeof wire.ms === "number" ? { ms: wire.ms } : {}),
+      ...(typeof wire.nextCursor === "string" && wire.nextCursor !== "" ? { nextCursor: wire.nextCursor } : {}),
+      ...(wire.bounded === true ? { bounded: true } : {}),
+      ...(typeof wire.indexed === "object" && wire.indexed !== null
+        ? { indexed: wire.indexed as { done: number; total: number } } : {}),
+      ...(facetsOf(wire.facets) ? { facets: facetsOf(wire.facets)! } : {}),
     };
   }
 
@@ -803,7 +836,7 @@ export class HttpAdapter implements EngineAdapter {
    * "nothing behind this list" a serverless client reports.
    */
   async listMessages(
-    view: OhmailView | "folder",
+    view: OhmailView | "folder" | "all",
     opts: {
       cursor?: string; limit?: number; folderId?: string;
       startBelow?: { date: string | null; id: string };
@@ -829,6 +862,23 @@ export class HttpAdapter implements EngineAdapter {
         nextCursor: typeof wiref.nextCursor === "string" && wiref.nextCursor !== "" ? wiref.nextCursor : null,
       };
     }
+    // THE WHOLE TIMELINE (History): every message the account owns, the same strict keyset.
+    if (view === "all") {
+      const qa = new URLSearchParams({ view: "all" });
+      if (opts.cursor) qa.set("cursor", opts.cursor);
+      else if (opts.startBelow) {
+        if (opts.startBelow.date !== null) qa.set("beforeDate", opts.startBelow.date);
+        qa.set("beforeId", opts.startBelow.id);
+      }
+      if (opts.limit !== undefined) qa.set("limit", String(opts.limit));
+      const resa = await this.request("GET", `/messages?${qa.toString()}`);
+      if (!resa.ok) throw await this.rejectionOf(resa);
+      const wirea = (await resa.json()) as { items?: EngineMessage[]; nextCursor?: string | null };
+      return {
+        items: Array.isArray(wirea.items) ? wirea.items : [],
+        nextCursor: typeof wirea.nextCursor === "string" && wirea.nextCursor !== "" ? wirea.nextCursor : null,
+      };
+    }
     const serverView = SERVER_VIEW_OF[view];
     if (serverView === null) return null;
     const q = new URLSearchParams({ view: serverView });
@@ -841,6 +891,16 @@ export class HttpAdapter implements EngineAdapter {
       items: Array.isArray(wire.items) ? wire.items : [],
       nextCursor: typeof wire.nextCursor === "string" && wire.nextCursor !== "" ? wire.nextCursor : null,
     };
+  }
+
+  /**
+   * `GET /messages/timeline` — History's total and its months, newest first. A non-2xx throws
+   * through `rejectionOf`; a body that is not a timeline reads as "no timeline here".
+   */
+  async timeline(): Promise<StoreTimeline | null> {
+    const res = await this.request("GET", "/messages/timeline");
+    if (!res.ok) throw await this.rejectionOf(res);
+    return readTimelineWire(await res.json());
   }
 
   // ── Trash ────────────────────────────────────────────────────────────────

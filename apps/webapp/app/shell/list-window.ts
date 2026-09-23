@@ -71,6 +71,12 @@ export interface ListWindow {
   rowHeight: number;
   /** Where index `i` starts, in scroller pixels: the prefix sum of the measured heights. */
   offsetOf: (index: number) => number;
+  /**
+   * The slots the viewport shows, plus the overscan — whether or not the list renders whole. A
+   * list that fetches its rows asks for these, never for every slot a short list mounts.
+   */
+  visibleStart: number;
+  visibleEnd: number;
 }
 
 export interface UseListWindowOptions {
@@ -193,6 +199,8 @@ export function useListWindow({
   };
 
   const windowed = count > FULL_RANGE_MAX_ROWS;
+  const visibleStart = Math.max(0, Math.min(count, indexAt(scrollTop) - overscan));
+  const visibleEnd = Math.min(count, indexAt(scrollTop + height) + 1 + overscan);
   const start = windowed ? Math.max(0, Math.min(count, indexAt(scrollTop) - overscan)) : 0;
   const end = windowed ? Math.min(count, indexAt(scrollTop + height) + 1 + overscan) : count;
   const padTop = windowed ? (prefix[start] ?? 0) : 0;
@@ -266,7 +274,7 @@ export function useListWindow({
   });
 
   if (!windowed) {
-    return { start: 0, end: count, padTop: 0, padBottom: 0, rowHeight: mean, offsetOf };
+    return { start: 0, end: count, padTop: 0, padBottom: 0, rowHeight: mean, offsetOf, visibleStart, visibleEnd };
   }
 
   return {
@@ -276,5 +284,7 @@ export function useListWindow({
     padBottom: Math.max(0, (prefix[count] ?? 0) - (prefix[end] ?? 0)),
     rowHeight: mean,
     offsetOf,
+    visibleStart,
+    visibleEnd,
   };
 }

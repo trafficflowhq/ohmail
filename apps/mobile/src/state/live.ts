@@ -70,6 +70,9 @@ import {
   type FolderEntity,
   type MutationResult,
   type OhmailEngine,
+  StoreTimelineWalker,
+  type ServerSearchOutcome,
+  type ServerSearchOpts,
   type PressVerdict,
   type RuleDTO,
   type ScreenDest,
@@ -1441,7 +1444,7 @@ export function liveMessage(engine: OhmailEngine, id: string, v: WorldView): Wor
   const projected = world.reader.get<EngineMessage>("message", id);
   const retired = projected ? undefined : world.history.find((h) => h.id === id);
   const m = projected ?? (retired ? { ...retired, physicalFolder: retired.folder } : undefined);
-  if (!m) return undefined;
+  if (!m) return offMirrorMail(engine, id, v);
   const pres = projected ? world.reader : engine.read();
   const row = toMail(pres, m, v);
   // The place the reader arrived through, on the row that carries no other honest one: the
@@ -1490,6 +1493,90 @@ export function liveMessage(engine: OhmailEngine, id: string, v: WorldView): Wor
   return row;
 }
 
+
+/* ──────────────────────────────────────────── the store's rows: History, Search */
+
+/**
+ * A STORE ROW — a History page's, a Search hit's — as a phone row. The mirror's live row wins
+ * where it holds one (read state, tags, triage); a History row states the folder it sits in.
+ */
+export function storeRowOf(engine: OhmailEngine, m: EngineMessage, v: WorldView, inHistory: boolean): WorldMail {
+  const src = engine.read().get<EngineMessage>("message", m.id) ?? m;
+  const stamped: EngineMessage = inHistory ? { ...src, physicalFolder: physicalFolderOf(src) } : src;
+  const row = toMail(engine.read(), stamped, v);
+  if (inHistory) row.historyPlace = physicalFolderOf(stamped);
+  return row;
+}
+
+export type { EngineMessage as StoreMessage, ServerSearchOpts, ServerSearchOutcome, StoreTimelineWalker };
+
+/** The mirror's rows in the store's reading order — History's first paint. */
+export function mirrorNewestFirst(engine: OhmailEngine): EngineMessage[] {
+  const at = (m: EngineMessage): number => {
+    const t = Date.parse(m.date ?? "");
+    return Number.isFinite(t) ? t : Number.NEGATIVE_INFINITY;
+  };
+  return [...engine.read().list<EngineMessage>("message")]
+    .sort((a, b) => at(b) - at(a) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+}
+
+/** History's walker for this engine — the one the browser renders too. */
+export function storeWalkerFor(engine: OhmailEngine): StoreTimelineWalker {
+  return new StoreTimelineWalker(engine);
+}
+
+/**
+ * THE ONE ROW THE READER MAY OPEN WITHOUT A MIRROR ROW BEHIND IT — the webapp's
+ * `readerOffMirror`: set by the list that opened it, with its body read on open through
+ * `engine.readBodyOffMirror` (returned, never written). One entry; the mirror's row wins.
+ */
+let offMirror: { row: EngineMessage; body: { state: "loading" | "full" | "failed"; text: string; html: string | null } | null } | null = null;
+let offMirrorRev = 0;
+const offMirrorListeners = new Set<() => void>();
+const offMirrorMoved = (): void => {
+  offMirrorRev += 1;
+  for (const fn of offMirrorListeners) fn();
+};
+export function openOffMirror(m: EngineMessage): void {
+  if (offMirror?.row.id === m.id) return;
+  offMirror = { row: m, body: null };
+  offMirrorMoved();
+}
+export const subscribeOffMirror = (fn: () => void): (() => void) => {
+  offMirrorListeners.add(fn);
+  return () => offMirrorListeners.delete(fn);
+};
+export const offMirrorRevision = (): number => offMirrorRev;
+
+function offMirrorMail(engine: OhmailEngine, id: string, v: WorldView): WorldMail | undefined {
+  if (offMirror === null || offMirror.row.id !== id) return undefined;
+  const row = storeRowOf(engine, offMirror.row, v, true);
+  const b = offMirror.body;
+  if (b !== null) {
+    row.bodyState = b.state;
+    row.body = b.state === "full" ? b.text : offMirror.row.snippet;
+    row.html = b.state === "full" ? b.html : null;
+  }
+  row.earlier = [];
+  return row;
+}
+
+/** The off-mirror row's body, read once per open (a failed read is asked again on the next). */
+export function hydrateOffMirror(engine: OhmailEngine, id: string): boolean {
+  if (offMirror === null || offMirror.row.id !== id || engine.read().get("message", id) !== undefined) return false;
+  const held = offMirror;
+  if (held.body !== null && held.body.state !== "failed") return true;
+  held.body = { state: "loading", text: "", html: null };
+  offMirrorMoved();
+  void engine.readBodyOffMirror(id).then((out) => {
+    if (offMirror !== held) return;
+    held.body = out.state === "ready"
+      ? { state: "full", text: out.text, html: out.html }
+      : { state: "failed", text: "", html: null };
+    offMirrorMoved();
+  });
+  return true;
+}
 
 /* ─────────────────────────────────────────────────────────────────── search */
 
@@ -2399,6 +2486,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * the default path deliberately skips a failed record.
    */
   const hydrateSmart = (id: string): void => {
+    if (hydrateOffMirror(engine, id)) return;
     const rec = engine.read().get<{ state?: string }>("message_body", id);
     void engine
       .hydrateBody(id, rec?.state === "failed" ? { retry: true } : {})

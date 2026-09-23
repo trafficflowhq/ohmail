@@ -171,7 +171,7 @@ export function AddressView({
     : t("addressDevice", { count: view.counts[direction] });
   const archiveHalf =
     archive.state === "searching" ? (
-      t("scopeSearching")
+      t("scopeWholeSearching")
     ) : archive.state === "unavailable" ? (
       t("scopeNoArchive")
     ) : archive.state === "failed" ? (
@@ -182,7 +182,7 @@ export function AddressView({
          block above the list would claim the whole view had failed when the device's rows are
          right there. Search's own retry is the same control on the same line. */
       <>
-        {t("scopeFailed", { reason: archive.error })}{" "}
+        {t("scopeUnanswered")}{" "}
         <button type="button" className="btn ghost" onClick={archive.retry}>
           {t("addressRetry")}
         </button>
@@ -254,13 +254,12 @@ export function AddressView({
           ) : (
             <>
               <div className="results-head addr-scope">{scope}</div>
-              {rows.map(({ hit, archiveOnly }) => (
+              {rows.map(({ hit }) => (
                 <div key={hit.message.id} className="hit-w" data-hit={hit.message.id}>
                   <SearchHitRow
                     hit={hit}
                     now={now}
                     onOpen={onOpen}
-                    archiveOnly={archiveOnly}
                     placeOf={placeOf}
                     here={address}
                   />

@@ -354,7 +354,7 @@ async function verifyAccountId(
  * forwarded by hand — an absent forward would silently strip it on the live path only.
  */
 type GuardedMobileAdapter = EngineAdapter
-  & Pick<HttpAdapter, "snapshot" | "listMessages" | "listTrash" | "restoreFromTrash">;
+  & Pick<HttpAdapter, "snapshot" | "listMessages" | "listTrash" | "restoreFromTrash" | "timeline">;
 
 function accountGuarded(
   adapter: HttpAdapter,
@@ -417,6 +417,8 @@ function accountGuarded(
     requestPull: () => adapter.requestPull(),
     unsubscribe: (id) => adapter.unsubscribe(id),
     listMessages: adapter.listMessages.bind(adapter),
+    // History's month rail, forwarded on `listMessages`' rule: the pages it places ride the line above.
+    timeline: () => adapter.timeline(),
     // Trash — the page read and the restore verb, forwarded on `mutate`'s rule (user-intent,
     // bounded by the press). The engine resolves `trashAvailable()` from the adapter's OPTIONAL
     // capabilities, so leaving this pair out of the literal is the `requestPull` defect again:

@@ -26,6 +26,10 @@ import {
 import { oneSourceReader, sendingMailboxId, winningStates } from "./selectors.js";
 import { flattenResponse } from "./apply.js";
 import { CASCADE_TYPES } from "./mirror-bounds.js";
+import {
+  HISTORY_PAGE_CACHE_ROWS, HISTORY_PAGE_ROWS, StorePageCache, storePageKey,
+  type StorePageOpts, type StorePageOutcome, type StoreTimelineFn, type StoreTimelineOutcome,
+} from "./store-pages.js";
 import { classifyWindowSyncFailure, type WindowSyncFailure } from "./window-sync-failure.js";
 import { countNotify } from "./client-vitals.js";
 import { ObjectUrlLedger } from "./object-urls.js";
@@ -686,6 +690,29 @@ export interface ServerSearchWire {
   totalExact?: boolean;
   /** The server's own time for this answer, in milliseconds. Absent on an older server. */
   ms?: number;
+  /** The next page's cursor for the same question; `null`/absent on the last page. */
+  nextCursor?: string | null;
+  /** The last relevance page of a fused set cut at its top rows — the date orders walk them all. */
+  bounded?: boolean;
+  /** Present while the store is still indexing this account's older mail. */
+  indexed?: { done: number; total: number };
+  /** Counts over the WHOLE match set (the summary part), keyed as the store keys them. */
+  facets?: ServerSearchFacets;
+}
+
+/** The store's facets: folder by its stored path, senders by address, attachments and unread. */
+export interface ServerSearchFacets {
+  folder: Record<string, number>;
+  sender: Array<{ address: string; count: number }>;
+  hasAttachments: { true: number; false: number };
+  unread: { true: number; false: number };
+}
+
+/** A facet pressed: the store answers the narrowed question, never a filter over one page. */
+export interface ServerSearchFilters {
+  folder?: string;
+  sender?: string;
+  hasAttachments?: boolean;
 }
 
 /**
@@ -712,6 +739,9 @@ export interface ServerSearchOpts {
    * on the wire, so an older server is asked what it always was.
    */
   parts?: "page" | "summary";
+  /** The `nextCursor` of the previous page for the same query and sort. */
+  cursor?: string;
+  filters?: ServerSearchFilters;
 }
 
 /**
@@ -812,7 +842,7 @@ export interface ListOlderWire {
  * behind the end of the list, and must be able to say so rather than spin.
  */
 export type ListOlderFn = (
-  view: OhmailView | "folder",
+  view: OhmailView | "folder" | "all",
   opts: {
     cursor?: string;
     limit?: number;
@@ -848,6 +878,11 @@ export type ListOlderFn = (
  */
 interface ListMessagesCapableAdapter {
   listMessages?: ListOlderFn;
+}
+
+/** `GET /messages/timeline` — History's month rail and total. Structural, like the three above. */
+interface TimelineCapableAdapter {
+  timeline?: StoreTimelineFn;
 }
 
 /** The batch body read, as {@link OhmailEngine.hydrateThread} calls it. */
@@ -1010,7 +1045,11 @@ function olderFirst(a: { id: string; t: number }, b: { id: string; t: number }):
  */
 export type ServerSearchOutcome =
   | { state: "unavailable" }
-  | { state: "ready"; items: EngineMessage[]; total: number; tier: SearchTier; totalExact: boolean; ms: number | null }
+  | {
+    state: "ready"; items: EngineMessage[]; total: number; tier: SearchTier; totalExact: boolean; ms: number | null;
+    nextCursor: string | null; bounded: boolean; indexed: { done: number; total: number } | null;
+    facets: ServerSearchFacets | null;
+  }
   /** `errorClass` is what a log line may carry ({@link errorClassOf}); `error` is the text. */
   | { state: "failed"; error: string; errorClass: string };
 
@@ -1019,6 +1058,14 @@ export type ServerSearchOutcome =
  * never its message, which can carry what the person typed or what the server said about them.
  * A thrown non-Error is named by its type alone.
  */
+/** The store's indexing progress, read defensively; `null` once it is done or when absent. */
+function indexedOf(wire: unknown): { done: number; total: number } | null {
+  if (typeof wire !== "object" || wire === null) return null;
+  const { done, total } = wire as { done?: unknown; total?: unknown };
+  if (typeof done !== "number" || typeof total !== "number" || total <= 0 || done >= total) return null;
+  return { done: Math.max(0, done), total };
+}
+
 export function errorClassOf(err: unknown): string {
   if (!(err instanceof Error)) return typeof err;
   const { status, code } = err as { status?: unknown; code?: unknown };
@@ -2192,6 +2239,13 @@ export class OhmailEngine {
   private readonly restoreCalls = new Map<string, Promise<RestoreOutcome>>();
   /** In-flight out-of-window pages by view+cursor — see {@link OhmailEngine.listOlder}. */
   private readonly olderPages = new Map<string, Promise<ListOlderOutcome>>();
+  /** `GET /messages/timeline`, or `null` when this adapter has none. */
+  private readonly timelineFn: StoreTimelineFn | null;
+  /** The store's History pages — the one bound on page rows in memory ({@link HISTORY_PAGE_CACHE_ROWS}). */
+  private readonly storePages = new StorePageCache(HISTORY_PAGE_CACHE_ROWS);
+  /** In-flight store pages by key, and the one in-flight timeline read. */
+  private readonly storePageCalls = new Map<string, Promise<StorePageOutcome>>();
+  private timelineCall: Promise<StoreTimelineOutcome> | null = null;
 
   /**
    * Attachment metadata + byte state by message id.
@@ -2279,6 +2333,7 @@ export class OhmailEngine {
     // one source means `listOlderAvailable()` and `listOlder` cannot disagree, and there is no
     // second way for a host to arm a capability the gate did not forward.
     this.listOlderFn = (opts.adapter as ListMessagesCapableAdapter).listMessages?.bind(opts.adapter) ?? null;
+    this.timelineFn = (opts.adapter as TimelineCapableAdapter).timeline?.bind(opts.adapter) ?? null;
     // The Trash pair, bound by the SAME rule and INDEPENDENTLY of each other and of the list
     // above: an adapter wrapper forwards structural capabilities one at a time, so deriving
     // either from another would make a control call a method that is not there.
@@ -2858,6 +2913,7 @@ export class OhmailEngine {
           // The instant index is an index of the mail that just went. A build walking the old
           // rows would install it over the new mirror and hand back hits that open nothing.
           this.invalidateSearchIndex();
+          this.storePages.clear();
           // The wipe took the mail with it, so nothing has been received any more: every row comes
           // back over the wire and would otherwise be counted a second time. The wipe emptied meta
           // with it, so there is no written count left for the next boot to read back.
@@ -6968,7 +7024,12 @@ export class OhmailEngine {
     const fn = this.serverSearchFn;
     if (fn === null) return { state: "unavailable" };
     const q = query.trim();
-    if (q === "") return { state: "ready", items: [], total: 0, tier: "exact", totalExact: true, ms: null };
+    if (q === "") {
+      return {
+        state: "ready", items: [], total: 0, tier: "exact", totalExact: true, ms: null,
+        nextCursor: null, bounded: false, indexed: null, facets: null,
+      };
+    }
 
     /**
      * THE SORT IS PART OF THE KEY, and omitting it would be a defect rather than a missed
@@ -6978,7 +7039,11 @@ export class OhmailEngine {
      * appear to do nothing — but only inside the debounce window, which is the shape that gets
      * filed as flakiness and never reproduced.
      */
-    const key = `${opts.limit ?? ""}\u0000${opts.sort ?? ""}\u0000${opts.parts ?? ""}\u0000${q}`;
+    const f = opts.filters;
+    const key = JSON.stringify([
+      opts.limit ?? null, opts.sort ?? null, opts.parts ?? null, opts.cursor ?? null,
+      f ? [f.folder ?? null, f.sender ?? null, f.hasAttachments ?? null] : null, q,
+    ]);
     const inFlight = this.serverSearches.get(key);
     if (inFlight) return inFlight;
 
@@ -7001,6 +7066,10 @@ export class OhmailEngine {
           tier: wire.tier === "similar" ? "similar" : "exact",
           totalExact: wire.totalExact !== false,
           ms: typeof wire.ms === "number" ? wire.ms : null,
+          nextCursor: typeof wire.nextCursor === "string" && wire.nextCursor !== "" ? wire.nextCursor : null,
+          bounded: wire.bounded === true,
+          indexed: indexedOf(wire.indexed),
+          facets: wire.facets ?? null,
         };
       })
       .catch((err: unknown): ServerSearchOutcome => ({
@@ -7193,6 +7262,114 @@ export class OhmailEngine {
 
     this.olderPages.set(key, request);
     return request;
+  }
+
+  // ── the store's timeline: History, paged ─────────────────────────────────
+
+  /** Can History read the store — both doors, the pages and the month rail. `false` for the demo. */
+  storePagesAvailable(): boolean {
+    return this.listOlderFn !== null && this.timelineFn !== null;
+  }
+
+  /** `GET /messages/timeline` — the total and the months. Single-flight; never rejects. */
+  async timeline(): Promise<StoreTimelineOutcome> {
+    const fn = this.timelineFn;
+    if (fn === null) return { state: "unavailable" };
+    if (this.timelineCall !== null) return this.timelineCall;
+    const call = Promise.resolve()
+      .then(() => fn())
+      .then((wire): StoreTimelineOutcome => (wire === null ? { state: "unavailable" } : { state: "ready", timeline: wire }))
+      .catch((err: unknown): StoreTimelineOutcome => ({ state: "failed", errorClass: errorClassOf(err) }))
+      .finally(() => {
+        this.timelineCall = null;
+      });
+    this.timelineCall = call;
+    return call;
+  }
+
+  /**
+   * ONE PAGE OF THE STORE'S TIMELINE — `GET /messages?view=all`, strictly below `before` or after
+   * `cursor`. The rows are held in the bounded page cache and NEVER written into the mirror (the
+   * rule `searchServer` states for hits). A cached page answers without a request; single-flight
+   * per page; never rejects.
+   */
+  async pageStore(view: "all", opts: StorePageOpts = {}): Promise<StorePageOutcome> {
+    const fn = this.listOlderFn;
+    if (fn === null) return { state: "unavailable" };
+    const limit = Math.max(1, Math.min(HISTORY_PAGE_ROWS, opts.limit ?? HISTORY_PAGE_ROWS));
+    const key = storePageKey(view, opts, limit);
+    const held = this.storePages.get(key);
+    if (held !== undefined) return { state: "ready", items: held.items, nextCursor: held.nextCursor };
+    const flightKey = opts.transient ? `${key}~` : key;
+    const inFlight = this.storePageCalls.get(flightKey);
+    if (inFlight) return inFlight;
+    const call = Promise.resolve()
+      .then(() => fn(view, {
+        limit,
+        ...(opts.cursor ? { cursor: opts.cursor } : {}),
+        ...(!opts.cursor && opts.before ? { startBelow: opts.before } : {}),
+      }))
+      .then((wire): StorePageOutcome => {
+        if (wire === null) return { state: "unavailable" };
+        const page = { items: Array.isArray(wire.items) ? wire.items : [], nextCursor: wire.nextCursor };
+        if (!opts.transient) this.storePages.put(key, page, opts.at);
+        return { state: "ready", ...page };
+      })
+      .catch((err: unknown): StorePageOutcome => ({ state: "failed", errorClass: errorClassOf(err) }))
+      .finally(() => {
+        this.storePageCalls.delete(flightKey);
+      });
+    this.storePageCalls.set(flightKey, call);
+    return call;
+  }
+
+  /** The cached page for this request, or `undefined` — a render's synchronous read. */
+  peekStorePage(view: "all", opts: StorePageOpts = {}): EngineMessage[] | undefined {
+    const limit = Math.max(1, Math.min(HISTORY_PAGE_ROWS, opts.limit ?? HISTORY_PAGE_ROWS));
+    return this.storePages.get(storePageKey(view, opts, limit))?.items;
+  }
+
+  /**
+   * A page row as it stands NOW: the mirror's own row where it holds one (read state, tags and
+   * triage stay live), `null` where the mirror records it gone (a tombstone, or a pending delete
+   * the overlay hides), else the page's row.
+   */
+  storePageRow(item: EngineMessage): EngineMessage | null {
+    const live = this.readerView.get<EngineMessage>("message", item.id);
+    if (live !== undefined) return live;
+    return this.store.record("message", item.id) !== undefined ? null : item;
+  }
+
+  /** The cached page row with this id, if a page holding it is still cached. */
+  storePageRowById(id: string): EngineMessage | undefined {
+    return this.storePages.find(id);
+  }
+
+  /**
+   * A BODY FOR A ROW THE MIRROR DOES NOT HOLD — a store page's, a search hit's. Read on open and
+   * RETURNED, never written: a body record without its message row is exactly what the mirror's
+   * bounds forbid. A mirror row takes `hydrateBody` instead. Never rejects.
+   */
+  async readBodyOffMirror(messageId: string): Promise<
+    { state: "ready"; text: string; html: string | null } | { state: "unavailable" } | { state: "failed"; errorClass: string }
+  > {
+    try {
+      const wire = await this.adapter.fetchBody(messageId);
+      if (wire === null) return { state: "unavailable" };
+      return { state: "ready", text: typeof wire.text === "string" ? wire.text : "", html: typeof wire.html === "string" ? wire.html : null };
+    } catch (err) {
+      return { state: "failed", errorClass: errorClassOf(err) };
+    }
+  }
+
+  /** Rows the page cache holds — what the bounds census reads. */
+  storePageCacheRows(): number {
+    return this.storePages.rows();
+  }
+
+  /** Drop every cached page — a History visit starts from the store's present. */
+  resetStorePages(): void {
+    this.storePages.clear();
   }
 
   // ── Trash: mail this account deleted, and putting one back ───────────────

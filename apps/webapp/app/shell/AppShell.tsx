@@ -245,6 +245,7 @@ import {
 } from "./routing";
 import { beginSearch, markStartup, useUiVitals } from "./ui-vitals";
 import { HistoryView } from "../views/HistoryView";
+import { useStoreTotal } from "./store-timeline";
 import { SeedReviewView } from "../views/SeedReviewView";
 import { OhboxView, type OhboxReplyDone } from "../views/OhboxView";
 import { ReadsView } from "../views/ReadsView";
@@ -1285,7 +1286,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   const {
     ownAddresses, ownNameOf, mailboxLabelOf, consentView, presented, trashPage, trashWindow,
     older, folderOlder, ohbox, resurfacedRows, partition, receipts, receiptsPartition, piles,
-    parked, tagGroups, windowedMirror, history, tags, folders, folderMailboxes,
+    parked, tagGroups, history, tags, folders, folderMailboxes,
     folderUnread, openFolder, folderMessages, rules, mailboxes, draft, aiChip, account,
     notifications, allOhbox, ohboxCount, participantsOf, threadCountOf, threadSubjectOf, fallbackMailboxId,
     drafts, scheduled,
@@ -1433,11 +1434,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * ONLY WHILE THE STAGE IS OPEN: `reader.list("message")` materialises the whole mirror, which is
    * the cost the windowing work exists to keep off the render path.
    */
+  /* THE HISTORY FIGURE IS THE STORE'S TOTAL — History lists every message the account owns — and
+     only where the account holds this one mailbox; beside a second, its own older mail. */
+  const storeTotal = useStoreTotal(engine, route.firstRun && (facts?.length ?? 0) <= 1);
   const firstRunPull = useMemo(
     () => (route.firstRun && firstRunMailbox !== null
-      ? firstRunCounts(reader.list<EngineMessage>("message"), history, firstRunMailbox.id)
+      ? firstRunCounts(reader.list<EngineMessage>("message"), history, firstRunMailbox.id, storeTotal)
       : { screened: 0, history: 0 }),
-    [route.firstRun, reader, derived, history, firstRunMailbox],
+    [route.firstRun, reader, derived, history, firstRunMailbox, storeTotal],
   );
   const onboardingFacts: OnboardingFacts | null = useMemo(() => {
     if (!firstRun || facts === null) return null;
@@ -2744,47 +2748,28 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
 
             {effectiveView === "history" ? (
               <HistoryView
-                /* The pair every list states its counts and its emptiness from — see
-                   `MailState.settled` and `MailState.owed`. */
+                /* The store's timeline, through the engine; the mirror paints first. */
+                engine={engine}
+                version={derived}
                 settled={mailState.settled}
                 owed={mailState.owed}
                 threadParticipants={participantsOf}
                 threadCountOf={threadCountOf}
                 absoluteTime={absoluteTime}
                 onToggleTime={toggleAbsoluteTime}
-                messages={history}
                 tags={tags}
                 now={now}
-                /**
-                 * The reader, IN PLACE — not `openMessage`, and the difference is a defect rather than a preference:
-                 * `openMessage` answers "open it where it lives", and where a History message lives is the INBOX — it
-                 * would navigate to the Ohbox and select a row that is not in the Ohbox's list, because the whole
-                 * point of History is that this message does not present there. The reader takes an id and reads
-                 * straight from the mirror, so it works for a message belonging to no pile.
-                 */
-
-                /**
-                 * `setReaderFor` and not `enterReader`: in the SOLO list there is no reading column at any width, so
-                 * the sheet is the only reading surface — the gate that suppresses the sheet where a column exists
-                 * would leave the solo list unable to open anything; the split layout reads in its column, the sheet
-                 * its mobile fallback. Either way the body hydrates through the `readerFor`-keyed effect above. It is
-                 * what makes decide-on-encounter work: the pane renders the full body and thread, and the sender menu
-                 * inside offers the screening decision with the sender's count and the explicit retro-apply, reached
-                 * from the mail that prompted the thought.
-                 */
-                onOpen={(m) => setReaderFor(m.id)}
-                /* The split reading column hydrates its own selection, the way ReadsView does. */
+                /* IN PLACE, and the row TRAVELS with the open: a store page's row is not a mirror
+                   row, and a reader resolving mirror ids alone would stay closed on it (the
+                   folder view's reach-past rule; the mirror's own row still wins). */
+                onOpen={(m) => { setReaderOffMirror(m); setReaderFor(m.id); }}
                 hydrateBody={hydrateBody}
                 onAction={onMessageAction}
                 onAddTag={openTagPicker}
-                /* The verbs this view declares for itself — see `useMessageVerbs`. */
                 onScreen={openSenderMenu}
                 canDelete={canDeleteMessage}
                 canReplyAll={canReplyAllTo}
-                onMarkAllRead={markAllRead}
-                /* This list is what the device kept, not the whole of History — see the view's
-                   `windowed` prop, which takes the count off and says where the rest is. */
-                windowed={windowedMirror}
+                held={deleting.held}
               />
             ) : null}
 
@@ -2804,7 +2789,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                    History message the folder and the place are different answers. The INDEX is
                    deliberately not projected — mail in History must stay searchable. */
                 placeOf={consentView?.placeOf}
-                onServerSearch={() => toast(t("search.toastServer"))}
                 /* The pass that does not exist — the provider's Junk folder is never mirrored,
                    so "Nothing here" is a claim about a corpus that excludes it. */
                 junkSaid={junkSaid}

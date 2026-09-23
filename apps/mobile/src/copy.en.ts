@@ -1018,18 +1018,21 @@ const TABLE = {
    * construction, so a badge would claim attention nothing in it wants.
    */
   history: "History",
-  historyNavSub: "Old mail from senders you never screened",
+  historyNavSub: "Everything you own, newest first",
   historyMeta: (n: number) => `${n} message${n === 1 ? "" : "s"}`,
-  historyExplainer: "Mail from people you never screened, who haven't written in a while.",
+  historyExplainer: "Every message you own, newest first — back to the first one.",
   historyExplainerMore:
-    "It's all read, so nothing here is waiting on you. It hasn't moved — each message is still where your mail server keeps it.",
+    "Nothing here has moved: each message is still where your mail server keeps it, and its row names that folder. The months and years on the right jump anywhere in it.",
   historyExplainerMoreLabel: "What History holds, and where it lives",
-  historyEmptyTitle: "Nothing has settled here yet.",
-  historyEmptyHint:
-    "History holds old mail from senders you never made a decision about. If one of them writes again, they go to the Screener and bring this mail with them.",
-  /* The phone's own tail, in `folderTail`'s shape and for its reason: this build has no
-     reach-past, so the count is what is on THIS PHONE and never a claim about the mailbox. */
-  historyTail: (n: number) => `${n} message${n === 1 ? "" : "s"} in History on this phone.`,
+  historyEmptyTitle: "Nothing here yet.",
+  historyEmptyHint: "Your mail appears as it syncs.",
+  /* The end of the store's timeline: its own count, the first message you own above it. */
+  historyTail: (n: number) => `${n} message${n === 1 ? "" : "s"} in History.`,
+  historyLoading: "Loading your mail.",
+  historyStoreUnavailable: "Your server did not answer — showing the recent mail this device holds.",
+  historyStoreRetry: "Try again",
+  historyRailLabel: "Jump to a year",
+  historyUndated: "No date",
 
   /*
    * THE FOLDER VERBS — stage 2 (FOLDERS-SPEC.md §18), the webapp rail's own strings
@@ -1109,10 +1112,17 @@ const TABLE = {
   searchResultsHead: (n: number) => (n === 1 ? "1 result" : `${n} results`),
   searchSimilarHead: "Similar",
   searchSimilarHint: "Nothing matched exactly, so these are the closest words.",
-  searchEmptyTitle: "Nothing on this device.",
-  searchIndexing: "Still reading this device's mail.",
-  searchScopeDevice:
-    "This device holds subjects, senders and the first 200 characters of each message — not the full text.",
+  searchEmptyTitle: "Nothing matched.",
+  searchIndexing: "Still reading your recent mail.",
+  /* THE WHOLE-MAILBOX VERDICT — the webapp's `search.scopeWhole*`, word for word. */
+  searchWholeSearching: "Searching your whole mailbox…",
+  searchWhole: (n: number) => (n === 0 ? "Searched your whole mailbox — nothing matched" : `Searched your whole mailbox — ${n} matched`),
+  searchWholeAtLeast: (n: number) => `Searched your whole mailbox — at least ${n} matched`,
+  searchServerMs: (ms: number) => `${ms} ms`,
+  searchUnanswered: "Your server did not answer — showing the recent mail this device holds.",
+  searchWholeRetry: "Search your whole mailbox again",
+  searchIndexingProgress: (percent: number) => `Older mail is still being indexed — ${percent} % done.`,
+  searchBounded: (n: number) => `Showing the ${n} best matches — sort by date to walk them all.`,
   searchEmptyAddressScopes: (address: string) =>
     `An address is its own search — everything ${address} sent, or anything from or to them.`,
   searchAddressAll: "All",

@@ -1,44 +1,46 @@
 "use client";
 
 /**
- * History — mail from people nobody ever decided about, who then went quiet. Every message here is READ, guaranteed
- * rather than arranged: a sender with any unread mail is ACTIVE and pulls into the Screener queue instead — so the
- * rail entry carries no count and the pane shows no unread state. Not called Archive: "Archive" is a verb in every
- * other client, an action this mail never received, and a mailbox with a real Archive folder would meet a view by
- * that name whose contents are not that folder's.
+ * History — every message the account owns, newest first, back to the first one. It is the
+ * store's timeline ({@link useStoreTimeline}): the list is as long as the store's total, rows are
+ * fetched a page at a time as the window nears them, and the month rail jumps anywhere in it.
+ * Nothing here has moved — every row names the server folder the message sits in. The mirror only
+ * paints first and is replaced in place; no path here reads or writes the mirror's window.
  */
-
-/**
- * Nothing here has moved: this is a presentation, not a location — every message sits exactly where the mail server
- * has it, and the row states the server folder so an invented place is not mistaken for a real one. One way to read
- * it — the Ohbox's list beside a reading column (the old List/Split toggle reset per visit and defaulted to the
- * slower half; the better shape is simply the shape; under 900px a click raises the reader sheet). The one pile with
- * no upper bound: measured at 20 000 rows, `messages.map` mounted in 4 050 ms as 242 904 nodes with 1 409 ms clicks —
- * windowed ({@link useListWindow}): 44 ms, 423 nodes, 6 ms.
- */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { rowThreadOf } from "../shell/row-thread";
 import {
   countWhen, listSurface, physicalFolderOf, saysEmpty,
-  type EngineMessage, type TagDTO,
+  type EngineMessage, type OhmailEngine, type TagDTO,
 } from "@ohmail/client-engine";
 import { InfoNote, ListPane, ListRows, MessageRow, ReadColumn, Spinner } from "@ohmail/ui";
-import { MarkAllRead } from "../components/MarkAllRead";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { useListWindow } from "../shell/list-window";
+import { useStoreTimeline } from "../shell/store-timeline";
 import { avatarOf, rowStamp, rowAddress, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useZoneNav } from "../shell/zone-nav";
 import { useMessageVerbs } from "../shell/message-verbs";
 import { readColumnHidden } from "../shell/narrow";
 import { useLoadingGrace } from "../shell/loading-grace";
+import { HistoryRail } from "./HistoryRail";
+import "./history-rail.css";
 
+/** The mirror's rows in the store's reading order: `date desc nulls last, id desc`. */
+export function newestFirst(rows: readonly EngineMessage[]): EngineMessage[] {
+  const at = (m: EngineMessage): number => {
+    const t = Date.parse(m.date ?? "");
+    return Number.isFinite(t) ? t : Number.NEGATIVE_INFINITY;
+  };
+  return [...rows].sort((a, b) => at(b) - at(a) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+}
 
 export function HistoryView({
+  engine,
+  version,
   settled,
   owed,
-  messages,
   tags,
   threadParticipants,
   threadCountOf,
@@ -52,162 +54,119 @@ export function HistoryView({
   onScreen,
   canDelete,
   canReplyAll,
-  onMarkAllRead,
-  windowed = false,
+  held,
 }: {
-  /**
-   * The pair every list asks before it states anything about the mailbox — `MailState.settled`
-   * and `MailState.owed`, through `@ohmail/client-engine`'s one reading. History is derived
-   * from the WHOLE mirror, so "Nothing here yet" over an unread one is the Ohbox's own defect
-   * in this pile. Props, because this view is mounted bare in tests.
-   */
+  /** The store's timeline and pages come through the engine's doors; the mirror paints first. */
+  engine: OhmailEngine;
+  /** The mirror's version — page rows re-read the mirror's live row when it moves. */
+  version: number;
+  /** `MailState.settled` / `owed`: emptiness is stated only over a read mirror (the demo's arm). */
   settled: boolean;
   owed: boolean;
-  messages: readonly EngineMessage[];
-  /**
-   * THE PEOPLE IN A ROW'S CONVERSATION, for its lead circles — bound to the engine's reader by
-   * the shell (this view has none) and mapped to `{initials, hue}`. A LOOKUP into the shell's
-   * per-version thread index, so calling it per row costs nothing; `[]` for a message whose
-   * thread has no second voice in it, and the row then leads with the one sender's circle it
-   * always did. Optional, so a view mounted without it (the demo, most tests) is unchanged.
-   */
+  /** The people in a row's conversation, for its lead circles — optional, as in every list. */
   threadParticipants?: (threadId: string) => { initials: string; hue: number }[];
-  /**
-   * HOW LONG THE CONVERSATION IS, from the engine's one index (`AppShell`) — 0 where the mirror
-   * knows of no thread, which is a row standing for itself. The view has no reader of its own,
-   * exactly as {@link threadParticipants} has none.
-   */
   threadCountOf?: (threadId: string) => number;
-  /**
-   * THE DATE STAMPS — which form they are in, and the press that flips them.
-   *
-   * One boolean for every row at once: the shell owns it, resets it on a view switch and shares
-   * it with the open message, so no two dates on screen are ever in different shapes. `rowStamp`
-   * turns the pair into the row's stamp props. Optional, and absent leaves the rows exactly as
-   * they were — relative dates, the exact instant on hover, nothing to press.
-   */
   absoluteTime?: boolean;
   onToggleTime?: () => void;
   tags: TagDTO[];
   now: Date;
   /** The reader sheet, in place — the narrow-width tap, where there is no reading column. */
   onOpen: (m: EngineMessage) => void;
-  /** Hydrate the split reading column's message, exactly as ReadsView hydrates `current`. */
+  /** Hydrate the reading column's message; off-mirror rows take the body door. */
   hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
-  /** The reading column's message verbs — the shell's `onMessageAction`. */
   onAction: (action: MessageAction, message: EngineMessage) => void;
   onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
-  /* THE THREE SEAMS THE MESSAGE VERBS NEED, resolved by the shell — see
-     `useMessageVerbs`' header for why none of them is derived in a view. */
   onScreen: (messageId: string, anchor: HTMLElement | null) => void;
   canDelete: (message: EngineMessage) => boolean;
   canReplyAll: (message: EngineMessage) => boolean;
-  /**
-   * Present for uniformity with the other list views. History is all-read by construction
-   * (an unread message is ACTIVE and lives in a pile, never here — see the file header), so the
-   * unread set is always empty and the affordance renders nothing. Optional and self-hiding.
-   */
-  onMarkAllRead?: (ids: string[]) => void;
-  /**
-   * IS THIS CLIENT'S MIRROR A WINDOW? `engine.storeWindow() !== null`, resolved by the shell.
-   *
-   * History is derived from the whole mirror and no wire partition serves it, so on a windowed
-   * client this list is what the device kept and its length is NOT the number of messages in the
-   * reader's History. So the count comes off — a bounded number under an unqualified label is the
-   * false state — and the tail says where the rest is. `false` for a mirror that is the mailbox,
-   * which keeps the count and says nothing.
-   */
-  windowed?: boolean;
+  /** Rows inside a delete's undo window — gone from every list while the toast stands. */
+  held?: ReadonlySet<string>;
 }) {
   const t = useTranslations("history");
   const rowBadge = useRowBadgeCopy();
-  /* The list keys' shared vocabulary and the reading column's region name — the Ohbox's own
-     labels and `reader.pane`, so the split views never phrase the same gesture apart. */
   const to = useTranslations("ohbox");
   const tReader = useTranslations("reader");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const scrollerRef = useRef<HTMLDivElement>(null);
-  const win = useListWindow({ scrollerRef, count: messages.length });
-  /* The pending pane's sentence, on the shared grace — a fast connection keeps its quiet frame
-     and never flashes a word (`shell/loading-grace.ts`, the Ohbox's own rule). */
-  const speak = useLoadingGrace(
-    !saysEmpty(listSurface({ settled, count: messages.length, pending: owed })),
+
+  const mirrorRows = useMemo(
+    () => newestFirst(engine.read().list<EngineMessage>("message")),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [engine, version],
   );
+  const store = useStoreTimeline(engine, version, mirrorRows);
+  const tl = useMemo(() => (held === undefined || held.size === 0 ? store : {
+    ...store,
+    rowAt: (i: number) => {
+      const r = store.rowAt(i);
+      return r !== null && r !== "gone" && held.has(r.id) ? "gone" as const : r;
+    },
+  }), [store, held]);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const win = useListWindow({ scrollerRef, count: tl.length });
+
+  /* The pages the window nears — asked after every move and every landed page. */
+  const { want } = tl;
+  useEffect(() => {
+    want(win.visibleStart, win.visibleEnd);
+  }, [want, win.visibleStart, win.visibleEnd]);
+
+  const speak = useLoadingGrace(tl.state === "loading" || (tl.state === "unavailable"
+    && !saysEmpty(listSurface({ settled, count: tl.length, pending: owed }))));
 
   /**
-   * The message the reading column shows — the user's pick, or the first row so the column is
-   * never blank beside a list that has rows. `?? messages[0]` is safe here where it was fatal in
-   * the Ohbox: History is all-read and static, so the list never re-partitions under the
-   * fallback and it cannot silently re-point at a message nobody chose.
+   * The open message is held as the ROW, not an index: a page can be evicted while it is read,
+   * and the column must not follow the cache. Absent a pick, the first slot's row.
    */
-  const shown = messages.find((m) => m.id === selectedId) ?? messages[0] ?? null;
+  const [picked, setPicked] = useState<{ row: EngineMessage; at: number } | null>(null);
+  const first = tl.rowAt(0);
+  const shown = picked
+    ? (engine.storePageRow(picked.row) ?? picked.row)
+    : first !== null && first !== "gone" ? first : null;
+  const shownAt = picked ? picked.at : shown ? 0 : -1;
 
   useEffect(() => {
     if (shown) hydrateBody(shown.id);
   }, [shown?.id, hydrateBody]);
 
-  /**
-   * OPENING A ROW MOVES THE CURSOR, ON BOTH LAYOUTS.
-   *
-   * The cursor is set FIRST and unconditionally. Before the message verbs were declared here it
-   * did not have to be: on the NARROW layout opening a row raised the reader and set no cursor,
-   * which was invisible because nothing read the cursor there. Every verb in `useMessageVerbs`
-   * reads it, so leaving it unset would make `d`, `⇧F` and the filing keys act on the FIRST row
-   * of the list while the reader showed the tapped one — the defect `TriageView` documents
-   * having already paid for.
-   */
-  const openRow = (m: EngineMessage) => {
-    setSelectedId(m.id);
-    // Where the column is hidden the sheet is the only reading surface; where it is standing the
-    // selection above is the whole open, and nothing leaves the screen.
+  const openRow = (m: EngineMessage, at: number) => {
+    setPicked({ row: m, at });
     if (readColumnHidden()) onOpen(m);
   };
 
-  /**
-   * ↓/↑ WALK THE LIST AS RENDERED — the zone model's list zone (`zone-nav.tsx`), and this
-   * view's first list keys. History is all-read by construction, so selection here can have
-   * no read side effect at all — showing is the whole act. → into the pane is a focus move;
-   * where the column is hidden it is the sheet, the same answer a tap gets (`openRow`).
-   */
-  const navAt = shown ? messages.findIndex((m) => m.id === shown.id) : -1;
-  const selectRow = (id: string): void => {
-    setSelectedId(id);
-    // Keep the new cursor in view. `?.` on the METHOD, not only the node: jsdom mounts this
-    // view without implementing scrollIntoView (RulesView's precedent).
-    queueMicrotask(() =>
-      document
-        .querySelector<HTMLElement>(`.view-history .row[data-id="${CSS.escape(id)}"]`)
-        ?.scrollIntoView?.({ block: "nearest" }),
-    );
+  /** Move the cursor to slot `i`: select the row there, or scroll to it so its page is fetched. */
+  const selectAt = (i: number): void => {
+    const r = tl.rowAt(i);
+    if (r !== null && r !== "gone") setPicked({ row: r, at: i });
+    const el = scrollerRef.current;
+    if (el) {
+      const top = win.offsetOf(i);
+      if (top < el.scrollTop || top > el.scrollTop + el.clientHeight - win.rowHeight) {
+        el.scrollTop = Math.max(0, top - win.rowHeight);
+      }
+    }
   };
-  /* THE NINE MESSAGE VERBS, over this view's own cursor. Without this declaration the
-     shell's bindings register `disabled` here (they act on `focused`, which has no arm for
-     a split view's local cursor) while the action bar goes on printing their keycaps —
-     nine keys that print a cap and do nothing. See `message-verbs.ts`. */
+  const loaded = (() => {
+    const out: EngineMessage[] = [];
+    for (let i = win.start; i < win.end; i++) {
+      const r = tl.rowAt(i);
+      if (r !== null && r !== "gone") out.push(r);
+    }
+    return out;
+  })();
   useMessageVerbs({
     shown, scope: ".view-history", onAction, onAddTag, onScreen, canDelete, canReplyAll,
-    /* The list as rendered and the walk's own selector — the cursor placer's two inputs
-       (`cursor-placer.ts`). `messages` is what the rows below are drawn from, in their order. */
-    rows: messages, select: selectRow,
+    rows: loaded, select: (id) => {
+      for (let i = win.start; i < win.end; i++) {
+        const r = tl.rowAt(i);
+        if (r !== null && r !== "gone" && r.id === id) return selectAt(i);
+      }
+    },
   });
 
   useZoneNav({
     list: {
       followId: shown?.id ?? null,
-      up: {
-        disabled: navAt <= 0,
-        run: () => {
-          if (navAt > 0) selectRow(messages[navAt - 1]!.id);
-        },
-        label: to("keyPrev"),
-      },
-      down: {
-        disabled: navAt >= messages.length - 1,
-        run: () => {
-          if (navAt < messages.length - 1) selectRow(messages[navAt + 1]!.id);
-        },
-        label: to("keyNext"),
-      },
+      up: { disabled: shownAt <= 0, run: () => selectAt(shownAt - 1), label: to("keyPrev") },
+      down: { disabled: shownAt < 0 || shownAt >= tl.length - 1, run: () => selectAt(shownAt + 1), label: to("keyNext") },
     },
     reader: {
       selector: ".view-history .read-col",
@@ -218,113 +177,105 @@ export function HistoryView({
     },
   });
 
+  /** The rail's jump: place the window at the month's first slot; the effect above fetches it. */
+  const jumpTo = (start: number) => {
+    tl.jump(start);
+    const el = scrollerRef.current;
+    if (el) el.scrollTop = win.offsetOf(start);
+    el?.dispatchEvent(new Event("scroll"));
+  };
+
+  const meta = tl.state === "ready"
+    ? t("metaCount", { count: tl.total ?? tl.length })
+    : tl.state === "unavailable"
+      ? countWhen({ settled, count: tl.length, pending: owed },
+        tl.length ? t("metaCount", { count: tl.length }) : undefined)
+      : undefined;
+  const empty = tl.length === 0 && (tl.state === "ready"
+    || (tl.state === "unavailable" && saysEmpty(listSurface({ settled, count: 0, pending: owed }))));
+
+  const slots: ReactElement[] = [];
+  for (let i = win.start; i < win.end; i++) {
+    const m = tl.rowAt(i);
+    if (m === "gone") {
+      /* Deleted here since the page was read: the slot folds away until the page is asked again. */
+      slots.push(<div key={`g${i}`} data-index={i} className="history-gone" aria-hidden />);
+    } else if (m === null) {
+      slots.push(
+        <div key={`p${i}`} data-index={i} className="row history-ghost" aria-hidden>
+          <span className="history-ghost-bar" />
+          <span className="history-ghost-bar short" />
+        </div>,
+      );
+    } else {
+      slots.push(
+        <MessageRow
+          spoken={rowBadge.spoken}
+          key={m.id}
+          id={m.id}
+          windowIndex={i}
+          from={senderName(m)}
+          address={rowAddress(m)}
+          {...avatarOf(m)}
+          participants={m.threadId ? threadParticipants?.(m.threadId) : undefined}
+          {...rowStamp(m, now, absoluteTime, onToggleTime)}
+          subject={m.subject}
+          preview={m.snippet}
+          amount={m.amount}
+          unread={m.unread}
+          seen
+          selected={shown?.id === m.id}
+          {...rowThreadOf(m, threadCountOf, rowBadge.thread)}
+          hasAttachment={m.hasAttachments}
+          protectedLabel={m.protected != null ? rowBadge.protectedLabel : undefined}
+          tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x) }))}
+          place={physicalFolderOf(m)}
+          onClick={() => openRow(m, i)}
+        />,
+      );
+    }
+  }
+
   return (
     <section className="view split view-history">
-      <ListPane
-        title={t("title")}
-        meta={countWhen({ settled, count: messages.length, pending: owed },
-          messages.length && !windowed ? t("metaCount", { count: messages.length }) : undefined)}
-        action={
-          onMarkAllRead ? (
-            <MarkAllRead
-              unreadCount={messages.filter((m) => m.unread).length}
-              onMarkAllRead={() => onMarkAllRead(messages.filter((m) => m.unread).map((m) => m.id))}
-            />
-          ) : null
-        }
-        /* The window reads this element's own scroll position; `ListPane` already offers the
-           handle ("if the app drives scrolling itself"), so nothing in the pane changes. */
-        scrollerRef={scrollerRef}
-      >
-        {/* One sentence, always present, above the list: "History" is a word this product uses as
-            no other mail client does, and a thousand old messages under an unexplained heading is
-            a list somebody has to guess at. Not a dismissible tip — the explanation is as true on
-            the hundredth visit as the first, and a hint that disappears is a hint nobody can go
-            back to. The other two sentences (all read; nothing moved on the mail server) are
-            behind the (i): they answer the second and third questions, and as a block of three
-            they pushed the first row off a short window. Collapsed, not deleted — a disclosure
-            always in the same place is not a hint that disappears. */}
-        <InfoNote
-          className="view-note"
-          lead={t("explainer")}
-          moreLabel={t("explainerMoreLabel")}
-        >
+      <ListPane title={t("title")} meta={meta} scrollerRef={scrollerRef}>
+        <InfoNote className="view-note" lead={t("explainer")} moreLabel={t("explainerMoreLabel")}>
           {t("explainerMore")}
         </InfoNote>
+        {tl.state === "ready" && tl.segments.length > 1 ? (
+          <HistoryRail segments={tl.segments} at={win.start} onJump={jumpTo} />
+        ) : null}
+        {tl.state === "unanswered" ? (
+          <div className="tail-row history-unanswered" role="status">
+            {t("storeUnavailable")}{" "}
+            <button type="button" className="btn ghost" onClick={tl.retry}>{t("storeRetry")}</button>
+          </div>
+        ) : tl.state === "loading" && tl.length > 0 && speak ? (
+          <div className="tail-row" role="status">{t("loading")}</div>
+        ) : null}
         <ListRows ariaLabel={t("title")}>
-          {messages.length ? (
+          {tl.length > 0 ? (
             <>
-              {/* THE ROWS ABOVE, AS HEIGHT. An empty element rather than a margin or a
-                  transform: the scroller's scroll height, and therefore the scrollbar and the
-                  scroll position, stay exactly what they would be with every row mounted.
-                  `aria-hidden` because it is geometry — there is nothing here to announce, and
-                  the mail it stands for is announced by the count above the list. */}
               {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
-              {messages.slice(win.start, win.end).map((m) => (
-                <MessageRow
-                  spoken={rowBadge.spoken}
-                  key={m.id}
-                  id={m.id}
-                  from={senderName(m)}
-                  address={rowAddress(m)}
-                  {...avatarOf(m)}
-                  participants={m.threadId ? threadParticipants?.(m.threadId) : undefined}
-                  {...rowStamp(m, now, absoluteTime, onToggleTime)}
-                  subject={m.subject}
-                  preview={m.snippet}
-                  amount={m.amount}
-                  /* Never unread, by construction — stated rather than passed through, so that a
-                     regression in the cutline shows up here as mail that stops looking read. */
-                  unread={false}
-                  seen
-                  selected={shown?.id === m.id}
-                  {...rowThreadOf(m, threadCountOf, rowBadge.thread)}
-                  hasAttachment={m.hasAttachments}
-                  protectedLabel={m.protected != null ? rowBadge.protectedLabel : undefined}
-                  tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x) }))}
-                  /* WHERE IT ACTUALLY IS. Not a pile label: History is not a folder, and the
-                     only honest badge is the server's own. */
-                  place={physicalFolderOf(m)}
-                  onClick={() => openRow(m)}
-                />
-              ))}
+              {slots}
               {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
             </>
+          ) : empty ? (
+            <div className="empty">
+              <span className="glyph">🕰</span>
+              <b>{t("emptyTitle")}</b>
+              {t("emptyHint")}
+            </div>
           ) : (
-            !saysEmpty(listSurface({ settled, count: messages.length, pending: owed })) ? (
-            /* NOT EMPTY — UNREAD. Before the mirror has been read, and while the account's own
-               facts say mail is still on its way, there is no emptiness to report: the pane
-               says what it is doing and nothing about what it will find (`OhboxView`'s
-               `SyncState`, the same silhouette-free shape). */
             <div className="empty" role="status" aria-busy="true">
               <span className="mbx-wait">
                 <Spinner className="mbx-spin" />
                 {speak ? <b>{t("loading")}</b> : null}
               </span>
             </div>
-            ) : (
-            <div className="empty">
-              <span className="glyph">🕰</span>
-              <b>{t("emptyTitle")}</b>
-              {/* An empty History says what History IS, not that it is empty. Somebody
-                  arriving at an empty one has learned nothing from the word alone. */}
-              {t("emptyHint")}
-            </div>
-            )
           )}
         </ListRows>
-        {/* WHERE THIS LIST ENDS, ON A CLIENT THAT KEEPS PART OF THE MAILBOX. The Ohbox's own
-            shape (`sentNote`, `olderPrompt`), without a control: History is derived from the
-            whole mirror and no `GET /messages?view=` partition serves it, so there is nothing
-            to page — Search reads the full store on both tiers and is the reach that works.
-            The sentence states the POLICY, which is true whatever the mailbox holds today. */}
-        {windowed ? <div className="tail-row">{t("windowNote")}</div> : null}
       </ListPane>
-      {/* THE READING COLUMN — the Ohbox's own, minus the dwell it does not need: History is
-          all-read, so there is no read-state to commit and nothing to arm a timer for. No
-          `onEnterReader` on the pane, for the reason the Ohbox omits it — the "open reading
-          mode" button it renders would sit at exactly the widths where the sheet duplicates
-          this column. */}
       <ReadColumn regionLabel={tReader("pane")}>
         {shown ? (
           <MessagePane
