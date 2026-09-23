@@ -12,7 +12,7 @@ const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 const asDb = (tx: Tx): Db => bridgeDb(tx);
 
 /** The caller's `Idempotency-Key` and the request hash it was presented with. */
-export interface ThreadIdempotency {
+interface ThreadIdempotency {
   key: string;
   requestHash: string;
 }

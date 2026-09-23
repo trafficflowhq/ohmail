@@ -40,7 +40,7 @@ export interface CloudTokens {
  * all; `seal_failed` is a renewal withheld because its attempt could not be written to disk
  * first. Every state but `refused` keeps the session and retries on its own clock.
  */
-export type CloudSessionState = "live" | "renewing" | "unreachable" | "refused" | "seal_failed";
+type CloudSessionState = "live" | "renewing" | "unreachable" | "refused" | "seal_failed";
 
 export interface CloudSessionReading {
   state: CloudSessionState;
