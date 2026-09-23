@@ -88,6 +88,8 @@ export interface PhoneStoreSearch {
   tier: "exact" | "similar";
   total: number;
   totalExact: boolean;
+  /** While `total` is a lower bound: about how many match, from the store's estimate. */
+  about: number | null;
   ms: number | null;
   indexedPercent: number | null;
   /** The last relevance page of a cut set: the date orders walk the rest. */
@@ -100,9 +102,9 @@ export interface PhoneStoreSearch {
 
 /**
  * THE WHOLE-MAILBOX PASS FOR ONE QUERY, on the walker History walks (`w.store.searchWalker`): the
- * page first, the summary after it, the next page on `loadMore`, one of three verdicts on every
- * outcome. `deviceIds` are the rows the device painted, in order — under relevance they keep their
- * places in the store's first page.
+ * page first, the estimate after it and the summary when the estimate was cut, the next page on
+ * `loadMore`, one of three verdicts on every outcome. `deviceIds` are the rows the device painted,
+ * in order — under relevance they keep their places in the store's first page.
  */
 export function useStoreSearch(query: string, deviceIds: readonly string[]): PhoneStoreSearch {
   const w = useWorld();
@@ -144,6 +146,7 @@ export function useStoreSearch(query: string, deviceIds: readonly string[]): Pho
       tier: info?.tier ?? "exact",
       total: info?.total ?? 0,
       totalExact: info?.totalExact ?? true,
+      about: info?.about ?? null,
       ms: info?.ms ?? null,
       indexedPercent: info?.indexed ? Math.floor((100 * info.indexed.done) / info.indexed.total) : null,
       bounded: info !== null && info.bounded && walker !== null && walker.atEnd(),

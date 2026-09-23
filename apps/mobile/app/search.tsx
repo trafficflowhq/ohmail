@@ -13,6 +13,7 @@ import { Copy } from "../src/copy";
 /* The engine is reached through the seam, never from a screen — `privacy.test.ts`'s
    allow-list is the rule, and the direction union rides out with the rest. */
 import { addressShaped, type AddressDirection } from "../src/state/live";
+import { searchCountLine } from "../src/state/search-count";
 import { useStoreSearch } from "../src/state/store-views";
 import { useWorld } from "../src/state/world";
 import { useTheme } from "../src/theme";
@@ -84,7 +85,7 @@ function SearchBody() {
   const door = answer !== null ? addressShaped(trimmed) : null;
   const verdict = addr !== null ? null : store.verdict === "searching" ? Copy.searchWholeSearching
     : store.verdict === "ready"
-      ? `${store.totalExact ? Copy.searchWhole(store.total) : Copy.searchWholeAtLeast(store.total)}${store.ms !== null ? ` · ${Copy.searchServerMs(store.ms)}` : ""}`
+      ? `${searchCountLine(store)}${store.ms !== null ? ` · ${Copy.searchServerMs(store.ms)}` : ""}`
       : store.verdict === "unanswered" ? Copy.searchUnanswered : null;
 
   /* EVERY ROW GOES THROUGH THE WINDOW. One address can hold thousands of this mailbox's

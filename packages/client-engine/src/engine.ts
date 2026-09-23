@@ -688,6 +688,8 @@ export interface ServerSearchWire {
   tier?: SearchTier;
   /** `false` when `total` is a lower bound (the page alone was asked for). Absent ⇒ exact. */
   totalExact?: boolean;
+  /** When `total` is a lower bound: about how many match, from the store's statistics. */
+  totalEstimate?: number;
   /** The server's own time for this answer, in milliseconds. Absent on an older server. */
   ms?: number;
   /** The next page's cursor for the same question; `null`/absent on the last page. */
@@ -728,6 +730,9 @@ export interface ServerSearchFilters {
 export const SERVER_SEARCH_SORTS = ["relevance", "date_desc", "date_asc", "mailbox", "sender"] as const;
 export type ServerSearchSort = (typeof SERVER_SEARCH_SORTS)[number];
 
+/** The parts of one answer a caller may name — `estimate` answers {@link ServerEstimateOutcome}. */
+export type ServerSearchPart = "page" | "summary" | "estimate";
+
 /** What a caller may ask of one archive pass. */
 export interface ServerSearchOpts {
   limit?: number;
@@ -735,10 +740,11 @@ export interface ServerSearchOpts {
   sort?: ServerSearchSort;
   /**
    * `page` asks for the first page alone, at index speed (its `total` exact only when
-   * `totalExact`); `summary` for the exact count with no rows. Absent ⇒ both, and nothing is put
-   * on the wire, so an older server is asked what it always was.
+   * `totalExact`); `estimate` for the count and facets over the page's candidates, no rows;
+   * `summary` for the exact count with no rows. Absent ⇒ both, and nothing is put on the wire,
+   * so an older server is asked what it always was.
    */
-  parts?: "page" | "summary";
+  parts?: ServerSearchPart;
   /** The `nextCursor` of the previous page for the same query and sort. */
   cursor?: string;
   filters?: ServerSearchFilters;
@@ -1052,6 +1058,32 @@ export type ServerSearchOutcome =
   }
   /** `errorClass` is what a log line may carry ({@link errorClassOf}); `error` is the text. */
   | { state: "failed"; error: string; errorClass: string };
+
+/**
+ * THE ESTIMATE'S ANSWER (`parts: "estimate"`): the count and facets over the page's candidates,
+ * no rows and no cursor, so it cannot be read as a page. `totalExact` means the candidates were
+ * the whole match set; otherwise `totalEstimate` is about how many match (`null` when the store
+ * did not say) and the exact count is the summary's.
+ */
+export type ServerEstimateOutcome =
+  | { state: "unavailable" }
+  | {
+    state: "ready"; total: number; totalExact: boolean; totalEstimate: number | null; tier: SearchTier;
+    ms: number | null; indexed: { done: number; total: number } | null; facets: ServerSearchFacets | null;
+  }
+  | { state: "failed"; error: string; errorClass: string };
+
+type ReadySearch = Extract<ServerSearchOutcome, { state: "ready" }>;
+
+/** A page-shaped reading taken as the estimate; an estimate below the lower bound is the bound. */
+function estimateFrom(r: ReadySearch, totalEstimate: unknown): Extract<ServerEstimateOutcome, { state: "ready" }> {
+  const about = !r.totalExact && typeof totalEstimate === "number" && Number.isFinite(totalEstimate)
+    ? Math.max(r.total, Math.round(totalEstimate)) : null;
+  return {
+    state: "ready", total: r.total, totalExact: r.totalExact, totalEstimate: about, tier: r.tier, ms: r.ms,
+    indexed: r.indexed, facets: r.facets,
+  };
+}
 
 /**
  * A failure's CLASS for a log line — its name, and a refusal's status and classified code —
@@ -2261,7 +2293,7 @@ export class OhmailEngine {
   /** See {@link STALE_RESUME_MS}; the option exists for tests. */
   private readonly staleResumeMs: number;
   /** In-flight archive passes by query key — see {@link OhmailEngine.searchServer}. */
-  private readonly serverSearches = new Map<string, Promise<ServerSearchOutcome>>();
+  private readonly serverSearches = new Map<string, Promise<ServerSearchOutcome | ServerEstimateOutcome>>();
   /** In-flight archive ADDRESS passes, keyed as `searchServer`'s are — see that method. */
   private readonly serverAddressSearches = new Map<string, Promise<ServerAddressOutcome>>();
   /** `GET /messages`, or `null` when this adapter has none — see {@link ListMessagesCapableAdapter}. */
@@ -7079,15 +7111,18 @@ export class OhmailEngine {
    * `cost: "read"` on the server; one request per settled query, never per keystroke — a paid request needs somebody
    * behind it.
    */
-  async searchServer(query: string, opts: ServerSearchOpts = {}): Promise<ServerSearchOutcome> {
+  searchServer(query: string, opts: ServerSearchOpts & { parts: "estimate" }): Promise<ServerEstimateOutcome>;
+  searchServer(query: string, opts?: ServerSearchOpts & { parts?: Exclude<ServerSearchPart, "estimate"> }): Promise<ServerSearchOutcome>;
+  async searchServer(query: string, opts: ServerSearchOpts = {}): Promise<ServerSearchOutcome | ServerEstimateOutcome> {
     const fn = this.serverSearchFn;
     if (fn === null) return { state: "unavailable" };
     const q = query.trim();
     if (q === "") {
-      return {
+      const none: ReadySearch = {
         state: "ready", items: [], total: 0, tier: "exact", totalExact: true, ms: null,
         nextCursor: null, bounded: false, indexed: null, facets: null,
       };
+      return opts.parts === "estimate" ? estimateFrom(none, undefined) : none;
     }
 
     /**
@@ -7110,12 +7145,12 @@ export class OhmailEngine {
     // below as a failed outcome — called bare, the throw rejected this method, which never rejects.
     const request = Promise.resolve()
       .then(() => fn(q, opts))
-      .then((wire): ServerSearchOutcome => {
+      .then((wire): ServerSearchOutcome | ServerEstimateOutcome => {
         // `null` ⇒ this transport serves no archive. Same shape as `fetchBody`'s `null`, and
         // it must not become an empty `ready`: "we searched everything and found nothing" is
         // a claim, and this is the case where we searched nothing at all.
         if (wire === null) return { state: "unavailable" };
-        return {
+        const ready: ReadySearch = {
           state: "ready",
           items: Array.isArray(wire.items) ? wire.items : [],
           total: typeof wire.total === "number" ? wire.total : (wire.items?.length ?? 0),
@@ -7130,6 +7165,7 @@ export class OhmailEngine {
           indexed: indexedOf(wire.indexed),
           facets: wire.facets ?? null,
         };
+        return opts.parts === "estimate" ? estimateFrom(ready, wire.totalEstimate) : ready;
       })
       .catch((err: unknown): ServerSearchOutcome => ({
         state: "failed",

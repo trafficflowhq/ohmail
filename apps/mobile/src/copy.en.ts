@@ -1118,6 +1118,7 @@ const TABLE = {
   searchWholeSearching: "Searching your whole mailbox…",
   searchWhole: (n: number) => (n === 0 ? "Searched your whole mailbox — nothing matched" : `Searched your whole mailbox — ${n} matched`),
   searchWholeAtLeast: (n: number) => `Searched your whole mailbox — at least ${n} matched`,
+  searchWholeAbout: (n: number) => `Searched your whole mailbox — about ${n} matched`,
   searchServerMs: (ms: number) => `${ms} ms`,
   searchUnanswered: "Your server did not answer — showing the recent mail this device holds.",
   searchWholeRetry: "Search your whole mailbox again",

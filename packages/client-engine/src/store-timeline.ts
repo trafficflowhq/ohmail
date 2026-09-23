@@ -360,15 +360,36 @@ export class StoreTimelineWalker {
 
 export type StoreSearchState = "idle" | "searching" | "ready" | "unanswered" | "unavailable";
 
-/** What the store said about the whole match set: the first page's reading, then the summary's. */
+/** What the store said about the whole match set: the page's reading, the estimate's, the summary's. */
 export interface StoreSearchMeta {
   total: number;
   totalExact: boolean;
+  /** While `total` is a lower bound: about how many match, from the estimate; `null` until it says. */
+  about: number | null;
   tier: "exact" | "similar";
   ms: number | null;
   bounded: boolean;
   indexed: { done: number; total: number } | null;
   facets: ServerSearchFacets | null;
+}
+
+/**
+ * THE EXACT FACETS OVER THE ESTIMATE'S, IN PLACE: the chips keep the order they were drawn in and
+ * take the exact counts; a sender or folder only the exact set names follows them, one it lacks goes.
+ */
+export function facetsInPlace(prev: ServerSearchFacets | null, next: ServerSearchFacets): ServerSearchFacets {
+  if (prev === null) return next;
+  const drawn = new Set(prev.sender.map((x) => x.address));
+  const exact = new Map(next.sender.map((x) => [x.address, x]));
+  const sender = [
+    ...prev.sender.flatMap((x) => exact.get(x.address) ?? []),
+    ...next.sender.filter((x) => !drawn.has(x.address)),
+  ];
+  const keys = [
+    ...Object.keys(prev.folder).filter((k) => Object.hasOwn(next.folder, k)),
+    ...Object.keys(next.folder).filter((k) => !Object.hasOwn(prev.folder, k)),
+  ];
+  return { ...next, sender, folder: Object.fromEntries(keys.map((k) => [k, next.folder[k]!])) };
 }
 
 /** How long a question settles before the store is asked — one request per question, not per key. */
@@ -482,7 +503,7 @@ export class StoreSearchWalker {
   private firstPage(out: Extract<ServerSearchOutcome, { state: "ready" }>): void {
     const epoch = this.epoch;
     this.meta = {
-      total: out.total, totalExact: out.totalExact, tier: out.tier, ms: out.ms, bounded: out.bounded,
+      total: out.total, totalExact: out.totalExact, about: null, tier: out.tier, ms: out.ms, bounded: out.bounded,
       indexed: out.indexed, facets: out.facets,
     };
     this.status = "ready";
@@ -493,16 +514,32 @@ export class StoreSearchWalker {
       this.order = [...kept, ...out.items.filter((m) => !keptSet.has(m.id)).map((m) => m.id)];
     }
     const key = this.key!;
-    // THE PAGE FIRST, THE SUMMARY SECOND: the exact count, the facets and the progress follow.
-    void this.engine.searchServer(key.query, { parts: "summary", ...(key.filters ? { filters: key.filters } : {}) }).then((sum) => {
-      if (epoch !== this.epoch || sum.state !== "ready" || this.meta === null) return;
-      this.meta = {
-        ...this.meta,
-        ...(sum.totalExact ? { total: sum.total, totalExact: true } : {}),
-        facets: sum.facets ?? this.meta.facets,
-        indexed: sum.indexed ?? this.meta.indexed,
-      };
-      this.signal.bump();
+    const filters = key.filters ? { filters: key.filters } : {};
+    // THE PAGE, THEN THE ESTIMATE, THEN THE SUMMARY ONLY WHEN THE ESTIMATE WAS CUT: the count and
+    // facets follow the page at its cost, and the exact count replaces "about N" when it lands.
+    // An estimate that failed (an older store refuses the part) is not exact: the summary follows.
+    void this.engine.searchServer(key.query, { parts: "estimate", limit: HISTORY_PAGE_ROWS, ...filters }).then((est) => {
+      if (epoch !== this.epoch || this.meta === null) return;
+      if (est.state === "ready") {
+        this.meta = {
+          ...this.meta,
+          ...(est.totalExact ? { total: est.total, totalExact: true, about: null } : { about: est.totalEstimate }),
+          facets: est.facets ?? this.meta.facets,
+          indexed: est.indexed,
+        };
+        this.signal.bump();
+        if (est.totalExact) return;
+      }
+      void this.engine.searchServer(key.query, { parts: "summary", ...filters }).then((sum) => {
+        if (epoch !== this.epoch || sum.state !== "ready" || this.meta === null) return;
+        this.meta = {
+          ...this.meta,
+          ...(sum.totalExact ? { total: sum.total, totalExact: true, about: null } : {}),
+          facets: sum.facets ? facetsInPlace(this.meta.facets, sum.facets) : this.meta.facets,
+          indexed: sum.indexed,
+        };
+        this.signal.bump();
+      }, () => undefined);
     }, () => undefined);
   }
 

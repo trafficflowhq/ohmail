@@ -1070,6 +1070,7 @@
     "scopeNoArchive": "Search covers the sample mailbox.",
     "scopeWhole": "Searched your whole mailbox — {total, plural, =0 {nothing matched} other {# matched}}",
     "scopeWholeAtLeast": "Searched your whole mailbox — at least {total} matched",
+    "scopeWholeAbout": "Searched your whole mailbox — about {total, number} matched",
     "scopeServerMs": "{ms} ms",
     "scopeUnanswered": "Your server did not answer — showing the recent mail this device holds.",
     "indexing": "Older mail is still being indexed — {percent} % done.",

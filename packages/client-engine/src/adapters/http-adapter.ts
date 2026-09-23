@@ -765,7 +765,7 @@ export class HttpAdapter implements EngineAdapter {
     const res = await this.request("GET", `/search?${q.toString()}`);
     if (!res.ok) throw await this.rejectionOf(res);
     const wire = (await res.json()) as {
-      items?: EngineMessage[]; total?: number; tier?: string; totalExact?: unknown; ms?: unknown;
+      items?: EngineMessage[]; total?: number; tier?: string; totalExact?: unknown; totalEstimate?: unknown; ms?: unknown;
       nextCursor?: unknown; bounded?: unknown; indexed?: unknown; facets?: unknown;
     };
     // `facets` is read as the store keys it (folder paths, sender addresses); the view labels it.
@@ -777,6 +777,7 @@ export class HttpAdapter implements EngineAdapter {
       // for why the unknown case takes that side rather than the cautious-looking one.
       tier: wire.tier === "similar" ? "similar" : "exact",
       ...(wire.totalExact === false ? { totalExact: false } : {}),
+      ...(typeof wire.totalEstimate === "number" ? { totalEstimate: wire.totalEstimate } : {}),
       ...(typeof wire.ms === "number" ? { ms: wire.ms } : {}),
       ...(typeof wire.nextCursor === "string" && wire.nextCursor !== "" ? { nextCursor: wire.nextCursor } : {}),
       ...(wire.bounded === true ? { bounded: true } : {}),

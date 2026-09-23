@@ -650,7 +650,10 @@ export function SearchView({
     </>
   ) : (
     <>
-      {ready.totalExact ? t("scopeWhole", { total: ready.total }) : t("scopeWholeAtLeast", { total: ready.total })}
+      {/* Exact, else the estimate's "about N" (replaced in place by the summary), else the page's bound. */}
+      {ready.totalExact ? t("scopeWhole", { total: ready.total })
+        : ready.about !== null ? t("scopeWholeAbout", { total: ready.about })
+          : t("scopeWholeAtLeast", { total: ready.total })}
       {ready.ms !== null ? <> · {t("scopeServerMs", { ms: ready.ms })}</> : null}
     </>
   );

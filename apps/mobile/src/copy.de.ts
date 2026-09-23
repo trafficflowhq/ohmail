@@ -728,6 +728,7 @@ export const DE: Deck = {
   searchWholeSearching: "Dein ganzes Postfach wird durchsucht …",
   searchWhole: (n: number) => (n === 0 ? "Dein ganzes Postfach wurde durchsucht — nichts gefunden" : `Dein ganzes Postfach wurde durchsucht — ${n} gefunden`),
   searchWholeAtLeast: (n: number) => `Dein ganzes Postfach wurde durchsucht — mindestens ${n} gefunden`,
+  searchWholeAbout: (n: number) => `Dein ganzes Postfach wurde durchsucht — etwa ${n} gefunden`,
   searchServerMs: (ms: number) => `${ms} ms`,
   searchUnanswered: "Dein Server hat nicht geantwortet — angezeigt wird die neuere Post, die dieses Gerät hat.",
   searchWholeRetry: "Ganzes Postfach erneut durchsuchen",

@@ -552,6 +552,8 @@ export {
   type TrashRowWire,
   type FetchBodiesFn,
   type ServerSearchOutcome,
+  type ServerEstimateOutcome,
+  type ServerSearchPart,
   errorClassOf,
   SERVER_ADDRESS_DIRECTIONS,
   SERVER_ADDRESS_DIRECTIONS_SERVED,
