@@ -124,7 +124,7 @@ import {
 
 export type {
   FolderEntity, MoveTarget, PhoneOrganizer, ScreenerRow, WorldActions, WorldHistory, WorldMail,
-  WorldPile, WorldScheduled, WorldScreener, WorldSearch, WorldTag, WorldDraft,
+  WorldPile, WorldScheduled, WorldScreener, WorldSearch, WorldTag, WorldDraft, DraftHeldSays,
 } from "./live";
 
 export interface World {
@@ -492,6 +492,7 @@ const NO_ACTIONS: WorldActions = {
   cancelSchedule: () => Promise.resolve(false),
   draftDiscard: () => Promise.resolve("refused" as const),
   draftResolve: () => Promise.resolve(false),
+  draftSendAgain: () => Promise.resolve("failed" as const),
   sendOutcome: () => "unknown",
   tagToggle: () => undefined,
   tagCreate: () => undefined,
@@ -1234,6 +1235,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           cancelSchedule: (draftId) => acts.cancelSchedule(draftId),
           draftDiscard: (draftId) => acts.draftDiscard(draftId),
           draftResolve: (draftId, outcome) => acts.draftResolve(draftId, outcome),
+          draftSendAgain: (draftId) => acts.draftSendAgain(draftId),
           sendOutcome: (key) => outcomeOf(key),
           tagToggle: (id, tag, assigned) => void acts.tagToggle(id, tag, assigned),
           tagCreate: (id, name) => void acts.tagCreate(id, name),

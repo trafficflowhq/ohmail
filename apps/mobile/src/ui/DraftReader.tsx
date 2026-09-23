@@ -1,18 +1,23 @@
 /**
- * One draft, read — and the two answers a held send can be given. The webapp
- * opens a draft in its editor; this app has none, so this card RECOVERS rather than edits: the
- * text in full and selectable, where the message goes to be finished, and — for a send this
- * server could not confirm — the pair of verbs that is the only way out of the held state.
- * Discard is two presses, the webapp `DraftsView`'s rule: `DELETE /drafts/:id` is a real delete
- * and the only copy of an unsent message is not something a mis-tap may take.
+ * One draft, read — and what a person can do about a send this server could not confirm. The
+ * webapp opens a draft in its editor; this app has none, so this card RECOVERS rather than edits:
+ * the text in full and selectable, where the message goes to be finished, and — for a held send —
+ * the sentence saying what is known with its two acts. What the card says is `draft-card.ts`'s;
+ * this file lays it out. Discard asks in its own place: one sentence, Keep, Discard, back keeps.
  */
-import { useState } from "react";
-import { View } from "react-native";
+import { useEffect, useState } from "react";
+import { AccessibilityInfo, BackHandler, Platform, View } from "react-native";
 import { router } from "expo-router";
 import { Copy } from "../copy";
 import { useWorld } from "../state/world";
 import { Button, Panel, Rule, Screen, Scroller, Txt } from "./base";
 import { DetailBar } from "./chrome";
+import {
+  backKeeps, discardDecision, draftCardPlan, refusalSentence, type DraftDiscardRefusal,
+} from "./draft-card";
+
+/** Which question stands on the card — one at a time, a card of open questions is noise. */
+type Asking = "discard" | "sendAgain" | null;
 
 export function DraftReader({
   id,
@@ -20,22 +25,43 @@ export function DraftReader({
   onClose,
 }: {
   id: string;
-  /** The row left Drafts (discarded, or answered "it arrived") — the pane closes behind it. */
+  /** The row left Drafts (discarded, dismissed as sent, or sent again) — the pane closes behind it. */
   onGone?: (id: string) => void;
   onClose?: () => void;
 }) {
   const w = useWorld();
   const row = w.drafts.find((d) => d.id === id);
   const [busy, setBusy] = useState(false);
-  /** Pressed Discard once. One row, one confirm — the webapp's own ceremony. */
-  const [confirming, setConfirming] = useState(false);
-  /**
-   * A DISCARD THE SERVER REFUSED BECAUSE THIS ROW HAS A SEND ON RECORD — the card turns to the
-   * "Did this message arrive?" pair rather than reporting a fault with no way out. Held as state
-   * and not derived, because it is a thing the SERVER said about a row whose mirror status may
-   * still read `draft`: the lost-answer case the webapp answers with its own jar read.
-   */
-  const [askResolve, setAskResolve] = useState(false);
+  const [asking, setAsking] = useState<Asking>(null);
+  /** The last refused discard, stamped so a second refusal is announced again. */
+  const [refusal, setRefusal] = useState<{ why: DraftDiscardRefusal; at: number } | null>(null);
+
+  /* BACK KEEPS. Registered only while a question stands, so it runs before the navigator's own
+     listener (RN calls the newest first) and the press closes the question, not the screen. */
+  useEffect(() => {
+    if (asking === null) return;
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (!backKeeps(true)) return false;
+      setAsking(null);
+      return true;
+    });
+    return () => sub.remove();
+  }, [asking]);
+
+  /* SPOKEN, not only drawn: Android reads the live regions below; iOS has none, so the question
+     and the refusal go through the announcement door — the toast's own two doors. */
+  const refusedAt = refusal?.at ?? null;
+  useEffect(() => {
+    if (Platform.OS !== "ios") return;
+    if (asking === "discard") AccessibilityInfo.announceForAccessibility(Copy.draftsDiscardWhat);
+    if (asking === "sendAgain") AccessibilityInfo.announceForAccessibility(Copy.draftsSendAgainWhat);
+  }, [asking]);
+  useEffect(() => {
+    if (Platform.OS !== "ios" || refusal === null) return;
+    AccessibilityInfo.announceForAccessibility(refusalSentence(refusal.why));
+    // `refusedAt` re-arms per press; the sentence is read off the value it stamps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refusedAt]);
 
   if (!row) {
     /* Discarded, answered, or drained away while this route was open. The honest gone sentence,
@@ -52,7 +78,11 @@ export function DraftReader({
     );
   }
 
-  const held = row.state !== "open" || askResolve;
+  const plan = draftCardPlan(row, {
+    confirming: asking === "discard",
+    confirmingSendAgain: asking === "sendAgain",
+    refusal: refusal?.why ?? null,
+  });
 
   const leave = () => {
     onGone?.(row.id);
@@ -61,23 +91,30 @@ export function DraftReader({
 
   const discard = async () => {
     if (busy) return;
+    setAsking(null);
+    const decided = discardDecision(row);
+    if (decided !== "wire") { setRefusal({ why: decided, at: Date.now() }); return; }
     setBusy(true);
     const outcome = await w.actions.draftDiscard(row.id);
-    setConfirming(false);
     if (outcome === "discarded") { leave(); return; }
-    // `held` is the server's answer, not a fault: the pair below is what it asks for.
-    if (outcome === "held") setAskResolve(true);
+    if (outcome === "stillSending") setRefusal({ why: "stillSending", at: Date.now() });
     setBusy(false);
   };
 
-  const resolve = async (outcome: "arrived" | "not_arrived") => {
+  /* IT WAS SENT — the ledger records the delivery and the row leaves Drafts. */
+  const dismissAsSent = async () => {
     if (busy) return;
     setBusy(true);
-    const ok = await w.actions.draftResolve(row.id, outcome);
-    // "It arrived" writes `sent` and the row leaves the list; "It didn't arrive" leaves an
-    // ordinary draft standing here, so only the first closes the card.
-    if (ok && outcome === "arrived") { leave(); return; }
-    if (ok) setAskResolve(false);
+    if (await w.actions.draftResolve(row.id, "arrived")) { leave(); return; }
+    setBusy(false);
+  };
+
+  const sendAgain = async () => {
+    if (busy) return;
+    setAsking(null);
+    setBusy(true);
+    const outcome = await w.actions.draftSendAgain(row.id);
+    if (outcome === "sent") { leave(); return; }
     setBusy(false);
   };
 
@@ -93,12 +130,11 @@ export function DraftReader({
           <Txt variant="caption" tone="ink3" tabular>{row.when}</Txt>
         </View>
 
-        {/* WHAT STATE THIS SEND IS IN, in the catalogue's own words. `held` and `interrupted` are
-            two different facts about the same danger and each carries its own sentence. */}
-        {row.state !== "open" ? (
+        {/* WHAT IS KNOWN about this send, in the catalogue's own words — never a claim either way. */}
+        {plan.held !== null ? (
           <Panel style={{ paddingVertical: 14, marginBottom: 12 }}>
             <Txt variant="note" tone="ink2" style={{ paddingHorizontal: 18 }}>
-              {row.state === "held" ? Copy.draftsUnverifiedNote : Copy.draftsInterruptedNote}
+              {plan.held}
             </Txt>
           </Panel>
         ) : null}
@@ -117,8 +153,7 @@ export function DraftReader({
             {Copy.draftsTextHeading}
           </Txt>
           {/* THREE STATES, NEVER TWO: a body this mirror never received is not an empty message.
-              `bodyKnown` is the engine's one predicate and the distinction a recovery surface may
-              not collapse — the text is selectable, because on a held row it is the only copy. */}
+              The text is selectable, because on a held row it is the only copy. */}
           <Txt
             variant="body"
             tone={row.bodyKnown && row.body !== "" ? "ink" : "ink3"}
@@ -132,26 +167,46 @@ export function DraftReader({
         </Panel>
 
         <Panel style={{ paddingVertical: 8, marginBottom: 12 }}>
-          {/* DID IT ARRIVE — the only way out of a held row, and the reason this screen exists on
-              the phone. Offered for the two held states and for a row the server refused a
-              discard on; never for an ordinary draft, which has no question to answer. */}
-          {held ? (
-            <View style={{ paddingHorizontal: 18, paddingVertical: 8, gap: 8 }}>
-              <Txt variant="note">{Copy.draftsResolveWhat}</Txt>
-              <View style={{ flexDirection: "row", gap: 10 }}>
-                <Button
-                  label={Copy.draftsResolveArrived}
-                  variant="quiet"
-                  disabled={busy}
-                  onPress={() => void resolve("arrived")}
-                />
-                <Button
-                  label={Copy.draftsResolveNotArrived}
-                  variant="quiet"
-                  disabled={busy}
-                  onPress={() => void resolve("not_arrived")}
-                />
-              </View>
+          {/* THE HELD SEND'S TWO ACTS, labelled by the sentence above so a screen reader hears
+              the same words. Send again asks in place like Discard; the row wraps on a narrow card. */}
+          {plan.acts !== null ? (
+            <View
+              accessibilityLabel={plan.held ?? undefined}
+              style={{ paddingHorizontal: 18, paddingVertical: 8, gap: 8 }}
+            >
+              {plan.acts.kind === "confirm" ? (
+                <View
+                  accessibilityLiveRegion="polite"
+                  onAccessibilityEscape={() => setAsking(null)}
+                  style={{ gap: 8 }}
+                >
+                  <Txt variant="note" tone="ink2">{plan.acts.what}</Txt>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+                    <Button label={plan.acts.keep} variant="plain" onPress={() => setAsking(null)} />
+                    <Button
+                      label={plan.acts.sendAgain}
+                      variant="solid"
+                      disabled={busy}
+                      onPress={() => void sendAgain()}
+                    />
+                  </View>
+                </View>
+              ) : (
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+                  <Button
+                    label={plan.acts.sendAgain}
+                    variant="quiet"
+                    disabled={busy || !row.bodyKnown}
+                    onPress={() => { setRefusal(null); setAsking("sendAgain"); }}
+                  />
+                  <Button
+                    label={plan.acts.itWasSent}
+                    variant="quiet"
+                    disabled={busy}
+                    onPress={() => void dismissAsSent()}
+                  />
+                </View>
+              )}
             </View>
           ) : null}
 
@@ -159,7 +214,7 @@ export function DraftReader({
               in THIS mirror. Never a promise about a message this device may not hold. */}
           {row.repliesHere && row.inReplyToMessageId !== null ? (
             <>
-              {held ? <Rule inset={18} /> : null}
+              {plan.acts !== null ? <Rule inset={18} /> : null}
               <View style={{ paddingHorizontal: 18, paddingVertical: 8 }}>
                 <Button
                   label={Copy.draftsOpenConversation}
@@ -170,41 +225,43 @@ export function DraftReader({
             </>
           ) : null}
 
-          {/* DISCARD — absent while a question is standing: the answer comes first, which is what
-              the server's own refusal says. Two presses, and the confirm states what it takes. */}
-          {!held ? (
-            <>
-              {row.repliesHere ? <Rule inset={18} /> : null}
-              <View style={{ paddingHorizontal: 18, paddingVertical: 8, gap: 8 }}>
-                {confirming ? (
-                  <>
-                    <Txt variant="note" tone="ink2">{Copy.draftsDiscardWhat}</Txt>
-                    <View style={{ flexDirection: "row", gap: 10 }}>
-                      <Button
-                        label={Copy.draftsDiscardConfirm}
-                        variant="quiet"
-                        disabled={busy}
-                        onPress={() => void discard()}
-                      />
-                      <Button
-                        label={Copy.draftsDiscardCancel}
-                        variant="plain"
-                        onPress={() => setConfirming(false)}
-                      />
-                    </View>
-                  </>
-                ) : (
-                  <View style={{ flexDirection: "row" }}>
-                    <Button
-                      label={Copy.draftsDiscard}
-                      variant="quiet"
-                      onPress={() => setConfirming(true)}
-                    />
-                  </View>
-                )}
+          {/* DISCARD, on every row — held ones included: the server admits an unverified discard.
+              Pressed once, the question stands IN ITS PLACE, and a refusal is said right under it. */}
+          {plan.acts !== null || row.repliesHere ? <Rule inset={18} /> : null}
+          <View style={{ paddingHorizontal: 18, paddingVertical: 8, gap: 8 }}>
+            {plan.discard.kind === "confirm" ? (
+              <View
+                accessibilityLiveRegion="polite"
+                onAccessibilityEscape={() => setAsking(null)}
+                style={{ gap: 8 }}
+              >
+                <Txt variant="note" tone="ink2">{plan.discard.what}</Txt>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+                  <Button label={plan.discard.keep} variant="plain" onPress={() => setAsking(null)} />
+                  <Button
+                    label={plan.discard.discard}
+                    variant="solid"
+                    disabled={busy}
+                    onPress={() => void discard()}
+                  />
+                </View>
               </View>
-            </>
-          ) : null}
+            ) : (
+              <View style={{ flexDirection: "row" }}>
+                <Button
+                  label={plan.discard.label}
+                  variant="quiet"
+                  disabled={busy}
+                  onPress={() => { setRefusal(null); setAsking("discard"); }}
+                />
+              </View>
+            )}
+            {plan.refusal !== null ? (
+              <Txt variant="note" tone="ink" accessibilityLiveRegion="polite">
+                {plan.refusal}
+              </Txt>
+            ) : null}
+          </View>
         </Panel>
 
         {/* Where the message goes to be finished — `scheduledEditNote`'s twin, for its reason. */}

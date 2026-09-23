@@ -14,6 +14,7 @@ import { useWorld, type WorldDraft } from "../../src/state/world";
 import { Empty, Panel, Rule, Screen, Scroller, TapRow, Tail, Txt } from "../../src/ui/base";
 import { DetailBar } from "../../src/ui/chrome";
 import { DraftReader } from "../../src/ui/DraftReader";
+import { heldSentence } from "../../src/ui/draft-card";
 import { Gated } from "../../src/ui/Gated";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
 import { SkeletonList } from "../../src/ui/Skeleton";
@@ -97,11 +98,11 @@ function DraftRow({ row, onPress }: { row: WorldDraft; onPress: () => void }) {
       onPress={onPress}
       accessibilityRole="button"
       /* The row's whole fact, spoken: what it is about, to whom, and — the half that matters —
-         whether it is a send nobody has confirmed. `row-spoken.ts`'s discipline, one list over. */
+         what is known about a send nobody has confirmed. `row-spoken.ts`'s discipline. */
       accessibilityLabel={
-        row.state === "open"
+        row.heldSays === null
           ? Copy.ariaLabelDetail(row.subject, row.to === "" ? Copy.scheduledNoRecipient : row.to)
-          : Copy.ariaLabelDetail(row.subject, Copy.draftsResolveWhat)
+          : Copy.ariaLabelDetail(row.subject, heldSentence(row.heldSays))
       }
       style={{ paddingHorizontal: 18, paddingVertical: 12, gap: 4 }}
     >
@@ -124,9 +125,9 @@ function DraftRow({ row, onPress }: { row: WorldDraft; onPress: () => void }) {
       ) : null}
       {/* A HELD SEND IS NOT AN ORDINARY DRAFT and the list says so where a person is scanning
           it, not only inside the card: the whole reason this destination exists on the phone. */}
-      {row.state !== "open" ? (
+      {row.heldSays !== null ? (
         <Txt variant="caption" tone="ink" style={{ paddingTop: 2 }}>
-          {row.state === "held" ? Copy.draftsUnverifiedNote : Copy.draftsInterruptedNote}
+          {heldSentence(row.heldSays)}
         </Txt>
       ) : null}
     </TapRow>

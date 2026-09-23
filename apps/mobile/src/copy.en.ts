@@ -1836,12 +1836,10 @@ const TABLE = {
   /** PHONE-ONLY (6/6): the row moved under somebody else while this screen was open. */
   awayChangedElsewhere: "Changed from another device. These are the away settings it holds now.",
   /*
-   * DRAFTS — what you started and have not sent, and the one way out of a send
-   * this server could not confirm. Every sentence below is the webapp catalogue's `drafts.*` word
-   * for word, except the four marked PHONE-ONLY, which say what this app does instead of a verb
-   * it does not have. Until this screen existed a `send_unverified` answer was said once, in a
-   * toast, and then nowhere on the phone at all — the row held the only copy of a message that
-   * may never have been delivered and no surface here mentioned it.
+   * DRAFTS — what you started and have not sent, and what is known about a send this server
+   * could not confirm. Every sentence below is the webapp catalogue's `drafts.*` word for word
+   * (`drafts-live.test.ts` holds both languages to it), except the five marked PHONE-ONLY, which
+   * say what this app does instead of a verb it does not have.
    */
   draftsTitle: "Drafts",
   draftsExplainer: "Messages you started and haven't sent.",
@@ -1857,19 +1855,25 @@ const TABLE = {
   draftsEmptyTitle: "Nothing half-written",
   draftsEmptyHint: "They're saved to your account, so they're here on every device you read your mail on.",
   draftsIsReply: "Reply",
-  draftsUnverifiedNote:
-    "Not confirmed — it may not have been delivered. It's held here; check your Sent folder.",
-  draftsInterruptedNote:
-    "The send was interrupted — it may not have been delivered. It's held here; check your Sent folder.",
-  draftsResolveWhat: "Did this message arrive?",
-  draftsResolveArrived: "It arrived",
-  draftsResolveNotArrived: "It didn't arrive",
+  draftsHeldChecking: "We're not sure this was sent. We're checking your Sent folder.",
+  draftsHeldNotInSent: "We're not sure this was sent. It isn't in your Sent folder.",
+  draftsHeldInterrupted: "We're not sure this was sent — the send was interrupted.",
+  draftsSendAgain: "Send again",
+  draftsItWasSent: "It was sent — dismiss",
+  /**
+   * PHONE-ONLY (5/5): Send again's question. The web opens the message in its editor, where Send
+   * is the second press; this card has no editor, so the second press is asked here.
+   */
+  draftsSendAgainWhat: "This sends the message again.",
   draftsResolveFailed: "That didn't reach the server. The message is still held here.",
+  draftsResolveStillRunning: "This send may still be running. You can answer for it once it has stopped.",
   draftsBodyUnavailable: "This draft's text hasn't reached this device yet. Try again in a moment.",
   draftsDiscard: "Discard",
-  draftsDiscardWhat: "This deletes the draft. It isn't recoverable, and it's the only copy.",
-  draftsDiscardConfirm: "Discard draft",
-  draftsDiscardCancel: "Keep it",
+  draftsDiscardWhat: "This deletes the only copy.",
+  draftsDiscardConfirm: "Discard",
+  draftsDiscardCancel: "Keep",
+  draftsDiscardStillSending:
+    "Not discarded — this message is still being sent, or its send is still being confirmed. Try again in a few minutes.",
   draftsDiscardRefused: (reason: string) => `Not discarded: ${reason}`,
   draftsDiscardRefusedUnnamed:
     "That didn't go through, and the server didn't say why. The draft is still here.",
@@ -1877,25 +1881,23 @@ const TABLE = {
     "Not discarded yet — this phone could not reach your account. We will keep trying.",
   draftsDiscardAwaitingOrganizer:
     "Asked for. The install that organizes this mailbox discards it on its next pass.",
-  draftsHeldDiscardBlocked:
-    "This message has a send we couldn't confirm. Tell us whether it arrived and you can discard it.",
   /**
-   * PHONE-ONLY (1/4): the row's own verb where this mirror holds the message the draft answers.
+   * PHONE-ONLY (1/5): the row's own verb where this mirror holds the message the draft answers.
    * The webapp opens the draft in its editor; this app has none, so the honest verb is the
    * conversation, where Reply is one press — and it is offered only where `liveDrafts` measured
    * the parent present, never as a promise about a message this device may not hold.
    */
   draftsOpenConversation: "Open the conversation",
   /**
-   * PHONE-ONLY (2/4): the stated degradation, `scheduledEditNote`'s twin and for its reason.
+   * PHONE-ONLY (2/5): the stated degradation, `scheduledEditNote`'s twin and for its reason.
    * This screen reads drafts and answers for held sends; it does not edit them.
    */
   draftsEditNote:
     "Drafts are read and recovered here. Edit and send them from ohmail on the web or the desktop.",
-  /** PHONE-ONLY (3/4): the detail screen's heading over the text itself. */
+  /** PHONE-ONLY (3/5): the detail screen's heading over the text itself. */
   draftsTextHeading: "Message",
   /**
-   * PHONE-ONLY (4/4): a draft with nothing typed in it yet. The empty string is a KNOWN body
+   * PHONE-ONLY (4/5): a draft with nothing typed in it yet. The empty string is a KNOWN body
    * ({@link draftBodyKnown}), which is a different fact from a body this mirror never received —
    * `draftsBodyUnavailable` says that one — and collapsing the two is the distinction a recovery
    * surface may not lose.

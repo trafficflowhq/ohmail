@@ -35,6 +35,7 @@ import {
   draftsList,
   draftBodyKnown,
   SENDING_STALE_AFTER_MS,
+  HELD_SEND_RECHECK_MS,
   screenerAdviceAi,
   screenerSegments,
   senderKey,
@@ -775,12 +776,19 @@ export function liveScheduled(reader: EntityReader, v: WorldView): WorldSchedule
 /**
  * WHAT STATE A DRAFT ROW IS IN, as the phone's Drafts surface has to treat it — three, not one.
  *
- * `open` is an ordinary unsent message. `held` is a send whose verdict never came (`unverified`,
- * the 409 whose answer is "check your Sent folder") and `interrupted` is one still calling itself
- * `sending` past every possible invocation lifetime: both hold the only copy of a message that may
- * never have been delivered, and both are answered rather than discarded.
+ * `open` is an ordinary unsent message. `held` is a send whose verdict never came (`unverified`)
+ * and `interrupted` is one still calling itself `sending` past every possible invocation
+ * lifetime: both hold the only copy of a message that may never have been delivered.
  */
 export type WorldDraftState = "open" | "held" | "interrupted";
+
+/**
+ * WHAT IS KNOWN ABOUT A HELD SEND — the webapp `DraftsView`'s `heldSentence`, one reading. The
+ * server looks in Sent for `HELD_SEND_RECHECK_MS` after the row was left `unverified` (nothing
+ * touches `updatedAt` while it waits): inside that window it is `checking`, past it `notInSent`.
+ * An unparseable stamp reads as past the window, the sentence that claims less.
+ */
+export type DraftHeldSays = "checking" | "notInSent" | "interrupted";
 
 /**
  * ONE DRAFT, as the phone's Drafts screen renders it — `WorldScheduled`'s charter exactly: the
@@ -798,6 +806,8 @@ export interface WorldDraft {
   /** "Fri 09:00" / "12 Sep" in the reader's zone: when this row was last written. */
   when: string;
   state: WorldDraftState;
+  /** What the row says about a held send ({@link DraftHeldSays}); `null` for an open draft. */
+  heldSays: DraftHeldSays | null;
   /**
    * Does THIS mirror hold the draft's text ({@link draftBodyKnown})? `false` is a row that
    * arrived without a body, and the reader is told that rather than shown an empty message — the
@@ -836,17 +846,24 @@ export function liveDrafts(reader: EntityReader, v: WorldView): WorldDraft[] {
        SAYS, not only what a press does, and promising a conversation this mirror does not hold is
        worse than offering nothing. */
     const repliesHere = parent !== null && reader.get<EngineMessage>("message", parent) !== undefined;
+    const leftAt = Date.parse(d.updatedAt);
+    const state: WorldDraftState = d.status === "unverified"
+      ? "held"
+      : d.status === "sending" && (d.updatedAt ? Date.parse(d.updatedAt) : 0) < staleBefore
+        ? "interrupted"
+        : "open";
     return {
       id: d.id,
       subject: d.subject.trim() === "" ? Copy.scheduledNoSubject : d.subject,
       to: [...d.to, ...d.cc, ...d.bcc].map((a) => a.name ?? a.address).join(", "),
       preview: (d.body ?? "").replace(/\s+/g, " ").trim().slice(0, 140),
       when: messageDisplayTime({ date: d.updatedAt }, v.now, v.zone, v.locale ?? "en"),
-      state: d.status === "unverified"
-        ? "held"
-        : d.status === "sending" && (d.updatedAt ? Date.parse(d.updatedAt) : 0) < staleBefore
-          ? "interrupted"
-          : "open",
+      state,
+      heldSays: state === "interrupted"
+        ? "interrupted"
+        : state === "held"
+          ? (Number.isFinite(leftAt) && v.now.getTime() - leftAt < HELD_SEND_RECHECK_MS ? "checking" : "notInSent")
+          : null,
       bodyKnown: draftBodyKnown(d),
       body: d.body ?? "",
       repliesHere,
@@ -1728,6 +1745,8 @@ export function sendIntentOf(m: EngineMutation): string | null {
   if (m.kind !== "mail_send") return null;
   if (m.forwardOf) return `fwd:${m.forwardOf}`;
   if (m.inReplyTo) return `reply:${m.inReplyTo}`;
+  // A bound row is its own intent: a second Send again resumes the first key, never a second one.
+  if (m.draftId) return `draft:${m.draftId}`;
   return null;
 }
 
@@ -1864,12 +1883,11 @@ export async function flushQueued(engine: OhmailEngine): Promise<Map<string, Flu
  */
 /**
  * HOW A DISCARD ENDED — four, because three of them are not failures. `discarded` is the
- * confirmed delete. `held` is the server's `send_recorded` refusal: the row has a send on record
- * and its question has to be answered first, so the screen turns to that row's pair of verbs
- * rather than reporting a fault. `queued` is a wire that could not be reached — the row is still
- * there and the request is still owed. `refused` is everything else.
+ * confirmed delete. `stillSending` is the server's `send_recorded` 409: a send still `pending`
+ * holds its draft, and the card says so IN THE ROW (no toast). `queued` is a wire that could not
+ * be reached — the row is still there and the request is still owed. `refused` is everything else.
  */
-export type DraftDiscardOutcome = "discarded" | "held" | "queued" | "refused";
+export type DraftDiscardOutcome = "discarded" | "stillSending" | "queued" | "refused";
 
 export const UNDO_MS = 8000;
 
@@ -2157,20 +2175,24 @@ export interface LiveWorldActions {
    */
   cancelSchedule(draftId: string): Promise<boolean>;
   /**
-   * DISCARD A DRAFT — `draft_discard`, the Drafts screen's destructive verb. The ceremony (two
-   * presses) is the screen's; this arm dispatches and reports. `false` covers every ending that
-   * is not a confirmed delete, and each one gets its own sentence — including the server's
-   * `send_recorded` refusal, which is not a failure but the answer "this row has a send on
-   * record, tell us whether it arrived first".
+   * DISCARD A DRAFT — `draft_discard` (`DELETE /drafts/:id`), the Drafts screen's destructive
+   * verb. The ceremony (the in-place confirm) is the card's; this arm dispatches and reports.
+   * The server admits the discard of an `unverified` row and refuses a send still running
+   * (`stillSending`), which the card renders in the row; every other ending is toasted.
    */
   draftDiscard(draftId: string): Promise<DraftDiscardOutcome>;
   /**
-   * ANSWER FOR A SEND THIS SERVER COULD NOT CONFIRM — `draft_resolve`. `arrived` writes `sent`
-   * and the row leaves the list; `not_arrived` writes an ordinary `draft` and clears the stale
-   * explanation. The one way out of a held row, and the reason this screen exists on the phone
-   * at all: until it did, a `send_unverified` answer was said once in a toast and then nowhere.
+   * A PERSON ACTS FOR A SEND THIS SERVER COULD NOT CONFIRM — `draft_resolve`
+   * (`POST /drafts/:id/resolve`). `arrived` is "It was sent — dismiss": the ledger records the
+   * delivery and the row leaves Drafts. `not_arrived` frees it to an ordinary draft.
    */
   draftResolve(draftId: string, outcome: "arrived" | "not_arrived"): Promise<boolean>;
+  /**
+   * SEND A HELD MESSAGE AGAIN — the web's two steps without an editor: `not_arrived` frees the
+   * row, then the row is sent AS IT STANDS through the bound send (`draftId`). `sent` closes the
+   * card; every other ending has said its sentence and leaves the row on screen.
+   */
+  draftSendAgain(draftId: string): Promise<SendOutcome>;
   /** Put a tag on / take it off — `tag_assign`. */
   tagToggle(messageId: string, tag: WorldTag, assigned: boolean): Promise<boolean>;
   /** Tag-or-create: a name that does not exist yet, minted and put on this message in one act. */
@@ -3253,10 +3275,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
 
   /**
    * DISCARD A DRAFT — `draft_discard`, and four endings rather than two. The server refuses the
-   * delete by name for a row with a send on record (`send_recorded`), which is an ANSWER and not
-   * a fault: the only copy of a message that may have gone out is not deleted on a press, and the
-   * screen turns to that row's "Did this message arrive?" pair. A `queued` mutation is reported as
-   * still owed — the row is on screen either way, so silence would read as a delete that happened.
+   * delete by name only while a send is still `pending` (`send_recorded`); that sentence is the
+   * card's, rendered in the row, so this arm says nothing for it. A `queued` mutation is reported
+   * as still owed — the row is on screen either way, so silence would read as a delete that happened.
    */
   const draftDiscard = async (draftId: string): Promise<DraftDiscardOutcome> => {
     const r = await engine
@@ -3272,13 +3293,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         toast(r.wait === "organizer" ? refuse("draftsDiscardAwaitingOrganizer") : refuse("draftsDiscardQueued"));
         return "queued";
       case "refused": {
-        /* THE SERVER'S `send_recorded` IS AN ANSWER, NOT A FAULT: the only copy of a message that
-           may have gone out is not deleted on a press, and the screen turns to that row's "Did
-           this message arrive?" pair instead of reporting a failure with no way out. */
-        if (r.refusal?.code === "send_recorded") {
-          toast(refuse("draftsHeldDiscardBlocked"));
-          return "held";
-        }
+        /* A SEND STILL RUNNING, said by the server under its row lock. The row comes back and
+           the card says why in the row — never a toast pointing somewhere else. */
+        if (r.refusal?.code === "send_recorded") return "stillSending";
         const reason = r.refusal?.message?.trim();
         toast(reason ? refuse("draftsDiscardRefused", reason) : refuse("draftsDiscardRefusedUnnamed"));
         return "refused";
@@ -3295,17 +3312,53 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   };
 
   /**
-   * ANSWER FOR A HELD SEND — `draft_resolve`. Only a CONFIRMED answer is one: the row is the only
-   * record that a message may be undelivered, so a queued or rolled-back attempt leaves the
-   * question standing and says so rather than clearing it on screen.
+   * ACT FOR A HELD SEND — `draft_resolve`. Only a CONFIRMED answer is one: the row is the only
+   * record that a message may be undelivered, so a queued or rolled-back attempt leaves it held
+   * and says so. The server refuses a send that may STILL BE RUNNING by name, and that gets its
+   * own sentence (the webapp's `resolveHeldSend`): "it failed" and "not yet" are different things.
    */
   const draftResolve = async (draftId: string, outcome: "arrived" | "not_arrived"): Promise<boolean> => {
     const r = await engine
       .mutate({ kind: "draft_resolve", draftId, outcome })
       .then((res) => res, () => null);
     if (r?.status === "confirmed") return true;
-    toast(refuse("draftsResolveFailed"));
+    toast(refuse(r?.error?.code === "send_still_running" ? "draftsResolveStillRunning" : "draftsResolveFailed"));
     return false;
+  };
+
+  /**
+   * SEND AGAIN — the resend door. The row's OWN stored fields ride the bound send, so the PUT the
+   * adapter makes before `POST /drafts/:id/send` writes back what the server holds (html included:
+   * a plain PUT over formatted text is refused) and the message that leaves is the one on the card.
+   * A body this mirror never received is refused before anything moves: sending it would write an
+   * empty message over the only copy.
+   */
+  const draftSendAgain = async (draftId: string): Promise<SendOutcome> => {
+    const d = engine.read().get<EngineDraft & { html?: string | null }>("draft", draftId);
+    if (!d || !draftBodyKnown(d)) {
+      toast(refuse("draftsBodyUnavailable"));
+      return "failed";
+    }
+    if (!(await draftResolve(draftId, "not_arrived"))) return "failed";
+    const html = typeof d.html === "string" && d.html !== "" ? d.html : null;
+    const r = await sent(
+      dispatchSend({
+        kind: "mail_send" as const,
+        inReplyTo: null,
+        draftId,
+        mailboxId: d.mailboxId,
+        threadId: null,
+        subject: d.subject,
+        body: d.body ?? "",
+        ...(html !== null ? { html } : {}),
+        to: d.to,
+        cc: d.cc,
+        bcc: d.bcc,
+      }),
+      Copy.composeSent,
+      Copy.composeEarlierWent,
+    );
+    return r.outcome;
   };
 
   const sendForward = async (messageId: string, to: EmailAddress[], body: string, sig: string | null = null, attachments: ComposeAttachment[] = [], andDone = false): Promise<SendResult> => {
@@ -3559,7 +3612,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, markAllSeen, move,
     deleteMessage, trashList, trashRestore,
     sendReply, sendForward, sendNew, sendAndDoneOffered, withdrawSend, cancelSchedule, tagToggle, tagCreate, screenSender,
-    draftDiscard, draftResolve,
+    draftDiscard, draftResolve, draftSendAgain,
     folderCreate, folderRename, folderDelete, folderDismiss,
   };
 }
@@ -3655,6 +3708,8 @@ export interface WorldActions {
   draftDiscard(draftId: string): Promise<DraftDiscardOutcome>;
   /** Answer for a held send — see {@link LiveWorldActions.draftResolve}. */
   draftResolve(draftId: string, outcome: "arrived" | "not_arrived"): Promise<boolean>;
+  /** Send a held message again — see {@link LiveWorldActions.draftSendAgain}. */
+  draftSendAgain(draftId: string): Promise<SendOutcome>;
   /** What became of a queued send's key — how a locked composer settles. See `World.sendOutcome`. */
   sendOutcome(key: string): "pending" | "confirmed" | "rolled_back" | "unverified" | "unknown";
   tagToggle(messageId: string, tag: WorldTag, assigned: boolean): void;
@@ -3714,6 +3769,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     cancelSchedule: (draftId) => current().cancelSchedule(draftId),
     draftDiscard: (draftId) => current().draftDiscard(draftId),
     draftResolve: (draftId, outcome) => current().draftResolve(draftId, outcome),
+    draftSendAgain: (draftId) => current().draftSendAgain(draftId),
     sendOutcome: (key) => current().sendOutcome(key),
     tagToggle: (id, tag, assigned) => void current().tagToggle(id, tag, assigned),
     tagCreate: (id, name) => void current().tagCreate(id, name),

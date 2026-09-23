@@ -1195,19 +1195,21 @@ export const DE: Deck = {
   draftsEmptyTitle: "Nichts Halbfertiges",
   draftsEmptyHint: "Sie liegen in deinem Konto und sind deshalb auf jedem Gerät da, auf dem du deine Mail liest.",
   draftsIsReply: "Antwort",
-  draftsUnverifiedNote:
-    "Nicht bestätigt — sie wurde möglicherweise nicht zugestellt. Sie wird hier festgehalten; sieh in deinem Ordner „Gesendet“ nach.",
-  draftsInterruptedNote:
-    "Der Versand wurde unterbrochen — die Nachricht wurde möglicherweise nicht zugestellt. Sie wird hier festgehalten; sieh in deinem Ordner „Gesendet“ nach.",
-  draftsResolveWhat: "Ist diese Nachricht angekommen?",
-  draftsResolveArrived: "Sie ist angekommen",
-  draftsResolveNotArrived: "Sie ist nicht angekommen",
+  draftsHeldChecking: "Wir sind nicht sicher, ob diese Nachricht gesendet wurde. Wir schauen in deinem Gesendet-Ordner nach.",
+  draftsHeldNotInSent: "Wir sind nicht sicher, ob diese Nachricht gesendet wurde. In deinem Gesendet-Ordner ist sie nicht.",
+  draftsHeldInterrupted: "Wir sind nicht sicher, ob diese Nachricht gesendet wurde — der Versand wurde unterbrochen.",
+  draftsSendAgain: "Noch einmal senden",
+  draftsItWasSent: "Sie wurde gesendet — ausblenden",
+  draftsSendAgainWhat: "Das sendet die Nachricht noch einmal.",
   draftsResolveFailed: "Das hat den Server nicht erreicht. Die Nachricht wird hier weiterhin festgehalten.",
+  draftsResolveStillRunning: "Dieser Versand läuft möglicherweise noch. Du kannst ihn beantworten, sobald er beendet ist.",
   draftsBodyUnavailable: "Der Text dieses Entwurfs hat dieses Gerät noch nicht erreicht. Versuch es gleich noch einmal.",
   draftsDiscard: "Verwerfen",
-  draftsDiscardWhat: "Das löscht den Entwurf. Er ist nicht wiederherstellbar, und es ist die einzige Kopie.",
-  draftsDiscardConfirm: "Entwurf verwerfen",
+  draftsDiscardWhat: "Das löscht die einzige Kopie.",
+  draftsDiscardConfirm: "Verwerfen",
   draftsDiscardCancel: "Behalten",
+  draftsDiscardStillSending:
+    "Nicht verworfen — diese Nachricht wird gerade gesendet, oder ihr Versand wird noch bestätigt. Versuch es in ein paar Minuten noch einmal.",
   draftsDiscardRefused: (reason: string) => `Nicht verworfen: ${reason}`,
   draftsDiscardRefusedUnnamed:
     "Das ist nicht durchgegangen, und der Server hat nicht gesagt, warum. Der Entwurf ist noch da.",
@@ -1215,8 +1217,6 @@ export const DE: Deck = {
     "Noch nicht verworfen — dieses Telefon konnte dein Konto nicht erreichen. Wir versuchen es weiter.",
   draftsDiscardAwaitingOrganizer:
     "Angefragt. Die Installation, die dieses Postfach organisiert, verwirft ihn bei ihrem nächsten Durchlauf.",
-  draftsHeldDiscardBlocked:
-    "Zu dieser Nachricht gibt es einen Versand, den wir nicht bestätigen konnten. Sag uns, ob sie angekommen ist, dann kannst du sie verwerfen.",
   draftsOpenConversation: "Unterhaltung öffnen",
   draftsEditNote:
     "Entwürfe werden hier gelesen und zurückgeholt. Bearbeiten und senden kannst du sie in ohmail im Web oder auf dem Desktop.",
