@@ -332,9 +332,10 @@ export class SearchService {
         : []),
     ];
     const exactPred = sql`m.id in (select u.id from (${sql.join(arms, sql` union `)}) u)`;
+    const rank = fuzz.rank;
     const guessPage = (): SQL => (sort === "relevance"
       ? sql`select m.id ${this.from} where ${where} and ${fuzz.pred}
-          order by ${fuzz.rank} desc, m.date desc nulls last, m.id desc limit ${limit}`
+          order by ${rank} desc, m.date desc nulls last, m.id desc limit ${limit}`
       : this.orderedArm(where, fuzz.pred, sort, limit));
     const exactPage = (): Promise<Page> => (sort === "relevance"
       ? this.fusedPage(ctx, d, arms, limit)
@@ -458,12 +459,14 @@ export class SearchService {
     const ranked = arms.map((a) => sql`
       select x.id, x.date, row_number() over (order by x.date desc nulls last, x.id desc) as r
       from (${a} order by m.date desc nulls last, m.id desc limit ${k}) x`);
+    // The fused rows are aliased `m`, so the order clause is `SQL_RANK_ORDER` spelled as everywhere.
+    const rank = sql`m.score`;
     const rows = await d.exec(ctx.db, sql`
       with arms as (${sql.join(ranked, sql` union all `)}),
       fused as (select id, max(date) as date, sum(1.0 / (${sql.raw(String(RRF_K))} + r)) as score from arms group by id)
-      select f.id, (select count(*) from fused) as seen, (select max(r) from arms) as deepest
-      from fused f
-      order by f.score desc, f.date desc nulls last, f.id desc
+      select m.id, (select count(*) from fused) as seen, (select max(r) from arms) as deepest
+      from fused m
+      order by ${rank} desc, m.date desc nulls last, m.id desc
       limit ${limit}`);
     const seen = Number(rows[0]?.[1] ?? 0);
     return { ids: rows.map((r) => String(r[0])), seen, cut: Number(rows[0]?.[2] ?? 0) >= k };
