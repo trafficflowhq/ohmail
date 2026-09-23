@@ -13,6 +13,82 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Delete, move and tag work on every message in History and Search
+<!-- changes: archive-024-client-followups.md -->
+
+A message you reach in History or Search can be deleted, moved and tagged like any other, however
+old it is: it leaves or moves the moment you act and stays that way. A long Search keeps only the
+pages near what is on screen and asks the rest again as you scroll back.
+
+### History shows every message you own, and Search pages through your whole mailbox
+<!-- changes: archive-024-client.md -->
+
+History now lists every message you own, newest first, back to the first one — on the web, the
+desktop and the phone. The months and years on the right jump anywhere in it, and any message in
+it opens. Search shows one list: what the app already has appears at once and is
+replaced by your whole mailbox's answer, scrolling loads more, the line under the box says how many
+matched and how long it took, and while older mail is still being indexed it says how far along
+that is.
+
+### Search on the desktop answers in milliseconds, with the count right behind
+<!-- changes: archive-024-desktop-search-budget.md -->
+
+On a desktop that keeps its mailbox in its own store, the first page of search results comes back
+in well under a tenth of a second, and the count and the filters beside it follow in a fraction of
+a second. A store carried over from an earlier version is brought up to speed the first time it
+opens.
+
+### The desktop searches your whole mailbox from its own store, and indexes older mail while idle
+<!-- changes: archive-024-desktop-store.md -->
+
+On a desktop that organizes its own mailbox, Search and History now read the app's own store with
+the same indexes as the server, so a word inside another word ("axa" in "myAXA") is found there
+too and the first page of results is back in about a tenth of a second. Mail stored before this version is indexed in the
+background while nobody is using the app and the computer is on power; Settings → Mailboxes shows
+how far it has got, and search stays complete meanwhile.
+
+### Search says how many messages match right after the first results
+<!-- changes: archive-024-search-estimate-client.md -->
+
+Search shows about how many messages match right after the first page of results, and the exact
+count takes its place when it is ready. The filters beside the results arrive with the first count
+and keep their order when the exact counts replace it.
+
+### Search reaches every message you own, and History goes back to the first one
+<!-- changes: archive-024-server.md -->
+
+Search now finds a message by its body, its subject, its sender, its recipients and its
+attachment names — including mail that arrived as HTML only — across your whole mailbox, and the
+first page answers in milliseconds however many messages contain the word. Every message you own
+can now be listed from the server newest first, back to the first one, with a count for every
+month to jump by.
+
+For operators: the new search index is built from what the server already stores — no mailbox is
+read again — and fills itself in the background after the upgrade, newest mail first; until it is
+complete, search reads the older rows the way it did before. It takes about 7 KB per message,
+of which about 5.8 KB comes back once the older body index is retired.
+
+### Removing a mailbox can erase ohmail's copy of its mail
+<!-- changes: erase-024-per-mailbox.md -->
+
+Removing a mailbox now offers to erase ohmail's copy of its mail as well as keeping it. You type
+the mailbox's address and confirm with your second factor; a large mailbox is erased in the
+background while the list counts down, and your mail server keeps every message. The mailbox list
+no longer shows the old rows while a change saves.
+
+### On a desktop paired with ohmail Cloud, a change a slow server confirms shows at once
+<!-- changes: stale-024-direct-writes-follow-pull.md -->
+
+A change the server is slow to confirm, such as a scheduled send or a removed mailbox, now shows as
+soon as this computer's copy has it, instead of at the window's next refresh.
+
+### On a desktop paired with ohmail Cloud, every change shows at once and stays
+<!-- changes: stale-024-write-through.md -->
+
+A message you move or read, a tag, a rule, a draft you save or discard and a mailbox setting now
+show when you change them in the desktop app paired with ohmail Cloud, and stay. A later change to
+the same message, made on this computer or on another device, is no longer missed.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
