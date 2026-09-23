@@ -2553,6 +2553,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             {effectiveView === "screener" ? (
               <ScreenerView
                 state={screener}
+                /* Which address of yours a stranger wrote to, above one mailbox — the resolver
+                   Reads is handed; the view draws the badge and the sheet's sentence from it. */
+                mailboxLabelOf={mailboxLabelOf}
                 /**
                  * Bound HERE, at the render, to the exact list the state computed this frame — so the set that gets
                  * priced and the set that gets bought are one list rather than two computations that agree today.
