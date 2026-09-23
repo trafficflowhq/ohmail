@@ -49,6 +49,13 @@ export const mailboxes = pgTable("mailboxes", {
    * what a stand-down writes, and those mailboxes are still in use.
    */
   erasedAt: timestamp("erased_at", { withTimezone: true }),
+  /**
+   * Mail 0126 — when the erasure stamped in {@link erasedAt} finished. The request stamps and the
+   * worker's `mailbox_erasure` pass sweeps in bounded steps (`mailbox-erasure.ts`); NULL beside a
+   * stamp means a sweep is still owed, and that pair is the whole resume point. Set in the same
+   * transaction as the sweep's last step, so a listed row is either being erased or erased.
+   */
+  erasureDoneAt: timestamp("erasure_done_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   // ── Migration 0007: real mailbox lifecycle fields. Server defaults so
   // the 0006-era rows stay valid on the additive cutover (no backfill needed). ──

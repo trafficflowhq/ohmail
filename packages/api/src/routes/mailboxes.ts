@@ -485,21 +485,21 @@ export const mailboxRoutes: Route[] = [
       const erase = query.get("erase") === "1"
         ? { confirmAddress: (query.get("confirm") ?? "").slice(0, RECIPIENT_ADDRESS_MAX_CHARS) }
         : undefined;
-      const { seq, erased } = await mailbox(deps)
+      const { seq, erasing } = await mailbox(deps)
         .delete(serviceContext(deps, req), params.id!, { erase });
-      /* An erasure answers with its receipt rather than a bare 204: the operator's audit trail and
-       * the person's own confirmation both read the per-table counts, exactly as `DELETE /account`
-       * reports them. A plain removal keeps the 204 it has always answered. */
-      if (erased) {
+      /* An erasure answers 202 with what it WILL erase: the request stamps and the worker's
+       * `mailbox_erasure` pass sweeps, and `GET /mailboxes` carries `erasure.remaining` until it
+       * has. `erasing: false` is a repeat on an erasure already finished. Counts and a verdict
+       * only — no address, subject or correspondent. A plain removal keeps its 204. */
+      if (erasing) {
         return jsonResponse({
-          erased: true,
+          erasing: !erasing.done,
           mailboxId: params.id!,
-          messagesErased: erased.messagesErased,
-          draftsErased: erased.draftsErased,
-          draftsUnanchored: erased.draftsUnanchored,
-          tables: erased.deleted,
+          messages: erasing.messages,
+          drafts: erasing.drafts,
+          draftsUnanchored: erasing.draftsUnanchored,
           retained: "nothing for this mailbox; the mail itself stays on your own server",
-        }, { seq });
+        }, { status: 202, seq });
       }
       // The delta contract's echo, on a 204: a removal closes the mailbox's pending scheduled
       // sends — a `draft` change the asking mirror has to apply, so the seq rides `X-Sync-Seq`

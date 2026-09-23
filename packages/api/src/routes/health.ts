@@ -761,8 +761,8 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // mail 0122_change_log_retention — the retention floor. `seqBounds` reads it on EVERY resuming
   // `/sync`, so an API deployed ahead of the migration answers 42703 on the whole delta surface:
   // every open client's poll loop fails at once. The marker makes that deployment name the
-  // missing migration instead of leaving a 500 nobody can attribute. (0123, the newest entry,
-  // is probed by its CHECK definition below.) Deploy order migration → API → worker.
+  // missing migration instead of leaving a 500 nobody can attribute. (0123 and 0124 are probed
+  // by their CHECK definitions below.) Deploy order migration → API → worker.
   ["account_sync_state", "pruned_through_seq"],
   // mail 0125_message_search — the search document and the backfill's completion marker. The LOUD
   // kind: ingest writes the document in the commit transaction and `GET /search` reads it, so an
@@ -770,6 +770,11 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // marker names the migration instead. Deploy order migration → API → worker.
   ["message_search", "terms"],
   ["account_settings", "search_index_built_at"],
+  // mail 0126_mailbox_erasure_done — when a per-mailbox erasure finished. The LOUD kind: `GET
+  // /mailboxes` filters on it on every poll, so an API ahead of the migration 42703s the list and
+  // every pane that reads it goes blank; the worker's erasure pass reads it too. Deploy order
+  // migration → API → worker.
+  ["mailboxes", "erasure_done_at"],
 ] as const;
 
 /**
@@ -1087,7 +1092,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0125_message_search";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0126_mailbox_erasure_done";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud

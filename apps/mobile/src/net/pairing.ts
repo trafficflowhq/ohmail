@@ -951,6 +951,9 @@ export async function forgetProfile(
    * finished by the engine's bootstrap; the identity row goes last, because while it stands the
    * launch refuses it and the person can press remove again. A failure here is a PARTIAL
    * take-back: nothing below runs, and the sentence says the mail is still on the phone. */
+  /* NO KEEP-OR-ERASE CHOICE ON THIS PHONE: here the removal already erases ohmail's copy — the
+     engine's store goes below — and a paired phone cannot ask a server to erase one, because its
+     bearer carries no second factor and that removal is step-up gated. The note says where it lives. */
   if (localOnly && env.standalone) {
     try {
       /* The ACCOUNT ID, which is the identity the bootstrap would otherwise reuse — never the

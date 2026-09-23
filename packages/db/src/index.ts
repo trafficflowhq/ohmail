@@ -203,6 +203,14 @@ export {
 export {
   pruneSendFingerprints, SEND_FINGERPRINT_RETENTION_MS,
 } from "./send-fingerprints.js";
+// Erasing ohmail's copy of ONE mailbox, in bounded steps — the request's stamp and the worker
+// pass's step, one module so the table walk has one spelling. Mail schema and change log only.
+export {
+  ERASE_BATCH, stampMailboxErasure, sweepMailboxStep, sweepMailboxData, eraseOwedMailbox,
+  erasureRemaining,
+  type MailboxErasureStamp, type MailboxSweepStep, type MailboxSweepResult, type OwedErasureRun,
+} from "./mailbox-erasure.js";
+export { rowsAffected } from "./rows-affected.js";
 // Observability and the hosted adapters USED to be re-exported here. They are runtime surface
 // — no `node:fs`, no migrator — so `/admin` was never the right home for them, and the worker
 // (which may import core + db only) still reaches them without `@trafficflow/services`. They

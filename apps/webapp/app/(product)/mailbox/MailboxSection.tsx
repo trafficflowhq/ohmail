@@ -53,6 +53,7 @@ import {
   messageOf,
   webauthnAvailable,
   type MailboxDTO,
+  type MailboxErasure,
   type OrganizerPeek,
   type TwofaChallenge,
   type UpdateMailboxBody,
@@ -91,9 +92,9 @@ type Factor = "webauthn" | "totp" | "recovery_code";
  * What a take-over press did, for the one caller that has to tell two refusals apart. `step_up`
  * has already PLACED the person — at the password step, with the ask still standing — so landing
  * them anywhere else would throw the ceremony away; `refused` and `settled` both belong on the
- * list the row is on.
+ * list the row is on. `behind` is a settled press whose re-read has not answered — it stays put.
  */
-type TakeoverVerdict = "settled" | "step_up" | "refused";
+type TakeoverVerdict = "settled" | "behind" | "step_up" | "refused";
 
 /**
  * What the edit form holds. Separate from the connect form's {@link Typed} on purpose: an edit is a
@@ -516,6 +517,20 @@ export function MailboxSection() {
    * them in a fixed order.
    */
   const [removing, setRemoving] = useState<MailboxDTO | null>(null);
+  /**
+   * THE REMOVAL'S SECOND ARM: erase ohmail's copy of the mailbox's mail as well. Off by default,
+   * because the removal that keeps the copy is the one this pane has always made. `eraseTyped` is
+   * the address as the person typed it — never filled in here; the SERVER compares it with the
+   * row it is about to erase, so a mistyped one is refused there and said at the confirmation.
+   */
+  const [eraseChosen, setEraseChosen] = useState(false);
+  const [eraseTyped, setEraseTyped] = useState("");
+  /**
+   * AN ERASURE THE WORKER IS STILL SWEEPING, with the receipt its request answered. The row counts
+   * down from `erasure.remaining`; when the list stops carrying it the erasure is finished and the
+   * receipt is said. Held here because the list's finished answer is the row's absence.
+   */
+  const [erasingFor, setErasingFor] = useState<{ receipt: MailboxErasure; address: string } | null>(null);
   const [typed, setTyped] = useState<Typed>(emptyTyped);
   /**
    * The mailbox being edited, or `null` in the connect flow. It is what the ceremony's final step
@@ -701,6 +716,17 @@ export function MailboxSection() {
   const peekWins = useLatestWins(alive);
 
   /**
+   * A WRITE THAT HAS ANSWERED AND NO READ SINCE. `writes` counts answered writes so a read knows
+   * whether it was issued after the last one; `owed` holds until such a read answers; `behind` is
+   * the painted half, set only once {@link afterWrite}'s bound has passed without one — the rows
+   * on screen predate the write then, so they are withheld and a sentence stands in their place.
+   */
+  const writes = useRef(0);
+  const owed = useRef(false);
+  const late = useRef(false);
+  const [behind, setBehind] = useState(false);
+
+  /**
    * Re-read the mailbox list. `counts` is asked for on pane open and never on the poll: `messageCount` is one grouped
    * aggregate over the account's whole `messages` table, and `refresh` runs on a 10-second timer while this pane is
    * on screen — putting the count on the poll would buy a number that changes by single digits an hour and charge a
@@ -714,8 +740,9 @@ export function MailboxSection() {
    * A mailbox gone from the list takes its count with it, because the merge is keyed off the INCOMING rows; a stale
    * id cannot resurrect a row or lend its number to a new one.
    */
-  const refresh = useCallback(async (opts: { counts?: boolean } = {}): Promise<void> => {
+  const refresh = useCallback(async (opts: { counts?: boolean } = {}): Promise<boolean> => {
     const wins = listWins();
+    const epoch = writes.current;
     try {
       const { items: got } = await mailboxApi.list(opts.counts ? { counts: true } : {});
       if (wins.claim()) {
@@ -747,6 +774,17 @@ export function MailboxSection() {
         });
         setListFailed(false);
       }
+      /* A read issued after the last answered write settles it. Past `afterWrite`'s bound this is
+         the read that finishes the move to the list, whichever read it turns out to be. */
+      if (epoch === writes.current && owed.current) {
+        owed.current = false;
+        if (late.current && alive.current) {
+          late.current = false;
+          setBehind(false);
+          setStage((s) => (s === "saving" ? "list" : s));
+        }
+      }
+      return true;
     } catch (err) {
       /**
        * A failed read is not an empty result — `setItems([])` was a claim, and the wrong one. This used to answer a
@@ -766,8 +804,32 @@ export function MailboxSection() {
        * subscription.
        */
       if (wins.claim()) { setListFailed(true); setError(messageOf(err)); }
+      return false;
     }
   }, [listWins]);
+
+  /**
+   * RECORD, THEN PAINT — the first-run rule (`FirstRun.tsx`'s `settle`) on this pane's writes.
+   * An answered write retires every read issued before its answer, then waits, bounded, for one
+   * issued after it; `true` means that read answered and the caller may paint the list. `false`
+   * leaves the pane where it is with `behind` set, and the next read that answers finishes it:
+   * the rows from before a write are never shown as its result.
+   */
+  const afterWrite = useCallback(async (): Promise<boolean> => {
+    writes.current += 1;
+    owed.current = true;
+    late.current = false;
+    listWins().publish();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      refresh(),
+      new Promise<boolean>((r) => { timer = setTimeout(() => r(false), WRITE_SETTLE_MS); }),
+    ]);
+    clearTimeout(timer);
+    if (!owed.current) return true;
+    if (alive.current) { late.current = true; setBehind(true); }
+    return false;
+  }, [listWins, refresh]);
 
   /**
    * STEP ONE — look at the mailbox and report what is holding it.
@@ -821,6 +883,8 @@ export function MailboxSection() {
    * A FAILED request is removed again, because then nothing was asked for and the way back has to stay reachable.
    */
   const [takingOver, setTakingOver] = useState<ReadonlySet<string>>(() => new Set());
+  /** The take-over press in flight, from the press to its re-read — the panel's confirm is spent. */
+  const [pressing, setPressing] = useState<string | null>(null);
 
   /**
    * THE MAILBOX A TAKE-OVER IS ABOUT, held across the step-up ceremony — the fourth thing a
@@ -851,15 +915,16 @@ export function MailboxSection() {
     try {
       const result = await mailboxApi.release(id);
       if (!wins.publish()) return;
-      setReleaseFor(null);
       setNotice(
         result.outcome === "requested" ? t("stopOrganizingQueued")
           : result.outcome === "not_organizing" ? t("stopOrganizingNot")
             : t("organizerDisconnected"),
       );
       // The row's role moves at the worker's gate, not here, so the pane re-reads rather than
-      // guessing — the same reason the takeover refreshes instead of writing a local role.
-      await refresh();
+      // guessing. The well stays open, its confirm spent, until that read answers.
+      await afterWrite();
+      if (!alive.current) return;
+      setReleaseFor(null);
     } catch (err) {
       if (wins.publish()) { setReleaseFor(null); setError(messageOf(err)); }
     } finally {
@@ -867,25 +932,28 @@ export function MailboxSection() {
          removal would leave a stale press spinning for ever. */
       if (alive.current) setReleasing((q) => { const n = new Set(q); n.delete(id); return n; });
     }
-  }, [listWins, refresh, t]);
+  }, [afterWrite, listWins, t]);
 
   const confirmTakeover = useCallback(async (id: string): Promise<TakeoverVerdict> => {
     setError(null);
     setTakingOver((q) => new Set(q).add(id));
+    setPressing(id);
     const wins = listWins();
     try {
       const result = await mailboxApi.organize(id);
       if (!wins.publish()) return "settled";
-      setOrganizer(null);
+      // The row's status changed under us on the authorized path, and only the server knows the
+      // new one — a local guess would be a second source of truth for `status`. The panel and its
+      // spent confirm stay until the re-read answers.
       setNotice(
         result.outcome === "authorized" ? t("organizerQueued")
           : result.outcome === "already_organizing" ? t("organizerAlready")
             : t("organizerDisconnected"),
       );
-      // The row's status changed under us on the authorized path, and only the server knows the
-      // new one — a local guess would be a second source of truth for `status`.
-      await refresh();
-      return "settled";
+      const read = await afterWrite();
+      if (!alive.current) return "settled";
+      setOrganizer(null);
+      return read ? "settled" : "behind";
     } catch (err) {
       if (!wins.publish()) return "refused";
       setOrganizer(null);
@@ -904,8 +972,10 @@ export function MailboxSection() {
         return "step_up";
       }
       return "refused";
+    } finally {
+      if (alive.current) setPressing((p) => (p === id ? null : p));
     }
-  }, [listWins, refresh, t]);
+  }, [afterWrite, listWins, t]);
 
   /**
    * The server's entitlement verdict, read before anything is typed.
@@ -1531,8 +1601,8 @@ export function MailboxSection() {
       // verdict about a mailbox that is already connected, presented as evidence about a mailbox
       // nobody has typed yet.
       clearVerdict();
-      setStage("list");
-      await refresh();
+      // The list only over a read that holds the new mailbox — see `afterWrite`.
+      if (await afterWrite()) setStage("list");
       // A mailbox that has just been connected is exactly the case the account strip exists for, so it
       // must learn about it now rather than on its next poll — otherwise the first thing a new
       // customer sees after the ceremony is a shell that still believes they have none.
@@ -1587,14 +1657,15 @@ export function MailboxSection() {
       if (!wins.publish()) return;
       // The password leaves this component the moment the server has it.
       setEdited(emptyEdit());
-      setEditing(null);
       setPassword("");
       setChallenge(null);
       setError(null);
       setInsecureOffer(false);
       setSuggestion(null);
-      setStage("list");
-      await refresh();
+      // `editing` is what the saving line names, so it goes after the re-read, never before.
+      const read = await afterWrite();
+      setEditing(null);
+      if (read) setStage("list");
       // The stored credential just changed, so a mailbox that was quarantined may recover on the
       // worker's next pass — the strip reads the same route and should not stay a poll behind.
       refreshMailState();
@@ -1634,23 +1705,62 @@ export function MailboxSection() {
     setStage("saving");
     const wins = listWins();
     try {
-      await mailboxApi.remove(target.id);
+      /* THE ERASE ARM sends the address as TYPED; the server compares it with this row and
+         answers the receipt, which is said in one sentence before the list comes back. */
+      const receipt = eraseChosen
+        ? await mailboxApi.erase(target.id, eraseTyped)
+        : (await mailboxApi.remove(target.id), null);
       if (!wins.publish()) return;
-      setRemoving(null);
       setPassword("");
       setChallenge(null);
       setError(null);
-      setStage("list");
-      await refresh();
+      // A finished repeat is said at once; a running erasure when its row leaves the list.
+      if (receipt?.erasing) setErasingFor({ receipt, address: target.address });
+      else if (receipt) setNotice(erasedSentence(receipt, target.address));
+      // `removing` is what the saving line names, so it goes after the re-read, never before.
+      const read = await afterWrite();
+      setRemoving(null);
+      setEraseChosen(false);
+      setEraseTyped("");
+      if (read) setStage("list");
       // The rail's strip reads the same route on its own slower clock; without this the pane and
       // the strip disagree about this mailbox for up to thirty seconds.
       refreshMailState();
     } catch (err) {
       if (!wins.publish()) return;
       setStage("remove");
+      /* A MISTYPED ADDRESS, refused by the server before it wrote anything: said at the
+         confirmation in this pane's words, with the typed value kept for the correction. */
+      if (codeOf(err) === "erase_not_confirmed") {
+        ceremony.end();
+        setError(t("removeEraseMismatch"));
+        setBusy(false);
+        return;
+      }
       fail(err);
     }
   };
+
+  /** The erase's receipt, as the one sentence the pane says before the list comes back. */
+  const erasedSentence = (r: MailboxErasure, address: string): string => {
+    const values = {
+      address: displayAddress(address),
+      messages: r.messages,
+      drafts: r.drafts,
+      unanchored: r.draftsUnanchored,
+    };
+    return r.draftsUnanchored > 0 ? t("removeErasedUnanchored", values) : t("removeErased", values);
+  };
+
+  /* THE ERASURE FINISHED when a read no longer lists its row — a finished erasure's row is not
+     listed at all. Only a read that has answered counts: `items` from before it is not absence. */
+  useEffect(() => {
+    if (!erasingFor || items === null) return;
+    if (items.some((m) => m.id === erasingFor.receipt.mailboxId)) return;
+    setNotice(erasedSentence(erasingFor.receipt, erasingFor.address));
+    setErasingFor(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, erasingFor]);
 
   /**
    * THE TAKE-OVER, RUN FROM A VERIFIED FACTOR — the ceremony's fourth ending. It re-presses the
@@ -1665,7 +1775,8 @@ export function MailboxSection() {
     // landing them on the list here would discard the ceremony they are halfway through.
     if (verdict === "step_up") return;
     setTakeoverFor(null);
-    setStage("list");
+    // A press whose re-read has not answered stays at this stage; the next read moves it.
+    if (verdict !== "behind") setStage("list");
   };
 
   /**
@@ -2015,13 +2126,17 @@ export function MailboxSection() {
           permanent false sentence for another. The reason renders below, in `error`. */}
       {items === null && !listFailed ? <p className="acct-lead">{t("loading")}</p> : null}
 
-      {items !== null && connected.length === 0 && stage === "list" ? (
+      {items !== null && connected.length === 0 && stage === "list" && !behind ? (
         <p className="acct-lead">{t("noneYet")}</p>
       ) : null}
 
+      {/* A WRITE ANSWERED AND NO READ HAS SINCE — the rows below would be the ones from before it,
+          so the sentence stands in their place until a read answers (`afterWrite`). */}
+      {behind ? <p className="acct-lead" role="status">{t("listBehind")}</p> : null}
+
       {/* ONE ROW PER ADDRESS. See `groupByAddress` for why a second row exists at all and
           why a disabled row with no live sibling still gets one of its own. */}
-      {groupByAddress(connected).map(({ shown: m, superseded }) => {
+      {(behind ? [] : groupByAddress(connected)).map(({ shown: m, superseded }) => {
         const stamp = m.lastSyncAt ? agoStamp(m.lastSyncAt, now) : null;
         /* WHY THIS MAILBOX IS DISABLED, when the ORGANIZER LEASE decided it and not a person
            (mail 0027). Null for every ordinary disconnect, which is the distinction the whole
@@ -2066,7 +2181,7 @@ export function MailboxSection() {
                   ohmail holds, not a claim about syncing, so it contradicts nothing beside it. */}
               <span className="mbx-sub">
                 {providerLabel(providerById(m.provider), tp)} · {t(statusKey(m))}
-                {typeof m.messageCount === "number"
+                {typeof m.messageCount === "number" && !m.erasure
                   ? ` · ${t("messageCount", { count: m.messageCount })}`
                   : null}
               </span>
@@ -2125,6 +2240,7 @@ export function MailboxSection() {
                       state={organizer}
                       t={t}
                       now={now}
+                      spent={pressing === m.id}
                       onCancel={() => { setOrganizer(null); }}
                       onConfirm={() => { void confirmTakeover(m.id); }}
                     />
@@ -2252,7 +2368,14 @@ export function MailboxSection() {
                   thirty seconds into a thirty-minute import. The row decides nothing about
                   progress: it renders what is strictly per-mailbox, and the account-wide answer
                   comes from the shell's single derivation (`shell/mail-state.ts`). */}
-              {m.status === "disabled" ? null : m.status === "error" ? (
+              {/* AN ERASURE STILL RUNNING says how much is left, and nothing else: the row has no
+                  verbs, and a sync line under it would describe a mailbox being taken away. */}
+              {m.erasure ? (
+                <span className="mbx-wait" role="status">
+                  <Spinner className="mbx-spin" />
+                  {t("erasingLeft", { count: m.erasure.remaining })}
+                </span>
+              ) : m.status === "disabled" ? null : m.status === "error" ? (
                 /**
                  * ── A DISCONNECTED MAILBOX REPORTS NO PROGRESS. FIRST, SO IT CANNOT BE OUTVOTED
                  * ────────────────────────────────────────────────────────────────── Without this arm a `disabled`
@@ -2386,7 +2509,10 @@ export function MailboxSection() {
                       factor, which is the same gate connecting a mailbox passes. */}
                   <Button
                     className="mbx-btn"
-                    onClick={() => { setError(null); setRemoving(m); setStage("remove"); }}
+                    onClick={() => {
+                      setError(null); setRemoving(m); setEraseChosen(false); setEraseTyped("");
+                      setStage("remove");
+                    }}
                   >
                     {t("remove")}
                   </Button>
@@ -2866,10 +2992,10 @@ export function MailboxSection() {
           (`MailboxService.delete` opens no IMAP connection, so nothing on their server is
           reachable from this press); the stored password is deleted — the thing a reconnect
           cannot undo without typing it again; scheduled sends are closed rather than sent — a
-          consequence with no other surface; and THE COPY ALREADY SYNCED STAYS, said plainly
-          because it is true and unflattering — erasure is account-scoped with no per-mailbox
-          purge, and claiming the local copy goes would be exactly the false statement this
-          panel avoids. `role="alertdialog"`, the safe answer first in the DOM. */}
+          consequence with no other surface; and WHAT HAPPENS TO OHMAIL'S COPY, which is the
+          person's choice: it stays (the default, and this panel's first sentence about it), or
+          it is erased — `?erase=1` on the same route, the address typed rather than filled in,
+          the same second factor. `role="alertdialog"`, the safe answer first in the DOM. */}
       {stage === "remove" && removing ? (
         <div className="acct-confirm" role="alertdialog" aria-label={t("removeTitle", { address: removing.address })}>
           <h3 className="acct-sub">{t("removeTitle", { address: removing.address })}</h3>
@@ -2878,14 +3004,44 @@ export function MailboxSection() {
             <li>{t("removeMailSafe")}</li>
             <li>{t("removeCredential")}</li>
             <li>{t("removeScheduled")}</li>
-            <li>{t("removeCopyStays")}</li>
+            <li>{eraseChosen ? t("removeCopyErased") : t("removeCopyStays")}</li>
           </ul>
+          <fieldset className="mbx-remove-choice">
+            <label className="join-label" htmlFor="mb-remove-keep">
+              <input
+                id="mb-remove-keep" type="radio" name="mb-remove-copy" checked={!eraseChosen}
+                onChange={() => { setEraseChosen(false); setError(null); }}
+              />{" "}
+              {t("removeKeepChoice")}
+            </label>
+            <label className="join-label" htmlFor="mb-remove-erase">
+              <input
+                id="mb-remove-erase" type="radio" name="mb-remove-copy" checked={eraseChosen}
+                onChange={() => { setEraseChosen(true); setError(null); }}
+              />{" "}
+              {t("removeEraseChoice")}
+            </label>
+            <p className="acct-fine">{t("removeEraseWhat")}</p>
+          </fieldset>
+          {eraseChosen ? (
+            <>
+              <label className="join-label" htmlFor="mb-erase-confirm">{t("removeEraseTypeLabel")}</label>
+              <input
+                id="mb-erase-confirm" className="join-input" type="text" autoComplete="off"
+                autoCapitalize="none" spellCheck={false} value={eraseTyped}
+                onChange={(e) => { setEraseTyped(e.target.value); setError(null); }}
+              />
+            </>
+          ) : null}
           <p className="acct-fine">{t("removeReconnect")}</p>
           {error ? <p className="acct-error" role="alert">{error}</p> : null}
           <div className="acct-actions">
             {/* THE SAFE ANSWER FIRST. A destructive confirmation that puts the destructive
                 button under the keyboard's first stop is a confirmation that confirms itself. */}
-            <Button onClick={() => { setRemoving(null); setError(null); setStage("list"); }}>
+            <Button onClick={() => {
+              setRemoving(null); setEraseChosen(false); setEraseTyped(""); setError(null);
+              setStage("list");
+            }}>
               {t("removeCancel")}
             </Button>
             {/* It does not remove anything — it enters the step-up. The account asks for a fresh
@@ -2895,9 +3051,10 @@ export function MailboxSection() {
                 confirm (`AccountSection.tsx`), so the two read as one product. */}
             <Button
               variant="primary" className="danger"
+              disabled={eraseChosen && eraseTyped.trim() === ""}
               onClick={() => { setError(null); setStage("password"); }}
             >
-              {t("removeConfirm")}
+              {eraseChosen ? t("removeEraseConfirm") : t("removeConfirm")}
             </Button>
           </div>
         </div>
@@ -2946,7 +3103,8 @@ export function MailboxSection() {
             {/* WHICH write this factor authorises. A removal is not a save, and a screen that
                 said "storing a mailbox password" over a delete would be asking for consent to
                 the wrong act. */}
-            {removing ? t("factorBodyRemove") : editing ? t("factorBodyEdit") : t("factorBody")}
+            {removing ? t(eraseChosen ? "factorBodyErase" : "factorBodyRemove")
+              : editing ? t("factorBodyEdit") : t("factorBody")}
           </p>
 
           {method === "webauthn" ? (
@@ -2968,7 +3126,9 @@ export function MailboxSection() {
               />
               <div className="acct-actions">
                 <Button variant="primary" type="submit" disabled={busy || code.trim().length === 0}>
-                  {busy ? t("working") : editing ? t("verifySave") : t("verifyConnect")}
+                  {busy ? t("working")
+                    : removing ? t(eraseChosen ? "verifyErase" : "verifyRemove")
+                      : editing ? t("verifySave") : t("verifyConnect")}
                 </Button>
               </div>
             </form>
@@ -3007,13 +3167,14 @@ export function MailboxSection() {
         </div>
       ) : null}
 
-      {stage === "saving" ? (
+      {stage === "saving" && !behind ? (
         <p className="acct-lead">
           {/* A take-over connects nothing — the credential is already stored and the claim is the
               worker's next pass — so it takes the neutral word rather than "Connecting…", which
               would describe an act this press does not perform. */}
           {takeoverFor ? t("working")
-            : removing ? t("removeWorking") : editing ? t("savingEdit") : t("connecting")}
+            : removing ? t(eraseChosen ? "removeEraseWorking" : "removeWorking")
+              : editing ? t("savingEdit") : t("connecting")}
         </p>
       ) : null}
 
@@ -3071,10 +3232,12 @@ interface OrganizerCheck {
  * would otherwise have to guess: that the other install stops on its own next check rather than immediately, and that
  * its local copy of the mail is left alone.
  */
-function OrganizerPanel({ state, t, now, onCancel, onConfirm }: {
+function OrganizerPanel({ state, t, now, spent, onCancel, onConfirm }: {
   state: OrganizerCheck;
   t: (k: string, v?: Record<string, string>) => string;
   now: number;
+  /** The confirm was pressed and its answer is being re-read: a second press asks again. */
+  spent: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }): JSX.Element {
@@ -3098,7 +3261,9 @@ function OrganizerPanel({ state, t, now, onCancel, onConfirm }: {
       <span className="mbx-sub">{found}</span>
       <span className="mbx-sub">{t("organizerEffect")}</span>
       <span className="mbx-actions">
-        <Button variant="primary" className="mbx-btn" onClick={onConfirm}>{t("organizerConfirm")}</Button>
+        <Button variant="primary" className="mbx-btn" onClick={onConfirm} disabled={spent}>
+          {t("organizerConfirm")}
+        </Button>
         <Button className="mbx-btn" onClick={onCancel}>{t("organizerCancel")}</Button>
       </span>
     </>
@@ -3136,6 +3301,13 @@ function errorTitle(
  * in: a true statement that looks like a failure because nothing ever changes it.
  */
 const TICK_MS = 10_000;
+
+/**
+ * How long an answered write waits for the read that shows it — the first-run flow's `SETTLE_MS`,
+ * so the two surfaces keep one bound. Past it the pane stays where it is and says so; the poll's
+ * next answer finishes the move.
+ */
+export const WRITE_SETTLE_MS = 4_000;
 
 /**
  * The FLOOR under a device-flow poll's delay — five seconds, matching the interval Microsoft

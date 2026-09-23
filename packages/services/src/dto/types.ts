@@ -804,6 +804,12 @@ export interface MailboxDTO {
    */
   messageCount?: number;
   /**
+   * An erasure of ohmail's copy still running (mail 0126): present only on a row whose erasure
+   * was asked for and has not finished, with the messages it has left. The worker's
+   * `mailbox_erasure` pass moves it; a finished erasure's row is not listed at all.
+   */
+  erasure?: { remaining: number };
+  /**
    * How much mail the SERVER says is in there — the first pull's DENOMINATOR. {@link
    * messageCount} is the numerator; until this there was no denominator: the adapter read
    * `EXISTS` off every SELECT and threw it away. Mail 0083 added `mailbox_folders.server_exists`;

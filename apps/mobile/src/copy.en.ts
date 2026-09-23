@@ -371,7 +371,7 @@ const TABLE = {
   // deletes the copied mail as well and reads the database back to check, so the promise is one
   // the code keeps — and `serversForgetFailed` is what gets said on the launch where it cannot.
   serversForgetNote:
-    "Forgetting deletes the pairing and the mail this phone had copied. The server's Devices list can revoke it there too.",
+    "Forgetting deletes the pairing and the mail this phone had copied. The server's Devices list can revoke it there too. Removing a mailbox on the server itself can also erase ohmail's copy of its mail.",
   /* THE SAME NOTE WHERE THERE IS NO SERVER — a list holding only this phone's own mailbox has no
      Devices pane, so naming one is an instruction nobody can follow. */
   serversForgetNoteHere:

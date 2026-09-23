@@ -2180,6 +2180,8 @@ export function DesktopMailboxes(
                 <li>{t("removeMailSafe")}</li>
                 <li>{t("removeCredential")}</li>
                 <li>{t("removeScheduled")}</li>
+                {/* No keep-or-erase choice on this door: the store is both server and mirror, so
+                    the removal IS the erase of this computer's copy (`local-mirror.ts`). */}
                 <li>{t("removeCopyLocal")}</li>
                 {/* ── AND THE SIXTH, ON THE LAST MAILBOX ONLY ────────────────────────────────
                     Removing the only mailbox leaves nothing for this install to open, so the

@@ -883,6 +883,13 @@
       "when": 1791602600029,
       "tag": "0125_message_search",
       "breakpoints": true
+    },
+    {
+      "idx": 126,
+      "version": "7",
+      "when": 1791602600030,
+      "tag": "0126_mailbox_erasure_done",
+      "breakpoints": true
     }
   ]
 }

@@ -228,7 +228,7 @@ export const DE: Deck = {
   serversStopHere: "Beenden und entfernen",
   serversForget: "Vergessen",
   serversForgetNote:
-    "Vergessen löscht die Kopplung und die Post, die dieses Telefon kopiert hatte. Über die Geräteliste des Servers lässt sie sich auch dort widerrufen.",
+    "Vergessen löscht die Kopplung und die Post, die dieses Telefon kopiert hatte. Über die Geräteliste des Servers lässt sie sich auch dort widerrufen. Wer ein Postfach auf dem Server selbst entfernt, kann dort auch die Kopie seiner Post bei ohmail löschen.",
   /* Dieselbe Notiz, wo es keinen Server gibt — siehe die englische Fassung. */
   serversForgetNoteHere:
     "Entfernen gibt das Postfach zurück, ohmail sortiert es hier nicht weiter ein, und die Post, die dieses Telefon kopiert hatte, wird gelöscht. Das Postfach auf deinem Mailserver bleibt unberührt.",

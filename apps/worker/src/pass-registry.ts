@@ -215,6 +215,15 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "leader lock; writes only the notice state",
   },
   {
+    name: "mailbox_erasure",
+    module: `${W}/mailbox-erasure-pass.ts`, entry: "mailboxErasurePass",
+    triggers: ["cycle-tail"],
+    cadence: "every cycle, leader-only, over this shard's owed stamps (mailboxes_erasure_owed_idx)",
+    budget: "MAILBOX_ERASURE_STEPS_PER_PASS steps of ERASE_BATCH messages and MAILBOX_ERASURE_PASS_BUDGET_MS of wall clock; one indexed read, empty when nothing is owed",
+    owns: "a \"Remove and erase\" press erases ohmail's copy of that mailbox's mail — every row, one receipt, erasure_done_at set — and nothing on the mail server",
+    fence: "per step: the account row FOR SHARE, the thread-structure advisory lock, the mailbox row FOR UPDATE — the order every erasure holds",
+  },
+  {
     name: "storage_evict",
     module: `${W}/storage-evict.ts`, entry: "storageEvictPass",
     triggers: ["cycle-tail"],

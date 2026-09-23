@@ -299,5 +299,12 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "CREATE INDEX IF NOT EXISTS \"messages_account_msg_order_idx\" ON \"messages\" (\"account_id\", \"date\" DESC, \"id\" DESC) WHERE \"deleted_at\" IS NULL;",
       "ALTER TABLE \"account_settings\" ADD COLUMN \"search_index_built_at\" integer;"
     ]
+  },
+  {
+    "name": "0126_mailbox_erasure_done.sql",
+    "statements": [
+      "ALTER TABLE \"mailboxes\" ADD COLUMN \"erasure_done_at\" integer;",
+      "UPDATE \"mailboxes\" SET \"erasure_done_at\" = \"erased_at\"\n  WHERE \"erased_at\" IS NOT NULL AND \"erasure_done_at\" IS NULL;"
+    ]
   }
 ] as const;

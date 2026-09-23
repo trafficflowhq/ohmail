@@ -212,6 +212,12 @@ function shardPredicate(shards: number, shardIndex: number): SQL {
   return sql`((hashtext(${mailboxes.accountId}::text) % ${shards}) + ${shards}) % ${shards} = ${shardIndex}`;
 }
 
+/** THIS shard's slice of `mailboxes`, or `undefined` on an unsharded deployment — the roster's rule, for a pass over rows the roster does not serve. */
+export function shardFilter(selection: MailboxSelection = {}): SQL | undefined {
+  const { shards, shardIndex } = validateShard(selection);
+  return shards > 1 ? shardPredicate(shards, shardIndex) : undefined;
+}
+
 /**
  * Which accounts the roster must skip — composed by the host, absent on a deployment that meters
  * nothing. It used to be one query over this database's own subscription and suspension rows, shared

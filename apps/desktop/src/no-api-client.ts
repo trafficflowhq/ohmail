@@ -235,6 +235,9 @@ export interface MailboxDTO {
     smtpMaxSizeBytes?: number | null;
     junkFolder?: string | null;
     messageCount?: number;
+    erasure?: {
+        remaining: number;
+    };
     serverMessageCount?: number;
     firstSyncStopFolder?: string | null;
 }
@@ -474,6 +477,15 @@ export const profileImport: {
         dismissed: boolean;
     }>;
 } = absent;
+
+export interface MailboxErasure {
+    erasing: boolean;
+    mailboxId: string;
+    messages: number;
+    drafts: number;
+    draftsUnanchored: number;
+    retained: string;
+}
 
 export interface ErasureResult {
     erased: true;

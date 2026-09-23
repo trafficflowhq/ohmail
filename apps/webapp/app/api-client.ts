@@ -1094,6 +1094,11 @@ export interface MailboxDTO {
    */
   messageCount?: number;
   /**
+   * An erasure of ohmail's copy still running (mail 0126), with the messages it has left —
+   * absent on every other row. A finished erasure's row is not listed at all.
+   */
+  erasure?: { remaining: number };
+  /**
    * How much mail the server says is in there — the first pull's denominator (mail 0083): Σ
    * `mailbox_folders.server_exists` over opened folders. Unlike {@link messageCount} it rides
    * EVERY response, including the 30 s poll — the server sums folder rows it was already
@@ -1582,6 +1587,17 @@ export const mailboxes = {
   remove: (id: string) => api<void>(`/mailboxes/${id}`, { method: "DELETE" }),
 
   /**
+   * REMOVE A MAILBOX AND ERASE OHMAIL'S COPY OF ITS MAIL — the same step-up gated route with
+   * `?erase=1`. `confirm` is the address the person TYPED, never one this client fills in: the
+   * server compares it to the row it is about to erase and refuses `erase_not_confirmed`
+   * otherwise. Answers the receipt. Nothing on the mail server is touched.
+   */
+  erase: (id: string, confirm: string) =>
+    api<MailboxErasure>(
+      `/mailboxes/${id}?erase=1&confirm=${encodeURIComponent(confirm)}`, { method: "DELETE" },
+    ),
+
+  /**
    * WHO IS ORGANIZING THIS MAILBOX RIGHT NOW, read from the mailbox itself. Exactly one ohmail organizes a mailbox at
    * a time, and the claim lives in an unsubscribed `ohmail/_meta` folder because that is the only thing a desktop
    * install and Cloud both see. When Cloud loses a mailbox it records why and stops — and from then on nothing
@@ -1859,6 +1875,22 @@ export type AccountAccess =
        */
       caughtUp?: { since: string; count: number };
     };
+
+/**
+ * What `DELETE /mailboxes/:id?erase=1` answers — 202, with what the erasure WILL remove. The
+ * request stamps the mailbox and a worker pass sweeps it; the list row carries
+ * `erasure.remaining` until the pass is done and then leaves the list. `erasing: false` is a
+ * repeat on an erasure already finished. `draftsUnanchored` counts drafts in OTHER mailboxes that
+ * kept their text and lost the reply link.
+ */
+export interface MailboxErasure {
+  erasing: boolean;
+  mailboxId: string;
+  messages: number;
+  drafts: number;
+  draftsUnanchored: number;
+  retained: string;
+}
 
 /** What `DELETE /account` answers. Every field is stated on the confirmation screen. */
 export interface ErasureResult {

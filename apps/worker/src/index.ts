@@ -99,6 +99,7 @@ import {
 } from "./screener-correspondent-retro.js";
 import { screenerAutoSuggestPass } from "./screener-auto-suggest.js";
 import { refundObligationDrainPass } from "./refund-obligation-drain.js";
+import { mailboxErasurePass } from "./mailbox-erasure-pass.js";
 import { syncKickPass } from "./sync-kick.js";
 import { sensitiveBackfillPass } from "./sensitive-backfill.js";
 import { searchIndexBackfillPass } from "@trafficflow/core/mail";
@@ -118,7 +119,7 @@ import {
   markMailboxSyncBlocked, clearMailboxSyncBlock,
   classifyMailboxError, mailboxErrorDetail,
   stampMailboxSyncNow, stampInitialImportComplete, makeSyncWriteFence, type LeaderFence,
-  accountsOf, organizedMailboxIdsOf, accountInShard,
+  accountsOf, organizedMailboxIdsOf, accountInShard, shardFilter,
   type EnabledMailbox, type MailboxDisabledReason, type MailboxErrorPhase,
   type MailboxSyncBlockReason, type ParkedAccountsReader,
 } from "./mailboxes.js";
@@ -4682,6 +4683,31 @@ export async function startWorkerWithLock(
               "next waiting sender and every one of them still carries its own Apply",
           });
         }
+      }
+
+      // ── THE ERASURES PEOPLE ASKED FOR (mail 0126) ─────────────────────────────────────
+      //
+      // "Remove and erase" stamps the mailbox and answers; this is the sweep it promised, every
+      // cycle because somebody is watching "Erasing — N messages left" count down. Bounded in
+      // steps and wall clock inside the pass, one indexed read over the owed stamps when there is
+      // nothing to do. Its OWN try/catch: every step is its own transaction, so a failure leaves
+      // what committed and the next cycle resumes from the stamp — never a cycle abort.
+      try {
+        const erased = await asDatabaseFault("cycle.mailboxErasurePass",
+          () => mailboxErasurePass(db as unknown as Tx, { now: () => new Date(), shard: shardFilter(selection) }));
+        if (erased.steps > 0) {
+          log.info("mailbox_erasure_pass", {
+            mailboxes: erased.mailboxes, steps: erased.steps, finished: erased.finished,
+            messagesErased: erased.messagesErased,
+          });
+        }
+      } catch (err) {
+        noteIfSharedDatabaseFault(err);
+        log.error("mailbox_erasure_failed", {
+          err,
+          reason: "the erasure steps that committed stand, each is one transaction, and the stamp " +
+            "is the resume point, so the next cycle continues from what is left",
+        });
       }
 
       // ── Global maintenance, leader-only and time-gated (~hourly) ────────────────────

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNotNull, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole,
@@ -17,7 +17,7 @@ import { ServiceError } from "./errors.js";
 import { accountMailboxesProbe, refuseOverAccountMailboxes } from "./read-bounds.js";
 import { fenceErasedAccount, fenceErasedMailboxOnly } from "./erasure-fence.js";
 import { fenceSignedOutMailbox, type CredentialOrigin } from "./signed-out-fence.js";
-import { sweepMailboxData, type MailboxSweepResult } from "./mailbox-erasure.js";
+import { erasureRemaining, stampMailboxErasure, type MailboxErasureStamp } from "./mailbox-erasure.js";
 /* The DEFAULT policy is registered rather than imported, so the paid gate is not an import edge
  * out of a module the desktop engine bundles — this one is mounted by the local API too. The
  * full `@trafficflow/services` barrel, which only a hosted process imports, registers the gate
@@ -70,10 +70,13 @@ export interface MailboxDeleteOptions {
   erase?: { confirmAddress: string | null };
 }
 
-/** What a removal did. `erased` is absent unless {@link MailboxDeleteOptions.erase} was given. */
+/**
+ * What a removal did. `erasing` is absent unless {@link MailboxDeleteOptions.erase} was given: it
+ * is the stamp's receipt, and the worker's `mailbox_erasure` pass does the sweep it promises.
+ */
 export interface MailboxDeleteResult {
   seq: bigint | null;
-  erased?: MailboxSweepResult;
+  erasing?: MailboxErasureStamp;
 }
 
 export type MailboxTakeoverResult =
@@ -942,8 +945,13 @@ export class MailboxService {
    * whose size is the product's whole point.
    */
   async list(ctx: ServiceContext, opts: ListMailboxesOptions = {}): Promise<MailboxDTO[]> {
+    /* A FINISHED ERASURE IS NOT LISTED. Its row survives only as the fence a late writer is
+       refused by; listed, it read as a disconnected mailbox ohmail still held mail for, beside the
+       receipt saying none is left. One still running is listed with `erasure.remaining`, and a
+       plain removal's tombstone is listed as always: its copy stays, and the row says so. */
     const rows = await ctx.db.select().from(mailboxes)
-      .where(eq(mailboxes.accountId, ctx.accountId)).orderBy(asc(mailboxes.id));
+      .where(and(eq(mailboxes.accountId, ctx.accountId), isNull(mailboxes.erasureDoneAt)))
+      .orderBy(asc(mailboxes.id));
     const counts = opts.counts ? await this.messageCounts(ctx) : null;
     const out: MailboxDTO[] = [];
     for (const m of rows) {
@@ -1726,15 +1734,14 @@ export class MailboxService {
         accountId: ctx.accountId, mailboxId: id, now: ctx.now(),
       });
       if (!opts.erase) return { seq };
-      /* The sweep runs LAST and inside this transaction: the tombstone above has to be visible to
-       * it, and both halves commit together — a mailbox whose mail is gone while its credentials
-       * remain is worse than an erasure that failed and can be retried. */
-      const erased = await sweepMailboxData(tx, {
+      /* THE STAMP, LAST and inside this transaction, with the tombstone and the credentials: from
+       * its commit every writer is fenced off the mailbox. The sweep itself is the worker's
+       * `mailbox_erasure` pass — one transaction over a large mailbox measured past the request's
+       * own ceiling — resumed from this stamp alone. */
+      const erasing = await stampMailboxErasure(tx, {
         accountId: ctx.accountId, mailboxId: id, now: ctx.now(),
       });
-      /* The sweep's seq wins where it allocated one: it is the LATER change and the per-account
-       * seq is gap-free, so a mirror that waits for it has seen the appointment closures too. */
-      return { seq: erased.seq ?? seq, erased };
+      return { seq, erasing };
     });
   }
 
@@ -2902,6 +2909,12 @@ export class MailboxService {
          a key whose presence says the opposite of what it means, and `packages/api` hands these
          objects to a local host as well as to a serializer. */
       ...(messageCount === undefined ? {} : { messageCount }),
+      /* AN ERASURE STILL RUNNING (mail 0126), with what it has left — ABSENT on every other row,
+         and a finished erasure's row is not listed at all (`list`). One count, only for the
+         rare row being erased. */
+      ...(m.erasedAt && !m.erasureDoneAt
+        ? { erasure: { remaining: await erasureRemaining(ctx.db, ctx.accountId, m.id) } }
+        : {}),
       /* SPREAD, on the line above's rule and for the sharper of the two reasons it gives: here
          ABSENT means "no folder of this mailbox has been counted", and a `0` in its place is the
          sentence "your mail server holds nothing". That is the one number on this DTO whose

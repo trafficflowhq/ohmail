@@ -418,6 +418,8 @@ export const mailboxes = sqliteTable("mailboxes", {
    * column that predates it, and the declaration is compared to the built store in order.
    */
   releaseRefusal: text("release_refusal"),
+  /** Mail 0126 — when the erasure stamped in `erased_at` finished; see the pg twin. LAST for 0111's reason. */
+  erasureDoneAt: integer("erasure_done_at", { mode: "timestamp_ms" }),
 }, (t) => ({
   ixIdAccount: uniqueIndex("mailboxes_id_account_uq").on(t.id, t.accountId),
   // ONE ACTIVE MAILBOX PER ADDRESS (mail 0021). PARTIAL, because `delete` is a soft delete to
