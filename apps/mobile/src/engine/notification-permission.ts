@@ -26,8 +26,8 @@ export interface NotificationPermissionHost {
   readonly apiLevel: number;
   /** `POST_NOTIFICATIONS` as `PermissionsAndroid.check` reads it. Undefined, so `false`, below 33. */
   permissionGranted(): Promise<boolean>;
-  /** `OrganizerService.canPostNotification` — `areNotificationsEnabled()`, the service's own gate. */
-  switchOn(): Promise<boolean>;
+  /** `OrganizerService.canPostNotification` — the service's own gate. `null`: no module to ask. */
+  switchOn(): Promise<boolean | null>;
   /** Show the OS prompt. Only a press that {@link shouldAskForOrganizerNotification} admitted. */
   request(): Promise<NotificationAnswer>;
   /** The per-install record: `true` once this install has asked. Never un-written. */
@@ -58,10 +58,11 @@ export const NOTIFICATION_PERMISSION_API = 33;
  * Below API 33 the permission does not exist and checking it answers `false` on every phone, so
  * the fact is the app's notification switch: the service's own gate, read through the module. From
  * 33 Android keeps the permission and that switch as one fact, so the permission is read once.
+ * `null` is "could not ask", never off.
  */
 export async function organizerNotificationEnabled(
   host: NotificationPermissionHost,
-): Promise<boolean> {
+): Promise<boolean | null> {
   if (host.apiLevel >= NOTIFICATION_PERMISSION_API) return host.permissionGranted();
   return host.switchOn();
 }
@@ -83,7 +84,7 @@ export async function shouldAskForOrganizerNotification(
   if (!notificationBacksOrganizing(host.platform)) return false;
   if (host.apiLevel < NOTIFICATION_PERMISSION_API) return false;
   try {
-    if (await organizerNotificationEnabled(host)) return false;
+    if ((await organizerNotificationEnabled(host)) !== false) return false;
     return !(await host.readAsked());
   } catch {
     return false;

@@ -38,11 +38,7 @@ export function nativeNotificationPermission(): NotificationPermissionHost {
     permissionGranted: (): Promise<boolean> => PermissionsAndroid.check(
       POST_NOTIFICATIONS as Parameters<typeof PermissionsAndroid.check>[0],
     ),
-    switchOn: async (): Promise<boolean> => {
-      const on = organizerCanPostNotification();
-      if (on === null) throw new Error("organizer_service_module_absent");
-      return on;
-    },
+    switchOn: async (): Promise<boolean | null> => organizerCanPostNotification(),
     request: async (): Promise<NotificationAnswer> => {
       /* NO `rationale` ARGUMENT. React Native shows that dialog only where the platform says a
          rationale is warranted — which is AFTER a refusal — so the sentence a first-time person
