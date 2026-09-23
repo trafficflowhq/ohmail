@@ -119,7 +119,8 @@ pub const DESKTOP_HOST_FLAVOR: &str = "desktop-host";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CloudDoor {
     pub cloud_url: String,
-    /// **`None` ONLY on a desktop-host door**, and the absence is a fact rather than a gap.
+    /// **`None` ONLY on a desktop-host door and the pending door** (`identity_pending`), and the
+    /// absence is a fact rather than a gap.
     ///
     /// The other two cloud doors are entered by naming a mailbox: somebody types the address they
     /// sign in with, and the mirror is that address's. A pairing link names a COMPUTER. Which
@@ -138,6 +139,12 @@ pub struct CloudDoor {
     /// with no pin cannot authenticate what answers at its address at all, so the two are one
     /// fact. `None` on every other door, where the platform's trust store is the authority.
     pub host_pin: Option<String>,
+    /// THE HOSTED DOOR BEFORE ITS ACCOUNT IS KNOWN — the browser approval's first boot.
+    ///
+    /// A positive fact, never an absent address: the engine is told "identity pending" and adopts
+    /// the account at the first approval claim, writing `config.json`'s door itself. `true` only on
+    /// the managed service with no address, flavor or pin (`parse`); never written to disk here.
+    pub identity_pending: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -171,7 +178,18 @@ impl Config {
     pub fn is_desktop_host(&self) -> bool {
         matches!(self, Config::Cloud(c) if c.flavor.as_deref() == Some(DESKTOP_HOST_FLAVOR))
     }
+
+    /// Is this the hosted door waiting for its account? See `CloudDoor::identity_pending`.
+    pub fn is_identity_pending(&self) -> bool {
+        matches!(self, Config::Cloud(c) if c.identity_pending)
+    }
 }
+
+/// The engine's "identity pending" flag, composed only for the door above and always as `1`.
+pub const IDENTITY_PENDING_VAR: &str = "OHMAIL_IDENTITY_PENDING";
+
+/// Where the pending door's claim writes this install's door — this directory's `config.json`.
+pub const DOOR_FILE_VAR: &str = "OHMAIL_DOOR_FILE";
 
 /// What the file is called inside the app's data directory.
 pub const CONFIG_FILE_NAME: &str = "config.json";
@@ -690,21 +708,37 @@ pub fn parse(value: &serde_json::Value) -> Result<Config, String> {
                 );
             }
             let address = string_at(map, "address");
+            // THE PENDING DOOR IS THE EXACT BOOLEAN, the rule `read_host` keeps for `enabled`: a
+            // truthy near-miss must not boot a hosted door with no address. It carries nothing a
+            // later claim decides — no address, and no flavor or pin, which belong to other doors.
+            let identity_pending =
+                matches!(map.get("identityPending"), Some(serde_json::Value::Bool(true)));
+            if identity_pending && (address.is_some() || flavor.is_some() || host_pin.is_some()) {
+                return Err(
+                    "a door waiting for its account names no address, flavor or computer yet"
+                        .to_string(),
+                );
+            }
             // AN ABSENT ADDRESS IS ADMISSIBLE ONLY HERE. A pairing link names a computer, and
-            // which mailbox this install reads is the host's answer to the redeem. On the other
-            // two cloud doors an absent address is a mirror belonging to nobody.
-            if !is_host && address.is_none() {
+            // which mailbox this install reads is the host's answer to the redeem; the pending door
+            // learns its account from the approval claim. Anywhere else it is a mirror of nobody.
+            if !is_host && !identity_pending && address.is_none() {
                 return Err("the cloud door needs the mailbox address".to_string());
             }
-            Ok(Config::Cloud(CloudDoor {
-                cloud_url: checked_cloud_url(
-                    &required_string(map, "cloudUrl")
-                        .map_err(|_| "the cloud door needs the hosted service's address".to_string())?,
-                )?,
-                address,
-                flavor,
-                host_pin,
-            }))
+            let cloud_url = checked_cloud_url(
+                &required_string(map, "cloudUrl")
+                    .map_err(|_| "the cloud door needs the hosted service's address".to_string())?,
+            )?;
+            // The browser approval is ohmail Cloud's ceremony (the engine refuses it elsewhere), so a
+            // pending door on somebody's own server would be a door nothing can ever complete.
+            if identity_pending && is_self_hosted_cloud(&cloud_url) {
+                return Err(
+                    "only ohmail Cloud can be set up by confirming in a browser; your own server \
+                     needs its address and your password"
+                        .to_string(),
+                );
+            }
+            Ok(Config::Cloud(CloudDoor { cloud_url, address, flavor, host_pin, identity_pending }))
         }
         other if other.is_empty() => Err("the configuration needs a mode".to_string()),
         other => Err(format!(
@@ -752,6 +786,9 @@ pub fn to_json(config: &Config) -> serde_json::Value {
             }
             if let Some(pin) = &c.host_pin {
                 out["hostPin"] = serde_json::Value::String(pin.clone());
+            }
+            if c.identity_pending {
+                out["identityPending"] = serde_json::Value::Bool(true);
             }
             out
         }
@@ -944,6 +981,16 @@ fn env_for_door(config: &Config, root: &Path, adopt: bool) -> Vec<(OsString, OsS
             if let Some(pin) = &c.host_pin {
                 env.push(pair("OHMAIL_HOST_PIN", pin.clone()));
             }
+            // ── THE PENDING DOOR: a flag and the file its claim writes, never an empty address ──
+            // The engine adopts the account at the first approval claim and creates `config.json`
+            // with it; the path is this install's own, beside the mirrors.
+            if c.identity_pending {
+                env.push(pair(IDENTITY_PENDING_VAR, "1".to_string()));
+                env.push((
+                    OsString::from(DOOR_FILE_VAR),
+                    root.join(CONFIG_FILE_NAME).into_os_string(),
+                ));
+            }
         }
     }
     env
@@ -962,6 +1009,8 @@ fn env_for_door(config: &Config, root: &Path, adopt: bool) -> Vec<(OsString, OsS
 pub fn unset_for(config: &Config) -> Vec<OsString> {
     match config {
         Config::Local(_) => Vec::new(),
+        // The four door facts go too: each cloud door composes its own after the removal, and an
+        // inherited one would give a pending door an address or a hosted door a pending flag.
         Config::Cloud(_) => [
             "OHMAIL_IMAP_HOST",
             "OHMAIL_IMAP_USER",
@@ -971,6 +1020,10 @@ pub fn unset_for(config: &Config) -> Vec<OsString> {
             "OHMAIL_SMTP_HOST",
             "OHMAIL_SMTP_PORT",
             "OHMAIL_SMTP_SECURE",
+            "OHMAIL_MAILBOX_ADDRESS",
+            "OHMAIL_HOST_PIN",
+            IDENTITY_PENDING_VAR,
+            DOOR_FILE_VAR,
         ]
         .iter()
         .map(OsString::from)

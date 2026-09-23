@@ -73,7 +73,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
@@ -191,11 +191,26 @@ pub const REQUIRED_PAIRED_CLOUD_VARS: [&str; 3] =
 /// refuses in, so one ceremony is described by one phrase on both sides of the bridge.
 pub const PAIRED_DOOR_LABEL: &str = "the door that opens another computer";
 
+/// The same list for the HOSTED door booted before its account is known — the browser approval's
+/// first boot. The flag takes the address's place, the paired door's pin rule: a positive fact the
+/// shell writes for this door alone, so a launch that lost it is refused rather than started as a
+/// mirror of nobody. The door file is where the claim writes the account it adopts.
+pub const REQUIRED_PENDING_CLOUD_VARS: [&str; 4] = [
+    "OHMAIL_CLOUD_URL",
+    config::IDENTITY_PENDING_VAR,
+    config::DOOR_FILE_VAR,
+    "OHMAIL_KEK",
+];
+
+/// What the "missing" report calls the pending door.
+pub const PENDING_DOOR_LABEL: &str = "the ohmail Cloud door waiting for your browser";
+
 /// Which list a door cannot start without — ONE place, so a `match` somebody extends later cannot
 /// leave the paired door on the list that demands an address it structurally does not have.
 pub fn required_vars_for(config: &Config) -> &'static [&'static str] {
     match config.mode() {
         Mode::Local => &REQUIRED_ENGINE_VARS,
+        Mode::Cloud if config.is_identity_pending() => &REQUIRED_PENDING_CLOUD_VARS,
         Mode::Cloud if config.is_desktop_host() => &REQUIRED_PAIRED_CLOUD_VARS,
         Mode::Cloud => &REQUIRED_CLOUD_VARS,
     }
@@ -203,7 +218,13 @@ pub fn required_vars_for(config: &Config) -> &'static [&'static str] {
 
 /// The door a "missing" report is about, or `None` where the variable names say it themselves.
 pub fn door_label_for(config: &Config) -> Option<&'static str> {
-    if config.is_desktop_host() { Some(PAIRED_DOOR_LABEL) } else { None }
+    if config.is_identity_pending() {
+        Some(PENDING_DOOR_LABEL)
+    } else if config.is_desktop_host() {
+        Some(PAIRED_DOOR_LABEL)
+    } else {
+        None
+    }
 }
 
 /// How many times the engine may be started before the shell gives up: one start and three
@@ -1364,6 +1385,10 @@ pub struct Shell {
     /// process its own destroy while a handler is blocked inside it. The waiting happens on a
     /// thread of its own now, and the process exits when it ends.
     leaving: Mutex<Leaving>,
+    /// THE ENGINE RUNNING NOW IS THE PENDING DOOR'S. Its claim writes `config.json`, so the file
+    /// alone cannot say so: the status reports it (`identityPending`) until the next spawn, and the
+    /// window keeps its chooser up until it relaunches the engine behind the adopted door.
+    pending_door: AtomicBool,
 }
 
 /// The three states a quit can be in. A plain flag would not do: the difference between "nobody
@@ -1419,6 +1444,7 @@ impl Shell {
             host_plan: Mutex::new(None),
             door: Mutex::new(()),
             leaving: Mutex::new(Leaving::NotStarted),
+            pending_door: AtomicBool::new(false),
         }
     }
 
@@ -1432,6 +1458,7 @@ impl Shell {
             host_plan: Mutex::new(None),
             door: Mutex::new(()),
             leaving: Mutex::new(Leaving::NotStarted),
+            pending_door: AtomicBool::new(false),
         }
     }
 }
@@ -1520,6 +1547,7 @@ impl Shell {
             host_plan: Mutex::new(host),
             door: Mutex::new(()),
             leaving: Mutex::new(Leaving::NotStarted),
+            pending_door: AtomicBool::new(false),
         }
     }
 
@@ -1558,6 +1586,7 @@ impl Shell {
     /// Restart the engine from the stored configuration and the current host-mode decision —
     /// what arming and disarming do once the setting is written.
     pub fn replan(&self) {
+        self.pending_door.store(false, Ordering::SeqCst);
         self.replace(self.planned(None));
     }
 
@@ -1602,6 +1631,7 @@ impl Shell {
                 ));
             }
         }
+        self.pending_door.store(false, Ordering::SeqCst);
         self.replace(plan);
         Ok(self.status())
     }
@@ -1768,6 +1798,7 @@ impl Shell {
             address: None,
             flavor: Some(config::DESKTOP_HOST_FLAVOR.to_string()),
             host_pin: Some(pin.to_string()),
+            identity_pending: false,
         });
 
         let outcome = self.walk_candidate(&candidate, &dir, left);
@@ -1883,7 +1914,21 @@ impl Shell {
         let path = self.paths.config_path().ok_or_else(|| {
             "this computer named no place for the app to keep its settings".to_string()
         })?;
-        config::write(&path, &config)?;
+        if config.is_identity_pending() {
+            // THE PENDING DOOR IS NOT WRITTEN: its claim CREATES `config.json` once, with the
+            // account it adopted, and refuses when a file is there. So it is an install with no
+            // door's only, and an unreadable leftover (which reads as none) is cleared for it.
+            if self.paths.config().is_some() {
+                return Err(
+                    "this install already has a door; confirming in a browser with no address is \
+                     how an install with none is set up"
+                        .to_string(),
+                );
+            }
+            config::remove(&path)?;
+        } else {
+            config::write(&path, &config)?;
+        }
         log_line(format_args!(
             "configured for the {} door; the engine's data directory is {}",
             config.mode().as_str(),
@@ -1891,6 +1936,7 @@ impl Shell {
         ));
         // Through `planned`, so an armed host door survives a reconfigure of the SAME door and
         // is correctly absent when the door is not the local one.
+        self.pending_door.store(config.is_identity_pending(), Ordering::SeqCst);
         self.replace(self.planned(Some(&config)));
         Ok(self.status())
     }
@@ -2075,6 +2121,7 @@ impl Shell {
         // NOT a re-plan. After a sign-out the honest state is "nothing is configured", and
         // re-planning would start an engine again from whatever the environment happens to say —
         // which on a developer's machine is the door the person just left.
+        self.pending_door.store(false, Ordering::SeqCst);
         self.replace(Plan::Inert(EngineState::NotConfigured {
             missing: vec![config::CONFIG_FILE_NAME.to_string()],
             door: None,
@@ -2117,6 +2164,10 @@ impl Shell {
                 None => {
                     object.insert("mode".into(), serde_json::Value::Null);
                 }
+            }
+            // Beside whatever the file says, because the pending engine's claim is what writes it.
+            if self.pending_door.load(Ordering::SeqCst) {
+                object.insert("identityPending".into(), true.into());
             }
         }
         out

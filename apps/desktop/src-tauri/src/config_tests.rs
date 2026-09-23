@@ -35,6 +35,7 @@ fn cloud_door() -> Config {
         address: Some("someone@ohmail.app".to_string()),
         flavor: None,
         host_pin: None,
+        identity_pending: false,
     })
 }
 
@@ -150,6 +151,76 @@ fn only_the_cloud_door_clears_the_inherited_mail_server_settings() {
     }
     // The local door clears nothing: inheritance is how a developer configures it by hand.
     assert!(unset_for(&local_door()).is_empty());
+}
+
+// ── The pending door: the browser approval's first boot, with no address ────────────────────
+
+#[test]
+fn the_pending_door_composes_a_flag_and_its_door_file_and_no_address() {
+    let door = parse(&serde_json::json!({
+        "mode": "cloud", "cloudUrl": "https://api.ohmail.app", "identityPending": true,
+    }))
+    .expect("the pending door");
+    assert!(door.is_identity_pending());
+    assert_eq!(door.address(), None);
+    let root = Path::new("/data");
+    let env = env_map(&env_for(&door, root));
+    assert_eq!(env.get("OHMAIL_MODE").map(String::as_str), Some("cloud"));
+    assert_eq!(env.get(IDENTITY_PENDING_VAR).map(String::as_str), Some("1"));
+    assert_eq!(
+        env.get(DOOR_FILE_VAR).map(String::as_str),
+        Some(root.join(CONFIG_FILE_NAME).to_string_lossy().as_ref()),
+    );
+    assert!(!env.contains_key("OHMAIL_MAILBOX_ADDRESS"), "an empty address reached the engine");
+    // Round trip, so a hand-written pending file reads as the same door.
+    assert_eq!(parse(&to_json(&door)).expect("round trip"), door);
+    // And an ordinary hosted door composes neither half.
+    let hosted = env_map(&env_for(&cloud_door(), root));
+    assert!(!hosted.contains_key(IDENTITY_PENDING_VAR) && !hosted.contains_key(DOOR_FILE_VAR));
+}
+
+#[test]
+fn the_pending_door_is_the_exact_boolean_and_carries_nothing_a_claim_decides() {
+    for near_miss in [serde_json::json!("true"), serde_json::json!(1), serde_json::json!(false)] {
+        let refused = parse(&serde_json::json!({
+            "mode": "cloud", "cloudUrl": "https://api.ohmail.app", "identityPending": near_miss,
+        }))
+        .expect_err("a near-miss is not the pending door");
+        assert!(refused.contains("needs the mailbox address"), "{refused}");
+    }
+    for extra in [
+        serde_json::json!({ "address": "someone@ohmail.app" }),
+        serde_json::json!({ "flavor": "desktop-host", "hostPin": "A2Z_abcdefghijklmnopqrstuvwxyz0123456789-xyz" }),
+    ] {
+        let mut value = serde_json::json!({
+            "mode": "cloud", "cloudUrl": "https://api.ohmail.app", "identityPending": true,
+        });
+        for (k, v) in extra.as_object().unwrap() {
+            value[k] = v.clone();
+        }
+        let refused = parse(&value).expect_err("a pending door naming what its claim decides");
+        assert!(refused.contains("waiting for its account"), "{refused}");
+    }
+}
+
+#[test]
+fn only_ohmail_cloud_is_set_up_by_a_browser_with_no_address() {
+    let refused = parse(&serde_json::json!({
+        "mode": "cloud", "cloudUrl": "https://ohmail.example.com/api", "identityPending": true,
+    }))
+    .expect_err("a pending door on somebody's own server can never be completed");
+    assert!(refused.contains("only ohmail Cloud"), "{refused}");
+}
+
+#[test]
+fn every_cloud_door_clears_the_inherited_door_facts_it_composes_itself() {
+    // Removed first and composed after (`supervise`), so each door keeps exactly its own: a
+    // developer's exported address cannot give the pending door an owner.
+    let cleared: Vec<String> =
+        unset_for(&cloud_door()).iter().map(|v| v.to_string_lossy().into_owned()).collect();
+    for name in ["OHMAIL_MAILBOX_ADDRESS", "OHMAIL_HOST_PIN", IDENTITY_PENDING_VAR, DOOR_FILE_VAR] {
+        assert!(cleared.iter().any(|c| c == name), "{name} is not cleared for a cloud door");
+    }
 }
 
 // ── Reading what the window sent ────────────────────────────────────────────────────────────
@@ -294,6 +365,7 @@ fn the_paired_door_hands_the_engine_the_fingerprint_and_no_mailbox() {
         address: None,
         flavor: Some("desktop-host".to_string()),
         host_pin: Some("A2Z_abcdefghijklmnopqrstuvwxyz0123456789-xyz".to_string()),
+        identity_pending: false,
     });
     let env = env_map(&env_for(&door, &dir));
 
@@ -637,6 +709,7 @@ fn self_hosted_door() -> Config {
         address: Some("someone@example.com".to_string()),
         flavor: None,
         host_pin: None,
+        identity_pending: false,
     })
 }
 
@@ -698,6 +771,7 @@ fn another_self_hosted_door() -> Config {
         address: Some("someone@other.example".to_string()),
         flavor: None,
         host_pin: None,
+        identity_pending: false,
     })
 }
 
@@ -708,6 +782,7 @@ fn door_at(cloud_url: &str) -> Config {
         address: Some("someone@example.com".to_string()),
         flavor: None,
         host_pin: None,
+        identity_pending: false,
     })
 }
 
@@ -857,6 +932,7 @@ fn the_managed_base_is_recognised_through_its_harmless_spellings() {
             address: Some("someone@ohmail.app".to_string()),
             flavor: None,
             host_pin: None,
+            identity_pending: false,
         });
         assert!(
             !env_map(&env_for(&door, &dir)).contains_key("NODE_EXTRA_CA_CERTS"),
@@ -1036,6 +1112,7 @@ fn an_address_whose_origin_cannot_be_established_is_never_read_as_self_hosted() 
             address: Some("someone@ohmail.app".to_string()),
             flavor: None,
             host_pin: None,
+            identity_pending: false,
         });
         assert!(
             !env_map(&env_for(&door, &dir)).contains_key("NODE_EXTRA_CA_CERTS"),
@@ -1085,6 +1162,7 @@ fn a_self_hosted_server_still_gets_the_certificate_authority_it_installed() {
             address: Some("someone@example.com".to_string()),
             flavor: None,
             host_pin: None,
+            identity_pending: false,
         });
         assert!(
             env_map(&env_for(&door, &dir)).contains_key("NODE_EXTRA_CA_CERTS"),

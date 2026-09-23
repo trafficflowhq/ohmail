@@ -70,7 +70,7 @@ export interface LocalWorld {
 export interface EnsureLocalWorldInput {
   /**
    * The mailbox this install organizes; doubles as the local user's address. `null` ONLY on a paired
-   * door, and the absence is a fact: an install set up from a pairing link names a COMPUTER, and
+   * door or the pending hosted door; the absence is a fact: a pairing link names a COMPUTER, and
    * which mailboxes it reads is the host's answer, unknown when the world is built — so there is no
    * seed to mint and no address to name a user row after (`shouldSeedMailbox` answers `false` for an
    * absent address, and the mirror fills the roster from the host). It is `null` and never `""`: an

@@ -20,6 +20,7 @@ import { hostsFor, providerById } from "../../webapp/app/shell/providers";
 import {
   EMPTY_LOCAL,
   PAIRED_DOOR_AVAILABLE,
+  MIRROR_OWNER_MISMATCH,
   beginBrowserApproval,
   beginBrowserSignIn,
   enterCloudDoor,
@@ -30,6 +31,7 @@ import {
   pairAgainWithHost,
   pollBrowserApproval,
   proveHostLink,
+  relaunchAdoptedDoor,
   signInToCloud,
   signInToCloudWithCode,
   standingEngine,
@@ -91,6 +93,17 @@ export function DoorChooser({
   signInCause = null,
   /** Offered only when there is already a door to go back to. */
   onCancel,
+  /**
+   * THIS INSTALL HAS NO DOOR YET, so the Cloud door is entered with no address: "Sign in with
+   * browser" boots the hosted door identity-pending and the claim names the account. Only the
+   * first-run chooser passes it — the shell refuses a pending door over a chosen one.
+   */
+  addressless = false,
+  /**
+   * Told when a claim was adopted (true) and the engine is being relaunched behind its door, and
+   * when that relaunch refused (false). The gate keeps THIS chooser on screen meanwhile.
+   */
+  onAdoption,
 }: {
   onEntered: (result: DoorResult) => void;
   start?: Step;
@@ -99,6 +112,8 @@ export function DoorChooser({
   roster?: { address: string; id: string }[] | null | undefined;
   host?: string | null;
   onCancel?: () => void;
+  addressless?: boolean;
+  onAdoption?: (holding: boolean) => void;
 }) {
   const [step, setStep] = useState<Step>(start);
   const [busy, setBusy] = useState(false);
@@ -238,12 +253,35 @@ export function DoorChooser({
   const [approvalWait, setApprovalWait] = useState<{ note: "busy" | "unreachable" | null } | null>(null);
   /** False once the hosted service answered that it has no approval door: the code path shows. */
   const [approvalOffered, setApprovalOffered] = useState(true);
+  /** A pending door's claim was adopted and the engine is being relaunched: "Signing in…". */
+  const [adopting, setAdopting] = useState(false);
+  /** The first-run door with no address — until a refusal asks for one (`mustSwitch`). */
+  const noAddress = addressless && cloudAction === "configure" && !mustSwitch;
   const approvalRun = useRef(0);
   useEffect(() => () => { approvalRun.current += 1; }, []);
 
   const stopApproval = (): void => {
     approvalRun.current += 1;
     setApprovalWait(null);
+  };
+
+  /**
+   * THE ADOPTED CLAIM'S LAST STEP: relaunch the engine behind the door the claim wrote. NOT TIED TO
+   * A RUN — the claim is spent and the door is on disk, so this goes through even if the screen
+   * goes away; the gate holds this chooser, saying "Signing in…", until the mail can mount.
+   */
+  const finishAdoption = async (address: string): Promise<void> => {
+    setAdopting(true);
+    setProblem(null);
+    onAdoption?.(true);
+    const done = await relaunchAdoptedDoor(address);
+    if (done.problem) {
+      setAdopting(false);
+      onAdoption?.(false);
+      setProblem(done.problem);
+      return;
+    }
+    onEntered(done);
   };
 
   /**
@@ -259,11 +297,15 @@ export function DoorChooser({
     setSuggestion(null);
     let begun;
     try {
-      begun = await beginBrowserApproval(address, cloudAction === "signIn" && !mustSwitch);
+      begun = await beginBrowserApproval(address, cloudAction === "signIn" && !mustSwitch, noAddress);
     } finally {
       setBusy(false);
     }
     if (run !== approvalRun.current) return;
+    if (begun.adoptedAddress) {
+      await finishAdoption(begun.adoptedAddress);
+      return;
+    }
     if (!begun.approvalId) {
       if (begun.notOffered) setApprovalOffered(false);
       setProblem(begun.problem ?? DOOR_COPY.browserSignInFailed);
@@ -299,7 +341,11 @@ export function DoorChooser({
         onEntered(step.result);
         return;
       }
-      setProblem(step.result.problem);
+      if (step.kind === "adopted") {
+        await finishAdoption(step.address);
+        return;
+      }
+      setProblem(approvalRefusal(step.code, step.result.problem));
       if (step.result.switchAccount) setMustSwitch(true);
       return;
     }
@@ -511,6 +557,8 @@ export function DoorChooser({
             signInOnly={cloudAction === "signIn"}
             signInCause={signInCause}
             needsAddress={!(cloudAction === "signIn" && !mustSwitch)}
+            addressless={noAddress}
+            adopting={adopting}
             approvalWait={approvalWait}
             approvalOffered={approvalOffered}
             onApprove={(address) => void startApproval(address)}
@@ -540,6 +588,22 @@ export function DoorChooser({
       </div>
     </div>
   );
+}
+
+/**
+ * THE CLAIM'S REFUSALS IN THIS WINDOW'S OWN WORDS, by the engine's code — both catalogues carry
+ * each one. A code with no sentence here keeps the engine's, which is still a sentence.
+ */
+function approvalRefusal(code: string | null, fallback: string | null): string | null {
+  switch (code) {
+    case "approval_denied": return DOOR_COPY.cloudApproveDenied;
+    case "approval_used": return DOOR_COPY.cloudApproveUsed;
+    case "approval_expired": return DOOR_COPY.cloudApproveExpired;
+    case MIRROR_OWNER_MISMATCH: return DOOR_COPY.cloudApproveOwned(machineWord());
+    case "door_changed": return DOOR_COPY.cloudApproveDoorChanged(machineWord());
+    case "door_not_saved": return DOOR_COPY.cloudApproveNotSaved(machineWord());
+    default: return fallback;
+  }
 }
 
 /**
@@ -1177,6 +1241,8 @@ function CloudDoor({
   signInOnly,
   signInCause = null,
   needsAddress = true,
+  addressless = false,
+  adopting = false,
   approvalWait = null,
   approvalOffered = true,
   onBack,
@@ -1194,6 +1260,13 @@ function CloudDoor({
   signInCause?: SignInCause;
   /** False when the engine is already configured: the browser approval reads no address. */
   needsAddress?: boolean;
+  /**
+   * THE FIRST-RUN DOOR: the browser press is the first thing on screen and asks nothing; the
+   * address field lives only under "Sign in with a code instead" and the password form.
+   */
+  addressless?: boolean;
+  /** The claim was adopted and the engine is being relaunched behind it. */
+  adopting?: boolean;
   /** The approval's wait, or null when none is in flight. */
   approvalWait?: { note: "busy" | "unreachable" | null } | null;
   /** False once the hosted service has no approval door: the browser path is the code path. */
@@ -1210,7 +1283,8 @@ function CloudDoor({
   const [password, setPassword] = useState("");
   const [totp, setTotp] = useState("");
   const [handoff, setHandoff] = useState("");
-  const [viaBrowser, setViaBrowser] = useState(false);
+  /* The first-run door opens ON the browser path; every other door opens on the password form. */
+  const [viaBrowser, setViaBrowser] = useState(addressless);
   /** The browser path asks for a code only when chosen, or when the service has no approval door. */
   const [wantsCode, setWantsCode] = useState(false);
   const byApproval = viaBrowser && approvalOffered && !wantsCode && onApprove !== undefined;
@@ -1266,9 +1340,10 @@ function CloudDoor({
 
       {problem ? <p className="join-error">{problem}</p> : null}
 
-      {/* THE BROWSER APPROVAL READS NO ADDRESS on a door already chosen; a fresh door still names
-          the mailbox it will hold, labelled as that and never as a sign-in field. */}
-      {byApproval && !needsAddress ? null : (
+      {/* THE BROWSER APPROVAL READS NO ADDRESS on a door already chosen or on the first-run door,
+          whose claim names the account; the overlay's fresh door still names the mailbox it will
+          hold, labelled as that and never as a sign-in field. */}
+      {byApproval && (!needsAddress || addressless) ? null : (
         <>
           <label className="join-label" htmlFor="cloud-address">
             {byApproval ? DOOR_COPY.cloudAddressForDoor(machineWord()) : DOOR_COPY.cloudAddress}
@@ -1288,7 +1363,11 @@ function CloudDoor({
       {byApproval ? (
         <>
           <p className="join-hint">{DOOR_COPY.cloudApproveHint(machineWord())}</p>
-          {approvalWait ? (
+          {/* From the adopted claim until the relaunched engine serves, one line and no press:
+              the gate holds this screen, so the relaunch shows as the sign-in finishing. */}
+          {adopting ? (
+            <p className="join-hint" role="status">{DOOR_COPY.signingIn}</p>
+          ) : approvalWait ? (
             <p className="join-hint" role="status">
               {approvalWait.note === "busy"
                 ? DOOR_COPY.cloudApproveBusy
@@ -1298,16 +1377,22 @@ function CloudDoor({
             </p>
           ) : null}
           <div className="join-actions">
-            <Button variant="primary" type="button" onClick={() => onApprove?.(address)} disabled={busy}>
-              {DOOR_COPY.cloudOpenBrowser}
+            <Button
+              variant="primary"
+              type="button"
+              onClick={() => onApprove?.(address)}
+              disabled={busy || adopting}
+            >
+              {addressless ? DOOR_COPY.cloudUseBrowser : DOOR_COPY.cloudOpenBrowser}
             </Button>
           </div>
           <button
             type="button"
             className="join-alt"
+            disabled={adopting}
             onClick={() => { onStopApproval?.(); setWantsCode(true); }}
           >
-            {DOOR_COPY.cloudTypeCodeInstead}
+            {addressless ? DOOR_COPY.cloudSignInWithCode : DOOR_COPY.cloudTypeCodeInstead}
           </button>
         </>
       ) : viaBrowser ? (
@@ -1381,7 +1466,7 @@ function CloudDoor({
         <Button
           variant="ghost"
           type="button"
-          disabled={busy}
+          disabled={busy || adopting}
           onClick={() => {
             setPassword("");
             setTotp("");
@@ -1392,7 +1477,7 @@ function CloudDoor({
         >
           {viaBrowser ? DOOR_COPY.cloudUsePassword : DOOR_COPY.cloudUseBrowser}
         </Button>
-        <Button variant="ghost" type="button" onClick={onBack} disabled={busy}>
+        <Button variant="ghost" type="button" onClick={onBack} disabled={busy || adopting}>
           {DOOR_COPY.back}
         </Button>
         {onCancel ? (

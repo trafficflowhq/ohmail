@@ -293,13 +293,28 @@ export function cloudConfigFromEnv(env: NodeJS.ProcessEnv = process.env): CloudS
   // so a door carrying one is paired by construction, not by inference.
   const pairedDoor = (env.OHMAIL_HOST_PIN ?? "").trim() !== "";
   const address = env.OHMAIL_MAILBOX_ADDRESS?.trim();
+  /* THE PENDING DOOR is the other positive fact that admits no address: the hosted door booted for
+     the browser approval, whose first claim adopts the account and writes `OHMAIL_DOOR_FILE`. Exactly
+     `1`, and never beside an address or a pin — one of the two would be stale. */
+  const pendingDoor = env.OHMAIL_IDENTITY_PENDING === "1";
+  const doorFile = env.OHMAIL_DOOR_FILE?.trim() ?? "";
+  if (pendingDoor && (address || pairedDoor)) {
+    throw new Error(
+      "OHMAIL_IDENTITY_PENDING names a door waiting for its account, and an address or a pin is " +
+        "set beside it; one of the two is stale, so this launch refuses rather than guess.",
+    );
+  }
+  if (pendingDoor && doorFile === "") {
+    throw new Error("OHMAIL_IDENTITY_PENDING needs OHMAIL_DOOR_FILE, where its claim writes the door.");
+  }
   return {
     dataDir: env.OHMAIL_DATA_DIR ?? required("OHMAIL_DATA_DIR"),
     cloudUrl: env.OHMAIL_CLOUD_URL ?? required("OHMAIL_CLOUD_URL"),
     /* `null` AND NEVER `""`. An empty string is an address that was configured and is blank, which
        `sameOwner` matches against nothing — a mirror recorded that way is discarded on every
        launch, which is the failure this whole change exists to avoid. */
-    address: pairedDoor ? address ?? null : address || required("OHMAIL_MAILBOX_ADDRESS"),
+    address: pendingDoor ? null : pairedDoor ? address ?? null : address || required("OHMAIL_MAILBOX_ADDRESS"),
+    ...(pendingDoor ? { identityPending: { doorFile } } : {}),
     ...(env.OHMAIL_MAILBOX_DISPLAY_NAME ? { displayName: env.OHMAIL_MAILBOX_DISPLAY_NAME } : {}),
     ...(access && refresh ? { tokens: { accessToken: access, refreshToken: refresh } } : {}),
     ...(env.OHMAIL_POLL_MS ? { pollIntervalMs: Number(env.OHMAIL_POLL_MS) } : {}),

@@ -38,6 +38,9 @@ export function ApproveScreen({ request = "" }: { request?: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  /* THE ACCOUNT THE CONFIRM BINDS — this browser's own session, shown plainly as Settings shows
+     it. Null until read, and a failed read says nothing rather than guessing. */
+  const [account, setAccount] = useState<string | null>(null);
 
   const alive = useRef(true);
   const gone = useRef(new AbortController());
@@ -116,6 +119,14 @@ export function ApproveScreen({ request = "" }: { request?: string }) {
     })();
     return () => ctl.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one read per request id
+  }, [request]);
+
+  useEffect(() => {
+    if (!request || !apiConfigured()) return;
+    void auth.session().then(
+      ({ user }) => { if (alive.current && user.email) setAccount(user.email); },
+      () => { /* no line: the confirm still binds this session, whatever it is called */ },
+    );
   }, [request]);
 
   /* The countdown, and the withdrawal at zero — the buttons go rather than grey out. */
@@ -227,6 +238,7 @@ export function ApproveScreen({ request = "" }: { request?: string }) {
         {asked.platform ? <li>{asked.platform}</li> : null}
         <li>{when}</li>
       </ul>
+      {account ? <p className="join-hint" data-testid="approve-account">{t("signsInTo", { email: account })}</p> : null}
 
       {phase === "stepUp" ? (
         <StepUpPrompt

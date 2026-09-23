@@ -43,6 +43,7 @@ import {
   OPERATOR_CA_FILE,
 } from "./cloud-origin.js";
 import { createHostFetch, probeHostPin } from "./host-pin-probe.js";
+import { createAdoptedDoor, DoorFileError } from "./adopted-door.js";
 import { probeTransport } from "./operator-ca-fetch.js";
 import { originNeedsPin } from "@trafficflow/core/pair-link";
 import type { Diagnostic } from "./log.js";
@@ -78,12 +79,19 @@ export interface CloudSidecarConfig {
   /**
    * The mailbox address this account mirrors — the local identity's address.
    *
-   * **`null` ONLY on a paired door.** A pairing link names a computer, not a mailbox, so there is
-   * nothing to configure: the roster arrives from the host. It is `null` and never `""`, because
+   * **`null` ONLY on a paired door or the pending door** — a link names a computer, and the pending
+   * door's first claim names its account (`identityPending`). It is `null` and never `""`, because
    * an empty string is an address that was configured and is blank — `sameOwner("")` matches
    * nothing, and a mirror recorded that way is thrown away on every launch.
    */
   address: string | null;
+  /**
+   * THE HOSTED DOOR BOOTED BEFORE ITS ACCOUNT IS KNOWN — the browser approval's first boot, with
+   * `address: null`. The first sign-in adopts the account it reads from the hosted service: it
+   * CREATES `doorFile` (this install's `config.json`) once and records the mirror's owner. Absent
+   * on every other door. See `adopted-door.ts`.
+   */
+  identityPending?: { doorFile: string };
   displayName?: string;
   /** The per-install key ring, for the token seal. Absent ⇒ tokens live in memory for this launch. */
   keks?: Record<number, Buffer>;
@@ -295,6 +303,8 @@ export function enforceMirrorOwner(
   /** The base this launch is configured to dial — `CloudSidecarConfig.cloudUrl`. */
   cloudUrl: string,
   log?: Diagnostic,
+  /** The pending door: `address` is null because nobody knows it yet, not because none is owed. */
+  opts: { identityPending?: boolean } = {},
 ): boolean {
   /* ── THE ADDRESS IS COMPARED ONLY WHEN BOTH SIDES CARRY ONE ─────────────────────────────
      A paired door is configured with no address at all: a pairing link names a computer, and which
@@ -389,10 +399,16 @@ export function enforceMirrorOwner(
      AND THE ACCOUNT SURVIVES A STAGED DISCARD, unlike the other two: a start-over pairing wrote the
      NEW world's account id in the same breath as the flag, so it is not the discarded world's and
      clearing it would un-bind the directory the pairing had just bound. */
+  /* THE PENDING DOOR KEEPS THE ACCOUNT IT FOUND. It launches knowing no address, and rewriting the
+     record with none would make a directory holding another account's mail read as unowned — which
+     the first claim would then adopt. A surviving mirror keeps its owner; a discarded one has none. */
+  const recordedAddress = opts.identityPending === true && !foreign
+    ? priorRecord?.address ?? null
+    : served;
   writeFileSync(
     ownerPath,
     encodeMirrorRecord(
-      served,
+      recordedAddress,
       servedBase,
       addressChanged || serverChanged ? null : priorRecord?.account ?? null,
     ),
@@ -795,7 +811,9 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     ...(log ? { log } : {}),
     ...(config.onPhase ? { onPhase: config.onPhase } : {}),
     underLock: () => {
-      enforceMirrorOwner(config.dataDir, config.address, cloudBase, log);
+      enforceMirrorOwner(config.dataDir, config.address, cloudBase, log, {
+        identityPending: config.identityPending !== undefined,
+      });
     },
   });
   config.onPhase?.("preparing");
@@ -819,6 +837,11 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     const ring = config.keks ?? {};
     const versions = Object.keys(ring).map(Number).filter((v) => Number.isInteger(v) && v >= 1);
     const keyProvider: KeyProvider | undefined = versions.length > 0 ? new StaticKeyProvider(ring) : undefined;
+    /* The pending door's claim hands its session to the relaunch through the seal, so a pending
+       launch with no key could adopt an account and keep no sign-in for it. Refused by name. */
+    if (config.identityPending !== undefined && keyProvider === undefined) {
+      throw new Error("OHMAIL_IDENTITY_PENDING needs OHMAIL_KEK: the first claim seals its session for the relaunch.");
+    }
     const sealPath = join(config.dataDir, "cloud-tokens.seal");
 
     const sealed = keyProvider ? await loadSealedTokens(sealPath, keyProvider) : null;
@@ -859,6 +882,13 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
      * a claim that returned the pair, or a refusal that ended the request, clears it.
      */
     let approval: { id: string; verifier: string } | null = null;
+
+    /**
+     * THE ACCOUNT A PENDING ENGINE ADOPTED, or null — set by the first sign-in in the same
+     * synchronous step that created the door file, so a second claim in this process meets it
+     * (and the recorded owner) rather than a directory that still reads as nobody's.
+     */
+    let adoptedAddress: string | null = null;
 
     /**
      * WHAT THIS INSTALL IS, in the hosted device vocabulary — this process's own fact, read once
@@ -970,7 +1000,9 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     };
 
     const launchTokens = sealed ?? config.tokens;
-    if (launchTokens) {
+    /* A PENDING LAUNCH HOLDS NO SESSION BY CONSTRUCTION: its account is the claim's answer, and a
+       seal left here (a claim that crashed before its door was written) is replaced by that claim. */
+    if (launchTokens && config.identityPending === undefined) {
       // FIRST LAUNCH: seal the environment token so no later launch needs one. Skipped without a
       // key, and skipped when a sealed pair already exists — which keeps this idempotent.
       if (!sealed && keyProvider) {
@@ -992,8 +1024,10 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       // `/health` and `/cloud/signin`, and the shell renders a sign-in surface rather than an
       // error about a process that would not start.
       log?.("cloud_pre_auth", {
-        reason: "no session is sealed on this install and none was supplied, so the engine serves " +
-          "the sign-in surface until one is established",
+        reason: config.identityPending !== undefined
+          ? "this door is waiting for a browser confirmation, and the first sign-in names its account"
+          : "no session is sealed on this install and none was supplied, so the engine serves " +
+            "the sign-in surface until one is established",
       });
     }
 
@@ -1056,6 +1090,49 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       log?.("cloud_signed_out", { mailboxId: world.mailboxId });
     };
 
+    /**
+     * THE PENDING DOOR'S ADOPTION, in one synchronous step so no other request in this process
+     * sees half of it: the door file first (the commit — created once, refused when any door is
+     * there), then the mirror-owner record when it names nobody. A record that fails to write is
+     * logged and not fatal: the next launch records the account from the door. Null once adopted.
+     */
+    const adoptIdentity = (address: string, unowned: boolean): Response | null => {
+      try {
+        createAdoptedDoor(config.identityPending!.doorFile, config.cloudUrl, address);
+      } catch (err) {
+        const refusal = err instanceof DoorFileError
+          ? err
+          : new DoorFileError("door_not_saved", "ohmail could not save which account this install is for", err);
+        log?.("cloud_door_write_failed", {
+          err: refusal.underlying ?? refusal,
+          reason: refusal.code === "door_changed"
+            ? "a door was chosen while the browser confirmation was pending, so this claim is refused"
+            : "the door file could not be created, so this claim is refused and nothing is sealed",
+        });
+        return json(
+          { error: { code: refusal.code, message: refusal.message } },
+          refusal.code === "door_changed" ? 409 : 500,
+        );
+      }
+      if (unowned) {
+        try {
+          writeFileSync(
+            join(config.dataDir, MIRROR_OWNER_FILE),
+            encodeMirrorRecord(address, cloudBase, readMirrorAccount(config.dataDir)),
+            { mode: 0o600 },
+          );
+        } catch (err) {
+          log?.("cloud_door_write_failed", {
+            err,
+            reason: "the mirror-owner record could not be written; the next launch records it from the door",
+          });
+        }
+      }
+      adoptedAddress = address;
+      log?.("cloud_identity_adopted", { changed: true });
+      return null;
+    };
+
     const handle = async (req: Request): Promise<Response> => {
       const url = new URL(req.url);
       const path = url.pathname;
@@ -1100,6 +1177,10 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
              The mail already here stays readable — signing out never deletes mail, and neither
              does this. */
           accountErased: authed !== null && authed.mirror.accountErased(),
+          /* THE PENDING DOOR, and whether its claim has adopted an account yet. `adopted` means the
+             door on disk now names that account and the window relaunches this engine behind it. */
+          identityPending: config.identityPending !== undefined && adoptedAddress === null,
+          adopted: adoptedAddress !== null,
         });
       }
 
@@ -1493,7 +1574,10 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           }
           throw err;
         }
-        const recordedOwner = readMirrorOwner(config.dataDir) ?? config.address;
+        const recordedOwner = readMirrorOwner(config.dataDir) ?? adoptedAddress ?? config.address;
+        /* THE PENDING DOOR'S FIRST CLAIM is the one sign-in an owner nobody recorded is ADOPTED
+           from: the account is the hosted service's answer above, never the person's typing. */
+        const adopting = config.identityPending !== undefined && adoptedAddress === null;
         /* ── AN OWNER THAT CANNOT BE ESTABLISHED IS A REFUSAL, NOT AN ADOPTION ────────────────
            `null` here means neither the marker nor the configuration names an address, which is
            the PAIRED door's ordinary state — and a password sign-in is not that door's ceremony at
@@ -1502,7 +1586,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
            directory holding a paired host's mail, which is the exact mixing this check exists to
            refuse. Every hosted and self-hosted door is unaffected: `config.address` is a string
            there, so the fallback always establishes one and this arm is unreachable. */
-        if (recordedOwner === null || sameOwner(hostedAddress) !== sameOwner(recordedOwner)) {
+        if (recordedOwner === null ? !adopting : sameOwner(hostedAddress) !== sameOwner(recordedOwner)) {
           // Refused, and nothing is kept: the pair is not sealed and `activate` is not called, so
           // `authed` stays null and every read stays `409 not_signed_in` — no window in which this
           // session reaches the previous account's rows. The DISCARD is deliberately not done here:
@@ -1516,13 +1600,20 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
             {
               error: {
                 code: "mirror_owner_mismatch",
-                message:
-                  "this install is set up for a different ohmail account, so signing in here has " +
-                  "to start that account's mail over from scratch",
+                message: adopting
+                  ? "this computer holds the mail of a different ohmail account, so the browser " +
+                    "cannot sign it in to this one; type the address of the account you want, and " +
+                    "its mail replaces the other copy here"
+                  : "this install is set up for a different ohmail account, so signing in here has " +
+                    "to start that account's mail over from scratch",
               },
             },
             409,
           );
+        }
+        if (adopting) {
+          const refused = adoptIdentity(hostedAddress, recordedOwner === null);
+          if (refused) return refused;
         }
 
         // SEALED BEFORE THE MIRROR IS TOLD ABOUT IT, and after the mirror-owner check for the reason
@@ -1531,6 +1622,13 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         // then silently is not there — better to say so now, while the person who typed the
         // password is still looking at the app.
         if (keyProvider) await sealTokens(sealPath, keyProvider, tokens);
+        /* THE PENDING ENGINE STOPS AT THE SEAL. Its world was built with no address, so its ready
+           frame named no mailbox and it cannot mount mail; the window relaunches it behind the door
+           just written, and that engine activates from this seal and runs the first drain. */
+        if (config.identityPending !== undefined) {
+          log?.("cloud_signed_in", { mailboxId: world.mailboxId });
+          return json({ status: "signed_in", mailboxId: world.mailboxId, address: adoptedAddress, adopted: true });
+        }
         const live = activate(tokens);
         log?.("cloud_signed_in", { mailboxId: world.mailboxId });
         // NOT AWAITED, and for the reason the launch path does not await it either: a first pull of
@@ -1559,6 +1657,19 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
        * disagreement is REFUSED, never merged — the remedy is the shell re-pointing the door.
        */
       if (req.method === "POST" && path === "/cloud/pair-redeem") {
+        /* The pending door is ohmail Cloud's; a pairing code opens another computer's door, which
+           the shell configures on its own. Refused before anything is spent. */
+        if (config.identityPending !== undefined) {
+          return json(
+            {
+              error: {
+                code: "identity_pending",
+                message: "this install is waiting for a browser confirmation for ohmail Cloud",
+              },
+            },
+            409,
+          );
+        }
         // The expiry teardown's tail removes the seal; sealing a fresh pair before it runs hands
         // the new session to the old teardown's rmSync. `/cloud/signin`'s wait, for its reason.
         await sessionTeardown;

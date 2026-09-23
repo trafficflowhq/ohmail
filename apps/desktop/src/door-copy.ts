@@ -191,6 +191,21 @@ const EN = {
   cloudTypeCodeInstead: "Type a code instead",
   cloudApproveInstead: "Confirm in the browser instead",
   cloudAddressForDoor: (machine: string) => `The ohmail mailbox this ${machine} will hold`,
+  /* The first-run door asks nothing before the browser; the address lives under the code path, and
+     the claim's refusals each have their own sentence rather than the engine's English. */
+  cloudSignInWithCode: "Sign in with a code instead",
+  cloudApproveDenied: "This request was declined in the browser.",
+  cloudApproveUsed: "This request was already used. Start again.",
+  cloudApproveOwned: (machine: string) =>
+    `This ${machine} holds the mail of a different ohmail account, so the browser cannot sign it in `
+    + `to this one. Type the address of the account you want: its mail then replaces the other copy `
+    + `on this ${machine}.`,
+  cloudApproveDoorChanged: (machine: string) =>
+    `This ${machine} was set up another way while you were confirming, so nothing was signed in. `
+    + "Start again.",
+  cloudApproveNotSaved: (machine: string) =>
+    `This ${machine} could not save the sign-in. Try again; if it keeps failing, quit ohmail and `
+    + "open it again.",
 
   /* ── THE HOST-JOIN CARD: paste the link, see what answered, then pair ────────────────────
      Two phases in one card, the self-hosted door's shape and for its reason: everything that can
@@ -717,6 +732,9 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   cloudSealPausedTitle: ["machine"],
   cloudApproveHint: ["machine"],
   cloudAddressForDoor: ["machine"],
+  cloudApproveOwned: ["machine"],
+  cloudApproveDoorChanged: ["machine"],
+  cloudApproveNotSaved: ["machine"],
   noBrowser: ["machine"],
   linkNoBrowser: ["machine", "address"],
   mailboxWhyReadsNamed: ["name"],

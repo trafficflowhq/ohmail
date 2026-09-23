@@ -452,6 +452,12 @@ export interface EngineStatus {
   flavor?: DoorFlavorWire | null;
   /** The mailbox this install is for, as a person would recognise it. */
   address?: string;
+  /**
+   * THE ENGINE RUNNING NOW IS THE PENDING DOOR'S — the first-run browser approval, booted with no
+   * address. With an `address` beside it, that engine's claim has written the door and the window
+   * owes the relaunch behind it (`relaunchAdoptedDoor`). Absent on every other engine.
+   */
+  identityPending?: boolean;
   mailboxId?: string;
   accountId?: string;
   userId?: string;
@@ -545,7 +551,18 @@ export interface HostDoorConfig {
  * shell's memory, and never written to the shell's settings file. The engine seals it under this
  * install's key, which is the one thing the shell does hold.
  */
-export type EngineConfig = LocalDoorConfig | CloudDoorConfig | HostDoorConfig;
+/**
+ * The hosted door before its account is known — the first-run browser approval. No address: the
+ * engine is told "identity pending" and its first claim writes the door with the account it read.
+ * The shell refuses it on an install that already has a door.
+ */
+export interface PendingCloudDoorConfig {
+  mode: "cloud";
+  cloudUrl: string;
+  identityPending: true;
+}
+
+export type EngineConfig = LocalDoorConfig | CloudDoorConfig | HostDoorConfig | PendingCloudDoorConfig;
 
 /**
  * ONE DOOR GESTURE AT A TIME — the window's half of the sign-out fence.

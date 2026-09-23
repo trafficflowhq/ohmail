@@ -2398,7 +2398,94 @@ fn paired_door(pin: Option<&str>) -> Config {
         address: None,
         flavor: Some(crate::config::DESKTOP_HOST_FLAVOR.to_string()),
         host_pin: pin.map(str::to_string),
+        identity_pending: false,
     })
+}
+
+/// The hosted door before its account is known — what the first-run browser approval boots.
+fn pending_door() -> Config {
+    crate::config::parse(&serde_json::json!({
+        "mode": "cloud",
+        "cloudUrl": "https://api.ohmail.app",
+        "identityPending": true,
+    }))
+    .expect("the pending door parses")
+}
+
+#[test]
+fn the_pending_door_launches_on_its_flag_and_never_on_an_address() {
+    // THE DECIDING LINE is the pending arm of `required_vars_for`: without it this door falls to the
+    // hosted list and is refused for an address nobody can know until the browser confirms.
+    let door = pending_door();
+    let env = composed_for(&door);
+    assert_eq!(env.get("OHMAIL_IDENTITY_PENDING").map(String::as_str), Some("1"));
+    assert!(!env.contains_key("OHMAIL_MAILBOX_ADDRESS"), "the pending door composed an address");
+    let plan = plan_with(
+        &|k| env.get(k).cloned(),
+        Some(res()),
+        Some(Path::new("/data")),
+        required_vars_for(&door),
+        door_label_for(&door),
+        &fs_with(&packaged()),
+    );
+    assert!(matches!(plan, Plan::Spawn(_)), "{plan:?}");
+}
+
+#[test]
+fn the_pending_door_is_refused_without_its_flag_and_says_which_door() {
+    // The flag took the address's place, so a launch that lost it is refused — never started as a
+    // hosted mirror belonging to nobody.
+    let door = pending_door();
+    let mut env = composed_for(&door);
+    env.remove("OHMAIL_IDENTITY_PENDING");
+    match plan_with(
+        &|k| env.get(k).cloned(),
+        Some(res()),
+        Some(Path::new("/data")),
+        required_vars_for(&door),
+        door_label_for(&door),
+        &fs_with(&packaged()),
+    ) {
+        Plan::Inert(EngineState::NotConfigured { missing, door }) => {
+            assert_eq!(missing, vec!["OHMAIL_IDENTITY_PENDING".to_string()]);
+            assert_eq!(door.as_deref(), Some(PENDING_DOOR_LABEL));
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn configuring_the_pending_door_writes_no_door_and_is_only_for_an_install_with_none() {
+    // The claim CREATES `config.json` once with the account it adopted; a door written here would
+    // make that create refuse, and a pending door over a chosen one would be a switch nobody asked for.
+    with_key_in_env();
+    let root = candidate_root("pending-configure");
+    let file = root.join(crate::config::CONFIG_FILE_NAME);
+    fs::write(&file, b"{ torn").expect("an unreadable leftover");
+    let shell = Shell::rooted_for_tests(&root);
+    let pending = serde_json::json!({
+        "mode": "cloud", "cloudUrl": "https://api.ohmail.app", "identityPending": true,
+    });
+    let status = shell.configure(&pending).expect("the pending door on an install with no door");
+    assert!(!file.exists(), "the pending door left a door file for its claim to collide with");
+    // The claim will write the file, so the status is what says the running engine is pending.
+    assert_eq!(status["identityPending"], serde_json::Value::Bool(true), "{status}");
+    let adopted = shell
+        .configure(&serde_json::json!({
+            "mode": "cloud", "cloudUrl": "https://api.ohmail.app", "address": "someone@ohmail.app",
+        }))
+        .expect("the relaunch behind the adopted door");
+    assert!(adopted.get("identityPending").is_none(), "{adopted}");
+    shell.stop();
+    let _ = fs::remove_dir_all(&root);
+
+    let root = signed_in_root("pending-over-a-door", "https://api.ohmail.app");
+    let before = fs::read(root.join(crate::config::CONFIG_FILE_NAME)).expect("the door");
+    let shell = Shell::rooted_for_tests(&root);
+    let refused = shell.configure(&pending).expect_err("a pending door over a chosen one");
+    assert!(refused.contains("already has a door"), "{refused}");
+    assert_eq!(fs::read(root.join(crate::config::CONFIG_FILE_NAME)).expect("the door"), before);
+    let _ = fs::remove_dir_all(&root);
 }
 
 // ── THE CANDIDATE WALK: NOTHING OF THIS INSTALL'S IS TOUCHED ────────────────────────────────
@@ -2465,6 +2552,7 @@ fn a_candidate_is_refused_outright_on_an_install_that_has_a_door() {
         address: Some("someone@ohmail.app".to_string()),
         flavor: None,
         host_pin: None,
+        identity_pending: false,
     });
     crate::config::write(&root.join(crate::config::CONFIG_FILE_NAME), &door).expect("write door");
     // The mirror and the session, as files, so "byte-identical" is measured rather than argued.
@@ -2652,6 +2740,7 @@ fn one_function_picks_the_list_and_the_label_for_every_door() {
         address: Some("someone@ohmail.app".to_string()),
         flavor: None,
         host_pin: None,
+        identity_pending: false,
     });
     let local = Config::Local(crate::config::LocalDoor {
         imap_host: "imap.example.org".to_string(),
@@ -2662,14 +2751,17 @@ fn one_function_picks_the_list_and_the_label_for_every_door() {
         address: None,
     });
     let paired = paired_door(Some(FIXTURE_PIN));
+    let pending = pending_door();
 
     assert_eq!(required_vars_for(&local), &REQUIRED_ENGINE_VARS[..]);
     assert_eq!(required_vars_for(&hosted), &REQUIRED_CLOUD_VARS[..]);
     assert_eq!(required_vars_for(&paired), &REQUIRED_PAIRED_CLOUD_VARS[..]);
+    assert_eq!(required_vars_for(&pending), &REQUIRED_PENDING_CLOUD_VARS[..]);
 
     assert_eq!(door_label_for(&local), None);
     assert_eq!(door_label_for(&hosted), None);
     assert_eq!(door_label_for(&paired), Some(PAIRED_DOOR_LABEL));
+    assert_eq!(door_label_for(&pending), Some(PENDING_DOOR_LABEL));
 
     // AND THE TWO CLOUD LISTS DIFFER BY EXACTLY THE TWO VALUES THE DOORS DIFFER BY. A split that
     // dropped the address without putting the pin in its place would pass every assertion above
@@ -2700,6 +2792,7 @@ fn an_inherited_mail_server_setting_does_not_reach_a_cloud_child() {
         address: Some("someone@ohmail.app".to_string()),
         flavor: None,
         host_pin: None,
+        identity_pending: false,
     }));
 
     let engine = Engine::spawn_with(launch, quick());
@@ -3816,6 +3909,7 @@ fn signed_in_root(name: &str, cloud_url: &str) -> PathBuf {
         address: Some("someone@example.com".to_string()),
         flavor: None,
         host_pin: None,
+        identity_pending: false,
     });
     crate::config::write(&root.join(crate::config::CONFIG_FILE_NAME), &door).expect("write door");
     let mirror = root.join("engine-cloud");
@@ -3843,6 +3937,7 @@ fn a_sign_out_whose_door_moved_refuses_and_clears_nothing() {
         address: Some("someone@other.example".to_string()),
         flavor: None,
         host_pin: None,
+        identity_pending: false,
     });
     let refused = shell.logout_of(Some(pressed)).expect_err("a moved door must refuse");
     assert!(

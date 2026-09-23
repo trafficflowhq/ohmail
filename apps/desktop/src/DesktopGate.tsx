@@ -648,6 +648,17 @@ export function DesktopGate() {
   const gate = gateFor(shell ?? { kind: "none" });
   const mount = mailMount(shell ?? { kind: "none" }, live?.key ?? null);
   /**
+   * THE FIRST-RUN CHOOSER, HELD while an adopted claim's engine is relaunched behind its door: the
+   * door on disk flips the gate to the app a moment before that engine serves, and the person must
+   * see the sign-in finish rather than a boot frame or a second chooser. Held until the mail can
+   * mount with the door's auth state known; a refused relaunch hands the screen back at once.
+   */
+  const [adoption, setAdoption] = useState(false);
+  const adoptionHeld = adoption && !(mount.kind === "engine" && (authKey === null || hostedAuthKnown));
+  useEffect(() => {
+    if (adoption && !adoptionHeld) setAdoption(false);
+  }, [adoption, adoptionHeld]);
+  /**
    * WHOSE `localStorage` PARTITION THE SHARED SHELL IS ABOUT TO USE — established HERE, in
    * render, above the `AppShell` this returns. With no account cookie, `readOwner()` answered
    * `null` and the four owner-keyed keys all resolved to the literal `"local"` — the compose
@@ -724,9 +735,11 @@ export function DesktopGate() {
     );
   }
 
-  if (gate.kind === "choose") {
+  if (gate.kind === "choose" || adoptionHeld) {
     return (
       <DoorChooser
+        addressless
+        onAdoption={setAdoption}
         onEntered={(r) => {
           /* THE FIRST LAUNCH'S CHOOSER, and the standalone door's only way into guided setup.
              See {@link openSetupOnStandalone}. */

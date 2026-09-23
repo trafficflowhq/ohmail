@@ -111,6 +111,9 @@ export function gateFor(shell: Shell): Gate {
       return { kind: "notice", reason, ...(failureClass === null ? {} : { failureClass }) };
     }
     default:
+      /* THE PENDING DOOR'S ENGINE IS A CHOOSER'S, whatever the file says: its claim writes the door
+         before the window relaunches the engine behind it, and mail cannot mount until then. */
+      if (status.identityPending === true) return { kind: "choose" };
       // `starting`, `restarting`, `stopped` and `serving`. A door HAS been chosen in every one of
       // them, so the client renders and the sync surface reports the rest — a window that hid the
       // mail every time the engine bounced would hide it for a second on every reconfigure.
@@ -1680,13 +1683,23 @@ export interface ApprovalBegun {
   status: EngineStatus | null;
   problem: string | null;
   notOffered?: boolean;
+  /**
+   * A CLAIM THIS WINDOW NEVER HEARD: the pending engine already adopted this account and wrote its
+   * door (the window went away between the claim and the relaunch). Nothing to ask; relaunch.
+   */
+  adoptedAddress?: string;
 }
 
-/** The engine's reading of one poll: still waiting (and why, if the wire was the reason), or done. */
+/**
+ * The engine's reading of one poll: still waiting (and why, if the wire was the reason), done,
+ * ADOPTED — a pending door's claim named its account, and the engine must be relaunched behind the
+ * door it wrote (`relaunchAdoptedDoor`) — or ended, with the refusal's code for its sentence.
+ */
 export type ApprovalStep =
   | { kind: "pending"; retryAfterMs: number; note: "busy" | "unreachable" | null }
   | { kind: "signed-in"; result: DoorResult }
-  | { kind: "ended"; result: DoorResult };
+  | { kind: "adopted"; address: string }
+  | { kind: "ended"; result: DoorResult; code: string | null };
 
 /** The engine's code for a hosted service with no approval door. */
 export const APPROVAL_NOT_OFFERED = "approval_not_offered";
@@ -1696,9 +1709,26 @@ export const APPROVAL_NOT_OFFERED = "approval_not_offered";
  * verifier, so the order is {@link beginBrowserSignIn}'s), then ask the engine for a request. On a
  * door already serving — the sign-in coming back — the address is not needed and not read.
  */
-export async function beginBrowserApproval(address: string, configured = false): Promise<ApprovalBegun> {
+export async function beginBrowserApproval(
+  address: string,
+  configured = false,
+  /** The first-run door: boot the hosted door with NO address; the claim names the account. */
+  pending = false,
+): Promise<ApprovalBegun> {
   let settled: EngineStatus | null = null;
-  if (!configured) {
+  if (!configured && pending) {
+    try {
+      const standing = await engineStatus();
+      if (standing.identityPending === true && standing.address) {
+        return { approvalId: null, expiresIn: 0, status: standing, problem: null, adoptedAddress: standing.address };
+      }
+      await engineConfigure({ mode: "cloud", cloudUrl: CLOUD_URL, identityPending: true });
+    } catch (err) {
+      return { approvalId: null, expiresIn: 0, status: null, problem: sentence(err) };
+    }
+    settled = await settle();
+    if (settled.state !== "serving") return { approvalId: null, expiresIn: 0, status: settled, problem: stalled(settled) };
+  } else if (!configured) {
     const trimmedAddress = address.trim();
     if (!trimmedAddress) return { approvalId: null, expiresIn: 0, status: null, problem: "Your ohmail address is missing." };
     if (!trimmedAddress.includes("@")) {
@@ -1747,7 +1777,7 @@ export async function pollBrowserApproval(): Promise<ApprovalStep> {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ approval: true }),
     });
   } catch (err) {
-    return { kind: "ended", result: { status: null, problem: sentence(err) } };
+    return { kind: "ended", result: { status: null, problem: sentence(err) }, code: null };
   }
   if (res.status === 202) {
     const body = (await res.json().catch(() => ({}))) as { retryAfterMs?: unknown; note?: unknown };
@@ -1760,9 +1790,34 @@ export async function pollBrowserApproval(): Promise<ApprovalStep> {
     return {
       kind: "ended",
       result: { status: null, problem, ...(code === MIRROR_OWNER_MISMATCH ? { switchAccount: true } : {}) },
+      code,
     };
   }
+  /* A PENDING DOOR'S CLAIM answers `adopted` with the account the ENGINE read from the hosted
+     service — the one address this window ever hands the shell on that path, never a typed one. */
+  const body = (await res.json().catch(() => ({}))) as { adopted?: unknown; address?: unknown };
+  if (body.adopted === true && typeof body.address === "string" && body.address.trim() !== "") {
+    return { kind: "adopted", address: body.address };
+  }
   return { kind: "signed-in", result: { status: await engineStatus(), problem: null } };
+}
+
+/**
+ * RELAUNCH THE ENGINE BEHIND THE DOOR ITS CLAIM WROTE. The pending engine was built with no
+ * address, so it named no mailbox and cannot mount mail; the shell's configure re-validates the
+ * adopted door at its own boundary, writes the same file and starts the engine that activates the
+ * sealed session and runs the first drain. Settled, like every door: the caller renders mail only
+ * once this answers `serving`.
+ */
+export async function relaunchAdoptedDoor(address: string): Promise<DoorResult> {
+  try {
+    await engineConfigure({ mode: "cloud", cloudUrl: CLOUD_URL, address: address.trim() });
+  } catch (err) {
+    return { status: null, problem: sentence(err) };
+  }
+  const settled = await settle();
+  if (settled.state !== "serving") return { status: settled, problem: stalled(settled) };
+  return { status: settled, problem: null };
 }
 
 /**
