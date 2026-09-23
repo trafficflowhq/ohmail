@@ -163,7 +163,8 @@ export function stripComments(source) {
 export function sqlTemplates(raw) {
   const source = stripComments(raw);
   const out = [];
-  for (const m of source.matchAll(/\bsql(?:\.raw)?(?:<[^<>()]*>)?`/g)) {
+  // `sql.raw(`…`)` too: a raw string handed to the driver is SQL, as the census reads it.
+  for (const m of source.matchAll(/\bsql(?:\.raw(?:\(\s*)?)?(?:<[^<>()]*>)?`/g)) {
     if (/pgOnly\(\s*$/.test(source.slice(Math.max(0, m.index - 40), m.index))) continue;
     let i = m.index + m[0].length;
     let text = "";
