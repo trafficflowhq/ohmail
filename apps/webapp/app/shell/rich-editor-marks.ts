@@ -12,8 +12,9 @@ import type { Mark, MarkType } from "@tiptap/pm/model";
  * (`test/editor-feel/rules.pw.ts`, a real keyboard on chromium and webkit) drives, and the jsdom
  * suite (`test/rich-editor-marks.test.tsx`) pins at the mechanism; `test/rich-editor-rules-census`
  * refuses a row without a test naming its id. The mechanism behind the rows: the link mark is
- * NON-INCLUSIVE in the schema and re-enters only for a non-space character typed at its end
- * (`nextMarks`); code EXITS on a space typed at its end; `keepOnSplit: false` on code and link is
+ * NON-INCLUSIVE in the schema (a space at its end is plain by ProseMirror's own rule) and re-enters
+ * only for a non-space character typed at its end (`nextMarks`); code EXITS on a space typed at its
+ * end; `keepOnSplit: false` on code and link is
  * what ends them at a line break; `exitable: false` is what stops ArrowRight from typing a space.
  */
 export const EDITOR_RULES = [
@@ -36,8 +37,13 @@ export const EDITOR_RULES = [
 
 export type EditorRuleId = (typeof EDITOR_RULES)[number][0];
 
-/** Marks a space typed at their END leaves. Bold, italic and strike stay sticky across a space. */
-const EXITS_ON_SPACE: ReadonlySet<string> = new Set(["code", "link"]);
+/**
+ * Marks a space typed at their END leaves: code alone. A link is non-inclusive in the schema, so a
+ * space at its end is plain by ProseMirror's own rule — listing it here too would be a second
+ * mechanism over the first, and a guard nobody can watch fail (measured: with the schema flag
+ * flipped back, webkit stayed green through this exit while chromium lost the typed text).
+ */
+const EXITS_ON_SPACE: ReadonlySet<string> = new Set(["code"]);
 
 const isWhitespace = (s: string): boolean => /^\s+$/.test(s);
 
@@ -56,8 +62,8 @@ function atEndOf($from: EditorState["selection"]["$from"], mark: Mark): boolean 
  * plugin, so the row of buttons cannot say one thing while the keystroke does another. `typed`
  * is the text about to be inserted; absent, the answer is for a letter. ProseMirror's own rule
  * (`storedMarks ?? $from.marks()`, which honours each mark's `inclusive`) is the base; the two
- * amendments are the link re-entering for a non-space at its end, and code/link leaving on a
- * space at theirs. A range selection keeps ProseMirror's answer untouched.
+ * amendments are the link re-entering for a non-space at its end, and code leaving on a space at
+ * its end. A range selection keeps ProseMirror's answer untouched.
  */
 export function nextMarks(state: EditorState, typed?: string): readonly Mark[] {
   const { $from, $to, empty } = state.selection;
