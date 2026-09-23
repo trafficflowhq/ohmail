@@ -362,6 +362,9 @@ export interface CloudMirrorConfig {
   pageLimit?: number;
   /** How long to wait between full pulls when caught up. */
   pollIntervalMs?: number;
+  /** The follow-up chain's backoff and cap; production takes {@link FOLLOW_UP_STEPS_MS} and {@link FOLLOW_UP_CAP_MS}. */
+  followUpStepsMs?: readonly number[];
+  followUpCapMs?: number;
 }
 
 export interface CloudMirror {
@@ -429,14 +432,22 @@ export interface CloudMirror {
    * The write-through echo: true once `cloudSeq() >= target`, read at every page the pull
    * commits, so a pull that is still walking cannot hold the answer past `deadlineMs`. The pull
    * itself runs on; only the wait is bounded. A hosted `Retry-After` is honoured, never beaten.
+   * With `followUp` (the route's key), a wait the deadline cut starts that route's follow-up chain.
    */
-  awaitCloudSeq(target: bigint, deadlineMs: number): Promise<boolean>;
+  awaitCloudSeq(target: bigint, deadlineMs: number, followUp?: string): Promise<boolean>;
   /**
    * The echo for a write whose answer names no seq: a hosted `/sync` page ASKED after this call
    * that reached the horizon, and with `mailboxes` a mailbox refresh asked after it (one is
    * started here). A pull already in flight counts from its next ask; its earlier ones never do.
    */
-  awaitFreshPull(deadlineMs: number, need?: { sync?: boolean; mailboxes?: boolean }): Promise<boolean>;
+  awaitFreshPull(deadlineMs: number, need?: { sync?: boolean; mailboxes?: boolean }, followUp?: string): Promise<boolean>;
+  /** How many follow-up chains are live (see {@link FOLLOW_UP_STEPS_MS}). */
+  followUps(): number;
+  /**
+   * While a follow-up chain is live: true at the mirror's next committed page, mailbox list or
+   * chain end, false at the deadline. False at once when no chain is live.
+   */
+  awaitFollowUp(deadlineMs: number): Promise<boolean>;
   /** This install's own change-log head: the sequence the window's `/sync` is written in. */
   localSeq(): Promise<bigint>;
   /**
@@ -469,6 +480,14 @@ export interface CloudMirror {
 }
 
 export const DEFAULT_CLOUD_POLL_MS = 20_000;
+
+/**
+ * THE FOLLOW-UP CHAIN. An echo the bound cut keeps asking off the request path: after 250 ms,
+ * 500 ms, 1 s and 2 s (each counted from the previous ask settling), never past 10 s from the cut,
+ * then the poll. One chain per route; every ask is the single-flight pull, so it joins one running.
+ */
+export const FOLLOW_UP_STEPS_MS: readonly number[] = [250, 500, 1_000, 2_000];
+export const FOLLOW_UP_CAP_MS = 10_000;
 
 /**
  * How old the hosted message counts may get before the next refresh asks again.
@@ -3522,19 +3541,65 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     }
   };
 
-  const awaitCloudSeq = (target: bigint, deadlineMs: number): Promise<boolean> =>
-    echo(() => cloudSeq() >= target, () => pullOnce().catch(() => undefined), deadlineMs);
+  /* THE FOLLOW-UP CHAINS, keyed by route: a second cut on a route adds its need to the live chain.
+     A hosted `Retry-After` is waited out, or ends the chain when it falls past the cap. Each end
+     wakes the waits, so a local `/sync` held on a chain (`cloud-engine.ts`) never outlives it. */
+  interface Need { covered: () => boolean; ask: () => Promise<unknown> }
+  const chains = new Map<string, Need[]>();
+  const stepsMs = cfg.followUpStepsMs ?? FOLLOW_UP_STEPS_MS;
+  const capMs = cfg.followUpCapMs ?? FOLLOW_UP_CAP_MS;
+  const nap = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, Math.max(0, ms)));
+  const runChain = async (needs: Need[], end: number): Promise<void> => {
+    const done = (): boolean => needs.every((n) => n.covered());
+    const over = (): boolean => aborted || accountErased || Date.now() >= end;
+    for (const step of stepsMs) {
+      if ((await until(done, nap(step), end)) === "yes" || over()) return;
+      if (quietUntil > Date.now()) {
+        if (quietUntil >= end) return;
+        if ((await until(done, nap(quietUntil - Date.now()), end)) === "yes" || over()) return;
+      }
+      if ((await until(done, Promise.all(needs.filter((n) => !n.covered()).map((n) => n.ask())), end)) === "yes") return;
+    }
+  };
+  const followUp = (key: string, need: Need): void => {
+    if (aborted || accountErased) return;
+    const live = chains.get(key);
+    if (live) { live.push(need); return; }
+    const needs = [need];
+    chains.set(key, needs);
+    void runChain(needs, Date.now() + capMs).finally(() => {
+      if (chains.get(key) === needs) chains.delete(key);
+      progressed();
+    });
+  };
+  const echoed = async (need: Need, deadlineMs: number, key: string | undefined): Promise<boolean> => {
+    const ok = await echo(need.covered, need.ask, deadlineMs);
+    if (!ok && key !== undefined) followUp(key, need);
+    return ok;
+  };
 
-  const awaitFreshPull = (deadlineMs: number, need: { sync?: boolean; mailboxes?: boolean } = {}): Promise<boolean> => {
+  const awaitCloudSeq = (target: bigint, deadlineMs: number, key?: string): Promise<boolean> =>
+    echoed({ covered: () => cloudSeq() >= target, ask: () => pullOnce().catch(() => undefined) }, deadlineMs, key);
+
+  const awaitFreshPull = (deadlineMs: number, need: { sync?: boolean; mailboxes?: boolean } = {}, key?: string): Promise<boolean> => {
     const from = asked;
     const sync = need.sync ?? true;
     const boxes = need.mailboxes ?? false;
     const covered = (): boolean => (!sync || horizonAsk > from) && (!boxes || boxesAsk > from);
     let listed: Promise<unknown> | null = null;
-    return echo(covered, () => {
+    return echoed({ covered, ask: () => {
       if (boxes && boxesAsk <= from && listed === null) listed = refreshMailboxes().catch(() => undefined).finally(() => { listed = null; });
       return sync ? pullOnce().catch(() => undefined) : (listed ?? Promise.resolve());
-    }, deadlineMs);
+    } }, deadlineMs, key);
+  };
+
+  const awaitFollowUp = (deadlineMs: number): Promise<boolean> => {
+    if (chains.size === 0 || aborted) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      const wake = (): void => { waiters.delete(wake); clearTimeout(t); resolve(true); };
+      const t = setTimeout(() => { waiters.delete(wake); resolve(false); }, Math.max(0, deadlineMs));
+      waiters.add(wake);
+    });
   };
 
   const localSeq = async (): Promise<bigint> => {
@@ -3589,6 +3654,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     cloudSeq,
     awaitCloudSeq,
     awaitFreshPull,
+    followUps: () => chains.size,
+    awaitFollowUp,
     localSeq,
     // The live map, not a copy: the only caller reads it synchronously to decorate one response,
     // and the map is REPLACED rather than mutated on each counted refresh, so a reader can never
@@ -3623,6 +3690,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       aborted = true;
       if (timer) clearTimeout(timer);
       timer = null;
+      // No chain outlives the mirror, and a drain held on one is answered now.
+      chains.clear();
+      progressed();
       // A pull that fails on the way out is still a pull that has left, which is all a caller
       // closing the database needs to know.
       await inflight?.catch(() => undefined);

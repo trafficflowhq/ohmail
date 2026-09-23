@@ -2,7 +2,7 @@ import { RELAY_ALLOWLIST, relayVerdict } from "@trafficflow/api/relay-allowlist"
 import { offlineResponse, type CloudAuth } from "./cloud-auth.js";
 import type { CloudMirror } from "./cloud-mirror.js";
 import type { Diagnostic } from "./log.js";
-import { writeRowsOf } from "./cloud-write-rows.js";
+import { routeKeyOf, writeRowsOf } from "./cloud-write-rows.js";
 
 /**
  * The write-through proxy — a Cloud-mode install owns no mailbox, so every WRITE is against the
@@ -10,7 +10,8 @@ import { writeRowsOf } from "./cloud-write-rows.js";
  * everything else — a move, a mark-read, a rule edit, and the byte reads the mirror never holds
  * (`/attachments/:id`, `/img`) — relays to `api.ohmail.app` over the mirror's `authedFetch` and
  * returns the answer. A 2xx write waits (1.5 s bound) until the local copy holds it (THE
- * ECHO-AWAIT below); past the bound the window's shadow holds the row the person acted on.
+ * ECHO-AWAIT below); past the bound the window's shadow holds the row the person acted on, and the
+ * mirror's follow-up chain keeps asking until the copy has it.
  * Offline is a MODE not a fault: it forwards nothing and answers `503 offline_read_only`.
  */
 
@@ -147,22 +148,24 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
     // THE ECHO-AWAIT, by what the write changes here (`cloud-write-rows.ts`): nothing (its reads
     // relay) answers at once; a seq waits for the mirror to pull that far; no seq waits for a page
     // asked after the answer; mailbox rows for a list asked after it. The window re-drains local
-    // `/sync` next, so a covered write is already in it; what the bound cuts, its shadow holds.
+    // `/sync` next, so a covered write is already in it. What the bound cuts, the route's follow-up
+    // chain keeps asking for, and the window's drain waits on that chain (`cloud-engine.ts`).
     const target = res.ok ? parseSeq(res.headers.get("x-sync-seq")) : null;
     const write = res.ok && method !== "GET" && method !== "HEAD";
     const rows = write ? writeRowsOf(method, url.pathname)?.rows ?? "sync" : "none";
     if (target === null && rows === "none") return res;
     const boxes = rows === "mailboxes" || rows === "sync+mailboxes";
+    const route = routeKeyOf(method, url.pathname) ?? `${method} other`;
     const [seqCovered, freshCovered] = await Promise.all([
-      target !== null ? cfg.mirror.awaitCloudSeq(target, echoDeadlineMs) : Promise.resolve(true),
+      target !== null ? cfg.mirror.awaitCloudSeq(target, echoDeadlineMs, route) : Promise.resolve(true),
       target === null || boxes
-        ? cfg.mirror.awaitFreshPull(echoDeadlineMs, { sync: target === null && rows !== "mailboxes", mailboxes: boxes })
+        ? cfg.mirror.awaitFreshPull(echoDeadlineMs, { sync: target === null && rows !== "mailboxes", mailboxes: boxes }, route)
         : Promise.resolve(true),
     ]);
     const covered = seqCovered && freshCovered;
     if (!covered) {
       cfg.log?.("cloud_write_echo", {
-        reason: "the mirror did not catch up to the write within the echo bound; answering anyway and reconciling on the next poll",
+        reason: "the mirror did not catch up to the write within the echo bound; answering anyway, and a follow-up pull carries it",
       });
     }
     return target === null ? res : restamped(res, covered ? null : await cfg.mirror.localSeq());

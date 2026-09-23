@@ -132,10 +132,16 @@ const SPECS: readonly RelaySpec[] = Object.keys(WRITE_ROWS).map((k) => {
   return { method: k.slice(0, at), pattern: k.slice(at + 1) };
 });
 
+/** The table key (`METHOD pattern`) one request matches, or null for a route the table does not name. */
+export function routeKeyOf(method: string, pathname: string): string | null {
+  const hit = matchSpec(SPECS, method, pathname);
+  return hit.matched ? `${hit.spec.method} ${hit.spec.pattern}` : null;
+}
+
 /** The entry for one request, or null for a route the table does not name (read as `sync`). */
 export function writeRowsOf(method: string, pathname: string): WriteRoute | null {
-  const hit = matchSpec(SPECS, method, pathname);
-  return hit.matched ? WRITE_ROWS[`${hit.spec.method} ${hit.spec.pattern}`] ?? null : null;
+  const key = routeKeyOf(method, pathname);
+  return key === null ? null : WRITE_ROWS[key] ?? null;
 }
 
 /** The census: relay writes the table does not name, and entries no relay route carries. */

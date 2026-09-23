@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { StaticKeyProvider, type KeyProvider } from "@trafficflow/core/mail";
 import {
   resolveSession, syncService, ServiceError,
-  type EntityType, type ServiceContext,
+  type EntityType, type ServiceContext, type SyncResponse,
 } from "@trafficflow/services/mail";
 import {
   openLocalDb, type LocalDb, type LocalDbOpenPhase, type MigrationProgress, type OpenLocalDb,
@@ -25,7 +25,7 @@ import {
   requestDesktopApproval,
   type CloudSignInRequest,
 } from "./cloud-signin.js";
-import { createCloudMirror, integrityLogFields, CLOUD_SYNC_TYPES, type CloudMirror } from "./cloud-mirror.js";
+import { createCloudMirror, integrityLogFields, CLOUD_SYNC_TYPES, FOLLOW_UP_CAP_MS, type CloudMirror } from "./cloud-mirror.js";
 import { startCloudWake, type CloudWake } from "./cloud-wake.js";
 import { matchReadRoute } from "./cloud-read.js";
 import { createWriteThroughProxy, type WriteThroughProxy } from "./cloud-proxy.js";
@@ -146,6 +146,40 @@ export interface CloudSidecar {
 
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+
+const quiet = (r: SyncResponse): boolean =>
+  !r.hasMore && r.changes.creates.length + r.changes.updates.length + r.changes.moves.length + r.changes.deletes.length === 0;
+
+/**
+ * THE DRAIN THAT WAITS ON A FOLLOW-UP CHAIN. A window drain with nothing new, while a write the
+ * echo bound cut is still being pulled, is asked again at every page the mirror commits, so the
+ * drain that follows the answer carries the write the moment this copy holds it. It ends with the
+ * last live chain and never past `capMs` from the ask; a second drain on the same `key` (cursor,
+ * limit, types) shares the first one's wait.
+ */
+export function drainOnFollowUp(
+  held: Map<string, Promise<SyncResponse>>,
+  key: string,
+  mirror: Pick<CloudMirror, "followUps" | "awaitFollowUp">,
+  ask: () => Promise<SyncResponse>,
+  first: SyncResponse,
+  capMs: number = FOLLOW_UP_CAP_MS,
+): Promise<SyncResponse> {
+  if (!quiet(first) || mirror.followUps() === 0) return Promise.resolve(first);
+  const live = held.get(key);
+  if (live) return live;
+  const wait = (async (): Promise<SyncResponse> => {
+    const end = Date.now() + capMs;
+    let result = first;
+    while (quiet(result) && mirror.followUps() > 0 && Date.now() < end) {
+      if (!(await mirror.awaitFollowUp(end - Date.now()))) break;
+      result = await ask();
+    }
+    return result;
+  })().finally(() => { held.delete(key); });
+  held.set(key, wait);
+  return wait;
+}
 
 /**
  * Add the hosted message count to a local `GET /mailboxes` answer, per mailbox that has one. The
@@ -865,6 +899,8 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       wake: CloudWake;
     }
     let authed: Authed | null = null;
+    /** Waiting drains by `since`/`limit`/`types`: a second drain on one cursor shares the first's wait. */
+    const heldDrains = new Map<string, Promise<SyncResponse>>();
 
     /**
      * THE PKCE VERIFIER FOR A BROWSER HANDOFF — this process's memory, and the whole of where it
@@ -1920,11 +1956,17 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           ? (typesRaw.split(",").map((t) => t.trim()).filter((t) => valid.has(t)) as EntityType[])
           : undefined;
         try {
-          const result = await syncService.getChanges(ctxFor(core.accountId, core.userId, core.sessionId), {
+          const ctx = ctxFor(core.accountId, core.userId, core.sessionId);
+          const ask = (): Promise<SyncResponse> => syncService.getChanges(ctx, {
             since,
             ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
             ...(types && types.length > 0 ? { types } : {}),
           });
+          let result = await ask();
+          // A bootstrap (no cursor) never waits; a resumed drain with nothing new may.
+          if (since !== undefined && since !== "0") {
+            result = await drainOnFollowUp(heldDrains, JSON.stringify([since, limitRaw, typesRaw]), liveMirror, ask, result);
+          }
           return json(result);
         } catch (err) {
           if (err instanceof ServiceError) {
