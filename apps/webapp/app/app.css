@@ -5664,8 +5664,10 @@ input.set-tag-input {
 }
 /* PRESSED IS THE CURSOR'S STATE, not the last click — the row says what the caret is
    standing in (`useEditorState` in `RichEditor.tsx`), so this has to read as a state and not
-   as a hover. */
-.rte-b[aria-pressed="true"] {
+   as a hover. The link button is not a toggle and never `aria-pressed`; it lights while its
+   address dialog is OPEN (`aria-expanded`), which is the one state it has. */
+.rte-b[aria-pressed="true"],
+.rte-b[aria-expanded="true"] {
   background: var(--tint2);
   color: var(--ink);
 }

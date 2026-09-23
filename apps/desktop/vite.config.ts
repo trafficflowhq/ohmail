@@ -749,6 +749,9 @@ export default defineConfig({
       { find: "@tiptap/react", replacement: r("./node_modules/@tiptap/react") },
       { find: "@tiptap/starter-kit", replacement: r("./node_modules/@tiptap/starter-kit") },
       { find: "@tiptap/extension-link", replacement: r("./node_modules/@tiptap/extension-link") },
+      // Inline code, extended in `rich-editor-marks.ts` (`keepOnSplit`/`exitable`), pinned for
+      // the same reason as the link extension beside it.
+      { find: "@tiptap/extension-code", replacement: r("./node_modules/@tiptap/extension-code") },
       /* The ProseMirror surface under the editor — RichEditor.tsx's line-scoped block
          commands import NodeSelection/TextSelection and the node/position types from
          these two subpaths, from apps/webapp/app/** like the entries above. This pair
@@ -760,6 +763,8 @@ export default defineConfig({
          proxy dirs (`state/index.ts` re-exporting prosemirror-state, likewise `model/`). */
       { find: "@tiptap/pm/state", replacement: r("./node_modules/@tiptap/pm/state") },
       { find: "@tiptap/pm/model", replacement: r("./node_modules/@tiptap/pm/model") },
+      // `rich-editor-marks.ts` reads `ReplaceStep` off the transform subpath; same proxy-dir rule.
+      { find: "@tiptap/pm/transform", replacement: r("./node_modules/@tiptap/pm/transform") },
       { find: "dompurify", replacement: r("./node_modules/dompurify") },
       /* pdf.js is kept OUT of the runtime bundle: the desktop window never previews a PDF inline
          (worker-src 'none'; an attachment opens in the platform's own viewer over

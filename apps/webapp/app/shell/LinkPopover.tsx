@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import type { Editor } from "@tiptap/react";
 import { TextField } from "@ohmail/ui";
+import { linkAtCaret } from "./rich-editor-marks";
 
 /**
  * The link popover — the destination input the toolbar's Link button and ⌘K both open. It replaced
@@ -71,10 +72,12 @@ export function LinkPopover({ editor, onClose }: LinkPopoverProps) {
    * The href under the caret at the moment the popover OPENED. A state initializer rather
    * than a render-time read, because the popover mounts fresh on every open (it is
    * conditionally rendered) and must not chase the document afterwards — the selection it is
-   * editing is the one the author had when they asked for it.
+   * editing is the one the author had when they asked for it. Read through `linkAtCaret`, not
+   * `getAttributes`: the link mark is non-inclusive, so at its END the schema's own reading is
+   * "no link" while the person is standing exactly where they would edit or remove one.
    */
   const [initialHref] = useState<string>(
-    () => (editor.getAttributes("link").href as string | undefined) ?? "",
+    () => (linkAtCaret(editor.state)?.attrs.href as string | undefined) ?? "",
   );
 
   const remove = (): void => {

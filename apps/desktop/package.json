@@ -31,6 +31,7 @@
     "nodemailer": "^6.9.15",
     "sanitize-html": "^2.17.6",
     "tldts": "^7.4.9",
+    "@tiptap/extension-code": "^3.29.2",
     "@tiptap/extension-link": "^3.29.2",
     "@tiptap/pm": "^3.29.2",
     "@tiptap/react": "^3.29.2",

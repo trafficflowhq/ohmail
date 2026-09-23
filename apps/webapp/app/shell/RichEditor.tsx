@@ -7,8 +7,8 @@ import {
   type ChainedCommands, type Editor,
 } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import Link from "@tiptap/extension-link";
 import { NodeSelection, TextSelection, type EditorState, type Transaction } from "@tiptap/pm/state";
+import { AutolinkPunctuation, CodeMark, LinkMark, MarkBoundaries, nextMarks } from "./rich-editor-marks";
 import type { ResolvedPos } from "@tiptap/pm/model";
 import { LinkPopover } from "./LinkPopover";
 import {
@@ -67,7 +67,9 @@ const EXTENSIONS = [
     bold: {},
     italic: {},
     strike: {},
-    code: {},
+    // Inline code is `CodeMark` below — the kit's copy would carry over a line break and let
+    // ArrowRight type a space; the mark-boundary rules live in `rich-editor-marks.ts`.
+    code: false,
     bulletList: {},
     orderedList: {},
     listItem: {},
@@ -86,7 +88,8 @@ const EXTENSIONS = [
     // Underline has no plain-text rendering and no place in mail — it reads as a dead link.
     underline: false,
   }),
-  Link.configure({
+  CodeMark,
+  LinkMark.configure({
     openOnClick: false,
     // The editor writes markup that a MAIL client renders, so a link may only be a thing a
     // mail client can open. This mirrors the scheme allow-list the server's sanitiser applies;
@@ -95,6 +98,10 @@ const EXTENSIONS = [
     autolink: true,
     HTMLAttributes: {},
   }),
+  // Where a typed character lands relative to a mark's edges (`EDITOR_RULES`), and the
+  // trailing-punctuation autolink Tiptap's own refuses.
+  MarkBoundaries,
+  AutolinkPunctuation,
 ];
 
 export interface RichEditorProps {
@@ -398,27 +405,36 @@ function Toolbar({ editor, editable, linkOpen, onLinkToggle, onLinkClose }: {
    */
   const active = useEditorState({
     editor,
-    selector: ({ editor: e }) => ({
-      bold: e?.isActive("bold") ?? false,
-      italic: e?.isActive("italic") ?? false,
-      strike: e?.isActive("strike") ?? false,
-      // ONE button, two constructs, so its pressed state has to answer for both — a caret
-      // sitting in a code block with an unlit Code button is a control that says the text is
-      // not code while the text is code, and pressing it would then be the only way to find
-      // out that it toggles the block off.
-      code: (e?.isActive("code") ?? false) || (e?.isActive("codeBlock") ?? false),
-      link: e?.isActive("link") ?? false,
-      bullet: e?.isActive("bulletList") ?? false,
-      ordered: e?.isActive("orderedList") ?? false,
-      quote: e?.isActive("blockquote") ?? false,
-    }),
+    selector: ({ editor: e }) => {
+      // With nothing selected a mark button answers "does the next letter carry this" through
+      // the SAME function the text-input plugin decides by (`toolbar-next`); over a selection it
+      // answers "is the whole selection marked", Tiptap's own reading.
+      const carried = e && e.state.selection.empty
+        ? new Set(nextMarks(e.state).map((m) => m.type.name))
+        : null;
+      const mark = (name: string): boolean =>
+        carried ? carried.has(name) : (e?.isActive(name) ?? false);
+      return {
+        bold: mark("bold"),
+        italic: mark("italic"),
+        strike: mark("strike"),
+        // ONE button, two constructs, so its pressed state has to answer for both — a caret
+        // sitting in a code block with an unlit Code button is a control that says the text is
+        // not code while the text is code, and pressing it would then be the only way to find
+        // out that it toggles the block off.
+        code: mark("code") || (e?.isActive("codeBlock") ?? false),
+        bullet: e?.isActive("bulletList") ?? false,
+        ordered: e?.isActive("orderedList") ?? false,
+        quote: e?.isActive("blockquote") ?? false,
+      };
+    },
   });
 
   if (!editor || !active) return null;
 
   const btn = (
     key: string,
-    isActive: boolean,
+    isActive: boolean | null,
     run: () => void,
     extra?: React.ButtonHTMLAttributes<HTMLButtonElement>,
   ) => (
@@ -433,8 +449,9 @@ function Toolbar({ editor, editable, linkOpen, onLinkToggle, onLinkClose }: {
       // adding a control cannot silently inherit another one's look through nth-child.
       data-mark={key}
       // `aria-pressed` and not a class alone: "is this text already bold" is the question the
-      // control answers, and a sighted user reads it from the highlight.
-      aria-pressed={isActive}
+      // control answers, and a sighted user reads it from the highlight. `null` is the link
+      // button, which is not a toggle and claims no pressed state (`link-not-toggle`).
+      aria-pressed={isActive ?? undefined}
       aria-label={t(`rte.${key}`)}
       title={t(`rte.${key}`)}
       // Mid-send. Not merely styled: a live button here would edit a document the caret cannot
@@ -455,7 +472,7 @@ function Toolbar({ editor, editable, linkOpen, onLinkToggle, onLinkClose }: {
       {btn("italic", active.italic, () => editor.chain().focus().toggleItalic().run())}
       {btn("strike", active.strike, () => editor.chain().focus().toggleStrike().run())}
       {btn("code", active.code, () => applyCode(editor))}
-      {btn("link", active.link, onLinkToggle, { "aria-haspopup": "dialog", "aria-expanded": linkOpen })}
+      {btn("link", null, onLinkToggle, { "aria-haspopup": "dialog", "aria-expanded": linkOpen })}
       {btn("bullet", active.bullet, () => applyList(editor, "bulletList"))}
       {btn("ordered", active.ordered, () => applyList(editor, "orderedList"))}
       {btn("quote", active.quote, () => applyQuote(editor))}
