@@ -321,6 +321,24 @@ export function makePooledDb(
   );
 }
 
+/**
+ * A handle over the SAME postgres.js pool as `db` whose statements wait at most `ms` to begin: the
+ * {@link makePooledDb} ceiling for a pool another factory built — the self-hosted server's
+ * {@link makeOwnedDb}. A property of the handle: no connection, and the pool keeps its own
+ * timeouts. Refuses a handle with no postgres.js client behind it (PGlite, `drizzle.mock()`).
+ */
+export function acquireCeilingHandle(
+  db: PostgresJsDatabase<typeof schema>, ms: number,
+): PostgresJsDatabase<typeof schema> {
+  const client = (db as { $client?: unknown }).$client;
+  if (typeof client !== "function" || typeof (client as { unsafe?: unknown }).unsafe !== "function") {
+    throw new TypeError("acquireCeilingHandle: this handle has no postgres.js pool behind it");
+  }
+  return brandDialect(
+    drizzle(withAcquireCeiling(client as ReturnType<typeof postgres>, ms), { schema }), "pg",
+  );
+}
+
 export async function closePooledDbs(): Promise<void> {
   for (const p of pools.values()) await p.end({ timeout: 5 });
   pools.clear();

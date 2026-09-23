@@ -6,6 +6,7 @@ import {
   makeSupabaseStagingStorage, makeS3StagingStorage,
   // The organizer's last completed pass, for the filing strip (mail 0097).
   organizerCycleReader,
+  acquireCeilingHandle, SESSION_ACQUIRE_TIMEOUT_MS,
   type AlertSink, type AttachmentStagingStorage,
 } from "@trafficflow/db/cloud";
 import {
@@ -478,11 +479,26 @@ export function needsSetupFor(
   };
 }
 
+/**
+ * The two session doors' handle (`withSessionAcquireCeiling`): the process pool behind a 5 s wait
+ * to begin, the managed host's number. One per pool, built on the first session request.
+ */
+const sessionHandles = new WeakMap<Db, Db>();
+function sessionDbOver(db: Db): Db {
+  let handle = sessionHandles.get(db);
+  if (!handle) {
+    handle = acquireCeilingHandle(db, SESSION_ACQUIRE_TIMEOUT_MS);
+    sessionHandles.set(db, handle);
+  }
+  return handle;
+}
+
 /** Build the per-request container. `req` is the ALREADY-NORMALIZED request (see `handler.ts`). */
 export function buildDeps(req: Request, rt: ServerRuntime): ApiDeps {
   const { cfg } = rt;
   return {
     db: rt.db,
+    sessionDb: () => sessionDbOver(rt.db),
     now: () => new Date(),
     requestId: "",                 // `withRequestId` assigns one
     session: null,                 // `withSession` resolves it
