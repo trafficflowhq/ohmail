@@ -120,6 +120,9 @@ beforeEach(() => {
       if (command === "engine_request") {
         const url = String(payload?.url ?? "");
         if (url === "/cloud/signin/challenge") return encode(200, JSON.stringify({ challenge: CHALLENGE }));
+        if (url === "/cloud/signin/approval") {
+          return encode(200, JSON.stringify({ approvalId: "4f9a3c1e-2b7d-4e8f-9a01-23456789abcd", expiresIn: 300 }));
+        }
         if (url === "/cloud/signin" && refusalsLeft > 0) {
           refusalsLeft -= 1;
           return encode(409, MISMATCH, "Conflict");
@@ -280,6 +283,7 @@ describe("the browser handoff, across the same refusal", () => {
     await signIn(el, "second@ohmail.app");
 
     await click(buttonSaying(el, "Sign in with browser"));
+    await click(buttonSaying(el, "Type a code instead"));
     await type(el, "cloud-address", "second@ohmail.app");
     await click(buttonSaying(el, "Open ohmail.app"));
 
@@ -292,6 +296,19 @@ describe("the browser handoff, across the same refusal", () => {
     expect(order.indexOf("engine_configure")).toBeLessThan(order.indexOf("/cloud/signin/challenge"));
   });
 
+  it("an APPROVAL started after the same refusal asks for the address and re-points the door first", async () => {
+    refusalsLeft = 1;
+    const { el } = await mount();
+    await signIn(el, "second@ohmail.app");
+    await click(buttonSaying(el, "Sign in with browser"));
+    // The switch is a configure, and a configure needs the address: the field is back on screen.
+    await type(el, "cloud-address", "second@ohmail.app");
+    await click(buttonSaying(el, "Open ohmail.app"));
+    const order = commands();
+    expect(order.lastIndexOf("engine_configure"), "the approval did not re-point the door").toBeGreaterThanOrEqual(0);
+    expect(order.lastIndexOf("engine_configure")).toBeLessThan(order.indexOf("/cloud/signin/approval"));
+  });
+
   it("does NOT restart the engine underneath an outstanding handoff", async () => {
     // The regression this could easily have caused. Once a commitment exists, the verifier lives in
     // that engine's memory and a second configure throws it away — and the account then answers a
@@ -301,6 +318,7 @@ describe("the browser handoff, across the same refusal", () => {
     await signIn(el, "second@ohmail.app");
 
     await click(buttonSaying(el, "Sign in with browser"));
+    await click(buttonSaying(el, "Type a code instead"));
     await type(el, "cloud-address", "second@ohmail.app");
     await click(buttonSaying(el, "Open ohmail.app"));
     const configuresBeforeCode = commands().filter((c) => c === "engine_configure").length;

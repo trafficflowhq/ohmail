@@ -962,6 +962,15 @@ export interface AuthorizeRequestDTO {
     expiresIn: number;
 }
 
+export interface DesktopApprovalDTO {
+    label: string;
+    platform: string;
+    requestedAt: string;
+    ipClass: string;
+    expiresIn: number;
+    approved: boolean;
+}
+
 /**
  * Where an account stands with the service, mirrored so shared `shell/` code resolves the name.
  * A standalone install has no hosted account, so nothing here ever holds one.
