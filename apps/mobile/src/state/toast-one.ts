@@ -1,12 +1,11 @@
 /**
- * WHICH SENTENCE IS ON SCREEN — the newest, always, and there is nowhere for a second to wait
- * (owner ruling 2026-09-21, closing `MOBILE-TOAST-QUEUE-SILENTLY-DROPS-A-VERBS-SENTENCE`: a
- * queue of four held each sentence for its turn and returned the fifth unrendered).
+ * WHICH SENTENCES ARE ON SCREEN — two slots, the newest in each, and nowhere for a third to wait:
+ * a queue of four once held each sentence for its turn and returned the fifth unrendered.
  *
- * Safe because a sentence REPORTS a dispatch that already happened: a held delete commits on
- * its own timer (`held-delete.ts`) and an undo offer dies on its own clock (`live.ts`'s
- * `UNDO_MS`, read at the press); neither consults the pill. What a displaced sentence costs is
- * the CHANCE to press Undo, and that is the trade.
+ * An entry carrying `undo` stands in the ACTION slot, any other in the NOTICE slot beneath it: a
+ * notice never takes an Undo off the screen, an action replaces an action and a notice a notice.
+ * A displaced offer still loses nothing but the chance to press: a held delete commits on its own
+ * timer (`held-delete.ts`) and an undo dies on its own clock (`live.ts`'s `UNDO_MS`).
  */
 import type { RefusalArg } from "../refusal";
 
@@ -18,26 +17,69 @@ export interface ToastEntry {
   holdMs?: number;
 }
 
+/** The two slots as the provider holds them. */
+export interface ToastSlots {
+  action: ToastEntry | null;
+  notice: ToastEntry | null;
+}
+
+export const NO_TOASTS: ToastSlots = Object.freeze({ action: null, notice: null });
+
 /**
- * The show door. It takes what is standing only to say, in one place, that it never keeps it —
- * a writer that can return its own input is the bounded-queue shape this replaces, and
- * `verbs-announce.test.ts` refuses one by name.
+ * The show door: the incoming entry takes its own slot and the other slot is left as it stands.
+ * It never keeps the entry standing in the incoming's slot — `verbs-announce.test.ts` refuses a
+ * writer that can return its own input, the bounded-queue shape this replaced.
  */
-export function nextToast(_standing: ToastEntry | null, incoming: ToastEntry): ToastEntry {
-  return incoming;
+export function nextToast(standing: ToastSlots, incoming: ToastEntry): ToastSlots {
+  return incoming.undo
+    ? { action: incoming, notice: standing.notice }
+    : { action: standing.action, notice: incoming };
 }
 
 /**
- * The dismiss door, BY ID. The pill hands its own id back because two callers can dismiss a
- * sentence that is no longer the one they were looking at: the hold timer of a displaced entry,
- * and an Undo press whose handler belongs to the last PAINTED render while state already holds a
- * newer sentence. Either would take the new one off the screen a moment after it arrived. An
- * id-less dismiss clears whatever stands, which is what a caller with no entry in hand means.
+ * The dismiss door, BY ID. Two callers can dismiss a sentence that is no longer the one they were
+ * looking at — a displaced entry's hold timer, and an Undo press whose handler belongs to the last
+ * PAINTED render — so a stale id leaves both slots standing. An id-less dismiss clears both.
  */
-export function afterDismiss(standing: ToastEntry | null, id?: number): ToastEntry | null {
-  if (standing === null) return null;
-  if (id !== undefined && standing.id !== id) return standing;
-  return null;
+export function afterDismiss(standing: ToastSlots, id?: number): ToastSlots {
+  if (id === undefined) return NO_TOASTS;
+  if (standing.action?.id === id) return { action: null, notice: standing.notice };
+  if (standing.notice?.id === id) return { action: standing.action, notice: null };
+  return standing;
+}
+
+/** The gap between the Undo pill and a notice standing beneath it. */
+export const STACK_GAP = 8;
+
+/**
+ * WHERE THE UNDO PILL STANDS: `lift` points above the shared anchor. A notice arriving under a
+ * standing offer lifts it to clear the notice — upward only, so it moves once per arrival and never
+ * back down when the notice leaves — and a press in progress defers the move to the press's end,
+ * so the button is never moved from under a finger. A new offer is PLACED above a standing notice.
+ */
+export interface Rise {
+  action: number | null;
+  lift: number;
+  pressing: boolean;
+  pending: number;
+}
+
+export const AT_REST: Rise = Object.freeze({ action: null, lift: 0, pressing: false, pending: 0 });
+
+export function riseForAction(action: number | null, noticeHeight: number | null): Rise {
+  const lift = action !== null && noticeHeight !== null && noticeHeight > 0 ? noticeHeight + STACK_GAP : 0;
+  return { action, lift, pressing: false, pending: 0 };
+}
+
+export function riseForNotice(r: Rise, noticeHeight: number): Rise {
+  const want = noticeHeight + STACK_GAP;
+  if (r.action === null || noticeHeight <= 0 || want <= r.lift) return r;
+  return r.pressing ? { ...r, pending: Math.max(r.pending, want) } : { ...r, lift: want };
+}
+
+export function riseForPress(r: Rise, pressing: boolean): Rise {
+  if (pressing) return { ...r, pressing: true };
+  return { ...r, pressing: false, lift: Math.max(r.lift, r.pending), pending: 0 };
 }
 
 /** How long an act waits for its sentence to reach the screen before it goes ahead anyway. */

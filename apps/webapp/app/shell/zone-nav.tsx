@@ -78,9 +78,9 @@ function computeZone(): Zone {
     // half the layering truth: the shell renders every higher surface (screening panels,
     // popovers, the tag picker) AFTER the reader element, so only focus in a node the sheet
     // PRECEDES can be a layer above it. The other half is that the node
-    // must BE a layer: an expired Undo toast keeps an invisible, still-focusable button
-    // mounted after the whole shell (`role="status"`, opacity 0 — undo-window.test.ts), and
-    // Tab landing there must not silence the visible reader. Every genuine
+    // must BE a layer: the toast's live regions are mounted after the whole shell
+    // (`role="status"`) and Tab can land on an Undo button there, which must not
+    // silence the visible reader. Every genuine
     // higher surface here is a dialog or menu and carries the role — the shell's own a11y
     // rule, leaned on rather than a second list of overlay class names. Focus in a layer
     // suspends the walk whole ("none"); everything else leaves the sheet in charge.

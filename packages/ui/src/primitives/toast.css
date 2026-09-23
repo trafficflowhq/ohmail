@@ -12,3 +12,8 @@
 .toast-act{margin-left:12px;font-size:calc(12.5px + var(--type-up));font-weight:650;color:var(--accent-ink);
   border:0;background:none;cursor:pointer;font-family:inherit;padding:0}
 .toast-act:hover{text-decoration:underline}
+/* The Undo slot at rest: the capsule's resting geometry, empty, so a toast arriving into it fades and
+   rises from the place a notice does. Over a notice it is lifted by `--toast-lift` (the host). */
+.toast-slot{position:fixed;left:50%;bottom:calc(72px + env(safe-area-inset-bottom,0px));translate:-50% 12px;opacity:0;pointer-events:none}
+.toast.toast-held{translate:-50% calc(12px - var(--toast-lift,0px))}
+.toast.toast-held.on{translate:-50% calc(0px - var(--toast-lift,0px))}

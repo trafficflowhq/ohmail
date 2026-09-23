@@ -23,7 +23,7 @@ import { AppState } from "react-native";
 
 import { Copy } from "../copy";
 import { refuse, type RefusalArg } from "../refusal";
-import { afterDismiss, nextToast, paintGate, type ToastEntry } from "./toast-one";
+import { NO_TOASTS, afterDismiss, nextToast, paintGate, type ToastSlots } from "./toast-one";
 import { useLocale } from "../i18n/LocaleProvider";
 import { activeLocale } from "../i18n/locale";
 import { useConnection } from "../net/connection";
@@ -426,20 +426,20 @@ export function useWorld(): World {
 }
 
 /**
- * The world's toast — one sentence at a time. A rejection carries no verb (the engine already
- * rolled the act back); a verb the wire can reverse carries `undo` and holds for `holdMs`
- * (the 0.20 review — the pill is where the way back lives). The callback enforces its own bound and
- * fires at most once, so a queued entry rendered late can never take back a settled press.
+ * The world's toast — two slots (`state/toast-one.ts`). A rejection carries no verb (the engine
+ * already rolled the act back); a verb the wire can reverse carries `undo` and holds for `holdMs`
+ * in the action slot, which a notice never takes. The callback enforces its own bound and fires
+ * at most once, so an entry rendered late can never take back a settled press.
  */
 export interface WorldToast {
-  toast: ToastEntry | null;
+  slots: ToastSlots;
   /** The pill's own id — see `state/toast-one.ts#afterDismiss` for why it is not optional there. */
   dismiss(id?: number): void;
   /** The pill's layout report — releases every door waiting in `LiveDeps.painted` (`toast-one.ts#paintGate`). */
   onScreen(): void;
 }
 
-const WorldToastContext = createContext<WorldToast>({ toast: null, dismiss: () => undefined, onScreen: () => undefined });
+const WorldToastContext = createContext<WorldToast>({ slots: NO_TOASTS, dismiss: () => undefined, onScreen: () => undefined });
 
 export function useWorldToast(): WorldToast {
   return useContext(WorldToastContext);
@@ -607,11 +607,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     () => (engine ? engine.searchIndexRevision() : 0),
   );
 
-  /* The toast: the NEWEST sentence, and nowhere for a second to wait — the rule and what it
-     costs are in `state/toast-one.ts`. A four-deep queue stood here and dropped the fifth
-     sentence with no record; the sentence a person wants is the one for the press they just
-     made. */
-  const [toastShown, setToastShown] = useState<ToastEntry | null>(null);
+  /* The toast: the NEWEST sentence in each of two slots, and nowhere for a third to wait — the
+     rule and what it costs are in `state/toast-one.ts`. A four-deep queue stood here and dropped
+     the fifth sentence with no record. */
+  const [toastShown, setToastShown] = useState<ToastSlots>(NO_TOASTS);
   const toastSeq = useRef(0);
   const showToast = useCallback((say: RefusalArg, opts?: ToastOpts) => {
     toastSeq.current += 1;
@@ -622,7 +621,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   /* The sentence-on-screen gate: the pill reports its layout here, the doors await it (below). */
   const gate = useRef(paintGate()).current;
   const worldToast = useMemo<WorldToast>(
-    () => ({ toast: toastShown, dismiss: dismissToast, onScreen: gate.onScreen }),
+    () => ({ slots: toastShown, dismiss: dismissToast, onScreen: gate.onScreen }),
     [toastShown, dismissToast, gate],
   );
 
@@ -640,7 +639,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   const sessionKey = session?.ownerKey ?? null;
   useEffect(() => {
     setScopes({});
-    setToastShown(null);
+    setToastShown(NO_TOASTS);
     // Open delete windows commit into the session that armed them (each press captured its own
     // dispatch) — leaving a session is not asking for the deletes back, the webapp's unmount rule.
     flushHeldDeletes();

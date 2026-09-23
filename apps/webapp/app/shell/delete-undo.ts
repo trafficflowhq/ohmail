@@ -209,7 +209,7 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
   const mintPress = deps.pressId ?? (() => crypto.randomUUID());
 
   /** One entry per OPEN PRESS. The ids it holds, and the timer that will commit them. */
-  interface Press { ids: string[]; timer: ReturnType<typeof setTimeout> }
+  interface Press { ids: string[]; timer: ReturnType<typeof setTimeout>; ends: AbortController }
   const open = new Map<string, Press>();
   /** Which press holds a message — the reverse index idempotence and Undo both need. */
   const heldBy = new Map<string, string>();
@@ -227,6 +227,8 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
     const press = open.get(pressId);
     if (!press) return [];
     disarm(press.timer);
+    // The press's Undo capsule goes with its window, early (`flush`, the keyboard's undo) or not.
+    press.ends.abort();
     open.delete(pressId);
     for (const id of press.ids) if (heldBy.get(id) === pressId) heldBy.delete(id);
     return press.ids;
@@ -335,13 +337,15 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
         return true;
       }
       const timer = arm(() => commit(pressId), windowMs);
-      open.set(pressId, { ids, timer });
+      const ends = new AbortController();
+      open.set(pressId, { ids, timer, ends });
       for (const id of ids) heldBy.set(id, pressId);
       publish();
       deps.toast(say(deps.copy.deleted, deps.copy.deletedMany, ids.length), {
         action: deps.copy.undo,
         duration: windowMs,
         onAction: () => { take(pressId); },
+        signal: ends.signal,
       });
       return true;
     },

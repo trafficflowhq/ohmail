@@ -6,14 +6,15 @@
  * inset and carries the factual sentences — freshness, outage, first-sync,
  * unsaved changes — which are state, not brand.
  */
-import { useEffect, useRef } from "react";
-import { AccessibilityInfo, Animated, Easing, Platform, View } from "react-native";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { AccessibilityInfo, Animated, Easing, Platform, View, type LayoutChangeEvent } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { Copy } from "../copy";
 import { sayArg } from "../refusal";
 import { useTheme } from "../theme";
 import { useWorld, useWorldToast } from "../state/world";
+import { AT_REST, riseForAction, riseForNotice, riseForPress, type Rise, type ToastEntry } from "../state/toast-one";
 import { connectionSaid, firstSyncContinuesSaid } from "../state/live";
 import { Icon } from "./Icon";
 import { usePaneChrome } from "./pane-chrome";
@@ -277,37 +278,115 @@ export function Doorbell(
 /* ------------------------------------------------------------------- toast */
 
 /**
- * The toast. Rises once, holds, dismisses itself; under reduced motion a state change is
- * instant, never merely slower. A rejection is one sentence, no verb — the engine already
- * rolled the act back. A verb the wire can reverse carries Undo (the 0.20 review): the pill
- * holds for the entry's own window and the press hands back to the callback, which enforces
- * its own bound and fires at most once — a queued entry rendered late can never take back a
- * settled press. The material is the glass pill, the one toolbar surface (`glass/GlassPill.tsx`).
+ * The toast: two pills over one anchor, the Undo offer above a notice (`state/toast-one.ts`). A
+ * notice arriving under a standing offer lifts the offer by the notice's height — a transform, on
+ * the arrival only, deferred while the button is held — so the offer stays on screen for its whole
+ * window and never moves from under a finger. Reduced motion places it at once (`t.ms`).
  */
 export function Toast() {
+  const t = useTheme();
+  const { slots, dismiss, onScreen } = useWorldToast();
+  const lift = useRef(new Animated.Value(0)).current;
+  const rise = useRef<Rise>(AT_REST);
+  const noticeHeight = useRef<number | null>(null);
+  const newest = Math.max(slots.action?.id ?? 0, slots.notice?.id ?? 0);
+  const actionId = slots.action?.id ?? null;
+  const noticeId = slots.notice?.id ?? null;
+
+  const moveTo = (next: Rise, animate: boolean) => {
+    const before = rise.current.lift;
+    rise.current = next;
+    if (!animate) lift.setValue(-next.lift);
+    else if (next.lift !== before) {
+      Animated.timing(lift, {
+        toValue: -next.lift,
+        duration: t.ms("base"),
+        easing: Easing.bezier(...t.motion.easing.spring),
+        useNativeDriver: true,
+      }).start();
+    }
+  };
+
+  // A new offer is PLACED: above a notice already standing, at the anchor otherwise.
+  useLayoutEffect(() => {
+    if (noticeId === null) noticeHeight.current = null;
+    moveTo(riseForAction(actionId, noticeId === null ? null : noticeHeight.current), false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionId]);
+  useEffect(() => {
+    if (noticeId === null) noticeHeight.current = null;
+  }, [noticeId]);
+
+  return (
+    <>
+      {slots.action ? (
+        <ToastPill
+          entry={slots.action}
+          newest={slots.action.id === newest}
+          dismiss={dismiss}
+          onScreen={onScreen}
+          lift={lift}
+          onPressing={(held) => moveTo(riseForPress(rise.current, held), true)}
+        />
+      ) : null}
+      {slots.notice ? (
+        <ToastPill
+          entry={slots.notice}
+          newest={slots.notice.id === newest}
+          dismiss={dismiss}
+          onScreen={onScreen}
+          onHeight={(h) => {
+            noticeHeight.current = h;
+            moveTo(riseForNotice(rise.current, h), true);
+          }}
+        />
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * One pill. Rises once, holds, dismisses itself; under reduced motion a state change is instant,
+ * never merely slower. A rejection is one sentence, no verb — the engine already rolled the act
+ * back. A verb the wire can reverse carries Undo: the pill holds for the entry's own window and the
+ * press hands back to the callback, which enforces its own bound and fires at most once. The
+ * material is the glass pill, the one toolbar surface (`glass/GlassPill.tsx`).
+ */
+function ToastPill({ entry, newest, dismiss, onScreen, lift, onHeight, onPressing }: {
+  entry: ToastEntry;
+  newest: boolean;
+  dismiss: (id?: number) => void;
+  onScreen: () => void;
+  lift?: Animated.Value;
+  onHeight?: (height: number) => void;
+  onPressing?: (held: boolean) => void;
+}) {
   const t = useTheme();
   const insets = useSafeAreaInsets();
   /* ABOVE WHATEVER STANDS AT THE FOOT. A fixed 74pt cleared the dock and nothing else: on the
      18 Pro the reader's two-row verb bar is taller, and the pill covered Later and Park
      (`bottom-chrome.ts` holds the measurement). The bars report; this reads. */
   const chrome = useBottomChromeExtent();
-  const { toast, dismiss, onScreen } = useWorldToast();
   const anim = useRef(new Animated.Value(0)).current;
-  const message = toast === null ? undefined : sayArg(toast.say);
-  const undo = toast?.undo;
-  const holdMs = toast?.holdMs ?? 3200;
-  // The ID, not the text: the queue can hold two ADJACENT identical sentences (two replies
-  // confirmed by one flush), and an effect keyed on the string would never re-arm the
-  // dismiss timer for the second — a toast that stands forever and blocks the queue.
-  const toastId = toast?.id;
+  const y = useMemo(() => {
+    const slide = anim.interpolate({ inputRange: [0, 1], outputRange: [10, 0] });
+    return lift ? Animated.add(slide, lift) : slide;
+  }, [anim, lift]);
+  const message = sayArg(entry.say);
+  const undo = entry.undo;
+  const holdMs = entry.holdMs ?? 3200;
+  // The ID, not the text: two ADJACENT identical sentences (two replies confirmed by one flush)
+  // must each re-arm the dismiss timer, or the second stands forever.
+  const toastId = entry.id;
   /* THE HOLD COUNTS FROM THE SCREEN, NOT FROM THE COMMIT. Everything a JS task commits is
      mounted at its end, and a task that also re-derives the mirror runs for seconds — measured
      on the 18 Pro: "Undone." (3.2 s) expired before it was ever drawn. So the timer and the fade
      start in `onLayout`, the first moment the pill is on screen, once per entry. */
   const hold = useRef<{ id: number | undefined; timer: ReturnType<typeof setTimeout> | null }>({ id: undefined, timer: null });
-  const laidOut = () => {
-    // The doors waiting on this sentence (`LiveDeps.painted`) may dispatch now — it is on screen.
-    onScreen();
+  const laidOut = (e: LayoutChangeEvent) => {
+    onHeight?.(e.nativeEvent.layout.height);
+    // The doors waiting on the newest sentence (`LiveDeps.painted`) may dispatch now — it is on screen.
+    if (newest) onScreen();
     if (hold.current.id === toastId) return;
     if (hold.current.timer !== null) clearTimeout(hold.current.timer);
     Animated.timing(anim, {
@@ -323,16 +402,13 @@ export function Toast() {
 
   useEffect(() => {
     if (!message) return;
-    /* AND IT IS SPOKEN, not merely drawn. A verb pressed from the reader answered with a pill
-       nobody heard: a view that appears is silent to VoiceOver unless something announces it,
-       and an assistive-tech walk of the 18 Pro read the press as having said nothing. Android
-       has `accessibilityLiveRegion` on the view below; iOS has no live region, so the sentence
-       goes through the announcement door — one outcome, two platform doors. The Undo verb rides
-       the sentence, because a way back nobody is told about is no way back. */
+    /* AND IT IS SPOKEN, not merely drawn: iOS has no live region, so the sentence goes through
+       the announcement door (Android has `accessibilityLiveRegion` below). The Undo verb rides the
+       sentence, because a way back nobody is told about is no way back; a notice QUEUES behind
+       whatever is being read, so it never cuts off the offer it stands beneath. */
     if (Platform.OS === "ios") {
-      AccessibilityInfo.announceForAccessibility(
-        undo ? Copy.ariaLabelDetail(message, Copy.undo) : message,
-      );
+      if (undo) AccessibilityInfo.announceForAccessibility(Copy.ariaLabelDetail(message, Copy.undo));
+      else AccessibilityInfo.announceForAccessibilityWithOptions(message, { queue: true });
     }
     return () => {
       if (hold.current.timer !== null) clearTimeout(hold.current.timer);
@@ -359,9 +435,7 @@ export function Toast() {
         bottom: toastBottom(insets.bottom, chrome),
         zIndex: t.zLayer.toast,
         opacity: anim,
-        transform: [
-          { translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [10, 0] }) },
-        ],
+        transform: [{ translateY: y }],
       }}
     >
       <GlassPill
@@ -377,6 +451,8 @@ export function Toast() {
           <Tap
             accessibilityRole="button"
             accessibilityLabel={Copy.undo}
+            onPressIn={() => onPressing?.(true)}
+            onPressOut={() => onPressing?.(false)}
             onPress={() => {
               undo();
               // This handler belongs to the last PAINTED render; a sentence raised since is

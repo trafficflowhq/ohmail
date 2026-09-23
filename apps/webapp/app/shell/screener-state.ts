@@ -108,6 +108,8 @@ interface PendingEntry {
    * worked.
    */
   quiet: boolean;
+  /** The Undo capsule this decision is offered under, shared by a bulk's rows (`commit` ends it). */
+  offer?: { ids: readonly string[]; ends: AbortController };
   /**
    * WHEN THE READER PRESSED — the same stamp the durable intent carries.
    *
@@ -349,14 +351,13 @@ export interface PendingDecision {
 
 const OUT_MS = 330;
 /**
- * How long "Undo" is true, and the two numbers that have to agree. `ToastHost` drops the `on` class on schedule but never
- * clears state, so the message and its button stay mounted — `pointer-events:none` stops a mouse, not Tab + Enter or a
- * screen reader (proven in jsdom: 20 minutes later the button still fired). And the undo was already dead: `commit` fires on
- * its own timer and `undo` only restores rows still pending, so a late press restored nothing and said "Undone — 0 waiting
- * again." — the product claiming an act it did not perform. So the window is ONE number: `UNDO_MS` is the offer and the
- * commit is derived from it (the shipped pair was 6000 vs 6200 — already a 200 ms slice of this bug). `COMMIT_GRACE_MS`
- * covers the toast's own fade so the capsule is gone before the decision is sent. `undo()` stays independently guarded: only
- * refusing to claim an undo that did not happen fixes the control.
+ * How long "Undo" is true, and the two numbers that have to agree. The window is the GUARD'S, not the capsule's: `commit`
+ * fires on its own timer from the press and `undo` restores only rows still pending, and neither reads the toast — a capsule
+ * replaced by the next decision's leaves this decision's window as it was (`test/undo-window.test.ts`). So the window is ONE
+ * number: `UNDO_MS` is the offer, the Undo slot's duration that no notice shortens, and the commit is derived from it.
+ * `COMMIT_GRACE_MS` covers the capsule's fade, after which `ToastHost` takes its button out of the tree, so the capsule is
+ * gone before the decision is sent. `undo()` stays independently guarded: a late press on a callback held elsewhere is told
+ * the truth ("Too late to undo"), never "Undone — 0 waiting again."
  */
 export const UNDO_MS = 8000;
 const COMMIT_GRACE_MS = 400;
@@ -813,6 +814,9 @@ export function useScreenerState(
     windows.release([id]);
     s.pending.delete(id);
     s.out.delete(id);
+    // THE OFFER ENDS WITH ITS LAST PENDING ROW: committed early (leaving the Screener), its Undo
+    // capsule is withdrawn rather than left standing above the decision's own outcome.
+    if (entry.offer && entry.offer.ids.every((x) => !s.pending.has(x))) entry.offer.ends.abort();
     if (entry.dest === "spam") {
       s.pins = [entry.sender, ...s.pins];
     }
@@ -1096,10 +1100,12 @@ export function useScreenerState(
       toast(`${message} ${tSession("noUndoHere")}`);
       return;
     }
+    entry.offer = { ids: [id], ends: new AbortController() };
     toast(message, {
       action: t("toastUndo"),
       duration: UNDO_MS,
       onAction: () => undo([id]),
+      signal: entry.offer.ends.signal,
     });
   };
 
@@ -1344,10 +1350,13 @@ export function useScreenerState(
       // reports that number, so a partial press says how many came back and a fully expired one
       // takes the `toastUndoExpired` arm. Shortening the capsule to cover the FIRST row instead
       // would leave a forty-row bulk with no undo on screen at all, which is worse.
+      const offer = { ids: snaps.map((x) => x.id), ends: new AbortController() };
+      for (const x of snaps) { const e = s.pending.get(x.id); if (e) e.offer = offer; }
       toast(summary(snaps), {
         action: t("toastUndo"),
         duration: UNDO_MS,
         onAction: () => undo(snaps.map((x) => x.id)),
+        signal: offer.ends.signal,
       });
     }, items.length * BULK_STEP_MS + 160);
   };
