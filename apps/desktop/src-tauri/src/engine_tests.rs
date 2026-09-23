@@ -3865,6 +3865,7 @@ fn the_unlock_press_removes_the_stale_lock_and_starts_the_engine_again() {
         host_plan: Mutex::new(None),
         door: Mutex::new(()),
         leaving: Mutex::new(Leaving::NotStarted),
+        pending_door: AtomicBool::new(false),
     };
     // The lock sits where the PLAN says the engine's data directory is — read the way the press
     // reads it, so the fixture cannot drift from the resolution it exercises.

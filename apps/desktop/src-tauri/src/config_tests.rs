@@ -167,10 +167,8 @@ fn the_pending_door_composes_a_flag_and_its_door_file_and_no_address() {
     let env = env_map(&env_for(&door, root));
     assert_eq!(env.get("OHMAIL_MODE").map(String::as_str), Some("cloud"));
     assert_eq!(env.get(IDENTITY_PENDING_VAR).map(String::as_str), Some("1"));
-    assert_eq!(
-        env.get(DOOR_FILE_VAR).map(String::as_str),
-        Some(root.join(CONFIG_FILE_NAME).to_string_lossy().as_ref()),
-    );
+    let expected = root.join(CONFIG_FILE_NAME).to_string_lossy().into_owned();
+    assert_eq!(env.get(DOOR_FILE_VAR), Some(&expected));
     assert!(!env.contains_key("OHMAIL_MAILBOX_ADDRESS"), "an empty address reached the engine");
     // Round trip, so a hand-written pending file reads as the same door.
     assert_eq!(parse(&to_json(&door)).expect("round trip"), door);
