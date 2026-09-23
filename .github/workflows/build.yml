@@ -681,7 +681,9 @@ jobs:
           CLOUD_URL='https://api.ohmail.app'
           SPLIT_URLS="$(printf '%s\n' "$ALL_URLS" \
             | awk '{ gsub(/https?:\/\//, "\n&"); print }' | grep -E '^https?://' || true)"
-          FIRST_PARTY="$(grep -Ei 'ohmail|mailoh|trafficflow' <<< "$SPLIT_URLS" | sort -u || true)"
+          FIRST_PARTY="$(awk '{ h = $0; sub(/^https?:\/\//, "", h); sub(/[\/?#].*$/, "", h)
+            if (tolower(h) ~ /ohmail|mailoh|trafficflow/ || $0 ~ /^https:\/\/github\.com\/trafficflowhq\//) print }' \
+            <<< "$SPLIT_URLS" | sort -u || true)"
           if [ -z "$FIRST_PARTY" ]; then
             echo "the pinned update feed URL is missing from the binary" >&2
             exit 1
@@ -981,7 +983,13 @@ jobs:
           CLOUD_URL='https://api.ohmail.app'
           SPLIT_URLS="$(printf '%s\n' "$ALL_URLS" \
             | awk '{ gsub(/https?:\/\//, "\n&"); print }' | grep -E '^https?://' || true)"
-          FIRST_PARTY="$(grep -Ei 'ohmail|mailoh|trafficflow' <<< "$SPLIT_URLS" | sort -u || true)"
+          # FIRST-PARTY IS DECIDED BY THE HOST, not by the whole glued string: a
+          # third-party address with one of our own literals stuck to its end
+          # (`https://tailscale.com/download` followed by `OHMAIL_BUILD_COMMIT…`)
+          # is not an endpoint of ours. The feed lives under our GitHub owner.
+          FIRST_PARTY="$(awk '{ h = $0; sub(/^https?:\/\//, "", h); sub(/[\/?#].*$/, "", h)
+            if (tolower(h) ~ /ohmail|mailoh|trafficflow/ || $0 ~ /^https:\/\/github\.com\/trafficflowhq\//) print }' \
+            <<< "$SPLIT_URLS" | sort -u || true)"
           if [ -z "$FIRST_PARTY" ]; then
             echo "the pinned update feed URL is missing from the binary" >&2
             exit 1
@@ -1684,7 +1692,9 @@ jobs:
           CLOUD_URL='https://api.ohmail.app'
           SPLIT_URLS="$(printf '%s\n' "$ALL_URLS" \
             | awk '{ gsub(/https?:\/\//, "\n&"); print }' | grep -E '^https?://' || true)"
-          FIRST_PARTY="$(grep -Ei 'ohmail|mailoh|trafficflow' <<< "$SPLIT_URLS" | sort -u || true)"
+          FIRST_PARTY="$(awk '{ h = $0; sub(/^https?:\/\//, "", h); sub(/[\/?#].*$/, "", h)
+            if (tolower(h) ~ /ohmail|mailoh|trafficflow/ || $0 ~ /^https:\/\/github\.com\/trafficflowhq\//) print }' \
+            <<< "$SPLIT_URLS" | sort -u || true)"
           if [ -z "$FIRST_PARTY" ]; then
             echo "the pinned update feed URL is missing from the binary" >&2
             exit 1
@@ -2689,7 +2699,9 @@ jobs:
           CLOUD_URL='https://api.ohmail.app'
           SPLIT_URLS="$(printf '%s\n' "$ALL_URLS" \
             | awk '{ gsub(/https?:\/\//, "\n&"); print }' | grep -E '^https?://' || true)"
-          FIRST_PARTY="$(grep -Ei 'ohmail|mailoh|trafficflow' <<< "$SPLIT_URLS" | sort -u || true)"
+          FIRST_PARTY="$(awk '{ h = $0; sub(/^https?:\/\//, "", h); sub(/[\/?#].*$/, "", h)
+            if (tolower(h) ~ /ohmail|mailoh|trafficflow/ || $0 ~ /^https:\/\/github\.com\/trafficflowhq\//) print }' \
+            <<< "$SPLIT_URLS" | sort -u || true)"
           if [ -z "$FIRST_PARTY" ]; then
             echo "the pinned update feed URL is missing from the binary" >&2
             exit 1
