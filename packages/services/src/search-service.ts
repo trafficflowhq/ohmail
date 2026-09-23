@@ -24,20 +24,20 @@ const FUZZY_THRESHOLD = 0.3;
 /** The RRF constant: an arm's row at position `r` contributes `1 / (RRF_K + r)`. */
 const RRF_K = 60;
 /** Each arm's cut is `max(FUSE_K_MIN, page × FUSE_K_PER_PAGE)` rows. */
-export const FUSE_K_PER_PAGE = 4;
-export const FUSE_K_MIN = 200;
+const FUSE_K_PER_PAGE = 4;
+const FUSE_K_MIN = 200;
 
 /** A page of ids and what it says about the rest of the match set. */
 interface Page { ids: string[]; seen: number; cut: boolean }
 /** The substring arm's width floor — a trigram's, below which its index cannot select. */
-export const SUBSTRING_MIN_CHARS = 3;
+const SUBSTRING_MIN_CHARS = 3;
 
 /**
  * Does the substring arm run for this query? Shut for a quoted phrase or a `-term` — the reader
  * asking for exactness, which the lexical arm gives — and below a trigram's width unless the
  * query is punctuated (the verbatim case this arm grew out of: `pha/Bet` inside `Alpha/Beta`).
  */
-export function substringOpen(q: string): boolean {
+function substringOpen(q: string): boolean {
   if (q.includes('"') || /(^|\s)-\S/.test(q)) return false;
   return [...q].length >= SUBSTRING_MIN_CHARS || holdsPunctuation(q);
 }
