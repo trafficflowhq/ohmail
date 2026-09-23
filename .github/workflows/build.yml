@@ -719,6 +719,7 @@ jobs:
               # Settings pane reaches that pane by key through the same fixed table.
               'https://ohmail.app/mailbox?settings=devices#/settings'*) : ;;
               'https://ohmail.app/link-desktop'*) : ;;
+              'https://ohmail.app/approve'*) : ;;
               'https://ohmail.app/privacy'*) : ;;
               'https://ohmail.app/subprocessors'*) : ;;
               *) echo "  unexpected first-party URL: $u" >&2; BAD=1 ;;
@@ -1025,6 +1026,7 @@ jobs:
               # Settings pane reaches that pane by key through the same fixed table.
               'https://ohmail.app/mailbox?settings=devices#/settings'*) : ;;
               'https://ohmail.app/link-desktop'*) : ;;
+              'https://ohmail.app/approve'*) : ;;
               'https://ohmail.app/privacy'*) : ;;
               'https://ohmail.app/subprocessors'*) : ;;
               *) echo "  unexpected first-party URL: $u" >&2; BAD=1 ;;
@@ -1730,6 +1732,7 @@ jobs:
               # Settings pane reaches that pane by key through the same fixed table.
               'https://ohmail.app/mailbox?settings=devices#/settings'*) : ;;
               'https://ohmail.app/link-desktop'*) : ;;
+              'https://ohmail.app/approve'*) : ;;
               'https://ohmail.app/privacy'*) : ;;
               'https://ohmail.app/subprocessors'*) : ;;
               *) echo "  unexpected first-party URL: $u" >&2; BAD=1 ;;
@@ -2731,6 +2734,7 @@ jobs:
               'https://ohmail.app/mailbox?settings=mailboxes#/settings'*) : ;;
               'https://ohmail.app/mailbox?settings=devices#/settings'*) : ;;
               'https://ohmail.app/link-desktop'*) : ;;
+              'https://ohmail.app/approve'*) : ;;
               'https://ohmail.app/privacy'*) : ;;
               'https://ohmail.app/subprocessors'*) : ;;
               *) echo "  unexpected first-party URL: $u" >&2; BAD=1 ;;
