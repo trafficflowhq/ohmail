@@ -2929,12 +2929,13 @@ export class OhmailEngine {
     for (const [overlayId, registered] of this.awaitingEcho) {
       if (registered.epoch >= epoch) continue;
       this.awaitingEcho.delete(overlayId);
-      if (!this.overlays.has(overlayId)) continue;
       // The drain proves the log was read, not that this mirror shows the rows: those stay
-      // masked until they agree (see `settleConfirmed`). The durable entry goes with the overlay;
-      // one that survives a refused delete replays idempotently, the safe direction.
+      // masked until they agree (see `settleConfirmed`). A verb with no overlay (its target was
+      // never in this mirror) settles at once. The durable entry goes with the overlay; one that
+      // survives a refused delete replays idempotently, the safe direction.
+      const had = this.overlays.has(overlayId);
       if (this.settleConfirmed(overlayId, registered.m)) void this.dropOutbox(overlayId);
-      swept = true;
+      swept = had || swept;
     }
     swept = this.sweepShadows(epoch) || swept;
     if (swept) {
