@@ -10,7 +10,7 @@ import { recordChange, recordChanges, accountSettings, CAPABILITY_REQUESTS,
   readAccountErasedAt, readMailboxErasedAt,
 } from "@trafficflow/db";
 import {
-  approvals, attachments, awayReplies, drafts, flagState, folderOps, folderState,
+  accountSyncState, approvals, attachments, awayReplies, drafts, flagState, folderOps, folderState,
   mailboxCredentials, mailboxFolders, mailboxProfileMirror,
   mailboxes, messageBodies, messageFailures, messageInstances, messageSearch, messageStates, messages,
   messageTags,
@@ -36,7 +36,7 @@ import type {
 } from "@trafficflow/services/mail";
 import type { LocalDb } from "./db.js";
 import type { LocalWorld } from "./identity.js";
-import type { CloudAuth } from "./cloud-auth.js";
+import { retryAfterMs, type CloudAuth } from "./cloud-auth.js";
 import { stampSynced } from "./sync-stamp.js";
 import { createFirstSyncReporter } from "./first-sync.js";
 import { deleteMailboxRows, mirroredMessageCount } from "./local-mirror.js";
@@ -426,18 +426,19 @@ export interface CloudMirror {
    */
   cloudSeq(): bigint;
   /**
-   * Pull (single-flight) until `cloudSeq() >= target`, or until `deadlineMs` elapses; returns
-   * whether it covered. This is the write-through echo: a hosted mutation echoes its `X-Sync-Seq`
-   * (a cloud seq) and the proxy waits here so the client's immediate re-drain of the local `/sync`
-   * already contains its own write.
+   * The write-through echo: true once `cloudSeq() >= target`, read at every page the pull
+   * commits, so a pull that is still walking cannot hold the answer past `deadlineMs`. The pull
+   * itself runs on; only the wait is bounded. A hosted `Retry-After` is honoured, never beaten.
    */
   awaitCloudSeq(target: bigint, deadlineMs: number): Promise<boolean>;
   /**
-   * One pull that BEGAN after this call, within `deadlineMs`; true when it completed in time. The
-   * echo for a write whose answer names no seq: the pull already in flight may have read the
-   * hosted log before that write committed, so it is waited out and never counted.
+   * The echo for a write whose answer names no seq: a hosted `/sync` page ASKED after this call
+   * that reached the horizon, and with `mailboxes` a mailbox refresh asked after it (one is
+   * started here). A pull already in flight counts from its next ask; its earlier ones never do.
    */
-  awaitFreshPull(deadlineMs: number): Promise<boolean>;
+  awaitFreshPull(deadlineMs: number, need?: { sync?: boolean; mailboxes?: boolean }): Promise<boolean>;
+  /** This install's own change-log head: the sequence the window's `/sync` is written in. */
+  localSeq(): Promise<bigint>;
   /**
    * How many messages the hosted account holds, per hosted mailbox id — the numbers this mirror is
    * draining TOWARD, not the ones it holds. Empty until the first counted refresh (see {@link
@@ -2099,6 +2100,21 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
   /** The single-flight pull: the poll timer and an echo-await share ONE drain. */
   let inflight: Promise<number> | null = null;
+  /* THE ECHO'S CLOCK, read inside a pull. `asked` numbers every hosted `/sync` page and mailbox
+     list as it is ASKED; `horizonAsk` is the ask of the last page that committed with nothing
+     more to give, `boxesAsk` of the last mailbox list applied. `quietUntil` is a hosted
+     `Retry-After`, which no await pulls before. `progressed` wakes the awaits. */
+  let asked = 0;
+  let horizonAsk = 0;
+  let boxesAsk = 0;
+  let quietUntil = 0;
+  const waiters = new Set<() => void>();
+  const progressed = (): void => { for (const w of [...waiters]) w(); };
+  const noteRetryAfter = (res: Response): void => {
+    if (res.status !== 429 && res.status !== 503) return;
+    const ms = retryAfterMs(res, Date.now());
+    if (ms !== null) quietUntil = Math.max(quietUntil, Date.now() + ms);
+  };
   /** Current reconnect delay; grows on failure, resets on success. See {@link scheduleAfter}. */
   let backoffMs = RECONNECT_BASE_MS;
   /**
@@ -2218,7 +2234,15 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     return t - countsAskedAt >= HOSTED_COUNTS_TTL_MS;
   };
 
-  const refreshMailboxes = async (): Promise<MailboxRefreshOutcome> => {
+  /* ONE MAILBOX LIST AT A TIME, applied in the order asked: the echo asks one of its own beside a
+     pull's, and an answer read earlier must never be written over one read later. */
+  let boxesLane: Promise<unknown> = Promise.resolve();
+  const refreshMailboxes = (): Promise<MailboxRefreshOutcome> => {
+    const run = boxesLane.then(refreshMailboxesNow, refreshMailboxesNow);
+    boxesLane = run.catch(() => undefined);
+    return run;
+  };
+  const refreshMailboxesNow = async (): Promise<MailboxRefreshOutcome> => {
     /* THE ONE PLACE COUNTS ARE ASKED FOR. `packages/api`'s route computes them only for
        `?counts=1`, so the ordinary refresh — three a minute — stays the cheap read it has always
        been, and the aggregate happens on the cadence above and nowhere else. The local read
@@ -2233,8 +2257,12 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
          floor is protecting is the ACCOUNT's database, so what has to be recorded is the ASK. */
       countsAskedAt = now().getTime();
     }
+    const ask = ++asked;
     const res = await fetchCloud(wantCounts ? "/mailboxes?counts=1" : "/mailboxes");
-    if (!res.ok) throw new Error(`the hosted /mailboxes answered HTTP ${res.status}`);
+    if (!res.ok) {
+      noteRetryAfter(res);
+      throw new Error(`the hosted /mailboxes answered HTTP ${res.status}`);
+    }
     const body = (await res.json()) as { items?: unknown };
     // A wire boundary, so the shape is checked rather than assumed — an answer that is not a list
     // would otherwise retire every local mailbox and take the mirror with it.
@@ -2245,6 +2273,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     const out = await applyMailboxRefresh(cfg.db, cfg.world, hosted, now());
     knownMailboxes = out.known;
     hostedMailboxIds = hosted.map((m) => m.id);
+    boxesAsk = Math.max(boxesAsk, ask);
+    progressed();
     if (wantCounts) {
       /* The ask is already stamped (above, at issue time) — what lands here is the ANSWER. Both
          reasons that bought this request are spent whether or not it carried numbers: a hosted
@@ -2715,6 +2745,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         limit: String(drainPageLimit(freshened !== null && sweep === null, pageLimit)),
         types: CLOUD_SYNC_TYPES.join(","),
       });
+      const ask = ++asked;
       const res = await fetchCloud(`/sync?${q.toString()}`);
       if (res.status === 410) {
         // The cursor fell behind the retention horizon (`sync-service.ts` — a malformed or
@@ -2747,7 +2778,10 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         cfg.log?.("cloud_cursor_expired", { reason: "410 from /sync; re-bootstrapping from since=0 with mark-and-sweep" });
         continue;
       }
-      if (!res.ok) throw new Error(`the hosted /sync answered HTTP ${res.status}`);
+      if (!res.ok) {
+        noteRetryAfter(res);
+        throw new Error(`the hosted /sync answered HTTP ${res.status}`);
+      }
       let body = (await res.json()) as SyncResponse;
       // The freshen-supersession skip (stage 3). A change at `seq ≤ asOfSeq` for an identity the
       // freshen LANDED is a superseded copy — the freshen's copy is the entity's state AT `asOfSeq`,
@@ -2785,6 +2819,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       // BEHIND. Read at the top of the next pull to decide whether the denominator is worth an
       // aggregate; nothing else reads it, and it changes no drain decision here.
       if (body.hasMore) sawBacklog = true;
+      if (!body.hasMore) horizonAsk = Math.max(horizonAsk, ask);
+      progressed();
       if (!body.hasMore) break;
     }
     return { applied, sweep, cut: false };
@@ -3416,6 +3452,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     if (accountErased) return Promise.resolve(0);
     inflight ??= runPull().finally(() => {
       inflight = null;
+      progressed();
     });
     return inflight;
   };
@@ -3441,42 +3478,69 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       });
   };
 
-  const awaitCloudSeq = async (target: bigint, deadlineMs: number): Promise<boolean> => {
+  /**
+   * Resolves "yes" the moment `covered()` holds (checked at every page, list and settle),
+   * "settled" when `work` settles first, "late" at `end`. Never awaits the work past the deadline.
+   */
+  const until = (covered: () => boolean, work: Promise<unknown>, end: number): Promise<"yes" | "settled" | "late"> =>
+    new Promise((resolve) => {
+      let done = false;
+      const finish = (v: "yes" | "settled" | "late"): void => {
+        if (done) return;
+        done = true;
+        waiters.delete(check);
+        clearTimeout(timer);
+        resolve(v);
+      };
+      const check = (): void => { if (covered()) finish("yes"); };
+      waiters.add(check);
+      const timer = setTimeout(() => finish("late"), Math.max(0, end - Date.now()));
+      void work.then(() => finish(covered() ? "yes" : "settled"), () => finish(covered() ? "yes" : "settled"));
+      check();
+    });
+
+  /**
+   * THE ONE ECHO LOOP: ask (`ask` starts the work — a pull, a list), wait inside it, and stop at
+   * the deadline or a hosted `Retry-After` that falls beyond it. A stopped mirror covers nothing.
+   */
+  const echo = async (covered: () => boolean, ask: () => Promise<unknown>, deadlineMs: number): Promise<boolean> => {
     const end = Date.now() + Math.max(0, deadlineMs);
     for (;;) {
-      if (cloudSeq() >= target) return true;
-      // A stopped mirror never advances again, so waiting on it is waiting for ever — and this loop
-      // would otherwise keep starting pulls against a database that is being closed.
-      if (aborted) return false;
-      try {
-        await pullOnce();
-      } catch {
-        // Offline mid-echo — `runPull` already flipped the flag. Keep trying to the deadline in
-        // case it was a blip, then let the caller answer anyway (the write landed on Cloud).
+      if (covered()) return true;
+      if (aborted || accountErased) return false;
+      if (quietUntil > Date.now()) {
+        if (quietUntil >= end) return false;
+        await until(() => false, new Promise((r) => setTimeout(r, quietUntil - Date.now())), end);
+        continue;
       }
-      if (cloudSeq() >= target) return true;
-      const remaining = end - Date.now();
-      if (remaining <= 0) return false;
-      await new Promise((r) => setTimeout(r, Math.min(50, remaining)));
+      const r = await until(covered, ask(), end);
+      if (r === "yes") return true;
+      if (r === "late" || Date.now() >= end) return false;
+      // A pull that settled short of the target (offline, or it began before the write): once
+      // more, after a breath, so a dead network is not asked in a hot loop.
+      await until(covered, new Promise((w) => setTimeout(w, Math.min(50, end - Date.now()))), end);
     }
   };
 
-  const awaitFreshPull = async (deadlineMs: number): Promise<boolean> => {
-    const end = Date.now() + Math.max(0, deadlineMs);
-    const within = async (p: Promise<unknown>): Promise<boolean> => {
-      const left = end - Date.now();
-      if (left <= 0) return false;
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const late = new Promise<boolean>((r) => { timer = setTimeout(() => r(false), left); });
-      try {
-        return await Promise.race([p.then(() => true, () => false), late]);
-      } finally {
-        clearTimeout(timer);
-      }
-    };
-    if (inflight && !(await within(inflight))) return false;
-    if (aborted) return false;
-    return within(pullOnce());
+  const awaitCloudSeq = (target: bigint, deadlineMs: number): Promise<boolean> =>
+    echo(() => cloudSeq() >= target, () => pullOnce().catch(() => undefined), deadlineMs);
+
+  const awaitFreshPull = (deadlineMs: number, need: { sync?: boolean; mailboxes?: boolean } = {}): Promise<boolean> => {
+    const from = asked;
+    const sync = need.sync ?? true;
+    const boxes = need.mailboxes ?? false;
+    const covered = (): boolean => (!sync || horizonAsk > from) && (!boxes || boxesAsk > from);
+    let listed: Promise<unknown> | null = null;
+    return echo(covered, () => {
+      if (boxes && boxesAsk <= from && listed === null) listed = refreshMailboxes().catch(() => undefined).finally(() => { listed = null; });
+      return sync ? pullOnce().catch(() => undefined) : (listed ?? Promise.resolve());
+    }, deadlineMs);
+  };
+
+  const localSeq = async (): Promise<bigint> => {
+    const rows = await cfg.db.select({ next: accountSyncState.nextSeq }).from(accountSyncState)
+      .where(eq(accountSyncState.accountId, cfg.world.accountId)).limit(1);
+    return rows[0]?.next ?? 0n;
   };
 
   /**
@@ -3489,7 +3553,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     if (stopped || accountErased) return;
     let delay: number;
     if (failed) {
-      delay = backoffMs;
+      delay = Math.max(backoffMs, quietUntil - Date.now());
       backoffMs = Math.min(backoffMs * 2, RECONNECT_MAX_MS);
     } else {
       backoffMs = RECONNECT_BASE_MS;
@@ -3525,6 +3589,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     cloudSeq,
     awaitCloudSeq,
     awaitFreshPull,
+    localSeq,
     // The live map, not a copy: the only caller reads it synchronously to decorate one response,
     // and the map is REPLACED rather than mutated on each counted refresh, so a reader can never
     // observe a half-built one.

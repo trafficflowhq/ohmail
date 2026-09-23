@@ -68,6 +68,7 @@ import { ProviderPicker } from "../../shell/ProviderPicker";
 import { AGO_COPY, agoStamp, dayStamp } from "../../shell/format";
 import { claimLeftBehind, isSyncBlockReason, readerStandDown, showInboundQuiet } from "../../shell/mail-state";
 import { useMailState } from "../../shell/MailStateProvider";
+import { useEngineOrNull } from "../../shell/engine";
 import { displayAddress } from "../../shell/idn";
 /* WHICH BUILD THIS IS, at compile time — the same constant `AccountSection` and `LoginScreen`
    read for the same kind of question. It decides one word of copy below and nothing else. */
@@ -487,6 +488,14 @@ export function MailboxSection() {
    * instead of leaving it a poll period behind.
    */
   const { state: mailState, refresh: refreshMailState } = useMailState();
+  const engine = useEngineOrNull();
+  /* THE POST-COMMIT DRAIN of the mailbox family. A connect, an edit or a removal changes rows the
+     window's mirror carries (a removal closes that mailbox's scheduled sends), and this pane is the
+     only part of the app that knows the write happened; without it they wait for the next poll. */
+  const afterMailboxWrite = useCallback((): void => {
+    refreshMailState();
+    void engine?.syncOnce().catch(() => undefined);
+  }, [engine, refreshMailState]);
 
   const [items, setItems] = useState<MailboxDTO[] | null>(null);
   /**
@@ -1374,7 +1383,7 @@ export function MailboxSection() {
           await refresh();
           // The shell's strip reads the same route on its own slower clock; without this the new
           // mailbox is on this screen and absent from the one above it for up to thirty seconds.
-          refreshMailState();
+          afterMailboxWrite();
           return;
         }
         if (r.status === "declined" || r.status === "expired") {
@@ -1432,7 +1441,7 @@ export function MailboxSection() {
     // value it was given). Re-running on the whole object would cancel a pending poll on every
     // pending answer, which is the loop restarting itself for ever.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [device?.state, refresh, refreshMailState, t]);
+  }, [device?.state, refresh, afterMailboxWrite, t]);
 
   /**
    * THE BOUNCE'S LANDING — READ, NOT PERFORMED. This pane no longer runs the ceremony. `oauth-return.ts` does, at
@@ -1463,7 +1472,7 @@ export function MailboxSection() {
       void refresh();
       // A mailbox that has just been connected is exactly the case the shell's strip exists for, so
       // it must learn now rather than on its next poll.
-      refreshMailState();
+      afterMailboxWrite();
       return;
     }
     if (back.kind === "refused") {
@@ -1475,7 +1484,7 @@ export function MailboxSection() {
     }
     // The server's sentence, as everywhere else in this pane.
     setError(back.message);
-  }, [back, refresh, refreshMailState, t]);
+  }, [back, refresh, afterMailboxWrite, t]);
 
   /** The ceremony's final call is in flight — the pane says so, and the doors are shut. */
   const finishing = back?.kind === "running";
@@ -1606,7 +1615,7 @@ export function MailboxSection() {
       // A mailbox that has just been connected is exactly the case the account strip exists for, so it
       // must learn about it now rather than on its next poll — otherwise the first thing a new
       // customer sees after the ceremony is a shell that still believes they have none.
-      refreshMailState();
+      afterMailboxWrite();
     } catch (err) {
       if (!wins.publish()) return;
       // A refused probe sends the user back to the FORM, not to the factor step. Everything else `connect()` can fail
@@ -1668,7 +1677,7 @@ export function MailboxSection() {
       if (read) setStage("list");
       // The stored credential just changed, so a mailbox that was quarantined may recover on the
       // worker's next pass — the strip reads the same route and should not stay a poll behind.
-      refreshMailState();
+      afterMailboxWrite();
     } catch (err) {
       if (!wins.publish()) return;
       const reason = probeReasonOf(err);
@@ -1725,7 +1734,7 @@ export function MailboxSection() {
       if (read) setStage("list");
       // The rail's strip reads the same route on its own slower clock; without this the pane and
       // the strip disagree about this mailbox for up to thirty seconds.
-      refreshMailState();
+      afterMailboxWrite();
     } catch (err) {
       if (!wins.publish()) return;
       setStage("remove");

@@ -242,7 +242,7 @@ async function envelopeCode(res: Response): Promise<string | null> {
 }
 
 /** `Retry-After` in milliseconds — seconds or an HTTP date — or null when absent or unreadable. */
-function retryAfterMs(res: Response, nowMs: number): number | null {
+export function retryAfterMs(res: Response, nowMs: number): number | null {
   const raw = res.headers.get("retry-after")?.trim() ?? "";
   if (raw === "") return null;
   const seconds = Number(raw);

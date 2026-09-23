@@ -2,23 +2,23 @@ import { RELAY_ALLOWLIST, relayVerdict } from "@trafficflow/api/relay-allowlist"
 import { offlineResponse, type CloudAuth } from "./cloud-auth.js";
 import type { CloudMirror } from "./cloud-mirror.js";
 import type { Diagnostic } from "./log.js";
+import { writeRowsOf } from "./cloud-write-rows.js";
 
 /**
  * The write-through proxy — a Cloud-mode install owns no mailbox, so every WRITE is against the
  * HOSTED account, forwarded here with the bearer. Reads come from the mirror (`cloud-read.ts`);
  * everything else — a move, a mark-read, a rule edit, and the byte reads the mirror never holds
  * (`/attachments/:id`, `/img`) — relays to `api.ohmail.app` over the mirror's `authedFetch` and
- * returns the answer verbatim. The client re-drains local `/sync` after each write, so a 2xx waits
- * (~5 s bound) until the mirror covers its echoed `X-Sync-Seq`, or, echoing none (triage, a Screener
- * decision), for one pull begun after it — else the acted-on row comes back until the next poll.
+ * returns the answer. A 2xx write waits (1.5 s bound) until the local copy holds it (THE
+ * ECHO-AWAIT below); past the bound the window's shadow holds the row the person acted on.
  * Offline is a MODE not a fault: it forwards nothing and answers `503 offline_read_only`.
  */
 
 /** The relay carries this many routes. Read at construction so an empty projection cannot pass. */
 const ALLOWLIST_MIN = 100;
 
-/** How long the echo-await drives the mirror before answering anyway. */
-export const DEFAULT_ECHO_DEADLINE_MS = 5_000;
+/** How long the echo-await waits inside the mirror's pull before answering anyway. */
+export const DEFAULT_ECHO_DEADLINE_MS = 1_500;
 
 export interface WriteThroughProxyConfig {
   auth: CloudAuth;
@@ -48,6 +48,20 @@ export interface WriteThroughProxy {
 
 /** Hop-by-hop / re-authored headers that must not be relayed to Cloud. */
 const STRIP_HEADERS = ["authorization", "host", "content-length", "connection"];
+
+/**
+ * THE ANSWER SPEAKS THIS INSTALL'S SEQUENCE. The hosted `X-Sync-Seq` counts the hosted change log;
+ * the window stamps an echo with it and drains THIS install's `/sync`, a different count, so a
+ * relayed seq outranked every later local change to the row (or lost to older ones). Covered: no
+ * seq, and the window's drain carries the write. Not covered: the local head, which every older
+ * local row is below and the write's own later row is above.
+ */
+function restamped(res: Response, local: bigint | null): Response {
+  const headers = new Headers(res.headers);
+  if (local === null) headers.delete("x-sync-seq");
+  else headers.set("x-sync-seq", local.toString());
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
 
 /** Parse an `X-Sync-Seq` header to a cloud seq, or null when it is absent/unparseable. */
 function parseSeq(raw: string | null): bigint | null {
@@ -130,24 +144,28 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
       return offlineResponse();
     }
 
-    // THE ECHO-AWAIT. A 2xx mutation carrying the hosted seq of its change waits for the mirror to
-    // pull that far; a 2xx write carrying none waits for one pull begun after this answer (hosted
-    // seq order is commit order). Either way the client's immediate local /sync holds its write.
+    // THE ECHO-AWAIT, by what the write changes here (`cloud-write-rows.ts`): nothing (its reads
+    // relay) answers at once; a seq waits for the mirror to pull that far; no seq waits for a page
+    // asked after the answer; mailbox rows for a list asked after it. The window re-drains local
+    // `/sync` next, so a covered write is already in it; what the bound cuts, its shadow holds.
     const target = res.ok ? parseSeq(res.headers.get("x-sync-seq")) : null;
     const write = res.ok && method !== "GET" && method !== "HEAD";
-    if (target !== null || write) {
-      const covered = target !== null
-        ? await cfg.mirror.awaitCloudSeq(target, echoDeadlineMs)
-        : await cfg.mirror.awaitFreshPull(echoDeadlineMs);
-      // Only the miss earns a line: the mirror did not catch up within the bound, so the answer
-      // goes back ahead of the local echo and the next poll reconciles it.
-      if (!covered) {
-        cfg.log?.("cloud_write_echo", {
-          reason: "the mirror did not catch up to the write within the echo bound; answering anyway and reconciling on the next poll",
-        });
-      }
+    const rows = write ? writeRowsOf(method, url.pathname)?.rows ?? "sync" : "none";
+    if (target === null && rows === "none") return res;
+    const boxes = rows === "mailboxes" || rows === "sync+mailboxes";
+    const [seqCovered, freshCovered] = await Promise.all([
+      target !== null ? cfg.mirror.awaitCloudSeq(target, echoDeadlineMs) : Promise.resolve(true),
+      target === null || boxes
+        ? cfg.mirror.awaitFreshPull(echoDeadlineMs, { sync: target === null && rows !== "mailboxes", mailboxes: boxes })
+        : Promise.resolve(true),
+    ]);
+    const covered = seqCovered && freshCovered;
+    if (!covered) {
+      cfg.log?.("cloud_write_echo", {
+        reason: "the mirror did not catch up to the write within the echo bound; answering anyway and reconciling on the next poll",
+      });
     }
-    return res;
+    return target === null ? res : restamped(res, covered ? null : await cfg.mirror.localSeq());
   };
 
   return { forward };

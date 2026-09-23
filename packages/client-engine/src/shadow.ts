@@ -6,8 +6,9 @@ import type { EngineMessage, EngineMutation } from "./types.js";
  * THE ROWS A VERB ACTS ON — the one verb → affected-entity registry the shadow reads. A confirmed
  * verb's effect on these types keeps masking the mirror's copy until that copy AGREES with it
  * ({@link placementOf}); a drain that succeeded is not proof, because the door it read can lag the
- * server that took the write. `[]`: the verb moves no list row, or owns its own confirm path.
- * Keyed by every kind, so a new verb does not compile without a decision here.
+ * server that took the write. `[]`: a create (no stale copy; its echo names the server's id),
+ * a send (its own confirm path), or a verb that edits no row. Keyed by every kind, so a new verb
+ * does not compile without a decision here.
  */
 export const SHADOWED_ROWS = {
   move: ["message"],
@@ -24,15 +25,15 @@ export const SHADOWED_ROWS = {
   draft_resolve: ["draft"],
   mail_send: [],
   tag_create: [],
-  tag_rename: [],
-  tag_recolor: [],
-  tag_delete: [],
+  tag_rename: ["tag"],
+  tag_recolor: ["tag"],
+  tag_delete: ["tag", "message"],
   folder_create: [],
-  folder_rename: [],
-  folder_delete: [],
-  folder_op_dismiss: [],
-  rule_delete: [],
-  rule_update: [],
+  folder_rename: ["folder"],
+  folder_delete: ["folder"],
+  folder_op_dismiss: ["folder"],
+  rule_delete: ["rule"],
+  rule_update: ["rule"],
   rule_create: [],
 } as const satisfies Record<EngineMutation["kind"], readonly string[]>;
 
@@ -112,6 +113,18 @@ export function placementOf(type: string, e: unknown): string {
   }
   if (type === "draft") return JSON.stringify([(e as { status?: string }).status ?? null]);
   if (type === "screener_sender") return JSON.stringify([(e as { segment?: string }).segment ?? null]);
+  if (type === "tag") return JSON.stringify([(e as { name?: string }).name ?? null, (e as { hue?: string }).hue ?? null]);
+  if (type === "rule") {
+    const r = e as { destination?: string; enabled?: boolean };
+    return JSON.stringify([r.destination ?? null, r.enabled !== false]);
+  }
+  // A folder verb is a pending command: the place is where the row is GOING, so the server's
+  // marker and the settled row both agree with the confirm.
+  if (type === "folder") {
+    const op = (e as { op?: { kind?: string; to?: string } }).op;
+    if (op?.kind === "delete") return "gone";
+    return JSON.stringify([op?.kind === "rename" ? op.to ?? null : (e as { name?: string }).name ?? null]);
+  }
   return "held";
 }
 
