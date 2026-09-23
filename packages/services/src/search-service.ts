@@ -289,24 +289,29 @@ export class SearchService {
     // same substring shape this file used to spell inline, ranked by RECENCY for the reason the
     // old comment gave: offline there is no relevance signal left.
     const fuzz = d.search.fuzzy(q, "mail", { trigram: trgm, threshold: FUZZY_THRESHOLD });
-    const lexPred = lex.pred;
     const lexRank = lex.rank;
     const fuzzPred = fuzz.pred;
     const fuzzRank = fuzz.rank;
 
     /**
-     * THE SUBSTRING ARM — the query as characters inside the subject or the sender. A lexeme
-     * match is all-or-nothing, so `axa` never reached `myAXA Portal` or `news@axa.example`.
-     * ILIKE over the two columns the trigram GINs serve (`search-setup.ts`); the recipients have
-     * no index and stay out, and so does the body. Through the seam: `ilike` is the server's
-     * word, the device store folds both sides. Ordered by `fuzz.rank` — word similarity where
-     * pg_trgm exists, recency where it does not — so `AXA` as a whole word leads `myAXA`.
+     * EVERY ARM IS AN ID SET under the account's scope, and the match set is their UNION — never
+     * an OR across the body join, which no index serves (a sequential scan on a large mailbox).
+     * The word arm is two sets, subject and body, each on its own index. The SUBSTRING arm is the
+     * query as characters inside the subject or the sender — `axa` in `myAXA Portal` or
+     * `news@axa.example` — ILIKE over the two columns the trigram GINs serve (`search-setup.ts`);
+     * recipients have no index and stay out. Its order is `fuzz.rank`: word similarity where
+     * pg_trgm exists, recency where it does not, so `AXA` as a whole word leads `myAXA`.
      */
+    const scope = sql`m.account_id = ${ctx.accountId} and m.deleted_at is null`;
+    const lexIds = sql.join(d.search.lexicalIds(q, scope), sql` union `);
     const like = `%${q}%`;
-    const subPred = substringOpen(q)
-      ? sql`(${d.ilike(sql`m.subject`, like)} or ${d.ilike(sql`m.from_address`, like)})`
+    const subIds = substringOpen(q)
+      ? sql`select m.id from messages m where ${scope}
+          and (${d.ilike(sql`m.subject`, like)} or ${d.ilike(sql`m.from_address`, like)})`
       : null;
-    const exactPred = subPred === null ? lexPred : sql`(${lexPred} or ${subPred})`;
+    const lexPred = sql`m.id in (${lexIds})`;
+    const subPred = subIds === null ? null : sql`m.id in (${subIds})`;
+    const exactPred = subIds === null ? lexPred : sql`m.id in (${lexIds} union ${subIds})`;
 
     /**
      * THE TIER IS DECIDED BEFORE A SINGLE ROW IS RANKED. The exact tier's count IS `total`
