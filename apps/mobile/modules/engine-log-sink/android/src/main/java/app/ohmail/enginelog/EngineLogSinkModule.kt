@@ -26,6 +26,9 @@ class EngineLogSinkModule : Module() {
         "warn" -> Log.w(TAG, line)
         else -> Log.i(TAG, line)
       }
+      // Unit, never Log's Int: a lambda returning Int sends expo to its reified return-type
+      // converter at runtime, which throws while the module registers and the app dies at launch.
+      Unit
     }
   }
 
