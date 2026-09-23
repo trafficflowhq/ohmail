@@ -9,41 +9,38 @@
  */
 
 /**
- * Discard is two presses (`RulesView`'s reasoning): `DELETE /drafts/:id` is a real delete, and the only copy of an
- * unsent message is not something a mis-click may take. A reply opens as a reply: a draft with a resolvable
- * `inReplyToMessageId` routes back to the message's own inline editor (the shell decides — only it can look in the
- * mirror). A send that did not confirm is a row here and says so: `draftsList` surfaces `unverified` rows and stale
- * `sending` rows — both hold the only copy of a message that may never have been delivered; opening one recovers the
- * text into a fresh message, never a blind re-send.
+ * Discard is two presses, and both happen where the hand is: the confirm replaces the row's
+ * trailing controls with one sentence and two buttons (Escape keeps). A reply opens as a reply: a
+ * draft with a resolvable `inReplyToMessageId` routes back to the message's own inline editor (the
+ * shell decides — only it can look in the mirror). A send that did not confirm is a row here and
+ * says plainly what is known: `draftsList` surfaces `unverified` rows and stale `sending` rows — both
+ * hold the only copy of a message that may never have been delivered. Discard works on them too.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import type { EngineDraft } from "@ohmail/client-engine";
+import { HELD_SEND_RECHECK_MS, type EngineDraft } from "@ohmail/client-engine";
 import { Button, InfoNote, ListPane, ListRows } from "@ohmail/ui";
 import { displayTime, scheduleLabel } from "../shell/format";
 import { useZoneNav } from "../shell/zone-nav";
 import { HeldSendResolve } from "../components/HeldSendResolve";
 
 /**
- * WHEN A HELD SEND STOPS BEING "NOT CONFIRMED YET" AND BECOMES "WE NEVER CONFIRMED IT".
- *
- * `unverifiedNote` reads as a thing still settling, and for an hour it is. The account behind the
- * 2026-09-16 incident carried one such row for THIRTY-SIX DAYS with the same sentence and the same
- * two verbs, and nobody ever pressed them: nothing on screen said the question had gone stale.
- * Seven days, ruled — it is a READING, not a state: no clock writes anything, the row is still
- * `unverified` on the server, and the two verbs are still the only way out.
+ * Is the engine still looking for this held send? `updatedAt` is the moment the row was left
+ * `unverified` — nothing touches it while it waits — and the reconciler checks the Sent folder for
+ * `HELD_SEND_RECHECK_MS` from then. Inside the window the row says so; past it, that the message is
+ * not in Sent. An unparseable stamp reads as past the window: the sentence that claims less.
  */
-const HELD_STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
-
-/**
- * Has this held row's question been standing longer than the bound? `updatedAt` is the row's last
- * write and nothing touches an `unverified` row while it waits, so it is the moment it was left
- * held. An unparseable stamp reads NOT stale — the softer sentence is the one that claims less.
- */
-function heldIsStale(d: EngineDraft, now: Date): boolean {
+function heldStillChecking(d: EngineDraft, now: Date): boolean {
   const at = Date.parse(d.updatedAt);
-  return Number.isFinite(at) && now.getTime() - at > HELD_STALE_AFTER_MS;
+  return Number.isFinite(at) && now.getTime() - at < HELD_SEND_RECHECK_MS;
+}
+
+/** The refusal a Discard came back with, rendered in its row — never a toast alone. */
+export interface DiscardRefusal {
+  draftId: string;
+  why: "still-sending" | "unknown-jar";
+  at: number;
 }
 
 /** "you, and two others" — the recipients, as a line, or the empty-string for none. */
@@ -59,7 +56,8 @@ export function DraftsView({
   onOpen,
   onDiscard,
   onResolve,
-  askResolveFor,
+  onSendAgain,
+  refusal,
   heldHere,
   onCancelSchedule,
   onEditScheduled,
@@ -90,13 +88,14 @@ export function DraftsView({
    * engine by the shell; this view renders the two verbs and knows nothing about the hold.
    */
   onResolve: (draftId: string, outcome: "arrived" | "not_arrived") => void;
+  /** Send the words again: the shell answers `not_arrived` and opens the message with Send live. */
+  onSendAgain: (draft: EngineDraft) => void;
   /**
-   * The row a Discard was just refused for, stamped by the press that was refused — the list puts
-   * focus on THAT row's pair of verbs. The toast alone named the answer and pointed at nothing: on
-   * a list with ten held rows there are ten identical pairs on screen (measured on the rig,
-   * 2026-09-16), so "tell us whether it arrived" is an instruction with no address.
+   * The row a Discard was just refused for, with why — rendered IN THAT ROW as a sentence and
+   * focused, so a refusal is never silent and never a toast pointing at nothing. Stamped by the
+   * press: a second refusal on the same row is heard again.
    */
-  askResolveFor?: { draftId: string; at: number } | null;
+  refusal?: DiscardRefusal | null;
   /**
    * The rows THIS browser holds by a durable send record — asked of the shell, like `repliesHere`,
    * because only it can read the jar. A record naming a row the mirror still calls `"draft"` is
@@ -124,36 +123,46 @@ export function DraftsView({
    */
   const listRef = useRef<HTMLElement | null>(null);
   const confirmRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (confirming !== null) confirmRef.current?.focus();
-  }, [confirming]);
   /**
-   * A REFUSED DISCARD PUTS FOCUS ON THE VERBS THAT UNBLOCK THAT ROW. Keyed on the press's own
-   * stamp, so a second press on the same row asks again; the ask is never cleared, because a value
-   * left standing cannot fire twice. `.draft-resolve` is a `group`, so focusing the group is what
-   * a screen reader hears — its label is the question — and the first verb is one Tab away.
+   * FOCUS FOLLOWS THE QUESTION BOTH WAYS. Opening puts it on the confirm. Keeping (the button or
+   * Escape) puts it back on the Discard control that opened it — which is UNMOUNTED while the
+   * question stands, since the confirm replaces the action area — so the restore runs after the
+   * re-render, off the row remembered at the close, never off a node that is not there yet.
    */
-  const askedAt = askResolveFor?.at ?? null;
-  const askedFor = askResolveFor?.draftId ?? null;
+  const focusBack = useRef<string | null>(null);
   useEffect(() => {
-    if (askedAt === null || askedFor === null) return;
-    const esc = (globalThis as { CSS?: { escape?: (s: string) => string } }).CSS?.escape
-      ?? ((s: string) => s);
-    const group = listRef.current
-      ?.querySelector<HTMLElement>(`.draft-row[data-id="${esc(askedFor)}"] .draft-resolve`);
-    if (!group) return;
-    group.scrollIntoView({ block: "nearest" });
-    group.focus();
-  }, [askedAt, askedFor]);
-  const closeConfirm = useCallback((draftId: string) => {
-    setConfirming(null);
+    if (confirming !== null) { confirmRef.current?.focus(); return; }
+    const back = focusBack.current;
+    if (back === null) return;
+    focusBack.current = null;
     // `CSS.escape` is fenced because jsdom builds lack it; a draft id is a server UUID, so the
     // raw fallback never actually differs.
     const esc = (globalThis as { CSS?: { escape?: (s: string) => string } }).CSS?.escape
       ?? ((s: string) => s);
     listRef.current
-      ?.querySelector<HTMLButtonElement>(`.draft-row[data-id="${esc(draftId)}"] .draft-discard`)
+      ?.querySelector<HTMLButtonElement>(`.draft-row[data-id="${esc(back)}"] .draft-discard`)
       ?.focus();
+  }, [confirming]);
+  /**
+   * A REFUSED DISCARD IS READ FROM ITS ROW. Keyed on the press's own stamp, so a second refusal on
+   * the same row is heard again. `.draft-refusal` is a live region with `tabIndex={-1}`: focusing
+   * it is what a screen reader hears, and a sighted reader sees it where the press was.
+   */
+  const refusedAt = refusal?.at ?? null;
+  const refusedFor = refusal?.draftId ?? null;
+  useEffect(() => {
+    if (refusedAt === null || refusedFor === null) return;
+    const esc = (globalThis as { CSS?: { escape?: (s: string) => string } }).CSS?.escape
+      ?? ((s: string) => s);
+    const line = listRef.current
+      ?.querySelector<HTMLElement>(`.draft-row[data-id="${esc(refusedFor)}"] .draft-refusal`);
+    if (!line) return;
+    line.scrollIntoView({ block: "nearest" });
+    line.focus();
+  }, [refusedAt, refusedFor]);
+  const closeConfirm = useCallback((draftId: string) => {
+    focusBack.current = draftId;
+    setConfirming(null);
   }, []);
 
   return (
@@ -229,14 +238,16 @@ export function DraftsView({
               return (
                 <div
                   key={d.id}
-                  /* The row a refused Discard was about is MARKED as well as focused: focus alone
-                     is invisible to a sighted reader who was watching the toast, not the list. */
-                  className={askedFor === d.id ? "draft-row draft-row-asked" : "draft-row"}
+                  /* `draft-row-confirming` and `draft-row-held` let the main line wrap: the question,
+                     or a held row's two acts, drop under the draft on a narrow pane instead of
+                     squeezing it. An ordinary row — one control — never wraps. */
+                  className={[
+                    "draft-row",
+                    confirming === d.id ? "draft-row-confirming" : "",
+                    d.status !== "draft" || heldHere?.has(d.id) === true ? "draft-row-held" : "",
+                  ].filter(Boolean).join(" ")}
                   data-id={d.id}
                 >
-                  {/* THE TWO CONTROLS THAT ARE ACTUALLY SIDE BY SIDE, and only those. The
-                      confirm below is a SIBLING of this line, not a third item in it — see
-                      `.draft-row` in `app.css` for what it cost to have it inside. */}
                   <div className="draft-row-main">
                     <button
                       type="button"
@@ -263,9 +274,7 @@ export function DraftsView({
                           exactly "we could not tell", and a claim either way would be a guess. */}
                       {d.status !== "draft" ? (
                         <span className="draft-state" role="status">
-                          {d.status === "unverified"
-                            ? t(heldIsStale(d, now) ? "unverifiedStaleNote" : "unverifiedNote")
-                            : t("interruptedNote")}
+                          {t(heldSentence(d, now))}
                         </span>
                       ) : null}
                       {/* A SCHEDULED SEND THAT COULD NOT BE KEPT (mail 0077). The server's own
@@ -279,59 +288,63 @@ export function DraftsView({
                         </span>
                       ) : null}
                     </button>
-                    {/* THE TRIGGER STAYS ON SCREEN WHILE THE QUESTION IS OPEN — `RulesView`'s
-                        idiom, and the reason is the same: it was SWAPPED for the confirm, so
-                        the row lost its only trailing control and the panel took its place in
-                        the flex line. A disclosure that keeps its trigger can also be closed
-                        from the same place it was opened. */}
-                    <button
-                      type="button"
-                      className="draft-discard"
-                      aria-expanded={confirming === d.id}
-                      onClick={() => setConfirming(confirming === d.id ? null : d.id)}
-                    >
-                      {t("discard")}
-                    </button>
-                  </div>
-                  {/* The stuck row's way out — BOTH stuck rows, which is the correction. A send
-                      whose outcome could not be confirmed was a dead end, and so was one that
-                      never answered at all: each note asked a question with nowhere to put the
-                      answer, so Discard refused the row for ever. These are that answer — the only
-                      two things a reader can know: they looked in Sent, and the message is there
-                      or it is not. `!== "draft"` is exactly the rows carrying a note above, and
-                      `draftsList` only lists a `sending` row once it is past every invocation's
-                      lifetime, so the verbs are never offered for a send still running. Only the
-                      mutation dispatches from here; whether the row may then be discarded is the
-                      shell's predicate on the next render. */}
-                  {d.status !== "draft" || heldHere?.has(d.id) === true ? (
-                    <HeldSendResolve draftId={d.id} onResolve={onResolve} />
-                  ) : null}
-                  {confirming === d.id ? (
-                    <div
-                      ref={confirmRef}
-                      className="draft-confirm"
-                      role="alertdialog"
-                      aria-label={t("discardConfirm")}
-                      aria-describedby={`draft-discard-what-${d.id}`}
-                      tabIndex={-1}
-                    >
-                      {/* SAID BEFORE THE ACT, not after. A draft is the only copy of an unsent
-                          message and the delete is real. */}
-                      <p className="set-note-inline" id={`draft-discard-what-${d.id}`}>
-                        {t("discardWhat")}
-                      </p>
-                      <div className="gate-actions">
-                        <Button
-                          variant="primary"
-                          onClick={() => { setConfirming(null); onDiscard(d.id); }}
-                        >
-                          {t("discardConfirm")}
-                        </Button>
-                        <Button variant="ghost" onClick={() => closeConfirm(d.id)}>
-                          {t("discardCancel")}
-                        </Button>
+                    {/* THE ROW'S CONTROLS, AT THE TRAILING EDGE. A held row (the server says
+                        `unverified` or interrupted, or this browser holds a record for it) carries
+                        the two acts a person can take beside Discard; while the discard question
+                        is open the whole area IS the question — one sentence, Keep, Discard —
+                        so the confirm lands under the finger that pressed. Escape keeps. */}
+                    {confirming === d.id ? (
+                      <div
+                        ref={confirmRef}
+                        className="draft-confirm"
+                        role="alertdialog"
+                        aria-label={t("discardConfirm")}
+                        aria-describedby={`draft-discard-what-${d.id}`}
+                        tabIndex={-1}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") { e.stopPropagation(); closeConfirm(d.id); }
+                        }}
+                      >
+                        <p className="set-note-inline" id={`draft-discard-what-${d.id}`}>
+                          {t("discardWhat")}
+                        </p>
+                        <div className="gate-actions">
+                          <Button variant="ghost" onClick={() => closeConfirm(d.id)}>
+                            {t("discardCancel")}
+                          </Button>
+                          <Button
+                            variant="primary"
+                            onClick={() => { setConfirming(null); onDiscard(d.id); }}
+                          >
+                            {t("discardConfirm")}
+                          </Button>
+                        </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="draft-actions">
+                        {d.status !== "draft" || heldHere?.has(d.id) === true ? (
+                          <HeldSendResolve
+                            draftId={d.id}
+                            label={t(heldSentence(d, now))}
+                            onResolve={onResolve}
+                            onSendAgain={() => onSendAgain(d)}
+                          />
+                        ) : null}
+                        <button
+                          type="button"
+                          className="draft-discard"
+                          aria-expanded={false}
+                          onClick={() => setConfirming(d.id)}
+                        >
+                          {t("discard")}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {refusedFor === d.id ? (
+                    <p className="draft-refusal" role="alert" tabIndex={-1}>
+                      {t(refusal!.why === "still-sending" ? "discardStillSending" : "discardUnknownJar")}
+                    </p>
                   ) : null}
                 </div>
               );
@@ -347,6 +360,19 @@ export function DraftsView({
       </ListPane>
     </section>
   );
+}
+
+/**
+ * WHAT A HELD ROW SAYS — the one reading, for the row's state line and the verbs' label alike. An
+ * `unverified` row: the engine is still looking, or the message is not in Sent. A stale `sending`
+ * row: the send was interrupted and nobody knows.
+ */
+function heldSentence(d: EngineDraft, now: Date): "heldChecking" | "heldNotInSent" | "heldInterrupted" {
+  if (d.status === "unverified") return heldStillChecking(d, now) ? "heldChecking" : "heldNotInSent";
+  if (d.status === "sending") return "heldInterrupted";
+  // A plain `draft` row this browser holds by its own record: the server wrote no word, so the
+  // honest sentence is the one about the window — the record is at most as old as the row.
+  return heldStillChecking(d, now) ? "heldChecking" : "heldNotInSent";
 }
 
 /** The first line of the body, cut — never the html, which this surface never renders. */

@@ -1770,7 +1770,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   const {
     cancelCompose, cancelSchedule, closeCompose, closeReply, compose, composeCloseRefusal,
     composeFrom, discardDraft, draftRepliesHere, draftReply, draftReplyChrome, editScheduled,
-    heldReplyRow, heldResolveAsk, mailSend, onComposeFields, onReplyBody, onReplySig,
+    heldReplyRow, discardRefusal, sendAgain, mailSend, onComposeFields, onReplyBody, onReplySig,
     onReplySubject, openDraft, openForward, openMessageRef, openReply, plan, replyAll,
     replyAttachments, replyBody, replyBook, replyDone, replyEnvelope, replyFromId, replyMode,
     pressSendAndDone, replySendState, replySig, replySubjectEdit, resolveHeldSend, sendCompose, sendReply,
@@ -2929,9 +2929,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 onOpen={openDraft}
                 onDiscard={discardDraft}
                 onResolve={resolveHeldSend}
-                /* Which row a refused Discard was about — the list puts focus on that row's own
-                   pair of verbs. See `heldResolveAsk` above `discardDraft`. */
-                askResolveFor={heldResolveAsk}
+                onSendAgain={sendAgain}
+                /* Which row a refused Discard was about, and why — the list renders the sentence
+                   in that row and focuses it. See `discardRefusal` above `discardDraft`. */
+                refusal={discardRefusal}
                 /* ROWS THIS BROWSER HOLDS BY A DURABLE RECORD, whatever the mirror says. The list
                    offered the resolve verbs on the row's own STATUS alone, so a row held by a
                    record the server never heard about — a send whose answer was lost, the case

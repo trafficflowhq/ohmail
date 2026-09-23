@@ -4,37 +4,40 @@ import { useTranslations } from "next-intl";
 import { Button } from "@ohmail/ui";
 
 /**
- * THE HELD SEND'S WAY OUT — one component for the three doors that show a held message.
+ * THE HELD SEND'S TWO ACTS — one component for the three doors that show a held message.
  *
- * A send the server took and never confirmed may already have arrived, so pressing Send again
- * could deliver it twice. These two verbs are the only things a reader is in a position to know:
- * they looked in their Sent folder, and the message is either there or it is not.
+ * The engine looks in the Sent folder itself for a day (`HELD_SEND_RECHECK_MS`); what is left is
+ * what only a person can decide: send the words again, or say it was sent and let the row go. No
+ * question is asked here — the sentence above these verbs says what is and is not known, and the
+ * door that renders it passes it as the group's label so a screen reader hears the same words.
  *
- * One component because two copies of this markup are two sets of words, and one of them falls
- * behind — which is how the Drafts row came to carry the answers while the editors carried none.
+ * `onSendAgain` defaults to answering `not_arrived`: in an editor the text is already in front of
+ * the person and Send goes live; the Drafts list passes its own, which also opens the message.
  */
 export function HeldSendResolve({
   draftId,
+  label,
   onResolve,
+  onSendAgain,
 }: {
   draftId: string;
+  /** The sentence this pair sits under — the group's accessible name. */
+  label: string;
   onResolve: (draftId: string, outcome: "arrived" | "not_arrived") => void;
+  onSendAgain?: (draftId: string) => void;
 }) {
   const t = useTranslations("drafts");
+  const again = onSendAgain ?? ((id: string) => { onResolve(id, "not_arrived"); });
   return (
-    /* `tabIndex={-1}`: a Discard refused for this row moves focus HERE, so the question the
-       reader has to answer is what they land on and hear, rather than a toast naming verbs that
-       are somewhere on a list of identical pairs. Not reachable by Tab — only by that press. */
-    <div className="draft-resolve" role="group" aria-label={t("resolveWhat")} tabIndex={-1}>
-      <p className="set-note-inline">{t("resolveWhat")}</p>
-      <div className="gate-actions">
-        <Button variant="ghost" onClick={() => { onResolve(draftId, "arrived"); }}>
-          {t("resolveArrived")}
-        </Button>
-        <Button variant="ghost" onClick={() => { onResolve(draftId, "not_arrived"); }}>
-          {t("resolveNotArrived")}
-        </Button>
-      </div>
+    /* `tabIndex={-1}`: a refused Discard moves focus onto the row's refusal sentence, which sits
+       beside this group; the group itself is reachable by Tab through its two buttons. */
+    <div className="draft-resolve" role="group" aria-label={label}>
+      <Button variant="ghost" className="draft-send-again" onClick={() => { again(draftId); }}>
+        {t("sendAgain")}
+      </Button>
+      <Button variant="ghost" className="draft-it-was-sent" onClick={() => { onResolve(draftId, "arrived"); }}>
+        {t("itWasSent")}
+      </Button>
     </div>
   );
 }

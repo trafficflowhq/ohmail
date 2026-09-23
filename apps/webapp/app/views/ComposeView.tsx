@@ -1117,7 +1117,7 @@ export function ComposeView({
             {/* THE VERBS, off the SAME narrowed state the sentence renders from: an unresolved send
                 that does not name this message says nothing here, so it offers no answer either. */}
             {heldResolve !== null && shown.phase === "unverified" ? (
-              <HeldSendResolve draftId={heldResolve.draftId} onResolve={heldResolve.onResolve} />
+              <HeldSendResolve draftId={heldResolve.draftId} label={t("statusUnverified")} onResolve={heldResolve.onResolve} />
             ) : null}
           </div>
         </div>

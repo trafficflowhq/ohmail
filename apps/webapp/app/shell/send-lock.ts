@@ -1037,6 +1037,26 @@ export function releaseSendLockForRow(
   if (kept.length !== rows.length) save(kept, owner);
 }
 
+/**
+ * WHAT THE DRAFTS LIST'S DISCARD DOES WITH THE HOLD. The server is the authority on whether a send
+ * is still running (`pending`, 409 by name) and admits the discard of an `unverified` row, so a hold
+ * by RECORD or by `unverified`/`sent` status goes to the wire — the record is released when the
+ * server confirms. Two refusals stay, each rendered in the row: a row still `sending` (the server
+ * would refuse it anyway, and this saves the round trip), and a jar this browser cannot read
+ * (invariant S(4): every recovery fails closed on `unknown`).
+ */
+export type DiscardDecision =
+  | { kind: "wire" }
+  | { kind: "refuse"; why: "still-sending" | "unknown-jar" };
+
+export function discardDecision(hold: Hold): DiscardDecision {
+  if (hold.kind === "unknown") return { kind: "refuse", why: "unknown-jar" };
+  if (hold.kind === "parked" && hold.by === "status" && hold.status === "sending") {
+    return { kind: "refuse", why: "still-sending" };
+  }
+  return { kind: "wire" };
+}
+
 /** `true` for every hold that is not `free` — the shape a write site's guard reads. */
 export function holdRefusesWrite(hold: Hold): boolean {
   return hold.kind !== "free";

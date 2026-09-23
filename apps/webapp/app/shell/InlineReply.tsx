@@ -869,7 +869,7 @@ export function InlineReply({
           on this lane that does not name this message puts no warning up, so it must offer no
           answer either. The row is the shell's; this component dispatches nothing itself. */}
       {heldResolve !== null && sendStateFor(send, wouldSend).phase === "unverified" ? (
-        <HeldSendResolve draftId={heldResolve.draftId} onResolve={heldResolve.onResolve} />
+        <HeldSendResolve draftId={heldResolve.draftId} label={t("statusUnverified")} onResolve={heldResolve.onResolve} />
       ) : null}
     </div>
   );

@@ -86,7 +86,8 @@ import type { MailboxFacts } from "./mail-state";
 import { readColumnHidden } from "./narrow";
 import { appendRich, EMPTY_RICH, isRichEmpty, type RichValue } from "./rich-text";
 import { go, type Route } from "./routing";
-import { attachSendLockDraft, holdOf, releaseSendLockForRow } from "./send-lock";
+import { attachSendLockDraft, discardDecision, holdOf, releaseSendLockForRow } from "./send-lock";
+import type { DiscardRefusal } from "../views/DraftsView";
 import {
   effectiveSignature,
   effectiveSignatureHtml,
@@ -1383,6 +1384,32 @@ export function useShellCompose({
     },
   );
   /**
+   * SEND THE WORDS AGAIN, from the Drafts list: the server's answer `not_arrived` frees the row to
+   * an ordinary draft (the ledger records the attempt as failed), the durable record is released,
+   * and only then does the message open — in front of the person, with Send live. Never a blind
+   * re-send from a list: sending stays a decision taken while looking at the message. A refusal
+   * leaves the row held and says so; the open is not attempted on a row the server did not free.
+   */
+  const sendAgain = useStableCallback((d: EngineDraft) => {
+    void engine.mutate({ kind: "draft_resolve", draftId: d.id, outcome: "not_arrived" }).then((res) => {
+      if (res.status !== "confirmed") {
+        toast(t(res.error?.code === "send_still_running"
+          ? "drafts.resolveStillRunning"
+          : "drafts.resolveFailed"));
+        return;
+      }
+      if (!resolvedRows.current.has(d.id)) {
+        resolvedRows.current.add(d.id);
+        const heldRow = readComposeRow();
+        releaseSendLockForRow(
+          COMPOSE_SEND_KEY, d.id,
+          heldRow !== null && heldRow === d.id ? composeSessionId() : null,
+        );
+      }
+      openDraft({ ...d, status: "draft", sendError: null, sendAt: null });
+    });
+  });
+  /**
    * ── WHERE A LANE'S REPLY HAS GOT TO, THE ROW INCLUDED ───────────────────────────────────
    *
    * `mailSend.stateOf` alone reads the durable RECORD, which a sweep, a seven-day TTL or another
@@ -1401,30 +1428,20 @@ export function useShellCompose({
     );
   });
   /**
-   * WHICH ROW THE LAST REFUSED DISCARD WAS ABOUT — the Drafts list moves focus to that row's own
-   * "Did this message arrive?" pair when this changes. Stamped rather than cleared: the effect
-   * that reads it fires once per press, and a value left standing can only be re-read by another
-   * press, which carries its own stamp. Naming the verbs in a toast was not enough — on a list
-   * with ten held rows, ten identical pairs are on screen and none of them is the answer to the
-   * press (measured on the rig, 2026-09-16).
+   * THE LAST REFUSED DISCARD, AND WHY — rendered by the Drafts list in that row as a sentence and
+   * focused there. Stamped rather than cleared: the effect that reads it fires once per press, and
+   * a value left standing can only be re-read by another press, which carries its own stamp.
    */
-  const [heldResolveAsk, setHeldResolveAsk] = useState<{ draftId: string; at: number } | null>(null);
+  const [discardRefusal, setDiscardRefusal] = useState<DiscardRefusal | null>(null);
   const discardDraft = useStableCallback(
     (draftId: string) => {
       /**
-       * THE LIST'S DELETE IS A WRITE SITE, AND IT WAS THE ONE NOT COUNTED: Every other `draft_discard` in the shell
-       * goes through the autosave hook, which asks the predicate. This one is a person pressing Delete on a row in
-       * the list and it fired straight at the wire. For a row with a send on record the server refuses it by name
-       * now, so the mutation rolled back and the row came SILENTLY back — the same ending the 500 used to give, and
-       * the reason "a discard that cannot happen says why" was true only from the composer. THE SESSION IS ASKED
-       * ABOUT ONLY FOR THE ROW THIS COMPOSE IS HOLDING — `openDraft`'s rule, for its reason: passing it
-       * unconditionally would park every draft in the account behind one unresolved send, because the session names
-       * whichever message the composer has open.
-       */
-
-      /**
-       * `unknown` is refused with `parked`: a delete cannot be taken back, and a browser that cannot read its own
-       * record has no evidence this row is free.
+       * THE LIST'S DELETE ASKS THE HOLD, AND THE SERVER DECIDES. `discardDecision` keeps two refusals
+       * on this side — a row still `sending`, a jar this browser cannot read — each rendered in the
+       * row. Every other hold goes to the wire: the server admits the discard of an `unverified` row
+       * and refuses a running send by name (409 `send_recorded`), which comes back as the same
+       * rendered sentence. THE SESSION IS ASKED ABOUT ONLY FOR THE ROW THIS COMPOSE IS HOLDING —
+       * `openDraft`'s rule: passing it unconditionally would park every draft behind one send.
        */
       const heldRow = readComposeRow();
       const hold = holdOf(engine, {
@@ -1432,9 +1449,9 @@ export function useShellCompose({
         draftId,
         session: heldRow !== null && heldRow === draftId ? composeSessionId() : null,
       });
-      if (hold.kind !== "free") {
-        toast(t("drafts.heldDiscardBlocked"));
-        setHeldResolveAsk({ draftId, at: Date.now() });
+      const decision = discardDecision(hold);
+      if (decision.kind === "refuse") {
+        setDiscardRefusal({ draftId, why: decision.why, at: Date.now() });
         return;
       }
       /* ── NOTHING IS FORGOTTEN BEFORE THE SERVER HAS ANSWERED — invariant T ─────────────────
@@ -1448,11 +1465,10 @@ export function useShellCompose({
          and the refusal restores the binding instead. */
       void engine.mutate({ kind: "draft_discard", draftId }).then((res) => {
         if (res.status === "rolled_back" && res.error?.code === "send_recorded") {
-          /* THE RACE, ANSWERED THE SAME WAY the local check answers it — and the row comes back,
-             so the compose that was bound to it is bound to it again. */
+          /* A SEND STILL RUNNING, said by the server under its row lock — the row comes back, so
+             the compose that was bound to it is bound to it again, and the row says why. */
           settleComposeRef.current({ kind: "restoredBy409", rowId: draftId });
-          toast(t("drafts.heldDiscardBlocked"));
-          setHeldResolveAsk({ draftId, at: Date.now() });
+          setDiscardRefusal({ draftId, why: "still-sending", at: Date.now() });
           return;
         }
         /**
@@ -1494,7 +1510,16 @@ export function useShellCompose({
             return;
           }
         }
-        // The row's life ends; the block state keyed to it goes with it.
+        // The row's life ends; the block state keyed to it goes with it — and so does the durable
+        // record this browser held for it: the server has answered for the row, so the jar entry
+        // leaves by the one door, once (`resolveHeldSend`'s latch, for its reason).
+        if (!resolvedRows.current.has(draftId)) {
+          resolvedRows.current.add(draftId);
+          releaseSendLockForRow(
+            COMPOSE_SEND_KEY, draftId,
+            heldRow !== null && heldRow === draftId ? composeSessionId() : null,
+          );
+        }
         writeReplyMeta(`draft:${draftId}`, {});
         // The compose form may be holding the very row that was just deleted — discarding from the
         // list while it is open would otherwise leave autosave PATCHing a row that is gone, and
@@ -1766,7 +1791,8 @@ export function useShellCompose({
     draftReplyChrome,
     editScheduled,
     heldReplyRow,
-    heldResolveAsk,
+    discardRefusal,
+    sendAgain,
     mailSend,
     onComposeFields,
     onReplyBody,

@@ -6139,6 +6139,19 @@ input.set-tag-input {
   gap: 10px;
   min-width: 0;
 }
+/* WHILE THE QUESTION IS OPEN THE LINE MAY WRAP: the confirm sits at the trailing edge where the
+   Discard control was, and where the pane is too narrow for both it drops to a second line, still
+   right-aligned — the row expands, nothing is squeezed. Only then: an ordinary row never wraps. */
+.draft-row-confirming .draft-row-main,
+.draft-row-held .draft-row-main { flex-wrap: wrap; }
+/* The row's trailing controls — Discard, or the held row's two acts and Discard. */
+.draft-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
 .draft-row:last-child { border-bottom: 0; }
 /* THE ROW A REFUSED DISCARD WAS ABOUT. The press moves focus into that row's "Did this message
    arrive?" group; this is the same fact for a reader who was watching the toast rather than the
@@ -6148,9 +6161,23 @@ input.set-tag-input {
   background: var(--accent-soft);
   border-radius: calc(var(--r-ctl) * 9 / 8);
 }
-.draft-resolve:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+.draft-resolve { display: flex; align-items: center; gap: 4px; }
+/* A refused discard says why IN THE ROW, at the trailing edge the press came from. */
+.draft-refusal {
+  justify-self: end;
+  max-width: 100%;
+  margin: 0 4px 4px 0;
+  padding: 6px 12px;
+  font-size: calc(12px + var(--type-up));
+  color: var(--ink2);
+  background: var(--accent-soft);
+  border-radius: calc(var(--r-card) * 12 / 14);
+}
+.draft-refusal:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
 .draft-open {
-  flex: 1;
+  /* A basis of 12rem, not 0: while the confirm shares the line the draft keeps a readable floor
+     and the confirm wraps below it instead — the collapse to padding this row once had. */
+  flex: 1 1 12rem;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -6238,12 +6265,26 @@ input.set-tag-input {
   transition: background .15s var(--swift), color .15s var(--swift);
 }
 .draft-discard:hover { color: var(--accent-ink); background: var(--accent-soft); }
-/* The confirm takes the whole row's width so the sentence above the buttons is readable —
-   a two-press delete whose explanation is squeezed into a corner is a one-press delete.
-   `min-width: 0` and NOT a flex declaration: it is a grid item now (see `.draft-row`), which
-   stretches to the column by default and therefore cannot outgrow the pane the way the
-   `flex: 1 0 100%` it replaces did. */
-.draft-confirm,
+/* THE CONFIRM IS WHERE THE HAND IS: one short sentence and two controls, in the row's action area
+   at the trailing edge, replacing the Discard control that was pressed. `flex: 0 0 auto` with
+   `max-width: 100%` and NO grow, NO 100% basis — the shape that once collapsed the draft to its
+   padding is unrepresentable here; when it does not fit beside the draft it wraps under it
+   (`.draft-row-confirming`), right-aligned. */
+.draft-confirm {
+  flex: 0 0 auto;
+  max-width: 100%;
+  min-width: 0;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 4px 4px 4px 12px;
+  border-radius: var(--r-pill);
+  background: var(--accent-soft);
+}
+.draft-confirm .set-note-inline { padding: 0; margin: 0; }
+.draft-confirm .gate-actions { flex-wrap: nowrap; gap: 4px; }
 .compose-confirm {
   min-width: 0;
   padding: 10px 12px 12px;
@@ -6252,7 +6293,6 @@ input.set-tag-input {
 }
 /* The sentence sits directly above the two buttons; the settings variant's 12px bottom pad is
    the panel's own `gate-actions` spacing here. */
-.draft-confirm .set-note-inline,
 .compose-confirm .set-note-inline { padding: 0 0 9px; margin: 0; }
 
 /* ── SEND LATER (mail 0077) ───────────────────────────────────────────────────────────────
