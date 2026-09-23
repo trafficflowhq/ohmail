@@ -1082,6 +1082,23 @@ fn socket_answers(port: u16) -> bool {
     }
 }
 
+/// Whether the port REFUSES a connect within `within`, polled rather than asked once. On a loaded
+/// runner one connect right after the drop read a listener as still up (rc4 x86, 2026-09-23); the
+/// likeliest holder is a child a concurrent test forked, which keeps the fd until its exec. A
+/// listener that is really up answers every attempt for the whole bound.
+fn socket_refuses_within(port: u16, within: Duration) -> bool {
+    let deadline = std::time::Instant::now() + within;
+    loop {
+        if !socket_answers(port) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 /// A directory of this test's own, named for the case so two cases cannot share one, holding the
 /// `host.json` an ARMED install has: `enabled: true`. Seeded rather than absent because an absent
 /// file reads as disabled, which would let a stand-down that wrote nothing pass for one that did.
@@ -1325,7 +1342,10 @@ fn the_record_is_written_before_the_world_so_a_crash_between_them_cannot_host() 
     let boot = HostBoot::detect_with(settings, Some(config::Mode::Local), &probe_ok, None);
     assert!(!boot.armed, "a crash in the gap comes back hosting");
     assert!(boot.spawn.is_none());
-    assert!(!socket_answers(port), "the listener outlived the stand-down");
+    assert!(
+        socket_refuses_within(port, Duration::from_secs(5)),
+        "the listener outlived the stand-down"
+    );
 
     unseal_and_remove(&dir);
 }

@@ -925,13 +925,19 @@ fn with_host_mode_armed_a_closed_window_leaves_the_engine_serving_and_quit_reaps
     assert_eq!(lifecycle_action(true, WindowSignal::MainDestroyed), LifecycleAction::Nothing);
     thread::sleep(Duration::from_millis(150));
     assert!(alive(pid), "the engine died over a close it was never supposed to hear about");
-    assert_eq!(fixture.exits(), 0);
+    assert!(engine.last_exit().is_none(), "a run was reaped over the close");
 
     // Quit — the tray's, or the platform's — is StopEngine in EVERY column, and stop reaps.
     assert_eq!(lifecycle_action(true, WindowSignal::Exit), LifecycleAction::StopEngine);
     engine.stop();
-    wait_for(|| !alive(pid), Duration::from_secs(5), "the engine to be reaped");
-    assert_eq!(fixture.exits(), 1);
+    // THE REAP IS READ OFF waitpid, NEVER OFF THE FAKE'S EXIT LINE. On a loaded runner the child
+    // can outlast quick()'s 400 ms grace, and stop then kills it: a reap that writes no exit line
+    // (rc4 arm64, 2026-09-23, "killing it" 3 ms before this assertion read 0). `last_exit` is the
+    // status the supervisor's wait returned, and kill -0 is the kernel's half.
+    wait_for(|| !alive(pid), Duration::from_secs(10), "the engine to be reaped");
+    let exit = engine.last_exit().expect("stop returned with no reaped status");
+    assert!(exit.served, "the reaped run is not the one that served");
+    assert_eq!(engine.state(), EngineState::Stopped, "the quit was followed by a restart");
 }
 
 /// The listener's announcement crosses from the engine's diagnostic stream into the state the
