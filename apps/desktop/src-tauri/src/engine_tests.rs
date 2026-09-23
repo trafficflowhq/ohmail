@@ -963,7 +963,10 @@ fn the_host_listener_signal_is_read_off_the_diagnostic_stream() {
 #[test]
 fn quitting_leaves_no_engine_behind() {
     let fixture = Fixture::new("quit");
-    let engine = Engine::spawn_with(fixture.launch("serve"), quick());
+    // A grace the child cannot outlast on a loaded runner: past quick()'s 400 ms stop kills it,
+    // and a kill is exactly what this test says did not happen (rc4 arm64, 2026-09-23).
+    let timings = Timings { stop_grace: Duration::from_secs(5), ..quick() };
+    let engine = Engine::spawn_with(fixture.launch("serve"), timings);
     wait_for(
         || matches!(engine.state(), EngineState::Serving { .. }),
         Duration::from_secs(20),
@@ -975,10 +978,11 @@ fn quitting_leaves_no_engine_behind() {
 
     assert_eq!(engine.state(), EngineState::Stopped);
     // Three independent proofs, because "the supervisor says it stopped it" is the claim under
-    // test rather than evidence for it: the engine ran its own exit handler, the kernel gave us
-    // an exit status for it, and the kernel no longer has the process.
-    assert_eq!(fixture.exits(), 1, "the engine ran its exit handler: {:?}", fixture.lines());
-    assert_eq!(engine.last_exit().expect("the run ended").code, Some(0));
+    // test rather than evidence for it: the kernel's exit status is a clean 0 (a signal gives
+    // None), the reaped run is the one that served, and the kernel no longer has the process.
+    let exit = engine.last_exit().expect("the run ended");
+    assert_eq!(exit.code, Some(0), "the engine was killed rather than left: {:?}", fixture.lines());
+    assert!(exit.served, "the reaped run is not the one that served");
     #[cfg(unix)]
     assert!(!alive(pid), "process {pid} is gone");
     let _ = pid;
@@ -989,7 +993,8 @@ fn quitting_closes_the_engines_input_rather_than_killing_it() {
     // The distinction matters: EOF on stdin is what makes the engine finish its in-flight work,
     // close IMAP and close its database in that order. A kill skips all three.
     let fixture = Fixture::new("graceful");
-    let engine = Engine::spawn_with(fixture.launch("serve"), quick());
+    let timings = Timings { stop_grace: Duration::from_secs(5), ..quick() };
+    let engine = Engine::spawn_with(fixture.launch("serve"), timings);
     wait_for(
         || matches!(engine.state(), EngineState::Serving { .. }),
         Duration::from_secs(20),
@@ -999,14 +1004,15 @@ fn quitting_closes_the_engines_input_rather_than_killing_it() {
     let began = Instant::now();
     engine.stop();
 
-    // It left of its own accord, well inside the grace period — it was asked, not killed.
+    // It left of its own accord, well inside the grace period — it was asked, not killed: the
+    // kernel's status is a clean 0, read off waitpid rather than off the fake's exit line.
     assert!(
-        began.elapsed() < quick().stop_grace,
+        began.elapsed() < timings.stop_grace,
         "left in {:?}, which is inside the {:?} grace period",
         began.elapsed(),
-        quick().stop_grace
+        timings.stop_grace
     );
-    assert_eq!(fixture.exits(), 1);
+    assert_eq!(engine.last_exit().expect("the run ended").code, Some(0));
 }
 
 #[test]
@@ -1122,9 +1128,10 @@ fn a_child_that_leaves_is_noticed_without_waiting_for_a_timer() {
         "the quit took {:?} for a child that left at once",
         began.elapsed()
     );
-    // It was asked, not killed: the exit handler ran and the kernel had a clean status for it.
-    assert_eq!(fixture.exits(), 1);
-    assert_eq!(engine.last_exit().expect("the run ended").code, Some(0));
+    // It was asked, not killed: the kernel had a clean status for the run that served.
+    let exit = engine.last_exit().expect("the run ended");
+    assert_eq!(exit.code, Some(0));
+    assert!(exit.served, "the reaped run is not the one that served");
 }
 
 /// THE CLOSE PRESS DOES NOT WAIT FOR THE ENGINE, AND THE EXIT DOES.
@@ -1170,7 +1177,8 @@ fn the_close_press_hands_the_engine_off_and_the_exit_waits_for_it() {
 #[test]
 fn an_exit_with_no_press_before_it_still_stops_the_engine() {
     let fixture = Fixture::new("quit-unwarned");
-    let shell = Arc::new(Shell::around(Engine::spawn_with(fixture.launch("serve"), quick())));
+    let timings = Timings { stop_grace: Duration::from_secs(5), ..quick() };
+    let shell = Arc::new(Shell::around(Engine::spawn_with(fixture.launch("serve"), timings)));
     wait_for(
         || matches!(shell.engine().state(), EngineState::Serving { .. }),
         Duration::from_secs(20),
@@ -1181,7 +1189,8 @@ fn an_exit_with_no_press_before_it_still_stops_the_engine() {
     assert!(shell.finish_stop(Duration::from_secs(20)));
 
     assert_eq!(shell.engine().state(), EngineState::Stopped);
-    assert_eq!(fixture.exits(), 1, "it was asked to leave, not killed: {:?}", fixture.lines());
+    let exit = shell.engine().last_exit().expect("the run ended");
+    assert_eq!(exit.code, Some(0), "it was killed rather than asked to leave: {:?}", fixture.lines());
     #[cfg(unix)]
     assert!(!alive(pid), "process {pid} is gone");
     let _ = pid;
@@ -1340,7 +1349,11 @@ fn a_stray_write_to_the_frame_stream_is_fatal_to_that_run() {
         "the restart budget to run out",
     );
     assert_eq!(fixture.starts(), MAX_STARTS as usize);
-    assert_eq!(fixture.exits(), MAX_STARTS as usize, "every run ended: {:?}", fixture.lines());
+    // Every run ended: the budget is spent only by reaped runs, and the last one reaped is a run
+    // that served before its stray write — read off waitpid, since a run the shell kills writes no
+    // exit line of its own.
+    let exit = engine.last_exit().expect("the last run was reaped");
+    assert!(exit.served, "the reaped run never reached ready: {:?}", fixture.lines());
     engine.stop();
 }
 

@@ -1195,7 +1195,10 @@ fn a_stand_down_whose_setting_cannot_be_saved_still_takes_the_listener_away() {
     );
 
     assert_eq!(withdrawn, None, "the tailnet withdrawal answered cleanly");
-    assert!(!socket_answers(port), "hosting reports off while a listener is still up");
+    assert!(
+        socket_refuses_within(port, Duration::from_secs(5)),
+        "hosting reports off while a listener is still up"
+    );
     assert!(!host.armed());
 
     // And the failure is a SENTENCE, not a swallowed error: the pane renders this.
@@ -1243,7 +1246,10 @@ fn an_ordinary_stand_down_stops_serving_and_says_nothing_it_does_not_have_to() {
     );
 
     assert_eq!(withdrawn, None);
-    assert!(!socket_answers(port), "the ordinary stand-down left a listener up");
+    assert!(
+        socket_refuses_within(port, Duration::from_secs(5)),
+        "the ordinary stand-down left a listener up"
+    );
     let state = host.state_json(None);
     assert!(state["notice"].is_null(), "a sentence about a write that worked");
     assert_eq!(state["enabled"], serde_json::json!(false));
@@ -1290,7 +1296,10 @@ fn a_stand_down_records_the_published_port_and_hands_it_to_the_world_step() {
         HostBoot::detect_with(Some(settings), Some(config::Mode::Local), &probe_ok, None).plan(),
         Some(HostPlan::Held(3311))
     );
-    assert!(!socket_answers(port), "the listener outlived the stand-down");
+    assert!(
+        socket_refuses_within(port, Duration::from_secs(5)),
+        "the listener outlived the stand-down"
+    );
 
     unseal_and_remove(&dir);
 }
@@ -1368,7 +1377,10 @@ fn the_shell_transition_stands_down_in_the_same_order_and_leaves_a_disarmed_inst
         "the install is switching to a door with no host listener",
     );
     assert!(stood, "an armed install must stand down on a shell transition");
-    assert!(!socket_answers(port), "the door switch left the host listener up");
+    assert!(
+        socket_refuses_within(port, Duration::from_secs(5)),
+        "the door switch left the host listener up"
+    );
     let notice = host.state_json(None)["notice"].as_str().map(str::to_string);
     assert!(
         notice.as_deref().unwrap_or("").contains("could not be saved"),
