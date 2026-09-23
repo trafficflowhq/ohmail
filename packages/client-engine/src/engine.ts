@@ -1870,7 +1870,7 @@ export class OhmailEngine {
    * lifetime is bound to the verb, not to any single drain attempt — the retry itself is the scheduler's ordinary
    * (bounded, backed-off) cadence, so no new retry loop exists here.
    */
-  private readonly awaitingEcho = new Map<string, { epoch: number; m: EngineMutation }>();
+  private readonly awaitingEcho = new Map<string, { epoch: number; m: EngineMutation; shadow: boolean }>();
   /**
    * CONFIRMED VERBS WHOSE ROWS THE MIRROR HAS NOT SHOWN YET — overlay id → the rows it masks
    * (`shadow.ts`). A successful drain is not proof: a door can answer /sync from a copy behind the
@@ -2934,7 +2934,7 @@ export class OhmailEngine {
       // never in this mirror) settles at once. The durable entry goes with the overlay; one that
       // survives a refused delete replays idempotently, the safe direction.
       const had = this.overlays.has(overlayId);
-      if (this.settleConfirmed(overlayId, registered.m)) void this.dropOutbox(overlayId);
+      if (this.settleConfirmed(overlayId, registered.m, registered.shadow)) void this.dropOutbox(overlayId);
       swept = had || swept;
     }
     swept = this.sweepShadows(epoch) || swept;
@@ -2948,12 +2948,14 @@ export class OhmailEngine {
    * A CONFIRMED VERB'S ECHO IS IN — retire its overlay, unless the mirror still disagrees with a
    * row it moved: then only the rows the mirror HOLDS stay masked (a created entity has no stale
    * copy to hide) and the verb waits in {@link shadows}. True when the overlay retired, and the
-   * caller then drops the durable entry. The caller bumps the overlay rev.
+   * caller then drops the durable entry. The caller bumps the overlay rev. `shadow: false` for a
+   * confirm naming `pendingWith`: the server took it and another install applies it, so the
+   * mirror is right to disagree and the surface shows it decided-and-waiting instead.
    */
-  private settleConfirmed(id: string, m: EngineMutation): boolean {
+  private settleConfirmed(id: string, m: EngineMutation, shadow = true): boolean {
     const effects = this.overlays.get(id);
     const held = (type: string, eid: string): boolean => this.store.record(type, eid) !== undefined;
-    const keys = effects ? shadowKeysOf(m, effects, held) : [];
+    const keys = effects && shadow ? shadowKeysOf(m, effects, held) : [];
     if (keys.length === 0 || shadowAgrees(keys, this.storeTruth)) {
       this.shadows.delete(id);
       this.overlays.delete(id);
@@ -6039,6 +6041,8 @@ export class OhmailEngine {
        * late would let a drain that began BEFORE the POST returned retire the overlay.
        */
       const epochAtConfirm = this.drainEpoch;
+      /** A confirm that names another install as the one to act is not shadowed (settleConfirmed). */
+      const shadow = !outcome.pendingWith;
       /** Whether the overlay must OUTLIVE this dispatch — set by the two no-echo-yet arms below. */
       let echoPending = false;
       /**
@@ -6067,7 +6071,7 @@ export class OhmailEngine {
           // committed mutation — the exact inversion this file's send path documents — so the
           // overlay stands as awaiting-echo instead, and the next successful drain (over a
           // store whose own recovery is a reload) retires it.
-          this.awaitingEcho.set(p.id, { epoch: epochAtConfirm, m: p.mutation });
+          this.awaitingEcho.set(p.id, { epoch: epochAtConfirm, m: p.mutation, shadow });
           echoPending = true;
         }
       } else if (p.mutation.kind === "mail_send") {
@@ -6110,7 +6114,7 @@ export class OhmailEngine {
          * drain that began after this POST completes — bounded by the scheduler's ordinary cadence.
          */
         if (opts.deferReconcile) {
-          this.awaitingEcho.set(p.id, { epoch: epochAtConfirm, m: p.mutation });
+          this.awaitingEcho.set(p.id, { epoch: epochAtConfirm, m: p.mutation, shadow });
           echoPending = true;
           opts.onReconcileDeferred?.("await");
         } else {
@@ -6119,7 +6123,7 @@ export class OhmailEngine {
           } catch {
             // The write landed; the mirror catches up on the next successful drain, and the
             // overlay stands until that drain proves the echo applied.
-            this.awaitingEcho.set(p.id, { epoch: epochAtConfirm, m: p.mutation });
+            this.awaitingEcho.set(p.id, { epoch: epochAtConfirm, m: p.mutation, shadow });
             echoPending = true;
           }
         }
@@ -6148,7 +6152,7 @@ export class OhmailEngine {
       // Both are released together by {@link OhmailEngine.drain}'s sweep, and
       // a kill before that sweep replays the entry under its original key — the server's
       // idempotency machinery answers with the stored response, never a second effect.
-      if (!echoPending && this.settleConfirmed(p.id, p.mutation)) await this.dropOutbox(p.id);
+      if (!echoPending && this.settleConfirmed(p.id, p.mutation, shadow)) await this.dropOutbox(p.id);
       // The Sent copy was materialised the instant the server confirmed, above — a rejection
       // reaches the `catch` below and never gets here, which is the "DROP on send rejection"
       // half, unchanged by moving the call up.

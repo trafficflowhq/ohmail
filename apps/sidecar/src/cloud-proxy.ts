@@ -8,10 +8,9 @@ import type { Diagnostic } from "./log.js";
  * HOSTED account, forwarded here with the bearer. Reads come from the mirror (`cloud-read.ts`);
  * everything else — a move, a mark-read, a rule edit, and the byte reads the mirror never holds
  * (`/attachments/:id`, `/img`) — relays to `api.ohmail.app` over the mirror's `authedFetch` and
- * returns the answer verbatim. The echo-await matters because the client re-drains local `/sync`
- * after each write: on a 2xx echoing `X-Sync-Seq` the proxy WAITS until the mirror's cloud cursor
- * covers that seq, and on a 2xx write echoing none (triage, a Screener decision) for one pull begun
- * after the answer — both bounded ~5 s — or the acted-on row comes back until the next poll.
+ * returns the answer verbatim. The client re-drains local `/sync` after each write, so a 2xx waits
+ * (~5 s bound) until the mirror covers its echoed `X-Sync-Seq`, or, echoing none (triage, a Screener
+ * decision), for one pull begun after it — else the acted-on row comes back until the next poll.
  * Offline is a MODE not a fault: it forwards nothing and answers `503 offline_read_only`.
  */
 
