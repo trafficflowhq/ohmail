@@ -1,7 +1,8 @@
 import { sql, type SQL } from "drizzle-orm";
 import { holdsPunctuation, showSimilar, type SearchTier } from "@trafficflow/core/search-rank";
+import { searchIndexBuilt, searchIndexProgress } from "@trafficflow/core/mail";
 import type { ServiceContext, Db } from "./context.js";
-import { boolLiteral, dialect, pgOnly, type Dialect } from "@trafficflow/db/dialect";
+import { boolLiteral, dialect, pgOnly, type Dialect, type SearchArm } from "@trafficflow/db/dialect";
 import { materializeMessages } from "./dto/materialize.js";
 import { clampLimit } from "./pagination.js";
 import { ServiceError } from "./errors.js";
@@ -9,42 +10,46 @@ import { instantRefusal, readInstant } from "./instant.js";
 import type { MessageDTO } from "./dto/types.js";
 
 /**
- * Hybrid search in TWO TIERS. The EXACT tier fuses two literal arms by RRF: lexical
- * (`websearch_to_tsquery` over `subject_tsv`/`body_tsv`, `ts_rank`) and substring (the query's
- * characters inside the subject or sender, so `axa` finds `myAXA`). The SIMILAR tier — pg_trgm
- * `word_similarity` typo guesses — runs ONLY when the exact tier found nothing, and is never
- * fused: RRF ranks by position, so a guess at rank one beat a real match at rank five
- * (`graphite` returned "Grat" mail above the body that says graphite). A substring row is not a
- * guess — the characters are there. Tier rule: `@trafficflow/core/search-rank`, shared with the
- * client index. Search reads only subject / from_address / the STORED redacted body.
+ * SEARCH OVER THE STORE'S SEARCH DOCUMENT (mail 0125), fused from index-shaped ARMS — each its own
+ * id set on its own index, never an OR across a join. EXACT tier: `head` (subject, people, file
+ * names — ranked), `text` (the body — newest first) and `substring` (`axa` in `myAXA`), each cut at
+ * its TOP-K, fused by reciprocal rank, paged AFTER fusion by a `(score, date, id)` cursor. The
+ * SIMILAR tier (typo guesses) runs only when the exact tier is empty. The first page carries no
+ * count; `total` and facets are {@link SearchService.summary}. Rows without a document yet are
+ * read through the pre-0125 columns until the account's backfill marker is written.
  */
 
-/** pg_trgm word-similarity floor for the fuzzy arm (Postgres default is 0.3). */
+/** pg_trgm word-similarity floor for the typo tier (Postgres default is 0.3). */
 const FUZZY_THRESHOLD = 0.3;
-/** The RRF constant: an arm's row at position `r` contributes `1 / (RRF_K + r)`. */
+/** The RRF constant: an arm's row at position `r` contributes `RRF_SCALE / (RRF_K + r)`. */
 const RRF_K = 60;
-/** Each arm's cut is `max(FUSE_K_MIN, page × FUSE_K_PER_PAGE)` rows. */
-const FUSE_K_PER_PAGE = 4;
-const FUSE_K_MIN = 200;
-
-/** A page of ids and what it says about the rest of the match set. */
-interface Page { ids: string[]; seen: number; cut: boolean }
+/** Integer scores, so a page cursor compares exactly on every store. */
+const RRF_SCALE = 1_000_000_000;
 /** The substring arm's width floor — a trigram's, below which its index cannot select. */
 const SUBSTRING_MIN_CHARS = 3;
+/** The page ceiling for search — each arm reads {@link SEARCH_ARM_FACTOR} pages' worth. */
+const SEARCH_PAGE_MAX = 50;
+/** Each arm's cut, in pages: RRF fuses the top `factor × page` of every arm, never a whole id set. */
+const SEARCH_ARM_FACTOR = 8;
+/**
+ * A RANKED arm ranks only its newest `window × page` candidates: ranking every match of a broad
+ * word costs one rank per match, where the newest window is read off the History index in order
+ * and costs the window. A narrow word has fewer matches than the window, so its ranking is exact.
+ */
+const SEARCH_RANK_WINDOW_FACTOR = 40;
+/** How many senders the sender facet returns. */
+const SENDER_FACET_LIMIT = 10;
 
 /**
  * Does the substring arm run for this query? Shut for a quoted phrase or a `-term` — the reader
- * asking for exactness, which the lexical arm gives — and below a trigram's width unless the
- * query is punctuated (the verbatim case this arm grew out of: `pha/Bet` inside `Alpha/Beta`).
+ * asking for exactness, which the word arms give — and below a trigram's width unless the query is
+ * punctuated (`pha/Bet` inside `Alpha/Beta`, one lexeme to the word arms).
  */
 function substringOpen(q: string): boolean {
   if (q.includes('"') || /(^|\s)-\S/.test(q)) return false;
   return [...q].length >= SUBSTRING_MIN_CHARS || holdsPunctuation(q);
 }
-/** How many senders the sender facet returns. */
-const SENDER_FACET_LIMIT = 10;
 
-/** Filters narrow the query — applied uniformly to results, facets, and total. */
 export interface SearchFilters {
   folder?: string;            // a Destination (folder_state.desiredFolder, else native/INBOX)
   sender?: string;            // exact from_address (case-insensitive) — a facet click
@@ -116,6 +121,57 @@ export interface SearchOptions {
   sort?: SearchSort;
   /** Absent means `both`. */
   parts?: SearchParts;
+  /** The `nextCursor` of the previous page, for the same `q`, filters and sort. */
+  cursor?: string;
+}
+
+export interface SearchResult {
+  items: MessageDTO[];
+  /** `null` when only the page was asked for (`parts: "page"`). */
+  facets: Facets | null;
+  /** How many messages match, over the tier being returned — never over both tiers. */
+  total: number;
+  /** WHICH TIER THIS ANSWER IS: `exact` literal matches, or `similar` typo guesses. Never mixed. */
+  tier: SearchTier;
+  /** `false` when `total` is a lower bound: the page alone was asked for and an arm was cut. */
+  totalExact: boolean;
+  /**
+   * With `parts: "page"` and a cut arm: about how many match — the planner's estimate for each
+   * cut arm, the largest of them, read from statistics and no row. `parts: "summary"` is exact.
+   */
+  totalEstimate?: number;
+  /** This answer's server time in milliseconds. */
+  ms: number;
+  /** The next page's cursor, or `null` on the last page (always `null` for `summary`). */
+  nextCursor: string | null;
+  /**
+   * On the last RELEVANCE page: an arm was cut at its top-K, so matches exist past the fused set
+   * and the date orders walk them all.
+   */
+  bounded: boolean;
+  /** Present on a summary while this account's search documents are still being built. */
+  indexed?: { done: number; total: number };
+}
+
+/** One page, before the summary is joined to it. */
+interface SearchPage {
+  items: MessageDTO[];
+  tier: SearchTier;
+  nextCursor: string | null;
+  bounded: boolean;
+  /** The fused candidates' count — the whole match set when no arm was cut. */
+  candidates: number;
+  cut: boolean;
+  /** When cut: the planner's estimate of the match set, from each cut arm's statistics. */
+  estimate: number | null;
+}
+
+/** The counts over the whole match set. */
+interface SearchSummary {
+  total: number;
+  facets: Facets;
+  tier: SearchTier;
+  indexed?: { done: number; total: number };
 }
 
 export interface Facets {
@@ -127,31 +183,6 @@ export interface Facets {
   hasAttachments: { true: number; false: number };
   /** coarse recency buckets. */
   date: { today: number; last7: number; last30: number; older: number };
-}
-
-export interface SearchResult {
-  items: MessageDTO[];
-  /** `null` when only the page was asked for (`parts: "page"`). */
-  facets: Facets | null;
-  /**
-   * How many messages match — COUNTED OVER THE TIER THAT IS BEING RETURNED, never over both
-   * arms. It used to count `lexical or fuzzy`, so a query with five real answers reported ten
-   * and the number under the box described rows the reader could not see the point of.
-   */
-  total: number;
-  /**
-   * WHICH TIER THIS ANSWER IS. `exact` when the lexical arm matched; `similar` when it did not
-   * and these rows are typo-tolerant guesses. Never a mixture — see the class header.
-   *
-   * A caller that renders `similar` rows without saying so is making the claim this field
-   * exists to remove, which is why it is on the result and not left to be inferred from an
-   * empty-looking list.
-   */
-  tier: SearchTier;
-  /** `false` when `total` is a lower bound: the page alone was asked for and an arm was cut. */
-  totalExact: boolean;
-  /** This answer's server time in milliseconds. */
-  ms: number;
 }
 
 /**
@@ -200,28 +231,21 @@ export interface AddressSearchResult {
   direction: AddressSearchDirection;
 }
 
+/** The empty facets — a blank query, or a query nothing matches. */
+function emptyFacets(): Facets {
+  return {
+    folder: {}, sender: [],
+    unread: { true: 0, false: 0 },
+    hasAttachments: { true: 0, false: 0 },
+    date: { today: 0, last7: 0, last30: 0, older: 0 },
+  };
+}
+
 /** Normalize the driver-specific `execute` shape: postgres-js returns an array,
  *  PGlite returns `{ rows }`. Keep every read below driver-agnostic. */
 function rowsOf<T>(result: unknown): T[] {
   if (Array.isArray(result)) return result as T[];
   return ((result as { rows?: T[] }).rows ?? []) as T[];
-}
-
-/** The empty result — used for a blank query (no predicate would be safe/meaningful). */
-function emptyResult(): SearchResult {
-  return {
-    items: [],
-    facets: {
-      folder: {}, sender: [],
-      unread: { true: 0, false: 0 },
-      hasAttachments: { true: 0, false: 0 },
-      date: { today: 0, last7: 0, last30: 0, older: 0 },
-    },
-    total: 0,
-    tier: "exact",
-    totalExact: true,
-    ms: 0,
-  };
 }
 
 // pg_trgm presence is a property of the physical database, not the request; memoize
@@ -252,136 +276,350 @@ function hasTrgm(db: Db): Promise<boolean> {
   return p;
 }
 
+/** One branch of an arm: an index-served predicate and the rank the arm orders by. */
+interface Branch { readonly pred: SQL; readonly rank: SQL }
+/**
+ * An arm: its branches (one per index), cut at its top-K after they are merged. `ranked`: ordered
+ * by its rank within the newest candidates; otherwise newest first, read off the History index.
+ */
+interface Arm { readonly name: string; readonly ranked: boolean; readonly branches: readonly Branch[] }
+
+/** A relevance cursor: the last row's fused score, date and id, and the tier it belongs to. */
+interface RelevanceCursor { readonly k: "r"; readonly t: SearchTier; readonly s: number; readonly d: number | null; readonly i: string }
+/** A date-order cursor: the last row's sort keys and id. */
+interface OrderedCursor { readonly k: "o"; readonly t: SearchTier; readonly o: string; readonly x: string | null; readonly d: number | null; readonly i: string }
+type SearchCursor = RelevanceCursor | OrderedCursor;
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** A cursor is ours or refused: the longest one this file writes is well under this. */
+const SEARCH_CURSOR_MAX_CHARS = 1024;
+
+function encodeCursor(c: SearchCursor): string {
+  return Buffer.from(JSON.stringify(c), "utf8").toString("base64url");
+}
+
+/** Decode a cursor this service wrote, or refuse it — a malformed one is a 400, never a guess. */
+function decodeCursor(raw: string): SearchCursor {
+  const bad = (): never => { throw new ServiceError("validation_failed", 400, "cursor is not a search cursor"); };
+  if (raw.length > SEARCH_CURSOR_MAX_CHARS) bad();
+  let v: unknown;
+  try { v = JSON.parse(Buffer.from(raw, "base64url").toString("utf8")); } catch {
+    bad(); // not base64url JSON: refused as not ours
+  }
+  const c = v as Record<string, unknown>;
+  const tierOk = c.t === "exact" || c.t === "similar";
+  const dateOk = c.d === null || (typeof c.d === "number" && Number.isFinite(c.d));
+  const idOk = typeof c.i === "string" && UUID_RE.test(c.i);
+  if (!c || typeof c !== "object" || !tierOk || !dateOk || !idOk) bad();
+  if (c.k === "r" && typeof c.s === "number" && Number.isInteger(c.s)) return c as unknown as RelevanceCursor;
+  if (c.k === "o" && typeof c.o === "string" && (SEARCH_SORTS as readonly string[]).includes(c.o)
+    && (c.x === null || typeof c.x === "string")) return c as unknown as OrderedCursor;
+  return bad();
+}
+
+/** An instant as the cursor carries it — what either driver handed back, in milliseconds. */
+function millisOf(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+  if (v instanceof Date) return v.getTime();
+  if (typeof v === "number") return v;
+  const n = Date.parse(String(v));
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Strictly after `(date, id)` under `date desc nulls last, id desc` — the History keyset. */
+function afterDateDesc(d: Dialect, date: number | null, id: string, idCol: SQL): SQL {
+  return date === null
+    ? sql`(m.date is null and ${idCol} < ${id})`
+    : sql`(m.date < ${d.ts(new Date(date))} or (m.date = ${d.ts(new Date(date))} and ${idCol} < ${id}) or m.date is null)`;
+}
+
+/** Strictly after `(date, id)` under `date asc nulls last, id asc`. */
+function afterDateAsc(d: Dialect, date: number | null, id: string): SQL {
+  return date === null
+    ? sql`(m.date is null and m.id > ${id})`
+    : sql`(m.date > ${d.ts(new Date(date))} or (m.date = ${d.ts(new Date(date))} and m.id > ${id}) or m.date is null)`;
+}
+
 export class SearchService {
-  /** The FROM + 1:1 LEFT JOINs shared by every arm/facet query (no row fan-out:
-   *  message_bodies and folder_state are both UNIQUE per message). */
+  /**
+   * The FROM every arm shares. The joins are 1:1 (each is unique per message), so no fan-out; a
+   * predicate on `s` makes its join inner, and `b` is only joined by a branch that reads it.
+   */
   private readonly from = sql`
     from messages m
+    left join message_search s on s.message_id = m.id
     left join message_bodies b on b.message_id = m.id
     left join folder_state fs on fs.message_id = m.id`;
 
   /** desiredFolder → native locator folder → INBOX (mirrors materializeMessage). */
   private readonly folderExpr = sql`coalesce(fs.desired_folder, m.native_locator->>'folder', 'INBOX')`;
 
-  async search(ctx: ServiceContext, opts: SearchOptions): Promise<SearchResult> {
-    const started = performance.now();
-    // THE CEILING IS CONSULTED BEFORE ANYTHING SCANS THE STRING. `.length` is O(1); `.trim()` is
-    // O(n) and would scan a ten-megabyte caller string before the ceiling ran — and an
-    // all-whitespace one would pay the scan and return a silent empty result. So the RAW length
-    // decides, and the refusal reports it — the number the caller has to bring down. It allows
-    // exactly ONE character over: one trailing space on a term at the ceiling, the only case the
-    // trim was for. Two spaces are refused — the alternatives are trimming first (the unbounded
-    // scan) or slicing first (silently ACCEPTING a truncated query).
-    const raw = opts.q ?? "";
-    /**
-     * THE RAW LENGTH DECIDES, and the version that sliced first was silently wrong. Slicing to
-     * the ceiling PLUS ONE and then trimming looks equivalent and is not: a term of exactly `MAX`
-     * characters followed by a space and more text slices to `MAX + 1`, trims the boundary space,
-     * and passes — the caller's search ran against a PREFIX of what they typed, with a 200 and no
-     * indication. The silent truncation this bound's own docstring refuses, produced by the
-     * bound. So the raw LENGTH is consulted first (O(1)), allowing exactly ONE character over —
-     * one trailing space at the ceiling. Two over cannot trim back without losing a non-space, so
-     * it is refused. Neither path truncates.
-     */
-    if (raw.length > SEARCH_QUERY_MAX_CHARS + 1) {
-      throw new ServiceError(
-        "validation_failed", 400,
-        `q is ${raw.length} characters; the limit is ${SEARCH_QUERY_MAX_CHARS}`,
-      );
+  /** Refuse an over-long query BEFORE anything scans it; see {@link SEARCH_QUERY_MAX_CHARS}. */
+  private static termOf(raw: string | undefined): string {
+    const q0 = raw ?? "";
+    // The RAW length decides, one trailing space allowed: trimming first would scan an unbounded
+    // string, slicing first would silently search a prefix of what was typed.
+    if (q0.length > SEARCH_QUERY_MAX_CHARS + 1) {
+      throw new ServiceError("validation_failed", 400, `q is ${q0.length} characters; the limit is ${SEARCH_QUERY_MAX_CHARS}`);
     }
-    const q = raw.trim();
-    if (!q) return emptyResult();
-    // BEFORE the tsquery, the trigram comparisons and the ILIKE degrade — see
-    // {@link SEARCH_QUERY_MAX_CHARS}. Refused, never truncated: a truncated term answers a
-    // question the caller did not ask, and does it silently.
+    const q = q0.trim();
     if (q.length > SEARCH_QUERY_MAX_CHARS) {
-      throw new ServiceError(
-        "validation_failed", 400,
-        `q is ${raw.length} characters; the limit is ${SEARCH_QUERY_MAX_CHARS}`,
-      );
+      throw new ServiceError("validation_failed", 400, `q is ${q0.length} characters; the limit is ${SEARCH_QUERY_MAX_CHARS}`);
     }
-    const limit = clampLimit(opts.limit);
-    // The DEFAULT BRANCHES, stated once: `relevance` and `both` are what an absent option means.
-    const sort: SearchSort = opts.sort ?? "relevance";
-    const parts: SearchParts = opts.parts ?? "both";
+    return q;
+  }
 
-    // BOTH STORES THROUGH THE SEAM: a generated `tsvector` column here, full-text tables joined by
-    // `rowid` on the device, and neither spelling parses on the other.
+  /** The page size: the route's clamp, and at most {@link SEARCH_PAGE_MAX}. */
+  private static pageOf(limit: number | undefined): number {
+    if (limit === undefined || !Number.isFinite(limit)) return SEARCH_PAGE_MAX;
+    return Math.max(1, Math.min(SEARCH_PAGE_MAX, Math.floor(limit)));
+  }
+
+  /**
+   * The arms of one tier. `exact`: head, text and (when open) substring; `similar`: the typo
+   * arm. While the account's backfill is unfinished each arm also reads the rows without a
+   * document through the pre-0125 columns, ANDed with "no document" so no row is read twice.
+   */
+  private async arms(ctx: ServiceContext, d: Dialect, q: string, tier: SearchTier): Promise<Arm[]> {
+    const trigram = await hasTrgm(ctx.db);
+    const built = await searchIndexBuilt(ctx.db as never, ctx.accountId);
+    const legacy = built ? null : d.search.unindexed(q, { trigram, threshold: FUZZY_THRESHOLD });
+    const bare = (b: SearchArm): Branch => ({ pred: sql`(${b.pred} and s.message_id is null)`, rank: b.rank });
+    // Where the arms read the document (a store with vectors), a branch names the document's own
+    // account too, so an index that leads with the account reads one account's candidates. A
+    // store whose word index is over the rows keeps every row, document or not.
+    const documents = d.search.document({ subject: "", people: "", attachments: "", body: "" }) !== null;
+    const own = (b: SearchArm): Branch =>
+      documents ? { pred: sql`(s.account_id = ${ctx.accountId} and ${b.pred})`, rank: b.rank } : b;
+    if (tier === "similar") {
+      const fuzz = d.search.fuzzy(q, "mail", { trigram, threshold: FUZZY_THRESHOLD });
+      return [{ name: "similar", ranked: true, branches: [own(fuzz), ...(legacy?.fuzzy ?? []).map(bare)] }];
+    }
+    const words = d.search.words(q);
+    const out: Arm[] = [
+      { name: "head", ranked: true, branches: [own(words.head), ...(legacy ? [bare(legacy.words.head)] : [])] },
+      { name: "text", ranked: false, branches: [own(words.text), ...(legacy ? [bare(legacy.words.text)] : [])] },
+    ];
+    if (substringOpen(q)) {
+      out.push({
+        name: "substring",
+        ranked: false,
+        branches: [own(d.search.substring(q, { trigram })), ...(legacy?.substring ?? []).map(bare)],
+      });
+    }
+    return out;
+  }
+
+  /**
+   * One arm's top-K as `(id, r)`. Every branch is read NEWEST FIRST and cut — at the window for a
+   * ranked arm (then ordered by rank), at K otherwise — so no branch reads more than its cut off
+   * an index; the branches are merged and the arm numbered by its own order.
+   */
+  private armSql(where: SQL, arm: Arm, k: number, window: number): SQL {
+    const cut = arm.ranked ? window : k;
+    const branch = (b: Branch): SQL => sql`(select m.id as id, m.date as date, ${arm.ranked ? b.rank : sql`0`} as rank
+      ${this.from} where ${where} and ${b.pred}
+      order by m.date desc nulls last, m.id desc limit ${cut})`;
+    const merged = arm.branches.length === 1
+      ? branch(arm.branches[0]!)
+      : sql`(select id, date, max(rank) as rank from (${sql.join(arm.branches.map(branch), sql` union all `)}) u group by id, date)`;
+    // `SQL_RANK_ORDER`'s key sequence (a recency arm's rank is the constant its branches wrote).
+    const rank = sql`m.rank`;
+    return sql`select m.id, row_number() over (order by ${rank} desc, m.date desc nulls last, m.id desc) as r
+               from (select m.id, m.date, m.rank from ${merged} m
+                     order by ${rank} desc, m.date desc nulls last, m.id desc limit ${k}) m`;
+  }
+
+  /** The union of every branch's id set — what `total` and the facets count over. */
+  private unionSql(where: SQL, arms: readonly Arm[]): SQL {
+    const selects = arms.flatMap((a) => a.branches).map((b) => sql`select m.id as id ${this.from} where ${where} and ${b.pred}`);
+    return sql.join(selects, sql` union `);
+  }
+
+  /**
+   * ONE PAGE — the first response, with nothing counted on its path. Relevance: the arms' top-K,
+   * fused by reciprocal rank and paged by `(score, date, id)`. A chosen order: the union of the
+   * arms' predicates, walked by its own keyset. The tier is the exact tier unless it has no row.
+   */
+  async page(ctx: ServiceContext, opts: SearchOptions): Promise<SearchPage> {
+    const q = SearchService.termOf(opts.q);
+    if (!q) return { items: [], tier: "exact", nextCursor: null, bounded: false, candidates: 0, cut: false, estimate: null };
+    const limit = SearchService.pageOf(opts.limit);
+    const sort: SearchSort = opts.sort ?? "relevance";
+    const cursor = opts.cursor ? decodeCursor(opts.cursor) : null;
     const d = dialect(ctx.db);
     const where = this.whereSql(d, ctx.accountId, opts.filters ?? {});
-    const trgm = await hasTrgm(ctx.db);
-    // Typo tolerance where the extension exists; without it the seam's substring degrade, ranked
-    // by recency — offline there is no relevance signal left.
-    const fuzz = d.search.fuzzy(q, "mail", { trigram: trgm, threshold: FUZZY_THRESHOLD });
 
-    /**
-     * EVERY ARM READS ITS OWN INDEX: the word arm is two arms (subject tsv, body tsv), and the
-     * SUBSTRING arm is the query as characters inside the subject or the sender — `axa` in
-     * `myAXA Portal` or `news@axa.example` — ILIKE over the two columns the trigram GINs serve
-     * (`search-setup.ts`); recipients have no index and stay out. The match set is their UNION,
-     * never an OR across the body join, which no index serves (a sequential scan on a large
-     * mailbox). The fs join is there for the folder filter and is removed when none is given.
-     */
-    const armFrom = sql`from messages m left join folder_state fs on fs.message_id = m.id`;
-    const like = `%${q}%`;
-    const arms = [
-      ...d.search.lexicalArms(q, armFrom, where),
-      ...(substringOpen(q)
-        ? [sql`select m.id, m.date ${armFrom} where ${where}
-            and (${d.ilike(sql`m.subject`, like)} or ${d.ilike(sql`m.from_address`, like)})`]
-        : []),
-    ];
-    const exactPred = sql`m.id in (select u.id from (${sql.join(arms, sql` union `)}) u)`;
-    const rank = fuzz.rank;
-    const guessPage = (): SQL => (sort === "relevance"
-      ? sql`select m.id ${this.from} where ${where} and ${fuzz.pred}
-          order by ${rank} desc, m.date desc nulls last, m.id desc limit ${limit}`
-      : this.orderedArm(where, fuzz.pred, sort, limit));
-    const exactPage = (): Promise<Page> => (sort === "relevance"
-      ? this.fusedPage(ctx, d, arms, limit)
-      : this.plainPage(ctx, d, this.orderedArm(where, exactPred, sort, limit), limit));
-
-    let tier: SearchTier;
-    let total: number;
-    let totalExact = true;
-    let facets: Facets | null = null;
-    let ids: string[] = [];
-    if (parts === "page") {
-      /* THE PAGE ALONE, at index speed: no count and no facets on this answer. The tier is read
-         off the fused candidates themselves, and `total` is their count — exact only when no arm
-         was cut at its K; the caller asks `summary` for the rest. */
-      const page = await exactPage();
-      tier = showSimilar(page.seen) ? "similar" : "exact";
-      const got = tier === "exact" ? page : await this.plainPage(ctx, d, guessPage(), limit);
-      ids = got.ids;
-      total = got.seen;
-      totalExact = !got.cut;
-    } else {
-      /* THE TIER IS DECIDED BEFORE A ROW IS RANKED: the exact union's count is `total` whenever
-         non-zero, and the fuzzy count is paid only on a query the store does not literally
-         answer. `showSimilar` holds the floor in one place (`@trafficflow/core/search-rank`). */
-      const exactTotal = await this.count(ctx, d, where, exactPred);
-      tier = showSimilar(exactTotal) ? "similar" : "exact";
-      const matchPred = tier === "exact" ? exactPred : fuzz.pred;
-      total = tier === "exact" ? exactTotal : await this.count(ctx, d, where, fuzz.pred);
-      facets = await this.facets(ctx, d, where, matchPred);
-      if (parts === "both") {
-        ids = (tier === "exact" ? await exactPage() : await this.plainPage(ctx, d, guessPage(), limit)).ids;
-      }
+    let tier: SearchTier = cursor?.t ?? "exact";
+    let got = await this.pageRows(ctx, d, q, tier, where, sort, limit, cursor);
+    if (cursor === null && tier === "exact" && got.rows.length === 0) {
+      tier = "similar";
+      got = await this.pageRows(ctx, d, q, tier, where, sort, limit, null);
     }
-
-    /**
-     * Re-materialize the hits into canonical MessageDTOs, preserving order; `materializeMessages`
-     * re-checks accountId. The BATCH form — 4 statements per page on a `max: 1` pool, never 4 per
-     * hit awaited serially, and never fired concurrently (the admin console deadlock's shape).
-     */
-    const byId = ids.length === 0 ? new Map<string, MessageDTO>() : await materializeMessages(ctx.db, ctx.accountId, ids);
+    const byId = await materializeMessages(ctx.db, ctx.accountId, got.rows.map((r) => r.id));
     const items: MessageDTO[] = [];
-    for (const id of ids) {
-      const dto = byId.get(id);
-      if (dto) items.push(dto);
+    for (const r of got.rows) { const dto = byId.get(r.id); if (dto) items.push(dto); }
+    const nextCursor = got.next === null ? null : encodeCursor({ ...got.next, t: tier } as SearchCursor);
+    const bounded = sort === "relevance" && nextCursor === null && got.cut;
+    return { items, tier, nextCursor, bounded, candidates: got.candidates, cut: got.cut, estimate: got.estimate };
+  }
+
+  /** The rows of one page of one tier, and the cursor after them. */
+  private async pageRows(
+    ctx: ServiceContext, d: Dialect, q: string, tier: SearchTier, where: SQL,
+    sort: SearchSort, limit: number, cursor: SearchCursor | null,
+  ): Promise<{
+    rows: Array<{ id: string }>; next: Omit<RelevanceCursor, "t"> | Omit<OrderedCursor, "t"> | null;
+    cut: boolean; candidates: number; estimate: number | null;
+  }> {
+    const arms = await this.arms(ctx, d, q, tier);
+    // The page's arms read newest first off the History index or their own GIN — never a table
+    // scan, which the planner picks for a word in a large share of the store (it does not price
+    // the per-row vector read), so the page runs with the scan priced out, like the counts.
+    const run = (statement: SQL): Promise<unknown[][]> =>
+      this.inSession(ctx, d, { tier, preferIndexes: true }, (db) => d.exec(db, statement));
+    if (sort === "relevance") {
+      if (cursor !== null && cursor.k !== "r") throw new ServiceError("validation_failed", 400, "cursor belongs to another order");
+      const k = SEARCH_ARM_FACTOR * limit;
+      // The typo tier ranks its newest K only: every candidate costs one similarity, and the
+      // tier is a guess list, where the closest recent guesses are the useful ones.
+      const window = tier === "similar" ? k : SEARCH_RANK_WINDOW_FACTOR * limit;
+      const armSqls = arms.map((a) => this.armSql(where, a, k, window));
+      const named = armSqls.map((a, i) => sql`${sql.raw("a" + String(i))} as (${a})`);
+      const all = sql.join(armSqls.map((_, i) => sql`select id, r from ${sql.raw("a" + String(i))}`), sql` union all `);
+      // Each arm's size, so the last page can say the fused set was cut. Uncorrelated: one read.
+      // Each named apart: positional rows collapse same-named columns on the server's driver.
+      const sizes = sql.join(armSqls.map((_, i) =>
+        sql`${d.castInt(sql`(select count(*) from ${sql.raw("a" + String(i))})`)} as ${sql.raw("n" + String(i))}`), sql`, `);
+      const after = cursor === null ? sql`` : sql`where (f.score < ${cursor.s} or (f.score = ${cursor.s} and ${afterDateDesc(d, cursor.d, cursor.i, sql`f.id`)}))`;
+      const rows = await run(sql`
+        with ${sql.join(named, sql`, `)},
+        fused as (select id, ${d.castInt(sql`sum(${sql.raw(String(RRF_SCALE))} / (${sql.raw(String(RRF_K))} + r))`)} as score from (${all}) x group by id)
+        select f.id, f.score, m.date, ${d.castInt(sql`(select count(*) from fused)`)} as fused, ${sizes}
+        from fused f join messages m on m.id = f.id
+        ${after}
+        order by f.score desc, m.date desc nulls last, f.id desc
+        limit ${limit + 1}`);
+      const page = rows.slice(0, limit);
+      const last = page[page.length - 1];
+      const sizesOf = (rows[0] ?? []).slice(4).map((n) => Number(n));
+      const cut = sizesOf.some((n) => n >= k);
+      const candidates = Number(rows[0]?.[3] ?? 0);
+      // THE ESTIMATE, off the index and the statistics: an arm under its cut is counted exactly by
+      // its own size; a cut arm by the planner's expected rows. The union is at least its largest arm.
+      let estimate: number | null = null;
+      if (cut && cursor === null) {
+        const perArm = await Promise.all(arms.map(async (a, i) => (sizesOf[i]! < k ? sizesOf[i]!
+          : (await d.search.estimateRows(ctx.db, this.unionSql(where, [a]))) ?? sizesOf[i]!)));
+        estimate = Math.max(candidates, ...perArm);
+      }
+      return {
+        rows: page.map((r) => ({ id: String(r[0]) })),
+        next: rows.length > limit && last ? { k: "r", s: Number(last[1]), d: millisOf(last[2]), i: String(last[0]) } : null,
+        cut, candidates, estimate,
+      };
     }
-    return { items, facets, total, tier, totalExact, ms: Math.round(performance.now() - started) };
+    if (cursor !== null && (cursor.k !== "o" || cursor.o !== sort)) {
+      throw new ServiceError("validation_failed", 400, "cursor belongs to another order");
+    }
+    const c = cursor as OrderedCursor | null;
+    const { statement, key } = this.orderedPage(d, where, arms, sort, limit, c);
+    const rows = await run(statement);
+    const page = rows.slice(0, limit);
+    const last = page[page.length - 1];
+    return {
+      rows: page.map((r) => ({ id: String(r[0]) })),
+      next: rows.length > limit && last
+        ? { k: "o", o: sort, x: key === null ? null : String(last[2] ?? ""), d: millisOf(last[1]), i: String(last[0]) }
+        : null,
+      // A date order walks the whole match set, so its page says nothing about the count.
+      cut: true,
+      candidates: page.length,
+      estimate: null,
+    };
+  }
+
+  /**
+   * A CHOSEN ORDER over the whole match set — a different query, never an `order by` on the
+   * ranked selection (sorting the relevance window by date answers "of the most relevant few,
+   * which is newest"). The union of the arms' predicates, walked by `(key, date, id)`.
+   */
+  private orderedPage(
+    d: Dialect, where: SQL, arms: readonly Arm[], sort: Exclude<SearchSort, "relevance">,
+    limit: number, c: OrderedCursor | null,
+  ): { statement: SQL; key: SQL | null } {
+    const ids = this.unionSql(where, arms);
+    const key = sort === "mailbox" ? sql`lower(mbx.address)` : sort === "sender" ? sql`lower(m.from_address)` : null;
+    const from = sort === "mailbox"
+      ? sql`from messages m join (${ids}) u on u.id = m.id left join mailboxes mbx on mbx.id = m.mailbox_id`
+      : sql`from messages m join (${ids}) u on u.id = m.id`;
+    const order = sort === "date_asc" ? sql`m.date asc nulls last, m.id asc`
+      : key === null ? sql`m.date desc nulls last, m.id desc`
+      : sql`${key} asc, m.date desc nulls last, m.id desc`;
+    // A mailbox address and a sender address are NOT NULL, so the key keyset needs no null arm.
+    const after = c === null ? sql``
+      : sort === "date_asc" ? sql`where ${afterDateAsc(d, c.d, c.i)}`
+      : key === null ? sql`where ${afterDateDesc(d, c.d, c.i, sql`m.id`)}`
+      : sql`where (${key} > ${c.x ?? ""} or (${key} = ${c.x ?? ""} and ${afterDateDesc(d, c.d, c.i, sql`m.id`)}))`;
+    return {
+      key,
+      statement: sql`select m.id, m.date, ${key ?? sql`null`} as k ${from} ${after} order by ${order} limit ${limit + 1}`,
+    };
+  }
+
+  /**
+   * THE SECOND RESPONSE — `total` and the facets over the whole match set of the tier the page
+   * answered in, and the backfill's progress while it runs. Off the first page's path.
+   */
+  async summary(ctx: ServiceContext, opts: SearchOptions): Promise<SearchSummary> {
+    const q = SearchService.termOf(opts.q);
+    if (!q) return { total: 0, facets: emptyFacets(), tier: "exact" };
+    const d = dialect(ctx.db);
+    const where = this.whereSql(d, ctx.accountId, opts.filters ?? {});
+    let tier: SearchTier = "exact";
+    let counted = await this.facets(ctx, d, this.unionSql(where, await this.arms(ctx, d, q, "exact")), tier);
+    if (showSimilar(counted.total)) {
+      tier = "similar";
+      counted = await this.facets(ctx, d, this.unionSql(where, await this.arms(ctx, d, q, "similar")), tier);
+    }
+    const { total, facets } = counted;
+    const built = await searchIndexBuilt(ctx.db as never, ctx.accountId);
+    const indexed = built ? undefined : await searchIndexProgress(ctx.db as never, ctx.accountId);
+    return { total, facets, tier, ...(indexed !== undefined && indexed.done < indexed.total ? { indexed } : {}) };
+  }
+
+  /**
+   * ONE ANSWER, by {@link SearchParts}: `page` is the first page with nothing counted on its path,
+   * `summary` the exact count and facets, `both` (the default) the two together — the shape
+   * `GET /search` has always answered.
+   */
+  // Asked for both parts (or none named), the facets are always there.
+  async search(ctx: ServiceContext, opts: SearchOptions & { parts?: "both" }): Promise<SearchResult & { facets: Facets }>;
+  async search(ctx: ServiceContext, opts: SearchOptions): Promise<SearchResult>;
+  async search(ctx: ServiceContext, opts: SearchOptions): Promise<SearchResult> {
+    const t0 = performance.now();
+    const parts: SearchParts = opts.parts ?? "both";
+    const ms = (): number => Math.round(performance.now() - t0);
+    if (parts === "summary") {
+      const s = await this.summary(ctx, opts);
+      return {
+        items: [], facets: s.facets, total: s.total, tier: s.tier, totalExact: true,
+        nextCursor: null, bounded: false, ...(s.indexed ? { indexed: s.indexed } : {}), ms: ms(),
+      };
+    }
+    const page = await this.page(ctx, opts);
+    if (parts === "page") {
+      return {
+        items: page.items, facets: null, total: page.candidates, tier: page.tier, totalExact: !page.cut,
+        ...(page.estimate !== null ? { totalEstimate: page.estimate } : {}),
+        nextCursor: page.nextCursor, bounded: page.bounded, ms: ms(),
+      };
+    }
+    const s = await this.summary(ctx, opts);
+    return {
+      items: page.items, facets: s.facets, total: s.total, tier: page.tier, totalExact: true,
+      nextCursor: page.nextCursor, bounded: page.bounded, ...(s.indexed ? { indexed: s.indexed } : {}), ms: ms(),
+    };
   }
 
   /**
@@ -418,7 +656,7 @@ export class SearchService {
     const where = this.whereSql(d, ctx.accountId, {});
     const pred = sql`lower(m.from_address) = lower(${address})`;
 
-    const total = await this.count(ctx, d, where, pred);
+    const total = await this.count(ctx, d, sql`select m.id as id ${this.from} where ${where} and ${pred}`);
     /* THROUGH THE SEAM, AND THE ROWS COME BACK POSITIONAL.
      *
      * `d.exec` answers `unknown[][]` on both stores — its own contract says positional is the shape
@@ -444,106 +682,51 @@ export class SearchService {
     return { items, total, direction: opts.direction };
   }
 
-  // ── the fused relevance order ────────────────────────────────────────────
+  // ── counts & facets over the union of the tier's arms ─────────────────────────────────
 
   /**
-   * RECIPROCAL-RANK FUSION over each arm's TOP K. Every arm is cut at K by the reading order
-   * (`messages_account_msg_order_idx`), so it reads its own index and stops — never its whole
-   * match set, which for a broad word is most of the mailbox; a row scores `Σ 1 / (RRF_K + r)`
-   * over the arms that hold it, recency then id breaking ties. A subject word is in two arms
-   * (word and substring), so it leads a body-only hit. `seen` is the fused candidates' count and
-   * `cut` says an arm stopped at K, so `seen` is then a lower bound on the match set.
+   * Run `fn` in a transaction shaped for a search read — the tier's typo threshold, and for the
+   * counts, the word indexes kept over a table scan — or on the plain handle when nothing needs
+   * shaping.
    */
-  private async fusedPage(ctx: ServiceContext, d: Dialect, arms: SQL[], limit: number): Promise<Page> {
-    const k = Math.max(FUSE_K_MIN, limit * FUSE_K_PER_PAGE);
-    const ranked = arms.map((a) => sql`
-      select x.id, x.date, row_number() over (order by x.date desc nulls last, x.id desc) as r
-      from (${a} order by m.date desc nulls last, m.id desc limit ${k}) x`);
-    // The fused rows are aliased `m`, so the order clause is `SQL_RANK_ORDER` spelled as everywhere.
-    const rank = sql`m.score`;
-    const rows = await d.exec(ctx.db, sql`
-      with arms as (${sql.join(ranked, sql` union all `)}),
-      fused as (select id, max(date) as date, sum(1.0 / (${sql.raw(String(RRF_K))} + r)) as score from arms group by id)
-      select m.id, (select count(*) from fused) as seen, (select max(r) from arms) as deepest
-      from fused m
-      order by ${rank} desc, m.date desc nulls last, m.id desc
-      limit ${limit}`);
-    const seen = Number(rows[0]?.[1] ?? 0);
-    return { ids: rows.map((r) => String(r[0])), seen, cut: Number(rows[0]?.[2] ?? 0) >= k };
+  private async inSession<T>(
+    ctx: ServiceContext, d: Dialect, opts: { tier: SearchTier; preferIndexes: boolean },
+    fn: (db: unknown) => Promise<T>,
+  ): Promise<T> {
+    const setup = d.search.searchSession({
+      ...(opts.tier === "similar" ? { typoThreshold: FUZZY_THRESHOLD } : {}),
+      preferIndexes: opts.preferIndexes,
+    });
+    if (setup === null) return fn(ctx.db);
+    const tx = ctx.db as unknown as { transaction: <R>(f: (t: unknown) => Promise<R>) => Promise<R> };
+    return tx.transaction(async (t) => { await d.exec(t, setup); return fn(t); });
   }
 
-  /** One statement's ids, in its order; `cut` when the page came back full. */
-  private async plainPage(ctx: ServiceContext, d: Dialect, statement: SQL, limit: number): Promise<Page> {
-    const ids = (await d.exec(ctx.db, statement)).map((r) => String(r[0]));
-    return { ids, seen: ids.length, cut: ids.length >= limit };
-  }
-
-  // ── the user-chosen orders ────────────────────────────────────────────────
-
-  /**
-   * ONE ARM, over the whole match set, ordered by the key the caller asked for. No migration, no
-   * new index: every key is an existing column, the `tsv` GINs still carry the MATCH (`where` +
-   * `matchPred`, the same predicates `total` and `facets` run over), and the sort happens across
-   * the rows that match. THE JOIN IS `left`, DELIBERATELY: `mailbox_id` is NOT NULL, so an inner
-   * join is equivalent today — but the invariant worth protecting is that a sort never changes
-   * WHICH rows match, only their order; an inner join makes the ordering clause capable of
-   * dropping a hit. `nulls last` on the address is the other half. Every order ends in `m.id`, so
-   * ties come back in a fixed order rather than reshuffling between calls.
-   */
-  private orderedArm(
-    where: SQL, matchPred: SQL, sort: Exclude<SearchSort, "relevance">, limit: number,
-  ): SQL {
-    // Only the mailbox key needs a row this query does not already have.
-    const from = sort === "mailbox"
-      ? sql`${this.from} left join mailboxes mbx on mbx.id = m.mailbox_id`
-      : this.from;
-
-    // `nulls last` on both date directions: a message with no `Date:` header has no place on a
-    // timeline, and Postgres would otherwise sort it FIRST on `asc`. Unknown belongs at the end
-    // in both readings of "by date".
-    const order =
-      sort === "date_desc" ? sql`m.date desc nulls last, m.id desc`
-      : sort === "date_asc" ? sql`m.date asc nulls last, m.id asc`
-      // Mail is grouped BY MAILBOX and then newest-first inside each one — a flat address-major
-      // ordering with arbitrary dates inside a group is not a list anybody reads.
-      : sort === "mailbox" ? sql`lower(mbx.address) asc nulls last, m.date desc nulls last, m.id desc`
-      // `lower()` so "Anna@" and "anna@" are one sender, matching `whereSql`'s sender filter.
-      : sql`lower(m.from_address) asc, m.date desc nulls last, m.id desc`;
-
-    return sql`
-      select m.id
-      ${from}
-      where ${where} and ${matchPred}
-      order by ${order}
-      limit ${limit}`;
-  }
-
-  // ── facets & total over the SAME candidate set (filters + text match) ──────
-
-  /**
-   * How many rows a predicate matches. Called twice for different jobs and it is worth naming
-   * both: once to DECIDE the tier (over the lexical predicate, before anything is ranked), and
-   * once — the same call, the same number — as the `total` the caller renders. In the exact tier
-   * those are one query, not two.
-   */
-  private async count(ctx: ServiceContext, d: Dialect, where: SQL, matchPred: SQL): Promise<number> {
-    const rows = await d.exec(ctx.db,
-      sql`select ${d.castInt(sql`count(*)`)} as n ${this.from} where ${where} and ${matchPred}`);
+  /** How many messages the union matches — ONE count over the union, each branch on its index. */
+  private async count(ctx: ServiceContext, d: Dialect, ids: SQL, tier: SearchTier = "exact"): Promise<number> {
+    const rows = await this.inSession(ctx, d, { tier, preferIndexes: true }, (db) =>
+      d.exec(db, sql`select ${d.castInt(sql`count(*)`)} as n from (${ids}) u`));
     return Number(rows[0]?.[0] ?? 0);
   }
 
-  private async facets(ctx: ServiceContext, d: Dialect, where: SQL, matchPred: SQL): Promise<Facets> {
+  /**
+   * `total` and the facets over one tier's union — three passes, the first carrying the count, and
+   * the other two skipped when nothing matched.
+   */
+  private async facets(
+    ctx: ServiceContext, d: Dialect, ids: SQL, tier: SearchTier,
+  ): Promise<{ total: number; facets: Facets }> {
     const now = ctx.now();
     const todayStart = new Date(now); todayStart.setUTCHours(0, 0, 0, 0);
-    // THE INSTANT IS A DIFFERENT LITERAL ON EACH STORE — an ISO string the server parses, a count
-    // of milliseconds the device keeps — and the old comment named only half the reason (that
-    // postgres-js will not serialize a bare Date through a raw `sql`). Both halves are the seam's.
+    // The instant is a different literal on each store — an ISO string the server parses, a count
+    // of milliseconds the device keeps — so it goes through the seam.
     const today = d.ts(todayStart);
     const d7 = d.ts(new Date(todayStart.getTime() - 7 * 86_400_000));
     const d30 = d.ts(new Date(todayStart.getTime() - 30 * 86_400_000));
     const n = (e: SQL): SQL => d.castInt(e);
-
-    // Scalars (unread / hasAttachments / recency buckets) in one aggregate pass.
+    const base = sql`from (${ids}) u join messages m on m.id = u.id left join folder_state fs on fs.message_id = m.id`;
+    // Scalars (unread / hasAttachments / recency buckets) in one aggregate pass. POSITIONAL rows:
+    // the eight positions below are read by index, so a reorder here moves them together.
     const scalarSql = sql`
       select
         ${n(sql`count(*) filter (where m.unread)`)} as unread_t,
@@ -553,43 +736,30 @@ export class SearchService {
         ${n(sql`count(*) filter (where m.date >= ${today})`)} as d_today,
         ${n(sql`count(*) filter (where m.date >= ${d7} and m.date < ${today})`)} as d_7,
         ${n(sql`count(*) filter (where m.date >= ${d30} and m.date < ${d7})`)} as d_30,
-        ${n(sql`count(*) filter (where m.date is null or m.date < ${d30})`)} as d_older
-      ${this.from}
-      where ${where} and ${matchPred}`;
-
-    const folderSql = sql`
-      select ${this.folderExpr} as folder, ${n(sql`count(*)`)} as c
-      ${this.from}
-      where ${where} and ${matchPred}
-      group by 1`;
-
+        ${n(sql`count(*) filter (where m.date is null or m.date < ${d30})`)} as d_older,
+        ${n(sql`count(*)`)} as total
+      ${base}`;
+    const folderSql = sql`select ${this.folderExpr} as folder, ${n(sql`count(*)`)} as c ${base} group by 1`;
     const senderSql = sql`
-      select m.from_address as address, ${n(sql`count(*)`)} as c
-      ${this.from}
-      where ${where} and ${matchPred}
-      group by 1
-      order by c desc, address asc
-      limit ${SENDER_FACET_LIMIT}`;
-
-    // POSITIONAL ROWS, in the order each statement selects — the seam's one shape on both stores.
-    // The scalar row's eight positions are the eight aggregates above, read by index rather than
-    // by alias; if that list is ever reordered, these indices move with it.
-    const [scalarR, folderR, senderR] = await Promise.all([
-      d.exec(ctx.db, scalarSql),
-      d.exec(ctx.db, folderSql),
-      d.exec(ctx.db, senderSql),
-    ]);
-
+      select m.from_address as address, ${n(sql`count(*)`)} as c ${base}
+      group by 1 order by c desc, address asc limit ${SENDER_FACET_LIMIT}`;
+    const [scalarR, folderR, senderR] = await this.inSession(ctx, d, { tier, preferIndexes: true }, async (db) => {
+      const scalars = await d.exec(db, scalarSql);
+      if (Number(scalars[0]?.[8] ?? 0) === 0) return [scalars, [], []];
+      return [scalars, await d.exec(db, folderSql), await d.exec(db, senderSql)];
+    });
     const s = (scalarR[0] ?? []).map((v) => Number(v ?? 0));
     const folder: Record<string, number> = {};
     for (const row of folderR) folder[String(row[0])] = Number(row[1] ?? 0);
-
     return {
-      folder,
-      sender: senderR.map((r) => ({ address: String(r[0]), count: Number(r[1] ?? 0) })),
-      unread: { true: s[0] ?? 0, false: s[1] ?? 0 },
-      hasAttachments: { true: s[2] ?? 0, false: s[3] ?? 0 },
-      date: { today: s[4] ?? 0, last7: s[5] ?? 0, last30: s[6] ?? 0, older: s[7] ?? 0 },
+      total: s[8] ?? 0,
+      facets: {
+        folder,
+        sender: senderR.map((r) => ({ address: String(r[0]), count: Number(r[1] ?? 0) })),
+        unread: { true: s[0] ?? 0, false: s[1] ?? 0 },
+        hasAttachments: { true: s[2] ?? 0, false: s[3] ?? 0 },
+        date: { today: s[4] ?? 0, last7: s[5] ?? 0, last30: s[6] ?? 0, older: s[7] ?? 0 },
+      },
     };
   }
 

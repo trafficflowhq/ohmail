@@ -2187,6 +2187,30 @@ export const unsubscribeDrainState = pgTable("unsubscribe_drain_state", {
  * from "does a seeded rule exist": unchecking every row and confirming is a real answer, and the
  * derived form reads it as "never asked", so onboarding would offer the seed forever.
  */
+/**
+ * THE SEARCH DOCUMENT (mail 0125) — one row per message, written at ingest in the commit
+ * transaction and by the store-only `search_index_backfill` pass for older rows. Both vectors are
+ * built by the INSERT itself (`dialect.search.document`): `headTsv` = subject (A) + senders,
+ * recipients, attachment names (B), small enough to rank; `textTsv` = the body text, walked newest
+ * first. `terms` is the header corpus lower-cased, the substring arm's column. NOT metered (the
+ * storage cap governs stored bodies, never findability) and never read by a model or the
+ * knowledge base (the core's message-search census holds both).
+ */
+export const messageSearch = pgTable("message_search", {
+  messageId: uuid("message_id").primaryKey().references(() => messages.id),
+  accountId: uuid("account_id").notNull(),
+  headTsv: tsvector("head_tsv").notNull(),
+  textTsv: tsvector("text_tsv").notNull(),
+  terms: text("terms").notNull().default(""),
+  source: text("source").notNull(),
+  builtAt: timestamp("built_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  ixHeadTsv: index("message_search_head_tsv_idx").using("gin", t.headTsv),
+  ixTextTsv: index("message_search_text_tsv_idx").using("gin", t.textTsv),
+  ixAccount: index("message_search_account_idx").on(t.accountId, t.messageId),
+  ckSource: check("message_search_source_closed", sql`${t.source} in ('text', 'html', 'headers_only')`),
+}));
+
 export const accountSettings = pgTable("account_settings", {
   accountId: uuid("account_id").primaryKey(),
   /** Cutline dial, in days. NULL = the product default. CHECK (> 0) lives in the migration. */
@@ -2389,6 +2413,13 @@ export const accountSettings = pgTable("account_settings", {
    * in order by `schema-twin-parity` against the SQLite store's PRAGMA-order pin.
    */
   heldReleaseDismissed: text("held_release_dismissed"),
+  /**
+   * When every living message of this account first had its search document (mail 0125) — the
+   * backfill's completion marker, written once when the derived count reaches the living count.
+   * NULL = still indexing (or never measured); search then also reads the unindexed rows through
+   * the pre-0125 arms. LAST: `ADD COLUMN` appends and the twins are compared in order.
+   */
+  searchIndexBuiltAt: timestamp("search_index_built_at", { withTimezone: true }),
 });
 
 /**
@@ -2398,5 +2429,5 @@ export const accountSettings = pgTable("account_settings", {
  * install passes THIS one and nothing else — see `apps/sidecar/src/db.ts`.
  */
 export const mailSchema = {
-  mailboxes, mailboxCredentials, mailboxFolders, messages, messageInstances, messageFailures, folderState, flagState, rules, contacts, auditLog, accountSyncState, changeLog, threads, messageBodies, routingDecisions, approvals, messageStates, graduations, learningSignals, accounts, users, devices, sessions, refreshTokens, pairingTokens, idempotencyKeys, trackerEvents, contactNotes, threadNotes, snippets, notifyRules, awayResponders, awayResponderSent, attachments, kbEntries, drafts, outboundSends, workflows, workflowRuns, workflowProposals, tags, messageTags, unsubscribeRecords, unsubscribeExamined, unsubscribeDrainState, accountSettings,
+  mailboxes, mailboxCredentials, mailboxFolders, messages, messageInstances, messageFailures, folderState, flagState, rules, contacts, auditLog, accountSyncState, changeLog, threads, messageBodies, routingDecisions, approvals, messageStates, graduations, learningSignals, accounts, users, devices, sessions, refreshTokens, pairingTokens, idempotencyKeys, trackerEvents, contactNotes, threadNotes, snippets, notifyRules, awayResponders, awayResponderSent, attachments, kbEntries, drafts, outboundSends, workflows, workflowRuns, workflowProposals, tags, messageTags, unsubscribeRecords, unsubscribeExamined, unsubscribeDrainState, accountSettings, messageSearch,
 };

@@ -2,7 +2,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { messageBodies, messages } from "@trafficflow/db/mail";
 import {
   messageService, threadService, searchService, mailboxService, tagsService, rulesService,
-  syncService, SEARCH_SORTS, isSearchSort, ServiceError,
+  syncService, SEARCH_SORTS, isSearchSort, SEARCH_PARTS, isSearchParts, ServiceError,
   ADDRESS_DIRECTIONS, isAddressSearchDirection,
   type AddressSearchOptions,
   type SearchFilters, type SearchOptions, type ServiceContext,
@@ -31,6 +31,24 @@ const json = (body: unknown, status = 200): Response =>
 
 /** A numeric query param, or undefined when absent/blank (the service applies its own default). */
 const num = (v: string | null): number | undefined => (v != null && v !== "" ? Number(v) : undefined);
+
+/** The facet filters a search URL carries. Mirrors `routes/search.ts`. */
+function searchFiltersOf(url: URL): SearchFilters {
+  const filters: SearchFilters = {};
+  const folder = url.searchParams.get("folder");
+  const sender = url.searchParams.get("sender");
+  const dateFrom = url.searchParams.get("dateFrom");
+  const dateTo = url.searchParams.get("dateTo");
+  const unread = boolParam(url.searchParams.get("unread"));
+  const hasAttachments = boolParam(url.searchParams.get("hasAttachments"));
+  if (folder) filters.folder = folder;
+  if (sender) filters.sender = sender;
+  if (dateFrom) filters.dateFrom = dateFrom;
+  if (dateTo) filters.dateTo = dateTo;
+  if (unread !== undefined) filters.unread = unread;
+  if (hasAttachments !== undefined) filters.hasAttachments = hasAttachments;
+  return filters;
+}
 
 /** "true"/"1" → true, "false"/"0" → false, else undefined (filter omitted). Mirrors `routes/search.ts`. */
 function boolParam(v: string | null): boolean | undefined {
@@ -247,28 +265,24 @@ export const READ_ROUTES: ReadRoute[] = [
         );
       }
 
-      const filters: SearchFilters = {};
-      const folder = url.searchParams.get("folder");
-      const sender = url.searchParams.get("sender");
-      const dateFrom = url.searchParams.get("dateFrom");
-      const dateTo = url.searchParams.get("dateTo");
-      const unread = boolParam(url.searchParams.get("unread"));
-      const hasAttachments = boolParam(url.searchParams.get("hasAttachments"));
-      if (folder) filters.folder = folder;
-      if (sender) filters.sender = sender;
-      if (dateFrom) filters.dateFrom = dateFrom;
-      if (dateTo) filters.dateTo = dateTo;
-      if (unread !== undefined) filters.unread = unread;
-      if (hasAttachments !== undefined) filters.hasAttachments = hasAttachments;
-
+      // The same paging and the same parts as `packages/api/src/routes/search.ts`, refused alike.
+      const partsRaw = url.searchParams.get("parts");
+      if (partsRaw !== null && !isSearchParts(partsRaw)) {
+        return json(
+          { error: { code: "validation_failed", message: `parts must be one of ${SEARCH_PARTS.join(", ")}` } },
+          400,
+        );
+      }
+      const cursor = url.searchParams.get("cursor");
       const opts: SearchOptions = {
         q,
-        filters,
+        filters: searchFiltersOf(url),
         ...(limit !== undefined ? { limit } : {}),
         ...(sortRaw !== null ? { sort: sortRaw } : {}),
+        ...(partsRaw !== null ? { parts: partsRaw } : {}),
+        ...(cursor ? { cursor } : {}),
       };
-      const result = await searchService.search(ctx, opts);
-      return json(result);
+      return json(await searchService.search(ctx, opts));
     },
   },
   {

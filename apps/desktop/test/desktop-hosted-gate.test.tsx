@@ -262,16 +262,12 @@ describe("the hosted auth gate", () => {
     expect(mounted(el)).toBe(false);
   });
 
-  it("an EXPIRED session gets the sign-in card over the mail, never the engine-down notice", async () => {
-    /* The card replaced "ohmail cannot open your mailbox / You were signed out…", which emptied the
-       window and opened the form only after a press. An older engine names no cause, so the
-       card's lead is the ordinary one. */
+  it("an EXPIRED session gets the honest sentence, never the mail app", async () => {
     const shell = fakeShell(CLOUD_SERVING);
     shell.health({ signedIn: false, sessionExpired: true });
     const el = await render();
-    expect(signInSurface(el)).toBe(true);
-    expect(mounted(el), "the mail stays behind the card").toBe(true);
-    expect(el.textContent ?? "").not.toContain("cannot open your mailbox");
+    expect(el.textContent ?? "").toContain("signed out of your hosted account");
+    expect(mounted(el)).toBe(false);
   });
 
   it("an in-place sign-in RE-EARNS the auth answer: still pre-auth ⇒ still withheld", async () => {

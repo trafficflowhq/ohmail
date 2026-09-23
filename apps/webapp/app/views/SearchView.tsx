@@ -1,25 +1,27 @@
 "use client";
 
 /**
- * Search — two passes, and it says which one it is on: this device instantly (`engine.search()`,
- * synchronous over the mirror, per keystroke), then the whole archive (`engine.searchServer()` →
- * `GET /search`), whose hits EXTEND the local ones, never replace them. The scope line is the
- * point: the local index reads subject, sender and the ≤200-char snippet, so the view says what was
- * searched at every moment; a client with no archive (`?demo=1`, the desktop) gets its own
- * sentence, nothing requested. Guesses live in their own tier (`@trafficflow/core/search-rank`):
- * matches first, guesses only when there are none — applied here once more to the MERGED list.
+ * Search — ONE list. The mirror's instant index paints first (`engine.search()`, per keystroke);
+ * the store's first page then REPLACES it in place — rows on screen that the store also returned
+ * keep their places — and the rest is History's own list mechanism (`StoreSearchWalker`): pages by
+ * the store's cursor, at most `HISTORY_PAGE_CACHE_ROWS` held, re-asked on the way back. Facets,
+ * the count and the indexing progress are the store's, over the whole match set. Every pass ends
+ * in one of three verdicts. Guesses keep their own tier (`search-rank`).
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactElement } from "react";
 import { useTranslations } from "next-intl";
 import {
-  errorClassOf,
   folderLeaf,
   SERVER_SEARCH_SORTS,
+  STORE_ANSWER_TIMEOUT_MS,
+  StoreSearchWalker,
   VIEW_OF_FOLDER,
   type EngineMessage,
   type LocalSearchResult,
   type OhmailEngine,
   type SearchHit as EngineSearchHit,
+  type ServerSearchFacets,
+  type ServerSearchFilters,
   type ServerSearchSort,
 } from "@ohmail/client-engine";
 import { showSimilar } from "@trafficflow/core/search-rank";
@@ -31,6 +33,7 @@ import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useZoneNav } from "../shell/zone-nav";
 import { storageOwner } from "../shell/storage-owner";
 import { searchSortKey, usePersistedChoice } from "../shell/persisted-ui";
+import { useListWindow } from "../shell/list-window";
 
 /** One address and nothing else — the query shape whose empty state may offer the address door. */
 const ADDRESS_QUERY = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -38,52 +41,24 @@ import { endSearch } from "../shell/ui-vitals";
 import "./search-keys.css";
 
 interface Filter {
-  group: string;
+  group: "folder" | "from" | "refine";
   label: string;
+  /** The store's own key for this facet — the stored folder path or the sender address. */
+  raw?: string;
 }
-
-/**
- * Derived rather than imported: `packages/client-engine/src/index.ts` is the barrel and it is
- * held by another slice, so `ServerSearchOutcome` is not re-exported yet. `Awaited<ReturnType<…>>`
- * is the same type by construction and cannot drift from the method it describes.
- */
-type ServerOutcome = Awaited<ReturnType<OhmailEngine["searchServer"]>>;
-
-/** What the whole-mailbox pass is doing FOR THE QUERY CURRENTLY IN THE BOX. */
-type Archive =
-  | { state: "searching" }
-  /**
-   * `tier` says whether these rows are matches or typo-tolerant guesses — see the merge below.
-   * `totalExact` is false while `total` is the first page's lower bound; `ms` is the server's.
-   */
-  | { state: "ready"; items: EngineMessage[]; total: number; tier: "exact" | "similar"; totalExact: boolean; ms: number | null }
-  /** A refusal, a rejection, or no answer inside {@link ARCHIVE_TIMEOUT_MS} — one sentence. */
-  | { state: "unanswered" }
-  | { state: "unavailable" };
 
 /**
  * EVERY WAY THE PASS ENDS IS ONE OF THREE VERDICTS — matched, nothing matched, or the server did
  * not answer. A refusal renders the third, not the server's text: the text can carry what the
- * person typed, so the log line takes the CLASS ({@link errorClassOf}) and the screen says what
- * is on it — what this device holds.
+ * person typed, so the log line takes the CLASS the walker kept and the screen says what is on it.
  */
-function unanswered(cause: string): Archive {
+function logUnanswered(cause: string): void {
   console.warn("[search] the whole-mailbox pass did not answer:", cause);
-  return { state: "unanswered" };
-}
-function verdictOf(outcome: ServerOutcome): Archive {
-  if (outcome.state === "ready") {
-    const { items, total, tier, totalExact, ms } = outcome;
-    return { state: "ready", items, total, tier, totalExact, ms };
-  }
-  return outcome.state === "failed" ? unanswered(outcome.errorClass) : { state: "unavailable" };
 }
 
-/** A hit and where it came from — the archive-only ones are marked on screen. */
+/** A row of the device's first paint, before the store's page replaces it. */
 interface MergedHit {
   hit: EngineSearchHit;
-  /** True when the archive returned it and this device's mirror does not hold the row. */
-  archiveOnly: boolean;
 }
 
 /**
@@ -106,22 +81,23 @@ const ARCHIVE_DEBOUNCE_MS = 250;
  * still wins — the timer replaces the sentence, it does not cancel the request: the sentence is
  * about this request, not the session.
  */
-export const ARCHIVE_TIMEOUT_MS = 15_000;
+export const ARCHIVE_TIMEOUT_MS = STORE_ANSWER_TIMEOUT_MS;
 
-/** Rows rendered. Unchanged; it is now STATED when there are more (see `resultsShown`). */
-const SHOWN = 12;
+/** How near the end of the list (px) the next store page is asked for. */
+const PAGE_AHEAD_PX = 480;
+
+/** The store's facet for a folder path, as the device keys it: a view id, else the leaf. */
+const folderKeyOf = (folder: string): string =>
+  (VIEW_OF_FOLDER as Record<string, string | undefined>)[folder] ?? folderLeaf(folder);
 
 /**
- * Ordering the merged list. The sort control is not merely forwarded: this view shows two arms —
- * the device's hits first, the archive's appended — so passing `sort` to the server alone would
- * leave twelve relevance-ranked local hits above the date-ordered ones ("Newest first" and the top
- * does not move). The server orders its half (it decides WHICH rows come back); this comparator
- * orders what is on screen. `mailbox` is the one order this client cannot compute: a message
- * carries `mailboxId`, never the address, and a Cloud mirror holds no mailbox rows — so the
- * comparator uses the position each mailbox first takes in the ARCHIVE's answer (address order,
- * because the server sorted it); unmentioned mailboxes sort after, newest-first among themselves.
+ * Ordering the device's first paint under the chosen sort, so the top moves the moment the order
+ * does; the store's page, which the store orders, then replaces it. `mailbox` is the one order this
+ * client cannot compute — a message carries `mailboxId`, never the address — so over the device's
+ * rows it degrades to date order, the store's answer being the one that orders by address.
  */
 type SortRank = ReadonlyMap<string, number>;
+const NO_RANK: SortRank = new Map();
 
 /** Millis for ordering; a message with no `Date:` header sorts last in both directions. */
 function stampOf(m: EngineMessage): number | null {
@@ -140,10 +116,7 @@ function byDate(a: EngineMessage, b: EngineMessage, dir: 1 | -1): number {
   return (ta - tb) * dir;
 }
 
-/**
- * The displayed order for one sort. `relevance` returns the merged list UNTOUCHED — the local
- * arm's own ranking followed by the archive's, exactly as before this control existed.
- */
+/** The displayed order for one sort. `relevance` returns the device's own ranking UNTOUCHED. */
 function orderMerged(items: MergedHit[], sort: ServerSearchSort, mailboxRank: SortRank): MergedHit[] {
   if (sort === "relevance") return items;
   // `toSorted` is not available on every target this bundle supports; copy first so the memo
@@ -190,7 +163,6 @@ export function SearchView({
   onQuery,
   onOpen,
   placeOf,
-  onServerSearch,
   onExit,
   junkSaid = null,
   junkReadable = false,
@@ -223,13 +195,6 @@ export function SearchView({
    * with no consent partition, where the folder is the honest answer.
    */
   placeOf?: ReadonlyMap<string, string | null>;
-  /**
-   * @deprecated The archive is searched by this view now, so nothing calls this. It is still
-   * declared because `app/shell/AppShell.tsx` still passes it and that file belongs to another
-   * slice; delete the prop and the call together when the shell is free. It must NOT be given
-   * a job in the meantime — the toast it is bound to is the claim this change removed.
-   */
-  onServerSearch?: () => void;
   /**
    * ESCAPE'S SECOND PRESS — leave Search, back to the view it was opened over.
    *
@@ -304,251 +269,205 @@ export function SearchView({
   /** The index has not caught up with this mirror — every sentence below says so. */
   const indexing = result?.indexing ?? false;
 
-  // ── the archive pass ──────────────────────────────────────────────────────
+  // ── the whole-mailbox pass: the store's pages, on the one list walker ─────────
   //
-  // Keyed by the query it answers. A result for a query the user has since edited is
-  // DISCARDED rather than rendered: two passes over one box means the slow one can land after
-  // the question changed, and showing it would attach the archive's answer to the wrong words.
-  const [archive, setArchive] = useState<{ q: string; outcome: Archive } | null>(null);
+  // Keyed by the question it answers (query, sort, pressed facet). A new question drops the old
+  // one's pages; an answer for a question since edited is never read.
+  const walker = useMemo(() => new StoreSearchWalker(engine), [engine]);
+  const rev = useSyncExternalStore(walker.subscribe, walker.revision, walker.revision);
   const [retryTick, setRetryTick] = useState(0);
   const available = engine.serverSearchAvailable();
 
+  /** The store's own filter for a pressed facet — the narrowed question goes to the store. */
+  const storeFilters: ServerSearchFilters | undefined = useMemo(() => {
+    if (!filter) return undefined;
+    if (filter.group === "folder" && filter.raw) return { folder: filter.raw };
+    if (filter.group === "from" && filter.raw) return { sender: filter.raw };
+    if (filter.group === "refine") return { hasAttachments: true };
+    return undefined;
+  }, [filter]);
+
+  /** The device's rows at the moment the store's first page lands — they keep their places. */
+  const deviceOrder = useRef<{ exact: string[]; similar: string[] }>({ exact: [], similar: [] });
+  deviceOrder.current = {
+    exact: (result?.items ?? []).map((h) => h.message.id),
+    similar: (result?.similar ?? []).map((h) => h.message.id),
+  };
   useEffect(() => {
-    // A single character is not a question. `tokenize` in the engine drops tokens shorter than
-    // two characters, so the local arm already ignores it; asking the archive would be a
-    // round trip whose answer nothing on this screen could use.
+    // A single character is not a question: the local arm ignores it, and so does the store.
     if (trimmed.length < 2) {
-      setArchive(null);
-      return;
+      walker.clear();
+      return undefined;
     }
-    if (!available) {
-      setArchive({ q: trimmed, outcome: { state: "unavailable" } });
-      return;
-    }
-    let live = true;
-    setArchive({ q: trimmed, outcome: { state: "searching" } });
-    /*
-     * The ceiling, armed with the state it bounds — and it fires ONLY on a state still `searching`
-     * for this same query. That condition is the whole mechanism, deliberately the only one: a
-     * `clearTimeout` in the settled `.then` beside it was a second way of saying the same thing,
-     * measured unwatchable — removing it left every case green, and a later reader would have taken
-     * the redundant one for a guarantee. A late answer still wins (it overwrites what this wrote);
-     * an answer that arrived before the ceiling is never reported as unanswered. The cleanup clears
-     * the timer on every query, sort and retry change.
-     */
-    const ceiling = setTimeout(() => {
-      if (!live) return;
-      setArchive((prev) =>
-        prev !== null && prev.q === trimmed && prev.outcome.state === "searching"
-          ? { q: trimmed, outcome: unanswered("timeout") }
-          : prev,
-      );
-    }, ARCHIVE_TIMEOUT_MS);
-    const timer = setTimeout(() => {
-      // BOTH ARMS. `searchServer` is written never to reject, and a rejection here once left the
-      // sentence on "Searching…" until the ceiling, as an unhandled rejection: the verdict does
-      // not depend on a promise keeping its contract.
-      void engine.searchServer(trimmed, { sort, parts: "page" })
-        .then(verdictOf, (err: unknown) => unanswered(errorClassOf(err)))
-        .then((outcome) => {
-          if (!live) return;
-          setArchive({ q: trimmed, outcome });
-          // THE PAGE FIRST, THE COUNT SECOND: a cut page says "at least N" until the exact count
-          // lands, and keeps saying it if the count never does — both sentences are true.
-          if (outcome.state !== "ready" || outcome.totalExact) return;
-          void engine.searchServer(trimmed, { parts: "summary" }).then((sum) => {
-            if (!live || sum.state !== "ready" || !sum.totalExact) return;
-            setArchive((prev) => (prev !== null && prev.q === trimmed && prev.outcome.state === "ready"
-              ? { q: trimmed, outcome: { ...prev.outcome, total: sum.total, totalExact: true } }
-              : prev));
-          }, () => {});
-        });
-    }, ARCHIVE_DEBOUNCE_MS);
-    return () => {
-      live = false;
-      clearTimeout(timer);
-      clearTimeout(ceiling);
-    };
-    // `sort` is a dependency: changing the order is a NEW QUESTION for the archive, not a
-    // re-presentation of the old answer. The server holds the whole corpus and decides which
-    // rows come back for a given order — re-sorting the previous page would keep showing the
-    // most RELEVANT fifty in date order, which is the same defect the service arm exists to
-    // avoid, moved to the client.
-  }, [engine, trimmed, available, retryTick, sort]);
+    walker.start(
+      { query: trimmed, sort, ...(storeFilters ? { filters: storeFilters } : {}) },
+      (tier) => (tier === "similar" ? deviceOrder.current.similar : deviceOrder.current.exact),
+      ARCHIVE_DEBOUNCE_MS,
+    );
+    return () => walker.stop();
+    // `sort` and the pressed facet are NEW QUESTIONS for the store, not re-presentations.
+  }, [walker, trimmed, available, retryTick, sort, storeFilters]);
+  useEffect(() => () => walker.clear(), [walker]);
 
-  /** The archive's answer, but only while it still belongs to what is in the box. */
-  const current: Archive | null = archive && archive.q === trimmed ? archive.outcome : null;
+  const passState = walker.state();
+  const cause = walker.failureCause();
+  const question = walker.question();
+  useEffect(() => {
+    if (cause !== null) logUnanswered(cause);
+  }, [question, cause]);
+
+  /** The store's reading of the match set, once its first page answered. */
+  const ready = walker.info();
+  const storeReady = ready !== null;
+  const storeLength = storeReady ? walker.length() : 0;
+
+  /** The device's hits by id: a store row the device also found keeps its highlighted words. */
+  const deviceHits = useMemo(() => {
+    const byId = new Map<string, EngineSearchHit>();
+    for (const hit of [...(result?.items ?? []), ...(result?.similar ?? [])]) byId.set(hit.message.id, hit);
+    return byId;
+  }, [result]);
+  const storeHitAt = (i: number): EngineSearchHit | "gone" | null => {
+    const m = walker.rowAt(i);
+    if (m === null || m === "gone") return m;
+    return { message: m, score: 0, matches: deviceHits.get(m.id)?.matches ?? [] };
+  };
 
   /**
-   * WHICH MAILBOX CAME FIRST IN THE ARCHIVE'S ANSWER — the only address order this device has.
-   *
-   * Built from the server's item order, which under `sort=mailbox` is address-ascending. Empty
-   * whenever the archive has not answered (or cannot), and the comparator degrades to date
-   * order rather than to a uuid comparison that would look sorted without being.
+   * THE DEVICE'S FIRST PAINT — its two tiers, ordered by the chosen sort. Once the store's page
+   * lands the list IS the store's, walked a page at a time; this paint is gone.
    */
-  const mailboxRank: SortRank = useMemo(() => {
-    const rank = new Map<string, number>();
-    if (current?.state !== "ready") return rank;
-    for (const item of current.items) {
-      if (!rank.has(item.mailboxId)) rank.set(item.mailboxId, rank.size);
-    }
-    return rank;
-  }, [current]);
+  const { exactRaw, similarRaw } = useMemo(() => ({
+    exactRaw: (result?.items ?? []).map((hit): MergedHit => ({ hit })),
+    similarRaw: (result?.similar ?? []).map((hit): MergedHit => ({ hit })),
+  }), [result]);
 
   /**
-   * Merge: two doors, two tiers, and the rule applied to the join. Each door decides its OWN tier
-   * and neither knows about the other. The obvious composition — render each door's similar rows
-   * whenever that door had no exact ones — puts local guesses above the archive's three real
-   * matches (the guesses answer first): exactly the interleaving the tier rule removes. So the two
-   * exact halves are merged, the two similar halves are merged, and `showSimilar` is asked ONCE
-   * about the merged exact count. The old noise floor here is gone but not removed: it was the
-   * right rule in the wrong place (local arm only) and now lives as `MIN_FUZZY_TERM_LEN` in
-   * `@trafficflow/core/search-rank`, inside the index, holding both doors to it.
+   * IS THERE A SIMILAR SECTION AT ALL — decided on the UNFILTERED exact count, so a facet that
+   * narrows the exact half can never make a block of guesses appear under it.
    */
-  const { exactRaw, similarRaw } = useMemo(() => {
-    const reader = current?.state === "ready" ? engine.read() : null;
-    const exact: MergedHit[] = (result?.items ?? []).map((hit) => ({ hit, archiveOnly: false }));
-    const similar: MergedHit[] = (result?.similar ?? []).map((hit) => ({ hit, archiveOnly: false }));
-    const seen = new Set([...exact, ...similar].map((m) => m.hit.message.id));
+  const similarOn = storeReady
+    ? ready.tier === "similar" && storeLength > 0
+    : showSimilar(exactRaw.length) && similarRaw.length > 0;
 
-    if (current?.state === "ready" && reader) {
-      const into = current.tier === "similar" ? similar : exact;
-      for (const item of current.items) {
-        if (seen.has(item.id)) continue;
-        seen.add(item.id);
-        // PREFER THE MIRROR'S OWN ROW. It carries the optimistic overlay and this device's
-        // triage/flag state; the wire item is a snapshot from before whatever the user just
-        // did. The wire item is the fallback for a row the mirror does not hold — which on a
-        // Cloud account means a bootstrap still draining, since `/sync` mirrors every message.
-        const mine = reader.get<EngineMessage>("message", item.id);
-        into.push({
-          hit: { message: mine ?? item, score: 0, matches: [] },
-          archiveOnly: mine === undefined,
-        });
-      }
-    }
-    return { exactRaw: exact, similarRaw: similar };
-  }, [result, current, engine]);
-
-  /**
-   * IS THERE A SIMILAR SECTION AT ALL — decided on the UNFILTERED exact count, deliberately.
-   *
-   * Asking after the facet filter would mean clicking "From · Anna" on a list of real matches
-   * could empty the exact half and make a block of typo guesses appear underneath, which is a
-   * narrowing gesture producing MORE rows. The facet narrows what is shown; it does not change
-   * what the corpus answered.
-   */
-  const similarOn = showSimilar(exactRaw.length) && similarRaw.length > 0;
-
-  /**
-   * The lists as they are READ — each tier merged, then put in the chosen order. `relevance`
-   * passes them through untouched, so the pre-existing behaviour is the identity case rather
-   * than a re-derivation of it. Ordered SEPARATELY: a sort reorders within a tier and can never
-   * lift a similar row past an exact one, which is the invariant the whole change is about.
-   */
-  const merged: MergedHit[] = useMemo(
-    () => orderMerged(exactRaw, sort, mailboxRank),
-    [exactRaw, sort, mailboxRank],
-  );
+  const merged: MergedHit[] = useMemo(() => orderMerged(exactRaw, sort, NO_RANK), [exactRaw, sort]);
   const mergedSimilar: MergedHit[] = useMemo(
-    () => (similarOn ? orderMerged(similarRaw, sort, mailboxRank) : []),
-    [similarRaw, similarOn, sort, mailboxRank],
+    () => (!similarOn || storeReady ? [] : orderMerged(similarRaw, sort, NO_RANK)),
+    [similarRaw, similarOn, sort, storeReady],
   );
 
+  /** A pressed facet narrows the device's first paint here; the store answers it by itself. */
   const applyFilter = (list: MergedHit[]) => {
     if (!filter) return list;
     return list.filter(({ hit: { message: m } }) => {
-      // Must match how the facets below are keyed, leaf fallback included.
-      if (filter.group === "folder")
-        return (VIEW_OF_FOLDER[m.folder] ?? folderLeaf(m.folder)) === filter.label;
-      if (filter.group === "from")
-        // Keyed on the same expression the facet below builds, decode included — the label is an
-        // in-tab comparison key and never leaves the client, so decoding it is safe as long as
-        // BOTH sides do it. One side alone and a sender facet would match nothing on an IDN.
-        return (m.from.name ?? displayAddress(m.from.address)) === filter.label;
+      if (filter.group === "folder") return folderKeyOf(m.folder) === filter.label;
+      if (filter.group === "from") {
+        return filter.raw !== undefined
+          ? m.from.address.toLowerCase() === filter.raw.toLowerCase()
+          : (m.from.name ?? displayAddress(m.from.address)) === filter.label;
+      }
       if (filter.group === "refine") return m.hasAttachments;
       return true;
     });
   };
 
-  const items = useMemo(() => applyFilter(merged), [merged, filter]);
-  const similarItems = useMemo(() => applyFilter(mergedSimilar), [mergedSimilar, filter]);
+  const items = useMemo(() => (storeReady ? [] : applyFilter(merged)), [merged, filter, storeReady]);
+  const similarItems = useMemo(() => (storeReady ? [] : applyFilter(mergedSimilar)), [mergedSimilar, filter, storeReady]);
 
   /**
-   * Facets are counted over what is ON SCREEN, not over `result.facets`.
-   *
-   * The engine's facets describe the local arm alone. Once the archive lands, rendering them
-   * beside a longer list would put "From · Anna · 3" above seven visible Anna results — a
-   * smaller, quieter version of exactly the claim this change exists to remove. Counted from
-   * the merged tiers (before the facet filter, so clicking one does not zero the others), and
-   * the similar half is counted only when it is being rendered — a facet count that includes
-   * rows nobody can see is the same defect one level down.
+   * THE FACETS ARE THE STORE'S once its summary lands — counts over the WHOLE match set, kept from
+   * the unnarrowed question so pressing one does not zero the others. Before that, the device's
+   * own, counted over what is on screen.
    */
-  const facetSource = useMemo(
-    () => (similarOn ? [...merged, ...mergedSimilar] : merged),
-    [merged, mergedSimilar, similarOn],
-  );
+  const [storeFacets, setStoreFacets] = useState<{ q: string; facets: ServerSearchFacets } | null>(null);
+  useEffect(() => {
+    if (ready?.facets && filter === null) setStoreFacets({ q: trimmed, facets: ready.facets });
+  }, [ready?.facets, filter, trimmed]);
+  const facets = storeFacets && storeFacets.q === trimmed ? storeFacets.facets : null;
+
+  /** The rows a facet fallback may count: the device's paint, or the store's held pages. */
+  const countedRows = (): EngineMessage[] => {
+    if (!storeReady) return (similarOn ? [...merged, ...mergedSimilar] : merged).map(({ hit }) => hit.message);
+    const out: EngineMessage[] = [];
+    for (let i = 0; i < storeLength; i++) {
+      const r = walker.rowAt(i);
+      if (r !== null && r !== "gone") out.push(r);
+    }
+    return out;
+  };
+
   const facetGroups: FacetGroup[] = useMemo(() => {
     if (!result) return [];
+    const groups: FacetGroup[] = [];
+    if (facets) {
+      if (facets.sender.length) {
+        groups.push({
+          title: t("facetFrom"),
+          items: facets.sender.slice(0, 5).map((x) => ({ label: displayAddress(x.address), count: x.count })),
+        });
+      }
+      const folders = new Map<string, number>();
+      for (const [path, count] of Object.entries(facets.folder)) {
+        const key = folderKeyOf(path);
+        folders.set(key, (folders.get(key) ?? 0) + count);
+      }
+      if (folders.size) {
+        groups.push({
+          title: t("facetFolder"),
+          items: [...folders.entries()].map(([key, count]) => ({ label: PLACE_LABEL[key] ?? key, count })),
+        });
+      }
+      if (facets.hasAttachments.true > 0) {
+        groups.push({ title: t("facetRefine"), items: [{ label: t("facetAttachment"), count: facets.hasAttachments.true }] });
+      }
+      return groups;
+    }
     const senders = new Map<string, number>();
     const folders = new Map<string, number>();
     let attachments = 0;
-    for (const { hit: { message: m } } of facetSource) {
+    for (const m of countedRows()) {
       const who = m.from.name ?? displayAddress(m.from.address);
       senders.set(who, (senders.get(who) ?? 0) + 1);
-      // View id where a view exists, else the folder's LEAF — never the raw namespaced path,
-      // which is what would otherwise reach the screen for a folder this client has no view for.
-      const view = VIEW_OF_FOLDER[m.folder] ?? folderLeaf(m.folder);
+      const view = folderKeyOf(m.folder);
       folders.set(view, (folders.get(view) ?? 0) + 1);
       if (m.hasAttachments) attachments++;
     }
-    const groups: FacetGroup[] = [];
     if (senders.size) {
       groups.push({
         title: t("facetFrom"),
-        items: [...senders.entries()]
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, 5)
-          .map(([label, count]) => ({ label, count })),
+        items: [...senders.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([label, count]) => ({ label, count })),
       });
     }
     if (folders.size) {
       groups.push({
         title: t("facetFolder"),
-        items: [...folders.entries()].map(([view, count]) => ({
-          label: PLACE_LABEL[view] ?? view,
-          count,
-        })),
+        items: [...folders.entries()].map(([view, count]) => ({ label: PLACE_LABEL[view] ?? view, count })),
       });
     }
     if (attachments > 0) {
-      groups.push({
-        title: t("facetRefine"),
-        items: [{ label: t("facetAttachment"), count: attachments }],
-      });
+      groups.push({ title: t("facetRefine"), items: [{ label: t("facetAttachment"), count: attachments }] });
     }
     return groups;
-  }, [result, facetSource, t]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result, facets, merged, mergedSimilar, similarOn, t, storeReady, storeLength, rev]);
 
   const onFacet = (groupTitle: string, label: string) => {
-    const group =
-      groupTitle === t("facetFrom")
-        ? "from"
-        : groupTitle === t("facetFolder")
-          ? "folder"
-          : "refine";
-    // Facet labels arrive display-formatted; map folders back to view ids.
-    const value =
-      group === "folder"
-        ? (Object.entries(PLACE_LABEL).find(([, v]) => v === label)?.[0] ?? label)
-        : label;
+    const group: Filter["group"] =
+      groupTitle === t("facetFrom") ? "from" : groupTitle === t("facetFolder") ? "folder" : "refine";
+    // Labels arrive display-formatted: a folder maps back to its key, and — from the store's
+    // facets — to the stored path and sender address the store filters on.
+    const value = group === "folder"
+      ? (Object.entries(PLACE_LABEL).find(([, v]) => v === label)?.[0] ?? label)
+      : label;
+    const raw = !facets ? undefined
+      : group === "folder" ? Object.keys(facets.folder).find((p) => folderKeyOf(p) === value)
+        : group === "from" ? facets.sender.find((x) => displayAddress(x.address) === label)?.address
+          : undefined;
     setFilter((f) =>
-      f && f.group === group && f.label === value ? null : { group, label: value },
+      f && f.group === group && f.label === value ? null : { group, label: value, ...(raw !== undefined ? { raw } : {}) },
     );
   };
 
-  const isEgg =
-    trimmed.toLowerCase() === "blanc" && items.length === 0 && similarItems.length === 0;
 
   /**
    * The keyboard path that did not exist. Reported as "search does not allow a message to be
@@ -569,17 +488,39 @@ export function SearchView({
    * `SHOWN`, but the arithmetic does not assume that, so a moved floor cannot make this list
    * longer than the cap it advertises.
    */
-  const shownExact = items.slice(0, SHOWN);
-  const shownSimilar = similarItems.slice(0, Math.max(0, SHOWN - shownExact.length));
+  const shownExact = items;
+  const shownSimilar = similarItems;
   const shown = [...shownExact, ...shownSimilar];
-  /** How many rows the two tiers hold in total — what the count under the box is about. */
-  const found = items.length + similarItems.length;
+  /** Slots in the list: the store's walked rows once it answered, else the device's paint. */
+  const shownCount = storeReady ? storeLength : shown.length;
+  const hitAt = (i: number): EngineSearchHit | "gone" | null =>
+    (storeReady ? storeHitAt(i) : shown[i]?.hit ?? null);
+  const isEgg = trimmed.toLowerCase() === "blanc" && shownCount === 0;
+  /** The count on the result line: the store's own once it answered, else the rows on screen. */
+  const found = storeReady && filter === null ? Math.max(ready.total, shownCount) : shownCount;
   const [at, setAt] = useState(0);
   // Reset on the ORDER too, not only on the query. The cursor is an index into the rendered
   // rows; reordering them under a held index leaves it pointing at a different message than the
   // one that was highlighted, which is the same reason it resets when the question changes.
   useEffect(() => setAt(0), [trimmed, sort]);
-  const cursor = shown.length === 0 ? -1 : Math.min(at, shown.length - 1);
+  const cursor = shownCount === 0 ? -1 : Math.min(at, shownCount - 1);
+
+  /** The store's list is a window over the walker's slots; the device's paint renders whole. */
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const win = useListWindow({ scrollerRef, count: storeLength });
+  useEffect(() => {
+    if (storeReady) walker.want(win.visibleStart, win.visibleEnd);
+  }, [walker, storeReady, win.visibleStart, win.visibleEnd, rev]);
+  /* The cursor stays on screen: a slot outside the rendered slice is scrolled to. */
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!storeReady || !el || cursor < 0) return;
+    const top = win.offsetOf(cursor);
+    if (top < el.scrollTop || top > el.scrollTop + el.clientHeight - win.rowHeight) {
+      el.scrollTop = Math.max(0, top - win.rowHeight);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cursor, storeReady]);
 
   /**
    * RE-ENTRY DOES NOT APPEND. The query is shell state so an answer survives a round-trip to
@@ -647,15 +588,15 @@ export function SearchView({
       // The box has focus the moment this view mounts (`autoFocus`), so a binding without
       // this is a binding that never fires — the same reason Escape and ⌘K opt in.
       inInput: true,
-      disabled: shown.length === 0 || zone !== "list",
-      run: () => setAt((i) => Math.min(i + 1, shown.length - 1)),
+      disabled: shownCount === 0 || zone !== "list",
+      run: () => setAt((i) => Math.min(i + 1, shownCount - 1)),
     },
     {
       chord: "ArrowUp",
       group: "navigate",
       label: t("keyPrev"),
       inInput: true,
-      disabled: shown.length === 0 || zone !== "list",
+      disabled: shownCount === 0 || zone !== "list",
       run: () => setAt((i) => Math.max(i - 1, 0)),
     },
     {
@@ -676,44 +617,30 @@ export function SearchView({
       run: () => {
         // `shown[cursor]`, never `shown[0]`. The cursor is the whole point of the two
         // bindings above; opening the first hit regardless would make ↓ decoration.
-        const target = shown[cursor];
-        if (target) onOpen(target.hit);
+        const target = hitAt(cursor);
+        if (target !== null && target !== "gone") onOpen(target);
       },
     },
   ];
   useKeyBindings(keys);
 
   /**
-   * The honest sentence, one always on screen while a query is. `scopeDevice` names the three
-   * fields the local index reads, and is suppressed when the mirror is empty (`coverage.messages
-   * === 0`) so "Nothing on this device." never sits above "…the full text of none.". The
-   * whole-mailbox pass then ends in exactly one of three verdicts ({@link verdictOf}); a query
-   * too short to ask about says nothing beyond this device, where it once said "Searching…" for
-   * ever while nothing was asked.
+   * The verdict, one always on screen while a query is: searching, matched / nothing matched,
+   * or the server did not answer. Under it, while the store is still indexing, its progress;
+   * on the last relevance page of a cut set, where the date orders walk everything.
    */
-  const device = indexing ? (
-    /*
-     * A SEVENTH ARM, and it outranks the inventory: while the index is filling, what this
-     * device holds is not yet what it can answer, so stating the inventory would describe a
-     * corpus the results are not over. It is also the one arm that survives
-     * `coverage.messages === 0`, because that zero now means "no index yet" as well as "no
-     * mail" and the two need different sentences.
-     */
-    <>{t("scopeIndexing")} </>
-  ) : !result || result.coverage.messages === 0 ? null : (
-    <>{t("scopeDevice")} </>
-  );
-  const scope = !result ? null : trimmed.length < 2 ? device : current === null || current.state === "searching" ? (
+  const device = indexing ? <>{t("scopeIndexing")} </> : null;
+  const verdict = !result ? null : trimmed.length < 2 ? device : passState === "idle" || passState === "searching" ? (
     <>
       {device}
       {t("scopeWholeSearching")}
     </>
-  ) : current.state === "unavailable" ? (
+  ) : passState === "unavailable" ? (
     <>
       {device}
       {t("scopeNoArchive")}
     </>
-  ) : current.state === "unanswered" ? (
+  ) : passState === "unanswered" || ready === null ? (
     /* The retry stays: a stated dead end with no way out of it is half a sentence. */
     <>
       {t("scopeUnanswered")}{" "}
@@ -723,10 +650,57 @@ export function SearchView({
     </>
   ) : (
     <>
-      {current.totalExact ? t("scopeWhole", { total: current.total }) : t("scopeWholeAtLeast", { total: current.total })}
-      {current.ms !== null ? <> · {t("scopeServerMs", { ms: current.ms })}</> : null}
+      {/* Exact, else the estimate's "about N" (replaced in place by the summary), else the page's bound. */}
+      {ready.totalExact ? t("scopeWhole", { total: ready.total })
+        : ready.about !== null ? t("scopeWholeAbout", { total: ready.about })
+          : t("scopeWholeAtLeast", { total: ready.total })}
+      {ready.ms !== null ? <> · {t("scopeServerMs", { ms: ready.ms })}</> : null}
     </>
   );
+  const scope = verdict === null ? null : (
+    <>
+      {verdict}
+      {ready?.indexed ? (
+        <span className="search-indexing" data-testid="search-indexing">
+          {" "}{t("indexing", { percent: Math.floor((100 * ready.indexed.done) / ready.indexed.total) })}
+        </span>
+      ) : null}
+      {ready?.bounded && walker.atEnd() ? (
+        <span className="search-bounded" data-testid="search-bounded">
+          {" "}{t("bounded", { count: storeLength })}
+        </span>
+      ) : null}
+    </>
+  );
+
+  /* THE STORE'S LIST — the walker's slots in the window: a row, a placeholder until its page lands
+     (asked again by its own cursor after an eviction), or nothing where the row was deleted. */
+  const storeSlots: ReactElement[] = [];
+  for (let i = win.start; storeReady && i < win.end; i++) {
+    const hit = storeHitAt(i);
+    if (hit === "gone") storeSlots.push(<div key={`g${i}`} data-index={i} className="hit-gone" aria-hidden />);
+    else if (hit === null) storeSlots.push(<div key={`p${i}`} data-index={i} className="hit-w hit-ghost" aria-hidden />);
+    else {
+      storeSlots.push(
+        <div
+          key={hit.message.id}
+          data-index={i}
+          className={i === cursor ? "hit-w cur" : "hit-w"}
+          data-hit={hit.message.id}
+          {...(similarOn ? { "data-similar": "hit" } : {})}
+          {...(i === cursor ? { "aria-current": "true" as const } : {})}
+        >
+          <SearchHitRow hit={hit} now={now} onOpen={onOpen} placeOf={placeOf} />
+        </div>,
+      );
+    }
+  }
+
+  /* Near the end of the list, the next store page. */
+  const onScroll = (e: { currentTarget: HTMLElement }) => {
+    const el = e.currentTarget;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - PAGE_AHEAD_PX) walker.more();
+  };
 
   return (
     <section className="view col view-search">
@@ -759,7 +733,7 @@ export function SearchView({
           </div>
         )}
       </div>
-      <div className="scroller">
+      <div className="scroller" ref={scrollerRef} onScroll={onScroll}>
         <div className="search-wrap">
           <SearchBox
             value={query}
@@ -782,7 +756,7 @@ export function SearchView({
               <b>{t("eggTitle")}</b>
               {t("eggHint")}
             </div>
-          ) : shown.length === 0 ? (
+          ) : shownCount === 0 ? (
             /* "Nothing here" is a claim too, and its size depends on which pass has answered.
                The scope line is rendered INSIDE the empty state for that reason: an empty
                result while the archive is still running must not read as an empty corpus. */
@@ -790,13 +764,9 @@ export function SearchView({
               <span className="glyph">🌫</span>
               {/* "Nothing" is the wrong word for a device that has not finished looking. The
                   indexing arm outranks both settled titles for that reason. */}
-              <b>
-                {indexing
-                  ? t("emptyTitleIndexing")
-                  : current?.state === "ready"
-                    ? t("emptyTitleAll")
-                    : t("emptyTitle")}
-              </b>
+              {/* No title while the store is still looking: "Nothing matched." is its answer to give. */}
+              {indexing ? <b>{t("emptyTitleIndexing")}</b>
+                : passState !== "idle" && passState !== "searching" ? <b>{t("emptyTitle")}</b> : null}
               {scope}
               {/* The address door, offered at the moment its two scopes apply. There is no typed
                   operator: an address is searched through `#/address/<addr>`, whose toggle holds
@@ -821,11 +791,8 @@ export function SearchView({
             <>
               <div className="results-head num">
                 <b>{t("resultsHead", { count: found })}</b>
-                {t("resultsMeta", { ms: tookMs })}
-                {/* The list is capped at 12 rows and always was. That was quiet when only the
-                    local arm fed it; with the archive merged in the gap between the count and
-                    the rows widens, so it is stated. */}
-                {found > SHOWN ? <> · {t("resultsShown", { shown: SHOWN })}</> : null}
+                {/* The time of the pass whose rows these are: the store's, once it answered. */}
+                {t("resultsMeta", { ms: ready?.ms ?? tookMs })}
                 {filter ? <> · {t("filtered")}</> : null}
               </div>
               {/* `.results-head` again rather than a new class: `app/app.css` and
@@ -839,14 +806,26 @@ export function SearchView({
                     to filter. The cursor is a wrapper class plus `aria-current`, which is
                     what a screen reader can act on without moving focus off the input. */}
                 <div>
-                  {shownExact.map(({ hit, archiveOnly }, i) => (
+                  {storeReady ? (
+                    <>
+                      {similarOn ? (
+                        <div className="results-head" data-similar="head">
+                          <b>{t("similarHead")}</b> {t("similarHint")}
+                        </div>
+                      ) : null}
+                      {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
+                      {storeSlots}
+                      {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
+                    </>
+                  ) : null}
+                  {storeReady ? null : shownExact.map(({ hit }, i) => (
                     <div
                       key={hit.message.id}
                       className={i === cursor ? "hit-w cur" : "hit-w"}
                       data-hit={hit.message.id}
                       {...(i === cursor ? { "aria-current": "true" as const } : {})}
                     >
-                      <SearchHitRow hit={hit} now={now} onOpen={onOpen} archiveOnly={archiveOnly} placeOf={placeOf} />
+                      <SearchHitRow hit={hit} now={now} onOpen={onOpen} placeOf={placeOf} />
                     </div>
                   ))}
                   {/*
@@ -858,12 +837,12 @@ export function SearchView({
                       the rows above it are never both on screen. `data-similar` is what the ranking table asserts
                       against; `.results-head` takes the existing 12px/--ink2 treatment.
                     */}
-                  {shownSimilar.length > 0 ? (
+                  {!storeReady && shownSimilar.length > 0 ? (
                     <>
                       <div className="results-head" data-similar="head">
                         <b>{t("similarHead")}</b> {t("similarHint")}
                       </div>
-                      {shownSimilar.map(({ hit, archiveOnly }, i) => {
+                      {shownSimilar.map(({ hit }, i) => {
                         const rowAt = shownExact.length + i;
                         return (
                           <div
@@ -873,7 +852,7 @@ export function SearchView({
                             data-similar="hit"
                             {...(rowAt === cursor ? { "aria-current": "true" as const } : {})}
                           >
-                            <SearchHitRow hit={hit} now={now} onOpen={onOpen} archiveOnly={archiveOnly} placeOf={placeOf} />
+                            <SearchHitRow hit={hit} now={now} onOpen={onOpen} placeOf={placeOf} />
                           </div>
                         );
                       })}
@@ -919,15 +898,12 @@ export function SearchHitRow({
   hit,
   now,
   onOpen,
-  archiveOnly,
   placeOf,
   here,
 }: {
   hit: EngineSearchHit;
   now: Date;
   onOpen: (hit: EngineSearchHit) => void;
-  /** The archive returned it and this device's mirror has no row for it — say so. */
-  archiveOnly: boolean;
   placeOf?: ReadonlyMap<string, string | null>;
   /** The address whose view this row stands in, if any — its own address is not linked. */
   here?: string;
@@ -965,7 +941,6 @@ export function SearchHitRow({
   const where = metaLine(
     known && presented === null ? t("hitHistory") : placeLabel(presented ?? m.folder),
     displayTime(m, now),
-    archiveOnly ? t("hitArchiveOnly") : null,
   );
 
   const name = m.from.name || null;

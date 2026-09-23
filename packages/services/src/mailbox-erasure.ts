@@ -1,7 +1,7 @@
 import { and, asc, eq, exists, gt, inArray, isNotNull, isNull, ne, notExists, sql } from "drizzle-orm";
 import {
   approvals, attachments, awayReplies, awayResponderSent, drafts, flagState, folderOps,
-  folderState, junkRescues, mailboxCredentials, mailboxFolders, mailboxProfileMirror, messageBodies,
+  folderState, junkRescues, mailboxCredentials, mailboxFolders, mailboxProfileMirror, messageBodies, messageSearch,
   messageFailures, messageInstances, messageStates, messageTags, messages, organizerRequests,
   eraseIdempotentResponses, mailboxes, outboundSendFingerprints, outboundSends, recordChanges,
   recordMailboxRemoved, routingDecisions, threadNotes, threads, trackerEvents,
@@ -152,6 +152,10 @@ export async function sweepMailboxData(
   // scoped-by: ownMessageIds — the mailbox-scoped messages subquery at the top of this function
   await drop("message_bodies", tx.delete(messageBodies)
     .where(inArray(messageBodies.messageId, ownMessageIds)));
+  // The search documents (mail 0125) carry the body's words — with the bodies, before `messages`.
+  // scoped-by: ownMessageIds — the mailbox-scoped messages subquery at the top of this function
+  await drop("message_search", tx.delete(messageSearch)
+    .where(inArray(messageSearch.messageId, ownMessageIds)));
   // scoped-by: ownMessageIds — the mailbox-scoped messages subquery at the top of this function
   await drop("folder_state", tx.delete(folderState)
     .where(inArray(folderState.messageId, ownMessageIds)));

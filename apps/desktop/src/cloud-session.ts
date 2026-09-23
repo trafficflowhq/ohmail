@@ -76,47 +76,6 @@ export function cloudSessionNotice(session: CloudSessionWire | null): HostConnec
   return undefined;
 }
 
-/**
- * WHO SAYS WHAT FOR ONE READING — the card, the rail and the sync strip, all keyed on the session
- * state and never on the window's pull: after a refusal every read the engine serves is refused,
- * so a strip counting failed pulls says "Retrying" over a session nothing will renew. `card` is
- * the lead's cause when the dialog is open; `noticeDue` is `cloudNoticeDue`, taken at the probe.
- */
-export function sessionReaders(
-  session: CloudSessionWire | null, expired: boolean, noticeDue: boolean,
-): { card: SignInCause | "closed"; rail: HostConnection | undefined; strip: boolean } {
-  return {
-    card: expired ? signInCauseOf(session) : "closed",
-    rail: noticeDue ? cloudSessionNotice(session) : undefined,
-    strip: !expired && session?.state !== "refused",
-  };
-}
-
-/** The engine's held question (`apps/sidecar/src/session-watch.ts`); bounded under the bridge's minute. */
-export const SESSION_WAIT_PATH = "/cloud/session/wait";
-
-/**
- * Ask the engine to answer when its reading differs from `held`. `changed` false is the hold
- * bound; null is an engine that has no such door or did not answer — the caller falls back to
- * its steady probe rather than asking again in a loop.
- */
-export async function waitForSessionMove(
-  held: CloudSessionWire | null,
-): Promise<{ changed: boolean; session: CloudSessionWire | null } | null> {
-  const q = held === null
-    ? "state=none"
-    : `state=${encodeURIComponent(held.state)}&code=${encodeURIComponent(held.code ?? "")}&since=${encodeURIComponent(held.since)}`;
-  try {
-    const res = await bridgeFetch(`${SESSION_WAIT_PATH}?${q}`);
-    if (!res.ok) return null;
-    const body = (await res.json()) as { changed?: unknown; session?: unknown };
-    if (typeof body.changed !== "boolean") return null;
-    return { changed: body.changed, session: sessionOf(body.session) };
-  } catch {
-    return null;
-  }
-}
-
 /** Settings' Try again: renew now rather than on the engine's own clock. Null when it could not ask. */
 export async function renewCloudSession(): Promise<CloudSessionWire | null> {
   try {

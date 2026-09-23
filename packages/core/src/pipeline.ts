@@ -1,5 +1,6 @@
 import { countRealFiles, normalizeMime } from "./mime.js";
 import { prepareHtmlForStorage } from "./html-storage.js";
+import { searchBodyOf } from "./message-search.js";
 import {
   fingerprintDedupKey, legacyDedupKey, messageFingerprint, verifiesLegacyIdentity,
 } from "./identity.js";
@@ -1370,13 +1371,27 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     // the bytes against `deps.storageCap` in this transaction, and at cap stores the withheld
     // husk instead; everything below proceeds identically — the acceptance that matters is a
     // rule-matched sender still moving on IMAP while its body is withheld.
+
+    // The search document goes with the body — from the PARSED message and not from what the cap
+    // let into the store, so a withheld body's message is still found by its words (mail 0125).
+    const storedHtml = prepareHtmlForStorage(p.normalized.htmlBody);
+    const searchBody = searchBodyOf(p.normalized.textBody, storedHtml);
     await repo.insertMessageBody(stored.id, {
       text: p.normalized.textBody,
-      html: prepareHtmlForStorage(p.normalized.htmlBody),
+      html: storedHtml,
       headers: p.normalized.headers,
     }, {
       accountId,
       capBytes: deps.storageCap === UNMETERED_STORAGE_CAP ? null : deps.storageCap,
+    }, {
+      accountId,
+      subject: p.normalized.subject,
+      from: p.normalized.from,
+      to: p.normalized.to,
+      cc: p.normalized.cc,
+      attachmentNames: p.normalized.attachments.flatMap((a) => (a.filename ? [a.filename] : [])),
+      bodyText: searchBody.bodyText,
+      source: searchBody.source,
     });
 
     // Threading, here and not anywhere else. In the persist phase because it is a pure DB

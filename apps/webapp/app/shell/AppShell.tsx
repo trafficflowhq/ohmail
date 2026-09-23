@@ -500,7 +500,6 @@ export function AppShell({
   organizerNoticeTransport,
   mirrorFreshness,
   hostConnection,
-  sessionRefused,
   sendSurfaceMaxTotalBytes,
   accountSection,
   mailboxSection,
@@ -592,12 +591,6 @@ export function AppShell({
    * derives `stale`, only the sentence is withheld.
    */
   hostConnection?: HostConnection;
-  /**
-   * The hosted session behind this window was REFUSED and the host's sign-in card is over the
-   * shell saying why. The sync strip then says nothing: every pull is refused, and its failure
-   * arm would read "Retrying" over a session nothing renews. Absent on every browser tab.
-   */
-  sessionRefused?: boolean;
   /**
    * The host's own ceiling on attachment bytes in one send — declared by the host because only
    * the host knows its transport. The form-side twin of `sendSurfaceMaxTotalBytes`, same three
@@ -875,7 +868,6 @@ export function AppShell({
             mailboxFacts={mailboxFacts}
             organizerNoticeTransport={organizerNoticeTransport}
             hostConnection={hostConnection}
-            sessionRefused={sessionRefused === true}
             sendSurfaceMaxTotalBytes={sendSurfaceMaxTotalBytes}
             accountSection={accountSection}
             mailboxSection={mailboxSection}
@@ -953,15 +945,13 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
   );
 }
 
-function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, sessionRefused, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, accountNotice, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, olderBodyWire, junkWire, trashWire, suggestWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
+function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, accountNotice, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, olderBodyWire, junkWire, trashWire, suggestWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
   /** The pull settle watch's read — the same probe `MailStateHost` above provides the strip. */
   mailboxFacts?: MailboxProbe;
   /** See `AppShell`'s prop of this name — absent withholds the organizer notice. */
   organizerNoticeTransport?: OrganizerNoticeTransport;
   /** See `AppShell`'s prop of this name — present only on a paired desktop with something wrong. */
   hostConnection?: HostConnection;
-  /** See `AppShell`'s prop of this name — the strip yields while the host's sign-in card is up. */
-  sessionRefused: boolean;
   /** The host's surface declaration for the attach ceiling — see `AppShell`'s prop of this name. */
   sendSurfaceMaxTotalBytes?: number | null;
   accountSection?: ReactNode;
@@ -2140,7 +2130,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             itself (`sync` on the rail below); this one is hidden there by `app.css`. Under
             900px the rail is a drawer that is closed most of the time, so the strip and the
             corner pill are the only way the mailbox can speak, and they keep the job. */}
-        {sessionRefused ? null : <SyncBar hostOffline={hostConnection != null} />}
+        <SyncBar hostOffline={hostConnection != null} />
 
         {/* THE COMPUTER THIS WINDOW READS THROUGH, when it is not answering — the narrow-width
             copy, on `SyncBar`'s rule and hidden above 901px by the same single query. It sits
@@ -2262,7 +2252,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                     status it acts on. Renders nothing in the demo and on builds with no Cloud
                     base; see `PullNewMail.tsx` for the honest-settle contract. */}
                 <PullNewMail variant="rail" binding={pullBinding} />
-                {sessionRefused ? null : <SyncBar variant="rail" hostOffline={hostConnection != null} />}
+                <SyncBar variant="rail" hostOffline={hostConnection != null} />
                 {/* Same component at rail width — its own layout collapses under 520px, so the
                     rail does not need a second variant. */}
                 <UnsavedChanges variant="rail" />

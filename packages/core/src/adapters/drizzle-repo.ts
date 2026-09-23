@@ -13,6 +13,7 @@ import type {
   // classifier and the drafter into the import graph of every artifact that stores a message.
 } from "../mail.js";
 import { canonicalDestination } from "../types.js";
+import { messageSearchUpsert, reindexMessageSearch, type MessageSearchInput } from "../message-search.js";
 import type { NormalizedMessage } from "../types.js";
 import {
   unhuskJunkFiledBody as unhuskJunkFiledBodyTx,
@@ -1265,6 +1266,8 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       await releaseBodyBytes(this.db, this.d, storage.accountId, bytes);
       return false;
     }
+    // The refilled body's words, in the same transaction (mail 0125).
+    await reindexMessageSearch(this.db as unknown as Tx, storage.accountId, messageId);
     return true;
   }
 
@@ -1387,7 +1390,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * only with content stored, whoever calls.
    */
   async insertMessageBody(
-    messageId: string, body: MessageBodyInput, storage: BodyStorageContext,
+    messageId: string, body: MessageBodyInput, storage: BodyStorageContext, search?: MessageSearchInput,
   ): Promise<BodyStorageOutcome> {
     const bytes = bodyBytesOf(body);
     // A DUPLICATE must not evict. The 1:1 conflict below is how this method learns the body
@@ -1405,7 +1408,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     const reserved = dupe.length > 0
       ? await reserveBodyBytes(this.db, this.d, storage.accountId, bytes, storage.capBytes)
       : await reserveBodyBytesEvicting(this.db, this.d, storage.accountId, bytes, storage.capBytes);
-    const rows = await this.db.insert(messageBodies).values({
+    const bodyInsert = this.db.insert(messageBodies).values({
       messageId,
       text: reserved ? body.text : "",
       html: reserved ? body.html : null,
@@ -1422,7 +1425,22 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       headers: { ...body.headers },
     }).onConflictDoNothing({ target: messageBodies.messageId })
       .returning({ id: messageBodies.id });
-    if (reserved && rows.length === 0) {
+    // THE SEARCH DOCUMENT RIDES THE BODY'S OWN STATEMENT (mail 0125): written from the PARSED
+    // message whatever the reserve decided, and at no extra round trip where the store can say
+    // both in one statement — the ingest's per-message cost is a ratchet that only falls.
+    let bodyRows: number;
+    const document = search === undefined ? null : messageSearchUpsert(this.db as unknown as Tx, [{ messageId, input: search }]);
+    // `getSQL()`, not the builders themselves: a builder inside a template renders as a
+    // parenthesised subquery, and `(insert …)` is no statement.
+    const combined = document === null ? null : this.d.search.withDocument(bodyInsert.getSQL(), document.getSQL());
+    if (combined !== null) {
+      const [row] = await this.d.exec(this.db, combined);
+      bodyRows = Number(row?.[0] ?? 0);
+    } else {
+      bodyRows = (await bodyInsert).length;
+      if (document !== null) await document;
+    }
+    if (reserved && bodyRows === 0) {
       await releaseBodyBytes(this.db, this.d, storage.accountId, bytes);
     }
     return reserved ? "stored" : "withheld";

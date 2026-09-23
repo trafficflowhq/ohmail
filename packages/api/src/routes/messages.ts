@@ -38,12 +38,26 @@ export const messageRoutes: Route[] = [
       const folderId = url.searchParams.get("folderId") ?? undefined;
       const beforeId = url.searchParams.get("beforeId") ?? undefined;
       const beforeDate = url.searchParams.get("beforeDate") ?? undefined;
+      // `view=all` (History): `atDate`/`atId` start the page AT a position — the rail's jump.
+      const atId = url.searchParams.get("atId") ?? undefined;
+      const atDate = url.searchParams.get("atDate") ?? undefined;
       const page = await message(deps).list(serviceContext(deps, req), {
         view, cursor, limit, folderId,
         ...(beforeId ? { before: { date: beforeDate ?? null, id: beforeId } } : {}),
+        ...(atId || atDate ? { at: { date: atDate ?? null, ...(atId ? { id: atId } : {}) } } : {}),
       });
       return jsonResponse({ items: page.items, nextCursor: page.nextCursor });
     },
+  },
+  {
+    // The History rail: every month's count and newest message, the undated tail and the total —
+    // one grouped read of the History index. Static beats `/messages/:id` by the router's rule.
+    method: "GET",
+    pattern: "/messages/timeline",
+    relay: true,
+    cost: "read",
+    handler: async (req, deps) =>
+      jsonResponse(await message(deps).timeline(serviceContext(deps, req))),
   },
   {
     // The batch body read, two modes over one route: `?after=<cursor>&limit=` — the keyset text

@@ -73,6 +73,7 @@ export const RELAY_ALLOWLIST: readonly RelaySpec[] = [
   { method: "GET", pattern: "/messages/:id/body" },
   { method: "GET", pattern: "/messages/:id/tracker-events" },
   { method: "GET", pattern: "/messages/bodies" },
+  { method: "GET", pattern: "/messages/timeline" },
   { method: "GET", pattern: "/notify-rules" },
   { method: "GET", pattern: "/pair" },
   { method: "GET", pattern: "/push/vapid-key" },

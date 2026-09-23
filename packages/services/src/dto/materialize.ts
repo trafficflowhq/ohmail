@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, getTableColumns, inArray, isNotNull, isNull, sql, type SQL, type Table } from "drizzle-orm";
 import { foldersEnabled, userFolderById, type UserFolderRow } from "../folders.js";
 import {
   capSuggestion, draftBodyOverCeiling, resolveOhboxPolicy, senderCheckAll,
@@ -328,125 +328,153 @@ export function messageRowToDTO(
 }
 
 /**
- * Materialize MANY messages in SIX queries, whatever the count — CONSTANT, not fast: a page of
- * 500 costs the round trips of a page of 1 (`search-materialize.test.ts` pins the SELECT count).
- * The fifth query is the auto-reply flag (`autoReplyByUsWhere`, once per PAGE); the sixth is the
- * away answer stamp. `accountId` is on the `messages` predicate; side tables key by SURVIVING
- * ids; `message_tags` also filters its denormalized `account_id`. A soft-deleted row materializes
- * as ABSENT by default: an update emitted after a delete used to re-materialize the DTO, and on a
- * stale resume it SUPERSEDED the delete tombstone. `deleted: "include"` is the receipt reader
- * only; nothing that feeds a mirror may pass it.
+ * Materialize MANY messages in ONE statement, whatever the count: the row, its folder and triage
+ * state, its tags, the away answer and the three flags, joined on the account-scoped `messages`
+ * row. One round trip, because production pays one per statement (`search-materialize.test.ts`
+ * pins it). `accountId` is on the `messages` predicate; `message_tags` and `away_replies` also
+ * filter their own `account_id`. A soft-deleted row materializes as ABSENT by default: an update
+ * emitted after a delete used to re-materialize the DTO, and on a stale resume it SUPERSEDED the
+ * delete tombstone. `deleted: "include"` is the receipt reader only; nothing that feeds a mirror
+ * may pass it.
  */
 export interface MaterializeMessagesOpts {
   /** Default `"omit"` — the living-view rule. See the header before passing `"include"`. */
   deleted?: "omit" | "include";
 }
 
+/**
+ * A page whose rows this read joins in, so the rows and their DTOs are one statement: `rows`
+ * answers `id` and the named `keys` at most once per id; `order` is over `p.<key>` and the
+ * `messages` columns, and the answer comes back in it.
+ */
+export interface MaterializeSource {
+  readonly rows: SQL;
+  readonly keys: readonly string[];
+  readonly order: SQL;
+}
+
+/** One materialized message and, for a joined page, its source row's keys in `keys` order. */
+export interface MaterializedRow { readonly dto: MessageDTO; readonly keys: readonly unknown[] }
+
 export async function materializeMessages(
   db: Db, accountId: string, ids: readonly string[], opts: MaterializeMessagesOpts = {},
 ): Promise<Map<string, MessageDTO>> {
   const out = new Map<string, MessageDTO>();
   if (ids.length === 0) return out;
+  for (const r of await materializeRows(db, accountId, { ids: [...new Set(ids)] }, opts)) out.set(r.dto.id, r.dto);
+  return out;
+}
 
-  const unique = [...new Set(ids)];
-  const rows = await db.select().from(messages)
+/** The DTOs of a joined page, in its `order` — the search page's rows and their DTOs at once. */
+export function materializePage(db: Db, accountId: string, source: MaterializeSource): Promise<MaterializedRow[]> {
+  return materializeRows(db, accountId, { source }, {});
+}
+
+async function materializeRows(
+  db: Db, accountId: string,
+  scope: { ids: readonly string[] } | { source: MaterializeSource },
+  opts: MaterializeMessagesOpts,
+): Promise<MaterializedRow[]> {
+  const d = dialect(db);
+  const source = "source" in scope ? scope.source : null;
+  const keyFields = Object.fromEntries((source?.keys ?? []).map((k, i) => [`k${i}`, sql`p.${sql.identifier(k)}`.as(`p_${k}`)]));
+  /**
+   * THE THREE FLAGS as columns of the same row — the auto-reply flag and the two calendar facts,
+   * each asked on the account-scoped row, on BOTH paths: the receipt reader (`deleted:
+   * "include"`) carries them too, so `MessageService.delete`'s echo cannot disagree with the row
+   * the client already holds. One store answers a boolean and the other 0/1, normalised below.
+   */
+  const fields = {
+    m: messages,
+    fs: prefixed(folderState, "fs"),
+    st: prefixed(messageStates, "st"),
+    tagId: sql<string | null>`${messageTags.tagId}`.as("mt_tag_id"),
+    awaySentAt: sql`${awayReplies.sentAt}`.mapWith(awayReplies.sentAt).as("ar_sent_at"),
+    autoReply: sql<unknown>`case when ${autoReplyByUsWhere(d, {
+      accountId: sql`${messages.accountId}`,
+      id: sql`${messages.id}`,
+      fromAddress: sql`${messages.fromAddress}`,
+      messageIdHeader: sql`${messages.messageIdHeader}`,
+    })} then 1 else 0 end`.as("m_auto_reply"),
+    invitation: sql`${invitationWithoutEventWhere(d, { id: sql`${messages.id}` })}`.as("m_invitation"),
+    itipReply: sql`${itipReplyHeaderWhere(d, { id: sql`${messages.id}` })}`.as("m_itip_reply"),
+    ...keyFields,
+  };
+  type Row = {
+    m: typeof messages.$inferSelect; fs: typeof folderState.$inferSelect;
+    st: typeof messageStates.$inferSelect; tagId: string | null; awaySentAt: Date | null;
+    autoReply: unknown; invitation: unknown; itipReply: unknown;
+  } & Record<string, unknown>;
+  // Dynamic: the page join is present only for a joined page. Every join is 1:1 but the tags.
+  // scoped-by: the `.where` below carries `eq(messages.accountId, accountId)`; every join keys on this row
+  const base = (db.select(fields).from(messages) as unknown as { $dynamic: () => DynamicSelect }).$dynamic();
+  const q = (source ? base.innerJoin(sql`(${source.rows}) p`, sql`p.id = ${messages.id}`) : base)
+    .leftJoin(folderState, eq(folderState.messageId, messages.id))
+    .leftJoin(messageStates, eq(messageStates.messageId, messages.id))
+    .leftJoin(messageTags, and(eq(messageTags.messageId, messages.id), eq(messageTags.accountId, accountId)))
+    /**
+     * The away answer stamp, on the ORIGINAL: `outcome in ('sent','unverified')` — "the claim is
+     * kept and no second reply will ever be offered". `isNotNull(sent_at)` is a NARROWING, not a
+     * second guard: `iso()` answers `null` for a null instant. The ledger's UNIQUE on
+     * `(account_id, message_id)` is why this join cannot fan out.
+     */
+    .leftJoin(awayReplies, and(
+      eq(awayReplies.messageId, messages.id), eq(awayReplies.accountId, accountId),
+      inArray(awayReplies.outcome, ["sent", "unverified"]), isNotNull(awayReplies.sentAt),
+    ))
     .where(and(
-      inArray(messages.id, unique),
+      ...("ids" in scope ? [inArray(messages.id, [...scope.ids])] : []),
       eq(messages.accountId, accountId),
       ...(opts.deleted === "include" ? [] : [isNull(messages.deletedAt)]),
-    ));
-  if (rows.length === 0) return out;
+    ))
+    .orderBy(source ? source.order : sql`${messages.id}`, sql`${messageTags.createdAt}`, sql`${messageTags.tagId}`);
+  const rows = (await q) as Row[];
 
-  const owned = rows.map((r) => r.id);
-  // scoped-by: `owned` is the account-scoped messages read above
-  const fsRows = await db.select().from(folderState).where(inArray(folderState.messageId, owned));
-  // scoped-by: `owned` is the account-scoped messages read above
-  const stRows = await db.select().from(messageStates).where(inArray(messageStates.messageId, owned));
-  const mtRows = await db.select().from(messageTags)
-    .where(and(inArray(messageTags.messageId, owned), eq(messageTags.accountId, accountId)));
-  /**
-   * THE AUTO-REPLY FLAG — one query per page, keyed on the ids that survived the account filter.
-   *
-   * On BOTH paths, deliberately: `owned` already reflects `opts.deleted`, so the receipt reader
-   * (`deleted: "include"`) carries the flag too. A projection that answered the question on the
-   * living view and not on the receipt would let `MessageService.delete`'s echo disagree with the
-   * row the client already holds, and the mirror's apply contract has no repair for a field that
-   * changes value on a `delete` it did not change on the `update` before it.
-   */
-  const arRows = await db.select({ id: messages.id }).from(messages)
-    .where(and(
-      inArray(messages.id, owned),
-      eq(messages.accountId, accountId),
-      autoReplyByUsWhere(dialect(db), {
-        accountId: sql`${messages.accountId}`,
-        id: sql`${messages.id}`,
-        fromAddress: sql`${messages.fromAddress}`,
-        messageIdHeader: sql`${messages.messageIdHeader}`,
-      }),
-    ));
-  const autoReplyIds = new Set(arRows.map((r) => r.id));
-  /**
-   * The away responder's answer stamp — one query per page, on the ORIGINAL, not the reply. Keyed
-   * on `owned`: the account filter has already run. Which rows count: `outcome in
-   * ('sent','unverified')` — "the claim is kept and no second reply will ever be offered"; the
-   * guard for the term is a `throttled` row carrying a `sent_at`, reachable by hand repair, the
-   * only shape where dropping it changes an answer. `isNotNull(sent_at)` is a NARROWING, not a
-   * second guard: `iso()` answers `null` for a null instant, so removing it changes the rows
-   * crossing the wire and no answer — measured, which is why it is documented rather than pinned
-   * by a test that could not fail. The ledger's UNIQUE is why no `distinct` is needed.
-   */
-  const wrRows = await db.select({
-    messageId: awayReplies.messageId, sentAt: awayReplies.sentAt,
-  }).from(awayReplies)
-    .where(and(
-      inArray(awayReplies.messageId, owned),
-      eq(awayReplies.accountId, accountId),
-      inArray(awayReplies.outcome, ["sent", "unverified"]),
-      isNotNull(awayReplies.sentAt),
-    ));
-  const awayRepliedBy = new Map(wrRows.map((r) => [r.messageId, iso(r.sentAt)]));
-  /**
-   * THE TWO CALENDAR FACTS — ONE query per page, not two: both read `message_bodies.headers` for
-   * the same ids, so asking them together costs one round trip instead of two scans of the same
-   * rows. On `owned` for the auto-reply flag's reason (the receipt reader carries them too, so a
-   * `delete` echo cannot disagree with the row the client already holds). Neither needs the .ics
-   * bytes, which are never persisted; `packages/core/src/mime.ts` holds the TS half of each.
-   */
-  const calRows = await db.select({
-    id: messages.id,
-    invitation: invitationWithoutEventWhere(dialect(db), { id: sql`${messages.id}` }),
-    itipReply: itipReplyHeaderWhere(dialect(db), { id: sql`${messages.id}` }),
-  }).from(messages)
-    .where(and(inArray(messages.id, owned), eq(messages.accountId, accountId)));
-  // One store answers a boolean and the other a 0/1 integer — a driver difference, not a dialect
-  // one, so the same question is normalised to one answer here.
   const isYes = (v: unknown): boolean => v === true || v === 1;
-  const invitationIds = new Set(calRows.filter((r) => isYes(r.invitation)).map((r) => r.id));
-  const itipReplyIds = new Set(calRows.filter((r) => isYes(r.itipReply)).map((r) => r.id));
-
-  const fsBy = new Map(fsRows.map((r) => [r.messageId, r]));
-  const stBy = new Map(stRows.map((r) => [r.messageId, r]));
-  const tagsBy = new Map<string, string[]>();
-  for (const r of mtRows) {
-    const list = tagsBy.get(r.messageId);
-    if (list) list.push(r.tagId);
-    else tagsBy.set(r.messageId, [r.tagId]);
+  const byId = new Map<string, { row: Row; tags: string[] }>();
+  for (const r of rows) {
+    const seen = byId.get(r.m.id);
+    if (!seen) byId.set(r.m.id, { row: r, tags: r.tagId === null ? [] : [r.tagId] });
+    else if (r.tagId !== null && !seen.tags.includes(r.tagId)) seen.tags.push(r.tagId);
   }
-  for (const m of rows) {
-    out.set(m.id, messageRowToDTO(
-      m, fsBy.get(m.id), stBy.get(m.id), tagsBy.get(m.id), autoReplyIds.has(m.id),
-      // `?? null` and never `undefined`: the batch ASKED, so "no ledger row" is a known answer
-      // and says so on the wire. Absent is reserved for a caller that did not ask.
-      awayRepliedBy.get(m.id) ?? null,
-      invitationIds.has(m.id),
-      itipReplyIds.has(m.id),
-    ));
+  const out: MaterializedRow[] = [];
+  for (const { row: r, tags: labels } of byId.values()) {
+    out.push({
+      dto: messageRowToDTO(
+        // A side row the left join did not find comes back as columns that are all null.
+        r.m, r.fs?.id == null ? undefined : r.fs, r.st?.id == null ? undefined : r.st, labels, isYes(r.autoReply),
+        // `?? null` and never `undefined`: the batch ASKED, so "no ledger row" is a known answer
+        // and says so on the wire. Absent is reserved for a caller that did not ask.
+        iso(r.awaySentAt),
+        isYes(r.invitation),
+        isYes(r.itipReply),
+      ),
+      keys: (source?.keys ?? []).map((_, i) => r[`k${i}`]),
+    });
   }
   return out;
 }
 
 /**
- * The same six queries as {@link materializeMessages}, in the caller's order.
+ * A joined table's columns each under its own name (`fs_id`, `st_id`, …), decoded by the column:
+ * the device store reads columns BY NAME and refuses two of one name, which every side table's
+ * `id` and `updated_at` would be beside the message's own.
+ */
+function prefixed<T extends Table>(table: T, prefix: string): Record<string, SQL.Aliased> {
+  return Object.fromEntries(Object.entries(getTableColumns(table)).map(([key, column]) =>
+    [key, sql`${column}`.mapWith(column).as(`${prefix}_${column.name}`)]));
+}
+
+/** The dynamic select the materializing read builds, as far as it uses it. */
+interface DynamicSelect {
+  innerJoin: (t: SQL, on: SQL) => DynamicSelect;
+  leftJoin: (t: unknown, on: SQL | undefined) => DynamicSelect;
+  where: (w: SQL | undefined) => DynamicSelect;
+  orderBy: (...o: SQL[]) => PromiseLike<unknown[]>;
+}
+
+/**
+ * The same one statement as {@link materializeMessages}, in the caller's order.
  * `materializeMessages` is keyed by id and says nothing about sequence — right for `getChanges`,
  * whose `change_log` page carries the order. A snapshot page IS an ordered window (newest first,
  * keyset-paged), so it needs the DTOs back in the order it asked. Ids the account does not own

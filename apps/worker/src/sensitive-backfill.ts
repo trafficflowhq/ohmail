@@ -5,7 +5,7 @@ import {
 import { dialect } from "@trafficflow/db/dialect";
 import {
   classifySensitivity, fingerprintDedupKey, messageFingerprint, normalizeMessageId, normalizeMime,
-  prepareHtmlForStorage, silentLogger,
+  prepareHtmlForStorage, reindexMessageSearch, silentLogger,
   type Logger, type NativeLocator, type NormalizedMessage, type SensitivityResult,
 } from "@trafficflow/core";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
@@ -647,6 +647,8 @@ async function repairOne(
       text: storedText,
       html: storedHtml,
     }).where(eq(messageBodies.messageId, messageId));
+    // The restored body's words replace the damaged ones in its search document (mail 0125).
+    await reindexMessageSearch(tx as unknown as Tx, accountId, messageId);
 
     // KEEP THE COUNTER TRUE: same transaction, before the `recordChange` below (the lock order
     // every `account_storage` writer holds), clamped at zero so a pre-backfill row can never

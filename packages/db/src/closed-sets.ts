@@ -8,6 +8,7 @@ import {
   type OrganizerKind,
 } from "./organizer-role.js";
 import { JUNK_RESCUE_STATUSES, isJunkRescueStatus } from "./junk-rescue-status.js";
+import { SEARCH_SOURCES, isSearchSource } from "./search-sources.js";
 
 /**
  * THE CLOSED SETS THE TWO STORES CARRY, AND WHICH OF THEM MAY BE A CHECK ON A DEVICE.
@@ -110,6 +111,15 @@ export const CLOSED_SETS: readonly ClosedSet[] = [
       + "ladder ran out; a LANDED rescue leaves no row at all, so there is no third state to "
       + "record. A fourth answer would be a different design rather than a wider set. NOT NULL, "
       + "so it has no null arm.",
+  },
+  {
+    constraint: "message_search_source_closed",
+    table: "message_search", column: "source", nullable: false,
+    members: SEARCH_SOURCES, isMember: isSearchSource,
+    kind: "immutable",
+    why: "where a document's body words came from, and a stored body offers exactly two places — "
+      + "its text part or its html — or none. A new source would be a new kind of stored body, "
+      + "a different design rather than a wider set. NOT NULL, so it has no null arm.",
   },
 ];
 

@@ -13,7 +13,7 @@ import { and, eq, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   approvals, attachments, awayReplies, awayResponderSent,
-  drafts, flagState, folderOps, folderState, junkRescues, mailboxFolders, messageBodies,
+  drafts, flagState, folderOps, folderState, junkRescues, mailboxFolders, messageBodies, messageSearch,
   messageFailures, messageInstances, messageStates, messageTags, messages, outboundSends,
   recordMailboxRemoved, routingDecisions, trackerEvents, unsubscribeExamined, unsubscribeRecords,
   type LedgerTx, type Tx,
@@ -43,6 +43,7 @@ export const WIPED_TABLES: readonly string[] = [
   "approvals",
   "routing_decisions",
   "message_bodies",
+  "message_search",
   "flag_state",
   "folder_state",
   "message_instances",
@@ -137,6 +138,8 @@ export async function deleteMailboxRows(db: Tx, mailboxId: string): Promise<void
   await db.delete(approvals).where(inArray(approvals.messageId, ownMessages));
   await db.delete(routingDecisions).where(inArray(routingDecisions.messageId, ownMessages));
   await db.delete(messageBodies).where(inArray(messageBodies.messageId, ownMessages));
+  // The search documents (mail 0125) reference the messages and carry the body's words.
+  await db.delete(messageSearch).where(inArray(messageSearch.messageId, ownMessages));
   await db.delete(flagState).where(inArray(flagState.messageId, ownMessages));
   await db.delete(folderState).where(inArray(folderState.messageId, ownMessages));
 

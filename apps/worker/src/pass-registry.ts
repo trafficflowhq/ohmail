@@ -42,6 +42,7 @@ export interface WorkerPass {
 
 const W = "apps/worker/src";
 const DB = "packages/db/src";
+const CORE = "packages/core/src";
 
 export const WORKER_PASSES: readonly WorkerPass[] = [
   /* ── IN-VISIT (the mailbox's own connection, inside the sync write fence) ────────────── */
@@ -104,6 +105,17 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     budget: "SENSITIVE_FP_BATCH / SENSITIVE_FP_FETCHES_PER_CYCLE / SENSITIVE_FP_MAX_PAGES / SENSITIVE_FP_MAX_BYTES",
     owns: "bodies a sensitivity false-positive redacted are re-read and restored",
     fence: "shares the visit's connection; a failure never counts toward the mailbox's failure budget",
+  },
+  {
+    name: "search_index_backfill",
+    module: `${CORE}/message-search.ts`, entry: "searchIndexBackfillPass",
+    // The SAME module the desktop engine's composition imports from `@trafficflow/core/mail`,
+    // gated there on idle and power; here it runs at the visit's tail.
+    triggers: ["visit"],
+    cadence: "after a SUCCESSFUL sync, per account, until account_settings.search_index_built_at is written",
+    budget: "SEARCH_INDEX_ROUNDS_PER_CYCLE rounds × SEARCH_INDEX_BATCH rows, one transaction per round",
+    owns: "every living message has its search document, built from the store alone (no mailbox read)",
+    fence: "store-only — no adapter, no lease; the document's FK refuses a row whose message is gone, and a failure never counts toward the mailbox's failure budget",
   },
   {
     name: "kickstart",

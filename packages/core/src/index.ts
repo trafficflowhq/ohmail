@@ -19,6 +19,10 @@ export * from "./reconciler.js";
 export * from "./threading.js";
 export * from "./pipeline.js";
 export * from "./husk-restore.js";
+// The search document (mail 0125): its parts, its one writer, the store-only backfill's page — and
+// the html-to-text rendering an HTML-only message's words come from.
+export * from "./html-text.js";
+export * from "./message-search.js";
 export * from "./ai/classify.js";
 export * from "./ai/anthropic-client.js";
 export * from "./ai/draft.js";

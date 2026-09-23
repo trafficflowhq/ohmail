@@ -18,63 +18,6 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
-## [0.23.2] — 2026-09-24
-
-### The desktop's Ohbox matches the web's
-<!-- changes: fix-0232-desktop-ohbox-news-rows.md -->
-
-On the desktop app paired to ohmail Cloud, the Ohbox could show messages the web filed under
-News or Receipts — notification mail from senders you had since decided about — and the counts
-disagreed between the two. The desktop now files every sender's mail by the same decision the
-web uses, and an installed desktop corrects itself on its next sync.
-
-## [0.23.1] — 2026-09-24
-
-### Drafts on the phone ask where you pressed, and a send we could not confirm says so plainly
-<!-- changes: drafts-023-phone-drafts-parity.md -->
-
-On the phone, Discard asks in the place you pressed it, and a message we could not confirm sending
-says what is known and offers Send again or It was sent — dismiss.
-
-### Set up a new computer by confirming in your browser — no address to type
-<!-- changes: fix-023-first-cloud-door-no-address.md -->
-
-On a fresh install, choose ohmail Cloud and press "Sign in with browser": confirm on ohmail.app and
-the app opens your mail, with no address or code to type. The confirmation page shows which account
-the computer is being signed in to. Signing in with a code is still there, under "Sign in with a
-code instead".
-
-### News no longer jumps while a card opens as you scroll
-<!-- changes: fix-023-news-scroll-jump.md -->
-
-Opening a card whose top has scrolled out of view keeps the card where you pressed it; before, it
-was pushed up by its own length. Opening another card no longer shifts the one above it: that card
-keeps its buttons until it leaves the screen. Receipts behaves the same way.
-
-### Someone you wrote to is never treated as spam
-<!-- changes: fix-023-screener-correspondent-unjunk.md -->
-
-A person you have written to since you set up ohmail, or who answers a message you sent since
-then, is let through to the Ohbox instead of waiting in the Screener, and "Act on suggestions for
-me" never files them, whatever the suggestion says. A message you move out of Junk gets its full
-text back with the move, and says it is loading until then rather than that your spam verdict
-filed it.
-
-### An Undo stays on screen for its whole window
-<!-- changes: fix-023-toast-undo-kept.md -->
-
-- After a Screener decision, a delete or any other act with **Undo**, a notice that arrives
-  meanwhile — such as the automatic suggestions' summary — shows beneath the Undo instead of
-  replacing it. On the web, the desktop apps and the phone.
-
-### The sign-in card opens at once when ohmail Cloud signs the desktop out
-<!-- changes: fix-0231-refused-session-card.md -->
-
-When ohmail Cloud ends the desktop's session — the device was removed from another device, or a
-security check signed it out — the app now opens the sign-in card within a second or two, over the
-mail it already shows, and its first sentence says why. It no longer shows "Can't refresh.
-Retrying." first, and no longer replaces the mail with "ohmail cannot open your mailbox".
-
 ## [0.23.0] — 2026-09-23
 
 ### Pressing send or retry after a lost answer replays the answer instead of doing the thing twice
@@ -8156,9 +8099,7 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.23.2...HEAD
-[0.23.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.23.2
-[0.23.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.23.1
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.23.0...HEAD
 [0.23.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.23.0
 [0.22.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.22.1
 [0.22.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.22.0

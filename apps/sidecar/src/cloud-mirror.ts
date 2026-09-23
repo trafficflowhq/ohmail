@@ -2,7 +2,7 @@ import { closeSync, fsyncSync, openSync, readFileSync, rmSync, writeFileSync, wr
 import { dirname, join } from "node:path";
 import { and, asc, desc, eq, gt, inArray, isNull, ne, notInArray, sql } from "drizzle-orm";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
-import { recordChange, recordChanges, recordRuleDelta, accountSettings, CAPABILITY_REQUESTS,
+import { recordChange, recordChanges, accountSettings, CAPABILITY_REQUESTS,
   SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS,
   // The erasure fence's own reads — the replay writes rows the ACCOUNT owns and rows one
   // MAILBOX owns, and SKIPS rather than throws on either stamp; see the folder arm for why a
@@ -12,7 +12,8 @@ import { recordChange, recordChanges, recordRuleDelta, accountSettings, CAPABILI
 import {
   approvals, attachments, awayReplies, drafts, flagState, folderOps, folderState,
   mailboxCredentials, mailboxFolders, mailboxProfileMirror,
-  mailboxes, messageBodies, messageFailures, messageInstances, messageStates, messages, messageTags,
+  mailboxes, messageBodies, messageFailures, messageInstances, messageSearch, messageStates, messages,
+  messageTags,
   organizerRequests, outboundSends, routingDecisions, rules, tags, threadNotes, threads,
   trackerEvents, unsubscribeExamined, unsubscribeRecords,
 } from "@trafficflow/db/mail";
@@ -324,13 +325,6 @@ interface CursorState {
    *  entities the pre-folders apply loop dropped while the cursor advanced past them. */
   folderBackfill: boolean;
   /**
-   * Set once the one-time rule-instant repair has been CONSIDERED — see `repairRuleInstants`.
-   * The `rule` arm used to write every hosted rule without its `createdAt`, so the local row
-   * took the insert instant. Absent from every cursor file written before the repair existed,
-   * which reads `false` — exactly the population whose rules all share one instant.
-   */
-  ruleInstantRepair: boolean;
-  /**
    * Set once the one-time cap-marker repair has been CONSIDERED — see {@link repairCapMarkers}.
    * Absent from every cursor file written before that repair existed, which reads as `false`, and
    * that population is exactly the one it is for: mirrors an old sidecar filled with ordinary
@@ -518,7 +512,6 @@ interface CursorFile {
   tagBackfill?: unknown;
   tagBackfillBegun?: unknown;
   folderBackfill?: unknown;
-  ruleInstantRepair?: unknown;
   capMarkerRepair?: unknown;
   /** ISO instant of the last completed pull; absent on every file from before the freshen. */
   lastDrainAt?: unknown;
@@ -565,8 +558,6 @@ function readCursor(path: string): CursorState {
       // started" — so those mirrors keep the cheap presence gate they have always had.
       tagBackfillBegun: j.tagBackfillBegun === true,
       folderBackfill: j.folderBackfill === true,
-      // `=== true`: an absent key (every pre-repair file) reads FALSE, so those mirrors repair once.
-      ruleInstantRepair: j.ruleInstantRepair === true,
       // `=== true`, never `?? true`: an absent key must read FALSE. The inverse would silently
       // exempt every install that HAS the defect and leave only fresh ones correct.
       capMarkerRepair: j.capMarkerRepair === true,
@@ -583,8 +574,6 @@ function readCursor(path: string): CursorState {
       version: CURSOR_VERSION, sync: "0", bodies: { phase: "unresolved" },
       bootstrapping: false, window: { phase: "pending" }, tagBackfill: false,
       tagBackfillBegun: false, folderBackfill: false,
-      // A fresh install's rule arm carries the creation instant from its first row: nothing to repair.
-      ruleInstantRepair: true,
       // A fresh install has no pre-marker rows and its walk writes markers from the start.
       capMarkerRepair: true,
       // And it has never completed a pull: the bootstrap's own window owns "newest first" here.
@@ -604,7 +593,6 @@ function writeCursor(path: string, state: CursorState): void {
     tagBackfill: state.tagBackfill,
     tagBackfillBegun: state.tagBackfillBegun,
     folderBackfill: state.folderBackfill,
-    ruleInstantRepair: state.ruleInstantRepair,
     capMarkerRepair: state.capMarkerRepair,
     ...(state.lastDrainAt !== null ? { lastDrainAt: state.lastDrainAt } : {}),
     // Absent when empty, so a healthy install's cursor file is byte-identical to one written
@@ -1251,16 +1239,8 @@ async function applyAccountUpsert(
         demotions: stats.demotions ?? 0,
         updatedAt: asDate(r.updatedAt) ?? now,
       };
-      /* THE CREATION INSTANT TRAVELS WITH THE RULE, in the insert AND the conflict set. Without
-         it every mirrored rule took this process's insert time, so all of them shared one instant
-         and `rulesList` — newest `createdAt` first — ordered a sender's rule twins by UUID: the
-         Cloud-paired desktop presented that sender's mail where an OLDER twin said while the web
-         followed the newest (measured 2026-09-24). Absent or unparseable on the wire leaves the
-         column alone, the message arm's rule for `created_at`. */
-      const ruleCreated = asDate(r.createdAt);
-      const created = ruleCreated && Number.isFinite(ruleCreated.getTime()) ? { createdAt: ruleCreated } : {};
-      await tx.insert(rules).values({ id: r.id, ...body, ...created })
-        .onConflictDoUpdate({ target: rules.id, set: { ...body, ...created } });
+      await tx.insert(rules).values({ id: r.id, ...body })
+        .onConflictDoUpdate({ target: rules.id, set: body });
       gen?.rule.add(r.id);
       return true;
     }
@@ -1708,6 +1688,9 @@ async function applyDelete(tx: Tx, ch: SyncChange, detached?: DetachedSurvivor[]
           .where(eq(unsubscribeRecords.messageId, ch.id)),
       ));
       await tx.delete(unsubscribeRecords).where(eq(unsubscribeRecords.messageId, ch.id));
+      // The search document (mail 0125) hangs off the message by FK, written by a standalone-era
+      // ingest or the store's own backfill.
+      await tx.delete(messageSearch).where(eq(messageSearch.messageId, ch.id));
       await tx.delete(messages).where(eq(messages.id, ch.id));
       return true;
     }
@@ -2979,56 +2962,6 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
 
   /**
-   * The one-time rule-instant repair — `repairStaleFolders`' shape. Every rule a pre-fix build
-   * mirrored carries the insert instant as `created_at`, and no delta re-delivers a rule nobody
-   * edits, so the corrected `rule` arm alone never reaches them. Snapshot page 1 carries every
-   * rule: re-applying it rewrites the instants, and each rule is announced on the local log so an
-   * open window re-reads them. A bootstrap has just replayed every rule through the corrected arm
-   * and consumes the repair without a fetch. Marked considered only when read; a failure retries.
-   */
-  const repairRuleInstants = async (bootstrapped: boolean): Promise<number> => {
-    if (cursor.ruleInstantRepair) return 0;
-    if (bootstrapped) {
-      cursor.ruleInstantRepair = true;
-      writeCursor(cfg.cursorPath, cursor);
-      return 0;
-    }
-    let snap: SnapshotResponse | null = null;
-    try {
-      snap = await fetchSnapshotPage();
-    } catch (err) {
-      cfg.log?.("cloud_rule_instant_repair_deferred", {
-        err,
-        reason: "the one-time rule repair could not read the snapshot; the mirror is unaffected " +
-          "and the next pull retries",
-      });
-      return 0;
-    }
-    if (!snap) return 0;   // did not answer → not marked; the next pull retries
-    const ruleChanges = snap.changes.filter((c) => c.type === "rule" && c.op !== "delete");
-    let appliedCount = 0;
-    await cfg.db.transaction(async (tx) => {
-      const rewritten: string[] = [];
-      for (const ch of ruleChanges) {
-        if (await applyUpsert(tx, dialect(cfg.db), cfg.world, ch, now(), null, new Set())) rewritten.push(ch.id);
-      }
-      // Through the one door every rule delta takes (`rule-state-delta-census`), on the LOCAL log.
-      if (rewritten.length > 0) await recordRuleDelta(tx, cfg.world.accountId, rewritten, "update");
-      appliedCount = rewritten.length;
-    });
-    cursor.ruleInstantRepair = true;
-    writeCursor(cfg.cursorPath, cursor);
-    if (appliedCount > 0) {
-      cfg.log?.("cloud_rule_instant_repair_applied", {
-        rules: appliedCount,
-        reason: "this mirror's rules were written without their creation instants, so a sender's " +
-          "rule twins resolved in the wrong order",
-      });
-    }
-    return appliedCount;
-  };
-
-  /**
    * Message ids the hosted account did not answer for. See {@link fetchMissingBodies} — asked at
    * most once per launch, so a message deleted on Cloud between the drain that mirrored it and the
    * tombstone that removes it cannot make every later pull re-ask for a body that is not there.
@@ -3386,7 +3319,6 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       // the zero-tags gate rather than by a special case for it.
       await repairStaleTags();
       await repairStaleFolders(sweep !== null && sweep !== undefined);
-      await repairRuleInstants(sweep !== null && sweep !== undefined);
       /* THE QUARANTINE'S WAY BACK IN — after the drain and the sweep (whose generation never
          marked these rows), before the body pass (a healed message gets its body this same pull).
          The drain that just ran may have landed the holders the held rows were refused for, so

@@ -8,7 +8,7 @@
  * being written.
  */
 import { sql, type SQL } from "drizzle-orm";
-import { type LockMode, assertComparable, assertDistinct, assertJsonKey, type Dialect, type LockOptions, type SearchArm, type SearchCorpus } from "./index.js";
+import { type LockMode, assertComparable, assertDistinct, assertJsonKey, type Dialect, type LockOptions, type SearchArm, type SearchCorpus, type SearchDocumentParts, type UnindexedMailArms, type MailWordArms } from "./index.js";
 
 // Re-exported because it was defined here first and the server arm's tests import it by this
 // path; the refusal itself belongs to both arms and now lives in the contract.
@@ -183,16 +183,19 @@ export function pgDialect(): Dialect {
         Array.isArray(r) ? r : fields.map((f) => (r as Record<string, unknown>)[f.name]));
     },
 
+    // Truncated, not formatted: formatting every row costs more than the grouping it serves.
+    monthBucket: (instant: SQL): SQL => sql`date_trunc('month', ${instant} at time zone 'UTC')`,
+
     search: {
       lexical: (q: string, corpus: SearchCorpus): SearchArm => {
         const tsq = sql`websearch_to_tsquery(${TEXT_SEARCH_CONFIG}, ${q})`;
         if (corpus === "kb") {
           return { pred: sql`kb_tsv @@ ${tsq}`, rank: sql`ts_rank(kb_tsv, ${tsq})` };
         }
-        return {
-          pred: sql`(m.subject_tsv @@ ${tsq} or b.body_tsv @@ ${tsq})`,
-          rank: sql`greatest(ts_rank(m.subject_tsv, ${tsq}), ts_rank(coalesce(b.body_tsv, to_tsvector('')), ${tsq}))`,
-        };
+        // The search document's HEAD vector (mail 0125) — the mail corpus's arms are `words`
+        // below. The old shape was an OR across the body join, which no index can serve: a
+        // sequential scan of the whole account.
+        return { pred: sql`s.head_tsv @@ ${tsq}`, rank: sql`ts_rank_cd(s.head_tsv, ${tsq})` };
       },
       lexicalArms: (q: string, from: SQL, where: SQL): SQL[] => {
         const tsq = sql`websearch_to_tsquery(${TEXT_SEARCH_CONFIG}, ${q})`;
@@ -215,20 +218,78 @@ export function pgDialect(): Dialect {
           return { pred: sql`(title ilike ${like} or content ilike ${like})`, rank: sql`0` };
         }
         if (opts.trigram) {
-          return {
-            pred: sql`(word_similarity(${q}, m.subject) >= ${opts.threshold} or word_similarity(${q}, m.from_address) >= ${opts.threshold})`,
-            rank: sql`greatest(word_similarity(${q}, m.subject), word_similarity(${q}, m.from_address))`,
-          };
+          // `<%` is `word_similarity >= pg_trgm.word_similarity_threshold`, and unlike the function
+          // it is served by `message_search_terms_trgm_idx`; the caller sets the threshold for its
+          // transaction through `fuzzyThreshold`, so the operator and `opts.threshold` agree.
+          return { pred: sql`${q} <% s.terms`, rank: sql`word_similarity(${q}, s.terms)` };
         }
         // The degrade, for a deployment without the trigram index: the same shape, no index, and
         // it still answers rather than pretending the arm does not exist. RECENCY is the rank —
         // there is no relevance signal left, and a constant here would have thrown away the one
         // ordering the caller still had.
+        return { pred: sql`s.terms ilike ${like}`, rank: sql`coalesce(extract(epoch from m.date), 0)` };
+      },
+      words: (q: string): MailWordArms => {
+        const tsq = sql`websearch_to_tsquery(${TEXT_SEARCH_CONFIG}, ${q})`;
         return {
-          pred: sql`(m.subject ilike ${like} or m.from_address ilike ${like})`,
-          rank: sql`coalesce(extract(epoch from m.date), 0)`,
+          head: { pred: sql`s.head_tsv @@ ${tsq}`, rank: sql`ts_rank_cd(s.head_tsv, ${tsq})` },
+          text: { pred: sql`s.text_tsv @@ ${tsq}`, rank: sql`coalesce(extract(epoch from m.date), 0)` },
         };
       },
+      substring: (q: string, opts): SearchArm => ({
+        // `message_search_terms_trgm_idx` serves the ILIKE where pg_trgm exists (search-setup.ts).
+        pred: sql`s.terms ilike ${`%${q}%`}`,
+        rank: opts.trigram ? sql`word_similarity(${q}, s.terms)` : sql`coalesce(extract(epoch from m.date), 0)`,
+      }),
+      unindexed: (q: string, opts): UnindexedMailArms => {
+        // The pre-0125 columns, one index per branch (subject_tsv / body_tsv GINs, the two trgm
+        // GINs) — never an OR, which is the shape that seq-scanned.
+        const tsq = sql`websearch_to_tsquery(${TEXT_SEARCH_CONFIG}, ${q})`;
+        const like = `%${q}%`;
+        const recency = sql`coalesce(extract(epoch from m.date), 0)`;
+        const sim = (col: SQL): SQL => (opts.trigram ? sql`word_similarity(${q}, ${col})` : recency);
+        return {
+          words: {
+            head: { pred: sql`m.subject_tsv @@ ${tsq}`, rank: sql`ts_rank(m.subject_tsv, ${tsq})` },
+            text: { pred: sql`b.body_tsv @@ ${tsq}`, rank: recency },
+          },
+          substring: [
+            { pred: sql`m.subject ilike ${like}`, rank: sim(sql`m.subject`) },
+            { pred: sql`m.from_address ilike ${like}`, rank: sim(sql`m.from_address`) },
+          ],
+          fuzzy: opts.trigram
+            ? [
+              { pred: sql`${q} <% m.subject`, rank: sim(sql`m.subject`) },
+              { pred: sql`${q} <% m.from_address`, rank: sim(sql`m.from_address`) },
+            ]
+            : [],
+        };
+      },
+      searchSession: (opts): SQL | null => {
+        const sets: SQL[] = [];
+        if (opts.typoThreshold !== undefined) {
+          sets.push(sql`set_config('pg_trgm.word_similarity_threshold', ${String(opts.typoThreshold)}, true)`);
+        }
+        if (opts.preferIndexes === true) sets.push(sql`set_config('enable_seqscan', 'off', true)`);
+        // Each named apart: a positional read refuses two columns of one name.
+        return sets.length === 0 ? null
+          : sql`select ${sql.join(sets.map((x, i) => sql`${x} as ${sql.raw(`s${i}`)}`), sql`, `)}`;
+      },
+      estimateRows: async (db: unknown, statement: SQL): Promise<number | null> => {
+        const rows = await pgDialect().exec(db, sql`explain (format json) ${statement}`);
+        const cell = rows[0]?.[0];
+        const plan = (typeof cell === "string" ? JSON.parse(cell) : cell) as Array<{ Plan?: { "Plan Rows"?: number } }> | undefined;
+        const n = plan?.[0]?.Plan?.["Plan Rows"];
+        return typeof n === "number" && Number.isFinite(n) ? Math.round(n) : null;
+      },
+      withDocument: (bodyInsert: SQL, documentUpsert: SQL): SQL =>
+        sql`with body as (${bodyInsert}) ${documentUpsert} returning (select count(*) from body)::int as body_rows`,
+      document: (p: SearchDocumentParts) => ({
+        head: sql`(setweight(to_tsvector(${TEXT_SEARCH_CONFIG}, ${p.subject}), 'A')
+          || setweight(to_tsvector('simple', ${p.people}), 'B')
+          || setweight(to_tsvector('simple', ${p.attachments}), 'B'))`,
+        text: sql`to_tsvector(${TEXT_SEARCH_CONFIG}, ${p.body})`,
+      }),
     },
   };
 }

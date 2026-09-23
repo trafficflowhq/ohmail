@@ -764,6 +764,12 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // missing migration instead of leaving a 500 nobody can attribute. (0123, the newest entry,
   // is probed by its CHECK definition below.) Deploy order migration → API → worker.
   ["account_sync_state", "pruned_through_seq"],
+  // mail 0125_message_search — the search document and the backfill's completion marker. The LOUD
+  // kind: ingest writes the document in the commit transaction and `GET /search` reads it, so an
+  // API ahead of the migration fails every ingest and every search on a missing relation — the
+  // marker names the migration instead. Deploy order migration → API → worker.
+  ["message_search", "terms"],
+  ["account_settings", "search_index_built_at"],
 ] as const;
 
 /**
@@ -825,6 +831,11 @@ export const SCHEMA_INDEX_MARKERS: ReadonlyArray<string> = [
   // (`SCHEMA_FK_MARKERS`), which the CLOUD half of the same change — foreign keys and nothing
   // else — is what forced into existence.
   "messages_id_account_uq",
+  // mail 0125_message_search. The SILENT kind, like the first five: without the two word indexes
+  // every search is a sequential scan of the account's documents — nothing raises, every test
+  // stays green, and the first page stops answering in milliseconds.
+  "message_search_head_tsv_idx",
+  "message_search_text_tsv_idx",
 ];
 
 /**
@@ -1076,7 +1087,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0124_sync_blocked_reason_account_closed";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0125_message_search";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud

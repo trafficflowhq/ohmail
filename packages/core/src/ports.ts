@@ -3,6 +3,7 @@ import type { NormalizedMessage, Destination, AttachmentMeta, EmailAddress } fro
 import type { AuthVerdict, Rule } from "./rules.js";
 import type { ClassifierPort } from "./classifier-port.js";
 import type { CorrespondentEvidence } from "./correspondent.js";
+import type { MessageSearchInput } from "./message-search.js";
 
 export interface NativeLocator { folder: string; ref: string; } // IMAP ref = `${uidvalidity}:${uid}`
 
@@ -355,6 +356,12 @@ export interface RepoPort {
    */
   insertMessageBody(
     messageId: string, body: MessageBodyInput, storage: BodyStorageContext,
+    /**
+     * The message's search document (mail 0125), written by the SAME statement as the body where
+     * the store can, from the parsed message, whatever the storage cap decided: a withheld body's
+     * message is still found. Unmetered. See `message-search.ts`.
+     */
+    search?: MessageSearchInput,
   ): Promise<BodyStorageOutcome>;
   /**
    * Persist attachment METADATA (never bytes) for a message. Called by the pipeline

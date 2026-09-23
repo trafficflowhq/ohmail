@@ -36,9 +36,7 @@ import {
 } from "../../webapp/app/shell/host-connection";
 import { BootStatus } from "./BootStatus.js";
 import { bridgeAvailable, bridgeFetch, engineUnlockRetry } from "./bridge-fetch.js";
-import {
-  cloudNoticeDue, sessionOf, sessionReaders, signInCauseOf, waitForSessionMove, type CloudSessionWire,
-} from "./cloud-session.js";
+import { cloudNoticeDue, cloudSessionNotice, sessionOf, signInCauseOf, type CloudSessionWire } from "./cloud-session.js";
 import { DoorChooser } from "./DoorChooser.js";
 import { DesktopAbout } from "./DesktopAbout.js";
 import { DesktopMailboxes, readMirrorFreshness } from "./DesktopMailboxes.js";
@@ -123,13 +121,6 @@ export const LIFECYCLE_POLL_MS = 5_000;
 const HOSTED_SESSION_PROBE_MS = 60_000;
 /** …and while the session is renewing or not answering: the notice should leave when it does. */
 const HOSTED_SESSION_DEGRADED_PROBE_MS = 5_000;
-/**
- * A held session question answered sooner than this was not held. Three in a row and the loop
- * waits {@link SESSION_WAIT_RETRY_MS} between asks rather than spinning the bridge — an engine
- * that is leaving answers every one at once. A held one comes back at the engine's bound.
- */
-const SESSION_WAIT_UNHELD_MS = 1_000;
-const SESSION_WAIT_RETRY_MS = 5_000;
 
 /** What the gate keeps from one `/health` answer, under the key it was earned under. */
 interface HostedAuth {
@@ -159,17 +150,6 @@ function hostedAuthOf(key: string, health: {
     session,
     noticeDue: cloudNoticeDue(session, Date.now()),
   };
-}
-
-/** One `/health` ask under `key`, or null when the engine did not answer — every asker's reader. */
-async function readHostedAuth(key: string): Promise<HostedAuth | null> {
-  try {
-    const res = await bridgeFetch("/health");
-    if (!res.ok) return null; // a dead ENGINE is the status path's story, not this one's
-    return hostedAuthOf(key, (await res.json()) as Parameters<typeof hostedAuthOf>[1]);
-  } catch {
-    return null; // engine unreachable or still starting — the next ask tries again
-  }
 }
 
 /** Keep the held answer when a new one says the same: a repaint of the whole window for nothing. */
@@ -395,9 +375,6 @@ export function DesktopGate() {
   const [authEpoch, setAuthEpoch] = useState(0);
   const authKey = door === "cloud" && bridgeAvailable() ? `cloud:${authEpoch}` : null;
   const [hostedAuth, setHostedAuth] = useState<HostedAuth | null>(null);
-  /* THE READING THE HELD QUESTION NAMES, recorded by whichever ask learned it before the paint —
-     the wait loop runs between paints, where a body-written ref would still hold the last one. */
-  const sessionHeld = useRef<CloudSessionWire | null>(null);
   /** TRUE once the CURRENT engine's first `/health` answer has been read — pending otherwise.
       Until then the mail app is withheld: React would otherwise commit `AppShell` once, before
       the asynchronous probe responds, over an engine whose mail routes refuse. Non-cloud doors
@@ -489,13 +466,19 @@ export function DesktopGate() {
     if (authKey === null) return;
     let cancelled = false;
     const probe = async (): Promise<void> => {
-      // `sessionExpired` and never bare `signedIn: false` decides the WORDING: an ordinary
-      // pre-auth engine also answers signedIn:false, and the engine latches sessionExpired only
-      // on the hosted API's coded refusal to renew (`hostedAuthOf`).
-      const next = await readHostedAuth(authKey);
-      if (cancelled || next === null) return;
-      sessionHeld.current = next.session;
-      setHostedAuth((held) => (sameHostedAuth(held, next) ? held : next));
+      try {
+        const res = await bridgeFetch("/health");
+        if (!res.ok) return; // a dead ENGINE is the status path's story, not this one's
+        // `sessionExpired` and never bare `signedIn: false` decides the WORDING: an ordinary
+        // pre-auth engine also answers signedIn:false, and the engine latches sessionExpired
+        // only on the hosted API's coded refusal to renew. Both states leave the mail client —
+        // the difference is the sentence over the sign-in, never whether it shows.
+        const next = hostedAuthOf(authKey, (await res.json()) as Parameters<typeof hostedAuthOf>[1]);
+        if (cancelled) return;
+        setHostedAuth((held) => (sameHostedAuth(held, next) ? held : next));
+      } catch {
+        /* engine unreachable — the status path owns that; the fast first-answer loop retries */
+      }
     };
     // Once at mount — a relaunch onto a signed-out engine must land on sign-in now, not a
     // minute from now — then on the slow steady cadence.
@@ -517,48 +500,20 @@ export function DesktopGate() {
     if (authKey === null || hostedAuthKnown) return;
     let cancelled = false;
     const probe = async (): Promise<void> => {
-      const next = await readHostedAuth(authKey);
-      if (cancelled || next === null) return;
-      sessionHeld.current = next.session;
-      setHostedAuth(next);
+      try {
+        const res = await bridgeFetch("/health");
+        if (!res.ok) return;
+        const next = hostedAuthOf(authKey, (await res.json()) as Parameters<typeof hostedAuthOf>[1]);
+        if (cancelled) return;
+        setHostedAuth(next);
+      } catch {
+        /* engine still starting — the next tick asks again */
+      }
     };
     const fast = setInterval(() => void probe(), 400);
     return () => {
       cancelled = true;
       clearInterval(fast);
-    };
-  }, [authKey, hostedAuthKnown]);
-  /**
-   * THE ENGINE SAYS WHEN THE SESSION MOVES. The probes above ask on a clock — a minute while live
-   * — so a refusal the engine knew in three seconds reached the window up to a minute later, over
-   * a strip already saying "Retrying". One held question stays open instead: the engine answers it
-   * the moment its reading changes, and the change is read at once through `/health`. An engine
-   * with no such door answers null, and the minute's probe is the fallback.
-   */
-  useEffect(() => {
-    if (authKey === null || !hostedAuthKnown) return;
-    let cancelled = false;
-    void (async () => {
-      let fast = 0;
-      while (!cancelled) {
-        const asked = Date.now();
-        const moved = await waitForSessionMove(sessionHeld.current);
-        if (cancelled || moved === null) return;
-        if (moved.changed) {
-          sessionHeld.current = moved.session;
-          const next = await readHostedAuth(authKey);
-          if (cancelled) return;
-          if (next !== null) {
-            sessionHeld.current = next.session;
-            setHostedAuth((held) => (sameHostedAuth(held, next) ? held : next));
-          }
-        }
-        fast = Date.now() - asked < SESSION_WAIT_UNHELD_MS ? fast + 1 : 0;
-        if (fast >= 3) await new Promise((r) => setTimeout(r, SESSION_WAIT_RETRY_MS));
-      }
-    })();
-    return () => {
-      cancelled = true;
     };
   }, [authKey, hostedAuthKnown]);
   /**
@@ -948,7 +903,7 @@ export function DesktopGate() {
     );
   }
 
-  if (hostedSessionGone && paired) {
+  if (hostedSessionGone) {
     /**
      * ── A PAIRED INSTALL WHOSE PAIRING WAS REVOKED — a different fact, a different card ──
      * `gateSessionGone` reads "You were signed out of your hosted account", which on this
@@ -960,7 +915,7 @@ export function DesktopGate() {
      * mirror, and the redeem refuses a different computer at that address.
      */
     const revokedHost = hostLabelOf(status?.baseUrl);
-    if (revokedHost !== null && !signInAfterExpiry) {
+    if (paired && revokedHost !== null && !signInAfterExpiry) {
       return (
         <>
           <GateNotice
@@ -1048,34 +1003,13 @@ export function DesktopGate() {
     return undefined;
   })();
 
-  /* ONE READING, THREE READERS (`sessionReaders`): the sign-in card, the rail's line and the sync
-     strip all key on the engine's session reading, never on this window's pull. The rail line is
-     for a session that is still there (Cloud not answering, a sign-in the disk would not save);
-     the card is for a refused one. Not on the paired door, whose own line and card say it. */
-  const readers = !paired && door === "cloud" && hostedAuthKnown
-    ? sessionReaders(hostedAuth.session, hostedAuth.gone, hostedAuth.noticeDue)
-    : null;
-  const cloudConnection = readers?.rail;
+  /* THE CLOUD DOOR'S OWN LINE, in the same slot: Cloud is not answering or the sign-in cannot be
+     saved, and the session is still there. A notice over the mail, never the dialog. Not on the
+     paired door, whose line above already says the other computer is not answering. */
+  const cloudConnection = !paired && door === "cloud" && hostedAuthKnown && hostedAuth.noticeDue
+    ? cloudSessionNotice(hostedAuth.session)
+    : undefined;
   const railConnection = hostConnection ?? cloudConnection;
-  /* A REFUSED SESSION: the sign-in card OVER the mail, its first sentence the cause. The mail on
-     screen is real and stays — the old engine-down notice replaced it with an empty window and
-     said nothing about why. Not cancellable: every read behind it is refused until a sign-in. */
-  const refusedCard = readers !== null && readers.card !== "closed" ? (
-    <div className="session-end session-signin" role="dialog" aria-label={DOOR_COPY.cloudTitle}>
-      <DoorChooser
-        start="cloud"
-        cloudAction="signIn"
-        signInCause={readers.card}
-        onEntered={(r) => {
-          /* Back to PENDING: only the fresh probe against the engine the sign-in touched says
-             what its session is now (the pre-auth branch's reason). */
-          setAuthEpoch((n) => n + 1);
-          if (r.status) onStatus(r.status);
-          else void refresh();
-        }}
-      />
-    </div>
-  ) : null;
 
   const suggestDoor = suggestDoorFor(status, hostedSession);
 
@@ -1152,9 +1086,6 @@ export function DesktopGate() {
            up" arm, which would otherwise claim activity that is not happening. See the derivation
            above and `host-connection.ts` for the grace. */
         {...(railConnection ? { hostConnection: railConnection } : {})}
-        /* THE SYNC STRIP YIELDS for a refused session: the card says why, and its pull-failure
-           arm would say "Retrying" over a session nothing will renew. */
-        {...(readers !== null && !readers.strip ? { sessionRefused: true } : {})}
         /* WHAT A SEND FROM THIS WINDOW RIDES. On the STANDALONE door the compose form, the
            send handler and the SMTP dial are one process — the mail engine's own service bag
            makes the same declaration, `sendSurfaceMaxTotalBytes: null` — so the attach
@@ -1463,7 +1394,6 @@ export function DesktopGate() {
           un-answered, so it is offered on the next visit with the flow closed. */}
       {routeNow.firstRun ? null : <DefaultMailAsk />}
       {doorOverlay}
-      {refusedCard}
     </>
   );
 }

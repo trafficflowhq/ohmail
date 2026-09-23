@@ -11,7 +11,7 @@ import {
 } from "./migration-provenance.js";
 import { runMigrations, openMigrationSession, JOURNALS } from "./migrate.js";
 import { ROLE_DEFAULT_TIMEOUTS } from "./client.js";
-import { ensureSearchExtensions, ensureWithheldProvenanceIndex } from "./search-setup.js";
+import { ensureSearchExtensions, ensureWithheldProvenanceIndex, TRIGRAM_INDEX_SPECS } from "./search-setup.js";
 import {
   ensureHotPathIndexes, HOT_PATH_INDEXES, DEFERRED_HOT_PATH_INDEXES,
 } from "./hot-path-indexes.js";
@@ -47,6 +47,7 @@ import {
 export const TRIGRAM_INDEXES = [
   "messages_subject_trgm_idx",
   "messages_from_address_trgm_idx",
+  "message_search_terms_trgm_idx",
 ] as const;
 
 /**
@@ -759,10 +760,13 @@ export async function setupProdDatabase(
       db,
       sql`select extversion from pg_extension where extname = 'pg_trgm'`,
     );
+    // Read back by (table, name) from the specs the build ran: a trigram index on another table
+    // than `messages` (the search document's) is verified like the two it was typed for.
     const idx = await rows<{ indexname: string }>(
       db,
-      sql`select indexname from pg_indexes where schemaname = 'public' and tablename = 'messages'
-          and indexname in ('messages_subject_trgm_idx', 'messages_from_address_trgm_idx')`,
+      sql`select indexname from pg_indexes where schemaname = 'public'
+          and (tablename::text, indexname::text) in (${sql.join(
+            TRIGRAM_INDEX_SPECS.map((s) => sql`(${s.table}::text, ${s.name}::text)`), sql`, `)})`,
     );
     // Every `ensureHotPathIndexes` build, read back by name — the list is DERIVED from the specs,
     // never typed here. `indisvalid` as well as existence: a failed CONCURRENTLY build leaves an

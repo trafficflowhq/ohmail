@@ -3,7 +3,7 @@ import { applyBodyBytesDelta, auditLog, bodyBytesOf, messageBodies, messages, re
 import { dialect } from "@trafficflow/db/dialect";
 import {
   fingerprintDedupKey, messageFingerprint, normalizeMessageId, normalizeMime,
-  prepareHtmlForStorage, silentLogger,
+  prepareHtmlForStorage, reindexMessageSearch, silentLogger,
   type Logger, type NativeLocator, type NormalizedMessage,
 } from "@trafficflow/core";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
@@ -269,6 +269,8 @@ async function restoreOne(
       text: storedText,
       html: storedHtml,
     }).where(eq(messageBodies.messageId, messageId));
+    // The restored body's words replace the redacted ones in its search document (mail 0125).
+    await reindexMessageSearch(tx as unknown as Tx, accountId, messageId);
 
     // KEEP THE COUNTER TRUE: this rewrite changes the row's stored bytes, so the same
     // transaction moves `account_storage` by the difference — BEFORE the `recordChange` below,

@@ -28,7 +28,7 @@ import {
   junkRescues,
   mailboxFolders,
   mailboxes,
-  messageBodies,
+  messageBodies, messageSearch,
   messageFailures,
   messageInstances,
   messageStates,
@@ -260,6 +260,9 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
       .from(messages).where(eq(messages.accountId, accountId));
     // scoped-by: ownMessageIds — the account-scoped messages subquery two lines up
     await drop("message_bodies", tx.delete(messageBodies).where(inArray(messageBodies.messageId, ownMessageIds)));
+    // The search documents (mail 0125) carry the body's words, so they go with the bodies —
+    // before `messages`, which they reference. Keyed by the account like the row itself.
+    await drop("message_search", tx.delete(messageSearch).where(eq(messageSearch.accountId, accountId)));
     // scoped-by: ownMessageIds — the account-scoped messages subquery above
     await drop("folder_state", tx.delete(folderState).where(inArray(folderState.messageId, ownMessageIds)));
     // `folder_state`'s twin for the `\Seen` flag, and it has no `account_id` either — which is

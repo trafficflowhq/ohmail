@@ -2005,6 +2005,22 @@ export const unsubscribeDrainState = sqliteTable("unsubscribe_drain_state", {
  * from "does a seeded rule exist": unchecking every row and confirming is a real answer, and the
  * derived form reads it as "never asked", so onboarding would offer the seed forever.
  */
+/**
+ * THE SEARCH DOCUMENT's twin (mail 0125) WITHOUT the two word vectors: this store's word index is FTS5 over the
+ * rows themselves, so the row carries the substring corpus and the provenance the backfill's
+ * progress reads. See the server twin.
+ */
+export const messageSearch = sqliteTable("message_search", {
+  messageId: text("message_id").primaryKey().references(() => messages.id),
+  accountId: text("account_id").notNull(),
+  terms: text("terms").notNull().default(""),
+  source: text("source").notNull(),
+  builtAt: integer("built_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+}, (t) => ({
+  ixAccount: index("message_search_account_idx").on(t.accountId, t.messageId),
+  ckSource: check("message_search_source_closed", sql`${t.source} in ('text', 'html', 'headers_only')`),
+}));
+
 export const accountSettings = sqliteTable("account_settings", {
   accountId: text("account_id").primaryKey(),
   /** Cutline dial, in days. NULL = the product default. CHECK (> 0) lives in the migration. */
@@ -2193,6 +2209,8 @@ export const accountSettings = sqliteTable("account_settings", {
    * compares the store's PRAGMA order with this one.
    */
   heldReleaseDismissed: text("held_release_dismissed"),
+  /** Mail 0125 — the search backfill's completion marker. See the server twin. */
+  searchIndexBuiltAt: integer("search_index_built_at", { mode: "timestamp_ms" }),
 });
 
 /**
@@ -2244,5 +2262,5 @@ export const outboundSendFingerprints = sqliteTable("outbound_send_fingerprints"
  * install passes THIS one and nothing else — see `apps/sidecar/src/db.ts`.
  */
 export const mailSchema = {
-  mailboxes, mailboxCredentials, mailboxFolders, messages, messageInstances, messageFailures, folderState, flagState, rules, contacts, auditLog, accountSyncState, changeLog, threads, messageBodies, routingDecisions, approvals, messageStates, graduations, learningSignals, accounts, users, devices, sessions, refreshTokens, pairingTokens, idempotencyKeys, trackerEvents, contactNotes, threadNotes, snippets, notifyRules, awayResponders, awayResponderSent, attachments, kbEntries, drafts, outboundSends, workflows, workflowRuns, workflowProposals, tags, messageTags, unsubscribeRecords, unsubscribeExamined, unsubscribeDrainState, accountSettings,
+  mailboxes, mailboxCredentials, mailboxFolders, messages, messageInstances, messageFailures, folderState, flagState, rules, contacts, auditLog, accountSyncState, changeLog, threads, messageBodies, routingDecisions, approvals, messageStates, graduations, learningSignals, accounts, users, devices, sessions, refreshTokens, pairingTokens, idempotencyKeys, trackerEvents, contactNotes, threadNotes, snippets, notifyRules, awayResponders, awayResponderSent, attachments, kbEntries, drafts, outboundSends, workflows, workflowRuns, workflowProposals, tags, messageTags, unsubscribeRecords, unsubscribeExamined, unsubscribeDrainState, accountSettings, messageSearch,
 };

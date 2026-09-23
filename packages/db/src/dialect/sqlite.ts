@@ -10,7 +10,7 @@
  */
 import { sql, type SQL } from "drizzle-orm";
 import { assertComparable, assertJsonKey } from "./index.js";
-import type { Dialect, LockOptions, SearchArm, SearchCorpus } from "./index.js";
+import type { Dialect, LockOptions, MailWordArms, SearchArm, SearchCorpus } from "./index.js";
 
 /**
  * The oldest SQLite this schema can be opened on, and what each digit buys.
@@ -329,6 +329,9 @@ export function sqliteDialect(): Dialect {
       return [];
     },
 
+    // The instant is milliseconds here.
+    monthBucket: (instant: SQL): SQL => sql`strftime('%Y-%m', ${instant} / 1000, 'unixepoch')`,
+
     search: {
       // Full-text lives in external-content tables kept beside the rows by triggers, rather than
       // in a generated column on the row itself: this dialect has no stored generated column of
@@ -369,13 +372,46 @@ export function sqliteDialect(): Dialect {
           };
         }
         return {
-          pred: sql`(lower(m.subject) like lower(${like}) or lower(m.from_address) like lower(${like}))`,
+          pred: sql`(lower(m.subject) like lower(${like}) or lower(m.from_address) like lower(${like})
+                  or lower(coalesce(s.terms, '')) like lower(${like}))`,
           // RECENCY, as the server's degrade ranks. The instant is already a count of
           // milliseconds in this store, so there is no epoch to extract — the column IS the
           // number, and `extract(epoch …)` would not parse here at all.
           rank: sql`coalesce(m.date, 0)`,
         };
       },
+      // The two FTS5 tables as the two word arms: subject/sender ranked by bm25, the body by
+      // recency, as the server's arms rank. FTS5 reads a quoted span as a phrase.
+      words: (q: string): MailWordArms => ({
+        head: {
+          pred: sql`m.rowid IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ${q})`,
+          rank: sql`-COALESCE((SELECT bm25(messages_fts) FROM messages_fts WHERE messages_fts MATCH ${q} AND rowid = m.rowid), 0)`,
+        },
+        text: {
+          pred: sql`b.rowid IN (SELECT rowid FROM message_bodies_fts WHERE message_bodies_fts MATCH ${q})`,
+          rank: sql`coalesce(m.date, 0)`,
+        },
+      }),
+      substring: (q: string): SearchArm => {
+        // Every row, whether or not it has a search document yet: this store has no index for a
+        // substring either way, so the header columns and the recipients' `terms` are one scan.
+        const like = `%${q}%`;
+        return {
+          pred: sql`(lower(m.subject) like lower(${like}) or lower(m.from_address) like lower(${like})
+                  or lower(coalesce(s.terms, '')) like lower(${like}))`,
+          rank: sql`coalesce(m.date, 0)`,
+        };
+      },
+      // A LIKE, not an index operator, and one planner: there is nothing to set.
+      searchSession: (): null => null,
+      // The FTS5 tables are kept by triggers over every row, so nothing here is unindexed.
+      unindexed: (): null => null,
+      // No planner statistics to ask; this store's exact count is its own scan anyway.
+      estimateRows: async (): Promise<null> => null,
+      // No INSERT inside a WITH on this store.
+      withDocument: (): null => null,
+      // No `tsv` column on this store (see the migration's twin).
+      document: (): null => null,
     },
   };
 }

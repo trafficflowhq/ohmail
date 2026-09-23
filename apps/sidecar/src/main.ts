@@ -506,8 +506,6 @@ export async function runCloudSidecar(): Promise<void> {
         mirrorDraining: cloud?.mirrorDraining() ?? false,
       });
       try {
-        // A held `/cloud/session/wait` is an in-flight request `finished()` would wait out.
-        cloud?.releaseHeld();
         if (host) {
           host.stop();
           await host.finished();
@@ -534,9 +532,6 @@ export async function runCloudSidecar(): Promise<void> {
     process.exit(1);
   }
 
-  /* The shell closing stdin is a quit too: the held session questions are answered first, or
-     `host.finished()` below would wait out their hold before this process could leave. */
-  process.stdin.once("end", () => cloud?.releaseHeld());
   host = serveOverStdio({
     handle: (req) => cloud!.handle(req),
     input: process.stdin,

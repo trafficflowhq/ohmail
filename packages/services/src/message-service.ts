@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, isNull, lt, notExists, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, notExists, or, sql, type SQL } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import {
   assertOrganizerRole,
@@ -147,12 +147,30 @@ export interface ListMessagesOptions {
    */
   folderId?: string;
   /**
-   * With `view: "folder"` and NO cursor: start strictly below this keyset position — the
+   * With `view: "folder"` or `view: "all"` and NO cursor: start strictly below this keyset position — the
    * client mirror's boundary, so page one begins where the mirror ends. A cursor supersedes
    * it (the cursor is the position); the six fixed views ignore it entirely.
    */
   before?: { date: string | null; id: string };
+  /**
+   * With `view: "all"` and NO cursor: start AT this position, inclusive — the History rail's jump
+   * to a month (`first.date`): with no id, every message at or before that instant.
+   */
+  at?: { date: string | null; id?: string };
 }
+
+/**
+ * One month of the History rail: how many messages, and its newest one — the jump target
+ * (`view=all&atDate=<date>&atId=<id>` opens the list ON it).
+ */
+interface TimelineMonth {
+  month: string;
+  count: number;
+  first: { date: string; id: string };
+}
+
+/** The History page ceiling: a page is one screen, and the index walk is priced per page. */
+const HISTORY_PAGE_MAX = 50;
 
 export interface MessagePatchBody {
   unread?: boolean;
@@ -289,6 +307,44 @@ function afterKeyset(pos: { date: Date | null; id: string }): SQL {
         and(eq(messages.date, pos.date), lt(messages.id, pos.id)),
         isNull(messages.date),
       )!;
+}
+
+/**
+ * AT OR AFTER a position under `date desc nulls last, id desc` — {@link afterKeyset} with the
+ * position itself admitted, so the rail's jump lands ON the month's newest message. With no id,
+ * every message at the instant is admitted.
+ */
+function atOrAfterKeyset(pos: { date: Date | null; id: string | null }): SQL {
+  const sameInstant = (d: Date | null): SQL => (d === null ? isNull(messages.date) : eq(messages.date, d));
+  const tie = pos.id === null ? sameInstant(pos.date) : and(sameInstant(pos.date), lte(messages.id, pos.id))!;
+  return pos.date === null ? tie : or(lt(messages.date, pos.date), tie, isNull(messages.date))!;
+}
+
+/** The rail's jump position: an instant, and an id only when the caller names one. */
+function atPositionOf(pos: { date: string | null; id?: string }): { date: Date | null; id: string | null } {
+  if (pos.id !== undefined) return positionOf({ date: pos.date, id: pos.id }, "at");
+  if (pos.date === null) throw new ServiceError("validation_failed", 400, "at needs atDate or atId");
+  const read = readInstant(pos.date);
+  if (!read.ok) throw new ServiceError("validation_failed", 400, instantRefusal("atDate", read.why));
+  return { date: read.at, id: null };
+}
+
+/** A client-named keyset position, validated at the door: a uuid id and a total instant, or 400. */
+function positionOf(pos: { date: string | null; id: string }, field: "before" | "at"): { date: Date | null; id: string } {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pos.id)) {
+    throw new ServiceError("validation_failed", 400, `${field}Id must be a message id`);
+  }
+  if (pos.date === null) return { date: null, id: pos.id };
+  const read = readInstant(pos.date);
+  if (!read.ok) throw new ServiceError("validation_failed", 400, instantRefusal(`${field}Date`, read.why));
+  return { date: read.at, id: pos.id };
+}
+
+/** An instant as the wire carries it (ISO), from what either store's driver handed back. */
+function instantText(v: unknown): string {
+  if (v instanceof Date) return v.toISOString();
+  if (typeof v === "number") return new Date(v).toISOString();
+  return new Date(String(v)).toISOString();
 }
 
 /** `date desc NULLS LAST, id desc` — see {@link encodeMsgCursor} for why the clause is explicit. */
@@ -477,6 +533,7 @@ export class MessageService {
      * `foldersEnabled` gate: Trash is the provider's own system folder.
      */
     if (opts.view === "trash") return this.listTrash(ctx, opts);
+    if (opts.view === "all") return this.listAll(ctx, opts);
     const view = this.validView(opts.view);
     const limit = clampLimit(opts.limit);
     const desiredFolder = VIEW_FOLDER[view];
@@ -609,6 +666,65 @@ export class MessageService {
       ))
       .limit(1);
     return live ? trashedFrom : "INBOX";
+  }
+
+  /**
+   * HISTORY — every living message the account owns, across mailboxes and folders, newest first,
+   * back to the first. No folder join: the page is an Index Only Scan of
+   * `messages_account_msg_order_idx` (mail 0125 carries it for a store the setup command never
+   * reaches), keyed by the same `(date, id)` cursor as every view, or started below `before` / at
+   * `at`. Junk never reaches the store; Trash rows are tombstoned and stay out.
+   */
+  async listAll(ctx: ServiceContext, opts: ListMessagesOptions): Promise<Page<MessageDTO>> {
+    const limit = Math.min(HISTORY_PAGE_MAX, clampLimit(opts.limit));
+    const filters: SQL[] = [eq(messages.accountId, ctx.accountId), isNull(messages.deletedAt)];
+    if (opts.cursor) filters.push(afterKeyset(decodeMsgCursor(opts.cursor)));
+    else if (opts.before) filters.push(afterKeyset(positionOf(opts.before, "before")));
+    else if (opts.at) filters.push(atOrAfterKeyset(atPositionOf(opts.at)));
+    // scoped-by: `filters` leads with eq(messages.accountId, ctx.accountId)
+    const rows = await ctx.db.select({ id: messages.id, date: messages.date }).from(messages)
+      .where(and(...filters))
+      .orderBy(...MSG_ORDER)
+      .limit(limit + 1);
+    const pageRows = rows.slice(0, limit);
+    const items = await materializeMessagesInOrder(
+      ctx.db, ctx.accountId, pageRows.map((r) => r.id), { deleted: "include" },
+    );
+    const last = pageRows[pageRows.length - 1];
+    const nextCursor = rows.length > limit && last ? encodeMsgCursor(last.date, last.id) : null;
+    return { items, nextCursor };
+  }
+
+  /**
+   * THE HISTORY RAIL — ONE grouped read of the History index: every month's count and its newest
+   * message (the jump: `at` on `view=all`), the undated tail, and the total. Months in UTC.
+   */
+  // `undated`: messages with no date, the end of the timeline after every month.
+  async timeline(ctx: ServiceContext): Promise<{ total: number; months: TimelineMonth[]; undated: number }> {
+    const d = dialect(ctx.db);
+    // scoped-by: the statement pins m.account_id = ctx.accountId
+    // The newest row of each month by ONE probe of the History index per month (a month's rows
+    // at its newest instant, highest id first) — a second pass over the account doubled the read.
+    const groups = await d.exec(ctx.db, sql`
+      select g.c, g.d,
+        (select n.id from messages n
+          where n.account_id = ${ctx.accountId} and n.deleted_at is null and n.date = g.d
+          order by n.id desc limit 1) as id
+      from (
+        select ${d.monthBucket(sql`m.date`)} as bucket, ${d.castInt(sql`count(*)`)} as c, max(m.date) as d
+        from messages m
+        where m.account_id = ${ctx.accountId} and m.deleted_at is null
+        group by 1
+      ) g`);
+    let undated = 0;
+    const months: TimelineMonth[] = [];
+    for (const r of groups) {
+      if (r[1] === null || r[1] === undefined) { undated = Number(r[0] ?? 0); continue; }
+      const date = instantText(r[1]);
+      months.push({ month: date.slice(0, 7), count: Number(r[0] ?? 0), first: { date, id: String(r[2]) } });
+    }
+    months.sort((a, b) => (a.month < b.month ? 1 : a.month > b.month ? -1 : 0));
+    return { total: months.reduce((n, m) => n + m.count, 0) + undated, months, undated };
   }
 
   /**

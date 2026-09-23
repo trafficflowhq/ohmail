@@ -290,5 +290,14 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "ALTER TABLE \"account_sync_state\" ADD COLUMN \"pruned_through_seq\" integer NOT NULL DEFAULT 0;"
     ]
+  },
+  {
+    "name": "0125_message_search.sql",
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS \"message_search\" (\n  \"message_id\" text PRIMARY KEY NOT NULL,\n  \"account_id\" text NOT NULL,\n  \"terms\" text NOT NULL DEFAULT '',\n  \"source\" text NOT NULL,\n  \"built_at\" integer NOT NULL DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER)),\n  CONSTRAINT \"message_search_source_closed\" CHECK (\"source\" IN ('text', 'html', 'headers_only')),\n  FOREIGN KEY (\"message_id\") REFERENCES \"messages\"(\"id\")\n);",
+      "CREATE INDEX IF NOT EXISTS \"message_search_account_idx\" ON \"message_search\" (\"account_id\", \"message_id\");",
+      "CREATE INDEX IF NOT EXISTS \"messages_account_msg_order_idx\" ON \"messages\" (\"account_id\", \"date\" DESC, \"id\" DESC) WHERE \"deleted_at\" IS NULL;",
+      "ALTER TABLE \"account_settings\" ADD COLUMN \"search_index_built_at\" integer;"
+    ]
   }
 ] as const;

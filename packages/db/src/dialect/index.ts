@@ -171,6 +171,39 @@ export interface LockOptions {
 export interface SearchArm { readonly pred: SQL; readonly rank: SQL }
 
 /**
+ * The parts a message's search document is built from (mail 0125), each already bounded by the
+ * caller: subject, the people (sender and recipients, names and addresses), the attachment file
+ * names, and the body text. Weighted in that order by the store that has weights.
+ */
+export interface SearchDocumentParts {
+  readonly subject: string;
+  readonly people: string;
+  readonly attachments: string;
+  readonly body: string;
+}
+
+/**
+ * The mail corpus's two WORD arms, each on its own index: `head` (subject, people, attachment
+ * names) ranked by relevance, `text` (the body) ranked by RECENCY — a broad word must not rank
+ * every body it occurs in, and newest-first is the order a reader scans a body match in.
+ */
+export interface MailWordArms {
+  readonly head: SearchArm;
+  readonly text: SearchArm;
+}
+
+/**
+ * The mail arms for rows that have NO search document yet — the pre-0125 columns, each branch its
+ * own index-served predicate. The caller ANDs every branch with "no document" and reads them only
+ * while the account's backfill is unfinished. `null` on a store whose word index covers every row.
+ */
+export interface UnindexedMailArms {
+  readonly words: MailWordArms;
+  readonly substring: readonly SearchArm[];
+  readonly fuzzy: readonly SearchArm[];
+}
+
+/**
  * One JSON array's elements as a joinable relation — see {@link Dialect.jsonArrayElements}.
  *
  * Four fragments rather than one because the element is a different KIND of thing on each store,
@@ -458,6 +491,12 @@ export interface Dialect {
    */
   foldLog(db: unknown, bounds: LogBounds, mark: LogMark): Promise<LogFold>;
 
+  /**
+   * An instant column's calendar month in UTC as a GROUPING key — the History rail's bucket. Only
+   * equality is promised; the caller names the month from the bucket's own instants.
+   */
+  monthBucket(instant: SQL): SQL;
+
   readonly search: {
     /** Word-based search over one {@link SearchCorpus}'s indexed text. */
     lexical(q: string, corpus: SearchCorpus): SearchArm;
@@ -479,6 +518,39 @@ export interface Dialect {
      * returns — a product decision, not a port's.
      */
     fuzzy(q: string, corpus: SearchCorpus, opts: { trigram: boolean; threshold: number }): SearchArm;
+    /** See {@link MailWordArms}. A quoted span is a phrase on both stores' query parsers. */
+    words(q: string): MailWordArms;
+    /**
+     * The query's characters inside the mail corpus's header text (subject, people, attachment
+     * names) — `axa` inside `myAXA`. Ranked by word similarity where trigrams exist, else recency.
+     */
+    substring(q: string, opts: { trigram: boolean }): SearchArm;
+    /** See {@link UnindexedMailArms}. */
+    unindexed(q: string, opts: { trigram: boolean; threshold: number }): UnindexedMailArms | null;
+    /**
+     * The statement that shapes the rest of the caller's TRANSACTION for a search read, or `null`
+     * where there is nothing to shape: `typoThreshold` makes the index-served typo operator mean
+     * that similarity; `preferIndexes` keeps a word read on its GIN where the planner would scan
+     * the table — it does not price reading a compressed vector per row, so for a word in most
+     * messages it picks a scan several times slower than the index.
+     */
+    searchSession(opts: { typoThreshold?: number; preferIndexes?: boolean }): SQL | null;
+    /**
+     * How many rows the planner expects `statement` to return — from its statistics, reading no
+     * row — or `null` on a store that keeps none worth asking. An ESTIMATE, labelled as one.
+     */
+    estimateRows(db: unknown, statement: SQL): Promise<number | null>;
+    /**
+     * The body's INSERT and its search document's upsert as ONE statement — a data-modifying CTE
+     * whose answer is how many body rows the first half wrote — or `null` on a store that has no
+     * such statement (the caller then runs the two in turn).
+     */
+    withDocument(bodyInsert: SQL, documentUpsert: SQL): SQL | null;
+    /**
+     * The values `message_search.head_tsv` / `text_tsv` are written with, or `null` on a store
+     * that has no such columns (its word index is over the rows themselves).
+     */
+    document(parts: SearchDocumentParts): { readonly head: SQL; readonly text: SQL } | null;
   };
 }
 

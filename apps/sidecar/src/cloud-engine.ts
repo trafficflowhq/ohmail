@@ -48,7 +48,6 @@ import { probeTransport } from "./operator-ca-fetch.js";
 import { originNeedsPin } from "@trafficflow/core/pair-link";
 import type { Diagnostic } from "./log.js";
 import { startEngineVitals } from "./vitals.js";
-import { createSessionWatch, heldReadingOf, sameReading } from "./session-watch.js";
 
 /**
  * The cloud engine — a read-only mirror of a hosted account, in the same stdio process the shell
@@ -143,8 +142,6 @@ export interface CloudSidecar {
    * is waiting for, so it said "nothing in flight" about the thing holding everything up.
    */
   mirrorDraining(): boolean;
-  /** Answer every held `GET /cloud/session/wait` now and hold no new one — before a quit waits. */
-  releaseHeld(): void;
 }
 
 const json = (body: unknown, status = 200): Response =>
@@ -910,13 +907,6 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
      * session ended that the refresh door never refused.
      */
     let hostedSession: CloudSessionReading | null = null;
-    /* EVERY WRITE GOES THROUGH HERE, so a window holding `GET /cloud/session/wait` hears each move
-       (`session-watch.ts`); a bare assignment would be a reading no held question learns of. */
-    const sessionWatch = createSessionWatch();
-    const setHostedSession = (next: CloudSessionReading | null): void => {
-      hostedSession = next;
-      sessionWatch.moved();
-    };
     /**
      * A pairing finished here and cannot take effect until this process is replaced. Set by a
      * `startOver` redeem, which seals the new world's session and stages the old mirror's discard —
@@ -947,7 +937,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         now,
         ...(log ? { log } : {}),
         onSessionState: (reading, next) => {
-          setHostedSession(reading);
+          hostedSession = reading;
           log?.("cloud_session_state", {
             state: reading.state, code: reading.code, attempt: next.attempt, retryInMs: next.retryInMs,
           });
@@ -969,7 +959,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           });
         },
       });
-      setHostedSession(auth.session());
+      hostedSession = auth.session();
 
       const mirror: CloudMirror = createCloudMirror({
         db,
@@ -1029,7 +1019,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       // check has just adopted or emptied.
       activate(launchTokens);
     } else {
-      if (sealUnreadable) setHostedSession({ state: "seal_failed", code: "seal_unreadable", since: now().toISOString() });
+      if (sealUnreadable) hostedSession = { state: "seal_failed", code: "seal_unreadable", since: now().toISOString() };
       // NOT A FAILURE. See the pre-auth section in this file's header: the engine serves
       // `/health` and `/cloud/signin`, and the shell renders a sign-in surface rather than an
       // error about a process that would not start.
@@ -1199,15 +1189,6 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       const token = header && /^Bearer\s+/i.test(header) ? header.replace(/^Bearer\s+/i, "").trim() : "";
       const core = token ? await resolveSession(db, token, now()) : null;
       if (!core) return json({ error: { code: "unauthorized", message: "authentication required" } }, 401);
-
-      /* THE WINDOW'S HELD QUESTION (`session-watch.ts`): answered the moment the session reading
-         differs from the one it names, else at the hold bound with `changed: false`. Served before
-         the signed-in check, because a refusal is exactly the move the window is waiting to hear. */
-      if (req.method === "GET" && path === "/cloud/session/wait") {
-        const held = heldReadingOf(url.searchParams);
-        await sessionWatch.wait(() => sameReading(hostedSession, held));
-        return json({ changed: !sameReading(hostedSession, held), session: hostedSession });
-      }
 
       // Signing in, and signing out — both addressed to THIS process over the pipe the shell holds;
       // the password and code are exchanged for a token pair, sealed, and never seen again (the
@@ -1900,7 +1881,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       }
 
       if (req.method === "DELETE" && path === "/cloud/session") {
-        setHostedSession(null);
+        hostedSession = null;
         const teardown = signOut();
         sessionTeardown = teardown.catch(() => undefined).finally(() => {
           sessionTeardown = null;
@@ -2047,7 +2028,6 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       signedIn: () => authed !== null,
       online: () => authed !== null && authed.mirror.online(),
       mirrorDraining: () => authed !== null && authed.mirror.draining(),
-      releaseHeld: () => sessionWatch.release(),
       async start() {
         // A pre-auth launch has nothing to pull. Not an error and not a no-op worth logging: the
         // engine already said so once, at assembly.
@@ -2060,7 +2040,6 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         // FIRST: a reading taken during teardown would describe a process that has stopped
         // serving as though it were.
         stopVitals();
-        sessionWatch.release();
         authed?.auth.stop();
         authed?.wake.stop();
         // THE AWAIT IS THE FIX. `opened.close()` hands PGlite a close that queues behind whatever

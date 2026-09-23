@@ -101,6 +101,7 @@ import { screenerAutoSuggestPass } from "./screener-auto-suggest.js";
 import { refundObligationDrainPass } from "./refund-obligation-drain.js";
 import { syncKickPass } from "./sync-kick.js";
 import { sensitiveBackfillPass } from "./sensitive-backfill.js";
+import { searchIndexBackfillPass } from "@trafficflow/core/mail";
 import { storageEvictPass } from "./storage-evict.js";
 import { isCliEntry, flushExit, installCrashHandlers } from "./entry.js";
 import {
@@ -3835,6 +3836,25 @@ export async function startWorkerWithLock(
               mailboxId: rt.mailboxId, accountId: rt.accountId, err,
               reason: "no marker was written, so the next cycle retries; every message keeps the " +
                 "body it already had and nothing about this mailbox's syncing is affected",
+            });
+          }
+
+          // The search documents for mail ingested before mail 0125 — STORE-ONLY: built from the
+          // stored text/html and headers, no mailbox read, so it needs nothing from this visit's
+          // connection. Bounded per run (SEARCH_INDEX_ROUNDS_PER_CYCLE rounds of SEARCH_INDEX_BATCH),
+          // a no-op once the account's marker is written. A failure never fails the cycle.
+          try {
+            const indexed = await searchIndexBackfillPass({ db: db as unknown as Tx, accountId: rt.accountId });
+            if (indexed.ran && indexed.written > 0) {
+              log.info("search_index_backfill_pass", {
+                mailboxId: rt.mailboxId, accountId: rt.accountId,
+                written: indexed.written, rounds: indexed.rounds, marked: indexed.marked,
+              });
+            }
+          } catch (err) {
+            log.error("search_index_backfill_failed", {
+              mailboxId: rt.mailboxId, accountId: rt.accountId, err,
+              reason: "no marker was written, so the next cycle resumes at the first message without a search document; search still reads those through the older columns",
             });
           }
 

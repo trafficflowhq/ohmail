@@ -16,14 +16,13 @@ import { search } from "./shared.js";
 import { pagingNumber } from "../query-bounds.js";
 
 /**
- * Hybrid search: lexical+fuzzy RRF, account-scoped; facets ride query params; an empty `q` yields
- * an empty result. `sort` is validated, not coerced: unknown is a 400, absent means `relevance` —
- * a fallback on a typo hands back a confidently-ordered list not in the order asked (the other
- * params stay lenient because they narrow: a dropped one returns a visible superset). `?address=`
- * is a different question on the same path, handled before `q`. `direction` is validated for a
- * sharper reason: two of the three directions cannot be served from an index today, so the
- * service refuses them by name — defaulting to `from` would answer "mail I sent" with mail they
- * sent to me: a different answer, not a partial one.
+ * Search over the store's search documents, paged by `cursor`; `parts=page` is the fast first
+ * answer, `parts=summary` the exact `total`, facets and indexing progress, absent both. `sort` is
+ * validated, not coerced: a fallback on a typo hands back a confidently-ordered list not in the
+ * order asked (the filters stay lenient because they narrow: a dropped one returns a visible
+ * superset). `?address=` is a different question on the same path, handled before `q`; its
+ * `direction` is refused by name where an index cannot serve it — defaulting to `from` would
+ * answer "mail I sent" with mail they sent to me.
  */
 
 /** "true"/"1" → true, "false"/"0" → false, else undefined (filter omitted). */
@@ -83,36 +82,42 @@ export const searchRoutes: Route[] = [
         );
       }
 
+      const filters = filtersOf(url);
+
+      // Spread rather than `sort: sortRaw ?? undefined`: the service's default lives in the
+      // service, and an omitted property is the only way to say "I did not ask" under
+      // `exactOptionalPropertyTypes`.
       // Refused by name, as `sort` is: an unknown value would silently answer `both`.
       const partsRaw = url.searchParams.get("parts");
       if (partsRaw !== null && !isSearchParts(partsRaw)) {
         return errorResponse("validation_failed", 400, `parts must be one of ${SEARCH_PARTS.join(", ")}`);
       }
-
-      const filters: SearchFilters = {};
-      const folder = url.searchParams.get("folder");
-      const sender = url.searchParams.get("sender");
-      const dateFrom = url.searchParams.get("dateFrom");
-      const dateTo = url.searchParams.get("dateTo");
-      const unread = boolParam(url.searchParams.get("unread"));
-      const hasAttachments = boolParam(url.searchParams.get("hasAttachments"));
-      if (folder) filters.folder = folder;
-      if (sender) filters.sender = sender;
-      if (dateFrom) filters.dateFrom = dateFrom;
-      if (dateTo) filters.dateTo = dateTo;
-      if (unread !== undefined) filters.unread = unread;
-      if (hasAttachments !== undefined) filters.hasAttachments = hasAttachments;
-
-      // Spread rather than `sort: sortRaw ?? undefined`: the service's default lives in the
-      // service, and an omitted property is the only way to say "I did not ask" under
-      // `exactOptionalPropertyTypes`.
+      const cursor = url.searchParams.get("cursor");
       const opts: SearchOptions = {
         q, filters, limit,
         ...(sortRaw !== null ? { sort: sortRaw } : {}),
         ...(partsRaw !== null ? { parts: partsRaw } : {}),
+        ...(cursor ? { cursor } : {}),
       };
-      const result = await search(deps).search(serviceContext(deps, req), opts);
-      return jsonResponse(result);
+      return jsonResponse(await search(deps).search(serviceContext(deps, req), opts));
     },
   },
 ];
+
+/** The facet filters a search URL carries. */
+function filtersOf(url: URL): SearchFilters {
+  const filters: SearchFilters = {};
+  const folder = url.searchParams.get("folder");
+  const sender = url.searchParams.get("sender");
+  const dateFrom = url.searchParams.get("dateFrom");
+  const dateTo = url.searchParams.get("dateTo");
+  const unread = boolParam(url.searchParams.get("unread"));
+  const hasAttachments = boolParam(url.searchParams.get("hasAttachments"));
+  if (folder) filters.folder = folder;
+  if (sender) filters.sender = sender;
+  if (dateFrom) filters.dateFrom = dateFrom;
+  if (dateTo) filters.dateTo = dateTo;
+  if (unread !== undefined) filters.unread = unread;
+  if (hasAttachments !== undefined) filters.hasAttachments = hasAttachments;
+  return filters;
+}

@@ -6,6 +6,7 @@ import {
 import { dialect } from "@trafficflow/db/dialect";
 import { fingerprintDedupKey, messageFingerprint, normalizeMessageId } from "./identity.js";
 import { prepareHtmlForStorage } from "./html-storage.js";
+import { reindexMessageSearch } from "./message-search.js";
 import type { NormalizedMessage } from "./types.js";
 
 /**
@@ -74,6 +75,8 @@ export async function unhuskJunkFiledBody(db: Tx, args: {
       html: storedHtml,
       withheldReason: null,
     }).where(eq(messageBodies.messageId, husk.id));
+    // The refilled body's words, in the same transaction (mail 0125).
+    await reindexMessageSearch(tx as unknown as Tx, accountId, husk.id);
     await tx.update(messages).set({
       snippet: fresh.textBody.replace(/\s+/g, " ").trim().slice(0, 200),
       updatedAt: args.now ?? new Date(),

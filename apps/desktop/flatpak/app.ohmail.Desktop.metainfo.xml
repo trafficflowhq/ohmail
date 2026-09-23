@@ -74,25 +74,6 @@
   </screenshots>
 
   <releases>
-    <release version="0.23.2" date="2026-09-24">
-      <description>
-        <ul>
-          <li>The desktop's Ohbox matches the web's</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.23.1" date="2026-09-24">
-      <description>
-        <ul>
-          <li>Drafts on the phone ask where you pressed, and a send we could not confirm says so plainly</li>
-          <li>Set up a new computer by confirming in your browser — no address to type</li>
-          <li>News no longer jumps while a card opens as you scroll</li>
-          <li>Someone you wrote to is never treated as spam</li>
-          <li>An Undo stays on screen for its whole window</li>
-          <li>The sign-in card opens at once when ohmail Cloud signs the desktop out</li>
-        </ul>
-      </description>
-    </release>
     <release version="0.23.0" date="2026-09-23">
       <description>
         <ul>
@@ -192,6 +173,63 @@
           <li>Mailboxes on a phone</li>
           <li>macOS</li>
           <li>An account whose subscription has ended sees what happened, when, and three ways out</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.21.0" date="2026-09-21">
+      <description>
+        <ul>
+          <li>The README opens with the features, and wears both faces</li>
+          <li>Attachments in the phone composer</li>
+          <li>Undo and Trash on the phone</li>
+          <li>The phone shows the whole message</li>
+          <li>Upgrading past the held-release migration</li>
+          <li>A replayed mail journal no longer stops on the held-release migration</li>
+          <li>Server hardening — isolation and admin checks held by tests</li>
+          <li>Storage</li>
+          <li>A stop blocked by a restored copy of your computer now says so</li>
+          <li>A request the local engine never answers ends in a sentence</li>
+          <li>Reading on a foldable and on a phone held sideways</li>
+          <li>Faster first paint</li>
+          <li>Upgrades on large databases</li>
+          <li>The tablet reader's toolbar fits its pane</li>
+          <li>Each mailbox carries its own sync verdict</li>
+          <li>Every filing verb can now be taken back</li>
+          <li>The reader moves on after you act</li>
+          <li>The phone sends again when it organizes its own mailbox</li>
+          <li>One navigation on every device</li>
+          <li>Mail beside the list on big screens</li>
+          <li>The desktop build refuses a lockfile that drifted from its manifest</li>
+          <li>The Flathub source check no longer passes over a lockfile it never opened</li>
+          <li>The Reads pile is now called News</li>
+          <li>Reopening the web app shows your mail immediately</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.20.1" date="2026-09-19">
+      <description>
+        <ul>
+          <li>Removing a mailbox</li>
+          <li>Closing the composer saves what you typed, immediately</li>
+          <li>The Flatpak manifest's generated npm sources cover the published lockfile again — fifteen packages were missing, and an offline build resolves only what it declares</li>
+          <li>Opening a large mailbox</li>
+          <li>The Ohbox waits before it says it is empty</li>
+          <li>The phone says who organizes a mailbox, and a Screener decision takes effect at once</li>
+          <li>A phone names what it could not reach, and the account-locked screen is laid out</li>
+          <li>Self-hosted images report the commit they were built from</li>
+          <li>A mail server address that cannot be reached is explained in a sentence</li>
+          <li>An error in the web app shows a page, not a blank tab</li>
+          <li>A locked build of the desktop app works again</li>
+          <li>A newly paired desktop finishes its first sync</li>
+          <li>The desktop recovers on its own after a crash or power loss</li>
+          <li>Pictures embedded in a message display in place</li>
+          <li>The self-hosted server's /health says where its version came from</li>
+          <li>A refused unsubscribe link is explained in a sentence</li>
+          <li>Screener</li>
+          <li>Send a file with no message text</li>
+          <li>Suggestion copy and badges agree on every device</li>
+          <li>A Screener decision covers the sender everywhere</li>
+          <li>Suggestions appear everywhere the moment they are made</li>
         </ul>
       </description>
     </release>
