@@ -6,7 +6,17 @@
  * reply, the server's locator, or the sending provider's own verdict on the `From`. Otherwise a
  * stranger naming a colleague in Cc reads as that colleague's correspondent.
  */
-import type { AuthVerdict } from "./rules.js";
+/**
+ * The authentication evidence about the CLAIMED author. Demote-only: exactly one member changes
+ * routing — `"fail"`. Absent evidence must never select the destructive branch: gating the
+ * known-sender match on a positive verdict makes every row of a large backlog answer Screener —
+ * so routing has no `auth !== "pass"` and there must never be one. Authentication may DEMOTE on
+ * evidence against; it may never be REQUIRED before a consented identity is honoured. Members:
+ * `"unauthenticated"` — the caller did not look (NULL resolves here); `"unavailable"` — looked,
+ * found nothing it may believe; `"pass"` — persisted and shown, never read by routing; `"fail"` —
+ * evidence AGAINST, toward the Screener only. A compile-time fixture pins the field required.
+ */
+export type AuthVerdict = "unauthenticated" | "unavailable" | "pass" | "fail";
 
 /** How an address came to be on a conversation. `sender_named` is a claim, never evidence. */
 export type CounterpartyEvidence = "we_wrote" | "they_wrote" | "sender_named";

@@ -1,4 +1,5 @@
 import { parseMessageIds } from "./threading.js";
+import type { AuthVerdict } from "./sender-headers.js";
 import type { NormalizedMessage, Destination } from "./types.js";
 
 export type RuleKind = "sender" | "domain" | "header";
@@ -15,17 +16,8 @@ export type RuleKind = "sender" | "domain" | "header";
  */
 export type RuleEffect = "allow" | "deny";
 
-/**
- * The authentication evidence about the CLAIMED author. Demote-only: exactly one member changes
- * routing — `"fail"`. Absent evidence must never select the destructive branch: gating the
- * known-sender match on a positive verdict makes every row of a large backlog answer Screener —
- * so there is no `auth !== "pass"` here and there must never be one. Authentication may DEMOTE on
- * evidence against; it may never be REQUIRED before a consented identity is honoured. Members:
- * `"unauthenticated"` — the caller did not look (NULL resolves here); `"unavailable"` — looked,
- * found nothing it may believe; `"pass"` — persisted and shown, never read by routing; `"fail"` —
- * evidence AGAINST, toward the Screener only. A compile-time fixture pins the field required.
- */
-export type AuthVerdict = "unauthenticated" | "unavailable" | "pass" | "fail";
+/** Defined in the import-free sender-headers leaf, which reads it too; see its docblock. */
+export type { AuthVerdict };
 
 /**
  * `messages.auth_verdict` as this vocabulary, or `null` for "nobody stated one".
