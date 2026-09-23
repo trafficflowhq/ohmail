@@ -273,7 +273,8 @@ export {
   type SendReconcilePassDeps, type SendReconcilePassResult,
 } from "./send-reconcile-pass.js";
 export {
-  SendService, sendService, SEND_STALE_AFTER_MS,
+  SendService, sendService, SEND_STALE_AFTER_MS, SEND_UNVERIFIED_RECHECK_MS,
+  SEND_UNVERIFIED_PROBE_AT_MS, SEND_UNVERIFIED_PROBE_WINDOW_MS, inUnverifiedProbeWindow,
   SEND_ATTEMPT_CEILING_MS, SEND_TIMEOUT_SENTENCE,
   SEND_ATTACHMENT_MAX_TOTAL_BYTES, SEND_ATTACHMENT_FIELD_MAX_CHARS,
   SEND_MAX_ATTACHMENT_PARTS, SEND_MAX_RECIPIENTS, dedupeStagedIds,

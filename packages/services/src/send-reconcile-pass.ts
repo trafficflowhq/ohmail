@@ -1,11 +1,14 @@
-import { and, eq, lt, ne } from "drizzle-orm";
+import { and, eq, gt, isNull, lt, ne } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import { drafts, mailboxes, outboundSends, type Tx } from "@trafficflow/db";
 import { createLogger, type Logger, type OpenSendAdapter, type SendAdapter } from "@trafficflow/core/mail";
 import { bridgeTx, bridgeDb, type Db, type ServiceContext } from "./context.js";
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
 import { SCHEDULED_SEND_BATCH, SCHEDULED_SEND_EXPIRY_MS } from "./schedule-send-pass.js";
-import { sendService, SEND_STALE_AFTER_MS, type SendService } from "./send-service.js";
+import {
+  sendService, SEND_STALE_AFTER_MS, SEND_UNVERIFIED_RECHECK_MS, inUnverifiedProbeWindow,
+  type SendService,
+} from "./send-service.js";
 
 /**
  * THE RECONCILING PASS FOR STRANDED SEND RESERVATIONS — resolves an `outbound_sends` row left
@@ -205,11 +208,17 @@ export interface SendReconcilePassResult {
   resolvedElsewhere: number;
   /** Of `unverified`, how many were closed by the age give-up rather than by evidence. */
   gaveUp: number;
+  /** `unverified` reservations inside {@link SEND_UNVERIFIED_RECHECK_MS} this invocation looked at again. */
+  rechecked: number;
+  /** Of those, how many the mirror or the Sent folder answered `sent` — the person is never asked. */
+  recheckedSent: number;
 }
 
 /** One row the claim selected, with the two joined facts the resolution needs. */
 interface StaleRow {
   send: typeof outboundSends.$inferSelect;
+  /** `pending` — a stranded attempt to decide; `unverified` — a closed one to look for again. */
+  kind: "pending" | "unverified";
   mailboxId: string;
   /** `connected` | `error` | `disabled` — `schema-mail.ts`, NOT `active`. */
   mailboxStatus: string;
@@ -230,6 +239,7 @@ export async function runSendReconcilePass(
   const sends = deps.sends ?? sendService;
   const result: SendReconcilePassResult = {
     claimed: 0, sent: 0, unverified: 0, deferred: 0, resolvedElsewhere: 0, gaveUp: 0,
+    rechecked: 0, recheckedSent: 0,
   };
 
   /**
@@ -243,7 +253,7 @@ export async function runSendReconcilePass(
     db, now(), batch * SEND_RECONCILE_SCAN_FACTOR, batch * SEND_RECONCILE_SCAN_FACTOR,
     deps.accountEligible,
   );
-  result.claimed = rows.length;
+  result.claimed = rows.filter((r) => r.kind === "pending").length;
   if (rows.length === 0) return result;
 
   /**
@@ -371,6 +381,33 @@ export async function runSendReconcilePass(
         log.warn("send_reconcile_deadline_preempted", {
           accountId: row.send.accountId, claimed: rows.length, dialled,
         });
+      }
+      /**
+       * THE SECOND LOOK AT A ROW CLOSED `unverified`. The mirror arm runs every cycle (one indexed
+       * read); the IMAP arm runs only inside {@link inUnverifiedProbeWindow} — or for free on a
+       * connection this invocation already holds — and never past the dial budget or deadline. A
+       * miss writes nothing; a hit means the person is never asked. A throw defers the row exactly
+       * as a pending row's probe would, and a ceiling breach drops the suspect handle first.
+       */
+      if (row.kind === "unverified") {
+        result.rechecked += 1;
+        const probe = mayDial && (shared.has(row.mailboxId) || (inUnverifiedProbeWindow(ageMs) && !outOfBudget));
+        try {
+          const out = await sends.recheckUnverified(ctx, row.send, row.mailboxId, probe ? openOnce : null);
+          if (out.status === "sent") {
+            result.recheckedSent += 1;
+            log.info("send_reconcile_recheck_sent", {
+              sendId: row.send.id, accountId: row.send.accountId, draftId: row.send.draftId, decidedBy: out.by,
+            });
+          }
+        } catch (err) {
+          if (!(err instanceof SettleFailed)) await forget(row.mailboxId);
+          result.deferred += 1;
+          log.warn("send_reconcile_recheck_deferred", {
+            sendId: row.send.id, accountId: row.send.accountId, draftId: row.send.draftId, err,
+          });
+        }
+        continue;
       }
       const willDial = mayDial && !outOfBudget;
       const onMiss: "unverified" | "defer" =
@@ -587,7 +624,8 @@ async function claimStale(
     // SKIP LOCKED through the seam, restricted to the send rows: on the server it is what lets
     // several runners share one window instead of queueing, and on the device store it is the
     // identity for the same reason the lock is — one serialized writer, nothing to skip.
-    const page = (dialable: boolean, limit: number) => d.skipLocked(tx.select({
+    const recheckAfter = new Date(now.getTime() - SEND_UNVERIFIED_RECHECK_MS);
+    const page = (which: "dialable" | "waiting" | "recheck", limit: number) => d.skipLocked(tx.select({
       id: outboundSends.id,
       accountId: outboundSends.accountId,
       idempotencyKey: outboundSends.idempotencyKey,
@@ -608,11 +646,23 @@ async function claimStale(
       .from(outboundSends)
       .innerJoin(drafts, eq(drafts.id, outboundSends.draftId))
       .innerJoin(mailboxes, eq(mailboxes.id, drafts.mailboxId))
-      .where(and(
-        eq(outboundSends.status, "pending"),
-        lt(outboundSends.createdAt, staleBefore),
-        dialable ? ne(mailboxes.status, "error") : eq(mailboxes.status, "error"),
-      ))
+      .where(which === "recheck"
+        /**
+         * THE RECHECK WINDOW: closed `unverified`, nobody has answered for it, younger than the
+         * window, and its draft still says `unverified` — a discarded draft's row (`draft_id`
+         * NULL, `resolved_by = 'discard'`) never joins, and a person's answer ends the looking.
+         */
+        ? and(
+          eq(outboundSends.status, "unverified"),
+          isNull(outboundSends.resolvedBy),
+          gt(outboundSends.createdAt, recheckAfter),
+          eq(drafts.status, "unverified"),
+        )
+        : and(
+          eq(outboundSends.status, "pending"),
+          lt(outboundSends.createdAt, staleBefore),
+          which === "dialable" ? ne(mailboxes.status, "error") : eq(mailboxes.status, "error"),
+        ))
       .orderBy(outboundSends.createdAt)
       .limit(limit), { of: outboundSends });
 
@@ -627,8 +677,10 @@ async function claimStale(
      * column), so one parked account can still delay newer rows; bounded, not removed.
      */
     const found = [
-      ...await page(true, dialWindow),
-      ...await page(false, waitWindow),
+      ...(await page("dialable", dialWindow)).map((r) => ({ ...r, kind: "pending" as const })),
+      ...(await page("waiting", waitWindow)).map((r) => ({ ...r, kind: "pending" as const })),
+      // ITS OWN WINDOW, after the pending ones: a second look never delays a first decision.
+      ...(await page("recheck", waitWindow)).map((r) => ({ ...r, kind: "unverified" as const })),
     ];
 
     // One eligibility read per DISTINCT account, memoised, and run on THIS transaction's handle
@@ -657,6 +709,7 @@ async function claimStale(
           // is ever set on anything it sees.
           resolvedBy: r.resolvedBy, resolvedAt: r.resolvedAt,
         },
+        kind: r.kind,
         mailboxId: r.mailboxId,
         mailboxStatus: r.mailboxStatus,
         eligible: await eligible(r.accountId),

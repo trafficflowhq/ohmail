@@ -6,6 +6,7 @@ import {
 } from "@trafficflow/db";
 import {
   createLogger, isMessageGone, mintMessageId, normalizeMessageId, recordSentMessage,
+  SentCopyAppendFailed,
   type AppendedSent, type EmailAddress, type Logger, type NativeLocator, type OutboundMessage,
   type OpenSendAdapter, type RepoPort, type RoutingPort, type SendAdapter, type StorageCap,
 } from "@trafficflow/core/mail";
@@ -428,6 +429,31 @@ export function sendSurfaceFor(
  * wait out rather than a state they are stuck in.
  */
 export const SEND_STALE_AFTER_MS = 10 * 60 * 1000;
+
+/**
+ * HOW LONG THE ENGINE KEEPS LOOKING FOR AN `unverified` SEND ITSELF. A reservation closed
+ * `unverified` used to be final: nothing ever looked in the Sent folder again, and the person was
+ * asked a question the engine could have answered. For this window the reconciling pass re-reads
+ * the account's mirror every cycle and searches Sent over IMAP inside {@link
+ * SEND_UNVERIFIED_PROBE_AT_MS}; a hit resolves the row `sent` with `resolved_by = 'sent_folder'`.
+ * Past it the row says plainly that the message is not in Sent and offers the two acts.
+ */
+export const SEND_UNVERIFIED_RECHECK_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * WHEN THE IMAP PROBE RUNS, as ages after the attempt — a LOGIN each, so bounded to two: one
+ * early enough to catch a provider that files sent mail itself (a copy appears within minutes),
+ * one late enough to be the last word before the window closes. Each window is
+ * {@link SEND_UNVERIFIED_PROBE_WINDOW_MS} wide so a pass every minute meets it; a pass that
+ * skips a window (a pre-empted invocation) skips that probe — the mirror arm still runs.
+ */
+export const SEND_UNVERIFIED_PROBE_AT_MS: readonly number[] = [15 * 60 * 1000, 23 * 60 * 60 * 1000];
+export const SEND_UNVERIFIED_PROBE_WINDOW_MS = 5 * 60 * 1000;
+
+/** Is an `unverified` attempt of this age inside one of the IMAP probe windows? */
+export function inUnverifiedProbeWindow(ageMs: number): boolean {
+  return SEND_UNVERIFIED_PROBE_AT_MS.some((at) => ageMs >= at && ageMs < at + SEND_UNVERIFIED_PROBE_WINDOW_MS);
+}
 
 /**
  * HOW LONG AN ACCOUNT'S CLAIM ON ONE MESSAGE'S CONTENT STANDS. Inside it, a second send of the
@@ -876,7 +902,18 @@ export class SendService {
             const res = await adapter.send(msg);
             providerMessageId = res.providerMessageId;
             appended = res.appended;
-          } catch {
+          } catch (err) {
+            if (err instanceof SentCopyAppendFailed) {
+              // SMTP ACCEPTED IT; only the Sent copy failed. Delivered for certain — finalize
+              // `sent` and say the copy is missing, never `unverified` (a probe would miss what
+              // was never appended and send the person to look for their own mail).
+              phases.submitMs = Date.now() - tSubmit;
+              (deps.log ?? defaultLog).warn("send_sent_copy_append_failed", {
+                draftId, accountId: ctx.accountId, sendId, err: err.cause,
+              });
+              const seq = await this.finalizeSent(ctx, sendId, err.providerMessageId, draftId, mailboxId);
+              return { status: "sent", providerMessageId: err.providerMessageId, draftId, seq };
+            }
             // SMTP threw → the delivery is AMBIGUOUS (it may have reached the server
             // before the failure). VERIFY by Sent rather than assume either way; NEVER
             // blindly resend. Reuse the still-open adapter for the probe.
@@ -1746,7 +1783,7 @@ export class SendService {
      * outcome — so this arm means a stale client replaying a key for a message that no longer
      * exists.
      */
-    if (row.draftId === null && (row.status === "sent" || row.status === "failed")) {
+    if (row.draftId === null && (row.status === "sent" || row.status === "failed" || row.status === "unverified")) {
       throw new ServiceError(
         "send_key_draft_discarded", 409,
         "the message this send belonged to was discarded; a new send makes a new key",
@@ -1883,6 +1920,77 @@ export class SendService {
       // implied by a sentence claiming they all are.
       await adapter.close().catch(() => { /* the connection is already broken */ });
     }
+  }
+
+  /**
+   * LOOK AGAIN FOR A SEND CLOSED `unverified` — the engine answering the delivery question itself.
+   * Mirror arm first (an indexed read, no LOGIN); the IMAP arm only when the caller hands an
+   * adapter. A hit finalizes `sent` by compare-and-swap on `unverified` with `resolved_by =
+   * 'sent_folder'`; a miss writes NOTHING — the row stays as it was, still inside its window.
+   * Throws propagate untouched (the pass defers the row). Nothing here can put mail on the wire.
+   */
+  async recheckUnverified(
+    ctx: ServiceContext,
+    row: typeof outboundSends.$inferSelect,
+    mailboxId: string,
+    openAdapter: OpenSendAdapter | null,
+  ): Promise<{ status: "sent" | "unverified"; by: "mirror" | "probe" | "none" | "elsewhere"; seq: number | null }> {
+    const mintedKey = normalizeMessageId(row.mintedMessageId);
+    const mirrored = mintedKey === null ? [] : await ctx.db.select({ id: messages.id })
+      .from(messages)
+      .where(and(eq(messages.accountId, ctx.accountId), eq(messages.messageIdHeader, mintedKey)))
+      .limit(1);
+    if (mirrored.length > 0) {
+      const seq = await this.finalizeSentFromUnverified(ctx, row, mailboxId);
+      return seq === null ? { status: "unverified", by: "elsewhere", seq: null } : { status: "sent", by: "mirror", seq };
+    }
+    if (openAdapter === null) return { status: "unverified", by: "none", seq: null };
+    const adapter = await openAdapter(mailboxId);
+    try {
+      const inSent = await adapter.messageInSent(row.mintedMessageId);
+      if (!inSent) return { status: "unverified", by: "probe", seq: null };
+      const seq = await this.finalizeSentFromUnverified(ctx, row, mailboxId);
+      return seq === null ? { status: "unverified", by: "elsewhere", seq: null } : { status: "sent", by: "probe", seq };
+    } finally {
+      await adapter.close().catch(() => { /* the connection is already broken */ });
+    }
+  }
+
+  /**
+   * `finalizeSent`'s twin for a row already closed `unverified`: the CAS is on `unverified` with no
+   * resolution yet, and the resolver is named on the row. The draft follows only while it still
+   * says `unverified` — a row a person already recovered stays where they put it.
+   */
+  private async finalizeSentFromUnverified(
+    ctx: ServiceContext, row: typeof outboundSends.$inferSelect, mailboxId: string,
+  ): Promise<number | null> {
+    const now = ctx.now();
+    const draftId = draftOfOpenAttempt(row);
+    const seq = await asTx(ctx).transaction(async (tx) => {
+      // scoped-by: row.id names one reservation; the status + resolved_by predicate makes the CAS single-winner
+      const won = await tx.update(outboundSends)
+        .set({ status: "sent", providerMessageId: row.mintedMessageId, sentAt: now, resolvedBy: "sent_folder", resolvedAt: now })
+        .where(and(
+          eq(outboundSends.id, row.id), eq(outboundSends.status, "unverified"),
+          sql`${outboundSends.resolvedBy} is null`,
+        ))
+        .returning({ id: outboundSends.id });
+      if (won.length === 0) return null;
+      await tx.update(drafts).set({ status: "sent", sendAt: null, sendKey: null, updatedAt: now })
+        .where(and(
+          eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId), eq(drafts.status, "unverified"),
+        ));
+      // The doorbell, as `finalizeSent` rings it: the Sent copy exists, so the mirror should show it soon.
+      // scoped-by: mailboxId came off the reservation's own draft in the claim
+      await tx.update(mailboxes).set({ syncRequestedAt: now }).where(sql`${mailboxes.id} in (
+        select ${mailboxes.id} from ${mailboxes} where ${mailboxes.id} = ${mailboxId}
+        ${dialect(ctx.db).lockClause({ mode: "update", skipLocked: true })}
+      )`);
+      return recordChange(tx, {
+        accountId: ctx.accountId, entityType: "draft", entityId: draftId, op: "update", meta: null,
+      });
+    });
+    return seq === null ? null : Number(seq);
   }
 
   /** `finalizeSent`, plus the CAS-loser re-read. See {@link SendService.resolveStale}. */
@@ -2144,6 +2252,12 @@ function draftOfTerminalAttempt(row: { id: string; draftId: string | null }): st
   return row.draftId;
 }
 
+/**
+ * `unverified` CAN lose its draft since the discard of a held row was admitted (the ledger row
+ * survives with `resolved_by = 'discard'`): `resumeExisting` refuses that case by name before
+ * reaching here, and the reconciling pass reaches its rows through `INNER JOIN drafts`, so a
+ * null here is still an invariant broken, not a state.
+ */
 function draftOfOpenAttempt(row: { id: string; draftId: string | null }): string {
   if (row.draftId === null) {
     throw new ServiceError(

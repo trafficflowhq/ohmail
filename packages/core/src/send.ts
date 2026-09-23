@@ -80,5 +80,22 @@ export interface SendAdapter {
   forceClose?(): void;
 }
 
+/**
+ * SMTP ACCEPTED THE MESSAGE AND THE SENT-FOLDER APPEND DID NOT — a delivered send with no copy.
+ * `ImapAdapter.send` runs `sendMail` and then `append`; one `catch` over both read an append
+ * fault as "SMTP threw", probed Sent, missed (nothing was ever appended) and recorded the
+ * delivery as `unverified`. Carrying the delivered id lets the send finalize `sent` and say
+ * plainly that the copy is missing. `cause` is the append's own error.
+ */
+export class SentCopyAppendFailed extends Error {
+  readonly providerMessageId: string;
+  constructor(providerMessageId: string, cause: unknown) {
+    super("the message was delivered; the copy to the Sent folder could not be written");
+    this.name = "SentCopyAppendFailed";
+    this.providerMessageId = providerMessageId;
+    (this as { cause?: unknown }).cause = cause;
+  }
+}
+
 /** Injected factory: open a connected send adapter for a mailbox. */
 export type OpenSendAdapter = (mailboxId: string) => Promise<SendAdapter>;

@@ -82,6 +82,7 @@ import {
 // The News pile's resolver (0.22): the adapter is the one place canonical names meet the live
 // tree, so `toServerPath` routes both spellings onto the folder the mailbox actually has.
 import { NEWS_FOLDER, LEGACY_NEWS_FOLDER, canonicalDestination, pileFolder } from "../types.js";
+import { SentCopyAppendFailed } from "../send.js";
 // The SSRF gate's other half. `pinned-fetch.ts` owns it because a pin and a gate are one
 // mechanism (its header says so); this file is the mail-leg consumer — see `ImapConfig.pin`.
 import { pinnedLookup } from "../net/pinned-lookup.js";
@@ -3907,16 +3908,25 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     }
 
     await this.transporter.sendMail(mail);
-    const raw = await buildRaw(mail);
-
-    const sentCanonical = await this.resolveSentFolder();
-    // Under the read deadline like every other wait on the server: an APPEND the server never
-    // answers would otherwise hold this connection — and a released connection is now kept for
-    // the next press, so a hang here would be handed on. A breach retires it; the keeper reads
-    // it dead and dials again.
-    const appended = await this.bounded(
-      this.client.append(this.toServerPath(sentCanonical), raw, ["\\Seen"]), sentCanonical,
-    );
+    // FROM HERE THE MESSAGE HAS LEFT. A fault in building or appending the Sent copy is not a
+    // fault of the delivery, so it is raised as `SentCopyAppendFailed` carrying the delivered
+    // id — the send service finalizes `sent` and names the missing copy, never `unverified`.
+    let raw: Buffer;
+    let sentCanonical: string;
+    let appended: Awaited<ReturnType<ImapFlow["append"]>>;
+    try {
+      raw = await buildRaw(mail);
+      sentCanonical = await this.resolveSentFolder();
+      // Under the read deadline like every other wait on the server: an APPEND the server never
+      // answers would otherwise hold this connection — and a released connection is kept for the
+      // next press, so a hang here would be handed on. A breach retires it; the keeper reads it
+      // dead and dials again.
+      appended = await this.bounded(
+        this.client.append(this.toServerPath(sentCanonical), raw, ["\\Seen"]), sentCanonical,
+      );
+    } catch (err) {
+      throw new SentCopyAppendFailed(messageId, err);
+    }
     const sentLocator: NativeLocator = appended && typeof appended !== "boolean" && appended.uid != null && appended.uidValidity != null
       ? { folder: sentCanonical, ref: makeRef(appended.uidValidity, appended.uid) }
       : { folder: sentCanonical, ref: "0:0" };

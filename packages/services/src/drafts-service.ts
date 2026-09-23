@@ -573,11 +573,12 @@ export class DraftsService {
   async remove(ctx: ServiceContext, id: string): Promise<{ seq: number }> {
     const seq = await asTx(ctx).transaction(async (tx) => {
       /**
-       * A send we could not confirm is refused by name; a finished one is not refused at all. The
-       * reservation OUTLIVES every terminal outcome — the `outbound_sends` row makes a same-key
-       * retry replay instead of delivering twice. This used to ask whether a row EXISTED,
-       * conflating an open question (`pending`/`unverified`) with a ledger entry
-       * (`sent`/`failed`) — a failed send's draft was undeletable. Nothing cascades: `draft_id`
+       * ONLY A SEND STILL RUNNING HOLDS THE DRAFT. `pending` is an attempt that may be on the wire
+       * (or one the reconciler will settle within minutes) and is refused by name. `unverified`
+       * used to be refused too — "resolve it first" — and a person who did not understand the
+       * question pressed Discard on one reply for weeks. The words are theirs: the row goes, and
+       * the ledger keeps the attempt with `resolved_by = 'discard'` so a same-key replay is refused
+       * as discarded rather than answered with a draft that is gone. Nothing cascades: `draft_id`
        * is `ON DELETE SET NULL` (mail 0095). The row is locked FIRST — only `FOR UPDATE`
        * conflicts with `reserve`'s `FOR KEY SHARE`: the reserve committed first (409) or the
        * delete did (404). An appointment is refused below with the way forward.
@@ -587,11 +588,27 @@ export class DraftsService {
           .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId)))
           .limit(1));
       if (held && held.status !== "scheduled" && held.sendKey === null) {
-        if (await this.sendOnRecord(tx, ctx.accountId, id)) {
+        const open = await tx.select({ id: outboundSends.id, status: outboundSends.status }).from(outboundSends)
+          .where(and(
+            eq(outboundSends.draftId, id),
+            eq(outboundSends.accountId, ctx.accountId),
+            inArray(outboundSends.status, [...SEND_ON_RECORD_STATUSES]),
+          ));
+        if (open.some((a) => a.status === "pending")) {
           throw new ServiceError(
             "send_recorded", 409,
-            "this message has a send we could not confirm; resolve it before discarding it",
+            "this message is still being sent, or its send is still being confirmed; try again in a few minutes",
           );
+        }
+        if (open.length > 0) {
+          await tx.update(outboundSends)
+            .set({ resolvedBy: "discard", resolvedAt: ctx.now() })
+            .where(and(
+              eq(outboundSends.draftId, id),
+              eq(outboundSends.accountId, ctx.accountId),
+              eq(outboundSends.status, "unverified"),
+              isNull(outboundSends.resolvedBy),
+            ));
         }
       }
       // A row WEARING AN APPOINTMENT refuses the delete with the way forward named, exactly as

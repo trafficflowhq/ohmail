@@ -1936,13 +1936,14 @@ export const outboundSends = pgTable("outbound_sends", {
   providerMessageId: text("provider_message_id"),            // the delivered Message-ID (null until sent)
   status: text("status").notNull().default("pending"),       // pending|sent|failed|unverified
   sentAt: timestamp("sent_at", { withTimezone: true }),
-  // ── Mail 0095 — WHO settled an ambiguous attempt, and WHEN. `'person'` is the only value any
-  // build writes: a reader who looked in their Sent folder and told us what they found. The
-  // distinction this records is testimony vs observation — a send the reconciler finalized and one
-  // a person resolved both end at `status = 'sent'`, and a later reader has to be able to tell
-  // those apart. Free text rather than CHECK-closed so the first other resolver is not an
-  // unwritable row on the day it ships; tainted in the content census for that reason, and
-  // deliberately outside the column-scoped `ohmail_admin` grant (no staff surface reads it).
+  // ── Mail 0095 — WHO settled an ambiguous attempt, and WHEN. Three values are written:
+  // `'person'` (a reader looked in their Sent folder and said what they found), `'sent_folder'`
+  // (the reconciler's second look found the minted id in the mirror or in Sent — the row is
+  // `sent` and nobody was asked), and `'discard'` (the person discarded the held draft; the row
+  // stays `unverified`, `draft_id` goes NULL, and a same-key replay is refused as discarded).
+  // Free text rather than CHECK-closed so a further resolver is not an unwritable row on the day
+  // it ships; tainted in the content census for that reason, and deliberately outside the
+  // column-scoped `ohmail_admin` grant (no staff surface reads it).
   resolvedBy: text("resolved_by"),
   resolvedAt: timestamp("resolved_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
