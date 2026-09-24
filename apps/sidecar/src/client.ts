@@ -101,6 +101,9 @@ export function connectOverStdio(opts: StdioClientOptions): StdioClient {
       // desktop shell's reader skips it: this client's consumers wait on `ready()`, and a phase
       // is never an answer to anything.
       if (header.t === "phase") continue;
+      // The served mailbox named after `ready` (`MailboxHeader`): uncorrelated, and this client's
+      // consumers read the mailbox off their own requests, so it is skipped like a phase.
+      if (header.t === "mailbox") continue;
       if (typeof header.id !== "number") {
         close(new Error(`frame with no correlation id: ${JSON.stringify(f.header).slice(0, 200)}`));
         return;

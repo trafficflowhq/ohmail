@@ -528,7 +528,11 @@ export async function runCloudSidecar(): Promise<void> {
 
   try {
     // Same single-voiced window as the local door's — see `bootPhaseEmitter`.
-    cloud = await createCloudSidecar({ ...cloudConfigFromEnv(), log, onPhase: bootPhaseEmitter(stdout) });
+    cloud = await createCloudSidecar({
+      ...cloudConfigFromEnv(), log, onPhase: bootPhaseEmitter(stdout),
+      // The mirror starts after `ready`, so the host exists by the time a mailbox can be named.
+      onServedMailbox: (mailboxId) => host?.mailbox(mailboxId) ?? Promise.resolve(),
+    });
   } catch (err) {
     // A refused IMAP setting, a missing URL or address, or a locked data directory — all report the
     // same way the local engine's start failure does: a structured line and a non-zero exit, so the
@@ -557,7 +561,7 @@ export async function runCloudSidecar(): Promise<void> {
     sessionToken: cloud.sessionToken,
     accountId: cloud.world.accountId,
     userId: cloud.world.userId,
-    mailboxId: cloud.world.mailboxId,
+    mailboxId: cloud.servedMailboxId(),
     // There is no mailbox password on this transport — the credential is a hosted session — so the
     // field says whether this launch HAS one. `ready` with a sealed pair; `absent` on a pre-auth
     // launch, which is the same word the local engine uses for "ask for it", and the shell renders
@@ -567,7 +571,7 @@ export async function runCloudSidecar(): Promise<void> {
     online: cloud.online(),
   });
   log("cloud_serving", {
-    mailboxId: cloud.world.mailboxId,
+    mailboxId: cloud.servedMailboxId(),
     state: cloud.signedIn() ? "signed_in" : "signed_out",
   });
 

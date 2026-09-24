@@ -2802,6 +2802,21 @@ fn accept_header(header: &[u8], inner: &Arc<Inner>) -> Result<Answer, String> {
         return Ok(Answer::None);
     }
 
+    // ── The served mailbox, named after `ready` ──────────────────────────────────────────────
+    //
+    // A paired install has no address, so its `ready` names no mailbox until the first mailbox
+    // list lands, and the engine then names it once. Only an EMPTY id is filled, and only while the
+    // run is serving: a launch serves one mailbox, so a frame that would move it is refused. Held
+    // to an id's grammar before it is stored, like a phase.
+    if kind == Some("mailbox") {
+        if let Some(id) = parsed.get("mailboxId").and_then(serde_json::Value::as_str) {
+            if !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+                name_served_mailbox(inner, id);
+            }
+        }
+        return Ok(Answer::None);
+    }
+
     if kind != Some("ready") {
         return Ok(Answer::None);
     }
@@ -2842,6 +2857,26 @@ fn accept_header(header: &[u8], inner: &Arc<Inner>) -> Result<Answer, String> {
     // under the user's home carries their account name, and the shell that set it already knows.
     inner.set_state(EngineState::Serving { mailbox_id });
     Ok(Answer::None)
+}
+
+/// Fill the mailbox id `ready` left empty — see the `mailbox` arm of [`accept_header`]. The state
+/// and the ready record change under one lock, so a status read never sees one without the other.
+fn name_served_mailbox(inner: &Arc<Inner>, id: &str) {
+    let named = {
+        let mut s = inner.shared.lock().expect("engine state");
+        let open = matches!(&s.state, EngineState::Serving { mailbox_id } if mailbox_id.is_empty())
+            && s.ready.as_ref().is_some_and(|r| r.mailbox_id.is_empty());
+        if open {
+            if let Some(ready) = s.ready.as_mut() {
+                ready.mailbox_id = id.to_string();
+            }
+            s.state = EngineState::Serving { mailbox_id: id.to_string() };
+        }
+        open
+    };
+    if named {
+        log_state(&EngineState::Serving { mailbox_id: id.to_string() });
+    }
 }
 
 fn fault(inner: &Arc<Inner>, message: String) {

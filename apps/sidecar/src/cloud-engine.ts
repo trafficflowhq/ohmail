@@ -117,6 +117,14 @@ export interface CloudSidecarConfig {
    * (`main.ts` turning it into `phase` frames), as the local engine's. See `SidecarConfig.onPhase`.
    */
   onPhase?: (phase: CloudBootPhase, progress?: MigrationProgress) => void;
+  /**
+   * Told the mailbox this launch serves when `ready` could not name one (a paired install, whose
+   * world has no row until the first mailbox list lands) — `main.ts` writes it as a `mailbox`
+   * frame. Awaited before any answer that depends on it goes out.
+   */
+  onServedMailbox?: (mailboxId: string) => Promise<void>;
+  /** The pairing's wait for that name — {@link PAIR_SERVED_WAIT_MS}; a test shortens it. */
+  pairServedWaitMs?: number;
 }
 
 /** The cloud door's boot phases. Identical to the local door's: the two share `openLocalDb`. */
@@ -125,6 +133,8 @@ export type CloudBootPhase = LocalDbOpenPhase | "preparing";
 export interface CloudSidecar {
   readonly db: LocalDb;
   readonly world: LocalWorld;
+  /** The mailbox this launch serves: `world.mailboxId`, or the one named after it (`onServedMailbox`). */
+  servedMailboxId(): string;
   /** The per-launch bearer token for the LOCAL bridge. In memory only. */
   readonly sessionToken: string;
   /** `Request → Response` over the mirror (reads) + the write-through proxy — the stdio surface. */
@@ -456,6 +466,13 @@ export function enforceMirrorOwner(
 
 /** How long the door waits for a server to say hello. Short: somebody is watching a spinner. */
 export const PROBE_DEADLINE_MS = 12_000;
+
+/**
+ * How long a pairing's answer waits for the first mailbox list to name the served mailbox. One
+ * hosted read on the network the link named; past this the answer goes without it and the
+ * window's lifecycle poll opens the mail when the name arrives.
+ */
+export const PAIR_SERVED_WAIT_MS = 10_000;
 
 /**
  * What answered at the configured address — the self-hosted door's probe. Exported and pure-ish
@@ -866,6 +883,44 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     // One phase, both identity writes — see the same two lines in `engine.ts`.
     const worldMs = Date.now() - tWorld;
 
+    /* THE MAILBOX THIS LAUNCH SERVES. A paired install has no address, so its world names no row
+       and `ready` says "" — the window then waits for ever on a mailbox the mirror already holds.
+       Named ONCE, when a mailbox list first gives this world a row, by the rule a relaunch applies
+       (`ensureLocalWorld` again), and told to the shell before the pairing's answer goes out. */
+    let served = world.mailboxId;
+    const servedWaiters = new Set<() => void>();
+    const nameServedMailbox = async (): Promise<void> => {
+      if (served !== "") return;
+      try {
+        const again = await ensureLocalWorld(db, {
+          address: config.address,
+          ...(config.displayName ? { displayName: config.displayName } : {}),
+          now: now(),
+        });
+        if (again.mailboxId === "" || served !== "") return;
+        served = again.mailboxId;
+        log?.("cloud_serving_mailbox", { mailboxId: served });
+        await config.onServedMailbox?.(served);
+      } catch (err) {
+        log?.("cloud_serving_mailbox_failed", { err, reason: "the served mailbox could not be named; a relaunch names it" });
+      } finally {
+        if (served !== "") {
+          for (const wake of servedWaiters) wake();
+          servedWaiters.clear();
+        }
+      }
+    };
+    /** Resolves once a mailbox is served, or after `ms` — the caller answers with what there is. */
+    const servedWithin = (ms: number): Promise<void> => {
+      if (served !== "") return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        const timer = setTimeout(() => { servedWaiters.delete(wake); resolve(); }, ms);
+        timer.unref?.();
+        const wake = (): void => { clearTimeout(timer); resolve(); };
+        servedWaiters.add(wake);
+      });
+    };
+
     // ── TOKENS: SEALED WINS OVER ENVIRONMENT, THE SAME PRECEDENCE THE IMAP CREDENTIAL FOLLOWS ──
     //
     // A durable key lets a rotated token pair be sealed to disk, so a later launch resumes with no
@@ -1011,6 +1066,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         db,
         world,
         auth,
+        onMailboxes: nameServedMailbox,
         cursorPath: join(config.dataDir, "cloud-cursor.json"),
         ...(log ? { log } : {}),
         now,
@@ -1133,7 +1189,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       } catch {
         /* logged by the first attempt's arm if it matters; nothing of this session reads it */
       }
-      log?.("cloud_signed_out", { mailboxId: world.mailboxId });
+      log?.("cloud_signed_out", { mailboxId: served });
     };
 
     /**
@@ -1192,7 +1248,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           ok: true,
           mode: "cloud",
           schemaTier: "mail",
-          mailboxId: world.mailboxId,
+          mailboxId: served,
           signedIn: authed !== null,
           online: authed !== null && authed.mirror.online(),
           // The reason `signedIn` is false, when the reason is the server ending the session
@@ -1425,7 +1481,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         // and the verifier is not logged here or anywhere else. Neither is emitted as a field:
         // `challenge` is not on the allowlist, so writing it would be dropped rather than shown,
         // and a line that says a handoff was started is the whole of what an operator needs.
-        log?.("cloud_link_challenge_minted", { mailboxId: world.mailboxId });
+        log?.("cloud_link_challenge_minted", { mailboxId: served });
         return json({ challenge: pair.challenge });
       }
 
@@ -1465,7 +1521,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
             pair.challenge,
           );
           approval = { id: started.approvalId, verifier: pair.verifier };
-          log?.("cloud_approval_requested", { mailboxId: world.mailboxId });
+          log?.("cloud_approval_requested", { mailboxId: served });
           return json(started);
         } catch (err) {
           if (err instanceof CloudSignInError) {
@@ -1568,7 +1624,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
               );
             }
             approval = null;
-            log?.("cloud_approval_claimed", { mailboxId: world.mailboxId });
+            log?.("cloud_approval_claimed", { mailboxId: served });
             tokens = polled.tokens;
           } else tokens = await cloudSignIn(
             {
@@ -1681,11 +1737,11 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
            frame named no mailbox and it cannot mount mail; the window relaunches it behind the door
            just written, and that engine activates from this seal and runs the first drain. */
         if (config.identityPending !== undefined) {
-          log?.("cloud_signed_in", { mailboxId: world.mailboxId });
-          return json({ status: "signed_in", mailboxId: world.mailboxId, address: adoptedAddress, adopted: true });
+          log?.("cloud_signed_in", { mailboxId: served });
+          return json({ status: "signed_in", mailboxId: served, address: adoptedAddress, adopted: true });
         }
         const live = activate(tokens);
-        log?.("cloud_signed_in", { mailboxId: world.mailboxId });
+        log?.("cloud_signed_in", { mailboxId: served });
         // NOT AWAITED, and for the reason the launch path does not await it either: a first pull of
         // a real account takes a while, and a sign-in that appears to hang for it looks broken. The
         // mirror reports its own progress through `/health.online` and the next `/sync`.
@@ -1698,7 +1754,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
             reason: "the first pull after signing in did not complete; the mirror retries with backoff",
           });
         });
-        return json({ status: "signed_in", mailboxId: world.mailboxId, address: config.address });
+        return json({ status: "signed_in", mailboxId: served, address: config.address });
       }
 
       /**
@@ -1842,7 +1898,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           return json({
             status: "paired",
             restartRequired: true,
-            mailboxId: world.mailboxId,
+            mailboxId: served,
             address: config.address,
           });
         }
@@ -1911,7 +1967,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           );
         }
         const live = activate(redeemed.tokens);
-        log?.("cloud_paired", { mailboxId: world.mailboxId });
+        log?.("cloud_paired", { mailboxId: served });
         // NOT AWAITED — a first pull takes a while and a pairing that appears to hang for it looks
         // broken. The mirror reports its own progress through `/health.online`.
         void live.mirror.start().catch((err: unknown) => {
@@ -1923,7 +1979,11 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
             reason: "the first pull after pairing did not complete; the mirror retries with backoff",
           });
         });
-        return json({ status: "paired", mailboxId: world.mailboxId, address: config.address });
+        /* …but its FIRST MAILBOX LIST is awaited, bounded: that list names the mailbox this launch
+           serves, and the shell has recorded it before this answer arrives, so the window's status
+           read after the pairing names the mail to open. Past the bound the answer goes anyway. */
+        await servedWithin(config.pairServedWaitMs ?? PAIR_SERVED_WAIT_MS);
+        return json({ status: "paired", mailboxId: served, address: config.address });
       }
 
       /* THE WINDOW'S TRY AGAIN — renew now rather than on the fault's own clock (the disk may
@@ -2092,6 +2152,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     return {
       db,
       world,
+      servedMailboxId: () => served,
       sessionToken: session.token,
       handle,
       signedIn: () => authed !== null,

@@ -386,6 +386,11 @@ export interface CloudMirrorConfig {
   /** The follow-up chain's backoff and cap; production takes {@link FOLLOW_UP_STEPS_MS} and {@link FOLLOW_UP_CAP_MS}. */
   followUpStepsMs?: readonly number[];
   followUpCapMs?: number;
+  /**
+   * After each mailbox list is applied and before the drain reads a page — the engine names the
+   * mailbox a launch serves from it (`cloud-engine.ts`). Never throws into the pull.
+   */
+  onMailboxes?: () => Promise<void>;
 }
 
 export interface CloudMirror {
@@ -2364,6 +2369,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     knownMailboxes = out.known;
     hostedMailboxIds = hosted.map((m) => m.id);
     boxesAsk = Math.max(boxesAsk, ask);
+    await cfg.onMailboxes?.().catch(() => undefined);
     progressed();
     if (wantCounts) {
       /* The ask is already stamped (above, at issue time) — what lands here is the ANSWER. Both

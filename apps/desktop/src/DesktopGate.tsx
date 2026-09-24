@@ -327,6 +327,10 @@ export function DesktopGate() {
   }, [toast]);
 
   const onStatus = useCallback((next: EngineStatus) => {
+    /* RECORDED, THEN PAINTED, as `refresh` does: a delivery painted without its record read as a
+       lifecycle move at the next poll, which re-keyed the gate and remounted the mail a pairing had
+       just opened. */
+    delivered.current = lifecycleMark({ kind: "status", status: next });
     setShell({ kind: "status", status: next });
     setOverlay(null);
     /* Every status delivered here follows an engine-lifecycle act — a door entered, a sign-in,

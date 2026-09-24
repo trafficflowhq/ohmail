@@ -26,7 +26,7 @@ interface ApprovalRow {
 }
 
 /** One hosted mailbox as `GET /mailboxes` answers it: organized there, consented to nothing. */
-function hostedMailbox(id: string, address: string): MailboxDTO {
+export function hostedMailbox(id: string, address: string): MailboxDTO {
   const at = "2026-01-01T00:11:00.000Z";
   return {
     id, provider: "imap", address, displayName: null, status: "connected", authKind: "password",
@@ -46,7 +46,7 @@ const json = (v: unknown, status = 200): Response =>
   new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json" } });
 const refused = (code: string, status: number): Response => json({ error: { code, message: code } }, status);
 
-function messagePage(owner: string): SyncResponse {
+export function messagePage(owner: string): SyncResponse {
   const at = new Date().toISOString();
   return {
     changes: {

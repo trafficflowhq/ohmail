@@ -27,6 +27,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 ///  · `echo`            — answer every request with a response describing what it received.
 ///  · `mute`            — accept requests and answer none. A wedged engine, which is what the
 ///                        run-end drain exists for.
+///  · `unnamed`         — `echo`, but `ready` names no mailbox, and before its first answer it
+///                        names one in `mailbox` frames: a malformed id, `mbx-2`, then `mbx-3`.
+///  · `renamed`         — the same frames after a `ready` that named `mbx-1`.
 ///
 /// The three request modes decode frames the same way the real engine does — an 8-byte preamble
 /// then a JSON header then a body — so a test that passes is a test about this shell's half of the
@@ -76,7 +79,7 @@ function frame(header, body) {
 const ready = () => frame({
   v: 1, t: "ready", baseUrl: "http://sidecar",
   sessionToken: "tok_" + "a".repeat(24),
-  accountId: "acc-1", userId: "usr-1", mailboxId: "mbx-1",
+  accountId: "acc-1", userId: "usr-1", mailboxId: mode === "unnamed" ? "" : "mbx-1",
   credentialState: "ready",
 });
 
@@ -148,8 +151,9 @@ if (mode !== "serve-deaf") {
   process.stdin.on("end", () => process.exit(0));
 }
 
-if (mode === "echo" || mode === "mute") {
+if (mode === "echo" || mode === "mute" || mode === "unnamed" || mode === "renamed") {
   let buf = Buffer.alloc(0);
+  let named = mode === "echo" || mode === "mute";
   process.stdin.on("data", (chunk) => {
     buf = Buffer.concat([buf, chunk]);
     for (;;) {
@@ -161,6 +165,12 @@ if (mode === "echo" || mode === "mute") {
       const body = buf.subarray(8 + hl, 8 + hl + bl);
       buf = buf.subarray(8 + hl + bl);
       if (mode === "mute") continue;
+      if (!named) {
+        named = true;
+        frame({ v: 1, t: "mailbox", mailboxId: "not an id!" });
+        frame({ v: 1, t: "mailbox", mailboxId: "mbx-2" });
+        frame({ v: 1, t: "mailbox", mailboxId: "mbx-3" });
+      }
       // The answer describes the request, so a test can prove what actually crossed the pipe —
       // the method, the URL, every header the shell composed, and the body's bytes.
       const said = Buffer.from(JSON.stringify({
@@ -1473,6 +1483,41 @@ fn a_request_crosses_the_pipe_and_the_answer_comes_back() {
     let said: serde_json::Value = serde_json::from_slice(&answer.body).expect("json");
     assert_eq!(said["method"], "GET");
     assert_eq!(said["url"], "http://sidecar/mailboxes");
+
+    engine.stop();
+}
+
+/// THE MAILBOX A PAIRED LAUNCH NAMES AFTER `ready`. A paired install's `ready` names none (it has no
+/// address), and the window opens mail only under a named one, so without this frame it waited on
+/// "Opening your mailbox…" until a relaunch. The name is read before the answer that follows it on
+/// the one reader, so no sleep stands between the request and the assertion; a malformed id is
+/// refused, and a second name moves nothing.
+#[test]
+fn a_mailbox_named_after_ready_fills_the_empty_id_before_the_next_answer() {
+    let f = Fixture::new("unnamed");
+    let engine = Engine::spawn_with(f.launch("unnamed"), quick());
+    serving(&engine);
+    assert_eq!(engine.state(), EngineState::Serving { mailbox_id: String::new() });
+
+    let answer = engine.request(get("/cloud/pair-redeem")).expect("the engine answered");
+    assert_eq!(answer.status, 200);
+    assert_eq!(engine.state(), EngineState::Serving { mailbox_id: "mbx-2".to_string() });
+    assert_eq!(engine.ready().expect("ready").mailbox_id, "mbx-2");
+
+    engine.stop();
+}
+
+/// …and a launch whose `ready` named its mailbox keeps it: the frame fills an empty id, never moves one.
+#[test]
+fn a_mailbox_frame_never_moves_a_mailbox_ready_named() {
+    let f = Fixture::new("renamed");
+    let engine = Engine::spawn_with(f.launch("renamed"), quick());
+    serving(&engine);
+
+    let answer = engine.request(get("/health")).expect("the engine answered");
+    assert_eq!(answer.status, 200);
+    assert_eq!(engine.state(), EngineState::Serving { mailbox_id: "mbx-1".to_string() });
+    assert_eq!(engine.ready().expect("ready").mailbox_id, "mbx-1");
 
     engine.stop();
 }

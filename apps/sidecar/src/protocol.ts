@@ -105,9 +105,8 @@ export interface ReadyHeader extends ReadyInfo, Record<string, unknown> {
 /**
  * What the engine is doing while it is still starting — sent BEFORE `ready`, zero or more times.
  *
- * The one unsolicited frame besides `ready`, and strictly earlier than it: once the engine is
- * serving there is nothing left for this to say, and the app's own sync surface narrates from
- * there. `phase` is a closed identifier the window maps to a sentence; a shell built before this
+ * Unsolicited and strictly earlier than `ready`: once the engine is serving there is nothing
+ * left for this to say, and the app's own sync surface narrates from there. `phase` is a closed identifier the window maps to a sentence; a shell built before this
  * frame existed skips it unread (an unknown `t` has always been "skip the body and carry on"),
  * which is what lets an engine say more without a lockstep upgrade.
  */
@@ -125,7 +124,19 @@ export interface PhaseHeader extends Record<string, unknown> {
   pending?: number;
 }
 
-export type AnyHeader = RequestHeader | ResponseHeader | ErrorHeader | ReadyHeader | PhaseHeader;
+/**
+ * THE MAILBOX A SERVING ENGINE NAMES AFTER `ready` — unsolicited, at most once per launch, and only
+ * where `ready.mailboxId` was empty: a paired install has no address, so its world names no mailbox
+ * until the first mailbox list lands. The shell fills the empty id it recorded from `ready` and
+ * ignores any other; a shell built before this frame skips it unread (an unknown `t`).
+ */
+export interface MailboxHeader extends Record<string, unknown> {
+  v: number;
+  t: "mailbox";
+  mailboxId: string;
+}
+
+export type AnyHeader = RequestHeader | ResponseHeader | ErrorHeader | ReadyHeader | PhaseHeader | MailboxHeader;
 
 const EMPTY = new Uint8Array(0);
 

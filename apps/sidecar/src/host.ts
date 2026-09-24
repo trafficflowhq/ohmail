@@ -2,7 +2,7 @@ import type { Readable, Writable } from "node:stream";
 import { FrameDecoder, FrameWriter, MAX_BODY_BYTES, PROTOCOL_VERSION, type FrameLimits } from "./frame.js";
 import { describeMethod, describeRoute, type Diagnostic } from "./log.js";
 import { noteFirstPageServed } from "./first-page-gate.js";
-import { decodeRequest, encodeResponse, type ErrorHeader, type ReadyHeader, type ReadyInfo, type RequestHeader } from "./protocol.js";
+import { decodeRequest, encodeResponse, type ErrorHeader, type MailboxHeader, type ReadyHeader, type ReadyInfo, type RequestHeader } from "./protocol.js";
 
 /**
  * The sidecar side of the bridge — frames on stdin, `app.handle` behind them, frames back out. The
@@ -48,6 +48,11 @@ export interface StdioHost {
   readonly inFlight: number;
   /** Announce the per-launch session to the shell. */
   ready(info: ReadyInfo): Promise<void>;
+  /**
+   * Name the mailbox this launch serves, where `ready` could not ({@link MailboxHeader}). Queued on
+   * the one writer, so a response written after this resolves reaches the shell after the name.
+   */
+  mailbox(mailboxId: string): Promise<void>;
   /** Resolves when the input ends AND every accepted request has been answered. */
   finished(): Promise<void>;
   /** Detach from the streams. Does not close them — the process owns those. */
@@ -219,6 +224,10 @@ export function serveOverStdio(opts: StdioHostOptions): StdioHost {
     },
     async ready(info) {
       const header: ReadyHeader = { v: PROTOCOL_VERSION, t: "ready", ...info };
+      await writer.write(header);
+    },
+    async mailbox(mailboxId) {
+      const header: MailboxHeader = { v: PROTOCOL_VERSION, t: "mailbox", mailboxId };
       await writer.write(header);
     },
     finished: () => finished,
