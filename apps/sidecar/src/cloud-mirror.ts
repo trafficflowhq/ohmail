@@ -147,6 +147,14 @@ const DEFAULT_PAGE_LIMIT = 500;
 const DEFAULT_BODIES_LIMIT = 100;
 
 /**
+ * The away-reply repair's reach: the NEWEST own-address rows it re-reads, and how many at once. An
+ * away reply is recent by nature and older own mail presents in History, where the flag decides
+ * nothing; a bound keeps a large Sent folder from turning one pull into thousands of requests.
+ */
+const AUTO_REPLY_REPAIR_MAX = 200;
+const AUTO_REPLY_REPAIR_WIDTH = 8;
+
+/**
  * How many body-less messages one pull may repair. Ten `?ids=` requests at the server's cap — enough
  * to absorb a burst of new mail in a single poll, small enough that a mirror which has been offline
  * for a week catches up over several polls instead of firing hundreds of requests at once.
@@ -331,6 +339,12 @@ interface CursorState {
    * which reads `false` — exactly the population whose rules all share one instant.
    */
   ruleInstantRepair: boolean;
+  /**
+   * Set once the one-time away-reply repair has been CONSIDERED — see `repairAutoReplies`. The
+   * `message` arm used to drop the hosted `autoReplyByUs`; absent from every older cursor file,
+   * which reads `false` — exactly the mirrors holding the responder's replies unflagged.
+   */
+  autoReplyRepair: boolean;
   /**
    * Set once the one-time cap-marker repair has been CONSIDERED — see {@link repairCapMarkers}.
    * Absent from every cursor file written before that repair existed, which reads as `false`, and
@@ -540,6 +554,7 @@ interface CursorFile {
   tagBackfillBegun?: unknown;
   folderBackfill?: unknown;
   ruleInstantRepair?: unknown;
+  autoReplyRepair?: unknown;
   capMarkerRepair?: unknown;
   /** ISO instant of the last completed pull; absent on every file from before the freshen. */
   lastDrainAt?: unknown;
@@ -588,6 +603,7 @@ function readCursor(path: string): CursorState {
       folderBackfill: j.folderBackfill === true,
       // `=== true`: an absent key (every pre-repair file) reads FALSE, so those mirrors repair once.
       ruleInstantRepair: j.ruleInstantRepair === true,
+      autoReplyRepair: j.autoReplyRepair === true,
       // `=== true`, never `?? true`: an absent key must read FALSE. The inverse would silently
       // exempt every install that HAS the defect and leave only fresh ones correct.
       capMarkerRepair: j.capMarkerRepair === true,
@@ -606,6 +622,8 @@ function readCursor(path: string): CursorState {
       tagBackfillBegun: false, folderBackfill: false,
       // A fresh install's rule arm carries the creation instant from its first row: nothing to repair.
       ruleInstantRepair: true,
+      // And its message arm carries the away-reply flag from its first row.
+      autoReplyRepair: true,
       // A fresh install has no pre-marker rows and its walk writes markers from the start.
       capMarkerRepair: true,
       // And it has never completed a pull: the bootstrap's own window owns "newest first" here.
@@ -626,6 +644,7 @@ function writeCursor(path: string, state: CursorState): void {
     tagBackfillBegun: state.tagBackfillBegun,
     folderBackfill: state.folderBackfill,
     ruleInstantRepair: state.ruleInstantRepair,
+    autoReplyRepair: state.autoReplyRepair,
     capMarkerRepair: state.capMarkerRepair,
     ...(state.lastDrainAt !== null ? { lastDrainAt: state.lastDrainAt } : {}),
     // Absent when empty, so a healthy install's cursor file is byte-identical to one written
@@ -1335,6 +1354,36 @@ async function applyAccountUpsert(
  * the FK), because attributing mail to a DIFFERENT mailbox is the one thing this may never do — a
  * message it cannot place honestly is better absent.
  */
+/**
+ * THE AWAY RESPONDER'S OWN REPLY, MIRRORED AS THE LEDGER FACT THE LOCAL DOOR READS. The hosted row
+ * says `autoReplyByUs`; the local door derives that flag (`autoReplyByUsWhere`) from an
+ * `away_replies` row naming the reply's Message-ID, and the wire carries neither the ledger nor raw
+ * headers. So a flagged row writes that one fact, once per id; `false` or absent writes nothing,
+ * because the hosted ledger never un-answers anybody. The caller has asked the mailbox's tombstone.
+ */
+async function mirrorAutoReply(
+  tx: Tx, world: LocalWorld, mailboxId: string,
+  m: Pick<MessageDTO, "autoReplyByUs" | "messageIdHeader" | "to" | "date">, now: Date,
+): Promise<boolean> {
+  const header = (m.messageIdHeader ?? "").trim();
+  // A CARRIER, not a reader of what the row means (the engagement census's line): only a TRUE flag
+  // is a fact to write, so it is asked in the positive form.
+  const flagged = m.autoReplyByUs === true;
+  if (!flagged || header === "") return false;
+  const minted = `<${header}>`;
+  const held = await tx.select({ id: awayReplies.id }).from(awayReplies)
+    .where(and(eq(awayReplies.accountId, world.accountId), eq(awayReplies.mintedMessageId, minted)))
+    .limit(1);
+  if (held.length > 0) return false;
+  const at = asDate(m.date) ?? now;
+  await tx.insert(awayReplies).values({
+    accountId: world.accountId, mailboxId, messageId: null,
+    sender: (m.to?.[0]?.address ?? "").trim().toLowerCase(), outcome: "sent",
+    mintedMessageId: minted, decidedAt: at, sentAt: at,
+  });
+  return true;
+}
+
 async function applyUpsert(
   tx: Tx,
   /**
@@ -1479,6 +1528,7 @@ async function applyUpsert(
       // The tag assignments this message carries. Written from the message change because that is
       // how the wire delivers them — see {@link applyLabels}.
       await applyLabels(tx, world, m.id, m.labels);
+      await mirrorAutoReply(tx, world, m.mailboxId, m, now);
       gen?.message.add(m.id);
       // Mark the thread STUB too: a surviving message pins its thread via the FK, so the sweep must
       // not treat that thread as a phantom even when the thread's own change never arrives.
@@ -3088,6 +3138,69 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
 
   /**
+   * The one-time away-reply repair — `repairRuleInstants`' shape. A pre-fix build mirrored every
+   * message without the hosted `autoReplyByUs`, and no delta re-delivers a reply nobody edits. Only
+   * the account's OWN rows can carry it, so the newest of those are re-read from Cloud (bounded),
+   * and each flagged one gets its fact and an announcement so an open window re-reads it. A
+   * bootstrap replayed every message through the corrected arm and consumes it without a read.
+   */
+  const repairAutoReplies = async (bootstrapped: boolean): Promise<number> => {
+    if (cursor.autoReplyRepair) return 0;
+    if (!bootstrapped) {
+      const flagged: Array<{ row: { id: string; mailboxId: string }; dto: MessageDTO }> = [];
+      try {
+        const own = await cfg.db.select({ id: messages.id, mailboxId: messages.mailboxId }).from(messages)
+          .where(and(
+            eq(messages.accountId, cfg.world.accountId), isNull(messages.deletedAt),
+            sql`${messages.messageIdHeader} is not null`,
+            sql`lower(${messages.fromAddress}) in (select lower(${mailboxes.address}) from ${mailboxes} where ${mailboxes.accountId} = ${cfg.world.accountId})`,
+          ))
+          .orderBy(desc(messages.date)).limit(AUTO_REPLY_REPAIR_MAX);
+        for (let i = 0; i < own.length; i += AUTO_REPLY_REPAIR_WIDTH) {
+          await Promise.all(own.slice(i, i + AUTO_REPLY_REPAIR_WIDTH).map(async (row) => {
+            const res = await fetchCloud(`/messages/${encodeURIComponent(row.id)}`);
+            if (res.status === 404) return;   // gone on Cloud; its tombstone is on its way
+            if (!res.ok) throw new Error(`GET /messages/:id answered ${res.status}`);
+            const dto = (await res.json()) as MessageDTO;
+            if (dto?.autoReplyByUs === true) flagged.push({ row, dto });
+          }));
+        }
+      } catch (err) {
+        cfg.log?.("cloud_auto_reply_repair_deferred", {
+          err,
+          reason: "the one-time away-reply repair could not read the account's own messages; the " +
+            "mirror is unaffected and the next pull retries",
+        });
+        return 0;
+      }
+      let applied = 0;
+      await cfg.db.transaction(async (tx) => {
+        for (const { row, dto } of flagged) {
+          if (await readMailboxErasedAt(tx, dialect(cfg.db), row.mailboxId) !== null) continue;
+          if (!(await mirrorAutoReply(tx, cfg.world, row.mailboxId, dto, now()))) continue;
+          await recordChange(tx, {
+            accountId: cfg.world.accountId, entityType: "message", entityId: row.id, op: "update", meta: null,
+          });
+          applied++;
+        }
+      });
+      cursor.autoReplyRepair = true;
+      writeCursor(cfg.cursorPath, cursor);
+      if (applied > 0) {
+        cfg.log?.("cloud_auto_reply_repair_applied", {
+          messages: applied,
+          reason: "this mirror held the away responder's replies without their flag, so the " +
+            "desktop's Ohbox listed them as the person's own mail",
+        });
+      }
+      return applied;
+    }
+    cursor.autoReplyRepair = true;
+    writeCursor(cfg.cursorPath, cursor);
+    return 0;
+  };
+
+  /**
    * Message ids the hosted account did not answer for. See {@link fetchMissingBodies} — asked at
    * most once per launch, so a message deleted on Cloud between the drain that mirrored it and the
    * tombstone that removes it cannot make every later pull re-ask for a body that is not there.
@@ -3446,6 +3559,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       await repairStaleTags();
       await repairStaleFolders(sweep !== null && sweep !== undefined);
       await repairRuleInstants(sweep !== null && sweep !== undefined);
+      await repairAutoReplies(sweep !== null && sweep !== undefined);
       /* THE QUARANTINE'S WAY BACK IN — after the drain and the sweep (whose generation never
          marked these rows), before the body pass (a healed message gets its body this same pull).
          The drain that just ran may have landed the holders the held rows were refused for, so
