@@ -2502,7 +2502,10 @@ describe("the UI bundle's build config", () => {
        with the ended pairing and Pair again. */
     expect(gate).toMatch(/signInCause=\{readers\.card\}/);
     expect(gate).toMatch(/DOOR_COPY\.gateUnpaired\(/);
-    expect(gate).toMatch(/onClick=\{\(\) => setOverlay\("host"\)\}>\{DOOR_COPY\.gatePairAgain\}/);
+    /* One card for both of the paired door's ends (a session refused over the mail, a pairing that
+       never finished): its Pair again is the card's press, and every use hands it the host door. */
+    expect(gate).toMatch(/onClick=\{onPairAgain\}>\{DOOR_COPY\.gatePairAgain\}/);
+    expect(gate.match(/<UnpairedCard host=\{hostLabel\} onPairAgain=\{\(\) => setOverlay\("host"\)\}/g) ?? []).toHaveLength(2);
     const door = catalogue("desktopDoor");
     expect(door.cloudLeadRevoked).toMatch(/was signed out/);
     expect(door.gateUnpaired).toMatch(/no longer paired/);

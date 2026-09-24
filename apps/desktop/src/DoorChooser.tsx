@@ -25,10 +25,10 @@ import {
   beginBrowserSignIn,
   enterCloudDoor,
   enterCloudDoorWithCode,
-  enterHostDoor,
   enterLocalDoor,
   hostLinkProblem,
   pairAgainWithHost,
+  pairThroughDoor,
   pollBrowserApproval,
   proveHostLink,
   relaunchAdoptedDoor,
@@ -104,6 +104,12 @@ export function DoorChooser({
    * when that relaunch refused (false). The gate keeps THIS chooser on screen meanwhile.
    */
   onAdoption,
+  /**
+   * Told when Pair is pressed on the pairing card. The gate keeps THIS chooser on screen from then
+   * until a door it opens is entered: the pairing writes its door before the other computer
+   * answers, and nothing the gate reads in between may take the card away.
+   */
+  onPairing,
 }: {
   onEntered: (result: DoorResult) => void;
   start?: Step;
@@ -114,6 +120,7 @@ export function DoorChooser({
   onCancel?: () => void;
   addressless?: boolean;
   onAdoption?: (holding: boolean) => void;
+  onPairing?: () => void;
 }) {
   const [step, setStep] = useState<Step>(start);
   const [busy, setBusy] = useState(false);
@@ -176,6 +183,10 @@ export function DoorChooser({
    * justified it and be pressed against a different computer.
    */
   const [mismatch, setMismatch] = useState(false);
+  /** The last Pair was answered with a refusal: the card offers Try again and Choose another way. */
+  const [pairRefused, setPairRefused] = useState(false);
+  /** The last Pair paired: the card says "Pairing…" until the gate puts the mail up. */
+  const [pairDone, setPairDone] = useState(false);
 
   /**
    * A HOST THE LAST REFUSAL NAMED, remembered so the card can offer it as a press.
@@ -435,14 +446,25 @@ export function DoorChooser({
           />
         ) : step === "host" ? (
           <HostDoor
-            busy={busy}
+            busy={busy || pairDone}
             problem={problem}
             proved={provedLink}
+            refused={pairRefused}
             onBack={() => {
               setProblem(null);
               setProvedLink(null);
               setMismatch(false);
+              setPairRefused(false);
               setStep("doors");
+            }}
+            /* TRY AGAIN IS THE CARD'S FIRST STEP, with the link still in the field: the same link
+               can be checked again once that computer answers, or a new one pasted. Pressing Pair
+               again blind would spend a second attempt on a code the refusal may have said is dead. */
+            onRetry={() => {
+              setProblem(null);
+              setProvedLink(null);
+              setMismatch(false);
+              setPairRefused(false);
             }}
             onCancel={onCancel}
             /* THE LINK STEP. Not routed through `attempt`, for `ServerDoor.onProve`'s reason: it
@@ -471,6 +493,7 @@ export function DoorChooser({
               /* A NEW LINK RETIRES THE VERB. Start over discards mail, and a control justified by
                  one refusal must never survive into a check against a different computer. */
               setMismatch(false);
+              setPairRefused(false);
               void proveHostLink(link)
                 .then((proof) => {
                   if (proof.refusal !== null) {
@@ -490,6 +513,9 @@ export function DoorChooser({
               const link = proved.link;
               const label = proved.host ?? link.origin;
               void attempt(async () => {
+                /* HELD FROM HERE until the pairing answers — see `onPairing`. */
+                onPairing?.();
+                setPairRefused(false);
                 /* PAIR AGAIN IS NOT CHOOSING THE DOOR AGAIN. The door is already chosen and the
                    mirror is still here; reconfiguring would replace the engine and give
                    `enforceMirrorOwner` grounds to discard the copy the pane promises is kept.
@@ -501,7 +527,7 @@ export function DoorChooser({
                    the very redeem that is staging the discard. */
                 const result = startOver || cloudAction === "signIn"
                   ? await pairAgainWithHost(link, startOver)
-                  : await enterHostDoor(link, proved.base);
+                  : await pairThroughDoor(link, proved.base, await standingEngine());
 
                 /* THE PAIRING WORKED AND THE APP MUST BE REOPENED. Not a refusal and not an
                    ordinary success: a session exists and may not be used until the next launch
@@ -509,16 +535,20 @@ export function DoorChooser({
                    `/health`, sees `restartRequired`, and draws the relaunch card. */
                 if (result.restartRequired) {
                   setMismatch(false);
+                  setPairDone(true);
                   return { status: result.status, problem: null };
                 }
 
                 /* THE REDEEM'S REFUSAL BECOMES A SENTENCE HERE, for the reason the map above
                    gives: `doors.ts` may not read this window's catalogue, so it hands back the
                    kind and the card is what has the words. */
-                if (result.refusal === null) {
+                if (result.refusal === null && result.problem === null) {
                   setMismatch(false);
+                  setPairDone(true);
                   return result;
                 }
+                setPairRefused(true);
+                if (result.refusal === null) return result;
                 /* …and the ONE refusal that has a way out arms the verb. Remembered rather than
                    acted on: the discard is the person's press, never this window's inference. */
                 setMismatch(result.refusal.kind === "pair_account_mismatch");
@@ -1063,14 +1093,19 @@ function HostDoor({
   busy,
   problem,
   proved,
+  refused,
   mismatch,
   onBack,
   onCancel,
   onProve,
+  onRetry,
   onSubmit,
 }: {
   busy: boolean;
   problem: string | null;
+  /** The last Pair was refused: Try again and Choose another way take the place of Pair and Back. */
+  refused: boolean;
+  onRetry: () => void;
   /** The link the first step proved, or null while it has not been proved yet. */
   proved: (HostLinkStep & { base: string }) | null;
   /**
@@ -1091,7 +1126,8 @@ function HostDoor({
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        if (proved === null) onProve(text);
+        if (refused) onRetry();
+        else if (proved === null) onProve(text);
         else onSubmit(false);
       }}
     >
@@ -1140,7 +1176,7 @@ function HostDoor({
         <Button variant="primary" type="submit" disabled={busy}>
           {busy
             ? proved === null ? DOOR_COPY.hostChecking : DOOR_COPY.hostPairing
-            : proved === null ? DOOR_COPY.hostCheck : DOOR_COPY.hostPair}
+            : refused ? DOOR_COPY.gateTryAgain : proved === null ? DOOR_COPY.hostCheck : DOOR_COPY.hostPair}
         </Button>
         {/* ── THE WAY OUT OF THE ONE REFUSAL THAT HAS ONE ──────────────────────────────────
             Offered only after that refusal, and it is a GHOST rather than a second primary: it
@@ -1161,7 +1197,7 @@ function HostDoor({
           </Button>
         ) : null}
         <Button variant="ghost" type="button" onClick={onBack} disabled={busy}>
-          {DOOR_COPY.back}
+          {refused ? DOOR_COPY.hostChooseAnother : DOOR_COPY.back}
         </Button>
         {onCancel ? (
           <Button variant="ghost" type="button" onClick={onCancel} disabled={busy}>
@@ -1193,7 +1229,7 @@ function refusalSentence(refusal: HostRefusal, host: string): string {
   return DOOR_COPY.errorRefused(String(refusal.status ?? ""));
 }
 
-/** The window's own three refusals plus the engine's eight, as one table. */
+/** The window's own refusals plus the engine's, as one table. */
 export function sentenceForKind(kind: HostLinkRefusal | string, host: string): string | null {
   switch (kind) {
     case "missing": return DOOR_COPY.hostLinkMissing;
@@ -1209,6 +1245,10 @@ export function sentenceForKind(kind: HostLinkRefusal | string, host: string): s
     case "restart_required": return DOOR_COPY.hostRefuseRestartFirst(host);
     case "pair_account_mismatch": return DOOR_COPY.hostRefuseAccountMismatch(host);
     case "unreachable": return DOOR_COPY.hostRefuseUnreachable(host);
+    case "invalid_pair_code": return DOOR_COPY.hostRefuseSpent;
+    case "host_unreachable": return DOOR_COPY.hostRefuseUnreachable(host);
+    case "host_refused":
+    case "pair_refused": return DOOR_COPY.hostRefuseRefused(host);
     /* NOT A DEFAULT SENTENCE. `null` is what sends the caller to the engine's own words; a
        catchall here would replace a true, specific refusal with a vague one. */
     default: return null;

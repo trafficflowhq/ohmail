@@ -140,7 +140,8 @@ const PAIRED_DOOR_KEYS = [
   // every refusal, window-side and engine-side
   "hostLinkMissing", "hostLinkShape", "hostRefuseCleartext", "hostRefuseNoPin",
   "hostRefusePinChanged", "hostRefuseNotOhmail", "hostRefuseNotServing", "hostRefuseManaged",
-  "hostRefuseServer", "hostRefuseSpent", "hostRefuseUnreachable",
+  "hostRefuseServer", "hostRefuseSpent", "hostRefuseUnreachable", "hostRefuseRefused",
+  "hostChooseAnother",
   // the standing line
   "hostFootStale", "hostFootStaleWhy", "hostFootUnknown", "hostCheckLan", "hostCheckTs",
   "hostFootSettings",

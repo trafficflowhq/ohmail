@@ -701,6 +701,17 @@ export function DesktopGate() {
     if (adoption && !adoptionHeld) setAdoption(false);
   }, [adoption, adoptionHeld]);
   /**
+   * AND HELD FROM A PRESS ON PAIR. The pairing writes its door before the other computer answers,
+   * so the lifecycle poll read a chosen door mid-pairing and drew the boot frame over the card, then
+   * the pre-auth arm drew the Cloud sign-in form. `held` until a door the chooser opens is entered —
+   * a refusal stays on the card — and `entered` until that engine's auth answer is read.
+   */
+  const [pairing, setPairing] = useState<"none" | "held" | "entered">("none");
+  const pairingHeld = pairing === "held" || (pairing === "entered" && authKey !== null && !hostedAuthKnown);
+  useEffect(() => {
+    if (pairing === "entered" && !pairingHeld) setPairing("none");
+  }, [pairing, pairingHeld]);
+  /**
    * WHOSE `localStorage` PARTITION THE SHARED SHELL IS ABOUT TO USE — established HERE, in
    * render, above the `AppShell` this returns. With no account cookie, `readOwner()` answered
    * `null` and the four owner-keyed keys all resolved to the literal `"local"` — the compose
@@ -745,7 +756,7 @@ export function DesktopGate() {
     );
   }
 
-  if (gate.kind === "notice") {
+  if (gate.kind === "notice" && !pairingHeld) {
     /* The same card the boot check and the error boundary draw — one apology, three ways of
        reaching it, differing only in the sentence and the button. See `GateNotice.tsx`.
 
@@ -777,12 +788,18 @@ export function DesktopGate() {
     );
   }
 
-  if (gate.kind === "choose" || adoptionHeld) {
+  if (gate.kind === "choose" || adoptionHeld || pairingHeld) {
     return (
       <DoorChooser
         addressless
         onAdoption={setAdoption}
+        onPairing={() => setPairing("held")}
         onEntered={(r) => {
+          /* A pairing's answer re-keys the auth answer whatever it carries: the hold ends on the
+             reading of the engine that answered, never on one earned before the press. Updaters,
+             not this render's `pairing`: the chooser calls the `onEntered` of the render it pressed in. */
+          setPairing((held) => (held === "held" ? "entered" : held));
+          setAuthEpoch((n) => n + 1);
           /* THE FIRST LAUNCH'S CHOOSER, and the standalone door's only way into guided setup.
              See {@link openSetupOnStandalone}. */
           openSetupOnStandalone(r.status ?? null);
@@ -925,7 +942,19 @@ export function DesktopGate() {
   }
 
   /* A PRE-AUTH cloud engine under a configured door: the sign-in surface, plainly — the app
-     would render mail routes that refuse. (The expiry branch below carries the sentence.) */
+     would render mail routes that refuse. (The expiry branch below carries the sentence.) A PAIRED
+     door has no Cloud account to sign in to: a pairing that did not finish lands on the Not-paired
+     card and its two remedies, with the door it opens kept over it. */
+  if (hostedPreAuth && !hostedSessionGone && paired) {
+    return (
+      <>
+        <div className="gate">
+          <UnpairedCard host={hostLabel} onPairAgain={() => setOverlay("host")} onOwn={beginTakeover} />
+        </div>
+        {doorOverlay}
+      </>
+    );
+  }
   if (hostedPreAuth && !hostedSessionGone) {
     return (
       <DoorChooser
@@ -1006,15 +1035,7 @@ export function DesktopGate() {
      that door is open and returns if it is cancelled. */
   const refusedCard = readers === null || readers.card === "closed" || overlay !== null ? null : paired ? (
     <div className="session-end" role="dialog" aria-label={DOOR_COPY.credHostOutValue}>
-      <div className="gate-card">
-        <span className="wordmark"><b>ohmail</b><em>.</em></span>
-        <h1>{DOOR_COPY.credHostOutValue}</h1>
-        <p>{DOOR_COPY.gateUnpaired(machineWord(), hostLabel ?? DOOR_COPY.doorHostName)}</p>
-        <div className="gate-actions">
-          <Button onClick={() => setOverlay("host")}>{DOOR_COPY.gatePairAgain}</Button>
-          <Button variant="ghost" onClick={beginTakeover}>{DOOR_COPY.gateOwn}</Button>
-        </div>
-      </div>
+      <UnpairedCard host={hostLabel} onPairAgain={() => setOverlay("host")} onOwn={beginTakeover} />
     </div>
   ) : (
     <div className="session-end session-signin" role="dialog" aria-label={DOOR_COPY.cloudTitle}>
@@ -1421,6 +1442,21 @@ export function DesktopGate() {
       {doorOverlay}
       {refusedCard}
     </>
+  );
+}
+
+/** "Not paired", the other computer named, and the two remedies: pair again, or stand alone. */
+function UnpairedCard({ host, onPairAgain, onOwn }: { host: string | null; onPairAgain: () => void; onOwn: () => void }) {
+  return (
+    <div className="gate-card">
+      <span className="wordmark"><b>ohmail</b><em>.</em></span>
+      <h1>{DOOR_COPY.credHostOutValue}</h1>
+      <p>{DOOR_COPY.gateUnpaired(machineWord(), host ?? DOOR_COPY.doorHostName)}</p>
+      <div className="gate-actions">
+        <Button onClick={onPairAgain}>{DOOR_COPY.gatePairAgain}</Button>
+        <Button variant="ghost" onClick={onOwn}>{DOOR_COPY.gateOwn}</Button>
+      </div>
+    </div>
   );
 }
 

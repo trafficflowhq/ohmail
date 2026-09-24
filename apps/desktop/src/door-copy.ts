@@ -311,6 +311,12 @@ const EN = {
   hostRefuseSpent:
     "That link is spent or expired. Make a new one from Settings → Devices on that computer.",
   hostRefuseUnreachable: (host: string) => `Could not reach ${host}.`,
+  /* THE OTHER COMPUTER ANSWERED THE REDEEM WITH A REFUSAL OF ITS OWN — not a spent code, not an
+     outage. The remedy is the same place the link came from. */
+  hostRefuseRefused: (host: string) =>
+    `${host} refused this pairing. Make a new link from Settings → Devices there and try again.`,
+  /* The refused card's way out to the other doors; "Back" there read as undoing the refusal. */
+  hostChooseAnother: "Choose another way",
   /* ── SHARED BY MORE THAN ONE CARD ────────────────────────────────────────────────────────── */
   password: "Password",
   totpLabel: "Code from your authenticator app",
@@ -691,6 +697,7 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   hostRefuseRestartFirst: ["host"],
   hostRefuseServer: ["host"],
   hostRefuseUnreachable: ["host"],
+  hostRefuseRefused: ["host"],
   hostFootStale: ["host"],
   /* TWO VALUES, and the ORDER here is the argument order of the formatter above, never the
      order the placeholders happen to appear in the German sentence — German puts `machine`

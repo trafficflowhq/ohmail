@@ -3659,6 +3659,8 @@
     "hostStartingOver": "Neuanfang läuft…",
     "hostRefuseSpent": "Dieser Link ist verbraucht oder abgelaufen. Erstelle unter Einstellungen → Geräte auf dem anderen Computer einen neuen.",
     "hostRefuseUnreachable": "{host} ist nicht erreichbar.",
+    "hostRefuseRefused": "{host} hat diese Kopplung abgelehnt. Erstelle dort unter Einstellungen → Geräte einen neuen Link und versuche es erneut.",
+    "hostChooseAnother": "Anderen Weg wählen",
     "hostFootStale": "{host} ist nicht erreichbar.",
     "hostFootStaleWhy": "Letzte Antwort {when}. Dieser {machine} zeigt die Kopie, die er hat; bis der andere Computer wieder da ist, lässt sich nichts ändern. Falls er nicht zurückkommt:",
     "hostFootUnknown": "{host} ist noch nicht erreichbar.",

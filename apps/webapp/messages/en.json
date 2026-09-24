@@ -3659,6 +3659,8 @@
     "hostStartingOver": "Starting over…",
     "hostRefuseSpent": "That link is spent or expired. Make a new one from Settings → Devices on that computer.",
     "hostRefuseUnreachable": "Could not reach {host}.",
+    "hostRefuseRefused": "{host} refused this pairing. Make a new link from Settings → Devices there and try again.",
+    "hostChooseAnother": "Choose another way",
     "hostFootStale": "Can't reach {host}.",
     "hostFootStaleWhy": "Last answered {when}. This {machine} shows the copy it holds; nothing can be changed until that computer is back. If it will not be:",
     "hostFootUnknown": "Can't reach {host} yet.",

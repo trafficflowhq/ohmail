@@ -25,6 +25,7 @@ import {
   bridgeAvailable,
   bridgeFetch,
   engineConfigure,
+  engineLogout,
   engineStatus,
   invokeShell,
   type DoorFlavorWire,
@@ -545,6 +546,13 @@ export const HOST_REFUSAL_KINDS = [
      translated sentence is the only place that fits. */
   "pair_account_mismatch",
   "unreachable",
+  /* THE REDEEM'S OWN FOUR (`cloud-signin.ts`): the other computer turned the code down, could not
+     be reached, or answered the redeem with a refusal of its own. `pairing_invalid` is the HOST's
+     word; the engine redeeming here names it `invalid_pair_code`, and that is what reaches the card. */
+  "invalid_pair_code",
+  "host_unreachable",
+  "host_refused",
+  "pair_refused",
 ] as const;
 export type HostRefusalKind = (typeof HOST_REFUSAL_KINDS)[number];
 
@@ -869,6 +877,30 @@ export async function enterHostDoor(
   const beforeRedeem = walkExpired(budget, "finishing the pairing");
   if (beforeRedeem !== null) return { status: settled, refusal: beforeRedeem, problem: null };
   return redeemPairing(link, settled);
+}
+
+/**
+ * THE PAIRING CARD'S SUBMIT ON THE CONFIGURE PATH: {@link enterHostDoor}, and when the install had
+ * NO door at the press (`before`, read at the submit), a pairing that did not pair forgets the door
+ * it wrote. The redeem needs the configured engine, so the door is on disk before the other computer
+ * answers; left there, the window fell to the pre-auth arm and the next launch opened a paired door
+ * with no session. The shell's sign-out forgets it. A pairing that worked, or waits for a relaunch,
+ * keeps its door, and an install that had a door keeps what the attempt left.
+ */
+export async function pairThroughDoor(
+  link: PairLink,
+  base: string,
+  before: EngineStatus | null,
+): Promise<HostDoorResult> {
+  const result = await enterHostDoor(link, base);
+  const paired = result.restartRequired === true || (result.refusal === null && result.problem === null);
+  /* The one refusal with a way out keeps its door: Start over is a redeem on this engine. */
+  if (paired || before?.mode != null || result.refusal?.kind === "pair_account_mismatch") return result;
+  try {
+    return { ...result, status: await engineLogout() };
+  } catch {
+    return result; // the refusal is still the answer, and the gate holds the card either way
+  }
 }
 
 /**
