@@ -286,7 +286,11 @@ keystore item after every update, and without the mirror your stored password
 would be lost each time. Where that happens the key lives in the file rather
 than behind your login password — a real reduction, stated here rather than
 buried — and the local mail mirror beside it is an ordinary unencrypted
-database.
+database. On a Linux desktop with no Secret Service (a window manager with
+neither GNOME Keyring nor KWallet running, say) the file is the only copy from
+the first launch. A locked keyring is never stepped around: the app asks you to
+unlock it and open ohmail again. The app's log names the store it used each
+time it starts.
 
 The folder set ohmail creates, and the bookkeeping behind it, are in
 [How ohmail organizes inside your mailbox](#how-ohmail-organizes-inside-your-mailbox)

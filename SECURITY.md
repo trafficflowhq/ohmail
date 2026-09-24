@@ -74,6 +74,9 @@ to, to ohmail Cloud):**
   as its binary changes, which is every update. Where the keystore refuses, the file is the
   only copy: the key is then protected by file permissions rather than by your login
   password, and it sits beside a local mail mirror that is an ordinary unencrypted database.
+  On Linux the keystore is the Secret Service; on a session that has none, the file is the
+  only copy from the first launch, and a locked keyring stops the start rather than being
+  stepped around.
   Reports about the credential envelope, the key file, the keystore use, or TLS/certificate
   handling are exactly what we want.
 - It **renders mail as HTML** and blocks remote content, so the tracking pixels that
