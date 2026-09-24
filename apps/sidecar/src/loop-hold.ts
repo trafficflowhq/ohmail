@@ -6,7 +6,7 @@
  * The yield sits INSIDE the transaction callback, so the page stays one transaction: the store's
  * own mutex is held across the turn, and every other statement waits for the commit as before.
  */
-export const LOOP_HOLD_MS = 20;
+const LOOP_HOLD_MS = 20;
 
 /** One turn of the event loop. */
 export function loopTurn(): Promise<void> {

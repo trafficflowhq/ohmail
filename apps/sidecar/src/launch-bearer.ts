@@ -12,9 +12,9 @@ import { mintLaunchSession, type LocalWorld } from "./identity.js";
  * with no store read either way; a request carrying it no longer queues behind a mirror page. Any
  * other token is not this holder's to answer, and the store decides it as before.
  */
-export type BearerDecision = { held: ResolvedSessionCore } | "refused" | "unknown";
+type BearerDecision = { held: ResolvedSessionCore } | "refused" | "unknown";
 
-export interface LaunchBearer {
+interface LaunchBearer {
   /** The bearer itself. In memory only — the database holds its hash. */
   readonly token: string;
   readonly sessionId: string;
