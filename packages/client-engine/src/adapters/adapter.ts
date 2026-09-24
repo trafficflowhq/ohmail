@@ -1,5 +1,6 @@
 import type { ServerAddressOpts, ServerAddressWire, ServerSearchOpts, ServerSearchWire } from "../engine.js";
 import type { WindowSyncFailure } from "../window-sync-failure.js";
+import type { WindowSearchPhases } from "../search-phases.js";
 import type {
   EngineMutation, MessageBodyBatchWire, MessageBodyWire, SyncChange, SyncResponse, UnsubscribeResult,
 } from "../types.js";
@@ -211,6 +212,8 @@ export interface EngineAdapter {
    * Never awaited by the drain and never allowed to throw into it.
    */
   reportSyncFailure?(record: WindowSyncFailure): Promise<void>;
+  /** One Search's timings ({@link WindowSearchPhases}), to the same door; absent on the hosted client. */
+  reportSearchPhases?(record: WindowSearchPhases): Promise<void>;
   requestPull?(): Promise<{
     requested: number;
     requestedAt: string;

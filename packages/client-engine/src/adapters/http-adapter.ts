@@ -35,6 +35,7 @@ import type {
 } from "./adapter.js";
 import { retryAfterMsOf, retryingRead } from "./retrying-read.js";
 import type { WindowSyncFailure } from "../window-sync-failure.js";
+import type { WindowSearchPhases } from "../search-phases.js";
 import { classifyRefusal, type RefusalKind } from "./refusal-shape.js";
 import { sessionEndedResponse } from "../session-gate.js";
 import { responseBlob } from "../bytes-blob.js";
@@ -96,6 +97,8 @@ export interface HttpAdapterOptions {
    * client, so `reportSyncFailure` is absent too and no request is ever made for it.
    */
   syncFailureSink?: (record: WindowSyncFailure) => Promise<void>;
+  /** Where a Search's timings go ({@link EngineAdapter.reportSearchPhases}); the desktop's sink only. */
+  searchPhasesSink?: (record: WindowSearchPhases) => Promise<void>;
   /**
    * MAY THIS CLIENT ASK AT ALL? Consulted before every request, and `false` answers it with
    * {@link sessionEndedResponse} — the server's own 401 shape — without touching the wire.
@@ -391,11 +394,17 @@ export class HttpAdapter implements EngineAdapter {
       const sink = opts.syncFailureSink;
       this.reportSyncFailure = (record: WindowSyncFailure): Promise<void> => sink(record);
     }
+    if (opts.searchPhasesSink) {
+      const sink = opts.searchPhasesSink;
+      this.reportSearchPhases = (record: WindowSearchPhases): Promise<void> => sink(record);
+    }
     this.mayAsk = opts.mayAsk ?? (() => true);
   }
 
   /** See {@link HttpAdapterOptions.syncFailureSink}; assigned in the constructor when one was given. */
   reportSyncFailure?: (record: WindowSyncFailure) => Promise<void>;
+  /** See {@link HttpAdapterOptions.searchPhasesSink}; assigned in the constructor when one was given. */
+  reportSearchPhases?: (record: WindowSearchPhases) => Promise<void>;
 
   /** The SSE wake-signal attach point (same origin/base as the sync API). */
   eventsUrl(): string {

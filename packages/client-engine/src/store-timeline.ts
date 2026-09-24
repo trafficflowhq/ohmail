@@ -11,6 +11,7 @@ import {
   type StoreKeyset, type StoreSearchKey, type StoreTimeline, type TimelineSegment,
 } from "./store-pages.js";
 import type { EngineMessage } from "./types.js";
+import type { SearchPhaseVerdict, WindowSearchPhases } from "./search-phases.js";
 
 /** How long a list waits for the store before it says so — Search's ceiling. */
 export const STORE_ANSWER_TIMEOUT_MS = 15_000;
@@ -412,6 +413,12 @@ export class StoreSearchWalker {
   private timers: ReturnType<typeof setTimeout>[] = [];
   private readonly signal = new Signal();
   private readonly walk: PagedWalk<string>;
+  /** This question's clock marks (`performance.now()`, the two instants `Date.now()`); see {@link painted}. */
+  private marks: {
+    epoch: number; start: number; fired: number | null; sent: number | null; sentAt: number | null;
+    answered: number | null; answeredAt: number | null; verdict: SearchPhaseVerdict | null; serverMs: number | null;
+    told: boolean;
+  } | null = null;
 
   constructor(private readonly engine: OhmailEngine, clock: () => number = Date.now) {
     const askPage = (a: string | null, o: { at: number; transient: boolean }): Promise<PageAnswer<string>> => {
@@ -419,9 +426,17 @@ export class StoreSearchWalker {
       const epoch = this.epoch;
       if (key === null) return Promise.resolve({ state: "unavailable" });
       const first = a === null && !o.transient;
+      const m = first && this.marks?.epoch === epoch && this.marks.sent === null ? this.marks : null;
+      if (m) { m.sent = performance.now(); m.sentAt = Date.now(); }
       return engine.pageSearch(key, { cursor: a, at: o.at, transient: o.transient })
         .then((out: ServerSearchOutcome): PageAnswer<string> => {
           const mine = first && epoch === this.epoch;
+          if (m) {
+            m.answered = performance.now(); m.answeredAt = Date.now();
+            m.verdict = out.state !== "ready" ? "failed" : out.fromMirror ? "mirror"
+              : out.total === 0 && out.totalExact ? "nothing" : "matched";
+            m.serverMs = out.state === "ready" ? out.ms : null;
+          }
           if (out.state !== "ready") {
             if (mine && out.state === "unavailable") this.status = "unavailable";
             if (mine && out.state === "failed") this.cause = out.errorClass;
@@ -470,10 +485,16 @@ export class StoreSearchWalker {
     this.cause = null;
     this.walk.reset();
     this.status = this.engine.serverSearchAvailable() ? "searching" : "unavailable";
+    this.marks = {
+      epoch, start: performance.now(), fired: null, sent: null, sentAt: null, answered: null, answeredAt: null,
+      verdict: null, serverMs: null, told: false,
+    };
     this.signal.bump();
     if (this.status === "unavailable") return;
     this.timers.push(setTimeout(() => {
-      if (epoch === this.epoch) this.walk.fetch(0, null, "down");
+      if (epoch !== this.epoch) return;
+      if (this.marks?.epoch === epoch) this.marks.fired = performance.now();
+      this.walk.fetch(0, null, "down");
     }, debounceMs));
     this.timers.push(setTimeout(() => {
       if (epoch !== this.epoch || this.status !== "searching") return;
@@ -545,6 +566,25 @@ export class StoreSearchWalker {
         this.signal.bump();
       }, () => undefined);
     }, () => undefined);
+  }
+
+  /**
+   * THE VERDICT IS ON SCREEN — the view calls this after committing the render that shows it. Once
+   * per question, and only after its first page answered: hands the engine this question's timings
+   * ({@link WindowSearchPhases}), which reach a desktop's engine log and nowhere else.
+   */
+  painted(): void {
+    const m = this.marks;
+    if (m === null || m.told || m.epoch !== this.epoch || m.fired === null || m.sent === null || m.answered === null
+      || m.sentAt === null || m.answeredAt === null || m.verdict === null) return;
+    m.told = true;
+    const now = performance.now();
+    const ms = (a: number, b: number): number => Math.max(0, Math.round(b - a));
+    this.engine.reportSearchPhases({
+      verdict: m.verdict, debounceMs: ms(m.start, m.fired), sendMs: ms(m.fired, m.sent), roundTripMs: ms(m.sent, m.answered),
+      paintMs: ms(m.answered, now), totalMs: ms(m.start, now), serverMs: m.serverMs === null ? null : Math.round(m.serverMs),
+      sentAtMs: m.sentAt, answeredAtMs: m.answeredAt,
+    } satisfies WindowSearchPhases);
   }
 
   state(): StoreSearchState {

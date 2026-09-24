@@ -85,6 +85,12 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // the recipient, the subject, or the minted `Message-ID`, which reads like an address and is
   // logged nowhere.
   "reserveMs", "assembleMs", "openMs", "submitMs", "finalizeMs", "projectMs", "sendId",
+  // A paired desktop's Search, split the same way (`search_relayed`, `window_search_phases`): the
+  // debounce, the window's send, the round trip, the account's own time and the paint, plus the
+  // two epoch instants that join the window's line to the engine's across the bridge. Every value
+  // is a millisecond count or a clock reading; the query is never on either line.
+  "debounceMs", "sendMs", "roundTripMs", "paintMs", "serverMs", "accountMs",
+  "sentAtMs", "answeredAtMs", "receivedAtMs",
   "reason", "detail", "kind", "severity", "phase", "state", "verdict", "configVar",
   // ── WHICH CONSTRAINT REFUSED A ROW, added WITH the lines that emit them ───────────────────
   //

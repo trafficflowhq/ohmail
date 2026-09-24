@@ -31,6 +31,7 @@ import {
   type StorePageOpts, type StorePageOutcome, type StoreSearchKey, type StoreTimelineFn, type StoreTimelineOutcome,
 } from "./store-pages.js";
 import { classifyWindowSyncFailure, type WindowSyncFailure } from "./window-sync-failure.js";
+import type { WindowSearchPhases } from "./search-phases.js";
 import { countNotify } from "./client-vitals.js";
 import { ObjectUrlLedger } from "./object-urls.js";
 import { bytesBlob, retypedBlob } from "./bytes-blob.js";
@@ -2565,6 +2566,13 @@ export class OhmailEngine {
     let record: WindowSyncFailure;
     try { record = classifyWindowSyncFailure(err, attempt); } catch { return; }
     void sink(record).catch(() => { /* the log is a courtesy; the retry is the contract */ });
+  }
+
+  /** One Search's timings to the door's log, fire-and-forget as {@link reportSyncFailure} is. */
+  reportSearchPhases(record: WindowSearchPhases): void {
+    const sink = this.adapter.reportSearchPhases?.bind(this.adapter);
+    if (!sink) return;
+    void sink(record).catch(() => { /* the log is a courtesy */ });
   }
 
   async requestPull(): Promise<{

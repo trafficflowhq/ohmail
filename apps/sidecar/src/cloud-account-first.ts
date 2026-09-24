@@ -1,7 +1,9 @@
 import { ServiceError, type ServiceContext } from "@trafficflow/services/mail";
 import { offlineResponse } from "./cloud-auth.js";
 import type { ReadRoute } from "./cloud-read.js";
+import { MAX_BODY_BYTES } from "./frame.js";
 import type { Diagnostic } from "./log.js";
+import { readBodyBounded } from "./protocol.js";
 
 /**
  * A READ THE ACCOUNT ANSWERS WHENEVER IT CAN BE REACHED — `/search`, whose whole-mailbox verdict
@@ -60,15 +62,52 @@ async function fromMirror(req: Request, hit: Hit, ctx: ServiceContext): Promise<
   return json({ ...body, ...next, answeredFrom: "mirror" });
 }
 
+/** Which part of a search this request asks for: the timed line's `kind`, never the query. */
+function partOf(url: URL): string {
+  if (url.searchParams.has("address")) return "address";
+  if (url.searchParams.has("cursor")) return "next";
+  const p = url.searchParams.get("parts");
+  return p === "page" || p === "estimate" || p === "summary" ? p : "both";
+}
+
+/** The account's own `ms` on a JSON answer, or null. */
+function serverMsOf(bytes: Uint8Array): number | null {
+  try {
+    const ms = (JSON.parse(new TextDecoder().decode(bytes)) as { ms?: unknown }).ms;
+    return typeof ms === "number" && Number.isFinite(ms) ? Math.round(ms) : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function answerAccountFirst(req: Request, hit: Hit, deps: AccountFirstDeps): Promise<Response> {
+  const receivedAtMs = Date.now();
+  const t0 = performance.now();
   const url = new URL(req.url);
+  const kind = partOf(url);
+  /* ONE TIMED LINE PER RELAYED SEARCH (`search_relayed`): who answered, the account's round trip
+     with its body read, the account's own `ms`, this door's total, and the instant it arrived. */
+  const said = (verdict: string, status: number | null, accountMs: number | null, serverMs: number | null): void => {
+    deps.log?.("search_relayed", {
+      kind, verdict, status, accountMs, serverMs, totalMs: Math.round(performance.now() - t0), receivedAtMs,
+    });
+  };
   const cursor = url.searchParams.get("cursor");
   if (cursor !== null && cursor.startsWith(MIRROR_CURSOR_TAG)) {
     url.searchParams.set("cursor", cursor.slice(MIRROR_CURSOR_TAG.length));
-    return fromMirror(new Request(url, req), hit, deps.ctx);
+    const res = await fromMirror(new Request(url, req), hit, deps.ctx);
+    said("mirror", res.status, null, null);
+    return res;
   }
   const answer = await withinBound(deps.forward(req), deps.boundMs ?? ACCOUNT_FIRST_BOUND_MS);
-  if (answer !== null && !UNREACHABLE.has(answer.status)) return answer;
+  if (answer !== null && !UNREACHABLE.has(answer.status)) {
+    // Read here rather than by the frame writer, with its cap, so the line times the whole answer.
+    const bytes = await readBodyBounded(answer, MAX_BODY_BYTES);
+    said("account", answer.status, Math.round(performance.now() - t0), serverMsOf(bytes));
+    return new Response(bytes.byteLength === 0 ? null : (bytes as unknown as BodyInit), {
+      status: answer.status, statusText: answer.statusText, headers: answer.headers,
+    });
+  }
   void answer?.body?.cancel().catch(() => undefined);
   const refused = cursor !== null || url.searchParams.has("address");
   deps.log?.("cloud_search_from_mirror", {
@@ -79,5 +118,7 @@ export async function answerAccountFirst(req: Request, hit: Hit, deps: AccountFi
         ? "the account did not answer within the bound; the mirror answered and said so"
         : "the account could not be reached; the mirror answered and said so",
   });
-  return refused ? offlineResponse() : fromMirror(req, hit, deps.ctx);
+  const res = refused ? offlineResponse() : await fromMirror(req, hit, deps.ctx);
+  said(refused ? "refused" : "mirror", answer === null ? null : answer.status, null, null);
+  return res;
 }

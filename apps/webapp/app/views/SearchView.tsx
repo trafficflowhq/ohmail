@@ -318,6 +318,11 @@ export function SearchView({
 
   /** The store's reading of the match set, once its first page answered. */
   const ready = walker.info();
+  /* The verdict below is committed: the walker hands this question's timings to the engine, which
+     carries them to a desktop's engine log (`search-phases.ts`) and nowhere on the web. */
+  useEffect(() => {
+    if (ready !== null || cause !== null) walker.painted();
+  }, [walker, ready, cause]);
   const storeReady = ready !== null;
   const storeLength = storeReady ? walker.length() : 0;
 

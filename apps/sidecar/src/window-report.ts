@@ -59,26 +59,37 @@ interface WindowReportDeps {
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-/** Answer the report: 204 and one `window_sync_failed` line, or a refusal that logs no content. */
-export async function handleWindowSyncFailure(req: Request, deps: WindowReportDeps): Promise<Response> {
+/** The bearer, the bound and the JSON every window report passes; the refusal names the shape only. */
+async function readReport<T>(
+  req: Request, deps: WindowReportDeps, refusal: (reason: string) => void, parse: (raw: unknown) => T | { refused: string },
+): Promise<T | Response> {
   if (!(await deps.authorized(req))) {
     return json(401, { error: { code: "unauthorized", message: "authentication required" } });
   }
   const text = await req.text();
   if (text.length > MAX_BODY_BYTES) {
-    deps.log("window_sync_report_refused", { route: WINDOW_SYNC_FAILED_ROUTE, status: 400, reason: "body over the bound" });
+    refusal("body over the bound");
     return json(400, { error: { code: "invalid_request", message: "the report is too large" } });
   }
   let raw: unknown;
   try { raw = JSON.parse(text); } catch {
-    deps.log("window_sync_report_refused", { route: WINDOW_SYNC_FAILED_ROUTE, status: 400, reason: "not JSON" });
+    refusal("not JSON");
     return json(400, { error: { code: "invalid_request", message: "the report is not JSON" } });
   }
-  const parsed = parseWindowSyncFailure(raw);
-  if ("refused" in parsed) {
-    deps.log("window_sync_report_refused", { route: WINDOW_SYNC_FAILED_ROUTE, status: 400, reason: parsed.refused });
+  const parsed = parse(raw);
+  if (typeof parsed === "object" && parsed !== null && "refused" in parsed) {
+    refusal(parsed.refused);
     return json(400, { error: { code: "invalid_request", message: `the report was refused: ${parsed.refused}` } });
   }
+  return parsed as T;
+}
+
+/** Answer the report: 204 and one `window_sync_failed` line, or a refusal that logs no content. */
+export async function handleWindowSyncFailure(req: Request, deps: WindowReportDeps): Promise<Response> {
+  const parsed = await readReport(req, deps, (reason) => {
+    deps.log("window_sync_report_refused", { route: WINDOW_SYNC_FAILED_ROUTE, status: 400, reason });
+  }, parseWindowSyncFailure);
+  if (parsed instanceof Response) return parsed;
   // `count` for the attempt and `errorClass` as the class: both on the logger's census. The
   // level says what a reader should think: the window is retrying, so this is a warning.
   // A LITERAL field set, so the log census can read every key: an absent status or code is
@@ -90,6 +101,56 @@ export async function handleWindowSyncFailure(req: Request, deps: WindowReportDe
     errorClass: parsed.errorClass,
     status: parsed.status ?? null,
     code: parsed.code ?? null,
+  });
+  return new Response(null, { status: 204 });
+}
+
+/**
+ * `POST /local/window/search-phases` — one Search's timings as the window measured them, so the
+ * split sits in THIS log beside the relay's own line (`search_relayed`): the debounce, the send,
+ * the round trip, the paint, the account's `ms`, and the two instants that join the lines across
+ * the bridge. Numbers and one verdict word; any other field refuses the whole body.
+ */
+export const WINDOW_SEARCH_PHASES_ROUTE = "/local/window/search-phases";
+
+const SEARCH_VERDICTS = new Set(["matched", "nothing", "mirror", "failed"]);
+const SPAN_KEYS = ["debounceMs", "sendMs", "roundTripMs", "paintMs", "totalMs"] as const;
+const INSTANT_KEYS = ["sentAtMs", "answeredAtMs"] as const;
+const SEARCH_KEYS = new Set<string>([...SPAN_KEYS, ...INSTANT_KEYS, "verdict", "serverMs"]);
+/** The longest span a report may state; the window's own ceiling on a search is far below it. */
+const SPAN_MAX_MS = 600_000;
+
+export interface WindowSearchPhasesReport {
+  verdict: string;
+  debounceMs: number; sendMs: number; roundTripMs: number; paintMs: number; totalMs: number;
+  serverMs: number | null;
+  sentAtMs: number; answeredAtMs: number;
+}
+
+const span = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= SPAN_MAX_MS;
+const instant = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v > 1e12 && v < 1e14;
+
+/** Parse a report or say why it is refused; the refusal names the shape, never the content. */
+export function parseWindowSearchPhases(raw: unknown): WindowSearchPhasesReport | { refused: string } {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return { refused: "not an object" };
+  const r = raw as Record<string, unknown>;
+  for (const k of Object.keys(r)) if (!SEARCH_KEYS.has(k)) return { refused: "a field this door does not take" };
+  if (typeof r.verdict !== "string" || !SEARCH_VERDICTS.has(r.verdict)) return { refused: "verdict is not a search verdict" };
+  for (const k of SPAN_KEYS) if (!span(r[k])) return { refused: `${k} is not a bounded span` };
+  for (const k of INSTANT_KEYS) if (!instant(r[k])) return { refused: `${k} is not a clock reading` };
+  if (r.serverMs !== null && !span(r.serverMs)) return { refused: "serverMs is not a bounded span" };
+  return r as unknown as WindowSearchPhasesReport;
+}
+
+/** Answer the report: 204 and one `window_search_phases` line, or a refusal that logs no content. */
+export async function handleWindowSearchPhases(req: Request, deps: WindowReportDeps): Promise<Response> {
+  const p = await readReport(req, deps, (reason) => {
+    deps.log("window_search_report_refused", { route: WINDOW_SEARCH_PHASES_ROUTE, status: 400, reason });
+  }, parseWindowSearchPhases);
+  if (p instanceof Response) return p;
+  deps.log("window_search_phases", {
+    verdict: p.verdict, debounceMs: p.debounceMs, sendMs: p.sendMs, roundTripMs: p.roundTripMs, paintMs: p.paintMs,
+    totalMs: p.totalMs, serverMs: p.serverMs, sentAtMs: p.sentAtMs, answeredAtMs: p.answeredAtMs,
   });
   return new Response(null, { status: 204 });
 }

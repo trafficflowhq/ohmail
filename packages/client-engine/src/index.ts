@@ -464,6 +464,8 @@ export {
   type WindowSyncFailure,
   type WindowSyncFailureReason,
 } from "./window-sync-failure.js";
+// A Search's timings as the window measured them, for the same door (`window_search_phases`).
+export { SEARCH_PHASE_VERDICTS, type SearchPhaseVerdict, type WindowSearchPhases } from "./search-phases.js";
 
 // The engine.
 export {

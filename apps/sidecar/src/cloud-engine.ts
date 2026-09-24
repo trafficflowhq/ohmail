@@ -29,6 +29,7 @@ import { createCloudMirror, integrityLogFields, CLOUD_SYNC_TYPES, FOLLOW_UP_CAP_
 import { startCloudWake, type CloudWake } from "./cloud-wake.js";
 import { matchReadRoute } from "./cloud-read.js";
 import { answerAccountFirst } from "./cloud-account-first.js";
+import { handleWindowSearchPhases, WINDOW_SEARCH_PHASES_ROUTE } from "./window-report.js";
 import { createWriteThroughProxy, type WriteThroughProxy } from "./cloud-proxy.js";
 import {
   accountAnswer,
@@ -1308,6 +1309,11 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       const token = header && /^Bearer\s+/i.test(header) ? header.replace(/^Bearer\s+/i, "").trim() : "";
       const core = token ? await resolveSession(db, token, now()) : null;
       if (!core) return json({ error: { code: "unauthorized", message: "authentication required" } }, 401);
+
+      // THE WINDOW'S SEARCH TIMINGS, into this log (`window-report.ts`); the bearer was read above.
+      if (req.method === "POST" && path === WINDOW_SEARCH_PHASES_ROUTE) {
+        return handleWindowSearchPhases(req, { authorized: async () => true, log: log ?? (() => undefined) });
+      }
 
       /* THE WINDOW'S HELD QUESTION (`session-watch.ts`): answered the moment the session reading
          differs from the one it names, else at the hold bound with `changed: false`. Served before

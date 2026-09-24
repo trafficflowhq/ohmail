@@ -19,7 +19,9 @@
  * loud — `HttpAdapter` falls back to global `fetch`, which the guard replaced with a thrower.
  */
 
-import { HttpAdapter, OhmailEngine, retryingRead, type WindowSyncFailure } from "@ohmail/client-engine";
+import {
+  HttpAdapter, OhmailEngine, retryingRead, type WindowSearchPhases, type WindowSyncFailure,
+} from "@ohmail/client-engine";
 import { DESKTOP_WINDOW } from "../../webapp/app/shell/store-windows.js";
 
 /**
@@ -654,7 +656,21 @@ export async function engineLogout(): Promise<EngineStatus> {
  * this — a preview reaching for the Cloud protocol fails loudly instead of opening a socket.
  */
 export function createEngineAdapter(): HttpAdapter {
-  return new HttpAdapter({ baseUrl: "", fetch: bridgeFetch, syncFailureSink: reportWindowSyncFailure });
+  return new HttpAdapter({
+    baseUrl: "", fetch: bridgeFetch, syncFailureSink: reportWindowSyncFailure, searchPhasesSink: reportWindowSearchPhases,
+  });
+}
+
+/** The local engine's door for one Search's timings — see {@link reportWindowSearchPhases}. */
+export const WINDOW_SEARCH_PHASES_PATH = "/local/window/search-phases";
+
+/** One Search's timings to the engine's log (`window_search_phases`); a refusal is dropped. */
+export async function reportWindowSearchPhases(record: WindowSearchPhases): Promise<void> {
+  await bridgeFetch(WINDOW_SEARCH_PHASES_PATH, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(record),
+  });
 }
 
 /** The local engine's door for a window's failed pull — see {@link reportWindowSyncFailure}. */
