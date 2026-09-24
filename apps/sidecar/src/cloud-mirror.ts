@@ -1916,7 +1916,7 @@ async function applyPage(
   const supersededInPage = (ch: SyncChange): boolean =>
     (latestSeq.get(`${ch.type}:${ch.id}`) ?? ch.seq) > ch.seq;
 
-  return db.transaction(async (tx) => {
+  const landed = await db.transaction(async (tx) => {
     /* ONE TRANSACTION, ITS CPU WORK IN TURNS (`loop-hold.ts`): the page commits whole or not at
        all, and no stretch of it holds this process's event loop past the budget. */
     const hold = loopHold();
@@ -2022,6 +2022,9 @@ async function applyPage(
     await loopTurn();
     return applied;
   });
+  // The commit is a stretch of its own: what follows it (the marks' fsync, the cursor) waits a turn.
+  await loopTurn();
+  return landed;
 }
 
 /**
@@ -3265,6 +3268,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       }
       await loopTurn();
     });
+    await loopTurn();
     return written;
   };
 
