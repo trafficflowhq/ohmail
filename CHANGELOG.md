@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.24.0] — 2026-09-24
+
 ### Delete, move and tag work on every message in History and Search
 <!-- changes: archive-024-client-followups.md -->
 
@@ -88,11 +95,6 @@ soon as this computer's copy has it, instead of at the window's next refresh.
 A message you move or read, a tag, a rule, a draft you save or discard and a mailbox setting now
 show when you change them in the desktop app paired with ohmail Cloud, and stay. A later change to
 the same message, made on this computer or on another device, is no longer missed.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
 
 ## [0.23.2] — 2026-09-24
 
@@ -8232,7 +8234,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.23.2...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.24.0
 [0.23.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.23.2
 [0.23.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.23.1
 [0.23.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.23.0
