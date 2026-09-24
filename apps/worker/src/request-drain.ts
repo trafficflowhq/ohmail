@@ -22,14 +22,12 @@ import {
 import { epochOf, epochVerdict, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
 
 /**
- * The dispatch table — one entry per kind this build can actually carry out (mail 0094). Each entry
- * RETURNS A CLOSURE rather than a validated value: a handler validates the payload and hands back the
- * APPLIER ALREADY BOUND TO IT, so "this kind's applier receives that kind's payload" is not
- * expressible rather than a property somebody keeps true — the only thing that sees a validated move
- * payload is the closure the move handler made. `null` means the payload failed validation, answered
- * `invalid_payload`. `rule.create`, `rule.update`, `rule.delete` and `profile.update` are deliberately
- * absent: they are `REQUEST_KINDS` members admitted by the database (a widening migration ships ahead
- * of the writer), and a kind with no entry LEAVES THE RECORD STANDING (the advertisement follows the entry).
+ * The dispatch table — one entry per kind this build carries out: `screener.decide`, `message.move`,
+ * the three `rule.*` kinds and `profile.update` (mail 0094). Each entry RETURNS A CLOSURE: the handler
+ * validates the payload and hands back the applier already bound to it, so "this kind's applier
+ * receives that kind's payload" is not expressible. `null` means the payload failed validation,
+ * answered `invalid_payload`. A kind with no entry (a newer install's) LEAVES THE RECORD STANDING,
+ * so it applies once this organizer updates.
  */
 interface HandlerContext {
   accountId: string;
@@ -362,7 +360,7 @@ export interface ApplyMetaRequestsResult {
   applied: number;
   /** Refused, acknowledged with a reason, and expunged. */
   refused: number;
-  /** Left for a retry — the apply or the expunge itself failed transiently. */
+  /** Left for a retry — the apply, its acknowledgement or the expunge failed transiently. */
   deferred: number;
   /**
    * LEFT STANDING and deliberately not acted on: a future protocol version, or a kind this build
@@ -836,17 +834,40 @@ export async function applyMetaRequests(
 
   /** Refusals and applies both end in "remove this record", batched into ONE STORE+EXPUNGE. */
   const toRemove: unknown[] = [...staleAckRefs];
-  /** Acks to append, one per record whose outcome is decided this cycle. */
-  const toAck: Array<{ requestId: string; outcome: "applied" | "refused"; reason?: RequestRefusalReason }> = [];
+  /** Acks to append, one per record whose outcome is decided this cycle. `resend`: applied earlier. */
+  const toAck: Array<{
+    requestId: string; outcome: "applied" | "refused"; reason?: RequestRefusalReason;
+    ref?: unknown; resend: boolean;
+  }> = [];
 
   const settle = (
     e: { requestId?: string; ref?: unknown },
     outcome: "applied" | "refused",
     reason?: RequestRefusalReason,
+    resend = false,
   ): void => {
     if (e.ref !== undefined) toRemove.push(e.ref);
     if (e.requestId !== undefined && !alreadyAcked.has(e.requestId)) {
-      toAck.push({ requestId: e.requestId, outcome, reason });
+      toAck.push({ requestId: e.requestId, outcome, reason, ref: e.ref, resend });
+    }
+  };
+
+  /**
+   * WAS THIS CONTENT APPLIED HERE — the `meta-request:<id>` key holding the same hash. The key is
+   * claimed after the record was appended and lives a full window, so it outlives the reader's
+   * wait. `null` when the read failed: that says nothing, and the record stays for the next pass.
+   */
+  const appliedEarlier = async (e: RequestEnvelope): Promise<boolean | null> => {
+    try {
+      const held = await db.transaction((tx) =>
+        readIdempotencyKey(tx, rt.accountId, `meta-request:${e.requestId}`, now));
+      return held !== null && held.erasedAt === null && held.requestHash === requestContentHash(e);
+    } catch (err) {
+      log("organizer_request_apply_failed", {
+        mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: e.requestId,
+        ...refusalFields(err),
+      });
+      return null;
     }
   };
 
@@ -958,6 +979,16 @@ export async function applyMetaRequests(
     // `decidedAt` order, leaving the older one as the final state. Refusing the stale one leaves
     // exactly the rule the person last asked for.
     if (now.getTime() - e.decidedAt.getTime() > REQUEST_STALE_AFTER_MS) {
+      /* `stale` refuses a decision nobody applied. One applied HERE whose ack was lost is still in
+         the folder for its answer, and that answer is `applied`, never a refusal of mail that
+         moved. Asked of a stale record only: a fresh one reaches the same key at step (8). */
+      const earlier = await appliedEarlier(e);
+      if (earlier === null) { deferred++; continue; }
+      if (earlier) {
+        settle(e, "applied", undefined, true);
+        applied++;
+        continue;
+      }
       settle(e, "refused", "stale");
       refused++;
       log("organizer_request_refused", {
@@ -1069,8 +1100,9 @@ export async function applyMetaRequests(
       applied++;
     } catch (err) {
       if (err instanceof AlreadyAppliedError) {
-        // Exactly as done as one applied this cycle. The reader is owed the same `applied` ack.
-        settle(e, "applied");
+        // Exactly as done as one applied this cycle. The reader is owed the same `applied` ack,
+        // and when that cycle's ack was lost this is its retry.
+        settle(e, "applied", undefined, true);
         applied++;
         continue;
       }
@@ -1116,41 +1148,56 @@ export async function applyMetaRequests(
     }
   }
 
-  // The acks, then the one expunge. Acks are appended BEFORE the records they answer are removed, and
-  // the order is load-bearing: if the expunge fails after the acks land, the next cycle re-reads the
-  // records, finds the acks already there (`alreadyAcked`), and retries only the removal. The reverse
-  // order would remove the record and then possibly fail to acknowledge it, leaving the reader with a
-  // decision that vanished with no outcome — the ambiguity acks exist to remove. An ack that fails to
-  // append is NOT a reason to skip the expunge of a record that was applied: the effect is committed
-  // and re-applying is prevented by the key, so leaving the record would only produce a permanent
-  // refusal loop; the reader falls back to its stale window.
+  /* The acks, then the one expunge: acks first, so a failed expunge leaves each answer beside its
+     record (`alreadyAcked` next cycle). AN APPLIED RECORD LEAVES ONLY WITH ITS ANSWER: when its ack
+     fails the record stays, and a later pass finds its key and acks from it — the key forbids a
+     second apply, and its life covers the reader's window. A lost REFUSAL is still expunged: the
+     reader then reads `expired`, true of a decision nobody applied. One line per request for the
+     loss and one for the resend, however many passes lie between. */
   let ackFailures = 0;
+  const keep = new Set<unknown>();
   for (const a of toAck) {
     try {
       await io.ack(formatAck({
         requestId: a.requestId, mailboxId: rt.mailboxId,
         outcome: a.outcome, reason: a.reason, ackedAt: now, key,
       }));
+      if (a.resend) {
+        log("organizer_ack_resent", {
+          mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: a.requestId,
+          reason: "applied on an earlier pass; its acknowledgement is appended now",
+        });
+      }
     } catch (err) {
       ackFailures++;
-      log("organizer_ack_append_failed", {
-        mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: a.requestId,
-        ...refusalFields(err),
-        reason: "the outcome is not carried back this cycle; the reader falls back to its window",
-      });
+      const held = a.outcome === "applied" && a.ref !== undefined;
+      if (held) keep.add(a.ref);
+      if (!a.resend) {
+        log("organizer_ack_append_failed", {
+          mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: a.requestId,
+          ...refusalFields(err),
+          reason: held
+            ? "the record stays in the folder and a later pass acknowledges it from the applied record"
+            : "the outcome is not carried back; the reader falls back to its window",
+        });
+      }
     }
   }
+  // Kept for its answer: from the reader's side nothing has resolved yet.
+  applied -= keep.size;
+  deferred += keep.size;
+  const removing = toRemove.filter((r) => !keep.has(r));
 
-  if (toRemove.length > 0) {
+  if (removing.length > 0) {
     try {
-      await io.remove(toRemove);
+      await io.remove(removing);
     } catch (err) {
       // The records stay in the folder. Everything applied is still applied (the key holds), and
       // everything refused will be refused identically next cycle — so the counters are re-derived
       // rather than lost. Reported as deferred work, because from a reader's point of view nothing
       // has resolved yet.
       log("meta_request_expunge_failed", {
-        mailboxId: rt.mailboxId, accountId: rt.accountId, count: toRemove.length,
+        mailboxId: rt.mailboxId, accountId: rt.accountId, count: removing.length,
         ...refusalFields(err),
         reason: "the records stay in the folder; the next cycle's drain retries them",
       });
