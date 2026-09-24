@@ -571,9 +571,9 @@ export interface MessageBodyRecord {
   error?: string;
   /**
    * When the fetch failed, epoch ms — what makes a failure survivable
-   * across a reload. `hydrateBody` never re-asks a `failed` record on an
-   * automatic trigger (an effect re-firing per mirror bump would poll a
-   * refusing server), but the records are PERSISTED, so "never re-ask" was
+   * across a reload. `hydrateBody` does not re-ask a `failed` record on an
+   * automatic trigger inside `FAILED_BODY_HOLD_MS` (an effect re-firing per
+   * mirror bump would poll a refusing server); the records are PERSISTED, so "never re-ask" was
    * silently for ever: one 500 stayed failed until Retry on that message.
    * Narrowed to the session that asked: a `failedAt` before this engine's
    * boot is re-asked exactly once on the next explicit intent. Absent means

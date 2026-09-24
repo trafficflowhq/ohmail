@@ -56,6 +56,7 @@ import { readColumnHidden, watchNarrow } from "../shell/narrow";
    it. See {@link useBodyStalled} for why the deadline is derived from the engine's rather than
    picked, and `HeldMail` below for why this pile needs it too. */
 import { useBodyStalled } from "../shell/message-chrome";
+import { heldBodyAsks } from "../shell/held-body-asks";
 import { goScreener, goSettings, type ScreenerSegmentId } from "../shell/routing";
 import { APPLY_PILE_ORDER, hasRealSuggestion, type PendingDecision } from "../shell/screener-state";
 /* The one role answer, from the module that derives it — see `mail-state.ts#screenerMode`. */
@@ -621,8 +622,8 @@ export function ScreenerView({
    */
   owed: boolean;
   onSelect: (segment: ScreenerSegmentId, id: string | null) => void;
-  /** Ask for one held message's body. `retry` marks a human asking again. */
-  hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
+  /** Ask for one held message's body. `retry` marks a human asking again, `urgent` a body being read. */
+  hydrateBody: (id: string, opts?: { retry?: boolean; urgent?: boolean }) => void;
   /**
    * Unsubscribe one held message's sender, server-side. ABSENT on a client with no server (the
    * demo, a test) — the screened-out / spam previews then offer no unsubscribe control rather
@@ -931,8 +932,11 @@ export function ScreenerView({
   // `heldOfCurrent` is resolved once, up beside the anchor, so the two effects that read this
   // sender's held mail cannot disagree about which rows they mean.
   const heldKey = heldOfCurrent.map((h) => h.id).join(",");
+  // The newest held bodies ask as an open message asks; see `heldBodyAsks`.
   useEffect(() => {
-    for (const id of heldKey ? heldKey.split(",") : []) hydrateBody(id);
+    for (const ask of heldBodyAsks(heldKey ? heldKey.split(",") : [])) {
+      hydrateBody(ask.id, ask.urgent ? { urgent: true } : undefined);
+    }
   }, [heldKey, hydrateBody]);
   /** A human asking again — the only path allowed to re-ask a server that refused. */
   const retryBody = (id: string) => hydrateBody(id, { retry: true });
@@ -1882,14 +1886,14 @@ export function HeldMail({
    * line of what they said" is the whole basis of that decision. `snippet` is included for that reason, where the
    * stream cards leave it silent: in this preview there is no pill standing in for the same fact. AND IT CARRIES A
    * CONTROL, for the reason the reading pane's does: the selection effect above is an AUTOMATIC trigger, and
-   * `hydrateBody` deliberately refuses to re-ask a server that already refused unless a human says so — otherwise a
-   * failing endpoint under an open view is a request loop billed per attempt, with nobody behind it.
+   * `hydrateBody` refuses to re-ask a server that just refused (`FAILED_BODY_HOLD_MS`) unless a human says so —
+   * otherwise a failing endpoint under an open view is a request loop billed per attempt, with nobody behind it.
    */
 
   /**
-   * Reselecting the sender therefore does NOT retry, so without this button a held message whose body 500'd could
-   * only be recovered by reloading the tab. In the one pile where the text is the basis of a consent decision, that
-   * is not an acceptable dead end.
+   * Reselecting the sender inside that hold therefore does NOT retry, so the button is what recovers a held message
+   * whose body just failed. In the one pile where the text is the basis of a consent decision, a wait is not an
+   * acceptable dead end.
    */
   /**
    * The spinner must be a claim about a real request. This used to map everything not `full` or `failed` to
@@ -1928,7 +1932,17 @@ export function HeldMail({
     && bodyState !== "full"
     && bodyState !== "failed"
     && (bodyState === "loading" || bodyStall == null);
-  const stalled = useBodyStalled(messageId ?? subject, waiting);
+  /* EACH RETRY RE-ARMS THE STALL CLOCK. A Retry pressed on the stall face joins the request still
+     in the air, so the record stays `loading` and a clock keyed on the message alone kept saying
+     "Couldn't load" over a live re-ask until it landed. */
+  const [asks, setAsks] = useState(0);
+  const stalled = useBodyStalled(`${messageId ?? subject}:${asks}`, waiting);
+  const retry = onRetry
+    ? () => {
+      setAsks((n) => n + 1);
+      onRetry();
+    }
+    : undefined;
   const failed = bodyState === "failed" || (waiting && stalled);
   const note =
     bodyState === undefined || bodyState === "full"
@@ -1982,8 +1996,8 @@ export function HeldMail({
       {note ? (
         <p className={failed ? "hm-state warn" : "hm-state"} role="status">
           {note}{" "}
-          {failed && onRetry ? (
-            <Button variant="ghost" onClick={onRetry}>
+          {failed && retry ? (
+            <Button variant="ghost" onClick={retry}>
               {t("retry")}
             </Button>
           ) : null}

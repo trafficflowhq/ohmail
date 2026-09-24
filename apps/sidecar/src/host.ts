@@ -21,6 +21,13 @@ import { decodeRequest, encodeResponse, type ErrorHeader, type ReadyHeader, type
  */
 const SNAPSHOT_ROUTE = "/sync/snapshot";
 
+/**
+ * The single-body read, matched on the path `describeRoute` answers. Its 404 is logged by pattern
+ * (`BODY_ROUTE_PATTERN`), never with the message id the path carries.
+ */
+const BODY_ROUTE = /^\/messages\/[^/]+\/body$/;
+const BODY_ROUTE_PATTERN = "/messages/:id/body";
+
 export interface StdioHostOptions {
   /** Usually `(req) => app.handle(req, freshDeps())`. */
   handle: (req: Request) => Promise<Response>;
@@ -94,6 +101,16 @@ export function serveOverStdio(opts: StdioHostOptions): StdioHost {
             requestId: header.id,
             method: describeMethod(header.method),
             route: describeRoute(header.url),
+            status: res.status,
+          });
+        }
+        /* EXCEPT A BODY THAT IS NOT HERE. The window renders a 404 on the body read as "Couldn't
+           load the full message", so it is a line a census can count (2026-09-24). */
+        if (res.status === 404 && BODY_ROUTE.test(describeRoute(header.url))) {
+          log("body_not_found", {
+            requestId: header.id,
+            method: describeMethod(header.method),
+            route: BODY_ROUTE_PATTERN,
             status: res.status,
           });
         }

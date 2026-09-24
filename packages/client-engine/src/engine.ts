@@ -1897,7 +1897,15 @@ class PageFallbackReader implements EntityReader {
  * speed it does today, and browsers cap per-host connections in this region anyway — the point is
  * to stop a forty-message sender from opening forty at once, not to serialise reading.
  */
-const MAX_CONCURRENT_BODIES = 4;
+export const MAX_CONCURRENT_BODIES = 4;
+
+/**
+ * HOW LONG A FAILED BODY STANDS BEFORE A SURFACE SHOWING IT MAY ASK AGAIN. A failure is a state of
+ * one attempt: a person looking at the message re-asks once it is older than this, and Retry asks
+ * at once. The hold is what keeps an effect re-running per render from polling a refusing server;
+ * the background pass never re-asks a failure within the session ({@link OhmailEngine.bodyPlan}).
+ */
+export const FAILED_BODY_HOLD_MS = 30_000;
 
 /**
  * HOW MANY MESSAGES THE INSTANT INDEX TAKES ON INSIDE ONE CALL — the bound on both synchronous
@@ -4175,9 +4183,8 @@ export class OhmailEngine {
    * whenever inputs change, and a failed fetch writes a record, bumps the version, re-renders — a
    * `failed` state that re-fetched on the default path is a billed request loop against a server
    * already refusing (found by exactly that: a 500-ing adapter under a per-render callback spun
-   * until the test timed out). The rule is about WHO asks: an automatic trigger asks once; a HUMAN
-   * act passes `retry` and asks again, which also makes the failed state's exit a thing the user
-   * chose. It never rejects: the outcome is the RECORD (`ready` or `failed`), a thing the UI
+   * until the test timed out). The rule is about WHO asks: an automatic trigger asks once per
+   * {@link FAILED_BODY_HOLD_MS}; a HUMAN act passes `retry` and asks at once. It never rejects: the outcome is the RECORD (`ready` or `failed`), a thing the UI
    * renders — reported on screen, not thrown at the DOM.
    */
 
@@ -4211,7 +4218,7 @@ export class OhmailEngine {
       return inFlight;
     }
 
-    const plan = this.bodyPlan(messageId, opts.retry === true);
+    const plan = this.bodyPlan(messageId, opts.retry === true, true);
     if (plan.kind === "skip") return;
     if (plan.kind === "purge") return this.putBody(messageId, null);
 
@@ -4240,6 +4247,7 @@ export class OhmailEngine {
   private bodyPlan(
     messageId: string,
     retry: boolean,
+    rendered = false,
   ): { kind: "skip" } | { kind: "purge" } | { kind: "fetch"; held: MessageBodyRecord | undefined } {
     const msg = this.read().get<EngineMessage>("message", messageId);
     // Not in the mirror at all — a fixture `screener_sender`'s held id, or a row that has
@@ -4303,26 +4311,28 @@ export class OhmailEngine {
       return { kind: "fetch", held };
     }
     /**
-     * A FAILURE IS FOR THIS SESSION, NOT FOR EVER: See `retry` above for why an automatic trigger must not re-ask a
-     * server that already refused: the effects behind this call re-run on every mirror bump, and a failed record IS a
-     * mirror bump, so re-asking on the default path is a billed poll with nobody behind it. That argument is about
-     * ONE SESSION and was being applied for ever, because these records are persisted. A body that failed during a
-     * deploy, on a lost connection, or on a lambda that cold-started past the 12 s deadline stayed `failed` in that
-     * browser until the reader pressed Retry on that exact message — and reloading the tab, which is what everybody
-     * actually does, changed nothing at all. So the guard is narrowed to the thing it was defending: within this
-     * engine's life, never re-ask.
+     * A FAILURE IS ONE ATTEMPT'S. An automatic trigger must not re-ask a server that just refused — the effects
+     * behind this call re-run on every mirror bump, and a failed record IS one — so a failure stands for
+     * {@link FAILED_BODY_HOLD_MS}. Past it, a surface RENDERING the message asks again (`rendered`: `hydrateBody`, a
+     * thread open): the desktop's held preview read "Couldn't load" for a whole session over a body its store held,
+     * from one deadline an hour earlier (2026-09-24). The background pass keeps the session rule, since nobody is
+     * looking and a refusing route would be re-asked for a thousand ids per drain.
      */
 
     /**
      * A record stamped before {@link OhmailEngine.bootedAt} — or carrying no stamp, which by construction means a
      * build that predates the field and therefore an earlier session ({@link MessageBodyRecord.failedAt}, read
-     * exactly as `html !== undefined` above is) — is re-asked ONCE, and `bodyHealed` is what makes that "once" a
-     * property of the engine rather than of a mirror write that can itself be refused.
+     * exactly as `html !== undefined` above is) — is re-asked ONCE on either path, and `bodyHealed` is what makes
+     * that "once" a property of the engine rather than of a mirror write that can itself be refused.
      */
     if (held?.state === "failed" && !retry) {
-      const stale = held.failedAt === undefined || held.failedAt < this.bootedAt;
-      if (!stale || this.bodyHealed.has(messageId)) return { kind: "skip" };
-      this.bodyHealed.add(messageId);
+      const at = held.failedAt;
+      if (at === undefined || at < this.bootedAt) {
+        if (this.bodyHealed.has(messageId)) return { kind: "skip" };
+        this.bodyHealed.add(messageId);
+      } else if (!rendered || this.now().getTime() - at < FAILED_BODY_HOLD_MS) {
+        return { kind: "skip" };
+      }
     }
     return { kind: "fetch", held };
   }
@@ -4466,7 +4476,7 @@ export class OhmailEngine {
         if (opts.stopped?.() === true) return Promise.resolve();
         const inFlight = this.bodyRequests.get(id);
         if (inFlight) return inFlight;
-        const plan = this.bodyPlan(id, false);
+        const plan = this.bodyPlan(id, false, false);
         if (plan.kind === "purge") return this.putBody(id, null);
         if (plan.kind === "skip") return Promise.resolve();
         const request = this.startBody(id, plan.held, false);
@@ -4482,7 +4492,7 @@ export class OhmailEngine {
       if (opts.rendered) this.noteRendered(id);
       // Already in the air, alone or in another batch — join it rather than ask twice.
       if (this.bodyRequests.has(id)) continue;
-      const plan = this.bodyPlan(id, false);
+      const plan = this.bodyPlan(id, false, opts.rendered);
       if (plan.kind === "purge") { writes.push(this.putBody(id, null)); continue; }
       if (plan.kind === "skip") continue;
       take.push({ id, held: plan.held });

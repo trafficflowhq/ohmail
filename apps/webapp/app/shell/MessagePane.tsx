@@ -1838,7 +1838,7 @@ export function MessagePane({
         <>
           {tb("failed")}{" "}
           {/* `retry` because this IS a human asking again. An automatic trigger deliberately
-              does not re-ask a server that already refused — see `hydrateBody`. */}
+              does not re-ask a server that just refused — see `hydrateBody`. */}
           <Button variant="ghost" onClick={() => chrome.hydrateBody(message.id, { retry: true })}>
             {tb("retry")}
           </Button>

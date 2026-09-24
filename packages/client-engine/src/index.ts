@@ -518,6 +518,10 @@ export {
   // The ceiling on hydrated bodies held at once, for the same reason: a guard that hand-copies it
   // goes green against a shipped value it has never seen.
   BODY_CACHE_MAX,
+  // The body limiter's width and how long a failed body stands before a surface re-asks it.
+  // Exported so the Screener's held preview and the guards read the shipped numbers.
+  MAX_CONCURRENT_BODIES,
+  FAILED_BODY_HOLD_MS,
   // How long an optimistic Sent copy (and its seeded attachment list) stands before the TTL
   // sweep. Exported so the seed-lifecycle guards read the shipped number, not a copy.
   OPTIMISTIC_SENT_TTL_MS,
