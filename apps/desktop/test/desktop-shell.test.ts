@@ -1493,6 +1493,16 @@ describe("the Rust side", () => {
     expect(engine).toMatch(/Permissions::from_mode\(0o600\)/);
     // …and the key file is the only path this module composes under the data directory.
     expect(engine).toMatch(/KEYSTORE_FILE: &str = /);
+
+    /* ── ONE WRITER OF THE KEY FILE, BEHIND THE RESOLVER'S ONE DOOR ────────────────────────
+     * `write_key_file` is defined once and called once, as the `write_file` door `install_key_in`
+     * hands `resolve_install_key`, so which store keeps a key is decided in one function. A second
+     * caller would be a second decision. The file is read and written by exactly two joins. */
+    expect(engine.match(/\bwrite_key_file\(/g)).toHaveLength(2);
+    expect(engine).toMatch(/write_file: &\|key\| write_key_file\(app_data, key\)/);
+    expect(engine.match(/\.join\(KEYSTORE_FILE\)/g)).toHaveLength(2);
+    // The launch line names the store that served the key (`key source file | platform:… | env`).
+    expect(engine).toMatch(/log_line\(format_args!\("key source \{from\}"\)\)/);
   });
 
   /**

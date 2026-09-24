@@ -1262,11 +1262,15 @@ impl ShellPaths {
     pub fn plan_now_in(&self, config: Option<&Config>, dir: Option<&Path>) -> Plan {
         let from_env = std::env::var(KEK_VAR).ok().filter(|v| !v.trim().is_empty());
         let key = match from_env {
-            Some(key) => Ok(key),
+            Some(key) => Ok(Resolved { key, from: KeySource::Env }),
             None => install_key(self.app_data.as_deref()),
         };
         let key = match key {
-            Ok(key) => key,
+            Ok(Resolved { key, from }) => {
+                // The launch line a support read starts from: which store served this key.
+                log_line(format_args!("key source {from}"));
+                key
+            }
             Err(reason) => return Plan::Inert(EngineState::NoKey { reason }),
         };
 
@@ -3480,7 +3484,49 @@ enum Stored {
     Empty,
     /// The keystore would not answer.
     Refused(String),
+    /// The keystore could not be OPENED: no session bus, or no Secret Service on it. There is no
+    /// store to hold a key, so the file is the only place left and the launch goes on there.
+    Unavailable(String),
+    /// A Secret Service that is locked, or whose unlock prompt nobody answered. The key that opens
+    /// the stored password may be behind it, so this never mints a second one into the file.
+    Locked(String),
 }
+
+/// Which store served this launch's key, named in the engine log's `key source` line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KeySource {
+    /// `OHMAIL_KEK`, set by whoever launched the app.
+    Env,
+    /// [`KEYSTORE_FILE`] beside the app's data.
+    File,
+    /// The operating system's keystore, [`PLATFORM_STORE`].
+    Platform,
+}
+
+impl fmt::Display for KeySource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            KeySource::Env => f.write_str("env"),
+            KeySource::File => f.write_str("file"),
+            KeySource::Platform => write!(f, "platform:{PLATFORM_STORE}"),
+        }
+    }
+}
+
+/// A key and the store that served it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Resolved {
+    key: String,
+    from: KeySource,
+}
+
+/// The name the launch line gives this platform's keystore.
+#[cfg(target_os = "macos")]
+const PLATFORM_STORE: &str = "keychain";
+#[cfg(target_os = "windows")]
+const PLATFORM_STORE: &str = "credential-manager";
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+const PLATFORM_STORE: &str = "secret-service";
 
 /// Every way this function is allowed to touch a keystore, and nothing else.
 ///
@@ -3547,7 +3593,10 @@ impl Default for Keystores<'_> {
 ///     exists to break. A fresh key goes in the file, where nothing about this app's signature can
 ///     make it unreadable, and the launch continues so the person can type their password once and
 ///     have it stick. The file write is REQUIRED here: without it there is nowhere left, and
-///     pretending otherwise is what makes a password vanish between restarts.
+///     pretending otherwise is what makes a password vanish between restarts. A keystore that
+///     cannot be OPENED (no session bus, no Secret Service) takes the same arm: there is no store.
+///     A LOCKED one does not — the key that opens the stored password may be behind the lock, so
+///     the launch stops and says "locked" rather than minting a second key into the file.
 ///  5. **The older item, before minting.** See [`LEGACY_KEYSTORE_SERVICE`]. Copied into this app's
 ///     coordinates, never moved, and a copy that fails is logged rather than fatal — the key was
 ///     read, it opens the credential, and refusing the launch over a bookkeeping failure would cost
@@ -3558,12 +3607,12 @@ impl Default for Keystores<'_> {
 ///     read. Minting over that silently orphans a sealed password; saying so lets somebody grant
 ///     the access or delete the item on purpose.
 ///  7. **Only then, a fresh key.**
-fn resolve_install_key(k: &Keystores) -> Result<String, String> {
+fn resolve_install_key(k: &Keystores) -> Result<Resolved, String> {
     if let Stored::Key(key) = (k.file)() {
-        return Ok(key);
+        return Ok(Resolved { key, from: KeySource::File });
     }
 
-    let refusal = match (k.own)() {
+    let fallback = match (k.own)() {
         Stored::Key(key) => {
             // Best-effort, and deliberately not fatal: the key is in hand and this launch works
             // either way. What the mirror buys is the launch AFTER the next update.
@@ -3573,7 +3622,7 @@ fn resolve_install_key(k: &Keystores) -> Result<String, String> {
                      works, but a future update may have to ask for your mailbox password again"
                 ));
             }
-            return Ok(key);
+            return Ok(Resolved { key, from: KeySource::Platform });
         }
         Stored::Foreign => {
             return Err(format!(
@@ -3582,24 +3631,26 @@ fn resolve_install_key(k: &Keystores) -> Result<String, String> {
                  be asked for your mailbox password once more, and no mail is affected"
             ))
         }
-        Stored::Refused(err) => Some(err),
+        Stored::Locked(err) => return Err(locked_sentence(&err)),
+        Stored::Unavailable(err) => {
+            Some(format!("this computer's keystore could not be opened ({err})"))
+        }
+        Stored::Refused(err) => {
+            Some(format!("this computer's keystore would not give up this app's key ({err})"))
+        }
         Stored::Empty => None,
     };
 
-    if let Some(err) = refusal {
+    if let Some(why) = fallback {
         let key = (k.mint)()?;
         (k.write_file)(&key).map_err(|file| {
-            format!(
-                "this computer's keystore would not give up this app's key ({err}), and a key file \
-                 could not be written beside this app's data either ({file})"
-            )
+            format!("{why}, and a key file could not be written beside this app's data either ({file})")
         })?;
         log_line(format_args!(
-            "this computer's keystore would not give up this app's key ({err}), so this install's key \
-             is now kept in {KEYSTORE_FILE} beside its data instead. If you are asked for your mailbox \
-             password once more, that is why — it will be remembered from then on"
+            "{why}, so this install's key is now kept in {KEYSTORE_FILE} beside its data instead. If you \
+             are asked for your mailbox password once more, that is why — it will be remembered from then on"
         ));
-        return Ok(key);
+        return Ok(Resolved { key, from: KeySource::File });
     }
 
     match (k.older)() {
@@ -3619,9 +3670,9 @@ fn resolve_install_key(k: &Keystores) -> Result<String, String> {
             }
             // Mirrored for the same reason as step 2, and just as non-fatally.
             let _ = (k.write_file)(&key);
-            Ok(key)
+            Ok(Resolved { key, from: KeySource::Platform })
         }
-        Stored::Refused(err) => Err(format!(
+        Stored::Refused(err) | Stored::Locked(err) | Stored::Unavailable(err) => Err(format!(
             "this computer's keystore has a key from an earlier version of ohmail and would not give it \
              up ({err}). Allow ohmail access to it when asked and open the app again — minting a new key \
              instead would leave your stored mailbox password unreadable"
@@ -3633,8 +3684,38 @@ fn resolve_install_key(k: &Keystores) -> Result<String, String> {
             // a mint that is not stored is a password that vanishes at the next restart.
             (k.write_keystore)(&key)?;
             let _ = (k.write_file)(&key);
-            Ok(key)
+            Ok(Resolved { key, from: KeySource::Platform })
         }
+    }
+}
+
+/// What a locked keyring is told, by name. Never a fall-through: see step 4 above.
+fn locked_sentence(err: &str) -> String {
+    format!(
+        "this computer's keyring is locked ({err}). Unlock it, or answer its prompt, and open ohmail \
+         again — the key this install keeps there is what opens your stored mailbox password"
+    )
+}
+
+/// On Linux a LOOKUP answers `NoStorageAccess` only for a locked collection or an unlock prompt
+/// nobody answered (the Secret Service's `Locked` / `Prompt`). macOS keeps its refusal fallback:
+/// there a refusal is a changed signature, which the file exists to survive.
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn is_locked(err: &keyring::Error) -> bool {
+    matches!(err, keyring::Error::NoStorageAccess(_))
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn is_locked(_: &keyring::Error) -> bool {
+    false
+}
+
+/// Why `Entry::new` failed. keyring 4 answers `NoDefaultStore` and keeps the platform's own reason
+/// (on Linux: no Secret Service provider or session bus) in `store_status`.
+fn unopened(err: &keyring::Error) -> String {
+    match (err, keyring::Entry::store_status()) {
+        (keyring::Error::NoDefaultStore, Err(why)) => why.to_string(),
+        _ => err.to_string(),
     }
 }
 
@@ -3644,6 +3725,7 @@ fn look_up(entry: &keyring::Entry) -> Stored {
         Ok(existing) if is_key(&existing) => Stored::Key(existing),
         Ok(_) => Stored::Foreign,
         Err(keyring::Error::NoEntry) => Stored::Empty,
+        Err(err) if is_locked(&err) => Stored::Locked(err.to_string()),
         // Translated HERE, at the edge, so every message built from a refusal downstream — the log
         // line, the fallback's composed error, the `NoKey` sentence on screen — says the same true
         // thing without each of them having to know about macOS errno statuses.
@@ -3808,9 +3890,10 @@ fn plainly(err: &str) -> String {
 /// mirror that is an ordinary unencrypted database, so anything that can read this file can already
 /// read the mail. The mailbox on the user's own server remains the master.
 ///
-/// The keychain is still tried first on a machine where it works, and still written on every path
-/// that mints — a Developer ID signed build, or any platform whose keystore is stable across
-/// updates, never reads this file because [`resolve_install_key`] never has cause to write it.
+/// The keystore is still asked on a first launch and still written on every path that mints where
+/// it opens; from then on this file answers first, because a key read from the keystore is
+/// mirrored here (step 2 of [`resolve_install_key`]). On a Linux session with no Secret Service it
+/// is the only store from the first launch.
 pub const KEYSTORE_FILE: &str = "install-key";
 
 /// One look at the file. `Empty` when there is no file, or no directory to hold one.
@@ -3888,18 +3971,29 @@ fn write_key_file(app_data: Option<&Path>, key: &str) -> Result<(), String> {
 ///
 /// Compiled only under the `local-engine` feature, like everything else in this file — the preview
 /// stores nothing and therefore needs nowhere to store it.
-fn install_key(app_data: Option<&Path>) -> Result<String, String> {
+fn install_key(app_data: Option<&Path>) -> Result<Resolved, String> {
     // Held across every lookup and every write below, and released when this function returns.
     let _quiet = NoKeychainPrompts::hold();
 
-    let entry = keyring::Entry::new(KEYSTORE_SERVICE, KEYSTORE_ENTRY)
-        .map_err(|err| format!("this computer's keystore could not be opened ({err})"))?;
+    let entry = keyring::Entry::new(KEYSTORE_SERVICE, KEYSTORE_ENTRY).map_err(|err| unopened(&err));
+    install_key_in(app_data, entry.as_ref().map_err(String::as_str))
+}
 
+/// [`install_key`] past the one call that can fail before any store is asked. A keystore that
+/// cannot be opened is a state the resolver decides about, never an early return: on a Linux
+/// session with no Secret Service that is every launch, and the key file is the answer.
+fn install_key_in(app_data: Option<&Path>, entry: Result<&keyring::Entry, &str>) -> Result<Resolved, String> {
     resolve_install_key(&Keystores {
         file: &|| look_up_file(app_data),
-        own: &|| look_up(&entry),
+        own: &|| match entry {
+            Ok(entry) => look_up(entry),
+            Err(why) => Stored::Unavailable(why.to_string()),
+        },
         older: &look_up_older,
-        write_keystore: &|key| store_and_read_back(&entry, key),
+        write_keystore: &|key| match entry {
+            Ok(entry) => store_and_read_back(entry, key),
+            Err(why) => Err(format!("this computer's keystore could not be opened ({why})")),
+        },
         write_file: &|key| write_key_file(app_data, key),
         mint: &|| {
             let mut bytes = [0u8; 32];

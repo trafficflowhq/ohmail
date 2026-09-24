@@ -1828,11 +1828,16 @@ fn a_key(seed: char) -> String {
     seed.to_string().repeat(64)
 }
 
+/// The key a resolution chose. The order tests read only this; the store it names is read apart.
+fn resolve(k: &Keystores) -> Result<String, String> {
+    resolve_install_key(k).map(|r| r.key)
+}
+
 #[test]
 fn this_apps_own_key_wins_and_nothing_else_is_consulted() {
     let store = Keystore::default();
     let key = a_key('a');
-    let got = resolve_install_key(&Keystores {
+    let got = resolve(&Keystores {
         file: &|| {
             store.note("file");
             Stored::Empty
@@ -1874,7 +1879,7 @@ fn a_key_in_the_file_is_used_and_the_keystore_is_not_consulted_at_all() {
     // `resolve_install_key` is arranged to prevent, arrived at from the other direction.
     let store = Keystore::default();
     let key = a_key('d');
-    let got = resolve_install_key(&Keystores {
+    let got = resolve(&Keystores {
         file: &|| {
             store.note("file");
             Stored::Key(key.clone())
@@ -1905,7 +1910,7 @@ fn a_keystore_that_will_not_give_up_this_apps_key_falls_back_to_the_file() {
     // failed identically. There was no way out from inside the app.
     let store = Keystore::default();
     let minted = a_key('a');
-    let got = resolve_install_key(&Keystores {
+    let got = resolve(&Keystores {
         file: &|| {
             store.note("file");
             Stored::Empty
@@ -1943,7 +1948,7 @@ fn a_keystore_that_will_not_give_up_this_apps_key_falls_back_to_the_file() {
 fn a_refused_keystore_and_an_unwritable_file_says_so_rather_than_starting_without_a_key() {
     // The one remaining way to have no key at all. It must name BOTH halves: a message that blamed
     // only the keychain would send somebody to fix the thing that is no longer the obstacle.
-    let got = resolve_install_key(&Keystores {
+    let got = resolve(&Keystores {
         own: &|| Stored::Refused("the keychain is locked".to_string()),
         write_file: &|_| Err("the disk is read-only".to_string()),
         mint: &|| Ok(a_key('c')),
@@ -1962,7 +1967,7 @@ fn the_key_an_earlier_version_stored_is_adopted_rather_than_replaced() {
     // why.
     let store = Keystore::default();
     let existing = a_key('7');
-    let got = resolve_install_key(&Keystores {
+    let got = resolve(&Keystores {
         own: &|| {
             store.note("own");
             Stored::Empty
@@ -2003,7 +2008,7 @@ fn a_copy_that_fails_does_not_cost_the_launch() {
     // The key is in hand and it opens what it opened before. Refusing to start over a bookkeeping
     // failure would trade a working mailbox for a syscall saved on the next launch.
     let existing = a_key('9');
-    let got = resolve_install_key(&Keystores {
+    let got = resolve(&Keystores {
         older: &|| Stored::Key(existing.clone()),
         write_keystore: &|_| Err("the keystore is read-only".to_string()),
         write_file: &|_| Err("the folder is read-only".to_string()),
@@ -2017,7 +2022,7 @@ fn a_copy_that_fails_does_not_cost_the_launch() {
 fn nothing_older_and_nothing_of_ours_mints_exactly_one_key() {
     let store = Keystore::default();
     let minted = a_key('f');
-    let got = resolve_install_key(&Keystores {
+    let got = resolve(&Keystores {
         own: &|| {
             store.note("own");
             Stored::Empty
@@ -2051,7 +2056,7 @@ fn a_first_run_whose_keystore_will_not_take_the_key_refuses_rather_than_running_
     // `write_keystore` failing here is not the bookkeeping failure that `a_copy_that_fails` covers:
     // there is no existing key in hand, so a launch that shrugged this off would serve, accept a
     // password, and have nowhere to put it.
-    let got = resolve_install_key(&Keystores {
+    let got = resolve(&Keystores {
         write_keystore: &|_| Err("the keystore would not store a key".to_string()),
         mint: &|| Ok(a_key('c')),
         ..Default::default()
@@ -2065,7 +2070,7 @@ fn an_item_of_ours_that_is_not_a_key_refuses_without_looking_further() {
     // Something wrote it. Minting over it, or quietly using a different key instead, would seal the
     // next password under a key that does not open the last one.
     let store = Keystore::default();
-    let got = resolve_install_key(&Keystores {
+    let got = resolve(&Keystores {
         file: &|| {
             store.note("file");
             Stored::Empty
@@ -2103,7 +2108,7 @@ fn a_key_file_of_the_wrong_shape_is_stepped_over_rather_than_obeyed() {
     // turn a stray edit or a truncated write into an app that will not open at all.
     let store = Keystore::default();
     let key = a_key('b');
-    let got = resolve_install_key(&Keystores {
+    let got = resolve(&Keystores {
         file: &|| {
             store.note("file");
             Stored::Foreign
@@ -2127,7 +2132,7 @@ fn an_older_item_that_will_not_be_read_stops_the_launch_rather_than_minting_over
     // The one branch where minting is actively harmful. The first lookup already proved the
     // keystore answers, so an error on the second means there IS an item here that this binary was
     // not allowed to read — and a fresh key would silently orphan whatever it seals.
-    let got = resolve_install_key(&Keystores {
+    let got = resolve(&Keystores {
         older: &|| Stored::Refused("access denied".to_string()),
         mint: &|| panic!("a key was minted over an item that could not be read"),
         ..Default::default()
@@ -2140,7 +2145,7 @@ fn an_older_item_that_will_not_be_read_stops_the_launch_rather_than_minting_over
 fn an_older_item_of_the_wrong_shape_is_not_adopted() {
     let store = Keystore::default();
     let minted = a_key('e');
-    let got = resolve_install_key(&Keystores {
+    let got = resolve(&Keystores {
         older: &|| Stored::Foreign,
         write_keystore: &|key| {
             store.note(&format!("adopt {key}"));
@@ -2234,7 +2239,7 @@ fn a_key_file_survives_the_restart_that_the_keychain_did_not() {
     let f = Fixture::new("keyfile-restart");
     let refuses = || Stored::Refused("Platform failure: UNIX[No space left on device]".to_string());
 
-    let first = resolve_install_key(&Keystores {
+    let first = resolve(&Keystores {
         file: &|| look_up_file(Some(&f.dir)),
         own: &refuses,
         write_file: &|key| write_key_file(Some(&f.dir), key),
@@ -2243,7 +2248,7 @@ fn a_key_file_survives_the_restart_that_the_keychain_did_not() {
     })
     .expect("the first launch recovers");
 
-    let second = resolve_install_key(&Keystores {
+    let second = resolve(&Keystores {
         file: &|| look_up_file(Some(&f.dir)),
         own: &refuses,
         write_file: &|_| panic!("the second launch wrote a key file it should have read"),
@@ -2253,6 +2258,153 @@ fn a_key_file_survives_the_restart_that_the_keychain_did_not() {
     .expect("the restart works");
 
     assert_eq!(first, second, "the restart uses the same key, so what was sealed still opens");
+}
+
+// ── A keystore that cannot be opened, and one that is locked ────────────────────────────────
+//
+// Two answers a Linux session gives that the macOS-shaped order above never met. No Secret
+// Service (no bus, a window manager without one) is ABSENT: there is no store, so the file is it.
+// A locked one is PRESENT: the key that opens the stored password may be behind it.
+
+#[test]
+fn a_keystore_that_cannot_be_opened_keeps_a_fresh_key_in_the_file() {
+    let store = Keystore::default();
+    let minted = a_key('5');
+    let got = resolve_install_key(&Keystores {
+        file: &|| {
+            store.note("file");
+            Stored::Empty
+        },
+        own: &|| {
+            store.note("own");
+            Stored::Unavailable("no secret service provider or dbus session found".to_string())
+        },
+        older: &|| panic!("a keystore that could not be opened was asked for an older item"),
+        write_keystore: &|_| panic!("a key minted with no keystore open was written to one"),
+        write_file: &|key| {
+            store.note(&format!("file-write {key}"));
+            Ok(())
+        },
+        mint: &|| {
+            store.note("mint");
+            Ok(minted.clone())
+        },
+    });
+    assert_eq!(got, Ok(Resolved { key: minted.clone(), from: KeySource::File }));
+    assert_eq!(
+        store.calls(),
+        vec!["file".to_string(), "own".to_string(), "mint".to_string(), format!("file-write {minted}")],
+        "the fresh key went to the file and to no keystore"
+    );
+}
+
+#[test]
+fn a_keystore_that_cannot_be_opened_and_an_unwritable_file_names_both() {
+    let got = resolve(&Keystores {
+        own: &|| Stored::Unavailable("no secret service provider or dbus session found".to_string()),
+        write_file: &|_| Err("the disk is read-only".to_string()),
+        mint: &|| Ok(a_key('c')),
+        ..Default::default()
+    });
+    let err = got.expect_err("a launch with nowhere to keep its key reported success");
+    assert!(err.contains("could not be opened"), "the keystore half is named: {err}");
+    assert!(err.contains("no secret service provider"), "in the platform's words: {err}");
+    assert!(err.contains("the disk is read-only"), "and the file half: {err}");
+}
+
+#[test]
+fn a_locked_keyring_stops_the_launch_by_name_and_mints_nothing() {
+    // A second key minted into the file here would seal the next password under the wrong key
+    // while the one that opens the last password sits behind the lock.
+    let store = Keystore::default();
+    let got = resolve_install_key(&Keystores {
+        file: &|| {
+            store.note("file");
+            Stored::Empty
+        },
+        own: &|| {
+            store.note("own");
+            Stored::Locked("Couldn't access platform storage: SS error: prompt dismissed".to_string())
+        },
+        older: &|| panic!("a locked keyring was stepped past to an older item"),
+        write_keystore: &|_| panic!("a key was written into a locked keyring"),
+        write_file: &|_| panic!("a locked keyring fell through to the key file"),
+        mint: &|| panic!("a key was minted over a locked keyring"),
+    });
+    let err = got.expect_err("a locked keyring started the engine");
+    assert!(err.contains("keyring is locked"), "the refusal says locked by name: {err}");
+    assert!(err.contains("prompt dismissed"), "and carries the platform's words: {err}");
+    assert_eq!(store.calls(), vec!["file", "own"]);
+}
+
+#[test]
+fn each_answer_names_the_store_that_served_it() {
+    fn from(k: &Keystores) -> Result<KeySource, String> {
+        resolve_install_key(k).map(|r| r.from)
+    }
+    let key = a_key('6');
+    assert_eq!(from(&Keystores { file: &|| Stored::Key(key.clone()), ..Default::default() }), Ok(KeySource::File));
+    assert_eq!(from(&Keystores { own: &|| Stored::Key(key.clone()), ..Default::default() }), Ok(KeySource::Platform));
+    assert_eq!(from(&Keystores { older: &|| Stored::Key(key.clone()), ..Default::default() }), Ok(KeySource::Platform));
+    assert_eq!(from(&Keystores { mint: &|| Ok(key.clone()), ..Default::default() }), Ok(KeySource::Platform));
+    let refused = Keystores {
+        own: &|| Stored::Refused("refused".to_string()),
+        mint: &|| Ok(key.clone()),
+        ..Default::default()
+    };
+    assert_eq!(from(&refused), Ok(KeySource::File));
+    // The words the launch line prints (`key source …`), which a support read greps for.
+    assert_eq!(KeySource::File.to_string(), "file");
+    assert_eq!(KeySource::Env.to_string(), "env");
+    assert_eq!(KeySource::Platform.to_string(), format!("platform:{PLATFORM_STORE}"));
+    #[cfg(target_os = "linux")]
+    assert_eq!(KeySource::Platform.to_string(), "platform:secret-service");
+}
+
+#[test]
+fn only_a_secret_service_that_will_not_give_access_reads_as_locked() {
+    let no_access = keyring::Error::NoStorageAccess(Box::new(io::Error::other("SS error: prompt dismissed")));
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    assert!(is_locked(&no_access), "the Secret Service's locked or dismissed-prompt answer");
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    assert!(!is_locked(&no_access), "macOS and Windows keep the refusal fallback");
+    let failure = keyring::Error::PlatformFailure(Box::new(io::Error::other("zbus error")));
+    assert!(!is_locked(&failure), "a platform failure is a refusal, not a lock");
+    assert!(!is_locked(&keyring::Error::NoEntry));
+    assert!(!is_locked(&keyring::Error::NoDefaultStore), "no store is absent, not locked");
+}
+
+#[test]
+fn with_no_keystore_to_open_the_launch_mints_into_the_file_and_the_restart_reads_it() {
+    // THE DEFECT, through the function the launch calls: `Entry::new` failing returned before the
+    // file was read, so a session with no Secret Service never started its engine.
+    let f = Fixture::new("keyfile-no-store");
+    let unopened = "no secret service provider or dbus session found";
+    let first = install_key_in(Some(&f.dir), Err(unopened)).expect("the launch starts from the file");
+    assert_eq!(first.from, KeySource::File);
+    assert!(is_key(&first.key), "a real key was minted");
+    assert_eq!(look_up_file(Some(&f.dir)), Stored::Key(first.key.clone()), "and kept in the file");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(f.dir.join(KEYSTORE_FILE)).expect("stat").permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "readable only by its owner");
+    }
+    let second = install_key_in(Some(&f.dir), Err(unopened)).expect("the restart starts");
+    assert_eq!(second, first, "the restart reads the same key from the same store");
+}
+
+#[test]
+fn with_no_keystore_to_open_a_key_file_already_there_is_read_and_not_rewritten() {
+    let f = Fixture::new("keyfile-there");
+    let key = a_key('4');
+    write_key_file(Some(&f.dir), &key).expect("a key file");
+    let path = f.dir.join(KEYSTORE_FILE);
+    let before = fs::metadata(&path).and_then(|m| m.modified()).expect("mtime");
+    let got = install_key_in(Some(&f.dir), Err("no bus")).expect("the launch starts");
+    assert_eq!(got, Resolved { key: key.clone(), from: KeySource::File });
+    assert_eq!(fs::metadata(&path).and_then(|m| m.modified()).expect("mtime"), before, "read, not rewritten");
+    assert_eq!(fs::read_to_string(&path).expect("read"), key);
 }
 
 #[cfg(target_os = "macos")]
