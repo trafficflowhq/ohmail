@@ -377,7 +377,7 @@ async function materializeRows(
 ): Promise<MaterializedRow[]> {
   const d = dialect(db);
   const source = "source" in scope ? scope.source : null;
-  const keyFields = Object.fromEntries((source?.keys ?? []).map((k, i) => [`k${i}`, sql`${sql.raw(`p.${k}`)}`]));
+  const keyFields = Object.fromEntries((source?.keys ?? []).map((k, i) => [`k${i}`, sql`p.${sql.identifier(k)}`]));
   /**
    * THE THREE FLAGS as columns of the same row — the auto-reply flag and the two calendar facts,
    * each asked on the account-scoped row, on BOTH paths: the receipt reader (`deleted:

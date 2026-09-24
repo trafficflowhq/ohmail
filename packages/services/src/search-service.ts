@@ -261,6 +261,14 @@ function rowsOf<T>(result: unknown): T[] {
   return ((result as { rows?: T[] }).rows ?? []) as T[];
 }
 
+/**
+ * Accounts whose backfill marker this handle has READ as written: the marker is written once and
+ * never cleared (`coalesce` on its only writer), so a written marker is remembered and the session
+ * statement then carries no parameter — one round trip through the pooler instead of two.
+ */
+const markerWritten = new WeakMap<object, Set<string>>();
+const MARKER_MEMO_MAX = 10_000;
+
 // pg_trgm presence is a property of the physical database, not the request; memoize
 // per Db handle so we probe `to_regprocedure` at most once per connection object.
 const trgmCache = new WeakMap<object, Promise<boolean>>();
@@ -767,7 +775,7 @@ export class SearchService {
     const hitIds = hitRows.map((r) => String(r[0]));
 
     // The batch form, for the reason {@link SearchService.search} gives at its own call site:
-    // four statements for the page instead of four per hit on a `max: 1` pool.
+    // one statement for the page instead of one per hit on a `max: 1` pool.
     const byId = await materializeMessages(ctx.db, ctx.accountId, hitIds);
     const items: MessageDTO[] = [];
     for (const id of hitIds) {
@@ -790,13 +798,24 @@ export class SearchService {
     const trigram = await hasTrgm(ctx.db);
     const setup = d.search.searchSession({ typoThreshold: FUZZY_THRESHOLD, preferIndexes: true });
     if (setup === null) return fn(ctx.db, { built: await searchIndexBuilt(ctx.db as never, ctx.accountId), trigram });
+    const handle = ctx.db as unknown as object;
+    const known = markerWritten.get(handle) ?? new Set<string>();
+    markerWritten.set(handle, known);
+    const tx = ctx.db as unknown as { transaction: <R>(f: (t: unknown) => Promise<R>) => Promise<R> };
+    if (known.has(ctx.accountId)) {
+      return tx.transaction(async (t) => { await d.exec(t, setup); return fn(t, { built: true, trigram }); });
+    }
     // Scoped by the caller's account like every read below: a marker is one account's fact.
     const marker = sql`exists (select 1 from ${accountSettings}
       where ${accountSettings.accountId} = ${ctx.accountId} and ${accountSettings.searchIndexBuiltAt} is not null)`;
-    const tx = ctx.db as unknown as { transaction: <R>(f: (t: unknown) => Promise<R>) => Promise<R> };
     return tx.transaction(async (t) => {
       const [row] = await d.exec(t, sql`select ${marker} as built, s.* from (${setup}) s`);
-      return fn(t, { built: row?.[0] === true || row?.[0] === 1, trigram });
+      const built = row?.[0] === true || row?.[0] === 1;
+      if (built) {
+        if (known.size >= MARKER_MEMO_MAX) known.clear();
+        known.add(ctx.accountId);
+      }
+      return fn(t, { built, trigram });
     });
   }
 
