@@ -1,9 +1,8 @@
 import { ServiceError, type ServiceContext } from "@trafficflow/services/mail";
 import { offlineResponse } from "./cloud-auth.js";
 import type { ReadRoute } from "./cloud-read.js";
-import { MAX_BODY_BYTES } from "./frame.js";
+import { MAX_BODY_BYTES, readBodyBounded } from "./frame.js";
 import type { Diagnostic } from "./log.js";
-import { readBodyBounded } from "./protocol.js";
 
 /**
  * A READ THE ACCOUNT ANSWERS WHENEVER IT CAN BE REACHED — `/search`, whose whole-mailbox verdict

@@ -286,3 +286,45 @@ export class FrameWriter {
     });
   }
 }
+
+/**
+ * Read a body with a hard ceiling, cancelling the source the moment it is passed.
+ *
+ * `arrayBuffer()` would be one line and would also happily buffer a gigabyte. The reader loop is
+ * the difference between "this response is too large" and "the sidecar died".
+ */
+export async function readBodyBounded(m: Request | Response, maxBytes: number): Promise<Uint8Array> {
+  if (!m.body) {
+    const buf = await m.arrayBuffer();
+    if (buf.byteLength > maxBytes) {
+      throw new FrameError(`body is ${buf.byteLength} bytes, over the ${maxBytes}-byte frame cap`);
+    }
+    return buf.byteLength === 0 ? EMPTY_BODY : new Uint8Array(buf);
+  }
+  const reader = m.body.getReader();
+  const parts: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new FrameError(`body exceeded the ${maxBytes}-byte frame cap`);
+      }
+      parts.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  if (total === 0) return EMPTY_BODY;
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.byteLength;
+  }
+  return out;
+}
