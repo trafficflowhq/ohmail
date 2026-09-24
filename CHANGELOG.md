@@ -94,6 +94,16 @@ the same message, made on this computer or on another device, is no longer misse
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.23.2] — 2026-09-24
+
+### The desktop's Ohbox matches the web's
+<!-- changes: fix-0232-desktop-ohbox-news-rows.md -->
+
+On the desktop app paired to ohmail Cloud, the Ohbox could show messages the web filed under
+News or Receipts — notification mail from senders you had since decided about — and the counts
+disagreed between the two. The desktop now files every sender's mail by the same decision the
+web uses, and an installed desktop corrects itself on its next sync.
+
 ## [0.23.1] — 2026-09-24
 
 ### Drafts on the phone ask where you pressed, and a send we could not confirm says so plainly
@@ -8222,7 +8232,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.23.1...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.23.2...HEAD
+[0.23.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.23.2
 [0.23.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.23.1
 [0.23.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.23.0
 [0.22.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.22.1

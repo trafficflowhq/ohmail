@@ -336,6 +336,11 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // `count` for the reason `tags` was: the event says the repair ran, this says whether the
   // Folders rail came back.
   "folders",
+  // `rules` is the same counter for the one-time rule-instant repair
+  // (`apps/sidecar/src/cloud-mirror.ts`): how many mirrored rule rows had their creation instant
+  // rewritten from the account's live state. A `++` over a snapshot page, never a rule's MATCH —
+  // an address or a domain, which is exactly the signal this census keeps off the line.
+  "rules",
   // `changed` is the ONE non-identifying fact the Cloud mirror's owner-change reset
   // (`apps/sidecar/src/cloud-engine.ts`) puts on its line: a literal `true` meaning a foreign
   // mirror was discarded because the served address changed. The addresses themselves — whose
