@@ -56,7 +56,6 @@ import {
   workflowRuns,
   workflows,
   type LedgerTx,
-  type Tx,
 } from "@trafficflow/db";
 import {
   accountLifecycleNotices,
@@ -79,7 +78,7 @@ import {
   webauthnCredentials,
   recordErasedBearers,
 } from "@trafficflow/db/cloud";
-import type { ServiceContext } from "./context.js";
+import { bridgeTx, type ServiceContext } from "./context.js";
 import { rowsAffected } from "./rows-affected.js";
 
 /**
@@ -427,7 +426,7 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     // The live tokens' HASHES are kept first (cloud 0043), so an installed app still holding one
     // is told the account was deleted instead of being answered as a stranger and renewing for
     // ever. A hash of a random secret and the account id — nothing about a person.
-    await recordErasedBearers(tx as unknown as Tx, accountId, ctx.now());
+    await recordErasedBearers(bridgeTx(tx), accountId, ctx.now());
     await drop("refresh_tokens", tx.delete(refreshTokens).where(eq(refreshTokens.accountId, accountId)));
     await drop("sessions", tx.delete(sessions).where(eq(sessions.accountId, accountId)));
     await drop("devices", tx.delete(devices).where(eq(devices.accountId, accountId)));
