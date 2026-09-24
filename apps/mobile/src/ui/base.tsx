@@ -386,7 +386,8 @@ export function Button({
   /**
    * A verb that cannot be taken right now keeps its FACE and dims, and says so to a screen
    * reader. Before this, callers swapped VARIANTS to disarm a button (solid→plain, quiet→plain),
-   * which made the unavailable state look like a different, perfectly pressable verb.
+   * which made the unavailable state look like a different, perfectly pressable verb. The state
+   * is always an object with the key: Android keeps the last `disabled` flag when a render omits it.
    */
   disabled?: boolean;
 }) {
@@ -398,7 +399,7 @@ export function Button({
       onPress={disabled === true ? undefined : onPress}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel ?? label}
-      accessibilityState={disabled === true ? { disabled: true } : undefined}
+      accessibilityState={{ disabled: disabled === true }}
       style={({ pressed }) => [
         {
           flexDirection: "row",

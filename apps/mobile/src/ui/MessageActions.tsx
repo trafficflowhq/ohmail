@@ -1248,7 +1248,7 @@ export function ComposeSheet({
                       setAttachments((list) => list.filter((a) => a !== file));
                     }}
                     accessibilityRole="button"
-                    accessibilityState={phase === "idle" ? undefined : { disabled: true }}
+                    accessibilityState={{ disabled: phase !== "idle" }}
                     accessibilityLabel={Copy.attachRemove(file.filename)}
                     style={{ padding: 8, marginRight: -8 }}
                   >
