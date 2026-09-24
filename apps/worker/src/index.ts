@@ -40,7 +40,7 @@ import {
 } from "@trafficflow/core";
 import { makeDrizzleRepo, mailboxProviderAuthservIds } from "@trafficflow/core/adapters/drizzle-repo";
 import {
-  ImapAdapter, ImapConnectionClosedError, WORKER_NET_TIMEOUTS, learnSmtpMaxSize,
+  ImapAdapter, ImapConnectionClosedError, WORKER_NET_TIMEOUTS, WriteDeclinedError, learnSmtpMaxSize,
   isImapBoundExceeded,
   type MailboxAdapter,
 } from "@trafficflow/core/adapters/imap";
@@ -127,7 +127,7 @@ import { OrganizerProfileSync, syncProfileMirror } from "./profile.js";
 import type { ProfileIo } from "@trafficflow/core/adapters/organizer-profile";
 import {
   readMailboxLease, acquireLeasePermit, releaseMailboxClaim, cloudInstallId, CLOUD_DISPLAY_NAME,
-  LeaseUnavailableError, leaseBlockReason, leaseStoodDown, DEFAULT_STALE_AFTER_MS,
+  LeaseUnavailableError, leaseBlockReason, leaseStoodDown, DEFAULT_STALE_AFTER_MS, writeDoorOf,
   type OrganizerWriteAuthority,
   type LeaseSelf, type LeasePeekCapableAdapter,
 } from "./lease.js";
@@ -2395,7 +2395,7 @@ export async function startWorkerWithLock(
          * the tree would be visibly organizing a mailbox it does not hold — in every other mail
          * client the person owns, and in the folder list of whoever does hold it.
          */
-        if (role === "organizer") await adapter.ensureFolders();
+        if (role === "organizer") await adapter.ensureFolders(writeDoorOf({ lease: leaseState.leasePermit }));
         const foldersMs = Date.now() - tFolders;
         // ── Mail 0065: DISCOVER THE PROVIDER'S OWN \Junk AND \Trash, AND WRITE THEM DOWN ──
         //
@@ -3442,7 +3442,7 @@ export async function startWorkerWithLock(
             // (the adapter creates only what is missing) and it is the first write this process is
             // entitled to make against this mailbox, which is why it is here and not one line
             // earlier: `mayOrganize` returning true is the entitlement.
-            await rt.adapter.ensureFolders();
+            await rt.adapter.ensureFolders(writeDoorOf({ lease: rt.leasePermit }));
             // The known-set memo is dropped for the reason a stand-down drops it, in the mirror
             // direction: everything this runtime remembers about the mailbox it remembered as a
             // READER, and the cycle that follows is going to move mail on the strength of it.
@@ -3614,6 +3614,8 @@ export async function startWorkerWithLock(
           const cycleMayStillWrite = !permitStoodDown
             && !(cycleError instanceof LeaderFencedError)
             && !(cycleError instanceof LeaseUnavailableError)
+            // A write the lease did not admit at the command: the same NO, asked one step later.
+            && !(cycleError instanceof WriteDeclinedError)
             // ── AND A SHARED-DATABASE FAULT IS NOT SOMETHING TO DRAIN THROUGH EITHER ─────────
             //
             // The arm below reads this class and sets `stopPass` — the whole point being to take
@@ -3969,6 +3971,19 @@ export async function startWorkerWithLock(
               reason: "this mailbox was removed while the cycle was reading it, so the pending "
                 + "writes were refused rather than committed into a mailbox that is gone — NOT "
                 + "counted toward maxSyncFailures and not quarantined",
+            });
+            return;
+          }
+          /* A DECLINED WRITE IS NOT A FAILING MAILBOX. The lease was asked at the command and did not
+             admit it — the claim had aged past its window, or a stand-down was seen — so nothing of it
+             was written and the cycle's own verdict line says where. The next cycle's gate re-reads
+             the lease and renews or stands down; counting this would walk a healthy mailbox toward
+             quarantine over our own handover. */
+          if (err instanceof WriteDeclinedError) {
+            log.info("sync_cycle_write_declined", {
+              mailboxId: rt.mailboxId, accountId: rt.accountId, verdict: err.reason,
+              reason: "a mail-server write was declined by the lease at the command — NOT counted "
+                + "toward maxSyncFailures; the next cycle's gate decides",
             });
             return;
           }

@@ -540,6 +540,47 @@ export const DEFAULT_SYNC_BATCH_MAX_BYTES = 32 * 1024 * 1024;
 export const FILING_BATCH_MAX = 50;
 
 /**
+ * THE WRITE DOOR — asked by the adapter immediately before every IMAP write it issues for an
+ * organizer: a MOVE, the COPY of a COPY-then-DELETE pair (the pair is one unit, asked once), a
+ * `\Seen` STORE, a folder CREATE, RENAME, DELETE or sweep. Synchronous by contract: it answers
+ * from the writer's own claim and what it has observed, never with a round trip, so asking it
+ * costs no command. The caller hands it in with every write; a write with no door is refused.
+ */
+export interface WriteDoor {
+  ask(write: MailboxWriteKind): WriteDoorAnswer;
+}
+
+/** What is about to be written. `expunge` is a lone DELETE whose COPY an earlier call made. */
+export type MailboxWriteKind =
+  | "move" | "expunge" | "seen" | "folder_create" | "folder_rename" | "folder_delete" | "folder_sweep";
+
+export type WriteDoorAnswer = { admit: true } | { admit: false; reason: WriteDeclineReason };
+
+export type WriteDeclineReason =
+  /** The claim's last renewal is older than the window every other install reads it fresh in. */
+  | "claim_stale"
+  /** A stand-down was observed on the claim this writer rides. */
+  | "stood_down"
+  /** The mailbox was switched off under "Use folders" (read per batch by the caller). */
+  | "folders_off"
+  /** The writer is a READER, whose one write is `\Seen`, and this write is an organizer's. */
+  | "no_lease"
+  /** The caller handed no door at all. */
+  | "no_door";
+
+/**
+ * NOTHING WAS WRITTEN: the door declined the command it was asked about. A refusal about the
+ * WRITER, never about the message — callers let it through every per-message catch, and a cycle
+ * ends on it. Anything written before this call stands; the pair rule means no half pair is left.
+ */
+export class WriteDeclinedError extends Error {
+  constructor(readonly write: MailboxWriteKind, readonly reason: WriteDeclineReason) {
+    super(`the ${write} was not issued: ${reason}`);
+    this.name = "WriteDeclinedError";
+  }
+}
+
+/**
  * What {@link MailboxAdapter.moveMany} answers — THREE outcomes, because "declined" and "moved,
  * then could not say where" are opposite facts and a boolean told the caller only the first.
  * `declined` used to carry both: three returns sat AFTER `UID MOVE` and answered with the
@@ -928,9 +969,11 @@ export interface MailboxAdapter {
    */
   lastServerActivityAt?(): Date | null;
   capabilities(): Promise<ImapCapabilities>;
-  ensureFolders(): Promise<void>;
+  /** Creates the `ohmail/*` tree an organizer files into; every CREATE and RENAME asks `door`. */
+  ensureFolders(door: WriteDoor): Promise<void>;
   changesSince(cursor: ImapCursor): Promise<ChangeBatch>;
-  move(locator: NativeLocator, toFolder: string): Promise<NativeLocator>;
+  /** `door` is asked before the MOVE, or once before a COPY-then-DELETE pair — see {@link WriteDoor}. */
+  move(locator: NativeLocator, toFolder: string, door: WriteDoor): Promise<NativeLocator>;
   /**
    * File a group of messages sharing a source folder and destination in a handful of round trips
    * instead of a handful per message. `outcome: "batched"` means the folders end in the state
@@ -941,7 +984,7 @@ export interface MailboxAdapter {
    * ({@link MessageGoneError} reported, not thrown), so one vanished message does not cost the
    * group. At most {@link FILING_BATCH_MAX}. Optional; fakes keep compiling.
    */
-  moveMany?(locators: readonly NativeLocator[], toFolder: string): Promise<MoveManyResult>;
+  moveMany?(locators: readonly NativeLocator[], toFolder: string, door: WriteDoor): Promise<MoveManyResult>;
   /* ── The USER-COMMANDED folder verbs (FOLDERS-SPEC.md stage 2) — executed only by the
    * worker's `folderOpsPass`, only from a recorded `folder_ops` command, under the organizer
    * lease. ohmail never creates, renames or deletes a folder on its own initiative. All four
@@ -955,13 +998,13 @@ export interface MailboxAdapter {
    * files a root-named CREATE under INBOX, and the caller must record where it landed.
    * Idempotent: "already exists" is the asked-for state.
    */
-  createFolder?(canonical: string): Promise<string>;
+  createFolder?(canonical: string, door: WriteDoor): Promise<string>;
   /**
    * IMAP RENAME with the idempotent-completion arm: `"already"` when the source is gone AND the
    * target exists (a crash between the RENAME and the database swap, or the user's own client
    * did it) — the caller proceeds to the swap. `"conflict"`/`"gone"` are the honest refusals.
    */
-  renameFolder?(from: string, to: string): Promise<"renamed" | "already" | "conflict" | "gone">;
+  renameFolder?(from: string, to: string, door: WriteDoor): Promise<"renamed" | "already" | "conflict" | "gone">;
   /**
    * IMAP DELETE of a folder VERIFIED EMPTY SINCE THE SWEEP — `fence` is what {@link moveAll}
    * left behind, and the delete re-reads the folder immediately before issuing. RFC 3501's
@@ -969,9 +1012,11 @@ export interface MailboxAdapter {
    * everything but an unchanged, empty reading refuses. `"unverified"` fails closed (no fence,
    * or a server that will not answer); `"already"` is a folder somebody else removed.
    */
-  deleteFolder?(canonical: string, fence: FolderSweepFence | null): Promise<FolderDeleteOutcome>;
+  deleteFolder?(
+    canonical: string, fence: FolderSweepFence | null, door: WriteDoor,
+  ): Promise<FolderDeleteOutcome>;
   /** The folder delete's sweep: move EVERYTHING in `folder` to `toFolder` (native \Trash). */
-  moveAll?(folder: string, toFolder: string): Promise<FolderSweepResult>;
+  moveAll?(folder: string, toFolder: string, door: WriteDoor): Promise<FolderSweepResult>;
   /**
    * Write the `\Seen` flag on one message — the other half of organize-in-place; without it
    * read-state never reached the mailbox in either direction. Called only by the worker's
@@ -982,7 +1027,7 @@ export interface MailboxAdapter {
    * the product has an opinion about. Throws {@link MessageGoneError} when the locator no longer
    * resolves — the same signal `move` raises.
    */
-  setFlags(locator: NativeLocator, flags: { seen: boolean }): Promise<void>;
+  setFlags(locator: NativeLocator, flags: { seen: boolean }, door: WriteDoor): Promise<void>;
   /**
    * Distinct recipient addresses of the newest `limit` messages in the resolved Sent folder — the
    * raw material of the connect-time kickstart. People you have written to are people you know,

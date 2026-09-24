@@ -4,7 +4,7 @@ import {
   type Logger, type OhboxPolicy, type StorageCap,
 } from "@trafficflow/core/mail";
 import {
-  WATCHED_FOLDERS, MessageGoneError, parseRef, FILING_BATCH_MAX,
+  WATCHED_FOLDERS, MessageGoneError, WriteDeclinedError, parseRef, FILING_BATCH_MAX,
   epochOf, epochVerdict, sameEpoch, UNKNOWN_EPOCH, type Epoch,
   type BudgetStop, type ImapCursor, type KnownEntry, type MailboxAdapter, type PersistedFolderCursor,
 } from "@trafficflow/core/adapters/imap";
@@ -43,7 +43,7 @@ import {
    that reads it off `sync.js`, and moving the definition may not move the name. */
 export { nextReconcileAttemptAfter };
 import {
-  assertMayWriteToMailbox, OrganizerStandDownError,
+  assertMayWriteToMailbox, OrganizerStandDownError, writeDoorOf,
   type MailboxWriteAuthority, type OrganizerWriteAuthority,
 } from "./lease.js";
 
@@ -676,6 +676,7 @@ function rethrowRefusal(err: unknown): void {
     err instanceof LeaderFencedError || err instanceof MailboxRemovedError
     || err instanceof MailboxErasedError
     || err instanceof OrganizerStandDownError || err instanceof LeaseUnavailableError
+    || err instanceof WriteDeclinedError
   ) throw err;
 }
 
@@ -833,6 +834,15 @@ export async function runSyncCycle(input: SyncDeps): Promise<{ hasBacklog: boole
         phase: at.pass, page: at.page, disabledReason: err.reason, state: err.state,
         reason: "another install holds this mailbox now — the cycle stopped at this page and "
           + "issued no further move, flag or folder write",
+      });
+    }
+    // The door declined a command mid-page: nothing of it was written, and the next gate decides.
+    if (err instanceof WriteDeclinedError) {
+      input.log?.info("write_declined_mid_cycle", {
+        mailboxId: input.mailboxId, accountId: input.accountId,
+        phase: at.pass, page: at.page, verdict: err.reason, kind: err.write,
+        reason: "the lease was asked immediately before a mail-server write and did not admit it — "
+          + "the cycle stopped there and the next cycle's gate re-reads the lease",
       });
     }
     throw err;
@@ -1995,8 +2005,12 @@ async function fileChunk(
   await assertMayWriteToMailbox(writeAuthorityOf(deps));
   let result;
   try {
-    result = await adapter.moveMany(chunk.map((p) => p.nativeLocator!), toFolder);
-  } catch {
+    result = await adapter.moveMany(
+      chunk.map((p) => p.nativeLocator!), toFolder, writeDoorOf(writeAuthorityOf(deps)),
+    );
+  } catch (err) {
+    // A decline at the door is about the writer: it ends the cycle, never the per-message path.
+    rethrowRefusal(err);
     return null;
   }
   // THE THREE ANSWERS, and the third is the one this used to get wrong. `declined` is a refusal
@@ -2192,7 +2206,7 @@ async function fileOne(
   try {
     openPage(at, "filing");
     await assertMayWriteToMailbox(writeAuthorityOf(deps));
-    newLoc = await adapter.move(p.nativeLocator!, physical);
+    newLoc = await adapter.move(p.nativeLocator!, physical, writeDoorOf(writeAuthorityOf(deps)));
   } catch (err) {
     // A refusal must not be recorded as this message's failure — it is the process's, or the
     // mailbox's new organizer's. A stand-down taken here used to fall through to the deferral
@@ -2382,7 +2396,7 @@ async function reconcileFlags(deps: SyncDeps, at: CyclePageCursor): Promise<bool
       // other write, which it was not before.
       openPage(at, "flags");
       await assertMayWriteToMailbox(writeAuthorityOf(deps));
-      await adapter.setFlags(p.nativeLocator, { seen: p.desiredSeen });
+      await adapter.setFlags(p.nativeLocator, { seen: p.desiredSeen }, writeDoorOf(writeAuthorityOf(deps)));
     } catch (err) {
       // A lost lease — this shard's or this mailbox's — is never evidence about this message. Those
       // are the throws that still leave this loop, and they must leave it unreclassified.

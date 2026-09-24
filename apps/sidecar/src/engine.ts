@@ -6,7 +6,7 @@ import {
   type KekEnvIdentity, type KeyProvider, type Logger, type OpenSendAdapter, type SendAdapter,
 } from "@trafficflow/core/mail";
 import {
-  ImapAdapter, ImapConnectionClosedError, WORKER_NET_TIMEOUTS, buildImapAuth,
+  ImapAdapter, ImapConnectionClosedError, WORKER_NET_TIMEOUTS, WriteDeclinedError, buildImapAuth,
   type ImapConfig, type MailboxAdapter, type CredMetaAuth, type NetTimeouts,
 } from "@trafficflow/core/adapters/imap";
 import { makeDrizzleRepo, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
@@ -135,7 +135,7 @@ import { startTailProgress } from "./drain-tail-progress.js";
 import {
   readMailboxLease, acquireLeasePermit, releaseMailboxClaim, LeaseUnavailableError,
   OrganizerStandDownError,
-  leaseStoodDown, DEFAULT_STALE_AFTER_MS, type OrganizerWriteAuthority,
+  leaseStoodDown, writeDoorOf, DEFAULT_STALE_AFTER_MS, type OrganizerWriteAuthority,
 } from "@trafficflow/worker/lease";
 // The APPEND-LESS read, straight from core: an install that has not been asked to organize must
 // still be able to say who does, and `runLeaseGate` cannot answer that question without taking
@@ -3547,6 +3547,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        */
       let lastLeaseRenewalAt: Date | null = null;
       /**
+       * THE LAST DRAIN ENDED ON A DECLINED WRITE — the lease was asked at a command and did not
+       * admit it. Reset by every drain pass; while set, the pass writes nothing more to the mailbox
+       * (no request acknowledgements, no profile publish) and the next pass's gate decides.
+       */
+      let drainDeclined = false;
+      /**
        * A stand-down recorded on the row outlives the process — what makes a lapsed Cloud
        * subscription leave the desktop stood down rather than auto-resuming. The lease alone
        * cannot: once Cloud releases its claim, `ohmail/_meta` is empty, and an empty folder
@@ -5180,6 +5186,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              * that state. NOT `LeaseUnavailableError`: an unreadable lease is a question with no
              * answer, it keeps counting toward the connection bound, and it leaves as it did.
              */
+            /* A DECLINED WRITE ends the drain the same way: nothing of it went out, and the next
+               pass's gate re-reads the lease. Remembered so this pass's tail writes nothing either. */
+            if (err instanceof WriteDeclinedError) { drainDeclined = true; break; }
             if (!(err instanceof OrganizerStandDownError)) throw err;
             break;
           } finally {
@@ -5420,7 +5429,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               /* THE MAILBOX WRITE THIS WHOLE ORDERING PROTECTS — creating somebody else's
                  `ohmail/*` tree. Refused outright if the connection has moved since the gate. */
               assertSameConnection(gen, conn);
-              await conn.ensureFolders();
+              await conn.ensureFolders(writeDoorOf({ lease: leasePermit }));
               foldersEnsured = true;
             } catch (err) {
               log("ensure_folders_failed", {
@@ -5481,6 +5490,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * takes the request channel below to run. See that block. */
           let cycleError: unknown = null;
           let cycles = 0;
+          drainDeclined = false;
           try {
             cycles = await drain(maxCycles, gen, conn, organizing);
           } catch (err) {
@@ -5505,7 +5515,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * `cycleError` NULL and the pass reporting success. Asked of the permit instead, both
            * shapes are one fact. Only when this pass was ORGANIZING: a reader holds no permit and
            * its own channel below must not be refused by a receipt from before its demotion. */
-          const permitStoodDown = organizing && leaseStoodDown(leasePermit);
+          /* A write the lease declined at the command is the same NO for the tail, asked later. */
+          const permitStoodDown = organizing && (leaseStoodDown(leasePermit) || drainDeclined);
           const cycleMayStillWrite = !permitStoodDown
             && !(cycleError instanceof LeaseUnavailableError
               || cycleError instanceof ConnectionReplacedError);
@@ -5993,7 +6004,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                Creating somebody else's `ohmail/*` tree through a connection this sequence never
                gated is the defect the cycles were fixed for, on the launch path. */
             assertSameConnection(gen, conn);
-            await conn.ensureFolders();
+            await conn.ensureFolders(writeDoorOf({ lease: leasePermit }));
             // See {@link foldersEnsured}: the poll's own call must not repeat what this just did.
             foldersEnsured = true;
           }

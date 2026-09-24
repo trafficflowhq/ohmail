@@ -15,6 +15,8 @@ import { classifyDedup, type DedupOutcome } from "./dedup.js";
 // adapter here would pull `imapflow` into the desktop engine. `gone.ts` carries the rule this
 // file's `move` arm implements.
 import { isMessageGone } from "./gone.js";
+// The door's refusal class, from the adapter's import-free types module (no `imapflow` behind it).
+import { WriteDeclinedError, type WriteDoor } from "./adapters/imap-types.js";
 // The ref's epoch half, from the MODEL layer's own module rather than the adapter's — and as a
 // discriminated value, so the same-epoch test below cannot be satisfied by two refs that each
 // name no epoch (`{ folder: "", ref: "0:0" }` is the NULL-locator placeholder; two are not one).
@@ -69,6 +71,11 @@ export interface ApplyContext {
  */
 export interface ReconcileApplyDeps extends Omit<PipelineDeps, "repo"> {
   repo: RepoPort & Pick<WorkerRepo, "completeFolderState" | "adoptFolderState">;
+  /**
+   * The writer's door for the move. The API's services hold no lease and pass none, so a real
+   * adapter refuses their inline move and the row stays pending for the organizer's own cycle.
+   */
+  door?: WriteDoor;
 }
 
 /** {@link adoptWithWitness}'s deps — both conditional folder-state writers and the account. */
@@ -177,8 +184,10 @@ export async function applyReconcileAction(
     case "move": {
       let newLocator: NativeLocator;
       try {
-        newLocator = await adapter.move(locator, action.to);
+        newLocator = await adapter.move(locator, action.to, deps.door);
       } catch (err) {
+        // Declined at the write door: nothing was issued, the row stays as committed and pending.
+        if (err instanceof WriteDeclinedError) return { locator, state, deferred: true };
         if (!isMessageGone(err)) throw err;
         // Deferred, and it writes NOTHING — the point, not an omission. This arm used to
         // `upsertFolderState` the desire it was called with, and the value was computed BEFORE

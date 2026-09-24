@@ -4,6 +4,7 @@ import type { AuthVerdict, Rule } from "./rules.js";
 import type { ClassifierPort } from "./classifier-port.js";
 import type { CorrespondentEvidence } from "./correspondent.js";
 import type { MessageSearchInput } from "./message-search.js";
+import type { WriteDoor } from "./adapters/imap-types.js";
 
 export interface NativeLocator { folder: string; ref: string; } // IMAP ref = `${uidvalidity}:${uid}`
 
@@ -49,7 +50,8 @@ export interface Change {
 }
 
 export interface AdapterPort {
-  move(locator: NativeLocator, toFolder: Destination | string): Promise<NativeLocator>;
+  /** `door` is the writer's lease, asked at the write; an adapter handed none refuses (`WriteDoor`). */
+  move(locator: NativeLocator, toFolder: Destination | string, door?: WriteDoor): Promise<NativeLocator>;
 }
 
 /**

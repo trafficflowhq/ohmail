@@ -17,6 +17,7 @@ import { loadMailboxCreds } from "./mailboxes.js";
 import { checkedDial, dialHostGuardFromEnv } from "./dial-host-guard.js";
 import { redactedRestorePass } from "./redacted-restore.js";
 import { cliArgs, readRunnerMailbox, takeRunnerLease } from "./run-cli.js";
+import { writeDoorOf } from "./lease.js";
 
 const { flag, opt } = cliArgs(process.argv.slice(2));
 
@@ -70,23 +71,18 @@ let restored = 0, fetched = 0, mismatched = 0, unreadable = 0;
 try {
   await adapter.connect();
 
-  // THE ORGANIZER LEASE, BEFORE `ensureFolders()` — WHICH IS A WRITE. The pass only FETCHES bodies and
-  // writes our own database, so it looks read-only; `ensureFolders()` is not — it CREATES the `ohmail/*`
-  // tree in somebody else's mailbox. `reconcile-cron.ts` gates at this seam, and the pass registry ALREADY
-  // CLAIMED this runner took a lease (it did not; same seam as `run-junk-sweep.ts`). No `guard` or `check()`
-  // beyond this: the acquisition IS the check (`acquireLeasePermit` reads the lease and throws on a
-  // stand-down, and `ensureFolders()` is the next statement). `ensureFolders()` is not one write — it issues
-  // a `mailboxCreate` per missing folder (up to five), so a takeover after the second leaves this creating
-  // folders in a mailbox it no longer organizes; NOT fixed here because the check would have to live in
-  // `packages/core/src/adapters/imap.ts` (the same seam that bounds `moveMany` and `move`'s COPY-then-DELETE),
-  // and creating a folder is additive where a move is destructive. The dry-run path returns before `connect()`.
-  await takeRunnerLease({
+  // THE ORGANIZER LEASE, BEFORE `ensureFolders()` — WHICH IS A WRITE: it CREATES the `ohmail/*` tree in
+  // somebody else's mailbox, while the pass itself only fetches bodies. The acquisition is the check
+  // (`acquireLeasePermit` reads the lease and throws on a stand-down), and the permit is also the door
+  // the adapter asks before each of its up-to-five CREATEs, so a claim that lapses between two of them
+  // stops the rest. The dry-run path returns before `connect()`.
+  const permit = await takeRunnerLease({
     adapter, mailboxId, mailbox: mb, auth: creds.imap.auth, env: process.env,
     voice: { verb: "restore", nothingDone: "Nothing was created and nothing was fetched." },
     log: (line) => { console.log(line); },
   });
 
-  await adapter.ensureFolders();
+  await adapter.ensureFolders(writeDoorOf({ lease: permit }));
   for (;;) {
     const r = await redactedRestorePass({
       db, adapter, accountId: mb.accountId, mailboxId,

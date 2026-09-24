@@ -1,10 +1,12 @@
-import { MessageGoneError, makeRef, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
+import {
+  MessageGoneError, WriteDeclinedError, makeRef, type MailboxAdapter,
+} from "@trafficflow/core/adapters/imap";
 import type { Logger } from "@trafficflow/core/mail";
 import type { PendingJunkRescue, WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { LeaseUnavailableError } from "@trafficflow/core/adapters/organizer-lease";
 import { MailboxErasedError } from "@trafficflow/db";
 import {
-  assertMayWriteToMailbox, OrganizerStandDownError, type MailboxWriteAuthority,
+  assertMayWriteToMailbox, OrganizerStandDownError, writeDoorOf, type MailboxWriteAuthority,
 } from "./lease.js";
 import {
   RECONCILE_BACKOFF_MINUTES, classifyMoveRefusal, isTransportFailure, nextReconcileAttemptAfter,
@@ -83,7 +85,10 @@ export async function junkRescuePass(deps: JunkRescueDeps): Promise<JunkRescueRe
     }
     try {
       await assertMayWriteToMailbox(deps.writeAuthority);
-      await adapter.move({ folder: row.folder, ref: makeRef(row.uidValidity, row.uid) }, "INBOX");
+      await adapter.move(
+        { folder: row.folder, ref: makeRef(row.uidValidity, row.uid) }, "INBOX",
+        writeDoorOf(deps.writeAuthority),
+      );
       await deps.write((r) => r.resolveJunkRescue(row.id));
       result.moved += 1;
     } catch (err) {
@@ -125,15 +130,16 @@ export async function junkRescuePass(deps: JunkRescueDeps): Promise<JunkRescueRe
 }
 
 /**
- * THE FIVE CLASSES THAT ARE NOT THIS MESSAGE'S FAULT — `sync.ts#rethrowRefusal`'s set, asked here
+ * THE SIX CLASSES THAT ARE NOT THIS MESSAGE'S FAULT — `sync.ts#rethrowRefusal`'s set, asked here
  * because the per-row catch below would otherwise read a lost lease as a refused move and burn an
  * attempt off somebody's press. The two classes that live in `sync.ts` are matched by NAME, on
  * `folder-ops.ts`' reasoning: `sync.ts` imports this module and the import back would be a cycle.
- * The other three are imported, which is the stronger match, and the split is stated rather than
+ * The other four are imported, which is the stronger match, and the split is stated rather than
  * uniform so nobody "tidies" an importable class into a string.
  */
 function isRefusal(err: unknown): boolean {
   if (err instanceof OrganizerStandDownError || err instanceof LeaseUnavailableError) return true;
+  if (err instanceof WriteDeclinedError) return true;
   if (err instanceof MailboxErasedError) return true;
   return err instanceof Error
     && (err.name === "LeaderFencedError" || err.name === "MailboxRemovedError");

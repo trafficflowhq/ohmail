@@ -76,6 +76,7 @@ import {
   type FetchRawOptions, type NetTimeouts, type FetchByUidOptions, type TargetedFetch,
   type ImapAuth, type ImapOAuthAuth, type ResolvedImapAuth,
   FILING_BATCH_MAX, type MoveManyResult,
+  WriteDeclinedError, type WriteDoor, type MailboxWriteKind,
   type FolderSweepFence, type FolderSweepResult, type FolderDeleteOutcome,
   JUNK_BY_NAME, TRASH_BY_NAME, type SpecialFolders,
 } from "./imap-types.js";
@@ -1102,6 +1103,18 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   }
 
   /**
+   * THE ONE ASK before every organizer write — see {@link WriteDoor}. Called with nothing awaited
+   * between it and the command (the write-site census reads that), so the answer is about the
+   * instant the command goes out. A missing door is refused like a declining one: an unguarded
+   * write has no spelling here.
+   */
+  private admitWrite(door: WriteDoor | undefined, write: MailboxWriteKind): void {
+    if (door === undefined || typeof door.ask !== "function") throw new WriteDeclinedError(write, "no_door");
+    const answer = door.ask(write);
+    if (!answer.admit) throw new WriteDeclinedError(write, answer.reason);
+  }
+
+  /**
    * End this connection because a command was abandoned while the server may still be filling it,
    * and tell whoever owns the adapter what happened.
    *
@@ -1355,7 +1368,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     return { ...base, ...this.opts.capabilityOverrides };
   }
 
-  async ensureFolders(): Promise<void> {
+  async ensureFolders(door: WriteDoor): Promise<void> {
     let list = await this.listBounded();
     this.sentFolder = this.findSent(list);
     this.learnPassiveFolders(list);
@@ -1379,11 +1392,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       try {
         if (newsAt === null) {
           const dst = readsAt.startsWith("INBOX/") ? `INBOX/${NEWS_FOLDER}` : NEWS_FOLDER;
+          this.admitWrite(door, "folder_rename");
           await this.client.mailboxRename(this.toServerPathRaw(readsAt), this.toServerPathRaw(dst));
           this.newsRename = { acted: "renamed", refused: null };
         } else {
-          const swept = await this.moveAllByPath(this.toServerPathRaw(readsAt), this.toServerPathRaw(newsAt));
-          const outcome = await this.deleteFolderByPath(this.toServerPathRaw(readsAt), swept.fence);
+          const swept = await this.moveAllByPath(this.toServerPathRaw(readsAt), this.toServerPathRaw(newsAt), door);
+          const outcome = await this.deleteFolderByPath(this.toServerPathRaw(readsAt), swept.fence, door);
           if (outcome === "deleted" || outcome === "already") {
             this.newsRename = { acted: "merged", refused: null };
           } else {
@@ -1395,7 +1409,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         list = await this.listBounded();
         this.learnPassiveFolders(list); // the tree moved — re-derive `newsPhysical` from it
       } catch (err) {
-        if (err instanceof ImapBoundExceeded) throw err;
+        // A declined write is about the writer, not the rename: it ends the call like a breach.
+        if (err instanceof ImapBoundExceeded || err instanceof WriteDeclinedError) throw err;
         this.newsRename = { acted: "none", refused: String((err as Error).message ?? err) };
       }
     }
@@ -1443,6 +1458,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
            behaviour this replaced. Fall through to the root-named CREATE the server will file
            under its own prefix anyway, and let "already exists" absorb it as it always did. */
       }
+      this.admitWrite(door, "folder_create");
       try {
         await this.client.mailboxCreate(path);
       } catch (err) {
@@ -1495,8 +1511,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * the INBOX-prefixed form. Idempotent either way: a folder that already exists is the
    * asked-for state, not a failure.
    */
-  async createFolder(canonical: string): Promise<string> {
+  async createFolder(canonical: string, door: WriteDoor): Promise<string> {
     const path = this.toServerPath(canonical);
+    this.admitWrite(door, "folder_create");
     try {
       const info = await this.client.mailboxCreate(path);
       const landed = (info as { path?: string } | undefined)?.path;
@@ -1522,7 +1539,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * the two honest refusals — a RENAME issued in either state would move or manufacture
    * something the user did not name.
    */
-  async renameFolder(from: string, to: string): Promise<"renamed" | "already" | "conflict" | "gone"> {
+  async renameFolder(
+    from: string, to: string, door: WriteDoor,
+  ): Promise<"renamed" | "already" | "conflict" | "gone"> {
     const list = await this.listBounded();
     const paths = new Set(list.map((f) => f.path));
     const src = this.toServerPath(from);
@@ -1532,6 +1551,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     if (!srcThere && dstThere) return "already";
     if (!srcThere) return "gone";
     if (dstThere) return "conflict";
+    this.admitWrite(door, "folder_rename");
     await this.client.mailboxRename(src, dst);
     return "renamed";
   }
@@ -1573,12 +1593,16 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * (mail passed through since the sweep), `"unverified"` (no fence, or the server would not
    * answer). The residual, stated: a delivery between the EXAMINE and the DELETE is still taken.
    */
-  async deleteFolder(canonical: string, fence: FolderSweepFence | null): Promise<FolderDeleteOutcome> {
-    return this.deleteFolderByPath(this.toServerPath(canonical), fence);
+  async deleteFolder(
+    canonical: string, fence: FolderSweepFence | null, door: WriteDoor,
+  ): Promise<FolderDeleteOutcome> {
+    return this.deleteFolderByPath(this.toServerPath(canonical), fence, door);
   }
 
   /** {@link deleteFolder} on a SERVER path — the News merge's half, where resolving would re-point the source. */
-  private async deleteFolderByPath(path: string, fence: FolderSweepFence | null): Promise<FolderDeleteOutcome> {
+  private async deleteFolderByPath(
+    path: string, fence: FolderSweepFence | null, door: WriteDoor,
+  ): Promise<FolderDeleteOutcome> {
     const list = await this.listBounded();
     if (!list.some((f) => f.path === path)) return "already";
     if (fence === null) return "unverified";
@@ -1598,6 +1622,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       // between that this delete was never authorized for.
       if (fence.exists !== 0) return "changed";
       if (fence.modseq !== null && now.modseq !== null && fence.modseq !== now.modseq) return "changed";
+      this.admitWrite(door, "folder_delete");
       await this.client.mailboxDelete(path);
       return "deleted";
     } finally {
@@ -1615,12 +1640,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * the sweep's own lock, so what it reports is the folder as the sweep left it, and {@link
    * deleteFolder} is authorized against that and nothing else.
    */
-  async moveAll(folder: string, toFolder: string): Promise<FolderSweepResult> {
-    return this.moveAllByPath(this.toServerPath(folder), this.toServerPath(toFolder));
+  async moveAll(folder: string, toFolder: string, door: WriteDoor): Promise<FolderSweepResult> {
+    return this.moveAllByPath(this.toServerPath(folder), this.toServerPath(toFolder), door);
   }
 
   /** {@link moveAll} on SERVER paths — the News merge's sweep, where resolving would collapse src and dst. */
-  private async moveAllByPath(src: string, dst: string): Promise<FolderSweepResult> {
+  private async moveAllByPath(src: string, dst: string, door: WriteDoor): Promise<FolderSweepResult> {
     let lock: { release(): void };
     try {
       lock = await this.bounded(this.client.getMailboxLock(src));
@@ -1638,7 +1663,10 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       const count = mb && typeof mb.exists === "number" ? mb.exists : 0;
       // A folder the lock reports empty still gets its fence read: "empty" off the lock is a
       // memory (the fast path), and the DELETE may only follow a reading.
-      if (count > 0) await this.client.messageMove("1:*", dst);
+      if (count > 0) {
+        this.admitWrite(door, "folder_sweep");
+        await this.client.messageMove("1:*", dst);
+      }
       return { moved: count, fence: await this.folderFence(src) };
     } finally {
       lock.release();
@@ -3459,7 +3487,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * more, or no source fingerprint — refuse without copying; nothing of ours — copy as normal.
    * Needed on UIDPLUS too: COPYUID says where a copy landed, not that none was made.
    */
-  async move(locator: NativeLocator, toFolder: string): Promise<NativeLocator> {
+  async move(locator: NativeLocator, toFolder: string, door: WriteDoor): Promise<NativeLocator> {
     const caps = await this.capabilities();
     const { uid } = parseRef(locator.ref);
     const srcPath = this.toServerPath(locator.folder);
@@ -3473,6 +3501,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // the COPY branch, and true on the adopt path below — where nothing was written at all, so the
     // source is necessarily still there. Only an atomic MOVE leaves it already gone.
     let sourceAwaitingDelete = false;
+    // The COPY ran in THIS call, so the door already admitted the pair: the DELETE is its second
+    // half and is not asked again — a half pair is mail in two places.
+    let copiedHere = false;
 
     /**
      * The epoch guard, called UNDER EVERY SOURCE LOCK this move takes — see
@@ -3534,12 +3565,15 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       try {
         assertEpoch();
         if (caps.move) {
+          this.admitWrite(door, "move");
           const res = await this.client.messageMove([uid], dstPath, { uid: true });
           if (res && typeof res !== "boolean") {
             dstUidValidity = res.uidValidity ?? dstUidValidity;
             dstUid = caps.uidplus ? (res.uidMap?.get(uid) ?? null) : null;
           }
         } else {
+          // The pair's one ask: once this COPY has run, the DELETE below follows unasked.
+          this.admitWrite(door, "move");
           const res = await this.client.messageCopy([uid], dstPath, { uid: true });
           if (res && typeof res !== "boolean") {
             dstUidValidity = res.uidValidity ?? dstUidValidity;
@@ -3547,6 +3581,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           }
           // NOT deleted here. See the header: the expunge is last, after the verify.
           sourceAwaitingDelete = true;
+          copiedHere = true;
         }
       } finally {
         lock.release();
@@ -3579,6 +3614,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // the message twice. A refusal is a failure exactly as a rejection is (the rule
         // `makeLeaseIo#removeClaims` already applies), and a `true` is proved by CUSTODY: the uid
         // must be gone. One extra fetch, on this branch only — an atomic MOVE never reaches it.
+        if (!copiedHere) this.admitWrite(door, "expunge");
         const expunged = await this.client.messageDelete([uid], { uid: true }); // \Deleted + EXPUNGE
         if (expunged === false) throw new MoveIncompleteError(locator, toFolder, "refused");
         const survivor = await this.client.fetchOne(String(uid), { uid: true }, { uid: true });
@@ -3601,7 +3637,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * search is one `OR HEADER` tree — ~70 KB at 1 137 ids, which capping hosts refuse.
    */
   async moveMany(
-    locators: readonly NativeLocator[], toFolder: string,
+    locators: readonly NativeLocator[], toFolder: string, door: WriteDoor,
   ): Promise<MoveManyResult> {
     // DECLINED is the answer before anything is written; UNMAPPED is the answer after `UID MOVE`
     // has run and the server has not named where the mail landed. They used to be one value, so a
@@ -3714,6 +3750,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // re-acquisition — so this reads the epoch `UID MOVE` will actually run against. A step-1
         // check alone would let a folder recycled in that window take the write.
         if (epochRep && this.locatorEpochStale(epochRep)) return empty;
+        // After the whole preflight, before the command: a claim that lapsed or stood down while
+        // the source and destination were read sends nothing (`WriteDeclinedError`).
+        this.admitWrite(door, "move");
         const res = await this.client.messageMove(uids, dstPath, { uid: true });
         // FROM HERE THE MAIL HAS MOVED, so every refusal below answers `moved_unmapped`, never
         // the pre-write fallback: a server that reports the move as a bare `true`, or a `uidMap`
@@ -3749,7 +3788,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * raises the {@link MessageGoneError} the reconciler's skip-and-retry branch is written for;
    * `!ok` stays as a second signal.
    */
-  async setFlags(locator: NativeLocator, flags: { seen: boolean }): Promise<void> {
+  async setFlags(locator: NativeLocator, flags: { seen: boolean }, door: WriteDoor): Promise<void> {
     const { uid } = parseRef(locator.ref);
     const lock = await this.bounded(this.client.getMailboxLock(this.toServerPath(locator.folder)));
     try {
@@ -3761,9 +3800,10 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       const present = await this.bounded(
         this.client.fetchOne(String(uid), { uid: true }, { uid: true }));
       if (!present) throw new MessageGoneError(locator);
-      const ok = flags.seen
-        ? await this.client.messageFlagsAdd([uid], ["\\Seen"], { uid: true })
-        : await this.client.messageFlagsRemove([uid], ["\\Seen"], { uid: true });
+      this.admitWrite(door, "seen");
+      const ok = await (flags.seen
+        ? this.client.messageFlagsAdd([uid], ["\\Seen"], { uid: true })
+        : this.client.messageFlagsRemove([uid], ["\\Seen"], { uid: true }));
       if (!ok) throw new MessageGoneError(locator);
     } finally {
       lock.release();

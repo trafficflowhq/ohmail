@@ -1,6 +1,6 @@
 import {
   CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_PROFILE, CAPABILITY_RULES, deriveRequestKey,
-  DEFAULT_STALE_AFTER_MS, LeaseUnavailableError, LeaseClockSkewError, META_FOLDER,
+  DEFAULT_STALE_AFTER_MS, LeaseUnavailableError, LeaseClockSkewError, META_FOLDER, clockSkewBoundMs,
   ClaimReleaseError,
   isMalformed, parseClaim, runLeaseGate, sameMetaStamp,
   type LeaseIo, type LeaseOp, type LeaseSelf, type LeaseVerdict, type MetaBaselineReading,
@@ -9,7 +9,9 @@ import {
   type RawClaimMessage,
   type TakeoverAuthorization,
 } from "@trafficflow/core/adapters/organizer-lease";
-import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
+import type {
+  MailboxAdapter, MailboxWriteKind, WriteDoor, WriteDoorAnswer,
+} from "@trafficflow/core/adapters/imap";
 import type { ImapAuth } from "@trafficflow/core/adapters/imap-types";
 import type { MailboxDisabledReason, MailboxSyncBlockReason } from "@trafficflow/db";
 
@@ -648,6 +650,12 @@ export interface LeasePermit {
   readonly writesSinceRead: number;
   /** TRUE once a stand-down has killed this permit. A dead permit is never revived. */
   readonly revoked: boolean;
+  /**
+   * IS THE CLAIM STILL OURS AT THIS INSTANT? — answered from this receipt alone, no round trip;
+   * the write door's question. `stale` once the last renewal is older than the window every other
+   * install reads the claim fresh in, less the clock skew an admitted peer may carry.
+   */
+  standing(): "held" | "stale" | "revoked";
 }
 
 /** The five facts a permit names, so a write can say which claim it is riding. */
@@ -731,6 +739,9 @@ export function leaseStoodDown(authority: OrganizerWriteAuthority): boolean {
 export async function acquireLeasePermit(input: LeasePermitInput): Promise<LeasePermit> {
   const clock = input.now ?? ((): Date => new Date());
   const ttlMs = Math.max(input.ttlMs ?? DEFAULT_PERMIT_TTL_MS, MIN_PERMIT_TTL_MS);
+  // The window a peer reads our claim fresh in, less the skew it may carry — see `standing()`.
+  const staleAfterMs = input.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
+  const heldForMs = staleAfterMs - clockSkewBoundMs(staleAfterMs);
   const writesPerRecheck = Math.max(input.writesPerRecheck ?? PERMIT_WRITES_PER_RECHECK, 1);
   const base = { ...input };
   delete (base as Partial<LeasePermitInput>).now;
@@ -931,6 +942,11 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
     get probes(): number { return probes; },
     get writesSinceRead(): number { return writesSinceRead; },
     get revoked(): boolean { return revoked; },
+    standing(): "held" | "stale" | "revoked" {
+      if (revoked) return "revoked";
+      // `verifiedAt` IS the heartbeat: every read that admitted renewed the claim at that instant.
+      return clock().getTime() - verifiedAt.getTime() >= heldForMs ? "stale" : "held";
+    },
     async check(): Promise<void> {
       if (revoked) {
         throw new OrganizerStandDownError({
@@ -1010,6 +1026,35 @@ export interface MailboxWriteAuthority {
  * owns and never re-derives this one.
  */
 export type OrganizerWriteAuthority = LeasePermit | NoOrganizerLease;
+
+/**
+ * THE WRITE DOOR — the one function every organizer hands the adapter, on the worker, the local
+ * engine and the phone alike. It answers from the permit's own state (`standing()`), what the
+ * caller observed this batch (`foldersOff`, read per batch), and the role: a reader may write
+ * `\Seen` and nothing else. The other no-lease arms are admitted exactly as
+ * {@link assertMayWriteToMailbox} admits them — two guards that disagree about one authority are
+ * worse than either. Synchronous and round-trip free; the page boundaries still re-read the lease.
+ */
+export function writeDoorOf(
+  authority: Pick<MailboxWriteAuthority, "lease">, observed: { foldersOff?: boolean } = {},
+): WriteDoor {
+  const refuse = (reason: Extract<WriteDoorAnswer, { admit: false }>["reason"]): WriteDoorAnswer =>
+    ({ admit: false, reason });
+  return {
+    ask(write: MailboxWriteKind): WriteDoorAnswer {
+      if (observed.foldersOff === true) return refuse("folders_off");
+      const { lease } = authority;
+      if ("noLease" in lease) {
+        if (lease.noLease !== "reader") return { admit: true };
+        return write === "seen" ? { admit: true } : refuse("no_lease");
+      }
+      const standing = lease.standing();
+      if (standing === "revoked") return refuse("stood_down");
+      if (standing === "stale") return refuse("claim_stale");
+      return { admit: true };
+    },
+  };
+}
 
 /** Why a pass holds no organizer lease. Every arm is a state somebody can point at. */
 export interface NoOrganizerLease {

@@ -10,14 +10,14 @@
  * server named, so a vanished member (`gone`) is left for `changesSince` and nothing is husked in error. */
 
 import { and, eq, gt, inArray } from "drizzle-orm";
-import { folderState, junkSweepCandidateWhere, messages, type Tx } from "@trafficflow/db";
+import { folderState, junkSweepCandidateWhere, mailboxes, messages, type Tx } from "@trafficflow/db";
 import {
-  FILING_BATCH_MAX, MessageGoneError, type MailboxAdapter, type MoveManyResult,
+  FILING_BATCH_MAX, MessageGoneError, WriteDeclinedError, type MailboxAdapter, type MoveManyResult,
 } from "@trafficflow/core/adapters/imap";
 import type { NativeLocator } from "@trafficflow/core";
 import type { WorkerRepo, PendingFolderState } from "@trafficflow/core/adapters/drizzle-repo";
 import { completeFiling, SPAM_PILE, type SpecialFolderMap } from "./junk-filing.js";
-import { assertMayWriteToMailbox, type MailboxWriteAuthority } from "./lease.js";
+import { assertMayWriteToMailbox, writeDoorOf, type MailboxWriteAuthority } from "./lease.js";
 
 /**
  * THE SCAN'S STATE ACROSS CYCLES — a pure decision, extracted so it can be pinned by test (a fully
@@ -178,6 +178,11 @@ export interface JunkSweepResult {
    */
   deferred: number;
   dryRun: boolean;
+  /**
+   * The mailbox was switched off under "Use folders" while the sweep ran: the batch that read it
+   * wrote nothing and the sweep stopped there. The command port retires the press on its next read.
+   */
+  optedOut: boolean;
 }
 
 export async function junkSweepPass(opts: {
@@ -239,6 +244,7 @@ export async function junkSweepPass(opts: {
 
   const result: JunkSweepResult = {
     candidates, junkFolder: special.junkFolder, moved: [], skipped: [], deferred: 0, dryRun: !execute,
+    optedOut: false,
   };
   if (!execute || special.junkFolder === null || candidates.length === 0) return result;
 
@@ -285,107 +291,127 @@ export async function junkSweepPass(opts: {
     return new Set(live.map((r) => r.messageId));
   };
 
-  for (let i = 0; i < pending.length; i += FILING_BATCH_MAX) {
-    const wholeChunk = pending.slice(i, i + FILING_BATCH_MAX);
-    // Before this chunk's IMAP writes. A refusal propagates, never caught into `skipped`: it is
-    // proof of a lost lease or lost leadership, not evidence about a message. Ordered before
-    // `stillDesired` deliberately — a process that has lost the lease must not spend a query on
-    // the mailbox either. Only under `execute`: a dry run reads no lease, because a lease read
-    // RENEWS our claim, which is itself a write.
-    if (execute) await assertMayWriteToMailbox(writeAuthority);
-    const desired = await stillDesired(wholeChunk);
-    const chunk = wholeChunk.filter((p) => desired.has(p.messageId));
-    for (const p of wholeChunk) {
-      if (!desired.has(p.messageId)) {
-        result.skipped.push({
-          messageId: p.messageId,
-          reason: "the spam verdict was withdrawn after this sweep began (newer intent stands)",
-        });
-      }
-    }
-    if (chunk.length === 0) continue;
-    // The batched fast path when the adapter can prove it, per-message otherwise — the
-    // reconciler's exact fallback shape, minus its deferral machinery: a sweep is one
-    // invocation, so a refusal is reported and left rather than scheduled. ONLY the IMAP call
-    // sits in the try: its refusal is what selects the fallback.
-    let batched: MoveManyResult | null = null;
-    // The batch's THIRD answer: the mail moved and the server would not say where. Nothing was
-    // recorded, and the per-message fallback must not run — it would spend one command per member
-    // rediscovering a source that is already empty and report landed work as gone.
-    let unmapped = false;
-    if (typeof adapter.moveMany === "function") {
-      // AGAIN, because `stillDesired` sits between the ask above and this write: an unbounded
-      // database wait there can outlive the permit's TTL, so the receipt would be checked and then
-      // spent after it expired. The first ask refuses to spend a query, this one the WRITE.
+  /** "Use folders" for this mailbox, read at every batch rather than once when the press is seen. */
+  const foldersOffNow = async (): Promise<boolean> => {
+    const [row] = await db.select({ off: mailboxes.foldersDisabledAt }).from(mailboxes)
+      .where(eq(mailboxes.id, mailboxId)).limit(1);
+    return row?.off != null;
+  };
+
+  try {
+    for (let i = 0; i < pending.length; i += FILING_BATCH_MAX) {
+      const wholeChunk = pending.slice(i, i + FILING_BATCH_MAX);
+      // Before this chunk's IMAP writes. A refusal propagates, never caught into `skipped`: it is
+      // proof of a lost lease or lost leadership, not evidence about a message. Ordered before
+      // `stillDesired` deliberately — a process that has lost the lease must not spend a query on
+      // the mailbox either. Only under `execute`: a dry run reads no lease, because a lease read
+      // RENEWS our claim, which is itself a write.
       if (execute) await assertMayWriteToMailbox(writeAuthority);
-      try {
-        const res = await adapter.moveMany(chunk.map((p) => p.nativeLocator!), junk);
-        if (res.outcome === "batched") batched = res;
-        else if (res.outcome === "moved_unmapped") unmapped = true;
-      } catch {
-        // A refused batch answers nothing; the per-message fallback below does the work.
-        batched = null;
+      const desired = await stillDesired(wholeChunk);
+      const chunk = wholeChunk.filter((p) => desired.has(p.messageId));
+      for (const p of wholeChunk) {
+        if (!desired.has(p.messageId)) {
+          result.skipped.push({
+            messageId: p.messageId,
+            reason: "the spam verdict was withdrawn after this sweep began (newer intent stands)",
+          });
+        }
       }
-    }
-    if (unmapped) {
-      // DEFERRED, which is the counter's own meaning: this is our bookkeeping, not the pile
-      // refusing. The mail is in Junk; the next scan finds it gone from the quarantine folder and
-      // the sweep's one-time command is not retired by a scan that "moved nothing".
-      for (const p of chunk) {
-        result.deferred++;
-        result.skipped.push({ messageId: p.messageId, reason: SWEEP_UNMAPPED_REASON });
+      if (chunk.length === 0) continue;
+      // The batched fast path when the adapter can prove it, per-message otherwise — the
+      // reconciler's exact fallback shape, minus its deferral machinery: a sweep is one
+      // invocation, so a refusal is reported and left rather than scheduled. ONLY the IMAP call
+      // sits in the try: its refusal is what selects the fallback.
+      let batched: MoveManyResult | null = null;
+      // The batch's THIRD answer: the mail moved and the server would not say where. Nothing was
+      // recorded, and the per-message fallback must not run — it would spend one command per member
+      // rediscovering a source that is already empty and report landed work as gone.
+      let unmapped = false;
+      // THIS BATCH'S DOOR: the lease as the adapter asks it at the command, and the opt-out as read
+      // now — so a mailbox switched off while the previous batch moved stops this one.
+      const door = writeDoorOf(writeAuthority, { foldersOff: await foldersOffNow() });
+      if (typeof adapter.moveMany === "function") {
+        // AGAIN, because `stillDesired` sits between the ask above and this write: an unbounded
+        // database wait there can outlive the permit's TTL, so the receipt would be checked and then
+        // spent after it expired. The first ask refuses to spend a query, this one the WRITE.
+        if (execute) await assertMayWriteToMailbox(writeAuthority);
+        try {
+          const res = await adapter.moveMany(chunk.map((p) => p.nativeLocator!), junk, door);
+          if (res.outcome === "batched") batched = res;
+          else if (res.outcome === "moved_unmapped") unmapped = true;
+        } catch (err) {
+          // A decline is about the writer, never the batch: it may not select the fallback.
+          if (err instanceof WriteDeclinedError) throw err;
+          // A refused batch answers nothing; the per-message fallback below does the work.
+          batched = null;
+        }
       }
-      continue;
-    }
-    if (batched !== null) {
-      for (const p of chunk) {
-        const newLoc = batched.moved.get(p.nativeLocator!.ref);
-        if (!newLoc) {
-          // A UID the batch did not return is the batch's own `MessageGoneError` — the source no
-          // longer holds it. DEFERRED, not refused: the next scan re-finds it by Message-ID.
+      if (unmapped) {
+        // DEFERRED, which is the counter's own meaning: this is our bookkeeping, not the pile
+        // refusing. The mail is in Junk; the next scan finds it gone from the quarantine folder and
+        // the sweep's one-time command is not retired by a scan that "moved nothing".
+        for (const p of chunk) {
           result.deferred++;
-          result.skipped.push({ messageId: p.messageId, reason: SWEEP_GONE_REASON });
+          result.skipped.push({ messageId: p.messageId, reason: SWEEP_UNMAPPED_REASON });
+        }
+        continue;
+      }
+      if (batched !== null) {
+        for (const p of chunk) {
+          const newLoc = batched.moved.get(p.nativeLocator!.ref);
+          if (!newLoc) {
+            // A UID the batch did not return is the batch's own `MessageGoneError` — the source no
+            // longer holds it. DEFERRED, not refused: the next scan re-finds it by Message-ID.
+            result.deferred++;
+            result.skipped.push({ messageId: p.messageId, reason: SWEEP_GONE_REASON });
+            continue;
+          }
+          await complete(p, newLoc);
+        }
+        continue;
+      }
+      // THE PER-MESSAGE FALLBACK ASKS PER MESSAGE, NOT ONCE FOR THE RUN. It used to ask ONCE and then issue
+      // up to `FILING_BATCH_MAX` separate `adapter.move()` commands under a comment claiming "the same fresh
+      // leadership read as before the batch" — one read before FIFTY writes, so a takeover after the third
+      // move let the remaining forty-seven proceed unchecked. This module's rule is *"EVERY IMAP mutation is
+      // preceded by `fenceImapMutation`"*; the batched arm above is one command (where "before the batch" and
+      // "before every write" coincide), and here they do not. The cost is real and right: under the worker's
+      // fence a fifty-message fallback costs fifty indexed reads, under the CLI's permit a comparison until
+      // the TTL lapses. This is the RARE path (no `moveMany`, or a refused batch) and every write is destructive.
+      for (const p of chunk) {
+        let newLoc: NativeLocator;
+        // OUTSIDE the `try`, and the placement is load-bearing: the catch below ends in a generic arm
+        // that files the error against THIS MESSAGE and carries on, so a refusal raised inside it
+        // would be read as evidence about a message and the sweep would keep moving mail.
+        if (execute) await assertMayWriteToMailbox(writeAuthority);
+        try {
+          newLoc = await adapter.move(p.nativeLocator!, junk, door);
+        } catch (err) {
+          if (err instanceof WriteDeclinedError) throw err;
+          if (err instanceof MessageGoneError) {
+            // The same fact the batched arm above reports by absence, and it gets the same reading
+            // and the same words: the source does not hold this message any more, so there is
+            // nothing to move and nothing is wrong. `changesSince` re-adopts it by Message-ID and a
+            // later sweep window moves it. Counted as DEFERRED so the cycle does not read a
+            // recycled folder as a pile the server refuses — see {@link JunkSweepResult.deferred}.
+            result.deferred++;
+            result.skipped.push({ messageId: p.messageId, reason: SWEEP_GONE_REASON });
+            continue;
+          }
+          result.skipped.push({
+            messageId: p.messageId,
+            reason: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+          });
           continue;
         }
         await complete(p, newLoc);
       }
-      continue;
     }
-    // THE PER-MESSAGE FALLBACK ASKS PER MESSAGE, NOT ONCE FOR THE RUN. It used to ask ONCE and then issue
-    // up to `FILING_BATCH_MAX` separate `adapter.move()` commands under a comment claiming "the same fresh
-    // leadership read as before the batch" — one read before FIFTY writes, so a takeover after the third
-    // move let the remaining forty-seven proceed unchecked. This module's rule is *"EVERY IMAP mutation is
-    // preceded by `fenceImapMutation`"*; the batched arm above is one command (where "before the batch" and
-    // "before every write" coincide), and here they do not. The cost is real and right: under the worker's
-    // fence a fifty-message fallback costs fifty indexed reads, under the CLI's permit a comparison until
-    // the TTL lapses. This is the RARE path (no `moveMany`, or a refused batch) and every write is destructive.
-    for (const p of chunk) {
-      let newLoc: NativeLocator;
-      // OUTSIDE the `try`, and the placement is load-bearing: the catch below ends in a generic arm
-      // that files the error against THIS MESSAGE and carries on, so a refusal raised inside it
-      // would be read as evidence about a message and the sweep would keep moving mail.
-      if (execute) await assertMayWriteToMailbox(writeAuthority);
-      try {
-        newLoc = await adapter.move(p.nativeLocator!, junk);
-      } catch (err) {
-        if (err instanceof MessageGoneError) {
-          // The same fact the batched arm above reports by absence, and it gets the same reading
-          // and the same words: the source does not hold this message any more, so there is
-          // nothing to move and nothing is wrong. `changesSince` re-adopts it by Message-ID and a
-          // later sweep window moves it. Counted as DEFERRED so the cycle does not read a
-          // recycled folder as a pile the server refuses — see {@link JunkSweepResult.deferred}.
-          result.deferred++;
-          result.skipped.push({ messageId: p.messageId, reason: SWEEP_GONE_REASON });
-          continue;
-        }
-        result.skipped.push({
-          messageId: p.messageId,
-          reason: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
-        });
-        continue;
-      }
-      await complete(p, newLoc);
-    }
+  } catch (err) {
+    // Switched off mid-sweep: the batch that saw it wrote nothing, and nothing after it runs. A
+    // lease decline is the cycle's to report, so it leaves as it came.
+    if (!(err instanceof WriteDeclinedError) || err.reason !== "folders_off") throw err;
+    result.optedOut = true;
   }
   return result;
 }

@@ -1,7 +1,11 @@
 import type { FolderOpRow, WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
+import { WriteDeclinedError, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import type { Logger } from "@trafficflow/core/mail";
-import { assertMayWriteToMailbox, type MailboxWriteAuthority } from "./lease.js";
+import { LeaseUnavailableError } from "@trafficflow/core/adapters/organizer-lease";
+import { MailboxErasedError } from "@trafficflow/db";
+import {
+  assertMayWriteToMailbox, OrganizerStandDownError, writeDoorOf, type MailboxWriteAuthority,
+} from "./lease.js";
 
 /**
  * THE FOLDER-OP PASS — user-commanded CREATE/RENAME/DELETE (FOLDERS-SPEC.md stage 2). The API records the
@@ -92,9 +96,9 @@ export async function folderOpsPass(deps: FolderOpsDeps): Promise<FolderOpsResul
       else if (outcome === "paused") result.owesMore = true;
       else result.failed += 1;
     } catch (err) {
-      // Only the caller's fence vocabulary may leave this pass — lost leadership stops the
-      // cycle unreclassified. Everything else is a transient: count it, keep the command.
-      if (isFenceRefusal(err)) throw err;
+      // Only a refusal about the WRITER may leave this pass — lost leadership, a lost or declined
+      // lease, a removed mailbox — and it leaves unreclassified. Everything else is a transient.
+      if (isRefusal(err)) throw err;
       const attempts = op.attempts + 1;
       if (attempts >= FOLDER_OP_MAX_ATTEMPTS) {
         await deps.write((r) => r.failFolderOp(op, "refused"));
@@ -111,12 +115,15 @@ export async function folderOpsPass(deps: FolderOpsDeps): Promise<FolderOpsResul
 }
 
 /**
- * `LeaderFencedError` by NAME rather than by class: the class lives in sync.ts, which imports
- * this module — an import the other way would be a cycle, and the name is the contract the
- * fence's own tests pin.
+ * `sync.ts#rethrowRefusal`'s set, asked here so a lost lease does not burn an attempt off a
+ * person's folder command. The two classes that live in `sync.ts` are matched by NAME (that
+ * module imports this one); the rest are imported.
  */
-function isFenceRefusal(err: unknown): boolean {
-  return err instanceof Error && err.name === "LeaderFencedError";
+function isRefusal(err: unknown): boolean {
+  if (err instanceof OrganizerStandDownError || err instanceof LeaseUnavailableError) return true;
+  if (err instanceof WriteDeclinedError || err instanceof MailboxErasedError) return true;
+  return err instanceof Error
+    && (err.name === "LeaderFencedError" || err.name === "MailboxRemovedError");
 }
 
 async function runCreate(deps: FolderOpsDeps, op: FolderOpRow): Promise<"done" | "failed"> {
@@ -129,7 +136,7 @@ async function runCreate(deps: FolderOpsDeps, op: FolderOpRow): Promise<"done" |
   // Where the create LANDED — a personal-namespace server files a root-named create under
   // INBOX, and the completion records the real path (or defers to the row discovery already
   // adopted there) so the commanded row can never stand as a phantom.
-  const landed = await deps.adapter.createFolder!(op.folder);
+  const landed = await deps.adapter.createFolder!(op.folder, writeDoorOf(deps.writeAuthority));
   await deps.write((r) => r.completeFolderCreate(op, landed));
   deps.log?.info("folder_created", {
     mailboxId: deps.mailboxId, accountId: deps.accountId, folderId: op.folderId, landed,
@@ -150,7 +157,7 @@ async function runRename(deps: FolderOpsDeps, op: FolderOpRow): Promise<"done" |
     return "failed";
   }
   await assertMayWriteToMailbox(deps.writeAuthority);
-  const res = await deps.adapter.renameFolder!(op.folder, to);
+  const res = await deps.adapter.renameFolder!(op.folder, to, writeDoorOf(deps.writeAuthority));
   if (res === "conflict") {
     await deps.write((r) => r.failFolderOp(op, "exists"));
     return "failed";
@@ -216,14 +223,14 @@ async function runDelete(
     // sweep hands back the FENCE: the folder as it left it, which is the only state the DELETE
     // is authorized against.
     await assertMayWriteToMailbox(deps.writeAuthority);
-    const sweep = await adapter.moveAll!(f.folder, trash);
+    const sweep = await adapter.moveAll!(f.folder, trash, writeDoorOf(deps.writeAuthority));
     // Phase 2 — the mirror consequences, chunked (one tx per chunk, idempotent re-entry).
     if (!(await tombstoneWithin(f.folder))) return "paused";
     // Phase 3 — the folder itself, re-read against the fence. `unverified` — no reading at all —
     // is a transient, not a verdict: deleting on an unverified count is the expunge this
     // ceremony exists to forbid.
     await assertMayWriteToMailbox(deps.writeAuthority);
-    const res = await adapter.deleteFolder!(f.folder, sweep.fence);
+    const res = await adapter.deleteFolder!(f.folder, sweep.fence, writeDoorOf(deps.writeAuthority));
     if (res === "unverified") {
       throw new Error(`folder ${f.folder}: the server did not answer the re-reading — emptiness unverified, retrying`);
     }

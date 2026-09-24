@@ -7,7 +7,7 @@ import {
 } from "@trafficflow/db";
 import { providerAuthservIds, silentLogger, type Logger } from "@trafficflow/core";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { ImapAdapter } from "@trafficflow/core/adapters/imap";
+import { ImapAdapter, WriteDeclinedError } from "@trafficflow/core/adapters/imap";
 import { deriveRequestKey } from "@trafficflow/core/adapters/organizer-lease";
 import { instanceIdFrom, selectionOf, type WorkerConfig } from "./config.js";
 import { acquireLeaderLock, leaderLockKeyFor } from "./leader-lock.js";
@@ -21,7 +21,7 @@ import { applyMetaRequests } from "./request-drain.js";
 import { OrganizerProfileSync } from "./profile.js";
 import { makeStorageCapResolver } from "./storage-cap.js";
 import {
-  CLOUD_DISPLAY_NAME, LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit,
+  CLOUD_DISPLAY_NAME, LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit, writeDoorOf,
   cloudInstallId, leaseStoodDown, mailboxHasRequestKey, type LeasePermit,
 } from "./lease.js";
 import { isCliEntry } from "./entry.js";
@@ -369,7 +369,7 @@ export async function runReconcileCron(
       if (err instanceof OrganizerStandDownError) return await standDown(err);
       throw err;
     }
-    await adapter.ensureFolders();
+    await adapter.ensureFolders(writeDoorOf({ lease: permit }));
     // ── THE IMPORT HOLD, ARMED FROM THE MAILBOX ITSELF (TAKEOVER-RESCREEN, rounds 4 and 6) ────
     //
     // This pass runs precisely when no worker leads, so the in-memory hold died with the worker
@@ -478,6 +478,8 @@ export async function runReconcileCron(
       const mayStillWrite = !leaseStoodDown(permit)
         && !(cycleError instanceof LeaderFencedError)
         && !(cycleError instanceof LeaseUnavailableError)
+        // A write the lease did not admit at the command is the same NO, asked one step later.
+        && !(cycleError instanceof WriteDeclinedError)
         // A shared-database fault is the third: this drain is database work end to end, so on a
         // Postgres outage it can only spend one IMAP round trip per mailbox to fail in a way the
         // first mailbox already established. The always-on worker's twin excludes it for the same
@@ -527,6 +529,15 @@ export async function runReconcileCron(
         });
         return { ran: false, reason: "mailbox-removed" };
       }
+      /* The lease did not admit a command at the moment it would have gone out: nothing of it was
+         written, and the next run's gate re-reads the claim. A skip, not a fault that pages. */
+      if (err instanceof WriteDeclinedError) {
+        log.info(cronEvent("reconcile", "write_declined"), {
+          mailboxId, accountId: row.accountId, verdict: err.reason, kind: err.write,
+          reason: "the lease did not admit a mail-server write at the command; nothing of it was written",
+        });
+        return { ran: false, reason: "write-declined" };
+      }
       if (!(err instanceof LeaderFencedError)) throw err;
       // NOT A FAILURE — a handover. The fence keys on the shard, so one refusal means every later
       // write would be refused too, and the write group that was refused wrote nothing. Reported
@@ -575,9 +586,9 @@ export async function runReconcileCron(
 }
 
 if (isCliEntry(import.meta.url)) {
-  // `reason` is one of eight author-written literals (`worker-live`, `other-shard`,
-  // `mailbox-disabled`, `mailbox-removed`, `stood-down`, `lease-unreadable`, `leadership-lost`,
-  // `unknown`), never a runtime-composed string — which is why it may ride on the line at all.
+  // `reason` is one of nine author-written literals (`worker-live`, `other-shard`,
+  // `mailbox-disabled`, `mailbox-removed`, `stood-down`, `lease-unreadable`, `write-declined`,
+  // `leadership-lost`, `unknown`), never a runtime-composed string — which is why it may ride on the line at all.
   // `mailbox-disabled` and `mailbox-removed` are different readings: the first is a row that was
   // already a tombstone when the sweep looked, the second a removal that landed mid-sweep.
   void runCronCli("reconcile", runReconcileCron, (r) => ({
