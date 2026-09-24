@@ -35,7 +35,8 @@ desktop and the phone. The months and years on the right jump anywhere in it, an
 it opens. Search shows one list: what the app already has appears at once and is
 replaced by your whole mailbox's answer, scrolling loads more, the line under the box says how many
 matched and how long it took, and while older mail is still being indexed it says how far along
-that is.
+that is. In this release, a desktop paired with ohmail Cloud searches the mail it keeps on the computer
+rather than your whole mailbox.
 
 ### Search on the desktop answers in milliseconds, with the count right behind
 <!-- changes: archive-024-desktop-search-budget.md -->
@@ -66,7 +67,7 @@ and keep their order when the exact counts replace it.
 
 Search now finds a message by its body, its subject, its sender, its recipients and its
 attachment names — including mail that arrived as HTML only — across your whole mailbox, and the
-first page answers in milliseconds however many messages contain the word. Every message you own
+first page comes back in a fraction of a second however many messages contain the word. Every message you own
 can now be listed from the server newest first, back to the first one, with a count for every
 month to jump by.
 
