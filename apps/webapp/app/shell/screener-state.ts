@@ -1444,8 +1444,8 @@ export function useScreenerState(
 
   /**
    * Retargeting is the reversal of the decision those rows record, and the only rewrite that moves ingest along with
-   * the presentation: a fresh allow rule beside a standing deny rule loses every tie (`compareRules`, deny before
-   * allow before kind), so future mail would have kept arriving in Quarantine. @param segment the pile the sender is
+   * the presentation: a fresh allow rule beside a standing deny rule of the same kind loses every tie (`compareRules`,
+   * deny before allow at one specificity), so future mail would have kept arriving in Quarantine. @param segment the pile the sender is
    * released FROM — named by a refusal, and where they remain if refused. Passed rather than derived because
    * `release` serves both `allowScreened` (Screened out) and `notSpamToOhbox` (Spam), identical from in here.
    */

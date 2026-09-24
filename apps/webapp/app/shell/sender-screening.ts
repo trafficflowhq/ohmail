@@ -596,7 +596,7 @@ export async function dispatchScreeningChange(
  * has INBOX and Screener mail LISTED in Spam while it physically sits elsewhere: a release of bare `move`s either
  * rolls back locally or is re-presented by the rule (measured live, 2026-08-19 — every "Not spam → Ohbox" press
  * answered the refusal toast). A NEW allow rule beside the old cannot fix it: `compareRules` ranks deny over allow at
- * equal priority, so only retargeting or deleting the holding rule makes the surfaces agree. Term-free only (the
+ * equal priority and specificity, so only retargeting or deleting the holding rule makes the surfaces agree. Term-free only (the
  * ladder's doctrine): a subject- or body-narrowed rule is one SLICE, deliberately built. Both kinds included: a
  * domain-scoped spam decision writes a `domain` deny rule, and its reversal must reach the same row.
  */

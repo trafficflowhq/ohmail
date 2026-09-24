@@ -2,6 +2,7 @@ import {
   counterpartyEvidence, type CounterpartyEvidence, type CounterpartyMessage,
 } from "@trafficflow/core/sender-headers";
 import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/folder-name";
+import { compareRules, effectForDestination, type OrderedRule } from "@trafficflow/core/rule-order";
 import type { EntityReader } from "./store.js";
 import { ownAddressKeys } from "./own-address.js";
 import { isOwnSent, isResurfaced, messagesByDateDesc, rulesList, senderKey } from "./selectors.js";
@@ -58,10 +59,10 @@ const CONSENTING_DESTINATIONS: ReadonlySet<string> = new Set<string>([
 
 export type SenderActivity = "active" | "dormant";
 
-/** Rules indexed for lookup: exact addresses first, then domains. */
+/** The winning rule per address and per domain, under the server's order ({@link consentIndex}). */
 export interface ConsentIndex {
-  readonly bySender: ReadonlyMap<string, Folder>;
-  readonly byDomain: ReadonlyMap<string, Folder>;
+  readonly bySender: ReadonlyMap<string, RuleDTO>;
+  readonly byDomain: ReadonlyMap<string, RuleDTO>;
 }
 
 export interface ConsentCounts {
@@ -144,19 +145,27 @@ export function domainOfAddress(address: string): string | null {
   return address.slice(at + 1).trim().toLowerCase();
 }
 
+/** A mirror rule as the shared order reads it: the effect is its destination's side of the gate. */
+function ordered(r: RuleDTO): OrderedRule {
+  return { ...r, effect: effectForDestination(r.destination) };
+}
+
+/** Does `a` outrank `b` under the one order the router uses (`@trafficflow/core/rule-order`)? */
+function outranks(a: RuleDTO, b: RuleDTO): boolean {
+  return compareRules(ordered(a), ordered(b)) < 0;
+}
+
 /**
- * Index the rules actually in force. Skipped: disabled rules; `header`
- * rules (about a message, not a person); rules pointing at the SCREENER
- * (the absence of a decision written down — counting it would park a
- * dormant sender in the queue for ever). Same kind, same target: the more
- * permissive wins — this decides PRESENTATION only, and the permissive
- * reading shows the user their mail. A subject- or body-narrowed rule
- * counts as a decision about the WHOLE sender (mail 0050/0052): terms
- * narrow placement, never admission. Never add a term check here.
+ * Index the rules actually in force. Skipped: disabled rules; `header` rules (about a message,
+ * not a person); rules pointing at the SCREENER (the absence of a decision). Two rules for one key
+ * are ranked by the ROUTER'S order — deny over allow, then terms, provenance and id — so a sender's
+ * twins present where the organizer files their mail; no instant is read, and the input order
+ * decides nothing. A subject- or body-narrowed rule counts as a decision about the WHOLE
+ * sender (mail 0050/0052): terms narrow placement, never admission. Never add a term check here.
  */
 export function consentIndex(rules: readonly RuleDTO[]): ConsentIndex {
-  const bySender = new Map<string, Folder>();
-  const byDomain = new Map<string, Folder>();
+  const bySender = new Map<string, RuleDTO>();
+  const byDomain = new Map<string, RuleDTO>();
   for (const r of rules) {
     if (!r.enabled) continue;
     if (r.destination === "ohmail/Screener") continue;
@@ -165,25 +174,25 @@ export function consentIndex(rules: readonly RuleDTO[]): ConsentIndex {
     const key = r.match.trim().toLowerCase();
     if (!key) continue;
     const held = target.get(key);
-    if (held !== undefined && CONSENTING_DESTINATIONS.has(held)) continue;
-    target.set(key, r.destination);
+    if (held === undefined || outranks(r, held)) target.set(key, r);
   }
   return { bySender, byDomain };
 }
 
 /**
- * The destination a decision names for this sender, or `null` when no decision exists.
- *
- * Address before domain, because naming one mailbox is a more specific claim than naming a
- * whole domain and the specific claim is the one the user meant.
+ * The destination a decision names for this sender, or `null` when no decision exists — core
+ * `standingRule`'s reading: the winner under the router's order among the rules naming the address
+ * and its domain. At equal priority the address rule wins, the more specific claim, whichever way
+ * the domain rule decides; a higher-priority domain rule wins over it, as the organizer files it.
  */
 export function decidedDestination(index: ConsentIndex, address: string): Folder | null {
   const addr = senderKey(address);
   const exact = index.bySender.get(addr);
-  if (exact !== undefined) return exact;
   const domain = domainOfAddress(addr);
-  if (domain === null) return null;
-  return index.byDomain.get(domain) ?? null;
+  const wide = domain === null ? undefined : index.byDomain.get(domain);
+  if (exact === undefined) return wide?.destination ?? null;
+  if (wide === undefined) return exact.destination;
+  return outranks(wide, exact) ? wide.destination : exact.destination;
 }
 
 /**

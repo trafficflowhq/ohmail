@@ -1700,37 +1700,39 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
 
   /**
    * The ORDER BY is the audit trail, not the correctness: `evaluateRules` resolves conflicts by a
-   * total order in TypeScript (`rules.ts#compareRules`), but without an ORDER BY this query
+   * total order in TypeScript (`rule-order.ts#compareRules`), but without an ORDER BY this query
    * returned physical row order, so nobody could run one SELECT in psql and see which rule the
    * router would pick — and PGlite's stable insertion order hid the class from every test not on
-   * real Postgres. The clauses mirror `compareRules` step for step, deny-over-allow included; a
+   * real Postgres. The clauses mirror `compareRules` step for step, the effect clause included; a
    * pg test sorts this output with the exported comparator and requires that nothing moves.
    */
   async listRules(accountId: string): Promise<Rule[]> {
     const rows = await this.db.select().from(rulesTbl).where(eq(rulesTbl.accountId, accountId))
       .orderBy(
         desc(rulesTbl.priority),
-        sql`case when ${rulesTbl.destination} in ('ohmail/Screener', 'ohmail/Screened', 'ohmail/Quarantine') then 0 else 1 end`,
         sql`case ${rulesTbl.kind} when 'sender' then 0 when 'domain' then 1 else 2 end`,
-        // A subject term outranks its absence within one kind — `subjectRank` in `rules.ts`, in
+        // Deny before allow within one kind — `compareRules`' effect clause, in the same position:
+        // below the kind, so an address allow outranks a domain deny; above the terms.
+        sql`case when ${rulesTbl.destination} in ('ohmail/Screener', 'ohmail/Screened', 'ohmail/Quarantine') then 0 else 1 end`,
+        // A subject term outranks its absence within one kind — `compareRules`' subject clause, in
         // the same position. A regex and not `IS NOT NULL` or `btrim`: the TypeScript side reads
         // `''` and blank as absent, and one-argument `btrim` trims spaces only, so a tab-only
         // term would rank as narrow in SQL and as bare in the evaluator — a rule matching
-        // everything. The class is `SUBJECT_TERM_TRIM` spelled in SQL, backslashes doubled so the
+        // everything. The class is `rule-order.ts`'s term trim in SQL, backslashes doubled so the
         // text Postgres receives is byte-identical to the migration's CHECK; the pg test checks
         // agreement over all six characters.
         sql`case when ${this.d.hasNonBlank(rulesTbl.subjectContains)} then 0 else 1 end`,
-        // THE BODY TERM'S CLAUSE (mail 0052), directly below the subject one — `bodyRank` in
-        // `rules.ts`, in the same position. Everything the comment above establishes applies
+        // THE BODY TERM'S CLAUSE (mail 0052), directly below the subject one — the body clause of
+        // `compareRules`, in the same position. Everything the comment above establishes applies
         // verbatim: the predicate is this REGEX and not `IS NOT NULL` or `btrim`, the backslashes
         // are DOUBLED so the text Postgres receives is byte-identical to the migration's CHECK,
         // and the character class is the evaluator's trim class spelled in SQL. The subject
-        // clause ranking first is `bodyRank`'s documented decision: a rule with both terms
+        // clause ranking first is the order's documented decision: a rule with both terms
         // outranks subject-only outranks body-only outranks bare, here and in `compareRules`,
         // or the two statements of one order disagree and the router picks a winner `psql` does
         // not show.
         sql`case when ${this.d.hasNonBlank(rulesTbl.bodyContains)} then 0 else 1 end`,
-        // Every value spelled out, none left to the `else`. `PROVENANCE_RANK` in `rules.ts` is
+        // Every value spelled out, none left to the `else`. `PROVENANCE_RANK` in `rule-order.ts` is
         // the same order and ranks an UNKNOWN value last; an `else 2` here would rank a value
         // this list forgot as though it were `promoted`, and the server and the client would
         // order the same two rules differently. The `else 4` is for a value neither knows.

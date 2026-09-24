@@ -1274,10 +1274,10 @@ async function applyAccountUpsert(
       };
       /* THE CREATION INSTANT TRAVELS WITH THE RULE, in the insert AND the conflict set. Without
          it every mirrored rule took this process's insert time, so all of them shared one instant
-         and `rulesList` — newest `createdAt` first — ordered a sender's rule twins by UUID: the
-         Cloud-paired desktop presented that sender's mail where an OLDER twin said while the web
-         followed the newest (measured 2026-09-24). Absent or unparseable on the wire leaves the
-         column alone, the message arm's rule for `created_at`. */
+         and the Rules list's newest-first order (`rulesList`) read one moment for all of them. It
+         decides no placement: a sender's twins are ranked by the router's order, which reads no
+         instant. Absent or unparseable on the wire leaves the column alone, the message arm's rule
+         for `created_at`. */
       const ruleCreated = asDate(r.createdAt);
       const created = ruleCreated && Number.isFinite(ruleCreated.getTime()) ? { createdAt: ruleCreated } : {};
       await tx.insert(rules).values({ id: r.id, ...body, ...created })

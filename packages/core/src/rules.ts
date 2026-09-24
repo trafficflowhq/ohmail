@@ -1,20 +1,20 @@
 import { parseMessageIds } from "./threading.js";
 import type { AuthVerdict } from "./sender-headers.js";
 import type { NormalizedMessage, Destination } from "./types.js";
+import {
+  bodyTermOf, compareRules, effectForDestination as effectOfDestination, subjectTermOf, type RuleEffect,
+} from "./rule-order.js";
 
 export type RuleKind = "sender" | "domain" | "header";
 
 /**
- * What a rule says about the consent gate — modelled, not inferred at the point of use. `deny` is
- * the user holding a sender at the gate, putting them behind it, or quarantining them; `allow`
- * lets them through. The distinction only decides a TIE between rules of equal priority ({@link
- * compareRules}), and it is a field because a broad `allow` once beat the user's sender-specific
- * "no" on nothing but array position. On the type and not a destination test in the evaluator: a
- * folder name is a routing target and intent is a separate claim. Today the two are a total
- * function of each other ({@link effectForDestination}), mapped ONCE at the adapter boundary;
- * when an `effect` column lands, the mapper is the only line that changes.
+ * What a rule says about the consent gate — `deny` holds the sender, `allow` lets them through —
+ * and the order that ranks two rules: both defined in the import-free `rule-order.ts` leaf, which
+ * the client engine's consent index reads too, so the router and every client rank a sender's
+ * rules one way. Re-exported here for every existing importer.
  */
-export type RuleEffect = "allow" | "deny";
+export type { RuleEffect };
+export { compareRules };
 
 /** Defined in the import-free sender-headers leaf, which reads it too; see its docblock. */
 export type { AuthVerdict };
@@ -240,174 +240,34 @@ export interface RuleDecision {
 }
 
 /**
- * The one place a folder is read as an expression of yes/no. Exhaustive over {@link Destination}:
- * a seventh folder is a compile error here until somebody decides which side of the gate it is on.
- *
- * The `default` arm is reachable at RUNTIME even though it is unreachable to the type checker —
- * `drizzle-repo.ts#listRules` casts `rules.destination` (a bare `text` column) to `Destination`
- * without validating it. A string that is not one of the six is not a positive assertion of
- * denial, so it gets no deny precedence: exactly the pre-slice behaviour, and never a *new*
- * reason for a rule to win a tie.
+ * The leaf's mapping (`rule-order.ts`), typed on {@link Destination}: a seventh folder is a
+ * compile error here until somebody decides which side of the gate it is on. The `default` arm is
+ * reachable at RUNTIME — `drizzle-repo.ts#listRules` casts a bare `text` column — and a string
+ * that is not one of the six gets no deny precedence, never a new reason for a rule to win a tie.
  */
 export function effectForDestination(destination: Destination): RuleEffect {
   switch (destination) {
     case "ohmail/Screener":
     case "ohmail/Screened":
     case "ohmail/Quarantine":
-      return "deny";
     case "INBOX":
     case "ohmail/News":
     case "ohmail/Receipts":
-      return "allow";
+      return effectOfDestination(destination);
     default: {
       const exhaustive: never = destination;
       void exhaustive;
-      return "allow";
+      return effectOfDestination(destination as string);
     }
   }
 }
 
-/**
- * The total order over rules. The reported defect was "equal priorities fall back to array
- * position"; the real one is worse: `listRules` had no `ORDER BY`, so the array position was
- * PostgreSQL's PHYSICAL ROW ORDER, which moves under UPDATE and VACUUM — the same message routed
- * differently on different days with no rule change, and PGlite (stable insertion order) could
- * never show it. The order below is total: for any two rules with distinct ids it returns
- * non-zero, and it reads nothing a sender controls. `listRules` sorts in SQL too — the same
- * order, mirrored — because a total order over a nondeterministic input is correct but
- * unauditable: `psql` must be able to show the winner first.
- */
-
-/** deny outranks allow at equal priority — the user's explicit "no" is never lost to a tie. */
-const EFFECT_RANK: Readonly<Record<RuleEffect, number>> = { deny: 0, allow: 1 };
-/**
- * Specificity. `sender` names one mailbox, `domain` names a set of them, and `header` names no
- * principal at all — it is a statement about a message, so it is the least specific claim
- * anybody can make about a sender and it sorts last.
- */
-const KIND_RANK: Readonly<Record<RuleKind, number>> = { sender: 0, domain: 1, header: 2 };
-/**
- * Specificity within one kind: a rule carrying a subject term outranks one that does not.
- * Directly BELOW `kind`, because it refines a claim about the same principal — a term-carrying
- * `domain` rule still loses to any `sender` rule. Without it, the ordinary case is a coin toss: a
- * broad rule and its narrow twin tie on everything and fall through to two random UUIDs — half
- * the accounts see the new rule work. The direction makes the pair COMPOSABLE: the narrow rule
- * takes the mail it names, the broad rule keeps the rest. `listRules` states this clause in SQL
- * in the same position, and the pg test sorts the adapter's output with {@link compareRules} and
- * requires nothing to move.
- */
-const subjectRank = (r: Rule): number => (subjectTermOf(r) === null ? 1 : 0);
-/**
- * The same specificity clause for the BODY term (mail 0052), ranked directly BELOW the subject
- * clause: a body-carrying rule outranks a bare one for {@link subjectRank}'s reasons — without it
- * the broad-plus-narrow pair is a UUID coin toss. The subject clause coming first is a decision,
- * not an accident: ties break the same way on every machine and in SQL, and a rule carrying BOTH
- * terms outranks either single-term rule. No claim that a subject term is semantically more
- * specific — the claim is that the two statements of this order (the SQL `ORDER BY` and this
- * comparator) must agree literally, and an order must pick a direction.
- */
-const bodyRank = (r: Rule): number => (bodyTermOf(r) === null ? 1 : 0);
-/**
- * What the user typed beats what we imported for them, which beats what we learned.
- * `seeded-from-sent` sorts LAST, below `promoted`, and the tie it breaks is real: a user screens
- * a sender the onboarding seed already wrote a rule for — both allow, both `sender`, both default
- * priority, so the winner would fall through to two random UUIDs, the nondeterminism this
- * comparator exists to end. The decision taken deliberately, one sender at a time, outranks the
- * one inferred in bulk. `listRules` states the same order in SQL, and the two must agree
- * literally: a value falling into the SQL `else` arm gets rank 2 there while the absent-key path
- * here ranks it last, and server and client would order the same two rules differently.
- */
-const PROVENANCE_RANK: Readonly<Record<Rule["provenance"], number>> = {
-  manual: 0, migrated: 1, promoted: 2, "seeded-from-sent": 3,
-};
-
-/**
- * Rank an enum-shaped column that reached us through an unvalidated cast.
- *
- * `kind`, `provenance` and `effect` are `text` in Postgres and `as`-cast in the adapter, so a
- * value outside the union is representable. A missing table entry would otherwise yield
- * `undefined`, and `undefined - undefined` is `NaN` — a comparator that returns `NaN` is not an
- * order at all, which is the exact class of bug this function exists to end. Unknown ranks LAST:
- * it loses every tie rather than winning one.
- */
-function rank<K extends string>(table: Readonly<Record<K, number>>, value: string): number {
-  return (table as Readonly<Record<string, number | undefined>>)[value] ?? Number.MAX_SAFE_INTEGER;
-}
-
-/** `priority` is `integer NOT NULL`, but a non-finite value here would poison the comparator. */
-function finitePriority(p: number): number {
-  return Number.isFinite(p) ? p : 0;
-}
-
-/**
- * Ascending = wins. Priority (numeric, user-facing) → deny over allow → sender over domain over
- * header → with a subject term over without one → with a body term over without one → manual over
- * migrated over promoted → `id`.
- *
- * `id` is the final NON-SEMANTIC tie-break and is compared with `<`/`>` rather than
- * `localeCompare`: a locale-dependent collation is not a stable order across two machines.
- */
-export function compareRules(a: Rule, b: Rule): number {
-  const priority = finitePriority(b.priority) - finitePriority(a.priority);
-  if (priority !== 0) return priority;
-
-  const effect = rank(EFFECT_RANK, a.effect) - rank(EFFECT_RANK, b.effect);
-  if (effect !== 0) return effect;
-
-  const kind = rank(KIND_RANK, a.kind) - rank(KIND_RANK, b.kind);
-  if (kind !== 0) return kind;
-
-  // Below `kind` and above `provenance`: it refines a claim about the same principal, so it must
-  // not reach across kinds, and it must outrank provenance — the pair this exists for is two
-  // `manual` rules for one address, where provenance separates nothing.
-  const subject = subjectRank(a) - subjectRank(b);
-  if (subject !== 0) return subject;
-
-  // Directly below the subject clause and above `provenance`, for the subject clause's reasons:
-  // a body term refines a claim about the same principal (mail 0052). See `bodyRank` for why the
-  // subject clause ranks first.
-  const body = bodyRank(a) - bodyRank(b);
-  if (body !== 0) return body;
-
-  const provenance = rank(PROVENANCE_RANK, a.provenance) - rank(PROVENANCE_RANK, b.provenance);
-  if (provenance !== 0) return provenance;
-
-  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-}
 
 function domainOf(addr: string): string {
   const i = addr.indexOf("@");
   return i >= 0 ? addr.slice(i + 1) : "";
 }
 
-/**
- * The whitespace a subject term is trimmed of — deliberately NOT what `trim()` strips. Six
- * characters, because the SQL side can express exactly those: the CHECK and the `ORDER BY` both
- * read `[^ \t\n\r\f\v]`, so a term is "blank" in Postgres precisely when it is blank under this
- * class. `trim()` strips more — U+00A0, the Unicode separators — so a term of a single
- * non-breaking space would rank SPECIFIC in SQL and read ABSENT here: the narrow rule winning the
- * tie and then matching every subject, the one failure this column must be incapable of. Verified
- * equal against real Postgres over all six (`rules-subject.pg.test.ts`). Anchored at both ends: a
- * trim, not a strip — interior whitespace is part of the term.
- */
-const SUBJECT_TERM_TRIM = /^[ \t\n\r\f\v]+|[ \t\n\r\f\v]+$/g;
-
-/**
- * The rule's subject term, case-folded and trimmed — or `null` when it does not carry one. THE
- * one place "does this rule have a subject term?" is answered: {@link matches} and {@link
- * subjectRank} both consult it and must agree, or the narrow rule wins the tie and then declines
- * to fire — which files nothing anywhere and looks like the column is being ignored. `null`, `""`
- * and a blank string all answer `null`. The database forbids the last two, and this still handles
- * them: a CHECK constrains rows the migration reached, not a value handed in by a fixture, a
- * mirror row or an older client's echo — and a blank term read as a substring test would pass on
- * almost every subject.
- */
-function subjectTermOf(r: Rule): string | null {
-  const raw = r.subjectContains;
-  if (typeof raw !== "string") return null;
-  const term = raw.replace(SUBJECT_TERM_TRIM, "").toLowerCase();
-  return term.length === 0 ? null : term;
-}
 
 /**
  * Does the message's subject satisfy the rule's subject term? `true` when there is no term — the
@@ -424,22 +284,6 @@ function subjectSatisfies(r: Rule, msg: NormalizedMessage): boolean {
   return msg.subject.toLowerCase().includes(term);
 }
 
-/**
- * The rule's BODY term, case-folded and trimmed — `subjectTermOf`'s contract applied to
- * `bodyContains` (mail 0052), and the one place "does this rule have a body term?" is answered:
- * {@link matches} and {@link bodyRank} must agree, or the narrow rule wins its tie and declines
- * to fire. The trim class is {@link SUBJECT_TERM_TRIM} — the SAME six characters, shared
- * deliberately: both columns' CHECKs state the identical class in SQL, and one definition of
- * "blank" is the point of the constraint. `null`, `""` and a blank string all answer `null` even
- * though the database forbids the last two: a CHECK constrains rows, not values a fixture hands
- * this function.
- */
-function bodyTermOf(r: Rule): string | null {
-  const raw = r.bodyContains;
-  if (typeof raw !== "string") return null;
-  const term = raw.replace(SUBJECT_TERM_TRIM, "").toLowerCase();
-  return term.length === 0 ? null : term;
-}
 
 /**
  * Does the message's text satisfy the rule's body term? `true` when there is no term — an absent

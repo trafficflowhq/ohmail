@@ -417,7 +417,7 @@ function normalizeAllowAddress(address: string): string {
 /**
  * "ALWAYS ALLOW THIS SENDER" — the rule half of the second verb: the promoted allow rule, the
  * `contacts` row, the change rows, and the one thing it cannot assume — that the sender's spam
- * rule is switched off first, since deny outranks allow at equal priority.
+ * rule is switched off first, since deny outranks allow at equal priority and specificity.
  *
  * IT TAKES THE CALLER'S TRANSACTION. It used to open its own, and the rescue then ran two
  * sequenced transactions, so an interruption left a rule standing with no move behind it. It
