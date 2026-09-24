@@ -614,8 +614,8 @@ export class AuthService extends SessionLifecycle {
 
     const db = asTx(ctx);
     // Rate limit, OUTSIDE the transaction below so a refusal is never rolled back — a rolled-back
-    // attempt counter is a free retry. Every attempt counts against its own key namespace, never
-    // the login keys. The counter is a SLOT CLAIM answering 429 `rate_limited`, not the lockout's
+    // attempt counter is a free retry. Attempts count against the register keys, never the login
+    // keys. The counter is a SLOT CLAIM answering 429 `rate_limited`, not the lockout's
     // 423 `account_locked` — "too many failed attempts" was false in every word on an endpoint
     // whose purpose is that no account exists yet (`ip-throttle.ts`). An unknown IP: skip when
     // gated, refuse when open. `clientIp` is `""` without a trusted platform header, and keying a
@@ -624,23 +624,16 @@ export class AuthService extends SessionLifecycle {
     // no other bound, so an unidentifiable client refuses. The invite path still works.
     const ip = (ctx.ip ?? "").trim();
     if (ip.length > 0) {
+      // One counter PER PATH, chosen with its ceiling by `openGate` — whether THIS request takes
+      // the open path — never by `publicSignup`, the deployment mode: an offered code takes the
+      // invite path in both modes. The paths share no slots, so strangers' open signups from one
+      // NAT cannot spend a live, operator-issued invite's ceiling, nor invites the open path's.
+      // Both keys stay under `register:ip:`, the prefix the prune sweeps.
+      const slot = openGate
+        ? { namespace: "register:ip:open", max: this.cfg.maxPublicRegistrationsPerWindow }
+        : { namespace: "register:ip:invite", max: this.cfg.maxRegistrationsPerWindow };
       const claimed = await reserveIpSlot(db, {
-        namespace: "register:ip",
-        ip,
-        now: ctx.now(),
-        // On `openGate`, never on `publicSignup` — they disagree on exactly the case that
-        // matters. `publicSignup` is the deployment MODE; `openGate` is whether THIS request
-        // takes the open path. With the flag on, an offered invite code takes the invite path
-        // byte for byte — yet it was metered against the five-slot public ceiling on the SAME
-        // `register:ip` counter, so five stranger attempts from one NAT denied a live,
-        // operator-issued invite for the whole window. Sharing one counter across both paths
-        // stays: the counter means "registrations from this client in this window" and only the
-        // CEILING is per-path — a public flood stops at five and leaves the invite path its
-        // slots.
-        max: openGate
-          ? this.cfg.maxPublicRegistrationsPerWindow
-          : this.cfg.maxRegistrationsPerWindow,
-        windowMs: this.cfg.failureWindowMs,
+        ...slot, ip, now: ctx.now(), windowMs: this.cfg.failureWindowMs,
       });
       if (!claimed) throw registrationRateLimited();
     } else if (openGate) {

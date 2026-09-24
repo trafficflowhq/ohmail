@@ -150,7 +150,8 @@ export interface AuthConfig {
   lockoutMs: number;
   failureWindowMs: number;
   /**
-   * How many `POST /auth/register` attempts one client may make per `failureWindowMs`.
+   * How many INVITE-path `POST /auth/register` attempts one client may make per
+   * `failureWindowMs`, on a counter of its own: open-path attempts never spend it.
    * `inviteCodes` is a reusable shared secret, so this — not the invite code — is what
    * bounds account creation and email-existence probing from a leaked bootstrap code.
    *
@@ -160,7 +161,7 @@ export interface AuthConfig {
    */
   maxRegistrationsPerWindow: number;
   /**
-   * The same limit, for the OPEN path, and it is tighter for a reason.
+   * The same limit, for the OPEN path on its own counter, and it is tighter for a reason.
    *
    * With {@link publicSignup} on, this per-IP counter is the only thing bounding both
    * account creation and the mail the open path sends to whatever address a caller types.
