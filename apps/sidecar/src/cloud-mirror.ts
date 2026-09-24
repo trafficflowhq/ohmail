@@ -41,6 +41,7 @@ import { stampSynced } from "./sync-stamp.js";
 import { createFirstSyncReporter } from "./first-sync.js";
 import { deleteMailboxRows, mirroredMessageCount } from "./local-mirror.js";
 import type { Diagnostic } from "./log.js";
+import { loopHold, loopTurn } from "./loop-hold.js";
 
 /**
  * The cloud mirror: pull the hosted account's `/sync` feed into the local mail schema so the
@@ -1916,6 +1917,9 @@ async function applyPage(
     (latestSeq.get(`${ch.type}:${ch.id}`) ?? ch.seq) > ch.seq;
 
   return db.transaction(async (tx) => {
+    /* ONE TRANSACTION, ITS CPU WORK IN TURNS (`loop-hold.ts`): the page commits whole or not at
+       all, and no stretch of it holds this process's event loop past the budget. */
+    const hold = loopHold();
     let applied = 0;
     /** The messages this page changed upstream — the bodies it re-owes; see the sweep below. */
     const touchedMessages: string[] = [];
@@ -1983,6 +1987,7 @@ async function applyPage(
     for (const type of APPLY_ORDER) {
       for (const ch of nonDeletes) {
         if (ch.type !== type) continue;
+        await hold();
         await guarded((t) => upsertOne(t, ch), ch);
       }
     }
@@ -1990,6 +1995,7 @@ async function applyPage(
       for (const ch of deletes) {
         if (ch.type !== type) continue;
         if (supersededInPage(ch)) continue;
+        await hold();
         await guarded((t) => deleteOne(t, ch), ch);
       }
     }
@@ -2002,6 +2008,7 @@ async function applyPage(
        and `storage_cap` is not refillable ({@link REFILLABLE_WITHHELD}) so its row stands. Chunked
        for the reason the detached batch is — PGlite's bind-parameter cap. */
     for (let i = 0; i < touchedMessages.length; i += DETACHED_BATCH_MAX) {
+      await hold();
       await tx.delete(messageBodies).where(and(
         inArray(messageBodies.messageId, touchedMessages.slice(i, i + DETACHED_BATCH_MAX)),
         inArray(messageBodies.withheldReason, [...REFILLABLE_WITHHELD]),
@@ -2012,6 +2019,7 @@ async function applyPage(
     if (changes.some((c) => c.type === "folder")) {
       await reconcileLocalFoldersFlag(tx, dialect(db), world, now);
     }
+    await loopTurn();
     return applied;
   });
 }
@@ -2028,7 +2036,9 @@ async function applyPage(
 async function sweepPhantoms(db: LocalDb, world: LocalWorld, gen: BootstrapGen, now: Date): Promise<number> {
   return db.transaction(async (tx) => {
     let swept = 0;
+    const hold = loopHold();
     const sweepOne = async (type: EntityType, id: string): Promise<void> => {
+      await hold();
       const ch: SyncChange = { type, op: "delete", id, seq: 0, updatedAt: now.toISOString() };
       const detached: DetachedSurvivor[] = [];
       if (await applyDelete(tx, ch, detached)) {
@@ -2081,6 +2091,7 @@ async function sweepPhantoms(db: LocalDb, world: LocalWorld, gen: BootstrapGen, 
       if (!gen.folder.has(r.id)) await sweepOne("folder", r.id);
 
     await reconcileLocalFoldersFlag(tx, dialect(db), world, now);
+    await loopTurn();
     return swept;
   });
 }
@@ -2134,9 +2145,11 @@ async function applyTagBackfill(
   now: Date,
 ): Promise<{ tags: number; messages: number }> {
   return db.transaction(async (tx) => {
+    const hold = loopHold();
     let tagCount = 0;
     for (const ch of snap.changes) {
       if (ch.type !== "tag" || ch.op === "delete") continue;
+      await hold();
       // A tag names no mailbox, so the empty set below is not a shortcut — it is the honest
       // statement that this repair touches nothing a mailbox id could gate.
       if (await applyUpsert(tx, dialect(db), world, ch, now, null, EMPTY_MAILBOXES)) {
@@ -2151,6 +2164,7 @@ async function applyTagBackfill(
       if (ch.type !== "message" || ch.op === "delete") continue;
       const m = ch.entity as MessageDTO | undefined;
       if (!m?.labels || m.labels.length === 0) continue;
+      await hold();
       // Only messages this mirror already holds. A snapshot message that is missing locally is not
       // this repair's business — the drain owns the mail, and it will carry its labels when it lands.
       if (!(await messagePresent(tx, m.id))) continue;
@@ -2161,7 +2175,7 @@ async function applyTagBackfill(
       await recordChange(tx, { accountId: world.accountId, entityType: "message", entityId: m.id, op: "update", meta: null });
       msgCount++;
     }
-
+    await loopTurn();
     return { tags: tagCount, messages: msgCount };
   });
 }
@@ -3226,7 +3240,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   const storeBodies = async (items: readonly MessageBodyBatchItem[]): Promise<number> => {
     let written = 0;
     await cfg.db.transaction(async (tx) => {
+      const hold = loopHold();
       for (const item of items) {
+        await hold();
         // The FK requires the message; a body whose message is not yet mirrored is skipped, and
         // {@link fetchMissingBodies} is what comes back for it once the message lands.
         if (!(await messagePresent(tx, item.messageId))) continue;
@@ -3247,6 +3263,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
           .onConflictDoUpdate({ target: messageBodies.messageId, set: row });
         written++;
       }
+      await loopTurn();
     });
     return written;
   };

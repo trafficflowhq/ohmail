@@ -9,7 +9,8 @@ import {
 import {
   openLocalDb, type LocalDb, type LocalDbOpenPhase, type MigrationProgress, type OpenLocalDb,
 } from "./db.js";
-import { ensureLocalWorld, mintLaunchSession, type LocalWorld } from "./identity.js";
+import { ensureLocalWorld, type LocalWorld } from "./identity.js";
+import { mintLaunchBearer } from "./launch-bearer.js";
 import {
   createCloudAuth, loadSealedTokens, sealTokens, ACCOUNT_ERASED,
   type CloudAuth, type CloudSessionReading, type CloudTokens,
@@ -883,7 +884,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       ...(config.displayName ? { displayName: config.displayName } : {}),
       now: now(),
     });
-    const session = await mintLaunchSession(db, world, now());
+    const session = await mintLaunchBearer(db, world, now());
     // One phase, both identity writes — see the same two lines in `engine.ts`.
     const worldMs = Date.now() - tWorld;
 
@@ -1304,10 +1305,13 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         });
       }
 
-      // Everything else requires the launch bearer — the same `resolveSession` the hosted chain runs.
+      // Everything else requires the launch bearer: held in memory (`launch-bearer.ts`), and any
+      // other token asks the same `resolveSession` the hosted chain runs.
       const header = req.headers.get("authorization");
       const token = header && /^Bearer\s+/i.test(header) ? header.replace(/^Bearer\s+/i, "").trim() : "";
-      const core = token ? await resolveSession(db, token, now()) : null;
+      const decided = token ? session.decide(token, now()) : "refused";
+      const core = decided === "refused" ? null
+        : decided === "unknown" ? await resolveSession(db, token, now()) : decided.held;
       if (!core) return json({ error: { code: "unauthorized", message: "authentication required" } }, 401);
 
       // THE WINDOW'S SEARCH TIMINGS, into this log (`window-report.ts`); the bearer was read above.
@@ -2219,6 +2223,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         // stop above matched nothing — but ITS mirror may still be draining its last page.
         // Wait for the teardown to be out of the database before the close is issued.
         await sessionTeardown;
+        session.end();
         await opened.close();
       },
     };

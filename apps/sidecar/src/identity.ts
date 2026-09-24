@@ -439,6 +439,8 @@ export interface LaunchSession {
   sessionId: string;
   /** How many stale LAUNCH sessions this launch revoked. Nonzero on every launch after the first. */
   revoked: number;
+  /** The row's `access_expires_at`, as written. */
+  expiresAt: Date;
 }
 
 /**
@@ -469,6 +471,7 @@ export async function mintLaunchSession(
     .returning({ id: sessions.id });
 
   const token = generateToken();
+  const expiresAt = new Date(now.getTime() + ttlMs);
   const [row] = await db
     .insert(sessions)
     .values({
@@ -476,15 +479,15 @@ export async function mintLaunchSession(
       userId: world.userId,
       familyId: randomUUID(),
       accessTokenHash: hashToken(token),
-      accessExpiresAt: new Date(now.getTime() + ttlMs),
-      refreshExpiresAt: new Date(now.getTime() + ttlMs),
+      accessExpiresAt: expiresAt,
+      refreshExpiresAt: expiresAt,
       // See the header: there is no second factor on a local install.
       lastTwofaAt: now,
       scope: "full",
     })
     .returning({ id: sessions.id });
 
-  return { token, sessionId: row!.id, revoked: stale.length };
+  return { token, sessionId: row!.id, revoked: stale.length, expiresAt };
 }
 
 /**
