@@ -2892,6 +2892,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        */
       let needsCredential = false;
       /**
+       * `start()` RETURNED WITHOUT DIALLING FOR WANT OF A PASSWORD — and nothing in this process
+       * dials such a runtime later: no poll, no heartbeat, no death for the re-dial to act on. Its
+       * adapter was never asked to connect, so every door that would use it (a drain, a claim
+       * release) refuses to. Unlike {@link needsCredential} it survives a password being stored:
+       * the password is used by the launch that dials it, which on the first connect is the
+       * engine the door starts next. One writer, `start()`'s two no-password arms.
+       */
+      let launchSkipped = false;
+      /**
        * WHAT THIS MAILBOX'S FIRST SYNC HAS PRODUCED — the third answer the connection record
        * carries, derived from the drain's own stamps and the mirror's own rows. See
        * {@link createFirstSyncTracker}: nothing here can set it, which is the point.
@@ -5624,6 +5633,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         maxCycles = 100,
         opts: { force?: boolean } = {},
       ): Promise<number> => {
+        /* NOTHING IS DRAINED OVER AN ADAPTER THAT WAS NEVER ASKED TO CONNECT — see
+           {@link launchSkipped}. A "Sync now" here drained over it, threw a TypeError the press's
+           catch swallowed, and left the first-sync record saying the import produced nothing
+           readable. Nothing to probe and nothing to re-dial either, so this comes before both. */
+        if (launchSkipped) return 0;
         // THE HEAL, IMMEDIATELY BEFORE THE DRAIN IT IS FOR — and outside `drainPass`'s serialized
         // body, which would deadlock. See `redialIfDead`. It never throws: a server that is still
         // down leaves the drain below to fail in its own words, which is the class the bound
@@ -6360,6 +6374,20 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           if (stopped) return;
           await rereadCredential();
           clearSignInRefusal("the stored password was replaced");
+          /* NO LOGIN TO RE-OPEN, SO NO CYCLE. The re-dial acts only on an observed death, and a
+             runtime that never dialled has none, so the forced cycle drained over an adapter
+             nothing had connected — the TypeError on every first connect. That seal is the FIRST
+             write, and the door replaces the engine straight after it: the launch it starts is
+             the cycle. See {@link launchSkipped}. */
+          if (launchSkipped) {
+            log("mailbox_relogin_skipped", {
+              mailboxId: mb.id,
+              reason: "this mailbox started without a password and has not dialled on this "
+                + "launch, so there is no login to re-open; the stored password is dialled by "
+                + "the launch that opens this mailbox",
+            });
+            return;
+          }
           await redialIfDead({ force: true });
           void syncUntilQuiet(1, { force: true }).catch((err: unknown) => {
             log("mailbox_relogin_cycle_failed", { mailboxId: mb.id, err });
@@ -6397,6 +6425,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // state a surface renders is not news to repeat.
           if (login.state !== "ready" || !login.pass) {
             needsCredential = true;
+            launchSkipped = true;
             return;
           }
           /* …AND NOT AFTER A SIGN-OUT. Same shape and same place as the line above, for the same
@@ -6407,6 +6436,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             /* THE SAME STATE AS THE ARM ABOVE, and it is set for the arm above's reason: this
                runtime opened no socket, so nothing may report it reachable. */
             needsCredential = true;
+            launchSkipped = true;
             log("stored_login_absent", {
               mailboxId: mb.id,
               state: "absent",
@@ -6566,8 +6596,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                (see the CLAIM IS OURS FROM HERE block), so a stop landing inside that window read
                the ATTACH DEFAULT rather than anything this pass knew, and reached the right answer
                by accident. No reachable state has `organizing` true with `claimed` false, so this
-               releases in exactly the cases it released in before, and in the window as well. */
-            const politely = Promise.resolve().then(() => (organizer.claimed
+               releases in exactly the cases it released in before, and in the window as well.
+               NOT on a runtime that never dialled: there is no login to release through, and the
+               attempt was a TypeError logged as a failed release. A claim from before ages out. */
+            const politely = Promise.resolve().then(() => (organizer.claimed && !launchSkipped
               ? releaseOwnClaim(
                 adapter, installId, mb.id, { current: leaseNonce, pending: leasePendingNonce }, log,
                 "this install is stopping and its claim could not be removed; it ages out of "
