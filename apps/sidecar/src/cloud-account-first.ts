@@ -12,8 +12,9 @@ import type { Diagnostic } from "./log.js";
  * mirror page's cursor is tagged, and an account cursor or an address count is refused offline.
  */
 
-/** How long the account may take before the mirror answers instead: forty times the page's p95. */
-export const ACCOUNT_FIRST_BOUND_MS = 4_000;
+/** How long the account may take before the mirror answers instead: twice the slowest relayed page
+    measured on a paired desktop (3.9 s), so a slow account is never called unreachable. */
+export const ACCOUNT_FIRST_BOUND_MS = 8_000;
 
 /** The tag on a mirror page's cursor. The service writes base64url, which never holds a `.`. */
 export const MIRROR_CURSOR_TAG = "m.";
