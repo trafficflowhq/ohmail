@@ -197,6 +197,13 @@
       "when": 1791328224225,
       "tag": "0042_desktop_approval",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1791328224226,
+      "tag": "0043_erased_bearers",
+      "breakpoints": true
     }
   ]
 }

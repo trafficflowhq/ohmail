@@ -437,10 +437,43 @@ export const withSession: Middleware = (next, route) => async (req, deps, params
     deps.session = null;
   }
   if (!route.options?.public && !deps.session) {
+    if (token && await erasedAccountBearer(req, deps, token.value)) return accountErasedResponse();
     return errorResponse("unauthorized", 401, "authentication required");
   }
   return next(req, deps, params);
 };
+
+/**
+ * THE ERASURE FENCE AT THE SESSION DOOR. An erased account's sessions are deleted in the
+ * transaction that stamps it, so its bearer resolves to nothing and no route's own fence ever
+ * meets it. A client that sends {@link ERASED_ANSWER_HEADER} naming `account_erased` is told so
+ * instead of 401 — asked only for a token that resolved to nothing, one lookup (cloud 0043
+ * through the hosted auth service; a local door answers false). An undeclared client keeps its
+ * 401: the web and the phone end a session on the coded 401 and would retry a 410.
+ */
+export const ERASED_ANSWER_HEADER = "x-ohmail-accepts";
+
+export function declaresErasedAnswer(req: Request): boolean {
+  const raw = req.headers.get(ERASED_ANSWER_HEADER);
+  return raw !== null && raw.split(",").some((w) => w.trim() === "account_erased");
+}
+
+export async function erasedAccountBearer(req: Request, deps: ApiDeps, token: string): Promise<boolean> {
+  if (!declaresErasedAnswer(req)) return false;
+  const auth = deps.services?.auth;
+  if (!auth) return false;
+  try {
+    return await auth.bearerOfErasedAccount(deps.db, token, deps.now());
+  } catch {
+    // A fault here leaves the answer it always had: 401. The raw pipeline has no envelope to
+    // catch a throw, and a refused token is no reason to answer 500.
+    return false;
+  }
+}
+
+export function accountErasedResponse(): Response {
+  return errorResponse("account_erased", 410, "this account has been deleted");
+}
 
 /**
  * Enforce a recent 2FA on step-up routes: null or stale `lastTwofaAt` → 403. No session at all is

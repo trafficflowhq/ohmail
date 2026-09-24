@@ -4,7 +4,7 @@ import { serviceContext } from "../context.js";
 import { clearSessionCookies, ownerCookieValue, sessionCookies, OWNER_COOKIE } from "../cookies.js";
 import { csrfTokenFor } from "../csrf.js";
 import type { ApiDeps } from "../deps.js";
-import { withSessionAcquireCeiling } from "../middleware.js";
+import { accountErasedResponse, erasedAccountBearer, withSessionAcquireCeiling } from "../middleware.js";
 import type { Route } from "../router.js";
 import { cookieSurface, json, noContent, parseCookies, readBody } from "./shared.js";
 
@@ -138,12 +138,22 @@ export const sessionLifecycleRoutes: Route[] = [
       // older build still take, and that arm is the theft detector. The service bounds it and
       // refuses a malformed one before consuming anything (`readAttemptId`); nothing about it is
       // logged here or there.
-      const { tokens } = await sessionLifecycle(deps).refresh(
-        serviceContext(deps, req),
-        { refreshToken: body.refreshToken, attemptId: body.attemptId },
-        { surface: "native" },
-      );
-      return json({ tokens }, 200);
+      try {
+        const { tokens } = await sessionLifecycle(deps).refresh(
+          serviceContext(deps, req),
+          { refreshToken: body.refreshToken, attemptId: body.attemptId },
+          { surface: "native" },
+        );
+        return json({ tokens }, 200);
+      } catch (err) {
+        // A refused token of an ERASED account is told so — the session door's rule, for the
+        // client that declared it (`erasedAccountBearer`). Anything else travels as it was.
+        if (classifyRefreshFailure(err) === "session_refused" && typeof body.refreshToken === "string"
+          && await erasedAccountBearer(req, deps, body.refreshToken)) {
+          return accountErasedResponse();
+        }
+        throw err;
+      }
     },
   },
 ];

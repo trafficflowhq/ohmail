@@ -11,7 +11,7 @@ import {
 } from "./db.js";
 import { ensureLocalWorld, mintLaunchSession, type LocalWorld } from "./identity.js";
 import {
-  createCloudAuth, loadSealedTokens, sealTokens,
+  createCloudAuth, loadSealedTokens, sealTokens, ACCOUNT_ERASED,
   type CloudAuth, type CloudSessionReading, type CloudTokens,
 } from "./cloud-auth.js";
 import {
@@ -1030,8 +1030,17 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
      * otherwise close the database under a mirror still draining its last page.
      */
     let sessionTeardown: Promise<void> | null = null;
+    /**
+     * THE HOSTED ACCOUNT WAS DELETED — latched by the session's `account_erased` refusal and
+     * cleared only when a new session is activated. It outlives the teardown that discards the
+     * seal, so `/health` keeps saying it after `authed` is gone; a relaunch holds no seal and
+     * starts at sign-in, which is the truth then.
+     */
+    let accountErasedLatch = false;
 
     const activate = (tokens: CloudTokens): Authed => {
+      // A NEW session is a new answer about its account: a sign-in after the card starts clean.
+      accountErasedLatch = false;
       const auth = createCloudAuth({
         baseUrl: cloudBase,
         tokens,
@@ -1053,10 +1062,15 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           // pre-auth state (stop the pulls, drop the spent seal) so the window renders the sign-in
           // surface. Fire-and-forget: this fires from inside a pull's own refresh, and the
           // teardown's stop() resolves only after that pull fails out — awaiting is the deadlock.
+          // A DELETED account takes the same teardown and latches first, so the window says so.
+          if (code === ACCOUNT_ERASED) accountErasedLatch = true;
           log?.("cloud_session_renewal_failed", {
             code,
-            reason: "the hosted API refused to renew the session; the engine returns to sign-in " +
-              "and the mirror keeps serving what it holds",
+            reason: code === ACCOUNT_ERASED
+              ? "the hosted account was deleted; the engine discards its session and asks the " +
+                "hosted API nothing more, and the mail already here stays readable"
+              : "the hosted API refused to renew the session; the engine returns to sign-in " +
+                "and the mirror keeps serving what it holds",
           });
           sessionTeardown = signOut().catch(() => undefined).finally(() => {
             sessionTeardown = null;
@@ -1256,7 +1270,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           online: authed !== null && authed.mirror.online(),
           // The reason `signedIn` is false, when the reason is the server ending the session
           // rather than nobody having signed in yet. The shell words its sign-in surface off it.
-          sessionExpired: hostedSession?.state === "refused",
+          sessionExpired: hostedSession?.state === "refused" && hostedSession.code !== ACCOUNT_ERASED,
           // Where the session stands and why — the dialog's cause and the rail's notice.
           session: hostedSession,
           // …and the OTHER reason it can be false: a pairing that has succeeded and is waiting for
@@ -1281,7 +1295,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
              clears; this one says the hosted account was deleted and nothing more will arrive.
              The mail already here stays readable — signing out never deletes mail, and neither
              does this. */
-          accountErased: authed !== null && authed.mirror.accountErased(),
+          accountErased: accountErasedLatch || (authed !== null && authed.mirror.accountErased()),
           /* THE PENDING DOOR, and whether its claim has adopted an account yet. `adopted` means the
              door on disk now names that account and the window relaunches this engine behind it. */
           identityPending: config.identityPending !== undefined && adoptedAddress === null,

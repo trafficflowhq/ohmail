@@ -116,6 +116,9 @@ export {
   // composition puts the same number on its recording handle's acquire ceiling: the middleware
   // bounds the delay, the handle bounds the abandoned write, and two literals would drift.
   API_FAULT_RECORD_BUDGET_MS,
+  // The request header a client names `account_erased` in to hear an erased account's token as
+  // `410 account_erased` rather than 401 — the desktop's cloud client sends it.
+  ERASED_ANSWER_HEADER,
   withCsrf, withIdempotency,
   type Middleware,
 } from "./middleware.js";

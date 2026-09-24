@@ -3675,6 +3675,7 @@
     "gateRestart": "This computer is now paired with {host}. Quit ohmail and open it again to finish connecting — the copy of the mail that was here before is replaced on the next start.",
     "gatePairAgain": "Pair again",
     "gateOwn": "Set up on its own",
+    "gateAccountErased": "The ohmail account this {machine} was signed in to was deleted, so nothing new arrives here. Set this {machine} up on its own to keep reading your mail from your own server.",
     "mailboxWhyViaHost": "The mailbox this {machine} reads through {host}, which organizes it.",
     "doorHostWhyLan": "ohmail on {host} organizes; this {machine} reads and acts through it, over your network.",
     "doorHostWhyTs": "ohmail on {host} organizes; this {machine} reads and acts through it, over your Tailscale ({origin}).",

@@ -47,7 +47,8 @@ export interface CloudTokens {
 
 /**
  * WHERE THE SESSION STANDS — the reading `/health.session` carries. Only `refused` ends it, and
- * only a coded 401 from the refresh door reaches it. `renewing` is an answer that was not a
+ * only a coded 401 from the refresh door, or a `410 account_erased` on any answer, reaches it
+ * (the latter under that code). `renewing` is an answer that was not a
  * verdict (a firewall's 403, a busy 503, a 429, an uncoded 401); `unreachable` is no answer at
  * all; `seal_failed` is a renewal withheld because its attempt could not be written to disk
  * first. Every state but `refused` keeps the session and retries on its own clock.
@@ -111,6 +112,27 @@ function leftMsOf(expiresAt: string | undefined, nowMs: number): number | null {
 export const OFFLINE_READ_ONLY = "offline_read_only";
 
 /**
+ * THE HOSTED ACCOUNT WAS DELETED. Every ask names the answer in {@link ERASED_ANSWER_HEADER} (the
+ * API's `ERASED_ANSWER_HEADER`), so an erased account's token is answered `410 account_erased`
+ * instead of 401; that answer — on a read or at the refresh door — ends the session like a coded
+ * refusal, under its own code, and nothing is dialled after it.
+ */
+export const ERASED_ANSWER_HEADER = "x-ohmail-accepts";
+export const ACCOUNT_ERASED = "account_erased";
+
+function erasedResponse(): Response {
+  return new Response(
+    JSON.stringify({ error: { code: ACCOUNT_ERASED, message: "this account has been deleted" } }),
+    { status: 410, headers: { "content-type": "application/json" } },
+  );
+}
+
+/** Does this answer say the account was deleted? Reads a CLONE, so the caller keeps its body. */
+async function saysAccountErased(res: Response): Promise<boolean> {
+  return res.status === 410 && (await envelopeCode(res.clone())) === ACCOUNT_ERASED;
+}
+
+/**
  * THE ANSWER WHEN CLOUD CANNOT BE USED RIGHT NOW — the proxy's offline refusal, and the answer a
  * request gets when its renewal met a fault. A relayed hosted 401 there read as a sign-out to
  * the window; this is the refusal the window's outbox already treats as a wait.
@@ -160,8 +182,9 @@ export interface CloudAuthConfig {
   requestDeadlineMs?: number;
   /**
    * Called at most once, when the refresh door REFUSED — a 401 carrying a code in
-   * {@link REFUSAL_CODES}. The engine's cue to return to sign-in. Nothing else calls it: a 403,
-   * an uncoded 401, a 5xx or a dead network is retried and the session stays.
+   * {@link REFUSAL_CODES} — or any answer said {@link ACCOUNT_ERASED}, with that code. The
+   * engine's cue to end the session. Nothing else calls it: a 403, an uncoded 401, a 5xx or a
+   * dead network is retried and the session stays.
    */
   onSessionRefused?: (code: string) => void;
   /** Told each new {@link CloudSessionReading}, and each fault's retry, for `/health` and the log. */
@@ -377,7 +400,7 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
     try {
       res = await fetchImpl(`${base}/auth/refresh`, withDeadline({
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", [ERASED_ANSWER_HEADER]: ACCOUNT_ERASED },
         body: JSON.stringify({ refreshToken: staged.refreshToken, attemptId }),
       }));
     } catch (err) {
@@ -389,6 +412,7 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
          session — each is retried with the attempt's name, so a retry is a replay, not a reuse. */
       const code = await envelopeCode(res);
       if (res.status === 401 && code !== null && REFUSAL_CODES.has(code)) return { kind: "refused", code };
+      if (res.status === 410 && code === ACCOUNT_ERASED) return { kind: "refused", code };
       return {
         kind: "fault", state: "renewing", code: code ?? `http_${res.status}`,
         retryAfterMs: retryAfterMs(res, now().getTime()),
@@ -494,7 +518,15 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
   const withBearer = (init: RequestInit | undefined, access: string): RequestInit => {
     const headers = new Headers(init?.headers);
     headers.set("authorization", `Bearer ${access}`);
+    headers.set(ERASED_ANSWER_HEADER, ACCOUNT_ERASED);
     return { ...init, headers };
+  };
+
+  const erased = (): boolean => reading.state === "refused" && reading.code === ACCOUNT_ERASED;
+  /** A hosted `410 account_erased` on any answer ends the session here, once. */
+  const noticeErased = async (res: Response): Promise<Response> => {
+    if (!erased() && await saysAccountErased(res)) settle({ kind: "refused", code: ACCOUNT_ERASED });
+    return res;
   };
 
   const discard = (res: Response): void => {
@@ -503,16 +535,22 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
 
   const authedFetch = async (path: string, init?: RequestInit): Promise<Response> => {
     if (launchRenewal) await launchRenewal;
+    // A deleted account is asked nothing more: every caller hears the same answer at once.
+    if (erased()) return erasedResponse();
     const sentWith = tokens.accessToken;
-    const res = await fetchImpl(`${base}${path}`, withBearer(withDeadline(init), sentWith));
+    const res = await noticeErased(await fetchImpl(`${base}${path}`, withBearer(withDeadline(init), sentWith)));
     if (res.status !== 401) return res;
     /* A 401 HERE SAYS THE ACCESS TOKEN IS STALE, never that the session is over — only the
        refresh door says that. So: a session already refused answers as it is; a token renewed
        while this was in flight is simply used; a fault already being retried on its own clock
        is not hurried by every request that meets it; anything else joins the one renewal. */
+    if (erased()) {
+      discard(res);
+      return erasedResponse();
+    }
     if (reading.state === "refused") return res;
-    const again = (): Promise<Response> =>
-      fetchImpl(`${base}${path}`, withBearer(withDeadline(init), tokens.accessToken));
+    const again = async (): Promise<Response> =>
+      noticeErased(await fetchImpl(`${base}${path}`, withBearer(withDeadline(init), tokens.accessToken)));
     if (tokens.accessToken !== sentWith) {
       discard(res);
       return again();
@@ -522,7 +560,11 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
       return offlineResponse();
     }
     const r = await renewOnce("request");
-    if (r.kind === "refused") return res;
+    if (r.kind === "refused") {
+      if (r.code !== ACCOUNT_ERASED) return res;
+      discard(res);
+      return erasedResponse();
+    }
     discard(res);
     return r.kind === "minted" ? again() : offlineResponse();
   };

@@ -3,7 +3,7 @@ import { carryDialect } from "@trafficflow/db/dialect";
 import { dialect } from "@trafficflow/db/dialect";
 import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, ne, or, type SQL } from "drizzle-orm";
 import { devices, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
-import { bridgeTx, runInTransaction, type ServiceContext } from "../context.js";
+import { bridgeTx, runInTransaction, type Db, type ServiceContext } from "../context.js";
 import { ServiceError } from "../errors.js";
 import { generateToken, hashToken } from "./crypto.js";
 import { surfaceTtls, type SurfaceTtls } from "./config.js";
@@ -1206,6 +1206,16 @@ export class SessionLifecycle {
    */
   protected async throttleReset(_db: Tx, _key: string): Promise<void> {
     /* no throttle table on the lifecycle half — see the doc comment */
+  }
+
+  /**
+   * Did this token belong to an account whose erasure committed? Asked by the session door only
+   * for a token that resolved to NOTHING, and only when the client declared it understands the
+   * answer. The record is cloud-half (cloud 0043) and a local store erases no accounts, so the
+   * base answers false; `AuthService` overrides it with the real read.
+   */
+  async bearerOfErasedAccount(_db: Db, _token: string, _now: Date): Promise<boolean> {
+    return false;
   }
 }
 

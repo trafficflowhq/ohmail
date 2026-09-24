@@ -3675,6 +3675,7 @@
     "gateRestart": "Dieser Computer ist jetzt mit {host} gekoppelt. Beende ohmail und öffne es erneut, um die Verbindung abzuschließen — die Kopie der Post, die vorher hier lag, wird beim nächsten Start ersetzt.",
     "gatePairAgain": "Erneut koppeln",
     "gateOwn": "Eigenständig einrichten",
+    "gateAccountErased": "Das ohmail-Konto, mit dem dieser {machine} angemeldet war, wurde gelöscht; hier kommt deshalb nichts Neues mehr an. Richte diesen {machine} eigenständig ein, um deine Post weiter von deinem eigenen Server zu lesen.",
     "mailboxWhyViaHost": "Das Postfach, das dieser {machine} über {host} liest. Organisiert wird es dort.",
     "doorHostWhyLan": "ohmail auf {host} organisiert; dieser {machine} liest und handelt darüber — über dein Netzwerk.",
     "doorHostWhyTs": "ohmail auf {host} organisiert; dieser {machine} liest und handelt darüber — über dein Tailscale ({origin}).",

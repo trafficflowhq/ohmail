@@ -9,7 +9,8 @@ import {
 } from "@trafficflow/db";
 import {
   makeEntitlementsClient, refundObligationsOn, makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout,
-  markScreenerSuggestOwed, owedSuggestAccounts, clearScreenerSuggestOwed, pushSubscriptions } from "@trafficflow/db/cloud";
+  markScreenerSuggestOwed, owedSuggestAccounts, clearScreenerSuggestOwed, pushSubscriptions,
+  pruneErasedBearers } from "@trafficflow/db/cloud";
 import {
   runAlertPass,
   webhookAlertSink,
@@ -4740,6 +4741,14 @@ export async function startWorkerWithLock(
           if (pruned > 0) log.info("idempotency_pruned", { pruned });
         } catch (err) {
           log.error("idempotency_prune_failed", { err });
+        }
+        // An erased account's token hashes (cloud 0043) answer nothing past their own expiry;
+        // the erasure writes them and nothing else ever revisits them, so they go here.
+        try {
+          const pruned = await pruneErasedBearers(db as unknown as Tx, new Date());
+          if (pruned > 0) log.info("erased_bearers_pruned", { pruned });
+        } catch (err) {
+          log.error("erased_bearers_prune_failed", { err });
         }
         // ── WHAT WE OWE PEOPLE WHOSE SPEND BOUGHT NOTHING ─────────────────────────────────
         //

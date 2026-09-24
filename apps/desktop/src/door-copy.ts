@@ -656,6 +656,12 @@ const EN = {
     + "connecting — the copy of the mail that was here before is replaced on the next start.",
   gatePairAgain: "Pair again",
   gateOwn: "Set up on its own",
+  /* ── THE HOSTED ACCOUNT WAS DELETED ─────────────────────────────────────────────────────
+     Neither a sign-out nor a broken mailbox, so neither of their sentences. The one way on is
+     this computer on its own; `gateFoot` below says the mail on the person's server is fine. */
+  gateAccountErased: (machine: string) =>
+    `The ohmail account this ${machine} was signed in to was deleted, so nothing new arrives `
+    + `here. Set this ${machine} up on its own to keep reading your mail from your own server.`,
   gateOpening: "Opening…",
   bootCreatingStore: "Setting up your local mail store…",
   bootOpeningStore: "Opening your local mail store…",
@@ -728,6 +734,7 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   gateRestart: ["host"],
   gateEngineReported: ["name"],
   gateUnpaired: ["machine", "host"],
+  gateAccountErased: ["machine"],
   aboutDoorHostWhy: ["host", "machine"],
   localLead: ["machine"],
   serverSignInLead: ["machine"],

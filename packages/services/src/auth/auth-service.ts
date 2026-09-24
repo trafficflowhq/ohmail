@@ -20,8 +20,9 @@ import {
   waitlist,
   pushSubscriptions,
   pruneWebauthnChallenges,
+  isErasedBearer,
 } from "@trafficflow/db/cloud";
-import { bridgeTx, type ServiceContext } from "../context.js";
+import { bridgeTx, type Db, type ServiceContext } from "../context.js";
 import { OAuthCodeReplayed, ServiceError } from "../errors.js";
 import { consumeInvite, inviteError, normalizeInviteCode } from "../invites.js";
 import { reserveIpSlot } from "../ip-throttle.js";
@@ -2647,6 +2648,11 @@ export class AuthService extends SessionLifecycle {
         updatedAt: new Date(),
       })
       .where(eq(authThrottle.key, key));
+  }
+
+  /** Cloud 0043's read — see the base declaration in `SessionLifecycle`. */
+  override async bearerOfErasedAccount(db: Db, token: string, now: Date): Promise<boolean> {
+    return isErasedBearer(bridgeTx(db), hashToken(token), now);
   }
 
   protected override async throttleReset(db: Tx, key: string): Promise<void> {

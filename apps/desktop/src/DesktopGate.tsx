@@ -134,6 +134,8 @@ const SESSION_WAIT_RETRY_MS = 5_000;
 /** What the gate keeps from one `/health` answer, under the key it was earned under. */
 interface HostedAuth {
   key: string; gone: boolean; preAuth: boolean; restartRequired: boolean; sealFailed: boolean;
+  /** `/health.accountErased` — the hosted account was deleted; read before every other card. */
+  erased: boolean;
   /** `/health.session` — the dialog's cause and the rail's notice. Null from an older engine. */
   session: CloudSessionWire | null;
   /** Has the fault in `session` lasted long enough to say so (`cloud-session.ts`)? */
@@ -148,11 +150,13 @@ interface HostedAuth {
  */
 function hostedAuthOf(key: string, health: {
   signedIn?: boolean; sessionExpired?: boolean; restartRequired?: boolean; sealed?: boolean; session?: unknown;
+  accountErased?: boolean;
 }): HostedAuth {
   const session = sessionOf(health.session);
   return {
     key,
     restartRequired: health.restartRequired === true,
+    erased: health.accountErased === true,
     sealFailed: health.sealed === false,
     gone: health.sessionExpired === true,
     preAuth: health.sessionExpired !== true && health.signedIn === false,
@@ -175,7 +179,7 @@ async function readHostedAuth(key: string): Promise<HostedAuth | null> {
 /** Keep the held answer when a new one says the same: a repaint of the whole window for nothing. */
 function sameHostedAuth(a: HostedAuth | null, b: HostedAuth): boolean {
   return a !== null && a.key === b.key && a.gone === b.gone && a.preAuth === b.preAuth
-    && a.restartRequired === b.restartRequired && a.sealFailed === b.sealFailed
+    && a.restartRequired === b.restartRequired && a.sealFailed === b.sealFailed && a.erased === b.erased
     && a.noticeDue === b.noticeDue && a.session?.state === b.session?.state
     && a.session?.code === b.session?.code && a.session?.since === b.session?.since;
 }
@@ -228,7 +232,7 @@ export function DesktopGate() {
   const [shell, setShell] = useState<Shell | null>(null);
   /* The door chooser, opened from Settings over a working install. Distinct from the chooser a
      fresh install lands on: this one is cancellable, because there is something to go back to. */
-  const [overlay, setOverlay] = useState<null | "doors" | "cloud" | "host" | "takeover">(null);
+  const [overlay, setOverlay] = useState<null | "doors" | "cloud" | "host" | "takeover" | "local">(null);
 
   /**
    * WHAT THE WINDOW HAS BEEN TOLD THE ENGINE IS — the settled lifecycle, owned by the one
@@ -432,7 +436,7 @@ export function DesktopGate() {
   const hostedSession: HostedSession =
     door !== "cloud" || !hostedAuthKnown
       ? "unknown"
-      : hostedAuth.gone || hostedAuth.preAuth
+      : hostedAuth.gone || hostedAuth.preAuth || hostedAuth.erased
         ? "out"
         : "live";
 
@@ -938,6 +942,23 @@ export function DesktopGate() {
           <p>{DOOR_COPY.gateRestart(hostLabel ?? DOOR_COPY.doorHostName)}</p>
         </div>
       </div>
+    );
+  }
+
+  /* THE HOSTED ACCOUNT WAS DELETED. Before the sign-in and the mail client, because it is
+     neither: a mailbox drawn here is empty and stopped, and a sign-in asks for an account that
+     no longer exists. One way on — this computer on its own, straight to the mail server. The
+     engine has already discarded the session and asks the hosted API nothing more. */
+  if (hostedAuthKnown && hostedAuth.erased) {
+    return (
+      <>
+        <GateNotice
+          reason={DOOR_COPY.gateAccountErased(machineWord())}
+          actionLabel={DOOR_COPY.gateOwn}
+          onAction={() => setOverlay("local")}
+        />
+        {doorOverlay}
+      </>
     );
   }
 

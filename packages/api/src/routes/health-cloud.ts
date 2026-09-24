@@ -196,6 +196,9 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // one transaction, so its presence implies the other five, the dropped NOT NULL and the CHECK.
   // Loud already (a desktop's approval request 42703s), but the deploy gate names it first.
   ["login_tokens", "attempts"],
+  // cloud 0043_erased_bearers — `expires_at`, the table's LAST column. Without it every erasure
+  // 42P01s inside its own transaction and is refused; the deploy gate names it first.
+  ["erased_bearers", "expires_at"],
 ] as const;
 
 /**
@@ -312,7 +315,7 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * FOREIGN-KEY-only migration is probed by its KEY marker, which is what 0038 added the class for.
  * The tag asserts reconciliation against the newest entry.
  */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0042_desktop_approval";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0043_erased_bearers";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

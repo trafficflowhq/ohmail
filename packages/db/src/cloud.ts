@@ -309,3 +309,9 @@ export {
   markScreenerSuggestOwed, owedSuggestAccounts, clearScreenerSuggestOwed,
   type SuggestOwedRow,
 } from "./screener-suggest-owed.js";
+
+/**
+ * The tokens of an erased account, kept by hash (cloud 0043): written by `deleteAccount`, read by
+ * the hosted session door, pruned by the worker. See `erased-bearers.ts`.
+ */
+export { recordErasedBearers, isErasedBearer, pruneErasedBearers } from "./erased-bearers.js";

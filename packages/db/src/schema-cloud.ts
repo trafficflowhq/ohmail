@@ -858,6 +858,18 @@ export const accountLifecycleNotices = pgTable("account_lifecycle_notices", {
   ),
 }));
 
+/**
+ * THE TOKENS OF AN ERASED ACCOUNT, BY HASH (cloud 0043). `deleteAccount` copies each live access
+ * and refresh token hash here before it deletes the rows, so the session door can tell a client
+ * that asks `410 account_erased` rather than answering a stranger's 401. Written only by the
+ * erasure; read only on a token that resolved to nothing; inert past `expires_at`.
+ */
+export const erasedBearers = pgTable("erased_bearers", {
+  tokenHash: text("token_hash").primaryKey(),
+  accountId: uuid("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+});
+
 export const cloudSchema = {
   credentials, webauthnCredentials, webauthnChallenges, totpSecrets, recoveryCodes, loginTokens,
   oauthAuthCodes, authEvents, authThrottle, pushSubscriptions,
@@ -865,5 +877,5 @@ export const cloudSchema = {
   waitlist, staffUsers, staffSessions, staffAuditLog,
   mailboxOauthCeremonies, mailboxOauthDeviceCeremonies,
   oauthProviderConfig, attachmentStaging, invites,
-  creditRefundObligations, screenerSuggestOwed, accountLifecycleNotices,
+  creditRefundObligations, screenerSuggestOwed, accountLifecycleNotices, erasedBearers,
 };

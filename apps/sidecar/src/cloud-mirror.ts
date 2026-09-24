@@ -2180,8 +2180,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   /**
    * THE HOSTED ACCOUNT WAS DELETED and this mirror has stopped. Latched by the one answer that
    * says so ({@link CloudAccountErased}); nothing is pulled and nothing is written afterwards.
-   * Process-local by design: the local rows stay exactly as they are, readable, and a relaunch
-   * asks the hosted account again rather than acting on a remembered verdict.
+   * Process-local by design: the local rows stay exactly as they are, readable. The same answer
+   * ends the session (`cloud-auth.ts`), whose seal the engine discards, so a relaunch starts at
+   * sign-in rather than acting on a remembered verdict.
    */
   let accountErased = false;
   /**
