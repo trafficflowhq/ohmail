@@ -1,6 +1,7 @@
 import postgres from "postgres";
 import { CHANGE_LOG_CHANNEL, parseChangeWake } from "./change-log.js";
 import { onNotice } from "./notices.js";
+import { withPgSocket } from "./pg-socket.js";
 
 /**
  * One LISTEN connection per process/instance, fanned out to that process's `/events` streams.
@@ -111,7 +112,7 @@ export function makeChangeWakeHub(
     // session-mode slots spent on work the host's own runtime connection already does. `onnotice`
     // routes server notices through the hardened logger like every other production client;
     // without it postgres.js writes raw notice objects straight to the drain.
-    sql ??= postgres(url, { max: 1, prepare: false, connect_timeout: 10, onnotice: onNotice });
+    sql ??= postgres(url, withPgSocket({ max: 1, prepare: false, connect_timeout: 10, onnotice: onNotice }));
     listening = sql
       .listen(CHANGE_LOG_CHANNEL, dispatch)
       .then(() => undefined)

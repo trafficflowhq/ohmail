@@ -1,5 +1,4 @@
 import { and, eq, inArray } from "drizzle-orm";
-import { RELAY_ALLOWLIST, type RelaySpec } from "@trafficflow/api/relay-allowlist";
 import { messageBodies, messages } from "@trafficflow/db/mail";
 import {
   messageService, threadService, searchService, mailboxService, tagsService, rulesService,
@@ -370,30 +369,19 @@ function cmpSpec(a: number[], b: number[]): number {
  * Resolve a method + path to the single most-specific READ route, or null when nothing matches —
  * which is the signal to forward the request to Cloud. Only exact method matches are considered;
  * this table is GET-only, so a mutation never resolves here and is always forwarded.
- * The relay table joins the specificity contest: a relayed route strictly more specific than the
- * read winner is the route this path names, so it forwards (`/messages/timeline` is not
- * `/messages/:id` with id "timeline"). A tie keeps the read. The tables are parameters for the census.
  */
 export function matchReadRoute(
   method: string,
   pathname: string,
-  reads: readonly ReadRoute[] = READ_ROUTES,
-  relayed: readonly RelaySpec[] = RELAY_ALLOWLIST,
 ): { route: ReadRoute; params: Record<string, string> } | null {
   const pathSegs = segsOf(pathname);
   const wanted = method.toUpperCase();
   let best: { route: ReadRoute; params: Record<string, string>; spec: number[] } | null = null;
-  for (const route of reads) {
+  for (const route of READ_ROUTES) {
     if (route.method.toUpperCase() !== wanted) continue;
     const m = tryMatch(segsOf(route.pattern), pathSegs);
     if (!m) continue;
     if (!best || cmpSpec(m.spec, best.spec) > 0) best = { route, params: m.params, spec: m.spec };
   }
-  if (!best) return null;
-  for (const r of relayed) {
-    if (r.method.toUpperCase() !== wanted) continue;
-    const m = tryMatch(segsOf(r.pattern), pathSegs);
-    if (m && cmpSpec(m.spec, best.spec) > 0) return null;
-  }
-  return { route: best.route, params: best.params };
+  return best ? { route: best.route, params: best.params } : null;
 }

@@ -13,13 +13,6 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
-
-## [0.24.0] — 2026-09-24
-
 ### Delete, move and tag work on every message in History and Search
 <!-- changes: archive-024-client-followups.md -->
 
@@ -35,8 +28,7 @@ desktop and the phone. The months and years on the right jump anywhere in it, an
 it opens. Search shows one list: what the app already has appears at once and is
 replaced by your whole mailbox's answer, scrolling loads more, the line under the box says how many
 matched and how long it took, and while older mail is still being indexed it says how far along
-that is. In this release, a desktop paired with ohmail Cloud searches the mail it keeps on the computer
-rather than your whole mailbox.
+that is.
 
 ### Search on the desktop answers in milliseconds, with the count right behind
 <!-- changes: archive-024-desktop-search-budget.md -->
@@ -67,7 +59,7 @@ and keep their order when the exact counts replace it.
 
 Search now finds a message by its body, its subject, its sender, its recipients and its
 attachment names — including mail that arrived as HTML only — across your whole mailbox, and the
-first page comes back in a fraction of a second however many messages contain the word. Every message you own
+first page answers in milliseconds however many messages contain the word. Every message you own
 can now be listed from the server newest first, back to the first one, with a count for every
 month to jump by.
 
@@ -97,19 +89,10 @@ A message you move or read, a tag, a rule, a draft you save or discard and a mai
 show when you change them in the desktop app paired with ohmail Cloud, and stay. A later change to
 the same message, made on this computer or on another device, is no longer missed.
 
-### History on a desktop paired with ohmail Cloud lists your whole mailbox
-<!-- changes: fix-024-paired-desktop-timeline-route.md -->
+### Still to come
 
-On a desktop paired with ohmail Cloud, History asks your account for its pages, so it lists every
-message you own, newest first, as it does on the web.
-
-### Search pages on ohmail Cloud answer faster
-<!-- changes: fix-024-search-page-one-round-trip.md -->
-
-A page of search results and everything the list shows about each message are now read from the
-database in one statement instead of one per table, and the count and facets share one
-transaction with their settings. On ohmail Cloud, where every statement costs a trip to the
-database, a whole-mailbox search page comes back in less than half the time it took.
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
 
 ## [0.23.2] — 2026-09-24
 
@@ -8249,8 +8232,7 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.24.0...HEAD
-[0.24.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.24.0
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.23.2...HEAD
 [0.23.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.23.2
 [0.23.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.23.1
 [0.23.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.23.0

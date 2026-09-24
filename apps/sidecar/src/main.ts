@@ -8,7 +8,6 @@ import {
   createAdmission, maybeHoldStoodDownPort, maybeStartHostListener, type HostListener,
 } from "./host-listener.js";
 import { maybeStartLanListener, type LanListener } from "./host-lan.js";
-import { createHostPower } from "./host-power.js";
 import { encodeFrame, PROTOCOL_VERSION } from "./frame.js";
 import { serveOverStdio, type StdioHost } from "./host.js";
 import { createSidecarLog, createSidecarLogger, diagnosticFor } from "./log.js";
@@ -391,10 +390,7 @@ export async function runSidecar(): Promise<void> {
   try {
     // The narration is only valid while nothing else writes frames — see `bootPhaseEmitter`.
     // The constructor returns before `serveOverStdio` below is built, which is that window.
-    // The power reader is this entry's to supply: the engine is also the phone's, and must not import it.
-    sidecar = await createSidecar({
-      ...configFromEnv(), log, logger, hostPower: createHostPower(), onPhase: bootPhaseEmitter(stdout),
-    });
+    sidecar = await createSidecar({ ...configFromEnv(), log, logger, onPhase: bootPhaseEmitter(stdout) });
   } catch (err) {
     log("start_failed", { err });
     process.exit(1);

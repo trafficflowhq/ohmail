@@ -268,12 +268,7 @@ export function pgDialect(): Dialect {
       searchSession: (opts): SQL | null => {
         const sets: SQL[] = [];
         if (opts.typoThreshold !== undefined) {
-          // A LITERAL, not a parameter: a statement with no parameter is one round trip through a
-          // transaction-mode pooler, where the driver describes every parameterized statement
-          // before it binds. The value is a number this module checks, never caller text.
-          const t = Number(opts.typoThreshold);
-          if (!Number.isFinite(t) || t < 0 || t > 1) throw new Error(`typo threshold ${String(opts.typoThreshold)} is not in [0, 1]`);
-          sets.push(sql`set_config('pg_trgm.word_similarity_threshold', ${sql.raw(`'${String(t)}'`)}, true)`);
+          sets.push(sql`set_config('pg_trgm.word_similarity_threshold', ${String(opts.typoThreshold)}, true)`);
         }
         if (opts.preferIndexes === true) sets.push(sql`set_config('enable_seqscan', 'off', true)`);
         // Each named apart: a positional read refuses two columns of one name.
