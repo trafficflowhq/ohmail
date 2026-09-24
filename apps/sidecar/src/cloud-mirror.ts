@@ -7,7 +7,7 @@ import { recordChange, recordChanges, recordRuleDelta, accountSettings, CAPABILI
   // The erasure fence's own reads — the replay writes rows the ACCOUNT owns and rows one
   // MAILBOX owns, and SKIPS rather than throws on either stamp; see the folder arm for why a
   // throw is the wrong verb here.
-  readAccountErasedAt, readMailboxErasedAt,
+  readAccountErasedAt, readMailboxErasedAt, fenceErased, AccountErasedError, MailboxErasedError,
 } from "@trafficflow/db";
 import {
   accountSyncState, approvals, attachments, awayReplies, drafts, flagState, folderOps, folderState,
@@ -1364,12 +1364,20 @@ async function applyAccountUpsert(
  * says `autoReplyByUs`; the local door derives that flag (`autoReplyByUsWhere`) from an
  * `away_replies` row naming the reply's Message-ID, and the wire carries neither the ledger nor raw
  * headers. So a flagged row writes that one fact, once per id; `false` or absent writes nothing,
- * because the hosted ledger never un-answers anybody. The caller has asked the mailbox's tombstone.
+ * because the hosted ledger never un-answers anybody. The row is the account's and names one
+ * mailbox, so the fence asks both stamps first, account then mailbox, and an erased one SKIPS the
+ * write as every replay arm here does: its refusal is caught, never thrown past the page.
  */
 async function mirrorAutoReply(
-  tx: Tx, world: LocalWorld, mailboxId: string,
+  tx: Tx, dia: Dialect, world: LocalWorld, mailboxId: string,
   m: Pick<MessageDTO, "autoReplyByUs" | "messageIdHeader" | "to" | "date">, now: Date,
 ): Promise<boolean> {
+  try {
+    await fenceErased(tx, dia, { accountId: world.accountId, mailboxId });
+  } catch (err) {
+    if (err instanceof AccountErasedError || err instanceof MailboxErasedError) return false;
+    throw err;
+  }
   const header = (m.messageIdHeader ?? "").trim();
   // A CARRIER, not a reader of what the row means (the engagement census's line): only a TRUE flag
   // is a fact to write, so it is asked in the positive form.
@@ -1533,7 +1541,7 @@ async function applyUpsert(
       // The tag assignments this message carries. Written from the message change because that is
       // how the wire delivers them — see {@link applyLabels}.
       await applyLabels(tx, world, m.id, m.labels);
-      await mirrorAutoReply(tx, world, m.mailboxId, m, now);
+      await mirrorAutoReply(tx, dia, world, m.mailboxId, m, now);
       gen?.message.add(m.id);
       // Mark the thread STUB too: a surviving message pins its thread via the FK, so the sweep must
       // not treat that thread as a phantom even when the thread's own change never arrives.
@@ -3184,7 +3192,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       await cfg.db.transaction(async (tx) => {
         for (const { row, dto } of flagged) {
           if (await readMailboxErasedAt(tx, dialect(cfg.db), row.mailboxId) !== null) continue;
-          if (!(await mirrorAutoReply(tx, cfg.world, row.mailboxId, dto, now()))) continue;
+          if (!(await mirrorAutoReply(tx, dialect(cfg.db), cfg.world, row.mailboxId, dto, now()))) continue;
           await recordChange(tx, {
             accountId: cfg.world.accountId, entityType: "message", entityId: row.id, op: "update", meta: null,
           });
