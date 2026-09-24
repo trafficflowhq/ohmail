@@ -8,7 +8,7 @@ import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import { DesktopGate } from "../src/DesktopGate.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
 import {
-  CLOUD_NOTICE_GRACE_MS, cloudNoticeDue, sessionOf, signInCauseOf, type CloudSessionWire,
+  CLOUD_NOTICE_GRACE_MS, cloudNoticeDue, sessionOf, sessionReaders, signInCauseOf, type CloudSessionWire,
 } from "../src/cloud-session.js";
 import { DOOR_COPY, machineWord } from "../src/door-copy.js";
 import messages from "../../webapp/messages/en.json";
@@ -89,9 +89,19 @@ const EMPTY_PAGE = JSON.stringify({
 });
 const EMPTY_SNAPSHOT = JSON.stringify({ asOfSeq: 0, changes: [], nextCursor: null, window: { days: 90, minRows: 500 } });
 
-/** The stand-in shell: a cloud engine whose `/health` answers `health`. */
-function fakeShell(health: Record<string, unknown>): void {
+/**
+ * The stand-in shell: a cloud engine whose `/health` answers `health`. With `wait`, it holds
+ * `/cloud/session/wait` as the engine does until `move()`; `reads` refuses the window's pulls
+ * with that status (409 is the engine's `not_signed_in` after a refusal) and counts them.
+ */
+function fakeShell(health: Record<string, unknown>, opts: { wait?: boolean; reads?: number } = {}): {
+  move(next: Record<string, unknown>): void;
+  refusedReads(): number;
+} {
   let next = 1;
+  let current = health;
+  let refused = 0;
+  const held: Array<() => void> = [];
   host.__TAURI_INTERNALS__ = {
     transformCallback: () => next++,
     invoke: async (command, payload) => {
@@ -99,13 +109,28 @@ function fakeShell(health: Record<string, unknown>): void {
       if (command === "mailto_claim" || command === "plugin:event|listen") return null;
       if (command === "engine_request") {
         const url = String(payload?.url ?? "");
-        if (url === "/health") return encode(200, JSON.stringify(health));
+        if (url === "/health") return encode(200, JSON.stringify(current));
+        if (url.startsWith("/cloud/session/wait") && opts.wait) {
+          // As the engine does: a reading that already differs from the one named is answered.
+          const named = new URLSearchParams(url.split("?")[1] ?? "").get("state");
+          const now = (current.session as CloudSessionWire | undefined)?.state ?? "none";
+          if (named === now) await new Promise<void>((r) => held.push(r));
+          return encode(200, JSON.stringify({ changed: true, session: current.session ?? null }));
+        }
+        if (opts.reads !== undefined && (url.startsWith("/sync") || url.startsWith("/mailboxes"))) {
+          refused++;
+          return encode(opts.reads, JSON.stringify({ error: { code: "not_signed_in", message: "not signed in" } }));
+        }
         if (url.startsWith("/sync/snapshot")) return encode(200, EMPTY_SNAPSHOT);
         if (url.startsWith("/mailboxes")) return encode(200, JSON.stringify({ items: [] }));
         return encode(200, EMPTY_PAGE);
       }
       return null;
     },
+  };
+  return {
+    move: (n) => { current = n; for (const r of held.splice(0)) r(); },
+    refusedReads: () => refused,
   };
 }
 
@@ -129,12 +154,18 @@ async function render(): Promise<HTMLElement> {
 const text = (el: HTMLElement): string => el.textContent ?? "";
 const mounted = (el: HTMLElement): boolean => text(el).includes("Ohbox");
 const dialog = (el: HTMLElement): boolean => text(el).includes(DOOR_COPY.cloudTitle);
+/** The engine-down notice — never the answer to a refused Cloud session. */
+const engineDown = (el: HTMLElement): boolean => text(el).includes(DOOR_COPY.gateCannotOpen);
+const RETRYING = (messages as { sync: { failing: string } }).sync.failing;
 
-async function press(el: HTMLElement, label: string): Promise<void> {
-  const b = [...el.querySelectorAll("button")].find((x) => (x.textContent ?? "").includes(label));
-  if (!b) throw new Error(`no button saying "${label}"`);
-  await act(async () => { b.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-  for (let i = 0; i < 10; i++) await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+/** Real time, in small turns, until `ok` holds or `ms` passes; answers how long it took. */
+async function within(ms: number, ok: () => boolean): Promise<number | null> {
+  const t0 = Date.now();
+  while (Date.now() - t0 <= ms) {
+    if (ok()) return Date.now() - t0;
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+  }
+  return ok() ? Date.now() - t0 : null;
 }
 
 afterEach(async () => {
@@ -187,13 +218,13 @@ describe("the gate over each session state", () => {
     ["refresh_expired", () => DOOR_COPY.cloudLeadExpired(machineWord())],
     ["unauthorized", () => DOOR_COPY.cloudLeadSignIn(machineWord())],
   ] as const) {
-    it(`a coded refusal (${code}) opens the dialog with the sentence for it`, async () => {
+    it(`a coded refusal (${code}) opens the dialog over the mail with the sentence for it`, async () => {
       fakeShell({ signedIn: false, sessionExpired: true, session: reading("refused", code) });
       const el = await render();
-      expect(mounted(el)).toBe(false);
-      await press(el, DOOR_COPY.signIn);
-      expect(dialog(el)).toBe(true);
+      expect(dialog(el), "the card is open without a press").toBe(true);
       expect(text(el)).toContain(lead());
+      expect(mounted(el), "the mail stays behind the card").toBe(true);
+      expect(engineDown(el), "a refused session is not the engine-down notice").toBe(false);
     });
   }
 
@@ -203,5 +234,85 @@ describe("the gate over each session state", () => {
     expect(dialog(el)).toBe(true);
     expect(text(el)).toContain(DOOR_COPY.cloudLeadSealFailed(machineWord()));
     expect(text(el)).not.toContain(DOOR_COPY.cloudLeadSignIn(machineWord()));
+  });
+});
+
+/**
+ * THE REFUSAL UNDER A WINDOW ALREADY SHOWING MAIL, as the packaged app met it: the engine knew
+ * in three seconds, the window said "Retrying" and then emptied to the engine-down notice, and
+ * the card never opened. The engine now answers the window's held question the moment
+ * its reading moves; the card must be open inside two seconds of that, over the mail it kept.
+ */
+describe("a session refused while the mail is on screen", () => {
+  it("opens the card within 2 s of the engine's refusal, names the cause, keeps the mail", async () => {
+    const shell = fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) }, { wait: true });
+    const el = await render();
+    expect(mounted(el)).toBe(true);
+    expect(dialog(el)).toBe(false);
+
+    shell.move({ signedIn: false, sessionExpired: true, session: reading("refused", "refresh_revoked", 0) });
+    const took = await within(2_000, () => dialog(el));
+    expect(took, "the card did not open within 2 s of the engine's refusal").not.toBeNull();
+    expect(text(el)).toContain(DOOR_COPY.cloudLeadRevoked(machineWord()));
+    expect(mounted(el), "the mail on screen was taken away").toBe(true);
+    expect(engineDown(el)).toBe(false);
+    expect(text(el)).not.toContain(RETRYING);
+  });
+
+  it("the positive control: with the session still live nothing opens, however long it is held", async () => {
+    fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) }, { wait: true });
+    const el = await render();
+    expect(await within(600, () => dialog(el))).toBeNull();
+    expect(mounted(el)).toBe(true);
+  });
+});
+
+/**
+ * THE STRIP KEYS ON THE SESSION, NOT ON THE PULL. After a refusal every read the engine serves is
+ * refused, so the window's pull fails on every attempt; its failure arm would say "Can't refresh.
+ * Retrying." over a session nothing renews. The control drives the same failing reads under a live
+ * session and watches the sentence arrive, so the fixture can say it.
+ */
+describe("the sync strip over a refused session", () => {
+  it("never says Retrying while the card is up, over at least three refused pulls", { timeout: 20_000 }, async () => {
+    const shell = fakeShell({ signedIn: false, sessionExpired: true, session: reading("refused", "refresh_revoked") }, { reads: 409 });
+    const el = await render();
+    expect(dialog(el)).toBe(true);
+    // Watched for 5 s: the control below says it in about 2 s over the same refused pulls.
+    expect(await within(5_000, () => text(el).includes(RETRYING)), "the strip said Retrying over a refused session").toBeNull();
+    expect(shell.refusedReads(), "the window did not pull enough to fail three times").toBeGreaterThanOrEqual(5);
+  });
+
+  it("the positive control: the same refused pulls under a live session do say it", { timeout: 20_000 }, async () => {
+    const shell = fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) }, { reads: 409 });
+    const el = await render();
+    expect(await within(10_000, () => text(el).includes(RETRYING)), "the fixture never produced the sentence").not.toBeNull();
+    expect(shell.refusedReads()).toBeGreaterThanOrEqual(3);
+  });
+});
+
+/** ONE READING, THREE READERS: each answer keyed on the session state, and on nothing else. */
+describe("the card, the rail and the strip read one session state", () => {
+  const cases: Array<[string, CloudSessionWire | null, boolean]> = [
+    ["live", reading("live", null), false],
+    ["renewing", reading("renewing", "http_403"), false],
+    ["unreachable", reading("unreachable", "network"), false],
+    ["refused", reading("refused", "refresh_revoked"), true],
+    ["seal_write_failed", reading("seal_failed", "seal_write_failed"), false],
+    ["seal_unreadable", reading("seal_failed", "seal_unreadable"), false],
+    ["none", null, false],
+  ];
+  for (const [name, session, expired] of cases) {
+    it(`${name}: the card opens only for a refusal, the rail only for a session still there, the strip yields only to the card`, () => {
+      const r = sessionReaders(session, expired, true);
+      expect(r.card === "closed", "the card").toBe(!expired);
+      if (expired) expect(r.card).toBe(signInCauseOf(session));
+      const railSays = ["renewing", "unreachable", "seal_write_failed"].includes(name);
+      expect(r.rail !== undefined, "the rail").toBe(railSays);
+      expect(r.strip, "the strip").toBe(!expired);
+    });
+  }
+  it("a refused reading silences the strip even before /health's verdict flag says so", () => {
+    expect(sessionReaders(reading("refused", "refresh_revoked"), false, true).strip).toBe(false);
   });
 });

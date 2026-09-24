@@ -602,6 +602,16 @@ function installShellStub(window) {
            refused with `the stub was asked for no route it does not serve`. That is the
            `unmodelled` list doing its job, and a double that answered differently from the real
            API would have hidden the change instead of reporting it. GET only and exact. */
+        /* `GET /cloud/session/wait` — THE WINDOW'S HELD SESSION QUESTION (`session-watch.ts`). The
+           engine answers it only when its reading differs from the one named, and holds it while
+           the reading is the same; this stub's `/health` names no session, so `state=none` is its
+           resting reading and is held for the run, exactly as the engine would hold it. Added after
+           the check named it red; the consumer check below keeps it asked. GET only. */
+        if (url.startsWith("/cloud/session/wait?") && (payload?.method ?? "GET") === "GET") {
+          const named = new URLSearchParams(url.slice(url.indexOf("?") + 1)).get("state");
+          if (named === "none") return new Promise(() => {});
+          return Promise.resolve(frame(200, "OK", { changed: true, session: null }));
+        }
         if (url === "/account/access" && (payload?.method ?? "GET") === "GET") {
           return Promise.resolve(frame(200, "OK", { metered: false }));
         }
@@ -967,6 +977,15 @@ check("no collapsed-mail placeholder", collapsed == null, collapsed?.[0] ?? "");
   check(
     "the window asked the engine's own mirror how fresh it is",
     asked.some((i) => String(i.payload?.url ?? "") === "/mirror/freshness"),
+    asked.map((i) => i.payload?.url).join(", "),
+  );
+
+  /* AND FOR THE HELD SESSION QUESTION: a window that stopped keeping it open would learn of a
+     refused session only on its minute's `/health` probe — the defect the question exists to end —
+     and every check above would stay green. Named, so losing the consumer is a red. */
+  check(
+    "the window keeps the engine's held session question open",
+    asked.some((i) => String(i.payload?.url ?? "").startsWith("/cloud/session/wait?")),
     asked.map((i) => i.payload?.url).join(", "),
   );
 

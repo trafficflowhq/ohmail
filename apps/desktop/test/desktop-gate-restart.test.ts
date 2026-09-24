@@ -45,29 +45,35 @@ describe("the relaunch arm outranks the two that would lie about it", () => {
   it("all three arms are present — otherwise the ordering below is vacuous", () => {
     expect(armAt("if (hostedRestartRequired) {"), "no relaunch arm").toBeGreaterThan(0);
     expect(armAt("if (hostedPreAuth"), "no pre-auth arm").toBeGreaterThan(0);
-    expect(armAt("if (hostedSessionGone) {"), "no expiry arm").toBeGreaterThan(0);
+    expect(armAt("if (hostedSessionGone && paired) {"), "no expiry arm for the paired door").toBeGreaterThan(0);
+    // The Cloud door's expiry is the card over the mail, rendered below every early return.
+    expect(armAt("const refusedCard = "), "no expiry card for the Cloud door").toBeGreaterThan(0);
   });
 
   it("and the relaunch arm is evaluated FIRST", () => {
     const restart = armAt("if (hostedRestartRequired) {");
     const preAuth = armAt("if (hostedPreAuth");
-    const gone = armAt("if (hostedSessionGone) {");
+    const gone = armAt("if (hostedSessionGone && paired) {");
+    const card = armAt("const refusedCard = ");
     expect(
       restart,
       "the relaunch arm sits after the pre-auth arm, whose condition its own /health shape also "
         + "matches — so it can never run and the window shows a password form instead",
     ).toBeLessThan(preAuth);
     expect(restart, "the relaunch arm sits after the expiry arm").toBeLessThan(gone);
+    expect(restart, "the relaunch arm sits after the Cloud door's expiry card").toBeLessThan(card);
   });
 
-  /* THE FIELD IS READ AT BOTH PROBES. The gate has two `/health` readers — one on the slow steady
-     cadence, one on the fast loop that runs until the first answer lands. A field added to only
-     one of them works on a warm window and not on a cold start, or the reverse — so both hand the
-     answer to ONE parser, and neither probe reads a field itself. */
-  it("both /health readers parse it, through the one parser", () => {
+  /* THE FIELD IS READ BY EVERY ASKER. The gate asks `/health` on the slow steady cadence, on the
+     fast loop until the first answer lands, and when the engine answers the held session question.
+     A field read by one of them works on a warm window and not on a cold start, or the reverse — so
+     all three ask through ONE reader that hands the answer to ONE parser. */
+  it("every /health asker parses it, through the one reader and the one parser", () => {
     const reads = GATE.split("restartRequired: health.restartRequired === true").length - 1;
     expect(reads, "the field is parsed in one place").toBe(1);
-    expect(GATE.split("hostedAuthOf(authKey, ").length - 1, "both probes call the one parser").toBe(2);
+    expect(GATE.split("hostedAuthOf(").length - 1, "the parser's definition and its one call").toBe(2);
+    expect(GATE.split("readHostedAuth(authKey)").length - 1, "the three askers call the one reader").toBe(3);
+    expect(GATE.split('bridgeFetch("/health")').length - 1, "and only the reader asks").toBe(1);
     expect(GATE.split("health.restartRequired").length - 1, "no probe reads the field on its own").toBe(1);
   });
 
