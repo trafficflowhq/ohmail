@@ -89,6 +89,32 @@ A message you move or read, a tag, a rule, a draft you save or discard and a mai
 show when you change them in the desktop app paired with ohmail Cloud, and stay. A later change to
 the same message, made on this computer or on another device, is no longer missed.
 
+### Mail resumes promptly after a database outage
+<!-- changes: fix-024-worker-resume-tail.md -->
+
+After the database drops its connections, the worker and the server reconnect on their next
+attempt once it answers again. Before, a connection cut while a statement was being sent could
+wait out its 30-second connect timeout several times in a row, and new mail arrived minutes late.
+
+### A confirmation is not replaced by the automatic suggestions' summary
+<!-- changes: fix-024-toast-notice-queue.md -->
+
+After a Screener decision or its Undo, the summary of automatic suggestions that arrives meanwhile
+waits until the confirmation has been shown, then appears. On the web and the desktop apps.
+
+### Screen readers hear the phone's buttons become available
+
+On the phone, a button that becomes available now reads as available to a screen reader: Connect
+on the mailbox form no longer says it is disabled once the address and password are filled in.
+
+### The Screener shows a held message's full text instead of saying it could not load
+
+On a busy desktop the Screener could say "Couldn't load the full message" for a held message
+whose text was there, and keep saying it for the rest of the session unless you pressed Retry.
+The held messages you are reading now load ahead of background work, a load that failed is tried
+again when you come back to the sender, and Retry shows the new attempt instead of the old
+failure.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
