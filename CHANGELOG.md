@@ -39,6 +39,128 @@ The held messages you are reading now load ahead of background work, a load that
 again when you come back to the sender, and Retry shows the new attempt instead of the old
 failure.
 
+### A sender's rules decide the same way in the organizer and in every app
+<!-- changes: fix-024-desktop-web-parity-twins.md -->
+
+When a sender has more than one rule, the organizer and the apps now pick the same one: the rule's
+priority first, then how narrowly it names the sender, then a screen-out over an admission. A
+sender you allowed by name is no longer screened out by a rule on their domain, and a sender with
+both a screen-out and an admission shows where the organizer files their mail.
+
+### The away responder's replies stay out of the desktop's Ohbox
+<!-- changes: fix-024-desktop-web-parity-twins.md -->
+
+On the desktop app paired to ohmail Cloud, the away responder's replies no longer show in the
+Ohbox's Earlier list, as on the web; an installed desktop corrects itself on its next sync.
+
+### The desktop renews its ohmail Cloud sign-in on schedule
+<!-- changes: fix-024-cloud-session-followups.md -->
+
+After you sign in, the desktop app renews its ohmail Cloud session before it lapses, whether or not
+the window is doing anything. Until now the first renewal waited for a request to meet an expired
+session.
+
+### A paired desktop keeps its mail on screen when the other computer removes it
+<!-- changes: fix-024-cloud-session-followups.md -->
+
+When the computer a desktop is paired with removes it from its Devices list, the app shows a card
+over the mail it already has: it names that computer, says the pairing has ended, and offers Pair
+again and Set up on its own. The mail no longer disappears behind "ohmail cannot open your mailbox".
+
+### A paired desktop names the computer it is paired with
+<!-- changes: fix-024-cloud-session-followups.md -->
+
+A desktop paired with another computer called it "sidecar" in the sync line, Settings, the away
+responder and its cards. It now names the computer the pairing link pointed at.
+
+### New mail arrives faster while the app is busy reading
+<!-- changes: fix-024-loaded-ingest-share.md -->
+
+With several windows open and reading the local mailbox, the desktop app's sync no longer hands the
+store to a window each time it pauses between two messages, so new mail comes in faster while you
+read.
+
+### Releasing one sender keeps the rule for their domain
+<!-- changes: fix-024-release-keeps-the-domain-rule.md -->
+
+When a rule for a whole domain screened a sender out or marked them spam, Allow and Not spam
+changed that rule and released everyone at the domain. They now allow that sender alone: the
+domain rule stays and keeps screening everyone else there, and the notice names it. Back to
+Waiting for such a sender is refused with a pointer to Settings → Rules. The same holds on the
+phone, for Move as well.
+
+### A freshly paired desktop shows your mail right away
+<!-- changes: fix-024-fresh-pairing-opens.md -->
+
+After you pair a desktop with another computer through "Another computer", the app opens the other
+computer's mail as soon as the pairing finishes. Until now it stayed on "Opening your mailbox…"
+until you quit it and opened it again.
+
+### A restarted desktop renews its ohmail Cloud sign-in on time
+<!-- changes: fix-024-fresh-pairing-opens.md -->
+
+A desktop signed in to ohmail Cloud that you quit and open again renews its session before it
+lapses, and right away when the saved session has already run out. Until now it waited for a
+request to be refused first.
+
+### Pairing a desktop keeps its card until the pairing answers
+<!-- changes: fix-024-pairing-chooser-held.md -->
+
+When you pair a new desktop with another computer, the "Pairing…" card stays on screen until that
+computer answers. Your mail then opens, or the card says why the pairing was refused — a spent or
+expired link, the other computer out of reach, or the other computer turning it down — with Try
+again and Choose another way, and the desktop is left as it was before you pressed Pair. Until now
+the card gave way to a loading screen after a few seconds, and a refused pairing ended on the
+ohmail Cloud sign-in form.
+
+### A repeated Screener suggestion request is never charged twice
+<!-- changes: fix-024-suggest-key-before-spend.md -->
+
+A retry of a Suggest press under the same request key used to run a purchase of its own when the
+first was still working, and a different sender set under a used key was refused only after its
+senders had been charged. The key is now taken before anything is bought: a different set is
+refused with nothing spent, a retry of the same set buys nothing and gets the first request's
+answer once it is ready, and a run that fails hands the key back so trying again works at once.
+
+### An organizer that has lost its lease makes no further change, even in the middle of a batch
+<!-- changes: fix-024-organizer-lease-per-write.md -->
+
+The install organizing a mailbox now checks its claim immediately before every change it makes on
+the mail server. One whose claim ran out while it was busy — a laptop that slept in the middle of a
+batch — or that learned another install had taken the mailbox sends nothing more; the next scan
+checks the claim again and carries on or hands over. A copy-then-delete move always finishes both
+halves. The one-time Junk sweep stops at its next batch when "Use folders" is switched off.
+
+### Search on a desktop paired with ohmail Cloud covers your whole mailbox
+<!-- changes: fix-024-paired-search-whole-mailbox.md -->
+
+On a desktop paired with ohmail Cloud, Search asks your account, so its results and its count cover
+your whole mailbox as they do on the web. While ohmail Cloud cannot be reached, Search covers the
+mail on this computer and says so.
+
+### Requests on ohmail Cloud answer faster
+<!-- changes: fix-024-api-statements-one-round-trip.md -->
+
+The database statements the server issues with values in them now reach the database in one
+round trip instead of two, so lists, message bodies, search and rules come back sooner. Measured
+against the production database, a whole-mailbox search page's 95th percentile went from
+129-172 ms to 101 ms.
+
+### An invite stays redeemable when others sign up from the same network
+<!-- changes: fix-024-invite-throttle-keeps-its-slots.md -->
+
+With public signup on, signups without an invite and signups with one were counted together per
+network address, so enough strangers signing up from the same office or shared connection could
+leave an invited person refused with "Too many signups from this connection" until the window
+passed. The two are now counted apart, and a refused attempt no longer counts at all.
+
+### The desktop says when its ohmail Cloud account was deleted
+<!-- changes: fix-024-erased-account-said-on-the-desktop.md -->
+
+A desktop signed in to an ohmail Cloud account that was deleted now says so, stops asking the
+server, and offers to set the computer up on its own. Before, it showed an empty mailbox or asked
+to sign in again.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
