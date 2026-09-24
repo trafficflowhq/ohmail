@@ -122,15 +122,20 @@ function databaseOf(url: string): string {
  * root is the directory holding `pnpm-workspace.yaml` — one walk up from `src` or `dist` alike.
  */
 function laneDbUrl(): string | null {
+  const root = checkoutRoot();
+  if (root === null) return null;
+  try {
+    const line = readFileSync(join(root, ".lane-db.env"), "utf8")
+      .split("\n").map((l) => l.trim()).find((l) => l.startsWith("PG_TEST_URL="));
+    return line ? line.slice("PG_TEST_URL=".length).trim() || null : null;
+  } catch { return null; }
+}
+
+/** The checkout this module was loaded from — the directory holding `pnpm-workspace.yaml`. */
+function checkoutRoot(): string | null {
   let dir = dirname(fileURLToPath(import.meta.url));
   for (let up = 0; up < 5; up++) {
-    if (existsSync(join(dir, "pnpm-workspace.yaml"))) {
-      try {
-        const line = readFileSync(join(dir, ".lane-db.env"), "utf8")
-          .split("\n").map((l) => l.trim()).find((l) => l.startsWith("PG_TEST_URL="));
-        return line ? line.slice("PG_TEST_URL=".length).trim() || null : null;
-      } catch { return null; }
-    }
+    if (existsSync(join(dir, "pnpm-workspace.yaml"))) return dir;
     dir = dirname(dir);
   }
   return null;
@@ -169,15 +174,32 @@ export const FREEZE_ENV = "OHMAIL_FREEZE";
  * remedy is one line and it is in the message. Returns the refusal sentence, or null when this run
  * may proceed.
  */
-export function sharedBoxRefusal(url: string, env: NodeJS.ProcessEnv): string | null {
+export function sharedBoxRefusal(url: string, env: NodeJS.ProcessEnv, worktree = "\"$PWD\""): string | null {
   if (databaseOf(url) !== SHARED_BOX_DB) return null;
   if (env[FREEZE_ENV] === "1") return null;
   return (
     `this run resolved to the SHARED box database (${SHARED_BOX_DB}) and no ${FREEZE_ENV}=1 was set. ` +
     "Co-tenants on that database share its advisory keys, so a leader-lock or lease case here reads " +
     "another checkout's state and the green means nothing. Give this checkout its own database — " +
-    "bash scripts/lane-db.sh \"$PWD\" — or set OHMAIL_FREEZE=1 if this really is the freeze run."
+    `bash scripts/lane-db.sh ${worktree} — or set OHMAIL_FREEZE=1 if this really is the freeze run.`
   );
+}
+
+/**
+ * THE URL A PG TEST FILE DIALS, taken through the refusal: {@link PG_TEST_URL}, refused by
+ * {@link sharedBoxRefusal} when it names the shared box and this is not the freeze. Called at the
+ * file's top level with its own `import.meta.url`, so a checkout with no lane database fails the
+ * file at collection — naming it and the remedy — before any client exists, instead of running it
+ * on the box unlocked. A lane database and any other URL are returned as they are.
+ */
+export function pgTestUrl(file: string, url: string = PG_TEST_URL, env: NodeJS.ProcessEnv = process.env): string {
+  const root = checkoutRoot();
+  const refusal = sharedBoxRefusal(url, env, root ?? undefined);
+  if (refusal === null) return url;
+  let name = file;
+  try { name = file.startsWith("file:") ? fileURLToPath(file) : file; } catch { /* keep it as given */ }
+  if (root !== null && name.startsWith(`${root}/`)) name = name.slice(root.length + 1);
+  throw new Error(`[pg] ${name}: ${refusal}`);
 }
 
 /** Set this to `1` in CI so a missing Postgres FAILS the suite instead of skipping it. */
@@ -275,7 +297,7 @@ export async function journalDrift(url: string): Promise<string | null> {
 export async function realPgAvailable(url: string = PG_TEST_URL): Promise<boolean> {
   /* Asked BEFORE anything dials: a refusal that arrived after the connection would already have
    * taken the shared box's advisory namespace for the length of the probe. */
-  const refusal = sharedBoxRefusal(url, process.env);
+  const refusal = sharedBoxRefusal(url, process.env, checkoutRoot() ?? undefined);
   if (refusal !== null) throw new Error(`[pg] ${refusal}`);
   const c = postgres(url, { max: 1, connect_timeout: 3, onnotice: () => {} });
   let up = false;
