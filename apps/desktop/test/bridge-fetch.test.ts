@@ -3,6 +3,7 @@ import { HttpAdapter } from "@ohmail/client-engine";
 
 import {
   BRIDGE_DEADLINE_MS, bridgeFetch, createEngineAdapter, engineConfigure, engineLogout, engineStatus,
+  WINDOW_SEARCH_PHASES_PATH,
 } from "../src/bridge-fetch.js";
 import { installOfflineGuard, isShellCommandChannel } from "../src/offline-guard.js";
 
@@ -387,5 +388,23 @@ describe("a sign-out and a door switch are one gesture at a time", () => {
 
     await expect(engineLogout()).rejects.toThrow(/refused to clear/);
     await expect(engineLogout()).rejects.toThrow(/refused to clear/);
+  });
+});
+
+describe("a Search's timings go to the engine's own log, through the bridge", () => {
+  it("the adapter carries the capability, and a record is one POST to the door with the record as its body", async () => {
+    const asked = shellAnswering(() => encode(204));
+    const adapter = createEngineAdapter();
+    expect(typeof adapter.reportSearchPhases).toBe("function");
+    const record = {
+      verdict: "matched" as const, debounceMs: 250, sendMs: 0, roundTripMs: 160, paintMs: 4, totalMs: 414,
+      serverMs: 108, sentAtMs: 1_790_000_000_000, answeredAtMs: 1_790_000_000_160,
+    };
+    await adapter.reportSearchPhases!(record);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]!.command).toBe("engine_request");
+    expect(asked[0]!.payload).toMatchObject({ method: "POST", url: WINDOW_SEARCH_PHASES_PATH });
+    const body = new TextDecoder().decode(new Uint8Array(asked[0]!.payload!.body as number[]));
+    expect(JSON.parse(body)).toEqual(record);
   });
 });

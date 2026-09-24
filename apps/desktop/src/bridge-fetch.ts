@@ -656,8 +656,7 @@ export async function engineLogout(): Promise<EngineStatus> {
  * this — a preview reaching for the Cloud protocol fails loudly instead of opening a socket.
  */
 export function createEngineAdapter(): HttpAdapter {
-  return new HttpAdapter({ baseUrl: "", fetch: bridgeFetch, syncFailureSink: reportWindowSyncFailure,
-    searchPhasesSink: reportWindowSearchPhases });
+  return new HttpAdapter({ baseUrl: "", fetch: bridgeFetch, syncFailureSink: reportWindowSyncFailure, searchPhasesSink: reportWindowSearchPhases });
 }
 
 /** The local engine's door for one Search's timings — see {@link reportWindowSearchPhases}. */
