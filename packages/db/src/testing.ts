@@ -122,7 +122,7 @@ function databaseOf(url: string): string {
  * root is the directory holding `pnpm-workspace.yaml` — one walk up from `src` or `dist` alike.
  */
 function laneDbUrl(): string | null {
-  const root = checkoutRoot();
+  const root = workspaceRoot();
   if (root === null) return null;
   try {
     const line = readFileSync(join(root, ".lane-db.env"), "utf8")
@@ -131,8 +131,8 @@ function laneDbUrl(): string | null {
   } catch { return null; }
 }
 
-/** The checkout this module was loaded from — the directory holding `pnpm-workspace.yaml`. */
-function checkoutRoot(): string | null {
+/** The workspace this module was loaded from — the directory holding `pnpm-workspace.yaml`. */
+function workspaceRoot(): string | null {
   let dir = dirname(fileURLToPath(import.meta.url));
   for (let up = 0; up < 5; up++) {
     if (existsSync(join(dir, "pnpm-workspace.yaml"))) return dir;
@@ -193,7 +193,7 @@ export function sharedBoxRefusal(url: string, env: NodeJS.ProcessEnv, worktree =
  * on the box unlocked. A lane database and any other URL are returned as they are.
  */
 export function pgTestUrl(file: string, url: string = PG_TEST_URL, env: NodeJS.ProcessEnv = process.env): string {
-  const root = checkoutRoot();
+  const root = workspaceRoot();
   const refusal = sharedBoxRefusal(url, env, root ?? undefined);
   if (refusal === null) return url;
   let name = file;
@@ -297,7 +297,7 @@ export async function journalDrift(url: string): Promise<string | null> {
 export async function realPgAvailable(url: string = PG_TEST_URL): Promise<boolean> {
   /* Asked BEFORE anything dials: a refusal that arrived after the connection would already have
    * taken the shared box's advisory namespace for the length of the probe. */
-  const refusal = sharedBoxRefusal(url, process.env, checkoutRoot() ?? undefined);
+  const refusal = sharedBoxRefusal(url, process.env, workspaceRoot() ?? undefined);
   if (refusal !== null) throw new Error(`[pg] ${refusal}`);
   const c = postgres(url, { max: 1, connect_timeout: 3, onnotice: () => {} });
   let up = false;
