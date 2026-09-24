@@ -55,6 +55,7 @@ import {
   dispatchScreeningChange,
   holdingRules,
   planScreeningChange,
+  releaseRules,
   senderScreening,
 } from "./sender-screening";
 import { pileNames } from "./decision-copy";
@@ -1436,18 +1437,10 @@ export function useScreenerState(
   /**
    * Releasing a sender the Screener already decided about. There is no un-screen endpoint: `decide` resolves `:id`
    * only against mail whose DESIRED folder is still `ohmail/Screener`, so a screened-out or quarantined
-   * representative is a 404; per-message `move` releases the mail physically filed here. It still creates no rule —
-   * but it RETARGETS the rules holding the sender here (this used to say "it creates no rule" and stop, which made
-   * the release unperformable for a sender whose segment membership came from a rule — see {@link releaseHeld}; live,
-   * 2026-08-19).
-   */
-
-  /**
-   * Retargeting is the reversal of the decision those rows record, and the only rewrite that moves ingest along with
-   * the presentation: a fresh allow rule beside a standing deny rule of the same kind loses every tie (`compareRules`,
-   * deny before allow at one specificity), so future mail would have kept arriving in Quarantine. @param segment the pile the sender is
-   * released FROM — named by a refusal, and where they remain if refused. Passed rather than derived because
-   * `release` serves both `allowScreened` (Screened out) and `notSpamToOhbox` (Spam), identical from in here.
+   * representative is a 404; per-message `move` releases the mail physically filed here, beside the rule write
+   * {@link releaseRules} names — the sender's own holding rule retargeted, or, when a DOMAIN rule holds them, an
+   * address rule that outranks it for this sender alone (live, 2026-08-19: bare moves were re-presented by the rule).
+   * @param segment the pile the sender is released FROM — named by a refusal, and where they remain if refused.
    */
   const release = (sender: ScreenerSenderDTO, dest: "ohbox" | "reads", segment: "screened" | "spam") => {
     // The RAW mirror, exactly as `commit` re-reads it: rules and physical folders are locations,
@@ -1455,24 +1448,34 @@ export function useScreenerState(
     const raw = engine.read();
     const wanted = FOLDER_OF_VIEW[dest];
     const segFolder = segment === "spam" ? FOLDER_OF_VIEW.spam : FOLDER_OF_VIEW.screened;
-    const retargets: EngineMutation[] = holdingRules(raw, sender.from.address, segFolder)
-      .map((r) => ({ kind: "rule_update", ruleId: r.id, destination: wanted }));
-    // Both halves are WATCHED. `toastReleased` below is raised at press time and states the
-    // release as done — which was the only thing on screen when the moves were refused, beside a
-    // row that had not moved. Keeping it and adding the refusal is the same pairing `decide`
-    // uses: the optimistic sentence when the press happens, the truth when the wire has answered.
-    void releaseHeld(retargets, physicallyHeldIn(raw, sender, segFolder), wanted)
+    const rules = releaseRules(raw, sender.from.address, segFolder, wanted);
+    if (rules.kind === "stands") { ruleStands(sender, segment, rules.domain); return; }
+    // Both halves are WATCHED: the optimistic sentence at the press, the truth when the wire has answered.
+    void releaseHeld(rules.mutations, physicallyHeldIn(raw, sender, segFolder), wanted)
       .then((tally) => releaseSaid(tally, sender, segment));
-    // TWO SENTENCES, BECAUSE ONLY ONE OF THEM IS TRUE AT A TIME. `toastReleased` says "No rule
-    // was made, so future mail is unchanged" — true for the no-rule release this always was, and
-    // FALSE the moment a holding rule is retargeted above: that retarget is precisely a statement
-    // about future mail. Claims are contracts; the toast follows what was actually dispatched.
+    // ONE SENTENCE PER WRITE, because only one is true: no rule, their own rule retargeted, or an
+    // address rule beside a domain rule that still decides everyone else there.
+    const said = { count: sender.held.length, sender: displayAddress(sender.from.address), dest: piles[dest] };
     toast(
-      t(retargets.length > 0 ? "toastReleasedRuled" : "toastReleased", {
-        count: sender.held.length,
-        sender: displayAddress(sender.from.address),
-        dest: piles[dest],
+      rules.kind === "address"
+        ? t("toastReleasedAddress", { ...said, domain: displayDomain(rules.domain) })
+        : t(rules.kind === "retarget" ? "toastReleasedRuled" : "toastReleased", said),
+    );
+  };
+
+  /**
+   * A PRESS THAT WOULD HAVE TO CHANGE A DOMAIN RULE, said and not performed: a rule for the whole
+   * domain decides this sender, and rewriting it from one sender's row would move everyone there.
+   * Nothing is written or moved; the sentence names the rule and where it can be changed.
+   */
+  const ruleStands = (sender: ScreenerSenderDTO, segment: "screened" | "spam", domain: string) => {
+    toast(
+      t("toastReleaseRuleStands", {
+        sender: senderLabel(sender),
+        place: segment === "spam" ? t("segSpam") : t("segScreened"),
+        domain: displayDomain(domain),
       }),
+      { duration: UNDO_MS },
     );
   };
 
@@ -1521,8 +1524,12 @@ export function useScreenerState(
       // WATCHED, like every other release: a refused deletion or move leaves the sender in Spam,
       // and the toast below states them as back in Waiting.
       const raw = engine.read();
-      const deletions: EngineMutation[] = holdingRules(raw, row.sender.from.address, FOLDER_OF_VIEW.spam)
-        .map((r) => ({ kind: "rule_delete", ruleId: r.id }));
+      const holding = holdingRules(raw, row.sender.from.address, FOLDER_OF_VIEW.spam);
+      // A DOMAIN rule holding them cannot be deleted for one sender (everyone there would be
+      // undecided) and an address rule cannot say "undecided": said, never performed.
+      const wide = holding.find((r) => r.kind !== "sender");
+      if (wide) { ruleStands(row.sender, "spam", wide.match.trim().toLowerCase()); return; }
+      const deletions: EngineMutation[] = holding.map((r) => ({ kind: "rule_delete", ruleId: r.id }));
       void releaseHeld(
         deletions,
         physicallyHeldIn(raw, row.sender, FOLDER_OF_VIEW.spam),
@@ -1540,7 +1547,16 @@ export function useScreenerState(
 
   const notSpamToOhbox = (row: SpamRow) => {
     clearRefused(row.sender);
+    let widened: string | null = null;
     if (row.pinned) {
+      // The decide that pinned this sender PROMOTED a rule to `ohmail/Quarantine` server-side,
+      // and by now the drain has put it in the mirror. Releasing the mail while that rule stands
+      // is the leckker defect one press later: the moved mail re-presents in Spam and every
+      // future arrival is quarantined. Their own rule is retargeted to INBOX beside the moves; a
+      // DOMAIN rule (a domain-scoped spam decision) stays, and an address rule outranks it.
+      const rules = releaseRules(reader, row.sender.from.address, FOLDER_OF_VIEW.spam, "INBOX");
+      if (rules.kind === "stands") { ruleStands(row.sender, "spam", rules.domain); return; }
+      if (rules.kind === "address") widened = rules.domain;
       // The engine already filed this sender's held mail to Quarantine —
       // release it to the Ohbox with real move mutations.
       const quarantined = reader
@@ -1568,13 +1584,7 @@ export function useScreenerState(
       const pinAt = s.pins.findIndex((p) => p.id === row.sender.id);
       s.pins = s.pins.filter((p) => p.id !== row.sender.id);
       bump();
-      // The decide that pinned this sender PROMOTED a rule to `ohmail/Quarantine` server-side,
-      // and by now the drain has put it in the mirror. Releasing the mail while that rule stands
-      // is the leckker defect one press later: the moved mail re-presents in Spam and every
-      // future arrival is quarantined. Retargeted to INBOX beside the moves, both watched.
-      const retargets: EngineMutation[] = holdingRules(reader, row.sender.from.address, FOLDER_OF_VIEW.spam)
-        .map((r) => ({ kind: "rule_update", ruleId: r.id, destination: "INBOX" }));
-      void releaseHeld(retargets, quarantined.map((m) => m.id), "INBOX").then((tally) => {
+      void releaseHeld(rules.mutations, quarantined.map((m) => m.id), "INBOX").then((tally) => {
         if (releaseSaid(tally, row.sender, "spam")) return;
         /* The pin goes back for a wait as well as for a refusal: nothing has moved in either
            case, and the derived row this session hid would otherwise come back unmarked. */
@@ -1601,7 +1611,9 @@ export function useScreenerState(
         () => refuseRelease(row.sender, "spam"),
       );
     }
-    toast(t("toastNotSpamOhbox", { sender: senderLabel(row.sender) }));
+    toast(widened === null
+      ? t("toastNotSpamOhbox", { sender: senderLabel(row.sender) })
+      : t("toastNotSpamOhboxAddress", { sender: senderLabel(row.sender), domain: displayDomain(widened) }));
   };
 
   const deleteSpam = (row: SpamRow) => {

@@ -12,6 +12,8 @@
  */
 import {
   FOLDER_OF_VIEW,
+  consentIndex,
+  decidedDestination,
   retroPassWouldMove,
   rulesList,
   senderKey,
@@ -591,14 +593,11 @@ export async function dispatchScreeningChange(
 }
 
 /**
- * The rules that hold a sender's mail at `folder` — the rows a release must rewrite. The consent cutline presents a
- * decided sender's mail at the RULE'S destination, so a sender with an enabled rule pointing at `ohmail/Quarantine`
- * has INBOX and Screener mail LISTED in Spam while it physically sits elsewhere: a release of bare `move`s either
- * rolls back locally or is re-presented by the rule (measured live, 2026-08-19 — every "Not spam → Ohbox" press
- * answered the refusal toast). A NEW allow rule beside the old cannot fix it: `compareRules` ranks deny over allow at
- * equal priority and specificity, so only retargeting or deleting the holding rule makes the surfaces agree. Term-free only (the
- * ladder's doctrine): a subject- or body-narrowed rule is one SLICE, deliberately built. Both kinds included: a
- * domain-scoped spam decision writes a `domain` deny rule, and its reversal must reach the same row.
+ * The rules that hold a sender's mail at `folder`. The consent cutline presents a decided sender's mail at the RULE'S
+ * destination, so a sender with an enabled rule pointing at `ohmail/Quarantine` has INBOX and Screener mail LISTED in
+ * Spam while it physically sits elsewhere: a release of bare `move`s either rolls back locally or is re-presented by
+ * the rule (measured live, 2026-08-19). Term-free only (the ladder's doctrine): a subject- or body-narrowed rule is one
+ * SLICE, deliberately built. Both kinds: which of them a press may rewrite is {@link releaseRules}' question.
  */
 export function holdingRules(reader: EntityReader, address: string, folder: Folder): RuleDTO[] {
   return rulesList(reader).filter((r) =>
@@ -607,6 +606,41 @@ export function holdingRules(reader: EntityReader, address: string, folder: Fold
     && (r.subjectContains ?? "").trim() === ""
     && (r.bodyContains ?? "").trim() === ""
     && ruleMatchesSender(r, address));
+}
+
+/**
+ * What a press about ONE sender writes, and it never changes how anyone else is filed. The sender's own holding rules
+ * are retargeted: a new allow beside one loses to it (deny over allow within a kind). A DOMAIN rule holding them
+ * stays; an address rule at `wanted` is written instead, which outranks it by kind — retargeting it would release
+ * everyone at the domain. `stands` is a domain rule the address rule cannot outrank (a higher priority), asked of the
+ * one order rather than restated. Mirrored by `apps/mobile/src/state/live.ts#releaseRules`.
+ */
+export type ReleaseRules =
+  | { kind: "retarget" | "none"; mutations: EngineMutation[] }
+  | { kind: "address" | "stands"; mutations: EngineMutation[]; domain: string };
+
+export function releaseRules(reader: EntityReader, address: string, from: Folder, wanted: Folder): ReleaseRules {
+  const holding = holdingRules(reader, address, from);
+  const own = holding.filter((r) => r.kind === "sender");
+  if (own.length > 0) {
+    return { kind: "retarget", mutations: own.map((r) => ({ kind: "rule_update", ruleId: r.id, destination: wanted })) };
+  }
+  const wide = holding.filter((r) => r.kind !== "sender");
+  if (wide.length === 0) return { kind: "none", mutations: [] };
+  const domain = wide[0]!.match.trim().toLowerCase();
+  const match = senderKey(address);
+  const mine: RuleDTO = { ...wide[0]!, id: "", kind: "sender", match, destination: wanted, priority: 0, provenance: "manual" };
+  if (decidedDestination(consentIndex([...wide, mine]), match) !== wanted) {
+    return { kind: "stands", mutations: [], domain };
+  }
+  // Already written (a re-plan, or the mirror behind the press): a second rule would decide nothing new.
+  const standing = rulesList(reader).some((r) => r.enabled && r.kind === "sender" && r.destination === wanted
+    && (r.subjectContains ?? "").trim() === "" && (r.bodyContains ?? "").trim() === "" && ruleMatchesSender(r, address));
+  return {
+    kind: "address",
+    mutations: standing ? [] : [{ kind: "rule_create", ruleKind: "sender", match, destination: wanted, applyRetro: true }],
+    domain,
+  };
 }
 
 /**

@@ -5,15 +5,17 @@
  * `threadOf`) over the consent-cutline projection (`presentationReader` ∘ `consentPartition`),
  * so this phone shows the piles any other client shows. Writes go through `engine.mutate`,
  * watched: `rolled_back` raises one sentence, `queued` is not a failure (the webapp's `moveAll`
- * doctrine); the release family rewrites the holding rule (`rule_update` beside physical
- * `move`s). Mutations read the raw mirror ({@link presentedOf} is for renders); no React, no I/O, no network.
+ * doctrine); the release family rewrites the sender's own holding rule, or writes an address rule
+ * beside a domain rule (`releaseRules`), beside physical `move`s. Mutations read the raw mirror ({@link presentedOf} is for renders); no React, no I/O, no network.
  */
 import {
   FOLDER_OF_VIEW,
   LAST_DRAIN_AT_META,
   VIEW_OF_FOLDER,
   bodyOf,
+  consentIndex,
   consentPartition,
+  decidedDestination,
   forwardSubject,
   dateClock,
   messageDisplayTime,
@@ -1692,10 +1694,10 @@ function ruleMatchesSender(rule: RuleDTO, address: string): boolean {
 }
 
 /**
- * The enabled rules HOLDING this sender in `folder` — the rows a release must rewrite.
+ * The enabled rules HOLDING this sender in `folder`.
  * Mirrored from `apps/webapp/app/shell/sender-screening.ts#holdingRules` (the reference):
  * plain sender/domain rules only; a subject- or body-termed rule is a narrower claim a
- * release must not silently widen.
+ * release must not silently widen. Which of them a press may rewrite is {@link releaseRules}'.
  */
 function holdingRules(reader: EntityReader, address: string, folder: Folder): RuleDTO[] {
   return rulesList(reader).filter(
@@ -1706,6 +1708,41 @@ function holdingRules(reader: EntityReader, address: string, folder: Folder): Ru
       (r.bodyContains ?? "").trim() === "" &&
       ruleMatchesSender(r, address),
   );
+}
+
+/**
+ * What a press about ONE sender writes, and it never changes how anyone else is filed.
+ * Mirrored from `apps/webapp/app/shell/sender-screening.ts#releaseRules` (the reference): the
+ * sender's own holding rules are retargeted; a DOMAIN rule holding them stays and an address
+ * rule at `wanted` outranks it by kind; `stands` is a domain rule it cannot outrank (a higher
+ * priority), asked of the one order rather than restated.
+ */
+export type ReleaseRules =
+  | { kind: "retarget" | "none"; mutations: EngineMutation[] }
+  | { kind: "address" | "stands"; mutations: EngineMutation[]; domain: string };
+
+export function releaseRules(reader: EntityReader, address: string, from: Folder, wanted: Folder): ReleaseRules {
+  const holding = holdingRules(reader, address, from);
+  const own = holding.filter((r) => r.kind === "sender");
+  if (own.length > 0) {
+    return { kind: "retarget", mutations: own.map((r) => ({ kind: "rule_update", ruleId: r.id, destination: wanted })) };
+  }
+  const wide = holding.filter((r) => r.kind !== "sender");
+  if (wide.length === 0) return { kind: "none", mutations: [] };
+  const domain = wide[0]!.match.trim().toLowerCase();
+  const match = senderKey(address);
+  const mine: RuleDTO = { ...wide[0]!, id: "", kind: "sender", match, destination: wanted, priority: 0, provenance: "manual" };
+  if (decidedDestination(consentIndex([...wide, mine]), match) !== wanted) {
+    return { kind: "stands", mutations: [], domain };
+  }
+  // Already written (a re-plan, or the mirror behind the press): a second rule would decide nothing new.
+  const standing = rulesList(reader).some((r) => r.enabled && r.kind === "sender" && r.destination === wanted
+    && (r.subjectContains ?? "").trim() === "" && (r.bodyContains ?? "").trim() === "" && ruleMatchesSender(r, address));
+  return {
+    kind: "address",
+    mutations: standing ? [] : [{ kind: "rule_create", ruleKind: "sender", match, destination: wanted, applyRetro: true }],
+    domain,
+  };
 }
 
 /**
@@ -1721,8 +1758,7 @@ export function planPhoneRouting(
 ): EngineMutation[] {
   const folder = FOLDER_OF_VIEW[intent.dest];
   if (!folder || intent.from === undefined) return [];
-  return holdingRules(reader, intent.address, intent.from as Folder)
-    .map((r) => ({ kind: "rule_update", ruleId: r.id, destination: folder }));
+  return releaseRules(reader, intent.address, intent.from as Folder, folder).mutations;
 }
 
 
@@ -2764,11 +2800,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const raw = engine.read();
     const segFolder = segment === "spam" ? FOLDER_OF_VIEW.spam : FOLDER_OF_VIEW.screened;
     const wanted = FOLDER_OF_VIEW[dest];
-    const retargets: EngineMutation[] = holdingRules(raw, row.address, segFolder).map((r) => ({
-      kind: "rule_update",
-      ruleId: r.id,
-      destination: wanted,
-    }));
+    const rules = releaseRules(raw, row.address, segFolder, wanted);
+    if (rules.kind === "stands") {
+      toast(refuse("liveReleaseRuleStands", row.address, rules.domain));
+      return false;
+    }
+    const retargets = rules.mutations;
     // Moves cover ONLY mail physically in the segment's folder. Everything else is where the
     // rule change alone re-presents; a move for mail already at its destination is the
     // engine's local 404 with nothing sent — the deterministic half of the bare-move bug.
@@ -2785,9 +2822,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       ...retargets.map((m) => dispatch(m)),
       ...moveIds.map((id) => dispatch({ kind: "move", messageId: id, folder: wanted })),
     ];
-    // Two sentences, one true at a time: the retarget IS a statement about future mail.
+    // One sentence per write, one true at a time: no rule, their own rule, or an address rule.
     toast(
-      retargets.length > 0 ? refuse("liveReleasedRuled", row.held.length, destDone(dest)) : refuse("liveReleased", row.held.length, destDone(dest)),
+      rules.kind === "address" ? refuse("liveReleasedAddress", row.held.length, destDone(dest), rules.domain)
+        : rules.kind === "retarget" ? refuse("liveReleasedRuled", row.held.length, destDone(dest))
+          : refuse("liveReleased", row.held.length, destDone(dest)),
     );
     return saidAll(await Promise.all(parts), null, refuse("liveReleaseFailed", row.address));
   };
@@ -3038,13 +3077,13 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     /* The plan as DATA first: nothing reaches `engine.mutate` until the list is known non-empty
        and no request of ours is still waiting on the organizer for this message. The move goes
        LAST so that, reading back, it is the first queued answer found and names its own holder. */
-    const writes: EngineMutation[] = row.presentedFolder === folder
-      ? []
-      : holdingRules(raw, m.from.address, row.presentedFolder).map((r) => ({
-        kind: "rule_update",
-        ruleId: r.id,
-        destination: folder,
-      }));
+    const routing = row.presentedFolder === folder ? null : releaseRules(raw, m.from.address, row.presentedFolder, folder);
+    // A DOMAIN rule this sender cannot be moved out from under: said, and nothing is sent.
+    if (routing?.kind === "stands") {
+      toast(refuse("liveReleaseRuleStands", m.from.address, routing.domain));
+      return false;
+    }
+    const writes: EngineMutation[] = routing ? [...routing.mutations] : [];
     if (m.folder !== folder) writes.push({ kind: "move", messageId, folder });
     // Nothing to dispatch means the mail is already in the place it was asked for, rules and all.
     // Said rather than swallowed: a press that returns in silence is the defect this arm had.
@@ -3058,8 +3097,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        decide where this sender's mail goes from here are HELD for the undo window — no rule
        mutation has a wire inverse, so the way back is to not send it yet (`held-routing.ts`).
        Junk rides this arm, so a spam filing is undone exactly like any other Move. */
-    const rules = writes.filter((w) => w.kind === "rule_update");
-    const mail = writes.filter((w) => w.kind !== "rule_update");
+    const rules = writes.filter((w) => w.kind !== "move");
+    const mail = writes.filter((w) => w.kind === "move");
     const inv = mail.flatMap((w) => inverseMutations(engine.verbRead(), w));
     /* RAW answers, never `watched`: it folds `awaiting_organizer` into landed-or-not, and on a
        mailbox this phone only reads EVERY write here comes back that way (`move` is named in the

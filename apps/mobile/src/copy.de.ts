@@ -897,6 +897,10 @@ export const DE: Deck = {
     `${dest} — ${n === 1 ? "1 zurückgehaltene Nachricht" : `${n} zurückgehaltene Nachrichten`} freigegeben. Es wurde keine Regel geändert.`,
   liveReleasedRuled: (n: number, dest: string) =>
     `${dest} — ${n === 1 ? "1 zurückgehaltene Nachricht" : `${n} zurückgehaltene Nachrichten`} freigegeben; die zurückhaltende Regel sortiert jetzt auch dorthin ein.`,
+  liveReleasedAddress: (n: number, dest: string, domain: string) =>
+    `${dest} — ${n === 1 ? "1 zurückgehaltene Nachricht" : `${n} zurückgehaltene Nachrichten`} freigegeben; dieser Absender ist dort ab jetzt zugelassen, die Regel für ${domain} sortiert alle anderen dort weiterhin aus.`,
+  liveReleaseRuleStands: (sender: string, domain: string) =>
+    `Nichts geändert — die Regel für ${domain} entscheidet über Post von ${sender}. Ändern kannst du sie im Web unter Einstellungen → Regeln.`,
   liveReleaseFailed: (sender: string) =>
     `Diese Freigabe ließ sich nicht speichern — Post von ${sender} liegt, wo sie lag.`,
   livePileAdded: (title: string) => `${title} — hinzugefügt.`,

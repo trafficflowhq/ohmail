@@ -1428,6 +1428,10 @@ const TABLE = {
     `Released ${n} held message${n === 1 ? "" : "s"} to ${dest}. No rule was changed.`,
   liveReleasedRuled: (n: number, dest: string) =>
     `Released ${n} held message${n === 1 ? "" : "s"} to ${dest} — the holding rule now files there too.`,
+  liveReleasedAddress: (n: number, dest: string, domain: string) =>
+    `Released ${n} held message${n === 1 ? "" : "s"} to ${dest} — this sender is allowed there from now on; the rule for ${domain} still screens everyone else there.`,
+  liveReleaseRuleStands: (sender: string, domain: string) =>
+    `Nothing changed — the rule for ${domain} decides mail from ${sender}. Change it on the web under Settings → Rules.`,
   liveReleaseFailed: (sender: string) =>
     `That release could not be saved — mail from ${sender} is where it was.`,
   livePileAdded: (title: string) => `${title} — added.`,
