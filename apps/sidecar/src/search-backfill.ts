@@ -32,7 +32,8 @@ interface SearchBackfillDeps {
   quietForMs: () => number;
   /** Is a drain taking mail in right now — `ingestIsRunning` in `store-lanes.ts`. */
   ingesting: () => boolean;
-  power: () => PowerVerdict;
+  /** Is the host on power — the desktop entry's `createHostPower`. Absent ⇒ {@link NO_POWER_READING}. */
+  power?: () => PowerVerdict;
   log: (event: string, fields: Record<string, unknown>) => void;
   /** The store's upkeep after the table grew — `OpenLocalDb.analyzeSearchIfStale`. Never throws. */
   maintain?: () => Promise<unknown>;
@@ -42,6 +43,13 @@ interface SearchBackfillDeps {
   tickMs?: number;
   waitMs?: number;
 }
+
+/**
+ * NO READER, NO INFORMATION — the verdict a host that cannot say gets from `host-power.ts`, and
+ * the one a composition without a reader runs on: power never refuses a round. The reader is
+ * injected rather than imported so the phone's engine carries no filesystem reader it never runs.
+ */
+const NO_POWER_READING: PowerVerdict = { onPower: true, state: "unknown" };
 
 export interface SearchBackfill {
   /** Look once and run a round if the gate admits one. The timer calls this; so may a test. */
@@ -54,6 +62,7 @@ export interface SearchBackfill {
 export function startSearchIndexBackfill(deps: SearchBackfillDeps): SearchBackfill {
   const now = deps.now ?? Date.now;
   const quietMs = deps.quietMs ?? PERSON_QUIET_MS;
+  const power = deps.power ?? (() => NO_POWER_READING);
   let finished = false;
   let stopped = false;
   let inFlight: Promise<unknown> | null = null;
@@ -73,7 +82,7 @@ export function startSearchIndexBackfill(deps: SearchBackfillDeps): SearchBackfi
     if (inFlight) return "busy";
     if (deps.quietForMs() < quietMs) return "person";
     if (deps.ingesting()) return "draining";
-    if (!deps.power().onPower) return "battery";
+    if (!power().onPower) return "battery";
     if (finished) {
       if (maintainedAt === null || now() - maintainedAt >= (deps.maintainEveryMs ?? SEARCH_MAINTAIN_EVERY_MS)) {
         const upkeep = maintain();
