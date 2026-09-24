@@ -1,4 +1,4 @@
-import { and, asc, eq, getTableColumns, inArray, isNotNull, isNull, sql, type SQL, type Table } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 import { foldersEnabled, userFolderById, type UserFolderRow } from "../folders.js";
 import {
   capSuggestion, draftBodyOverCeiling, resolveOhboxPolicy, senderCheckAll,
@@ -377,7 +377,7 @@ async function materializeRows(
 ): Promise<MaterializedRow[]> {
   const d = dialect(db);
   const source = "source" in scope ? scope.source : null;
-  const keyFields = Object.fromEntries((source?.keys ?? []).map((k, i) => [`k${i}`, sql`p.${sql.identifier(k)}`.as(`p_${k}`)]));
+  const keyFields = Object.fromEntries((source?.keys ?? []).map((k, i) => [`k${i}`, sql`${sql.raw(`p.${k}`)}`]));
   /**
    * THE THREE FLAGS as columns of the same row — the auto-reply flag and the two calendar facts,
    * each asked on the account-scoped row, on BOTH paths: the receipt reader (`deleted:
@@ -386,27 +386,26 @@ async function materializeRows(
    */
   const fields = {
     m: messages,
-    fs: prefixed(folderState, "fs"),
-    st: prefixed(messageStates, "st"),
-    tagId: sql<string | null>`${messageTags.tagId}`.as("mt_tag_id"),
-    awaySentAt: sql`${awayReplies.sentAt}`.mapWith(awayReplies.sentAt).as("ar_sent_at"),
+    fs: folderState,
+    st: messageStates,
+    tagId: messageTags.tagId,
+    awaySentAt: awayReplies.sentAt,
     autoReply: sql<unknown>`case when ${autoReplyByUsWhere(d, {
       accountId: sql`${messages.accountId}`,
       id: sql`${messages.id}`,
       fromAddress: sql`${messages.fromAddress}`,
       messageIdHeader: sql`${messages.messageIdHeader}`,
-    })} then 1 else 0 end`.as("m_auto_reply"),
-    invitation: sql`${invitationWithoutEventWhere(d, { id: sql`${messages.id}` })}`.as("m_invitation"),
-    itipReply: sql`${itipReplyHeaderWhere(d, { id: sql`${messages.id}` })}`.as("m_itip_reply"),
+    })} then 1 else 0 end`,
+    invitation: invitationWithoutEventWhere(d, { id: sql`${messages.id}` }),
+    itipReply: itipReplyHeaderWhere(d, { id: sql`${messages.id}` }),
     ...keyFields,
   };
   type Row = {
-    m: typeof messages.$inferSelect; fs: typeof folderState.$inferSelect;
-    st: typeof messageStates.$inferSelect; tagId: string | null; awaySentAt: Date | null;
+    m: typeof messages.$inferSelect; fs: typeof folderState.$inferSelect | null;
+    st: typeof messageStates.$inferSelect | null; tagId: string | null; awaySentAt: Date | null;
     autoReply: unknown; invitation: unknown; itipReply: unknown;
   } & Record<string, unknown>;
   // Dynamic: the page join is present only for a joined page. Every join is 1:1 but the tags.
-  // scoped-by: the `.where` below carries `eq(messages.accountId, accountId)`; every join keys on this row
   const base = (db.select(fields).from(messages) as unknown as { $dynamic: () => DynamicSelect }).$dynamic();
   const q = (source ? base.innerJoin(sql`(${source.rows}) p`, sql`p.id = ${messages.id}`) : base)
     .leftJoin(folderState, eq(folderState.messageId, messages.id))
@@ -441,8 +440,7 @@ async function materializeRows(
   for (const { row: r, tags: labels } of byId.values()) {
     out.push({
       dto: messageRowToDTO(
-        // A side row the left join did not find comes back as columns that are all null.
-        r.m, r.fs?.id == null ? undefined : r.fs, r.st?.id == null ? undefined : r.st, labels, isYes(r.autoReply),
+        r.m, r.fs ?? undefined, r.st ?? undefined, labels, isYes(r.autoReply),
         // `?? null` and never `undefined`: the batch ASKED, so "no ledger row" is a known answer
         // and says so on the wire. Absent is reserved for a caller that did not ask.
         iso(r.awaySentAt),
@@ -453,16 +451,6 @@ async function materializeRows(
     });
   }
   return out;
-}
-
-/**
- * A joined table's columns each under its own name (`fs_id`, `st_id`, …), decoded by the column:
- * the device store reads columns BY NAME and refuses two of one name, which every side table's
- * `id` and `updated_at` would be beside the message's own.
- */
-function prefixed<T extends Table>(table: T, prefix: string): Record<string, SQL.Aliased> {
-  return Object.fromEntries(Object.entries(getTableColumns(table)).map(([key, column]) =>
-    [key, sql`${column}`.mapWith(column).as(`${prefix}_${column.name}`)]));
 }
 
 /** The dynamic select the materializing read builds, as far as it uses it. */
