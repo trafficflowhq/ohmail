@@ -29,7 +29,7 @@ export {
   WORKER_TIMEOUTS, WORKER_POOL_MAX,
   POOLED_TIMEOUTS, API_MAX_DURATION_MS, ROLE_DEFAULT_TIMEOUTS,
   POOLED_ACQUIRE_TIMEOUT_MS, SESSION_ACQUIRE_TIMEOUT_MS, POOLED_MAX_CONNECTIONS,
-  DbAcquireTimeoutError, isDbAcquireTimeout,
+  DbAcquireTimeoutError, isDbAcquireTimeout, DbParameterTypeError,
   type OwnedDb,
 } from "./client.js";
 

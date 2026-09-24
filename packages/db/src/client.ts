@@ -262,7 +262,7 @@ function guardAcquire<Q extends object>(query: Q, ms: number): Q {
  * postgres-js session reaches the driver through exactly `client.unsafe(sql, params)`,
  * `client.unsafe(sql, params).values()` and `client.begin(fn)`. Everything else — `options`
  * (which drizzle MUTATES at construction to install its type parsers), `begin`, `end`, `listen` —
- * passes through to the real client untouched, so this cannot drift as the driver grows methods.
+ * passes through untouched to the client beneath (the one-flush door), so this cannot drift.
  */
 function withAcquireCeiling(
   client: ReturnType<typeof postgres>, ms: number,
@@ -279,6 +279,128 @@ function withAcquireCeiling(
         : value;
     },
   }) as ReturnType<typeof postgres>;
+}
+
+/**
+ * Thrown when a statement sent in one flush met a parameter the describe would have bound
+ * differently: text or a number where the server's type has its own serializer (boolean, bytea),
+ * or a flat array where it wanted something else. The statement HAS run: the refusal rides its
+ * answer, so a transaction rolls back and a lone write stands. Pass the value as its own type.
+ */
+export class DbParameterTypeError extends Error {
+  readonly code = "db_parameter_type";
+  constructor(readonly position: number, readonly oid: number) {
+    super(`parameter $${position} met server type ${oid}, which binds it differently from its text`);
+    this.name = "DbParameterTypeError";
+  }
+}
+
+/** The half of postgres.js' `Query` the one-flush door writes. See {@link sendInOneFlush}. */
+interface FlushQuery {
+  onlyDescribe?: boolean;
+  statement: { types: number[] } | null;
+  parameters: unknown[];
+  resolve: (rows: unknown) => void;
+  reject: (err: unknown) => void;
+}
+type Serializers = Record<number, (x: unknown) => unknown>;
+
+/** A flat text/number array, written as the driver's own array serializer writes one. */
+function arrayLiteral(xs: readonly unknown[]): string {
+  return `{${xs.map((x) => (x === null ? "null"
+    : `"${String(x).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`)).join(",")}}`;
+}
+
+/**
+ * The arguments for a one-flush send and the positions whose type the server decides, or `null`
+ * when a parameter needs the driver's describe (an object, a date, a nested or mixed array, a
+ * typed `Parameter`): that statement keeps its two round trips. Null, a boolean, a bigint and
+ * bytes carry their type from the client, which a describe never overwrites.
+ */
+function flatArgs(params: readonly unknown[]): { args: unknown[]; untyped: number[] } | null {
+  const args: unknown[] = [];
+  const untyped: number[] = [];
+  for (const [i, v] of params.entries()) {
+    if (v === null || typeof v === "boolean" || typeof v === "bigint" || v instanceof Uint8Array) args.push(v);
+    else if (typeof v === "string" || typeof v === "number") { args.push(v); untyped.push(i); }
+    else if (Array.isArray(v) && v.every((x) => x === null || typeof x === "string" || typeof x === "number")) {
+      args.push(arrayLiteral(v));
+      untyped.push(i);
+    } else return null;
+  }
+  return { args, untyped };
+}
+
+/** The first server-typed position whose sent text is not what the describe would have bound. */
+function divergent(q: FlushQuery, params: readonly unknown[], untyped: readonly number[], s: Serializers): number | null {
+  for (const i of untyped) {
+    const oid = q.statement?.types[i];
+    if (!oid) return i;
+    let bound: unknown;
+    try { bound = oid in s ? s[oid]!(params[i]) : `${params[i] as string}`; } catch { return i; }
+    if (bound !== q.parameters[i]) return i;
+  }
+  return null;
+}
+
+/**
+ * ONE FLUSH, NOT TWO. Under `prepare: false` postgres.js 3.4.9 sends every parameterized statement
+ * as Parse+Describe+Flush, waits, then Bind+Execute+Sync — two round trips to the pooler whatever
+ * the types — only so Bind can serialize by the server's type. Here `describeFirst` reads false,
+ * so the driver takes its own unnamed path (Parse, Describe, Bind, Execute, Sync in one write); the
+ * reply still describes, and at resolution the statement is refused if a position was bound other
+ * than the describe would have. `onexecute` false keeps each statement alone on its connection,
+ * as the describe did: the pool's pipelining is unchanged.
+ */
+function sendInOneFlush(query: object, params: readonly unknown[], untyped: readonly number[], s: () => Serializers): void {
+  const q = query as FlushQuery;
+  Object.defineProperty(q, "describeFirst", {
+    configurable: true,
+    get(this: FlushQuery) { return this.onlyDescribe === true; },
+    set() { /* the driver's verdict is replaced, not stored */ },
+  });
+  const settle = q.resolve;
+  q.resolve = (rows) => {
+    const at = divergent(q, params, untyped, s());
+    if (at === null) settle(rows);
+    else q.reject(new DbParameterTypeError(at + 1, q.statement?.types[at] ?? 0));
+  };
+}
+
+const holdConnection = (): boolean => false;
+
+/**
+ * The pooled client with {@link sendInOneFlush} at every door drizzle uses: `unsafe`, and the
+ * scoped clients `begin` and `savepoint` hand their callbacks, which are new driver handles the
+ * outer proxy never sees. A caller passing its own `onexecute` keeps the driver's path.
+ */
+function withOneFlush(client: ReturnType<typeof postgres>): ReturnType<typeof postgres> {
+  type Sql = ReturnType<typeof postgres>;
+  const serializers = (): Serializers => (client.options as unknown as { serializers: Serializers }).serializers;
+  const unsafeOf = (t: Sql) => (text: string, params: unknown[] = [], options: Record<string, unknown> = {}) => {
+    const flat = params.length > 0 && !("onexecute" in options) ? flatArgs(params) : null;
+    if (flat === null) return t.unsafe(text, params as never[], options);
+    // `onexecute` is the driver's own query option; its types do not list it.
+    const query = t.unsafe(text, flat.args as never[], { ...options, onexecute: holdConnection } as never);
+    sendInOneFlush(query, params, flat.untyped, serializers);
+    return query;
+  };
+  const within = (args: unknown[]): unknown[] => {
+    const fn = args[args.length - 1];
+    return typeof fn === "function" ? [...args.slice(0, -1), (sql: Sql) => (fn as (s: Sql) => unknown)(door(sql))] : args;
+  };
+  const door = (sql: Sql): Sql => new Proxy(sql, {
+    get(target, prop) {
+      if (prop === "unsafe") return unsafeOf(target);
+      if (prop === "begin" || prop === "savepoint") {
+        const open = Reflect.get(target, prop) as ((...a: unknown[]) => unknown) | undefined;
+        return open === undefined ? undefined : (...a: unknown[]) => open(...within(a));
+      }
+      const value = Reflect.get(target, prop);
+      return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+    },
+  });
+  return door(client);
 }
 
 // Serverless request-scoped Db. One pool per connection string, module-cached so a warm instance
@@ -317,7 +439,7 @@ export function makePooledDb(
     pools.set(url, pooled);
   }
   return brandDialect(
-    drizzle(withAcquireCeiling(pooled, opts.acquireTimeoutMs ?? POOLED_ACQUIRE_TIMEOUT_MS), { schema }),
+    drizzle(withAcquireCeiling(withOneFlush(pooled), opts.acquireTimeoutMs ?? POOLED_ACQUIRE_TIMEOUT_MS), { schema }),
     "pg",
   );
 }

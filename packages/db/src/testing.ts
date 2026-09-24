@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import net from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
@@ -13,6 +14,7 @@ import { JOURNALS } from "./migrate.js";
 import { schema } from "./schema.js";
 import { assertDistinct, brandDialect, deliverLocalNotifyAtCommit } from "./dialect/index.js";
 import { migrateSqlite } from "./sqlite-migrate.js";
+import { isProtocolOpener } from "./pg-socket.js";
 
 /**
  * Create an in-process PGlite-backed Drizzle client with all migrations applied. Tests only — no
@@ -436,5 +438,74 @@ export function throwawayDb(logical: string): ThrowawayDb {
         await admin.end({ timeout: 5 });
       }
     },
+  };
+}
+
+/**
+ * WHAT A STATEMENT COSTS ON THE WIRE, read off the frontend protocol bytes the driver hands its
+ * socket. A statement is a Parse or a simple Query; a round trip is every message after which the
+ * client waits on the server — Sync, Flush and a simple Query — so a describe before its bind is
+ * two. Installed once per process over `net.Socket#write`, before the first connection it is to
+ * see; a socket whose first packet is no protocol opener is not Postgres, and a TLS session is not
+ * read (a lane database dials in the clear). `binds` keeps each Bind message's bytes.
+ */
+export interface PgWireReading { statements: number; roundTrips: number; flushes: string[]; binds: Buffer[] }
+export interface PgWireRecorder { start(): void; read(): PgWireReading; connections(): number }
+
+type WireSeen = (kinds: string, binds: Buffer[]) => void;
+let wireSeen: Set<WireSeen> | null = null;
+let wireOpened = 0;
+
+export function recordPgWire(): PgWireRecorder {
+  if (wireSeen === null) {
+    const seen = new Set<WireSeen>();
+    wireSeen = seen;
+    const state = new WeakMap<object, { buf: Buffer; opened: boolean } | "skip">();
+    const write = net.Socket.prototype.write;
+    net.Socket.prototype.write = function (this: net.Socket, chunk: unknown, ...rest: unknown[]): boolean {
+      if (chunk instanceof Uint8Array) {
+        let st = state.get(this);
+        if (st === undefined) {
+          st = isProtocolOpener(chunk) ? { buf: Buffer.alloc(0), opened: false } : "skip";
+          state.set(this, st);
+        }
+        if (st !== "skip") readFrontend(this, st, Buffer.from(chunk));
+      }
+      return (write as (...a: unknown[]) => boolean).apply(this, [chunk, ...rest]);
+    } as typeof write;
+    const readFrontend = (sock: object, st: { buf: Buffer; opened: boolean }, chunk: Buffer): void => {
+      st.buf = st.buf.length === 0 ? chunk : Buffer.concat([st.buf, chunk]);
+      let kinds = "";
+      const binds: Buffer[] = [];
+      for (;;) {
+        if (!st.opened) {
+          if (st.buf.length < 8 || st.buf.length < st.buf.readInt32BE(0)) break;
+          if (st.buf.readInt32BE(4) === 80_877_103) { state.set(sock, "skip"); return; }
+          st.buf = st.buf.subarray(st.buf.readInt32BE(0));
+          st.opened = true;
+          wireOpened++;
+          continue;
+        }
+        if (st.buf.length < 5 || st.buf.length < st.buf.readInt32BE(1) + 1) break;
+        const len = st.buf.readInt32BE(1);
+        const kind = String.fromCharCode(st.buf[0]!);
+        if (kind === "B") binds.push(Buffer.from(st.buf.subarray(0, len + 1)));
+        kinds += kind;
+        st.buf = st.buf.subarray(len + 1);
+      }
+      if (kinds !== "") for (const s of seen) s(kinds, binds);
+    };
+  }
+  let flushes: string[] = [];
+  let binds: Buffer[] = [];
+  wireSeen.add((k, b) => { flushes.push(k); binds.push(...b); });
+  const count = (all: string, of: string): number => [...all].filter((c) => of.includes(c)).length;
+  return {
+    start() { flushes = []; binds = []; },
+    read() {
+      const all = flushes.join("");
+      return { statements: count(all, "PQ"), roundTrips: count(all, "SHQ"), flushes: [...flushes], binds: [...binds] };
+    },
+    connections: () => wireOpened,
   };
 }
