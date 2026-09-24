@@ -97,6 +97,20 @@ A message you move or read, a tag, a rule, a draft you save or discard and a mai
 show when you change them in the desktop app paired with ohmail Cloud, and stay. A later change to
 the same message, made on this computer or on another device, is no longer missed.
 
+### History on a desktop paired with ohmail Cloud lists your whole mailbox
+<!-- changes: fix-024-paired-desktop-timeline-route.md -->
+
+On a desktop paired with ohmail Cloud, History asks your account for its pages, so it lists every
+message you own, newest first, as it does on the web.
+
+### Search pages on ohmail Cloud answer faster
+<!-- changes: fix-024-search-page-one-round-trip.md -->
+
+A page of search results and everything the list shows about each message are now read from the
+database in one statement instead of one per table, and the count and facets share one
+transaction with their settings. On ohmail Cloud, where every statement costs a trip to the
+database, a whole-mailbox search page comes back in less than half the time it took.
+
 ## [0.23.2] — 2026-09-24
 
 ### The desktop's Ohbox matches the web's

@@ -86,6 +86,8 @@
           <li>Removing a mailbox can erase ohmail's copy of its mail</li>
           <li>On a desktop paired with ohmail Cloud, a change a slow server confirms shows at once</li>
           <li>On a desktop paired with ohmail Cloud, every change shows at once and stays</li>
+          <li>History on a desktop paired with ohmail Cloud lists your whole mailbox</li>
+          <li>Search pages on ohmail Cloud answer faster</li>
         </ul>
       </description>
     </release>
