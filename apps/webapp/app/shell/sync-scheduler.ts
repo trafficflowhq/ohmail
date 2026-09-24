@@ -755,6 +755,10 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
         ...(adapter.reportSyncFailure
           ? { reportSyncFailure: gatedRead(adapter.reportSyncFailure.bind(adapter), "a window's sync-failure report") }
           : {}),
+        /** A Search's timings for the door's log: forwarded and gated as the failure report above is. */
+        ...(adapter.reportSearchPhases
+          ? { reportSearchPhases: gatedRead(adapter.reportSearchPhases.bind(adapter), "a Search's timings report") }
+          : {}),
 
         /**
          * The one-click unsubscribe — forwarded, refused when contradicted, and spread. `POST
