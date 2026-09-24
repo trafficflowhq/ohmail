@@ -209,7 +209,7 @@ import { mirroredFirstSyncFacts, mirroredMessageCount, wipeLocalMirror } from ".
 import { stampSynced } from "./sync-stamp.js";
 import { handleWindowSyncFailure, WINDOW_SYNC_FAILED_ROUTE } from "./window-report.js";
 import { createAttentionClock } from "./attention.js";
-import { createHostPower } from "./host-power.js";
+import type { PowerVerdict } from "./host-power.js";
 import { startSearchIndexBackfill } from "./search-backfill.js";
 import { createStatisticsUpkeep } from "./store-statistics.js";
 import { SEARCH_INDEX_ROUTE, createSearchIndexDoor } from "./search-index-door.js";
@@ -282,6 +282,13 @@ export interface SidecarConfig {
   idlePollCeilingMs?: number;
   /** TEST SEAM: the search backfill's clocks (`search-backfill.ts`); production takes its constants. */
   searchBackfillTiming?: { waitMs?: number; tickMs?: number; quietMs?: number };
+  /**
+   * IS THIS MACHINE ON POWER — asked by the store-only pass before each round. The desktop entry
+   * (`main.ts`) supplies `createHostPower`; absent ⇒ no reading, which the pass runs on as a host
+   * that cannot say. Injected, never imported here: the phone bundles this module, and a value
+   * import would put a filesystem reader it never runs into its artifact.
+   */
+  hostPower?: () => PowerVerdict;
   /**
    * How long a connection has to answer an IMAP NOOP before it is treated as dead. Absent means
    * {@link DEFAULT_HEARTBEAT_TIMEOUT_MS}; a value that is not a positive number refuses the boot.
@@ -7005,9 +7012,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      */
     /* WHETHER SOMEBODY IS USING THIS INSTALL, and whether the machine is on power — the two
        questions a store-only pass asks before it takes the connection. Every door notes each
-       request; see `attention.ts` and `host-power.ts`. */
+       request (`attention.ts`); the power reader is the one the entry injected (`hostPower`). */
     const attention = createAttentionClock();
-    const hostPower = createHostPower();
     /** Does this request carry the install's live launch bearer — the check the window's report door reads. */
     const launchBearerAuthorized = async (r: Request): Promise<boolean> => {
       const header = r.headers.get("authorization");
@@ -7021,7 +7027,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           round: () => searchIndexBackfillPass({ db: db as unknown as Tx, accountId: world.accountId, rounds: 1 }),
           quietForMs: () => attention.quietForMs(),
           ingesting: ingestIsRunning,
-          power: hostPower,
+          ...(config.hostPower ? { power: config.hostPower } : {}),
           log,
           // PGlite has no autovacuum: the statistics of the tables search reads are the store's to keep.
           maintain: () => opened.analyzeSearchIfStale(),

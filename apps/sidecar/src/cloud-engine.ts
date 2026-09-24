@@ -3,7 +3,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { StaticKeyProvider, type KeyProvider } from "@trafficflow/core/mail";
 import {
-  resolveSession, syncService, ServiceError,
+  resolveSession, syncService, ServiceError, isUuid,
   type EntityType, type ServiceContext, type SyncResponse,
 } from "@trafficflow/services/mail";
 import {
@@ -2013,6 +2013,13 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       // hold — so it falls through to the proxy below; see `cloud-read.ts` at its former position.
       const read = matchReadRoute(req.method, path);
       if (read) {
+        // Every read parameter names a uuid row. The API's door refuses a misshapen one with a
+        // 400 before any query (`app.ts` `firstMisshapenParam`); this door says the same, rather
+        // than letting the uuid column throw a plain error the window reads as a failed request.
+        const bad = Object.keys(read.params).find((k) => !isUuid(read.params[k]));
+        if (bad !== undefined) {
+          return json({ error: { code: "validation_failed", message: `${bad} must be an id` } }, 400);
+        }
         try {
           const answer = await read.route.handler(req, ctxFor(core.accountId, core.userId, core.sessionId), read.params);
           // THE ONE FACT THE MIRROR ADDS ABOUT SOMEWHERE ELSE. `GET /mailboxes` is served from

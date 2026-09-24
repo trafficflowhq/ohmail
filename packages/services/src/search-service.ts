@@ -1,9 +1,10 @@
 import { sql, type SQL } from "drizzle-orm";
 import { holdsPunctuation, showSimilar, type SearchTier } from "@trafficflow/core/search-rank";
 import { searchIndexBuilt, searchIndexProgress } from "@trafficflow/core/mail";
+import { accountSettings, messages } from "@trafficflow/db";
 import type { ServiceContext, Db } from "./context.js";
 import { boolLiteral, dialect, pgOnly, type Dialect, type SearchArm } from "@trafficflow/db/dialect";
-import { materializeMessages } from "./dto/materialize.js";
+import { materializeMessages, materializePage, type MaterializeSource } from "./dto/materialize.js";
 import { clampLimit } from "./pagination.js";
 import { ServiceError } from "./errors.js";
 import { instantRefusal, readInstant } from "./instant.js";
@@ -260,6 +261,14 @@ function rowsOf<T>(result: unknown): T[] {
   return ((result as { rows?: T[] }).rows ?? []) as T[];
 }
 
+/**
+ * Accounts whose backfill marker this handle has READ as written: the marker is written once and
+ * never cleared (`coalesce` on its only writer), so a written marker is remembered and the session
+ * statement then carries no parameter — one round trip through the pooler instead of two.
+ */
+const markerWritten = new WeakMap<object, Set<string>>();
+const MARKER_MEMO_MAX = 10_000;
+
 // pg_trgm presence is a property of the physical database, not the request; memoize
 // per Db handle so we probe `to_regprocedure` at most once per connection object.
 const trgmCache = new WeakMap<object, Promise<boolean>>();
@@ -287,6 +296,9 @@ function hasTrgm(db: Db): Promise<boolean> {
   }
   return p;
 }
+
+/** What the store says before a search composes its arms: the backfill marker and pg_trgm. */
+interface StoreFacts { readonly built: boolean; readonly trigram: boolean }
 
 /** One branch of an arm: an index-served predicate and the rank the arm orders by. */
 interface Branch { readonly pred: SQL; readonly rank: SQL }
@@ -392,9 +404,8 @@ export class SearchService {
    * arm. While the account's backfill is unfinished each arm also reads the rows without a
    * document through the pre-0125 columns, ANDed with "no document" so no row is read twice.
    */
-  private async arms(ctx: ServiceContext, d: Dialect, q: string, tier: SearchTier): Promise<Arm[]> {
-    const trigram = await hasTrgm(ctx.db);
-    const built = await searchIndexBuilt(ctx.db as never, ctx.accountId);
+  private arms(ctx: ServiceContext, d: Dialect, q: string, tier: SearchTier, store: StoreFacts): Arm[] {
+    const { built, trigram } = store;
     const legacy = built ? null : d.search.unindexed(q, { trigram, threshold: FUZZY_THRESHOLD });
     const bare = (b: SearchArm): Branch => ({ pred: sql`(${b.pred} and s.message_id is null)`, rank: b.rank });
     // Where the arms read the document (a store with vectors), a branch names the document's own
@@ -496,56 +507,67 @@ export class SearchService {
     const d = dialect(ctx.db);
     const where = this.whereSql(d, ctx.accountId, opts.filters ?? {});
 
-    let tier: SearchTier = cursor?.t ?? "exact";
-    let got = await this.pageRows(ctx, d, q, tier, where, sort, limit, cursor);
-    if (cursor === null && tier === "exact" && got.rows.length === 0) {
-      tier = "similar";
-      got = await this.pageRows(ctx, d, q, tier, where, sort, limit, null);
-    }
-    const byId = await materializeMessages(ctx.db, ctx.accountId, got.rows.map((r) => r.id));
-    const items: MessageDTO[] = [];
-    for (const r of got.rows) { const dto = byId.get(r.id); if (dto) items.push(dto); }
+    // ONE session for the page: its settings and the marker, the tier's rows joined into their
+    // DTOs, and the typo tier in the same transaction when the exact tier is empty.
+    const { tier, got } = await this.session(ctx, d, async (db, built) => {
+      let t: SearchTier = cursor?.t ?? "exact";
+      let rows = await this.pageRows(ctx, db, d, q, t, where, sort, limit, cursor, built);
+      if (cursor === null && t === "exact" && rows.items.length === 0) {
+        t = "similar";
+        rows = await this.pageRows(ctx, db, d, q, t, where, sort, limit, null, built);
+      }
+      return { tier: t, got: rows };
+    });
+    const estimate = got.estimateOf === null ? null : await got.estimateOf();
+    const items = got.items;
     const nextCursor = got.next === null ? null : encodeCursor({ ...got.next, t: tier } as SearchCursor);
     const bounded = sort === "relevance" && nextCursor === null && got.cut;
-    return { items, tier, nextCursor, bounded, candidates: got.candidates, cut: got.cut, estimate: got.estimate };
+    return { items, tier, nextCursor, bounded, candidates: got.candidates, cut: got.cut, estimate };
   }
 
-  /** The rows of one page of one tier, and the cursor after them. */
+  /**
+   * The rows of one page of one tier as their DTOs, and the cursor after them — the tier's
+   * statement is the source the materializing read joins, so the page is ONE statement on `db`.
+   */
   private async pageRows(
-    ctx: ServiceContext, d: Dialect, q: string, tier: SearchTier, where: SQL,
-    sort: SearchSort, limit: number, cursor: SearchCursor | null,
+    ctx: ServiceContext, db: unknown, d: Dialect, q: string, tier: SearchTier, where: SQL,
+    sort: SearchSort, limit: number, cursor: SearchCursor | null, built: StoreFacts,
   ): Promise<{
-    rows: Array<{ id: string }>; next: Omit<RelevanceCursor, "t"> | Omit<OrderedCursor, "t"> | null;
-    cut: boolean; candidates: number; estimate: number | null;
+    items: MessageDTO[]; next: Omit<RelevanceCursor, "t"> | Omit<OrderedCursor, "t"> | null;
+    cut: boolean; candidates: number; estimateOf: (() => Promise<number>) | null;
   }> {
-    const arms = await this.arms(ctx, d, q, tier);
+    const arms = this.arms(ctx, d, q, tier, built);
     // The page's arms read newest first off the History index or their own GIN — never a table
     // scan, which the planner picks for a word in a large share of the store (it does not price
-    // the per-row vector read), so the page runs with the scan priced out, like the counts.
-    const run = (statement: SQL): Promise<unknown[][]> =>
-      this.inSession(ctx, d, { tier, preferIndexes: true }, (db) => d.exec(db, statement));
+    // the per-row vector read), so the page runs in the session that prices the scan out.
+    const read = (source: MaterializeSource) => materializePage(db as Db, ctx.accountId, source);
+    const dateOf = (dto: MessageDTO): number | null => millisOf(dto.date);
     if (sort === "relevance") {
       if (cursor !== null && cursor.k !== "r") throw new ServiceError("validation_failed", 400, "cursor belongs to another order");
       const { k, named, all, sizes } = this.fusedArms(d, where, arms, tier, limit);
       const after = cursor === null ? sql`` : sql`where (f.score < ${cursor.s} or (f.score = ${cursor.s} and ${afterDateDesc(d, cursor.d, cursor.i, sql`f.id`)}))`;
-      const rows = await run(sql`
+      const rows = await read({
+        rows: sql`
         with ${named},
         fused as (select id, ${d.castInt(sql`sum(${sql.raw(String(RRF_SCALE))} / (${sql.raw(String(RRF_K))} + r))`)} as score from (${all}) x group by id)
-        select f.id, f.score, m.date, ${d.castInt(sql`(select count(*) from fused)`)} as fused, ${sql.join(sizes, sql`, `)}
+        select f.id as id, f.score as score, ${d.castInt(sql`(select count(*) from fused)`)} as fused, ${sql.join(sizes, sql`, `)}
         from fused f join messages m on m.id = f.id
         ${after}
         order by f.score desc, m.date desc nulls last, f.id desc
-        limit ${limit + 1}`);
+        limit ${limit + 1}`,
+        keys: ["score", "fused", ...sizes.map((_, i) => "n" + String(i))],
+        order: sql`p.score desc, ${messages.date} desc nulls last, ${messages.id} desc`,
+      });
       const page = rows.slice(0, limit);
       const last = page[page.length - 1];
-      const sizesOf = (rows[0] ?? []).slice(4).map((n) => Number(n));
+      const sizesOf = (rows[0]?.keys ?? []).slice(2).map((n) => Number(n));
       const cut = sizesOf.some((n) => n >= k);
-      const candidates = Number(rows[0]?.[3] ?? 0);
-      const estimate = cut && cursor === null ? await this.estimateOf(ctx, d, where, arms, sizesOf, k, candidates) : null;
+      const candidates = Number(rows[0]?.keys[1] ?? 0);
       return {
-        rows: page.map((r) => ({ id: String(r[0]) })),
-        next: rows.length > limit && last ? { k: "r", s: Number(last[1]), d: millisOf(last[2]), i: String(last[0]) } : null,
-        cut, candidates, estimate,
+        items: page.map((r) => r.dto),
+        next: rows.length > limit && last ? { k: "r", s: Number(last.keys[0]), d: dateOf(last.dto), i: last.dto.id } : null,
+        cut, candidates,
+        estimateOf: cut && cursor === null ? () => this.estimateOf(ctx, d, where, arms, sizesOf, k, candidates) : null,
       };
     }
     if (cursor !== null && (cursor.k !== "o" || cursor.o !== sort)) {
@@ -553,18 +575,21 @@ export class SearchService {
     }
     const c = cursor as OrderedCursor | null;
     const { statement, key } = this.orderedPage(d, where, arms, sort, limit, c);
-    const rows = await run(statement);
+    const order = sort === "date_asc" ? sql`${messages.date} asc nulls last, ${messages.id} asc`
+      : key === null ? sql`${messages.date} desc nulls last, ${messages.id} desc`
+      : sql`p.k asc, ${messages.date} desc nulls last, ${messages.id} desc`;
+    const rows = await read({ rows: statement, keys: ["k"], order });
     const page = rows.slice(0, limit);
     const last = page[page.length - 1];
     return {
-      rows: page.map((r) => ({ id: String(r[0]) })),
+      items: page.map((r) => r.dto),
       next: rows.length > limit && last
-        ? { k: "o", o: sort, x: key === null ? null : String(last[2] ?? ""), d: millisOf(last[1]), i: String(last[0]) }
+        ? { k: "o", o: sort, x: key === null ? null : String(last.keys[0] ?? ""), d: dateOf(last.dto), i: last.dto.id }
         : null,
       // A date order walks the whole match set, so its page says nothing about the count.
       cut: true,
       candidates: page.length,
-      estimate: null,
+      estimateOf: null,
     };
   }
 
@@ -605,15 +630,17 @@ export class SearchService {
     if (!q) return { total: 0, facets: emptyFacets(), tier: "exact" };
     const d = dialect(ctx.db);
     const where = this.whereSql(d, ctx.accountId, opts.filters ?? {});
-    let tier: SearchTier = "exact";
-    let counted = await this.facets(ctx, d, this.unionSql(where, await this.arms(ctx, d, q, "exact")), tier);
-    if (showSimilar(counted.total)) {
-      tier = "similar";
-      counted = await this.facets(ctx, d, this.unionSql(where, await this.arms(ctx, d, q, "similar")), tier);
-    }
-    const { total, facets } = counted;
-    const indexed = await this.indexing(ctx);
-    return { total, facets, tier, ...(indexed ? { indexed } : {}) };
+    return this.session(ctx, d, async (db, built) => {
+      let tier: SearchTier = "exact";
+      let counted = await this.facets(ctx, db, d, this.unionSql(where, this.arms(ctx, d, q, "exact", built)));
+      if (showSimilar(counted.total)) {
+        tier = "similar";
+        counted = await this.facets(ctx, db, d, this.unionSql(where, this.arms(ctx, d, q, "similar", built)));
+      }
+      const { total, facets } = counted;
+      const indexed = await this.indexing(ctx, db, built);
+      return { total, facets, tier, ...(indexed ? { indexed } : {}) };
+    });
   }
 
   /**
@@ -628,27 +655,31 @@ export class SearchService {
     const limit = SearchService.pageOf(opts.limit);
     const d = dialect(ctx.db);
     const where = this.whereSql(d, ctx.accountId, opts.filters ?? {});
-    const ofTier = async (t: SearchTier) => {
-      const arms = await this.arms(ctx, d, q, t);
-      const { k, named, all, sizes } = this.fusedArms(d, where, arms, t, limit);
-      const got = await this.facets(ctx, d, sql`select id from (${all}) x group by id`, t, { named, extras: sizes });
-      const cut = got.extras.some((n) => n >= k);
-      return { ...got, cut, estimate: cut ? await this.estimateOf(ctx, d, where, arms, got.extras, k, got.total) : null };
-    };
-    let tier: SearchTier = "exact";
-    let got = await ofTier(tier);
-    if (showSimilar(got.total)) {
-      tier = "similar";
-      got = await ofTier(tier);
-    }
-    const indexed = await this.indexing(ctx);
-    return { total: got.total, facets: got.facets, tier, exact: !got.cut, estimate: got.estimate, ...(indexed ? { indexed } : {}) };
+    const { tier, got, indexed } = await this.session(ctx, d, async (db, built) => {
+      const ofTier = async (t: SearchTier) => {
+        const arms = this.arms(ctx, d, q, t, built);
+        const { k, named, all, sizes } = this.fusedArms(d, where, arms, t, limit);
+        const counted = await this.facets(ctx, db, d, sql`select id from (${all}) x group by id`, { named, extras: sizes });
+        const cut = counted.extras.some((n) => n >= k);
+        return { ...counted, cut, estimateOf: cut ? () => this.estimateOf(ctx, d, where, arms, counted.extras, k, counted.total) : null };
+      };
+      let t: SearchTier = "exact";
+      let counted = await ofTier(t);
+      if (showSimilar(counted.total)) {
+        t = "similar";
+        counted = await ofTier(t);
+      }
+      return { tier: t, got: counted, indexed: await this.indexing(ctx, db, built) };
+    });
+    // The planner's estimate reads statistics, outside the session and only for a cut arm.
+    const estimate = got.estimateOf === null ? null : await got.estimateOf();
+    return { total: got.total, facets: got.facets, tier, exact: !got.cut, estimate, ...(indexed ? { indexed } : {}) };
   }
 
   /** This account's search documents while they are still being built, else nothing. */
-  private async indexing(ctx: ServiceContext): Promise<{ done: number; total: number } | undefined> {
-    if (await searchIndexBuilt(ctx.db as never, ctx.accountId)) return undefined;
-    const p = await searchIndexProgress(ctx.db as never, ctx.accountId);
+  private async indexing(ctx: ServiceContext, db: unknown, store: StoreFacts): Promise<{ done: number; total: number } | undefined> {
+    if (store.built) return undefined;
+    const p = await searchIndexProgress(db as never, ctx.accountId);
     return p.done < p.total ? p : undefined;
   }
 
@@ -744,7 +775,7 @@ export class SearchService {
     const hitIds = hitRows.map((r) => String(r[0]));
 
     // The batch form, for the reason {@link SearchService.search} gives at its own call site:
-    // four statements for the page instead of four per hit on a `max: 1` pool.
+    // one statement for the page instead of one per hit on a `max: 1` pool.
     const byId = await materializeMessages(ctx.db, ctx.accountId, hitIds);
     const items: MessageDTO[] = [];
     for (const id of hitIds) {
@@ -755,6 +786,38 @@ export class SearchService {
   }
 
   // ── counts & facets over the union of the tier's arms ─────────────────────────────────
+
+  /**
+   * ONE TRANSACTION FOR A SEARCH ANSWER, shaped for its reads: the typo threshold (read only by
+   * the typo tier's operator) and the word indexes kept over a table scan, and the account's
+   * backfill marker — all in ONE statement, so an answer costs begin, this, its reads and commit.
+   * A store with no session (the device) reads the marker on its own handle, no round trip away.
+   */
+  private async session<T>(ctx: ServiceContext, d: Dialect, fn: (db: unknown, store: StoreFacts) => Promise<T>): Promise<T> {
+    // Before the transaction: the probe runs on the handle, and memoized, once per handle.
+    const trigram = await hasTrgm(ctx.db);
+    const setup = d.search.searchSession({ typoThreshold: FUZZY_THRESHOLD, preferIndexes: true });
+    if (setup === null) return fn(ctx.db, { built: await searchIndexBuilt(ctx.db as never, ctx.accountId), trigram });
+    const handle = ctx.db as unknown as object;
+    const known = markerWritten.get(handle) ?? new Set<string>();
+    markerWritten.set(handle, known);
+    const tx = ctx.db as unknown as { transaction: <R>(f: (t: unknown) => Promise<R>) => Promise<R> };
+    if (known.has(ctx.accountId)) {
+      return tx.transaction(async (t) => { await d.exec(t, setup); return fn(t, { built: true, trigram }); });
+    }
+    // Scoped by the caller's account like every read below: a marker is one account's fact.
+    const marker = sql`exists (select 1 from ${accountSettings}
+      where ${accountSettings.accountId} = ${ctx.accountId} and ${accountSettings.searchIndexBuiltAt} is not null)`;
+    return tx.transaction(async (t) => {
+      const [row] = await d.exec(t, sql`select ${marker} as built, s.* from (${setup}) s`);
+      const built = row?.[0] === true || row?.[0] === 1;
+      if (built) {
+        if (known.size >= MARKER_MEMO_MAX) known.clear();
+        known.add(ctx.accountId);
+      }
+      return fn(t, { built, trigram });
+    });
+  }
 
   /**
    * Run `fn` in a transaction shaped for a search read — the tier's typo threshold, and for the
@@ -788,7 +851,7 @@ export class SearchService {
    * columns, 1 a folder, 2 a sender in the SQL's own order. `arms` names statements `ids` reads.
    */
   private async facets(
-    ctx: ServiceContext, d: Dialect, ids: SQL, tier: SearchTier,
+    ctx: ServiceContext, db: unknown, d: Dialect, ids: SQL,
     arms?: { named: SQL; extras: readonly SQL[] },
   ): Promise<{ total: number; facets: Facets; extras: number[] }> {
     const now = ctx.now();
@@ -821,7 +884,7 @@ export class SearchService {
       select * from (
         select 2 as k, addr as key, ${n(sql`count(*)`)} as n, ${n(sql`row_number() over (order by count(*) desc, addr asc)`)} as o, ${nulls}
         from h group by addr order by count(*) desc, addr asc limit ${SENDER_FACET_LIMIT}) s`;
-    const rows = await this.inSession(ctx, d, { tier, preferIndexes: true }, (db) => d.exec(db, statement));
+    const rows = await d.exec(db, statement);
     const num = (v: unknown): number => Number(v ?? 0);
     const head = rows.find((r) => num(r[0]) === 0) ?? [];
     const s = head.slice(4, 12).map(num);
