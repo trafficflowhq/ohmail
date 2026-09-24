@@ -68,14 +68,21 @@ function encode(res: { status: number; statusText: string; headers: Headers }, b
 const json = (v: unknown, status = 200, headers: Record<string, string> = {}): Response =>
   new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", ...headers } });
 
-/** The other computer: the redeem, its one mailbox, one message in the feed, no push stream. */
+/**
+ * The other computer: the redeem, its one mailbox, one message in the feed, no push stream. Its
+ * mailbox list takes a second, as one across a network does — so the gate's own status poll reads
+ * the engine serving with no mailbox named before the name arrives, every run.
+ */
 const otherComputer = (async (input: string | URL | Request): Promise<Response> => {
   const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
   if (url.pathname === "/pair/redeem") {
     return json({ grant: "device-pair", tokens: { accessToken: "access-1", refreshToken: "refresh-1" } }, 200,
       { "x-ohmail-account": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" });
   }
-  if (url.pathname === "/mailboxes") return json({ items: [hostedMailbox(FIXTURE_MAILBOX, OWNER)] });
+  if (url.pathname === "/mailboxes") {
+    await new Promise((r) => setTimeout(r, 1_000));
+    return json({ items: [hostedMailbox(FIXTURE_MAILBOX, OWNER)] });
+  }
   if (url.pathname === "/sync") return json(messagePage(OWNER));
   if (url.pathname === "/events") return json({ error: { code: "events_disabled" } }, 503);
   return json({ error: { code: "not_found", message: "not found" } }, 404);
@@ -107,6 +114,8 @@ function standInShell(dataDir: string, startMs: number) {
   let served = "";
   const configured: Record<string, unknown>[] = [];
   const events: { event: string; at: number }[] = [];
+  /** How many times the window asked the shell what the engine is doing. */
+  let asked = 0;
   const status = (): Record<string, unknown> => {
     const run = engine
       ? { state: "serving", mailboxId: served, accountId: engine.world.accountId, userId: engine.world.userId,
@@ -139,7 +148,7 @@ function standInShell(dataDir: string, startMs: number) {
   host.__TAURI_INTERNALS__ = {
     transformCallback: () => nextId++,
     invoke: async (command, payload) => {
-      if (command === "engine_status") return status();
+      if (command === "engine_status") { asked += 1; return status(); }
       if (command === "engine_configure") return configure(payload!.config as Record<string, unknown>);
       if (command === "host_candidate_probe") return { status: 200, body: { ok: true, flavor: "desktop-host", base: ORIGIN } };
       if (command === "engine_request") {
@@ -160,6 +169,7 @@ function standInShell(dataDir: string, startMs: number) {
   return {
     configured,
     events,
+    asked: (): number => asked,
     async stop(): Promise<void> {
       await starting?.catch(() => undefined);
       await engine?.stop().catch(() => undefined);
@@ -251,8 +261,11 @@ describe("a fresh pairing opens the mail the moment the paired engine serves it"
     expect(paired, "the engine never paired").toBeDefined();
     expect(mountedAt - paired!.at, "the mail came up later than a relaunch brings it").toBeLessThanOrEqual(5_000);
 
-    // AND IT STAYS across the gate's next lifecycle poll: never replaced by a boot frame again.
-    await tick(LIFECYCLE_POLL_MS + 3_000);
+    // AND IT STAYS across the gate's next two lifecycle polls, counted rather than timed (the store
+    // shares this event loop and a timer can fire late): never replaced by a boot frame again.
+    const polled = shell.asked();
+    await until(el, "two lifecycle polls after the mail opened", () => shell!.asked() >= polled + 2, 4 * LIFECYCLE_POLL_MS);
+    await tick(1_000);
     watch.disconnect();
     console.info(`FIXTURE start held ${startMs} ms: cloud_paired at ${paired!.at - pressed} ms, mail ${mountedAt - paired!.at} ms after it; shown ${shown.join(", ")}`);
     expect(shown.filter((s2) => s2.endsWith("mail")), "the mail left the screen after it had opened").toHaveLength(1);
