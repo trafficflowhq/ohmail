@@ -1474,7 +1474,12 @@ export const healthRoutes: Route[] = [
       // whose database is down is still a host that may or may not be able to quote.
       let aiPricing: "plane" | "unpriced" | "unmetered" | null = null;
       if (injected?.aiPricing) {
-        try { aiPricing = await injected.aiPricing(); } catch { aiPricing = null; }
+        try {
+          aiPricing = await injected.aiPricing();
+        } catch {
+          // Contracted not to throw; a reading that faults is published as no reading, never a 503.
+          aiPricing = null;
+        }
       }
 
       // The pager's arms — the worker's boot announcement, in the idiom a serverless host has. A

@@ -633,7 +633,6 @@ export function selectionOf(config: WorkerConfig): MailboxSelection {
  * file; every existing importer of `buildVersionOf` is unaffected.
  */
 export { buildIdentityOf, buildVersionOf };
-export type { BuildIdentitySource };
 
 /**
  * Why the build identity is unknown, or null. REPORTED, NEVER THROWN, and never folded into
@@ -880,7 +879,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
 }
 
 /** The staging store this worker sweeps — the API host's `StorageConfig`, kind for kind. */
-export type WorkerStagingStorage =
+type WorkerStagingStorage =
   | { kind: "supabase"; url: string; serviceKey: string; bucket: string }
   | { kind: "s3"; endpoint: string; region: string; accessKeyId: string; secretAccessKey: string; bucket: string };
 
@@ -1007,7 +1006,7 @@ export function classifyCallCeilingMs(env: NodeJS.ProcessEnv): number {
  * `attach`, every report goes to the logger and nowhere else, which is the honest behaviour for
  * the window in question — a handful of calls at most, before the first sync cycle can run.
  */
-export interface AiUsageRelay {
+interface AiUsageRelay {
   /** The `onUsage` handed to the client at construction. Never throws. */
   readonly onUsage: (report: AnthropicCallReport) => void;
   /** Install the real sink once the database pool exists. */
