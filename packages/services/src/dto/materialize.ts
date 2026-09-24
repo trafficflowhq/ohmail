@@ -406,6 +406,7 @@ async function materializeRows(
     autoReply: unknown; invitation: unknown; itipReply: unknown;
   } & Record<string, unknown>;
   // Dynamic: the page join is present only for a joined page. Every join is 1:1 but the tags.
+  // scoped-by: the `.where` below carries `eq(messages.accountId, accountId)`; every join keys on this row
   const base = (db.select(fields).from(messages) as unknown as { $dynamic: () => DynamicSelect }).$dynamic();
   const q = (source ? base.innerJoin(sql`(${source.rows}) p`, sql`p.id = ${messages.id}`) : base)
     .leftJoin(folderState, eq(folderState.messageId, messages.id))
