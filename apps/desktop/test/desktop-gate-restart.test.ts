@@ -45,23 +45,22 @@ describe("the relaunch arm outranks the two that would lie about it", () => {
   it("all three arms are present — otherwise the ordering below is vacuous", () => {
     expect(armAt("if (hostedRestartRequired) {"), "no relaunch arm").toBeGreaterThan(0);
     expect(armAt("if (hostedPreAuth"), "no pre-auth arm").toBeGreaterThan(0);
-    expect(armAt("if (hostedSessionGone && paired) {"), "no expiry arm for the paired door").toBeGreaterThan(0);
-    // The Cloud door's expiry is the card over the mail, rendered below every early return.
-    expect(armAt("const refusedCard = "), "no expiry card for the Cloud door").toBeGreaterThan(0);
+    // Both doors' expiry is the card over the mail, rendered below every early return; the paired
+    // door's early notice, which replaced the mail, is gone.
+    expect(armAt("const refusedCard = "), "no expiry card").toBeGreaterThan(0);
+    expect(armAt("if (hostedSessionGone && paired) {"), "the paired door's expiry returns early again").toBe(-1);
   });
 
   it("and the relaunch arm is evaluated FIRST", () => {
     const restart = armAt("if (hostedRestartRequired) {");
     const preAuth = armAt("if (hostedPreAuth");
-    const gone = armAt("if (hostedSessionGone && paired) {");
     const card = armAt("const refusedCard = ");
     expect(
       restart,
       "the relaunch arm sits after the pre-auth arm, whose condition its own /health shape also "
         + "matches — so it can never run and the window shows a password form instead",
     ).toBeLessThan(preAuth);
-    expect(restart, "the relaunch arm sits after the expiry arm").toBeLessThan(gone);
-    expect(restart, "the relaunch arm sits after the Cloud door's expiry card").toBeLessThan(card);
+    expect(restart, "the relaunch arm sits after the expiry card").toBeLessThan(card);
   });
 
   /* THE FIELD IS READ BY EVERY ASKER. The gate asks `/health` on the slow steady cadence, on the

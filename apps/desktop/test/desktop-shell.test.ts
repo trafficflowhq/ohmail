@@ -2495,14 +2495,18 @@ describe("the UI bundle's build config", () => {
     expect(gate).toMatch(/health\.sessionExpired === true/);
     expect(gate).not.toMatch(/health\.signedIn === false\) setHostedSessionGone/);
     /* THE SENTENCE MOVED INTO THE CATALOGUE, so this follows it rather than being dropped:
-       the gate must name the right two keys, and those keys must still say the thing. Asserting
+       the gate must name the right keys, and those keys must still say the thing. Asserting
        only the key would let the sentence be rewritten into something that does not explain the
-       stand-still; asserting only the text would go green on a key nothing reads. */
-    expect(gate).toMatch(/reason=\{DOOR_COPY\.gateSessionGone\}/);
-    expect(gate).toMatch(/actionLabel=\{DOOR_COPY\.signIn\}/);
+       stand-still; asserting only the text would go green on a key nothing reads. Both doors'
+       refused session is one card over the mail: Cloud leads with the cause, a paired install
+       with the ended pairing and Pair again. */
+    expect(gate).toMatch(/signInCause=\{readers\.card\}/);
+    expect(gate).toMatch(/DOOR_COPY\.gateUnpaired\(/);
+    expect(gate).toMatch(/onClick=\{\(\) => setOverlay\("host"\)\}>\{DOOR_COPY\.gatePairAgain\}/);
     const door = catalogue("desktopDoor");
-    expect(door.gateSessionGone).toMatch(/signed out of your hosted account/);
-    expect(door.signIn).toBe("Sign in");
+    expect(door.cloudLeadRevoked).toMatch(/was signed out/);
+    expect(door.gateUnpaired).toMatch(/no longer paired/);
+    expect(door.gatePairAgain).toBe("Pair again");
     // The way back is the IN-PLACE cloud sign-in, not a door re-pick that reconfigures the
     // engine over the mirror it already has.
     expect(gate).toMatch(/start="cloud"\s+cloudAction="signIn"/);

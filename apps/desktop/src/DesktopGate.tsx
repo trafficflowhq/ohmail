@@ -22,7 +22,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OhmailEngine } from "@ohmail/client-engine";
-import { useOptionalToast } from "@ohmail/ui";
+import { Button, useOptionalToast } from "@ohmail/ui";
 
 import { AppShell } from "../../webapp/app/shell/AppShell";
 import { setStorageOwner } from "../../webapp/app/shell/storage-owner";
@@ -431,7 +431,6 @@ export function DesktopGate() {
       : hostedAuth.gone || hostedAuth.preAuth
         ? "out"
         : "live";
-  const [signInAfterExpiry, setSignInAfterExpiry] = useState(false);
 
   /**
    * IS THERE A HOSTED ACCOUNT BEHIND THIS WINDOW — the one gate every account-shaped surface
@@ -477,12 +476,6 @@ export function DesktopGate() {
     return onAccessRefused((facts) => setAccessRefused((held) => held ?? facts));
   }, [accountDoor]);
 
-  useEffect(() => {
-    // A new key is a new engine (or no cloud engine at all): the expiry flow's held step is
-    // about an answer that no longer exists. The stored answer itself needs no reset — a stale
-    // key already reads as pending.
-    setSignInAfterExpiry(false);
-  }, [authKey]);
   /** Not live: renewing, unreachable or unable to save. The probe then asks every few seconds. */
   const hostedDegraded = hostedAuthKnown && hostedAuth.session !== null && hostedAuth.session.state !== "live";
   useEffect(() => {
@@ -814,8 +807,11 @@ export function DesktopGate() {
        command palette (`--z-pal`) and below the toasts, which is where a modal setup step
        belongs: nothing in the app should be reachable while it is open, and a toast it
        produces still has to be readable over it. Inline because it is the only element in
-       either product that needs it. */
+       either product that needs it. ONE KEY in every branch that renders it: React keeps a keyed
+       child across branches whatever its position, so a door attempt that re-keys the gate never
+       remounts the door (and empties the link typed into it). */
     <div
+      key="door-overlay"
       style={{
         position: "fixed",
         inset: 0,
@@ -895,9 +891,8 @@ export function DesktopGate() {
         </div>
         {/* AND THE DOOR SOMEBODY IS STANDING IN, KEPT. This branch is reached DURING a door
             attempt — the attempt replaces the engine, the delivered lifecycle move re-keys the
-            auth answer, and the withheld app is this frame. Rendering the overlay at the same
-            position the branch below does is what keeps React from remounting it: measured, a
-            remount empties the pairing link the person had already typed. */}
+            auth answer, and the withheld app is this frame. The overlay's key is what keeps React
+            from remounting it here: measured, a remount empties the pairing link already typed. */}
         {doorOverlay}
       </>
     );
@@ -948,63 +943,6 @@ export function DesktopGate() {
     );
   }
 
-  if (hostedSessionGone && paired) {
-    /**
-     * ── A PAIRED INSTALL WHOSE PAIRING WAS REVOKED — a different fact, a different card ──
-     * `gateSessionGone` reads "You were signed out of your hosted account", which on this
-     * door names an account that never existed; what happened is Remove was pressed on the
-     * OTHER computer's Devices list. TWO ACTIONS, because the remedies are opposites: pair
-     * again, or stop depending on that computer and open the mailbox from here — a card with
-     * only the first is a dead end when the other machine is gone for good. "The copy of
-     * your mail here is kept" is a claim about what re-pairing DOES: signing out freezes the
-     * mirror, and the redeem refuses a different computer at that address.
-     */
-    const revokedHost = hostLabelOf(status?.baseUrl);
-    if (revokedHost !== null && !signInAfterExpiry) {
-      return (
-        <>
-          <GateNotice
-            reason={DOOR_COPY.gateUnpaired(machineWord(), revokedHost)}
-            actionLabel={DOOR_COPY.gatePairAgain}
-            onAction={() => setOverlay("host")}
-            secondaryLabel={DOOR_COPY.gateOwn}
-            onSecondary={beginTakeover}
-          />
-          {/* THE DOOR EACH BUTTON NAMES. Pair again opens the pairing door over this card and
-              Set up on its own opens the takeover card; without this the presses moved state
-              nobody rendered and the person read the same notice twice. */}
-          {doorOverlay}
-        </>
-      );
-    }
-    if (signInAfterExpiry) {
-      /* Straight to the CLOUD sign-in, in place — the same `start`/`cloudAction` pair the
-         Settings reauthentication overlay passes. The chooser's defaults would ask the person
-         to pick a door again and then RECONFIGURE the engine (which replaces the mirror);
-         an expired session needs a new session over the mirror it already has. */
-      return (
-        <DoorChooser
-          start="cloud"
-          cloudAction="signIn"
-          signInCause={signInCauseOf(hostedAuth?.session ?? null)}
-          onEntered={(r) => {
-            setAuthEpoch((n) => n + 1);
-            setSignInAfterExpiry(false);
-            if (r.status) onStatus(r.status);
-            else void refresh();
-          }}
-        />
-      );
-    }
-    return (
-      <GateNotice
-        reason={DOOR_COPY.gateSessionGone}
-        actionLabel={DOOR_COPY.signIn}
-        onAction={() => setSignInAfterExpiry(true)}
-      />
-    );
-  }
-
   /**
    * THE FINISHED SENTENCE, or `undefined` when there is nothing wrong to say.
    *
@@ -1049,18 +987,32 @@ export function DesktopGate() {
   })();
 
   /* ONE READING, THREE READERS (`sessionReaders`): the sign-in card, the rail's line and the sync
-     strip all key on the engine's session reading, never on this window's pull. The rail line is
-     for a session that is still there (Cloud not answering, a sign-in the disk would not save);
-     the card is for a refused one. Not on the paired door, whose own line and card say it. */
-  const readers = !paired && door === "cloud" && hostedAuthKnown
+     strip all key on the engine's session reading, never on this window's pull — on both doors.
+     The rail line is for a session that is still there; the paired door's own line (the other
+     computer not answering) says that there, so the Cloud wording stays off it. */
+  const readers = door === "cloud" && hostedAuthKnown
     ? sessionReaders(hostedAuth.session, hostedAuth.gone, hostedAuth.noticeDue)
     : null;
-  const cloudConnection = readers?.rail;
+  const cloudConnection = paired ? undefined : readers?.rail;
   const railConnection = hostConnection ?? cloudConnection;
-  /* A REFUSED SESSION: the sign-in card OVER the mail, its first sentence the cause. The mail on
-     screen is real and stays — the old engine-down notice replaced it with an empty window and
-     said nothing about why. Not cancellable: every read behind it is refused until a sign-in. */
-  const refusedCard = readers !== null && readers.card !== "closed" ? (
+  /* A REFUSED SESSION: a card OVER the mail, its first sentence the cause; the mail on screen is
+     real and stays. The doors differ only in the way back in: Cloud signs in inside the card; a
+     paired install was removed on the other computer, so it pairs again or sets up on its own
+     (opposite remedies, both offered) through a door opened over the card, which yields while
+     that door is open and returns if it is cancelled. */
+  const refusedCard = readers === null || readers.card === "closed" || overlay !== null ? null : paired ? (
+    <div className="session-end" role="dialog" aria-label={DOOR_COPY.credHostOutValue}>
+      <div className="gate-card">
+        <span className="wordmark"><b>ohmail</b><em>.</em></span>
+        <h1>{DOOR_COPY.credHostOutValue}</h1>
+        <p>{DOOR_COPY.gateUnpaired(machineWord(), hostLabel ?? DOOR_COPY.doorHostName)}</p>
+        <div className="gate-actions">
+          <Button onClick={() => setOverlay("host")}>{DOOR_COPY.gatePairAgain}</Button>
+          <Button variant="ghost" onClick={beginTakeover}>{DOOR_COPY.gateOwn}</Button>
+        </div>
+      </div>
+    </div>
+  ) : (
     <div className="session-end session-signin" role="dialog" aria-label={DOOR_COPY.cloudTitle}>
       <DoorChooser
         start="cloud"
@@ -1075,7 +1027,7 @@ export function DesktopGate() {
         }}
       />
     </div>
-  ) : null;
+  );
 
   const suggestDoor = suggestDoorFor(status, hostedSession);
 

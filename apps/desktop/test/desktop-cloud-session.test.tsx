@@ -72,6 +72,10 @@ const host = globalThis as unknown as Host;
 const CLOUD_SERVING: EngineStatus = {
   state: "serving", mode: "cloud", address: "someone@ohmail.app", mailboxId: "mbx-1", credentialState: "ready",
 };
+/** A paired install: the cloud door's `desktop-host` flavour, reading through another computer. */
+const PAIRED_SERVING: EngineStatus = {
+  ...CLOUD_SERVING, flavor: "desktop-host", address: "someone@example.com", baseUrl: "https://kestrel.tail1234.ts.net",
+};
 
 function encode(status: number, body: string): Uint8Array {
   const meta = new TextEncoder().encode(JSON.stringify({ status, statusText: "OK", h: [] }));
@@ -94,7 +98,7 @@ const EMPTY_SNAPSHOT = JSON.stringify({ asOfSeq: 0, changes: [], nextCursor: nul
  * `/cloud/session/wait` as the engine does until `move()`; `reads` refuses the window's pulls
  * with that status (409 is the engine's `not_signed_in` after a refusal) and counts them.
  */
-function fakeShell(health: Record<string, unknown>, opts: { wait?: boolean; reads?: number } = {}): {
+function fakeShell(health: Record<string, unknown>, opts: { wait?: boolean; reads?: number; status?: EngineStatus } = {}): {
   move(next: Record<string, unknown>): void;
   refusedReads(): number;
 } {
@@ -105,7 +109,7 @@ function fakeShell(health: Record<string, unknown>, opts: { wait?: boolean; read
   host.__TAURI_INTERNALS__ = {
     transformCallback: () => next++,
     invoke: async (command, payload) => {
-      if (command === "engine_status") return CLOUD_SERVING;
+      if (command === "engine_status") return opts.status ?? CLOUD_SERVING;
       if (command === "mailto_claim" || command === "plugin:event|listen") return null;
       if (command === "engine_request") {
         const url = String(payload?.url ?? "");
@@ -263,6 +267,66 @@ describe("a session refused while the mail is on screen", () => {
     fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) }, { wait: true });
     const el = await render();
     expect(await within(600, () => dialog(el))).toBeNull();
+    expect(mounted(el)).toBe(true);
+  });
+});
+
+/**
+ * THE PAIRED DOOR'S TWIN: the other computer removed this one from its Devices list. The same
+ * card over the kept mail, its sentence the unpaired one naming that computer, both remedies on
+ * it; the pairing door opens over the list when pressed. Before, a GateNotice replaced the mail.
+ */
+describe("a paired install removed on the other computer", () => {
+  const unpaired = (): string => DOOR_COPY.gateUnpaired(machineWord(), "kestrel");
+  const buttons = (el: HTMLElement, label: string): HTMLButtonElement[] =>
+    [...el.querySelectorAll("button")].filter((b) => (b.textContent ?? "").includes(label));
+
+  it("opens the card within 2 s of the engine's refusal, names the computer, keeps the mail", async () => {
+    const shell = fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) }, { wait: true, status: PAIRED_SERVING });
+    const el = await render();
+    expect(mounted(el)).toBe(true);
+    expect(text(el)).not.toContain(unpaired());
+
+    shell.move({ signedIn: false, sessionExpired: true, session: reading("refused", "refresh_revoked", 0) });
+    const took = await within(2_000, () => text(el).includes(unpaired()));
+    expect(took, "the unpaired card did not open within 2 s of the engine's refusal").not.toBeNull();
+    expect(mounted(el), "the mail on screen was taken away").toBe(true);
+    expect(engineDown(el), "a removed pairing is not the engine-down notice").toBe(false);
+    expect(dialog(el), "the hosted password form is not this door's way back").toBe(false);
+    expect(buttons(el, DOOR_COPY.gatePairAgain)).toHaveLength(1);
+    expect(buttons(el, DOOR_COPY.gateOwn)).toHaveLength(1);
+  });
+
+  it("Pair again opens the pairing door over the kept mail, and the card steps aside", async () => {
+    fakeShell({ signedIn: false, sessionExpired: true, session: reading("refused", "refresh_revoked") }, { status: PAIRED_SERVING });
+    const el = await render();
+    expect(text(el)).toContain(unpaired());
+    await act(async () => { buttons(el, DOOR_COPY.gatePairAgain)[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(await within(1_000, () => text(el).includes(DOOR_COPY.hostAskLead))).not.toBeNull();
+    expect(text(el), "the card stays over the door it opened").not.toContain(unpaired());
+    expect(mounted(el)).toBe(true);
+  });
+
+  it("the strip never says Retrying under the card, over at least three refused pulls", { timeout: 20_000 }, async () => {
+    const shell = fakeShell({ signedIn: false, sessionExpired: true, session: reading("refused", "refresh_revoked") }, { reads: 409, status: PAIRED_SERVING });
+    const el = await render();
+    expect(text(el)).toContain(unpaired());
+    expect(await within(5_000, () => text(el).includes(RETRYING)), "the strip said Retrying over a removed pairing").toBeNull();
+    expect(shell.refusedReads()).toBeGreaterThanOrEqual(5);
+  });
+
+  it("a renewal fault on the paired door never borrows the Cloud sentence (the Cloud door's arm above says it)", async () => {
+    fakeShell({ signedIn: true, sessionExpired: false, session: reading("renewing", "http_403") }, { status: PAIRED_SERVING });
+    const el = await render();
+    expect(mounted(el)).toBe(true);
+    expect(text(el)).not.toContain(DOOR_COPY.cloudUnreachableTitle);
+    expect(text(el)).not.toContain(unpaired());
+  });
+
+  it("the positive control: a live pairing opens nothing and keeps the mail", async () => {
+    fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) }, { wait: true, status: PAIRED_SERVING });
+    const el = await render();
+    expect(await within(600, () => text(el).includes(unpaired()))).toBeNull();
     expect(mounted(el)).toBe(true);
   });
 });
