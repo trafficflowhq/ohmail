@@ -133,24 +133,35 @@ export function newDesktopLinkPair(): DesktopLinkPair {
 export function tokensFromSetCookie(cookies: readonly string[]): CloudTokens | null {
   let accessToken: string | null = null;
   let refreshToken: string | null = null;
+  let issued: Pick<CloudTokens, "expiresIn"> = {};
   for (const cookie of cookies) {
-    const pair = cookie.split(";", 1)[0] ?? "";
+    const [pair = "", ...attrs] = cookie.split(";");
     const eq = pair.indexOf("=");
     if (eq < 0) continue;
     const name = pair.slice(0, eq).trim();
     const value = pair.slice(eq + 1).trim();
     if (value === "") continue;
-    if (name === "tf_session") accessToken = value;
-    else if (name === "tf_refresh") refreshToken = value;
+    if (name === "tf_session") {
+      accessToken = value;
+      // The access cookie lives exactly as long as the access token: its Max-Age IS the window.
+      const maxAge = attrs.map((a) => a.trim()).find((a) => /^max-age=/i.test(a))?.slice("max-age=".length);
+      issued = windowOf({ expiresIn: maxAge !== undefined && /^\d+$/.test(maxAge) ? Number(maxAge) : undefined });
+    } else if (name === "tf_refresh") refreshToken = value;
   }
-  return accessToken && refreshToken ? { accessToken, refreshToken } : null;
+  return accessToken && refreshToken ? { accessToken, refreshToken, ...issued } : null;
+}
+
+/** The access window a pair came with, kept beside it (never sealed) so the first renewal is scheduled. */
+function windowOf(wire: { expiresIn?: unknown }): Pick<CloudTokens, "expiresIn"> {
+  const s = wire.expiresIn;
+  return typeof s === "number" && Number.isFinite(s) && s > 0 ? { expiresIn: s } : {};
 }
 
 /** The token pair a session response carries, from whichever of the two places holds it. */
 function tokensFromResponse(body: unknown, res: Response): CloudTokens | null {
-  const wire = (body as { tokens?: { accessToken?: unknown; refreshToken?: unknown } } | null)?.tokens;
+  const wire = (body as { tokens?: { accessToken?: unknown; refreshToken?: unknown; expiresIn?: unknown } } | null)?.tokens;
   if (typeof wire?.accessToken === "string" && typeof wire?.refreshToken === "string") {
-    return { accessToken: wire.accessToken, refreshToken: wire.refreshToken };
+    return { accessToken: wire.accessToken, refreshToken: wire.refreshToken, ...windowOf(wire) };
   }
   return tokensFromSetCookie(res.headers.getSetCookie());
 }
@@ -469,7 +480,7 @@ export async function redeemPairingToken(
      is composed `allowCookieAuth: false` — so the cookie fallback the sign-in paths need would be
      reading for a transport this door does not have. Asking for it anyway would quietly accept a
      session established the one way this ceremony refuses. */
-  const wire = (body as { tokens?: { accessToken?: unknown; refreshToken?: unknown } } | null)?.tokens;
+  const wire = (body as { tokens?: { accessToken?: unknown; refreshToken?: unknown; expiresIn?: unknown } } | null)?.tokens;
   if (typeof wire?.accessToken !== "string" || typeof wire?.refreshToken !== "string") {
     throw new CloudSignInError(
       "no_session_returned", 502,
@@ -478,7 +489,7 @@ export async function redeemPairingToken(
   }
   const named = trimmed(res.headers.get(ACCOUNT_HEADER));
   return {
-    tokens: { accessToken: wire.accessToken, refreshToken: wire.refreshToken },
+    tokens: { accessToken: wire.accessToken, refreshToken: wire.refreshToken, ...windowOf(wire) },
     accountId: named === "" ? null : named,
   };
 }

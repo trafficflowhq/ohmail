@@ -31,6 +31,13 @@ export interface CloudTokens {
    * a stranger. Absent means nothing is owed, which is every ordinary pair.
    */
   refreshAttempt?: string;
+  /**
+   * NOT SEALED: the access window in seconds, as the door that issued THIS pair stated it. Read
+   * once, when the auth client starts, to arm the first renewal — so a sign-in renews on the same
+   * schedule a renewal does, not on the first 401. `sealTokens` writes the pair and the attempt name
+   * only, so a launch from the seal carries none and its first renewal is the 401 belt.
+   */
+  expiresIn?: number;
 }
 
 /**
@@ -66,6 +73,20 @@ const RETRY_BASE_MS = 1_000;
 export const RETRY_CAP_MS = 60_000;
 /** A server-named wait is honoured up to this; a longer header is read as a mistake. */
 const RETRY_AFTER_MAX_MS = 300_000;
+
+/** An `expiresIn` in seconds as milliseconds, or null when absent or not a positive number. */
+function windowMsOf(expiresIn: unknown): number | null {
+  return typeof expiresIn === "number" && Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn * 1000 : null;
+}
+
+/** The pair and the attempt name — what the seal holds and a rotation carries, and nothing else. */
+function pairOf(t: CloudTokens): CloudTokens {
+  return {
+    accessToken: t.accessToken,
+    refreshToken: t.refreshToken,
+    ...(t.refreshAttempt !== undefined ? { refreshAttempt: t.refreshAttempt } : {}),
+  };
+}
 
 export const OFFLINE_READ_ONLY = "offline_read_only";
 
@@ -183,7 +204,7 @@ interface SealedTokenFile {
  * key ring wraps both. Mode `0600`: the file is a live credential and no other user may read it.
  */
 export async function sealTokens(path: string, keyProvider: KeyProvider, tokens: CloudTokens): Promise<void> {
-  const sealed = await keyProvider.encrypt(JSON.stringify(tokens));
+  const sealed = await keyProvider.encrypt(JSON.stringify(pairOf(tokens)));
   /* STAGED AND RENAMED (`fs-atomic.ts`), never written in place. This file is the only credential
      a relaunch has: a process killed mid-write left a prefix of one envelope, which `loadSealed-
      Tokens` reads as "this key does not open that file" — a session lost for a write that was
@@ -214,7 +235,7 @@ export async function loadSealedTokens(path: string, keyProvider: KeyProvider): 
     const file = JSON.parse(raw) as SealedTokenFile;
     const plain = await keyProvider.decrypt(file.ciphertext, file.keyVersion);
     const tokens = JSON.parse(plain) as CloudTokens;
-    if (typeof tokens.accessToken === "string" && typeof tokens.refreshToken === "string") return tokens;
+    if (typeof tokens.accessToken === "string" && typeof tokens.refreshToken === "string") return pairOf(tokens);
     return null;
   } catch {
     return null;
@@ -263,7 +284,7 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
   const deadlineMs = cfg.requestDeadlineMs ?? REQUEST_DEADLINE_MS;
   const now = cfg.now ?? ((): Date => new Date());
   const random = cfg.random ?? Math.random;
-  let tokens = cfg.tokens;
+  let tokens = pairOf(cfg.tokens);
   /** The clone defence, single-flight: one in-flight renewal serves every caller. */
   let renewing: Promise<Renewal> | null = null;
   /** The refusal latch: {@link CloudAuthConfig.onSessionRefused} fires at most once. */
@@ -367,13 +388,17 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
        resumes. The next renewal cannot move further ahead: its own name must land first. */
     await persist(tokens,
       "the renewed session could not be written to disk; the saved one resumes it on the next launch");
-    const expiresIn = typeof next.expiresIn === "number" && next.expiresIn > 0 ? next.expiresIn * 1000 : null;
-    return { kind: "minted", expiresInMs: expiresIn };
+    return { kind: "minted", expiresInMs: windowMsOf(next.expiresIn) };
   };
 
   const clearTimer = (): void => {
     if (timer) clearTimeout(timer);
     timer = null;
+  };
+
+  /** Ahead of expiry: {@link RENEW_AHEAD_FRACTION} of the window, jittered ±5 %. */
+  const scheduleAhead = (windowMs: number): void => {
+    schedule(Math.round(windowMs * (RENEW_AHEAD_FRACTION + (random() - 0.5) * 0.1)), false);
   };
 
   const schedule = (delayMs: number, retry: boolean): void => {
@@ -404,9 +429,7 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
     if (r.kind === "minted") {
       faults = 0;
       report("live", null, null);
-      if (r.expiresInMs !== null) {
-        schedule(Math.round(r.expiresInMs * (RENEW_AHEAD_FRACTION + (random() - 0.5) * 0.1)), false);
-      }
+      if (r.expiresInMs !== null) scheduleAhead(r.expiresInMs);
       return;
     }
     if (r.kind === "refused") {
@@ -471,6 +494,12 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
     discard(res);
     return r.kind === "minted" ? again() : offlineResponse();
   };
+
+  /* A SIGN-IN'S PAIR IS ON THE SAME CLOCK AS A RENEWAL'S. The issuing door named its window, so
+     the first renewal runs ahead of expiry like every later one, not on the first request to meet
+     a 401 — an idle desktop never meets one. No window (a launch from the seal): the 401 belt. */
+  const issuedWindowMs = windowMsOf(cfg.tokens.expiresIn);
+  if (issuedWindowMs !== null) scheduleAhead(issuedWindowMs);
 
   return {
     authedFetch,
