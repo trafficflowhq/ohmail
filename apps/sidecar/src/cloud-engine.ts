@@ -1108,7 +1108,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       // FIRST LAUNCH: seal the environment token so no later launch needs one. Skipped without a
       // key, and skipped when a sealed pair already exists — which keeps this idempotent.
       if (!sealed && keyProvider) {
-        await sealTokens(sealPath, keyProvider, launchTokens);
+        await sealTokens(sealPath, keyProvider, launchTokens, now());
       }
       // NO IDENTITY ROUND TRIP HERE, and that is a decision rather than an omission. The mirror-owner
       // check the sign-in path runs (see `POST /cloud/signin`) would have to dial the hosted
@@ -1732,7 +1732,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         // pair that could not be written to disk is a session that survives until the next quit and
         // then silently is not there — better to say so now, while the person who typed the
         // password is still looking at the app.
-        if (keyProvider) await sealTokens(sealPath, keyProvider, tokens);
+        if (keyProvider) await sealTokens(sealPath, keyProvider, tokens, now());
         /* THE PENDING ENGINE STOPS AT THE SEAL. Its world was built with no address, so its ready
            frame named no mailbox and it cannot mount mail; the window relaunches it behind the door
            just written, and that engine activates from this seal and runs the first drain. */
@@ -1887,7 +1887,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
              record is stamped and the next launch performs it (`enforceMirrorOwner`); the pair sealed
              below is spared, because it belongs to the world being arrived at. NOTHING IS ACTIVATED —
              reads stay `409 not_signed_in` until the relaunch. */
-          if (keyProvider) await sealTokens(sealPath, keyProvider, redeemed.tokens);
+          if (keyProvider) await sealTokens(sealPath, keyProvider, redeemed.tokens, now());
           writeFileSync(
             join(config.dataDir, MIRROR_OWNER_FILE),
             encodeMirrorRecord(config.address, cloudBase, redeemed.accountId, true),
@@ -1953,7 +1953,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         // reasons exactly: a pair belonging to another world must not be written into this
         // directory even briefly, and a pair that could not reach the disk is a session that
         // silently is not there after the next quit.
-        if (keyProvider) await sealTokens(sealPath, keyProvider, redeemed.tokens);
+        if (keyProvider) await sealTokens(sealPath, keyProvider, redeemed.tokens, now());
         /* THE BINDING IS WRITTEN ONLY WHEN THE HOST NAMED ONE. A composition that names no account
            leaves the field as it was rather than stamping `null` over a recorded id — "this answer
            carried no header" is not evidence about whose mail is here. */
