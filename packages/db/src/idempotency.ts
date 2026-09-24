@@ -1,4 +1,4 @@
-import { and, eq, isNull, lte } from "drizzle-orm";
+import { and, eq, isNull, lte, or, type SQL } from "drizzle-orm";
 /* The mail half directly — see the note in `change-log.ts`. `idempotency_keys` is a mail table. */
 import { idempotencyKeys } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
@@ -20,9 +20,18 @@ import { dialect } from "./dialect/index.js";
 export const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** `expires_at` for a row written now. */
-export function idempotencyExpiry(now: Date): Date {
-  return new Date(now.getTime() + IDEMPOTENCY_TTL_MS);
+export function idempotencyExpiry(now: Date, ttlMs: number = IDEMPOTENCY_TTL_MS): Date {
+  return new Date(now.getTime() + ttlMs);
 }
+
+/**
+ * A KEY CLAIMED BEFORE ITS ANSWER EXISTS — the status and body of a PENDING row. A request whose
+ * effect is many transactions long (the Screener's suggestion purchase) binds its key to its body
+ * first and settles the answer onto the row at the end. 102 is never a stored answer: the one
+ * replay renderer turns it into a retryable "still running" refusal, never a response.
+ */
+export const IDEMPOTENCY_PENDING_STATUS = 102;
+export const IDEMPOTENCY_PENDING_BODY = "pending";
 
 export interface IdempotencyClaimInput {
   accountId: string;
@@ -35,6 +44,8 @@ export interface IdempotencyClaimInput {
   seq: number | null;
   /** The request clock (`ctx.now()`), used for both `expires_at` and the expired-row takeover. */
   now: Date;
+  /** How long the row binds the key; absent is {@link IDEMPOTENCY_TTL_MS}. A pending claim's is short. */
+  ttlMs?: number;
 }
 
 /**
@@ -46,6 +57,49 @@ export interface IdempotencyClaimInput {
  * treated as a conflict.
  */
 export async function claimIdempotencyKey(tx: Tx, i: IdempotencyClaimInput): Promise<boolean> {
+  return writeClaim(tx, i, lte(idempotencyKeys.expiresAt, i.now));
+}
+
+/**
+ * SETTLE THE ANSWER ONTO A KEY THIS REQUEST CLAIMED PENDING. It takes the row over while it is
+ * still pending under the SAME request hash and unerased — this request's own claim, or a
+ * same-body twin's after an expiry — or once it has expired, like any claim. A row somebody else
+ * settled, another body's claim or an erasure's stamp answers `false`, and the caller throws so
+ * the request replays whatever the key now holds.
+ */
+export async function settleIdempotencyKey(tx: Tx, i: IdempotencyClaimInput): Promise<boolean> {
+  return writeClaim(tx, i, or(
+    lte(idempotencyKeys.expiresAt, i.now),
+    and(
+      eq(idempotencyKeys.responseStatus, IDEMPOTENCY_PENDING_STATUS),
+      eq(idempotencyKeys.requestHash, i.requestHash),
+      isNull(idempotencyKeys.erasedAt),
+    ),
+  )!);
+}
+
+/**
+ * HAND BACK A PENDING KEY this request will not answer — a run that faulted or refused mid-way —
+ * so its retry runs instead of waiting out the TTL. Only the pending row under this request's
+ * hash: a settled answer is never deleted, since that would let a retry apply the effect twice.
+ */
+export async function releasePendingIdempotencyKey(
+  tx: Tx, i: { accountId: string; key: string; requestHash: string },
+): Promise<boolean> {
+  const gone = await tx
+    .delete(idempotencyKeys)
+    .where(and(
+      eq(idempotencyKeys.accountId, i.accountId),
+      eq(idempotencyKeys.key, i.key),
+      eq(idempotencyKeys.requestHash, i.requestHash),
+      eq(idempotencyKeys.responseStatus, IDEMPOTENCY_PENDING_STATUS),
+    ))
+    .returning({ key: idempotencyKeys.key });
+  return gone.length > 0;
+}
+
+/** The one writer: insert, or take the live row over only where `takeOver` holds. */
+async function writeClaim(tx: Tx, i: IdempotencyClaimInput, takeOver: SQL): Promise<boolean> {
   /* THE FENCE, HERE AND NOT AT NINETEEN CALL SITES. `idempotency_keys` is a table the Art. 17
      sweep empties, and a claim is written by a request that was valid when it started: the
      screener's suggest run reads a balance and awaits a model between its session check and this
@@ -60,7 +114,7 @@ export async function claimIdempotencyKey(tx: Tx, i: IdempotencyClaimInput): Pro
     responseStatus: i.responseStatus,
     responseJson: i.responseJson,
     seq: i.seq,
-    expiresAt: idempotencyExpiry(i.now),
+    expiresAt: idempotencyExpiry(i.now, i.ttlMs),
     createdAt: i.now,
   };
   const claimed = await tx
@@ -76,9 +130,9 @@ export async function claimIdempotencyKey(tx: Tx, i: IdempotencyClaimInput): Pro
         expiresAt: row.expiresAt,
         createdAt: row.createdAt,
       },
-      // ONLY an already-expired row may be taken over. A live row belongs to whoever
-      // committed it and must make this claim fail.
-      setWhere: lte(idempotencyKeys.expiresAt, i.now),
+      // ONLY the row `takeOver` names — for a claim, an already-expired one. A live row belongs
+      // to whoever committed it and must make this claim fail.
+      setWhere: takeOver,
     })
     .returning({ key: idempotencyKeys.key });
   return claimed.length > 0;

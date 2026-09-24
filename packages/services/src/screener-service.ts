@@ -4,7 +4,8 @@ import {
   messages,
   folderState,
   routingDecisions,
-  claimIdempotencyKey,
+  claimIdempotencyKey, settleIdempotencyKey, releasePendingIdempotencyKey,
+  IDEMPOTENCY_PENDING_STATUS, IDEMPOTENCY_PENDING_BODY,
   screenerAttemptKey,
   storeScreenerSuggestion,
   screenerSuggestionsBySender,
@@ -367,6 +368,16 @@ export function admissionDeadline(invocationBudgetMs: number | undefined): numbe
   return Date.now()
     + Math.max(0, invocationBudgetMs - SUGGEST_SPEND_CALL_CEILING_MS
       - SUGGEST_MODEL_CALL_CEILING_MS - SUGGEST_STORE_MARGIN_MS);
+}
+
+/**
+ * HOW LONG A PENDING KEY WAITS FOR ITS ANSWER before a retry may take it over. A run the platform
+ * kills has no `finally`, so its claim must free itself: the host's own ceiling plus the store
+ * margin, or a quarter hour where nothing kills a request (the desktop's slow local model
+ * included). A run that outlives it is answered by whichever run settles first.
+ */
+export function pendingKeyTtlMs(invocationBudgetMs: number | undefined): number {
+  return (invocationBudgetMs ?? 15 * 60_000) + SUGGEST_STORE_MARGIN_MS;
 }
 
 /**
@@ -1932,288 +1943,322 @@ export class ScreenerService extends ScreenerReadService {
       // what makes the cron and this press claim the same work. The source is composed by
       // whoever answers.
       const attemptKey = screenerAttemptKey(r.messageId);
-      /** What a release must name, when this lane charged one. */
+      /**
+       * WHAT A RELEASE MUST NAME, AND THE REFUND FLAG. Set when this lane charged; cleared once
+       * the work is delivered or a model fault leaves the charge standing to buy a free retry.
+       * Still set at the door means the lane charged and delivered nothing — the store faulted —
+       * so the one release reverses it.
+       */
       let chargedAttempt: string | null = null;
-      /** Give the claim back, reversing the charge only if this lane made one. */
+      /** Set only where the gate hands this lane the claim; `inflight` names another holder. */
+      let claimed = false;
+      let released = false;
+      /** Give the claim back ONCE — `released` set before the await, so a fault is not retried. */
       const releaseClaim = async (): Promise<void> => {
-        if (!gate) return;
+        if (!gate || !claimed || released) return;
+        released = true;
         const meta = { messageId: r.messageId };
         await gate.release(ctx.accountId, chargedAttempt === null
           ? { action: "screener", attemptKey, refund: false, meta }
           : { action: "screener", attemptKey, refund: true, attempt: chargedAttempt, meta });
       };
-      if (gate) {
-        const outcome = await gate.spend(
-          ctx.accountId, "screener", attemptKey, { messageId: r.messageId });
+      try {
+        if (gate) {
+          const outcome = await gate.spend(
+            ctx.accountId, "screener", attemptKey, { messageId: r.messageId });
 
-        // SOMEBODY ELSE IS BUYING THIS ONE RIGHT NOW — the FOURTH layer, the only one that can
-        // see a caller not yet finished. The three above describe work already OVER (a stored
-        // suggestion, a claimed key, a committed ledger row), and an overlapping request passes
-        // all of them; the ledger even answers `duplicate` — "already paid for, proceed" — which
-        // is how N simultaneous requests made N paid calls against ONE credit. The holder is the
-        // user's other tab or the worker's auto-suggest pass (the cron and a press select the
-        // same held sender by construction). SO IT WAITS for the answer rather than reporting a
-        // failure: a verdict is arriving within seconds, and a skip makes a correct system look
-        // broken. Bounded, per-REQUEST budget — a large set held elsewhere degrades to one wait,
-        // and lanes overlap several waits inside it.
-        if (outcome.verdict === "inflight") {
-          const settled = await this.awaitHeldSuggestion(ctx, r.messageId, ohboxPolicy, waitUntil);
-          if (settled) {
-            // Charged NOTHING and asked NOTHING, and the sender is answered. `quoted` stays as it
-            // was: this request priced the sender honestly and then did not have to pay.
-            answered[index] = {
-              sender, messageId: r.messageId,
-              ...withSenderCheck(settled, checked.get(r.messageId), ohboxPolicy)!,
-            };
-            return;
-          }
-          // The holder is slower than the budget, or died mid-call and its claim has not expired
-          // yet. Both are temporary and both are cleared by asking again, which is what
-          // `spend_unavailable` already tells a client — so no new wire value is minted for a
-          // state whose whole content is "retry". It is NOT `out_of_credits`: this account is
-          // fully funded, and a 402 here would be a bill for somebody else's concurrency.
-          refused[index] = { sender, reason: "spend_unavailable" };
-          stops[index] = "spend_unavailable";
-          // `fault`, so a run that produced nothing at all answers 503 "temporarily unavailable;
-          // please retry" rather than 402. Refusing to demand money for this is the point.
-          refusals[index] = { refusal: "fault", verdict: "inflight" };
-          return;
-        }
-
-        if (outcome.verdict !== "ok" && outcome.verdict !== "duplicate") {
-          const reason = outcome.verdict === "insufficient" ? "out_of_credits" : "spend_unavailable";
-          refused[index] = { sender, reason };
-          stops[index] = reason;
-          // The wire words the client already reads, from the port's own verdict: `quantity` for
-          // an empty balance, `state` for a subscription (or the account's switch) that may not
-          // spend, `fault` for "we do not know" — which is never a payment demand.
-          refusals[index] = outcome.verdict === "fault"
-            ? { refusal: "fault", verdict: outcome.verdict }
-            : {
-                refusal: outcome.verdict === "insufficient" ? "quantity" : "state",
-                verdict: outcome.verdict,
-                reason: outcome.reason,
+          // SOMEBODY ELSE IS BUYING THIS ONE RIGHT NOW — the FOURTH layer, the only one that can
+          // see a caller not yet finished. The three above describe work already OVER (a stored
+          // suggestion, a claimed key, a committed ledger row), and an overlapping request passes
+          // all of them; the ledger even answers `duplicate` — "already paid for, proceed" — which
+          // is how N simultaneous requests made N paid calls against ONE credit. The holder is the
+          // user's other tab or the worker's auto-suggest pass (the cron and a press select the
+          // same held sender by construction). SO IT WAITS for the answer rather than reporting a
+          // failure: a verdict is arriving within seconds, and a skip makes a correct system look
+          // broken. Bounded, per-REQUEST budget — a large set held elsewhere degrades to one wait,
+          // and lanes overlap several waits inside it.
+          if (outcome.verdict === "inflight") {
+            const settled = await this.awaitHeldSuggestion(ctx, r.messageId, ohboxPolicy, waitUntil);
+            if (settled) {
+              // Charged NOTHING and asked NOTHING, and the sender is answered. `quoted` stays as it
+              // was: this request priced the sender honestly and then did not have to pay.
+              answered[index] = {
+                sender, messageId: r.messageId,
+                ...withSenderCheck(settled, checked.get(r.messageId), ohboxPolicy)!,
               };
-          return;
-        }
-        // `charged: false` is a free retry of an attempt already on record — a `duplicate`;
-        // reporting it as spend would say the user paid twice. `+= the weight`, not `++`: the
-        // field is CREDITS and `spend()` moves that many per call (`ai-gate.ts` — `opts.amount ??
-        // aiActionCost(opts.reason)`). `debit_classify` weighs 1 today, so this changes no
-        // number; it is the increment that stays true now that weights are per-reason. `charged`
-        // is a plain `+=` across lanes, sound because JavaScript runs one lane at a time between
-        // `await`s — a read-modify-write with no `await` inside is atomic here.
-        if (outcome.verdict === "ok") {
-          charged += AI_ACTION_WEIGHTS.debit_classify;
-          chargedAttempt = outcome.attempt;
+              return;
+            }
+            // The holder is slower than the budget, or died mid-call and its claim has not expired
+            // yet. Both are temporary and both are cleared by asking again, which is what
+            // `spend_unavailable` already tells a client — so no new wire value is minted for a
+            // state whose whole content is "retry". It is NOT `out_of_credits`: this account is
+            // fully funded, and a 402 here would be a bill for somebody else's concurrency.
+            refused[index] = { sender, reason: "spend_unavailable" };
+            stops[index] = "spend_unavailable";
+            // `fault`, so a run that produced nothing at all answers 503 "temporarily unavailable;
+            // please retry" rather than 402. Refusing to demand money for this is the point.
+            refusals[index] = { refusal: "fault", verdict: "inflight" };
+            return;
+          }
+
+          if (outcome.verdict !== "ok" && outcome.verdict !== "duplicate") {
+            const reason = outcome.verdict === "insufficient" ? "out_of_credits" : "spend_unavailable";
+            refused[index] = { sender, reason };
+            stops[index] = reason;
+            // The wire words the client already reads, from the port's own verdict: `quantity` for
+            // an empty balance, `state` for a subscription (or the account's switch) that may not
+            // spend, `fault` for "we do not know" — which is never a payment demand.
+            refusals[index] = outcome.verdict === "fault"
+              ? { refusal: "fault", verdict: outcome.verdict }
+              : {
+                  refusal: outcome.verdict === "insufficient" ? "quantity" : "state",
+                  verdict: outcome.verdict,
+                  reason: outcome.reason,
+                };
+            return;
+          }
+          // THE CLAIM IS THIS LANE'S FROM HERE: `ok` and `duplicate` are the two verdicts that hand
+          // it over, and the door below gives back nothing without this line.
+          claimed = true;
+          // `charged: false` is a free retry of an attempt already on record — a `duplicate`;
+          // reporting it as spend would say the user paid twice. `+= the weight`, not `++`: the
+          // field is CREDITS and `spend()` moves that many per call (`ai-gate.ts` — `opts.amount ??
+          // aiActionCost(opts.reason)`). `debit_classify` weighs 1 today, so this changes no
+          // number; it is the increment that stays true now that weights are per-reason. `charged`
+          // is a plain `+=` across lanes, sound because JavaScript runs one lane at a time between
+          // `await`s — a read-modify-write with no `await` inside is atomic here.
+          if (outcome.verdict === "ok") {
+            charged += AI_ACTION_WEIGHTS.debit_classify;
+            chargedAttempt = outcome.attempt;
+          }
+
+          // A FREE RETRY LOOKS FOR THE RESULT IT IS A RETRY OF, BEFORE RE-BUYING TOKENS. `charged:
+          // false` means the gate found the work already paid for; taking that as leave to call the
+          // model was the LAST way N requests could buy one credit's work N times — through the
+          // preflight SNAPSHOT, read once before the passes: a racer that stored its verdict after
+          // that read leaves the next caller seeing nothing, told `duplicate`, buying the same
+          // tokens again (measured on two racers over five senders). So the check is re-made HERE,
+          // inside the exclusive region, where every earlier commit is visible — layer 1 asked at
+          // the only authoritative moment. NOT run when `charged` is true: a new attempt purchases
+          // a FRESH verdict; serving the old row takes the money and hands back what the customer
+          // already had.
+          if (outcome.verdict === "duplicate") {
+            const settled = (await this.storedSuggestions(ctx, [r.messageId], ohboxPolicy)).get(r.messageId);
+            if (settled) {
+              answered[index] = {
+                sender, messageId: r.messageId,
+                ...withSenderCheck(settled, checked.get(r.messageId), ohboxPolicy)!,
+              };
+              return;
+            }
+          }
         }
 
-        // A FREE RETRY LOOKS FOR THE RESULT IT IS A RETRY OF, BEFORE RE-BUYING TOKENS. `charged:
-        // false` means the gate found the work already paid for; taking that as leave to call the
-        // model was the LAST way N requests could buy one credit's work N times — through the
-        // preflight SNAPSHOT, read once before the passes: a racer that stored its verdict after
-        // that read leaves the next caller seeing nothing, told `duplicate`, buying the same
-        // tokens again (measured on two racers over five senders). So the check is re-made HERE,
-        // inside the exclusive region, where every earlier commit is visible — layer 1 asked at
-        // the only authoritative moment. NOT run when `charged` is true: a new attempt purchases
-        // a FRESH verdict; serving the old row takes the money and hands back what the customer
-        // already had.
-        if (outcome.verdict === "duplicate") {
-          const settled = (await this.storedSuggestions(ctx, [r.messageId], ohboxPolicy)).get(r.messageId);
-          if (settled) {
-            answered[index] = {
-              sender, messageId: r.messageId,
-              ...withSenderCheck(settled, checked.get(r.messageId), ohboxPolicy)!,
-            };
-            await releaseClaim();
+        let result;
+        try {
+          // THE REQUEST — `askScreeningQuestion`, ONE definition, in `@trafficflow/core/mail`. The
+          // redaction (at the CALLER, because a port has implementations outside this repo), the
+          // `outbound: "prescreened"` declaration, the screening question rather than the routing
+          // one, and the account's Ohbox bar into the model's user turn — four lines a second
+          // caller (the worker's always-on pass) would have to get independently right, four ways
+          // to send a credential or ask the wrong question. THIS IS THE ONLY AWAIT THAT OVERLAPS
+          // BETWEEN LANES in any meaningful way, and it is the point: no connection, no lock, no
+          // claim-blocking transaction, ~2 s long.
+          const facts = senderFacts(checked.get(r.messageId) ?? { senderDomain: "", urgency: false });
+          result = await askScreeningQuestion(classifier, {
+            fromAddress: r.fromAddress,
+            subject: r.subject,
+            snippet: r.snippet,
+            ...(ohboxBar ? { ohboxBar } : {}),
+            ...(facts ? { senderFacts: facts } : {}),
+          });
+        } catch (err) {
+          console.error(`[screener] AI suggestion failed for message ${r.messageId}:`, err);
+          refused[index] = { sender, reason: "model_unavailable" };
+          // The claim goes back at the door and the CHARGE STANDS: the source is stable, so the
+          // next attempt over this message answers `duplicate` and is free.
+          chargedAttempt = null;
+          return;
+        }
+
+        // THE FACTS CAP THE ANSWER, and the cap is what is stored and what is answered — the same
+        // `capSuggestion` the worker's pass and the read path call. No signal ⇒ `capped` IS
+        // `result`, so an ordinary sender's stored row is byte-for-byte the one this path always
+        // wrote.
+        const capped = capSuggestion(result, checked.get(r.messageId) ?? { senderDomain: "", urgency: false });
+        // Persisted NOW, in its own transaction, before this lane takes another sender.
+        await this.store(ctx, r.messageId, capped);
+        // DELIVERED, so the charge stands; the claim goes back at the door, after this write.
+        chargedAttempt = null;
+        answered[index] = {
+          sender,
+          messageId: r.messageId,
+          ...suggestionAdvice(capped.destination, capped.spam, capped.rationale, ohboxPolicy),
+          confidence: capped.confidence,
+          rationale: capped.rationale,
+          ...(capped.reasonCode
+            ? { reasonCode: capped.reasonCode, ...reasonDetail(checked.get(r.messageId) as SenderSignals) }
+            : {}),
+        };
+      } finally {
+        // ONE DOOR, AFTER THE STORE: every exit of this lane — a served duplicate, a model fault, a
+        // throw from the store, and any exit added later — gives the claim back here, never in the
+        // window before the verdict is durable. A release that faults is logged once and never
+        // replaces the error this lane is already carrying.
+        try {
+          await releaseClaim();
+        } catch (err) {
+          console.error(`[screener] claim release failed for message ${r.messageId}:`, err);
+        }
+      }
+    };
+
+    // ── THE KEY, CLAIMED BEFORE THE FIRST SPEND ─────────────────────────────────────────────
+    //
+    // Bound to this body's hash as PENDING, so another body under the same key is refused before
+    // the gate is asked, and a same-body twin replays (the renderer answers it 409 "still
+    // running" until the answer is settled onto the row). Every exit that is not the settle hands
+    // the key back through `releaseKey`, once, so a run with no answer never leaves it bound. A
+    // dry run claims nothing: it changed nothing, and burning the key would make the confirmation
+    // click that follows it a 409.
+    const key = opts.idempotency && !dryRun ? opts.idempotency : null;
+    let keyHeld = false;
+    if (key) {
+      keyHeld = await asTx(ctx).transaction(async (tx) => claimIdempotencyKey(tx, {
+        accountId: ctx.accountId, key: key.key, requestHash: key.requestHash,
+        responseStatus: IDEMPOTENCY_PENDING_STATUS, responseJson: IDEMPOTENCY_PENDING_BODY,
+        seq: null, now: ctx.now(), ttlMs: pendingKeyTtlMs(this.invocationBudgetMs),
+      }));
+      if (!keyHeld) throw new IdempotencyRaceLost(ctx.accountId, key.key);
+    }
+    /** Hand the key back, once; the latch is cleared before the await, as the settle clears it. */
+    const releaseKey = async (): Promise<void> => {
+      if (!key || !keyHeld) return;
+      keyHeld = false;
+      await asTx(ctx).transaction(async (tx) => releasePendingIdempotencyKey(tx, {
+        accountId: ctx.accountId, key: key.key, requestHash: key.requestHash,
+      }));
+    };
+
+    try {
+      // ── PASS 2 — THE PAID WORK, IN BOUNDED LANES ────────────────────────────────────────────
+      //
+      // A hand-rolled pool rather than `Promise.all` over the whole set, because the bound IS the
+      // feature: `Promise.all(purchases.map(buy))` would put fifty model calls in flight at once
+      // against a per-account rate limit and a single pooled connection, which is how an
+      // acceleration becomes a 429 and a queue.
+      //
+      // `next` is read-and-incremented with no `await` between the two, so a lane cannot take a
+      // sender another lane already has — the same single-threaded argument the `charged` increment
+      // above relies on, stated once here because it is the load-bearing one.
+      let next = 0;
+      /**
+       * THE FIRST THROW STOPS ADMISSION, AND EVERY LANE IS AWAITED BEFORE IT IS RE-RAISED. `buy`
+       * catches the model's faults per sender; what reaches here is `this.store` rejecting or the
+       * database going away. `Promise.all` rejects on the first error and leaves the other lanes
+       * RUNNING — a transient storage fault would go on dequeuing and DEBITING while the caller
+       * gets a 500 with no idempotency row: money moved for work nobody sees. So a fatal error
+       * closes the queue (`fatal` checked before each dequeue; the read-modify-write of `next` has
+       * no `await`), `allSettled` waits for mid-call lanes to land their verdicts, and the FIRST
+       * error re-raises. Paid-for senders are still stored.
+       */
+      let fatal: unknown;
+      const lanes = Math.max(1, Math.min(SUGGEST_LANES, purchases.length));
+      await Promise.allSettled(Array.from({ length: lanes }, async () => {
+        for (;;) {
+          if (fatal !== undefined) return;
+          const i = next++;
+          const p = purchases[i];
+          if (!p) return;
+          try {
+            await buy(p);
+          } catch (err) {
+            fatal ??= err ?? new Error("a suggestion lane failed with no error value");
             return;
           }
         }
+      }));
+      if (fatal !== undefined) throw fatal;
+
+      // ── FLATTENED IN THE CALLER'S OWN ORDER ─────────────────────────────────────────────────
+      for (let i = 0; i < senders.length; i++) {
+        const a = answered[i];
+        if (a) suggestions.push(a);
+        const s = refused[i];
+        if (s) skipped.push(s);
+        stopped ??= stops[i];
+        refusal ??= refusals[i];
       }
 
-      let result;
-      /**
-       * THE CLAIM IS GIVEN BACK WHEN THE WORK ENDS — AND NOT ONE LINE SOONER THAN THE WRITE THAT
-       * MAKES IT READABLE. Two releases rather than one `finally`: a `finally` around the model
-       * call runs BEFORE `store`, and in that window the suggestion is not on record and nothing
-       * holds the source — a second caller takes the freed claim, is told `duplicate`, and calls
-       * the model again: the double-buy restored, narrower. On SUCCESS the claim is released
-       * after the verdict is durable; on FAILURE in the catch — the charge stands on purpose, the
-       * next attempt is a free `duplicate`, and holding the claim would make it wait out the TTL.
-       * Forgetting a release is still SAFE (claims expire). `release` never throws.
-       */
-      try {
-        // THE REQUEST — `askScreeningQuestion`, ONE definition, in `@trafficflow/core/mail`. The
-        // redaction (at the CALLER, because a port has implementations outside this repo), the
-        // `outbound: "prescreened"` declaration, the screening question rather than the routing
-        // one, and the account's Ohbox bar into the model's user turn — four lines a second
-        // caller (the worker's always-on pass) would have to get independently right, four ways
-        // to send a credential or ask the wrong question. THIS IS THE ONLY AWAIT THAT OVERLAPS
-        // BETWEEN LANES in any meaningful way, and it is the point: no connection, no lock, no
-        // claim-blocking transaction, ~2 s long.
-        const facts = senderFacts(checked.get(r.messageId) ?? { senderDomain: "", urgency: false });
-        result = await askScreeningQuestion(classifier, {
-          fromAddress: r.fromAddress,
-          subject: r.subject,
-          snippet: r.snippet,
-          ...(ohboxBar ? { ohboxBar } : {}),
-          ...(facts ? { senderFacts: facts } : {}),
-        });
-      } catch (err) {
-        console.error(`[screener] AI suggestion failed for message ${r.messageId}:`, err);
-        // Not refunded, and the charge is what buys the retry: the source is stable, so the
-        // next attempt over this message answers `duplicate` and costs nothing.
-        refused[index] = { sender, reason: "model_unavailable" };
-        // The claim goes back and the CHARGE STANDS: the key is stable, so the next attempt over
-        // this message answers `duplicate` and is free. That free retry is what honours it.
-        chargedAttempt = null;
-        await releaseClaim();
-        return;
+      // ── A RUN THAT PRODUCED NOTHING BECAUSE OF THE GATE IS NOT A SUCCESS ────────────────────
+      //
+      // `DraftingService` already decides these three answers and they are decided the same way
+      // here: 503 for OUR fault (we do not bill for our outage), 409 for the account's own off
+      // switch (fully funded; nothing they could buy would change it), 402 for an empty balance.
+      // The condition is `suggestions.length === 0` rather than "the first refusal": a set where
+      // eight senders were served and two ran out of credit is a 200 that says where it stopped,
+      // because throwing there would discard eight results the account has already paid for.
+      if (refusal && suggestions.length === 0) {
+        // ONE PLACE DECIDES, for this call site and the drafting one — see `ai-refusal.ts`. It
+        // writes the line naming the verdict and the reason (neither was logged anywhere before,
+        // so a refusal could not be attributed at all), and it refuses to turn a `state` refusal
+        // the account's own access view contradicts into a payment demand.
+        await refuseAiSpend(
+          { refusal: refusal.refusal, verdict: refusal.verdict, reason: refusal.reason },
+          {
+            event: "screener_suggest_refused",
+            accountId: ctx.accountId,
+            ...(this.access ? { access: this.access } : {}),
+            unavailable: "AI suggestions are temporarily unavailable; please retry",
+          },
+        );
       }
 
-      // THE FACTS CAP THE ANSWER, and the cap is what is stored and what is answered — the same
-      // `capSuggestion` the worker's pass and the read path call. No signal ⇒ `capped` IS
-      // `result`, so an ordinary sender's stored row is byte-for-byte the one this path always
-      // wrote.
-      const capped = capSuggestion(result, checked.get(r.messageId) ?? { senderDomain: "", urgency: false });
-      // Persisted NOW, in its own transaction, before this lane takes another sender.
-      await this.store(ctx, r.messageId, capped);
-      // …and only NOW is the claim free. See the block above the `try` for the window this
-      // ordering closes. The work was DELIVERED, so the charge stands.
-      chargedAttempt = null;
-      await releaseClaim();
-      answered[index] = {
-        sender,
-        messageId: r.messageId,
-        ...suggestionAdvice(capped.destination, capped.spam, capped.rationale, ohboxPolicy),
-        confidence: capped.confidence,
-        rationale: capped.rationale,
-        ...(capped.reasonCode
-          ? { reasonCode: capped.reasonCode, ...reasonDetail(checked.get(r.messageId) as SenderSignals) }
-          : {}),
-      };
-    };
-
-    // ── PASS 2 — THE PAID WORK, IN BOUNDED LANES ────────────────────────────────────────────
-    //
-    // A hand-rolled pool rather than `Promise.all` over the whole set, because the bound IS the
-    // feature: `Promise.all(purchases.map(buy))` would put fifty model calls in flight at once
-    // against a per-account rate limit and a single pooled connection, which is how an
-    // acceleration becomes a 429 and a queue.
-    //
-    // `next` is read-and-incremented with no `await` between the two, so a lane cannot take a
-    // sender another lane already has — the same single-threaded argument the `charged` increment
-    // above relies on, stated once here because it is the load-bearing one.
-    let next = 0;
-    /**
-     * THE FIRST THROW STOPS ADMISSION, AND EVERY LANE IS AWAITED BEFORE IT IS RE-RAISED. `buy`
-     * catches the model's faults per sender; what reaches here is `this.store` rejecting or the
-     * database going away. `Promise.all` rejects on the first error and leaves the other lanes
-     * RUNNING — a transient storage fault would go on dequeuing and DEBITING while the caller
-     * gets a 500 with no idempotency row: money moved for work nobody sees. So a fatal error
-     * closes the queue (`fatal` checked before each dequeue; the read-modify-write of `next` has
-     * no `await`), `allSettled` waits for mid-call lanes to land their verdicts, and the FIRST
-     * error re-raises. Paid-for senders are still stored.
-     */
-    let fatal: unknown;
-    const lanes = Math.max(1, Math.min(SUGGEST_LANES, purchases.length));
-    await Promise.allSettled(Array.from({ length: lanes }, async () => {
-      for (;;) {
-        if (fatal !== undefined) return;
-        const i = next++;
-        const p = purchases[i];
-        if (!p) return;
+      // WHAT IS LEFT, FROM THE LEDGER THE GATE READS. AFTER the loop, so it is the balance this run
+      // left behind. No arithmetic: a client handed material to subtract `charged` from keeps a
+      // shadow ledger that goes wrong on a renewal, a refund, an expiry or a second tab — and wrong
+      // upward, claiming credits that are not there. A FAILED READ IS SILENCE, NOT ZERO: the run
+      // has completed and its suggestions are paid for — a hiccup on a courtesy read must not turn
+      // a purchase into an error or report an empty balance to a funded account. Absent means "no
+      // answer", the same rule an unmetered deployment gives.
+      let remainingCredits: number | undefined;
+      if (this.remaining) {
         try {
-          await buy(p);
+          remainingCredits = await this.remaining(asTx(ctx), ctx.accountId);
         } catch (err) {
-          fatal ??= err ?? new Error("a suggestion lane failed with no error value");
-          return;
+          console.error(`[screener] balance read failed for account ${ctx.accountId}:`, err);
         }
       }
-    }));
-    if (fatal !== undefined) throw fatal;
 
-    // ── FLATTENED IN THE CALLER'S OWN ORDER ─────────────────────────────────────────────────
-    for (let i = 0; i < senders.length; i++) {
-      const a = answered[i];
-      if (a) suggestions.push(a);
-      const s = refused[i];
-      if (s) skipped.push(s);
-      stopped ??= stops[i];
-      refusal ??= refusals[i];
-    }
+      const dto: ScreenerSuggestResult = {
+        dryRun, requested: senders.length, quoted,
+        quotedCredits: quoted * AI_ACTION_WEIGHTS.debit_classify, charged,
+        ...(stopped ? { stopped } : {}),
+        ...(typeof remainingCredits === "number" ? { remainingCredits } : {}),
+        suggestions, skipped,
+      };
 
-    // ── A RUN THAT PRODUCED NOTHING BECAUSE OF THE GATE IS NOT A SUCCESS ────────────────────
-    //
-    // `DraftingService` already decides these three answers and they are decided the same way
-    // here: 503 for OUR fault (we do not bill for our outage), 409 for the account's own off
-    // switch (fully funded; nothing they could buy would change it), 402 for an empty balance.
-    // The condition is `suggestions.length === 0` rather than "the first refusal": a set where
-    // eight senders were served and two ran out of credit is a 200 that says where it stopped,
-    // because throwing there would discard eight results the account has already paid for.
-    if (refusal && suggestions.length === 0) {
-      // ONE PLACE DECIDES, for this call site and the drafting one — see `ai-refusal.ts`. It
-      // writes the line naming the verdict and the reason (neither was logged anywhere before,
-      // so a refusal could not be attributed at all), and it refuses to turn a `state` refusal
-      // the account's own access view contradicts into a payment demand.
-      await refuseAiSpend(
-        { refusal: refusal.refusal, verdict: refusal.verdict, reason: refusal.reason },
-        {
-          event: "screener_suggest_refused",
-          accountId: ctx.accountId,
-          ...(this.access ? { access: this.access } : {}),
-          unavailable: "AI suggestions are temporarily unavailable; please retry",
-        },
-      );
-    }
-
-    // WHAT IS LEFT, FROM THE LEDGER THE GATE READS. AFTER the loop, so it is the balance this run
-    // left behind. No arithmetic: a client handed material to subtract `charged` from keeps a
-    // shadow ledger that goes wrong on a renewal, a refund, an expiry or a second tab — and wrong
-    // upward, claiming credits that are not there. A FAILED READ IS SILENCE, NOT ZERO: the run
-    // has completed and its suggestions are paid for — a hiccup on a courtesy read must not turn
-    // a purchase into an error or report an empty balance to a funded account. Absent means "no
-    // answer", the same rule an unmetered deployment gives.
-    let remainingCredits: number | undefined;
-    if (this.remaining) {
+      // THE ANSWER, SETTLED ONTO THE KEY. The latch is cleared first: a settle that loses or
+      // faults never deletes a row that may now be another run's. LOST means another run's
+      // answer is on the key (a same-body twin that outlived this claim's TTL, or an erasure's
+      // stamp); the request replays whatever the key holds.
+      if (key) {
+        keyHeld = false;
+        const settled = await asTx(ctx).transaction(async (tx) => settleIdempotencyKey(tx, {
+          accountId: ctx.accountId, key: key.key, requestHash: key.requestHash,
+          responseStatus: 200, responseJson: dto, seq: 0, now: ctx.now(),
+        }));
+        if (!settled) throw new IdempotencyRaceLost(ctx.accountId, key.key);
+      }
+      return dto;
+    } finally {
+      // ONE DOOR for the key: a fatal lane, a refusal or any throw above leaves through here.
       try {
-        remainingCredits = await this.remaining(asTx(ctx), ctx.accountId);
+        await releaseKey();
       } catch (err) {
-        console.error(`[screener] balance read failed for account ${ctx.accountId}:`, err);
+        console.error(`[screener] idempotency key release failed for account ${ctx.accountId}:`, err);
       }
     }
-
-    const dto: ScreenerSuggestResult = {
-      dryRun, requested: senders.length, quoted,
-      quotedCredits: quoted * AI_ACTION_WEIGHTS.debit_classify, charged,
-      ...(stopped ? { stopped } : {}),
-      ...(typeof remainingCredits === "number" ? { remainingCredits } : {}),
-      suggestions, skipped,
-    };
-
-    // Idempotency, as `decide` does it — with one difference forced by the loop above: the claim can no
-    // longer share a transaction with the effect, because the effect is N transactions and a
-    // model call sits between them. It is still the right claim to make. A LOST claim means a
-    // concurrent same-key request committed first; its stored response is replayed, and the
-    // rows this one wrote carry the same verdicts for the same messages (the model was asked
-    // once — the loser's `spend` answered `duplicate`), so the two agree by construction.
-    //
-    // A dry run claims nothing. It changed nothing, so there is nothing a replay must protect,
-    // and burning the key would make the confirmation click that follows it a 409.
-    if (opts.idempotency && !dryRun) {
-      const claimed = await asTx(ctx).transaction(async (tx) => claimIdempotencyKey(tx, {
-        accountId: ctx.accountId,
-        key: opts.idempotency!.key,
-        requestHash: opts.idempotency!.requestHash,
-        responseStatus: 200,
-        responseJson: dto,
-        seq: 0,
-        now: ctx.now(),
-      }));
-      if (!claimed) throw new IdempotencyRaceLost(ctx.accountId, opts.idempotency.key);
-    }
-
-    return dto;
   }
 
   /**

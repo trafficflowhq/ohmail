@@ -1,9 +1,10 @@
 import {
   claimIdempotencyKey, readIdempotencyKey, idempotencyExpiry as dbIdempotencyExpiry,
+  IDEMPOTENCY_PENDING_STATUS,
   type Tx,
 } from "@trafficflow/db";
 import type { Db } from "@trafficflow/services/mail";
-import { jsonResponse } from "./responses.js";
+import { errorResponse, jsonResponse } from "./responses.js";
 
 /** `expires_at = now + 24h`. The TTL itself lives in `packages/db`. */
 export const idempotencyExpiry = dbIdempotencyExpiry;
@@ -77,6 +78,13 @@ export async function lookupIdempotent(
  * `jsonResponse`'s: a 204's stored `{}` is the column's NOT NULL requirement and never ships.
  */
 export function storedResponse(found: StoredIdempotent): Response {
+  // A PENDING row holds no answer yet: the request that claimed it is still running. A retry is
+  // told so and when to come back, never handed the placeholder as though it were the answer.
+  if (found.responseStatus === IDEMPOTENCY_PENDING_STATUS) {
+    return errorResponse("idempotency_in_progress", 409,
+      "a request with this idempotency key is still running; retry it shortly",
+      undefined, true, { "Retry-After": "2" });
+  }
   return jsonResponse(found.responseJson, {
     status: found.responseStatus,
     seq: found.seq ?? undefined,

@@ -56,7 +56,7 @@ export {
   // directly — the money property (a sender is never charged for a queue position) can only be
   // driven by a test that can occupy the gate a purchase actually uses. Nothing in the product
   // imports either name.
-  LaneGate, suggestLaneGate, SUGGEST_ADMISSION, admissionDeadline,
+  LaneGate, suggestLaneGate, SUGGEST_ADMISSION, admissionDeadline, pendingKeyTtlMs,
   type ScreenerDeps, type ScreenBody, type ScreenDecisionResult, type ScreenIdempotency,
   type ScreenDecisionMailboxes, type ScreenRequestedMailbox, type ScreenRequestResult,
 } from "./screener-service.js";

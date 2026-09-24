@@ -197,7 +197,8 @@ export {
 } from "./change-log.js";
 export {
   claimIdempotencyKey, readIdempotencyKey, pruneIdempotencyKeys, eraseIdempotentResponses,
-  idempotencyExpiry, IDEMPOTENCY_TTL_MS,
+  settleIdempotencyKey, releasePendingIdempotencyKey,
+  idempotencyExpiry, IDEMPOTENCY_TTL_MS, IDEMPOTENCY_PENDING_STATUS, IDEMPOTENCY_PENDING_BODY,
   type IdempotencyClaimInput,
 } from "./idempotency.js";
 export {
