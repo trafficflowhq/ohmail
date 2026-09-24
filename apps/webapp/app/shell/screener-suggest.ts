@@ -888,8 +888,9 @@ export function useScreenerSuggestions(opts: {
         // SAID OUT LOUD, every time, even though nobody pressed anything. This is the "visible
         // after the fact" half of the opt-in: money moved, so the same sentence the manual
         // purchase shows is shown here. A spend the user only discovers on their next invoice is
-        // the failure mode the setting exists to avoid, not one it is licensed to create.
-        notify.current.toast(summarize(res, notify.current.t));
+        // the failure mode the setting exists to avoid, not one it is licensed to create. It YIELDS:
+        // nobody pressed for it, so it waits behind the "Undone" or outcome the person's act raised.
+        notify.current.toast(summarize(res, notify.current.t), { yields: true });
       } catch (err) {
         if (io.current.autoRun !== run) return;
         // DISARM, DO NOT RETRY — for a refusal a SERVER stated. See the latch's own comment and

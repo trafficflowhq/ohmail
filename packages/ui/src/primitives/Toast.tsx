@@ -27,6 +27,13 @@ export interface ToastOptions {
    * dead Undo never stands above the act's own outcome.
    */
   signal?: AbortSignal;
+  /**
+   * A notice nobody pressed for, such as a background batch's summary. It never replaces a notice
+   * the person's own act raised: it waits for that notice's window, then draws after the fade, and
+   * a newer one waiting replaces it. It replaces a standing notice of its own class. Every other
+   * notice still replaces whatever notice stands, so a refusal is never held back.
+   */
+  yields?: boolean;
 }
 
 export type ToastFn = (message: string, options?: ToastOptions) => void;
@@ -37,6 +44,7 @@ interface ActiveToast {
   message: string;
   action?: string;
   onAction?: () => void;
+  yields?: boolean;
   key: number;
 }
 
@@ -57,8 +65,9 @@ type Timer = ReturnType<typeof setTimeout>;
  * Mount once near the app root; children get `useToast()`. TWO SLOTS in one corner: a toast
  * carrying `action` holds the Undo slot for its whole duration, and a notice arriving meanwhile
  * shows beneath it on its own timer instead of replacing it. A notice replaces a notice and an
- * action an action. A notice's arrival lifts the Undo capsule clear of it, once and never while
- * it is pressed. Both slots are polite live regions, mounted at rest so neither is lost.
+ * action an action, except that a `yields` notice waits behind one the person's act raised. A
+ * notice's arrival lifts the Undo capsule clear of it, once and never while it is pressed. Both
+ * slots are polite live regions, mounted at rest so neither is lost.
  */
 export function ToastHost({ children }: ToastHostProps) {
   const [held, setHeld] = useState<ActiveToast | null>(null);
@@ -72,8 +81,10 @@ export function ToastHost({ children }: ToastHostProps) {
   const noticeEl = useRef<HTMLDivElement>(null);
   /* What the timers and handlers read between renders: which capsule is on, whether the Undo
      capsule is being pressed, and a lift that waits for that press to end. */
-  const at = useRef({ heldOn: false, noticeOn: false, arrived: false, pressing: false, pending: 0, noticeLift: 0 });
+  const at = useRef({ heldOn: false, noticeOn: false, noticeYields: false, arrived: false, pressing: false, pending: 0, noticeLift: 0 });
   const seq = useRef(0);
+  /* The one `yields` notice waiting for the notice slot; a newer one replaces it. */
+  const waiting = useRef<{ toast: ActiveToast; duration: number } | null>(null);
 
   const release = useCallback(() => {
     if (heldTimer.current) clearTimeout(heldTimer.current);
@@ -85,11 +96,28 @@ export function ToastHost({ children }: ToastHostProps) {
     setLift(0);
   }, []);
 
+  // Draws into the notice slot on its own timer; when that window ends, a waiting notice follows the fade.
+  const drawNotice = useCallback((next: ActiveToast, duration: number) => {
+    const s = at.current;
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    if (next.yields) waiting.current = null;
+    Object.assign(s, { noticeOn: true, noticeYields: next.yields === true, arrived: true });
+    setNotice(next);
+    setNoticeOn(true);
+    noticeTimer.current = setTimeout(() => {
+      s.noticeOn = false;
+      setNoticeOn(false);
+      const w = waiting.current;
+      if (w) noticeTimer.current = setTimeout(() => drawNotice(w.toast, w.duration), FADE_MS);
+    }, duration);
+  }, []);
+
   const show = useCallback<ToastFn>((message, options) => {
     const next: ActiveToast = {
       message,
       action: options?.action,
       onAction: options?.onAction,
+      yields: options?.yields,
       key: ++seq.current,
     };
     const duration = options?.duration ?? 2600;
@@ -111,16 +139,12 @@ export function ToastHost({ children }: ToastHostProps) {
       }, duration);
       return;
     }
-    if (noticeTimer.current) clearTimeout(noticeTimer.current);
-    s.noticeOn = true;
-    s.arrived = true;
-    setNotice(next);
-    setNoticeOn(true);
-    noticeTimer.current = setTimeout(() => {
-      s.noticeOn = false;
-      setNoticeOn(false);
-    }, duration);
-  }, [release]);
+    if (next.yields && s.noticeOn && !s.noticeYields) {
+      waiting.current = { toast: next, duration };
+      return;
+    }
+    drawNotice(next, duration);
+  }, [release, drawNotice]);
 
   // The notice's height is known once it is in the tree; its ARRIVAL lifts a standing Undo capsule.
   useEffect(() => {
