@@ -8,16 +8,17 @@ import { AsyncLocalStorage } from "node:async_hooks";
  * coming in, weighted, and everything else — so eight pollers share ONE turn. And every admission
  * crosses the loop's CHECK PHASE: PGlite answers from WASM in-process, so a poll loop is an
  * unbroken chain of microtasks and the cycle's stream-based MIME parse never ran. 0.0 % of quiet
- * throughput before, 66.8 % after.
+ * throughput before; 55 % with the cycle's own gaps held for ({@link INGEST_GAP_TURNS}).
  *//** Which side of the connection a statement belongs to. */
 export type StoreLane = "ingest" | "interactive";
 
 /**
  * The ingest's share of the connection when BOTH lanes have work, as a weight against the
  * interactive lane's 1. Above 1 because the two lanes are not symmetric: a window that waits gets
- * a later answer, and mail that waits does not arrive. Two, measured: it holds the cycle at 66.8 %
- * of its quiet throughput under eight pollers where 1 reads 49 %, which is on the wrong side of
- * the floor this lane exists to hold.
+ * a later answer, and mail that waits does not arrive. Two, measured by the liveness case under
+ * eight pollers with the cycle's own gaps held for ({@link INGEST_GAP_TURNS}): 55 % of its quiet
+ * throughput at about the unheld build's read latency, where three reads 66 % and costs a waiting
+ * read 1.6x.
  */
 export const INGEST_LANE_WEIGHT = 2;
 
@@ -122,6 +123,18 @@ interface Waiter {
 export const CREDIT_BURST_MS = 100;
 
 /**
+ * THE MAIL'S OWN GAP IS NOT THE WINDOWS' TURN, for up to this many turns of the loop.
+ *
+ * The cycle is one statement deep and its MIME parse settles on the check phase, so between two
+ * of its statements it is not queued, and serving whoever is queued gave a poller one statement
+ * per turn: the weight held only while both lanes happened to be, and the share read 47 %. While
+ * the ingest is behind its weighted share the connection waits for it instead. In turns, so a
+ * cycle gone to the network costs a window microseconds; 32 covers the parse's 11.4 turns a
+ * message with the readers' own beside them (15.9 under eight pollers).
+ */
+export const INGEST_GAP_TURNS = 32;
+
+/**
  * The scheduler: one admission at a time — the connection allows no more — given to whichever lane
  * has had the least of it.
  *
@@ -135,6 +148,7 @@ export function createStoreScheduler(
   weights: Record<StoreLane, number> = { ingest: INGEST_LANE_WEIGHT, interactive: 1 },
   clock: () => number = () => performance.now(),
   creditBurstMs: number = CREDIT_BURST_MS,
+  ingestGapTurns: number = INGEST_GAP_TURNS,
 ): StoreScheduler {
   const queues: Record<StoreLane, Waiter[]> = { ingest: [], interactive: [] };
   let active: symbol | null = null;
@@ -151,6 +165,8 @@ export function createStoreScheduler(
   const lastServed: Record<StoreLane, number> = { ingest: -Infinity, interactive: -Infinity };
   /** Admissions since the last turn of the event loop — see {@link TURN_EVERY}. */
   let sinceTurn = 0;
+  /** Turns since the ingest's last statement returned — see {@link INGEST_GAP_TURNS}. */
+  let sinceIngest = Infinity;
 
   /**
    * ONE TURN OF THE EVENT LOOP BETWEEN STATEMENTS, AND THE CHOICE MADE INSIDE IT.
@@ -167,6 +183,11 @@ export function createStoreScheduler(
     if (busy) return;
     const ready = LANES.filter((l) => queues[l].length > 0);
     if (ready.length === 0) return;
+    if (holdForIngest(ready)) {
+      scheduled = true;
+      setImmediate(onTurn);
+      return;
+    }
     const next = ready.reduce((a, b) => (owed[a] <= owed[b] ? a : b));
     const w = queues[next].shift()!;
     busy = true;
@@ -177,6 +198,17 @@ export function createStoreScheduler(
     w.admit();
   };
 
+  /* Only the interactive lane is queued, a drain is live, the ingest returned within the bound
+     and it has had no more than its weighted share: wait a turn for it. */
+  const holdForIngest = (ready: readonly StoreLane[]): boolean =>
+    ready.length === 1 && ready[0] === "interactive" && ingestIsRunning()
+    && sinceIngest < ingestGapTurns && owed.ingest <= owed.interactive;
+
+  const onTurn = (): void => {
+    sinceIngest++;
+    dispatch();
+  };
+
   const pump = (): void => {
     if (busy || scheduled) return;
     if (queues.ingest.length + queues.interactive.length === 0) return;
@@ -185,7 +217,7 @@ export function createStoreScheduler(
     if (shared || ++sinceTurn >= TURN_EVERY) {
       sinceTurn = 0;
       scheduled = true;
-      setImmediate(dispatch);
+      setImmediate(onTurn);
       return;
     }
     dispatch();
@@ -219,6 +251,7 @@ export function createStoreScheduler(
         const spent = clock() - started;
         storeMs[lane] += spent;
         owed[lane] += spent / (weights[lane] || 1);
+        if (lane === "ingest") sinceIngest = 0;
         busy = false;
         pump();
       }
