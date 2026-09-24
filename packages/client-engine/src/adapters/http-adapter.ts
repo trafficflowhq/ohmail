@@ -766,7 +766,7 @@ export class HttpAdapter implements EngineAdapter {
     if (!res.ok) throw await this.rejectionOf(res);
     const wire = (await res.json()) as {
       items?: EngineMessage[]; total?: number; tier?: string; totalExact?: unknown; totalEstimate?: unknown; ms?: unknown;
-      nextCursor?: unknown; bounded?: unknown; indexed?: unknown; facets?: unknown;
+      nextCursor?: unknown; bounded?: unknown; indexed?: unknown; facets?: unknown; answeredFrom?: unknown;
     };
     // `facets` is read as the store keys it (folder paths, sender addresses); the view labels it.
     return {
@@ -784,6 +784,7 @@ export class HttpAdapter implements EngineAdapter {
       ...(typeof wire.indexed === "object" && wire.indexed !== null
         ? { indexed: wire.indexed as { done: number; total: number } } : {}),
       ...(facetsOf(wire.facets) ? { facets: facetsOf(wire.facets)! } : {}),
+      ...(wire.answeredFrom === "mirror" ? { answeredFrom: "mirror" as const } : {}),
     };
   }
 

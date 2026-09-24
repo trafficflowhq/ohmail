@@ -28,6 +28,7 @@ import {
 import { createCloudMirror, integrityLogFields, CLOUD_SYNC_TYPES, FOLLOW_UP_CAP_MS, type CloudMirror } from "./cloud-mirror.js";
 import { startCloudWake, type CloudWake } from "./cloud-wake.js";
 import { matchReadRoute } from "./cloud-read.js";
+import { answerAccountFirst } from "./cloud-account-first.js";
 import { createWriteThroughProxy, type WriteThroughProxy } from "./cloud-proxy.js";
 import {
   accountAnswer,
@@ -112,6 +113,8 @@ export interface CloudSidecarConfig {
   hostPin?: string;
   pageLimit?: number;
   pollIntervalMs?: number;
+  /** How long `/search` waits for the account before the mirror answers; absent, `ACCOUNT_FIRST_BOUND_MS`. */
+  accountFirstBoundMs?: number;
   /**
    * Told what the boot is about to spend its time on — the same narration, and the same consumer
    * (`main.ts` turning it into `phase` frames), as the local engine's. See `SidecarConfig.onPhase`.
@@ -2065,8 +2068,20 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         return json({ ...liveMirror.freshness(), draining: liveMirror.draining() });
       }
 
+      // THE ACCOUNT FIRST — a read row marked `accountFirst` (`/search`) relays to the account and
+      // is answered from the mirror only while the account cannot be reached (`cloud-account-first.ts`).
+      const first = matchReadRoute(req.method, path);
+      if (first?.route.accountFirst) {
+        return answerAccountFirst(req, first, {
+          ctx: ctxFor(core.accountId, core.userId, core.sessionId),
+          forward: proxy.forward,
+          ...(config.accountFirstBoundMs !== undefined ? { boundMs: config.accountFirstBoundMs } : {}),
+          ...(log ? { log } : {}),
+        });
+      }
+
       // THE LOCAL READ SURFACE — GET /messages/:id(+/body), /messages/bodies, /threads/:id,
-      // /search, /mailboxes, /tags, /rules, served from the mirror through read services alone.
+      // /mailboxes, /tags, /rules, served from the mirror through read services alone.
       // The census over this file's expanded graph proves none of these handlers can reach the
       // IMAP adapter, the lease or the sync loop. The LIST route (`GET /messages`) is deliberately
       // NOT in the table — it is the reach-past door, a question about mail the mirror does not

@@ -371,6 +371,8 @@ export interface StoreSearchMeta {
   bounded: boolean;
   indexed: { done: number; total: number } | null;
   facets: ServerSearchFacets | null;
+  /** Page one came from a paired desktop's mirror: the verdict is about the mail on this computer. */
+  fromMirror: boolean;
 }
 
 /**
@@ -504,7 +506,7 @@ export class StoreSearchWalker {
     const epoch = this.epoch;
     this.meta = {
       total: out.total, totalExact: out.totalExact, about: null, tier: out.tier, ms: out.ms, bounded: out.bounded,
-      indexed: out.indexed, facets: out.facets,
+      indexed: out.indexed, facets: out.facets, fromMirror: out.fromMirror === true,
     };
     this.status = "ready";
     if ((this.key?.sort ?? "relevance") === "relevance") {
@@ -518,9 +520,11 @@ export class StoreSearchWalker {
     // THE PAGE, THEN THE ESTIMATE, THEN THE SUMMARY ONLY WHEN THE ESTIMATE WAS CUT: the count and
     // facets follow the page at its cost, and the exact count replaces "about N" when it lands.
     // An estimate that failed (an older store refuses the part) is not exact: the summary follows.
+    // A count from the other store (the account's under a mirror page, or the reverse) is not read.
+    const sameStore = (o: { fromMirror?: true }): boolean => (o.fromMirror === true) === this.meta?.fromMirror;
     void this.engine.searchServer(key.query, { parts: "estimate", limit: HISTORY_PAGE_ROWS, ...filters }).then((est) => {
       if (epoch !== this.epoch || this.meta === null) return;
-      if (est.state === "ready") {
+      if (est.state === "ready" && sameStore(est)) {
         this.meta = {
           ...this.meta,
           ...(est.totalExact ? { total: est.total, totalExact: true, about: null } : { about: est.totalEstimate }),
@@ -531,7 +535,7 @@ export class StoreSearchWalker {
         if (est.totalExact) return;
       }
       void this.engine.searchServer(key.query, { parts: "summary", ...filters }).then((sum) => {
-        if (epoch !== this.epoch || sum.state !== "ready" || this.meta === null) return;
+        if (epoch !== this.epoch || sum.state !== "ready" || this.meta === null || !sameStore(sum)) return;
         this.meta = {
           ...this.meta,
           ...(sum.totalExact ? { total: sum.total, totalExact: true, about: null } : {}),

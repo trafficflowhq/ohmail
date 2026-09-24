@@ -25,6 +25,11 @@ export interface ReadRoute {
   /** e.g. `/messages/:id/body`. `:name` is a single-segment parameter. */
   pattern: string;
   handler: (req: Request, ctx: ServiceContext, params: Record<string, string>) => Promise<Response>;
+  /**
+   * The ACCOUNT answers this route whenever it can be reached and this handler only while it
+   * cannot (`cloud-account-first.ts`); the reason is pinned by `cloud-read-account-first.test.ts`.
+   */
+  accountFirst?: { reason: string };
 }
 
 const json = (body: unknown, status = 200): Response =>
@@ -213,6 +218,9 @@ export const READ_ROUTES: ReadRoute[] = [
   {
     method: "GET",
     pattern: "/search",
+    accountFirst: {
+      reason: "a search's whole-mailbox verdict and count are the account's; the mirror holds a window of it",
+    },
     handler: async (req, ctx) => {
       const url = new URL(req.url);
 

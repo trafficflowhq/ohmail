@@ -648,6 +648,18 @@ export function SearchView({
         {t("scopeWholeRetry")}
       </button>
     </>
+  ) : ready.fromMirror ? (
+    /* A desktop paired with ohmail Cloud whose account did not answer: its mirror did, and the
+       sentence says whose mail that is. The retry asks the account again. */
+    <>
+      {ready.totalExact ? t("scopeMirror", { total: ready.total })
+        : ready.about !== null ? t("scopeMirrorAbout", { total: ready.about })
+          : t("scopeMirrorAtLeast", { total: ready.total })}
+      {ready.ms !== null ? <> · {t("scopeServerMs", { ms: ready.ms })}</> : null}{" "}
+      <button type="button" className="btn ghost" onClick={() => setRetryTick((n) => n + 1)}>
+        {t("scopeWholeRetry")}
+      </button>
+    </>
   ) : (
     <>
       {/* Exact, else the estimate's "about N" (replaced in place by the summary), else the page's bound. */}
