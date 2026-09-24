@@ -160,8 +160,8 @@ export const screenerRoutes: Route[] = [
       const cursor = url.searchParams.get("cursor") ?? undefined;
       const limit = pagingNumber(url.searchParams.get("limit"));
       const page = await screener(deps).list(serviceContext(deps, req), { cursor, limit });
-      // `suggestable` is the PRICE of this page — `{ senders, credits }` — so a control can
-      // state both before it offers the button, from the response it already has.
+      // `suggestable` is the set a control may offer — `{ senders, maxPerRequest, … }`, and no
+      // price: the figure a person consents to is the dry run's `quotedCredits` over that set.
       //
       // `pendingDecisions` is the OTHER half of the same idea (0.14.1): a sender this install has
       // decided on but whose organizer has not applied it yet is already GONE from `items` — the

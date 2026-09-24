@@ -296,7 +296,9 @@ export {
  */
 export {
   makeEntitlementsClient, ENTITLEMENTS_CALL_BUDGET_MS, ACCESS_TTL_MS,
-  type EntitlementsClientConfig, type EntitlementsFetch, type CallFault, type EntitlementsPath,
+  PRICE_PROBE_ACCOUNT, PRICE_PROBE_BUDGET_MS,
+  type EntitlementsClient, type EntitlementsClientConfig, type EntitlementsFetch, type CallFault,
+  type EntitlementsPath,
 } from "./entitlements-client.js";
 
 /**

@@ -48,9 +48,15 @@ export interface AccessLifecycle {
   lifecycleEpoch?: string | null;
 }
 
-/** May this account use the service, and within what limits. */
+/**
+ * What one action of each call site costs, in credits — the card the program states on
+ * `/v1/access`. Carried, never held: this tree has no price of its own.
+ */
+export type ActionPrices = Record<SpendAction, number>;
+
+/** May this account use the service, and within what limits. `prices` absent = unpriced. */
 export type AccessVerdict =
-  | { ok: true; limits: AccessLimits; lifecycle?: AccessLifecycle }
+  | { ok: true; limits: AccessLimits; lifecycle?: AccessLifecycle; prices?: ActionPrices }
   | { ok: false; reason: AccessRefusal; manageUrl?: string; lifecycle?: AccessLifecycle };
 
 /**
@@ -297,3 +303,30 @@ export async function accessOf(
 export function isMetered(e: EntitlementsComposition): e is EntitlementsPort {
   return e !== UNMETERED;
 }
+
+/**
+ * WHAT ONE ACTION COSTS, IN CREDITS — asked, never held. The program that mints the debit states
+ * its card on `/v1/access`; a quote is read from that answer so a person sees the figure before
+ * anything is spent. `null` means this host states no price: an unmetered host charges nothing,
+ * and a metered one with no card withholds the quote and sells nothing.
+ */
+export interface ActionPricing {
+  priceOf(accountId: string, action: SpendAction): Promise<number | null>;
+}
+
+/** The null default: the action is recorded and nothing is priced. */
+export const UNPRICED: ActionPricing = { priceOf: async () => null };
+
+/** The card this host's access answer carries. An unmetered host prices nothing. */
+export function pricingOf(entitlements: AccessPort | typeof UNMETERED): ActionPricing {
+  if (entitlements === UNMETERED) return UNPRICED;
+  return {
+    async priceOf(accountId, action) {
+      const verdict = await entitlements.access(accountId);
+      return verdict.ok ? verdict.prices?.[action] ?? null : null;
+    },
+  };
+}
+
+/** `/health`'s reading of where prices come from: the program's card, none yet, or no meter. */
+export type AiPricingMarker = "plane" | "unpriced" | "unmetered";

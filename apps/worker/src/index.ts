@@ -4252,7 +4252,7 @@ export async function startWorkerWithLock(
               log.info("screener_auto_apply_pass", { accountId, moved: applied.moved, capped: applied.capped });
             }
             const screening = await screeningFor(accountId);
-            const { ran, bought, charged, stopped: why, capped } = await screenerAutoSuggestPass(
+            const { ran, bought, chargedAttempts, stopped: why, capped } = await screenerAutoSuggestPass(
               db as unknown as Tx,
               {
                 accountId, log,
@@ -4263,7 +4263,7 @@ export async function startWorkerWithLock(
               },
             );
             if (ran && (bought > 0 || why)) {
-              log.info("screener_suggest_owed_served", { accountId, bought, charged, stopped: why, capped });
+              log.info("screener_suggest_owed_served", { accountId, bought, chargedAttempts, stopped: why, capped });
             }
             // Cleared after ANY non-throwing pass, opted-in or not: a stale mark for an account
             // that opted out would otherwise lead every cycle for ever.
@@ -4652,7 +4652,7 @@ export async function startWorkerWithLock(
           // does. Read through the same 30-second cache the sync loop fills for every served
           // account, so this is a hit rather than a read per account per cycle.
           const screening = await screeningFor(accountId);
-          const { ran, bought, charged, stopped: why, capped } = await screenerAutoSuggestPass(
+          const { ran, bought, chargedAttempts, stopped: why, capped } = await screenerAutoSuggestPass(
             db as unknown as Tx,
             {
               accountId, log,
@@ -4663,7 +4663,7 @@ export async function startWorkerWithLock(
             },
           );
           if (ran && (bought > 0 || why)) {
-            log.info("screener_auto_suggest_pass", { accountId, bought, charged, stopped: why, capped });
+            log.info("screener_auto_suggest_pass", { accountId, bought, chargedAttempts, stopped: why, capped });
           }
         } catch (err) {
           log.error("screener_auto_suggest_failed", {

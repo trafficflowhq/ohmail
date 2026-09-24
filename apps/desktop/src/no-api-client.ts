@@ -753,7 +753,6 @@ export interface ScreenerWirePage {
     nextCursor: string | null;
     suggestable: {
         senders: string[];
-        credits: number;
         maxPerRequest: number;
     };
 }
@@ -764,7 +763,7 @@ export interface ScreenerSuggestWire {
     dryRun: boolean;
     requested: number;
     quoted: number;
-    quotedCredits: number;
+    quotedCredits?: number;
     charged: number;
     stopped?: "out_of_credits" | "over_quote" | "spend_unavailable";
     remainingCredits?: number;

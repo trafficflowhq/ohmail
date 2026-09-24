@@ -533,6 +533,13 @@ export interface HealthConfig {
    * no host, no port, no role, no credential.
    */
   entitlements?: "configured" | "unmetered" | null;
+  /**
+   * Where a quote's price comes from: `plane` (the metering program's card has been read),
+   * `unpriced` (a metered host that has not read one, so it quotes and sells nothing) or
+   * `unmetered`. A capability, because the metered reading may cost one bounded probe; it never
+   * throws. Absent ⇒ the key is published as `null`, like `entitlements`.
+   */
+  aiPricing?: (() => Promise<"plane" | "unpriced" | "unmetered">) | null;
 /**
  * Every configured pager arm on this host, and whether it is actually delivering. A capability,
  * not a value: the memory is the alert driver's own delivery streak, in the route module that

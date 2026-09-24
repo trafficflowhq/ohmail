@@ -2573,15 +2573,13 @@ export interface ScreenerWirePage {
   items: ScreenerWireItem[];
   nextCursor: string | null;
   /**
-   * The price of suggesting for THIS PAGE — not for what is on screen.
+   * What suggesting for THIS PAGE may take — not what is on screen, and no price.
    *
-   * Read for `maxPerRequest` alone, and that asymmetry is deliberate: the page is a server-side
-   * window over the held set while the rows this app shows come from the mirror, so the two
-   * sender lists are not the same list and `credits` here would price senders the user may not
-   * be looking at. The number that IS quoted to the user comes from a dry run over the exact
-   * set about to be posted.
+   * Read for `maxPerRequest` alone: the page is a server-side window over the held set while the
+   * rows this app shows come from the mirror, so the two sender lists are not the same list. The
+   * number quoted to the user comes from a dry run over the exact set about to be posted.
    */
-  suggestable: { senders: string[]; credits: number; maxPerRequest: number };
+  suggestable: { senders: string[]; maxPerRequest: number };
   /**
    * SENDERS THIS INSTALL HAS DECIDED ON THAT ITS ORGANIZER HAS NOT CARRIED OUT YET. They are ALREADY EXCLUDED from
    * {@link items}, which is what makes this field load-bearing rather than informational: without it the exclusion is
@@ -2624,7 +2622,8 @@ export interface ScreenerSuggestWire {
   requested: number;
   /** Senders that would be bought. `quotedCredits` is what they COST — never re-derive it. */
   quoted: number;
-  quotedCredits: number;
+  /** ABSENT when the server can state no price: then there is no quote and no purchase. */
+  quotedCredits?: number;
   /** Credits actually moved. Lower than the quote when a sender's answer was already bought. */
   charged: number;
   /** Set when the spend gate stopped the run PART-WAY; absent on a run that served everything. */

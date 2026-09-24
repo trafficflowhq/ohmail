@@ -1,12 +1,12 @@
 import {
   UNMETERED_ACCESS,
-  type AccessLifecycle, type AccessLifecycleState, type AccessClosedReason,
+  type AccessLifecycle, type AccessLifecycleState, type AccessClosedReason, type ActionPrices,
   type AccessRefusal, type AccessVerdict, type EntitlementsPort,
   type ReleaseOutcome, type ReleaseReceipt, type SpendAction, type SpendMeta, type SpendOutcome,
   type SpendRelease,
 } from "./entitlements-port.js";
 import { isAiRefusalReason } from "./ai-gate-port.js";
-import { assertAttemptKey } from "./ledger-source.js";
+import { SPEND_ACTIONS, assertAttemptKey } from "./ledger-source.js";
 
 /**
  * The HTTP client of an entitlements program, implementing {@link EntitlementsPort} over that
@@ -36,6 +36,22 @@ export type EntitlementsPath =
 
 /** How long an `access` verdict is reused before it is re-read. */
 export const ACCESS_TTL_MS = 60_000;
+
+/**
+ * The account `/health` asks about when no real access read has carried the price card yet. The
+ * nil uuid names nobody, and the program's answer for an unknown account writes nothing (no
+ * manage link is minted for it), so the probe reads the card and moves no state.
+ */
+export const PRICE_PROBE_ACCOUNT = "00000000-0000-0000-0000-000000000000";
+
+/** How long `/health` waits for that probe. Past it the reading is `unpriced`, never a stall. */
+export const PRICE_PROBE_BUDGET_MS = 1_500;
+
+/** The client, plus the one reading `/health` publishes about it. */
+export type EntitlementsClient = EntitlementsPort & {
+  /** `plane` once any access answer carried a readable card, else `unpriced`. Never throws. */
+  aiPricing(): Promise<"plane" | "unpriced">;
+};
 
 /** The slice of `fetch` this client needs — injectable so no test opens a socket. */
 export type EntitlementsFetch = (url: string, init: {
@@ -207,6 +223,25 @@ function verdictOf(body: unknown): AccessVerdict | { bad: string } {
   };
 }
 
+/**
+ * The `prices` block: every call site this client spends on, each a non-negative integer.
+ * Absent or null is an older program — unpriced, not a drift. A block that is there and cannot
+ * be read is a drift, named, and reads as unpriced: a price nobody can read sells nothing, and it
+ * must never cost the account its access verdict.
+ */
+function pricesOf(raw: unknown): ActionPrices | null | { bad: string } {
+  if (raw === undefined || raw === null) return null;
+  const p = obj(raw);
+  if (!p) return { bad: "prices" };
+  const card = {} as ActionPrices;
+  for (const action of Object.keys(SPEND_ACTIONS) as (keyof ActionPrices)[]) {
+    const v = p[action];
+    if (typeof v !== "number" || !Number.isInteger(v) || v < 0) return { bad: `prices.${action}` };
+    card[action] = v;
+  }
+  return card;
+}
+
 /** The program's five spend verdicts. `fault` is never one of them — see {@link SpendOutcome}. */
 function spendOf(body: unknown): SpendOutcome | { bad: string } {
   const b = obj(body);
@@ -245,7 +280,7 @@ const OUTCOMES: ReadonlySet<string> = new Set<ReleaseOutcome>(["none", "cancelle
  * dial a relative path, fault on every call, and then fail OPEN by design — an unmetered
  * deployment wearing a metered one's clothes. A host that means unmetered declares `UNMETERED`.
  */
-export function makeEntitlementsClient(cfg: EntitlementsClientConfig): EntitlementsPort {
+export function makeEntitlementsClient(cfg: EntitlementsClientConfig): EntitlementsClient {
   const raw = (cfg.baseUrl ?? "").trim();
   if (raw === "") {
     throw new Error(
@@ -297,6 +332,8 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
 
   /** Per-account verdicts. `freshUntil` bounds REUSE; the value itself is kept for the fault arm. */
   const cache = new Map<string, { verdict: AccessVerdict; freshUntil: number }>();
+  /** Latched by the first 200 that carried a readable card — `/health`'s `plane` reading. */
+  let pricesStated = false;
 
   /**
    * One bounded exchange. The clock covers the WHOLE call including the body parse, so a peer
@@ -346,7 +383,7 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
     }
   };
 
-  return {
+  const client: EntitlementsClient = {
     async access(accountId: string, opts?: { fresh?: boolean }): Promise<AccessVerdict> {
       const at = clock();
       const held = cache.get(accountId);
@@ -363,8 +400,13 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
         const read = res.bodyIsJson ? verdictOf(res.body) : { bad: "body" };
         if ("bad" in read) named("/v1/access", res.status, read.bad);
         else {
-          cache.set(accountId, { verdict: read, freshUntil: at + ttlMs });
-          return read;
+          const card = pricesOf(obj(res.body)?.prices);
+          if (card !== null && "bad" in card) named("/v1/access", res.status, card.bad);
+          const priced = card !== null && !("bad" in card);
+          if (priced) pricesStated = true;
+          const verdict: AccessVerdict = read.ok && priced ? { ...read, prices: card } : read;
+          cache.set(accountId, { verdict, freshUntil: at + ttlMs });
+          return verdict;
         }
       }
       // The fault arm: the last thing we knew, however stale, and otherwise allow.
@@ -434,5 +476,23 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       named("/v1/account/release", res.status, "outcome");
       return "cancel_failed";
     },
+
+    async aiPricing(): Promise<"plane" | "unpriced"> {
+      if (pricesStated) return "plane";
+      // One bounded read through the SAME door, cached like any other, so a `/health` poller
+      // dials at most once per TTL and an unanswering program costs the probe budget, not more.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const budget = new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, PRICE_PROBE_BUDGET_MS);
+        (timer as unknown as { unref?: () => void }).unref?.();
+      });
+      try {
+        await Promise.race([client.access(PRICE_PROBE_ACCOUNT).catch(() => undefined), budget]);
+      } finally {
+        clearTimeout(timer);
+      }
+      return pricesStated ? "plane" : "unpriced";
+    },
   };
+  return client;
 }

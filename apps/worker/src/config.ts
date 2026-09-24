@@ -8,7 +8,6 @@ import {
 } from "@trafficflow/core";
 import { transactionPoolerReason, sessionUrlRejection } from "@trafficflow/db";
 import { DEFAULT_ALERT_THRESHOLDS, msOAuthEnv, WORKER_POOL_MAX, type PostJson } from "@trafficflow/db/cloud";
-import { assertWeightedScheduleActive } from "@trafficflow/db";
 import type { MailboxAdapter, ImapConfig } from "@trafficflow/core/adapters/imap";
 import { buildIdentityOf, buildVersionOf, type BuildIdentitySource } from "./build-version.js";
 import type { MailboxSelection } from "./mailboxes.js";
@@ -1041,16 +1040,6 @@ export function loadAiPorts(
 ): Pick<WorkerConfig, "classifier" | "drafter" | "proposer" | "aiUsage"> {
   const raw = (env.ANTHROPIC_API_KEY ?? "").trim();
   if (raw === "") return {};
-  // The arming guard: managed AI does not come up against a FLAT debit schedule. The rule is older
-  // than the mechanism — managed AI must not arm before the weighted prices land — and while it lived
-  // only in prose it was one revert away from being untrue. This is the worker's half, placed where the
-  // key is parsed rather than where a spend happens, because the whole point is to refuse at BOOT: a
-  // guard at first spend would let the process come up healthy, sync mail, and only then under-charge.
-  // The worker is the metered arm for three of the four priced reasons, so a flat schedule here would
-  // meter a workflow draft at a fifteenth of what it costs. It throws for `loadAiPorts`' reason: a
-  // deployment configured wrong must fail loudly, not sell an AI product whose metering is quietly
-  // wrong. After the weighted schedule shipped this passes by construction.
-  assertWeightedScheduleActive();
   const aiUsage = makeAiUsageRelay(log);
   const client = makeAnthropicClient({
     apiKey: assertAnthropicKey(raw),

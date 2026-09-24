@@ -1,17 +1,17 @@
 import {
-  noticeSinkFor, setNoticeSink, UNMETERED, accessOf, isMetered,
-  type AccessPort, type EntitlementsComposition, type SpendPort, type Tx,
+  noticeSinkFor, setNoticeSink, UNMETERED, accessOf, isMetered, pricingOf,
+  type AccessPort, type AiPricingMarker, type EntitlementsComposition, type SpendPort, type Tx,
 } from "@trafficflow/db";
 import {
   API_MAX_DURATION_MS, makePooledDb, recordApiFault, entitlementsFaultRow,
   makeEntitlementsClient, refundObligationsOn, SESSION_ACQUIRE_TIMEOUT_MS,
+  type EntitlementsClient,
 } from "@trafficflow/db/cloud";
 import { adminDbFor, attestStaffDbFault, resetAdminDbs, webhookAlertSink, telegramAlertSink, acquireImapSlot, releaseImapSlot, resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER, // The staging BUCKET client. It sits beside the `attachment_staging` rows rather than with the
   // send path, because the retention sweep's caller is the worker, which may not depend on
   // `@trafficflow/services`. This host is the one place that needs both halves.
   makeSupabaseStagingStorage, // The organizer's last completed pass, for the filing strip (mail 0097).
   organizerCycleReader, type AdminDb, type AlertSink } from "@trafficflow/db/cloud";
-import { assertWeightedScheduleActive } from "@trafficflow/db";
 import {
   resolveCloudInstallId,
   createLogger, makeAnthropicClient, makeHaikuClassifier, makeSonnetDrafter,
@@ -266,16 +266,6 @@ function buildServices(cfg: HostConfig): ApiServices {
   // classifies inside one invocation (`maxDuration 60`), spend recorded per message, so each
   // call gets a tight deadline and one retry — a slow model fails one sender, never the run.
   const anthropicApiKey = cfg.anthropicApiKey;
-  // The arming guard: the production managed-AI arm refuses a flat debit schedule. It sits at
-  // the hoist so both the screener's classifier and the drafter are covered by one statement.
-  // The condition is the production shape: a model key AND the billing plane (the plane is
-  // where subscriptions and the allowance exist; a key with no plane is a preview or
-  // self-host shape with no ledger for a mis-priced debit). A hard throw, unlike
-  // `loadAlertsConfig`'s soft null: a deployment that prices a draft like a classification
-  // undercharges every customer for as long as it serves, and that is not recoverable after
-  // the fact. After the weighted schedule shipped it passes by construction; it exists for
-  // the revert.
-  if (anthropicApiKey && cfg.entitlements) assertWeightedScheduleActive();
   /**
    * THE SPEND HALF OF WHATEVER THIS HOST DECLARED, or nothing when it meters nothing.
    *
@@ -323,6 +313,9 @@ function buildServices(cfg: HostConfig): ApiServices {
     // (`ai-refusal.ts`). The same instance, so the fresh read it makes also refreshes the cache
     // every other caller reads.
     ...(accessHalf() ? { access: accessHalf()! } : {}),
+    // THE PRICE, from the same instance: the program's card rides its access answer, so a quote
+    // reads the cached verdict every other caller reads. No card ⇒ no quote and no purchase.
+    ...(accessHalf() ? { pricing: pricingOf(accessHalf()!) } : {}),
     ...(anthropicApiKey ? {
       classifier: makeHaikuClassifier({
         client: makeAnthropicClient({
@@ -613,6 +606,16 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
       // Reads the SAME config member `buildServices` arms from, so the marker cannot disagree
       // with the wiring.
       entitlements: cfg.entitlements ? "configured" : "unmetered",
+      // WHERE A QUOTE'S PRICE COMES FROM — `plane` once the program's card has been read (a real
+      // access answer, or one bounded probe), `unpriced` while it has not, `unmetered` with no
+      // program. A deploy carrying the pricing port is green only on `plane`: before it, the
+      // Screener withholds every quote and sells nothing.
+      aiPricing: async (): Promise<AiPricingMarker> => {
+        const composed = servicesFor(cfg).entitlementsPort as EntitlementsComposition | undefined;
+        if (composed === undefined || composed === UNMETERED) return "unmetered";
+        // The same memoised client the Screener's pricing reads, so its latch is this host's.
+        return "aiPricing" in composed ? (composed as EntitlementsClient).aiPricing() : "unpriced";
+      },
       // The pager's arms, published where an operator already looks. Unconditional,
       // `cfg.alerts` null included: `arms: []` is the loud statement that this deployment
       // cannot page anybody, and gating on `cfg.alerts` would make the key vanish in exactly

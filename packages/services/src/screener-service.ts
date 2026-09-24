@@ -10,7 +10,7 @@ import {
   storeScreenerSuggestion,
   screenerSuggestionsBySender,
   SCREENER_SUGGESTION_PROVENANCE,
-  AI_ACTION_WEIGHTS,
+  UNPRICED,
   // 0.14.1, 0.14.1 — the request path. See `screener-apply.ts` and `organizer-role.ts` in
   // `@trafficflow/db` for why the transactional core and the eligibility read live there.
   resolveCutline, senderIsActiveSql, senderIsDecidedSql, type ResolvedCutline,
@@ -25,7 +25,9 @@ import {
 /* The PORT, from the root barrel — not `@trafficflow/db/cloud`, which is the half that
  * answers. This service names a gate it may be handed; it never builds one, and it must
  * compile in a deployment where no gate and no ledger exist. */
-import type { AccessPort, AiCreditGate, AiRefusalReason, SpendPort } from "@trafficflow/db";
+import type {
+  AccessPort, ActionPricing, AiCreditGate, AiRefusalReason, SpendPort,
+} from "@trafficflow/db";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import type {
   AdapterPort, ClassifierPort, Destination, NativeLocator, OhboxPolicy, SenderReasonCode,
@@ -174,6 +176,13 @@ export interface ScreenerSuggestDeps extends ScreenerDeps {
    * here: it lives in `@trafficflow/db/cloud`, the half this module must compile without.
    */
   remaining?: (db: Tx, accountId: string) => Promise<number>;
+  /**
+   * WHAT ONE SUGGESTION COSTS, asked of whoever meters this host — never a figure held here.
+   * Read only when a gate is composed: an unmetered host charges nothing, so it quotes nothing.
+   * ABSENT ⇒ {@link UNPRICED}, and a metered host with no price withholds the quote and refuses
+   * the purchase before the gate is asked — nobody is charged a figure they were not shown.
+   */
+  pricing?: ActionPricing;
 }
 
 export interface ScreenBody {
@@ -600,15 +609,14 @@ export interface ScreenerSuggestResult {
    */
   quoted: number;
   /**
-   * What `quoted` COSTS, in credits — `quoted × AI_ACTION_WEIGHTS.debit_classify`, computed here.
-   * Count and price are different numbers and only the price is what the pricing invariant
-   * demands a control names before it spends. Equal today because a classification weighs 1 —
-   * exactly why the client must not multiply: the webapp cannot import `@trafficflow/db`, so a
-   * client-side price is a hardcoded `1` still reading "40 senders · 40 credits" the day the
-   * weight moves — and weights are per-reason now, moving independently. `GET /screener` states
-   * `suggestable.credits` for the same reason.
+   * What `quoted` COSTS, in credits — `quoted ×` the price the metering program states for one
+   * Screener suggestion ({@link ScreenerSuggestDeps.pricing}); 0 on a host that meters nothing.
+   * ABSENT when a metered host has no price: the client then offers no purchase, because a figure
+   * nobody could state is not one anybody can consent to. Count and price are different numbers;
+   * only the price is what a control names before it spends, which is why the client never
+   * multiplies.
    */
-  quotedCredits: number;
+  quotedCredits?: number;
   /** Credits this request moved. A re-run over the same mail is a `duplicate` and charges 0. */
   charged: number;
   /**
@@ -653,10 +661,9 @@ export interface ScreenerSuggestResult {
  */
 export interface ScreenerPage extends Page<ScreenerItem> {
   suggestable: {
-    /** Page senders that are held, AI-eligible, and have no stored suggestion yet. */
+    /** Page senders that are held, AI-eligible, and have no stored suggestion yet. No price: the
+     *  figure a person consents to is the dry run's `quotedCredits` over the set they press. */
     senders: string[];
-    /** `senders.length × AI_ACTION_WEIGHTS.debit_classify`. Stated, not implied. */
-    credits: number;
     /**
      * How many senders one `POST /screener/suggest` will accept — `MAX_SUGGEST_SENDERS`,
      * published so the client learns the PER-REQUEST cap by READING it rather than hardcoding a
@@ -981,7 +988,6 @@ export class ScreenerReadService {
       nextCursor,
       suggestable: {
         senders: suggestable,
-        credits: suggestable.length * AI_ACTION_WEIGHTS.debit_classify,
         maxPerRequest: MAX_SUGGEST_SENDERS,
         recommendedPerRequest: SUGGEST_RECOMMENDED_PER_REQUEST,
       },
@@ -1669,15 +1675,18 @@ export class ScreenerService extends ScreenerReadService {
   private readonly remaining?: (db: Tx, accountId: string) => Promise<number>;
   /** This host's own invocation ceiling, or absent. See {@link ScreenerSuggestDeps}. */
   private readonly invocationBudgetMs?: number;
+  /** The price question. See {@link ScreenerSuggestDeps.pricing}. */
+  private readonly pricing: ActionPricing;
 
   constructor(deps: ScreenerSuggestDeps) {
-    const { classifier, credits, access, remaining, invocationBudgetMs, ...readOnly } = deps;
+    const { classifier, credits, access, remaining, invocationBudgetMs, pricing, ...readOnly } = deps;
     super(readOnly);
     this.classifier = classifier;
     this.credits = credits;
     this.access = access;
     this.remaining = remaining;
     this.invocationBudgetMs = invocationBudgetMs;
+    this.pricing = pricing ?? UNPRICED;
   }
 
   /**
@@ -1713,6 +1722,19 @@ export class ScreenerService extends ScreenerReadService {
         "suggest_unconfigured", 503,
         "this deployment has no AI classifier connected", undefined, false,
       );
+    }
+
+    /* THE PRICE OF ONE SUGGESTION, asked once, before anything is read or spent. A host with no
+       gate charges nothing, so it quotes 0. A metered host asks the program's card; with no card
+       the dry run answers without a quote and a purchase is refused here, before the gate — the
+       program would charge its own price, and nobody consented to a figure nobody stated. */
+    const price = this.credits ? await this.pricing.priceOf(ctx.accountId, "screener") : 0;
+    if (price === null && !dryRun) {
+      await refuseAiSpend({ refusal: "fault", verdict: "unpriced" }, {
+        event: "screener_suggest_refused",
+        accountId: ctx.accountId,
+        unavailable: "AI suggestions are temporarily unavailable; please retry",
+      });
     }
 
     // THE ACCOUNT'S OHBOX PREFERENCE, read ONCE for the whole call — the two axes the worker
@@ -1898,8 +1920,7 @@ export class ScreenerService extends ScreenerReadService {
        * the same set cost more the second time — and a run that costs more than the figure
        * somebody pressed is the overstatement this whole surface exists to avoid.
        */
-      if (ceiling !== null
-        && (quoted + 1) * AI_ACTION_WEIGHTS.debit_classify > ceiling) {
+      if (ceiling !== null && price !== null && (quoted + 1) * price > ceiling) {
         refused[index] = { sender, reason: "over_quote" };
         stops[index] = "over_quote";
         return;
@@ -2021,14 +2042,12 @@ export class ScreenerService extends ScreenerReadService {
           // it over, and the door below gives back nothing without this line.
           claimed = true;
           // `charged: false` is a free retry of an attempt already on record — a `duplicate`;
-          // reporting it as spend would say the user paid twice. `+= the weight`, not `++`: the
-          // field is CREDITS and `spend()` moves that many per call (`ai-gate.ts` — `opts.amount ??
-          // aiActionCost(opts.reason)`). `debit_classify` weighs 1 today, so this changes no
-          // number; it is the increment that stays true now that weights are per-reason. `charged`
-          // is a plain `+=` across lanes, sound because JavaScript runs one lane at a time between
-          // `await`s — a read-modify-write with no `await` inside is atomic here.
+          // reporting it as spend would say the user paid twice. `+= price`, not `++`: the field is
+          // CREDITS, and the price is the program's own card, the figure it debits. A purchase never
+          // reaches here unpriced (refused above), so `?? 0` only satisfies the type. A plain `+=`
+          // across lanes is sound: JavaScript runs one lane at a time between `await`s.
           if (outcome.verdict === "ok") {
-            charged += AI_ACTION_WEIGHTS.debit_classify;
+            charged += price ?? 0;
             chargedAttempt = outcome.attempt;
           }
 
@@ -2232,7 +2251,7 @@ export class ScreenerService extends ScreenerReadService {
 
       const dto: ScreenerSuggestResult = {
         dryRun, requested: senders.length, quoted,
-        quotedCredits: quoted * AI_ACTION_WEIGHTS.debit_classify, charged,
+        ...(price !== null ? { quotedCredits: quoted * price } : {}), charged,
         ...(stopped ? { stopped } : {}),
         ...(typeof remainingCredits === "number" ? { remainingCredits } : {}),
         suggestions, skipped,

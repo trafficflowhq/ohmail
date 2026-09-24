@@ -4,7 +4,7 @@ import {
   accountSettings, folderState, messages,
   resolveCutline, senderIsActiveSql, senderIsDecidedSql, type ResolvedCutline,
   screenerAttemptKey, storeScreenerSuggestion,
-  screenerSuggestedSenderExists, hasScreenerSuggestionForSender, AI_ACTION_WEIGHTS,
+  screenerSuggestedSenderExists, hasScreenerSuggestionForSender,
   decisionCanBeApplied, readRequestEligibility,
   type RefundObligationPort, type RefundObligationReason, type SpendPort, type Tx,
 } from "@trafficflow/db";
@@ -104,8 +104,11 @@ export interface ScreenerAutoSuggestResult {
   examined: number;
   /** Suggestions stored. */
   bought: number;
-  /** Credits this pass actually moved. A `duplicate` charges nothing and is not counted. */
-  charged: number;
+  /**
+   * Attempts this pass was CHARGED for — what happened, not what it cost: the price is the
+   * metering program's, which debits it, and this pass holds none. A `duplicate` is not counted.
+   */
+  chargedAttempts: number;
   /** Why the pass stopped early, if it did. Absent ⇒ it ran the page out. */
   stopped?: "out_of_credits" | "spend_unavailable" | "ai_disabled" | "model_unavailable";
   /** True ⇒ the page was full, so more eligible senders wait for the next cycle. */
@@ -127,7 +130,7 @@ interface Candidate {
 }
 
 const EMPTY = (): ScreenerAutoSuggestResult => ({
-  ran: false, examined: 0, bought: 0, charged: 0, capped: false,
+  ran: false, examined: 0, bought: 0, chargedAttempts: 0, capped: false,
 });
 
 /**
@@ -247,8 +250,8 @@ export async function screenerAutoSuggestPass(
     // that away. The source is the MESSAGE, which makes this free to retry and impossible to double-charge
     // against the client's own batch. The whole block is SKIPPED on an unmetered host — skipped rather
     // than satisfied by a permissive stub gate, which would put a second always-yes "may this account
-    // spend" in the codebase that refuses nothing the day it is wired to the hosted side. `charged` stays
-    // 0 there, the truth: a standalone install moves no credits because it has none. The bare key is the
+    // spend" in the codebase that refuses nothing the day it is wired to the hosted side. `chargedAttempts`
+    // stays 0 there, the truth: a standalone install is charged for nothing. The bare key is the
     // MESSAGE — what makes this pass and a person's press claim the same work, and the next ask free.
     const attemptKey = screenerAttemptKey(c.messageId);
     /**
@@ -344,7 +347,7 @@ export async function screenerAutoSuggestPass(
         // THE CLAIM IS THIS PASS'S FROM HERE, and only from here: `ok` and `duplicate` are the two
         // verdicts that hand it over, and the door below gives back nothing without this line.
         claimed = true;
-        // Recorded, not yet counted: `result.charged` is added to below, once this candidate is past
+        // Recorded, not yet counted: `result.chargedAttempts` moves below, once this candidate is past
         // the entitlement re-check, because a charge that is handed straight back moved nothing.
         if (outcome.verdict === "ok") chargedAttempt = outcome.attempt;
       }
@@ -386,11 +389,9 @@ export async function screenerAutoSuggestPass(
         refundOnRelease = "already_advised";
         continue;
       }
-      // `+= the weight` and not `++`: the field is credits, and `spend()` moves that many per
-      // call. A `charged: false` is a free retry of an attempt already on record — reporting it as
-      // spend would say the account paid twice for one message. This pass books `debit_classify`,
-      // weight 1; naming the weight is what keeps the tally right now that prices are per-reason.
-      if (chargedAttempt !== undefined) result.charged += AI_ACTION_WEIGHTS.debit_classify;
+      // A `charged: false` is a free retry of an attempt already on record — counting it would say
+      // the account paid twice for one message. Attempts, not credits: the program prices them.
+      if (chargedAttempt !== undefined) result.chargedAttempts++;
 
       let verdict;
       try {
@@ -460,7 +461,8 @@ export async function screenerAutoSuggestPass(
 
   if (result.bought > 0 || result.stopped) {
     log.info("screener_auto_suggest", {
-      accountId, examined: result.examined, bought: result.bought, charged: result.charged,
+      accountId, examined: result.examined, bought: result.bought,
+      chargedAttempts: result.chargedAttempts,
       ...(result.stopped ? { stopped: result.stopped } : {}),
       capped: result.capped,
     });

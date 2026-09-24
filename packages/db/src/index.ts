@@ -257,7 +257,9 @@ export { runtimeUrlReason, providerFamily } from "./session-url.js";
  */
 export {
   clientIdempotencyKey, ledgerSources,
-  AI_ACTION_WEIGHTS, WEIGHTED_DEBIT_REASONS, aiActionCost, assertWeightedScheduleActive,
+  // The metered REASONS, and no price: what an action costs is the entitlements program's answer,
+  // asked through `ActionPricing` (on the entitlements port below).
+  WEIGHTED_DEBIT_REASONS,
   classifyLedgerSource, screenerLedgerSource,
   // THE SPEND TERMS AND THE ONE SOURCE COMPOSER. The call sites name an action and build a BARE
   // attempt key; whoever answers composes `<namespace>:<key>` through `sourceFor` and nowhere
@@ -396,6 +398,7 @@ export {
  */
 export {
   UNMETERED, UNMETERED_ACCESS, accessOf, isMetered, isSpendMetered,
+  UNPRICED, pricingOf, type ActionPricing, type ActionPrices, type AiPricingMarker,
   type EntitlementsPort, type EntitlementsComposition,
   type SpendPort, type SpendComposition, type SpendMeta, type AccessPort,
   type AccessVerdict, type AccessLimits, type AccessRefusal,

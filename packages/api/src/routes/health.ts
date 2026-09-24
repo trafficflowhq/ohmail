@@ -1470,6 +1470,12 @@ export const healthRoutes: Route[] = [
       // failure mode is camouflaged — a host that lost its entitlements URL reads as a
       // legitimately unmetered one. Emitted on every branch, like dbProvider and for its reason.
       const entitlements = injected?.entitlements ?? null;
+      // The price's source, on the same every-branch terms: a deploy gate reads it, and a host
+      // whose database is down is still a host that may or may not be able to quote.
+      let aiPricing: "plane" | "unpriced" | "unmetered" | null = null;
+      if (injected?.aiPricing) {
+        try { aiPricing = await injected.aiPricing(); } catch { aiPricing = null; }
+      }
 
       // The pager's arms — the worker's boot announcement, in the idiom a serverless host has. A
       // memory read (`HealthConfig.alertSinks` says why it is a capability), so it costs no round
@@ -1530,6 +1536,7 @@ export const healthRoutes: Route[] = [
           kek,
           dbProvider,
           entitlements,
+          aiPricing,
           ...pager,
           ...staffFaults,
         });
@@ -1539,6 +1546,7 @@ export const healthRoutes: Route[] = [
           ok: false, version, buildSource, ...artifact, dbLatencyMs: probe.dbLatencyMs, error: "database_probe_empty", kek,
           dbProvider,
           entitlements,
+          aiPricing,
           ...pager,
           ...staffFaults,
         });
@@ -1592,6 +1600,7 @@ export const healthRoutes: Route[] = [
         kek,
         dbProvider,
         entitlements,
+        aiPricing,
         ...pager,
         ...staffFaults,
         ...(fault ?? {}),

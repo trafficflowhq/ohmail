@@ -48,14 +48,11 @@ export interface DraftReplyControl {
 export type DraftedReply = RichValue;
 
 /**
- * What one draft costs: 15 credits. It used to be `DRAFT_REPLY_COST_ACTIONS = 1`, arguing that
- * actions were the honest unit; weighted debits inverted both halves — the plan is sold in CREDITS
- * (1,000 / 2,000 / 4,000 on the card) and an action no longer has one price
- * (`AI_ACTION_WEIGHTS.debit_draft` is 15 against a classification's 1). The quoted unit and the
- * charged unit are the same again, the only thing that makes a client literal safe. A literal, not
- * an import: the webapp takes no dependency on `@trafficflow/db` (`connect-gate-order.test.ts`
- * asserts it), and `test/landing-pricing-matches-plan-card.test.ts` reads this literal out of the
- * source and compares it to the server's weight. `DraftingService` still spends once per request.
+ * What one draft costs: 15 credits. The plan is sold in CREDITS and an action has its own price
+ * (a draft 15 against a classification's 1, on the metering service's card). A literal, not an
+ * import: the webapp takes no dependency on `@trafficflow/db` (`connect-gate-order.test.ts`
+ * asserts it), and `test/landing-pricing-matches-plan-card.test.ts` holds this literal to the
+ * metering service's own card. `DraftingService` still spends once per request.
  */
 export const DRAFT_REPLY_COST_CREDITS = 15;
 
