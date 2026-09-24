@@ -833,6 +833,45 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
+
+          # ── A DROPPED STREAM IS RETRIED, AND NOTHING ELSE IS ──────────────────
+          # A release transfer runs up to three times, 20 s then 40 s apart, and only
+          # while its error names a transport failure: an HTTP/2 stream error, a reset
+          # connection, an early EOF, a 502, 503 or 504. Anything else (a 404, a refused
+          # token, a missing asset) returns its own rc at once. Only the answer of the try
+          # that succeeded reaches stdout; what the transfer moved is read back after it.
+          retry_on_transport() {
+            local try
+            local rc
+            local out
+            local err
+            try=1
+            out="$(mktemp)" || return 1
+            err="$(mktemp)" || return 1
+            while :; do
+              rc=0
+              "$@" > "$out" 2> "$err" || rc=$?
+              cat "$err" >&2
+              if [ "$rc" = 0 ]; then
+                cat "$out"
+                rm -f "$out" "$err"
+                return 0
+              fi
+              if ! grep -Eq 'PROTOCOL_ERROR|stream error|connection reset|(^|[^[:alnum:]_])EOF([^[:alnum:]_]|$)|HTTP 50[234]' "$err"; then
+                rm -f "$out" "$err"
+                return "$rc"
+              fi
+              if [ "$try" -ge 3 ]; then
+                echo "transport failure on all 3 tries: $*" >&2
+                rm -f "$out" "$err"
+                return "$rc"
+              fi
+              echo "transport failure on try $try of 3, retrying in $((try * 20)) s: $*" >&2
+              sleep $((try * 20))
+              try=$((try + 1))
+            done
+          }
+
           # The release is normally cut first, with its own notes; this create is the fallback
           # so a bare tag push still ends with the signed pair attached to a page.
           #
@@ -892,11 +931,11 @@ jobs:
           done
 
           # Separate calls, so a failure on the mapping never starts an artifact upload.
-          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+          retry_on_transport gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
             mapping/ohmail-android-mapping.txt.gz
-          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+          retry_on_transport gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
             ohmail-android.apk
-          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+          retry_on_transport gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
             ohmail-android.aab
 
       - name: What was uploaded is what was signed
@@ -904,8 +943,47 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+
+          # ── A DROPPED STREAM IS RETRIED, AND NOTHING ELSE IS ──────────────────
+          # A release transfer runs up to three times, 20 s then 40 s apart, and only
+          # while its error names a transport failure: an HTTP/2 stream error, a reset
+          # connection, an early EOF, a 502, 503 or 504. Anything else (a 404, a refused
+          # token, a missing asset) returns its own rc at once. Only the answer of the try
+          # that succeeded reaches stdout; what the transfer moved is read back after it.
+          retry_on_transport() {
+            local try
+            local rc
+            local out
+            local err
+            try=1
+            out="$(mktemp)" || return 1
+            err="$(mktemp)" || return 1
+            while :; do
+              rc=0
+              "$@" > "$out" 2> "$err" || rc=$?
+              cat "$err" >&2
+              if [ "$rc" = 0 ]; then
+                cat "$out"
+                rm -f "$out" "$err"
+                return 0
+              fi
+              if ! grep -Eq 'PROTOCOL_ERROR|stream error|connection reset|(^|[^[:alnum:]_])EOF([^[:alnum:]_]|$)|HTTP 50[234]' "$err"; then
+                rm -f "$out" "$err"
+                return "$rc"
+              fi
+              if [ "$try" -ge 3 ]; then
+                echo "transport failure on all 3 tries: $*" >&2
+                rm -f "$out" "$err"
+                return "$rc"
+              fi
+              echo "transport failure on try $try of 3, retrying in $((try * 20)) s: $*" >&2
+              sleep $((try * 20))
+              try=$((try + 1))
+            done
+          }
+
           rm -rf uploaded && mkdir uploaded
-          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir uploaded \
+          retry_on_transport gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir uploaded \
             --pattern "ohmail-android.apk"
           cmp ohmail-android.apk uploaded/ohmail-android.apk
           echo "release APK verified byte-for-byte"
@@ -913,7 +991,7 @@ jobs:
           # The bundle read back the same way, and this is the one that matters most for it: a
           # bundle whose bytes changed in transit is refused by the console with a signature
           # error, days after the upload and with nothing local to compare against.
-          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir uploaded \
+          retry_on_transport gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir uploaded \
             --pattern "ohmail-android.aab"
           cmp ohmail-android.aab uploaded/ohmail-android.aab
           echo "release App Bundle verified byte-for-byte"
@@ -923,7 +1001,7 @@ jobs:
           # the check that the set really is on the page: an artifact whose mapping is missing is
           # one nobody can retrace a crash from, and without this the previous step's success is
           # the only evidence there is.
-          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir uploaded \
+          retry_on_transport gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir uploaded \
             --pattern "ohmail-android-mapping.txt.gz"
           # Byte-for-byte against the file the build job produced, which is the strongest thing
           # available here and makes a separate integrity test redundant: these bytes came out of

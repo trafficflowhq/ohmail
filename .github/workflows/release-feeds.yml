@@ -394,9 +394,96 @@ jobs:
 
           PUB_DATE_ISO="${RELEASE_PUBLISHED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 
+          # ── A DROPPED STREAM IS RETRIED, AND NOTHING ELSE IS ──────────────────
+          # A release transfer runs up to three times, 20 s then 40 s apart, and only
+          # while its error names a transport failure: an HTTP/2 stream error, a reset
+          # connection, an early EOF, a 502, 503 or 504. Anything else (a 404, a refused
+          # token, a missing asset) returns its own rc at once. Only the answer of the try
+          # that succeeded reaches stdout; what the transfer moved is read back after it.
+          retry_on_transport() {
+            local try
+            local rc
+            local out
+            local err
+            try=1
+            out="$(mktemp)" || return 1
+            err="$(mktemp)" || return 1
+            while :; do
+              rc=0
+              "$@" > "$out" 2> "$err" || rc=$?
+              cat "$err" >&2
+              if [ "$rc" = 0 ]; then
+                cat "$out"
+                rm -f "$out" "$err"
+                return 0
+              fi
+              if ! grep -Eq 'PROTOCOL_ERROR|stream error|connection reset|(^|[^[:alnum:]_])EOF([^[:alnum:]_]|$)|HTTP 50[234]' "$err"; then
+                rm -f "$out" "$err"
+                return "$rc"
+              fi
+              if [ "$try" -ge 3 ]; then
+                echo "transport failure on all 3 tries: $*" >&2
+                rm -f "$out" "$err"
+                return "$rc"
+              fi
+              echo "transport failure on try $try of 3, retrying in $((try * 20)) s: $*" >&2
+              sleep $((try * 20))
+              try=$((try + 1))
+            done
+          }
+
+          # ── A WHOLE-RELEASE DOWNLOAD IS CHECKED AGAINST THE RELEASE'S OWN LIST ─
+          # Every asset the release lists must be in the directory at the size the API
+          # states, or the step stops and names it. A download that answered 0 with a
+          # short file is caught here, and a listing with nothing on it is refused rather
+          # than read as "nothing is missing".
+          assets_on_disk() {
+            local tag
+            local repo
+            local dir
+            local list
+            local name
+            local size
+            local have
+            local bad
+            tag="$1"
+            repo="$2"
+            dir="$3"
+            list="$(mktemp)" || return 1
+            if ! retry_on_transport gh release view "$tag" --repo "$repo" --json assets \
+                --jq '.assets[] | "\(.name)\t\(.size)"' > "$list"; then
+              rm -f "$list"
+              return 1
+            fi
+            if [ ! -s "$list" ]; then
+              echo "$tag lists no assets, so the download has nothing to be checked against" >&2
+              rm -f "$list"
+              return 1
+            fi
+            bad=0
+            while IFS=$'\t' read -r name size; do
+              if [ ! -f "$dir/$name" ]; then
+                echo "ASSET-NOT-DOWNLOADED $name" >&2
+                bad=1
+              else
+                have="$(wc -c < "$dir/$name" | tr -d ' ')"
+                if [ "$have" != "$size" ]; then
+                  echo "ASSET-SIZE-MISMATCH $name: $have bytes on disk, $size on the release" >&2
+                  bad=1
+                fi
+              fi
+            done < "$list"
+            if [ "$bad" = 0 ]; then
+              echo "$(wc -l < "$list" | tr -d ' ') assets on disk at the sizes $tag lists"
+            fi
+            rm -f "$list"
+            return "$bad"
+          }
+
           # ── Pull the release's binary assets ───────────────────────────────
           rm -rf assets && mkdir assets
-          gh release download "$RELEASE_TAG" --repo "$REPO" --dir assets --clobber
+          retry_on_transport gh release download "$RELEASE_TAG" --repo "$REPO" --dir assets --clobber
+          assets_on_disk "$RELEASE_TAG" "$REPO" assets
           echo "downloaded:"; ls -la assets
 
           # ── THE METADATA FROM A PREVIOUS RUN IS DELETED, NOT KEPT ─────────
@@ -1073,6 +1160,93 @@ jobs:
           set -euo pipefail
           REPO="$GITHUB_REPOSITORY"
           BASE="https://github.com/$REPO/releases/download/$RELEASE_TAG"
+
+          # ── A DROPPED STREAM IS RETRIED, AND NOTHING ELSE IS ──────────────────
+          # A release transfer runs up to three times, 20 s then 40 s apart, and only
+          # while its error names a transport failure: an HTTP/2 stream error, a reset
+          # connection, an early EOF, a 502, 503 or 504. Anything else (a 404, a refused
+          # token, a missing asset) returns its own rc at once. Only the answer of the try
+          # that succeeded reaches stdout; what the transfer moved is read back after it.
+          retry_on_transport() {
+            local try
+            local rc
+            local out
+            local err
+            try=1
+            out="$(mktemp)" || return 1
+            err="$(mktemp)" || return 1
+            while :; do
+              rc=0
+              "$@" > "$out" 2> "$err" || rc=$?
+              cat "$err" >&2
+              if [ "$rc" = 0 ]; then
+                cat "$out"
+                rm -f "$out" "$err"
+                return 0
+              fi
+              if ! grep -Eq 'PROTOCOL_ERROR|stream error|connection reset|(^|[^[:alnum:]_])EOF([^[:alnum:]_]|$)|HTTP 50[234]' "$err"; then
+                rm -f "$out" "$err"
+                return "$rc"
+              fi
+              if [ "$try" -ge 3 ]; then
+                echo "transport failure on all 3 tries: $*" >&2
+                rm -f "$out" "$err"
+                return "$rc"
+              fi
+              echo "transport failure on try $try of 3, retrying in $((try * 20)) s: $*" >&2
+              sleep $((try * 20))
+              try=$((try + 1))
+            done
+          }
+
+          # ── A WHOLE-RELEASE DOWNLOAD IS CHECKED AGAINST THE RELEASE'S OWN LIST ─
+          # Every asset the release lists must be in the directory at the size the API
+          # states, or the step stops and names it. A download that answered 0 with a
+          # short file is caught here, and a listing with nothing on it is refused rather
+          # than read as "nothing is missing".
+          assets_on_disk() {
+            local tag
+            local repo
+            local dir
+            local list
+            local name
+            local size
+            local have
+            local bad
+            tag="$1"
+            repo="$2"
+            dir="$3"
+            list="$(mktemp)" || return 1
+            if ! retry_on_transport gh release view "$tag" --repo "$repo" --json assets \
+                --jq '.assets[] | "\(.name)\t\(.size)"' > "$list"; then
+              rm -f "$list"
+              return 1
+            fi
+            if [ ! -s "$list" ]; then
+              echo "$tag lists no assets, so the download has nothing to be checked against" >&2
+              rm -f "$list"
+              return 1
+            fi
+            bad=0
+            while IFS=$'\t' read -r name size; do
+              if [ ! -f "$dir/$name" ]; then
+                echo "ASSET-NOT-DOWNLOADED $name" >&2
+                bad=1
+              else
+                have="$(wc -c < "$dir/$name" | tr -d ' ')"
+                if [ "$have" != "$size" ]; then
+                  echo "ASSET-SIZE-MISMATCH $name: $have bytes on disk, $size on the release" >&2
+                  bad=1
+                fi
+              fi
+            done < "$list"
+            if [ "$bad" = 0 ]; then
+              echo "$(wc -l < "$list" | tr -d ' ') assets on disk at the sizes $tag lists"
+            fi
+            rm -f "$list"
+            return "$bad"
+          }
+
           # Everything the feeds say, read back out of the prepare job's
           # manifest: no name and no version is derived twice.
           VERSION="$(jq -r .version meta/manifest.json)"
@@ -1098,7 +1272,8 @@ jobs:
           # The three metadata files this run replaces are deleted for the
           # reason the prepare job gives — the checksums must not cover them.
           rm -rf assets && mkdir assets
-          gh release download "$RELEASE_TAG" --repo "$REPO" --dir assets --clobber
+          retry_on_transport gh release download "$RELEASE_TAG" --repo "$REPO" --dir assets --clobber
+          assets_on_disk "$RELEASE_TAG" "$REPO" assets
           rm -f assets/latest.json assets/appcast-macos.xml assets/SHA256SUMS
           cp meta/SHA256SUMS SHA256SUMS
           ( cd assets && shasum -a 256 --check ../SHA256SUMS )
@@ -1240,7 +1415,7 @@ jobs:
           node scripts/verify-feeds.mjs . assets latest.json appcast-macos.xml
 
           # ── Attach both feeds to the release ───────────────────────────────
-          gh release upload "$RELEASE_TAG" --repo "$REPO" --clobber \
+          retry_on_transport gh release upload "$RELEASE_TAG" --repo "$REPO" --clobber \
             latest.json appcast-macos.xml SHA256SUMS
           echo "uploaded latest.json, appcast-macos.xml and SHA256SUMS to $RELEASE_TAG"
 
@@ -1249,7 +1424,7 @@ jobs:
           # page; the summary states what these say and nothing else, so a run that
           # ends here cannot report three feeds it does not have.
           mkdir -p feeds-state/attached
-          ON_PAGE="$(gh release view "$RELEASE_TAG" --repo "$REPO" --json assets --jq '.assets[].name')"
+          ON_PAGE="$(retry_on_transport gh release view "$RELEASE_TAG" --repo "$REPO" --json assets --jq '.assets[].name')"
           MISSING=""
           for f in latest.json appcast-macos.xml SHA256SUMS; do
             if printf '%s\n' "$ON_PAGE" | grep -qx "$f"; then
@@ -1270,7 +1445,7 @@ jobs:
           # upload that silently served something else is the failure this
           # catches. A release is served for years; this costs two requests.
           rm -rf uploaded && mkdir uploaded
-          gh release download "$RELEASE_TAG" --repo "$REPO" --dir uploaded --clobber \
+          retry_on_transport gh release download "$RELEASE_TAG" --repo "$REPO" --dir uploaded --clobber \
             --pattern latest.json --pattern appcast-macos.xml --pattern SHA256SUMS
           cmp latest.json uploaded/latest.json
           cmp appcast-macos.xml uploaded/appcast-macos.xml
