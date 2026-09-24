@@ -461,7 +461,13 @@ export interface EngineStatus {
   mailboxId?: string;
   accountId?: string;
   userId?: string;
+  /** The ENGINE's own stdio address, the same on every door — never the door's host. */
   baseUrl?: string;
+  /**
+   * WHERE THE DOOR POINTS, from the shell's configuration: the hosted API, a server the person
+   * runs, or on a paired door the other computer — the one fact a paired sentence names.
+   */
+  cloudUrl?: string;
   /**
    * Whether the engine holds the credential it needs: the mailbox password on the LOCAL door,
    * the hosted session on the CLOUD door (`absent` there means "signed out"; sign-in is

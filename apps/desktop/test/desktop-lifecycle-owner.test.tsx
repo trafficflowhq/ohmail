@@ -40,7 +40,9 @@ const PAIRED_REVOKED: EngineStatus = {
   flavor: "desktop-host",
   address: "someone@example.com",
   mailboxId: "mbx-1",
-  baseUrl: "https://kestrel.tail1234.ts.net",
+  // The engine-frame shape: the stdio address in `baseUrl`, the other computer in `cloudUrl`.
+  baseUrl: "http://sidecar",
+  cloudUrl: "https://kestrel.tail1234.ts.net",
   credentialState: "ready",
 };
 

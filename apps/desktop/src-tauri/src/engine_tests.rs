@@ -2786,6 +2786,31 @@ fn one_function_picks_the_list_and_the_label_for_every_door() {
 }
 
 #[test]
+fn the_status_names_the_paired_computer_from_the_door_and_never_the_bridge() {
+    // THE DECIDING LINE is `door_fields`' `cloudUrl`: the engine's ready frame says `http://sidecar`
+    // for every door, and a window that read the host from it named every paired computer that.
+    let mut paired = serde_json::Map::new();
+    paired.insert("baseUrl".into(), "http://sidecar".into());
+    door_fields(&mut paired, &paired_door(Some(FIXTURE_PIN)));
+    assert_eq!(paired.get("cloudUrl").and_then(|v| v.as_str()), Some("https://desk.tail1234.ts.net"));
+    assert_eq!(paired.get("flavor").and_then(|v| v.as_str()), Some(crate::config::DESKTOP_HOST_FLAVOR));
+    assert_eq!(paired.get("mode").and_then(|v| v.as_str()), Some("cloud"));
+    assert_eq!(paired.get("baseUrl").and_then(|v| v.as_str()), Some("http://sidecar"), "the bridge base is not the door's to rewrite");
+    // A local door points at no other computer, so it names none.
+    let mut local = serde_json::Map::new();
+    door_fields(&mut local, &Config::Local(crate::config::LocalDoor {
+        imap_host: "imap.example.org".to_string(),
+        imap_user: "someone".to_string(),
+        imap_port: 993,
+        imap_secure: true,
+        smtp: None,
+        address: None,
+    }));
+    assert_eq!(local.get("mode").and_then(|v| v.as_str()), Some("local"));
+    assert!(!local.contains_key("cloudUrl"));
+}
+
+#[test]
 fn an_inherited_mail_server_setting_does_not_reach_a_cloud_child() {
     // ── WHY THIS SPAWNS A REAL PROCESS ──────────────────────────────────────────────────────
     //

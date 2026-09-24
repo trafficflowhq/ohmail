@@ -17,6 +17,8 @@ import {
   hostLinkProblem,
   hostViaOf,
   isDesktopHost,
+  pairedHostOf,
+  pairedViaOf,
   profileImportDoorFor,
   proveHostLink,
   suggestDoorFor,
@@ -85,8 +87,9 @@ const NO_FLAVOR = status();
 /** A hosted account that DOES name itself. */
 const MANAGED = status({ flavor: "managed" });
 /** The new door. */
-const PAIRED = status({ flavor: "desktop-host", baseUrl: "https://192.168.1.24:8443" });
-const PAIRED_TS = status({ flavor: "desktop-host", baseUrl: "https://kestrel.tail9c2.ts.net" });
+/* THE ENGINE-FRAME SHAPE: `baseUrl` is the engine's stdio address on every door; the other computer is `cloudUrl`. */
+const PAIRED = status({ flavor: "desktop-host", baseUrl: "http://sidecar", cloudUrl: "https://192.168.1.24:8443" });
+const PAIRED_TS = status({ flavor: "desktop-host", baseUrl: "http://sidecar", cloudUrl: "https://kestrel.tail9c2.ts.net" });
 const LOCAL = status({ mode: "local", flavor: null });
 
 afterEach(() => {
@@ -210,6 +213,16 @@ describe("what to call the other computer, and which network it is on", () => {
     expect(hostViaOf("https://[fd7a::1]:8443")).toBe("lan");
     expect(hostViaOf("https://kestrel.tail9c2.ts.net")).toBe("ts");
     expect(hostViaOf(null)).toBeNull();
+  });
+
+  /* FROM THE DOOR, NEVER THE BRIDGE: the engine's `baseUrl` is `http://sidecar` on every door, and a
+     reader of it named every paired computer "sidecar" and put every one on Tailscale. */
+  it("a paired status is read where the door points, whatever the engine's stdio address says", () => {
+    expect(pairedHostOf(PAIRED)).toBe("192.168.1.24");
+    expect(pairedViaOf(PAIRED)).toBe("lan");
+    expect(pairedHostOf(PAIRED_TS)).toBe("kestrel");
+    expect(pairedViaOf(PAIRED_TS)).toBe("ts");
+    expect(pairedHostOf(status({ flavor: "desktop-host", baseUrl: "http://sidecar" })), "no door origin: no name").toBeNull();
   });
 });
 

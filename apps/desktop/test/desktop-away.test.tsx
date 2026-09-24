@@ -344,10 +344,12 @@ describe("the wiring, pinned by source", () => {
    * than falling back to the standalone promise.
    */
   it("and on a paired desktop it names the other computer, or says nothing", () => {
-    expect(gate).toMatch(/awayDoorFor\(status, hostedSession\) === "host" && hostLabelOf\(status\?\.baseUrl\)/);
-    expect(gate).toMatch(/awayOnHost: hostLabelOf\(status\?\.baseUrl\)/);
+    // `hostLabel` is `pairedHostOf(status)`: the door's cloudUrl, never the engine's stdio address.
+    expect(gate).toMatch(/const hostLabel = pairedHostOf\(status\);/);
+    expect(gate).toMatch(/awayDoorFor\(status, hostedSession\) === "host" && hostLabel\b/);
+    expect(gate).toMatch(/awayOnHost: hostLabel \}/);
     expect(gate, "an absent label must withhold the prop, never pass an empty string")
-      .not.toMatch(/awayOnHost: hostLabelOf\(status\?\.baseUrl\) \?\? ""/);
+      .not.toMatch(/awayOnHost: hostLabel \?\? ""/);
   });
 
   it("the shared shell admits a host transport as a second way to be supported", () => {

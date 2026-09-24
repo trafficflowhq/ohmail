@@ -47,9 +47,10 @@ import type { EngineStatus } from "../src/bridge-fetch.js";
  * this file exists to stop.
  *
  * `desktopSelfHost` is a ruling for a different reason, and the reason is itself a finding: the
- * window CANNOT TELL that door from `desktopCloud`. Both are `{ mode: "cloud" }`, `status` carries
- * no field naming the configured server, and the ready frame's `baseUrl` is the local bridge. So
- * the column cannot be rendered, and its `inert` cells are what that costs.
+ * window CANNOT TELL that door from `desktopCloud`. Both are `{ mode: "cloud" }`, no door rule reads
+ * the configured server (`status.cloudUrl`, which only the paired door's label reads), and the ready
+ * frame's `baseUrl` is the local bridge. So the column cannot be rendered, and its `inert` cells are
+ * what that costs.
  *
  * ── THE TABLE IS THE POINT ──────────────────────────────────────────────────────────────────
  *
@@ -115,8 +116,8 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
  * have let that question go unasked.
  *
  * This column is a ruling and not a render: the two are indistinguishable to `DesktopGate` today
- * (`status` carries no field naming the configured server, and the ready frame's `baseUrl` is the
- * local bridge), which is the finding rather than a limitation of the harness.
+ * (no door rule reads `status.cloudUrl`, and the ready frame's `baseUrl` is the local bridge),
+ * which is the finding rather than a limitation of the harness.
  *
  * ── AND THE LIST IS A VALUE, WITH THE TYPE DERIVED FROM IT ─────────────────────────────────
  *

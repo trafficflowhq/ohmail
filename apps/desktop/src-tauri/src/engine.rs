@@ -2134,30 +2134,7 @@ impl Shell {
         let mut out = status_json(&self.engine());
         if let Some(object) = out.as_object_mut() {
             match self.paths.config() {
-                Some(config) => {
-                    object.insert("mode".into(), config.mode().as_str().into());
-                    if let Some(address) = config.address() {
-                        object.insert("address".into(), address.into());
-                    }
-                    // ── WHICH KIND OF CLOUD DOOR, WHEN THE RECORD SAYS ──────────────────────
-                    //
-                    // `mode` says local or cloud, and three different things are cloud: the hosted
-                    // service, a server the person runs, and another computer's desktop. The window
-                    // reads this through one seam that narrows against a closed set and answers
-                    // "unknown" for anything absent or unrecognised, so an OMISSION here is not a
-                    // neutral saving — it silently gives a paired install the hosted account's
-                    // sentences and panes. It is emitted whenever the door record carries it.
-                    //
-                    // FROM THE CONFIGURATION AND NOT FROM THE ENGINE'S READY FRAME. The flavor is
-                    // a fact about the door this shell WROTE, which is exactly the class of thing
-                    // this block exists to add; taking it from the engine would make the window's
-                    // door state depend on a process that may not have announced itself yet.
-                    if let crate::config::Config::Cloud(cloud) = &config {
-                        if let Some(flavor) = &cloud.flavor {
-                            object.insert("flavor".into(), flavor.clone().into());
-                        }
-                    }
-                }
+                Some(config) => door_fields(object, &config),
                 // NAMED RATHER THAN OMITTED. A window that reads an absent `mode` as "still
                 // loading" would spin for ever on a fresh install, which is exactly the state that
                 // most needs to reach the door picker.
@@ -2171,6 +2148,28 @@ impl Shell {
             }
         }
         out
+    }
+}
+
+/// The door's own facts the window reads, added to a status beside the engine's.
+///
+/// ── WHICH KIND OF CLOUD DOOR, AND WHERE IT POINTS, WHEN THE RECORD SAYS ──────────────────────
+/// `mode` says local or cloud, and three different things are cloud: the hosted service, a server
+/// the person runs, and another computer's desktop. The window narrows `flavor` against a closed
+/// set, so an OMISSION gives a paired install the hosted account's sentences. `cloudUrl` is where
+/// the door points — on a paired door, the other computer the window names. Both come FROM THE
+/// CONFIGURATION this shell wrote, never the engine's ready frame, whose `baseUrl` is the stdio
+/// door's own address (`http://sidecar`): read as the host, it named every paired computer that.
+fn door_fields(object: &mut serde_json::Map<String, serde_json::Value>, config: &Config) {
+    object.insert("mode".into(), config.mode().as_str().into());
+    if let Some(address) = config.address() {
+        object.insert("address".into(), address.into());
+    }
+    if let Config::Cloud(cloud) = config {
+        if let Some(flavor) = &cloud.flavor {
+            object.insert("flavor".into(), flavor.clone().into());
+        }
+        object.insert("cloudUrl".into(), cloud.cloud_url.clone().into());
     }
 }
 

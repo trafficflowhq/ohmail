@@ -226,6 +226,20 @@ export function hostLabelOf(baseUrl: string | null | undefined): string | null {
 }
 
 /**
+ * THE OTHER COMPUTER'S NAME AND NETWORK, read from where the door POINTS: the shell's `cloudUrl`,
+ * from its own configuration. Never from `baseUrl` — that is the engine's stdio address
+ * (`http://sidecar`) on every door, and read as the host it named every paired computer
+ * "sidecar" in the packaged app. One reader for every paired sentence; null is "no name to say".
+ */
+export function pairedHostOf(status: EngineStatus | null | undefined): string | null {
+  return hostLabelOf(status?.cloudUrl);
+}
+
+export function pairedViaOf(status: EngineStatus | null | undefined): "lan" | "ts" | null {
+  return hostViaOf(status?.cloudUrl);
+}
+
+/**
  * WHICH NETWORK THE OTHER COMPUTER IS REACHED OVER — decided from the origin's SHAPE, the only
  * thing this window is told. The same-network door binds one interface and hands out its
  * address as an IP literal (`host-lan.ts`), and no authority certifies one — why that door's

@@ -14,7 +14,7 @@ import { SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } from "@oh
 import type { EngineStatus } from "./bridge-fetch.js";
 import { BUILD_LABEL } from "./build-id.js";
 import { DOOR_COPY, machineWord } from "./door-copy.js";
-import { hostLabelOf, isDesktopHost } from "./doors.js";
+import { isDesktopHost, pairedHostOf } from "./doors.js";
 import { selfUpdates } from "./distribution.js";
 import { DesktopUpdate } from "./DesktopUpdate.js";
 
@@ -39,7 +39,7 @@ export function DesktopAbout({ status }: { status: EngineStatus }) {
   /* THE OTHER COMPUTER, when this install reads through one. Both the value and its sentence
      change: "An ohmail Cloud account · the organizing happens on our servers" names a service
      that has nothing to do with this install. */
-  const host = hostLabelOf(status.baseUrl);
+  const host = pairedHostOf(status);
   const paired = isDesktopHost(status) && host !== null;
   return (
     <SettingsSection>

@@ -16,7 +16,7 @@ import { engineLogout, type EngineStatus } from "./bridge-fetch.js";
 import { renewCloudSession } from "./cloud-session.js";
 import type { HostedSession } from "./doors.js";
 import { DOOR_COPY, machineWord } from "./door-copy.js";
-import { hostLabelOf, hostViaOf, isDesktopHost } from "./doors.js";
+import { isDesktopHost, pairedHostOf, pairedViaOf } from "./doors.js";
 import { agoStamp } from "../../webapp/app/shell/format";
 import { DesktopAiSettings } from "./DesktopAiSettings.js";
 import type { LocalAiStatus } from "./local-ai.js";
@@ -274,7 +274,7 @@ export function DesktopSettings({
   };
   /* THE OTHER COMPUTER'S NAME, or null. Every paired sentence below interpolates it, and each one
      falls back to the door's older wording rather than rendering a hole — see `credentialLine`. */
-  const host = hostLabelOf(status.baseUrl);
+  const host = pairedHostOf(status);
   const paired = isDesktopHost(status) && host !== null;
   const door = paired
     ? host
@@ -333,7 +333,7 @@ export function DesktopSettings({
           answers a standing question about somebody else's machine, which a person may want to
           check at any time and cannot check any other way from here. */}
       {paired ? (() => {
-        const line = connectionLine(connection ?? null, hostViaOf(status.baseUrl));
+        const line = connectionLine(connection ?? null, pairedViaOf(status));
         return (
           <SettingsRow
             label={DOOR_COPY.connLabel}
@@ -471,9 +471,9 @@ export function DesktopSettings({
  */
 function doorDescription(status: EngineStatus, host: string | null): string {
   if (isDesktopHost(status) && host !== null) {
-    return hostViaOf(status.baseUrl) === "lan"
+    return pairedViaOf(status) === "lan"
       ? DOOR_COPY.doorHostWhyLan(host, machineWord())
-      : DOOR_COPY.doorHostWhyTs(host, machineWord(), status.baseUrl ?? host);
+      : DOOR_COPY.doorHostWhyTs(host, machineWord(), status.cloudUrl ?? host);
   }
   if (status.mode === "cloud") return DOOR_COPY.doorCloudWhy;
   if (status.mode === "local") return DOOR_COPY.doorLocalWhy;

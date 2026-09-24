@@ -72,9 +72,10 @@ const host = globalThis as unknown as Host;
 const CLOUD_SERVING: EngineStatus = {
   state: "serving", mode: "cloud", address: "someone@ohmail.app", mailboxId: "mbx-1", credentialState: "ready",
 };
-/** A paired install: the cloud door's `desktop-host` flavour, reading through another computer. */
+/** A paired install in the engine-frame shape: `baseUrl` is the stdio address, the other computer `cloudUrl`. */
 const PAIRED_SERVING: EngineStatus = {
-  ...CLOUD_SERVING, flavor: "desktop-host", address: "someone@example.com", baseUrl: "https://kestrel.tail1234.ts.net",
+  ...CLOUD_SERVING, flavor: "desktop-host", address: "someone@example.com",
+  baseUrl: "http://sidecar", cloudUrl: "https://kestrel.tail1234.ts.net",
 };
 
 function encode(status: number, body: string): Uint8Array {

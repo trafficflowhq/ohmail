@@ -55,8 +55,8 @@ import { DesktopSubscription, useDesktopManageOffer } from "./DesktopSubscriptio
 import { DesktopAccessLock } from "./DesktopAccessLock.js";
 import { DesktopWebSection } from "./DesktopWebSection.js";
 import {
-  accountDoorFor, awayDoorFor, consentDoorFor, firstRunDoorFor, gateFor, hostLabelOf,
-  hostDoorFor, hostViaOf, isDesktopHost, mailMount, profileImportDoorFor, readShell,
+  accountDoorFor, awayDoorFor, consentDoorFor, firstRunDoorFor, gateFor,
+  hostDoorFor, isDesktopHost, mailMount, pairedHostOf, pairedViaOf, profileImportDoorFor, readShell,
   suggestDoorFor, type HostedSession, type Shell,
 } from "./doors.js";
 import { DesktopDevices } from "./DesktopDevices.js";
@@ -220,7 +220,7 @@ function lifecycleMark(shell: Shell): string {
   const s = shell.status;
   return JSON.stringify([
     "status", s.state, s.mode ?? null, s.flavor ?? null, s.mailboxId ?? null,
-    s.credentialState ?? null, s.baseUrl ?? null,
+    s.credentialState ?? null, s.baseUrl ?? null, s.cloudUrl ?? null,
   ]);
 }
 
@@ -799,7 +799,7 @@ export function DesktopGate() {
    * the person stayed on the same card, with nothing on screen having changed. One element,
    * rendered by whichever branch is on screen, is what makes a press lead to its door.
    */
-  const hostLabel = hostLabelOf(status?.baseUrl);
+  const hostLabel = pairedHostOf(status);
   const doorOverlay = overlay ? (
     /* OVER the client, not under it. `.gate` is a full-height flow element — correct when it
        IS the window, wrong when the mail is already on screen behind it, where it would
@@ -914,7 +914,7 @@ export function DesktopGate() {
         <div className="gate-card">
           <span className="wordmark"><b>ohmail</b><em>.</em></span>
           <h1>{DOOR_COPY.gateRestartTitle}</h1>
-          <p>{DOOR_COPY.gateRestart(hostLabelOf(status?.baseUrl) ?? DOOR_COPY.doorHostName)}</p>
+          <p>{DOOR_COPY.gateRestart(hostLabel ?? DOOR_COPY.doorHostName)}</p>
         </div>
       </div>
     );
@@ -953,7 +953,7 @@ export function DesktopGate() {
   const hostConnection: HostConnection | undefined = ((): HostConnection | undefined => {
     if (!paired || freshness === null || hostLabel === null) return undefined;
     const settingsLink = { href: "#/settings/desktop", label: DOOR_COPY.hostFootSettings };
-    const check = hostViaOf(status?.baseUrl) === "lan"
+    const check = pairedViaOf(status) === "lan"
       ? DOOR_COPY.hostCheckLan(machineWord())
       : DOOR_COPY.hostCheckTs;
     if (freshness.state === "stale") {
@@ -1258,12 +1258,12 @@ export function DesktopGate() {
                  which `awayDoorFor` makes unreachable in this window, since it answers exactly
                  one arm. WITHOUT this the paired door would have rendered Cloud's copy, which is
                  the same class of false state the flavor seam exists to end. */
-              /* WITHHELD RATHER THAN EMPTY when there is no label to give. `hostLabelOf` answers
+              /* WITHHELD RATHER THAN EMPTY when there is no label to give. `pairedHostOf` answers
                  null for an absent or unparseable base, and `?? ""` would have rendered "…while
                  ohmail is open on ." — a sentence with a hole in it, which is worse than the
                  standalone one this then falls back to. */
-              ...(awayDoorFor(status, hostedSession) === "host" && hostLabelOf(status?.baseUrl)
-                ? { awayOnHost: hostLabelOf(status?.baseUrl) }
+              ...(awayDoorFor(status, hostedSession) === "host" && hostLabel
+                ? { awayOnHost: hostLabel }
                 : {}),
             }
           : {})}
