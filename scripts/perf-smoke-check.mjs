@@ -26,7 +26,7 @@
  *
  * verdict: PERF_SMOKE: GREEN rc 0 - RED rc 1 - REFUSED rc 3.
  */
-import { readFileSync, readdirSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync, appendFileSync, existsSync, realpathSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 
@@ -34,24 +34,23 @@ import { pathToFileURL, fileURLToPath } from "node:url";
  *
  * A budget is a number with an origin. A number invented in advance would have every later
  * reading judged against the invention instead of against the product, so each line below says
- * where it comes from and the two that nothing has measured yet say so and redden nothing.
+ * where it comes from, and a budget the perf table rules `records` is printed and reddens nothing.
  */
 export const BUDGETS = {
-  /* The renderer group — the webview's own processes — on a ten-thousand-message mailbox.
-   *
-   * THE DERIVATION, because 400 MB is not a tenth of anything. The renderer's steady ceiling on a
-   * mailbox seven times this size is 600 MB, with 400 MB as the goal; that ceiling is reachable
-   * only if the renderer is bounded by the window of mail it is showing rather than by the size
-   * of the mailbox behind it. If it is so bounded, ten thousand messages and seventy-five
-   * thousand cost the SAME, and a build already over the larger mailbox's goal at this size is a
-   * regression in the bound by any reading. If it is not so bounded, this reddens — which is the
-   * defect, not a false alarm. Scaling the ceiling down with the message count would assume the
-   * opposite of what the budget is for. */
-  rendererPeakKb: 400 * 1024,
+  /* The renderer group — the webview's own processes — at its peak over a first sync: the perf
+   * table's ruled `renderer.peak-first-sync` ceiling, the row whose drive is this run's, copied
+   * because this file is published and the table is not. */
+  rendererPeakKb: 1400 * 1024,
+  /* THE GOAL, printed beside it: this check's own derivation, that a renderer bounded by its mail
+   * window costs the same at any mailbox size, so the larger mailbox's 400 MB goal holds here too.
+   * It is not the ceiling: a hosted runner's EMPTY app read 452 MB in its web group on 2026-09-24,
+   * so as a ceiling it could not pass on any build. */
+  rendererGoalKb: 400 * 1024,
   /* The mail engine, steady. Measured: 378.8 MB settled on an empty install, and 450 MB settled
    * with five and twenty-five thousand messages. */
   engineRssKb: 450 * 1024,
-  /* The engine's own boot, from its `boot_phases.totalReadyMs`. NO MEASUREMENT BEHIND IT YET. */
+  /* The engine's own boot, from its `boot_phases.totalReadyMs`. NO MEASUREMENT BEHIND IT YET, and
+   * the table rules it `records`. */
   engineReadyMs: 4000,
   /* The first import, from `first_sync_finished`. The released build's own line read 33.1 messages
    * a second because its clock began at the END of the drain that found the import open; measured
@@ -59,7 +58,8 @@ export const BUDGETS = {
    * times a released build, and it is read only when the import finished inside the run — against
    * a `totalMs` that now covers the drain that found the import open. */
   syncMsgPerS: 60,
-  /* Everything below is read from `ui_vitals` and has NO MEASUREMENT BEHIND IT YET. */
+  /* Everything below is read from `ui_vitals` and has NO MEASUREMENT BEHIND IT YET; the table
+   * rules every one of them `records`. */
   startToListMs: 2000,
   frameGapMs: 50,
   longTaskMs: 200,
@@ -265,6 +265,23 @@ export function bundleCarriesUiVitals(path) {
   return bundleVocabulary(path)?.event ?? null;
 }
 
+/** The shell's own "not started" reason out of the log, or null. Bounded, and the last one wins. */
+export function engineNotStarted(log) {
+  let reason = null;
+  for (const line of log.split("\n")) {
+    const m = /engine: not started \u2014 (.*)$/.exec(line);
+    if (m) reason = m[1].trim().slice(0, 200);
+  }
+  return reason;
+}
+
+/** The budget row a run is held to — messages, seconds, MB — printed before the verdict. */
+export function budgetLine({ fixtureMessages, windowS }) {
+  const mb = (kb) => Math.round(kb / 1024);
+  return `PERF_SMOKE_BUDGET: ${fixtureMessages} messages, ${windowS} s window, ` +
+    `renderer peak ${mb(BUDGETS.rendererPeakKb)} MB (goal ${mb(BUDGETS.rendererGoalKb)} MB), engine ${mb(BUDGETS.engineRssKb)} MB`;
+}
+
 /* ── THE DERIVATION p95 BUDGET, READ FROM THE TABLE AND NEVER SPELLED HERE ─────────────────────
  *
  * A budget is a number with an origin, never a literal in the check. The renderer and engine
@@ -319,6 +336,15 @@ export function collect({ samples, log, uiInBundle, uiFields, expectMessages, fi
   const arms = [];
   const add = (id, kind, status, reading, note) => arms.push({ id, kind, status, reading, note });
 
+  /* An engine that never started imported nothing. Every CI run of this check until 2026-09-24
+   * refused "the mailbox never finished importing" over a shell that had logged, in this same
+   * file, that the engine was not started — so the fixture's size took the blame for a missing
+   * key. The shell's reason names no mailbox and is echoed. */
+  const notStarted = engineNotStarted(log);
+  if (notStarted !== null) {
+    return { refused: `the engine never started, so nothing was imported: ${notStarted}` };
+  }
+
   const rows = parseSamples(samples);
   if (rows.length < MIN_SAMPLES) {
     return { refused: `only ${rows.length} samples, and this check reads no fewer than ${MIN_SAMPLES}` };
@@ -341,22 +367,25 @@ export function collect({ samples, log, uiInBundle, uiFields, expectMessages, fi
     };
   }
 
-  /* The one arm with a real measurement behind it on both sides: a released build read far over
-   * this line, and a build bounded by its mail window reads far under it. */
+  /* The ruled ceiling decides; this check's own goal is printed beside it. A released build read
+   * over both, and the released 0.24.0 read under the ceiling and over the goal. */
   const peak = peakOf(rows, webTotal);
   add("renderer_peak", "DECIDES", peak < BUDGETS.rendererPeakKb ? "PASS" : "FAIL",
     `${peak} kB peak against ${BUDGETS.rendererPeakKb} kB`,
-    "the ceiling for a mailbox seven times this size is 600 MB with a 400 MB goal; a renderer bounded by its window costs the same at either size");
+    "the perf table's ruled ceiling for a first sync's peak");
+  add("renderer_goal", "RECORDED", peak < BUDGETS.rendererGoalKb ? "PASS" : "FAIL",
+    `${peak} kB peak against a ${BUDGETS.rendererGoalKb} kB goal`,
+    "a renderer bounded by its mail window costs the same at any mailbox size");
 
   /* A log line that is not there makes its arm UNREAD — printed, deciding nothing. UNREAD is a
    * third state and never a pass, so a run in which nothing decided is refused at the bottom of
    * this function rather than reported as a green with no arms behind it. */
   const readyMs = lastField(log, "boot_phases", "totalReadyMs");
   if (readyMs === null) {
-    add("engine_ready", "DECIDES", "UNREAD", "<the log carries no boot_phases line>", "");
+    add("engine_ready", "RECORDED", "UNREAD", "<the log carries no boot_phases line>", "");
   } else {
-    add("engine_ready", "DECIDES", readyMs <= BUDGETS.engineReadyMs ? "PASS" : "FAIL",
-      `${readyMs} ms against ${BUDGETS.engineReadyMs} ms`, "no measurement behind the budget yet; the reading is real");
+    add("engine_ready", "RECORDED", readyMs <= BUDGETS.engineReadyMs ? "PASS" : "FAIL",
+      `${readyMs} ms against ${BUDGETS.engineReadyMs} ms`, "no measurement behind the budget yet, so the table rules it records; the reading is real");
   }
 
   const rssBytes = lastField(log, "engine_vitals", "rss");
@@ -396,17 +425,15 @@ export function collect({ samples, log, uiInBundle, uiFields, expectMessages, fi
   } else if (ui.state === "absent") {
     add("ui_vitals", "RECORDED", "UNREAD", ui.why, "");
   }
-  /* Two of these four DECIDE and two are printed, and which is which is a fact about what the
-   * window can answer rather than a preference. `longFrames` is a COUNT the window took at its
-   * own threshold and no ceiling for that count has been measured, so a budget here would be an
-   * invented number. `longTasks` comes from an observer WebKit does not have, so the Linux
-   * desktop — the one platform this check runs on — writes 0 whether or not a task ran long, and
-   * an arm that cannot fail where it runs is an arm nobody can watch fail. */
+  /* All four are printed. The perf table rules every latency budget `records` until a run reads
+   * under it; `longFrames` is a count no ceiling has been measured for; and `longTasks` comes from
+   * an observer WebKit does not have, so the Linux desktop writes 0 whether or not a task ran long.
+   * A vocabulary drift still reddens every one of them, below. */
   const latency = [
-    ["start_to_list", "DECIDES", "worst",
+    ["start_to_list", "RECORDED", "worst",
       (v) => `${v} ms against ${BUDGETS.startToListMs} ms`, (v) => v <= BUDGETS.startToListMs,
       "the window's own cold start to a usable list; no measurement behind the budget yet"],
-    ["open_p95", "DECIDES", "worst",
+    ["open_p95", "RECORDED", "worst",
       (v) => `p95 ${v} ms against ${BUDGETS.openP95Ms} ms`, (v) => v <= BUDGETS.openP95Ms,
       "the window computes this p95 over its last hundred opens; the worst report of the run"],
     ["long_frames", "RECORDED", "sum",
@@ -668,8 +695,10 @@ export function selftest(write) {
   return bad === 0 ? 0 : 1;
 }
 
+/* Through realpath: `import.meta.url` is the resolved file, so a checker reached through a
+ * symlink compared unequal, ran nothing and exited 0 — a green with no verdict behind it. */
 const RUN_AS_SCRIPT = process.argv[1] !== undefined
-  && import.meta.url === pathToFileURL(process.argv[1]).href;
+  && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
 
 if (RUN_AS_SCRIPT) {
   const args = process.argv.slice(2);
@@ -711,6 +740,10 @@ if (RUN_AS_SCRIPT) {
       process.stderr.write("usage: perf-smoke-check.mjs --samples <tsv> --engine-log <log> [--bundle <file>]\n");
       process.exit(2);
     }
+    const expect = Number(opt("expect-messages", "0"));
+    const fixture = Number(opt("fixture-messages", String(expect)));
+    const windowS = opt("window-s", null);
+    if (windowS !== null) process.stdout.write(`${budgetLine({ fixtureMessages: fixture, windowS: Number(windowS) })}\n`);
     if (!existsSync(samplesPath)) {
       process.stdout.write(`PERF_SMOKE: REFUSED -- no sample file at ${samplesPath}; nothing was sampled\n`);
       process.exit(3);
@@ -719,8 +752,6 @@ if (RUN_AS_SCRIPT) {
       process.stdout.write(`PERF_SMOKE: REFUSED -- the app wrote no log at ${logPath}\n`);
       process.exit(3);
     }
-    const expect = Number(opt("expect-messages", "0"));
-    const fixture = Number(opt("fixture-messages", String(expect)));
     const vocabulary = bundleVocabulary(opt("bundle", null));
     const deriveBudget = readDeriveP95Budget(opt("budget-table", DEFAULT_BUDGET_TABLE));
     const { text, code } = render(collect({

@@ -1076,7 +1076,7 @@ jobs:
   linux:
     name: Linux · smoke · engine · appimage + deb + rpm
     runs-on: ubuntu-latest
-    # Seventy-five and not sixty since the perf smoke joined this job: importing ten thousand
+    # Seventy-five and not sixty since the perf smoke joined this job: importing five thousand
     # messages and letting the process group settle is minutes on top of three packaged artifacts.
     timeout-minutes: 75
     defaults:
@@ -1806,7 +1806,7 @@ jobs:
       # did exactly that: an 8 GB machine, a large mailbox, 4.1 GB resident
       # and a core held at 93.7 % for 29 minutes, with nothing watching.
       #
-      # So: ten thousand messages on a mail server in a container, the app
+      # So: five thousand messages on a mail server in a container, the app
       # signed in against it, and its own numbers read back against budgets.
       # Every budget and the derivation behind it is in the header of
       # `scripts/perf-smoke-check.mjs`, which is also the verdict.
@@ -1814,9 +1814,12 @@ jobs:
       # Nothing here is a real account. The mailbox is generated in this step,
       # the server is thrown away with the runner, and the password is the one
       # the container's own configuration sets a few lines down.
-      - name: Serve a ten-thousand-message mailbox
+      - name: Serve a five-thousand-message mailbox
         env:
-          PERF_FIXTURE_MESSAGES: "10000"
+          # The perf table's 5k size class. Sized to finish inside half the
+          # window below on a hosted runner: a rehearsal read 74 messages a
+          # second on four CPUs of a faster machine, taken as 2.5x slower here.
+          PERF_FIXTURE_MESSAGES: "5000"
         run: |
           set -euo pipefail
           # THE TOOLS FIRST, BY NAME, before anything is started — the rule the
@@ -1828,7 +1831,7 @@ jobs:
           mkdir -p perf-smoke/vmail/perf/Maildir/cur
           mkdir -p perf-smoke/vmail/perf/Maildir/new
           mkdir -p perf-smoke/vmail/perf/Maildir/tmp
-          # Written as files rather than appended over IMAP: ten thousand
+          # Written as files rather than appended over IMAP: five thousand
           # appends is a protocol conversation measured in minutes, and the
           # subject of this step is the app, not the seeding.
           node -e '
@@ -1898,27 +1901,21 @@ jobs:
 
       - name: The packaged app's start and memory on that mailbox
         env:
-          PERF_FIXTURE_MESSAGES: "10000"
-          # Long enough for the import to finish and for the group to settle,
-          # and long enough that the verdict's own floors — twelve samples over
-          # a hundred seconds — cannot be met by a window too short to read.
-          PERF_SMOKE_WINDOW_S: "420"
+          PERF_FIXTURE_MESSAGES: "5000"
+          # Twice what the import should take here, so a slow runner still
+          # finishes, and long enough that the verdict's own floors — twelve
+          # samples over a hundred seconds — cannot be met by a short window.
+          PERF_SMOKE_WINDOW_S: "480"
           # The fixture's own password, set by the container configuration in
           # the step above. The app takes a file for everything that is not a
           # secret and the password from here, which is also the path somebody
           # reproducing this run by hand takes.
           OHMAIL_IMAP_PASS: fixture-password
-          # ── THIS IS OFF UNTIL A RUN HAS PRODUCED A VERDICT ───────────────
-          # A verdict of RED — the app measurably over a budget — fails this
-          # step whatever this is set to. A REFUSAL is a different answer: it
-          # means the rig above produced no measurement at all, and until one
-          # run on a real runner has shown that it does, a refusal here would
-          # be this file failing every build for a reason that is not the app.
-          # The first run that prints a verdict is the one that turns this to
-          # "1", in a commit of its own. Still "0" on 2026-09-12: the rc3 build
-          # ran this job WITHOUT these steps — unpublished at that commit — so no
-          # runner has read the rig yet and there is nothing to move the pin on.
-          PERF_SMOKE_REQUIRED: "0"
+          # A REFUSAL FAILS THIS STEP, like a RED. At "0" a refusal was forgiven,
+          # and every run from 2026-09-13 to 2026-09-24 was green over an engine
+          # that never started. A rig that cannot measure is a red to fix, never
+          # a pass to read.
+          PERF_SMOKE_REQUIRED: "1"
         run: |
           set -euo pipefail
           for t in Xvfb xwininfo docker node; do
@@ -1929,20 +1926,25 @@ jobs:
           # refuses with "the app wrote no log" — the rig's failure wearing the
           # app's clothes, which is the one shape this step exists to avoid.
           [ -f build/ohmail-linux-x86_64.AppImage ] || { echo "perf smoke: no artifact at build/ohmail-linux-x86_64.AppImage"; exit 1; }
+          # THE BINARY, for the check to read the frame vocabulary out of: the
+          # AppImage's payload is compressed, so none of its strings are there,
+          # and every started run would read its own frame lines as impossible.
+          (cd perf-smoke && ../build/ohmail-linux-x86_64.AppImage --appimage-extract usr/bin/ohmail > /dev/null) \
+            && [ -f perf-smoke/squashfs-root/usr/bin/ohmail ] \
+            || { echo "perf smoke: the AppImage did not extract usr/bin/ohmail"; exit 1; }
           HOME_DIR="$PWD/perf-smoke/home"
           APP_DATA="$HOME_DIR/.local/share/io.ohmail.desktop"
           mkdir -p "$APP_DATA"
           mkdir -p "$PWD/perf-smoke/run"
           chmod 700 "$PWD/perf-smoke/run"
-          # WHICH DOOR, AND THE KEY THAT SEALS WHAT THE ENGINE STORES. The app
-          # writes both itself when a person signs in; written here, the run
-          # starts on a mailbox instead of on the first-run screen, and no
-          # keychain is involved on a machine that has none. 127.0.0.1 is why
-          # the server needs no certificate: the app's transport floor exempts
-          # the loopback range and nothing else.
+          # WHICH DOOR, AND THE KEY THAT SEALS WHAT THE ENGINE STORES. The door is
+          # written here so the run starts on a mailbox, not on the first-run
+          # screen; 127.0.0.1 is why the server needs no certificate. The key goes
+          # through OHMAIL_KEK, which the shell reads before any keystore: a runner
+          # has no session bus, so the keystore cannot be opened, and the shell
+          # stopped there without reading the key file this step used to write.
           printf '%s\n' '{"mode":"local","imap":{"host":"127.0.0.1","user":"perf","port":11143,"secure":false},"address":"perf@example.invalid"}' > "$APP_DATA/config.json"
-          node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))' > "$APP_DATA/install-key"
-          chmod 600 "$APP_DATA/install-key"
+          KEK="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')"
 
           # A DISPLAY OF ITS OWN, AND ASSERTED. :99 belongs to the launch check
           # above, which kills its server as its last line — a step boundary does
@@ -1967,6 +1969,7 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN=1 DISPLAY=:98 HOME="$HOME_DIR" \
             XDG_DATA_HOME="$HOME_DIR/.local/share" \
             XDG_RUNTIME_DIR="$PWD/perf-smoke/run" \
+            OHMAIL_KEK="$KEK" \
             build/ohmail-linux-x86_64.AppImage &
           APP=$!
           # The sampler reads the app's own process tree from /proc and
@@ -1987,25 +1990,29 @@ jobs:
           node scripts/perf-smoke-check.mjs \
             --samples perf-smoke/samples.tsv \
             --engine-log "$LOG" \
-            --bundle build/ohmail-linux-x86_64.AppImage \
+            --bundle perf-smoke/squashfs-root/usr/bin/ohmail \
             --expect-messages "$PERF_FIXTURE_MESSAGES" \
+            --window-s "$PERF_SMOKE_WINDOW_S" \
             --fixture-messages "$PERF_FIXTURE_MESSAGES" | tee perf-smoke/verdict.txt
           RC="${PIPESTATUS[0]}"
           set -e
+          # A checker that printed no verdict did not run, whatever it exited: a
+          # rehearsal of this step read rc 0 over an empty file as MEASURED.
+          grep -a -q '^PERF_SMOKE: ' perf-smoke/verdict.txt || RC=4
           kill "$APP" 2>/dev/null || true
           kill "$XVFB" 2>/dev/null || true
           docker rm -f ohmail-perf-imap > /dev/null 2>&1 || true
           # THE SUMMARY SAYS WHAT THE CHECKER SAID, not what the step concluded.
           # A refusal forgiven by PERF_SMOKE_REQUIRED=0 gave the step a green tick
-          # and a summary block nobody opens, so rc 3 — the 10k import not
-          # finishing in 420 s on the runner — read as a pass for a whole
-          # candidate. Forgiven is not the same as measured, and the heading is
-          # where a reader looks first.
+          # and a summary block nobody opens, so rc 3 — an engine that never
+          # started on the runner — read as a pass for a whole candidate.
+          # Forgiven is not the same as measured, and the heading is where a
+          # reader looks first.
           case "$RC" in
-            0) PERF_HEAD='the app on a ten-thousand-message mailbox — MEASURED, inside every budget' ;;
-            1) PERF_HEAD='the app on a ten-thousand-message mailbox — OVER A BUDGET' ;;
-            3) PERF_HEAD='the app on a ten-thousand-message mailbox — REFUSED: NO MEASUREMENT WAS TAKEN' ;;
-            *) PERF_HEAD="the app on a ten-thousand-message mailbox — the checker exited $RC, which is not a verdict" ;;
+            0) PERF_HEAD="the app on a $PERF_FIXTURE_MESSAGES-message mailbox — MEASURED, inside every budget" ;;
+            1) PERF_HEAD="the app on a $PERF_FIXTURE_MESSAGES-message mailbox — OVER A BUDGET" ;;
+            3) PERF_HEAD="the app on a $PERF_FIXTURE_MESSAGES-message mailbox — REFUSED: NO MEASUREMENT WAS TAKEN" ;;
+            *) PERF_HEAD="the app on a $PERF_FIXTURE_MESSAGES-message mailbox — the checker exited $RC, which is not a verdict" ;;
           esac
           {
             echo "### $PERF_HEAD"
@@ -3307,8 +3314,37 @@ jobs:
         run: |
           dbus-run-session -- flatpak run --command=flatpak-builder-lint org.flatpak.Builder \
             manifest apps/desktop/flatpak/app.ohmail.Desktop.yml
+          set +e
           dbus-run-session -- flatpak run --command=flatpak-builder-lint org.flatpak.Builder \
-            repo flatpak-repo
+            repo flatpak-repo > flatpak-lint-repo.json
+          LINT_RC=$?
+          set -e
+          cat flatpak-lint-repo.json
+          # EXPECTED TO FAIL OFFLINE, BY NAME: only a Flathub-side mirror can pass these two.
+          # Flathub copies the metainfo's screenshots into its own ostree repository and media
+          # host when it builds; a repository built on a runner has neither. Every other error
+          # the linter reports, and any output that is not its JSON, still fails this step.
+          FLATHUB_ONLY="appstream-screenshots-not-mirrored-in-ostree appstream-external-screenshot-url"
+          node -e '
+            const [rc, file, ...expected] = process.argv.slice(1);
+            const text = require("node:fs").readFileSync(file, "utf8");
+            const from = text.search(/^\{/m);
+            let out = null;
+            try { out = JSON.parse(text.slice(from, text.lastIndexOf("}") + 1)); } catch {}
+            if (from < 0 || !out || (out.errors !== undefined && !Array.isArray(out.errors))) {
+              console.log("flatpak-builder-lint: RED -- its output is not the JSON it prints (exit " + rc + ")");
+              process.exit(1);
+            }
+            const errors = out.errors ?? [];
+            const other = errors.filter((e) => !expected.includes(e));
+            const offline = errors.filter((e) => expected.includes(e));
+            const red = (why) => { console.log("flatpak-builder-lint: RED -- " + why); process.exit(1); };
+            if (rc !== "0" && rc !== "1") red("the linter exited " + rc + ", which is neither of its verdicts");
+            if (other.length > 0) red(other.join(" "));
+            if (rc === "1" && offline.length === 0) red("the linter exited 1 and named no error");
+            console.log("flatpak-builder-lint: GREEN -- " + (offline.length > 0
+              ? "expected offline: " + offline.join(" ") : "no errors"));
+          ' "$LINT_RC" flatpak-lint-repo.json $FLATHUB_ONLY
 
       # The permission set, asserted against the built metadata rather than
       # against the manifest it was written from — the finished app is what a
