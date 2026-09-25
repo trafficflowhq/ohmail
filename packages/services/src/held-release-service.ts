@@ -5,6 +5,7 @@ import {
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { SCREENER_FOLDER } from "./screener-service.js";
+import { recordSettingsChange } from "./consent-seed.js";
 import { ServiceError } from "./errors.js";
 import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 
@@ -252,13 +253,18 @@ export async function dismissHeldRelease(
   if (typeof fp !== "string" || fp.length === 0 || fp.length > 128) {
     throw new ServiceError("validation_failed", 400, "fingerprint must be a short string");
   }
+  /* THE DOORBELL, in the same transaction and after the row (`recordSettingsChange`'s lock
+     order). The dismissal is the ACCOUNT's: without a moved stamp and a change row, every other
+     device kept the offer it had read until its shell remounted. Each engine re-asks its one
+     held-release door when the settings stamp moves (`OhmailEngine.ringHeldReleaseBell`). */
   await withAccountTx(ctx, async (t) => {
     await t.insert(accountSettings)
-      .values({ accountId: ctx.accountId, heldReleaseDismissed: fp })
+      .values({ accountId: ctx.accountId, heldReleaseDismissed: fp, updatedAt: ctx.now() })
       .onConflictDoUpdate({
         target: accountSettings.accountId,
-        set: { heldReleaseDismissed: fp },
+        set: { heldReleaseDismissed: fp, updatedAt: ctx.now() },
       });
+    await recordSettingsChange(t, ctx.accountId);
   });
   return { dismissed: true };
 }

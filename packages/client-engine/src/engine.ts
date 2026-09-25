@@ -2189,6 +2189,13 @@ export class OhmailEngine {
   /** The build in flight, with the token that abandons it. One at a time — see {@link OhmailEngine.startSearchBuild}. */
   private searchBuild: { version: number; cancelled: boolean; done: Promise<void> } | null = null;
   private syncing: Promise<void> | null = null;
+  /**
+   * The held-release offer's freshness, kept beside its one door ({@link refreshHeldReleases}).
+   * `armed`: a surface asked, so the offer is shown in this process. `stamp`: the settings stamp
+   * the last ANSWER was asked under. `seq`: the newest ask issued. `bell`: the settle's re-ask.
+   */
+  private heldRelease: { armed: boolean; stamp: string | null; seq: number; bell: Promise<void> | null } =
+    { armed: false, stamp: null, seq: 0, bell: null };
   /** Which index answered — see {@link OhmailEngine.searchIndexRevision}. */
   private searchIndexRev = 0;
   /** The in-flight mirror read, so concurrent callers coalesce. See {@link OhmailEngine.hydrate}. */
@@ -3125,6 +3132,8 @@ export class OhmailEngine {
       // before this drain began now has its echo IN the mirror, so retiring it changes what is
       // rendered from "the overlay's claim" to "the server's identical statement".
       this.sweepAwaitingEcho(epoch);
+      // The held-release offer re-asks when the settings stamp this drain carried moved.
+      this.ringHeldReleaseBell();
       return;
     }
   }
@@ -4822,7 +4831,17 @@ export class OhmailEngine {
   async refreshHeldReleases(): Promise<void> {
     const ask = this.adapter.heldReleases;
     if (!ask) return;
+    const h = this.heldRelease;
+    h.armed = true;
+    const seq = ++h.seq;
+    const stamp = this.settingsStamp();
     const wire = await ask.call(this.adapter);
+    // A later ask went out while this one was in the air, and its answer is the newer statement:
+    // an older one landing last would bring back an offer the account already dismissed.
+    if (seq !== h.seq) return;
+    // The stamp this answer was asked UNDER, never the one at arrival: a doorbell that rang while
+    // the read was in the air may not be reflected in it, so the next settle asks again.
+    h.stamp = stamp;
     const before = this.read().list<HeldReleaseGroupDTO>(HELD_RELEASE_TYPE);
     const keep = new Set(wire.groups.map((g) => g.ruleId));
     await this.store.commitLocal(
@@ -4841,11 +4860,34 @@ export class OhmailEngine {
     this.notify();
   }
 
+  /** The settings entity's stamp off the mirror, or null before the first one lands. */
+  private settingsStamp(): string | null {
+    const [row] = this.store.entries<{ updatedAt?: string }>("settings");
+    return row ? String(row.entity?.updatedAt ?? "") : null;
+  }
+
+  /**
+   * THE DOORBELL FOR THE OFFER — called at every drain's settle. A dismissal (or any settings write)
+   * on another device moves the settings stamp, so the next pull re-asks the one door; the server
+   * answers `dismissed` by its own rule and every device reads the same answer. Only once a surface
+   * asked, and only when the stamp moved, so a pull with nothing to say costs nothing. Never
+   * awaited: reads are never hostage to an offer. A failed ask leaves the stamp behind and the next
+   * settle asks again.
+   */
+  private ringHeldReleaseBell(): void {
+    const h = this.heldRelease;
+    if (!h.armed || h.bell !== null || this.settingsStamp() === h.stamp) return;
+    h.bell = this.refreshHeldReleases()
+      .catch(() => { /* an offer: the next settle asks again */ })
+      .finally(() => { h.bell = null; });
+  }
+
   /**
    * "NOT NOW" — dismiss the offer AS READ. The fingerprint is taken off the mirror rows this
    * surface showed, never re-derived, so a set that changed since the read stays offered. The
    * re-read afterwards is what removes the row from every surface of this device; other devices
-   * see it on their next refresh. A door with no dismiss verb, or a mirror with no fingerprint
+   * drop it on their next pull, because the dismissal rings the settings doorbell ({@link
+   * ringHeldReleaseBell}). A door with no dismiss verb, or a mirror with no fingerprint
    * (an older server), is a no-op — the button that calls this is not offered there.
    */
   async dismissHeldRelease(): Promise<void> {

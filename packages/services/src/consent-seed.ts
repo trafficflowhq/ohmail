@@ -787,7 +787,7 @@ export async function consentSettings(
 // a stamp whose first write came from the database clock while every later write comes from the
 // context clock is two clocks on one column — the exact thing these writers' own comments refuse
 // for the consent instants beside it.
-async function recordSettingsChange(tx: LedgerTx, accountId: string): Promise<void> {
+export async function recordSettingsChange(tx: LedgerTx, accountId: string): Promise<void> {
   await recordChanges(tx, [
     { accountId, entityType: "settings" as const, entityId: accountId, op: "update" as const },
   ]);
