@@ -1524,10 +1524,6 @@ describe("the Rust side", () => {
    * `fs::read` is the one addition since, argued rather than absorbed: the operator CA's record
    * binds the file to one server by its digest, so the module reads that file's BYTES. It reads
    * and never writes it, and the removal half of this list is unchanged.
-   *
-   * A PAIRING'S SWITCH adds no call: its record is written and removed like the settings file, and
-   * `fs::rename` sets the directory a pairing opens aside, puts it back, or moves it into the
-   * candidate slot to be discarded. Moved, never removed here — the slot is emptied by `engine.rs`.
    */
   it("keeps the settings module's filesystem reach to the two files it owns", () => {
     const config = read("src-tauri/src/config.rs");
@@ -1553,7 +1549,8 @@ describe("the Rust side", () => {
     }
     // The mirror is frozen on a door switch, never deleted — no recursive removal exists to do it.
     expect(config).not.toMatch(/remove_dir/);
-    // What a switch discards goes to the candidate slot by its constant name, and nowhere else.
+    // A pairing's switch adds no call: its record is written and removed like the settings file,
+    // and what it discards is MOVED into the candidate slot, which `engine.rs` empties.
     expect(config.match(/fs::rename\(dir, candidate_data_dir\(root\)\)/g)).toHaveLength(1);
 
     /* ── AND THE SETTINGS FILE IS NEVER TRUNCATED IN PLACE ──────────────────────────────────
