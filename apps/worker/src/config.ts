@@ -1,6 +1,6 @@
 import { hostname } from "node:os";
 import {
-  keyProviderFromEnvOptional, kekFingerprint, kekFingerprintFromEnv, kekEnvIdentity,
+  keyProviderFromEnvOptional, kekFingerprintFromEnv, kekEnvIdentity,
   makeAnthropicClient, assertAnthropicKey, makeHaikuClassifier, makeSonnetDrafter, makeOpusProposer,
   callCeilingMs, msDeviceEnv, organizerEnvironment, resolveCloudInstallId,
   type KeyProvider, type ClassifierPort, type DraftPort, type WorkflowPort,
@@ -601,9 +601,9 @@ function leaseUnavailableDetachMsFrom(env: NodeJS.ProcessEnv): number {
 // none — the two could silently disagree about the key that decrypts every mailbox
 // credential. `@trafficflow/core/crypto` now owns the env contract (`TF_KEK_V1..Vn`,
 // contiguous, highest active) and BOTH hosts import it; `apps/api-vercel` uses
-// the same symbols. Re-exported under the worker's historical names so `index.ts`,
-// `supervisor.ts` and the worker tests keep importing them from here.
-export { kekFingerprint, kekFingerprintFromEnv, kekEnvIdentity };
+// the same symbols. `kekFingerprintFromEnv` is re-exported under its historical name for the
+// worker's config test, the one importer that still takes it from here.
+export { kekFingerprintFromEnv };
 
 /**
  * The worker's KeyProvider, or `undefined` when no `TF_KEK_V*` is configured — the
@@ -1033,7 +1033,7 @@ function makeAiUsageRelay(log?: Logger): AiUsageRelay {
   };
 }
 
-export function loadAiPorts(
+function loadAiPorts(
   env: NodeJS.ProcessEnv,
   log?: Logger,
 ): Pick<WorkerConfig, "classifier" | "drafter" | "proposer" | "aiUsage"> {

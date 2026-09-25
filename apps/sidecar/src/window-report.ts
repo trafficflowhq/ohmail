@@ -120,7 +120,7 @@ const SEARCH_KEYS = new Set<string>([...SPAN_KEYS, ...INSTANT_KEYS, "verdict", "
 /** The longest span a report may state; the window's own ceiling on a search is far below it. */
 const SPAN_MAX_MS = 600_000;
 
-export interface WindowSearchPhasesReport {
+interface WindowSearchPhasesReport {
   verdict: string;
   debounceMs: number; sendMs: number; roundTripMs: number; paintMs: number; totalMs: number;
   serverMs: number | null;
