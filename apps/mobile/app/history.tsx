@@ -57,6 +57,12 @@ function HistoryBody() {
   }, [heights]);
   /* The slots, as positions only: rows are read per slot from the walker's cache at render. */
   const slots = useMemo(() => Array.from({ length: h.length }, (_, i) => i), [h.length]);
+  /* The list is told the ledger, so a year jump below the rows laid out so far reaches its row. */
+  const { rowAt } = h;
+  const rowLayout = useMemo(() => ({
+    offsetOf: (i: number) => heights.offsetOf(i),
+    lengthOf: (i: number) => (rowAt(i) === "gone" ? 0 : heights.heightOf(i)),
+  }), [heights, rowAt]);
   const groups = useMemo(() => [{ key: "history", rows: slots }], [slots]);
 
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -106,6 +112,7 @@ function HistoryBody() {
           onScroll={onScroll}
           scrollEventThrottle={100}
           scrollTo={scrollTo}
+          rowLayout={rowLayout}
           surface={h.length > 0}
           gapAbove={h.length > 0 ? 8 : 0}
           refresh={pull}

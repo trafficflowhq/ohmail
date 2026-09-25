@@ -6,7 +6,10 @@
  * Every client passes a WINDOW; `test/mail-list-window.test.ts` pins this one.
  */
 
-/** The window every mail list runs under. No `getItemLayout`: rows are 3–4 lines by content. */
+/**
+ * The window every mail list runs under. No `getItemLayout` — rows are 3–4 lines by content —
+ * unless the caller draws its rows at heights it keeps ({@link sectionItemLayout}).
+ */
 export const LIST_WINDOW = {
   initialNumToRender: 16,
   maxToRenderPerBatch: 12,
@@ -79,4 +82,39 @@ export function isSection(item: unknown): boolean {
  */
 export function mountedRowsBound(window: ListWindow, viewportPt: number, rowPt: number): number {
   return Math.ceil((window.windowSize * viewportPt) / rowPt) + window.maxToRenderPerBatch;
+}
+
+/** A list's rows at the heights its caller draws them at, counted from the first row. */
+export interface RowLayout {
+  offsetOf(i: number): number;
+  lengthOf(i: number): number;
+}
+
+export interface CellLayout {
+  length: number;
+  offset: number;
+  index: number;
+}
+
+/**
+ * EVERY CELL WHERE IT WILL BE DRAWN, for one untitled group whose rows the caller draws at heights
+ * it keeps (History's slot ledger). Without it `VirtualizedList` limits its tail spacer to the
+ * highest cell it has measured, so a jump below the rows laid out so far stops at their end.
+ * SectionList's cells are the section's header, its rows, then its footer; `origin` is where the
+ * header cell starts in the scroll content — the list head's height. Any other shape gets none.
+ */
+export function sectionItemLayout<T>(
+  sections: readonly PlannedSection<T>[],
+  rows: RowLayout,
+  origin: number,
+): ((data: unknown, index: number) => CellLayout) | undefined {
+  if (sections.length !== 1 || sections[0]!.title !== null) return undefined;
+  const n = sections[0]!.data.length;
+  const head = sections[0]!.padTop;
+  return (_data, index) => {
+    if (index <= 0) return { length: head, offset: origin, index };
+    const i = index - 1;
+    if (i >= n) return { length: 0, offset: origin + head + rows.offsetOf(n), index };
+    return { length: rows.lengthOf(i), offset: origin + head + rows.offsetOf(i), index };
+  };
 }

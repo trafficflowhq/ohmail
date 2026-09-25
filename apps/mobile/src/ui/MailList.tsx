@@ -41,8 +41,10 @@ import {
   TOP_HOLD,
   isSection,
   planSections,
+  sectionItemLayout,
   type ListGroup,
   type PlannedSection,
+  type RowLayout,
 } from "./mail-list-plan";
 
 export type { ListGroup } from "./mail-list-plan";
@@ -78,6 +80,11 @@ export interface MailListProps<T> {
   onRowFrame?: (row: T, frame: RowFrame) => void;
   /** Filled with a scroll to a content offset — History's year strip jumps with it. */
   scrollTo?: { current: ((y: number) => void) | null };
+  /**
+   * The heights the rows are drawn at, for a list of one untitled group that keeps them: the
+   * list then knows every row's place before it has laid out, so a scroll reaches any of them.
+   */
+  rowLayout?: RowLayout;
 }
 
 interface CellRules {
@@ -144,6 +151,7 @@ export function MailList<T>({
   scrollEventThrottle,
   onRowFrame,
   scrollTo,
+  rowLayout,
 }: MailListProps<T>) {
   const t = useTheme();
   const listRef = useRef<SectionList<T, PlannedSection<T>>>(null);
@@ -158,6 +166,11 @@ export function MailList<T>({
   useEffect(() => {
     if (tail === undefined || tail === null) setTailH(0);
   }, [tail]);
+  /* The rows' own heights, placed under the head (the cells start where it ends). */
+  const itemLayout = useMemo(
+    () => (rowLayout ? sectionItemLayout(sections, rowLayout, headH ?? 0) : undefined),
+    [sections, rowLayout, headH],
+  );
 
   const rules = useMemo<CellRules>(
     () => ({
@@ -230,6 +243,7 @@ export function MailList<T>({
         accessibilityRole="list"
         sections={sections}
         keyExtractor={rowKey}
+        getItemLayout={itemLayout}
         renderItem={renderItem}
         renderSectionHeader={renderSectionHeader}
         CellRendererComponent={Cell}
