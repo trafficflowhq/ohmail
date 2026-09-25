@@ -25,6 +25,7 @@ import {
 } from "./search.js";
 import { oneSourceReader, rulesList, sendingMailboxId, winningStates } from "./selectors.js";
 import { outrankCoveringDomains } from "./address-rank.js";
+import { consentIndex, decidedDestination } from "./consent-cutline.js";
 import { flattenResponse } from "./apply.js";
 import { CASCADE_TYPES } from "./mirror-bounds.js";
 import {
@@ -1937,6 +1938,13 @@ export const FAILED_BODY_HOLD_MS = 30_000;
 const SEARCH_INDEX_SYNC_MAX = 500;
 
 /**
+ * HOW MANY GATE ARRIVALS ONE SETTLE JUDGES against the mirror's rules before it asks the held-release
+ * door without judging. The judgement is a consent index over every rule plus one lookup per
+ * sender; past this many senders in one pull the one read is the cheaper answer.
+ */
+const HELD_ARRIVALS_MAX = 200;
+
+/**
  * HOW MANY OF THE MESSAGES A SURFACE LAST ASKED TO RENDER THE WINDOWED PRUNE HOLDS ON TO. Exported because it is a
  * policy number a guard depends on, and a guard that hand-copies the number it is checking goes green against a
  * shipped value it has never seen. Sized so that everything one screen can hold fits several times over — the widest
@@ -2194,11 +2202,14 @@ export class OhmailEngine {
    * The held-release offer's freshness, kept beside its one door ({@link refreshHeldReleases}).
    * `armed`: a surface asked, so the offer is shown in this process. `stamp`: the settings stamp
    * the last ANSWER was asked under. `owed`: a re-bootstrap wiped that answer. `seq`: the newest
-   * ask issued. `bell`: the settle's re-ask in flight.
+   * ask issued. `bell`: the settle's re-ask in flight. `arrivals`: senders of mail that landed at
+   * the gate since the last settle; `rang`: settles that found held mail among them, and
+   * `answered` the count the last answer was asked under.
    */
   private heldRelease: {
     armed: boolean; stamp: string | null; owed: boolean; seq: number; bell: Promise<void> | null;
-  } = { armed: false, stamp: null, owed: false, seq: 0, bell: null };
+    arrivals: Set<string>; rang: number; answered: number;
+  } = { armed: false, stamp: null, owed: false, seq: 0, bell: null, arrivals: new Set(), rang: 0, answered: 0 };
   /** Which index answered — see {@link OhmailEngine.searchIndexRevision}. */
   private searchIndexRev = 0;
   /** The in-flight mirror read, so concurrent callers coalesce. See {@link OhmailEngine.hydrate}. */
@@ -3137,7 +3148,7 @@ export class OhmailEngine {
       // before this drain began now has its echo IN the mirror, so retiring it changes what is
       // rendered from "the overlay's claim" to "the server's identical statement".
       this.sweepAwaitingEcho(epoch);
-      // The held-release offer re-asks when the settings stamp this drain carried moved.
+      // The held-release offer re-asks when this drain moved the settings stamp or brought held mail.
       this.ringHeldReleaseBell();
       return;
     }
@@ -3705,6 +3716,7 @@ export class OhmailEngine {
     this.countReceived(changes);
     this.settleOrganizerRequests(changes);
     this.noteMessagesRemoved(changes);
+    this.noteGateArrivals(changes);
     this.storePages.adopt(changes);
   }
 
@@ -4840,6 +4852,7 @@ export class OhmailEngine {
     h.armed = true;
     const seq = ++h.seq;
     const stamp = this.settingsStamp();
+    const rang = h.rang;
     const wire = await ask.call(this.adapter);
     // A later ask went out while this one was in the air, and its answer is the newer statement:
     // an older one landing last would bring back an offer the account already dismissed.
@@ -4847,6 +4860,7 @@ export class OhmailEngine {
     // The stamp this answer was asked UNDER, never the one at arrival: a doorbell that rang while
     // the read was in the air may not be reflected in it, so the next settle asks again.
     h.stamp = stamp;
+    h.answered = rang;
     h.owed = false;
     const before = this.read().list<HeldReleaseGroupDTO>(HELD_RELEASE_TYPE);
     const keep = new Set(wire.groups.map((g) => g.ruleId));
@@ -4866,6 +4880,30 @@ export class OhmailEngine {
     this.notify();
   }
 
+  /**
+   * MAIL THAT LANDED AT THE GATE IN THIS PAGE, by sender — collected only once a surface asked, and
+   * judged at the settle ({@link ringHeldReleaseBell}) against the rules the mirror holds then, so
+   * a rule arriving in the same pull as its sender's mail counts. Past the cap the settle asks
+   * without judging: one read, however large the pull.
+   */
+  private noteGateArrivals(changes: SyncChange[]): void {
+    const h = this.heldRelease;
+    if (!h.armed) return;
+    for (const ch of changes) {
+      if (ch.type !== "message" || ch.op === "delete" || h.arrivals.size >= HELD_ARRIVALS_MAX) continue;
+      const m = ch.entity as EngineMessage | undefined;
+      const address = m?.from?.address;
+      if ((ch.move?.to ?? m?.folder) === FOLDER_OF_VIEW.screener && address) h.arrivals.add(address);
+    }
+  }
+
+  /** Does a decision in the mirror name one of these senders — held mail, as far as a client can tell. */
+  private heldArrivalDecided(senders: ReadonlySet<string>): boolean {
+    const index = consentIndex(rulesList(this.read()));
+    for (const address of senders) if (decidedDestination(index, address) !== null) return true;
+    return false;
+  }
+
   /** The settings entity's stamp off the mirror, or null before the first one lands. */
   private settingsStamp(): string | null {
     const [row] = this.store.entries<{ updatedAt?: string }>("settings");
@@ -4874,15 +4912,20 @@ export class OhmailEngine {
 
   /**
    * THE DOORBELL FOR THE OFFER — called at every drain's settle. A dismissal (or any settings write)
-   * on another device moves the settings stamp, so the next pull re-asks the one door; the server
-   * answers `dismissed` by its own rule and every device reads the same answer. Only once a surface
-   * asked, and only when the stamp moved or a re-bootstrap wiped the answer, so a pull with nothing
-   * to say costs nothing. Never awaited: reads are never hostage to an offer. A failed ask leaves
-   * the stamp behind and the next settle asks again.
+   * on another device moves the settings stamp, and held mail arriving grows the set, so the pull
+   * that carried either re-asks the one door; the server answers `dismissed` by its own rule and
+   * every device reads the same answer. Only once a surface asked, so a pull with nothing to say
+   * costs nothing. Never awaited: reads are never hostage to an offer. A failed ask leaves the
+   * stamp and the ring behind, and the next settle asks again.
    */
   private ringHeldReleaseBell(): void {
     const h = this.heldRelease;
-    if (!h.armed || h.bell !== null || (!h.owed && this.settingsStamp() === h.stamp)) return;
+    if (h.arrivals.size > 0) {
+      if (h.arrivals.size >= HELD_ARRIVALS_MAX || this.heldArrivalDecided(h.arrivals)) h.rang++;
+      h.arrivals.clear();
+    }
+    if (!h.armed || h.bell !== null) return;
+    if (!h.owed && h.rang === h.answered && this.settingsStamp() === h.stamp) return;
     h.bell = this.refreshHeldReleases()
       .catch(() => { /* an offer: the next settle asks again */ })
       .finally(() => { h.bell = null; });
