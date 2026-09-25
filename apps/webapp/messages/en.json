@@ -751,7 +751,7 @@
     "heldReleasedNone": "Nothing left to release.",
     "heldReleaseFailed": "Could not release that mail. Try again.",
     "heldDismissFailed": "That didn't save. Try again.",
-    "unscreenedLead": "{count, plural, one {1 message in your Ohbox is from a sender you have not decided about.} other {# messages in your Ohbox are from senders you have not decided about.}}",
+    "unscreenedLead": "{count, plural, one {1 message from a sender you have not decided about is still in the Inbox on your mail server.} other {# messages from senders you have not decided about are still in the Inbox on your mail server.}}",
     "unscreenedAll": "Screen {count}",
     "unscreenedMoved": "Screened {count}. Your organizer moves them on the next pass.",
     "unscreenedMovedNone": "Nothing left to screen.",

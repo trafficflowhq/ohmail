@@ -751,7 +751,7 @@
     "heldReleasedNone": "Nichts freizugeben.",
     "heldReleaseFailed": "Freigabe nicht m\u00f6glich. Versuch es noch einmal.",
     "heldDismissFailed": "Nicht gespeichert. Versuch es noch einmal.",
-    "unscreenedLead": "{count, plural, one {1 Nachricht in deiner Ohbox ist von einem Absender, \u00fcber den du nie entschieden hast.} other {# Nachrichten in deiner Ohbox sind von Absendern, \u00fcber die du nie entschieden hast.}}",
+    "unscreenedLead": "{count, plural, one {1 Nachricht von einem Absender, \u00fcber den du nie entschieden hast, liegt noch im Posteingang auf deinem Mailserver.} other {# Nachrichten von Absendern, \u00fcber die du nie entschieden hast, liegen noch im Posteingang auf deinem Mailserver.}}",
     "unscreenedAll": "{count} in den Screener",
     "unscreenedMoved": "{count} in den Screener gelegt. Dein Organizer verschiebt sie beim n\u00e4chsten Durchlauf.",
     "unscreenedMovedNone": "Nichts mehr zu screenen.",
