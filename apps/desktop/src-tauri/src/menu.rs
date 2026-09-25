@@ -102,7 +102,7 @@ pub const COMMAND_PREFIX: &str = "cmd:";
 #[cfg(feature = "local-engine")]
 pub const VIEWS: [(&str, &str, &str); 5] = [
     ("ohbox", "Ohbox", "CmdOrCtrl+1"),
-    ("reads", "Reads", "CmdOrCtrl+2"),
+    ("reads", "News", "CmdOrCtrl+2"),
     ("receipts", "Receipts", "CmdOrCtrl+3"),
     ("screener", "Screener", "CmdOrCtrl+4"),
     ("triage", "Answer Later", "CmdOrCtrl+5"),

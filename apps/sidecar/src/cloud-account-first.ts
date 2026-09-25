@@ -1,5 +1,6 @@
 import { ServiceError, type ServiceContext } from "@trafficflow/services/mail";
 import { offlineResponse } from "./cloud-auth.js";
+import { runsStorePass } from "./composition-passes.js";
 import type { ReadRoute } from "./cloud-read.js";
 import { MAX_BODY_BYTES, readBodyBounded } from "./frame.js";
 import type { Diagnostic } from "./log.js";
@@ -21,6 +22,11 @@ export const ACCOUNT_FIRST_BOUND_MS = 8_000;
 export const MIRROR_CURSOR_TAG = "m.";
 
 const UNREACHABLE = new Set([502, 503, 504]);
+
+/** Whether this composition fills the mirror's search index. It does not, so the mirror holds no
+    documents, is searched the older way (complete) and would answer "0 % done" for ever: its
+    answer carries no index progress. */
+const MIRROR_INDEX_FILLS = runsStorePass("cloud", "search-index-backfill");
 
 type Hit = { route: ReadRoute; params: Record<string, string> };
 
@@ -56,7 +62,8 @@ async function fromMirror(req: Request, hit: Hit, ctx: ServiceContext): Promise<
     throw err;
   }
   if (!res.ok) return res;
-  const body = (await res.json()) as Record<string, unknown>;
+  const { indexed, ...rest } = (await res.json()) as Record<string, unknown>;
+  const body = MIRROR_INDEX_FILLS && indexed !== undefined ? { ...rest, indexed } : rest;
   const next = typeof body.nextCursor === "string" ? { nextCursor: `${MIRROR_CURSOR_TAG}${body.nextCursor}` } : {};
   return json({ ...body, ...next, answeredFrom: "mirror" });
 }

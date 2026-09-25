@@ -2047,12 +2047,14 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .scn-read .empty {
   padding-top: 96px;
 }
-/* THE SEARCH EMPTY STATE'S ADDRESS DOOR — its own line. The shared `.empty` children are inline
-   spans by design, so without this the link runs straight on from the scope sentence's full
-   stop, one word into the next (measured on the demo frame that shipped the feature). */
-.view-search .empty .empty-addr {
+/* THE SEARCH EMPTY STATE'S ADDRESS DOOR AND JUNK SENTENCE — each on its own line. The shared
+   `.empty` children are inline spans by design, so without this each runs straight on from the
+   scope sentence, one word into the next (the address door on the demo frame that shipped it, the
+   junk sentence on 0.24.0). The junk sentence is a `<p>`: the margin resets its default. */
+.view-search .empty .empty-addr,
+.view-search .empty .empty-junk {
   display: block;
-  margin-top: 10px;
+  margin: 10px 0 0;
 }
 /* …and the Ohbox's resting reading column, which is the same situation: `.empty` is sized for
    the TOP of a list, where 52px of padding sits under a header. A reading column has no header,

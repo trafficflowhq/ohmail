@@ -803,12 +803,13 @@ export function SearchView({
                 </a>
               ) : null}
               {/* …and the pass that does not exist. No arm of `scope` can name the provider's
-                  Junk folder, because nothing here ever searched it (JUNK-INVISIBLE). */}
+                  Junk folder, because nothing here ever searched it (JUNK-INVISIBLE). Its own
+                  paragraph: inline, it ran on from the scope line with no break between them. */}
               {junkSaid !== null ? (
-                <span data-testid="search-junk-scope">
+                <p className="empty-junk" data-testid="search-junk-scope">
                   {junkSaid === "unnamed" ? t("junkScopeUnnamed") : t("junkScope", { folder: junkSaid.named })}
                   {junkReadable ? <> {ts("junkElsewhere")}</> : null}
-                </span>
+                </p>
               ) : null}
             </div>
           ) : (
