@@ -18,7 +18,7 @@ import {
   consentPartition,
   decidedDestination,
   forwardSubject,
-  dateClock,
+  appointmentStamp,
   messageDisplayTime,
   weekdayClock,
   composeZonedWallClock,
@@ -1387,7 +1387,7 @@ export function livePiles(pres: EntityReader, v: WorldView): WorldPile[] {
     ...(e.subtitle ? { subtitle: e.subtitle } : {}),
     ...(e.preview ? { preview: e.preview } : {}),
     ...(e.resurfaceAt
-      ? { resurfaceAt: messageDisplayTime({ date: e.resurfaceAt }, v.now, v.zone, v.locale ?? "en") }
+      ? { resurfaceAt: setTimeLabel(e.resurfaceAt, v.now, v.zone, v.locale ?? "en") }
       : {}),
   });
   return PILE_KINDS.map((kind) => ({
@@ -2962,7 +2962,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   };
 
   const resurfaceAt = (messageId: string, iso: string): Promise<boolean> =>
-    triage(messageId, "bubbled_up", refuse("toastResurface", whenLabel(iso, zone)), iso);
+    triage(messageId, "bubbled_up", refuse("toastResurface", setTimeLabel(iso, now(), zone)), iso);
 
   const resurfaceToggle = async (messageId: string): Promise<boolean> => {
     const m = messageOf(messageId);
@@ -4153,25 +4153,23 @@ export function usableHours(from: Date, offset: number, zone: string = readerZon
 }
 
 /**
- * "Fri 18:00" inside the coming week, "12 Sep, 18:00" beyond it — the appointment, read where
- * the reader is. The webapp's `scheduleLabel`, mirrored: the week band matches {@link whenLabel}'s
- * so the phone's two future-time vocabularies agree, and past a week a bare weekday is
- * ambiguous (which Friday?) — an appointment is exactly the value that ambiguity misleads
- * about. Not-ISO input echoes through, as both references do.
+ * A SET TIME — a resurface, a send-later, the away end date — read where the reader is: `10:00`
+ * today, `Fri 10:00` inside the week, `25 Dec, 10:00` past it. The engine's `appointmentStamp`,
+ * the one the webapp's `resurfaceLabel` and `scheduleLabel` read, so the phone and the web name a
+ * set time alike. Not-ISO input echoes through; an unknown zone throws there and echoes here.
  */
-export function scheduleLabel(iso: string, now: Date, zone: string): string {
+export function setTimeLabel(iso: string, now: Date, zone: string, locale = "en"): string {
   if (!/^\d{4}-\d{2}-\d{2}T/.test(iso)) return iso;
-  const d = new Date(iso);
-  // Inside the week the weekday IS the clearest name, and it is the one `whenLabel` already
-  // speaks — so the near band is literally the same derivation, not a second copy of it.
-  if (d.getTime() - now.getTime() < 6 * 24 * 60 * 60 * 1000) return whenLabel(iso, zone);
   try {
-    return dateClock(d, zone);
+    return appointmentStamp(new Date(iso), now, zone, locale);
   } catch {
-    // An unknown zone throws rather than falling back to UTC, and this label survives it — the
-    // engine's own rule, with the caller that can carry on saying so.
     return iso;
   }
+}
+
+/** The send-later appointment — {@link setTimeLabel}, under the name its callers already use. */
+export function scheduleLabel(iso: string, now: Date, zone: string): string {
+  return setTimeLabel(iso, now, zone);
 }
 
 /**
@@ -4207,9 +4205,9 @@ export function dayEndIso(from: Date, daysAhead: number, zone: string = readerZo
 }
 
 /**
- * "Fri 09:00" from an ISO instant, read where the reader is — the webapp's `resurfaceLabel`,
- * so the toast reads back the same wall clock the preset fixed. Not-ISO input echoes through,
- * exactly as the reference does.
+ * "Fri 09:00" from an ISO instant, read where the reader is — a PAST instant close to now (the
+ * stale mirror's "as of", an outage's "since"). A set time goes through {@link setTimeLabel},
+ * which names the date past the week. Not-ISO input echoes through.
  */
 export function whenLabel(iso: string, zone: string): string {
   if (!/^\d{4}-\d{2}-\d{2}T/.test(iso)) return iso;

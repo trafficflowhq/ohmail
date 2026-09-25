@@ -286,7 +286,7 @@ export function TriageView({
   const row = (entry: TriagePileEntry, index: number) => {
     const m = entry.messageId ? messageOf(entry.messageId) : null;
     const done = frDone.has(entry.messageId ?? entry.title);
-    const when = entry.resurfaceAt ? resurfaceLabel(entry.resurfaceAt) : undefined;
+    const when = entry.resurfaceAt ? resurfaceLabel(entry.resurfaceAt, now) : undefined;
 
     if (!m) {
       /* AN ENTRY WITH NO MESSAGE BEHIND IT IS NOT A BUTTON. The demo world's `triage_item`

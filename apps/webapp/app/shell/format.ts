@@ -4,9 +4,9 @@
  * mutations fall back to a clock/weekday derived from the ISO date.
  */
 import {
+  appointmentStamp,
   clock,
   composeZonedWallClock,
-  dateClock,
   folderLeaf,
   isJunkHuskLeaving,
   isOwnSent,
@@ -148,11 +148,15 @@ export function metaLine(...parts: Array<string | null | undefined>): string {
   return parts.filter((p): p is string => typeof p === "string" && p !== "").join(" · ");
 }
 
-/** "Fri 09:00" from an ISO instant (or the raw string when not ISO), read where the reader is. */
-export function resurfaceLabel(when: string): string {
+/**
+ * A resurface time from an ISO instant (or the raw string when not ISO), read where the reader
+ * is: `10:00` today, `Fri 10:00` inside the week, `25 Dec, 10:00` past it — the engine's
+ * `appointmentStamp`, which {@link scheduleLabel} and the phone read too. `now` is required: the
+ * band is a statement about the reader's calendar, and a weekday alone for 25 Dec read as today.
+ */
+export function resurfaceLabel(when: string, now: Date): string {
   if (!/^\d{4}-\d{2}-\d{2}T/.test(when)) return when;
-  const d = new Date(when);
-  return weekdayClock(d, activeFormatZone(), activeFormatLocale());
+  return appointmentStamp(new Date(when), now, activeFormatZone(), activeFormatLocale());
 }
 
 /**
@@ -291,22 +295,14 @@ export function todayEvening(base: Date): ZonedComposition {
 }
 
 /**
- * "Fri 18:00" inside the coming week, "12 Sep, 18:00" beyond it — the appointment, read where
- * the reader is. The week band matches `resurfaceLabel`'s so the two future-time vocabularies
- * agree; past a week a bare weekday is ambiguous (which Friday?), and an appointment is exactly
- * the value that ambiguity would mislead about.
+ * "Fri 18:00" inside the coming week, "12 Sep, 18:00" beyond it, "18:00" today — the appointment,
+ * read where the reader is, by the same `appointmentStamp` as {@link resurfaceLabel}, so the two
+ * future-time vocabularies agree by construction. Past a week a bare weekday is ambiguous (which
+ * Friday?), and an appointment is exactly the value that ambiguity would mislead about.
  */
 export function scheduleLabel(when: string, now: Date): string {
   if (!/^\d{4}-\d{2}-\d{2}T/.test(when)) return when;
-  const d = new Date(when);
-  const zone = activeFormatZone();
-  const locale = activeFormatLocale();
-  if (d.getTime() - now.getTime() < 6 * 24 * 60 * 60 * 1000) return weekdayClock(d, zone, locale);
-  /* THE FAR BAND IS DAY-FIRST, and the sentence above this function has said so all along. It was
-     built from a combined `{day, month}` pattern, which ICU orders month-first for `en` — so it
-     rendered "Sep 20, 07:05" while the docblock promised "12 Sep, 18:00", and while every dated ROW
-     stamp in the same product read "2 Aug". The appointment now speaks the list's order. */
-  return dateClock(d, zone, locale);
+  return appointmentStamp(new Date(when), now, activeFormatZone(), activeFormatLocale());
 }
 
 /**

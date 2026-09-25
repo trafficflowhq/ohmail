@@ -724,7 +724,7 @@ export function useShellVerbs({
           const when = tomorrowAt(nowAt(), consent.resurfaceTime).iso;
           void mutateAndReport(
             { kind: "triage_set", messageId: m.id, state: "bubbled_up", bubbleUpAt: when },
-            t("ohbox.toastResurface", { when: resurfaceLabel(when) }),
+            t("ohbox.toastResurface", { when: resurfaceLabel(when, nowAt()) }),
           );
           break;
         }
@@ -845,7 +845,7 @@ export function useShellVerbs({
             const when = action.slice("resurface:".length);
             void mutateAndReport(
               { kind: "triage_set", messageId: m.id, state: "bubbled_up", bubbleUpAt: when },
-              t("ohbox.toastResurface", { when: resurfaceLabel(when) }),
+              t("ohbox.toastResurface", { when: resurfaceLabel(when, nowAt()) }),
             );
             break;
           }
@@ -1016,7 +1016,7 @@ export function useShellVerbs({
             ...(when ? { bubbleUpAt: when } : {}),
           })),
           (applied) => (action === "resurface"
-            ? t("ohbox.toastBulkResurface", { count: applied, when: resurfaceLabel(when!) })
+            ? t("ohbox.toastBulkResurface", { count: applied, when: resurfaceLabel(when!, nowAt()) })
             : t(action === "later" ? "ohbox.toastBulkLater" : "ohbox.toastBulkAside", {
                 count: applied,
               })),

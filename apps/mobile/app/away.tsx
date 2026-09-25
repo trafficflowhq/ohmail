@@ -14,7 +14,7 @@ import { Copy } from "../src/copy";
 import { useLocale } from "../src/i18n/LocaleProvider";
 import { readAway, saveAway } from "../src/net/away";
 import { useConnection } from "../src/net/connection";
-import { calendarDayLabel, dayEndIso, readerZone, whenLabel } from "../src/state/live";
+import { calendarDayLabel, dayEndIso, readerZone, setTimeLabel } from "../src/state/live";
 import { useWorld } from "../src/state/world";
 import {
   awayAudienceWide, awayPileWords, awaySaveBlocked, awaySaveBody, awaySay, type AwayRow,
@@ -113,8 +113,8 @@ function AwayBody() {
 
   const untilLine =
     endsAt === null ? Copy.awayUntilNone
-      : say === "expired" ? Copy.awayUntilPast(whenLabel(endsAt, zone))
-        : Copy.awayUntilOn(whenLabel(endsAt, zone));
+      : say === "expired" ? Copy.awayUntilPast(setTimeLabel(endsAt, now, zone))
+        : Copy.awayUntilOn(setTimeLabel(endsAt, now, zone));
 
   return (
     <Screen>

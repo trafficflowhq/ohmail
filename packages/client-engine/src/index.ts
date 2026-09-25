@@ -286,6 +286,7 @@ export {
 // EVERY TIME OF DAY IN THE PRODUCT. The bands, the clock, and the reason the clock is not
 // `Intl`-formatted are in `stamp.ts`; `messageDisplayTime` keeps its name through `selectors.ts`.
 export {
+  appointmentStamp,
   clock,
   dateClock,
   fullDateTime,

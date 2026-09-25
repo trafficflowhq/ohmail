@@ -1732,7 +1732,7 @@ export function OhboxView({
     if (s === "set_aside") return t("stateAside");
     if (s === "bubbled_up")
       return m.triage?.bubbleUpAt
-        ? t("stateResurface", { when: resurfaceLabel(m.triage.bubbleUpAt) })
+        ? t("stateResurface", { when: resurfaceLabel(m.triage.bubbleUpAt, now) })
         : t("stateResurfaceBare");
     return undefined;
   };

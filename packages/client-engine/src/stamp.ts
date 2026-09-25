@@ -74,6 +74,22 @@ export function dateClock(instant: Date, zone: string, locale = "en"): string {
   return `${f.day} ${named(locale, { month: "short" }, instant, zone)}, ${clock(instant, zone)}`;
 }
 
+/**
+ * A SET TIME — a resurface, a scheduled send, an away end date — by the bands at the top of this
+ * file, either side of now and with the clock on every band: same day → `10:00`; within six days
+ * → `Fri 10:00`; beyond → `25 Dec, 10:00`, the year added outside the current one. A weekday
+ * alone names a day only inside the week: 25 Dec read as "Fri 10:00" on a Friday afternoon, a
+ * time seven hours gone. Throws for an unknown zone, as {@link clock} does.
+ */
+export function appointmentStamp(instant: Date, now: Date, zone: string, locale = "en"): string {
+  const days = Math.abs(daysAgo(instant, now, zone));
+  if (days === 0) return clock(instant, zone);
+  if (days <= 6) return weekdayClock(instant, zone, locale);
+  const f = zonedFields(instant, zone);
+  if (f.year === zonedFields(now, zone).year) return dateClock(instant, zone, locale);
+  return `${f.day} ${named(locale, { month: "short" }, instant, zone)} ${f.year}, ${clock(instant, zone)}`;
+}
+
 /** "Wed 5 Aug 2026, 14:32" — the exact instant, for a hover title and the details disclosure. */
 export function fullDateTime(instant: Date, zone: string, locale = "en"): string {
   const f = zonedFields(instant, zone);
