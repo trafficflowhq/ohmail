@@ -388,11 +388,13 @@ export async function recordMailboxRemoved(
   });
 }
 
-/** Both ends of an account's retained change log. Both `null` ⇔ the log is empty. */
+/** Both ends of an account's retained change log. Both `null` ⇔ the log is empty and unpruned. */
 export interface SeqBounds {
   /** The lowest retained seq — the floor a resuming cursor must not have fallen below. */
   min: bigint | null;
-  /** The highest committed seq — the ceiling no legitimate cursor can be above. */
+  /** The highest committed seq — the ceiling no legitimate cursor can be above. Never below
+   *  `prunedThrough`: the floor is a committed seq, so a log whose newest row an earlier prune
+   *  deleted still reads its floor here, and a cursor at the floor is caught up. */
   max: bigint | null;
   /**
    * The explicit retention floor (`account_sync_state.pruned_through_seq`, mail 0122): every seq
@@ -425,10 +427,14 @@ export async function seqBounds(tx: Tx, accountId: string): Promise<SeqBounds> {
     .from(changeLog)
     .where(eq(changeLog.accountId, accountId));
   const row = rows[0];
+  const max = row?.max == null ? null : BigInt(row.max);
+  const prunedThrough = row?.prunedThrough == null ? 0n : BigInt(row.prunedThrough);
   return {
     min: row?.min == null ? null : BigInt(row.min),
-    max: row?.max == null ? null : BigInt(row.max),
-    prunedThrough: row?.prunedThrough == null ? 0n : BigInt(row.prunedThrough),
+    // The heal for a log already pruned below its floor: read, not migrated. Done here, not in
+    // SQL, because this read runs on the device's sqlite store too.
+    max: prunedThrough > 0n && (max === null || max < prunedThrough) ? prunedThrough : max,
+    prunedThrough,
   };
 }
 

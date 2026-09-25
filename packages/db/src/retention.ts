@@ -123,13 +123,13 @@ export async function pruneChangeLogForAccount(
   const floor = BigInt(floorRows[0]?.f ?? "0");
   if (floor === 0n) return { prunedThroughSeq: 0n, deleted: 0 };
 
-  // COMPACTION below the floor. Keep: each entity's first row while it lives, and every
-  // user-wins move-to-INBOX row. Delete: later rows per entity (`rn > 1` — the delta pipeline
-  // materializes current state, so the first row already replays the entity whole), every row of
-  // an entity with a tombstone at or below the floor (`dead`), and the tombstones themselves.
-  // The window runs over the whole sub-floor range and the LIMIT bounds what one statement
-  // takes; a converged account's sub-floor range is one row per live entity, so the steady-state
-  // scan is small. Deleting is idempotent — a rerun re-derives the same victims minus the gone.
+  // COMPACTION below the floor. Keep: each entity's first row while it lives, every user-wins
+  // move-to-INBOX row, and the account's NEWEST row — on an idle account the floor lands on it,
+  // and deleting it drops max(seq) below the floor, so every cursor the account hands out 410s.
+  // Delete: later rows per entity (`rn > 1` — the delta materializes current state), every row
+  // of an entity with a tombstone at or below the floor (`dead`), and the tombstones themselves.
+  // The LIMIT bounds one statement; a converged account's sub-floor range is one row per live
+  // entity. Idempotent — a rerun re-derives the same victims minus the gone.
   let deleted = 0;
   for (let i = 0; i < maxBatches; i++) {
     const res = await db.execute(sql`
@@ -149,6 +149,7 @@ export async function pruneChangeLogForAccount(
         select seq from sub
          where (rn > 1 or dead)
            and not (op = 'move' and meta ->> 'to' = 'INBOX')
+           and seq < (select max(${changeLog.seq}) from ${changeLog} where ${changeLog.accountId} = ${accountId})
          order by seq
          limit ${batch}
       )

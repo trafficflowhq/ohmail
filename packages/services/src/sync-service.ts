@@ -402,20 +402,15 @@ export class SyncService {
   /**
    * THE ACCOUNT'S HIGH-WATER **COMMITTED** SEQ — the whole gap-free delta contract. A snapshot
    * reporting `asOfSeq = N` must have seen everything ≤ N: the client never asks again, so a
-   * missed row is missing for ever. `max(change_log.seq)` IS that value: `allocateSeqRange` holds
-   * the counter row lock to COMMIT, so rows become visible in seq order. The counter (`next_seq`)
-   * is NOT the source: it names the last seq ALLOCATED and can sit above the log after a restore;
-   * the log read is only ever CONSERVATIVE. NO LOCK HERE: the writers' lock establishes the
-   * ordering. MUST RUN BEFORE ANY ENTITY IS READ — after, the projection can be older than its
+   * missed row is missing for ever. `seqBounds`' `max` IS that value — `max(change_log.seq)`,
+   * never below the retention floor, so a snapshot's own cursor is never 410'd as pruned. Rows
+   * become visible in seq order (`allocateSeqRange` holds the counter row lock to COMMIT); the
+   * counter (`next_seq`) is NOT the source, it can sit above the log after a restore. NO LOCK
+   * HERE. MUST RUN BEFORE ANY ENTITY IS READ — after, the projection can be older than its
    * cursor (`sync-snapshot-seq.pg.test.ts` drives the race on real Postgres).
    */
   private async highWaterSeq(db: Db, accountId: string): Promise<bigint> {
-    const rows = await db
-      .select({ max: sql<string | null>`max(${changeLog.seq})` })
-      .from(changeLog)
-      .where(eq(changeLog.accountId, accountId));
-    const m = rows[0]?.max;
-    return m == null ? 0n : BigInt(m);
+    return (await seqBounds(db, accountId)).max ?? 0n;
   }
 
   async getChanges(ctx: ServiceContext, opts: GetChangesOptions = {}): Promise<SyncResponse> {
