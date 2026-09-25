@@ -95,11 +95,13 @@ export {
  * The folder-name validator, re-exported from core's browser-safe leaf (the `/ics` rule above):
  * the honest sentence BEFORE the wire is the SERVER's own rules, and every client that offers
  * the stage-2 folder verbs needs them — the webapp reaches core directly, the mobile app
- * reaches core only through this package.
+ * reaches core only through this package. `canonicalDestination` is the News pile's alias, for
+ * the phone's readers that compare a folder with a rule's place.
  */
 export {
   FOLDER_PATH_MAX,
   RESERVED_FOLDER_LEAF,
+  canonicalDestination,
   folderNameError,
   type FolderNameError,
 } from "@trafficflow/core/folder-name";
@@ -336,6 +338,7 @@ export {
   scheduledSendsList,
   HELD_SEND_RECHECK_MS, SENDING_STALE_AFTER_MS,
   rulesList,
+  storedRuleDestination,
   heldReleaseDismissedOf,
   heldReleaseFingerprintOf,
   heldReleaseGroups,

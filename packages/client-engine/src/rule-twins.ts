@@ -1,4 +1,5 @@
 import { outranks } from "./consent-cutline.js";
+import { storedRuleDestination } from "./selectors.js";
 import type { EngineMutation, Folder, RuleDTO } from "./types.js";
 
 /**
@@ -52,10 +53,11 @@ export function pressOverTwins(
   }
   const retargets: EngineMutation[] = twinsElsewhere(twins, kind, match, wanted)
     .map((r) => ({ kind: "rule_update", ruleId: r.id, destination: wanted, applyRetro }));
-  // An explicit `applyRetro: true` on a PATCH that does not move the rule is the server's re-arm.
+  // An explicit `applyRetro: true` on a PATCH that does not move the rule is the server's re-arm,
+  // in the STORED spelling: a re-arm moves nothing, so it never rewrites a pre-0.22 News rule.
   const rearms: EngineMutation[] = applyRetro
     ? twins.filter((r) => r.destination === wanted)
-      .map((r) => ({ kind: "rule_update", ruleId: r.id, destination: wanted, applyRetro: true }))
+      .map((r) => ({ kind: "rule_update", ruleId: r.id, destination: storedRuleDestination(r), applyRetro: true }))
     : [];
   return {
     state: twinWinner(twins)!.destination === wanted ? "already" : "retargeted",

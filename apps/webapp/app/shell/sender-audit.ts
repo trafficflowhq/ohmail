@@ -12,6 +12,7 @@
  */
 import {
   FOLDER_OF_VIEW,
+  canonicalDestination,
   rulesList,
   senderKey,
   type EngineMessage,
@@ -131,7 +132,7 @@ export function attributeMessages(
     const rule = routedRule(rules, message);
     return {
       message,
-      attribution: rule !== null && rule.destination === message.folder ? { kind: "rule", rule } : { kind: "arrival" },
+      attribution: rule !== null && rule.destination === canonicalDestination(message.folder) ? { kind: "rule", rule } : { kind: "arrival" },
     };
   });
 }

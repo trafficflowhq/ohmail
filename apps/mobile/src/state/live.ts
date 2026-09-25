@@ -13,6 +13,7 @@ import {
   LAST_DRAIN_AT_META,
   VIEW_OF_FOLDER,
   bodyOf,
+  canonicalDestination,
   consentIndex,
   consentPartition,
   decidedDestination,
@@ -1704,7 +1705,7 @@ function holdingRules(reader: EntityReader, address: string, folder: Folder): Ru
   return rulesList(reader).filter(
     (r) =>
       r.enabled &&
-      r.destination === folder &&
+      r.destination === canonicalDestination(folder) &&
       (r.subjectContains ?? "").trim() === "" &&
       (r.bodyContains ?? "").trim() === "" &&
       ruleMatchesSender(r, address),

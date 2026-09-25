@@ -1765,13 +1765,36 @@ export function unscreenedTotalOf(reader: EntityReader): number {
   return first?.total ?? 0;
 }
 
+/**
+ * Every rule, newest first, each at the PLACE it files into. A rule stored before the 0.22 rename says
+ * `ohmail/Reads` and the organizer files it into the one News folder, so every reader compares the canonical
+ * name (`canonicalDestination`, the rename's one alias table) and one pile never reads as two. For
+ * read and comparison only: the mirror row keeps its spelling, and a write that keeps a rule's destination sends
+ * {@link storedRuleDestination} back, so reading never rewrites a rule.
+ */
 export function rulesList(reader: EntityReader): RuleDTO[] {
-  return reader.list<RuleDTO>("rule").sort((a, b) => {
+  return reader.list<RuleDTO>("rule").map(atItsPlace).sort((a, b) => {
     const ta = a.createdAt ? Date.parse(a.createdAt) : 0;
     const tb = b.createdAt ? Date.parse(b.createdAt) : 0;
     if (ta !== tb) return tb - ta;
     return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
   });
+}
+
+/** The stored spelling of each copy {@link rulesList} re-spelled; a rule already canonical is handed out as itself. */
+const STORED_DESTINATION = new WeakMap<RuleDTO, Folder>();
+
+function atItsPlace(rule: RuleDTO): RuleDTO {
+  const place = canonicalDestination(rule.destination) as Folder;
+  if (place === rule.destination) return rule;
+  const read = { ...rule, destination: place };
+  STORED_DESTINATION.set(read, rule.destination);
+  return read;
+}
+
+/** Where a rule from {@link rulesList} is STORED — what a write that keeps its destination sends back. */
+export function storedRuleDestination(rule: RuleDTO): Folder {
+  return STORED_DESTINATION.get(rule) ?? rule.destination;
 }
 
 /**

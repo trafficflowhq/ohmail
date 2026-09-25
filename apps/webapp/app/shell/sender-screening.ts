@@ -575,7 +575,7 @@ export async function dispatchScreeningChange(
 export function holdingRules(reader: EntityReader, address: string, folder: Folder): RuleDTO[] {
   return rulesList(reader).filter((r) =>
     r.enabled
-    && r.destination === folder
+    && r.destination === canonicalDestination(folder)
     && (r.subjectContains ?? "").trim() === ""
     && (r.bodyContains ?? "").trim() === ""
     && ruleMatchesSender(r, address));
