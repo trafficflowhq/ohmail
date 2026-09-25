@@ -966,15 +966,11 @@ export class MailboxService {
   }
 
   /**
-   * How many messages each mailbox holds, in one grouped statement — only what the account OWNS,
-   * by History's own predicate ({@link ownedMessages}). Invariant #9 lives in the
-   * WHERE: the account predicate is in the SAME statement as the `GROUP BY` —
-   * not redundant, because `messages.account_id` has no foreign key tying it to
-   * `mailboxes.account_id`, so a row whose mailbox is ours and whose account is somebody else's
-   * is a state the database permits (the operator dedup resolver leaves exactly that). A
-   * real-Postgres test seeds that row and goes red when the predicate is removed. The index leads
-   * on the scope predicate. `::int` because `count(*)` is `bigint` and postgres-js hands bigint
-   * back as a STRING.
+   * How many messages each mailbox holds, in one grouped statement, counting only what the
+   * account OWNS by History's own predicate ({@link ownedMessages}): deleted rows stay out.
+   * Invariant #9 lives in the WHERE — the account predicate is in the SAME statement as the
+   * `GROUP BY`, and a real-Postgres test reads it off the statement the driver sent. `::int`
+   * because `count(*)` is `bigint` and postgres-js hands bigint back as a STRING.
    */
   private async messageCounts(ctx: ServiceContext): Promise<Map<string, number>> {
     const rows = await ctx.db
