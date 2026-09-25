@@ -7,8 +7,8 @@
  * the message is actually in (present tense — never "this rule filed this message", false for every message
  * older than its rule); `arrival` — everything else, claiming nothing: known senders route through `contacts`,
  * absent from the mirror's vocabulary, so a rule-less Ohbox message is explained by something this module
- * cannot read. Precedence is not attempted (`RuleDTO` carries no `effect`; a rule is only reported when it
- * agrees with where the message is). This reads the mirror — `screening.auditCount` says so.
+ * cannot read. The rule named is the one the ROUTER chose ({@link routedRule}), and only when it agrees
+ * with where the message is. This reads the mirror — `screening.auditCount` says so.
  */
 import {
   FOLDER_OF_VIEW,
@@ -19,6 +19,7 @@ import {
   type RuleDTO,
   type ScreenerSenderDTO,
 } from "@ohmail/client-engine";
+import { compareRules, effectForDestination, type OrderedRule } from "@trafficflow/core/rule-order";
 import { bodyTextOf } from "./subject-rule";
 
 export type MailAttribution =
@@ -84,13 +85,36 @@ export function ruleBodyHolds(rule: RuleDTO, text: string): boolean {
   return text.toLowerCase().includes(term.toLowerCase());
 }
 
+/** A mirror rule as the router's order reads it: the effect is its destination's side of the gate. */
+const outranks = (a: RuleDTO, b: RuleDTO): boolean => {
+  const ordered = (r: RuleDTO): OrderedRule => ({ ...r, effect: effectForDestination(r.destination) });
+  return compareRules(ordered(a), ordered(b)) < 0;
+};
+
 /**
- * Attribute a set of messages. The rules are read once for the whole set, not per message. A sender
- * rule is preferred over a domain rule when both agree with the folder — the more specific TRUE
- * statement to show a person, not a reproduction of the router's precedence, which this module does
- * not attempt. A rule carrying a subject term is only offered for a message whose subject satisfies
- * it ({@link ruleSubjectHolds}) — the conjunction is checked per message, which is why the rules
- * are filtered here and not once for the whole set.
+ * The rule the router would name for this message, over what the mirror can test — `evaluateRules`'
+ * first two steps in `core/src/rules.ts`: the minimum under `compareRules` among the rules that fire,
+ * else the sender's standing DENIAL (a term narrows placement, never admission; a standing admission
+ * places nothing). Header rules cannot be tested here and take no part, as {@link ruleMatchesSender}
+ * says. Newest-first order decides nothing.
+ */
+export function routedRule(rules: readonly RuleDTO[], message: EngineMessage): RuleDTO | null {
+  let winner: RuleDTO | null = null;
+  let standing: RuleDTO | null = null;
+  for (const r of rules) {
+    if (!ruleMatchesSender(r, message.from.address)) continue;
+    if (r.destination !== FOLDER_OF_VIEW.screener && (standing === null || outranks(r, standing))) standing = r;
+    if (!ruleSubjectHolds(r, message.subject ?? "") || !ruleBodyHolds(r, bodyTextOf(message))) continue;
+    if (winner === null || outranks(r, winner)) winner = r;
+  }
+  if (winner !== null) return winner;
+  return standing !== null && effectForDestination(standing.destination) === "deny" ? standing : null;
+}
+
+/**
+ * Attribute a set of messages; the rules are read once for the whole set. A message is attributed to
+ * the rule the router chose ({@link routedRule}) only when that rule files into the folder the message
+ * is in: an Inbox copy from before a denial presents in Screened and names neither rule.
  */
 export function attributeMessages(
   reader: EntityReader, messages: readonly EngineMessage[],
@@ -104,20 +128,10 @@ export function attributeMessages(
       const row = senders.find((s) => senderKey(s.from.address) === key);
       return { message, attribution: { kind: "gate", suggestion: row?.ai ?? null } };
     }
-    const hits = rules.filter(
-      (r) => r.destination === message.folder
-        && ruleMatchesSender(r, message.from.address)
-        && ruleSubjectHolds(r, message.subject ?? "")
-        && ruleBodyHolds(r, bodyTextOf(message)),
-    );
-    // Among the rules that hold, the one carrying a term (subject or body, mail 0052) is the more
-    // specific TRUE statement — and it is also the one the router would pick (`compareRules`'
-    // specificity clauses), so preferring it costs nothing this module refuses to do: it is still
-    // only ever reporting a rule that AGREES with where the message already is.
-    const rule = hits.find((r) => r.kind === "sender"
-        && ((r.subjectContains ?? "").trim() !== "" || (r.bodyContains ?? "").trim() !== ""))
-      ?? hits.find((r) => r.kind === "sender")
-      ?? hits[0];
-    return { message, attribution: rule ? { kind: "rule", rule } : { kind: "arrival" } };
+    const rule = routedRule(rules, message);
+    return {
+      message,
+      attribution: rule !== null && rule.destination === message.folder ? { kind: "rule", rule } : { kind: "arrival" },
+    };
   });
 }
