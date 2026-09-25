@@ -10,9 +10,24 @@
 
 import { bridgeFetch } from "./bridge-fetch.js";
 import { consentVia } from "./consent-wire.js";
-import type { ConsentTransport } from "../../webapp/app/shell/consent-state";
+import type { ConsentReadFailure, ConsentTransport } from "../../webapp/app/shell/consent-state";
 
 export { CONSENT_PATH, CONSENT_SETTINGS_PATH, consentVia } from "./consent-wire.js";
+
+/** The engine's door for a window's failed consent read — `consent_read_failed` in its log. */
+export const CONSENT_READ_FAILED_PATH = "/local/window/consent-read-failed";
+
+/**
+ * Carry a failed consent read to the engine's log, on both doors (the local and the cloud engine
+ * both serve the path). The record is the hook's closed report; a refused report is dropped.
+ */
+export async function reportConsentReadFailure(report: ConsentReadFailure): Promise<void> {
+  await bridgeFetch(CONSENT_READ_FAILED_PATH, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(report),
+  });
+}
 
 /**
  * The hosted door's transport. A constant rather than a factory: it holds no state, and one
@@ -20,6 +35,7 @@ export { CONSENT_PATH, CONSENT_SETTINGS_PATH, consentVia } from "./consent-wire.
  */
 export const consentOverBridge: ConsentTransport = {
   ...consentVia(bridgeFetch),
+  readFailed: reportConsentReadFailure,
   /* THE MANAGED TABLE MOUNTS `foldersRoutes`: `/folders*` is not in `cloud-read.ts`, so all
      four verbs fall through to the write-through proxy and the account answers — true of an
      install connected to the managed service. `mode` has two values but the app has THREE

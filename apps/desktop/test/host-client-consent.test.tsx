@@ -169,8 +169,13 @@ describe("the consent wire a paired device's gate hands the shared shell", () =>
        window and not to the paired door is a control that exists on a laptop and is silently
        missing on the phone beside it — which is the shape of the defect this file closes. */
     const paired = Object.keys(consent).sort();
-    const window_ = Object.keys(consentOverBridge).sort();
+    /* `readFailed` is not a consent call: it is the window's report of a failed read into its
+       OWN engine's log, and a served client has no engine log on its side (the host's table does
+       not take the report). So it is the one declared difference, pinned absent here. */
+    const window_ = Object.keys(consentOverBridge).filter((k) => k !== "readFailed").sort();
     expect(paired).toEqual(window_);
+    expect(consentOverBridge.readFailed, "the window's wire reports its failed reads").toBeTypeOf("function");
+    expect(consent.readFailed, "the served client's wire reports nowhere").toBeUndefined();
   });
 
   it("declares the folders flag unstorable, because this door serves no folder verb", async () => {

@@ -154,3 +154,70 @@ export async function handleWindowSearchPhases(req: Request, deps: WindowReportD
   });
   return new Response(null, { status: 204 });
 }
+
+/**
+ * `POST /local/window/consent-read-failed` — the window's failed `GET /consent`, into this log as
+ * ONE `consent_read_failed` line per failure. The same closed-shape rule as the pull
+ * report: an attempt count, a reason token from a closed set, and a status or a class name; any
+ * other key refuses the report whole. Served by both engines — the cloud door is where it failed.
+ */
+export const WINDOW_CONSENT_READ_FAILED_ROUTE = "/local/window/consent-read-failed";
+
+const CONSENT_KEYS = new Set(["attempt", "reason", "status", "errorClass"]);
+const CONSENT_REASONS = new Set(["refused", "unreachable", "shape"]);
+
+interface WindowConsentReadFailure {
+  attempt: number;
+  reason: string;
+  status?: number;
+  errorClass?: string;
+}
+
+/** Parse a consent report or say why it is refused, naming the shape and never the content. */
+export function parseWindowConsentReadFailure(raw: unknown): WindowConsentReadFailure | { refused: string } {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return { refused: "not an object" };
+  const r = raw as Record<string, unknown>;
+  for (const k of Object.keys(r)) if (!CONSENT_KEYS.has(k)) return { refused: "a field this door does not take" };
+  if (typeof r.attempt !== "number" || !Number.isInteger(r.attempt) || r.attempt < 1 || r.attempt > 1_000_000) {
+    return { refused: "attempt is not a bounded count" };
+  }
+  if (typeof r.reason !== "string" || !CONSENT_REASONS.has(r.reason)) return { refused: "reason is not a known token" };
+  const out: WindowConsentReadFailure = { attempt: r.attempt, reason: r.reason };
+  if (r.status !== undefined) {
+    if (typeof r.status !== "number" || !Number.isInteger(r.status) || r.status < 100 || r.status > 599) {
+      return { refused: "status is not an HTTP status" };
+    }
+    out.status = r.status;
+  }
+  if (r.errorClass !== undefined) {
+    if (typeof r.errorClass !== "string" || !NAME.test(r.errorClass)) return { refused: "errorClass is not a class name" };
+    out.errorClass = r.errorClass;
+  }
+  return out;
+}
+
+/** Answer the report: 204 and one `consent_read_failed` line, or a refusal that logs no content. */
+export async function handleWindowConsentReadFailure(req: Request, deps: WindowReportDeps): Promise<Response> {
+  if (!(await deps.authorized(req))) {
+    return json(401, { error: { code: "unauthorized", message: "authentication required" } });
+  }
+  const refuse = (reason: string): Response => {
+    deps.log("window_consent_report_refused", { route: WINDOW_CONSENT_READ_FAILED_ROUTE, status: 400, reason });
+    return json(400, { error: { code: "invalid_request", message: `the report was refused: ${reason}` } });
+  };
+  const text = await req.text();
+  if (text.length > MAX_BODY_BYTES) return refuse("body over the bound");
+  let raw: unknown;
+  try { raw = JSON.parse(text); } catch { return refuse("not JSON"); }
+  const parsed = parseWindowConsentReadFailure(raw);
+  if ("refused" in parsed) return refuse(parsed.refused);
+  // A LITERAL field set, as above: an absent status or class is `null` on the line.
+  deps.log("consent_read_failed", {
+    route: WINDOW_CONSENT_READ_FAILED_ROUTE,
+    count: parsed.attempt,
+    reason: parsed.reason,
+    status: parsed.status ?? null,
+    errorClass: parsed.errorClass ?? null,
+  });
+  return new Response(null, { status: 204 });
+}

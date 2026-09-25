@@ -6,9 +6,9 @@
  * the accepted cost is stated — a second tab keeps the old window until it reloads, which only makes a Screener
  * queue briefly the wrong length. The boot applies the device's CACHED last answer first (`boot-cache.ts` — the
  * three partition inputs, nothing that authorises anything): a partition that waited for the fetch presented the
- * raw piles for the whole round trip, resurrecting already-decided Screener senders on every reload. A failure is
- * silent: the default is the product default, or the cache — strictly closer to the account's truth; a network
- * blip must not produce an error anybody has to read.
+ * raw piles for the whole round trip, resurrecting already-decided Screener senders on every reload. A failure
+ * shows nobody an error — the default is the product default, or the cache — but while no answer is known the
+ * read is asked again on {@link CONSENT_RETRY_MS}, and each failure is handed to the host's `readFailed`.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -91,6 +91,48 @@ export interface ConsentTransport {
    * been dispatched by the time this is called.
    */
   setResurfaceTime?: (resurfaceTime: string | null) => Promise<{ resurfaceTime: string | null }>;
+  /**
+   * TOLD OF EVERY FAILED `state()` READ — OPTIONAL, a host with a log of its own supplies it (the
+   * desktop's engine log). The report is closed and content-free: the status or the thrown class,
+   * never a body. A sink that throws or rejects is ignored; the retry does not depend on it.
+   */
+  readFailed?: (report: ConsentReadFailure) => void | Promise<void>;
+}
+
+/**
+ * ONE FAILED CONSENT READ. `refused`: the wire answered a non-2xx `status`. `unreachable`: the
+ * request threw (`errorClass` names what). `shape`: a 2xx whose body carries no numeric window.
+ * `attempt` counts the failures since the last answer, from 1.
+ */
+export interface ConsentReadFailure {
+  attempt: number;
+  reason: "refused" | "unreachable" | "shape";
+  status?: number;
+  errorClass?: string;
+}
+
+/**
+ * WHEN AN UNANSWERED READ IS ASKED AGAIN — after the failure, while no answer (live or cached) is
+ * known: 2 s, 10 s, 60 s, then every five minutes. The tail stands in for the mirror's reconnect,
+ * which a window on the paired door cannot see (its own drains are local): one failed forward
+ * marks the engine offline and every forwarded read answers 503 until its next good pull.
+ */
+export const CONSENT_RETRY_MS: readonly number[] = [2_000, 10_000, 60_000, 300_000];
+
+/** Thrown inside the read for a 2xx body with no numeric window, so one arm reports every failure. */
+const NO_WINDOW = Object.freeze({ noWindow: true });
+
+/** The failure a thrown read is, by what the wire said — a status when it carried one. */
+function failureOf(err: unknown, attempt: number): ConsentReadFailure {
+  const status = (err as { status?: unknown } | null)?.status;
+  if (typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599) {
+    return { attempt, reason: "refused", status };
+  }
+  const name = typeof err === "string" ? "String" : (err as { name?: unknown } | null)?.name;
+  return {
+    attempt, reason: "unreachable",
+    errorClass: typeof name === "string" && /^[A-Za-z_$][A-Za-z0-9_$]{0,63}$/.test(name) ? name : "Unknown",
+  };
 }
 
 /** The hosted transport — the browser talking to the API this app was written against. */
@@ -625,26 +667,49 @@ export function useConsentState(
    * hook's own lifetime.
    */
   const era = useRef(0);
+  /**
+   * THE RETRY — `known` mirrors whether an answer (live or cached) is in state; while it is not, a
+   * failed or discarded read arms ONE timer on {@link CONSENT_RETRY_MS}. `failures` numbers the
+   * reports since the last answer. The era cleanup clears the timer with the era.
+   */
+  const knownRef = useRef(false);
+  const failures = useRef(0);
+  const retryStep = useRef(0);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fetchRef = useRef<(() => Promise<void>) | null>(null);
+
+  const askAgain = useCallback((): void => {
+    if (knownRef.current || retryTimer.current !== null) return;
+    const delay = CONSENT_RETRY_MS[Math.min(retryStep.current, CONSENT_RETRY_MS.length - 1)];
+    retryStep.current += 1;
+    const eraAt = era.current;
+    retryTimer.current = setTimeout(() => {
+      retryTimer.current = null;
+      if (era.current === eraAt) void fetchRef.current?.();
+    }, delay);
+  }, []);
 
   const fetchLive = useCallback(async (): Promise<void> => {
     const at = writeEpoch.current;
     const eraAt = era.current;
     const mine = ++readSeq.current;
+    let failure: ConsentReadFailure;
     try {
         const wire: ConsentStateWire = await link.current.state();
         // A write from this tab outranks every read in flight; a newer applied read outranks an
         // older one arriving late; and a read outliving the hook's active era — deactivated,
         // unmounted — is nobody's answer. Issuance alone supersedes nothing — see the refs above.
-        if (era.current !== eraAt || writeEpoch.current !== at || mine <= appliedSeq.current) return;
+        if (era.current !== eraAt) return;
+        if (writeEpoch.current !== at || mine <= appliedSeq.current) { askAgain(); return; }
         // KNOWN MEANS THE SERVER ANSWERED THIS QUESTION, not that a request returned 200.
         //
         // The window is the one field that cannot be absent from a real answer — the route
         // substitutes the product default rather than ever sending null — so its presence and
-        // its type ARE the check. A body that does not carry one is a stale deployment, a
-        // proxy that rewrote it, or a harness answering every url alike, and none of those
-        // are grounds to re-present somebody's whole mailbox. `known: false` leaves every
-        // message in the pile its folder names, which is the safe direction.
-        if (typeof wire.dormancyDays !== "number" || !Number.isFinite(wire.dormancyDays)) return;
+        // its type ARE the check. A body without one (a stale deployment, a rewriting proxy) is
+        // a FAILED read: reported and asked again, and the partition stays `rulesOnly`.
+        if (typeof wire.dormancyDays !== "number" || !Number.isFinite(wire.dormancyDays)) {
+          throw NO_WINDOW;
+        }
         setState({
           // Normalised: absent and null both mean "nobody has answered the review yet".
           seedConfirmedAt: wire.seedConfirmedAt ?? null,
@@ -744,6 +809,9 @@ export function useConsentState(
           foldersStorable: false,
         });
         appliedSeq.current = mine;
+        knownRef.current = true;
+        failures.current = 0;
+        retryStep.current = 0;
         // The next boot paints from THIS answer. Written after the state (never instead of
         // it), from the same normalised values, under the same account id the read used —
         // and only the three fields `ConsentBootCache` names, which is the authorisation
@@ -760,10 +828,21 @@ export function useConsentState(
           writeBootCache(CONSENT_BOOT_SCOPE, owner, next);
           bootCache.current = next;
         }
-      } catch {
-        // Deliberately silent — see the header.
+        return;
+      } catch (err) {
+        if (era.current !== eraAt) return;
+        failures.current += 1;
+        failure = err === NO_WINDOW
+          ? { attempt: failures.current, reason: "shape" }
+          : failureOf(err, failures.current);
       }
-  }, []);
+      const sink = link.current.readFailed;
+      if (sink) {
+        try { void Promise.resolve(sink(failure)).catch(() => undefined); } catch { /* a courtesy */ }
+      }
+      askAgain();
+  }, [askAgain]);
+  fetchRef.current = fetchLive;
 
   useEffect(() => {
     if (!active || !reachable) {
@@ -779,10 +858,13 @@ export function useConsentState(
        */
       if (active && !reachable) {
         bootCache.current = null;
+        knownRef.current = false;
         setState(RESTING);
       }
       return;
     }
+    failures.current = 0;
+    retryStep.current = 0;
     /**
      * The device's last answer, first — synchronously, before the fetch is issued, so the live
      * answer can only land on top of the cache, never under it. Keyed by the remembered account
@@ -797,6 +879,7 @@ export function useConsentState(
       const cached = readBootCache(CONSENT_BOOT_SCOPE, owner, acceptConsentCache);
       if (cached !== null) {
         bootCache.current = cached;
+        knownRef.current = true;
         setState((prev) =>
           prev.known
             ? prev
@@ -815,7 +898,11 @@ export function useConsentState(
     void fetchLive();
     // The cleanup closes this era: a response landing after deactivation or unmount applies
     // nothing — see `era` above.
-    return () => { era.current += 1; };
+    return () => {
+      era.current += 1;
+      if (retryTimer.current !== null) clearTimeout(retryTimer.current);
+      retryTimer.current = null;
+    };
     // The fetch itself lives in `fetchLive` below so the settings-stamp effect can share it —
     // one implementation of "read the live answer and apply it under the guards".
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -240,19 +240,18 @@ export function useShellDerivations({
     engine.setCutline({ dormancyDays: consent.dormancyDays, scope: consent.screeningScope });
   }, [engine, demo, consent.known, consent.standalone, consent.dormancyDays, consent.screeningScope]);
   const consentView: ConsentPartition | null = useMemo(
-    // The demo is not partitioned — consent derives from rules and the
-    // fixture world has none, so the partition would empty the curated world into History. Nothing
-    // is partitioned before the account's window is known: `consent.known` is false until `GET
-    // /consent` lands or the boot applies the account's CACHED last answer (`boot-cache.ts` —
-    // without it every reload resurrected already-decided senders). A tab that cannot know shows
-    // MORE, never less. The desktop (`consent.standalone`) partitions anyway: there is no stored
-    // window to guess at, so the default IS the truth — read as "not yet known" it killed the
-    // cutline for the whole desktop tier. The baseline rides the
-    // same `GET /consent` answer as the window: one fetch, both halves.
+    // The demo is not partitioned — consent derives from rules and the fixture world has none, so
+    // the partition would empty the curated world into History. RULES NEVER WAIT FOR THE READ: until
+    // the window is known (`GET /consent`, or the boot's CACHED last answer, `boot-cache.ts`) the
+    // partition runs `rulesOnly` — a ruled sender presents at the rule's destination, an unruled
+    // one stays in its folder, nothing is cut to History. Switched off here, a paired desktop
+    // whose read failed showed every unread INBOX message in its Ohbox, ruled senders included. The
+    // desktop (`consent.standalone`) has no stored window, so the default IS the truth there.
     () =>
-      demo || !(consent.known || consent.standalone)
+      demo
         ? null
         : consentPartition(reader, {
+            rulesOnly: !(consent.known || consent.standalone),
             now,
             dormancyDays: consent.dormancyDays,
             baselineAt: consent.screeningBaselineAt,

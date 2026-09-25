@@ -30,7 +30,10 @@ import { createCloudMirror, integrityLogFields, CLOUD_SYNC_TYPES, FOLLOW_UP_CAP_
 import { startCloudWake, type CloudWake } from "./cloud-wake.js";
 import { matchReadRoute } from "./cloud-read.js";
 import { answerAccountFirst } from "./cloud-account-first.js";
-import { handleWindowSearchPhases, WINDOW_SEARCH_PHASES_ROUTE } from "./window-report.js";
+import {
+  handleWindowConsentReadFailure, handleWindowSearchPhases, handleWindowSyncFailure,
+  WINDOW_CONSENT_READ_FAILED_ROUTE, WINDOW_SEARCH_PHASES_ROUTE, WINDOW_SYNC_FAILED_ROUTE,
+} from "./window-report.js";
 import { createWriteThroughProxy, type WriteThroughProxy } from "./cloud-proxy.js";
 import {
   accountAnswer,
@@ -1317,6 +1320,16 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       // THE WINDOW'S SEARCH TIMINGS, into this log (`window-report.ts`); the bearer was read above.
       if (req.method === "POST" && path === WINDOW_SEARCH_PHASES_ROUTE) {
         return handleWindowSearchPhases(req, { authorized: async () => true, log: log ?? (() => undefined) });
+      }
+
+      /* THE WINDOW'S OWN REPORTS, into THIS log — the local engine's two doors, served here too.
+         Unrouted, both fell to the relay, which refuses a `/local/*` path (`cloud_relay_refused`),
+         so a paired window's failed pull and failed consent read reached no log at all. */
+      if (req.method === "POST" && (path === WINDOW_SYNC_FAILED_ROUTE || path === WINDOW_CONSENT_READ_FAILED_ROUTE)) {
+        const deps = { authorized: async () => true, log: log ?? (() => undefined) };
+        return path === WINDOW_SYNC_FAILED_ROUTE
+          ? handleWindowSyncFailure(req, deps)
+          : handleWindowConsentReadFailure(req, deps);
       }
 
       /* THE WINDOW'S HELD QUESTION (`session-watch.ts`): answered the moment the session reading

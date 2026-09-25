@@ -209,7 +209,8 @@ import {
 import { mirroredFirstSyncFacts, mirroredMessageCount, wipeLocalMirror } from "./local-mirror.js";
 import { stampSynced } from "./sync-stamp.js";
 import {
-  handleWindowSearchPhases, handleWindowSyncFailure, WINDOW_SEARCH_PHASES_ROUTE, WINDOW_SYNC_FAILED_ROUTE,
+  handleWindowConsentReadFailure, handleWindowSearchPhases, handleWindowSyncFailure,
+  WINDOW_CONSENT_READ_FAILED_ROUTE, WINDOW_SEARCH_PHASES_ROUTE, WINDOW_SYNC_FAILED_ROUTE,
 } from "./window-report.js";
 import { createAttentionClock } from "./attention.js";
 import type { PowerVerdict } from "./host-power.js";
@@ -7138,6 +7139,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         }
         if (req.method === "POST" && new URL(req.url).pathname === WINDOW_SEARCH_PHASES_ROUTE) {
           return handleWindowSearchPhases(req, { authorized: launchBearerAuthorized, log });
+        }
+        if (req.method === "POST" && new URL(req.url).pathname === WINDOW_CONSENT_READ_FAILED_ROUTE) {
+          return handleWindowConsentReadFailure(req, { authorized: launchBearerAuthorized, log });
         }
         // How far the local search index has got — the Mailboxes pane's progress arm.
         if (req.method === "GET" && new URL(req.url).pathname === SEARCH_INDEX_ROUTE) {

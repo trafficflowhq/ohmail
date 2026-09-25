@@ -25,15 +25,18 @@ import type { ConsentStateWire } from "../../webapp/app/api-client";
 export const CONSENT_PATH = "/consent";
 export const CONSENT_SETTINGS_PATH = "/consent/settings";
 
-/** The engine's own sentence for a refusal, or the status line when it composed none. */
-async function refusal(res: Response): Promise<Error> {
+/**
+ * The engine's own sentence for a refusal, or the status line when it composed none — carrying
+ * the STATUS, which the shared hook reports when a consent read fails (never the body).
+ */
+async function refusal(res: Response): Promise<Error & { status: number }> {
   let said: string | undefined;
   try {
     said = ((await res.json()) as { error?: { message?: string } }).error?.message;
   } catch {
     /* Not JSON, or an empty body. The status is all there is. */
   }
-  return new Error(said ?? `the mail engine answered ${res.status}`);
+  return Object.assign(new Error(said ?? `the mail engine answered ${res.status}`), { status: res.status });
 }
 
 async function jsonOf<T>(res: Response): Promise<T> {

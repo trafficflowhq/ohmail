@@ -136,6 +136,13 @@ export interface ConsentOptions {
    * (`consent-cutline.pg.test.ts` pins the server's answer to this one).
    */
   ownAddresses?: Iterable<string>;
+  /**
+   * The account's cutline is NOT KNOWN yet — its `GET /consent` has not answered. A decision is a
+   * rule the mirror already holds, so a ruled sender still presents at the rule's destination; only
+   * the two halves that need the window wait: no unruled sender is queued in the Screener and
+   * nothing is cut to History. An unruled row stays where its folder is, so nothing is hidden.
+   */
+  rulesOnly?: boolean;
 }
 
 /** The domain half of an address, lower-cased, or `null` when there is not one. */
@@ -308,7 +315,8 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
   /** Is this message's folder one of its OWN mailbox's live user folders? */
   const inUserFolder = (m: EngineMessage): boolean =>
     userFolders.has(`${m.mailboxId}|${m.folder}`) || userFolders.has(m.folder);
-  const activity = senderActivity(messages, opts, own);
+  const rulesOnly = opts.rulesOnly === true;
+  const activity = rulesOnly ? new Map<string, SenderActivity>() : senderActivity(messages, opts, own);
   // The same line {@link senderActivity} measures from, read here for outbound mail — see the
   // own-sent branch below. One call, so the two halves of the partition cannot disagree about
   // where the cutline is.
@@ -374,12 +382,12 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
         if (!own.has(key) && !m.unread && !isResurfaced(m)) {
           const decided = decidedDestination(index, m.from.address);
           const ms = messageMs(m);
-          if (decided === null && ms !== null && ms < cutoff) historyIds.add(m.id);
+          if (!rulesOnly && decided === null && ms !== null && ms < cutoff) historyIds.add(m.id);
         }
         continue;
       }
       const sentMs = messageMs(m);
-      if (!isResurfaced(m) && sentMs !== null && sentMs < cutoff) {
+      if (!rulesOnly && !isResurfaced(m) && sentMs !== null && sentMs < cutoff) {
         placeOf.set(m.id, null);
         historyIds.add(m.id);
       } else {
@@ -419,7 +427,9 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
     // An explicit placement is already an answer. Never second-guessed.
     if (!UNDECIDED_RESIDENCES.has(m.folder)) { placeOf.set(m.id, m.folder); continue; }
 
-    const active = activity.get(key) === "active";
+    // With the cutline unknown every sender counts as active for the gate hold below, and an
+    // unruled one keeps its folder (the `rulesOnly` arm) rather than being queued or retired.
+    const active = rulesOnly || activity.get(key) === "active";
     /**
      * A RULE THAT HAS NOT MOVED THE MAIL CHANGES NOTHING A PERSON SEES. Mail PHYSICALLY at the
      * gate presents at the gate whatever admitting destination a rule names: the client never
@@ -432,6 +442,8 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
     const heldAtGate = consented && active && m.folder === "ohmail/Screener";
     if (decided !== null && !heldAtGate) {
       placeOf.set(m.id, decided);
+    } else if (rulesOnly) {
+      placeOf.set(m.id, m.folder);
     } else if (active) {
       // The COUNTS keep the cutline's own question — senders with no rule still owed a decision —
       // because that is the one `cutlineCounts` answers in SQL and the parity test pins. Only the
