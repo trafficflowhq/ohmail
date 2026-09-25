@@ -3027,6 +3027,8 @@
     "toastRuleFailed": "{place} — {count, plural, =0 {mail already here stays where it is} one {1 message from {sender} moved} other {# messages from {sender} moved}}, but the rule couldn't be made. Future mail is unchanged.",
     "toastRuleOrganizer": "Queued for the organizer — mail from {sender} goes to {place} on its next pass, and the rule is made then.",
     "verdictKept": "{count, plural, one {1 is} other {# are}} in {place} · {kept, plural, one {1 stays} other {# stay}} in {keptPlace} by your rule »{term}«.",
+    "verdictKeptDomain": "{count, plural, one {1 is} other {# are}} in {place} · {kept, plural, one {1 stays} other {# stay}} in {keptPlace} by your rule for everyone at {domain}, subject contains »{term}«.",
+    "verdictMoved": "{place} — {count, plural, one {1 message} other {# messages}} moved.",
     "verdictKeptMany": "{count, plural, one {1 is} other {# are}} in {place} · {kept, plural, one {1 stays} other {# stay}} where your rules file them.",
     "verdictStill": "{count, plural, one {1 is} other {# are}} in {place} · {still, plural, one {1 is} other {# are}} still in {stillPlace}.",
     "verdictStillLegacy": "{count, plural, one {1 is} other {# are}} in {place} · {still, plural, one {1 is} other {# are}} still in the folder {folder}, the old name of {stillPlace}.",

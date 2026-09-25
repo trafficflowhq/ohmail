@@ -1429,6 +1429,8 @@ const TABLE = {
   /* A screening press read back from the list: how many are at the place, and what stays where. */
   liveVerdictKept: (count: number, place: string, kept: number, keptPlace: string, term: string) =>
     `${count === 1 ? "1 is" : `${count} are`} in ${place} · ${kept === 1 ? "1 stays" : `${kept} stay`} in ${keptPlace} by your rule »${term}«.`,
+  liveVerdictKeptDomain: (count: number, place: string, kept: number, keptPlace: string, domain: string, term: string) =>
+    `${count === 1 ? "1 is" : `${count} are`} in ${place} · ${kept === 1 ? "1 stays" : `${kept} stay`} in ${keptPlace} by your rule for everyone at ${domain}, subject contains »${term}«.`,
   liveVerdictKeptMany: (count: number, place: string, kept: number) =>
     `${count === 1 ? "1 is" : `${count} are`} in ${place} · ${kept === 1 ? "1 stays" : `${kept} stay`} where your rules file them.`,
   liveVerdictStill: (count: number, place: string, still: number, stillPlace: string) =>

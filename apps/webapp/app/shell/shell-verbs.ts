@@ -34,7 +34,7 @@ import { displayAddress, displayDomain } from "./idn";
 import { readerMoveRefusal } from "./mail-state";
 import type { BulkAction, MessageAction } from "./MessagePane";
 import type { ShellConsentFacts } from "./consent-options";
-import { VERDICT_KEY, screeningVerdict } from "./press-verdict";
+import { moveInBatches, screeningVerdict, verdictAction, verdictKeyOf } from "./press-verdict";
 import { attributeMessages } from "./sender-audit";
 import { senderHitOf } from "./sender-hit";
 import {
@@ -189,31 +189,38 @@ export function useShellVerbs({
         return;
       }
       const wanted = FOLDER_OF_VIEW[dest];
-      const text = t(`screening.${VERDICT_KEY[v.key]}`, {
+      const text = t(`screening.${verdictKeyOf(v)}`, {
         sender: who, place, count: v.count,
-        ...(v.key === "kept" ? { kept: v.kept, keptPlace: placeLabel(v.keptPlace), term: v.term } : {}),
+        ...(v.key === "kept" ? {
+          kept: v.kept, keptPlace: placeLabel(v.keptPlace), term: v.term, domain: displayDomain(v.rule.match),
+        } : {}),
         ...(v.key === "keptMany" ? { kept: v.kept } : {}),
         ...(v.key === "still" ? { still: v.still, stillPlace: placeLabel(v.stillPlace) } : {}),
         ...(v.key === "stillLegacy" ? { still: v.still, folder: v.folder, stillPlace: placeLabel(v.folder) } : {}),
       });
-      if (v.key === "kept") {
-        // Their own subject rule keeps some of this mail elsewhere. Removing it by id and pressing
-        // again leaves the pressed rule deciding all of it.
+      const act = verdictAction(v, { scope, address: sender.address });
+      if (act?.kind === "remove") {
+        // Their own subject rule for this address keeps some of this mail elsewhere. Removing it
+        // by id and pressing again leaves the pressed rule deciding all of it.
         toast(text, {
           action: t("screening.verdictRemoveRule"), duration: 8000,
           onAction: () => {
-            void mutateAndReport({ kind: "rule_delete", ruleId: v.rule.id }, null).then((ok) => {
+            void mutateAndReport({ kind: "rule_delete", ruleId: act.ruleId }, null).then((ok) => {
               if (ok) changeScreening(messageId, dest, scope, makeRule, applyRetro, address);
             });
           },
         });
         return;
       }
-      if (v.key === "still" || v.key === "stillLegacy") {
+      if (act?.kind === "move") {
         toast(text, {
-          action: t("screening.verdictMoveThem", { still: v.still }), duration: 8000,
+          action: t("screening.verdictMoveThem", { still: act.ids.length }), duration: 8000,
           onAction: () => {
-            for (const id of v.ids.slice(0, 50)) void fileAndRefresh(engine.mutate({ kind: "move", messageId: id, folder: wanted }));
+            void moveInBatches(act.ids, wanted, (m) => fileAndRefresh(engine.mutate(m))).then((r) => {
+              if (r.moved > 0) toast(t("screening.verdictMoved", { place, count: r.moved }));
+              if (r.refused > 0) toast(t("ohbox.pressPartlyRefused", { count: r.refused }));
+              else if (r.waiting > 0) toast(t("ohbox.pressPartlyQueued", { count: r.waiting }));
+            });
           },
         });
         return;

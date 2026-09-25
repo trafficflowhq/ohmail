@@ -433,7 +433,9 @@ function pressReadBack(
   const v = stayVerdict(pressOutcome({ presented, subject, rules: rulesList(reader), wanted, retro }), reader);
   switch (v.key) {
     case "none": return null;
-    case "kept": return refuse("liveVerdictKept", v.count, place, v.kept, folderName(v.keptPlace), v.term);
+    case "kept": return v.rule.kind === "domain"
+      ? refuse("liveVerdictKeptDomain", v.count, place, v.kept, folderName(v.keptPlace), v.rule.match, v.term)
+      : refuse("liveVerdictKept", v.count, place, v.kept, folderName(v.keptPlace), v.term);
     case "keptMany": return refuse("liveVerdictKeptMany", v.count, place, v.kept);
     case "still": return refuse("liveVerdictStill", v.count, place, v.still, folderName(v.stillPlace));
     case "stillLegacy": return refuse("liveVerdictStillLegacy", v.count, place, v.still, v.folder, folderName(v.folder));

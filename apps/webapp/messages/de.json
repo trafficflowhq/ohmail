@@ -3027,6 +3027,8 @@
     "toastRuleFailed": "{place} — {count, plural, =0 {Post, die schon hier ist, bleibt, wo sie ist} one {1 Nachricht von {sender} verschoben} other {# Nachrichten von {sender} verschoben}}, aber die Regel ließ sich nicht anlegen. Künftige Post bleibt unverändert.",
     "toastRuleOrganizer": "Für den Organizer vorgemerkt — beim nächsten Durchgang: Post von {sender} → {place}, und die Regel wird angelegt.",
     "verdictKept": "{count, plural, one {1 liegt} other {# liegen}} in {place} · {kept, plural, one {1 bleibt} other {# bleiben}} nach deiner Regel »{term}« in {keptPlace}.",
+    "verdictKeptDomain": "{count, plural, one {1 liegt} other {# liegen}} in {place} · {kept, plural, one {1 bleibt} other {# bleiben}} nach deiner Regel für alle bei {domain} (Betreff enthält »{term}«) in {keptPlace}.",
+    "verdictMoved": "{place} — {count, plural, one {1 Nachricht} other {# Nachrichten}} verschoben.",
     "verdictKeptMany": "{count, plural, one {1 liegt} other {# liegen}} in {place} · {kept, plural, one {1 bleibt} other {# bleiben}}, wo deine Regeln sie einsortieren.",
     "verdictStill": "{count, plural, one {1 liegt} other {# liegen}} in {place} · {still, plural, one {1 liegt} other {# liegen}} noch in {stillPlace}.",
     "verdictStillLegacy": "{count, plural, one {1 liegt} other {# liegen}} in {place} · {still, plural, one {1 liegt} other {# liegen}} noch im Ordner {folder}, dem alten Namen von {stillPlace}.",
