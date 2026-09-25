@@ -27,6 +27,7 @@ import { defaultMailboxAllowance } from "./mailbox-allowance-registry.js";
  * gate: which policy a host installed decides whether the gate runs, and the lock order may not
  * depend on that. */
 import { lockAccountRow } from "./account-lock.js";
+import { ownedMessages } from "./owned-messages.js";
 import type { KeyProvider } from "./auth/crypto.js";
 import type { MailboxDTO, MailboxFolderSummary } from "./dto/types.js";
 // The window's vocabulary, from the one place it is defined (core), so the ceremony that writes
@@ -965,8 +966,9 @@ export class MailboxService {
   }
 
   /**
-   * How many messages each mailbox holds, in one grouped statement. Invariant #9 lives in the
-   * WHERE: `eq(messages.accountId, ctx.accountId)` is in the SAME statement as the `GROUP BY` —
+   * How many messages each mailbox holds, in one grouped statement — only what the account OWNS,
+   * by History's own predicate ({@link ownedMessages}). Invariant #9 lives in the
+   * WHERE: the account predicate is in the SAME statement as the `GROUP BY` —
    * not redundant, because `messages.account_id` has no foreign key tying it to
    * `mailboxes.account_id`, so a row whose mailbox is ours and whose account is somebody else's
    * is a state the database permits (the operator dedup resolver leaves exactly that). A
@@ -981,7 +983,7 @@ export class MailboxService {
         n: dialect(ctx.db).castInt(sql`count(*)`).mapWith(Number) as unknown as SQL<number>,
       })
       .from(messages)
-      .where(eq(messages.accountId, ctx.accountId))
+      .where(ownedMessages(ctx.accountId))
       .groupBy(messages.mailboxId);
     return new Map(rows.map((r) => [r.mailboxId, r.n]));
   }

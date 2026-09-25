@@ -25,6 +25,7 @@ import {
   encodeListCursor, encodeNullableKeysetCursor,
 } from "./pagination.js";
 import { requireUuid } from "./ids.js";
+import { ownedMessages } from "./owned-messages.js";
 import {
   moveDestinationWord, routeMailboxWrite, writeReaderRequest, type PendingRequest,
 } from "./reader-request.js";
@@ -677,11 +678,11 @@ export class MessageService {
    */
   async listAll(ctx: ServiceContext, opts: ListMessagesOptions): Promise<Page<MessageDTO>> {
     const limit = Math.min(HISTORY_PAGE_MAX, clampLimit(opts.limit));
-    const filters: SQL[] = [eq(messages.accountId, ctx.accountId), isNull(messages.deletedAt)];
+    const filters: SQL[] = [ownedMessages(ctx.accountId)];
     if (opts.cursor) filters.push(afterKeyset(decodeMsgCursor(opts.cursor)));
     else if (opts.before) filters.push(afterKeyset(positionOf(opts.before, "before")));
     else if (opts.at) filters.push(atOrAfterKeyset(atPositionOf(opts.at)));
-    // scoped-by: `filters` leads with eq(messages.accountId, ctx.accountId)
+    // scoped-by: `filters` leads with ownedMessages(ctx.accountId)
     const rows = await ctx.db.select({ id: messages.id, date: messages.date }).from(messages)
       .where(and(...filters))
       .orderBy(...MSG_ORDER)
@@ -708,12 +709,12 @@ export class MessageService {
     const groups = await d.exec(ctx.db, sql`
       select g.c, g.d,
         (select n.id from messages n
-          where n.account_id = ${ctx.accountId} and n.deleted_at is null and n.date = g.d
+          where ${ownedMessages(ctx.accountId, "n")} and n.date = g.d
           order by n.id desc limit 1) as id
       from (
         select ${d.monthBucket(sql`m.date`)} as bucket, ${d.castInt(sql`count(*)`)} as c, max(m.date) as d
         from messages m
-        where m.account_id = ${ctx.accountId} and m.deleted_at is null
+        where ${ownedMessages(ctx.accountId, "m")}
         group by 1
       ) g`);
     let undated = 0;
