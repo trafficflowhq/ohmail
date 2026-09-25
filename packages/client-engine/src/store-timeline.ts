@@ -24,7 +24,7 @@ export type StoreTimelineState = "unavailable" | "loading" | "ready" | "unanswer
 /** One page as a walk reads it: its rows and the position the page after it starts from. */
 export type PageAnswer<A> =
   | { state: "ready"; items: readonly EngineMessage[]; next: A | null }
-  | { state: "failed" | "unavailable" };
+  | { state: "failed" | "unavailable"; errorClass?: string };
 
 /** Where a walk reads its pages: History's keyset pages, Search's cursor pages. */
 export interface PageSource<A> {
@@ -73,7 +73,7 @@ export class PagedWalk<A> {
       /** The walker's own anchor at or above `p` — History's month starts. */
       extra?: (p: number) => { start: number; anchor: A | null } | null;
       landed?: (start: number, transient: boolean, answer: Extract<PageAnswer<A>, { state: "ready" }>) => void;
-      failed?: (start: number) => void;
+      failed?: (start: number, errorClass: string | null) => void;
     },
   ) {}
 
@@ -133,7 +133,7 @@ export class PagedWalk<A> {
       const key = JSON.stringify([start, anchor]);
       if (out.state !== "ready") {
         this.failedAt.set(key, this.hooks.clock());
-        this.hooks.failed?.(start);
+        this.hooks.failed?.(start, out.state === "failed" ? out.errorClass ?? null : null);
         this.hooks.changed();
         return;
       }
@@ -244,6 +244,8 @@ export class StoreTimelineWalker {
   private timeline: StoreTimeline | null = null;
   private segs: TimelineSegment[] = [];
   private failed = false;
+  /** The first failure's class this visit — see {@link failureCause}. */
+  private cause: string | null = null;
   private timedOut = false;
   private pageOne = false;
   private epoch = 0;
@@ -254,7 +256,8 @@ export class StoreTimelineWalker {
   constructor(private readonly engine: OhmailEngine, clock: () => number = Date.now) {
     this.walk = new PagedWalk<StoreKeyset>(engine, {
       ask: (a, o) => engine.pageStore("all", { ...(a ? { before: a } : {}), ...(o.transient ? { transient: true } : {}), at: o.at })
-        .then((out) => (out.state === "ready" ? { state: "ready" as const, items: out.items, next: null } : { state: out.state })),
+        .then((out): PageAnswer<StoreKeyset> => (out.state === "ready" ? { state: "ready", items: out.items, next: null }
+          : out.state === "failed" ? { state: "failed", errorClass: out.errorClass } : { state: "unavailable" })),
       peek: (a) => engine.peekStorePage("all", a ? { before: a } : {}),
       anchorOf: keysetOf,
     }, {
@@ -273,8 +276,10 @@ export class StoreTimelineWalker {
       landed: (start, transient) => {
         if (!transient && start === 0) this.pageOne = true;
       },
-      failed: (start) => {
-        if (start === 0) this.failed = true;
+      failed: (start, errorClass) => {
+        if (start !== 0) return;
+        this.failed = true;
+        if (this.cause === null) this.cause = errorClass;
       },
     });
   }
@@ -290,6 +295,7 @@ export class StoreTimelineWalker {
     this.timeline = null;
     this.segs = [];
     this.failed = false;
+    this.cause = null;
     this.timedOut = false;
     this.pageOne = false;
     this.walk.reset();
@@ -301,7 +307,10 @@ export class StoreTimelineWalker {
       if (out.state === "ready") {
         this.timeline = out.timeline;
         this.segs = timelineSegments(out.timeline);
-      } else this.failed = true;
+      } else {
+        this.failed = true;
+        if (this.cause === null && out.state === "failed") this.cause = out.errorClass;
+      }
       this.signal.bump();
     });
     this.walk.fetch(0, null, "down");
@@ -329,6 +338,12 @@ export class StoreTimelineWalker {
   /** The store's own count, once it answered. */
   total(): number | null {
     return this.state() === "ready" ? this.timeline!.total : null;
+  }
+
+  /** Why the store did not answer this visit: the first failure's class, or `timeout`. */
+  failureCause(): string | null {
+    if (this.state() !== "unanswered") return null;
+    return this.cause ?? (this.timedOut ? "timeout" : null);
   }
 
   segments(): readonly TimelineSegment[] {

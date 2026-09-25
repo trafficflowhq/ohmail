@@ -14,6 +14,7 @@ import {
   type StoreTimelineState,
   type TimelineSegment,
 } from "@ohmail/client-engine";
+import { useSessionReask } from "./session-reask";
 
 export type TimelineState = StoreTimelineState;
 
@@ -47,8 +48,11 @@ export function useStoreTimeline(
     return () => walker.stop();
   }, [walker]);
   const rev = useSyncExternalStore(walker.subscribe, walker.revision, walker.revision);
+  const raw = walker.state();
+  /* A 401 is the session's answer: loading while the renewal is out, asked again once it lands. */
+  const renewing = useSessionReask(walker.failureCause(), raw === "ready", () => walker.start());
   return useMemo(() => ({
-    state: walker.state(),
+    state: renewing ? "loading" : raw,
     total: walker.total(),
     length: walker.length(mirrorRows.length),
     rowAt: (i: number) => walker.rowAt(i, mirrorRows),
@@ -58,5 +62,5 @@ export function useStoreTimeline(
     jump: (start: number) => walker.jump(start),
     // `rev` and `version` are the signals: the walker moved, or the mirror did.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [walker, rev, version, mirrorRows]);
+  }), [walker, rev, version, mirrorRows, raw, renewing]);
 }

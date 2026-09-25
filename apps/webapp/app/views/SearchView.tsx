@@ -26,6 +26,7 @@ import {
 } from "@ohmail/client-engine";
 import { showSimilar } from "@trafficflow/core/search-rank";
 import { Facets, SearchBox, type FacetGroup } from "@ohmail/ui";
+import { useSessionReask } from "../shell/session-reask";
 import { displayTime, metaLine, PLACE_LABEL, placeLabel, senderName } from "../shell/format";
 import { displayAddress } from "../shell/idn";
 import { addressHref } from "../shell/address-view";
@@ -309,8 +310,10 @@ export function SearchView({
   }, [walker, trimmed, available, retryTick, sort, storeFilters]);
   useEffect(() => () => walker.clear(), [walker]);
 
-  const passState = walker.state();
   const cause = walker.failureCause();
+  /* A 401 is the session's answer: still searching while the renewal is out, asked again once it lands. */
+  const renewing = useSessionReask(cause, walker.info() !== null, () => setRetryTick((n) => n + 1));
+  const passState = renewing ? "searching" : walker.state();
   const question = walker.question();
   useEffect(() => {
     if (cause !== null) logUnanswered(cause);
