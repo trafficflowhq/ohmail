@@ -573,7 +573,7 @@ export function ReadsView({
 
   /* `windowIndex` is passed explicitly by each mapper — never `.map(row)`, which would stamp the
      array index as the slot (the Ohbox's warning). */
-  const row = (m: EngineMessage, windowIndex: number) => {
+  const row = (m: EngineMessage, windowIndex: number, inSet: { size: number; position: number }) => {
     const mailbox = mailboxLabelOf?.(m.mailboxId) ?? undefined;
     return (
     <MessageRow
@@ -581,6 +581,7 @@ export function ReadsView({
       key={m.id}
       id={m.id}
       windowIndex={windowIndex}
+      inSet={inSet}
       from={senderName(m)}
       address={rowAddress(m)}
       {...avatarOf(m)}
@@ -733,7 +734,7 @@ export function ReadsView({
             return (
               <span key={m.id} style={{ display: "contents" }}>
                 {chipShown && p === chipAt && k === 0 ? chipRow : null}
-                {row(m, windowIndexOf(p))}
+                {row(m, windowIndexOf(p), { size: freshCount, position: p + 1 })}
                 {chipShown && p === chipAfter ? chipRow : null}
               </span>
             );
@@ -743,7 +744,8 @@ export function ReadsView({
           <Waterline label={t("waterline")} meta={wlMeta} index={freshSpan} />
         ) : null}
         <ListRows ariaLabel={t("waterline")}>
-          {partition.seen.slice(seenFrom, seenTo).map((m, k) => row(m, seenBase + seenFrom + k))}
+          {partition.seen.slice(seenFrom, seenTo).map((m, k) =>
+            row(m, seenBase + seenFrom + k, { size: partition.seen.length, position: seenFrom + k + 1 }))}
         </ListRows>
         {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
         <div className="tail-row">{t("tail")}</div>

@@ -64,6 +64,14 @@ export interface MessageRowProps {
    * no attribute, and the window falls back to one measured height for all of them.
    */
   windowIndex?: number;
+  /**
+   * Its place in the listbox it is an option of, for a list that mounts only a window of its
+   * rows: the list's true size and this row's 1-based position in it, as `aria-setsize` and
+   * `aria-posinset`. Without them a screen reader counts the mounted options — "16 items" for
+   * an Ohbox of 900. Absent ⇒ neither attribute, and the browser counts, which is right for a
+   * list rendered whole.
+   */
+  inSet?: { size: number; position: number };
   from: string;
   address?: string;
   time?: string;
@@ -254,6 +262,7 @@ export function MessageRow(props: MessageRowProps) {
     newSinceLabel,
     newSinceTitle,
     windowIndex,
+    inSet,
     from,
     address,
     time,
@@ -541,6 +550,8 @@ export function MessageRow(props: MessageRowProps) {
       aria-label={`${from}: ${subject}`}
       aria-description={description}
       role="option"
+      aria-setsize={inSet?.size}
+      aria-posinset={inSet?.position}
       aria-selected={chosen ? "true" : "false"}
       tabIndex={tab}
       onClick={press}

@@ -1197,7 +1197,7 @@ export function ScreenerView({
     return state.notApplied.find((d) => d.sender.id === x.id)?.decision;
   }
 
-  const row = (x: ScreenerSenderDTO | SpamRow, windowIndex: number) => {
+  const row = (x: ScreenerSenderDTO | SpamRow, windowIndex: number, inSet: { size: number; position: number }) => {
     if (segment === "waiting") {
       const w = x as ScreenerSenderDTO;
       // Both fields come from the SAME message — the newest one, which is what
@@ -1211,6 +1211,7 @@ export function ScreenerView({
           key={w.id}
           id={w.id}
           windowIndex={windowIndex}
+          inSet={inSet}
           from={displayAddressee(w.from.name, w.from.address)}
           address={displayAddressUnder(w.from.name, w.from.address)}
           {...mailboxBadge(w)}
@@ -1301,6 +1302,7 @@ export function ScreenerView({
           key={w.id}
           id={w.id}
           windowIndex={windowIndex}
+          inSet={inSet}
           /* NAME AND ADDRESS, AS IN `waiting`. These two segments printed the
              ADDRESS ALONE, which in the demo world is invisible — every screened and spam
              fixture is an address with no display name — and on a live account throws away
@@ -1340,6 +1342,7 @@ export function ScreenerView({
         key={r.sender.id}
         id={r.sender.id}
         windowIndex={windowIndex}
+        inSet={inSet}
         from={displayAddressee(r.sender.from.name, r.sender.from.address)}
         address={displayAddressUnder(r.sender.from.name, r.sender.from.address)}
         {...mailboxBadge(r.sender)}
@@ -1578,7 +1581,8 @@ export function ScreenerView({
         <ListRows ariaLabel={t("title")}>
           {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
           {junkActive ? null : items.length ? (
-            items.slice(itemsFrom, itemsTo).map((x, k) => row(x, itemsFrom + k))
+            items.slice(itemsFrom, itemsTo).map((x, k) =>
+              row(x, itemsFrom + k, { size: items.length + decidedRows.length, position: itemsFrom + k + 1 }))
           ) : state.decided.length === 0 ? (
             <Empty segment={segment} surface={emptySurface(items.length)} />
           ) : null}
@@ -1600,6 +1604,7 @@ export function ScreenerView({
               sender={sender}
               decision={decision}
               windowIndex={decidedBase + decidedFrom + k}
+              inSet={{ size: items.length + decidedRows.length, position: items.length + decidedFrom + k + 1 }}
               selected={sender.id === activeId}
               onSelect={() => selectRow(sender.id)}
             />
@@ -2132,6 +2137,7 @@ function DecidedRow({
   sender,
   decision,
   windowIndex,
+  inSet,
   selected,
   onSelect,
 }: {
@@ -2139,6 +2145,8 @@ function DecidedRow({
   decision: PendingDecision;
   /** Its slot in the list window's index space — see `useListWindow`. */
   windowIndex: number;
+  /** Its place in the listbox, the queue above it counted — see `MessageRow.inSet`. */
+  inSet: { size: number; position: number };
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -2150,6 +2158,7 @@ function DecidedRow({
       spoken={rowBadge.spoken}
       id={sender.id}
       windowIndex={windowIndex}
+      inSet={inSet}
       from={displayAddressee(sender.from.name, sender.from.address)}
       address={displayAddressUnder(sender.from.name, sender.from.address)}
       time={newest?.time ?? sender.time}

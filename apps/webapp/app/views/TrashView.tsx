@@ -255,6 +255,7 @@ export function TrashView({
                   key={m.id}
                   id={m.id}
                   windowIndex={win.start + k}
+                  inSet={{ size: rows.length, position: win.start + k + 1 }}
                   from={senderName(m)}
                   address={rowAddress(m)}
                   {...avatarOf(m)}

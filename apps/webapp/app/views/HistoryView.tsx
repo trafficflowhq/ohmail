@@ -219,6 +219,7 @@ export function HistoryView({
           key={m.id}
           id={m.id}
           windowIndex={i}
+          inSet={{ size: tl.length, position: i + 1 }}
           from={senderName(m)}
           address={rowAddress(m)}
           {...avatarOf(m)}

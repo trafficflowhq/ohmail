@@ -450,12 +450,13 @@ export function ReceiptsView({
 
   /* `windowIndex` is passed explicitly by each mapper — never `.map(row)`, which would stamp the
      array index as the slot (the Ohbox's warning). */
-  const row = (m: EngineMessage, windowIndex: number) => (
+  const row = (m: EngineMessage, windowIndex: number, inSet: { size: number; position: number }) => (
     <MessageRow
       spoken={rowBadge.spoken}
       key={m.id}
       id={m.id}
       windowIndex={windowIndex}
+      inSet={inSet}
       from={senderName(m)}
       address={rowAddress(m)}
       {...avatarOf(m)}
@@ -513,11 +514,13 @@ export function ReceiptsView({
             slice. */}
         {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
         <ListRows ariaLabel={t("title")}>
-          {all.slice(freshFrom, freshTo).map((m, k) => row(m, freshFrom + k))}
+          {all.slice(freshFrom, freshTo).map((m, k) =>
+            row(m, freshFrom + k, { size: fresh, position: freshFrom + k + 1 }))}
         </ListRows>
         {showWaterline ? <Waterline label={tr("waterline")} meta={wlMeta} index={fresh} /> : null}
         <ListRows ariaLabel={tr("waterline")}>
-          {all.slice(fresh + seenFrom, fresh + seenTo).map((m, k) => row(m, seenBase + seenFrom + k))}
+          {all.slice(fresh + seenFrom, fresh + seenTo).map((m, k) =>
+            row(m, seenBase + seenFrom + k, { size: seenCount, position: seenFrom + k + 1 }))}
         </ListRows>
         {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
         {/* No-collapse rule: every receipt is a real row above — and the line is still a claim

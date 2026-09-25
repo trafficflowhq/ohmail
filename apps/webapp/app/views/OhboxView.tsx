@@ -24,6 +24,7 @@ import {
   MessageRow,
   ReadColumn,
   Spinner,
+  type MessageRowProps,
 } from "@ohmail/ui";
 import { MarkAllRead } from "../components/MarkAllRead";
 import { ShortcutHint } from "../shell/ShortcutHint";
@@ -1860,7 +1861,7 @@ export function OhboxView({
    * `data-index` from another list's counting, which the window would then measure as its own.
    * Every call site wraps them in a lambda for that reason.
    */
-  const rowWith = (m: EngineMessage, actions?: ReactNode, windowIndex?: number) => {
+  const rowWith = (m: EngineMessage, actions?: ReactNode, windowIndex?: number, inSet?: MessageRowProps["inSet"]) => {
     // the conversation's people, computed by the shell's bound selector and never in the row.
     // Only for a threaded row; `[]` for a single-sender thread or none, and the row then leads
     // with the one full-size circle it always did.
@@ -1874,6 +1875,7 @@ export function OhboxView({
       key={m.id}
       id={m.id}
       windowIndex={windowIndex}
+      inSet={inSet}
       from={sent ? sent.label : senderName(m)}
       address={sent ? undefined : rowAddress(m)}
       {...(sent ? sent.avatar : avatarOf(m))}
@@ -1980,11 +1982,11 @@ export function OhboxView({
    * re-files under "Earlier" as one row. A row that animated on each member would be five slides, four ending where
    * they started.
    */
-  const groupRow = (g: OhboxRowGroup, windowIndex?: number, actions?: ReactNode) => {
+  const groupRow = (g: OhboxRowGroup, windowIndex?: number, actions?: ReactNode, inSet?: MessageRowProps["inSet"]) => {
     /* The slot travels through the singleton arm too: a conversation with one message on screen
        is still a conversation the reader asked to see again, and a Done that appeared only once
        a second member arrived would be a control that comes and goes with the mail. */
-    if (g.members.length === 1) return rowWith(g.members[0]!, actions, windowIndex);
+    if (g.members.length === 1) return rowWith(g.members[0]!, actions, windowIndex, inSet);
     const target = g.openTarget;
     const shown = g.latest;
     const voices = groupVoices(g);
@@ -2030,6 +2032,7 @@ export function OhboxView({
         key={`t:${g.key}`}
         id={target.id}
         windowIndex={windowIndex}
+        inSet={inSet}
         /* The fold SHOWS every member, so anything locating "the row where message X is"
            (the shell's flash after a search jump) must be able to match this row on any of
            them — `data-id` alone named only the lead. See MessageRow.memberIds. */
@@ -2268,7 +2271,8 @@ export function OhboxView({
         {/* THE WINDOW, ACROSS TWO GROUPS. Reserved height above, then each group's share of the
             mounted slice inside its own listbox, then reserved height below. A group whose rows
             are entirely outside the window renders neither its label nor an empty listbox — the
-            heading-over-nothing rule, kept as the window slides. */}
+            heading-over-nothing rule, kept as the window slides. Each row states its group's true
+            size and its place in it (`inSet`), because the listbox holds only the mounted share. */}
         {/* Resurfaced — pinned at the very top under its own quiet label, whole and outside the
             window (a scheduled set is small): not "this arrived" but "you asked to see this
             again now", so it earns its own heading. Every row here is drawn unread whatever its
@@ -2292,7 +2296,8 @@ export function OhboxView({
         {showNewLabel ? <ListGroupLabel group="new" index={0}>{t("newForYou")}</ListGroupLabel> : null}
         {newTo > newFrom ? (
           <ListRows multiSelectable ariaLabel={t("newForYou")}>
-            {groupedNew.slice(newFrom, newTo).map((g, k) => groupRow(g, newBase + newFrom + k))}
+            {groupedNew.slice(newFrom, newTo).map((g, k) =>
+              groupRow(g, newBase + newFrom + k, undefined, { size: newCount, position: newFrom + k + 1 }))}
           </ListRows>
         ) : null}
         {showPrevLabel ? (
@@ -2300,7 +2305,8 @@ export function OhboxView({
         ) : null}
         {prevTo > prevFrom ? (
           <ListRows multiSelectable ariaLabel={t("previouslySeen")}>
-            {groupedPrev.slice(prevFrom, prevTo).map((g, k) => groupRow(g, prevBase + prevFrom + k))}
+            {groupedPrev.slice(prevFrom, prevTo).map((g, k) =>
+              groupRow(g, prevBase + prevFrom + k, undefined, { size: prevCount, position: prevFrom + k + 1 }))}
           </ListRows>
         ) : null}
         {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}

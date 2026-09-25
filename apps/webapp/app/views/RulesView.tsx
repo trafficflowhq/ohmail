@@ -188,6 +188,8 @@ export interface RulesViewProps {
 
 export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
   const t = useTranslations("rules");
+  /* The list's name is the section's own heading, already on screen. */
+  const tSettings = useTranslations("settings");
   const toast = useToast();
 
   /**
@@ -390,7 +392,7 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
         {filtered.length === 0 ? (
           <p className="rules-empty">{t("noMatch")}</p>
         ) : (
-          <div className="rules-list">
+          <div className="rules-list" role="list" aria-label={tSettings("rules")}>
             {/* The rows above and below the window, as reserved height — empty elements rather
                 than a margin, so the scroller's scroll height and scrollbar match every row
                 mounted; `aria-hidden` because this is geometry. The open confirm is the one
@@ -398,7 +400,8 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
                 is read AT the rule it is about, and Cancel leaves the reader in place. It carries
                 no slot, so the spacers leave its height out: the error is one confirm (~2 rows),
                 inside the 8-row overscan; when the row scrolls out, the confirm unmounts and
-                returns with it — `open` state unaffected. */}
+                returns with it — `open` state unaffected. Each row states the filtered list's true
+                size and its place in it, because only the window's rows are mounted. */}
             {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
             {filtered.slice(win.start, win.end).map((rule, k) => {
               const what = whatOf(rule);
@@ -413,6 +416,9 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
                     className={openHere ? "rules-item editing" : "rules-item"}
                     data-rule-id={rule.id}
                     data-index={win.start + k}
+                    role="listitem"
+                    aria-setsize={filtered.length}
+                    aria-posinset={win.start + k + 1}
                   >
                     <span className="body">
                       <b className="what">{what}</b>

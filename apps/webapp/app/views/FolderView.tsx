@@ -289,6 +289,7 @@ export function FolderView({
                     <MessageRow
                       spoken={rowBadge.spoken}
                       id={m.id}
+                      inSet={{ size: ordered.length, position: index + 1 }}
                       from={senderName(m)}
                       address={rowAddress(m)}
                       {...avatarOf(m)}

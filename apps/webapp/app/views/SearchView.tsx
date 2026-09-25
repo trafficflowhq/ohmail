@@ -693,6 +693,10 @@ export function SearchView({
   /* THE STORE'S LIST — the walker's slots in the window: a row, a placeholder until its page lands
      (asked again by its own cursor after an eviction), or nothing where the row was deleted. */
   const storeSlots: ReactElement[] = [];
+  /* THE LIST'S SIZE AS A SCREEN READER HEARS IT — only a window of it is mounted: the walked
+     slots once the store's last page is in, the count the head states while that count is exact,
+     and unknown (-1) until then. A hit's position is its slot. */
+  const setSize = walker.atEnd() ? storeLength : filter === null && ready?.totalExact === true ? found : -1;
   for (let i = win.start; storeReady && i < win.end; i++) {
     const hit = storeHitAt(i);
     if (hit === "gone") storeSlots.push(<div key={`g${i}`} data-index={i} className="hit-gone" aria-hidden />);
@@ -704,6 +708,9 @@ export function SearchView({
           data-index={i}
           className={i === cursor ? "hit-w cur" : "hit-w"}
           data-hit={hit.message.id}
+          role="listitem"
+          aria-setsize={setSize}
+          aria-posinset={i + 1}
           {...(similarOn ? { "data-similar": "hit" } : {})}
           {...(i === cursor ? { "aria-current": "true" as const } : {})}
         >
@@ -830,9 +837,11 @@ export function SearchView({
                           <b>{t("similarHead")}</b> {t("similarHint")}
                         </div>
                       ) : null}
-                      {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
-                      {storeSlots}
-                      {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
+                      <div role="list" aria-label={t("title")}>
+                        {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
+                        {storeSlots}
+                        {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
+                      </div>
                     </>
                   ) : null}
                   {storeReady ? null : shownExact.map(({ hit }, i) => (

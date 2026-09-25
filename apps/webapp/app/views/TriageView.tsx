@@ -313,6 +313,7 @@ export function TriageView({
         key={m.id}
         id={m.id}
         windowIndex={index}
+        inSet={{ size: entries.length, position: index + 1 }}
         from={senderName(m)}
         address={rowAddress(m)}
         {...avatarOf(m)}
