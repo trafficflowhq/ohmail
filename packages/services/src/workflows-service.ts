@@ -117,7 +117,7 @@ export class WorkflowsService {
     // A proposal id routes to the materialize path — the workflow is
     // built from the (account-scoped) proposal, provenance 'proposed', enabled=false.
     if (body.fromProposalId !== undefined && body.fromProposalId !== null) {
-      return this.materialize(ctx, body.fromProposalId);
+      return this.materialize(ctx, body.fromProposalId, opts.idempotency);
     }
     const name = this.validName(body.name);
     const trigger = this.validTrigger(body.trigger);
@@ -148,7 +148,9 @@ export class WorkflowsService {
    * PATCH by the user), and flip the proposal to 'materialized'. `validateSteps`
    * still runs so a proposal that somehow carries a bad tool cannot be persisted.
    */
-  private async materialize(ctx: ServiceContext, proposalIdRaw: unknown): Promise<WorkflowDTO> {
+  private async materialize(
+    ctx: ServiceContext, proposalIdRaw: unknown, idempotency: IdempotencyClaim | null | undefined,
+  ): Promise<WorkflowDTO> {
     if (typeof proposalIdRaw !== "string" || proposalIdRaw.length === 0) {
       throw new ServiceError("validation_failed", 400, "fromProposalId must be a string");
     }
@@ -179,7 +181,11 @@ export class WorkflowsService {
       await tx.update(workflowProposals).set({ status: "materialized" })
         .where(eq(workflowProposals.id, proposalId));
 
-      return toWorkflowDTO(row!);
+      // The key commits with the row and the flip, as on the inline path: a retry after a lost
+      // 201 replays it instead of finding the proposal consumed and answering 404.
+      const dto = toWorkflowDTO(row!);
+      await claimOrLose(tx, ctx, idempotency, { status: 201, json: dto });
+      return dto;
     });
   }
 
