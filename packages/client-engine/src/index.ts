@@ -139,6 +139,7 @@ export {
 // Wire vocabulary + errors.
 export {
   CursorExpiredError,
+  SnapshotCursorRefusedError,
   MutationRejectedError,
   UnsupportedMutationError,
   FOLDER_OF_VIEW,
@@ -534,6 +535,9 @@ export {
   // How many backlog pages share one publish while a drain is catching up. Exported so the
   // guards read the shipped number rather than a copy of it.
   BACKLOG_PUBLISH_PAGES,
+  // How long a refused snapshot cursor holds off the next re-snapshot, first and at most.
+  SNAPSHOT_REFUSAL_HOLD_BASE_MS,
+  SNAPSHOT_REFUSAL_HOLD_CAP_MS,
   // The eager recent-window hydration bounds. Exported so the guards read the shipped numbers.
   EAGER_BODIES_MAX,
   EAGER_BODIES_SLICE,

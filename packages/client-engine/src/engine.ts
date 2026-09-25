@@ -50,6 +50,7 @@ import {
 import type { SearchTier } from "@trafficflow/core/search-rank";
 import {
   CursorExpiredError,
+  SnapshotCursorRefusedError,
   FOLDER_OF_VIEW,
   MAILBOX_TYPE,
   MutationRejectedError,
@@ -1765,6 +1766,15 @@ export const OUTBOX_UNKEYED_CREATE_TTL_MS = 24 * 60 * 60 * 1000;
 export const BACKLOG_PUBLISH_PAGES = 8;
 
 /**
+ * HOW LONG A REFUSED SNAPSHOT CURSOR HOLDS OFF THE NEXT RE-SNAPSHOT. A door that refuses the
+ * cursor its own snapshot just issued will refuse the next one too, and each attempt is a wipe
+ * and the whole window again: the Windows rig paid that on every drain for eleven hours. The hold
+ * doubles per consecutive refusal from the first figure to the second; an accepted pull ends it.
+ */
+export const SNAPSHOT_REFUSAL_HOLD_BASE_MS = 60_000;
+export const SNAPSHOT_REFUSAL_HOLD_CAP_MS = 30 * 60_000;
+
+/**
  * HOW MANY OF THE NEWEST MESSAGES THE EAGER PASS HYDRATES — 1 000, and it is now a measured number.
  *
  * The rule is fixed (2026-08-21): recent mail opens instantly. The number was not. Measured over a
@@ -2257,6 +2267,10 @@ export class OhmailEngine {
    * server to exactly one wasted request per engine, rather than one per drain forever.
    */
   private snapshotUnavailable = false;
+  /** Consecutive snapshots whose own cursor the door refused on the next pull; 0 after an accepted pull. */
+  private snapshotCursorRefusals = 0;
+  /** Until this instant a 410 is surfaced, the mirror kept, and no re-snapshot is taken. */
+  private resnapshotHeldUntilMs = 0;
   /**
    * HOW MANY MESSAGE ROWS THIS READER HAS TAKEN IN — see {@link OhmailEngine.receivedMessages}.
    * Counted where the rows ARRIVE, so eviction cannot move it, and written to {@link
@@ -2937,9 +2951,13 @@ export class OhmailEngine {
     // measured arithmetic. An explicit {@link EngineOptions.syncLimit} always wins (the test
     // seam), and a fresh resume keeps the server's default page, the deployed shape.
     const staleResume = this.isStaleResume();
-    await this.freshenStaleResume();
-    this.policyWalkFailed = false;
-    await this.rehydrateForPolicy();
+    // AFTER A REFUSED SNAPSHOT CURSOR, until a pull is accepted, the freshen and the tail walk are
+    // not read: both are snapshot reads over a mirror that IS the refused snapshot, and the drain
+    // stamp they key on is never written while every drain fails. The walk stays owed (the latch).
+    const refused = this.snapshotCursorRefusals > 0;
+    if (!refused) await this.freshenStaleResume();
+    this.policyWalkFailed = refused;
+    if (!refused) await this.rehydrateForPolicy();
     for (;;) {
       // COLD MIRROR + A SNAPSHOT ROUTE ⇒ TAKE THE SNAPSHOT INSTEAD OF REPLAYING THE LOG.
       //
@@ -2954,7 +2972,10 @@ export class OhmailEngine {
       const resumedIncomplete = this.store.getCursor() !== "0"
         && this.store.getMeta<string>(LAST_DRAIN_AT_META) === undefined;
 
-      if (this.store.getCursor() === "0" && this.snapshotFn) await this.runSnapshot();
+      // TRUE WHEN THIS ITERATION'S SNAPSHOT COMMITTED THE CURSOR THE PULL BELOW PRESENTS — the
+      // one cursor a door has no reason to refuse. See the 410 arm.
+      const snapshotIssued = this.store.getCursor() === "0" && this.snapshotFn !== null
+        && await this.runSnapshot();
 
       // Rules before mail, on the degraded bootstrap. The snapshot path delivers the whole rule set in page 1 ("a
       // partial rule set is worse than none"), so a mid-bootstrap render never sees a message whose sender's decision
@@ -2973,7 +2994,9 @@ export class OhmailEngine {
       try {
         // INSIDE the try, deliberately: a later prefetch page can 410 exactly as the delta can
         // (the horizon moves), and the recovery is the same one — reset, re-enter as a bootstrap.
-        if (this.snapshotFn && !rulesFirstDone
+        // Not after a refused snapshot cursor: that mirror is a COMPLETE snapshot, rules and all,
+        // which only reads as an interrupted bootstrap because no drain has settled since.
+        if (this.snapshotFn && !rulesFirstDone && !refused
             && (resumedIncomplete || (this.store.getCursor() === "0" && this.snapshotUnavailable))) {
           rulesFirstDone = true;
           await this.drainRulesFirst();
@@ -2990,6 +3013,21 @@ export class OhmailEngine {
           ...(this.types ? { types: this.types } : {}),
         });
       } catch (err) {
+        if (err instanceof CursorExpiredError) {
+          const at = this.now().getTime();
+          if (snapshotIssued) {
+            // THE DOOR REFUSED THE CURSOR ITS OWN SNAPSHOT JUST ISSUED. A second wipe and snapshot
+            // would be refused the same way, so the snapshot's rows stay, the defect is surfaced by
+            // name, and no re-snapshot is taken until the hold ends (doubling, capped).
+            this.snapshotCursorRefusals += 1;
+            this.resnapshotHeldUntilMs = at + Math.min(
+              SNAPSHOT_REFUSAL_HOLD_BASE_MS * 2 ** (this.snapshotCursorRefusals - 1),
+              SNAPSHOT_REFUSAL_HOLD_CAP_MS,
+            );
+            throw new SnapshotCursorRefusedError();
+          }
+          if (at < this.resnapshotHeldUntilMs) throw new SnapshotCursorRefusedError();
+        }
         if (err instanceof CursorExpiredError && !rebootstrapped) {
           // The once-per-drain guard stays exactly as it was: a SECOND 410 inside one drain is a
           // server that expires the cursor it just issued, and is surfaced rather than looped on.
@@ -3021,6 +3059,9 @@ export class OhmailEngine {
         }
         throw err;
       }
+      // An accepted page ends any hold: the door takes this mirror's cursor again.
+      this.snapshotCursorRefusals = 0;
+      this.resnapshotHeldUntilMs = 0;
       // READ THE HIGH-WATER BEFORE THE PAGE LANDS — it is the grace bound below, and one line
       // later it is gone.
       const highBefore = this.store.maxSeq();
@@ -3584,9 +3625,10 @@ export class OhmailEngine {
     });
   }
 
-  private async runSnapshot(): Promise<void> {
+  /** True when the last page committed the cursor; false when the route is absent or latched off. */
+  private async runSnapshot(): Promise<boolean> {
     const snapshot = this.snapshotFn;
-    if (!snapshot || this.snapshotUnavailable) return;
+    if (!snapshot || this.snapshotUnavailable) return false;
     let cursor: string | undefined;
     let applied = false;
     for (;;) {
@@ -3596,7 +3638,7 @@ export class OhmailEngine {
       } catch (err) {
         if (applied) throw err; // unsound to fall back — see the note above
         this.snapshotUnavailable = true;
-        return; // nothing was written; `since=0` takes over
+        return false; // nothing was written; `since=0` takes over
       }
       if (!applied) await this.claimSnapshotPrefix(page.asOfSeq);
       // Before the count and before the apply, so neither the received count nor the store ever
@@ -3625,7 +3667,7 @@ export class OhmailEngine {
       }
       applied = true;
       this.notify();
-      if (last) return;
+      if (last) return true;
       cursor = page.nextCursor as string;
     }
   }

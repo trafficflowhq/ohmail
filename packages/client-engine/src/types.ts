@@ -1479,6 +1479,19 @@ export class CursorExpiredError extends Error {
   }
 }
 
+/**
+ * The door refused the cursor its own snapshot had just issued — or a 410 arrived while the
+ * engine is still holding off after one. A defect of the door, never of the mirror: the engine
+ * keeps the snapshot's rows and re-snapshots only when the hold ends. A `CursorExpiredError`, so
+ * a reader that asks "was the cursor refused" still reads yes.
+ */
+export class SnapshotCursorRefusedError extends CursorExpiredError {
+  constructor(message = "the door refused the cursor its own snapshot issued") {
+    super(message);
+    this.name = "SnapshotCursorRefusedError";
+  }
+}
+
 /** A mutation the server (or adapter) refused. `retryable` gates the offline queue. */
 export class MutationRejectedError extends Error {
   readonly status: number | null;

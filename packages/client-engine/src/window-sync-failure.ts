@@ -19,6 +19,8 @@ export const WINDOW_SYNC_FAILURE_REASONS = [
   "aborted",
   /** The door's cursor was expired twice within one drain. */
   "cursor_expired",
+  /** The door refused the cursor its own snapshot had just issued, or the engine is holding off after one. */
+  "snapshot_cursor_refused",
   /** A page arrived that the engine could not read. */
   "protocol",
   /** The engine's own code threw while applying or pruning — a defect in the window, not a door. */
@@ -62,6 +64,7 @@ export function classifyWindowSyncFailure(err: unknown, attempt: number): Window
   if (status !== undefined) out.status = status;
   if (code !== undefined) out.code = code;
   if (errorClass === "SyncAbortedError" || errorClass === "AbortError") out.reason = "aborted";
+  else if (errorClass === "SnapshotCursorRefusedError") out.reason = "snapshot_cursor_refused";
   else if (errorClass === "CursorExpiredError") out.reason = "cursor_expired";
   else if (errorClass === "BridgeDeadlineError") out.reason = "bridge_deadline";
   else if (code === "network") out.reason = "transport";
