@@ -421,6 +421,13 @@ function withOneFlush(client: ReturnType<typeof postgres>): ReturnType<typeof po
 // client-side by POOLED_ACQUIRE_TIMEOUT_MS, because every server ceiling bounds a statement that
 // already HAS a connection.
 const pools = new Map<string, ReturnType<typeof postgres>>();
+/**
+ * ONE HANDLE PER POOL AND CEILING, not one per call. Callers memoise facts per handle (the search's
+ * pg_trgm probe and backfill marker, the knowledge base's probe), and the host asks for a handle on
+ * every request: a fresh one each time re-ran every such probe on every request, a round trip each
+ * through the pooler. A handle carries no request state — the drizzle session over the shared pool.
+ */
+const handles = new Map<string, PostgresJsDatabase<typeof schema>>();
 
 export function makePooledDb(
   url: string,
@@ -436,6 +443,10 @@ export function makePooledDb(
    */
   opts: { acquireTimeoutMs?: number; max?: number } = {},
 ): PostgresJsDatabase<typeof schema> {
+  const ceiling = opts.acquireTimeoutMs ?? POOLED_ACQUIRE_TIMEOUT_MS;
+  const key = JSON.stringify([url, ceiling]);
+  const known = handles.get(key);
+  if (known) return known;
   let pooled = pools.get(url);
   if (!pooled) {
     // `max` is read when this URL's pool is FIRST built; a later handle over it shares that pool.
@@ -445,10 +456,9 @@ export function makePooledDb(
     }));
     pools.set(url, pooled);
   }
-  return brandDialect(
-    drizzle(withAcquireCeiling(withOneFlush(pooled), opts.acquireTimeoutMs ?? POOLED_ACQUIRE_TIMEOUT_MS), { schema }),
-    "pg",
-  );
+  const handle = brandDialect(drizzle(withAcquireCeiling(withOneFlush(pooled), ceiling), { schema }), "pg");
+  handles.set(key, handle);
+  return handle;
 }
 
 /**
@@ -470,6 +480,7 @@ export function acquireCeilingHandle(
 }
 
 export async function closePooledDbs(): Promise<void> {
+  handles.clear();
   for (const p of pools.values()) await p.end({ timeout: 5 });
   pools.clear();
 }

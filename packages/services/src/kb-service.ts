@@ -3,6 +3,7 @@ import { kbEntries } from "@trafficflow/db";
 import { claimOrLose, withAccountTx, type IdempotencyClaim, type ServiceContext, type Db } from "./context.js";
 import { dialect, pgOnly } from "@trafficflow/db/dialect";
 import { ServiceError } from "./errors.js";
+import { storeProbe } from "./store-probe.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
 import { MAX_TAG_NAME_CHARS } from "./tags-service.js";
 import { SEARCH_QUERY_MAX_CHARS } from "./search-service.js";
@@ -60,12 +61,10 @@ function rowsOf<T>(result: unknown): T[] {
 // ("the caller's own probe of the deployment it is talking to"), because one dialect runs against
 // a database that has the extension and one that does not; the DEVICE is neither, and its answer
 // is a fact about the store rather than a property of a deployment.
-const trgmCache = new WeakMap<object, Promise<boolean>>();
+const trgmProbe = storeProbe();
 function hasTrgm(db: Db): Promise<boolean> {
   if (dialect(db).name !== "pg") return Promise.resolve(false);
-  const key = db as unknown as object;
-  let p = trgmCache.get(key);
-  if (!p) {
+  return trgmProbe(db as unknown as object, () =>
     /* A DECLARED POSTGRES-ONLY ARM, and it is unreachable above: the guard one line up answers
        `false` for any store that is not the server, so this statement is never composed there.
        It stays in the caller by the seam's own contract — the fuzzy member IS the trigram arm,
@@ -73,12 +72,8 @@ function hasTrgm(db: Db): Promise<boolean> {
        the dialect, which is why the seam takes it as an argument rather than guessing it. The
        question has no second spelling: `to_regprocedure` reads a Postgres catalog. */
     // scoped-by: reads a Postgres catalog only — an extension probe, no account rows
-    p = db.execute(pgOnly(sql`select to_regprocedure('word_similarity(text,text)') is not null as ok`))
-      .then((r) => Boolean(rowsOf<{ ok: boolean }>(r)[0]?.ok))
-      .catch(() => false);
-    trgmCache.set(key, p);
-  }
-  return p;
+    db.execute(pgOnly(sql`select to_regprocedure('word_similarity(text,text)') is not null as ok`))
+      .then((r) => Boolean(rowsOf<{ ok: boolean }>(r)[0]?.ok)));
 }
 
 /** pg_trgm word-similarity floor for the fuzzy degrade (Postgres default 0.3). */

@@ -7,6 +7,8 @@ import { boolLiteral, dialect, pgOnly, type Dialect, type SearchArm } from "@tra
 import { materializeMessages, materializePage, type MaterializeSource } from "./dto/materialize.js";
 import { clampLimit } from "./pagination.js";
 import { ServiceError } from "./errors.js";
+import { storeProbe } from "./store-probe.js";
+import { afterSettings } from "./settings-first.js";
 import { instantRefusal, readInstant } from "./instant.js";
 import type { MessageDTO } from "./dto/types.js";
 
@@ -267,9 +269,9 @@ function rowsOf<T>(result: unknown): T[] {
 const markerWritten = new WeakMap<object, Set<string>>();
 const MARKER_MEMO_MAX = 10_000;
 
-// pg_trgm presence is a property of the physical database, not the request; memoize
-// per Db handle so we probe `to_regprocedure` at most once per connection object.
-const trgmCache = new WeakMap<object, Promise<boolean>>();
+// pg_trgm presence is a property of the physical database, not the request: asked once per
+// handle, and a "no" asked again after a while (`storeProbe`), so a later install is seen.
+const trgmProbe = storeProbe();
 function hasTrgm(db: Db): Promise<boolean> {
   // ASKED ONLY OF A STORE THAT COULD ANSWER. `to_regprocedure` is a server function, so composing
   // this for the device store would not return `false` — it would fail to parse, during a search.
@@ -277,9 +279,7 @@ function hasTrgm(db: Db): Promise<boolean> {
   // database that HAS the extension and one that does not; the device is neither, and its answer
   // is a fact about the store.
   if (dialect(db).name !== "pg") return Promise.resolve(false);
-  const key = db as unknown as object;
-  let p = trgmCache.get(key);
-  if (!p) {
+  return trgmProbe(db as unknown as object, () =>
     /* A DECLARED POSTGRES-ONLY ARM, and it is unreachable above: the guard one line up answers
        `false` for any store that is not the server, so this statement is never composed there.
        It stays in the caller by the seam's own contract — the fuzzy member IS the trigram arm,
@@ -287,12 +287,8 @@ function hasTrgm(db: Db): Promise<boolean> {
        the dialect, which is why the seam takes it as an argument rather than guessing it. The
        question has no second spelling: `to_regprocedure` reads a Postgres catalog. */
     // scoped-by: reads a Postgres catalog only — an extension probe, no account rows
-    p = db.execute(pgOnly(sql`select to_regprocedure('word_similarity(text,text)') is not null as ok`))
-      .then((r) => Boolean(rowsOf<{ ok: boolean }>(r)[0]?.ok))
-      .catch(() => false);
-    trgmCache.set(key, p);
-  }
-  return p;
+    db.execute(pgOnly(sql`select to_regprocedure('word_similarity(text,text)') is not null as ok`))
+      .then((r) => Boolean(rowsOf<{ ok: boolean }>(r)[0]?.ok)));
 }
 
 /** What the store says before a search composes its arms: the backfill marker and pg_trgm. */
@@ -804,7 +800,7 @@ export class SearchService {
     markerWritten.set(handle, known);
     const tx = ctx.db as unknown as { transaction: <R>(f: (t: unknown) => Promise<R>) => Promise<R> };
     if (known.has(ctx.accountId)) {
-      return tx.transaction(async (t) => { await d.exec(t, setup); return fn(t, { built: true, trigram }); });
+      return tx.transaction((t) => afterSettings(t, d, setup, () => fn(t, { built: true, trigram })));
     }
     // Scoped by the caller's account like every read below: a marker is one account's fact.
     const marker = sql`exists (select 1 from ${accountSettings}
@@ -835,7 +831,7 @@ export class SearchService {
     });
     if (setup === null) return fn(ctx.db);
     const tx = ctx.db as unknown as { transaction: <R>(f: (t: unknown) => Promise<R>) => Promise<R> };
-    return tx.transaction(async (t) => { await d.exec(t, setup); return fn(t); });
+    return tx.transaction((t) => afterSettings(t, d, setup, () => fn(t)));
   }
 
   /** How many messages the union matches — ONE count over the union, each branch on its index. */
