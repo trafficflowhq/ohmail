@@ -142,8 +142,8 @@ export interface SearchResult {
   /** `false` when `total` is a lower bound: the page alone was asked for and an arm was cut. */
   totalExact: boolean;
   /**
-   * With `parts: "page"` or `"estimate"` and a cut arm: about how many match — the planner's
-   * estimate for each cut arm, the largest of them, read from statistics and no row.
+   * With `parts: "estimate"` and a cut arm: about how many match — the planner's estimate for
+   * each cut arm, the largest of them, read from statistics and no row. Never on a page.
    */
   totalEstimate?: number;
   /** This answer's server time in milliseconds. */
@@ -168,8 +168,6 @@ interface SearchPage {
   /** The fused candidates' count — the whole match set when no arm was cut. */
   candidates: number;
   cut: boolean;
-  /** When cut: the planner's estimate of the match set, from each cut arm's statistics. */
-  estimate: number | null;
 }
 
 /** The counts over the whole match set. */
@@ -500,7 +498,7 @@ export class SearchService {
    */
   async page(ctx: ServiceContext, opts: SearchOptions): Promise<SearchPage> {
     const q = SearchService.termOf(opts.q);
-    if (!q) return { items: [], tier: "exact", nextCursor: null, bounded: false, candidates: 0, cut: false, estimate: null };
+    if (!q) return { items: [], tier: "exact", nextCursor: null, bounded: false, candidates: 0, cut: false };
     const limit = SearchService.pageOf(opts.limit);
     const sort: SearchSort = opts.sort ?? "relevance";
     const cursor = opts.cursor ? decodeCursor(opts.cursor) : null;
@@ -518,11 +516,10 @@ export class SearchService {
       }
       return { tier: t, got: rows };
     });
-    const estimate = got.estimateOf === null ? null : await got.estimateOf();
     const items = got.items;
     const nextCursor = got.next === null ? null : encodeCursor({ ...got.next, t: tier } as SearchCursor);
     const bounded = sort === "relevance" && nextCursor === null && got.cut;
-    return { items, tier, nextCursor, bounded, candidates: got.candidates, cut: got.cut, estimate };
+    return { items, tier, nextCursor, bounded, candidates: got.candidates, cut: got.cut };
   }
 
   /**
@@ -534,7 +531,7 @@ export class SearchService {
     sort: SearchSort, limit: number, cursor: SearchCursor | null, built: StoreFacts,
   ): Promise<{
     items: MessageDTO[]; next: Omit<RelevanceCursor, "t"> | Omit<OrderedCursor, "t"> | null;
-    cut: boolean; candidates: number; estimateOf: (() => Promise<number>) | null;
+    cut: boolean; candidates: number;
   }> {
     const arms = this.arms(ctx, d, q, tier, built);
     // The page's arms read newest first off the History index or their own GIN — never a table
@@ -567,7 +564,6 @@ export class SearchService {
         items: page.map((r) => r.dto),
         next: rows.length > limit && last ? { k: "r", s: Number(last.keys[0]), d: dateOf(last.dto), i: last.dto.id } : null,
         cut, candidates,
-        estimateOf: cut && cursor === null ? () => this.estimateOf(ctx, d, where, arms, sizesOf, k, candidates) : null,
       };
     }
     if (cursor !== null && (cursor.k !== "o" || cursor.o !== sort)) {
@@ -589,7 +585,6 @@ export class SearchService {
       // A date order walks the whole match set, so its page says nothing about the count.
       cut: true,
       candidates: page.length,
-      estimateOf: null,
     };
   }
 
@@ -714,7 +709,6 @@ export class SearchService {
     if (parts === "page") {
       return {
         items: page.items, facets: null, total: page.candidates, tier: page.tier, totalExact: !page.cut,
-        ...(page.estimate !== null ? { totalEstimate: page.estimate } : {}),
         nextCursor: page.nextCursor, bounded: page.bounded, ms: ms(),
       };
     }
