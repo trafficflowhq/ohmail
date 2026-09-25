@@ -129,7 +129,7 @@ import type { ProfileIo } from "@trafficflow/core/adapters/organizer-profile";
 import {
   readMailboxLease, acquireLeasePermit, releaseMailboxClaim, cloudInstallId, CLOUD_DISPLAY_NAME,
   LeaseUnavailableError, leaseBlockReason, leaseStoodDown, DEFAULT_STALE_AFTER_MS, writeDoorOf,
-  cycleWriteAuthority,
+  cycleWriteAuthority, OrganizerStandDownError,
   type OrganizerWriteAuthority,
   type LeaseSelf, type LeasePeekCapableAdapter,
 } from "./lease.js";
@@ -3985,6 +3985,18 @@ export async function startWorkerWithLock(
               mailboxId: rt.mailboxId, accountId: rt.accountId, verdict: err.reason,
               reason: "a mail-server write was declined by the lease at the command — NOT counted "
                 + "toward maxSyncFailures; the next cycle's gate decides",
+            });
+            return;
+          }
+          /* A STAND-DOWN IS NOT A FAILING MAILBOX EITHER. The permit this cycle rode saw another
+             install take the mailbox and stopped the cycle at the page `stood_down_mid_cycle`
+             names. Counted, a handover walked a healthy mailbox toward quarantine; the next
+             cycle's gate demotes it and it goes on as a reader. */
+          if (err instanceof OrganizerStandDownError) {
+            log.info("sync_cycle_stood_down", {
+              mailboxId: rt.mailboxId, accountId: rt.accountId, verdict: err.reason,
+              reason: "another install took this mailbox during the cycle — NOT counted toward "
+                + "maxSyncFailures; the next cycle's gate reads the lease and demotes",
             });
             return;
           }
