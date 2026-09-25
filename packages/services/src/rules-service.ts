@@ -525,6 +525,13 @@ export class RulesService {
         );
       }
 
+      // THE PLACE, NOT ITS SPELLING: a rule stored before the News rename says `ohmail/Reads`, and
+      // `canonicalDestination` (the rename's alias table) makes it the same place as `ohmail/News`.
+      // A PATCH naming the place the rule already files to keeps the stored spelling, moves nothing
+      // and re-walks no backlog unless it asks.
+      if (set.destination !== undefined && before !== undefined
+        && canonicalDestination(before.destination) === set.destination) set.destination = before.destination;
+
       // Either half of "which mail does this rule claim, and where does it send it" moving is a
       // retroactive event. Compared against the STORED value, so a PATCH that re-sends the term it
       // already has costs nothing — the habit-click argument above, applied to the second term.

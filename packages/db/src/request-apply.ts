@@ -768,9 +768,21 @@ function ruleCreateDiff(found: FoundRule, want: ValidatedRuleCreate): Partial<ty
   const diff: Record<string, unknown> = {};
   for (const field of Object.keys(RULE_CREATE_STATE) as RuleCreateStateField[]) {
     const column = RULE_CREATE_STATE[field];
-    if (found[column] !== want[field]) diff[column] = want[field];
+    const same = field === "destination"
+      ? samePlace(found.destination, want.destination)
+      : found[column] === want[field];
+    if (!same) diff[column] = want[field];
   }
   return diff as Partial<typeof rulesTbl.$inferInsert>;
+}
+
+/**
+ * One place in either spelling: a rule stored before the News rename says `ohmail/Reads`, which
+ * {@link canonicalNewsSpelling} (this package's copy of the rename's alias table) reads as News.
+ * A request naming the place a rule already files to moves nothing and keeps the stored spelling.
+ */
+function samePlace(a: string, b: string): boolean {
+  return canonicalNewsSpelling(a) === canonicalNewsSpelling(b);
 }
 
 /**
@@ -851,7 +863,10 @@ export async function applyRuleRequest(
   }
 
   const set: Partial<typeof rulesTbl.$inferInsert> = { updatedAt: now };
-  if (payload.set.destination !== undefined) set.destination = payload.set.destination;
+  if (payload.set.destination !== undefined) {
+    set.destination = samePlace(payload.set.destination, found.destination)
+      ? found.destination : payload.set.destination;
+  }
   if (payload.set.priority !== undefined) set.priority = payload.set.priority;
   if (payload.set.enabled !== undefined) set.enabled = payload.set.enabled;
 
