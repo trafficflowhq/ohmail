@@ -165,7 +165,7 @@ function ordered(r: RuleDTO): OrderedRule {
 }
 
 /** Does `a` outrank `b` under the one order the router uses (`@trafficflow/core/rule-order`)? */
-function outranks(a: RuleDTO, b: RuleDTO): boolean {
+export function outranks(a: RuleDTO, b: RuleDTO): boolean {
   return compareRules(ordered(a), ordered(b)) < 0;
 }
 

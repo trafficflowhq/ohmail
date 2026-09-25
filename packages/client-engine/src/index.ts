@@ -210,6 +210,15 @@ export {
   type SenderActivity,
 } from "./consent-cutline.js";
 
+// The screening sheet's rule twins: the winner a press is read against, and what it writes.
+export {
+  pressOverTwins,
+  ruleTwins,
+  twinWinner,
+  type TwinPress,
+  type TwinPressState,
+} from "./rule-twins.js";
+
 // The Content Door's on-demand arm — the one session-body pattern (mechanics + the stored-body
 // wire vocabulary) every surface binds instead of re-deriving; see the module header.
 export {

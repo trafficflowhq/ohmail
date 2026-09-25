@@ -29,6 +29,7 @@ import {
   physicalFolderOf,
   presentationReader,
   presentsUnread,
+  pressOverTwins,
   retroPassWouldMove,
   readsPartition,
   receiptsByDay,
@@ -3622,12 +3623,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   /**
    * Screening from the open message — the rule ladder, mirrored from
    * `apps/webapp/app/shell/sender-screening.ts#planScreeningChange`: (1) a subject still waiting
-   * at the gate is decided with `screener_decide`, which carries the past-mail answer; (2) a
-   * term-free rule of the same kind already at the destination writes no new rule and is re-armed
-   * for the backlog when that answer is yes; (3) rules pointing elsewhere — every one — are
-   * retargeted; (4) otherwise one is written. The moves are the optimistic half, capped at 50,
-   * gated on `applyRetro` and narrowed by `retroPassWouldMove` — see {@link movePastMail}; the
-   * rule is awaited and reported, the moves roll their own rows back. Raw mirror reads.
+   * at the gate is decided with `screener_decide`, which carries the past-mail answer; (2) past
+   * the gate the twins decide through the one shared `pressOverTwins`. The moves are the
+   * optimistic half, capped at 50, gated on `applyRetro` and narrowed by `retroPassWouldMove` —
+   * see {@link movePastMail}; the rule is awaited and reported, the moves roll their own rows
+   * back. Raw mirror reads.
    */
   const screenSender = async (
     messageId: string, dest: Destination, scope: Scope, applyRetro = true,
@@ -3690,30 +3690,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       // move only when the person asked for it.
       movePastMail((x) => physicalFolderOf(x) !== FOLDER_OF_VIEW.screener && retroPassWouldMove(x, wanted));
     } else {
-      const standing = rulesList(raw).filter(
-        (r) =>
-          r.enabled &&
-          r.kind === scope &&
-          (r.subjectContains ?? "").trim() === "" &&
-          (r.bodyContains ?? "").trim() === "" &&
-          r.match.trim().toLowerCase() === match,
-      );
-      const retargets: EngineMutation[] = standing
-        .filter((r) => r.destination !== wanted)
-        .map((r) => ({ kind: "rule_update", ruleId: r.id, destination: wanted, applyRetro }));
-      /* A standing rule ALREADY at the destination writes nothing about the future — and, with the
-         past-mail option on, re-arms that rule for the backlog: an explicit `applyRetro: true` on a
-         PATCH whose destination did not move is the server's re-arm. Off, it writes nothing at all
-         and a habit-click stays free. The webapp's `planScreeningChange` ladder, verbatim. */
-      const rearms: EngineMutation[] = applyRetro
-        ? standing
-            .filter((r) => r.destination === wanted)
-            .map((r) => ({ kind: "rule_update", ruleId: r.id, destination: wanted, applyRetro: true }))
-        : [];
-      const writes: EngineMutation[] =
-        standing.length === 0
-          ? [{ kind: "rule_create", ruleKind: scope, match, destination: wanted, applyRetro }]
-          : [...retargets, ...rearms];
+      /* THE WEB SHEET'S LADDER, ONE FUNCTION: every twin elsewhere is retargeted, each one already
+         at the destination re-armed when the past-mail answer is yes (off, a habit-click writes
+         nothing), and one rule written when there is none. */
+      const { writes } = pressOverTwins(rulesList(raw), scope, match, wanted, applyRetro);
       ruled = Promise.all(writes.map((w) => watched(engine.mutate(w))));
       // The optimistic half: what the reader can see moves now; the server's pass does the rest.
       movePastMail((x) => retroPassWouldMove(x, wanted));

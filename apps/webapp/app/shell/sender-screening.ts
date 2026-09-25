@@ -14,6 +14,7 @@ import {
   FOLDER_OF_VIEW,
   consentIndex,
   decidedDestination,
+  pressOverTwins,
   retroPassWouldMove,
   rulesList,
   senderKey,
@@ -237,9 +238,9 @@ function subjectOf(messages: EngineMessage[]): ScreeningSubject {
  * sheet says a different true sentence for each:
  *  · `promoted`   — `POST /screener/:id` wrote it as part of the decision.
  *  · `created`    — `POST /rules` wrote a new one (the past-the-gate default).
- *  · `retargeted` — a rule for exactly this subject existed, pointing
- *                   somewhere else, and was PATCHed rather than duplicated.
- *  · `already`    — one already files this subject's mail there.
+ *  · `retargeted` — the rule that decides pointed somewhere else, and every
+ *                   rule for exactly this subject that did was PATCHed.
+ *  · `already`    — the rule that decides already files their mail there.
  *  · `none`       — the user opted out; the move is all that happens.
  */
 export type ScreeningRuleState = "promoted" | "created" | "retargeted" | "already" | "none";
@@ -249,8 +250,8 @@ export interface ScreeningPlan {
   mutations: EngineMutation[];
   /**
    * The prefix of {@link ScreeningPlan.mutations} that writes the rule — the SAME objects, so
-   * the two cannot disagree about what was dispatched. Empty for `promoted`, `already` and
-   * `none`. The caller awaits exactly these to decide what to claim; see {@link screeningToast}.
+   * the two cannot disagree about what was dispatched. Empty for `promoted` and `none`. The
+   * caller awaits exactly these to decide what to claim; see {@link screeningToast}.
    */
   ruleMutations: EngineMutation[];
   /** Which of the five things above happened. */
@@ -330,63 +331,21 @@ export function planScreeningChange(
 
   /**
    * The rule ladder, before the moves — the durable half lands first, so an interrupted sequence leaves a rule with
-   * mail on its way rather than moved mail with nothing remembering why. 1. A WAITING subject makes no `rule_create`;
-   * `decide` promotes one server-side, carrying the past-mail answer. 2. A rule already at the destination is re-armed
-   * for the backlog when that answer is yes, and otherwise left alone. 3. One pointing elsewhere is RETARGETED — every
-   * one: identical `manual` rules fall to an ID tie-break in `compareRules`, so leaving the old one makes "future mail
-   * files there too" a coin toss. 4. Otherwise, write one. A covering rule of the OTHER kind is not consulted (a new
-   * `sender` rule outranks a `domain` one). A subject-term rule (mail 0050) is never retargeted: it is one SLICE,
-   * deliberately built — it outranks the new broad rule for its slice, and the broad rule takes the rest.
+   * mail on its way rather than moved mail with nothing remembering why. A WAITING subject makes no rule write:
+   * `decide` promotes one, carrying the past-mail answer. Past the gate the twins decide ({@link pressOverTwins},
+   * the phone's own ladder): `already` only when the twin the router files by is at the destination, every twin
+   * elsewhere retargeted, one rule written when there is none. A rule of the OTHER kind is not consulted (a new
+   * `sender` rule outranks a `domain` one); a subject- or body-term rule is one SLICE and never a twin. The created
+   * rule's `match` and the moves below both come from `scope`, so a domain rule cannot ride one address's mail.
    */
-  const covering = makeRule && !promoted
-    // Neither term may be present (mail 0050/0051): a subject- or body-narrowed rule is the rule
-    // for one SLICE of the sender's mail, and retargeting it from a whole-sender click would
-    // destroy the split the user deliberately built — the note above, for both terms.
-    ? s.rules.filter((r) => r.kind === scope
-        && (r.subjectContains ?? "").trim() === ""
-        && (r.bodyContains ?? "").trim() === "")
-    : [];
   const ruleMutations: EngineMutation[] = [];
   let ruleState: ScreeningRuleState = "none";
-
   if (promoted) {
     ruleState = "promoted";
   } else if (makeRule) {
-    if (covering.some((r) => r.destination === wanted)) {
-      ruleState = "already";
-      // NOTHING TO WRITE ABOUT THE FUTURE — a rule already sends their mail there. The PAST is a
-      // different question, and it used to go unasked: the sheet promised the mail already here
-      // would follow and this branch emitted no mutation at all. With the option on, the covering
-      // rule is re-armed at the SAME destination (`applyRetro: true` on an unmoved rule is the
-      // server's re-arm); with it off nothing is written and a habit-click stays free.
-      if (applyRetro) {
-        for (const r of covering.filter((c) => c.destination === wanted)) {
-          ruleMutations.push({ kind: "rule_update", ruleId: r.id, destination: wanted, applyRetro: true });
-        }
-      }
-    } else if (covering.length > 0) {
-      ruleState = "retargeted";
-      for (const r of covering) {
-        ruleMutations.push({ kind: "rule_update", ruleId: r.id, destination: wanted, applyRetro });
-      }
-    } else {
-      ruleState = "created";
-      ruleMutations.push({
-        kind: "rule_create",
-        // THE RULE'S SUBJECT AND THE MAIL THAT MOVES COME FROM THE SAME `scope`, and that is
-        // the whole guard. `decide` was once caught computing the mail to move BY ADDRESS
-        // regardless of scope, so a domain rule moved one sender's mail and stranded the rest
-        // behind a gate whose own rule already let them through. Here `match` is derived from
-        // `scope` and the moves below are taken from `subject` — which IS `s.scopes[scope]` —
-        // so the two cannot be given different subjects without changing both lines.
-        ruleKind: scope,
-        match: ruleMatchOf(s, scope),
-        destination: wanted,
-        // The retroactive half, and it is the DEFAULT. The server stamps the request and
-        // the worker walks the backlog; nothing about it happens in this process.
-        applyRetro,
-      });
-    }
+    const press = pressOverTwins(s.rules, scope, ruleMatchOf(s, scope), wanted, applyRetro);
+    ruleState = press.state;
+    ruleMutations.push(...press.writes);
   }
   mutations.push(...ruleMutations);
 
