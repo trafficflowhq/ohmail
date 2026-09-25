@@ -10,7 +10,7 @@ import {
   openLocalDb, type LocalDb, type LocalDbOpenPhase, type MigrationProgress, type OpenLocalDb,
 } from "./db.js";
 import { ensureLocalWorld, type LocalWorld } from "./identity.js";
-import { mintLaunchBearer } from "./launch-bearer.js";
+import { launchSessionExpiredResponse, mintLaunchBearer } from "./launch-bearer.js";
 import {
   createCloudAuth, loadSealedTokens, sealTokens, ACCOUNT_ERASED,
   type CloudAuth, type CloudSessionReading, type CloudTokens,
@@ -887,7 +887,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       ...(config.displayName ? { displayName: config.displayName } : {}),
       now: now(),
     });
-    const session = await mintLaunchBearer(db, world, now());
+    const session = await mintLaunchBearer(db, world, now(), log);
     // One phase, both identity writes — see the same two lines in `engine.ts`.
     const worldMs = Date.now() - tWorld;
 
@@ -1309,11 +1309,13 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       }
 
       // Everything else requires the launch bearer: held in memory (`launch-bearer.ts`), and any
-      // other token asks the same `resolveSession` the hosted chain runs.
+      // other token asks the same `resolveSession` the hosted chain runs. This launch's own bearer,
+      // ended, is refused BY NAME — the local door's code, so the window reads one state on both.
       const header = req.headers.get("authorization");
       const token = header && /^Bearer\s+/i.test(header) ? header.replace(/^Bearer\s+/i, "").trim() : "";
-      const decided = token ? session.decide(token, now()) : "refused";
-      const core = decided === "refused" ? null
+      const decided = token ? await session.decide(token, now()) : "unknown";
+      if (decided === "refused") return launchSessionExpiredResponse();
+      const core = !token ? null
         : decided === "unknown" ? await resolveSession(db, token, now()) : decided.held;
       if (!core) return json({ error: { code: "unauthorized", message: "authentication required" } }, 401);
 

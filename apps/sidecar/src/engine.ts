@@ -193,9 +193,10 @@ export type OpenLocalDbFn = (
 ) => Promise<OpenLocalDb>;
 import {
   endLegacyOrganizerPauses, ensureLocalWorld, loadLocalRoster, loadUnattachedLocalRoster,
-  mintLaunchSession, resolveExpiredLaunchSession,
+  resolveExpiredLaunchSession,
   type LocalRosterRow, type LocalWorld,
 } from "./identity.js";
+import { launchSessionExpiredResponse, mintLaunchBearer } from "./launch-bearer.js";
 // ONE RUNTIME PER MAILBOX, held in a map. The record, the map and the seed decision live in
 // `roster.ts`; what stays here is the assembly that fills one in and the routes that add and
 // remove them. See that file's header for what is per mailbox and what is per install.
@@ -1620,7 +1621,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     const statisticsUpkeep = createStatisticsUpkeep(() => opened.analyzeSearchIfStale());
     const tWorld = Date.now();
     const world = await ensureLocalWorld(db, { address, ...(config.displayName ? { displayName: config.displayName } : {}), now: now() });
-    const session = await mintLaunchSession(db, world, now());
+    const session = await mintLaunchBearer(db, world, now(), log);
     // The two identity writes, together: the mailbox row this install serves and the launch
     // session the shell will authenticate with. Measured as one phase because they are one
     // question — what it costs to establish who this launch is — and neither is separable from
@@ -7131,6 +7132,18 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       sessionToken: session.token,
       handle: async (req) => {
         attention.note(req.method, new URL(req.url).pathname);
+        /* THE WINDOW'S BEARER IS RENEWED BEFORE ANY DOOR READS THE STORE (`launch-bearer.ts`), so
+           a window left open does not expire under the person. Ended — its row revoked, or past
+           its expiry with the store refusing the renewal — it is refused BY NAME on every route,
+           as on the Cloud door. A fault here (the clock) falls through to the pipeline, whose
+           envelope answers and logs it. */
+        const auth = req.headers.get("authorization") ?? "";
+        const presented = /^Bearer\s+/i.test(auth) ? auth.replace(/^Bearer\s+/i, "").trim() : "";
+        let refused = false;
+        try {
+          refused = presented !== "" && (await session.decide(presented, now())) === "refused";
+        } catch { /* the pipeline below meets the same fault inside its envelope */ }
+        if (refused) return launchSessionExpiredResponse();
         /* THE WINDOW'S OWN PULL FAILURE, into this log. Its own door, ahead of the local-action
            chain: it carries no mailbox, writes nothing, and is authorised by the same launch
            bearer every local door reads. See `window-report.ts`. */
@@ -7265,13 +7278,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           const live = token ? await resolveSession(db, token, now()) : null;
           /* ── THE WAY OUT OF A BROKEN SESSION MAY NOT DEPEND ON IT ─────────────────────────
            *
-           * The launch bearer has no refresh ceremony, so after a day it expires and every route
-           * here answers 401 — SIGN OUT with them, which made the one action that ends a broken
-           * session need the broken thing. Its life is NOT extended: this asks the expiry
-           * question only for the sign-out door, and only once the ordinary resolution has said
-           * no. Every other route still refuses at the same minute it always did, and the
-           * credential is cleared on this path alone — never on a 401 from anywhere else.
-           * See {@link resolveExpiredLaunchSession} for what stays required. */
+           * The launch bearer renews while it is used (`launch-bearer.ts`); a session that ended
+           * anyway answers 401 on every route — SIGN OUT with them, which made the one action that
+           * ends a broken session need the broken thing. So this asks the expiry question only for
+           * the sign-out door, and only once the ordinary resolution has said no. Every other route
+           * still refuses, and the credential is cleared on this path alone — never on a 401 from
+           * anywhere else. See {@link resolveExpiredLaunchSession} for what stays required. */
           const staleLaunch = live === null && token !== ""
             ? await resolveExpiredLaunchSession(db, token)
             : null;
@@ -7298,17 +7310,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                check the mail server right now" — a silence that reads as no new mail while the
                day-old session quietly refused every poll. Named, so the row can say what
                happened and what to press. */
-            return new Response(
-              JSON.stringify(staleLaunch
-                ? {
-                    error: {
-                      code: "launch_session_expired",
-                      message: "this install's sign-in expired; sign in again to keep reading mail",
-                    },
-                  }
-                : { error: { code: "unauthorized", message: "authentication required" } }),
-              { status: 401, headers: { "content-type": "application/json" } },
-            );
+            return staleLaunch
+              ? launchSessionExpiredResponse()
+              : new Response(
+                JSON.stringify({ error: { code: "unauthorized", message: "authentication required" } }),
+                { status: 401, headers: { "content-type": "application/json" } },
+              );
           }
           if (staleLaunch && live === null) {
             log("local_sign_out_on_expired_launch", {

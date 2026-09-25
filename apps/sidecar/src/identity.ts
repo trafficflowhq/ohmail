@@ -445,9 +445,9 @@ export interface LaunchSession {
 
 /**
  * Revoke every stale LAUNCH session the database still holds, then mint one for this launch.
- * `accessExpiresAt` is a day, not Cloud's 15 minutes: there is no refresh ceremony and no user to
- * re-authenticate, so a short expiry would only stop the app while open — the real bound is the
- * process (the token is never written and the next launch revokes what it finds). The revoke is
+ * `accessExpiresAt` is a day, not Cloud's 15 minutes, and `launch-bearer.ts` renews it while the
+ * bearer is used: there is no user to re-authenticate, so an expiry would only stop the app while
+ * open — the real bound is the process (the token is never written; the next launch revokes). The revoke is
  * narrowed to `deviceId IS NULL`, and that is load-bearing: `establishPairedDevice` (Phase 3) mints
  * a REMOTE device's session into this same table, so a blanket sweep unpaired every phone on every
  * desktop restart (`pairing-local.e2e.test.ts`, watched red). The discriminator is structural — a
@@ -491,19 +491,13 @@ export async function mintLaunchSession(
 }
 
 /**
- * IS THIS THIS INSTALL'S OWN LAUNCH BEARER, EXPIRED? — the one question the sign-out door asks
- * that {@link resolveSession} cannot answer, because expiry is the very thing it refuses on.
- *
- * Leave the app open for a day. The launch token cannot be refreshed — there is no ceremony and
- * no user to re-authenticate — so it expires, every route answers 401, and SIGN OUT answered 401
- * with them: the one action that ends a broken session needed the broken thing, and the only way
- * out was a restart nothing mentioned. The way out of a broken session may never depend on it.
- *
- * So the sign-out door asks this instead, and NOTHING ELSE DOES. The token's life is not
- * extended; every other route still refuses at the same minute it always did. What is relaxed is
- * the clock alone — the row must still hash to a real session, be UNREVOKED, and carry no
- * `deviceId`, which is the structural discriminator: a paired device's session is minted into
- * this same table and its lifecycle is its own, so a phone's bearer can never open this door.
+ * IS THIS THIS INSTALL'S OWN LAUNCH BEARER, EXPIRED? — the one question the sign-out door asks that
+ * {@link resolveSession} cannot answer, because expiry is the very thing it refuses on. A launch
+ * session that expired anyway answers 401 on every route, and SIGN OUT did with them: the way out
+ * of a broken session may never depend on it. So the sign-out door asks this, and NOTHING ELSE
+ * DOES. What is relaxed is the clock alone — the row must still hash to a real session, be
+ * UNREVOKED, and carry no `deviceId`, the structural discriminator: a paired device's session is
+ * minted into this same table with its own lifecycle, so a phone's bearer can never open this door.
  */
 export async function resolveExpiredLaunchSession(
   db: LocalDb, token: string,
