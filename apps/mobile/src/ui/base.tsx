@@ -411,7 +411,8 @@ export function Button({
           paddingVertical: 8,
           borderRadius: t.radius.pill,
           backgroundColor: solid ? t.c.accent : variant === "quiet" ? "transparent" : t.c.panel,
-          opacity: disabled === true ? 0.45 : pressed ? 0.86 : 1,
+          // Disabled, Tap lays DISABLED_FACE over this: one dim rule for every control.
+          opacity: pressed ? 0.86 : 1,
         },
         variant === "plain" ? t.lift("l0") : null,
         style,
@@ -432,6 +433,21 @@ export function Button({
  * `hitSlop` grows the touch rectangle, never the box — and a caller passing its own
  * `hitSlop` still wins.
  */
+/**
+ * THE FACE OF A CONTROL THAT CANNOT BE PRESSED NOW. A control a screen reader hears as disabled
+ * looks disabled: Tap and TapRow lay this over the caller's style when either door says so —
+ * Pressable's own `disabled`, or the state key Button hands it so a dimmed verb keeps its touch.
+ */
+export const DISABLED_FACE = { opacity: 0.45 } as const;
+
+function isDisabled(p: PressableProps): boolean {
+  return p.disabled === true || p.accessibilityState?.disabled === true;
+}
+
+function dimmed(style: PressableProps["style"]): PressableProps["style"] {
+  return typeof style === "function" ? (state) => [style(state), DISABLED_FACE] : [style, DISABLED_FACE];
+}
+
 export function Tap({ style, children, hitSlop, onLayout, ...rest }: PressableProps) {
   const [height, setHeight] = useState(0);
   const measure = useCallback(
@@ -447,7 +463,7 @@ export function Tap({ style, children, hitSlop, onLayout, ...rest }: PressablePr
       hitSlop={hitSlop ?? (height > 0 ? hitSlopFor(height) : MIN_SLOP)}
       onLayout={measure}
       {...rest}
-      style={style}
+      style={isDisabled(rest) ? dimmed(style) : style}
     >
       {children as ReactNode}
     </Pressable>
@@ -473,6 +489,7 @@ export function TapRow({
           backgroundColor: pressed ? t.c.tint : selected ? t.c.tint : "transparent",
         },
         style as ViewStyle,
+        isDisabled(rest) ? DISABLED_FACE : null,
       ]}
     >
       {children as ReactNode}

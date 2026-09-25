@@ -11,12 +11,12 @@
 import { useEffect, useRef, useState } from "react";
 import { JUNK_REFILL_BOUND_MS } from "../state/live";
 import { junkLeaving, withheldNote } from "./body-note";
-import { ActivityIndicator, Platform, Pressable, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import { ActivityIndicator, Platform, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { useWorld, type WorldMail } from "../state/world";
 import { shareAttachmentBytes } from "../mail/open-attachment-native";
-import { Chip, Panel, Screen, Scroller, Txt } from "./base";
+import { Chip, Panel, Screen, Scroller, Tap, Txt } from "./base";
 import { DetailBar } from "./chrome";
 import { Icon } from "./Icon";
 import { MailBodyFrame } from "./MailBodyFrame";
@@ -290,7 +290,7 @@ function AttachmentTiles({ m }: { m: WorldMail }) {
     <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 20 }}>
       {tiles.map((a) => (
         <View key={a.id}>
-          <Pressable
+          <Tap
             accessibilityRole="button"
             accessibilityLabel={a.inline ? Copy.attachmentEmbeddedLabel(a.filename) : a.filename}
             disabled={busy !== null}
@@ -324,7 +324,7 @@ function AttachmentTiles({ m }: { m: WorldMail }) {
                 {Copy.attachmentEmbedded}
               </Txt>
             ) : null}
-          </Pressable>
+          </Tap>
           {note?.id === a.id ? (
             <Txt variant="caption" tone="ink3" accessibilityRole="alert" style={{ marginTop: 4 }}>
               {note.kind === "too_large"
