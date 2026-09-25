@@ -13,7 +13,7 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Avatar, Badge, Button, Icon } from "@ohmail/ui";
-import { isForwardedByUs, isProtectedMessage, type EngineMessage } from "@ohmail/client-engine";
+import { forwardOffered, isForwardedByUs, isProtectedMessage, type EngineMessage } from "@ohmail/client-engine";
 import { AwayMark } from "./AwayMark";
 import { isPreviewable } from "../components/AttachmentPreview";
 import { AttachmentStrip } from "../components/AttachmentStrip";
@@ -125,24 +125,16 @@ export function MessageHeader({
     }
   }
   /**
-   * Forward, under the same two predicates the pill applies (`MessagePane.ActionBar#canForward`).
-   * `chrome.forward` alone was merely permissive while this menu was Forward's only door; the verb
-   * now also stands in the action bar, and two surfaces offering it under DIFFERENT conditions is
-   * worse than either rule: on a `no_forward` message the bar withholds Forward while the menu
-   * offers it, then a refusal toast. `no_forward` — the send path answers 403 (an OTP or a reset
-   * link must not leave the account inside a quote block); off-mirror — `AppShell.openForward`
-   * returns silently when the row is absent, so the item would be a no-op with no reason given.
-   * Degrading by omission is what this menu already does for every other unwired verb.
+   * Forward, under the one predicate every surface reads (`forwardOffered`): always offered on a
+   * message on screen. A `no_forward` message asks once when pressed and an off-mirror row has its
+   * body fetched first — both inside `openForward`, so this item, the bar and `⇧F` cannot disagree.
+   * Absent only where no compose seam is wired.
    */
-  if (
-    chrome.forward &&
-    message.sensitivity?.no_forward !== true &&
-    chrome.mirrorHolds?.(message.id) !== false
-  ) {
+  if (chrome.forward && forwardOffered(message)) {
     menuItems.push({
       id: "forward",
       label: tm("menuForward"),
-      run: () => { closeMenu(); chrome.forward!(message.id); },
+      run: () => { closeMenu(); chrome.forward!(message.id, message); },
     });
   }
 

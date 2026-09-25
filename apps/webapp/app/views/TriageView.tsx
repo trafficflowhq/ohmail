@@ -14,7 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { rowThreadOf } from "../shell/row-thread";
-import type { EngineMessage, TagDTO, TriagePileEntry, TriagePiles } from "@ohmail/client-engine";
+import { forwardOffered, type EngineMessage, type TagDTO, type TriagePileEntry, type TriagePiles } from "@ohmail/client-engine";
 import {
   Button,
   Icon,
@@ -182,9 +182,9 @@ export function TriageView({
         { chord: "e", key: "park", action: "aside" },
         { chord: "b", key: "resurface", action: "resurface" },
         { chord: "r", key: "reply", action: "reply" },
-        ...(shown.sensitivity?.no_forward === true
-          ? []
-          : [{ chord: "shift+f", key: "forward", action: "forward" }] as const),
+        ...(forwardOffered(shown)
+          ? [{ chord: "shift+f", key: "forward", action: "forward" }] as const
+          : []),
       ] as const)
     : [];
   useKeyBindings([

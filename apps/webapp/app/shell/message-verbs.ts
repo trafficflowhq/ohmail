@@ -26,7 +26,7 @@
  */
 
 import { useTranslations } from "next-intl";
-import type { EngineMessage } from "@ohmail/client-engine";
+import { forwardOffered, type EngineMessage } from "@ohmail/client-engine";
 import { useKeyBindings } from "./keymap";
 /* The one cursor placer, claimed at `view` scope so this seam answers instead of the shell,
    which holds no cursor for the views that mount it. See `cursor-placer.ts`. */
@@ -172,13 +172,12 @@ export function useMessageVerbs(input: MessageVerbsInput): void {
       run: () => shown && onAction("reply_all", shown),
     },
     {
-      /* `⇧F` carries the sensitivity gate its button carries (`ActionBar#canForward`). The
-         mirror half of the shell's gate is not repeated: a row this view is showing is a row it
-         resolved out of the list it renders. */
+      /* `⇧F` reads the one predicate its button reads (`forwardOffered`); the press asks or
+         fetches first in the shell's `openForward`, never here. */
       chord: "shift+f",
       group: "message",
       label: labels.forward,
-      disabled: none || shown!.sensitivity?.no_forward === true,
+      disabled: none || !forwardOffered(shown),
       ...parked,
       run: () => shown && onAction("forward", shown),
     },

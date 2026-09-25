@@ -634,12 +634,12 @@ export function useShellVerbs({
           /**
            * THE BAR'S FORWARD, answered by the seam the panel ⋯ menus have always dispatched.
            *
-           * NOT `toggleReply`-shaped, deliberately: `openForward` REFUSES a `no_forward` original
+           * NOT `toggleReply`-shaped, deliberately: `openForward` ASKS before a `no_forward` original
            * with a toast, and a toggle would read that refusal as "the editor is already open on
            * this message, close it" on the second press. It is also not a second implementation —
            * one open, one refusal, one scratch lane.
            */
-          openForward(m.id);
+          openForward(m.id, m);
           break;
         case "draft":
           /**

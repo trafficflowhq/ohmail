@@ -15,6 +15,7 @@ import type { useTranslations } from "next-intl";
 import {
   addressBook,
   draftBodyKnown,
+  forwardPress,
   forwardSubject,
   pressVerdict,
   replySubject,
@@ -25,6 +26,7 @@ import {
   type EngineDraft,
   type EngineMessage,
   type EngineMutation,
+  type ForwardAsk,
   type EntityReader,
   type OhmailEngine,
   type SendAndDonePlan,
@@ -195,6 +197,14 @@ export function useShellCompose({
    * which mutation `sendReply` builds.
    */
   const [replyMode, setReplyMode] = useState<"reply" | "forward">("reply");
+  /**
+   * THE FORWARD'S ASK, per open: which message it is, why it was flagged (`forwardPress`), and
+   * whether the person confirmed. `null` for a forward that needs no ask. The send carries
+   * `forwardConfirmed` only for the message this names, confirmed; the dock shows the ask until then.
+   */
+  const [forwardGate, setForwardGate] = useState<
+    { id: string; ask: ForwardAsk; confirmed: boolean; seed: EngineMessage | null } | null
+  >(null);
   const [replyBody, setReplyBody] = useState<RichValue>(EMPTY_RICH);
   /**
    * THE REPLY'S AUDIENCE AS EDITED — `null` while the computed envelope stands, which is
@@ -334,29 +344,42 @@ export function useShellCompose({
   });
 
   /**
-   * The inline forward — the reply dock in forward mode, inside the thread.
-   * Replaces the navigation `forwardMessage` used to make (forwarding one
-   * message of a conversation meant leaving it for the compose screen).
-   * The wire is unchanged — the same `mail_send { forwardOf }`, the server
-   * builds the quote and streams the original's attachments, recipients are
-   * the user's — only the surface moved: the reply's editor, docked at the
-   * thread's foot. The `no_forward` refusal stays client-side courtesy AND
-   * server-side law.
+   * The inline forward — the reply dock in forward mode, inside the thread, on the same
+   * `mail_send { forwardOf }` wire (the server quotes the original and streams its attachments).
+   * FORWARD IS ALWAYS OFFERED (`forwardPress`): a `no_forward` message opens the dock on its
+   * one-sentence ask, and a row the mirror does not hold has its body fetched through the reader's
+   * door first. The server still refuses an unconfirmed `no_forward` forward.
    */
-  const openForward = useStableCallback((messageId: string) => {
-    const m = engine.read().get<EngineMessage>("message", messageId);
+  const openForward = useStableCallback((messageId: string, seed?: EngineMessage) => {
+    const held = engine.read().get<EngineMessage>("message", messageId);
+    const m = held ?? engine.verbRead().get<EngineMessage>("message", messageId)
+      ?? (seed?.id === messageId ? seed : undefined);
     if (!m) return;
-    if (m.sensitivity?.no_forward) {
-      toast(t("compose.forwardRefused"));
-      return;
-    }
-    setReplyAll(false);
-    setReplyMode("forward");
-    setReplyTo(messageId);
-    setReplyBody(readReplyDraft(replyDraftKey("forward", messageId)));
-    // The same mobile rule `openReply` states: below 900px the dock lives in the reader.
-    if (readColumnHidden()) setReaderFor(messageId);
+    const press = forwardPress(m, held != null);
+    const open = () => {
+      setForwardGate(press.ask === null && held != null
+        ? null
+        : { id: messageId, ask: press.ask ?? "sensitive", confirmed: press.ask === null, seed: held ? null : m });
+      setReplyAll(false);
+      setReplyMode("forward");
+      setReplyTo(messageId);
+      setReplyBody(readReplyDraft(replyDraftKey("forward", messageId)));
+      // The same mobile rule `openReply` states: below 900px the dock lives in the reader.
+      if (readColumnHidden()) setReaderFor(messageId);
+    };
+    if (!press.fetch) { open(); return; }
+    void engine.hydrateBody(messageId, { urgent: true }).catch(() => undefined).then(open);
   });
+
+  /** The person answered the ask: the dock shows the editor, and the send carries the confirmation. */
+  const confirmForward = useStableCallback(() => {
+    setForwardGate((g) => (g && g.id === replyToRef.current ? { ...g, confirmed: true } : g));
+  });
+  /** The ask on screen now — only for the open forward it names, until it is confirmed. */
+  const forwardAsk: ForwardAsk | null =
+    forwardGate && !forwardGate.confirmed && replyMode === "forward" && replyTo === forwardGate.id
+      ? forwardGate.ask
+      : null;
 
   /**
    * CLOSING THE DOCK CANCELS ITS SEND, because the button says Cancel. `cancelCompose` has
@@ -835,7 +858,12 @@ export function useShellCompose({
        (see `pressSendAndDone`); a press that is refused at the door leaves an entry no answer
        will ever spend, and the next plain Send on the same lane must not inherit it. */
     sendDoneArm.current.delete(replyLaneOf(messageId));
-    const parent = reader.get<EngineMessage>("message", messageId) ?? null;
+    // A forward of a row the mirror does not hold reads the row its open resolved (`openForward`).
+    const fwdGate = replyMode === "forward" && forwardGate?.id === messageId ? forwardGate : null;
+    const parent = reader.get<EngineMessage>("message", messageId)
+      ?? (replyMode === "forward"
+        ? engine.verbRead().get<EngineMessage>("message", messageId) ?? fwdGate?.seed ?? null
+        : null);
     const parentMailbox = parent?.mailboxId ?? null;
     const from = resolveReplyFrom(fromOptions, parentMailbox, replyFromId);
     /**
@@ -872,6 +900,8 @@ export function useShellCompose({
      */
     if (replyMode === "forward") {
       if (!parent) return;
+      // An unanswered ask sends nothing: the dock shows the ask, not an editor, until confirmed.
+      if (fwdGate !== null && !fwdGate.confirmed) return;
       mailSend.send(
         // The signature seals into the forward's note, and the server appends the quoted
         // original AFTER the body it is handed (`send-service.ts`) — so the block the editor
@@ -885,6 +915,7 @@ export function useShellCompose({
           mailboxId: from.mailboxId ?? parent.mailboxId,
           ...(replyAttachments.length > 0 ? { attachments: replyAttachments } : {}),
           plan: forwardEnvelopePlan(replyEnvelope, fromOptions.map((o) => o.address)),
+          confirmed: fwdGate?.confirmed === true && parent.sensitivity?.no_forward === true,
         }), sigText, sigHtml),
         { surface: "inline" },
       );
@@ -1784,6 +1815,8 @@ export function useShellCompose({
     closeReply,
     compose,
     composeCloseRefusal,
+    confirmForward,
+    forwardAsk,
     composeFrom,
     discardDraft,
     draftRepliesHere,

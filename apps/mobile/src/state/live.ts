@@ -94,6 +94,8 @@ import {
   type ZonedComposition,
   resurfacedThreads,
   conversationSize,
+  forwardPress,
+  type ForwardAsk,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
 import { blobToBase64 } from "../mail/blob-base64";
@@ -398,8 +400,10 @@ export type WorldMail = Mail & {
    * {@link canReplyAll} is false.
    */
   replyAllHead: { to: string; cc: string } | null;
-  /** `sensitivity.no_forward` — the forward entry is ABSENT on such a message, never dead. */
+  /** `sensitivity.no_forward` — Forward is still offered; the press asks first (`forwardAsk`). */
   noForward: boolean;
+  /** Why a Forward press asks once before the composer opens (`forwardPress`); `null` opens it. */
+  forwardAsk: ForwardAsk | null;
   /** The tag ids on this message — what the tag sheet shows as checked. */
   labels: string[];
   /**
@@ -499,6 +503,7 @@ function toMail(reader: EntityReader, m: EngineMessage, v: WorldView): WorldMail
       ? { to: env.to.map(displayName).join(", "), cc: env.cc.map(displayName).join(", ") }
       : null,
     noForward: m.sensitivity?.no_forward === true,
+    forwardAsk: forwardPress(m).ask,
     labels: [...(m.labels ?? [])],
     ...(m.rationale ? { rationale: m.rationale } : {}),
     ...(m.trackerNote ? { trackerNote: m.trackerNote } : {}),
@@ -2296,7 +2301,7 @@ export interface LiveWorldActions {
    * `attachments` on either verb ride the same mutation the webapp composer sends —
    * base64 on `POST /drafts/:id/send`, nothing stored (`ComposeAttachment`'s own contract).
    */
-  sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null, attachments?: ComposeAttachment[], andDone?: boolean): Promise<SendResult>;
+  sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null, attachments?: ComposeAttachment[], andDone?: boolean, confirmed?: boolean): Promise<SendResult>;
   /**
    * A MAIL THAT ANSWERS NOTHING — the same `mail_send` with no parent: `inReplyTo` null,
    * no `forwardOf`, the sending mailbox named explicitly because there is no parent to derive
@@ -3523,12 +3528,13 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return r.outcome;
   };
 
-  const sendForward = async (messageId: string, to: EmailAddress[], body: string, sig: string | null = null, attachments: ComposeAttachment[] = [], andDone = false): Promise<SendResult> => {
+  const sendForward = async (messageId: string, to: EmailAddress[], body: string, sig: string | null = null, attachments: ComposeAttachment[] = [], andDone = false, confirmed = false): Promise<SendResult> => {
     const m = messageOf(messageId);
-    // The `no_forward` refusal is client-side courtesy AND server-side law — the sheet never
-    // offers the verb on such a message, and this arm refuses it too rather than trusting the
-    // UI. Told, for the reply belt's reason: a return before `sent()` renders nothing.
-    if (!m || to.length === 0 || m.sensitivity?.no_forward) {
+    // A `no_forward` original leaves only after the sheet's ask was answered (`forwardPress`);
+    // the server refuses it without `forwardConfirmed` too. Told, for the reply belt's reason: a
+    // return before `sent()` renders nothing.
+    const sensitive = m?.sensitivity?.no_forward === true;
+    if (!m || to.length === 0 || (sensitive && !confirmed)) {
       toast(refuse("replyFailed"));
       return { outcome: "failed" };
     }
@@ -3537,6 +3543,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         kind: "mail_send" as const,
         inReplyTo: null,
         forwardOf: messageId,
+        ...(sensitive && confirmed ? { forwardConfirmed: true } : {}),
         subject: forwardSubject(m.subject),
         // The mailbox the original arrived in — the same sender a reply gets from `enrich`.
         // A forward has no parent-derived From of its own, and the send refuses without one.
@@ -3830,7 +3837,7 @@ export interface WorldActions {
   ): Promise<SendResult>;
   /** Is Send + Done offered for this source? See {@link LiveWorldActions.sendAndDoneOffered}. */
   sendAndDoneOffered(messageId: string): boolean;
-  sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null, attachments?: ComposeAttachment[], andDone?: boolean): Promise<SendResult>;
+  sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null, attachments?: ComposeAttachment[], andDone?: boolean, confirmed?: boolean): Promise<SendResult>;
   /** A mail with no parent — see {@link LiveWorldActions.sendNew}. */
   sendNew(
     mailboxId: string | null,
@@ -3902,8 +3909,8 @@ export function stableActions(current: () => WorldActions): WorldActions {
     trashRestore: (id) => current().trashRestore(id),
     sendReply: (id, body, all, sig, sendAt, attachments, andDone) =>
       current().sendReply(id, body, all, sig, sendAt, attachments, andDone),
-    sendForward: (id, to, body, sig, attachments, andDone) =>
-      current().sendForward(id, to, body, sig, attachments, andDone),
+    sendForward: (id, to, body, sig, attachments, andDone, confirmed) =>
+      current().sendForward(id, to, body, sig, attachments, andDone, confirmed),
     sendNew: (mailboxId, to, subject, body, sig, sendAt, attachments) => current().sendNew(mailboxId, to, subject, body, sig, sendAt, attachments),
     sendAndDoneOffered: (id) => current().sendAndDoneOffered(id),
     withdrawSend: (key) => current().withdrawSend(key),

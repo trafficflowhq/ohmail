@@ -1124,7 +1124,6 @@
     "noSubject": "Kein Betreff",
     "sendingFromLastSession": "Diese Nachricht wird noch aus deiner letzten Sitzung gesendet. Sie verschwindet hier, sobald sie raus ist.",
     "forwardingNote": "Die Originalnachricht und ihre Anhänge kommen beim Senden dazu.",
-    "forwardRefused": "Diese Nachricht lässt sich nicht weiterleiten — sie enthält sensible Inhalte.",
     "attach": "Dateien anhängen",
     "attachCap": "Bis zu {size} insgesamt",
     "attachCapSurface": "Der Mailserver würde mehr annehmen; mehr kann ohmail von hier nicht senden.",
@@ -3122,6 +3121,16 @@
     "toastSentAndDone": "Gesendet · erledigt",
     "toastForwarded": "Weitergeleitet.",
     "forwardHead": "Weiterleiten — du wählst, wer sie bekommt",
+    "forwardAsk": {
+      "otp": "ohmail hat in dieser Nachricht einen Einmalcode erkannt.",
+      "verification": "ohmail hat diese Nachricht als Kontobestätigung erkannt.",
+      "password_reset": "ohmail hat diese Nachricht als Passwort-Zurücksetzung erkannt.",
+      "security_alert": "ohmail hat diese Nachricht als Sicherheitswarnung zu einem Konto erkannt.",
+      "sensitive": "ohmail hat diese Nachricht als vertraulich markiert.",
+      "question": "Trotzdem weiterleiten?",
+      "confirm": "Weiterleiten",
+      "cancel": "Abbrechen"
+    },
     "editSubject": "Betreff bearbeiten",
     "subjectAria": "Betreff dieser Antwort"
   },

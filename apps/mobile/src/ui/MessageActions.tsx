@@ -14,6 +14,7 @@ import {
   type LayoutChangeEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { forwardOffered, type ForwardAsk } from "@ohmail/client-engine";
 import { Copy } from "../copy";
 import { useLocale } from "../i18n/LocaleProvider";
 import { useTheme } from "../theme";
@@ -101,7 +102,19 @@ type Open =
   | "tag"
   | "screening"
   | "delete"
-  | { compose: "reply" | "replyAll" | "forward" };
+  | "forward-ask"
+  | { compose: "reply" | "replyAll" | "forward"; confirmed?: boolean };
+
+/** The ask's reason, read at render time so it follows the app's language. */
+function forwardAskSentence(ask: ForwardAsk): string {
+  switch (ask) {
+    case "otp": return Copy.forwardAskOtp;
+    case "verification": return Copy.forwardAskVerification;
+    case "password_reset": return Copy.forwardAskPasswordReset;
+    case "security_alert": return Copy.forwardAskSecurityAlert;
+    case "sensitive": return Copy.forwardAskSensitive;
+  }
+}
 
 export function MessageActions({
   m,
@@ -133,6 +146,8 @@ export function MessageActions({
 
   const a = w.actions;
   const close = () => setOpen(null);
+  /** Forward is always offered (`forwardOffered`); a `no_forward` message asks once first. */
+  const openForward = () => setOpen(m.forwardAsk ? "forward-ask" : { compose: "forward" });
 
   /* The reader may leave (the delete committed) OR be gone already (the person backed out during
      the window). The window still commits the delete either way; only the NAVIGATION is guarded,
@@ -158,7 +173,7 @@ export function MessageActions({
   }, [mode, standing]);
   const facts: ReaderVerbFacts = {
     canReplyAll: m.canReplyAll === true,
-    noForward: m.noForward === true,
+    forwardOffered: forwardOffered(m),
     foldersEnabled: w.folders.enabled,
     junkOffered: moveTargetsFor(m).includes("spam"),
   };
@@ -223,7 +238,7 @@ export function MessageActions({
         case "replyAll":
           return { id, icon: "replyall", label: Copy.actionReplyAll, onPress: () => setOpen({ compose: "replyAll" }) };
         case "forward":
-          return { id, icon: "fwd", label: Copy.actionForward, onPress: () => setOpen({ compose: "forward" }) };
+          return { id, icon: "fwd", label: Copy.actionForward, onPress: openForward };
         case "read":
           return { id, icon: readFace.icon, label: readFace.label, onPress: readFace.press };
         case "aside":
@@ -244,7 +259,7 @@ export function MessageActions({
     publishReaderRail(railReaderGroups(facts).map((g) => g.map(entry)));
     return () => publishReaderRail(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, m.id, pile, unread, facts.canReplyAll, facts.noForward, facts.foldersEnabled, facts.junkOffered, locale, onBack]);
+  }, [mode, m.id, pile, unread, facts.canReplyAll, facts.forwardOffered, m.forwardAsk, facts.foldersEnabled, facts.junkOffered, locale, onBack]);
 
   /**
    * THE HOUR THE CHOOSER IS ASKING ABOUT (mail 0110) — the account's stored time, or the
@@ -286,7 +301,7 @@ export function MessageActions({
   const barSpec = (id: ReaderVerbId): BarVerbSpec => {
     switch (id) {
       case "replyAll": return { id, label: Copy.actionReplyAll, onPress: () => setOpen({ compose: "replyAll" }) };
-      case "forward": return { id, label: Copy.actionForward, onPress: () => setOpen({ compose: "forward" }) };
+      case "forward": return { id, label: Copy.actionForward, onPress: openForward };
       case "later": return { id, icon: "clock", label: Copy.actionLater, seg: "defer", onPress: () => a.pileToggle(m.id, "replyLater") };
       case "aside": return { id, icon: "pause", label: Copy.actionSetAside, seg: "defer", onPress: () => a.pileToggle(m.id, "setAside") };
       case "resurface": return { id, icon: "up", label: Copy.actionResurface, seg: "defer", onPress: () => (m.pile === "bubbled_up" ? a.resurfaceToggle(m.id) : setOpen("resurface")) };
@@ -425,7 +440,7 @@ export function MessageActions({
           <SheetRow icon="pen" label={Copy.actionReplyAll} onPress={() => setOpen({ compose: "replyAll" })} />
         ) : null}
         {moreHas("forward") ? (
-          <SheetRow icon="open" label={Copy.actionForward} onPress={() => setOpen({ compose: "forward" })} />
+          <SheetRow icon="open" label={Copy.actionForward} onPress={openForward} />
         ) : null}
         {/* The two horizons the rail does not stand (its column carries Done · Park · Junk;
             Later and Resurface live here, one press away — never gone). */}
@@ -490,6 +505,19 @@ export function MessageActions({
           </>
         ) : null}
       </Sheet>
+
+      {/* ── Forward's ask: a `no_forward` message says why it was flagged, once, before the composer ── */}
+      {m.forwardAsk ? (
+        <Sheet open={open === "forward-ask"} onClose={close} label={Copy.forwardAskQuestion}>
+          <Txt variant="sectionLabel" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
+            {Copy.forwardAskQuestion}
+          </Txt>
+          <Txt variant="note" tone="ink2" style={{ paddingHorizontal: 14, paddingBottom: 10 }}>
+            {forwardAskSentence(m.forwardAsk)}
+          </Txt>
+          <SheetRow icon="open" label={Copy.actionForward} onPress={() => setOpen({ compose: "forward", confirmed: true })} />
+        </Sheet>
+      ) : null}
 
       {/* ── Delete: the one destructive verb, behind its own stated confirm ─────────────── */}
       {w.folders.enabled ? (
@@ -614,7 +642,7 @@ export function MessageActions({
           leaves the reader behind it readable and offers Retry, never the process. */}
       {open !== null && typeof open === "object" ? (
         <SurfaceBoundary surface="composer" frame="sheet" onClose={close}>
-          <ComposeSheet m={m} mode={open.compose} onClose={close} />
+          <ComposeSheet m={m} mode={open.compose} forwardConfirmed={open.confirmed === true} onClose={close} />
         </SurfaceBoundary>
       ) : null}
     </>
@@ -759,11 +787,14 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
 export function ComposeSheet({
   m,
   mode,
+  forwardConfirmed = false,
   onClose,
 }: {
   /** The message being answered — `null` for a mail with no parent (the `new` mode). */
   m: WorldMail | null;
   mode: "reply" | "replyAll" | "forward" | "new";
+  /** The forward ask was answered (`forward-ask`); the send carries the confirmation. */
+  forwardConfirmed?: boolean;
   onClose: () => void;
 }) {
   const t = useTheme();
@@ -1016,7 +1047,7 @@ export function ComposeSheet({
     const result = fresh
       ? await w.actions.sendNew(mailboxId, recipients ?? [], subject, body, sigText, sendAt, files)
       : forward
-        ? await w.actions.sendForward(m!.id, recipients ?? [], body, sigText, files, andDone)
+        ? await w.actions.sendForward(m!.id, recipients ?? [], body, sigText, files, andDone, forwardConfirmed)
         : await w.actions.sendReply(m!.id, body, mode === "replyAll", sigText, sendAt, files, andDone);
     if (result.outcome === "sent") {
       onClose();

@@ -246,6 +246,11 @@ export interface SendInput {
    */
   forwardOf?: string | null;
   /**
+   * The person confirmed forwarding a `no_forward` original after the client's one-sentence ask.
+   * Without it such a forward is refused (403); with it the forward proceeds like any other.
+   */
+  forwardConfirmed?: boolean;
+  /**
    * WHICH VERSION OF THE DRAFT THIS PRESS WAS COMPOSED AGAINST — the `DraftDTO.contentRevision`
    * the client last saw, carried back so the send can assert the row is still the one it wrote.
    * Absent means UNSTATED (a client that predates the field), and an unstated press is admitted:
@@ -1386,11 +1391,10 @@ export class SendService {
           .where(and(eq(messages.id, input.forwardOf), eq(messages.accountId, ctx.accountId)))
           .limit(1);
         if (!orig) throw new ServiceError("not_found", 404, "the message to forward was not found");
-        // THE SENSITIVE-LEAK GATE. A `no_forward` message (an OTP, a reset link) has its body kept
-        // out of AI and out of a quote — forwarding it would carry the very bytes the flag protects
-        // to a recipient the sender chose. The client hides the entry too, but this is the check
-        // that is authoritative, because the client's absence is not a guarantee.
-        if (orig.noForward) {
+        // THE SENSITIVE-LEAK GATE. A `no_forward` message (an OTP, a reset link) is forwarded only
+        // after the person confirmed it: the client asks once, naming why it was flagged, and sends
+        // `forwardConfirmed`. An unconfirmed forward (an older client, a stray request) is refused.
+        if (orig.noForward && input.forwardConfirmed !== true) {
           throw new ServiceError("forbidden", 403, "This message can't be forwarded — it contains sensitive content.");
         }
         // scoped-by: orig was loaded by (id, accountId) earlier in this send

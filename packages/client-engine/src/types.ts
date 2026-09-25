@@ -1201,9 +1201,14 @@ export type EngineMutation =
        * the server refuses `no_forward` (a sensitive body must never leave through a quote
        * block), appends the quoted original and streams the attachments from IMAP — a
        * client-built quote is the seam a redacted body would escape through. The compose
-       * surface offers forward only for non-`no_forward` mail; this is the second check.
+       * surface asks once before forwarding `no_forward` mail (`forwardPress`); this is the second check.
        */
       forwardOf?: string | null;
+      /**
+       * The person confirmed forwarding a `no_forward` original after the one-sentence ask. The
+       * server refuses such a forward without it (403) and admits it with it; ignored otherwise.
+       */
+      forwardConfirmed?: boolean;
       /**
        * The draft row this message already is, when there is one. A compose
        * autosaves through `draft_save`, so naming the row makes the send

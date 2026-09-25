@@ -13,6 +13,7 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import type { useTranslations } from "next-intl";
 import {
+  forwardOffered,
   sendAndDonePlanFor,
   type EngineMessage,
   type EntityReader,
@@ -221,7 +222,7 @@ export function useShellKeys({
   allOhbox, ohboxCount, presented, pressSendAndDone, drafts, folderMailboxes, folderMessages, folderOlder, folders, folderUnread, history,
   ohbox, openFolder, ownAddresses, partition, piles, receipts, scheduled, tagGroups, tags,
   trashPage,
-  barPanel, focused, fr, frValues, mirrorHolds, picker, railOpen, readerFor, readerMessage,
+  barPanel, focused, fr, frValues, picker, railOpen, readerFor, readerMessage,
   selectedOhbox, senderAudit, senderMenu, setBarPanel, setFr, setFrPending, setPicker, setRailOpen,
   setReaderFor, setScreenerFull, setSenderAudit, setSenderMenu, setShortcutsOpen, setSubjectRule,
   shortcutsOpen, startFR, subjectRule,
@@ -524,11 +525,9 @@ export function useShellKeys({
        * Forward — `⇧F`, and not the `f` a mail client usually gives it: `f` is taken, by the Reply Run over the
        * Answer Later pile, and moving a shipped chord is the more expensive change. `⇧F` is the shifted variant of a
        * bare letter that already means something adjacent — the convention `⇧R` and `⇧U` set — and the `?` sheet
-       * prints it beside `r` and `⇧R`. Its `disabled` carries the SAME two predicates the bar's button does
-       * (`MessagePane.ActionBar#canForward`): `sensitivity.no_forward`, which the send path answers with a 403, and
-       * the mirror, because `openForward` reads the row out of the engine and returns silently when absent — so key
-       * and control appear and disappear together, the reason the pill's keycap can be generated from this registry.
-       * Not a toggle — `openForward` answers a refused message with a toast a second-press-closes verb would swallow.
+       * prints it beside `r` and `⇧R`. Its `disabled` reads the ONE predicate the bar's button reads
+       * (`forwardOffered`), so key and control cannot disagree; a `no_forward` message asks and an off-mirror row
+       * fetches its body inside `openForward`. Not a toggle — a second-press-closes verb would swallow the ask.
        */
 
       /**
@@ -544,14 +543,11 @@ export function useShellKeys({
       chord: "shift+f",
       group: "message",
       label: t("shortcuts.forward"),
-      disabled:
-        focused == null ||
-        focused.sensitivity?.no_forward === true ||
-        mirrorHolds(focused.id) === false,
+      disabled: !forwardOffered(focused),
       ...noCursor,
       run: () => {
         if (!focused) return;
-        if (readerMessage != null || route.view === "ohbox") openForward(focused.id);
+        if (readerMessage != null || route.view === "ohbox") openForward(focused.id, focused);
         else onStreamAction("forward", focused);
       },
     },

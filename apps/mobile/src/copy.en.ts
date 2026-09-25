@@ -1692,6 +1692,13 @@ const TABLE = {
   /* The send lock's told refusal — the webapp's `compose.needContent`, byte for byte. */
   composeNeedContent: "Write something or attach a file.",
   forwardHead: "Forward — you pick who receives it",
+  /* The forward ask on a `no_forward` message — the webapp's `reply.forwardAsk`, word for word. */
+  forwardAskOtp: "ohmail flagged this message as containing a one-time code.",
+  forwardAskVerification: "ohmail flagged this message as an account verification.",
+  forwardAskPasswordReset: "ohmail flagged this message as a password reset.",
+  forwardAskSecurityAlert: "ohmail flagged this message as a security alert about an account.",
+  forwardAskSensitive: "ohmail flagged this message as sensitive.",
+  forwardAskQuestion: "Forward it anyway?",
   forwardTo: "To",
   forwardToPlaceholder: "name@example.org, …",
   forwardNotePlaceholder: "Add a note (optional)",

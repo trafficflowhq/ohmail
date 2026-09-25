@@ -1124,7 +1124,6 @@
     "noSubject": "No subject",
     "sendingFromLastSession": "This message is still being sent from your last session. It will clear here once it has gone out.",
     "forwardingNote": "The original message and its attachments are added when you send.",
-    "forwardRefused": "This message can't be forwarded — it contains sensitive content.",
     "attach": "Attach files",
     "attachCap": "Up to {size} total",
     "attachCapSurface": "Your mail server would take more; this is what ohmail can send from here.",
@@ -3122,6 +3121,16 @@
     "toastSentAndDone": "Sent · marked done",
     "toastForwarded": "Forwarded.",
     "forwardHead": "Forward — you pick who receives it",
+    "forwardAsk": {
+      "otp": "ohmail flagged this message as containing a one-time code.",
+      "verification": "ohmail flagged this message as an account verification.",
+      "password_reset": "ohmail flagged this message as a password reset.",
+      "security_alert": "ohmail flagged this message as a security alert about an account.",
+      "sensitive": "ohmail flagged this message as sensitive.",
+      "question": "Forward it anyway?",
+      "confirm": "Forward",
+      "cancel": "Cancel"
+    },
     "editSubject": "Edit subject",
     "subjectAria": "Subject of this reply"
   },

@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { FOLDER_OF_VIEW, isResurfaced, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
+import { FOLDER_OF_VIEW, forwardOffered, isResurfaced, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
 import { Button, Chip, DatePicker, Icon, InfoNote, Kbd, ReadingPane } from "@ohmail/ui";
 import { AttachmentStrip } from "../components/AttachmentStrip";
 import { isPreviewable } from "../components/AttachmentPreview";
@@ -21,6 +21,7 @@ import { activeFormatLocale } from "./locale";
 import { replyAllRecipients } from "./compose-from";
 import { useBarDensity } from "./bar-density";
 import { InlineReply } from "./InlineReply";
+import { ForwardAskStrip } from "./ForwardAsk";
 import { inlineForwardKey } from "./mail-send";
 import { chordKeys, useBinding, useKeyPress, useModGlyph } from "./keymap";
 import { useBodyStalled, useJunkRefill, useMessageChrome, type MessageBarPanel } from "./message-chrome";
@@ -408,27 +409,12 @@ function ActionBar({
   const canReplyAll =
     replyAllRecipients(message, chrome.ownAddresses ?? []) !== null;
   /**
-   * Forward is offered unless the message may not be forwarded — the `no_forward` sensitivity.
-   * The server refuses such a forward with a 403 (`SendService.reserve`, the sensitive-leak
-   * gate) and `AppShell.openForward` refuses it client-side with a toast, so a Forward control
-   * on an OTP or a reset link is a button that can only ever say no — the same rule Delete
-   * follows against `chrome.mirrorHolds`. `⇧F`'s binding carries the identical predicate
-   * (`AppShell`), so key and button appear and disappear together, the discipline `shift+r`
-   * already keeps.
+   * FORWARD IS ALWAYS OFFERED on a message on screen — `forwardOffered`, the one predicate the
+   * card's menu, this bar, its More menu and `⇧F` read. What a press does first is the shell's
+   * (`openForward` via `forwardPress`): a `no_forward` message asks once, naming why it was
+   * flagged; a row the mirror does not hold has its body fetched through the reader's door.
    */
-
-  /**
-   * Off-mirror is the second half, for a reason specific to this verb: the reader shows rows the mirror deliberately
-   * does not hold (an archive-only Search hit, an older Folder row). Reply survives that — `toggleReply` opens an
-   * editor over the message it was handed — but `AppShell.openForward` starts with `engine.read().get("message", id)`
-   * and RETURNS SILENTLY when the row is absent, so button, menu item and `⇧F` would all be no-ops giving no reason.
-   * Same predicate and precedent as Delete; absent chrome reads as "holds" (`!== false`), the bare-test/desktop
-   * default every consumer of this field uses. The density measurement needs no predicate for either: it measures the
-   * groups this message actually renders, so a message with no Forward simply has one fewer group — no assumed worst
-   * case, no `data-*` chain, which is the whole reason the static rungs went.
-   */
-  const canForward =
-    message.sensitivity?.no_forward !== true && chrome.mirrorHolds?.(message.id) !== false;
+  const canForward = forwardOffered(message);
   /** Is the disclosure menu open? A boolean, because the menu is anchored by CSS, not by a point. */
   const [menuOpen, setMenuOpen] = useState(false);
   /**
@@ -1941,7 +1927,13 @@ export function MessagePane({
     />
   );
 
-  const replyEditor = replyTarget ? (
+  const replyEditor = replyTarget && chrome.forwardAsk && chrome.replyMode === "forward" ? (
+    <ForwardAskStrip
+      ask={chrome.forwardAsk}
+      onConfirm={() => chrome.confirmForward?.()}
+      onCancel={chrome.closeReply}
+    />
+  ) : replyTarget ? (
     <InlineReply
       /* THE TARGET, not the focused message — see `replyTarget`. The editor takes the
          message it is answering and nothing else: the `to` line, the draft key, `canSend`

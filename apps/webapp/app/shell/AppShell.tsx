@@ -1783,7 +1783,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const {
     cancelCompose, cancelSchedule, closeCompose, closeReply, compose, composeCloseRefusal,
-    composeFrom, discardDraft, draftRepliesHere, draftReply, draftReplyChrome, editScheduled,
+    confirmForward, forwardAsk, composeFrom, discardDraft, draftRepliesHere, draftReply, draftReplyChrome, editScheduled,
     heldReplyRow, discardRefusal, sendAgain, mailSend, onComposeFields, onReplyBody, onReplySig,
     onReplySubject, openDraft, openForward, openMessageRef, openReply, plan, replyAll,
     replyAttachments, replyBody, replyBook, replyDone, replyEnvelope, replyFromId, replyMode,
@@ -1922,7 +1922,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       verbHolds,
       absoluteTime,
       onToggleAbsoluteTime: toggleAbsoluteTime,
-      replyTo, replyAll, replyMode, replyBody, onReplyBody, closeReply, sendReply,
+      replyTo, replyAll, replyMode, replyBody, onReplyBody, closeReply, sendReply, forwardAsk, confirmForward,
       /* SEND + DONE — offered per message by the ENGINE's one rule, asked at every render so a
          source that is filed or finished in another window stops offering it. The press reads
          the mirror again: what is offered and what happens are the same question, asked twice
@@ -2029,7 +2029,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         },
     }),
     [ownAddresses, absoluteTime, toggleAbsoluteTime, replyTo, replyAll, replyMode, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
-      replyEnvelope, replyFromId, replyAttachments, replySig, replySubjectEdit,
+      forwardAsk, confirmForward, replyEnvelope, replyFromId, replyAttachments, replySig, replySubjectEdit,
       onReplySig, onReplySubject,
       consent.signatures, consent.signaturesHtml, consent.signaturesKnown,
       sendSurfaceMaxTotalBytes, replyBook,

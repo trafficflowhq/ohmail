@@ -49,12 +49,15 @@ export function forwardSend(
     mailboxId?: string;
     attachments?: readonly ComposeAttachment[];
     plan: ReplyEnvelopePlan;
+    /** The person answered the `no_forward` ask (`forwardPress`); the server refuses without it. */
+    confirmed?: boolean;
   },
 ): MailSend {
   return {
     kind: "mail_send",
     inReplyTo: null,
     forwardOf: parent.id,
+    ...(input.confirmed === true ? { forwardConfirmed: true } : {}),
     subject: forwardSubject(parent.subject),
     body: input.body,
     ...(input.html ? { html: input.html } : {}),

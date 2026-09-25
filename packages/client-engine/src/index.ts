@@ -411,6 +411,9 @@ export {
   type MutationEffect,
 } from "./mutations.js";
 
+// Forward is always offered; the press asks once on `no_forward` and fetches an off-mirror body.
+export { forwardOffered, forwardPress, type ForwardAsk, type ForwardPress } from "./forward-offer.js";
+
 // Undo semantics — every verb's undo class, and the wire's own reversal for the "inverse" kinds.
 export { inverseMutations, UNDO_CLASS, type UndoClass, type UndoSubject } from "./undo.js";
 

@@ -25,8 +25,10 @@ interface SendRequestBody {
   attachments?: SendAttachmentWire[];
   /** Upload-ticket ids. Account-scoped in the service; a foreign id is a 404. */
   stagedAttachmentIds?: unknown;
-  /** Forward this original — the server reads it, refuses a no_forward one, and quotes it. */
+  /** Forward this original — the server reads it, refuses an unconfirmed no_forward one, and quotes it. */
   forwardOf?: string;
+  /** The person confirmed forwarding a no_forward original after the ask. Only `true` counts. */
+  forwardConfirmed?: unknown;
   /**
    * WHICH VERSION OF THE DRAFT THIS PRESS WAS COMPOSED AGAINST — the `DraftDTO.contentRevision`
    * the client last saw. The send refuses a row that has moved off it (`draft_changed`, 409) and
@@ -318,6 +320,7 @@ export const draftsRoutes: Route[] = [
       const attachments = decodeSendAttachments(body.attachments);
       const stagedAttachmentIds = readStagedIds(body.stagedAttachmentIds);
       const forwardOf = typeof body.forwardOf === "string" && body.forwardOf.length > 0 ? body.forwardOf : undefined;
+      const forwardConfirmed = forwardOf !== undefined && body.forwardConfirmed === true;
       // THE ROW THIS PRESS SAW. Threaded to `SendService.reserve`, which compares it against the
       // row it locks — see `SendInput.ifContentRevision`.
       const ifContentRevision = readContentRevision(body.ifContentRevision);
@@ -356,6 +359,7 @@ export const draftsRoutes: Route[] = [
             : {}),
         },
         { attachments, stagedAttachmentIds, forwardOf,
+          ...(forwardConfirmed ? { forwardConfirmed } : {}),
           ...(ifContentRevision ? { ifContentRevision } : {}) },
       );
       switch (result.status) {

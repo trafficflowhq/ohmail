@@ -15,6 +15,7 @@ import {
   type AddressBookEntry,
   type ComposeAttachment,
   type EngineMessage,
+  type ForwardAsk,
   type MessageBody,
 } from "@ohmail/client-engine";
 import type { AttachmentsChrome } from "./attachments";
@@ -126,7 +127,14 @@ export interface MessageChrome {
    * absent where there is no compose seam, and an absent verb is an absent menu item rather
    * than a dead one.
    */
-  forward?: (messageId: string) => void;
+  forward?: (messageId: string, seed?: EngineMessage) => void;
+  /**
+   * THE FORWARD ASK — set while the dock is open in forward mode on a `no_forward` message the
+   * person has not confirmed (`forwardPress`). The pane renders the one-sentence ask in place of
+   * the editor; `confirmForward` answers it. Absent means no ask.
+   */
+  forwardAsk?: ForwardAsk | null;
+  confirmForward?: () => void;
   /**
    * OPEN THE SUBJECT-RULE SHEET for `messageId` — dispatched from the message title press.
    *
