@@ -306,7 +306,7 @@ export async function junkSweepPass(opts: {
       // `stillDesired` deliberately — a process that has lost the lease must not spend a query on
       // the mailbox either. Only under `execute`: a dry run reads no lease, because a lease read
       // RENEWS our claim, which is itself a write.
-      if (execute) await assertMayWriteToMailbox(writeAuthority);
+      if (execute) await assertMayWriteToMailbox(writeAuthority, "move");
       const desired = await stillDesired(wholeChunk);
       const chunk = wholeChunk.filter((p) => desired.has(p.messageId));
       for (const p of wholeChunk) {
@@ -334,7 +334,7 @@ export async function junkSweepPass(opts: {
         // AGAIN, because `stillDesired` sits between the ask above and this write: an unbounded
         // database wait there can outlive the permit's TTL, so the receipt would be checked and then
         // spent after it expired. The first ask refuses to spend a query, this one the WRITE.
-        if (execute) await assertMayWriteToMailbox(writeAuthority);
+        if (execute) await assertMayWriteToMailbox(writeAuthority, "move");
         try {
           const res = await adapter.moveMany(chunk.map((p) => p.nativeLocator!), junk, door);
           if (res.outcome === "batched") batched = res;
@@ -383,7 +383,7 @@ export async function junkSweepPass(opts: {
         // OUTSIDE the `try`, and the placement is load-bearing: the catch below ends in a generic arm
         // that files the error against THIS MESSAGE and carries on, so a refusal raised inside it
         // would be read as evidence about a message and the sweep would keep moving mail.
-        if (execute) await assertMayWriteToMailbox(writeAuthority);
+        if (execute) await assertMayWriteToMailbox(writeAuthority, "move");
         try {
           newLoc = await adapter.move(p.nativeLocator!, junk, door);
         } catch (err) {

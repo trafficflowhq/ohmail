@@ -620,9 +620,8 @@ function writeAuthorityOf(deps: Pick<SyncDeps, "fence" | "writeAuthority">): Mai
   const { fence } = deps;
   return {
     ...(fence ? { fence: (): Promise<void> => fenceImapMutation({ fence }) } : {}),
-    // The field is REQUIRED, so this coalesce is reached only by a FIXTURE — the same reading
-    // `role`'s omission gets, and named rather than silent. A production root that omitted it is
-    // refused by `lease-write-permit-census.test.ts`, not by this line.
+    // The field is REQUIRED, so this coalesce is reached only by a composition that omitted it —
+    // and `not_supplied` is refused at both guards, by name, so such a cycle writes nothing.
     lease: deps.writeAuthority ?? { noLease: "not_supplied" },
   };
 }
@@ -837,13 +836,22 @@ export async function runSyncCycle(input: SyncDeps): Promise<{ hasBacklog: boole
       });
     }
     // The door declined a command mid-page: nothing of it was written, and the next gate decides.
+    // `not_supplied` is no lease verdict but a cycle composed with none, which would decline the
+    // same way every cycle — so it is said at error, never as the routine decline.
     if (err instanceof WriteDeclinedError) {
-      input.log?.info("write_declined_mid_cycle", {
+      const where = {
         mailboxId: input.mailboxId, accountId: input.accountId,
         phase: at.pass, page: at.page, verdict: err.reason, kind: err.write,
-        reason: "the lease was asked immediately before a mail-server write and did not admit it — "
-          + "the cycle stopped there and the next cycle's gate re-reads the lease",
-      });
+      };
+      if (err.reason === "not_supplied") {
+        input.log?.error("write_declined_mid_cycle", { ...where,
+          reason: "this cycle was composed with no organizer lease, so no mail-server write is "
+            + "admitted until its root supplies one" });
+      } else {
+        input.log?.info("write_declined_mid_cycle", { ...where,
+          reason: "the lease was asked immediately before a mail-server write and did not admit "
+            + "it — the cycle stopped there and the next cycle's gate re-reads the lease" });
+      }
     }
     throw err;
   }
@@ -2002,7 +2010,7 @@ async function fileChunk(
   // BEFORE the IMAP command — the whole batch is one mutation, and one filing page. Outside the
   // `try` below deliberately: its refusal must abort the cycle, never degrade to the per-message path.
   openPage(at, "filing");
-  await assertMayWriteToMailbox(writeAuthorityOf(deps));
+  await assertMayWriteToMailbox(writeAuthorityOf(deps), "move");
   let result;
   try {
     result = await adapter.moveMany(
@@ -2205,7 +2213,7 @@ async function fileOne(
   let newLoc: Awaited<ReturnType<MailboxAdapter["move"]>>;
   try {
     openPage(at, "filing");
-    await assertMayWriteToMailbox(writeAuthorityOf(deps));
+    await assertMayWriteToMailbox(writeAuthorityOf(deps), "move");
     newLoc = await adapter.move(p.nativeLocator!, physical, writeDoorOf(writeAuthorityOf(deps)));
   } catch (err) {
     // A refusal must not be recorded as this message's failure — it is the process's, or the
@@ -2395,7 +2403,7 @@ async function reconcileFlags(deps: SyncDeps, at: CyclePageCursor): Promise<bool
       // itself — see `OrganizerWriteAuthority`. An ORGANIZER's `\Seen` is permit-checked like any
       // other write, which it was not before.
       openPage(at, "flags");
-      await assertMayWriteToMailbox(writeAuthorityOf(deps));
+      await assertMayWriteToMailbox(writeAuthorityOf(deps), "seen");
       await adapter.setFlags(p.nativeLocator, { seen: p.desiredSeen }, writeDoorOf(writeAuthorityOf(deps)));
     } catch (err) {
       // A lost lease — this shard's or this mailbox's — is never evidence about this message. Those

@@ -12,7 +12,7 @@ import {
 import type {
   MailboxAdapter, MailboxWriteKind, WriteDoor, WriteDoorAnswer,
 } from "@trafficflow/core/adapters/imap";
-import type { ImapAuth } from "@trafficflow/core/adapters/imap-types";
+import { WriteDeclinedError, type ImapAuth } from "@trafficflow/core/adapters/imap-types";
 import type { MailboxDisabledReason, MailboxSyncBlockReason, OrganizerRole } from "@trafficflow/db";
 
 /**
@@ -997,9 +997,24 @@ export const PERMIT_WRITES_PER_RECHECK = 100;
  * preceded by this call and that there is exactly one definition of it, so a new write site cannot
  * arrive without an author placing it.
  */
-export async function assertMayWriteToMailbox(authority: MailboxWriteAuthority): Promise<void> {
+export async function assertMayWriteToMailbox(
+  authority: MailboxWriteAuthority, write: MailboxWriteKind,
+): Promise<void> {
   if (authority.fence) await authority.fence();
-  if ("check" in authority.lease) await authority.lease.check();
+  const { lease } = authority;
+  if ("check" in lease) { await lease.check(); return; }
+  const answer = noLeaseAnswer(lease, write);
+  if (!answer.admit) throw new WriteDeclinedError(write, answer.reason);
+}
+
+/**
+ * WHAT A WRITE WITH NO LEASE IS ANSWERED — one line for both guards, the page check above and the
+ * door below. A reader writes `\Seen` and nothing else; a composition that supplied no lease writes
+ * nothing, refused by reason. A fixture rides a held fixture permit of its own instead.
+ */
+function noLeaseAnswer(lease: NoOrganizerLease, write: MailboxWriteKind): WriteDoorAnswer {
+  if (lease.noLease === "reader") return write === "seen" ? { admit: true } : { admit: false, reason: "no_lease" };
+  return { admit: false, reason: "not_supplied" };
 }
 
 /**
@@ -1042,9 +1057,8 @@ export function cycleWriteAuthority(
 /**
  * THE WRITE DOOR — the one function every organizer hands the adapter, on the worker, the local
  * engine and the phone alike. It answers from the permit's own state (`standing()`), what the
- * caller observed this batch (`foldersOff`, read per batch), and the role: a reader may write
- * `\Seen` and nothing else. The other no-lease arms are admitted exactly as
- * {@link assertMayWriteToMailbox} admits them — two guards that disagree about one authority are
+ * caller observed this batch (`foldersOff`, read per batch), and, holding no lease, the one answer
+ * {@link assertMayWriteToMailbox} gives too — two guards that disagree about one authority are
  * worse than either. Synchronous and round-trip free; the page boundaries still re-read the lease.
  */
 export function writeDoorOf(
@@ -1056,10 +1070,7 @@ export function writeDoorOf(
     ask(write: MailboxWriteKind): WriteDoorAnswer {
       if (observed.foldersOff === true) return refuse("folders_off");
       const { lease } = authority;
-      if ("noLease" in lease) {
-        if (lease.noLease !== "reader") return { admit: true };
-        return write === "seen" ? { admit: true } : refuse("no_lease");
-      }
+      if ("noLease" in lease) return noLeaseAnswer(lease, write);
       const standing = lease.standing();
       if (standing === "revoked") return refuse("stood_down");
       if (standing === "stale") return refuse("claim_stale");
@@ -1073,12 +1084,9 @@ export interface NoOrganizerLease {
   readonly noLease:
     /** A READER: it holds no lease, and `\Seen` is the one verb it may write (`sync.ts`). */
     | "reader"
-    /** The adapter cannot reach `ohmail/_meta`, so no lease is readable from this composition. */
-    | "adapter_cannot_reach_meta"
     /**
-     * NOBODY SUPPLIED ONE. A fixture reaches this; a production root must not, and the write-permit
-     * census is what refuses it there — asserting both composition roots pass a `writeAuthority`.
-     * Named rather than silent so a diagnosis has something to read.
+     * NOBODY SUPPLIED ONE — a root before its gate. Both guards REFUSE it, by this name, so a
+     * composition that reaches it stops at its first write and says why rather than writing.
      */
     | "not_supplied";
 }

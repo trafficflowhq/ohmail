@@ -84,7 +84,7 @@ export async function junkRescuePass(deps: JunkRescueDeps): Promise<JunkRescueRe
       continue;
     }
     try {
-      await assertMayWriteToMailbox(deps.writeAuthority);
+      await assertMayWriteToMailbox(deps.writeAuthority, "move");
       // "Use folders" read AT THIS PRESS, not with the listing: switched off mid-pass, the door
       // declines this move and the command is dropped below, as one already off at listing is.
       const foldersOff = (await repo.getMailbox(mailboxId))?.foldersOff === true;

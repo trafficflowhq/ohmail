@@ -565,6 +565,8 @@ export type WriteDeclineReason =
   | "folders_off"
   /** The writer is a READER, whose one write is `\Seen`, and this write is an organizer's. */
   | "no_lease"
+  /** The writer's composition supplied no lease at all, so nothing it asks is admitted. */
+  | "not_supplied"
   /** The caller handed no door at all. */
   | "no_door";
 

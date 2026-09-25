@@ -132,7 +132,7 @@ async function runCreate(deps: FolderOpsDeps, op: FolderOpRow): Promise<"done" |
     await deps.write((r) => r.failFolderOp(op, "bad_name"));
     return "failed";
   }
-  await assertMayWriteToMailbox(deps.writeAuthority);
+  await assertMayWriteToMailbox(deps.writeAuthority, "folder_create");
   // Where the create LANDED — a personal-namespace server files a root-named create under
   // INBOX, and the completion records the real path (or defers to the row discovery already
   // adopted there) so the commanded row can never stand as a phantom.
@@ -156,7 +156,7 @@ async function runRename(deps: FolderOpsDeps, op: FolderOpRow): Promise<"done" |
     await deps.write((r) => r.failFolderOp(op, "bad_name"));
     return "failed";
   }
-  await assertMayWriteToMailbox(deps.writeAuthority);
+  await assertMayWriteToMailbox(deps.writeAuthority, "folder_rename");
   const res = await deps.adapter.renameFolder!(op.folder, to, writeDoorOf(deps.writeAuthority));
   if (res === "conflict") {
     await deps.write((r) => r.failFolderOp(op, "exists"));
@@ -222,14 +222,14 @@ async function runDelete(
     // mail the mirror never ingested, and every message must reach Trash before DELETE. The
     // sweep hands back the FENCE: the folder as it left it, which is the only state the DELETE
     // is authorized against.
-    await assertMayWriteToMailbox(deps.writeAuthority);
+    await assertMayWriteToMailbox(deps.writeAuthority, "folder_sweep");
     const sweep = await adapter.moveAll!(f.folder, trash, writeDoorOf(deps.writeAuthority));
     // Phase 2 — the mirror consequences, chunked (one tx per chunk, idempotent re-entry).
     if (!(await tombstoneWithin(f.folder))) return "paused";
     // Phase 3 — the folder itself, re-read against the fence. `unverified` — no reading at all —
     // is a transient, not a verdict: deleting on an unverified count is the expunge this
     // ceremony exists to forbid.
-    await assertMayWriteToMailbox(deps.writeAuthority);
+    await assertMayWriteToMailbox(deps.writeAuthority, "folder_delete");
     const res = await adapter.deleteFolder!(f.folder, sweep.fence, writeDoorOf(deps.writeAuthority));
     if (res === "unverified") {
       throw new Error(`folder ${f.folder}: the server did not answer the re-reading — emptiness unverified, retrying`);
