@@ -33,9 +33,9 @@ Honest edges, stated here and on the screens themselves:
   you pick, so a folder's own list is read-only, and the folder screens say
   plainly that they show what is on this phone's mirror rather than claiming a
   folder is empty.
-- **Compose from scratch, search and attachment-open are not built yet.** No
-  control for them renders; the More screen and the About block say they
-  arrive with later updates.
+- **New mail, whole-mailbox search and attachments are live.** New mail opens
+  the reply's own editor with no message to answer, and an attachment opens
+  from the reader.
 - **The picker never claims a door works — it asks.** Each card negotiates
   `GET /hello` against the real server and offers a pairing step only where that
   server answers `features.pairing: true`. The managed service answers that it
@@ -64,8 +64,6 @@ Honest edges, stated here and on the screens themselves:
   showing a control that cannot work.
 
 [up]: https://unifiedpush.org
-- The theme choice resets to "system" on relaunch; a persisted preference is a
-  later update.
 
 ---
 

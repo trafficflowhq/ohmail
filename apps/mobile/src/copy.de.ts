@@ -791,7 +791,9 @@ export const DE: Deck = {
   buildVersionWithCode: (version: string, build: string) => `Version ${version} (${build})`,
   buildCommit: (commit: string) => `Build ${commit}`,
   aboutLive: (origin: string) =>
-    `Gekoppelt mit ${origin}. Post wird in einen Spiegel auf dem Gerät synchronisiert; Lesen, Sortieren, Antworten, Weiterleiten, Tags und Suche sind live. Neue Nachrichten schreiben kommt mit einem späteren Update.`,
+    `Gekoppelt mit ${origin}. Post wird in einen Spiegel auf dem Gerät synchronisiert; Lesen, neue Nachrichten schreiben, Sortieren, Antworten, Weiterleiten, Tags und Suche sind live.`,
+  aboutLiveHere:
+    "Dieses Telefon verbindet sich selbst mit deinem Mailserver und synchronisiert die Post in einen Spiegel auf dem Gerät; Lesen, neue Nachrichten schreiben, Sortieren, Antworten, Weiterleiten, Tags und Suche sind live.",
   aboutOnDevice:
     "Einen Server zu vergessen löscht seine Kopplung und die Post, die dieses Telefon kopiert "
     + "hatte. Die App zu löschen nimmt die kopierte Post mit; auf iPhone und iPad bleibt die "

@@ -331,7 +331,7 @@ function SettingsBody() {
               {Copy.buildCommit(commit)}
             </Txt>
             <Txt variant="note" tone="ink2">
-              {Copy.aboutLive(w.account.name)}
+              {w.standalone ? Copy.aboutLiveHere : Copy.aboutLive(w.account.name)}
             </Txt>
             {/* What leaving actually leaves. The backup half is a SECOND line, derived from what
                 the mirror's open measured rather than written per platform: subscribed, because

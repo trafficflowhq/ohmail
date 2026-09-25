@@ -1224,7 +1224,10 @@ const TABLE = {
   buildCommit: (commit: string) => `Build ${commit}`,
   /** The About block — states what is real on this build, no more. */
   aboutLive: (origin: string) =>
-    `Paired with ${origin}. Mail syncs into an on-device mirror; reading, triage, reply, forward, tags and search are live. Compose from scratch arrives with a later update.`,
+    `Paired with ${origin}. Mail syncs into an on-device mirror; reading, writing new mail, triage, reply, forward, tags and search are live.`,
+  /** The same block on the standalone door, which is paired with nothing: the phone dials the mail server itself. */
+  aboutLiveHere:
+    "This phone connects to your mail server itself and syncs the mail into an on-device mirror; reading, writing new mail, triage, reply, forward, tags and search are live.",
   /**
    * What the on-device copy does and does not leave. The uninstall sentence is careful: on iOS
    * the Keychain item survives deleting the app and no code of ours runs at that moment, so the
