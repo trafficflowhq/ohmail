@@ -53,7 +53,7 @@ import {
   makeApprovalService, makeAuthConfig, makeMailboxService, makePrivacyService,
   makeScreenerService, makeUnsubscribeService, messageService, nodeHostResolver,
   nodeOneClickPost, nodeRemoteFetch, notifyRulesService, resolveSession,
-  rulesService, searchService, sendService, snippetsService, syncService, threadService,
+  rulesService, sendService, snippetsService, syncService, threadService,
   triageService, workflowsService, ServiceError, type UnsubscribeService,
   type AuthConfig, type MailboxAllowancePolicy, type OneClickPost,
   type PushService, type RemoteFetch,
@@ -90,7 +90,7 @@ import { createSignOutFence, SIGN_OUT_FENCE_WAIT_MS, type SignOutFence } from ".
 import { requestOrganizerTakeover } from "./organize-here.js";
 // WHICH OUTBOUND PASSES THIS COMPOSITION RUNS — one table read by the pass and by the door, so
 // "a phone keeps no appointments" cannot be true in one of the two places. See its header.
-import { AppointmentsRefused, runsPass, runsStorePass } from "./composition-passes.js";
+import { AppointmentsRefused, runsPass, runsStorePass, searchFor } from "./composition-passes.js";
 import { hostPairRoutes } from "./host-pair-routes.js";
 // The static half of the host door — the built browser client the QR sends a phone to, served
 // beside the API out of one `handleHost`. The route table wins; this covers everything else.
@@ -977,7 +977,7 @@ function localServices(
     ...(drafter ? { drafter } : {}),
     approval: makeApprovalService({}),
     triage: triageService,
-    search: searchService,
+    search: searchFor(organizerKind),
     /* `imageFetch` is the test seam `oneClickPost` is, and for the same stated reason: both exist
        so a test can count what left the machine. Production passes nothing and gets the pinned,
        redirect-manual client the hosted door uses — one implementation, so the two doors cannot

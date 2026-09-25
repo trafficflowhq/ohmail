@@ -1,4 +1,4 @@
-import { ScheduleService, ServiceError } from "@trafficflow/services/mail";
+import { ScheduleService, SearchService, ServiceError, searchService } from "@trafficflow/services/mail";
 import type { OrganizerKind } from "@trafficflow/core/adapters/organizer-lease";
 
 /**
@@ -73,4 +73,12 @@ export const COMPOSITION_STORE_PASSES:
 
 export function runsStorePass(kind: OrganizerKind, pass: StorePass): boolean {
   return COMPOSITION_STORE_PASSES[kind].includes(pass);
+}
+
+/** The search a composition that fills no index answers with: complete, and stating no index progress. */
+const SEARCH_WITHOUT_BACKFILL = new SearchService({ indexFills: false });
+
+/** WHICH SEARCH THIS COMPOSITION ANSWERS WITH — the one that states index progress only where the pass runs. */
+export function searchFor(kind: OrganizerKind): SearchService {
+  return runsStorePass(kind, "search-index-backfill") ? searchService : SEARCH_WITHOUT_BACKFILL;
 }

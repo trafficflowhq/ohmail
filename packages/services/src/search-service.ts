@@ -364,6 +364,13 @@ function afterDateAsc(d: Dialect, date: number | null, id: string): SQL {
 
 export class SearchService {
   /**
+   * `indexFills: false` for a store no backfill fills (the phone, `composition-passes.ts`): its rows
+   * without a document are searched the older way, complete, and nothing writes one, so an answer
+   * there states no index progress rather than a percentage that never moves.
+   */
+  constructor(private readonly opts: { readonly indexFills: boolean } = { indexFills: true }) {}
+
+  /**
    * The FROM every arm shares. The joins are 1:1 (each is unique per message), so no fan-out; a
    * predicate on `s` makes its join inner, and `b` is only joined by a branch that reads it.
    */
@@ -671,9 +678,9 @@ export class SearchService {
     return { total: got.total, facets: got.facets, tier, exact: !got.cut, estimate, ...(indexed ? { indexed } : {}) };
   }
 
-  /** This account's search documents while they are still being built, else nothing. */
+  /** This account's search documents while something is still building them, else nothing. */
   private async indexing(ctx: ServiceContext, db: unknown, store: StoreFacts): Promise<{ done: number; total: number } | undefined> {
-    if (store.built) return undefined;
+    if (store.built || !this.opts.indexFills) return undefined;
     const p = await searchIndexProgress(db as never, ctx.accountId);
     return p.done < p.total ? p : undefined;
   }
