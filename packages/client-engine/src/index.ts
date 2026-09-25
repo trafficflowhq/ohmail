@@ -26,6 +26,17 @@ export { PRESS_THREW, pressVerdict, tallyVerdicts } from "./press-verdict.js";
 export type { PressAnswer, PressTally, PressVerdict } from "./press-verdict.js";
 
 /**
+ * WHAT A REFRESH ANSWER SAYS — the phone's and the paired browser's one reading of `/auth/refresh`.
+ * Barrel for `session-gate`'s reason: both hosts compile the engine and the module imports nothing.
+ */
+export {
+  isSessionRefusal,
+  readRefreshAnswer,
+  SESSION_REFUSAL_CODES,
+  type RefreshAnswer,
+} from "./refresh-answer.js";
+
+/**
  * A DEAD SESSION STOPS ASKING, and heals on a schedule. Barrel rather than a leaf for
  * `press-verdict`'s reason: the two hosts that need it already compile the engine, and the
  * module imports nothing, so a host that only reads `SESSION_HEAL_BACKOFF_MS` pays one file.

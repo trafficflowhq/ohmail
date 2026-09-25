@@ -16,7 +16,7 @@
 /*
  * ROTATION: `/auth/refresh` takes the body token (strict reuse detection, no concurrent grace), so
  * this manager rotates SERIALLY, single-flighted — presenting one refresh token twice IS the theft
- * signal. Three sharpenings: only a 401/403 from the refresh is an authentication judgment (`503
+ * signal. Three sharpenings: only the door's named refusal is a judgment (`readRefreshAnswer`; `503
  * host_busy` is the listener's admission bound — clearing over it signed a working phone out); storage
  * is the family's shared head (a stale in-memory copy re-reads storage and presents the FRESHEST
  * token, the whole rotation under `navigator.locks` — without it the re-read narrows the
@@ -33,6 +33,7 @@
  * inside the presented token's window, and the legitimate retry rotates straight past it.
  */
 
+import { readRefreshAnswer } from "@ohmail/client-engine";
 import { storageDoor, type StorageDoor } from "@ohmail/client-engine/durable";
 
 /** The wire pair the redeem and the refresh both answer. */
@@ -288,9 +289,9 @@ export class BearerManager {
 
   /**
    * Rotate the pair once, single-flighted, under the origin-wide lock where the browser has one.
-   * Resolves `true` when a fresh pair is held. A REFUSAL (401/403) clears the session (see the
-   * header); everything else — a network failure, the admission bound's 503, any answer that is
-   * not an authentication judgment — clears nothing and resolves `false`.
+   * Resolves `true` when a fresh pair is held. A REFUSAL (`readRefreshAnswer`) clears the session;
+   * everything else — a network failure, the admission bound's 503, a sign-in page, a firewall's
+   * 403 — clears nothing and resolves `false`.
    */
   /**
    * IS THE PAIRING THIS ROTATION IS FOR STILL THE ONE THIS ORIGIN HOLDS? Asked IMMEDIATELY
@@ -360,33 +361,24 @@ export class BearerManager {
         // documented residual in the header — nothing this side can conclude, nothing cleared.
         return false;
       }
-      if (res.ok) {
-        try {
-          const body = (await res.json()) as { tokens?: BearerTokens };
-          if (body.tokens?.accessToken && body.tokens.refreshToken) {
-            /* THE WRITE DOOR. `res.json()` is a second suspension point, so this is asked after
-               it and not once after the fetch. */
-            if (this.standDownIfRepaired(scopeAtSend)) return false;
-            this.adopt(body.tokens);
-            return true;
-          }
-        } catch {
-          /* an OK answer this build cannot read — the old token is consumed and the new pair is
-             lost, so the stranded session falls through to the sign-out below, honestly */
-        }
+      const answer = await readRefreshAnswer(res);
+      if (answer.kind === "minted") {
+        /* THE WRITE DOOR. Reading the body is a second suspension point, so this is asked after
+           it and not once after the fetch. */
+        if (this.standDownIfRepaired(scopeAtSend)) return false;
+        this.adopt(answer.tokens);
+        return true;
+      }
+      if (answer.kind === "refused") {
+        // The server judged the presented token and said no, by name. Definitive: sign out — of
+        // the pairing this rotation was FOR, which is why the scope is asked again first.
         if (this.standDownIfRepaired(scopeAtSend)) return false;
         this.die();
         return false;
       }
-      if (res.status === 401 || res.status === 403) {
-        // The server judged the presented token and said no. Definitive: sign out — of the
-        // pairing this rotation was FOR, which is why the scope is asked again first.
-        if (this.standDownIfRepaired(scopeAtSend)) return false;
-        this.die();
-        return false;
-      }
-      // 503 host_busy, a 5xx, a proxy hiccup — the handler never judged the token. Keep the
-      // pair; the caller gets its original 401 and the next episode tries again.
+      // Not the host's verdict: a 503, a sign-in page, a firewall's 403, an unreadable 200. Keep
+      // the pair and the attempt's name; the caller gets its original 401, and the next episode
+      // retries as the same attempt, which the host answers if it had already rotated.
       return false;
     }).finally(() => {
       this.rotating = null;

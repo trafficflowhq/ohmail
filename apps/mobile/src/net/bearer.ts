@@ -1,12 +1,14 @@
 /**
  * The bearer manager, on React Native — this app's whole credential, in one small object. A
- * port of `apps/desktop/src/host-client/bearer.ts` semantics — single-flight rotation,
- * 401/403-only judgment, generation-bound replay, refusal-only sign-out — with two narrowing
+ * port of `apps/desktop/src/host-client/bearer.ts` semantics — single-flight rotation, one reading
+ * of the refresh answer, generation-bound replay, refusal-only sign-out — with two narrowing
  * substitutions: the refresh token persists in the device keystore, and `navigator.locks` is
  * dropped because RN is one JS runtime with no sibling presenters. A lost rotation response used
  * to end the pairing: strict reuse read the retry of the retained token as theft. Every attempt
  * now carries a name persisted BEFORE it submits and repeated until an answer lands.
  */
+
+import { readRefreshAnswer } from "@ohmail/client-engine";
 
 /** The wire pair the redeem and the refresh both answer — the desktop manager's exact shape. */
 export interface BearerTokens {
@@ -51,17 +53,12 @@ export type SessionDeath = "refused" | "revoked";
 const REUSE_REFUSAL = "refresh token reuse detected";
 
 /**
- * Which death a refusal names. Anything unreadable is the ORDINARY refusal — a guess would be
- * worse than the plain sentence, and this decides only which words a person reads, never whether
- * the session ends.
+ * Which death a refusal names. Anything else is the ORDINARY refusal — a guess would be worse
+ * than the plain sentence, and this decides only which words a person reads, never whether the
+ * session ends.
  */
-async function readDeathReason(res: Response): Promise<SessionDeath> {
-  try {
-    const body = (await res.json()) as { error?: { message?: unknown } };
-    return body.error?.message === REUSE_REFUSAL ? "revoked" : "refused";
-  } catch {
-    return "refused";
-  }
+function deathOf(message: string | null): SessionDeath {
+  return message === REUSE_REFUSAL ? "revoked" : "refused";
 }
 
 function mintAttemptId(): string {
@@ -184,8 +181,8 @@ export class BearerManagerRN {
 
   /**
    * Rotate the pair once, single-flighted. Resolves `true` when a fresh pair is held. A REFUSAL
-   * (401/403) clears the session; everything else — a network failure, a 503 admission bound,
-   * any answer that is not an authentication judgment — clears nothing and resolves `false`.
+   * (`readRefreshAnswer`) clears the session; everything else — a network failure, a 503, a
+   * sign-in page, a firewall's 403 — clears nothing and resolves `false`.
    * No lock and no storage re-read around the critical section: one runtime, one presenter
    * (the header's second paragraph).
    */
@@ -218,30 +215,20 @@ export class BearerManagerRN {
         // cleared; the lost-response case is the documented residual in the header.
         return false;
       }
-      if (res.ok) {
-        try {
-          const body = (await res.json()) as { tokens?: BearerTokens };
-          if (body.tokens?.accessToken && body.tokens.refreshToken) {
-            await this.adopt(body.tokens);
-            return true;
-          }
-        } catch {
-          /* an OK answer this build cannot read — the old token is consumed and the new pair is
-             lost, so the stranded session falls through to the sign-out below, honestly */
-        }
-        await this.die("refused");
+      const answer = await readRefreshAnswer(res);
+      if (answer.kind === "minted") {
+        await this.adopt(answer.tokens);
+        return true;
+      }
+      if (answer.kind === "refused") {
+        // The server judged the presented token and said no, by name. Definitive: sign out, and
+        // say WHICH no — a family swept for reuse reads apart from a token that merely expired.
+        await this.die(deathOf(answer.message));
         return false;
       }
-      if (res.status === 401 || res.status === 403) {
-        // The server judged the presented token and said no. Definitive: sign out — and say WHICH
-        // no, where it can be read: the door relays its refusal BY NAME rather than one flattened
-        // sentence, so a family swept for reuse is distinguishable from a token that merely
-        // expired and the person gets a reason instead of "pair again".
-        await this.die(await readDeathReason(res));
-        return false;
-      }
-      // 503 host_busy, a 5xx, a proxy hiccup — the handler never judged the token. Keep the
-      // pair; the caller gets its original 401 and the next episode tries again.
+      // Not the server's verdict: a 503, a sign-in page, a firewall's 403, an unreadable 200. Keep
+      // the pair and the attempt's name; the caller gets its original 401, and the next episode
+      // retries as the same attempt, which the server answers if it had already rotated.
       return false;
     })().finally(() => {
       this.rotating = null;

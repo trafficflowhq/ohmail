@@ -62,6 +62,15 @@ function scripted(answers: Array<(seen: Seen) => Response | Error>): { fetch: (u
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
+/** A captive portal or a firewall answering in the host's place: its own HTML, no envelope. */
+const portalPage = (status: number): Response =>
+  new Response("<!doctype html><title>Sign in to Wi-Fi</title><form action=/login></form>", {
+    status, headers: { "content-type": "text/html" },
+  });
+
+/** The refresh door's refusal, in the envelope `packages/services` throws it with. */
+const refusal = (code: string, status = 401): Response => json(status, { error: { code, message: "refused" } });
+
 const PAIR: BearerTokens = { accessToken: "access-1", refreshToken: "refresh-1" };
 const ROTATED: BearerTokens = { accessToken: "access-2", refreshToken: "refresh-2" };
 
@@ -270,6 +279,62 @@ describe("what a refresh refusal means", () => {
     expect(died).toBe(0);
     expect(bearer.paired()).toBe(true);
     expect(storage.getItem(REFRESH_STORAGE_KEY)).toBe("refresh-1");
+  });
+
+  /* ONLY THE REFRESH DOOR'S OWN VERDICT ENDS THE PAIRING: a 401 naming one of its codes. Any
+     other answer is the network's. MUTATION: judge by status alone in
+     `readRefreshAnswer` — the first table reddens. */
+  it.each<[string, () => Response]>([
+    ["a 403 Wi-Fi sign-in page", () => portalPage(403)],
+    ["a 401 page from a proxy", () => portalPage(401)],
+    ["a 401 with a foreign JSON body", () => json(401, { message: "Unauthorized" })],
+    ["a 403 naming a refusal code", () => refusal("refresh_revoked", 403)],
+    ["a 200 sign-in page", () => portalPage(200)],
+    ["a 200 with no token pair", () => json(200, { ok: true })],
+  ])("%s at the refresh keeps the pairing", async (_what, answer) => {
+    const storage = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" });
+    const wire = scripted([() => json(401, {}), answer]);
+    const bearer = new BearerManager({ storage, fetchImpl: wire.fetch });
+    let died = 0;
+    bearer.onSessionDead(() => died++);
+    const res = await bearer.fetch("/sync");
+    expect(res.status).toBe(401);
+    expect(died).toBe(0);
+    expect(bearer.paired()).toBe(true);
+    expect(storage.getItem(REFRESH_STORAGE_KEY)).toBe("refresh-1");
+    expect(storage.getItem(REFRESH_ATTEMPT_STORAGE_KEY)).not.toBeNull();
+  });
+
+  it.each<[string, number]>([
+    ["refresh_missing", 401], ["refresh_expired", 401], ["refresh_revoked", 401], ["unauthorized", 401],
+  ])("the host's %s ends the pairing", async (code, status) => {
+    const storage = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" });
+    const wire = scripted([() => json(401, {}), () => refusal(code, status)]);
+    const bearer = new BearerManager({ storage, fetchImpl: wire.fetch });
+    let died = 0;
+    bearer.onSessionDead(() => died++);
+    await bearer.fetch("/sync");
+    expect(died).toBe(1);
+    expect(bearer.paired()).toBe(false);
+    expect(storage.getItem(REFRESH_STORAGE_KEY)).toBeNull();
+  });
+
+  it("after a sign-in page, the next 401 retries the SAME attempt and adopts its answer", async () => {
+    const storage = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" });
+    const refreshes: Array<{ refreshToken?: string; attemptId?: string }> = [];
+    const wire = scripted([
+      () => json(401, {}),
+      (s) => { refreshes.push(JSON.parse(s.body ?? "{}")); return portalPage(403); },
+      () => json(401, {}),
+      (s) => { refreshes.push(JSON.parse(s.body ?? "{}")); return json(200, { tokens: ROTATED }); },
+      (s) => json(s.headers.authorization === "Bearer access-2" ? 200 : 401, { ok: true }),
+    ]);
+    const bearer = new BearerManager({ storage, fetchImpl: wire.fetch });
+    expect((await bearer.fetch("/sync")).status).toBe(401);
+    expect((await bearer.fetch("/sync")).status).toBe(200);
+    expect(refreshes.map((r) => r.refreshToken)).toEqual(["refresh-1", "refresh-1"]);
+    expect(refreshes[1]!.attemptId).toBe(refreshes[0]!.attemptId);
+    expect(storage.getItem(REFRESH_STORAGE_KEY)).toBe("refresh-2");
   });
 });
 
