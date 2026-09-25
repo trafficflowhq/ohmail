@@ -9,9 +9,9 @@
  * `node-sources.json` are GENERATED, so a dependency bump that leaves them behind must fail here
  * rather than inside a Flathub builder at review time.
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const FLATPAK = join(ROOT, "apps", "desktop", "flatpak");
@@ -90,7 +90,9 @@ export function checkSources({ mirror = null } = {}) {
   return out;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+/* Through realpath: `import.meta.url` is the resolved file, so a script reached through a symlink
+ * compared unequal, ran nothing and exited 0. */
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const argv = process.argv.slice(2);
   const value = (name) => {
     const at = argv.indexOf(name);

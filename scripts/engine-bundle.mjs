@@ -9,7 +9,7 @@
  * journal (the db package composes it from `import.meta.url`, which the bundler rewrites to the OUTPUT URL,
  * so it sits at `<dirname(bundle)>/../drizzle` — the reason the output has a `bin/`; only the MAIL journal
  * is copied) and the database engine's WebAssembly (loaded relative to its module, vendored beside the bundle). A banner defines `require` for the MIME parser's runtime charset lookups. `.mjs` makes the ESM module type a fact when handed to a runtime by name; the shebang/execute bit are now a convenience, since the shell spawns `<node> <bundle>` (the only shape that works on Windows). */
-import { chmodSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
@@ -165,7 +165,9 @@ export async function buildEngine({ root = ROOT, outRoot } = {}) {
 /* Run directly — build the artifact and say what it contains. Importers get the function above and
  * decide for themselves what to check; see `scripts/build-engine.mjs`, which is the entry point
  * this workspace actually uses. */
-if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+/* Through realpath: `import.meta.url` is the resolved file, so a script reached through a symlink
+ * compared unequal, ran nothing and exited 0. */
+if (process.argv[1] && pathToFileURL(realpathSync(process.argv[1])).href === import.meta.url) {
   const { inputs, bundleText } = await buildEngine();
   console.log(`\nengine: ${inputs.length} bundled inputs, ${(bundleText.length / 1024 / 1024).toFixed(1)} MiB`);
   console.log("NOTE: the engine is a node script. The app that ships it carries its own Node "

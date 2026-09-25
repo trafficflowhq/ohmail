@@ -10,7 +10,7 @@
  * other catches. The capture route is the SESSION's: `grim` under Wayland, `xwd -root` on an X server (an
  * app-window capture is black there, the compositor draws elsewhere). */
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -19,7 +19,7 @@ import { pathToFileURL } from "node:url";
  * parses argv and calls `process.exit`. Run as a script it behaves exactly as before; imported,
  * only the exports run. */
 const RUN_AS_SCRIPT = process.argv[1] !== undefined
-  && import.meta.url === pathToFileURL(process.argv[1]).href;
+  && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
 
 const args = process.argv.slice(2);
 const appPath = args[0];

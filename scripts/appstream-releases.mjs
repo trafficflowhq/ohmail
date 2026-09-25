@@ -9,9 +9,9 @@
  * other rather than keeping a second copy. The check makes a tag that moves `## [Unreleased]` to a
  * version and forgets the metainfo go red instead of shipping a stale software-centre entry.
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 /** The changelog this derives from, resolved for the tree it is running in. The monorepo keeps it
@@ -92,7 +92,9 @@ export function withReleases(metainfo, block) {
   return metainfo.replace(BLOCK, block);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+/* Through realpath: `import.meta.url` is the resolved file, so a script reached through a symlink
+ * compared unequal, ran nothing and exited 0. */
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const write = process.argv.includes("--write");
   if (!CHANGELOG) {
     process.stderr.write(
