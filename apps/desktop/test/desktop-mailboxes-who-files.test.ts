@@ -6,6 +6,7 @@ import { IntlProvider } from "use-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
 import messages from "../../webapp/messages/en.json";
+import messagesDe from "../../webapp/messages/de.json";
 import type { MailboxFacts } from "../../webapp/app/shell/mail-state";
 
 /**
@@ -21,6 +22,7 @@ import type { MailboxFacts } from "../../webapp/app/shell/mail-state";
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 const copy = (messages as unknown as { mailboxes: Record<string, string> }).mailboxes;
+const copyDe = (messagesDe as unknown as { mailboxes: Record<string, string> }).mailboxes;
 
 let FACTS: MailboxFacts[] | null = null;
 
@@ -75,7 +77,10 @@ const REFUSED: MailboxFacts = {
 let root: Root | null = null;
 let mountPoint: HTMLElement | null = null;
 
-async function render(props: { door: string; host?: string | null; flavor?: string | null }): Promise<string> {
+async function render(
+  props: { door: string; host?: string | null; flavor?: string | null },
+  locale: "en" | "de" = "en",
+): Promise<string> {
   const { DesktopMailboxes } = await import("../src/DesktopMailboxes.js");
   mountPoint = document.createElement("div");
   document.body.appendChild(mountPoint);
@@ -83,7 +88,7 @@ async function render(props: { door: string; host?: string | null; flavor?: stri
   await act(async () => {
     root!.render(h(
       IntlProvider,
-      { locale: "en", messages: messages as never, timeZone: "UTC" } as never,
+      { locale, messages: (locale === "en" ? messages : messagesDe) as never, timeZone: "UTC" } as never,
       h(ThemeProvider, { storageKey: "ohmail.theme" } as never,
         h(ToastHost, null, h(DesktopMailboxes, props as never))),
     ));
@@ -155,5 +160,49 @@ describe("the desktop pane names who files the mailbox", () => {
     const said = await render({ door: "cloud", host: "studio", flavor: "desktop-host" });
     expect(said).not.toMatch(/this computer/i);
     expect(said).toContain(copy.stopOrganizingSiblingLapseHost!.replace("{name}", "studio"));
+  });
+});
+
+describe("the desktop pane's heading names the door, never ohmail Cloud for a server or a computer", () => {
+  /* The heading said "Cloud mailboxes" on every hosted door, a self-hosted server's and a paired
+     computer's included. The local and managed doors are the controls and keep their words. */
+  const heading = (): string => mountPoint?.querySelector("h2")?.textContent ?? "";
+  const unmountNow = async (): Promise<void> => {
+    if (root) await act(async () => { root!.unmount(); });
+    mountPoint?.remove();
+    root = null;
+    mountPoint = null;
+  };
+
+  it("CONTROL — its own door and the managed service keep their headings", async () => {
+    FACTS = [ORGANIZING];
+    for (const [props, want] of [
+      [{ door: "local" }, copy.desktopModeLocal],
+      [{ door: "cloud", flavor: "managed" }, copy.modeCloud],
+      [{ door: "cloud" }, copy.modeCloud],
+    ] as const) {
+      await render(props);
+      expect(heading(), JSON.stringify(props)).toBe(want);
+      await unmountNow();
+    }
+  });
+
+  it("a self-hosted server's door is headed by the server, in both languages, loaded or not", async () => {
+    for (const facts of [null, [ORGANIZING, REFUSED, { ...ORGANIZING, id: "mbx-2", organizerRole: "reader" as const }]]) {
+      FACTS = facts;
+      for (const [locale, want] of [["en", copy.modeSelfhost], ["de", copyDe.modeSelfhost]] as const) {
+        await render({ door: "cloud", flavor: "selfhost" }, locale);
+        expect(heading()).toBe(want);
+        expect(mountPoint!.textContent ?? "", `${locale} names Cloud on a self-hosted door`).not.toMatch(/\bCloud\b/);
+        await unmountNow();
+      }
+    }
+  });
+
+  it("a paired door is headed by the other computer's name", async () => {
+    FACTS = [ORGANIZING];
+    await render({ door: "cloud", host: "studio", flavor: "desktop-host" });
+    expect(heading()).toBe(copy.modeHost!.replace("{name}", "studio"));
+    expect(mountPoint!.textContent ?? "").not.toMatch(/\bCloud\b/);
   });
 });

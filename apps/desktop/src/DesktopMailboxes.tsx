@@ -28,7 +28,7 @@ import {
 } from "@ohmail/ui";
 
 import {
-  desktopFiler, deviceHoldings, holdingsSpeak, readerStandDown, showInboundQuiet, siblingLapseSentence,
+  desktopFiler, deviceHoldings, filerSentence, holdingsSpeak, readerStandDown, showInboundQuiet,
   type MailboxFacts,
 } from "../../webapp/app/shell/mail-state";
 import { addressKey } from "../../webapp/app/shell/address-key";
@@ -899,11 +899,13 @@ export function DesktopMailboxes(
   /* PAIRED: a cloud door whose far side is a computer of the person's own. Everything the ENGINE
      does is the cloud door's; what changes is what this pane may claim. */
   const paired = cloud && !!host;
-  const heading = cloud ? t("modeCloud") : t("desktopModeLocal");
-  /* WHO FILES WHAT THIS DOOR SHOWS, for the one organizer sentence a hosted or paired row can
-     carry — the refused stop. This computer on its own door; the server or the other computer
-     on the rest. */
-  const lapse = siblingLapseSentence(paired ? { host: host! } : desktopFiler(door, flavor));
+  /* WHO FILES WHAT THIS DOOR SHOWS, for the heading and the one organizer sentence a hosted or
+     paired row can carry — the refused stop. This computer on its own door; ohmail Cloud, the
+     self-hosted server or the other computer on the rest. */
+  const filer = paired ? { host: host! } : desktopFiler(door, flavor);
+  const title = filerSentence("heading", filer);
+  const heading = t(title.key, title.params);
+  const lapse = filerSentence("siblingLapse", filer);
 
   /**
    * ASK FOR A FRESH PASS OVER ONE MAILBOX. 202 — nothing is synced when this returns. The

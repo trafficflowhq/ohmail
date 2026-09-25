@@ -69,7 +69,8 @@ import {
 } from "../../shell/probe-refusal";
 import { AGO_COPY, agoStamp, dayStamp } from "../../shell/format";
 import {
-  claimLeftBehind, filerKey, isSyncBlockReason, readerStandDown, showInboundQuiet, webFiler,
+  claimLeftBehind, filerKey, isSyncBlockReason, readerStandDown, showInboundQuiet, standDownKey, webFiler,
+  type WebFiler,
 } from "../../shell/mail-state";
 import { useMailState } from "../../shell/MailStateProvider";
 import { useEngineOrNull } from "../../shell/engine";
@@ -899,8 +900,8 @@ export function MailboxSection() {
       // new one — a local guess would be a second source of truth for `status`. The panel and its
       // spent confirm stay until the re-read answers.
       setNotice(
-        result.outcome === "authorized" ? t("organizerQueued")
-          : result.outcome === "already_organizing" ? t("organizerAlready")
+        result.outcome === "authorized" ? t(filerKey("takeoverQueued", filer))
+          : result.outcome === "already_organizing" ? t(filerKey("takeoverAlready", filer))
             : t("organizerDisconnected"),
       );
       const read = await afterWrite();
@@ -928,7 +929,7 @@ export function MailboxSection() {
     } finally {
       if (alive.current) setPressing((p) => (p === id ? null : p));
     }
-  }, [afterWrite, listWins, t]);
+  }, [afterWrite, filer, listWins, t]);
 
   /**
    * The server's entitlement verdict, read before anything is typed.
@@ -2081,7 +2082,7 @@ export function MailboxSection() {
           the managed bundle keeps exactly the string it had. The self-host wording matches that build's own
           vocabulary elsewhere ("AI on this server", "Accounts on this server").
         */}
-      <h2 className="acct-h">{SELF_HOST_BUILD ? t("modeSelfhost") : t("modeCloud")}</h2>
+      <h2 className="acct-h">{t(filerKey("heading", filer))}</h2>
       {/* A failed read is not an empty result — "Reading your mailboxes…" is only true while a read is outstanding. A
           read that came back refused is not still running, and saying it is would trade one
           permanent false sentence for another. The reason renders below, in `error`. */}
@@ -2195,11 +2196,12 @@ export function MailboxSection() {
                 </>
               ) : standDown && !stranded ? (
                 <>
-                  <span className="mbx-bad">{t(`standDown_${standDown}`)}</span>
+                  <span className="mbx-bad">{t(standDownKey(standDown, filer))}</span>
                   {organizer?.id === m.id ? (
                     <OrganizerPanel
                       state={organizer}
                       t={t}
+                      filer={filer}
                       now={now}
                       spent={pressing === m.id}
                       onCancel={() => { setOrganizer(null); }}
@@ -2207,13 +2209,13 @@ export function MailboxSection() {
                     />
                   ) : (
                     <>
-                      <span className="mbx-sub">{t("standDownHow")}</span>
+                      <span className="mbx-sub">{t(filerKey("takeoverHow", filer))}</span>
                       <Button
                         className="mbx-btn"
                         onClick={() => { void checkOrganizer(m.id); }}
                         disabled={organizer !== null}
                       >
-                        {t("organizerCheck")}
+                        {t(filerKey("takeoverCheck", filer))}
                       </Button>
                     </>
                   )}
@@ -2256,7 +2258,7 @@ export function MailboxSection() {
                   <SettingsBanner
                     label={stranded ? t("stateReading") : t("stateOrganizing")}
                     description={
-                      stranded ? t("stateClaimLeftBehind")
+                      stranded ? t(filerKey("claimLeftBehind", filer))
                         /* WHY the stop stands, when the wire can say (mail 0121) — the
                            desktop pane's arm, on this surface's own pending description: a
                            refusal against a live same-id sibling (a restored image or clone)
@@ -2284,7 +2286,7 @@ export function MailboxSection() {
                       is red. */}
                   {releaseFor === m.id ? (
                     <div className="mbx-handover">
-                      <p className="mbx-handover-what">{stranded ? t("releaseClaimWhat") : t(filerKey("stopWhat", filer))}</p>
+                      <p className="mbx-handover-what">{stranded ? t(filerKey("releaseClaimWhat", filer)) : t(filerKey("stopWhat", filer))}</p>
                       <SettingsActions>
                         <Button
                           variant="primary"
@@ -3195,9 +3197,11 @@ interface OrganizerCheck {
  * would otherwise have to guess: that the other install stops on its own next check rather than immediately, and that
  * its local copy of the mail is left alone.
  */
-function OrganizerPanel({ state, t, now, spent, onCancel, onConfirm }: {
+function OrganizerPanel({ state, t, filer, now, spent, onCancel, onConfirm }: {
   state: OrganizerCheck;
   t: (k: string, v?: Record<string, string>) => string;
+  /** Who takes the mailbox over from here: ohmail Cloud, or the self-hosted server. */
+  filer: WebFiler;
   now: number;
   /** The confirm was pressed and its answer is being re-read: a second press asks again. */
   spent: boolean;
@@ -3222,7 +3226,7 @@ function OrganizerPanel({ state, t, now, spent, onCancel, onConfirm }: {
   return (
     <>
       <span className="mbx-sub">{found}</span>
-      <span className="mbx-sub">{t("organizerEffect")}</span>
+      <span className="mbx-sub">{t(filerKey("takeoverEffect", filer))}</span>
       <span className="mbx-actions">
         <Button variant="primary" className="mbx-btn" onClick={onConfirm} disabled={spent}>
           {t("organizerConfirm")}

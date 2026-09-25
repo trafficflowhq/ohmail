@@ -184,6 +184,12 @@ export function claimLeftBehind(m: {
 /** Who files a mailbox this install organizes: a desktop, ohmail Cloud, or a self-hosted server. */
 export type FilerSelf = "computer" | "cloud" | "server";
 
+/** A browser build is ohmail Cloud or the self-hosted server it is served by, never a computer. */
+export type WebFiler = Exclude<FilerSelf, "computer">;
+
+/* The rows below `siblingLapse` are the web pane's own: the heading, the claim left behind and the
+   takeover. A self-hosted server said "Cloud" in every one of them, and a desktop headed a
+   self-hosted door "Cloud mailboxes". */
 const FILER_KEYS = {
   organizing: {
     computer: "stateOrganizingHere", cloud: "stateOrganizingCloud", server: "stateOrganizingServer",
@@ -202,38 +208,62 @@ const FILER_KEYS = {
     cloud: "stopOrganizingSiblingLapseCloud",
     server: "stopOrganizingSiblingLapseServer",
   },
-} as const satisfies Record<string, Record<FilerSelf, string>>;
+  heading: { computer: "desktopModeLocal", cloud: "modeCloud", server: "modeSelfhost" },
+  claimLeftBehind: { cloud: "stateClaimLeftBehind", server: "stateClaimLeftBehindServer" },
+  releaseClaimWhat: { cloud: "releaseClaimWhat", server: "releaseClaimWhatServer" },
+  claimedElsewhere: { cloud: "standDown_organized_elsewhere_cloud", server: "standDownClaimedByServer" },
+  takeoverHow: { cloud: "standDownHow", server: "standDownHowServer" },
+  takeoverCheck: { cloud: "organizerCheck", server: "organizerCheckServer" },
+  takeoverEffect: { cloud: "organizerEffect", server: "organizerEffectServer" },
+  takeoverQueued: { cloud: "organizerQueued", server: "organizerQueuedServer" },
+  takeoverAlready: { cloud: "organizerAlready", server: "organizerAlreadyServer" },
+} as const satisfies Record<string, Partial<Record<FilerSelf, string>>>;
 
 /** One sentence about the install that files the mailbox. */
 export type FilerSentence = keyof typeof FILER_KEYS;
 
+/** The installs {@link FilerSentence} is written for — a web-only row has no `computer`. */
+export type FilerOf<S extends FilerSentence> = keyof (typeof FILER_KEYS)[S] & FilerSelf;
+
+/** The whole table, read by the self-host census. */
+export const FILER_TABLE: Readonly<Record<FilerSentence, Partial<Record<FilerSelf, string>>>> = FILER_KEYS;
+
 /** The `mailboxes` key for {@link FilerSentence} said about {@link FilerSelf}. */
-export function filerKey(sentence: FilerSentence, self: FilerSelf): string {
-  return FILER_KEYS[sentence][self];
+export function filerKey<S extends FilerSentence>(sentence: S, self: FilerOf<S>): string {
+  return (FILER_KEYS[sentence] as Partial<Record<FilerSelf, string>>)[self]!;
 }
 
-/** A paired desktop's organizer is the other computer, named as that pane names it. */
-const FILER_HOST_SIBLING_LAPSE = "stopOrganizingSiblingLapseHost";
+/** A paired desktop's organizer and door are the other computer, named as that pane names it. */
+export const FILER_HOST_KEYS = {
+  siblingLapse: "stopOrganizingSiblingLapseHost",
+  heading: "modeHost",
+} as const;
 
 /** Every key this table can answer — the catalogue census reads it. */
 export const FILER_KEY_SET: readonly string[] = [
-  ...Object.values(FILER_KEYS).flatMap((row) => Object.values(row)),
-  FILER_HOST_SIBLING_LAPSE,
+  ...Object.values(FILER_TABLE).flatMap((row) => Object.values(row)),
+  ...Object.values(FILER_HOST_KEYS),
 ];
 
 /**
- * The refused stop is the one organizer sentence a hosted or paired desktop row can carry, so it
- * alone takes the other computer as its subject.
+ * The refused stop and the heading are the organizer sentences a hosted or paired desktop pane
+ * can carry, so they alone take the other computer as their subject.
  */
-export function siblingLapseSentence(
+export function filerSentence(
+  sentence: keyof typeof FILER_HOST_KEYS,
   self: FilerSelf | { host: string },
 ): { key: string; params: Record<string, string> } {
-  if (typeof self === "object") return { key: FILER_HOST_SIBLING_LAPSE, params: { name: self.host } };
-  return { key: filerKey("siblingLapse", self), params: {} };
+  if (typeof self === "object") return { key: FILER_HOST_KEYS[sentence], params: { name: self.host } };
+  return { key: filerKey(sentence, self), params: {} };
 }
 
 /** A browser build files as the managed service, or as the self-hosted server it is served by. */
-export const webFiler = (selfHostBuild: boolean): FilerSelf => (selfHostBuild ? "server" : "cloud");
+export const webFiler = (selfHostBuild: boolean): WebFiler => (selfHostBuild ? "server" : "cloud");
+
+/** The web row's stand-down sentence: a server holder is named by the table, the rest by reason. */
+export function standDownKey(reason: StandDownReason, self: WebFiler): string {
+  return reason === "organized_elsewhere_cloud" ? filerKey("claimedElsewhere", self) : `standDown_${reason}`;
+}
 
 /**
  * A desktop files as this computer on its own door. A hosted door's organizer is the server it
