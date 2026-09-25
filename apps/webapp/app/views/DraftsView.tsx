@@ -23,6 +23,7 @@ import { HELD_SEND_RECHECK_MS, type EngineDraft } from "@ohmail/client-engine";
 import { Button, InfoNote, ListPane, ListRows } from "@ohmail/ui";
 import { displayTime, scheduleLabel } from "../shell/format";
 import { useZoneNav } from "../shell/zone-nav";
+import { useListWindow } from "../shell/list-window";
 import { HeldSendResolve } from "../components/HeldSendResolve";
 
 /**
@@ -165,11 +166,32 @@ export function DraftsView({
     setConfirming(null);
   }, []);
 
+  /**
+   * THE LIST IS A WINDOW, like every list: nothing bounds what an account has written and not
+   * sent. One index space for both groups and the heading between them, the Ohbox's shape —
+   * Scheduled, its rows, Drafts, its rows — the two headings only while a send is scheduled.
+   */
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const schedCount = scheduled.length;
+  const draftCount = drafts.length;
+  const schedBase = schedCount > 0 ? 1 : 0;
+  const draftsHeadAt = schedBase + schedCount;
+  const draftsBase = draftsHeadAt + (schedCount > 0 ? 1 : 0);
+  const win = useListWindow({ scrollerRef, count: draftsBase + draftCount });
+  const clamp = (i: number, hi: number): number => Math.min(Math.max(i, 0), hi);
+  const schedFrom = clamp(win.start - schedBase, schedCount);
+  const schedTo = clamp(win.end - schedBase, schedCount);
+  const draftsFrom = clamp(win.start - draftsBase, draftCount);
+  const draftsTo = clamp(win.end - draftsBase, draftCount);
+  const showSchedHead = schedCount > 0 && win.start === 0;
+  const showDraftsHead = schedCount > 0 && win.start <= draftsHeadAt && win.end > draftsHeadAt;
+
   return (
     <section className="view col view-drafts" ref={listRef}>
       <ListPane
         title={t("title")}
         meta={drafts.length ? t("metaCount", { count: drafts.length }) : undefined}
+        scrollerRef={scrollerRef}
       >
         {/* Same idiom as History: the sentence that says what the list IS stays on screen,
             the one that says where the drafts live is behind the (i). */}
@@ -184,57 +206,67 @@ export function DraftsView({
             Each row says WHEN it sends, in the reader's own clock (`scheduleLabel`), because
             the time is the entire content of this group. Open-to-edit and Cancel both route
             through the shell's cancel verb — see the prop's note. */}
-        {scheduled.length ? (
-          <>
-            <div className="drafts-group-head" role="heading" aria-level={2}>
-              {t("scheduledTitle")}
-            </div>
-            <ListRows ariaLabel={t("scheduledTitle")}>
-              {scheduled.map((d) => {
-                const to = recipientLine(d);
-                return (
-                  <div key={d.id} className="draft-row draft-row-scheduled" data-id={d.id}>
-                    <div className="draft-row-main">
-                      <button
-                        type="button"
-                        className="draft-open"
-                        onClick={() => onEditScheduled(d)}
-                        title={t("scheduledEditTitle")}
-                      >
-                        <span className="draft-line">
-                          <b className="draft-subject">{d.subject.trim() || t("noSubject")}</b>
-                          {/* The appointment, not `updatedAt`: when it SENDS is this row's stamp. */}
-                          <span className="draft-when">
-                            {d.sendAt ? t("scheduledWhen", { when: scheduleLabel(d.sendAt, now) }) : ""}
-                          </span>
-                        </span>
-                        <span className="draft-line">
-                          <span className="draft-to">{to || t("noRecipient")}</span>
-                        </span>
-                        <span className="draft-preview">{preview(d.body ?? "")}</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="draft-discard"
-                        onClick={() => onCancelSchedule(d.id)}
-                        title={t("scheduledCancelTitle")}
-                      >
-                        {t("scheduledCancel")}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </ListRows>
-            <div className="drafts-group-head" role="heading" aria-level={2}>
-              {t("title")}
-            </div>
-          </>
+        <div aria-hidden data-window-top="" style={{ height: win.padTop }} />
+        {showSchedHead ? (
+          <div className="drafts-group-head" role="heading" aria-level={2} data-index={0}>
+            {t("scheduledTitle")}
+          </div>
         ) : null}
-        <ListRows ariaLabel={t("title")}>
-          {drafts.length ? (
-            drafts.map((d) => {
+        {schedTo > schedFrom ? (
+          <ListRows ariaLabel={t("scheduledTitle")}>
+            {scheduled.slice(schedFrom, schedTo).map((d, k) => {
               const to = recipientLine(d);
+              const at = schedFrom + k;
+              return (
+                <div
+                  key={d.id}
+                  className={["draft-row draft-row-scheduled", at === schedCount - 1 ? "draft-row-last" : ""].filter(Boolean).join(" ")}
+                  data-id={d.id}
+                  data-index={schedBase + at}
+                >
+                  <div className="draft-row-main">
+                    <button
+                      type="button"
+                      className="draft-open"
+                      onClick={() => onEditScheduled(d)}
+                      title={t("scheduledEditTitle")}
+                    >
+                      <span className="draft-line">
+                        <b className="draft-subject">{d.subject.trim() || t("noSubject")}</b>
+                        {/* The appointment, not `updatedAt`: when it SENDS is this row's stamp. */}
+                        <span className="draft-when">
+                          {d.sendAt ? t("scheduledWhen", { when: scheduleLabel(d.sendAt, now) }) : ""}
+                        </span>
+                      </span>
+                      <span className="draft-line">
+                        <span className="draft-to">{to || t("noRecipient")}</span>
+                      </span>
+                      <span className="draft-preview">{preview(d.body ?? "")}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="draft-discard"
+                      onClick={() => onCancelSchedule(d.id)}
+                      title={t("scheduledCancelTitle")}
+                    >
+                      {t("scheduledCancel")}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </ListRows>
+        ) : null}
+        {showDraftsHead ? (
+          <div className="drafts-group-head" role="heading" aria-level={2} data-index={draftsHeadAt}>
+            {t("title")}
+          </div>
+        ) : null}
+        {draftsTo > draftsFrom ? (
+          <ListRows ariaLabel={t("title")}>
+            {drafts.slice(draftsFrom, draftsTo).map((d, k) => {
+              const to = recipientLine(d);
+              const at = draftsFrom + k;
               return (
                 <div
                   key={d.id}
@@ -245,8 +277,10 @@ export function DraftsView({
                     "draft-row",
                     confirming === d.id ? "draft-row-confirming" : "",
                     d.status !== "draft" || heldHere?.has(d.id) === true ? "draft-row-held" : "",
+                    at === draftCount - 1 ? "draft-row-last" : "",
                   ].filter(Boolean).join(" ")}
                   data-id={d.id}
+                  data-index={draftsBase + at}
                 >
                   <div className="draft-row-main">
                     <button
@@ -348,15 +382,19 @@ export function DraftsView({
                   ) : null}
                 </div>
               );
-            })
-          ) : (
+            })}
+          </ListRows>
+        ) : null}
+        {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
+        {draftCount === 0 ? (
+          <ListRows ariaLabel={t("title")}>
             <div className="empty">
               <span className="glyph">✎</span>
               <b>{t("emptyTitle")}</b>
               {t("emptyHint")}
             </div>
-          )}
-        </ListRows>
+          </ListRows>
+        ) : null}
       </ListPane>
     </section>
   );

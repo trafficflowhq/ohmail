@@ -6163,7 +6163,7 @@ input.set-tag-input {
   gap: 4px;
   margin-left: auto;
 }
-.draft-row:last-child { border-bottom: 0; }
+.draft-row.draft-row-last { border-bottom: 0; }
 /* THE ROW A REFUSED DISCARD WAS ABOUT. The press moves focus into that row's "Did this message
    arrive?" group; this is the same fact for a reader who was watching the toast rather than the
    list, on a screen where every held row carries an identical pair. The accent ground is
