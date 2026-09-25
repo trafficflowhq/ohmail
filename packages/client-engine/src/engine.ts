@@ -2192,10 +2192,12 @@ export class OhmailEngine {
   /**
    * The held-release offer's freshness, kept beside its one door ({@link refreshHeldReleases}).
    * `armed`: a surface asked, so the offer is shown in this process. `stamp`: the settings stamp
-   * the last ANSWER was asked under. `seq`: the newest ask issued. `bell`: the settle's re-ask.
+   * the last ANSWER was asked under. `owed`: a re-bootstrap wiped that answer. `seq`: the newest
+   * ask issued. `bell`: the settle's re-ask in flight.
    */
-  private heldRelease: { armed: boolean; stamp: string | null; seq: number; bell: Promise<void> | null } =
-    { armed: false, stamp: null, seq: 0, bell: null };
+  private heldRelease: {
+    armed: boolean; stamp: string | null; owed: boolean; seq: number; bell: Promise<void> | null;
+  } = { armed: false, stamp: null, owed: false, seq: 0, bell: null };
   /** Which index answered — see {@link OhmailEngine.searchIndexRevision}. */
   private searchIndexRev = 0;
   /** The in-flight mirror read, so concurrent callers coalesce. See {@link OhmailEngine.hydrate}. */
@@ -3047,6 +3049,8 @@ export class OhmailEngine {
           // verb and every abandoned record. It was also a second writer of a rule the store
           // already owned for the cross-tab case.
           await this.store.resetForBootstrap(); // cursor → "0"
+          // The wipe took the held-release answer too; the settle's bell asks for it again.
+          this.heldRelease.owed = true;
           // The instant index is an index of the mail that just went. A build walking the old
           // rows would install it over the new mirror and hand back hits that open nothing.
           this.invalidateSearchIndex();
@@ -4842,6 +4846,7 @@ export class OhmailEngine {
     // The stamp this answer was asked UNDER, never the one at arrival: a doorbell that rang while
     // the read was in the air may not be reflected in it, so the next settle asks again.
     h.stamp = stamp;
+    h.owed = false;
     const before = this.read().list<HeldReleaseGroupDTO>(HELD_RELEASE_TYPE);
     const keep = new Set(wire.groups.map((g) => g.ruleId));
     await this.store.commitLocal(
@@ -4870,13 +4875,13 @@ export class OhmailEngine {
    * THE DOORBELL FOR THE OFFER — called at every drain's settle. A dismissal (or any settings write)
    * on another device moves the settings stamp, so the next pull re-asks the one door; the server
    * answers `dismissed` by its own rule and every device reads the same answer. Only once a surface
-   * asked, and only when the stamp moved, so a pull with nothing to say costs nothing. Never
-   * awaited: reads are never hostage to an offer. A failed ask leaves the stamp behind and the next
-   * settle asks again.
+   * asked, and only when the stamp moved or a re-bootstrap wiped the answer, so a pull with nothing
+   * to say costs nothing. Never awaited: reads are never hostage to an offer. A failed ask leaves
+   * the stamp behind and the next settle asks again.
    */
   private ringHeldReleaseBell(): void {
     const h = this.heldRelease;
-    if (!h.armed || h.bell !== null || this.settingsStamp() === h.stamp) return;
+    if (!h.armed || h.bell !== null || (!h.owed && this.settingsStamp() === h.stamp)) return;
     h.bell = this.refreshHeldReleases()
       .catch(() => { /* an offer: the next settle asks again */ })
       .finally(() => { h.bell = null; });
