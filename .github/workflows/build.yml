@@ -3346,20 +3346,84 @@ jobs:
               ? "expected offline: " + offline.join(" ") : "no errors"));
           ' "$LINT_RC" flatpak-lint-repo.json $FLATHUB_ONLY
 
-      # The permission set, asserted against the built metadata rather than
-      # against the manifest it was written from — the finished app is what a
-      # person installs. A --filesystem grant of any kind is a refusal here:
-      # this build reaches the host's files only through the portal.
+      # THE BUILT METADATA AGAINST THE MANIFEST'S finish-args, AS SETS. Each finish-arg is read as
+      # the group and key flatpak writes it under, and the two sets must be equal but for one entry
+      # the builder derives: flatpak 1.14 adds x11 beside fallback-x11 (option_socket_cb in
+      # common/flatpak-context.c, lines 1084-1085 at 1.14.6) and drops it again at run time when
+      # Wayland is there. Anything else either side lacks is refused by name, and so is any
+      # --filesystem grant: this build reaches the host's files only through the portal.
       - name: The app ships the permissions it says it does
         run: |
-          META=flatpak-build/metadata
-          cat "$META"
-          ! grep -q 'filesystems=' "$META" || {
-            echo "the built app carries a --filesystem grant" >&2; exit 1; }
-          for want in 'shared=network;ipc' 'sockets=wayland;fallback-x11' \
-                      'org.freedesktop.secrets=talk' 'org.freedesktop.Notifications=talk'; do
-            grep -q "$want" "$META" || { echo "the built app is missing $want" >&2; exit 1; }
-          done
+          command -v node >/dev/null || { echo "node is not installed" >&2; exit 1; }
+          node -e '
+            const fs = require("node:fs");
+            const [manifestPath, metaPath] = process.argv.slice(1);
+            const why = [];
+            const red = () => {
+              for (const w of why) console.log("flatpak permissions: RED -- " + w);
+              process.exit(1);
+            };
+            const read = (p) => {
+              try { return fs.readFileSync(p, "utf8"); } catch { why.push("cannot read " + p); red(); }
+            };
+            const manifest = read(manifestPath);
+            const meta = read(metaPath);
+            process.stdout.write(meta.endsWith("\n") ? meta : meta + "\n");
+
+            const CONTEXT = { share: "shared", socket: "sockets", device: "devices",
+              filesystem: "filesystems", persist: "persistent", allow: "features" };
+            const BUS = { "talk-name": ["Session Bus Policy", "talk"], "own-name": ["Session Bus Policy", "own"],
+              "system-talk-name": ["System Bus Policy", "talk"], "system-own-name": ["System Bus Policy", "own"] };
+            const declared = new Set();
+            const lines = manifest.split("\n");
+            const at = lines.indexOf("finish-args:");
+            if (at < 0) why.push(manifestPath + " has no finish-args list");
+            for (const line of at < 0 ? [] : lines.slice(at + 1)) {
+              if (/^\S/.test(line)) break;
+              if (/^\s*(#.*)?$/.test(line)) continue;
+              const m = /^  - ["\x27]?--([a-z-]+)=([^"\x27\s]+)["\x27]?\s*$/.exec(line);
+              if (!m) { why.push("a finish-args line this check cannot read: " + line.trim()); continue; }
+              const [, opt, value] = m;
+              if (CONTEXT[opt]) declared.add("[Context] " + CONTEXT[opt] + "=" + value);
+              else if (BUS[opt]) declared.add("[" + BUS[opt][0] + "] " + value + "=" + BUS[opt][1]);
+              else if (opt === "env") declared.add("[Environment] " + value);
+              else why.push("a finish-arg this check does not map: --" + opt + "=" + value);
+            }
+
+            const READ = new Set(["Context", "Session Bus Policy", "System Bus Policy", "Environment"]);
+            const built = new Set();
+            let group = null;
+            for (const raw of meta.split("\n")) {
+              const line = raw.trim();
+              if (line === "" || line.startsWith("#")) continue;
+              const g = /^\[(.+)\]$/.exec(line);
+              if (g) {
+                group = g[1];
+                if (!READ.has(group) && group !== "Application" && !group.startsWith("Extension "))
+                  why.push("the built metadata carries a group this check does not read: [" + group + "]");
+                continue;
+              }
+              if (group === null) { why.push("a metadata line outside any group: " + line); continue; }
+              if (!READ.has(group)) continue;
+              const eq = line.indexOf("=");
+              if (eq <= 0) { why.push("a metadata line this check cannot read: " + line); continue; }
+              const key = line.slice(0, eq), value = line.slice(eq + 1);
+              if (group !== "Context") built.add("[" + group + "] " + key + "=" + value);
+              else for (const v of value.split(";")) if (v !== "") built.add("[Context] " + key + "=" + v);
+            }
+            if (declared.size === 0) why.push(manifestPath + " declares no permission");
+            if (built.size === 0) why.push(metaPath + " carries no permission, so nothing was read");
+
+            const FALLBACK = "[Context] sockets=fallback-x11", DERIVED = "[Context] sockets=x11";
+            const admitted = (p) => declared.has(p) || (p === DERIVED && declared.has(FALLBACK));
+            for (const p of built) if (!admitted(p)) why.push("the built app carries " + p + ", which the manifest does not declare");
+            for (const p of declared) if (!built.has(p)) why.push("the built app is missing " + p + ", which the manifest declares");
+            for (const p of built) if (p.startsWith("[Context] filesystems=")) why.push("the built app carries a --filesystem grant: " + p);
+            if (why.length > 0) red();
+            const derived = built.has(DERIVED) && !declared.has(DERIVED);
+            console.log("flatpak permissions: GREEN -- " + declared.size + " declared, all built"
+              + (derived ? "; x11 derived by flatpak from fallback-x11" : ""));
+          ' apps/desktop/flatpak/app.ohmail.Desktop.yml flatpak-build/metadata
 
       # A SUMMARY THAT CANNOT SAY "IT DID NOT BUILD" IS A CLAIM, NOT A READING. This step runs
       # on a failed job too, and the sentence below stated a build on every one of them while
