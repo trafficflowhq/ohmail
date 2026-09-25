@@ -245,7 +245,6 @@ import {
 } from "./routing";
 import { beginSearch, markStartup, useUiVitals } from "./ui-vitals";
 import { HistoryView } from "../views/HistoryView";
-import { useStoreTotal } from "./store-timeline";
 import { SeedReviewView } from "../views/SeedReviewView";
 import { OhboxView, type OhboxReplyDone } from "../views/OhboxView";
 import { ReadsView } from "../views/ReadsView";
@@ -1438,14 +1437,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * ONLY WHILE THE STAGE IS OPEN: `reader.list("message")` materialises the whole mirror, which is
    * the cost the windowing work exists to keep off the render path.
    */
-  /* THE HISTORY FIGURE IS THE STORE'S TOTAL — History lists every message the account owns — and
-     only where the account holds this one mailbox; beside a second, its own older mail. */
-  const storeTotal = useStoreTotal(engine, route.firstRun && (facts?.length ?? 0) <= 1);
   const firstRunPull = useMemo(
     () => (route.firstRun && firstRunMailbox !== null
-      ? firstRunCounts(reader.list<EngineMessage>("message"), history, firstRunMailbox.id, storeTotal)
+      ? firstRunCounts(reader.list<EngineMessage>("message"), history, firstRunMailbox.id)
       : { screened: 0, history: 0 }),
-    [route.firstRun, reader, derived, history, firstRunMailbox, storeTotal],
+    [route.firstRun, reader, derived, history, firstRunMailbox],
   );
   const onboardingFacts: OnboardingFacts | null = useMemo(() => {
     if (!firstRun || facts === null) return null;

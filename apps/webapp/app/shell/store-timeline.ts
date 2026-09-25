@@ -6,7 +6,7 @@
  * walker fetches pages from the nearest seen keyset, reaches far slots by uncached steps, and the
  * mirror paints first until page one replaces it in place.
  */
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
 import {
   StoreTimelineWalker,
   type EngineMessage,
@@ -59,23 +59,4 @@ export function useStoreTimeline(
     // `rev` and `version` are the signals: the walker moved, or the mirror did.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [walker, rev, version, mirrorRows]);
-}
-
-/** History is every message the account owns: while `on`, the store's total, re-read as it grows. */
-export function useStoreTotal(engine: OhmailEngine, on: boolean, everyMs = 10_000): number | null {
-  const [total, setTotal] = useState<number | null>(null);
-  useEffect(() => {
-    if (!on || !engine.storePagesAvailable()) return undefined;
-    let live = true;
-    const ask = () => void engine.timeline().then((out) => {
-      if (live && out.state === "ready") setTotal(out.timeline.total);
-    });
-    ask();
-    const timer = setInterval(ask, everyMs);
-    return () => {
-      live = false;
-      clearInterval(timer);
-    };
-  }, [engine, on, everyMs]);
-  return on ? total : null;
 }

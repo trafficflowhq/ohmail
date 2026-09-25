@@ -333,11 +333,19 @@ export function firstRunStep(
    * derivation + {@link asked}); down one: a fresh explicit `nobody`.
    */
   const questionUp = at === "elsewhere" || (at === null && asked && !claimAnswered);
-  const cursor = questionUp
+  const kept = questionUp
     ? (holderVerdict(mb) === "nobody" && readIsNotOlder(mb?.organizerEventAt, heldStamp)
       ? null
       : "elsewhere")
     : at;
+  /* NOR MAY IT HOLD THE PULL PAST THE IMPORT. The pull screen asks nothing, so nothing on it writes
+   * and a cursor left there (the AI answer keeps one) is never cleared: the stamp the server writes
+   * when the import drains went unread and the screen said "reading the mailbox" for ever. Once the
+   * import is over the run goes on to what the walk holds after the pull — row 7's rule, `=== null`
+   * is running and absent is a build that cannot tell. */
+  const cursor = kept === "pull" && mb !== null && mb.initialImportCompletedAt !== null
+    ? nextStep(onboardingPath(facts, add), "pull") ?? null
+    : kept;
   /* A re-run is an intent, and it outranks the completion stamp. `rerun`
    * comes from the route (`#/first-run/again`) — the only place it can: a
    * finished account derives to "nothing to do", correctly, which is
@@ -758,6 +766,9 @@ export function FirstRun({
   const rate = pullRate(samples);
   const remaining = pullRemaining(serverMessageCount, pulled);
   const etaMs = pullEtaMs(remaining, rate);
+  /* Everything the server has counted is in: no estimate is being worked out any more, and the
+     step ends on the server's stamp. "So far" because the count grows as folders are opened. */
+  const readAll = typeof serverMessageCount === "number" && remaining === null;
 
   /**
    * The default is the choice a first run is about, and it is no longer withheld. It used to follow a
@@ -1451,7 +1462,7 @@ export function FirstRun({
             <p className="ob-eta" role="status">
               {etaMs !== null && rate !== null
                 ? t("eta", { eta: durationWords(etaMs), rate: Math.round(rate) })
-                : t("etaSoon")}
+                : readAll ? t("pullRead") : t("etaSoon")}
             </p>
             {resumed ? <SettingsVerdict state="wait" headline={t("pullResumed")} /> : null}
             {foot({

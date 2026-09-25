@@ -74,15 +74,15 @@ export function firstRunCounts(
   mirrored: readonly HasMailbox[],
   history: readonly HasMailbox[],
   mailboxId: string | null,
-  /** The store's own History total (`engine.timeline()`), given only where it is this mailbox's. */
-  storeTotal: number | null = null,
 ): { screened: number; history: number } {
   if (mailboxId === null) return { screened: 0, history: 0 };
   const mine = (m: HasMailbox) => m.mailboxId === mailboxId;
   const held = mirrored.reduce((n, m) => (mine(m) ? n + 1 : n), 0);
   const listed = history.reduce((n, m) => (mine(m) ? n + 1 : n), 0);
+  // Two partitions of what this device holds, so they never add to more than it. Not the store's
+  // History total: History lists every message, so that figure contains the screened ones.
   // Clamped: both are projections over one reader and a race between the two reads must not print a negative.
-  return { screened: Math.max(0, held - listed), history: storeTotal ?? listed };
+  return { screened: Math.max(0, held - listed), history: listed };
 }
 
 

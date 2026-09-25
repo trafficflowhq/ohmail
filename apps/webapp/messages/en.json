@@ -2709,6 +2709,7 @@
     "history": "Listed under History",
     "remaining": "Still to read",
     "etaSoon": "Working out how long this takes…",
+    "pullRead": "Everything counted so far is read. Finishing the first pass…",
     "eta": "About {eta} left · {rate, number} messages a minute",
     "etaDone": "Done. {screened, number} screened, {history, number} listed under History.",
     "pullResumed": "The connection dropped and came back. The pull continues where it stopped.",
