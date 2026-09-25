@@ -551,7 +551,7 @@ export function DoorChooser({
                 if (result.refusal === null) return result;
                 /* …and the ONE refusal that has a way out arms the verb. Remembered rather than
                    acted on: the discard is the person's press, never this window's inference. */
-                setMismatch(result.refusal.kind === "pair_account_mismatch");
+                setMismatch(result.refusal.kind === "pair_account_mismatch" && result.restored !== true);
                 return { ...result, problem: refusalSentence(result.refusal, label) };
               });
             }}

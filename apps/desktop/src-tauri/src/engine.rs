@@ -1749,8 +1749,16 @@ impl Shell {
     /// looks worst, because "another copy already holds this directory" is also what a genuine
     /// second instance of the app reports.
     fn replace(&self, plan: Plan) {
+        self.replace_with(|| plan);
+    }
+
+    /// [`Shell::replace`] with a step between the stop and the spawn, under the same lock: a door
+    /// switch moves the directory the stopped engine held, and nothing may read the slot or start
+    /// an engine while it does. The step answers the plan to spawn.
+    fn replace_with(&self, between: impl FnOnce() -> Plan) {
         let mut slot = self.engine.lock().expect("shell engine");
         slot.stop();
+        let plan = between();
         *slot = Arc::new(match plan {
             Plan::Spawn(launch) => Engine::spawn(launch),
             Plan::Inert(state) => Engine::inert(state),
@@ -1911,6 +1919,20 @@ impl Shell {
     /// running engine and an unchanged file, which is the state somebody can retry from. The
     /// reverse order would take the app down to report a full disk.
     pub fn configure(&self, value: &serde_json::Value) -> Result<serde_json::Value, String> {
+        self.switch_door(value, false)
+    }
+
+    /// THE ONE DOOR SWITCH. `provisional` REPLACES the door on disk rather than leaving it: the
+    /// door is recorded before anything moves, the new door's directory is set aside whole with
+    /// the engine stopped, and both are kept until [`Shell::commit_switch`] (the other computer
+    /// accepted) or [`Shell::restore_switch`] (anything else, and the next launch after a kill).
+    /// A switch arriving while one is provisional first puts that one's replaced door back, so the
+    /// door a switch keeps is always the person's own and never another attempt's.
+    pub fn switch_door(
+        &self,
+        value: &serde_json::Value,
+        provisional: bool,
+    ) -> Result<serde_json::Value, String> {
         // UNDER THE DOOR LOCK, whole: a sign-out re-reads the door under it and acts on what it
         // reads, so a switch landing between those two would be the race back by the other side.
         let _door = self.door.lock().expect("shell door");
@@ -1918,30 +1940,84 @@ impl Shell {
         let path = self.paths.config_path().ok_or_else(|| {
             "this computer named no place for the app to keep its settings".to_string()
         })?;
+        // THE PENDING DOOR IS NOT WRITTEN: its claim CREATES `config.json` once, with the account
+        // it adopted, and refuses when a file is there. So it is an install with no door's only.
+        if config.is_identity_pending() && self.paths.config().is_some() {
+            return Err(
+                "this install already has a door; confirming in a browser with no address is \
+                 how an install with none is set up"
+                    .to_string(),
+            );
+        }
+        let root = self.paths.app_data.clone().unwrap_or_default();
+        let pending = config::read_switch(&root)?;
+        if pending.is_some() || (provisional && self.paths.config().is_some()) {
+            let mut outcome = Ok(());
+            self.replace_with(|| {
+                match switch_on_disk(&root, &path, &config, pending.as_ref(), provisional) {
+                    Ok(()) => {
+                        log_configured(&config, provisional);
+                        self.pending_door.store(false, Ordering::SeqCst);
+                        self.planned(Some(&config))
+                    }
+                    Err(reason) => {
+                        outcome = Err(reason);
+                        self.planned(None)
+                    }
+                }
+            });
+            outcome?;
+            return Ok(self.status());
+        }
         if config.is_identity_pending() {
-            // THE PENDING DOOR IS NOT WRITTEN: its claim CREATES `config.json` once, with the
-            // account it adopted, and refuses when a file is there. So it is an install with no
-            // door's only, and an unreadable leftover (which reads as none) is cleared for it.
-            if self.paths.config().is_some() {
-                return Err(
-                    "this install already has a door; confirming in a browser with no address is \
-                     how an install with none is set up"
-                        .to_string(),
-                );
-            }
+            // An unreadable leftover (which reads as no door) is cleared for the pending door.
             config::remove(&path)?;
         } else {
             config::write(&path, &config)?;
         }
-        log_line(format_args!(
-            "configured for the {} door; the engine's data directory is {}",
-            config.mode().as_str(),
-            config.mode().dir_name()
-        ));
+        log_configured(&config, false);
         // Through `planned`, so an armed host door survives a reconfigure of the SAME door and
         // is correctly absent when the door is not the local one.
         self.pending_door.store(config.is_identity_pending(), Ordering::SeqCst);
         self.replace(self.planned(Some(&config)));
+        Ok(self.status())
+    }
+
+    /// THE COMMIT: the other computer accepted the pairing. Removing the record is the one step that
+    /// makes the new door the install's; the set-aside directory is retired after it. No record is
+    /// an answer too — nothing was provisional — and changes nothing.
+    pub fn commit_switch(&self) -> Result<serde_json::Value, String> {
+        let _door = self.door.lock().expect("shell door");
+        let root = self.paths.app_data.clone().unwrap_or_default();
+        if let Some(switch) = config::read_switch(&root)? {
+            let deferred = config::keep_switch(&root, &switch)?;
+            log_line(format_args!("the pairing was accepted; the door it replaced is retired"));
+            if let Some(reason) = deferred {
+                log_line(format_args!("its set-aside copy stays until the next launch ({reason})"));
+            }
+        }
+        Ok(self.status())
+    }
+
+    /// Put back the door a provisional switch replaced and start its engine. That engine reopens
+    /// the same store through the plan any launch composes, so what it holds of the mailbox's
+    /// organizer lease it reads there, never here. No record changes nothing.
+    pub fn restore_switch(&self) -> Result<serde_json::Value, String> {
+        let _door = self.door.lock().expect("shell door");
+        let root = self.paths.app_data.clone().unwrap_or_default();
+        let (Some(switch), Some(path)) = (config::read_switch(&root)?, self.paths.config_path()) else {
+            return Ok(self.status());
+        };
+        let mut outcome = Ok(());
+        self.replace_with(|| {
+            match config::undo_switch(&root, &path, &switch) {
+                Ok(()) => log_line(format_args!("the pairing did not finish; the door it replaced is back")),
+                Err(reason) => outcome = Err(reason),
+            }
+            self.pending_door.store(false, Ordering::SeqCst);
+            self.planned(None)
+        });
+        outcome?;
         Ok(self.status())
     }
 
@@ -2002,6 +2078,14 @@ impl Shell {
                 "{LOGOUT_UNCHANGED}The door this install comes in by changed while you were \
                  signing out, so nothing was cleared and you have NOT been signed out. Check which \
                  mailbox ohmail is on and sign out again."
+            ));
+        }
+        // A PAIRING NOT YET ANSWERED: signing out of it would leave its record to undo the sign-out
+        // at the next launch, so nothing is cleared until it has settled.
+        if self.paths.app_data.as_deref().is_some_and(|root| config::switch_path(root).exists()) {
+            return Err(format!(
+                "{LOGOUT_UNCHANGED}A pairing on this computer has not been answered yet, so nothing \
+                 was cleared and you have NOT been signed out. Wait for it to finish and sign out again."
             ));
         }
 
@@ -2150,6 +2234,10 @@ impl Shell {
             if self.pending_door.load(Ordering::SeqCst) {
                 object.insert("identityPending".into(), true.into());
             }
+            // A SWITCH NOT YET ANSWERED, read from the disk it is kept on, like the door itself.
+            if self.paths.app_data.as_deref().is_some_and(|root| config::switch_path(root).exists()) {
+                object.insert("switchPending".into(), true.into());
+            }
         }
         out
     }
@@ -2174,6 +2262,74 @@ fn door_fields(object: &mut serde_json::Map<String, serde_json::Value>, config: 
             object.insert("flavor".into(), flavor.clone().into());
         }
         object.insert("cloudUrl".into(), cloud.cloud_url.clone().into());
+    }
+}
+
+/// The disk half of [`Shell::switch_door`], run with the engine stopped. A pending switch is undone
+/// first; a provisional one is recorded, then its directory set aside, then the door written — and
+/// a step that fails undoes the ones before it, so the old door's engine is what starts again.
+fn switch_on_disk(
+    root: &Path,
+    path: &Path,
+    next: &Config,
+    pending: Option<&config::DoorSwitch>,
+    provisional: bool,
+) -> Result<(), String> {
+    if let Some(switch) = pending {
+        config::undo_switch(root, path, switch)?;
+        log_line(format_args!("a pairing that had not been answered was set aside for this switch"));
+    }
+    let kept = match provisional.then(|| config::read_door_file(path)).flatten() {
+        Some(file) => {
+            let switch = config::record_switch(root, &file, next.mode())?;
+            if let Err(reason) = config::set_aside(root, &switch) {
+                let _ = config::remove(&config::switch_path(root));
+                return Err(reason);
+            }
+            Some(switch)
+        }
+        None => None,
+    };
+    if let Err(reason) = config::write(path, next) {
+        if let Some(switch) = &kept {
+            let _ = config::undo_switch(root, path, switch);
+        }
+        return Err(reason);
+    }
+    Ok(())
+}
+
+fn log_configured(config: &Config, provisional: bool) {
+    log_line(format_args!(
+        "configured for the {} door{}; the engine's data directory is {}",
+        config.mode().as_str(),
+        if provisional { ", provisionally until the pairing is answered" } else { "" },
+        config.mode().dir_name()
+    ));
+}
+
+/// AT LAUNCH, BEFORE ANYTHING READS THE DOOR: a switch the last run never settled is undone (the
+/// app was killed mid-pairing, and a pairing nobody answered did not happen), and an accepted
+/// switch's unfinished retire is finished. Host mode's launch decision reads the door after this.
+pub fn recover_door_switch(paths: &ShellPaths) {
+    let (Some(root), Some(path)) = (paths.app_data.as_deref(), paths.config_path()) else { return };
+    match config::read_switch(root) {
+        Ok(Some(switch)) => match config::undo_switch(root, &path, &switch) {
+            Ok(()) => log_line(format_args!(
+                "a pairing the last run did not finish was undone; the door it replaced is back"
+            )),
+            Err(reason) => log_line(format_args!(
+                "a pairing the last run did not finish could not be undone yet ({reason})"
+            )),
+        },
+        Ok(None) => {
+            for mode in [Mode::Local, Mode::Cloud] {
+                if let Err(reason) = config::retire_replaced(root, mode) {
+                    log_line(format_args!("a retired door's copy could not be removed ({reason})"));
+                }
+            }
+        }
+        Err(reason) => log_line(format_args!("{reason}; nothing was moved")),
     }
 }
 
@@ -4107,6 +4263,7 @@ fn engine_configure<R: tauri::Runtime>(
     shell: tauri::State<'_, Arc<Shell>>,
     host: tauri::State<'_, Arc<crate::host::HostRuntime<R>>>,
     config: serde_json::Value,
+    provisional: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     if config::parse(&config)?.mode() != Mode::Local {
         crate::host::stand_down_on_shell_transition(
@@ -4115,7 +4272,24 @@ fn engine_configure<R: tauri::Runtime>(
             "the install is switching to a door with no host listener",
         );
     }
-    shell.configure(&config)
+    // The exact `true` and nothing truthy: a provisional switch is one a pairing asked for.
+    shell.switch_door(&config, provisional == Some(true))
+}
+
+/// The other computer accepted the pairing: keep its door, retire the one it replaced. Takes
+/// nothing — the shell's own record says what was replaced. See [`Shell::commit_switch`].
+#[cfg(feature = "local-engine")]
+#[tauri::command(async)]
+fn engine_switch_commit(shell: tauri::State<'_, Arc<Shell>>) -> Result<serde_json::Value, String> {
+    shell.commit_switch()
+}
+
+/// The pairing did not finish: put back the door it replaced. Takes nothing, and changes nothing
+/// when no switch is provisional. See [`Shell::restore_switch`].
+#[cfg(feature = "local-engine")]
+#[tauri::command(async)]
+fn engine_switch_restore(shell: tauri::State<'_, Arc<Shell>>) -> Result<serde_json::Value, String> {
+    shell.restore_switch()
 }
 
 /// Ask the engine about a computer this install might pair with, from an install that has none.
@@ -5595,9 +5769,9 @@ fn announce_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, raw: &str) {
 #[cfg(feature = "local-engine")]
 const LOCAL_ENGINE_CAPABILITY: &str = r#"{
   "identifier": "local-engine",
-  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for, sign out of it, press the failure card's one recovery (the shell removes the engine's own data-directory lock — a path the shell resolves and the window never names — and starts the engine again, refused outright unless the shell has already given up on the engine), ask the engine whether the computer at a pasted pairing link's address is the one that link came from (the window hands over the ORIGIN and the PIN the link carried and no token; on an install that has no door the shell starts an engine for that CANDIDATE in a directory of its own, asks it, and removes that directory afterwards, configuring nothing), post one notification, set the icon's badge, report its own startup and interaction timings as numbers the shell turns into a log line, open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), hand the shell ONE http/https address a person clicked in a message for that same browser to open, hand it the BYTES of one attachment and a display name so the shell can write that file under its own directory and open it in this computer's usual viewer, or save that same file into this computer's Downloads folder (the shell picks the folder and composes every part of the name; a name already taken is numbered, never overwritten), and listen for the shell's own events — including the handoff code an ohmail:// activation carried. It may also drive HOST MODE, entirely through this shell's own commands: read its state, probe the user's own tailnet (tailscale status), arm or disarm publishing the engine's loopback door to that tailnet (tailscale serve — never funnel, pinned by test), read and set this install's start-at-login registration, and open Tailscale's download page — one more constant address the shell owns, the window still naming no URL. It may also CLAIM a mailto: activation the shell is holding (take-once, so a link seeds one compose form and never two), and ask about the OS's DEFAULT MAIL APP through two commands that name nothing: a read of the current handler's state, and a request that takes each platform's own sanctioned path — macOS's consent dialog, the Windows Settings page (one more constant address), xdg-settings on Linux — never a registry write. It may read the app's UPDATE state, press the same button the menu item is, and ask for the check the app makes at launch — a read of the installed version and of what the last check found, a press that checks or restarts into an already-verified payload, and a scheduled check that is silent unless it finds something (a press is a person asking and is answered out loud, which is right for a button and wrong once a day for ever); it may not name a feed, see a payload or install anything, and the request, the signature check and the version guard stay in the shell. It may ask for the DESKTOP'S OWN THEME through one read-only command: on an Omarchy system the shell answers the active theme's raw material (the theme's colors.toml, the system's font and gap facts — paths the SHELL names, never the window), and everywhere else it answers nothing. Nothing else: no filesystem path the window may name, no arbitrary shell command, no network, and no other Tauri core API.",
+  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for (a pairing's choice provisionally, then kept or undone by one of two commands that name nothing — the shell's own record says which door was replaced), sign out of it, press the failure card's one recovery (the shell removes the engine's own data-directory lock — a path the shell resolves and the window never names — and starts the engine again, refused outright unless the shell has already given up on the engine), ask the engine whether the computer at a pasted pairing link's address is the one that link came from (the window hands over the ORIGIN and the PIN the link carried and no token; on an install that has no door the shell starts an engine for that CANDIDATE in a directory of its own, asks it, and removes that directory afterwards, configuring nothing), post one notification, set the icon's badge, report its own startup and interaction timings as numbers the shell turns into a log line, open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), hand the shell ONE http/https address a person clicked in a message for that same browser to open, hand it the BYTES of one attachment and a display name so the shell can write that file under its own directory and open it in this computer's usual viewer, or save that same file into this computer's Downloads folder (the shell picks the folder and composes every part of the name; a name already taken is numbered, never overwritten), and listen for the shell's own events — including the handoff code an ohmail:// activation carried. It may also drive HOST MODE, entirely through this shell's own commands: read its state, probe the user's own tailnet (tailscale status), arm or disarm publishing the engine's loopback door to that tailnet (tailscale serve — never funnel, pinned by test), read and set this install's start-at-login registration, and open Tailscale's download page — one more constant address the shell owns, the window still naming no URL. It may also CLAIM a mailto: activation the shell is holding (take-once, so a link seeds one compose form and never two), and ask about the OS's DEFAULT MAIL APP through two commands that name nothing: a read of the current handler's state, and a request that takes each platform's own sanctioned path — macOS's consent dialog, the Windows Settings page (one more constant address), xdg-settings on Linux — never a registry write. It may read the app's UPDATE state, press the same button the menu item is, and ask for the check the app makes at launch — a read of the installed version and of what the last check found, a press that checks or restarts into an already-verified payload, and a scheduled check that is silent unless it finds something (a press is a person asking and is answered out loud, which is right for a button and wrong once a day for ever); it may not name a feed, see a payload or install anything, and the request, the signature check and the version guard stay in the shell. It may ask for the DESKTOP'S OWN THEME through one read-only command: on an Omarchy system the shell answers the active theme's raw material (the theme's colors.toml, the system's font and gap facts — paths the SHELL names, never the window), and everywhere else it answers nothing. Nothing else: no filesystem path the window may name, no arbitrary shell command, no network, and no other Tauri core API.",
   "windows": ["main"],
-  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-logout", "allow-engine-unlock-retry", "allow-host-candidate-probe", "allow-notify", "allow-set-badge", "allow-ui-vitals", "allow-open-link", "allow-open-external", "allow-open-attachment", "allow-save-attachment", "allow-host-state", "allow-tailscale-status", "allow-tailscale-serve-arm", "allow-tailscale-serve-disarm", "allow-autostart-get", "allow-autostart-set", "allow-open-tailscale-download", "allow-mailto-claim", "allow-default-mail-status", "allow-default-mail-request", "allow-omarchy-theme", "allow-update-state", "allow-update-press", "allow-update-poll", "core:event:allow-listen"]
+  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-switch-commit", "allow-engine-switch-restore", "allow-engine-logout", "allow-engine-unlock-retry", "allow-host-candidate-probe", "allow-notify", "allow-set-badge", "allow-ui-vitals", "allow-open-link", "allow-open-external", "allow-open-attachment", "allow-save-attachment", "allow-host-state", "allow-tailscale-status", "allow-tailscale-serve-arm", "allow-tailscale-serve-disarm", "allow-autostart-get", "allow-autostart-set", "allow-open-tailscale-download", "allow-mailto-claim", "allow-default-mail-status", "allow-default-mail-request", "allow-omarchy-theme", "allow-update-state", "allow-update-press", "allow-update-poll", "core:event:allow-listen"]
 }"#;
 
 /// The commands `build.rs` declared to the ACL manifest, baked in at compile time.
@@ -5718,6 +5892,9 @@ pub fn attach<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
             engine_status,
             engine_request,
             engine_configure,
+            // A pairing started from a door settles its switch: kept, or the replaced door back.
+            engine_switch_commit,
+            engine_switch_restore,
             engine_logout,
             // The failure card's one recovery press — see the command for who may ask and why.
             engine_unlock_retry,

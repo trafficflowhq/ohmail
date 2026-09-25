@@ -15,10 +15,10 @@
 //! and never opens IMAP at all. They are different engines with different databases, and the
 //! directory each writes to is derived from the mode — `engine-local/` and `engine-cloud/` under
 //! the app's data directory — so switching doors cannot mix one mirror into the other. **The
-//! directory a switch leaves behind is FROZEN, never deleted.** Nothing in this file removes a
-//! mirror: the mail is on the user's server or in the hosted account, this machine's copy is a
-//! convenience, and a door switch that silently destroyed the old one would make going back
-//! expensive for no reason.
+//! directory a switch leaves behind is FROZEN, never deleted.** The mail is on the user's server
+//! or in the hosted account, this machine's copy is a convenience, and a door switch that silently
+//! destroyed the old one would make going back expensive for no reason. The one removal here is a
+//! pairing's set-aside copy, retired once the pairing is accepted (the foot of this file).
 //!
 //! ── THE ONE COMPOSITION THAT IS SAFETY-CRITICAL ────────────────────────────────────────────
 //!
@@ -1336,5 +1336,131 @@ pub fn remove_sealed_session(root: &Path, mode: Mode) -> Result<(), String> {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(format!("{} could not be removed ({err})", path.display())),
+    }
+}
+
+// ── A DOOR SWITCH THAT HAS NOT BEEN ANSWERED YET ──────────────────────────────────────────────
+//
+// A pairing started from a door writes its own door before the other computer answers, because
+// the redeem needs the configured engine. Until that answer it is PROVISIONAL: the door it
+// replaced is kept whole — its `config.json` in the record below, and the directory the new door
+// opens set aside with everything in it — so a refusal, a walk out of time, an abandoned window
+// or a killed app puts that door back exactly. Only an accepted pairing retires what was set
+// aside, which is the copy the new door's own launch used to discard (a mirror of another server).
+
+/// The record of a provisional switch. Its PRESENCE is the provisional state, on disk.
+pub const SWITCH_FILE_NAME: &str = "door-switch.json";
+
+/// What a set-aside directory is called beside the one it was: `engine-cloud.replaced`.
+pub const REPLACED_SUFFIX: &str = ".replaced";
+
+/// A provisional switch, as its record holds it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DoorSwitch {
+    /// The replaced door's `config.json`, byte for byte, so the restore is that file and no other.
+    pub replaced_file: String,
+    /// The mode whose directory the NEW door opens.
+    pub dir: Mode,
+    /// Whether that directory existed and was set aside; `false` means the new door created it.
+    pub moved: bool,
+}
+
+pub fn switch_path(root: &Path) -> PathBuf {
+    root.join(SWITCH_FILE_NAME)
+}
+
+/// Where `mode`'s directory is kept while a switch is provisional.
+pub fn replaced_store(root: &Path, mode: Mode) -> PathBuf {
+    root.join(format!("{}{REPLACED_SUFFIX}", mode.dir_name()))
+}
+
+/// The door file's own text when it holds a door this shell can read — what a switch keeps.
+pub fn read_door_file(path: &Path) -> Option<String> {
+    let raw = fs::read_to_string(path).ok()?;
+    let value = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
+    parse(&value).ok().map(|_| raw)
+}
+
+/// The provisional switch on disk. `Ok(None)` is none; a record that exists and cannot be read is
+/// an `Err`, never `None`: its set-aside directory may be somebody's only copy of that door.
+pub fn read_switch(root: &Path) -> Result<Option<DoorSwitch>, String> {
+    let path = switch_path(root);
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(format!("{} could not be read ({err})", path.display())),
+    };
+    let unreadable = || format!("{} does not hold a door switch this build can read", path.display());
+    let value = serde_json::from_str::<serde_json::Value>(&raw).map_err(|_| unreadable())?;
+    let replaced_file = value.get("replaced").and_then(|v| v.as_str()).ok_or_else(unreadable)?;
+    let dir = match value.get("dir").and_then(|v| v.as_str()) {
+        Some("local") => Mode::Local,
+        Some("cloud") => Mode::Cloud,
+        _ => return Err(unreadable()),
+    };
+    let moved = value.get("moved").and_then(|v| v.as_bool()).ok_or_else(unreadable)?;
+    Ok(Some(DoorSwitch { replaced_file: replaced_file.to_string(), dir, moved }))
+}
+
+/// Write the record of a switch from the door in `replaced_file` to a door that opens `dir`'s
+/// directory. Written BEFORE anything moves, so every later step is undone from it.
+pub fn record_switch(root: &Path, replaced_file: &str, dir: Mode) -> Result<DoorSwitch, String> {
+    // A set-aside directory with no record is an accepted switch's unfinished retire.
+    retire_replaced(root, dir)?;
+    let moved = data_dir(root, dir).exists();
+    let body = serde_json::to_vec_pretty(&serde_json::json!({
+        "replaced": replaced_file, "dir": dir.as_str(), "moved": moved,
+    }))
+    .map_err(|err| format!("the door switch could not be encoded ({err})"))?;
+    write_private(&switch_path(root), &body)?;
+    Ok(DoorSwitch { replaced_file: replaced_file.to_string(), dir, moved })
+}
+
+/// Set the new door's directory aside whole. The engine that held it must already be stopped.
+pub fn set_aside(root: &Path, switch: &DoorSwitch) -> Result<(), String> {
+    if !switch.moved {
+        return Ok(());
+    }
+    let (dir, aside) = (data_dir(root, switch.dir), replaced_store(root, switch.dir));
+    fs::rename(&dir, &aside)
+        .map_err(|err| format!("{} could not be set aside ({err})", dir.display()))
+}
+
+/// Put the replaced door back: its directory where it was, the new door's gone, its
+/// `config.json`, and the record last. Every step is safe to run again after a kill mid-way.
+pub fn undo_switch(root: &Path, config_path: &Path, switch: &DoorSwitch) -> Result<(), String> {
+    let (dir, aside) = (data_dir(root, switch.dir), replaced_store(root, switch.dir));
+    // With `moved`, an absent set-aside directory means it is already back where it was.
+    if !switch.moved || aside.exists() {
+        remove_tree(&dir)?;
+    }
+    if switch.moved && aside.exists() {
+        fs::rename(&aside, &dir)
+            .map_err(|err| format!("{} could not be put back ({err})", aside.display()))?;
+    }
+    write_private(config_path, switch.replaced_file.as_bytes())?;
+    remove(&switch_path(root))
+}
+
+/// Keep the new door. Removing the record IS the commit, and an `Err` means nothing changed. The
+/// set-aside directory follows it; one that would not go is the `Ok` reason, retired at next launch.
+pub fn keep_switch(root: &Path, switch: &DoorSwitch) -> Result<Option<String>, String> {
+    remove(&switch_path(root))?;
+    Ok(retire_replaced(root, switch.dir).err())
+}
+
+/// Remove a set-aside directory — only ever one no record points at.
+pub fn retire_replaced(root: &Path, mode: Mode) -> Result<(), String> {
+    if switch_path(root).exists() {
+        return Ok(());
+    }
+    remove_tree(&replaced_store(root, mode))
+}
+
+fn remove_tree(dir: &Path) -> Result<(), String> {
+    match fs::remove_dir_all(dir) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(format!("{} could not be removed ({err})", dir.display())),
     }
 }

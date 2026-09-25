@@ -41,6 +41,8 @@ const REQUEST_COMMAND = "engine_request";
 const STATUS_COMMAND = "engine_status";
 const CONFIGURE_COMMAND = "engine_configure";
 const LOGOUT_COMMAND = "engine_logout";
+const SWITCH_COMMIT_COMMAND = "engine_switch_commit";
+const SWITCH_RESTORE_COMMAND = "engine_switch_restore";
 const UNLOCK_COMMAND = "engine_unlock_retry";
 
 const NO_SHELL =
@@ -460,6 +462,11 @@ export interface EngineStatus {
    * owes the relaunch behind it (`relaunchAdoptedDoor`). Absent on every other engine.
    */
   identityPending?: boolean;
+  /**
+   * A PAIRING STARTED FROM A DOOR HAS NOT BEEN ANSWERED: the shell still keeps the door it replaced,
+   * on disk, until the pairing is committed or that door is put back. Absent otherwise.
+   */
+  switchPending?: boolean;
   mailboxId?: string;
   accountId?: string;
   userId?: string;
@@ -616,10 +623,37 @@ export async function engineStatus(): Promise<EngineStatus> {
  * deleting it: coming back does not cost a full re-sync, and no mail is lost either way — the
  * master is the user's own server or the hosted account, never this machine.
  */
-export async function engineConfigure(config: EngineConfig): Promise<EngineStatus> {
+export async function engineConfigure(
+  config: EngineConfig,
+  /**
+   * A PAIRING'S SWITCH: the shell keeps the door this replaces until {@link engineSwitchCommit} or
+   * {@link engineSwitchRestore} settles it. Sent only when asked, as the exact `true`.
+   */
+  opts: { provisional?: boolean } = {},
+): Promise<EngineStatus> {
+  const payload = opts.provisional === true ? { config, provisional: true } : { config };
   return alone(
     "changing the door",
-    async () => (await shell().invoke(CONFIGURE_COMMAND, { config })) as EngineStatus,
+    async () => (await shell().invoke(CONFIGURE_COMMAND, payload)) as EngineStatus,
+  );
+}
+
+/** The other computer accepted: keep the pairing's door and retire the one it replaced. */
+export async function engineSwitchCommit(): Promise<EngineStatus> {
+  return alone(
+    "changing the door",
+    async () => (await shell().invoke(SWITCH_COMMIT_COMMAND)) as EngineStatus,
+  );
+}
+
+/**
+ * The pairing did not finish: the shell puts back the door it replaced and starts its engine.
+ * Changes nothing when no switch is provisional, so any way out of the pairing card may ask.
+ */
+export async function engineSwitchRestore(): Promise<EngineStatus> {
+  return alone(
+    "changing the door",
+    async () => (await shell().invoke(SWITCH_RESTORE_COMMAND)) as EngineStatus,
   );
 }
 

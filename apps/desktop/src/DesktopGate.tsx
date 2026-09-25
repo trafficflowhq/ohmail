@@ -35,7 +35,7 @@ import {
   unknownSpeaks, type HostConnection,
 } from "../../webapp/app/shell/host-connection";
 import { BootStatus } from "./BootStatus.js";
-import { bridgeAvailable, bridgeFetch, engineUnlockRetry } from "./bridge-fetch.js";
+import { bridgeAvailable, bridgeFetch, engineSwitchRestore, engineUnlockRetry } from "./bridge-fetch.js";
 import {
   cloudNoticeDue, sessionOf, sessionReaders, signInCauseOf, waitForSessionMove, type CloudSessionWire,
 } from "./cloud-session.js";
@@ -244,7 +244,13 @@ export function DesktopGate() {
   const delivered = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const next = await readShell();
+    let next = await readShell();
+    /* A SWITCH THIS WINDOW DID NOT START. A mount's first answer can only find a pairing a previous
+       window left unanswered (a reload mid-pairing), and its answer is never coming: the door it
+       replaced comes back before anything is drawn over it. */
+    if (delivered.current === null && next.kind === "status" && next.status.switchPending === true) {
+      next = await engineSwitchRestore().then((status): Shell => ({ kind: "status", status }), () => next);
+    }
     const mark = lifecycleMark(next);
     /* `null` is "nothing delivered yet", which is the first answer of the launch and not a
        change — the window has no previous run to have been describing. */
@@ -872,7 +878,9 @@ export function DesktopGate() {
            the shell: the door state itself may have moved under an abandoned attempt. */
         setAuthEpoch((n) => n + 1);
         setOverlay(null);
-        void refresh();
+        /* A pairing still provisional when its card is left is undone: only an accepted one keeps
+           its door. Nothing provisional, nothing changed. */
+        void engineSwitchRestore().catch(() => undefined).finally(() => void refresh());
       }}
       onEntered={(r) => {
         /* THE SETTINGS OVERLAY, which is where a mailbox is CONNECTED AGAIN after a removal

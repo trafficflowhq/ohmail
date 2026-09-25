@@ -27,6 +27,8 @@ import {
   engineConfigure,
   engineLogout,
   engineStatus,
+  engineSwitchCommit,
+  engineSwitchRestore,
   invokeShell,
   type DoorFlavorWire,
   type EngineConfig,
@@ -860,6 +862,8 @@ export async function enterHostDoor(
    * ends up with none over the whole. A caller with no walk of its own gets one.
    */
   budget: WalkBudget = startWalk(),
+  /** From an install with a door: the shell keeps that door until the pairing is settled. */
+  provisional = false,
 ): Promise<HostDoorResult> {
   const beforeConfigure = walkExpired(budget, "starting up");
   if (beforeConfigure !== null) return { status: null, refusal: beforeConfigure, problem: null };
@@ -871,7 +875,7 @@ export async function enterHostDoor(
       /* THE MEASURED BASE, not the typed origin — see {@link proveHostLink}. */
       cloudUrl: base,
       hostPin: link.pin,
-    });
+    }, { provisional });
   } catch (err) {
     return { status: null, refusal: null, problem: sentence(err) };
   }
@@ -890,26 +894,42 @@ export async function enterHostDoor(
 }
 
 /**
- * THE PAIRING CARD'S SUBMIT ON THE CONFIGURE PATH: {@link enterHostDoor}, and when the install had
- * NO door at the press (`before`, read at the submit), a pairing that did not pair forgets the door
- * it wrote. The redeem needs the configured engine, so the door is on disk before the other computer
- * answers; left there, the window fell to the pre-auth arm and the next launch opened a paired door
- * with no session. The shell's sign-out forgets it. A pairing that worked, or waits for a relaunch,
- * keeps its door, and an install that had a door keeps what the attempt left.
+ * THE PAIRING CARD'S SUBMIT ON THE CONFIGURE PATH: {@link enterHostDoor}. The redeem needs the
+ * configured engine, so the door is on disk before the other computer answers. From an install
+ * that HAD a door (`before`, read at the submit) the switch is provisional and is settled here:
+ * committed when the other computer accepted, the replaced door put back on anything else. From an
+ * install with none, a pairing that did not pair forgets the door it wrote (the shell's sign-out).
  */
 export async function pairThroughDoor(
   link: PairLink,
   base: string,
   before: EngineStatus | null,
 ): Promise<HostDoorResult> {
-  const result = await enterHostDoor(link, base);
+  const fromDoor = before?.mode != null;
+  const result = await enterHostDoor(link, base, startWalk(), fromDoor);
   const paired = result.restartRequired === true || (result.refusal === null && result.problem === null);
+  if (fromDoor) return settleSwitch(result, paired);
   /* The one refusal with a way out keeps its door: Start over is a redeem on this engine. */
-  if (paired || before?.mode != null || result.refusal?.kind === "pair_account_mismatch") return result;
+  if (paired || result.refusal?.kind === "pair_account_mismatch") return result;
   try {
     return { ...result, status: await engineLogout() };
   } catch {
     return result; // the refusal is still the answer, and the gate holds the card either way
+  }
+}
+
+/**
+ * THE ONE SETTLE OF A PROVISIONAL PAIRING. Accepted: the pairing's door is kept. Anything else — a
+ * refusal, the walk out of time, an engine that never served — puts the replaced door back, the
+ * account mismatch included (the pairing opened a fresh directory, so Start over has nothing to
+ * repair). A settle the shell refused is the card's sentence, and leaving the card restores.
+ */
+async function settleSwitch(result: HostDoorResult, paired: boolean): Promise<HostDoorResult> {
+  try {
+    if (paired) return { ...result, status: await engineSwitchCommit() };
+    return { ...result, status: await engineSwitchRestore(), restored: true };
+  } catch (err) {
+    return { ...result, problem: result.problem ?? sentence(err) };
   }
 }
 
@@ -965,6 +985,8 @@ export interface HostDoorResult {
    * performed the staged discard. Absent on every ordinary path.
    */
   restartRequired?: boolean;
+  /** THE DOOR THIS PAIRING REPLACED IS BACK: the attempt was undone, so nothing may redeem on it. */
+  restored?: boolean;
 }
 
 /**

@@ -4254,3 +4254,287 @@ fn a_door_switch_waits_for_a_sign_out_rather_than_landing_inside_it() {
     shell.stop();
     let _ = fs::remove_dir_all(&root);
 }
+
+// ── A PAIRING STARTED FROM A DOOR IS PROVISIONAL UNTIL THE OTHER COMPUTER ACCEPTS ─────────────
+//
+// The door it replaces is kept whole — its file, and the directory the new door opens set aside —
+// and every end short of an acceptance puts it back byte for byte: a refusal, the walk out of time
+// and an abandoned window reach `restore_switch`; a killed app reaches `recover_door_switch` at the
+// next launch. Only `commit_switch` retires what was set aside.
+
+const PAIRED_ORIGIN: &str = "https://192.168.1.24:8443";
+
+fn pairing_door(origin: &str) -> serde_json::Value {
+    serde_json::json!({
+        "mode": "cloud", "flavor": "desktop-host", "cloudUrl": origin, "hostPin": "a".repeat(43),
+    })
+}
+
+/// A local door and its store, beside a frozen hosted mirror from before — the row's install.
+fn local_root(name: &str, frozen_cloud: bool) -> PathBuf {
+    let root = candidate_root(name);
+    let door = crate::config::Config::Local(crate::config::LocalDoor {
+        imap_host: "imap.example.test".to_string(),
+        imap_user: "reader".to_string(),
+        imap_port: 993,
+        imap_secure: true,
+        smtp: None,
+        address: Some("reader@example.test".to_string()),
+    });
+    crate::config::write(&root.join(crate::config::CONFIG_FILE_NAME), &door).expect("write door");
+    fs::create_dir_all(root.join("engine-local/pgdata")).expect("local store");
+    fs::write(root.join("engine-local/pgdata/PG_VERSION"), b"17 the local store").unwrap();
+    if frozen_cloud {
+        fs::create_dir_all(root.join("engine-cloud")).expect("frozen mirror");
+        fs::write(root.join("engine-cloud").join(crate::config::CLOUD_SESSION_SEAL), b"a frozen session").unwrap();
+    }
+    root
+}
+
+/// What the pairing's engine writes into the directory it opened before the other computer answers.
+fn pairing_wrote(root: &Path) {
+    fs::create_dir_all(root.join("engine-cloud/pgdata")).expect("the pairing's store");
+    fs::write(root.join("engine-cloud/mirror-owner"), b"the pairing's record").unwrap();
+}
+
+fn paths_of(root: &Path) -> ShellPaths {
+    ShellPaths { app_data: Some(root.to_path_buf()), resources: None, downloads: None }
+}
+
+fn under(root: &Path, dir: &str) -> Vec<(PathBuf, Vec<u8>)> {
+    bytes_under(&root.join(dir))
+}
+
+#[test]
+fn a_refused_pairing_from_the_hosted_door_puts_that_door_back_byte_for_byte() {
+    with_key_in_env();
+    let root = signed_in_root("switch-refused-cloud", "https://api.ohmail.app");
+    fs::create_dir_all(root.join("engine-cloud/pgdata")).expect("the hosted mirror");
+    fs::write(root.join("engine-cloud/pgdata/PG_VERSION"), b"17 the hosted mirror").unwrap();
+    let before = bytes_under(&root);
+    let shell = Shell::rooted_for_tests(&root);
+
+    let status = shell.switch_door(&pairing_door(PAIRED_ORIGIN), true).expect("a provisional switch");
+    assert_eq!(status["switchPending"], serde_json::Value::Bool(true), "{status}");
+    assert!(door_of(&root).expect("a door").is_desktop_host(), "the pairing's door is not on disk");
+    // THE REPLACED STORE IS NEVER OPENED BY THE PAIRING: set aside whole, the pairing's directory fresh.
+    assert_eq!(under(&root, "engine-cloud.replaced").len(), 2, "the hosted mirror was not set aside whole");
+    assert!(
+        !root.join("engine-cloud").join(crate::config::CLOUD_SESSION_SEAL).exists(),
+        "the pairing's engine would open the replaced door's session",
+    );
+    pairing_wrote(&root);
+
+    let status = shell.restore_switch().expect("the restore");
+    assert!(status.get("switchPending").is_none(), "{status}");
+    assert_eq!(bytes_under(&root), before, "the replaced door did not come back exactly");
+    assert!(!root.join("engine-cloud.replaced").exists(), "the set-aside copy outlived the restore");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_refused_pairing_from_the_local_door_puts_it_back_and_its_store_is_never_moved() {
+    with_key_in_env();
+    for frozen in [true, false] {
+        let root = local_root(&format!("switch-refused-local-{frozen}"), frozen);
+        let before = bytes_under(&root);
+        let store = under(&root, "engine-local");
+        let shell = Shell::rooted_for_tests(&root);
+        shell.switch_door(&pairing_door(PAIRED_ORIGIN), true).expect("a provisional switch");
+        assert_eq!(under(&root, "engine-local"), store, "the local store moved under the pairing");
+        assert_eq!(root.join("engine-cloud.replaced").exists(), frozen, "the frozen mirror was not set aside");
+        pairing_wrote(&root);
+        shell.restore_switch().expect("the restore");
+        // THE PAIRING'S DIRECTORY GOES WITH IT, including one it created where none was.
+        assert_eq!(bytes_under(&root), before, "frozen={frozen}: the local door did not come back exactly");
+        assert_eq!(root.join("engine-cloud").exists(), frozen, "frozen={frozen}: the pairing's directory stayed");
+        let _ = fs::remove_dir_all(&root);
+    }
+}
+
+#[test]
+fn an_accepted_pairing_keeps_its_door_and_retires_only_what_was_set_aside() {
+    with_key_in_env();
+    let root = local_root("switch-accepted", true);
+    let store = under(&root, "engine-local");
+    let shell = Shell::rooted_for_tests(&root);
+    shell.switch_door(&pairing_door(PAIRED_ORIGIN), true).expect("a provisional switch");
+    pairing_wrote(&root);
+    let paired = bytes_under(&root.join("engine-cloud"));
+
+    let status = shell.commit_switch().expect("the commit");
+    assert!(status.get("switchPending").is_none(), "{status}");
+    assert!(door_of(&root).expect("a door").is_desktop_host(), "the accepted pairing lost its door");
+    assert!(!root.join(crate::config::SWITCH_FILE_NAME).exists(), "the record outlived the commit");
+    assert!(!root.join("engine-cloud.replaced").exists(), "the set-aside copy outlived the commit");
+    assert_eq!(bytes_under(&root.join("engine-cloud")), paired, "the commit touched the pairing's store");
+    // THE LEFT DOOR IS FROZEN, AS EVERY SWITCH LEAVES IT.
+    assert_eq!(under(&root, "engine-local"), store, "the commit touched the local store");
+
+    // Settled means settled: a second commit and a late restore change nothing.
+    let settled = bytes_under(&root);
+    shell.commit_switch().expect("a second commit");
+    shell.restore_switch().expect("a late restore");
+    assert_eq!(bytes_under(&root), settled, "a settle after the commit moved something");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_plain_switch_keeps_nothing_and_writes_no_record() {
+    // UNCHANGED for every switch but a pairing's: the directory it leaves stays where it was.
+    with_key_in_env();
+    let root = local_root("switch-plain", true);
+    let cloud = under(&root, "engine-cloud");
+    let shell = Shell::rooted_for_tests(&root);
+    let status = shell
+        .switch_door(&serde_json::json!({
+            "mode": "cloud", "cloudUrl": "https://api.ohmail.app", "address": "reader@example.test",
+        }), false)
+        .expect("a plain switch");
+    assert!(status.get("switchPending").is_none(), "{status}");
+    assert!(!root.join(crate::config::SWITCH_FILE_NAME).exists(), "a plain switch wrote a record");
+    assert!(!root.join("engine-cloud.replaced").exists(), "a plain switch set a directory aside");
+    assert_eq!(under(&root, "engine-cloud"), cloud, "a plain switch moved the directory it opens");
+    // …and a provisional one over a door that has none is the same plain switch: nothing to keep.
+    let fresh = candidate_root("switch-no-door");
+    let bare = Shell::rooted_for_tests(&fresh);
+    bare.switch_door(&pairing_door(PAIRED_ORIGIN), true).expect("a pairing on an install with no door");
+    assert!(!fresh.join(crate::config::SWITCH_FILE_NAME).exists(), "a door-less install kept a record");
+    let _ = fs::remove_dir_all(&root);
+    let _ = fs::remove_dir_all(&fresh);
+}
+
+#[test]
+fn a_kill_mid_pairing_leaves_the_replaced_door_for_the_next_launch() {
+    // EACH STOP A KILL CAN LEAVE ON DISK, in the switch's own order, undone by the launch's step.
+    with_key_in_env();
+    for stop in 1..=4 {
+        let root = local_root(&format!("switch-killed-{stop}"), true);
+        let before = bytes_under(&root);
+        let path = root.join(crate::config::CONFIG_FILE_NAME);
+        let file = crate::config::read_door_file(&path).expect("the door file");
+        let switch = crate::config::record_switch(&root, &file, Mode::Cloud).expect("recorded");
+        if stop >= 2 {
+            crate::config::set_aside(&root, &switch).expect("set aside");
+        }
+        if stop >= 3 {
+            let next = crate::config::parse(&pairing_door(PAIRED_ORIGIN)).expect("the pairing's door");
+            crate::config::write(&path, &next).expect("written");
+        }
+        if stop >= 4 {
+            pairing_wrote(&root);
+        }
+        recover_door_switch(&paths_of(&root));
+        assert_eq!(bytes_under(&root), before, "stop {stop}: the next launch did not bring the door back");
+        assert!(!root.join(crate::config::SWITCH_FILE_NAME).exists(), "stop {stop}: the record stayed");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // The whole shell, killed with the switch unsettled: nothing in memory is what brings it back.
+    let root = local_root("switch-killed-shell", true);
+    let before = bytes_under(&root);
+    let shell = Shell::rooted_for_tests(&root);
+    shell.switch_door(&pairing_door(PAIRED_ORIGIN), true).expect("a provisional switch");
+    pairing_wrote(&root);
+    drop(shell);
+    recover_door_switch(&paths_of(&root));
+    assert_eq!(bytes_under(&root), before, "a killed pairing's door was not back at the next launch");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_restore_or_a_commit_cut_short_is_finished_by_the_next_launch() {
+    with_key_in_env();
+    // A RESTORE KILLED after the store went back and before the record went: finished, not repeated.
+    let root = local_root("switch-restore-cut", true);
+    let before = bytes_under(&root);
+    let path = root.join(crate::config::CONFIG_FILE_NAME);
+    let file = crate::config::read_door_file(&path).expect("the door file");
+    let switch = crate::config::record_switch(&root, &file, Mode::Cloud).expect("recorded");
+    crate::config::set_aside(&root, &switch).expect("set aside");
+    pairing_wrote(&root);
+    fs::remove_dir_all(root.join("engine-cloud")).expect("the pairing's directory, removed");
+    fs::rename(root.join("engine-cloud.replaced"), root.join("engine-cloud")).expect("put back");
+    recover_door_switch(&paths_of(&root));
+    assert_eq!(bytes_under(&root), before, "a restore cut short was not finished at the next launch");
+    let _ = fs::remove_dir_all(&root);
+
+    // A COMMIT KILLED after its record went and before the set-aside copy did: retired at launch.
+    let root = local_root("switch-commit-cut", true);
+    let shell = Shell::rooted_for_tests(&root);
+    shell.switch_door(&pairing_door(PAIRED_ORIGIN), true).expect("a provisional switch");
+    pairing_wrote(&root);
+    fs::remove_file(root.join(crate::config::SWITCH_FILE_NAME)).expect("the commit's one step");
+    drop(shell);
+    let kept = bytes_under(&root.join("engine-cloud"));
+    recover_door_switch(&paths_of(&root));
+    assert!(!root.join("engine-cloud.replaced").exists(), "the accepted switch's copy was not retired");
+    assert!(door_of(&root).expect("a door").is_desktop_host(), "the next launch undid an accepted pairing");
+    assert_eq!(bytes_under(&root.join("engine-cloud")), kept, "the retire touched the pairing's store");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_switch_while_one_is_provisional_keeps_the_person_s_own_door() {
+    with_key_in_env();
+    let root = local_root("switch-twice", true);
+    let before = bytes_under(&root);
+    let original = fs::read_to_string(root.join(crate::config::CONFIG_FILE_NAME)).expect("the door file");
+    let shell = Shell::rooted_for_tests(&root);
+    shell.switch_door(&pairing_door(PAIRED_ORIGIN), true).expect("the first pairing");
+    pairing_wrote(&root);
+    shell.switch_door(&pairing_door("https://192.168.1.25:8443"), true).expect("a second pairing");
+    let kept = crate::config::read_switch(&root).expect("readable").expect("a record");
+    assert_eq!(kept.replaced_file, original, "the second pairing kept the first pairing's door");
+    shell.restore_switch().expect("the restore");
+    assert_eq!(bytes_under(&root), before, "two pairings in a row did not come back to the person's door");
+
+    // A plain switch over a provisional one settles it first: it leaves the person's door, not the pairing's.
+    shell.switch_door(&pairing_door(PAIRED_ORIGIN), true).expect("a pairing again");
+    pairing_wrote(&root);
+    shell
+        .switch_door(&serde_json::json!({
+            "mode": "cloud", "cloudUrl": "https://api.ohmail.app", "address": "reader@example.test",
+        }), false)
+        .expect("a plain switch over it");
+    assert!(!root.join(crate::config::SWITCH_FILE_NAME).exists(), "the plain switch kept the record");
+    assert!(!root.join("engine-cloud.replaced").exists(), "the plain switch left a set-aside copy");
+    assert_eq!(
+        under(&root, "engine-cloud"),
+        before.iter().filter(|(p, _)| p.starts_with(root.join("engine-cloud"))).cloned().collect::<Vec<_>>(),
+        "the plain switch opened the pairing's directory rather than the one the person's door left",
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_sign_out_while_a_pairing_is_unanswered_clears_nothing() {
+    with_key_in_env();
+    let root = local_root("switch-logout", true);
+    let before = bytes_under(&root);
+    let shell = Shell::rooted_for_tests(&root);
+    shell.switch_door(&pairing_door(PAIRED_ORIGIN), true).expect("a provisional switch");
+    let during = bytes_under(&root);
+    let refused = shell.logout().expect_err("a sign-out over an unanswered pairing");
+    assert!(refused.starts_with(LOGOUT_UNCHANGED), "{refused}");
+    assert_eq!(bytes_under(&root), during, "a refused sign-out changed the install");
+    shell.restore_switch().expect("the restore");
+    assert_eq!(bytes_under(&root), before);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_record_that_cannot_be_read_moves_nothing() {
+    with_key_in_env();
+    let root = local_root("switch-torn", true);
+    fs::write(root.join(crate::config::SWITCH_FILE_NAME), b"{ torn").unwrap();
+    fs::rename(root.join("engine-cloud"), root.join("engine-cloud.replaced")).expect("a set-aside copy");
+    let before = bytes_under(&root);
+    recover_door_switch(&paths_of(&root));
+    assert_eq!(bytes_under(&root), before, "an unreadable record's set-aside copy was touched");
+    let shell = Shell::rooted_for_tests(&root);
+    let refused = shell.switch_door(&pairing_door(PAIRED_ORIGIN), true).expect_err("a switch over it");
+    assert!(refused.contains("door switch"), "{refused}");
+    assert_eq!(bytes_under(&root), before, "a refused switch moved something");
+    let _ = fs::remove_dir_all(&root);
+}

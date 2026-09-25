@@ -149,7 +149,10 @@ fn main() {
     #[cfg(feature = "local-engine")]
     let host_boot = {
         engine::Shell::open_log(&app);
-        host::HostBoot::detect(&engine::Shell::paths(&app))
+        let paths = engine::Shell::paths(&app);
+        // A pairing the last run never settled puts its replaced door back before anything reads it.
+        engine::recover_door_switch(&paths);
+        host::HostBoot::detect(&paths)
     };
     #[cfg(feature = "local-engine")]
     let shell = std::sync::Arc::new(engine::Shell::start(&app, host_boot.plan()));

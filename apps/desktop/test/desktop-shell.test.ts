@@ -829,6 +829,10 @@ describe("the Rust side", () => {
       "engine_status",
       "engine_request",
       "engine_configure",
+      // A pairing started from a door settles its provisional switch — kept, or the replaced door
+      // put back. Neither takes an argument: the shell's own record names the replaced door.
+      "engine_switch_commit",
+      "engine_switch_restore",
       "engine_logout",
       // The failure card's one recovery press: remove the engine's own stale data-directory lock
       // and start it again. No path and no argument — the shell resolves the lock from its own

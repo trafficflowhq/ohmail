@@ -25,6 +25,11 @@ const WINDOW_COMMANDS: &[&str] = &[
     "engine_status",
     "engine_request",
     "engine_configure",
+    // A pairing started from a door settles the provisional switch it made: the other computer
+    // accepted (keep its door, retire the replaced one) or did not (put the replaced door back).
+    // Both take nothing; the shell's own record says which door was replaced.
+    "engine_switch_commit",
+    "engine_switch_restore",
     "engine_logout",
     // The failure card's one recovery press: remove the engine's own stale data-directory lock
     // (the shell resolves the path; the window names none) and start the engine again.
