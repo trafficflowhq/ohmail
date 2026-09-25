@@ -8,7 +8,7 @@
  * The query string (?demo=1) is untouched by navigation.
  */
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
-import { beginOpen, beginSwitch } from "./ui-vitals";
+import { abandonOpen, beginOpen, beginSwitch } from "./ui-vitals";
 
 export const VIEWS = [
   "ohbox",
@@ -549,8 +549,9 @@ export function reflectMessage(route: Route, messageId: string | null): void {
   /* THE OPEN MARK STARTS HERE, because this is the shell's ONE writer of the `m/<id>` tail: a
      click, `j` down a pile, a search hit and a deep link all arrive through it, and instrumenting
      the controls instead would have counted some opens and not others. It ends when THAT
-     message's body is painted (`MessagePane`). Closing a reading writes `null` and marks nothing. */
+     message's body is painted (`MessagePane`); closing a reading abandons it. */
   if (messageId !== null && messageId !== route.messageId) beginOpen(messageId);
+  else if (messageId === null) abandonOpen();
   if (messageId !== null && route.messageId === null) {
     window.location.hash = next; // an OPEN pushes
     return;

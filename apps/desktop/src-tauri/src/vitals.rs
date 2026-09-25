@@ -448,9 +448,11 @@ pub const UI_VITALS_FIELDS: &[&str] = &[
     "openP50Ms",
     "openP95Ms",
     "openCount",
+    "openTimeouts",
     "switchP50Ms",
     "switchP95Ms",
     "switchCount",
+    "switchTimeouts",
     "searchP50Ms",
     "searchP95Ms",
     "searchCount",
@@ -465,19 +467,37 @@ pub const UI_VITALS_FIELDS: &[&str] = &[
     "uptimeMin",
 ];
 
+/// THE LONGEST WAIT AN OPEN OR A SWITCH IS LOGGED AS — `ui-vitals.ts`'s number, asserted equal
+/// there. The window counts a slower one as a timeout (`openTimeouts`, `switchTimeouts`); a window
+/// older than that rule reports it inside a percentile, so a percentile above this is refused here
+/// and the line's `reason` says `timeout` — a mark that outlived its open is not a reading.
+pub const INTERACTION_TIMEOUT_MS: u64 = 30_000;
+
+/// The percentiles [`INTERACTION_TIMEOUT_MS`] bounds. Search is not one: its mark cannot outlive it.
+pub const BOUNDED_UI_FIELDS: &[&str] = &["openP50Ms", "openP95Ms", "switchP50Ms", "switchP95Ms"];
+
+/// The word a refused percentile puts in the line's `reason`, the name the window counts it by.
+pub const TIMEOUT_REASON: &str = "timeout";
+
 /// The `ui_vitals` line, composed from numbers and nothing else.
 ///
 /// A field the window did not report, reported as a string, or reported as a negative or
 /// non-finite number, is `null` — "not answered" and "answered wrongly" both read as absent rather
 /// than as zero, because zero is a measurement and these are not. Keys the window invented are
-/// dropped: the vocabulary is this file's, never the caller's.
+/// dropped: the vocabulary is this file's, never the caller's. `reason` is the one word, and it is
+/// this file's constant or `null`.
 pub fn ui_vitals_line(reported: &serde_json::Value) -> String {
     let mut parts = String::new();
+    let mut refused = false;
     for (i, name) in UI_VITALS_FIELDS.iter().enumerate() {
         if i > 0 {
             parts.push(',');
         }
         let value = match reported.get(name).and_then(|v| v.as_f64()) {
+            Some(n) if BOUNDED_UI_FIELDS.contains(name) && n > INTERACTION_TIMEOUT_MS as f64 => {
+                refused = true;
+                "null".to_string()
+            }
             Some(n) if n.is_finite() && n >= 0.0 => (n.round() as u64).to_string(),
             _ => "null".to_string(),
         };
@@ -485,7 +505,8 @@ pub fn ui_vitals_line(reported: &serde_json::Value) -> String {
         // sent can become a key.
         parts.push_str(&format!("\"{name}\":{value}"));
     }
-    format!("{{\"service\":\"ui\",\"event\":\"ui_vitals\",{parts}}}")
+    let reason = if refused { format!("\"{TIMEOUT_REASON}\"") } else { "null".to_string() };
+    format!("{{\"service\":\"ui\",\"event\":\"ui_vitals\",{parts},\"reason\":{reason}}}")
 }
 
 /// The scope of one pid under a `/proc`-shaped root, or `None` when it cannot be read.

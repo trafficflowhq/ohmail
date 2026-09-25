@@ -1588,12 +1588,13 @@ export function MessagePane({
    *
    * A LAYOUT effect, so it runs in the commit that put the text on screen rather than a frame
    * later, and gated on a TERMINAL state: `snippet` and `loading` are both "the body has not
-   * arrived", and ending on either would report the spinner's latency as the mail's. `endOpen` is
-   * keyed by message id and is silent when nothing was pending, so a body that was already in the
-   * mirror — a re-render, a prefetch — records nothing rather than a zero.
+   * arrived", and ending on either would report the spinner's latency as the mail's. `endOpen`
+   * holds the body as on screen until the cleanup, so the bar's later mark for a body already in
+   * the mirror — a re-render, a prefetch — records nothing rather than a wait.
    */
   useLayoutEffect(() => {
-    if (body.state !== "snippet" && body.state !== "loading") endOpen(message.id);
+    if (body.state !== "snippet" && body.state !== "loading") return endOpen(message.id);
+    return undefined;
   }, [message.id, body.state]);
 
   /**

@@ -23,6 +23,17 @@ const useCommitEffect = typeof window === "undefined" ? useEffect : useLayoutEff
 /** The three interactions worth a percentile — the ones a person waits through. */
 export type UiInteraction = "open" | "switch" | "search";
 
+/** The two whose mark can outlive the interaction it was taken for — see {@link INTERACTION_TIMEOUT_MS}. */
+type BoundedInteraction = "open" | "switch";
+
+/**
+ * THE LONGEST WAIT AN OPEN OR A SWITCH IS RECORDED AS. Past it the mark is a TIMEOUT, counted by
+ * name (`openTimeouts`, `switchTimeouts`) and never a duration, so a mark nothing ended cannot
+ * come back hours later as one reading (0.24.0, Windows: open p95 6 816 173 ms). `vitals.rs`
+ * holds the same number and refuses a percentile above it from a window older than this rule.
+ */
+export const INTERACTION_TIMEOUT_MS = 30_000;
+
 /** The three startup marks, in the order a launch reaches them. */
 export type UiStartupMark = "shellPainted" | "listUsable" | "engineReady";
 
@@ -96,6 +107,8 @@ const startup: Record<UiStartupMark, number | null> = {
 let longFrames = 0;
 let longTasks = 0;
 let sink: UiVitalsSink | null = null;
+/** Opens and switches that passed {@link INTERACTION_TIMEOUT_MS} in this report window. */
+const timeouts: Record<BoundedInteraction, number> = { open: 0, switch: 0 };
 
 /**
  * THE STARTUP REPORT, EMITTED ONCE THE THREE MARKS ARE COMPLETE.
@@ -159,10 +172,15 @@ export function startupMarks(): Record<UiStartupMark, number | null> {
  * Record one finished interaction, in milliseconds.
  *
  * A negative or non-finite reading is dropped rather than stored: a clock that went backwards is
- * not a fast interaction, and one bad point moves a p95 more than a hundred good ones.
+ * not a fast interaction, and one bad point moves a p95 more than a hundred good ones. An open or
+ * a switch past the bound is a timeout, never a duration — this is the one door into the rings.
  */
 export function recordInteraction(kind: UiInteraction, ms: number): void {
   if (!Number.isFinite(ms) || ms < 0) return;
+  if (kind !== "search" && ms > INTERACTION_TIMEOUT_MS) {
+    timeouts[kind] += 1;
+    return;
+  }
   const ring = rings[kind];
   if (ring.values.length < RING) ring.values.push(ms);
   else ring.values[ring.next] = ms;
@@ -172,8 +190,15 @@ export function recordInteraction(kind: UiInteraction, ms: number): void {
 
 /* ── the pending interactions, each one start → the paint that ends it ───────────────────────── */
 
-/** Keyed by message id so a second open while the first is still loading cannot end the wrong one. */
-const pendingOpen = new Map<string, number>();
+/**
+ * THE ONE OPEN IN FLIGHT, and which message ends it. Another open or a view switch supersedes it
+ * and it records nothing for itself; past the bound it is one timeout ({@link expirePending}).
+ */
+let pendingOpen: { id: string; at: number } | null = null;
+/** Messages whose body a pane has on screen, counted — two panes can show one message. */
+const bodiesShown = new Map<string, number>();
+/** The route key of the view on screen, or `null` while the shell shows a placeholder. */
+let viewShown: string | null = null;
 /**
  * The switch in flight: when it was asked for, and WHICH view has to be on screen to end it.
  *
@@ -185,51 +210,84 @@ let pendingSwitch: { key: string; at: number } | null = null;
 let pendingSearch: number | null = null;
 
 /**
- * A message was asked for. The mark ends when THAT message's body is on screen
- * ({@link endOpen}) — a press that is abandoned leaves an entry, so the map is capped.
+ * A mark past {@link INTERACTION_TIMEOUT_MS} becomes ONE timeout and is gone, so nothing can end
+ * it later. Asked at every begin, end and report rather than on a timer: an idle window pays
+ * nothing, and the report that follows the expiry is the one that counts it.
+ */
+function expirePending(now: number): void {
+  if (pendingOpen !== null && now - pendingOpen.at > INTERACTION_TIMEOUT_MS) {
+    pendingOpen = null;
+    timeouts.open += 1;
+  }
+  if (pendingSwitch !== null && now - pendingSwitch.at > INTERACTION_TIMEOUT_MS) {
+    pendingSwitch = null;
+    timeouts.switch += 1;
+  }
+}
+
+/**
+ * A message was asked for; the mark ends when THAT message's body is on screen ({@link endOpen}).
+ *
+ * The pane ends in a LAYOUT effect and this runs from the bar's PASSIVE one, so a body already in
+ * the mirror is on screen before its open is marked: that open waited for nothing and records
+ * nothing, and it still supersedes the open before it.
  */
 export function beginOpen(messageId: string): void {
   const at = nowMs();
   if (at === null) return;
-  // A reader who walks a pile with `j` opens faster than bodies arrive; the oldest pending press
-  // is the one nobody is waiting for any more.
-  if (pendingOpen.size >= 8) {
-    const oldest = pendingOpen.keys().next().value;
-    if (oldest !== undefined) pendingOpen.delete(oldest);
-  }
-  pendingOpen.set(messageId, at);
+  expirePending(at);
+  pendingOpen = bodiesShown.has(messageId) ? null : { id: messageId, at };
+}
+
+/** The reading was closed: an open still waiting is abandoned, and records nothing — not a timeout. */
+export function abandonOpen(): void {
+  pendingOpen = null;
 }
 
 /**
- * That message's body is committed — record the open after the paint that shows it. Silent when
- * nothing was pending: a body can arrive unasked.
+ * That message's body is committed — record the open after the paint that shows it, and hold the
+ * message as ON SCREEN until the returned function runs (the pane's effect cleanup). Silent when
+ * this message's open is not the one pending: a body can arrive unasked.
  *
  * The caller is a LAYOUT effect on a terminal body state (`MessagePane`), so this runs in the
- * commit that put the text in the document; the paint is the other frame a reader waits through,
- * and it is the same rule the switch mark ends on.
+ * commit that put the text in the document; the paint is the other frame a reader waits through.
  */
-export function endOpen(messageId: string): void {
-  const started = pendingOpen.get(messageId);
-  if (started === undefined) return;
-  pendingOpen.delete(messageId);
+export function endOpen(messageId: string): () => void {
+  bodiesShown.set(messageId, (bodiesShown.get(messageId) ?? 0) + 1);
+  let held = true;
+  const gone = (): void => {
+    if (!held) return;
+    held = false;
+    const left = (bodiesShown.get(messageId) ?? 1) - 1;
+    if (left > 0) bodiesShown.set(messageId, left);
+    else bodiesShown.delete(messageId);
+  };
+  const at = nowMs();
+  if (at !== null) expirePending(at);
+  const pending = pendingOpen;
+  if (pending === null || pending.id !== messageId) return gone;
+  pendingOpen = null;
   afterPaint(() => {
-    const at = nowMs();
-    if (at !== null) recordInteraction("open", at - started);
+    const ended = nowMs();
+    if (ended !== null) recordInteraction("open", ended - pending.at);
   });
+  return gone;
 }
 
 /**
  * A view or folder switch was asked for, naming the view the press asks FOR (its route key).
  *
- * It used to end itself two frames later, which is the paint of the frame the press landed in —
- * the OLD view. The end is now {@link endSwitch}, called from the commit that puts the target
- * view on screen. A second press before the first view committed OWNS the reading: the abandoned
- * view is never going to be on screen, so its reading would be about a wait nobody had.
+ * The end is {@link endSwitch}, from the commit that puts the target view on screen. A second
+ * press before the first view committed OWNS the reading; a press to the view ALREADY on screen
+ * re-commits nothing, so it marks nothing; and any switch supersedes the open in flight, whose
+ * reading is being left.
  */
 export function beginSwitch(viewKey: string): void {
   const at = nowMs();
   if (at === null) return;
-  pendingSwitch = { key: viewKey, at };
+  expirePending(at);
+  pendingOpen = null;
+  pendingSwitch = viewKey === viewShown ? null : { key: viewKey, at };
 }
 
 /**
@@ -240,6 +298,9 @@ export function beginSwitch(viewKey: string): void {
  * pending or with another key, and none of them is a switch somebody waited through.
  */
 export function endSwitch(viewKey: string): void {
+  viewShown = viewKey;
+  const at = nowMs();
+  if (at !== null) expirePending(at);
   const pending = pendingSwitch;
   if (pending === null || pending.key !== viewKey) return;
   pendingSwitch = null;
@@ -258,6 +319,7 @@ export function endSwitch(viewKey: string): void {
 export function useSwitchEnd(viewKey: string | null): void {
   useCommitEffect(() => {
     if (viewKey !== null) endSwitch(viewKey);
+    else viewShown = null;
   }, [viewKey]);
 }
 
@@ -435,6 +497,7 @@ function stopSampler(): void {
 export function takeUiVitals(): UiVitalsReport {
   const engine = takeClientEngineVitals();
   const at = nowMs();
+  if (at !== null) expirePending(at);
   const report: UiVitalsReport = {
     shellPaintedMs: rounded(startup.shellPainted),
     listUsableMs: rounded(startup.listUsable),
@@ -442,9 +505,11 @@ export function takeUiVitals(): UiVitalsReport {
     openP50Ms: percentile(rings.open.values, 50),
     openP95Ms: percentile(rings.open.values, 95),
     openCount: rings.open.sinceReport,
+    openTimeouts: timeouts.open,
     switchP50Ms: percentile(rings.switch.values, 50),
     switchP95Ms: percentile(rings.switch.values, 95),
     switchCount: rings.switch.sinceReport,
+    switchTimeouts: timeouts.switch,
     searchP50Ms: percentile(rings.search.values, 50),
     searchP95Ms: percentile(rings.search.values, 95),
     searchCount: rings.search.sinceReport,
@@ -471,6 +536,8 @@ export function takeUiVitals(): UiVitalsReport {
   rings.open.sinceReport = 0;
   rings.switch.sinceReport = 0;
   rings.search.sinceReport = 0;
+  timeouts.open = 0;
+  timeouts.switch = 0;
   longFrames = 0;
   longTasks = 0;
   framesSeen = 0;
@@ -566,7 +633,11 @@ export function resetUiVitalsForTest(): void {
   longTasks = 0;
   framesSeen = 0;
   activeUntil = 0;
-  pendingOpen.clear();
+  pendingOpen = null;
+  bodiesShown.clear();
+  viewShown = null;
+  timeouts.open = 0;
+  timeouts.switch = 0;
   pendingSwitch = null;
   pendingSearch = null;
   lastFrameAt = null;

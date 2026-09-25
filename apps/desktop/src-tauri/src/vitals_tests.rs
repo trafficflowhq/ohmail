@@ -731,6 +731,52 @@ fn an_unreported_or_impossible_number_is_null_and_never_zero() {
     assert!(line.contains("\"deriveP95Ms\":null"), "no derivation means no milliseconds: {line}");
 }
 
+/// A WINDOW OLDER THAN THE TIMEOUT RULE CANNOT PUT A STALE MARK IN THE LOG. 0.24.0's window
+/// reported the time since an open nothing ended as its p95 (6 816 173 ms on Windows); the shell
+/// refuses a bounded percentile above [`INTERACTION_TIMEOUT_MS`] and names why, and the rest of
+/// the line still reads.
+#[test]
+fn a_bounded_percentile_above_the_timeout_is_refused_and_named() {
+    let line = ui_vitals_line(&serde_json::json!({
+        "openP50Ms": 15_145, "openP95Ms": 6_815_423, "openCount": 22,
+        "switchP50Ms": 220, "switchP95Ms": 1_394, "switchCount": 66,
+    }));
+
+    assert!(line.contains("\"openP95Ms\":null"), "a stale mark reached the line: {line}");
+    assert!(!line.contains("6815423"), "its VALUE reached the line: {line}");
+    assert!(line.contains("\"openP50Ms\":15145"), "a figure under the bound is kept: {line}");
+    assert!(line.contains("\"switchP95Ms\":1394"), "{line}");
+    assert!(line.contains("\"openCount\":22"), "{line}");
+    assert!(line.contains(&format!("\"reason\":\"{TIMEOUT_REASON}\"")), "the refusal is not named: {line}");
+    let _: serde_json::Value = serde_json::from_str(&line).expect("valid JSON");
+}
+
+/// The positive half: the bound itself is a reading, a search is not bounded, and a line that
+/// refused nothing says so.
+#[test]
+fn a_percentile_at_the_bound_or_a_slow_search_is_kept_and_the_reason_is_null() {
+    let bound = INTERACTION_TIMEOUT_MS;
+    let line = ui_vitals_line(&serde_json::json!({
+        "openP95Ms": bound, "switchP95Ms": bound, "searchP95Ms": bound + 1,
+    }));
+
+    assert!(line.contains(&format!("\"openP95Ms\":{bound}")), "{line}");
+    assert!(line.contains(&format!("\"switchP95Ms\":{bound}")), "{line}");
+    assert!(line.contains(&format!("\"searchP95Ms\":{}", bound + 1)), "{line}");
+    assert!(line.contains("\"reason\":null"), "{line}");
+}
+
+/// The window's own timeout counts reach the line as numbers, beside the counts they sit next to.
+#[test]
+fn the_window_s_timeout_counts_reach_the_line() {
+    let line = ui_vitals_line(&serde_json::json!({ "openTimeouts": 2, "switchTimeouts": 0 }));
+
+    assert!(line.contains("\"openTimeouts\":2"), "{line}");
+    assert!(line.contains("\"switchTimeouts\":0"), "zero timeouts IS a measurement: {line}");
+    let idle = ui_vitals_line(&serde_json::json!({}));
+    assert!(idle.contains("\"openTimeouts\":null"), "a window that did not say is not zero: {idle}");
+}
+
 /// THE NAMES A MEASUREMENT RUN'S READERS ASK THIS LINE FOR — the three startup marks, the open,
 /// switch and search percentiles with their counts, the frame counter, and the derivation's four.
 /// Written down here because those readers live outside this repository, and a field they read
