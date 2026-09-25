@@ -211,6 +211,8 @@ import {
 // Removing a mailbox takes this install's copy of its mail with it. See `local-mirror.ts` for why
 // this is the sidecar's job and not `MailboxService.delete`'s.
 import { mirroredFirstSyncFacts, mirroredMessageCount, wipeLocalMirror } from "./local-mirror.js";
+// An earlier build's sign-out left the outgoing password behind; the boot removes it.
+import { removeSignedOutResidue } from "./signed-out-residue.js";
 import { stampSynced } from "./sync-stamp.js";
 import {
   handleWindowConsentReadFailure, handleWindowSearchPhases, handleWindowSyncFailure,
@@ -7092,6 +7094,28 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       }
     }
 
+    /* WHAT AN EARLIER BUILD'S SIGN-OUT LEFT: a mailbox with no incoming row holding its
+       outgoing one, password and all. AFTER the attach, so a launch that sealed a password just
+       now is signed in and keeps its rows. The coordinates move into `signed_out_meta` first
+       (`signed-out-residue.ts`); one line per mailbox, never again once removed. */
+    try {
+      for (const done of await removeSignedOutResidue(db, world.accountId)) {
+        log("signed_out_residue_removed", {
+          mailboxId: done.mailboxId,
+          count: done.count,
+          reason: "an earlier version signed this mailbox out and left its outgoing server's "
+            + "password stored; it was removed, and the server and username were kept so "
+            + "Sign in again can still name them",
+        });
+      }
+    } catch (err) {
+      log("signed_out_residue_remove_failed", {
+        err,
+        reason: "a signed-out mailbox still holds its outgoing server's password from an earlier "
+          + "version; Sign in again replaces it, and the next launch tries the removal again",
+      });
+    }
+
     // Where the "Opening your mailbox" seconds went — measurement only; nothing above behaves
     // differently for it. The four named phases are the awaited work this constructor is made of,
     // and `totalReadyMs` brackets all of it, so `totalReadyMs` minus the four is the unnamed
@@ -7857,6 +7881,47 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 body.imap = {
                   host: own.host, port: own.port, secure: own.secure, user: own.auth.user, ...incoming,
                 };
+              }
+              /* …AND WHERE NEITHER EXISTS: an earlier build's sign-out kept nothing of where this
+                 mailbox lives (mail 0127 is newer than it). Refused BY NAME with what this install
+                 still knows — the provider it was added as, the outgoing server and its login — so
+                 the window can place the server from its provider table or ask for it once. */
+              if (bare && onTheRow && (body.imap as Record<string, unknown>).host === undefined) {
+                const [placed] = await db.select({
+                  provider: mailboxes.provider, status: mailboxes.status, kept: mailboxes.signedOutMeta,
+                }).from(mailboxes)
+                  .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, core.accountId)))
+                  .limit(1);
+                if (placed && placed.status !== "disabled"
+                  && signedOutTransportMeta(placed.kept, "imap") === null) {
+                  const leftover = await db.select({
+                    transport: mailboxCredentials.transport, meta: mailboxCredentials.meta,
+                  }).from(mailboxCredentials)
+                    .where(and(
+                      eq(mailboxCredentials.mailboxId, mailboxId),
+                      eq(mailboxCredentials.transport, "smtp"),
+                    ));
+                  const outgoing = signedOutMetaOf(leftover)?.smtp
+                    ?? signedOutTransportMeta(placed.kept, "smtp");
+                  log("local_mailbox_server_unknown", {
+                    mailboxId,
+                    reason: "Sign in again was pressed on a mailbox an earlier version signed out, "
+                      + "which kept no record of its incoming server; nothing was dialled or stored "
+                      + "and the window is told what is still known so it can ask for the server",
+                  });
+                  return new Response(JSON.stringify({
+                    error: {
+                      code: "mailbox_server_unknown",
+                      message: "This computer no longer knows this mailbox's incoming server. "
+                        + "Enter it once to sign in again.",
+                      details: {
+                        provider: placed.provider,
+                        login: outgoing?.user ?? null,
+                        outgoingHost: outgoing?.host ?? null,
+                      },
+                    },
+                  }), { status: 400, headers: { "content-type": "application/json" } });
+                }
               }
               if (passed && body.smtp === undefined) {
                 const [submission] = await db.select({ mailboxId: mailboxCredentials.mailboxId })

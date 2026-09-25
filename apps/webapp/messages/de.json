@@ -2603,7 +2603,13 @@
     "signInAgainConfirm": "Speichern und anmelden",
     "signInAgainWorking": "Anmeldung läuft…",
     "signInAgainCancel": "Abbrechen",
-    "signInAgainDone": "Angemeldet. Dieses Postfach synchronisiert wieder."
+    "signInAgainDone": "Angemeldet. Dieses Postfach synchronisiert wieder.",
+    "signInAgainAskWhy": "Dieser Computer kennt den Posteingangsserver dieses Postfachs nicht mehr. Trag ihn einmal ein; danach reicht das Passwort.",
+    "signInAgainAskServer": "Posteingangsserver (IMAP)",
+    "signInAgainAskServerHint": "Der Postausgangsserver ist {host}.",
+    "signInAgainAskPort": "Port",
+    "signInAgainAskUser": "Benutzername",
+    "signInAgainAskHint": "Wird auf diesem Computer versiegelt und nur an den Server oben gesendet."
   },
   "onboarding": {
     "rail_mailbox": "Postfach",

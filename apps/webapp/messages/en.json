@@ -2603,7 +2603,13 @@
     "signInAgainConfirm": "Save and sign in",
     "signInAgainWorking": "Signing in…",
     "signInAgainCancel": "Cancel",
-    "signInAgainDone": "Signed in. This mailbox is syncing again."
+    "signInAgainDone": "Signed in. This mailbox is syncing again.",
+    "signInAgainAskWhy": "This computer no longer has this mailbox's incoming server. Enter it once; after that the password alone signs it in.",
+    "signInAgainAskServer": "Incoming server (IMAP)",
+    "signInAgainAskServerHint": "The outgoing server is {host}.",
+    "signInAgainAskPort": "Port",
+    "signInAgainAskUser": "Username",
+    "signInAgainAskHint": "Sealed on this computer and sent only to the server above."
   },
   "onboarding": {
     "rail_mailbox": "Mailbox",

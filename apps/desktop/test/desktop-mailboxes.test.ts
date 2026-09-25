@@ -4277,6 +4277,108 @@ describe("the row takes a new password without the mailbox being removed", () =>
     ]);
   });
 
+  /* ── SIGNED OUT BY AN EARLIER VERSION, WITH NOTHING KEPT ─────────────────────────────────
+     The engine refuses the password-only press as `mailbox_server_unknown` with what it still
+     knows. A provider FACT places the server and the press is sent again with it; otherwise the
+     form asks for the server once, pre-filled, and what it holds is what is sent. */
+  const unknownServer = (details: Record<string, unknown>): Response => new Response(JSON.stringify({
+    error: { code: "mailbox_server_unknown", message: "the engine's own sentence", details },
+  }), { status: 400, headers: { "content-type": "application/json" } });
+  /** The first PATCH answers `first`, every later one 200; the poll reads "needs a password". */
+  const earlier = (first: () => Response): (() => Response) => {
+    let patches = 0;
+    return () => {
+      if (bridged.at(-1)?.method !== "PATCH") return reach({ reachable: false, needsCredential: true });
+      patches += 1;
+      return patches === 1 ? first() : new Response("{}", { status: 200 });
+    };
+  };
+  const submitSignIn = async (el: HTMLElement): Promise<void> => {
+    await act(async () => {
+      el.querySelector("form.acct-confirm")!
+        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+  };
+  const openAndType = async (el: HTMLElement, password: string): Promise<void> => {
+    await act(async () => { named(el, copy.signInAgainAction!)[0]!.click(); });
+    await act(async () => { type(el.querySelector<HTMLInputElement>("#mbx-new-password")!, password); });
+  };
+
+  it("an earlier version's sign-out: the provider it was added as places the server, password alone", async () => {
+    FACTS = [MAILBOX];
+    bridgeReply = earlier(() => unknownServer({ provider: "fastmail", login: null, outgoingHost: null }));
+    const el = await render("local");
+    await openAndType(el, "the-password");
+    await submitSignIn(el);
+    expect(sentBodies).toEqual([
+      { url: "/local/mailboxes/mbx-1", body: JSON.stringify({ imap: { pass: "the-password" } }) },
+      {
+        url: "/local/mailboxes/mbx-1",
+        body: JSON.stringify({
+          imap: { host: "imap.fastmail.com", port: 993, secure: true, user: MAILBOX.address, pass: "the-password" },
+        }),
+      },
+    ]);
+    expect(el.querySelector("#mbx-server-host"), "the form asked for a server a fact states").toBeNull();
+    expect(el.textContent).toContain(copy.signInAgainDone!);
+  });
+
+  it("…and the provider its outgoing server belongs to places it, with the kept login", async () => {
+    FACTS = [MAILBOX];
+    bridgeReply = earlier(() => unknownServer({ provider: "imap", login: "the-login", outgoingHost: "smtp.gmail.com" }));
+    const el = await render("local");
+    await openAndType(el, "the-password");
+    await submitSignIn(el);
+    expect(sentBodies.map((b) => JSON.parse(b.body) as unknown)).toEqual([
+      { imap: { pass: "the-password" } },
+      { imap: { host: "imap.gmail.com", port: 993, secure: true, user: "the-login", pass: "the-password" } },
+    ]);
+    expect(el.textContent).toContain(copy.signInAgainDone!);
+  });
+
+  it("with nothing to place it, the form asks for the server once — pre-filled — and sends what it holds", async () => {
+    FACTS = [{ ...MAILBOX, address: "someone@gmail.com" }];
+    bridgeReply = earlier(() => unknownServer({ provider: "imap", login: "the-login", outgoingHost: "mail.example.test" }));
+    const el = await render("local");
+    await openAndType(el, "the-password");
+    expect(el.querySelector("#mbx-server-host"), "the server was asked for before anybody pressed").toBeNull();
+    await submitSignIn(el);
+    /* ONE request: the address's domain is a guess, and a guess is never dialled unseen. */
+    expect(sentBodies).toHaveLength(1);
+    const host = el.querySelector<HTMLInputElement>("#mbx-server-host")!;
+    const port = el.querySelector<HTMLInputElement>("#mbx-server-port")!;
+    const user = el.querySelector<HTMLInputElement>("#mbx-server-user")!;
+    expect([host.value, port.value, user.value]).toEqual(["imap.gmail.com", "993", "the-login"]);
+    expect(el.querySelector<HTMLInputElement>("#mbx-new-password")!.value, "the typed password was lost")
+      .toBe("the-password");
+    expect(el.textContent).toContain(copy.signInAgainAskWhy!);
+    expect(el.textContent).toContain(copy.signInAgainAskServerHint!.replace("{host}", "mail.example.test"));
+    expect(el.textContent).not.toContain("the engine's own sentence");
+    await act(async () => { type(host, "mail.example.test"); });
+    await act(async () => { type(port, "143"); });
+    await submitSignIn(el);
+    expect(JSON.parse(sentBodies[1]!.body)).toEqual({
+      imap: { host: "mail.example.test", port: 143, secure: false, user: "the-login", pass: "the-password" },
+    });
+    expect(el.textContent).toContain(copy.signInAgainDone!);
+    expect(el.querySelector("#mbx-server-host"), "the ask outlived the sign-in").toBeNull();
+  });
+
+  it("the ask cannot be sent without a server", async () => {
+    FACTS = [MAILBOX];
+    bridgeReply = earlier(() => unknownServer({ provider: "imap", login: null, outgoingHost: null }));
+    const el = await render("local");
+    await openAndType(el, "the-password");
+    await submitSignIn(el);
+    const host = el.querySelector<HTMLInputElement>("#mbx-server-host")!;
+    expect(host.value, "a server was invented for an unknown domain").toBe("");
+    expect(el.querySelector<HTMLInputElement>("#mbx-server-user")!.value).toBe(MAILBOX.address);
+    const confirm = named(el, copy.signInAgainConfirm!)[0]!;
+    expect(confirm.disabled).toBe(true);
+    await act(async () => { type(host, "mail.example.test"); });
+    expect(confirm.disabled).toBe(false);
+  });
+
   it("says the press landed, on the row it was made on", async () => {
     FACTS = [MAILBOX];
     bridgeReply = (): Response =>

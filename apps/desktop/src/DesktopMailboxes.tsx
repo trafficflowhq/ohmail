@@ -45,6 +45,9 @@ import {
 } from "../../webapp/app/shell/reading-along";
 import { bridgeFetch, engineLogout, retryingBridgeFetch, type EngineStatus } from "./bridge-fetch.js";
 import { firstRunDoorFor } from "./doors.js";
+import {
+  askFor, incomingFromAsk, knownIncoming, readServerUnknown, type ServerAsk,
+} from "./sign-in-again-server.js";
 import { openWeb } from "./native.js";
 
 /** Whether this install can reach ONE mailbox's server right now — see {@link MailboxReachSlice}. */
@@ -481,11 +484,15 @@ async function reasonOf(res: Response): Promise<string> {
  * than the engine can write, since only this pane knows the retry is the press the confirmation
  * panel is still showing.
  */
-async function refusalOf(res: Response): Promise<{ code?: string; message: string }> {
+async function refusalOf(res: Response): Promise<{ code?: string; message: string; details?: unknown }> {
   try {
-    const wire = (await res.json()) as { error?: { code?: string; message?: string } };
+    const wire = (await res.json()) as { error?: { code?: string; message?: string; details?: unknown } };
     if (wire.error?.message) {
-      return { ...(wire.error.code ? { code: wire.error.code } : {}), message: wire.error.message };
+      return {
+        ...(wire.error.code ? { code: wire.error.code } : {}),
+        message: wire.error.message,
+        ...(wire.error.details === undefined ? {} : { details: wire.error.details }),
+      };
     }
   } catch {
     /* Not JSON. The status is all there is to say, and saying it beats inventing a reason. */
@@ -895,6 +902,11 @@ export function DesktopMailboxes(
   const [signInBusy, setSignInBusy] = useState(false);
   /** The mailbox this pane just re-sealed — the sentence saying the press landed. */
   const [signedIn, setSignedIn] = useState<string | null>(null);
+  /**
+   * THE ASK-ONCE FORM'S FIELDS, for the one mailbox whose incoming server the engine could not
+   * name (an earlier version's sign-out kept none) and no provider fact places — `null` otherwise.
+   */
+  const [serverAsk, setServerAsk] = useState<{ id: string; ask: ServerAsk } | null>(null);
   const cloud = door === "cloud";
   /* PAIRED: a cloud door whose far side is a computer of the person's own. Everything the ENGINE
      does is the cloud door's; what changes is what this pane may claim. */
@@ -949,23 +961,39 @@ export function DesktopMailboxes(
   /**
    * GIVE THIS MAILBOX THE PASSWORD IT IS REFUSED WITH NOW — `PATCH /local/mailboxes/:id`, the
    * standalone door's seal, and the reason a password change stopped meaning remove-and-import.
-   * The body carries the password and NOTHING else: the server, port and username come from the
-   * sealed row itself, which is what this mailbox was proved against and what no surface here is
-   * told. The engine tries it before it stores it, so a refusal changes nothing at all.
+   * The body carries the password and NOTHING else: the engine merges the server, port and
+   * username from what it keeps. The engine tries it before it stores it, so a refusal changes
+   * nothing at all. ONE exception, `mailbox_server_unknown` — an earlier version's sign-out kept
+   * no server: a provider fact places it and the press is sent again with it, else the form asks.
    */
   const signInAgain = (m: MailboxFacts, password: string): void => {
     setProblem(null);
     setSignInBusy(true);
+    const asking = serverAsk?.id === m.id ? incomingFromAsk(serverAsk.ask) : null;
     void (async () => {
-      try {
-        const res = await bridgeFetch(`/local/mailboxes/${encodeURIComponent(m.id)}`, {
+      const seal = (imap: Record<string, unknown>): Promise<Response> =>
+        bridgeFetch(`/local/mailboxes/${encodeURIComponent(m.id)}`, {
           method: "PATCH",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ imap: { pass: password } }),
+          body: JSON.stringify({ imap }),
         });
-        if (!res.ok) throw new Error(await reasonOf(res));
+      try {
+        let res = await seal(asking ? { ...asking, pass: password } : { pass: password });
+        if (!res.ok) {
+          const refusal = await refusalOf(res);
+          const unknown = asking ? null : readServerUnknown(refusal.code, refusal.details);
+          if (unknown === null) throw new Error(refusal.message);
+          const known = knownIncoming(unknown, m.address);
+          if (known === null) {
+            setServerAsk({ id: m.id, ask: askFor(unknown, m.address) });
+            return;
+          }
+          res = await seal({ ...known, pass: password });
+          if (!res.ok) throw new Error(await reasonOf(res));
+        }
         setSigningIn(null);
         setNewPassword("");
+        setServerAsk(null);
         setSignedIn(m.id);
         refresh();
       } catch (err) {
@@ -2055,6 +2083,7 @@ export function DesktopMailboxes(
                         setProblem(null);
                         setSignedIn(null);
                         setNewPassword("");
+                        setServerAsk(null);
                         setSigningIn(shown);
                       }}
                     >
@@ -2113,12 +2142,12 @@ export function DesktopMailboxes(
               On a row this machine organizes it is the release; on every other one it is the fact and
               the way back — see `organizerBlock`. */}
           {organizerBlock(shown)}
-          {/* ══ THE PASSWORD THIS MAILBOX IS REFUSED WITH — one field, because one field is
-              all this door needs. The server, the port and the username are in the credential
-              this mailbox was proved against, and the engine merges them itself; asking for
-              them again would be asking somebody to re-type what is already right. Under the
-              row for the confirmation's reason: a machine with two addresses must never show a
-              form with an ambiguous subject. */}
+          {/* ══ THE PASSWORD THIS MAILBOX IS REFUSED WITH — one field, because the engine merges
+              the server, the port and the username from what it keeps; asking again would be
+              asking somebody to re-type what is already right. The server fields appear ONLY
+              for a mailbox an earlier version signed out with nothing kept and no provider fact
+              to place it (`serverAsk`), pre-filled. Under the row: a machine with two addresses
+              must never show a form with an ambiguous subject. */}
           {signingIn?.id === shown.id ? (
             <form
               className="acct-confirm"
@@ -2126,11 +2155,65 @@ export function DesktopMailboxes(
               onSubmit={(e) => { e.preventDefault(); signInAgain(shown, newPassword); }}
             >
               <h3 className="acct-sub">{t("signInAgainTitle", { address: shown.address })}</h3>
-              <p className="acct-fine">{t("signInAgainWhy")}</p>
+              <p className="acct-fine">
+                {serverAsk?.id === shown.id ? t("signInAgainAskWhy") : t("signInAgainWhy")}
+              </p>
+              {serverAsk?.id === shown.id ? (
+                <>
+                  <SettingsField
+                    htmlFor="mbx-server-host"
+                    label={t("signInAgainAskServer")}
+                    hint={serverAsk.ask.outgoingHost
+                      ? t("signInAgainAskServerHint", { host: serverAsk.ask.outgoingHost })
+                      : undefined}
+                  >
+                    <input
+                      id="mbx-server-host"
+                      type="text"
+                      autoComplete="off"
+                      spellCheck={false}
+                      value={serverAsk.ask.host}
+                      onChange={(e) => {
+                        const host = e.target.value;
+                        setServerAsk((a) => (a ? { ...a, ask: { ...a.ask, host } } : a));
+                      }}
+                      disabled={signInBusy}
+                    />
+                  </SettingsField>
+                  <SettingsField htmlFor="mbx-server-port" label={t("signInAgainAskPort")}>
+                    <input
+                      id="mbx-server-port"
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      value={serverAsk.ask.port}
+                      onChange={(e) => {
+                        const port = e.target.value;
+                        setServerAsk((a) => (a ? { ...a, ask: { ...a.ask, port } } : a));
+                      }}
+                      disabled={signInBusy}
+                    />
+                  </SettingsField>
+                  <SettingsField htmlFor="mbx-server-user" label={t("signInAgainAskUser")}>
+                    <input
+                      id="mbx-server-user"
+                      type="text"
+                      autoComplete="off"
+                      spellCheck={false}
+                      value={serverAsk.ask.user}
+                      onChange={(e) => {
+                        const user = e.target.value;
+                        setServerAsk((a) => (a ? { ...a, ask: { ...a.ask, user } } : a));
+                      }}
+                      disabled={signInBusy}
+                    />
+                  </SettingsField>
+                </>
+              ) : null}
               <SettingsField
                 htmlFor="mbx-new-password"
                 label={t("signInAgainPassword")}
-                hint={t("signInAgainHint")}
+                hint={serverAsk?.id === shown.id ? t("signInAgainAskHint") : t("signInAgainHint")}
               >
                 <input
                   id="mbx-new-password"
@@ -2146,14 +2229,15 @@ export function DesktopMailboxes(
                 <Button
                   type="button"
                   disabled={signInBusy}
-                  onClick={() => { setSigningIn(null); setNewPassword(""); }}
+                  onClick={() => { setSigningIn(null); setNewPassword(""); setServerAsk(null); }}
                 >
                   {t("signInAgainCancel")}
                 </Button>
                 <Button
                   variant="primary"
                   type="submit"
-                  disabled={signInBusy || newPassword === ""}
+                  disabled={signInBusy || newPassword === ""
+                    || (serverAsk?.id === shown.id && incomingFromAsk(serverAsk.ask) === null)}
                 >
                   {signInBusy ? t("signInAgainWorking") : t("signInAgainConfirm")}
                 </Button>
