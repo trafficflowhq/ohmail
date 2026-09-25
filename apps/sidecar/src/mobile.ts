@@ -793,7 +793,7 @@ async function composePhoneEngine(
 
   const removeRefusedSeal = async (why: string): Promise<void> => {
     if (!suppliedPassword) return;
-    await sidecar.forgetStoredLogin().catch((err: unknown) => {
+    await sidecar.forgetStoredLogin({ keepCoordinates: false }).catch((err: unknown) => {
       log("stored_login_clear_failed", {
         err,
         reason: "a refused launch could not remove the password it had just sealed, so the next " +

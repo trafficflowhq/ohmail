@@ -59,7 +59,10 @@ import {
   type PushService, type RemoteFetch,
   // The sign-out fence's durable half — one module for both doors, so the engine and the shared
   // mailbox service cannot hold two versions of the same rule (`signed-out-fence.ts`).
-  fenceSignedOutMailbox, signedOutMidWrite, type CredentialOrigin,
+  fenceSignedOutMailbox, signedOutMidWrite, launchRefused, type CredentialOrigin,
+  // What a sign-out keeps of where a mailbox lives (mail 0127): the one builder the column takes
+  // and the reader that re-applies its allow-list.
+  signedOutMetaOf, signedOutTransportMeta,
 } from "@trafficflow/services/mail";
 /* The session LIFECYCLE — the machinery half of the hosted auth service (establish, refresh
  * rotation with reuse detection, family revocation, devices, the paired-device mint), from the
@@ -202,8 +205,8 @@ import { launchSessionExpiredResponse, mintLaunchBearer } from "./launch-bearer.
 // remove them. See that file's header for what is per mailbox and what is per install.
 import {
   LocalRoster,
-  type CredentialBlock, type CredentialState, type LocalMailboxRuntime, type MailboxConnectionState,
-  type OrganizerState,
+  type CredentialBlock, type CredentialState, type DialAnswer, type LocalMailboxRuntime,
+  type MailboxConnectionState, type OrganizerState,
 } from "./roster.js";
 // Removing a mailbox takes this install's copy of its mail with it. See `local-mirror.ts` for why
 // this is the sidecar's job and not `MailboxService.delete`'s.
@@ -673,16 +676,16 @@ export interface Sidecar {
    */
   credentialState(): Promise<CredentialState>;
   /**
-   * Forget the stored mailbox password; answers whether there was one to forget. The shell can
-   * delete its own configuration and stop this process, but the sealed credential lives in the
-   * mirror's database — and the mirror is frozen on a door switch rather than deleted, because
-   * the mail is on the user's own server. So the one thing that has to go is removed here.
+   * Forget the stored mailbox passwords; answers whether there was one to forget. The shell can
+   * delete its own configuration and stop this process, but the sealed credentials live in the
+   * mirror's database, which is frozen on a door switch rather than deleted — so they go here.
    *
    * IT DOES END THE LOGIN that password bought. The socket IS the credential in use: a poll timer
    * left running re-dialled from the copy the attachment still held. The sign-out epoch moves with
    * the row (`signout-fence.ts`), the live connection closes, and every later dial refuses.
+   * `keepCoordinates: false` is a refused seal's discard — see the runtime's own method.
    */
-  forgetStoredLogin(): Promise<boolean>;
+  forgetStoredLogin(opts?: { keepCoordinates?: boolean }): Promise<boolean>;
   /**
    * Stop polling, let the in-flight cycle finish, GIVE EVERY CLAIM BACK, close IMAP, close and
    * unlock the database. The release is inside each mailbox's `detach()`, between the queue
@@ -2417,6 +2420,46 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     };
 
     /**
+     * THE ANSWER A "SIGN IN AGAIN" PRESS GIVES ON A MAILBOX THAT NEVER DIALLED — the first
+     * connect's shape. The launch is awaited within its own two dial deadlines (connect +
+     * greeting); a server refusing the sign-in or the encrypted way in is the press's refusal, and
+     * the password the press stored is discarded so it cannot win over the next press. An outage,
+     * a slow server or no dial at all is not a refusal: the password stays, and the connection
+     * record says what the mailbox is doing.
+     */
+    const answerPressLaunch = async (
+      mailboxId: string, rt: LocalMailboxRuntime, answer: Promise<DialAnswer | null>,
+    ): Promise<void> => {
+      const t = { ...SIDECAR_NET_TIMEOUTS, ...(rt.imap.timeouts ?? {}) };
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const within = await Promise.race([
+        answer.catch((err: unknown) => {
+          log("local_mailbox_repoint_failed", {
+            err,
+            reason: "the new password is stored and this mailbox uses it from the next launch; "
+              + "nothing was undone",
+          });
+          return null;
+        }),
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), t.connectionMs + t.greetingMs);
+          (timer as { unref?: () => void }).unref?.();
+        }),
+      ]).finally(() => clearTimeout(timer));
+      if (within === null || within.outcome !== "failed") return;
+      const refused = credentialsRefused(within.err) ? "auth" : tlsRefused(within.err) ? "tls" : null;
+      if (refused === null) return;
+      await discardCredentialsFor(mailboxId);
+      log("local_mailbox_launch_refused", {
+        mailboxId,
+        err: within.err,
+        reason: "the mail server refused the launch this press started, so the password it had "
+          + "just stored was removed again and the press is answered with the refusal",
+      });
+      throw launchRefused(refused);
+    };
+
+    /**
      * Is this row the mailbox the settings file describes — the seed, by ADDRESS. As
      * `row.id === world.mailboxId` it conflated two questions, since `world.mailboxId` falls
      * back to the oldest live row when the seed address has no row. `isSeed` gates four
@@ -2494,7 +2537,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * those is reconstructible from the user's own server and none of them is a secret. The
        * credential is the only thing on this machine that a person signing out is asking to be gone.
        */
-      const forgetStoredLogin = async (): Promise<boolean> => {
+      const forgetStoredLogin = async (opts?: { keepCoordinates?: boolean }): Promise<boolean> => {
         /**
          * The delete and its proof are one transaction, and the proof is a read. This issued the DELETE, logged
          * `stored_login_cleared` and answered 200 without asking whether the row was gone — a delete that removed
@@ -2506,28 +2549,28 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * row lock and refuses when it moved (`packages/services/src/signed-out-fence.ts`).
          */
         const had = await db.transaction(async (tx) => {
+          /* EVERY TRANSPORT, not the incoming row alone: a mailbox with an outgoing server holds
+             the same password a second time in its `smtp` row, and that row used to survive the
+             sign-out with this install's key beside it. */
           const before = await dialect(tx).forUpdate(
-            tx.select({ mailboxId: mailboxCredentials.mailboxId }).from(mailboxCredentials)
-              .where(and(
-                eq(mailboxCredentials.mailboxId, mb.id),
-                eq(mailboxCredentials.transport, "imap"),
-              )));
-          await tx.delete(mailboxCredentials).where(and(
-            eq(mailboxCredentials.mailboxId, mb.id),
-            eq(mailboxCredentials.transport, "imap"),
-          ));
+            tx.select({ transport: mailboxCredentials.transport, meta: mailboxCredentials.meta })
+              .from(mailboxCredentials)
+              .where(eq(mailboxCredentials.mailboxId, mb.id)));
+          await tx.delete(mailboxCredentials).where(eq(mailboxCredentials.mailboxId, mb.id));
           /* AND THE DURABLE STAMP, in the same transaction as the delete. Every writer that seals
              a secret re-reads this column under the mailbox's row lock and refuses when it has
              moved, which is what closes the writer this transaction can serialize but not stop
              committing right after it — the shared `PATCH /mailboxes/:id` a paired phone sends.
-             The epoch below is the same rule for this process; the column is the rule on disk. */
-          await tx.update(mailboxes).set({ signedOutAt: now() })
+             WHERE THE MAILBOX LIVES is kept beside it (mail 0127), through the one allow-list
+             builder, so "Sign in again" can take a password alone. Not rewritten when nothing was
+             stored, and not written for a seal a server refused, whose coordinates nobody proved. */
+          const kept = before.length > 0 && opts?.keepCoordinates !== false
+            ? { signedOutMeta: signedOutMetaOf(before) }
+            : {};
+          await tx.update(mailboxes).set({ signedOutAt: now(), ...kept })
             .where(eq(mailboxes.id, mb.id));
           const after = await tx.select({ mailboxId: mailboxCredentials.mailboxId }).from(mailboxCredentials)
-            .where(and(
-              eq(mailboxCredentials.mailboxId, mb.id),
-              eq(mailboxCredentials.transport, "imap"),
-            ));
+            .where(eq(mailboxCredentials.mailboxId, mb.id));
           if (after.length > 0) {
             throw new ServiceError(
               "stored_login_not_cleared", 500,
@@ -5845,6 +5888,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * though this install still organized the mailbox. Reading through a getter is what keeps
        * the map's view and the gate's view the same view.
        */
+      /** Set only while {@link launch} waits: called once the launch's login has opened. */
+      let onDialled: (() => void) | null = null;
+
       /**
        * Dial, then learn, then act — the ONE sequence a launch and a re-dial both run. Extracting
        * it from `start()` is what makes reconnect safe: resuming a drain over a fresh socket
@@ -5863,6 +5909,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            and refuses again until the process ends or somebody signs back in. */
         if (signedOutSinceDial()) throw new SignedOutError();
         await adapter.connect();
+        /* The login is open: a press waiting on this launch has its answer ({@link launch}). */
+        onDialled?.();
         /* AFTER `connect()`, because that is the call that establishes the connection this pass
            is about. Captured once and carried, exactly as `drainPass` does. */
         /* STOPPED WHILE WE DIALLED. `connect()` is the longest await in this sequence and
@@ -6281,6 +6329,32 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         }
       };
 
+      /**
+       * START THIS MAILBOX AND ANSWER AT THE DIAL — for a caller a person is waiting on. `start()`
+       * settles after the first drain, which is minutes on a large mailbox; a sign-in or TLS
+       * refusal arrives at the login, so that is when this answers. The drain carries on behind
+       * it, and a start that dials nothing (no usable password) answers `not-dialled`.
+       */
+      const launch = (): Promise<DialAnswer> => new Promise<DialAnswer>((resolve) => {
+        let answered = false;
+        const answer = (a: DialAnswer): void => {
+          if (answered) return;
+          answered = true;
+          onDialled = null;
+          resolve(a);
+        };
+        onDialled = () => answer({ outcome: "dialled" });
+        /* The skip is over: `start()` sets it again if this launch has no password either. */
+        launchSkipped = false;
+        rt.start().then(
+          () => answer({ outcome: "not-dialled" }),
+          (err: unknown) => {
+            log("mailbox_start_failed", { err });
+            answer({ outcome: "failed", err });
+          },
+        );
+      });
+
       const rt: LocalMailboxRuntime = {
         mailboxId: mb.id,
         address: mb.address,
@@ -6386,29 +6460,39 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * dial is AWAITED so the route answers a verdict about the connection; the cycle behind
          * it is not — one cycle, forced, because a person is waiting and a first sync is minutes.
          */
-        async credentialReplaced() {
-          if (stopped) return;
+        async credentialReplaced(opts) {
+          if (stopped) return null;
           await rereadCredential();
           clearSignInRefusal("the stored password was replaced");
           /* NO LOGIN TO RE-OPEN, SO NO CYCLE. The re-dial acts only on an observed death, and a
              runtime that never dialled has none, so the forced cycle drained over an adapter
-             nothing had connected — the TypeError on every first connect. That seal is the FIRST
-             write, and the door replaces the engine straight after it: the launch it starts is
-             the cycle. See {@link launchSkipped}. */
+             nothing had connected — the TypeError on every first connect. The door's seal is
+             followed by an engine the door starts, which is that launch; a "Sign in again" press
+             has nothing behind it, so it asks for the launch here. See {@link launchSkipped}. */
           if (launchSkipped) {
+            if (opts?.launch === true) {
+              log("mailbox_launch_on_press", {
+                mailboxId: mb.id,
+                reason: "this mailbox started without a password and one was just stored from "
+                  + "Settings, so it is launched now rather than at the next start",
+              });
+              return launch();
+            }
             log("mailbox_relogin_skipped", {
               mailboxId: mb.id,
               reason: "this mailbox started without a password and has not dialled on this "
                 + "launch, so there is no login to re-open; the stored password is dialled by "
                 + "the launch that opens this mailbox",
             });
-            return;
+            return null;
           }
           await redialIfDead({ force: true });
           void syncUntilQuiet(1, { force: true }).catch((err: unknown) => {
             log("mailbox_relogin_cycle_failed", { mailboxId: mb.id, err });
           });
+          return null;
         },
+        launch,
         async start() {
           // ── A PASSWORD THAT IS THERE AND CANNOT BE USED IS AN OUTAGE ──────────────────────
           //
@@ -7752,7 +7836,29 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                  through nothing, and `keepingIncoming` is what covers a submission dial that says
                  no. */
               const incoming = (body.imap ?? {}) as Record<string, unknown>;
-              if (typeof incoming.pass === "string" && incoming.pass !== "" && body.smtp === undefined) {
+              /* BARE: no incoming row before this press — a signed-out mailbox, or the seed
+                 before its first seal. Its password can still be stored, against the mailbox's
+                 own server: the runtime's own configuration where it has one (the seed's), else
+                 what the sign-out kept on the row, which the service merges under (mail 0127). */
+              const [incomingRow] = await db.select({ mailboxId: mailboxCredentials.mailboxId })
+                .from(mailboxCredentials)
+                .where(and(
+                  eq(mailboxCredentials.mailboxId, mailboxId),
+                  eq(mailboxCredentials.transport, "imap"),
+                ))
+                .limit(1);
+              const bare = incomingRow === undefined;
+              const passed = typeof incoming.pass === "string" && incoming.pass !== "";
+              /* A PRESS THAT LEAVES THE SERVER TO THE ROW — Settings' "Sign in again". The door's
+                 seal always names the host, and the engine it starts next is its launch. */
+              const onTheRow = passed && incoming.host === undefined;
+              const own = runtimes.get(mailboxId)?.imap;
+              if (bare && onTheRow && own && own.host !== "") {
+                body.imap = {
+                  host: own.host, port: own.port, secure: own.secure, user: own.auth.user, ...incoming,
+                };
+              }
+              if (passed && body.smtp === undefined) {
                 const [submission] = await db.select({ mailboxId: mailboxCredentials.mailboxId })
                   .from(mailboxCredentials)
                   .where(and(
@@ -7760,7 +7866,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                     eq(mailboxCredentials.transport, "smtp"),
                   ))
                   .limit(1);
-                if (submission) body.smtp = { pass: incoming.pass };
+                const [kept] = bare
+                  ? await db.select({ meta: mailboxes.signedOutMeta }).from(mailboxes)
+                    .where(eq(mailboxes.id, mailboxId)).limit(1)
+                  : [];
+                if (submission || signedOutTransportMeta(kept?.meta, "smtp")) {
+                  body.smtp = { pass: incoming.pass };
+                }
               }
               const dto = await keepingIncoming(body, (b) => deps.services!.mailbox.update(
                 {
@@ -7792,6 +7904,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                  * mid-cycle poll is how two connections disagree. The SEED is left alone: its door
                  * already replaces the engine, and doing both tears down a mailbox a new one starts. */
               const live = runtimes.get(mailboxId);
+              /* THE LAUNCH THIS PRESS WAITS ON — a bare mailbox's runtime never dialled, and
+                 nothing else will dial it on this launch. Answered below, outside the re-point's
+                 catch: a refusal is the press's answer, never a logged failure. */
+              let launched: { rt: LocalMailboxRuntime; answer: Promise<DialAnswer | null> } | null = null;
               if (live && mailboxId !== world.mailboxId) {
                 try {
                    /* Detach first, then the attach may THROW. The login is closed and the timer
@@ -7821,9 +7937,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                        file and withhold the password it was called to store. */
                     false,
                   );
-                  void attached.start().catch((startErr: unknown) => {
-                    log("mailbox_start_failed", { err: startErr });
-                  });
+                  if (bare) launched = { rt: attached, answer: attached.launch() };
+                  else {
+                    void attached.start().catch((startErr: unknown) => {
+                      log("mailbox_start_failed", { err: startErr });
+                    });
+                  }
                 } catch (err) {
                   if (!runtimes.has(mailboxId)) runtimes.add(live);
                   log("local_mailbox_reattach_failed", {
@@ -7841,7 +7960,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                    logged and not raised — the password IS stored, and answering 500 would tell
                    somebody the opposite of what the store now says. */
                 try {
-                  await live.credentialReplaced();
+                  if (bare && onTheRow) {
+                    launched = { rt: live, answer: live.credentialReplaced({ launch: true }) };
+                  } else await live.credentialReplaced();
                 } catch (err) {
                   log("local_mailbox_repoint_failed", {
                     err,
@@ -7850,6 +7971,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                   });
                 }
               }
+              if (launched) await answerPressLaunch(mailboxId, launched.rt, launched.answer);
               return new Response(JSON.stringify(dto), {
                 status: 200, headers: { "content-type": "application/json" },
               });
@@ -8329,7 +8451,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         return rt.peekOrganizer();
       },
       credentialState: async () => (await seedRuntime()?.credentialState()) ?? "absent",
-      forgetStoredLogin: async () => (await seedRuntime()?.forgetStoredLogin()) ?? false,
+      forgetStoredLogin: async (opts) => (await seedRuntime()?.forgetStoredLogin(opts)) ?? false,
       /**
        * START EVERY MAILBOX. Concurrent for `syncUntilQuiet`'s reason, and `allSettled` for it
        * too — with one difference that is the whole of why this is not a bare `Promise.all`:

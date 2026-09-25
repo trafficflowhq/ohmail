@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { mailboxes, type Tx } from "@trafficflow/db";
+import { mailboxes, type SignedOutMeta, type SignedOutTransportMeta, type Tx } from "@trafficflow/db";
 import type { Dialect, LockMode } from "@trafficflow/db/dialect";
 import { ServiceError } from "./errors.js";
 
@@ -74,4 +74,48 @@ export async function fenceSignedOutMailbox(
   const then = origin.signedOutAt;
   const same = now === null ? then === null : then !== null && now.getTime() === then.getTime();
   if (!same) throw signedOutMidWrite();
+}
+
+/** The transports a sign-out keeps coordinates for: the two a password mailbox dials. */
+const KEPT_TRANSPORTS = ["imap", "smtp"] as const;
+
+/**
+ * One transport's coordinates out of a credential row's `meta` (or out of the column itself), by
+ * ALLOW-LIST: `host`, `port`, `secure` and `user`, each only in its own type. Anything else a
+ * `meta` carries — a consent marker, a witness, an OAuth block, a key somebody adds tomorrow — is
+ * dropped, so no reader of the column can be handed more than where the server is.
+ */
+export function keptTransportMeta(value: unknown): SignedOutTransportMeta | null {
+  if (typeof value !== "object" || value === null) return null;
+  const v = value as Record<string, unknown>;
+  const kept: SignedOutTransportMeta = {};
+  if (typeof v.host === "string" && v.host.trim() !== "") kept.host = v.host;
+  if (typeof v.port === "number" && Number.isInteger(v.port)) kept.port = v.port;
+  if (typeof v.secure === "boolean") kept.secure = v.secure;
+  if (typeof v.user === "string" && v.user !== "") kept.user = v.user;
+  return kept.host === undefined ? null : kept;
+}
+
+/**
+ * THE ONLY VALUE WRITTEN INTO `mailboxes.signed_out_meta` — built from the credential rows a
+ * sign-out is about to delete. `null` when none of them names a server. A census
+ * (`test/signed-out-meta-census.test.ts`) refuses any other expression written to the column.
+ */
+export function signedOutMetaOf(
+  rows: readonly { transport: string; meta: unknown }[],
+): SignedOutMeta | null {
+  const out: SignedOutMeta = {};
+  for (const t of KEPT_TRANSPORTS) {
+    const kept = keptTransportMeta(rows.find((r) => r.transport === t)?.meta);
+    if (kept) out[t] = kept;
+  }
+  return out.imap || out.smtp ? out : null;
+}
+
+/** What the column kept for one transport, re-read through the same allow-list. */
+export function signedOutTransportMeta(
+  column: unknown, transport: "imap" | "smtp",
+): SignedOutTransportMeta | null {
+  if (typeof column !== "object" || column === null) return null;
+  return keptTransportMeta((column as Record<string, unknown>)[transport]);
 }

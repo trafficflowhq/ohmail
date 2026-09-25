@@ -4251,6 +4251,32 @@ describe("the row takes a new password without the mailbox being removed", () =>
     ]);
   });
 
+  it("a row that needs a password sends it the same way — the password alone, to that row", async () => {
+    /* The bare card: mailbox two after a sign-out and a reconnect of mailbox one alone. The engine
+       reads the server from the row, so the request is the one a stored row gets, byte for byte. */
+    FACTS = [MAILBOX, { ...MAILBOX, id: "mbx-2", address: "other@example.test" }];
+    bridgeReply = () => new Response(JSON.stringify({
+      items: [
+        { mailboxId: "mbx-1", reachable: true, unreachableSince: null },
+        { mailboxId: "mbx-2", reachable: false, unreachableSince: null, needsCredential: true },
+      ],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+    const el = await render("local");
+    expect(el.textContent).toContain(copy.desktopStateNeedsCredential!);
+
+    const second = [...addressRows(el)[1]!.querySelectorAll("button")]
+      .find((b) => (b.textContent ?? "").trim() === copy.signInAgainAction!)!;
+    await act(async () => { second.click(); });
+    await act(async () => { type(el.querySelector<HTMLInputElement>("#mbx-new-password")!, "the-new-one"); });
+    await act(async () => {
+      el.querySelector("form.acct-confirm")!
+        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(sentBodies).toEqual([
+      { url: "/local/mailboxes/mbx-2", body: JSON.stringify({ imap: { pass: "the-new-one" } }) },
+    ]);
+  });
+
   it("says the press landed, on the row it was made on", async () => {
     FACTS = [MAILBOX];
     bridgeReply = (): Response =>

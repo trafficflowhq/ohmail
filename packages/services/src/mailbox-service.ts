@@ -16,7 +16,7 @@ import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { accountMailboxesProbe, refuseOverAccountMailboxes } from "./read-bounds.js";
 import { fenceErasedAccount, fenceErasedMailboxOnly } from "./erasure-fence.js";
-import { fenceSignedOutMailbox, type CredentialOrigin } from "./signed-out-fence.js";
+import { fenceSignedOutMailbox, signedOutTransportMeta, type CredentialOrigin } from "./signed-out-fence.js";
 import { erasureRemaining, stampMailboxErasure, type MailboxErasureStamp } from "./mailbox-erasure.js";
 /* The DEFAULT policy is registered rather than imported, so the paid gate is not an import edge
  * out of a module the desktop engine bundles — this one is mounted by the local API too. The
@@ -608,6 +608,13 @@ const probeRefused = (code: MailboxErrorCode, tls?: ProbeTlsDetail, transport: P
     r.retryable,
   );
 };
+
+/**
+ * The same refusal when the server said no to the LAUNCH that followed a store rather than to the
+ * probe before it — the local door's "Sign in again" on a mailbox that never dialled. One sentence
+ * per cause, so the field shows what a refused probe would have shown.
+ */
+export const launchRefused = (code: "auth" | "tls"): ServiceError => probeRefused(code);
 
 /**
  * A credential write reached a write path with no probe to try it with.
@@ -1716,6 +1723,9 @@ export class MailboxService {
         // have surfaced it.
         syncBlockedReason: null,
         syncBlockedSince: null,
+        // Mail 0127 — where a signed-out mailbox lived goes with the credentials: a removed
+        // mailbox keeps nothing about how to reach it.
+        signedOutMeta: null,
       })
         .where(and(eq(mailboxes.id, id), eq(mailboxes.accountId, ctx.accountId)));
       await tx.delete(mailboxCredentials).where(eq(mailboxCredentials.mailboxId, id));
@@ -2377,10 +2387,7 @@ export class MailboxService {
     const effectiveStatus = patch.status ?? current.status;
     if (effectiveStatus === "disabled") throw mailboxDisabled();
 
-    const stored = (await asTx(ctx).select({ meta: mailboxCredentials.meta })
-      .from(mailboxCredentials)
-      .where(and(eq(mailboxCredentials.mailboxId, id), eq(mailboxCredentials.transport, "imap")))
-      .limit(1))[0]?.meta as Record<string, unknown> | null | undefined;
+    const stored = await this.mergeBaseOn(asTx(ctx), id, "imap");
 
     const merged = mergedTransportMeta(stored, patch.imap, undefined, "imap");
 
@@ -2432,10 +2439,7 @@ export class MailboxService {
     const effectiveStatus = patch.status ?? current.status;
     if (effectiveStatus === "disabled") throw mailboxDisabled();
 
-    const stored = (await asTx(ctx).select({ meta: mailboxCredentials.meta })
-      .from(mailboxCredentials)
-      .where(and(eq(mailboxCredentials.mailboxId, id), eq(mailboxCredentials.transport, "smtp")))
-      .limit(1))[0]?.meta as Record<string, unknown> | null | undefined;
+    const stored = await this.mergeBaseOn(asTx(ctx), id, "smtp");
 
     const merged = mergedTransportMeta(stored, patch.smtp, undefined, "smtp");
 
@@ -2474,6 +2478,29 @@ export class MailboxService {
   }
 
   /**
+   * WHAT A PATCH OF ONE TRANSPORT MERGES OVER — the credential row's `meta`, exactly as before,
+   * and only where that row is ABSENT, what a sign-out kept of it (mail 0127). Without the second
+   * a pass-only press on a signed-out mailbox merged over nothing and was refused "imap host is
+   * required", though the row says where the mailbox lives. `undefined` when neither exists.
+   */
+  private async mergeBaseOn(
+    on: Tx, mailboxId: string, transport: ProbeTransport,
+  ): Promise<Record<string, unknown> | null | undefined> {
+    const [row] = await on.select({ meta: mailboxCredentials.meta })
+      .from(mailboxCredentials)
+      .where(and(
+        eq(mailboxCredentials.mailboxId, mailboxId),
+        eq(mailboxCredentials.transport, transport),
+      ))
+      .limit(1);
+    if (row) return row.meta as Record<string, unknown> | null;
+    const [mb] = await on.select({ kept: mailboxes.signedOutMeta })
+      .from(mailboxes).where(eq(mailboxes.id, mailboxId)).limit(1);
+    const kept = signedOutTransportMeta(mb?.kept, transport);
+    return kept === null ? undefined : { ...kept };
+  }
+
+  /**
    * Compare-and-set for a merge computed OUTSIDE the transaction that is written INSIDE it.
    * Throws {@link configMoved}; returns nothing — the only legal continuation is "the merge is
    * still the answer". MUST be called on `tx`, after `ownedRowOn(..., { forUpdate: true })`: on
@@ -2486,14 +2513,7 @@ export class MailboxService {
     tx: Tx, mailboxId: string, transport: ProbeTransport,
     patch: TransportInput | undefined, dialled: ProbedMeta,
   ): Promise<void> {
-    const [row] = await tx.select({ meta: mailboxCredentials.meta })
-      .from(mailboxCredentials)
-      .where(and(
-        eq(mailboxCredentials.mailboxId, mailboxId),
-        eq(mailboxCredentials.transport, transport),
-      ))
-      .limit(1);
-    const fresh = row?.meta as Record<string, unknown> | null | undefined;
+    const fresh = await this.mergeBaseOn(tx, mailboxId, transport);
     const rebuilt = mergedTransportMeta(fresh, patch, dialled.proven, transport);
     if (stableJson(rebuilt) !== stableJson(dialled.meta)) throw configMoved(transport);
   }

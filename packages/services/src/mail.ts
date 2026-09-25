@@ -108,7 +108,7 @@ export {
 
 
 export {
-  MailboxService, makeMailboxService, mailboxService, decryptCredential,
+  MailboxService, makeMailboxService, mailboxService, decryptCredential, launchRefused,
   type CreateMailboxBody, type UpdateMailboxBody, type TransportInput, type MailboxServiceDeps,
   // Cloud 0009 — the OAuth consent flow's write end. `connectOAuth` resolves its target row
   // by ADDRESS (the `id_token` claim), so these types carry no `mailboxId`.
@@ -128,6 +128,7 @@ export {
 // own, so both halves of the rule live in one module rather than two implementations of it.
 export {
   fenceSignedOutMailbox, readMailboxSignedOutAt, signedOutMidWrite,
+  signedOutMetaOf, signedOutTransportMeta,
   type CredentialOrigin,
 } from "./signed-out-fence.js";
 // The plan-limit gate the mailbox write path runs inside its transaction.

@@ -775,6 +775,10 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // every pane that reads it goes blank; the worker's erasure pass reads it too. Deploy order
   // migration → API → worker.
   ["mailboxes", "erasure_done_at"],
+  // mail 0127_mailbox_signed_out_meta — where a signed-out mailbox lives. `PATCH /mailboxes/:id`
+  // reads it on a mailbox with no credential row, so an API ahead of the migration 42703s that
+  // write; the local engine's sign-out writes it. Deploy order migration → API → worker.
+  ["mailboxes", "signed_out_meta"],
 ] as const;
 
 /**
@@ -1092,7 +1096,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0126_mailbox_erasure_done";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0127_mailbox_signed_out_meta";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud

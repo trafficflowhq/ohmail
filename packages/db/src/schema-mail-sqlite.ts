@@ -10,6 +10,7 @@
  */
 import { sqliteTable, text, integer, real, unique, uniqueIndex, index, primaryKey, customType, check } from "drizzle-orm/sqlite-core";
 import { sql, desc } from "drizzle-orm";
+import type { SignedOutMeta } from "./schema-mail.js";
 
 /**
  * A 64-bit counter that stays a `bigint` in TypeScript and a native integer in the store.
@@ -420,6 +421,8 @@ export const mailboxes = sqliteTable("mailboxes", {
   releaseRefusal: text("release_refusal"),
   /** Mail 0126 — when the erasure stamped in `erased_at` finished; see the pg twin. LAST for 0111's reason. */
   erasureDoneAt: integer("erasure_done_at", { mode: "timestamp_ms" }),
+  /** Mail 0127 — what a sign-out kept of where this mailbox lives; see the pg twin. LAST for 0111's reason. */
+  signedOutMeta: text("signed_out_meta", { mode: "json" }).$type<SignedOutMeta>(),
 }, (t) => ({
   ixIdAccount: uniqueIndex("mailboxes_id_account_uq").on(t.id, t.accountId),
   // ONE ACTIVE MAILBOX PER ADDRESS (mail 0021). PARTIAL, because `delete` is a soft delete to

@@ -306,5 +306,11 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "ALTER TABLE \"mailboxes\" ADD COLUMN \"erasure_done_at\" integer;",
       "UPDATE \"mailboxes\" SET \"erasure_done_at\" = \"erased_at\"\n  WHERE \"erased_at\" IS NOT NULL AND \"erasure_done_at\" IS NULL;"
     ]
+  },
+  {
+    "name": "0127_mailbox_signed_out_meta.sql",
+    "statements": [
+      "ALTER TABLE \"mailboxes\" ADD COLUMN \"signed_out_meta\" text;"
+    ]
   }
 ] as const;

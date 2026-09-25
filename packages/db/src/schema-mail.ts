@@ -34,6 +34,20 @@ const tsvector = customType<{ data: string; driverData: string }>({
  */
 const EPOCH = new Date(0);
 
+/** One transport's server coordinates, as a sign-out keeps them — see `mailboxes.signed_out_meta`. */
+export interface SignedOutTransportMeta {
+  host?: string;
+  port?: number;
+  secure?: boolean;
+  user?: string;
+}
+
+/** `mailboxes.signed_out_meta` (mail 0127): the non-secret half of the rows a sign-out removed. */
+export interface SignedOutMeta {
+  imap?: SignedOutTransportMeta;
+  smtp?: SignedOutTransportMeta;
+}
+
 export const mailboxes = pgTable("mailboxes", {
   id: uuid("id").defaultRandom().primaryKey(),
   accountId: uuid("account_id").notNull(),
@@ -407,6 +421,14 @@ export const mailboxes = pgTable("mailboxes", {
    * out here". On this row rather than the credential's, which is what a sign-out deletes.
    */
   signedOutAt: timestamp("signed_out_at", { withTimezone: true }),
+  /**
+   * WHERE THIS MAILBOX LIVES, KEPT BY A SIGN-OUT (mail 0127). The sign-out removes every
+   * credential row, and the server coordinates lived only in their `meta`; this is their
+   * NON-SECRET half — `host`, `port`, `secure`, `user` per transport, never a password or a key —
+   * written beside {@link signedOutAt} and merged under a credential write on a mailbox with no
+   * row. NULL is "no sign-out kept anything"; `MailboxService.delete` clears it.
+   */
+  signedOutMeta: jsonb("signed_out_meta").$type<SignedOutMeta>(),
 }, (t) => ({
   ixIdAccount: uniqueIndex("mailboxes_id_account_uq").on(t.id, t.accountId),
   // ONE ACTIVE MAILBOX PER ADDRESS (mail 0021). PARTIAL, because `delete` is a soft delete to

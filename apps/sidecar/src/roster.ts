@@ -375,8 +375,12 @@ export interface LocalMailboxRuntime {
   peekOrganizer(): Promise<LeasePeekAnswer>;
   /** Can this install open this mailbox right now? Read fresh from the store on every call. */
   credentialState(): Promise<CredentialState>;
-  /** Forget this mailbox's sealed password. Answers whether there was one to forget. */
-  forgetStoredLogin(): Promise<boolean>;
+  /**
+   * Forget this mailbox's sealed passwords, every transport. Answers whether there was one to
+   * forget. `keepCoordinates: false` is a refused seal's discard: its server was never proved,
+   * so it is not kept as where the mailbox lives (mail 0127).
+   */
+  forgetStoredLogin(opts?: { keepCoordinates?: boolean }): Promise<boolean>;
   /**
    * THE SEALED PASSWORD WAS REPLACED — re-read it, drop the refusal, dial now.
    *
@@ -387,8 +391,24 @@ export interface LocalMailboxRuntime {
    * adapter, the cursors and the claim are left alone, and a read that does not open leaves this
    * runtime exactly as it was.
    */
-  credentialReplaced(): Promise<void>;
+  credentialReplaced(opts?: { launch?: boolean }): Promise<DialAnswer | null>;
+  /**
+   * Start this mailbox and answer once its login has opened or been refused — not after the
+   * first drain, which is what `start()` waits for. `launch: true` on
+   * {@link credentialReplaced} routes a runtime whose start was skipped for want of a password
+   * through here; `null` from that call is every other arm.
+   */
+  launch(): Promise<DialAnswer>;
 }
+
+/**
+ * What {@link LocalMailboxRuntime.launch} answered. `failed` carries the start's own error — a
+ * refused sign-in, a refused TLS handshake, or an outage — for the caller to classify.
+ */
+export type DialAnswer =
+  | { readonly outcome: "dialled" }
+  | { readonly outcome: "not-dialled" }
+  | { readonly outcome: "failed"; readonly err: unknown };
 
 /**
  * The roster: every mailbox this install currently runs, keyed by row id. A class rather than a bare
