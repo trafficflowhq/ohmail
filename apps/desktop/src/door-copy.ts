@@ -315,6 +315,24 @@ const EN = {
      outage. The remedy is the same place the link came from. */
   hostRefuseRefused: (host: string) =>
     `${host} refused this pairing. Make a new link from Settings → Devices there and try again.`,
+  /* The rest of the redeem's refusals, so none reads in the engine's English: the other
+     computer's rate limit, an account it did not name, and three this install refuses itself. */
+  hostRefuseRateLimited: (host: string) =>
+    `Too many pairing attempts reached ${host} from here. Wait a few minutes, then try again.`,
+  hostRefuseAccountUnnamed: (host: string) =>
+    `${host} did not say which account this pairing belongs to, and this computer already holds `
+    + `mail for one. Update ohmail on ${host}, then pair again.`,
+  hostRefuseSignedIn:
+    "This computer is already signed in, so nothing was paired. Sign out first, then pair again.",
+  hostRefuseIdentityPending:
+    "This computer is waiting for a browser confirmation for ohmail Cloud, so nothing was paired. "
+    + "Finish or cancel that first, then pair again.",
+  hostRefuseUnsupportedPlatform: (host: string) =>
+    `This build of ohmail cannot tell ${host} what kind of computer this is, and pairing without `
+    + "that would list it there as a browser. Nothing was paired.",
+  hostRefuseNoSession: (host: string) =>
+    `${host} accepted the link and sent back no session, so nothing was paired. Make a new link `
+    + "from Settings → Devices there and try again.",
   /* The refused card's way out to the other doors; "Back" there read as undoing the refusal. */
   hostChooseAnother: "Choose another way",
   /* ── SHARED BY MORE THAN ONE CARD ────────────────────────────────────────────────────────── */
@@ -704,6 +722,10 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   hostRefuseServer: ["host"],
   hostRefuseUnreachable: ["host"],
   hostRefuseRefused: ["host"],
+  hostRefuseRateLimited: ["host"],
+  hostRefuseAccountUnnamed: ["host"],
+  hostRefuseUnsupportedPlatform: ["host"],
+  hostRefuseNoSession: ["host"],
   hostFootStale: ["host"],
   /* TWO VALUES, and the ORDER here is the argument order of the formatter above, never the
      order the placeholders happen to appear in the German sentence — German puts `machine`

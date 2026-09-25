@@ -58,6 +58,7 @@ const ANSWERS = {
   invalid_pair_code: { status: 401, body: { error: { code: "invalid_pair_code", message: "that pairing code was not accepted" } } },
   host_unreachable: { status: 502, body: { error: { code: "host_unreachable", message: "that computer could not be reached" } } },
   host_refused: { status: 502, body: { error: { code: "host_refused", message: "that computer answered HTTP 403 to the code" } } },
+  rate_limited: { status: 429, body: { error: { code: "rate_limited", message: "too many attempts from this connection; give it a few minutes and try again" } } },
   pair_account_mismatch: { status: 409, body: { error: { code: "pair_account_mismatch", message: "a different account" } } },
   started_over: { status: 200, body: { status: "paired", restartRequired: true } },
 } as const;
@@ -262,6 +263,7 @@ describe("a refused pairing says why on the same card, and never shows a sign-in
     ["invalid_pair_code", (): string => DOOR_COPY.hostRefuseSpent],
     ["host_unreachable", (): string => DOOR_COPY.hostRefuseUnreachable(HOST)],
     ["host_refused", (): string => DOOR_COPY.hostRefuseRefused(HOST)],
+    ["rate_limited", (): string => DOOR_COPY.hostRefuseRateLimited(HOST)],
   ] as const)("the other computer answers %s", async (answer, sentence) => {
     const shell = fakeShell({ startMs: 1_000, redeemMs: 300, answer });
     const shown = await pairFromFirstRun(shell);

@@ -1249,6 +1249,13 @@ export function sentenceForKind(kind: HostLinkRefusal | string, host: string): s
     case "host_unreachable": return DOOR_COPY.hostRefuseUnreachable(host);
     case "host_refused":
     case "pair_refused": return DOOR_COPY.hostRefuseRefused(host);
+    case "rate_limited": return DOOR_COPY.hostRefuseRateLimited(host);
+    case "pair_account_unnamed": return DOOR_COPY.hostRefuseAccountUnnamed(host);
+    case "already_signed_in": return DOOR_COPY.hostRefuseSignedIn;
+    case "identity_pending": return DOOR_COPY.hostRefuseIdentityPending;
+    case "unsupported_platform": return DOOR_COPY.hostRefuseUnsupportedPlatform(host);
+    case "no_session_returned": return DOOR_COPY.hostRefuseNoSession(host);
+    case "invalid_request": return DOOR_COPY.hostLinkShape;
     /* NOT A DEFAULT SENTENCE. `null` is what sends the caller to the engine's own words; a
        catchall here would replace a true, specific refusal with a vague one. */
     default: return null;

@@ -553,6 +553,16 @@ export const HOST_REFUSAL_KINDS = [
   "host_unreachable",
   "host_refused",
   "pair_refused",
+  /* The route's and the redeem's remaining codes (`pairing-refusals-translated.test.ts` reads them
+     out of the engine): the other computer's rate limit, an account it did not name, a session
+     it did not return, and four this install refuses before anything is spent. */
+  "rate_limited",
+  "pair_account_unnamed",
+  "no_session_returned",
+  "already_signed_in",
+  "identity_pending",
+  "unsupported_platform",
+  "invalid_request",
 ] as const;
 export type HostRefusalKind = (typeof HOST_REFUSAL_KINDS)[number];
 
