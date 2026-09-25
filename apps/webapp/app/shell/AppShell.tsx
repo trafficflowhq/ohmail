@@ -261,6 +261,7 @@ import { TriageView } from "../views/TriageView";
 import { DraftsView } from "../views/DraftsView";
 import { reconcileWakeRegistration, updateNotifyWords } from "./notification-settings.js";
 import { usePersistedFlag, UI_KEYS } from "./persisted-ui.js";
+import { useSeedOffer } from "./seed-offer";
 import { durableSessionSet } from "./durable";
 
 /* THE TWO PANES THE FIRST PAINT NEVER SHOWS, split out of the first-load bundle. Lazy VALUE,
@@ -1263,18 +1264,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   /* The Option B offer's gates (Linux default active, nothing chosen, dismissal) live in the
      hook — see OhmarchyOffer.tsx. */
   const faceOffer = useOhmarchyOffer(applyFaceAllDevices);
-  /**
-   * The seed review, offered once the server says it is owed — and dismissible. `seedConfirmedAt` is
-   * null until somebody answers (also the post-reset state). It takes the stage because it decides
-   * what the Ohbox contains. "Later" is a real answer, remembered per tab; nothing is gated on
-   * completing it — an account that never does screens every stranger, the old behaviour. "Not now" is
-   * not "never", and neither is "Done": dismissing once left the screen unreachable for the tab's
-   * life, confirming for the account's — wrong once a second mailbox brings a second address book. The
-   * Settings entry sets `seedReopened`, `confirmSeed` writes only who is new, and the review
-   * recomputes from whatever mailboxes are attached when opened.
-   */
-  const [seedDismissed, setSeedDismissed] = useState(false);
-  const [seedReopened, setSeedReopened] = useState(false);
+  /* The seed review, offered once the server says it is owed; it takes the stage because it decides
+     what the Ohbox contains. When it is owed, what "Not now" keeps and what nobody-to-decide does are
+     `seed-offer.ts`'s. Settings reopens it; `confirmSeed` writes only who is new. */
   /**
    * The review needs the browser's Cloud client; no injected wire substitutes. `consent.known`
    * was the whole gate while "the server answered" and "this bundle can call the server" were
@@ -1285,8 +1277,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * ConsentState.cloudClient} is published separately from `standalone`.
    */
   const seedSupported = consent.cloudClient;
-  const seedOwed = !demo && consent.known && seedSupported
-    && (seedReopened || (consent.seedConfirmedAt === null && !seedDismissed));
+  const seedOffer = useSeedOffer({
+    demo, known: consent.known, supported: seedSupported, seedConfirmedAt: consent.seedConfirmedAt,
+  });
+  const seedOwed = seedOffer.owed;
   /**
    * THE WHOLE-MIRROR DERIVATIONS — the consent partition, the presentation projection and every
    * pile, count and lookup over them, in `shell-derivations.ts`. Below the dispatch spine whose
@@ -2330,15 +2324,15 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             {seedOwed ? (
               <SeedReviewView
                 onDone={() => {
-                  setSeedDismissed(true);
-                  setSeedReopened(false);
+                  seedOffer.done();
                   if (typeof window !== "undefined") window.location.reload();
                 }}
-                /* Nothing was written, so nothing needs re-reading. The offer stands next
-                   time this tab loads — it is not remembered on the server, because "not
-                   now" is not an answer to "shall I let these people through" — and
-                   Settings holds the door open for the rest of this one. */
-                onLater={() => { setSeedDismissed(true); setSeedReopened(false); }}
+                /* Nothing was written, so nothing needs re-reading. Offered, "Not now" is kept
+                   on this device; opened from Settings, leaving keeps nothing. */
+                onLater={seedOffer.reopened ? seedOffer.done : seedOffer.later}
+                /* Offered only: nobody to decide about hands the stage back. Opened from
+                   Settings, the review says so itself. */
+                onNothingToDecide={seedOffer.reopened ? undefined : seedOffer.nothingToDecide}
               />
             ) : null}
 
@@ -3037,7 +3031,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                     <>
                       <p className="set-note-inline">{t("seed.reopenBody")}</p>
                       <div className="gate-actions">
-                        <Button onClick={() => setSeedReopened(true)}>
+                        <Button onClick={seedOffer.reopen}>
                           {t("seed.reopenAction")}
                         </Button>
                       </div>

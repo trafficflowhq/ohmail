@@ -951,6 +951,8 @@
     "confirm": "{count, plural, one {1 Person} other {# Leute}} durchlassen",
     "confirming": "Wird gespeichert …",
     "later": "Nicht jetzt",
+    "nothingToDecide": "In deiner gesendeten Post wartet niemand auf eine Entscheidung.",
+    "close": "Schließen",
     "loading": "Deine gesendete Post wird gelesen …",
     "errorTitle": "Das hat nicht funktioniert.",
     "errorGeneric": "Beim Lesen deiner gesendeten Post ist etwas schiefgegangen.",

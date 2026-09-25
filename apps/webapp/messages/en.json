@@ -951,6 +951,8 @@
     "confirm": "Let {count, plural, one {1 person} other {# people}} through",
     "confirming": "Saving…",
     "later": "Not now",
+    "nothingToDecide": "Nobody in your sent mail is waiting for a decision.",
+    "close": "Close",
     "loading": "Reading your sent mail…",
     "errorTitle": "That didn't work.",
     "errorGeneric": "Something went wrong reading your sent mail.",

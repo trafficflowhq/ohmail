@@ -24,7 +24,7 @@
  * separates "pressed twice" from "the first response never arrived" — a retry replays its answer.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button, TextField } from "@ohmail/ui";
 import { ApiError, consent as consentApi, type SeedReviewWire } from "../api-client";
@@ -45,11 +45,18 @@ const newKey = (): string =>
 export function SeedReviewView({
   onDone,
   onLater,
+  onNothingToDecide,
 }: {
   /** The consent event landed. The caller re-reads the world; the mirror has not seen the rules yet. */
   onDone: () => void;
-  /** Left without answering. Nothing was written, and the offer stands next time. */
+  /** Left without answering. Nothing was written. */
   onLater: () => void;
+  /**
+   * The review found nobody to decide about — no one written to, or everyone already decided.
+   * Given, the view renders nothing and hands the stage back through this; absent (opened from
+   * Settings), it says so in one sentence. Either way no decision is offered over zero people.
+   */
+  onNothingToDecide?: () => void;
 }) {
   const t = useTranslations("seed");
   const [phase, setPhase] = useState<Phase>({ state: "loading" });
@@ -81,6 +88,11 @@ export function SeedReviewView({
   }, [t]);
 
   const review = phase.state === "ready" || phase.state === "confirming" ? phase.review : null;
+  /* `every` over an empty list is true: nobody written to and everybody decided are one answer. */
+  const nothing = phase.state === "ready" && phase.review.candidates.every((c) => c.alreadyDecided);
+  const handBack = useRef(onNothingToDecide);
+  handBack.current = onNothingToDecide;
+  useEffect(() => { if (nothing) handBack.current?.(); }, [nothing]);
 
   const shown = useMemo(() => {
     if (!review) return [];
@@ -176,6 +188,18 @@ export function SeedReviewView({
               somebody ends up being told the wrong reason. */}
           <p className="set-note-inline">{phase.message}</p>
           <Button variant="ghost" onClick={onLater}>{t("later")}</Button>
+        </div>
+      </section>
+    );
+  }
+
+  if (nothing) {
+    if (onNothingToDecide) return null;
+    return (
+      <section className="view center view-seed">
+        <div className="gate-card">
+          <p className="set-note-inline">{t("nothingToDecide")}</p>
+          <Button variant="ghost" onClick={onLater}>{t("close")}</Button>
         </div>
       </section>
     );
