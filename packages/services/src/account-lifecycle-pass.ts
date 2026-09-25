@@ -10,10 +10,10 @@ import type { MailContext } from "./mail/index.js";
 
 /**
  * THE NIGHTLY ACCOUNT-LIFECYCLE PASS (cloud 0040, the wall) — the reminder mails and the erasure.
- * It iterates `accounts WHERE erased_at IS NULL` having at least one user, reads the plane's
- * verdict once per account, and owes at most one mail per FACT: idempotency is DERIVED from the
- * `account_lifecycle_notices` PRIMARY KEY (account, kind, anchor), where `anchor` is the plane's
- * own ISO instant — never a clock read here. No state machine, no closure table: a re-run
+ * It iterates `accounts WHERE erased_at IS NULL` having at least one user, acts only on a verdict
+ * the plane ANSWERED for the account, and owes at most one mail per FACT: idempotency is DERIVED
+ * from the `account_lifecycle_notices` PRIMARY KEY (account, kind, anchor), where `anchor` is the
+ * plane's own ISO instant — never a clock read here. No state machine, no closure table: a re-run
  * inserts nothing, a NEW closure is a new anchor. The ERASURE runs here and in `DELETE /account`
  * and NOWHERE ELSE: when `erasureAt + 24 h <= now` (a day of slack against plane↔API clock skew)
  * and the date clears the plane's own epoch, it calls `deleteAccount` as the route does.
@@ -47,9 +47,12 @@ export interface LifecycleNoticeMailer {
 }
 
 export interface AccountLifecyclePassDeps {
-  /** The entitlements program, or what a route composes from it. Never throws (the port's rule). */
+  /**
+   * The entitlements program, or what a route composes from it. Never throws (the port's rule).
+   * No `access`: its fault arm answers the last verdict known, and nothing this pass does — a
+   * notice or an erasure — may rest on a verdict the program did not give.
+   */
   port: {
-    access(accountId: string): Promise<AccessVerdict>;
     accessOrFault(accountId: string): Promise<AccessVerdict | "fault">;
     releaseAccount(accountId: string): Promise<ReleaseOutcome>;
   };
@@ -76,7 +79,7 @@ export interface AccountLifecyclePassResult {
   unmailable: number;
   /** Accounts erased this run (`erasureAt` + slack passed). */
   erased: number;
-  /** Per-account faults absorbed (send failures, erase failures) — the run keeps going. */
+  /** Per-account faults absorbed (unanswered reads, failed sends, failed erasures). */
   faults: number;
 }
 
@@ -191,7 +194,19 @@ export async function runAccountLifecyclePass(
       await Promise.all(chunk.map(async ({ id }) => {
         result.accounts += 1;
         try {
-          const verdict = await deps.port.access(id);
+          // AN ANSWER OR NOTHING: a notice sent on a remembered verdict can tell somebody who
+          // subscribed again that their account is closing. An unanswered read skips the account
+          // whole, and the next pass asks again; what it owes is claimed then, once, by the PK.
+          const verdict = await deps.port.accessOrFault(id);
+          if (verdict === "fault") {
+            result.faults += 1;
+            log.warn("account_lifecycle_skipped_unanswered", {
+              accountId: id,
+              reason: "the entitlements program did not answer; no notice was sent and nothing " +
+                "was erased, and the next run asks again",
+            });
+            return;
+          }
           const lc = verdict.lifecycle;
           if (!lc) return; // an old plane, or no block — today's behaviour, nothing owed
           result.withLifecycle += 1;
@@ -233,9 +248,9 @@ export async function runAccountLifecyclePass(
           if (erasureDue(lc, now())) {
             // THE PROGRAM IS ASKED AGAIN AT THE ERASURE DOOR, past every cache, and only its
             // answer erases: a read it did not answer skips, and the next run asks again. The
-            // page's verdict can be a minute old or the fault arm's last known one, and somebody
-            // who subscribed again must keep their data. The read sits AHEAD of the money stop
-            // so a skip touches nothing — a released subscription is not recoverable.
+            // page's answer came before the notices went out, and somebody who subscribed again
+            // meanwhile must keep their data. The read sits AHEAD of the money stop so a skip
+            // touches nothing — a released subscription is not recoverable.
             const answer = await deps.port.accessOrFault(id);
             if (answer === "fault") {
               result.faults += 1;
