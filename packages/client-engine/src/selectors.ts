@@ -1580,6 +1580,32 @@ export interface TriagePiles {
   resurface: TriagePileEntry[];
 }
 
+type Filed = { entry: TriagePileEntry; msg: EngineMessage | undefined };
+
+/** Arrival, the Ohbox's own comparator; an entry whose message this mirror lacks goes after. */
+function byPileArrival(a: Filed, b: Filed): number {
+  if (a.msg && b.msg) return byDateDesc(a.msg, b.msg);
+  return a.msg ? -1 : b.msg ? 1 : 0;
+}
+
+/** When a Resurface row comes back — the stamp it shows; none reads as "never", after every dated row. */
+function returnAt(f: Filed): number {
+  const t = f.entry.resurfaceAt ? Date.parse(f.entry.resurfaceAt) : NaN;
+  return Number.isNaN(t) ? Infinity : t;
+}
+
+/**
+ * ONE ORDER PER PILE, and every surface renders it as returned. No pile used to be sorted, so each
+ * device showed its mirror's insertion order and Reply Run began on a different message per device.
+ * Answer Later and Parked follow arrival, newest first; Resurface follows the time its rows show,
+ * soonest first, arrival breaking a tie. `triage-pile-order.census.test.ts` refuses a second sort.
+ */
+const PILE_ORDER: Record<keyof TriagePiles, (a: Filed, b: Filed) => number> = {
+  replyLater: byPileArrival,
+  setAside: byPileArrival,
+  resurface: (a, b) => (returnAt(a) - returnAt(b)) || byPileArrival(a, b),
+};
+
 /**
  * The bottom piles: `message_state` entities joined to their messages, merged with fixture-only `triage_item` entries
  * (demo entries with no backing message). ONE MESSAGE, ONE CLAIM — the records are deduped by MESSAGE id first, in
@@ -1589,38 +1615,40 @@ export interface TriagePiles {
  * bottom pile cannot also be listed in an Ohbox group.
  */
 export function triagePiles(reader: EntityReader): TriagePiles {
-  const piles: TriagePiles = { replyLater: [], setAside: [], resurface: [] };
+  const filed: Record<keyof TriagePiles, Filed[]> = { replyLater: [], setAside: [], resurface: [] };
   // THE SAME TWO STEPS `parkedMessageIds` TAKES — `winningStates` then `pileOfState`. A row this
   // files into a pile is a row `ohboxView` holds out, because both read this one derivation
   // rather than each spelling it themselves. See `pileOfState` for what the two spellings cost.
-  const pileOf = (state: string): TriagePileEntry[] | null => {
+  const pileOf = (state: string): Filed[] | null => {
     const name = pileOfState(state);
-    return name ? piles[name] : null;
+    return name ? filed[name] : null;
   };
 
   for (const st of winningStates(reader).values()) {
     const pile = pileOf(st.state);
     if (!pile) continue;
     const msg = reader.get<EngineMessage>("message", st.messageId);
-    pile.push({
+    pile.push({ msg, entry: {
       messageId: st.messageId,
       title: msg?.from.name || msg?.from.address || st.messageId,
       ...(msg?.subject ? { subtitle: msg.subject } : {}),
       ...(msg?.snippet ? { preview: msg.snippet } : {}),
       ...(st.bubbleUpAt ? { resurfaceAt: st.bubbleUpAt } : {}),
-    });
+    } });
   }
   for (const item of reader.list<TriageItemDTO>("triage_item")) {
     const pile = pileOf(item.pile);
     if (!pile) continue;
-    pile.push({
+    pile.push({ msg: undefined, entry: {
       title: item.title,
       ...(item.subtitle ? { subtitle: item.subtitle } : {}),
       ...(item.preview ? { preview: item.preview } : {}),
       ...(item.resurfaceAt ? { resurfaceAt: item.resurfaceAt } : {}),
-    });
+    } });
   }
-  return piles;
+  const sorted = (name: keyof TriagePiles): TriagePileEntry[] =>
+    filed[name].sort(PILE_ORDER[name]).map((f) => f.entry);
+  return { replyLater: sorted("replyLater"), setAside: sorted("setAside"), resurface: sorted("resurface") };
 }
 
 // ── Tags cross-view ────────────────────────────────────────────────────────
