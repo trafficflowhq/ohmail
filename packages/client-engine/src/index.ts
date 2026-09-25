@@ -728,3 +728,15 @@ export {
   SAFE_HREF,
   tinyDimension,
 } from "./mail-render-rules.js";
+
+// A screening press: the address rule it writes outranks its domain's, and after it the pressed
+// rows as the list shows them, with the one sentence they earn.
+export { outrankCoveringDomains } from "./address-rank.js";
+export {
+  pressOutcome,
+  stayVerdict,
+  type PressOutcome,
+  type PressStay,
+  type PressStayCause,
+  type StayVerdict,
+} from "./press-outcome.js";

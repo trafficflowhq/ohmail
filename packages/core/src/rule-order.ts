@@ -53,6 +53,14 @@ function rank(table: Readonly<Record<string, number>>, value: string): number {
   return Object.prototype.hasOwnProperty.call(table, value) ? table[value]! : Number.MAX_SAFE_INTEGER;
 }
 
+/**
+ * THE ONE PRIORITY BOUND: a rule's priority is an integer in 0..RULE_PRIORITY_MAX at every door
+ * that stores or carries one — `RulesService`, the organizer's request drain (`request-apply.ts`,
+ * which holds a pinned copy) and the profile import. A value past it that one door admitted and
+ * another refused made the drain drop a whole rule request.
+ */
+export const RULE_PRIORITY_MAX = 1000;
+
 /** `priority` is `integer NOT NULL`, but a non-finite value would poison the comparator. */
 function finitePriority(p: number): number {
   return Number.isFinite(p) ? p : 0;

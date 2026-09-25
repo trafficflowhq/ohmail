@@ -1364,6 +1364,8 @@ export type EngineMutation =
       kind: "rule_update";
       ruleId: string;
       destination: Folder;
+      /** Absent keeps the stored priority; set only to lift an address rule over its domain's. */
+      priority?: number;
       /**
        * Also apply the rule to mail already filed, as the user answered it. The server re-arms the
        * retro on a retarget unless this says otherwise; an explicit `true` re-arms a rule whose
@@ -1386,6 +1388,8 @@ export type EngineMutation =
       kind: "rule_create";
       /** The rules row's `kind`. `domain` widens it to everyone after the `@`. */
       ruleKind: "sender" | "domain";
+      /** Absent is the server's 0; set only to lift an address rule over its domain's. */
+      priority?: number;
       /**
        * The address or the domain, ALREADY NORMALIZED by the caller (trimmed, lower-cased).
        *

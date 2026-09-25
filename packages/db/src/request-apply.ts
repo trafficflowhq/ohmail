@@ -9,6 +9,12 @@ import { insertOrganizerRequest, TERMINAL_REQUEST_STATES } from "./organizer-req
 import { NEWS_FOLDER, canonicalNewsSpelling } from "./screener-apply.js";
 
 /**
+ * `@trafficflow/core/rule-order#RULE_PRIORITY_MAX`, copied: this package does not import core.
+ * `test/rule-priority-one-bound.test.ts` pins the two equal.
+ */
+export const RULE_PRIORITY_MAX = 1000;
+
+/**
  * `recordChange` wants `LedgerTx` (`PgTransaction`, narrower than `Tx`/`PgDatabase`) because it is
  * only safe inside an open transaction. Every caller here already is one, so this is the same cast
  * `screener-apply.ts` makes at its own call sites rather than a widening of what is safe.
@@ -653,7 +659,7 @@ export function validateRulePayload(kind: string, payload: unknown): ValidatedRu
     const destination = asRuleDestination(o.destination);
     if (destination === null) return null;
     const priority = o.priority === undefined ? 0 : o.priority;
-    if (typeof priority !== "number" || !Number.isInteger(priority) || priority < 0 || priority > 1_000) return null;
+    if (typeof priority !== "number" || !Number.isInteger(priority) || priority < 0 || priority > RULE_PRIORITY_MAX) return null;
     const enabled = o.enabled === undefined ? true : o.enabled;
     if (typeof enabled !== "boolean") return null;
     return { op: "create", key, destination, priority, enabled, applyRetro };
@@ -677,7 +683,7 @@ export function validateRulePayload(kind: string, payload: unknown): ValidatedRu
     }
     if ("priority" in r) {
       const p = r.priority;
-      if (typeof p !== "number" || !Number.isInteger(p) || p < 0 || p > 1_000) return null;
+      if (typeof p !== "number" || !Number.isInteger(p) || p < 0 || p > RULE_PRIORITY_MAX) return null;
       set.priority = p;
     }
     if ("enabled" in r) {

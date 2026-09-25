@@ -7,6 +7,7 @@ import {
   type MetaIdentity, type Generation,
 } from "./meta-memo.js";
 import { epochOf, uidRefsAtEpoch } from "../epoch.js";
+import { RULE_PRIORITY_MAX } from "../rule-order.js";
 
 /**
  * The portable organizer profile — how a mailbox carries its own organizer configuration. The
@@ -606,7 +607,9 @@ function readPayload(raw: Record<string, unknown>): OrganizerProfilePayload {
       const bodyContains = asString(o.bodyContains);
       rules.push({
         kind, match, destination,
-        priority: typeof o.priority === "number" && Number.isFinite(o.priority) ? o.priority : 0,
+        // Clamped into the one bound, so an imported rule is one every other door accepts.
+        priority: typeof o.priority === "number" && Number.isFinite(o.priority)
+          ? Math.min(Math.max(Math.round(o.priority), 0), RULE_PRIORITY_MAX) : 0,
         enabled: typeof o.enabled === "boolean" ? o.enabled : true,
         provenance: asString(o.provenance) ?? "manual",
         ...(subjectContains === null ? {} : { subjectContains }),

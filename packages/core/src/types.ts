@@ -89,6 +89,14 @@ export function pileFolder(pile: Destination, listing: Iterable<string>): string
 }
 
 /**
+ * Every folder ohmail organizes, in every spelling a mailbox can still FILE mail under: the six
+ * and the pre-0.22 News name. The one set a decision may move mail OUT OF — {@link
+ * isOrganizedFolder} here and the retro pass's candidate query (`rule-retro.ts`) both read it, so
+ * "also move" reaches mail an unrenamed mailbox still holds in the legacy folder.
+ */
+export const ORGANIZED_FOLDERS: readonly string[] = [...DESTINATIONS, LEGACY_NEWS_FOLDER];
+
+/**
  * Does ohmail ORGANIZE this folder — is it one a decision may file mail into?
  *
  * NOT "do we read it". `Sent` is read and never organized; a customer's own folders
@@ -97,9 +105,7 @@ export function pileFolder(pile: Destination, listing: Iterable<string>): string
  * a mover.
  */
 export function isOrganizedFolder(folder: string): boolean {
-  // Canonicalized first: a mailbox organized before 0.22 has mail FILED in the legacy News
-  // folder, and "is this one ohmail organizes" must answer the same for both spellings.
-  return (DESTINATIONS as readonly string[]).includes(canonicalDestination(folder));
+  return ORGANIZED_FOLDERS.includes(folder);
 }
 
 /** One message, as much of it as the question below reads — the wire's own fields. */

@@ -104,7 +104,7 @@ The envelope:
 | `kind` | `"sender"` \| `"domain"` \| `"header"` | What `match` is matched against. |
 | `match` | string | The address, the domain, or the header spec. |
 | `destination` | string | The canonical folder **name** (`ohmail/Reads`, `ohmail/Screened`, …) — never an internal id. |
-| `priority` | number | Higher wins between overlapping rules; `0` is the default. |
+| `priority` | number | Higher wins between overlapping rules; `0` is the default. Read as a whole number from 0 to 1000; a value outside that range is read as the nearest end. |
 | `enabled` | boolean | A disabled rule is kept, not deleted — re-enabling restores it exactly. |
 | `provenance` | string | How the rule came to be. Today's writers emit `"manual"` (written by hand), `"migrated"` (imported from another tool), `"promoted"` (a screening decision — a screen-out and a spam verdict both leave one), or `"seeded-from-sent"` (the onboarding pass over your own Sent mail). The field is open: a reader must carry an unknown value through unchanged, never reject the profile over it. |
 | `subjectContains` | string, optional | Narrows the rule to subjects containing this term. |

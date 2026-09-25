@@ -22,16 +22,19 @@ import {
   type Folder,
   type OhmailEngine,
   type OhmailView,
+  type StayVerdict,
   type TagDTO,
 } from "@ohmail/client-engine";
 import { type ToastFn } from "@ohmail/ui";
 import type { ActedMarker } from "./after-verb";
 import { replyAllRecipients } from "./compose-from";
 import type { ConsentState } from "./consent-state";
-import { dayStamp, PLACE_LABEL, resurfaceLabel, tomorrowAt } from "./format";
+import { dayStamp, PLACE_LABEL, placeLabel, resurfaceLabel, tomorrowAt } from "./format";
 import { displayAddress, displayDomain } from "./idn";
 import { readerMoveRefusal } from "./mail-state";
 import type { BulkAction, MessageAction } from "./MessagePane";
+import type { ShellConsentFacts } from "./consent-options";
+import { VERDICT_KEY, screeningVerdict } from "./press-verdict";
 import { attributeMessages } from "./sender-audit";
 import { senderHitOf } from "./sender-hit";
 import {
@@ -45,6 +48,7 @@ import {
   type ScreeningDest,
   type ScreeningPlan,
   type ScreeningScope,
+  type ScreeningToastKey,
 } from "./sender-screening";
 import type { ShellCompose } from "./shell-compose";
 import type { ShellDispatch } from "./shell-dispatch";
@@ -66,6 +70,11 @@ function withRow(read: EntityReader, row: EngineMessage): EntityReader {
   };
 }
 
+/** The press sentences a re-read of the list may replace; every other one is a wait or a refusal. */
+const READS_BACK: ReadonlySet<string> = new Set([
+  "toastAlready", "toastMoved", "toastRuled", "toastRetargeted", "toastAlreadyRuled",
+  "toastAlreadyRuledRetro", "toastRuledFuture", "toastRuledMoved",
+]);
 export interface ShellVerbsInput {
   engine: OhmailEngine;
   /** The mirror as it is — `engine.read()` from the render, never re-read here. */
@@ -73,7 +82,9 @@ export interface ShellVerbsInput {
   t: ReturnType<typeof useTranslations>;
   toast: ToastFn;
   /** Only the resurface hour: the horizon-less verbs mint tomorrow at the account's own time. */
-  consent: Pick<ConsentState, "resurfaceTime">;
+  consent: Pick<ConsentState, "resurfaceTime"> & ShellConsentFacts;
+  /** The demo's lists are not partitioned, so a press there reads nothing back. */
+  demo: boolean;
   /** The shell's clock — `DEMO_NOW` on the demo, so a dated sentence is deterministic. */
   nowAt: () => Date;
   /** The mirror's tags, for the name a tag verb says (`shell-derivations.ts`). */
@@ -116,7 +127,7 @@ export interface ShellVerbsInput {
 export type ShellVerbs = ReturnType<typeof useShellVerbs>;
 
 export function useShellVerbs({
-  engine, reader, t, toast, consent, nowAt, tags, ownAddresses,
+  engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses,
   fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, mailboxesOf, refusalCopy,
   rosterRef, routing, deleting, restoring,
   markSeen, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
@@ -164,16 +175,56 @@ export function useShellVerbs({
     // The SUBJECT of the sentence follows the scope, or a domain decision would report
     // itself as being about the one address the user happened to click.
     const who = scope === "domain" ? displayDomain(sender.domain) : displayAddress(sender.address);
-    if (plan.mutations.length === 0) {
-      toast(t("screening.toastAlready", { sender: who, place }));
-      return;
-    }
+    /* SUCCESS IS SAID ONLY OVER THE LIST READ AGAIN: a pressed row the list shows elsewhere is
+       named with its count and cause (`press-verdict.ts`). A refusal, a queue and another
+       organizer's wait keep their own sentences — none of them has placed anything yet. */
+    const say = (key: ScreeningToastKey | "toastAlready") => {
+      const v: StayVerdict = READS_BACK.has(key) && !demo
+        ? screeningVerdict(engine.verbRead(), messageId, address, dest, scope, {
+            consent, now: nowAt(), ownAddresses, retro: plan.retro,
+          })
+        : { key: "none" };
+      if (v.key === "none") {
+        toast(t(`screening.${key}`, { sender: who, place, count: plan.moved }));
+        return;
+      }
+      const wanted = FOLDER_OF_VIEW[dest];
+      const text = t(`screening.${VERDICT_KEY[v.key]}`, {
+        sender: who, place, count: v.count,
+        ...(v.key === "kept" ? { kept: v.kept, keptPlace: placeLabel(v.keptPlace), term: v.term } : {}),
+        ...(v.key === "keptMany" ? { kept: v.kept } : {}),
+        ...(v.key === "still" ? { still: v.still, stillPlace: placeLabel(v.stillPlace) } : {}),
+        ...(v.key === "stillLegacy" ? { still: v.still, folder: v.folder, stillPlace: placeLabel(v.folder) } : {}),
+      });
+      if (v.key === "kept") {
+        // Their own subject rule keeps some of this mail elsewhere. Removing it by id and pressing
+        // again leaves the pressed rule deciding all of it.
+        toast(text, {
+          action: t("screening.verdictRemoveRule"), duration: 8000,
+          onAction: () => {
+            void mutateAndReport({ kind: "rule_delete", ruleId: v.rule.id }, null).then((ok) => {
+              if (ok) changeScreening(messageId, dest, scope, makeRule, applyRetro, address);
+            });
+          },
+        });
+        return;
+      }
+      if (v.key === "still" || v.key === "stillLegacy") {
+        toast(text, {
+          action: t("screening.verdictMoveThem", { still: v.still }), duration: 8000,
+          onAction: () => {
+            for (const id of v.ids.slice(0, 50)) void fileAndRefresh(engine.mutate({ kind: "move", messageId: id, folder: wanted }));
+          },
+        });
+        return;
+      }
+      toast(text);
+    };
+    if (plan.mutations.length === 0) { say("toastAlready"); return; }
     /* THROUGH `fileAndRefresh`, LIKE EVERY OTHER FILING DISPATCH. This one has not been since it
        shipped: the mail moved and the filing strip's count stayed stale until its next poll, up to
        thirty seconds later. Both Move arms already go through it. */
-    void dispatchScreeningChange(plan, (m) => fileAndRefresh(engine.mutate(m))).then((key) => {
-      toast(t(`screening.${key}`, { sender: who, place, count: plan.moved }));
-    });
+    void dispatchScreeningChange(plan, (m) => fileAndRefresh(engine.mutate(m))).then(say);
   });
 
   /**

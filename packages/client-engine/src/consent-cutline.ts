@@ -231,20 +231,29 @@ export function decidedDestination(index: ConsentIndex, address: string): Folder
 }
 
 /**
- * Where the organizer FILES this message — `evaluateRules`' first two steps: the winner among the
- * sender's rules whose terms this message satisfies; with none, a standing DENIAL is carried out,
- * and a standing admission places nothing (`null`). A body term is not read here: the mirror row
- * does not carry the text the router matches, so a body-narrowed rule places nothing on a client.
+ * The rule the organizer FILES this message by — `evaluateRules`' first step: the winner among the
+ * sender's rules whose terms this message satisfies, or `null`. A body term is not read here: the
+ * mirror row does not carry the text the router matches, so a body-narrowed rule places nothing on
+ * a client. Exported so a reader naming WHICH rule placed a row asks the partition's own answer.
  */
-function placedDestination(index: ConsentIndex, m: EngineMessage): Folder | null {
-  let winner: RuleDTO | undefined;
+export function placedRule(index: ConsentIndex, m: EngineMessage): RuleDTO | null {
+  let winner: RuleDTO | null = null;
   for (const list of rulesNaming(index, m.from.address)) {
     for (const r of list) {
       if (!subjectTermSatisfied(r, m.subject ?? "") || !bodyTermSatisfied(r, null)) continue;
-      if (winner === undefined || outranks(r, winner)) winner = r;
+      if (winner === null || outranks(r, winner)) winner = r;
     }
   }
-  if (winner !== undefined) return winner.destination;
+  return winner;
+}
+
+/**
+ * Where the organizer FILES this message — {@link placedRule}'s destination; with none, a standing
+ * DENIAL is carried out, and a standing admission places nothing (`null`).
+ */
+function placedDestination(index: ConsentIndex, m: EngineMessage): Folder | null {
+  const winner = placedRule(index, m);
+  if (winner !== null) return winner.destination;
   const standing = decidedDestination(index, m.from.address);
   return standing !== null && effectForDestination(standing) === "deny" ? standing : null;
 }

@@ -1426,6 +1426,17 @@ const TABLE = {
     `Decided — ${name} files ${target} on its next pass.`,
   liveDecidedElsewhereUnknown: (target: string) =>
     `Decided — the install that organizes this mailbox files ${target} on its next pass.`,
+  /* A screening press read back from the list: how many are at the place, and what stays where. */
+  liveVerdictKept: (count: number, place: string, kept: number, keptPlace: string, term: string) =>
+    `${count === 1 ? "1 is" : `${count} are`} in ${place} · ${kept === 1 ? "1 stays" : `${kept} stay`} in ${keptPlace} by your rule »${term}«.`,
+  liveVerdictKeptMany: (count: number, place: string, kept: number) =>
+    `${count === 1 ? "1 is" : `${count} are`} in ${place} · ${kept === 1 ? "1 stays" : `${kept} stay`} where your rules file them.`,
+  liveVerdictStill: (count: number, place: string, still: number, stillPlace: string) =>
+    `${count === 1 ? "1 is" : `${count} are`} in ${place} · ${still === 1 ? "1 is" : `${still} are`} still in ${stillPlace}.`,
+  liveVerdictStillLegacy: (count: number, place: string, still: number, folder: string, stillPlace: string) =>
+    `${count === 1 ? "1 is" : `${count} are`} in ${place} · ${still === 1 ? "1 is" : `${still} are`} still in the folder ${folder}, the old name of ${stillPlace}.`,
+  liveVerdictApplying: (count: number, place: string) =>
+    `${count === 1 ? "1 is" : `${count} are`} in ${place}. ohmail is applying the rule to the rest of their mail in your mailbox.`,
   liveDecideFailed: (sender: string) =>
     `That decision could not be saved — ${sender} is still waiting.`,
   liveReleased: (n: number, dest: string) =>

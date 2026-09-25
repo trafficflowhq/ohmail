@@ -1579,6 +1579,8 @@ export class HttpAdapter implements EngineAdapter {
         const res = await this.request("PATCH", `/rules/${encodeURIComponent(m.ruleId)}`, {
           body: {
             destination: m.destination,
+            // Omitted unless an address rule is lifted over its domain's (`address-rank.ts`).
+            ...(m.priority === undefined ? {} : { priority: m.priority }),
             // OMITTED when the caller said nothing, and that is the whole contract: the server
             // re-arms a retarget's retro by default, and reads an explicit `true` as "apply this
             // rule to my old mail" even when the destination did not move. Sending the default
@@ -1624,6 +1626,8 @@ export class HttpAdapter implements EngineAdapter {
         const res = await this.request("POST", "/rules", {
           body: {
             kind: m.ruleKind, match: m.match, destination: m.destination,
+            // Omitted unless an address rule is lifted over its domain's (`address-rank.ts`).
+            ...(m.priority === undefined ? {} : { priority: m.priority }),
             // The second term, and OMITTED rather than sent as `null` when there is none — unlike
             // `applyRetro` one line down, and for the opposite reason. `applyRetro`'s default is a
             // DECISION this client owns, so it states it explicitly; `subjectContains` has no

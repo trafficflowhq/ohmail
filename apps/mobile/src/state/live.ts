@@ -101,6 +101,8 @@ import { Copy } from "../copy";
 import { blobToBase64 } from "../mail/blob-base64";
 import { logAttachmentRefusal } from "../engine/engine-log";
 import { refuse, type Refusal, type RefusalArg } from "../refusal";
+import { pressOutcome, stayVerdict } from "@ohmail/client-engine";
+import { destLabel, DESTINATIONS as SCREEN_DESTS } from "./model";
 import { ACCESS_REFUSED_CODE } from "../net/access-lock";
 import { folderLeafOf, folderUnreadCounts } from "./folders";
 /* Move/Junk: the mail now, the sender's routing after the window. See the module. */
@@ -417,6 +419,33 @@ export type WorldMail = Mail & {
    */
   folderLeaf?: string;
 };
+
+/**
+ * A SCREENING PRESS READ BACK FROM THE LIST (the web's `press-verdict.ts`, one classifier in the
+ * engine): the sentence naming what stays where and why, or `null` when every pressed row is shown
+ * at the place. `presented` is the reader the lists are drawn from (`presentedWorld`).
+ */
+function pressReadBack(
+  reader: EntityReader, presented: EntityReader, ofSubject: (m: EngineMessage) => boolean,
+  wanted: Folder, place: string, retro: boolean,
+): Refusal | null {
+  const subject = reader.list<EngineMessage>("message").filter(ofSubject);
+  const v = stayVerdict(pressOutcome({ presented, subject, rules: rulesList(reader), wanted, retro }), reader);
+  switch (v.key) {
+    case "none": return null;
+    case "kept": return refuse("liveVerdictKept", v.count, place, v.kept, folderName(v.keptPlace), v.term);
+    case "keptMany": return refuse("liveVerdictKeptMany", v.count, place, v.kept);
+    case "still": return refuse("liveVerdictStill", v.count, place, v.still, folderName(v.stillPlace));
+    case "stillLegacy": return refuse("liveVerdictStillLegacy", v.count, place, v.still, v.folder, folderName(v.folder));
+    case "applying": return refuse("liveVerdictApplying", v.count, place);
+  }
+}
+
+/** A pile's name for a folder in either News spelling; a folder of the user's own by its leaf. */
+function folderName(folder: string): string {
+  const view = VIEW_OF_FOLDER[folder as Folder];
+  return (SCREEN_DESTS as readonly string[]).includes(view) ? destLabel(view as Destination) : folderLeafOf(folder);
+}
 
 function placeOfFolder(folder: Folder): Place {
   const view = VIEW_OF_FOLDER[folder];
@@ -3746,7 +3775,15 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     if (waiting && verdicts.every((x) => x.kind === "applied")) {
       deps.forgetWaiting?.({ address: m.from.address, scope });
     }
-    return saidAll(verdicts, refuse("liveDecided", destDone(dest), target), refuse("liveDecideFailed", m.from.address));
+    /* THE LIST IS READ AGAIN BEFORE SUCCESS IS SAID — the web sheet's reading: a pressed row the
+       list shows elsewhere is named with its count and cause. Only a press whose every write
+       applied reads back; a wait or a refusal keeps its own sentence. */
+    const back = tallyVerdicts(verdicts);
+    // The lists' own reader; a harness without one reads the same projection with its defaults.
+    const lists = deps.presented?.() ?? presentedOf(engine.read(), deps.now?.() ?? new Date(), false, SCREENING_UNSUPPLIED, deps.ownAddresses?.());
+    const stay = back.refused === 0 && back.queued === 0
+      ? pressReadBack(engine.read(), lists, ofSubject, wanted, destDone(dest), applyRetro) : null;
+    return saidAll(verdicts, stay ?? refuse("liveDecided", destDone(dest), target), refuse("liveDecideFailed", m.from.address));
   };
 
 /* ── the folder verbs — see the interface's header for the whole optimism model ─────────── */

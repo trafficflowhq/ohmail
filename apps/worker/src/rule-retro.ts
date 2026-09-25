@@ -4,7 +4,7 @@ import {
   messageStates, messages, recordChange, rules as rulesTbl, weAnsweredThisSenderWhere, type Tx,
 } from "@trafficflow/db";
 import {
-  DEFAULT_OHBOX_POLICY, DESTINATIONS, authVerdictFromHeaders, evaluateRules,
+  DEFAULT_OHBOX_POLICY, ORGANIZED_FOLDERS, authVerdictFromHeaders, canonicalDestination, evaluateRules,
   silentLogger, type Destination, type Logger, type NormalizedMessage, type Rule,
 } from "@trafficflow/core";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
@@ -350,7 +350,9 @@ export async function ruleRetroPass(
           // which happens to imply it today. The two are separate fields and a narrowing that
           // depends on their agreeing is one refactor away from filing mail into `null`.
           const to = decision.destination;
-          if (decision.source !== "rule" || to === null || to === c.desiredFolder) {
+          // In either News spelling a message already at the router's place stays: no move.
+          if (decision.source !== "rule" || to === null
+            || canonicalDestination(to) === canonicalDestination(c.desiredFolder)) {
             kept++;
             continue;
           }
@@ -551,16 +553,13 @@ async function selectCandidates(
     eq(messages.accountId, rule.accountId),
     matchPredicate(rule),
     sql`${folderState.desiredFolder} <> ${rule.destination}`,
-    // A RULE MAY ONLY MOVE MAIL OUT OF A FOLDER ohmail ORGANIZES — an ALLOW-LIST over the frozen six,
-    // not `desired_folder <> rule.destination` alone, which would empty a customer's `Archive`,
-    // `Private/Family`, `_archive/…` or their Sent folder into a rule's destination. Allow-list so a
-    // folder nobody has thought about is excluded by default; `types.ts#isOrganizedFolder` is the same
-    // statement in TypeScript. `DESTINATIONS` comes from `@trafficflow/core`, NOT
-    // `@trafficflow/core/adapters/imap` (enforced by `rule-retro.no-imap.test.ts`): importing the list
-    // from the module carrying `imapflow` would drag a dialer in and make this a second organizer. The
-    // `last_set_by` line below is the second, independent gate (a property of the FOLDER); either suffices.
+    // A RULE MAY ONLY MOVE MAIL OUT OF A FOLDER ohmail ORGANIZES — an ALLOW-LIST over the six and the
+    // legacy News spelling, never `desired_folder <> rule.destination` alone, which would empty a
+    // customer's `Archive` or Sent folder into a rule's destination. `ORGANIZED_FOLDERS` is
+    // `types.ts#isOrganizedFolder`'s own set, from `@trafficflow/core` and NOT the IMAP adapter
+    // (`rule-retro.no-imap.test.ts`). The `last_set_by` line below is the second, independent gate.
     sql`${folderState.desiredFolder} in ${sql`(${sql.join(
-      DESTINATIONS.map((f) => sql`${f}`), sql`, `,
+      ORGANIZED_FOLDERS.map((f) => sql`${f}`), sql`, `,
     )})`}`,
     /* THE ONE PASS THAT ADMITS `'peer'`, AND ONLY BECAUSE A PERSON PRESSED.
      * `'peer'` is a placement by ANOTHER install of this account in a folder ohmail organizes,

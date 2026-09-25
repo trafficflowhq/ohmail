@@ -8,6 +8,7 @@ import {
   type ChangeInput, type Tx,
 } from "@trafficflow/db";
 import { DESTINATIONS, isAwayPile, awayScopeFitsAudience, type AwayPile } from "@trafficflow/core/mail";
+import { RULE_PRIORITY_MAX } from "@trafficflow/core/rule-order";
 import {
   PROFILE_LIST_MAX, PROFILE_VERSION, ProfileUnavailableError, profileFingerprint,
   type OrganizerProfileDoc, type ProfileReadResult, type ProfileRuleEntry,
@@ -129,17 +130,14 @@ function normTerm(v: string | undefined, max: number): string | null | typeof IN
  */
 const hasNul = (v: string): boolean => v.includes("\u0000");
 
-/** The store's integer bounds — a document may claim any JavaScript number. */
-const INT4_MAX = 2_147_483_647;
-
 /** The document rule, admitted under the product's own create rules — or null (skip + count). */
 function applicableRule(r: ProfileRuleEntry): ApplicableRule | null {
   if (!KINDS.has(r.kind)) return null;
   if (typeof r.match !== "string" || r.match.length === 0 || hasNul(r.match)) return null;
   if (!FOLDER_SET.has(r.destination)) return null;
-  // Bounded to what the store's integer column can hold: an overflowing priority would abort
-  // the whole transaction as a database error, which is a 500 dressed as an import.
-  if (!Number.isInteger(r.priority) || Math.abs(r.priority) > INT4_MAX) return null;
+  // The one priority bound `RulesService` creates under, well inside what the column holds (an
+  // overflow would abort the whole transaction as a 500 dressed as an import).
+  if (!Number.isInteger(r.priority) || r.priority < 0 || r.priority > RULE_PRIORITY_MAX) return null;
   const subjectContains = normTerm(r.subjectContains, MAX_SUBJECT_CONTAINS_CHARS);
   const bodyContains = normTerm(r.bodyContains, MAX_BODY_CONTAINS_CHARS);
   if (subjectContains === INVALID_TERM || bodyContains === INVALID_TERM) return null;

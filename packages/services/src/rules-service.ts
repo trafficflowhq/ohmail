@@ -2,6 +2,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { rules, recordRuleDelta, claimIdempotencyKey, type OrganizedBy, type Tx } from "@trafficflow/db";
 import type { Destination } from "@trafficflow/core/mail";
 import { canonicalDestination } from "@trafficflow/core/mail";
+import { RULE_PRIORITY_MAX } from "@trafficflow/core/rule-order";
 import type { RequestKind } from "@trafficflow/core/adapters/organizer-lease";
 import { bridgeTx, bridgeDb, withAccountTx, type Db, type ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
@@ -741,8 +742,8 @@ export class RulesService {
   }
   private validPriority(v: unknown): number {
     if (v === undefined) return 0;
-    if (typeof v !== "number" || !Number.isInteger(v)) {
-      throw new ServiceError("validation_failed", 400, "priority must be an integer");
+    if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > RULE_PRIORITY_MAX) {
+      throw new ServiceError("validation_failed", 400, `priority must be an integer from 0 to ${RULE_PRIORITY_MAX}`);
     }
     return v;
   }

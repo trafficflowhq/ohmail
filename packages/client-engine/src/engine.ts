@@ -23,7 +23,8 @@ import {
   type AddressResult,
   type LocalSearchResult,
 } from "./search.js";
-import { oneSourceReader, sendingMailboxId, winningStates } from "./selectors.js";
+import { oneSourceReader, rulesList, sendingMailboxId, winningStates } from "./selectors.js";
+import { outrankCoveringDomains } from "./address-rank.js";
 import { flattenResponse } from "./apply.js";
 import { CASCADE_TYPES } from "./mirror-bounds.js";
 import {
@@ -5094,6 +5095,8 @@ export class OhmailEngine {
 
   /** Fill in wire-derivable fields so adapter + overlay agree on the payload. */
   private enrich(m: EngineMutation): EngineMutation {
+    // An address rule is written at a priority no rule on its domain filing elsewhere outranks.
+    if (m.kind === "rule_create" || m.kind === "rule_update") return outrankCoveringDomains(rulesList(this.read()), m);
     if (m.kind === "tag_assign" && m.labels === undefined) {
       const msg = this.read().get<EngineMessage>("message", m.messageId);
       if (msg) {

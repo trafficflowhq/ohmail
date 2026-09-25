@@ -174,7 +174,7 @@ export {
      shrink. Not for narrowing anything — `validateProfileUpdatePayload` is the door. */
   AWAY_PILES,
   validateProfileUpdatePayload, applyProfileUpdate,
-  RULE_TERM_MAX, RULE_MATCH_MAX, validateRulePayload, applyRuleRequest,
+  RULE_TERM_MAX, RULE_MATCH_MAX, RULE_PRIORITY_MAX, validateRulePayload, applyRuleRequest,
   type ValidatedMovePayload, type MoveRefusal,
   type ApplyMessageMoveInput, type ApplyMessageMoveResult,
   type ValidatedProfileUpdate, type ProfileAwayUpdate,

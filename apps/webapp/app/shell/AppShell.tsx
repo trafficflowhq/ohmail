@@ -1800,7 +1800,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     onStreamAction, openSenderAudit, openSenderMenu, openSubjectRule, openTagPicker, retargetRule,
     revokeRule, tagAdmin, toggleTag,
   } = useShellVerbs({
-    engine, reader, t, toast, consent, nowAt, tags, ownAddresses,
+    engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses,
     fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, mailboxesOf, refusalCopy,
     rosterRef, routing, deleting, restoring,
     markSeen, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,

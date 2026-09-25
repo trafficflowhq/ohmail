@@ -883,6 +883,16 @@ export const DE: Deck = {
     `Entschieden — ${name} sortiert ${target} beim nächsten Durchlauf ein.`,
   liveDecidedElsewhereUnknown: (target: string) =>
     `Entschieden — die Installation, die dieses Postfach organisiert, sortiert ${target} beim nächsten Durchlauf ein.`,
+  liveVerdictKept: (count: number, place: string, kept: number, keptPlace: string, term: string) =>
+    `${count === 1 ? "1 liegt" : `${count} liegen`} in ${place} · ${kept === 1 ? "1 bleibt" : `${kept} bleiben`} nach deiner Regel »${term}« in ${keptPlace}.`,
+  liveVerdictKeptMany: (count: number, place: string, kept: number) =>
+    `${count === 1 ? "1 liegt" : `${count} liegen`} in ${place} · ${kept === 1 ? "1 bleibt" : `${kept} bleiben`}, wo deine Regeln sie einsortieren.`,
+  liveVerdictStill: (count: number, place: string, still: number, stillPlace: string) =>
+    `${count === 1 ? "1 liegt" : `${count} liegen`} in ${place} · ${still === 1 ? "1 liegt" : `${still} liegen`} noch in ${stillPlace}.`,
+  liveVerdictStillLegacy: (count: number, place: string, still: number, folder: string, stillPlace: string) =>
+    `${count === 1 ? "1 liegt" : `${count} liegen`} in ${place} · ${still === 1 ? "1 liegt" : `${still} liegen`} noch im Ordner ${folder}, dem alten Namen von ${stillPlace}.`,
+  liveVerdictApplying: (count: number, place: string) =>
+    `${count === 1 ? "1 liegt" : `${count} liegen`} in ${place}. Auf den Rest ihrer Post im Postfach wendet ohmail die Regel gerade an.`,
   liveDecideFailed: (sender: string) =>
     `Diese Entscheidung ließ sich nicht speichern — ${sender} wartet weiter.`,
   /*

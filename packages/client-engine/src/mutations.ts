@@ -925,7 +925,10 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       return [{
         type: "rule",
         id: rule.id,
-        entity: { ...rule, destination: m.destination, updatedAt: iso } satisfies RuleDTO,
+        entity: {
+          ...rule, destination: m.destination, updatedAt: iso,
+          ...(m.priority === undefined ? {} : { priority: m.priority }),
+        } satisfies RuleDTO,
       }];
     }
 
@@ -934,8 +937,8 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
      * consulted when mail ARRIVES; nothing already filed moves because a rule was written. The dispatching surface
      * composes its own `move`s for the mail it can see, from the same scope, so the relocated mail and the written
      * rule can never disagree about whose mail this is. `provenance: "manual"` is not a guess — `RulesService.create`
-     * inserts exactly that, and an optimistic `promoted` would flip under the echo. `priority` is fabricated as 0 and
-     * NOT sent (`validPriority(undefined)` answers 0). The id is a client uuid; the server's row arrives under its
+     * inserts exactly that, and an optimistic `promoted` would flip under the echo. `priority` is the one sent, else 0 and
+     * not sent (`validPriority(undefined)` answers 0). The id is a client uuid; the server's row arrives under its
      * own, and the overlay drops when the echo carries the real row.
      */
 
@@ -967,7 +970,7 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         kind: m.ruleKind,
         match: m.match,
         destination: m.destination,
-        priority: 0,
+        priority: m.priority ?? 0,
         provenance: "manual",
         enabled: true,
         // TRIMMED, and `""` collapses to `null` — the same normalisation
