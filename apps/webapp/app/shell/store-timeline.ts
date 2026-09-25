@@ -50,7 +50,13 @@ export function useStoreTimeline(
   const rev = useSyncExternalStore(walker.subscribe, walker.revision, walker.revision);
   const raw = walker.state();
   /* A 401 is the session's answer: loading while the renewal is out, asked again once it lands. */
-  const renewing = useSessionReask(walker.failureCause(), raw === "ready", () => walker.start());
+  const read = useMemo(() => ({
+    subscribe: walker.subscribe,
+    cause: () => walker.failureCause(),
+    answered: () => walker.state() === "ready",
+    reask: () => walker.start(),
+  }), [walker]);
+  const renewing = useSessionReask(read);
   return useMemo(() => ({
     state: renewing ? "loading" : raw,
     total: walker.total(),

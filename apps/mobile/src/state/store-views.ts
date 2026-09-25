@@ -6,7 +6,7 @@
  */
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useWorld, type WorldMail } from "./world";
-import type { StoreMessage } from "./live";
+import { createSessionReask, type SessionRenewalDoor, type StoreMessage, type StoreReadSource } from "./live";
 
 /** Search's debounce — the webapp's `ARCHIVE_DEBOUNCE_MS`; the ceiling is the walker's own. */
 export const STORE_SEARCH_DEBOUNCE_MS = 250;
@@ -14,6 +14,18 @@ export const STORE_SEARCH_DEBOUNCE_MS = 250;
 const NONE: readonly StoreMessage[] = [];
 const noWalker = (): (() => void) => () => undefined;
 const zero = (): number => 0;
+
+/**
+ * A 401 on a store page is the session's answer: the engine's one rule (the web binds it too)
+ * asks the bearer for a rotation, the read counts as loading meanwhile, and it is asked again
+ * once a fresh pair is adopted. `read` is stable per walker.
+ */
+function useSessionReask(door: SessionRenewalDoor | null, read: StoreReadSource | null): boolean {
+  const rule = useMemo(() => (read ? createSessionReask(door, read) : null), [door, read]);
+  useEffect(() => rule?.attach(), [rule]);
+  useSyncExternalStore(rule ? rule.subscribe : noWalker, rule ? rule.revision : zero, rule ? rule.revision : zero);
+  return rule !== null && rule.renewing();
+}
 
 export interface PhoneHistory {
   state: "unavailable" | "loading" | "ready" | "unanswered";
@@ -39,7 +51,14 @@ export function useStoreHistory(): PhoneHistory {
     return () => walker.stop();
   }, [walker]);
   const rev = useSyncExternalStore(walker ? walker.subscribe : noWalker, walker ? walker.revision : zero, walker ? walker.revision : zero);
-  const state = walker ? walker.state() : "unavailable";
+  const read = useMemo(() => (walker ? {
+    subscribe: walker.subscribe,
+    cause: () => walker.failureCause(),
+    answered: () => walker.state() === "ready",
+    reask: () => walker.start(),
+  } : null), [walker]);
+  const renewing = useSessionReask(w.store.renewal, read);
+  const state = walker ? (renewing ? "loading" : walker.state()) : "unavailable";
   /* The first paint: the mirror's rows, sorted only while the store has not answered. */
   const mirror = useMemo(() => (state === "ready" ? NONE : w.store.mirrorRows()),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -70,7 +89,7 @@ export function useStoreHistory(): PhoneHistory {
       retry: () => walker?.start(),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [walker, rev, mirror, w]);
+  }, [walker, rev, mirror, w, state]);
 }
 
 export type PhoneSearchVerdict = "idle" | "searching" | "ready" | "unanswered" | "unavailable";
@@ -127,8 +146,15 @@ export function useStoreSearch(query: string, deviceIds: readonly string[]): Pho
   useEffect(() => () => walker?.clear(), [walker]);
 
   const rev = useSyncExternalStore(walker ? walker.subscribe : noWalker, walker ? walker.revision : zero, walker ? walker.revision : zero);
+  const read = useMemo(() => (walker ? {
+    subscribe: walker.subscribe,
+    cause: () => walker.failureCause(),
+    answered: () => walker.info() !== null,
+    reask: () => setTick((n) => n + 1),
+  } : null), [walker]);
+  const renewing = useSessionReask(w.store.renewal, read);
   return useMemo(() => {
-    const state = walker ? walker.state() : q.length < 2 ? "idle" : "unavailable";
+    const state = walker ? (renewing ? "searching" : walker.state()) : q.length < 2 ? "idle" : "unavailable";
     const info = walker?.info() ?? null;
     const at = (i: number): StoreMessage | "gone" | null => (walker ? walker.rowAt(i) : null);
     return {
@@ -155,5 +181,5 @@ export function useStoreSearch(query: string, deviceIds: readonly string[]): Pho
       retry: () => setTick((n) => n + 1),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [walker, rev, q, w]);
+  }, [walker, rev, q, w, renewing]);
 }

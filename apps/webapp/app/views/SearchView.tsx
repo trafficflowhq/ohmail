@@ -312,7 +312,13 @@ export function SearchView({
 
   const cause = walker.failureCause();
   /* A 401 is the session's answer: still searching while the renewal is out, asked again once it lands. */
-  const renewing = useSessionReask(cause, walker.info() !== null, () => setRetryTick((n) => n + 1));
+  const read = useMemo(() => ({
+    subscribe: walker.subscribe,
+    cause: () => walker.failureCause(),
+    answered: () => walker.info() !== null,
+    reask: () => setRetryTick((n) => n + 1),
+  }), [walker]);
+  const renewing = useSessionReask(read);
   const passState = renewing ? "searching" : walker.state();
   const question = walker.question();
   useEffect(() => {

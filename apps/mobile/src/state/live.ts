@@ -1551,6 +1551,8 @@ export function storeRowOf(engine: OhmailEngine, m: EngineMessage, v: WorldView,
 }
 
 export type { EngineMessage as StoreMessage, ServerSearchOpts, ServerSearchOutcome, StoreSearchWalker, StoreTimelineWalker };
+/** The one re-ask rule the store reads bind (`store-views.ts`); the web binds the same one. */
+export { createSessionReask, type SessionRenewalDoor, type StoreReadSource } from "@ohmail/client-engine";
 
 /** The mirror's rows in the store's reading order — History's first paint. */
 export function mirrorNewestFirst(engine: OhmailEngine): EngineMessage[] {

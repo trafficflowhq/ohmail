@@ -9,6 +9,7 @@
  */
 
 import { readRefreshAnswer } from "@ohmail/client-engine";
+import type { SessionRenewalDoor } from "@ohmail/client-engine";
 
 /** The wire pair the redeem and the refresh both answer — the desktop manager's exact shape. */
 export interface BearerTokens {
@@ -76,7 +77,7 @@ interface LooseInit {
   signal?: AbortSignal;
 }
 
-export class BearerManagerRN {
+export class BearerManagerRN implements SessionRenewalDoor {
   private access: string | null;
   private refresh: string | null;
   /** Requests are ABSOLUTE on this platform — there is no served origin to be relative to. */
@@ -98,6 +99,7 @@ export class BearerManagerRN {
    */
   private attempt: string | null;
   private readonly deadListeners = new Set<(why: SessionDeath) => void>();
+  private readonly renewedListeners = new Set<() => void>();
 
   constructor(opts: {
     /** `https://host` or plain `http://192.168…` — the door this credential belongs to. */
@@ -143,9 +145,29 @@ export class BearerManagerRN {
     // the same write `save` makes, so there is no window where a new token stands beside an old
     // attempt's name. A `fetch` resolves once or throws, so one attempt never has two answers.
     this.attempt = null;
+    // A read the old token was refused on asks again now; a reader's fault is not the credential's.
+    for (const cb of [...this.renewedListeners]) {
+      try { cb(); } catch { /* the pair is adopted either way */ }
+    }
     return this.vault.save(tokens.refreshToken).catch(() => {
       /* A keystore refusal: the session lives until the next kill, then one scan re-pairs. */
     });
+  }
+
+  /** The store reads' renewal door (`createSessionReask`): ask a rotation, single-flighted. */
+  renew(): void {
+    void this.rotate();
+  }
+
+  /** Hear every adopted pair. Returns the unsubscribe. */
+  onRenewed(cb: () => void): () => void {
+    this.renewedListeners.add(cb);
+    return () => this.renewedListeners.delete(cb);
+  }
+
+  /** No credential left: a refusal is said, never waited on. */
+  ended(): boolean {
+    return !this.paired();
   }
 
   /** The extra-headers seam's value — `HttpAdapterOptions.headers` calls this per request. */

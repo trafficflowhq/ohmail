@@ -114,6 +114,7 @@ import {
   storeSearchWalkerFor,
   storeWalkerFor,
   subscribeOffMirror,
+  type SessionRenewalDoor,
   type StoreMessage,
   type StoreSearchWalker,
   type StoreTimelineWalker,
@@ -421,6 +422,8 @@ export interface World {
     walker: StoreTimelineWalker | null;
     /** Search's walker — the same list mechanism, one question at a time. */
     searchWalker: StoreSearchWalker | null;
+    /** The session a refused store read asks to renew — the paired door's bearer; none standalone. */
+    renewal: SessionRenewalDoor | null;
     mirrorRows(): StoreMessage[];
     rowOf(m: StoreMessage, inHistory: boolean): WorldMail;
     searchAvailable: boolean;
@@ -599,6 +602,7 @@ function emptyWorld(actions: WorldActions): World {
     store: {
       walker: null,
       searchWalker: null,
+      renewal: null,
       mirrorRows: () => [],
       rowOf: () => { throw new Error("no live engine"); },
       searchAvailable: false,
@@ -1501,6 +1505,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       store: {
         walker,
         searchWalker,
+        renewal: session.bearer,
         mirrorRows: () => mirrorNewestFirst(engine),
         rowOf: (m, inHistory) => storeRowOf(engine, m, v, inHistory),
         searchAvailable: engine.serverSearchAvailable(),

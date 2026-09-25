@@ -49,6 +49,14 @@ export {
   type SessionHeal,
   type SessionHealTimers,
 } from "./session-gate.js";
+/** A store read the session refused is asked again once it renews — one rule, browser and phone. */
+export {
+  createSessionReask,
+  sessionRefused,
+  type SessionReask,
+  type SessionRenewalDoor,
+  type StoreReadSource,
+} from "./session-reask.js";
 
 /**
  * UNKNOWN IS NOT EMPTY — one reading of what a message list may say about itself, for the phone
