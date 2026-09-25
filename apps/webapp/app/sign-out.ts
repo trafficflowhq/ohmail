@@ -16,6 +16,7 @@ import { DELETE_INTENTS_PREFIX } from "./shell/delete-intents";
 import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
 import { READING_ALONG_PREFIX } from "./shell/reading-along";
 import { SEND_LOCKS_PREFIX } from "./shell/send-lock";
+import { SESSION_MINTED_KEY } from "./session-refresh";
 
 /**
  * The one correct way to sign out of the web client. `POST /auth/logout` revokes the session and clears
@@ -178,6 +179,8 @@ export async function forgetThisBrowser(
     // DTO's deny-list for that reason), so leaving it behind would leave somebody's machine name
     // in a shared browser's jar. The intention costs one press to state again.
     READING_ALONG_PREFIX,
+    // When this jar last received a session: it goes with the session it describes.
+    SESSION_MINTED_KEY,
   ]);
   survivors.push(...durable.survivors);
   // The mirror-name registry is swept BY `clearAllMirrors` itself (it removes the names it proved

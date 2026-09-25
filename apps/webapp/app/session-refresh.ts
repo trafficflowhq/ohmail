@@ -12,6 +12,7 @@
 import { isSessionRefusal } from "@ohmail/client-engine";
 import { csrfToken } from "./csrf";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "./shell/confirm-schedule";
+import { durableSet } from "./shell/durable";
 import { readOwner } from "./shell/owner-cookie";
 import {
   markSessionAlive, markSessionDead, registerSessionProbe, sessionIsDead, subscribeSessionRevival,
@@ -136,7 +137,14 @@ export async function withSessionCookieLock<T>(fn: () => Promise<T>): Promise<T>
   let started = false;
   const run = async (): Promise<T> => {
     started = true;
-    return fn();
+    const before = csrfToken();
+    try {
+      return await fn();
+    } finally {
+      // A ceremony that minted a session is a mint like a refresh's: the renewal counts from it.
+      const after = csrfToken();
+      if (after !== null && after !== before) noteSessionMinted();
+    }
   };
   try {
     const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
@@ -328,6 +336,7 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> 
       // interposing itself.
       if (res.status === 204) {
         recordRefresh({ outcome: "minted", status: 204, code: null, errorClass: null, retryAfterMs: null });
+        noteSessionMinted();
         markSessionAlive();
         return true;
       }
@@ -431,6 +440,34 @@ export const ACCESS_WINDOW_MS = 15 * 60_000;
 export const RENEW_AT_FRACTION = 0.8;
 export const RENEW_JITTER_MS = 60_000;
 
+/**
+ * WHEN THIS BROWSER'S JAR LAST RECEIVED A SESSION, shared by every tab and page load. The window
+ * is counted from the MINT: a page confirming a session minted before it had counted from itself,
+ * and the cookie lapsed first (every 401-led refresh the tester logged followed a page load). This
+ * client's clock at both ends; no account, no token. A jar that refuses storage keeps this page's
+ * own mint, so a refused write never reads as "unknown" twice.
+ */
+export const SESSION_MINTED_KEY = "ohmail.session.mintedAt";
+let mintedHere: number | null = null;
+
+function noteSessionMinted(): void {
+  mintedHere = Date.now();
+  durableSet(SESSION_MINTED_KEY, String(mintedHere), "session-mint");
+}
+
+/** The latest mint this origin recorded, or `null` when nothing says how old the session is. */
+function lastSessionMint(): number | null {
+  let stored: number | null = null;
+  try {
+    const raw = window.localStorage.getItem(SESSION_MINTED_KEY);
+    if (raw !== null && /^\d+$/.test(raw)) stored = Number(raw);
+  } catch {
+    /* unreadable: the page's own copy, if any */
+  }
+  if (stored === null) return mintedHere;
+  return mintedHere === null ? stored : Math.max(stored, mintedHere);
+}
+
 let renewTimer: ReturnType<typeof setTimeout> | null = null;
 /** What the jar held when the renewal was armed: a skip is decided against it. */
 let armed: { owner: string; csrf: string | null } | null = null;
@@ -455,7 +492,10 @@ function armRenewal(): void {
   const owner = readOwner();
   if (owner === null) return;
   armed = { owner, csrf: csrfToken() };
-  const due = ACCESS_WINDOW_MS * RENEW_AT_FRACTION - Math.random() * RENEW_JITTER_MS;
+  const lead = ACCESS_WINDOW_MS * RENEW_AT_FRACTION - Math.random() * RENEW_JITTER_MS;
+  // From the mint, capped at a whole lead (a clock stepped back); unknown age renews at once.
+  const minted = lastSessionMint();
+  const due = minted === null ? 0 : Math.min(lead, minted + lead - Date.now());
   renewTimer = setTimeout(() => { renewTimer = null; void renew(1); }, Math.max(1, due));
   if (!watchingVisibility && typeof document !== "undefined") {
     watchingVisibility = true;
