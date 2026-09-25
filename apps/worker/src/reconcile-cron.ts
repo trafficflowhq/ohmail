@@ -22,6 +22,7 @@ import { OrganizerProfileSync } from "./profile.js";
 import { makeStorageCapResolver } from "./storage-cap.js";
 import {
   CLOUD_DISPLAY_NAME, LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit, writeDoorOf,
+  cycleWriteAuthority,
   cloudInstallId, leaseStoodDown, mailboxHasRequestKey, type LeasePermit,
 } from "./lease.js";
 import { isCliEntry } from "./entry.js";
@@ -440,7 +441,7 @@ export async function runReconcileCron(
       // faulted read costs one stale cycle, retried at the second pass.
       await permit.check();
       await runSyncCycle({
-        ...deps, writeAuthority: permit,
+        ...deps, writeAuthority: cycleWriteAuthority(deps.role, permit),
         importDecisionOpen: await profileSync.importDecisionOpenNow(),
       });
       // The second cycle is where the once-per-run read was weakest: the FIRST cycle has just spent
@@ -450,7 +451,7 @@ export async function runReconcileCron(
       await runSyncCycle({
         // THE SAME RECEIPT, and it is named at the call rather than folded into `deps` above: the
         // permit is what every page inside the cycle asks, and the census reads this argument list.
-        ...deps, writeAuthority: permit,
+        ...deps, writeAuthority: cycleWriteAuthority(deps.role, permit),
         importDecisionOpen: await profileSync.importDecisionOpenNow(),
       });
     } catch (err) {

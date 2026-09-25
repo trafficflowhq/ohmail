@@ -135,7 +135,8 @@ import { startTailProgress } from "./drain-tail-progress.js";
 import {
   readMailboxLease, acquireLeasePermit, releaseMailboxClaim, LeaseUnavailableError,
   OrganizerStandDownError,
-  leaseStoodDown, writeDoorOf, DEFAULT_STALE_AFTER_MS, type OrganizerWriteAuthority,
+  leaseStoodDown, writeDoorOf, cycleWriteAuthority, DEFAULT_STALE_AFTER_MS,
+  type OrganizerWriteAuthority,
 } from "@trafficflow/worker/lease";
 // The APPEND-LESS read, straight from core: an install that has not been asked to organize must
 // still be able to say who does, and `runLeaseGate` cannot answer that question without taking
@@ -5159,9 +5160,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             // back off the engine, so a demotion or a promotion applies to the very next PASS.
             role: organizing ? "organizer" : "reader",
             // A demoted install keeps draining as a READER, and a reader holds no lease — its
-            // `\Seen` push is the one verb it may write. Naming that here rather than passing the
-            // spent permit is what keeps "no lease" and "not asked" apart at the write boundary.
-            writeAuthority: organizing ? leasePermit : { noLease: "reader" },
+            // `\Seen` push is the one verb it may write. The hosted worker's composition, from the
+            // same role expression, so "no lease" and "not asked" stay apart at the write boundary.
+            writeAuthority: cycleWriteAuthority(organizing ? "organizer" : "reader", leasePermit),
             // The routing half of the organizer-profile hold (TAKEOVER-RESCREEN), EVALUATED from
             // the current facts at every cycle edge — never cached; see the worker's cycle for
             // the argument (many arm/release orderings were tried, each with a

@@ -129,6 +129,7 @@ import type { ProfileIo } from "@trafficflow/core/adapters/organizer-profile";
 import {
   readMailboxLease, acquireLeasePermit, releaseMailboxClaim, cloudInstallId, CLOUD_DISPLAY_NAME,
   LeaseUnavailableError, leaseBlockReason, leaseStoodDown, DEFAULT_STALE_AFTER_MS, writeDoorOf,
+  cycleWriteAuthority,
   type OrganizerWriteAuthority,
   type LeaseSelf, type LeasePeekCapableAdapter,
 } from "./lease.js";
@@ -3546,13 +3547,12 @@ export async function startWorkerWithLock(
             // after the spread deliberately: it must win over `rt.deps.role`, which is only ever
             // the value the attach saw.
             role: rt.role,
-            /* AND THE PERMIT THE SAME GATE JUST TOOK, threaded INTO the cycle rather than left at
-             * its edge. Until this line the cycle received none, so every write boundary inside it
-             * read `not_supplied` and was admitted: a person moving organization to their own
-             * install mid-scan had Cloud applying moves beside it for the rest of the cycle. Beside
-             * `role` and for its reason — written by `mayOrganize` on both arms at THIS cycle's
-             * gate, so it is the current receipt and never the attach-time one on `rt.deps`. */
-            writeAuthority: rt.leasePermit,
+            /* AND THE AUTHORITY THAT ROLE RIDES: the permit THIS cycle's gate took when it
+             * organizes, a reader's authority when it does not. `mayOrganize` writes the permit
+             * only on its organize arm, so for a reader `rt.leasePermit` is the attach seed or a
+             * permit from before a demotion — whose page check re-ran the lease's write gate from
+             * a reader cycle. One composition, the local engine's too (`cycleWriteAuthority`). */
+            writeAuthority: cycleWriteAuthority(rt.role, rt.leasePermit),
             // Told when this pass HOLDS a first-contact sender at the gate — the suggest-owed
             // mark's writer ({@link SyncDeps.onScreenerHold}), fire-and-forget by design.
             onScreenerHold: noteScreenerHold,

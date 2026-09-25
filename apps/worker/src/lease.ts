@@ -13,7 +13,7 @@ import type {
   MailboxAdapter, MailboxWriteKind, WriteDoor, WriteDoorAnswer,
 } from "@trafficflow/core/adapters/imap";
 import type { ImapAuth } from "@trafficflow/core/adapters/imap-types";
-import type { MailboxDisabledReason, MailboxSyncBlockReason } from "@trafficflow/db";
+import type { MailboxDisabledReason, MailboxSyncBlockReason, OrganizerRole } from "@trafficflow/db";
 
 /**
  * The worker's half of the organizer lease — composition, and nothing else.
@@ -1026,6 +1026,18 @@ export interface MailboxWriteAuthority {
  * owns and never re-derives this one.
  */
 export type OrganizerWriteAuthority = LeasePermit | NoOrganizerLease;
+
+/**
+ * A CYCLE'S AUTHORITY, FROM THE ROLE ITS GATE ANSWERED — the one composition every root hands
+ * `runSyncCycle`. An organizer rides its permit; a reader rides a reader's authority, whose one
+ * write is `\Seen`. Never the runtime's permit for a reader: one left from before a demotion
+ * re-runs the lease's write gate at its next check, from a cycle that may not claim.
+ */
+export function cycleWriteAuthority(
+  role: OrganizerRole, permit: OrganizerWriteAuthority,
+): OrganizerWriteAuthority {
+  return role === "organizer" ? permit : { noLease: "reader" };
+}
 
 /**
  * THE WRITE DOOR — the one function every organizer hands the adapter, on the worker, the local
