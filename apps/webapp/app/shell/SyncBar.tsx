@@ -336,7 +336,7 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
       // load-bearing.
       return {
         tone: "busy", role: "status", warn: false, busy: true,
-        title: t("staleAsOf", { time: waterlineStamp(state.asOf ?? "", activeFormatLocale()) }),
+        title: t("staleAsOf", { time: waterlineStamp(state.asOf ?? "", new Date(), activeFormatLocale()) }),
         detail: null, link: null,
       };
 

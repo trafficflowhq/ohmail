@@ -20,7 +20,6 @@ import {
   forwardSubject,
   appointmentStamp,
   messageDisplayTime,
-  weekdayClock,
   composeZonedWallClock,
   zonedFields,
   zonedInstant,
@@ -4192,10 +4191,12 @@ export function usableHours(from: Date, offset: number, zone: string = readerZon
 }
 
 /**
- * A SET TIME — a resurface, a send-later, the away end date — read where the reader is: `10:00`
- * today, `Fri 10:00` inside the week, `25 Dec, 10:00` past it. The engine's `appointmentStamp`,
- * the one the webapp's `resurfaceLabel` and `scheduleLabel` read, so the phone and the web name a
- * set time alike. Not-ISO input echoes through; an unknown zone throws there and echoes here.
+ * AN INSTANT IN A SENTENCE — a set time (a resurface, a send-later, the away end date) or a past
+ * one (the stale mirror's "as of", an outage's "since") — read where the reader is: `10:00` today,
+ * `Fri 10:00` inside the week, `25 Dec, 10:00` past it. The engine's `appointmentStamp`, the one
+ * the webapp's `resurfaceLabel`, `scheduleLabel` and `waterlineStamp` read, so the phone and the
+ * web name an instant alike. Not-ISO input echoes through; an unknown zone throws there and
+ * echoes here.
  */
 export function setTimeLabel(iso: string, now: Date, zone: string, locale = "en"): string {
   if (!/^\d{4}-\d{2}-\d{2}T/.test(iso)) return iso;
@@ -4244,21 +4245,6 @@ export function dayEndIso(from: Date, daysAhead: number, zone: string = readerZo
 }
 
 /**
- * "Fri 09:00" from an ISO instant, read where the reader is — a PAST instant close to now (the
- * stale mirror's "as of", an outage's "since"). A set time goes through {@link setTimeLabel},
- * which names the date past the week. Not-ISO input echoes through.
- */
-export function whenLabel(iso: string, zone: string): string {
-  if (!/^\d{4}-\d{2}-\d{2}T/.test(iso)) return iso;
-  const d = new Date(iso);
-  try {
-    return weekdayClock(d, zone);
-  } catch {
-    return iso;
-  }
-}
-
-/**
  * Has this mirror ever completed a drain — the boot-from-local question, answered from the
  * engine's own completion stamp ({@link LAST_DRAIN_AT_META}). It separates the two states a
  * zero-row list can be in, which must never be conflated: settled — a drain finished, so zero
@@ -4280,14 +4266,15 @@ export function mirrorSettled(store: { getMeta<T>(key: string): T | undefined })
  * the chrome says how old ("As of Fri 09:00 · catching up") until a drain settles. The engine
  * is the one derivation (`engine.freshness()`, the same stamp `freshenStaleResume` reads), so
  * this surface cannot disagree with the webapp's strip about what stale means. Formatted here
- * through {@link whenLabel} — the chrome gets a sentence-ready time in the reader's own zone.
+ * through {@link setTimeLabel} — the chrome gets a sentence-ready time in the reader's own zone.
  */
 export function staleAsOf(
   engine: { freshness(): { state: "unknown" | "stale" | "current"; asOf: string | null } },
   zone: string,
+  now: Date,
 ): string | null {
   const f = engine.freshness();
-  return f.state === "stale" && f.asOf !== null ? whenLabel(f.asOf, zone) : null;
+  return f.state === "stale" && f.asOf !== null ? setTimeLabel(f.asOf, now, zone) : null;
 }
 
 /**
@@ -4380,7 +4367,7 @@ export function connectionSay(
   if (Number.isNaN(since)) return { kind: "lost" };
   return now.getTime() - since < RECONNECT_PROMISE_MS
     ? { kind: "lost" }
-    : { kind: "gone", since: whenLabel(stamp, zone) };
+    : { kind: "gone", since: setTimeLabel(stamp, now, zone) };
 }
 
 /**

@@ -75,11 +75,12 @@ export function dateClock(instant: Date, zone: string, locale = "en"): string {
 }
 
 /**
- * A SET TIME — a resurface, a scheduled send, an away end date — by the bands at the top of this
- * file, either side of now and with the clock on every band: same day → `10:00`; within six days
- * → `Fri 10:00`; beyond → `25 Dec, 10:00`, the year added outside the current one. A weekday
- * alone names a day only inside the week: 25 Dec read as "Fri 10:00" on a Friday afternoon, a
- * time seven hours gone. Throws for an unknown zone, as {@link clock} does.
+ * AN INSTANT NAMED IN A SENTENCE — a set time (a resurface, a scheduled send, an away end date) or
+ * a past one (a last visit, a stale mirror's "as of", an outage's "since") — by the bands at the
+ * top of this file, either side of now and with the clock on every band: same day → `10:00`;
+ * within six days → `Fri 10:00`; beyond → `25 Dec, 10:00`, the year added outside the current
+ * one. A weekday alone names a day only inside the week: 25 Dec read as "Fri 10:00" on a Friday
+ * afternoon. Throws for an unknown zone, as {@link clock} does.
  */
 export function appointmentStamp(instant: Date, now: Date, zone: string, locale = "en"): string {
   const days = Math.abs(daysAgo(instant, now, zone));

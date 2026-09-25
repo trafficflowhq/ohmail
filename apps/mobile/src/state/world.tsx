@@ -1544,7 +1544,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         // `conn.syncing` from the deps would delay the clear to the next tick, not prevent it.
         // The appearing direction is time's alone — a phone sitting open crosses the threshold
         // with no store write — so `freshBeat` ticks when the verdict changes.
-        staleAsOf: staleAsOf(engine, zone),
+        staleAsOf: staleAsOf(engine, zone, new Date()),
         draining: conn.syncing,
         /* THE DOOR'S OWN WORD, re-read per derivation like the two above. It is NOT in this
            memo's dependency array and cannot be: the door read is module state, not React
@@ -1590,7 +1590,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (engine === null) return;
     const check = (): void => {
-      const staleMoved = staleAsOf(engine, zone) !== renderedStale;
+      const staleMoved = staleAsOf(engine, zone, new Date()) !== renderedStale;
       const connMoved = JSON.stringify(
         [
           connectionSay(standaloneHereFor({ standalone: rendersOwnDoor }), new Date(), zone),

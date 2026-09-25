@@ -14,7 +14,6 @@ import {
   fullDateTime as stampFullDateTime,
   messageDisplayTime,
   VIEW_OF_FOLDER,
-  weekdayClock,
   zonedFields,
   zonedInstant,
   zonedWeekday,
@@ -658,21 +657,16 @@ export function hueOf(tag: TagDTO): TagHueName {
 }
 
 /**
- * The waterline's stamp — WHEN the reader last left the stream, as "Mon 18:40" in their
- * locale. The engine stores the instant (`WaterlineMeta.at`), never display strings, so the
- * two streams format it here through one function rather than each composing its own. An
- * unparseable instant yields "" and the caller renders the line with no meta — a line with a
- * wrong time would be a claim, a line without one is just the line.
+ * The waterline's stamp — WHEN the reader last left the stream — and the stale strip's "as of":
+ * the engine's `appointmentStamp` in the reader's zone and locale, so "18:40" today, "Mon 18:40"
+ * inside the week, "3 Aug, 18:40" past it. The engine stores the instant (`WaterlineMeta.at`),
+ * never display strings. An unparseable instant yields "" and the caller renders the line with
+ * no meta — a line with a wrong time would be a claim, a line without one is just the line.
  */
-export function waterlineStamp(atIso: string, locale: string): string {
+export function waterlineStamp(atIso: string, now: Date, locale: string): string {
   const at = new Date(atIso);
   if (Number.isNaN(at.getTime())) return "";
-  /* THE READER'S ZONE, WHICH THIS DID NOT HAVE. It asked `Intl` for a combined weekday-and-time
-     pattern with no `timeZone` at all, so alone among the product's stamps it read the BROWSER's
-     zone — a waterline that could name a different hour from the rows directly beneath it. The
-     combined pattern was the second defect: German renders it "Mi., 18:40", with a comma no caller
-     chose, while every other "a day this week at a time" in the product reads "Mi 18:40". */
-  return weekdayClock(at, activeFormatZone(), locale);
+  return appointmentStamp(at, now, activeFormatZone(), locale);
 }
 
 /**

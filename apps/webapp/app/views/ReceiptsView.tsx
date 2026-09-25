@@ -190,7 +190,7 @@ export function ReceiptsView({
     const top = all[0];
     if (top) onLeaveSeen?.({ upToId: top.id, messageIds: [] });
   };
-  const wlStamp = waterline?.at ? waterlineStamp(waterline.at, locale) : "";
+  const wlStamp = waterline?.at ? waterlineStamp(waterline.at, now, locale) : "";
   const wlMeta = waterline?.meta ?? (wlStamp ? tr("waterlineMeta", { stamp: wlStamp }) : undefined);
   /**
    * THE LIST IS A WINDOW, not the whole pile. Receipts is a working set on most accounts, but a

@@ -392,7 +392,7 @@ export function ReadsView({
     if (top) onLeaveSeen?.({ upToId: top.id, messageIds: [] });
   };
   /** The line's stamp: fixture-authored on the demo, formatted from the commit instant live. */
-  const wlStamp = partition.waterline?.at ? waterlineStamp(partition.waterline.at, locale) : "";
+  const wlStamp = partition.waterline?.at ? waterlineStamp(partition.waterline.at, now, locale) : "";
   const wlMeta =
     partition.waterline?.meta ?? (wlStamp ? t("waterlineMeta", { stamp: wlStamp }) : undefined);
   const current = cur ?? all.find((m) => m.unread)?.id ?? all[0]?.id ?? null;
