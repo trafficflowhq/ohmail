@@ -482,10 +482,10 @@ export function useShellOpenState({
   /**
    * THE OHBOX'S ARMED READ — reported by `OhboxView.onReadArmed`, held here for ONE consumer:
    * the reader sheet's `MessagePane`, whose read-state verb derives from `message.unread`. The
-   * Ohbox commits reading on departure, so while a message is open the store still says unread —
-   * and the sheet went on offering "Mark read" over a message the reader was reading. The view
-   * flips its own column and rows; the sheet is mounted HERE, so the fact travels up. A report
-   * of view-local presentation state, never a second writer of read-state: nothing else may
+   * Ohbox saves the read at the arm and holds the row in place until it is left; this carries
+   * the same presentation to the sheet, so sheet and row never disagree, and a refused save
+   * clears it for both. The sheet is mounted HERE, so the fact travels up. A report of
+   * view-local presentation state, never a second writer of read-state: nothing else may
    * read it.
    */
   const [ohboxArmedRead, setOhboxArmedRead] = useState<string | null>(null);
@@ -496,7 +496,7 @@ export function useShellOpenState({
    * reads unread whatever its stored flag says (owner ruling 2026-08-31),
    * so the sheet offers "Mark as read" — the deliberate verb that spends
    * the pin; an ARMED read reads read, so the sheet offers "Mark unread"
-   * while the departure write waits — and the arm does not spend a pin.
+   * over a read saved as a glance — and the arm does not spend a pin.
    */
   const sheetPresentsUnread =
     readerMessage != null && (isResurfaced(readerMessage) || (readerMessage.unread && readerMessage.id !== ohboxArmedRead));
