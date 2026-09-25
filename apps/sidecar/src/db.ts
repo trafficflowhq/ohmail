@@ -18,6 +18,7 @@ import {
   type LogBounds, type LogMark,
 } from "@trafficflow/db/dialect";
 import { createStoreScheduler, currentStoreLane, scheduleStoreLanes, type StoreLaneCensus } from "./store-lanes.js";
+import { LocalStoreFs } from "./pglite-transport.js";
 import type { Diagnostic } from "./log.js";
 
 /**
@@ -1268,7 +1269,13 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     // and read from the directory rather than from PGlite, which says nothing until it is done.
     opts.onPhase?.(openPhaseFor(dataDir));
     const tOpen = Date.now();
-    client = new PGlite(pgDataDir, opts.withoutSearchExtensions ? {} : { extensions: LOCAL_STORE_EXTENSIONS });
+    /* PGlite's NodeFS with the protocol transport kept in memory (`pglite-transport.ts`); the log,
+       the relations and the durability properties below are the disk exactly as before. */
+    client = new PGlite({
+      dataDir: pgDataDir,
+      fs: new LocalStoreFs(pgDataDir),
+      ...(opts.withoutSearchExtensions ? {} : { extensions: LOCAL_STORE_EXTENSIONS }),
+    });
     // AWAITED HERE ON PURPOSE, AND IT CHANGES NOTHING EXCEPT WHERE THE COST IS ATTRIBUTED.
     //
     // `new PGlite()` returns before the database is usable — the WASM instantiation, the data
