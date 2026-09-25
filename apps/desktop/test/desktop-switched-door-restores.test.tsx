@@ -52,6 +52,15 @@ const EMPTY_PAGE = JSON.stringify({
   serverTime: "2026-01-01T00:00:00.000Z",
 });
 const EMPTY_SNAPSHOT = JSON.stringify({ asOfSeq: 0, changes: [], nextCursor: null, window: { days: 90, minRows: 500 } });
+/** `GET /consent` as the engine answers it for a mailbox that never decided anything
+ * (`packages/api/src/routes/consent.ts`: the default window, every stamp null, empty maps). */
+const CONSENT = JSON.stringify({
+  seedConfirmedAt: null, screeningResetAt: null, dormancyDays: 60, screeningBaselineAt: null,
+  autoSuggestAt: null, blockRemoteImagesAt: null, loadTrackingPixelsAt: null, blockAutoUnsubscribeAt: null,
+  foldersEnabledAt: null, folderMailboxesOff: {}, signatures: {}, signaturesHtml: {}, signatureSources: {},
+  locale: null, themeFace: null, resurfaceTime: null, onboardingCompletedAt: null, screeningScope: "window",
+  counts: { activeUndecidedSenders: 0, dormantUndecidedSenders: 0 },
+});
 /** The local door's model settings, as `/local/ai` answers them with nothing configured. */
 const NO_MODEL = JSON.stringify({
   provider: "none", available: false, unavailableReason: "not_configured", contentGoesTo: "nowhere",
@@ -175,6 +184,8 @@ function fakeShell(opts: {
         if (url.startsWith("/sync/snapshot")) return encode(200, EMPTY_SNAPSHOT);
         if (url.startsWith("/mailboxes")) return encode(200, JSON.stringify({ items: [] }));
         if (url === "/local/ai") return encode(200, NO_MODEL);
+        // The window reads consent on every door; a page without a window is a failed read it reports.
+        if (url === "/consent") return encode(200, CONSENT);
         return encode(200, EMPTY_PAGE);
       }
       return null;
