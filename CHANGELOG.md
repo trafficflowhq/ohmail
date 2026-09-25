@@ -295,6 +295,117 @@ the provider the mailbox was added with, or from its outgoing server. Where neit
 for the incoming server once, with the username filled in. The outgoing server's password those
 sign-outs left stored is removed when the app starts.
 
+### Forward is always offered
+<!-- changes: fix-025-forward-is-always-offered.md -->
+
+Forward no longer disappears from a message. A message ohmail flagged as sensitive says why and asks
+once before you forward it.
+
+### The phone answers under the option you pressed
+<!-- changes: fix-025-phone-door-answers-under-its-option.md -->
+
+On the phone's first screen, the answer to ohmail Cloud or Your own server now appears under the
+option you pressed, below a heading that names what the four choices are, and Forward on a message
+opened from History or Search loads that message before the forward opens.
+
+### Messages with many images open without a wait
+<!-- changes: fix-025-access-check-one-call-per-account.md -->
+
+On a server that checks accounts with an entitlements program, such as ohmail Cloud, opening a
+message with many images asked once per image, and a slow answer held the images and the text for
+several seconds. The requests now share one check.
+
+### An account is erased only when the entitlements program confirms it
+<!-- changes: fix-025-access-check-one-call-per-account.md -->
+
+At the end of a closed account's retention, the server asks the entitlements program again and
+erases only on its answer. If the program cannot be reached, nothing is erased and it asks again
+on the next run.
+
+### Account reminders wait for the entitlements program's answer
+<!-- changes: fix-025-lifecycle-notices-on-a-real-answer.md -->
+
+On a server that checks accounts with an entitlements program, such as ohmail Cloud, the reminders
+about a trial ending, a closed account and an upcoming erasure could go out on the last answer the
+server remembered while the program was unreachable. They are now sent only on the program's own
+answer, and otherwise on the next run.
+
+### Server alerts repeat less and leave closed accounts out
+<!-- changes: fix-025-alerts-page-only-what-is-on-duty.md -->
+
+A server's alert mail no longer counts mailboxes it deliberately does not sync, pages a standing
+critical alert three times and then daily, pages again when the condition doubles, and sends one
+mail when an alert that paged has stayed resolved for an hour.
+
+### Your own mail stays out of the Screener
+<!-- changes: fix-025-own-mail-never-in-the-screener.md -->
+
+- Mail from one of your own addresses that sits in the Screener folder now shows in the Ohbox. The
+  Screener no longer lists it or offers Allow and Screen out for it.
+- A resurfaced message that sits in the Screener folder shows once, pinned in the Ohbox.
+
+### Settings shows Folders only where your server keeps the setting
+<!-- changes: fix-025-selfhost-settings-and-counts.md -->
+
+On a self-hosted install, Settings → Folders offered a "Use folders" switch whose every press
+answered "Couldn't save that — try again". The pane now appears only where the server keeps the
+setting, in the browser and in the desktop app connected to a self-hosted server.
+
+### The sent-mail review asks nothing when there is nobody to ask about
+<!-- changes: fix-025-selfhost-settings-and-counts.md -->
+
+Right after setup, "You've written to 0 people" no longer covers every view: the review steps aside
+when nobody you have written to is waiting for a decision. "Not now" is remembered on this device,
+and Settings → Screener → People you write to opens the review again.
+
+### The Screener says where older mail from undecided senders is
+<!-- changes: fix-025-selfhost-settings-and-counts.md -->
+
+The Screener said "N messages in your Ohbox are from senders you have not decided about" while the
+Ohbox listed none of them. It now says that mail is still in the Inbox on your mail server.
+
+### Dismissing the held-mail offer reaches every device
+<!-- changes: fix-025-held-offer-dismissal.md -->
+
+"Not now" on the Screener's offer to release mail from senders you already decided about now hides
+it on every device signed in to the account on its next sync. It used to stay on the others until
+they were restarted.
+
+### A resurface set for a later date shows that date
+<!-- changes: fix-025-resurface-names-its-date.md -->
+
+- The Resurface pile, its confirmations and the "Back …" note show the date and time of a
+  resurface past this week ("25 Dec, 10:00") on the web, the desktop and the phone. Before, the web
+  and the desktop showed only a weekday ("Fri 10:00"), which on that weekday read as the same day.
+  Scheduled sends and the phone's away end date use the same labels.
+
+### An open phone paired to ohmail Cloud keeps receiving mail
+<!-- changes: fix-025-paired-phone-keeps-draining.md -->
+
+- A phone paired to ohmail Cloud and left open now fetches new mail every few seconds without a
+  pull-down, and fetches at once when you come back to the app. Nothing runs while the app is in the
+  background. The top line says "catching up" only while it is fetching.
+
+### The Screener shows a held message's full text on the desktop app too
+<!-- changes: fix-025-screener-held-body-loads-on-the-local-door.md -->
+
+- On a desktop app with a quiet mailbox, every held message in the Screener could say "Couldn't
+  load the full message" while History showed the same message in full. The preview now shows the
+  text as soon as it is read, and Retry shows its own attempt. A waiting sender's row is read out as
+  unread while its held mail is.
+
+### Screening a sender into the Ohbox moves every message the list shows, and says what stays
+<!-- changes: fix-025-screen-to-ohbox.md -->
+
+Screening a sender from the sender sheet with "Also move the mail already in your mailbox" now
+reaches their mail still filed under the old News folder name, and the rule it writes for their
+address is no longer outranked by a higher-priority rule for their whole domain. After the press the
+sheet reads the list again. If a rule of yours still keeps some of their mail elsewhere — a rule for
+one subject of theirs, say — it says how many are in the Ohbox and how many stay where, and offers
+Remove that rule when the rule is about that address alone; a rule for everyone at their domain is
+named instead. Mail that did not move gets Move them, which moves all of it. Web, desktop and phone
+share the change.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
@@ -976,12 +1087,12 @@ reaches this door.
 - Attaching a photo from the library no longer closes the app on the newest iOS. The composer and
   its text stay where they were.
 
-### The Ohbox can be cleared of older mail from senders you never decided about
+### Your mail server's Inbox can be cleared of older mail from senders you never decided about
 <!-- changes: ohbox-023-unscreened-senders.md -->
 
-The Screener says how many messages in your Ohbox come from senders you never decided about — mail
-that arrived before screening existed — and one press moves them to the Screener, where you decide
-per sender as usual. Nothing moves until you press it.
+The Screener says how many messages in the Inbox on your mail server come from senders you never
+decided about — mail that arrived before screening existed — and one press moves them to the
+Screener, where you decide per sender as usual. Nothing moves until you press it.
 
 ### On iPhone, the local copy of your mail stays out of the phone's backup, and Settings says so only where it is true
 <!-- changes: phone-023-ios-mirror-backup-exclusion.md -->
