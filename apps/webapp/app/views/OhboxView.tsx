@@ -2256,7 +2256,7 @@ export function OhboxView({
             </ListRows>
           </>
         ) : null}
-        {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
+        <div aria-hidden data-window-top="" style={{ height: win.padTop }} />
         {/* `group`: the landing demo's callout anchors — see ListGroupLabel */}
         {showNewLabel ? <ListGroupLabel group="new" index={0}>{t("newForYou")}</ListGroupLabel> : null}
         {newTo > newFrom ? (

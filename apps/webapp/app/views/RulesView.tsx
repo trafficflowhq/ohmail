@@ -402,7 +402,7 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
                 inside the 8-row overscan; when the row scrolls out, the confirm unmounts and
                 returns with it — `open` state unaffected. Each row states the filtered list's true
                 size and its place in it, because only the window's rows are mounted. */}
-            {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
+            <div aria-hidden data-window-top="" style={{ height: win.padTop }} />
             {filtered.slice(win.start, win.end).map((rule, k) => {
               const what = whatOf(rule);
               const origin = t(`origin.${rule.provenance}`);

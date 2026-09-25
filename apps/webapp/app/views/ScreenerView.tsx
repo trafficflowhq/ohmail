@@ -1584,7 +1584,7 @@ export function ScreenerView({
             changed the selection would open nothing (review finding on this commit). */}
         {junkActive ? <JunkRows junk={junk!} activeKey={activeId} onSelect={selectRow} /> : null}
         <ListRows ariaLabel={t("title")}>
-          {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
+          <div aria-hidden data-window-top="" style={{ height: win.padTop }} />
           {junkActive ? null : items.length ? (
             items.slice(itemsFrom, itemsTo).map((x, k) =>
               row(x, itemsFrom + k, { size: items.length + decidedRows.length, position: itemsFrom + k + 1 }))

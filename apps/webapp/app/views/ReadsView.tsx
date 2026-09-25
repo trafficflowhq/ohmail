@@ -725,7 +725,7 @@ export function ReadsView({
             (with the AI chip inline), the waterline at the junction when it is in view, the seen
             slice, then the reserved height below. Two `ListRows` still, so the two groups keep
             their own row containers, but each renders only its share of the mounted window. */}
-        {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
+        <div aria-hidden data-window-top="" style={{ height: win.padTop }} />
         <ListRows ariaLabel={t("title")}>
           {/* The chip rides after its row; when the window starts AT the chip, before the next. */}
           {chipShown && freshFrom === chipAt && freshFrom === freshTo ? chipRow : null}

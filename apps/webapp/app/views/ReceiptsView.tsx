@@ -512,7 +512,7 @@ export function ReceiptsView({
             windowed sequence is split at the line's junction, exactly as in `ReadsView`:
             the fresh slice, the waterline when the junction is inside the window, the seen
             slice. */}
-        {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
+        <div aria-hidden data-window-top="" style={{ height: win.padTop }} />
         <ListRows ariaLabel={t("title")}>
           {all.slice(freshFrom, freshTo).map((m, k) =>
             row(m, freshFrom + k, { size: fresh, position: freshFrom + k + 1 }))}

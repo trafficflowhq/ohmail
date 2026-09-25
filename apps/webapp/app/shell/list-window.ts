@@ -33,6 +33,14 @@
  * the item under the top edge, `scrollTop` moves by exactly that delta in the same layout
  * effect, before paint: the scroller's `overflow-anchor` is off (app.css), so this is the anchor.
  */
+
+/**
+ * SLOT 0 STARTS WHERE THE TOP SPACER STARTS, NOT AT THE SCROLLER'S TOP. A note, a banner or a
+ * pinned group above the rows used to shift which rows mounted by its own height, and the anchor
+ * held the row that far below the top edge. The caller renders the top spacer ALWAYS, carrying
+ * {@link WINDOW_TOP}; its place is read before paint, every offset counts from it, and a change
+ * above it while the top edge is inside the rows moves `scrollTop` with it.
+ */
 import {
   useCallback,
   useEffect,
@@ -67,6 +75,21 @@ export const FULL_RANGE_MAX_ROWS = 500;
  */
 export const MEASURED_FULL_RANGE_MAX_ROWS = 50;
 
+/** The attribute on the list's top spacer, which is where slot 0 starts. */
+export const WINDOW_TOP = "data-window-top";
+
+/**
+ * Where slot 0 starts in `el`'s scroll content: its top spacer's place. 0 when the list marks no
+ * spacer, or when the scroller has no box to measure (not laid out yet, or jsdom).
+ */
+export function listOrigin(el: HTMLElement): number {
+  const top = el.querySelector<HTMLElement>(`[${WINDOW_TOP}]`);
+  if (!top) return 0;
+  const box = el.getBoundingClientRect();
+  if (box.width === 0 && box.height === 0) return 0;
+  return top.getBoundingClientRect().top - box.top - el.clientTop + el.scrollTop;
+}
+
 export interface ListWindow {
   /** First index to render, inclusive. */
   start: number;
@@ -78,7 +101,9 @@ export interface ListWindow {
   padBottom: number;
   /** The height in force for an unmeasured row — the mean of what has been measured. */
   rowHeight: number;
-  /** Where index `i` starts, in scroller pixels: the prefix sum of the measured heights. */
+  /** Where slot 0 starts in the scroller's content — the top spacer's place. */
+  origin: number;
+  /** Where index `i` starts, in scroller pixels: the origin plus the measured heights above it. */
   offsetOf: (index: number) => number;
   /**
    * The slots the viewport shows, plus the overscan — whether or not the list renders whole. A
@@ -123,8 +148,17 @@ export function useListWindow({
   const frozen = useRef<Map<number, number>>(new Map());
   /** Every unmeasured index below this has a frozen estimate; the freezing pass resumes here. */
   const frozenUpTo = useRef(0);
-  /** The item under the top edge at the last commit, where the DOM had it, and at which count. */
-  const anchor = useRef<{ index: number; offset: number; count: number } | null>(null);
+  /**
+   * The item under the top edge at the last commit, where the DOM had it (from slot 0), at which
+   * count and origin, and whether the top edge was inside the rows rather than above them.
+   */
+  const anchor = useRef<{ index: number; offset: number; count: number; origin: number; inRows: boolean } | null>(null);
+  /**
+   * Where slot 0 started at the last commit — {@link listOrigin}. State, so a move re-derives the
+   * slice; and a ref, so an effect holding an older render's `offsetOf` still scrolls to the place.
+   */
+  const [origin, setOrigin] = useState(0);
+  const originAt = useRef(0);
   /** Bumped when a measurement moves, which is what makes the sums below recompute. */
   const [samples, setSamples] = useState(0);
   /** Did the first layout pass find `data-index` items? `null` until a pass has drawn some. */
@@ -192,7 +226,7 @@ export function useListWindow({
   }, [count, mean, samples]);
 
   const offsetOf = useCallback(
-    (index: number): number => prefix[Math.max(0, Math.min(count, index))] ?? 0,
+    (index: number): number => originAt.current + (prefix[Math.max(0, Math.min(count, index))] ?? 0),
     [prefix, count],
   );
 
@@ -210,10 +244,12 @@ export function useListWindow({
   };
 
   const windowed = count > (stamped === false ? FULL_RANGE_MAX_ROWS : MEASURED_FULL_RANGE_MAX_ROWS);
-  const visibleStart = Math.max(0, Math.min(count, indexAt(scrollTop) - overscan));
-  const visibleEnd = Math.min(count, indexAt(scrollTop + height) + 1 + overscan);
-  const start = windowed ? Math.max(0, Math.min(count, indexAt(scrollTop) - overscan)) : 0;
-  const end = windowed ? Math.min(count, indexAt(scrollTop + height) + 1 + overscan) : count;
+  /** The top edge in slot pixels: negative while the chrome above the rows is on screen. */
+  const rel = scrollTop - origin;
+  const visibleStart = Math.max(0, Math.min(count, indexAt(rel) - overscan));
+  const visibleEnd = Math.min(count, indexAt(rel + height) + 1 + overscan);
+  const start = windowed ? visibleStart : 0;
+  const end = windowed ? visibleEnd : count;
   const padTop = windowed ? (prefix[start] ?? 0) : 0;
 
   /**
@@ -250,6 +286,10 @@ export function useListWindow({
        edge); the browser's own scroll anchoring on top of it corrects the same move twice — a
        row growing above the viewport moved the rows on screen by its growth, the other way. */
     if (found && el.style.overflowAnchor !== "none") el.style.overflowAnchor = "none";
+    /* WHERE SLOT 0 IS — the top spacer's place, which moves with whatever stands above it. */
+    const o = listOrigin(el);
+    originAt.current = o;
+    if (Math.abs(o - origin) >= 0.5) setOrigin(o);
 
     if (heights.current.size === 0) {
       /* The pre-cache fallback, for a list that stamps no index: one row's height, taken only at
@@ -277,25 +317,28 @@ export function useListWindow({
       for (let j = start; j < i; j += 1) y += priced(j);
       return y;
     };
+    /* While the top edge was inside the rows, the item under it is held through a move of the
+       origin too; above them, the chrome is what is being read and the rows follow it. */
     const a = anchor.current;
     if (a && a.count === count && a.index >= start && a.index < end) {
-      const delta = drawnOffset(a.index) - a.offset;
+      const delta = drawnOffset(a.index) - a.offset + (a.inRows ? o - a.origin : 0);
       if (Math.abs(delta) >= 0.5) {
         el.scrollTop += delta;
         setScrollTop(el.scrollTop);
       }
     }
+    const edge = el.scrollTop - o;
     let idx = start;
     let off = padTop;
-    while (idx + 1 < end && off + priced(idx) <= el.scrollTop) {
+    while (idx + 1 < end && off + priced(idx) <= edge) {
       off += priced(idx);
       idx += 1;
     }
-    anchor.current = { index: idx, offset: off, count };
+    anchor.current = { index: idx, offset: off, count, origin: o, inRows: edge > 0 };
   });
 
   if (!windowed) {
-    return { start: 0, end: count, padTop: 0, padBottom: 0, rowHeight: mean, offsetOf, visibleStart, visibleEnd };
+    return { start: 0, end: count, padTop: 0, padBottom: 0, rowHeight: mean, origin, offsetOf, visibleStart, visibleEnd };
   }
 
   return {
@@ -304,6 +347,7 @@ export function useListWindow({
     padTop,
     padBottom: Math.max(0, (prefix[count] ?? 0) - (prefix[end] ?? 0)),
     rowHeight: mean,
+    origin,
     offsetOf,
     visibleStart,
     visibleEnd,

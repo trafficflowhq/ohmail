@@ -271,7 +271,7 @@ export function FolderView({
         <ListRows ariaLabel={folderLeafOf(folder.name)}>
           {ordered.length ? (
             <>
-              {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
+              <div aria-hidden data-window-top="" style={{ height: win.padTop }} />
               {ordered.slice(win.start, win.end).map((m, i) => {
                 const index = win.start + i;
                 // Each group's label rides its first row, so labels appear exactly where the

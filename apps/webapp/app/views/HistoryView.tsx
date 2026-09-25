@@ -41,17 +41,6 @@ export function newestFirst(rows: readonly EngineMessage[]): EngineMessage[] {
   return keyed.map((k) => k.m);
 }
 
-/**
- * Where slot 0 starts in the scroller's content. The window counts its offsets from the first
- * row, and the explainer note stands above the rows, so a scroll position is this plus the offset.
- */
-function rowsOrigin(el: HTMLElement): number {
-  const rows = el.querySelector<HTMLElement>(".rows");
-  const first = rows?.firstElementChild ?? rows;
-  if (!first) return 0;
-  return first.getBoundingClientRect().top - el.getBoundingClientRect().top - el.clientTop + el.scrollTop;
-}
-
 export function HistoryView({
   engine,
   version,
@@ -154,7 +143,7 @@ export function HistoryView({
     if (r !== null && r !== "gone") setPicked({ row: r, at: i });
     const el = scrollerRef.current;
     if (el) {
-      const top = rowsOrigin(el) + win.offsetOf(i);
+      const top = win.offsetOf(i);
       if (top < el.scrollTop || top > el.scrollTop + el.clientHeight - win.rowHeight) {
         el.scrollTop = Math.max(0, top - win.rowHeight);
       }
@@ -224,7 +213,7 @@ export function HistoryView({
         el.dispatchEvent(new Event("scroll"));
       }
     }
-    const at = held ? held.slot : slotAt(el.scrollTop - rowsOrigin(el) + 0.5);
+    const at = held ? held.slot : slotAt(el.scrollTop + 0.5);
     const month = tl.segments.find((s) => at >= s.start && at < s.start + s.count);
     const next = month ? month.start : at;
     if (next !== railAt) setRailAt(next);
@@ -251,7 +240,7 @@ export function HistoryView({
     pin.current = { slot: start, count: tl.length };
     setRailAt(start);
     const el = scrollerRef.current;
-    if (el) el.scrollTop = rowsOrigin(el) + win.offsetOf(start);
+    if (el) el.scrollTop = win.offsetOf(start);
     el?.dispatchEvent(new Event("scroll"));
   };
 
@@ -327,7 +316,7 @@ export function HistoryView({
         <ListRows ariaLabel={t("title")}>
           {tl.length > 0 ? (
             <>
-              {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
+              <div aria-hidden data-window-top="" style={{ height: win.padTop }} />
               {slots}
               {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
             </>

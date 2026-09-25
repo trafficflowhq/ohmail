@@ -218,7 +218,7 @@ export function TagView({
         <ListRows ariaLabel={tag.name}>
           {messages.length ? (
             <>
-            {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
+            <div aria-hidden data-window-top="" style={{ height: win.padTop }} />
             {messages.slice(win.start, win.end).map((m, k) => (
               <MessageRow
                 spoken={rowBadge.spoken}

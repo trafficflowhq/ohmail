@@ -407,7 +407,7 @@ export function TriageView({
         <ListRows ariaLabel={t("title")}>
           {entries.length ? (
             <>
-              {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
+              <div aria-hidden data-window-top="" style={{ height: win.padTop }} />
               {entries.slice(win.start, win.end).map((e, k) => row(e, win.start + k))}
               {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
             </>

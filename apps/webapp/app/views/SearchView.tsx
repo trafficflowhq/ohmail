@@ -848,7 +848,7 @@ export function SearchView({
                         </div>
                       ) : null}
                       <div role="list" aria-label={t("title")}>
-                        {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
+                        <div aria-hidden data-window-top="" style={{ height: win.padTop }} />
                         {storeSlots}
                         {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
                       </div>
