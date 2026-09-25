@@ -85,6 +85,22 @@ export function bodyTermOf(r: Pick<OrderedRule, "bodyContains">): string | null 
   return termOf(r.bodyContains);
 }
 
+/**
+ * Does `subject` satisfy the rule's subject term — THE one term match, asked by the router's
+ * `matches` and by the clients' per-message placement (`consent-cutline.ts`). Case-folded
+ * substring and nothing cleverer; an absent term is satisfied, `""` satisfies no term.
+ */
+export function subjectTermSatisfied(r: Pick<OrderedRule, "subjectContains">, subject: string): boolean {
+  const term = subjectTermOf(r);
+  return term === null || subject.toLowerCase().includes(term);
+}
+
+/** The same for the body term; `null`, a text not known to the caller, satisfies no term. */
+export function bodyTermSatisfied(r: Pick<OrderedRule, "bodyContains">, text: string | null): boolean {
+  const term = bodyTermOf(r);
+  return term === null || (text !== null && text.toLowerCase().includes(term));
+}
+
 /** A rule carrying the term outranks one without, within one kind: 0 wins. */
 const subjectRank = (r: OrderedRule): number => (subjectTermOf(r) === null ? 1 : 0);
 const bodyRank = (r: OrderedRule): number => (bodyTermOf(r) === null ? 1 : 0);

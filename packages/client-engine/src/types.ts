@@ -641,14 +641,13 @@ export interface RuleDTO {
   provenance: "manual" | "migrated" | "promoted" | "seeded-from-sent";
   enabled: boolean;
   /**
-   * The rule's second term, or `null` — from this address AND with this in
-   * the subject. A conjunction the server evaluates, never applied by a
-   * surface here; it is on the mirror because two surfaces need to see it:
-   * the rules list (two rules differing only by term would render as
-   * identical duplicates with two Revoke buttons) and the sender sheet's
-   * ladder (retargeting a narrow rule would silently widen it — the ladder
-   * must skip it). Optional, the one such field on `RuleDTO`: older servers
-   * and rows read as "no term"; `undefined` and `null` mean the same.
+   * The rule's second term, or `null` — from this address AND with this in the subject. A
+   * conjunction the server evaluates; here it decides only which of a sender's rules PLACES one
+   * message (the consent partition), never admission. The rules list needs it too (two rules
+   * differing only by term would render as duplicates with two Revoke buttons), and so does the
+   * sender sheet's ladder (retargeting a narrow rule would silently widen it — the ladder must skip
+   * it). Optional, the one such field on `RuleDTO`: older servers and rows read as "no term";
+   * `undefined` and `null` mean the same.
    */
   subjectContains?: string | null;
   /**

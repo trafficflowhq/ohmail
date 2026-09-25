@@ -2,7 +2,8 @@ import { parseMessageIds } from "./threading.js";
 import type { AuthVerdict } from "./sender-headers.js";
 import type { NormalizedMessage, Destination } from "./types.js";
 import {
-  bodyTermOf, compareRules, effectForDestination as effectOfDestination, subjectTermOf, type RuleEffect,
+  bodyTermSatisfied, compareRules, effectForDestination as effectOfDestination, subjectTermSatisfied,
+  type RuleEffect,
 } from "./rule-order.js";
 
 export type RuleKind = "sender" | "domain" | "header";
@@ -279,9 +280,7 @@ function domainOf(addr: string): string {
  * satisfies no term, the fail-closed direction for a narrowing conjunct.
  */
 function subjectSatisfies(r: Rule, msg: NormalizedMessage): boolean {
-  const term = subjectTermOf(r);
-  if (term === null) return true;
-  return msg.subject.toLowerCase().includes(term);
+  return subjectTermSatisfied(r, msg.subject);
 }
 
 
@@ -296,9 +295,7 @@ function subjectSatisfies(r: Rule, msg: NormalizedMessage): boolean {
  * place for the term and the haystack to disagree.
  */
 function bodySatisfies(r: Rule, msg: NormalizedMessage): boolean {
-  const term = bodyTermOf(r);
-  if (term === null) return true;
-  return msg.textBody.toLowerCase().includes(term);
+  return bodyTermSatisfied(r, msg.textBody);
 }
 
 /**

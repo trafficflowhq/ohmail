@@ -2,7 +2,10 @@ import {
   counterpartyEvidence, type CounterpartyEvidence, type CounterpartyMessage,
 } from "@trafficflow/core/sender-headers";
 import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/folder-name";
-import { compareRules, effectForDestination, type OrderedRule } from "@trafficflow/core/rule-order";
+import {
+  bodyTermOf, bodyTermSatisfied, compareRules, effectForDestination, subjectTermOf, subjectTermSatisfied,
+  type OrderedRule,
+} from "@trafficflow/core/rule-order";
 import type { EntityReader } from "./store.js";
 import { ownAddressKeys } from "./own-address.js";
 import { isOwnSent, isResurfaced, messagesByDateDesc, rulesList, senderKey } from "./selectors.js";
@@ -59,10 +62,14 @@ const CONSENTING_DESTINATIONS: ReadonlySet<string> = new Set<string>([
 
 export type SenderActivity = "active" | "dormant";
 
-/** The winning rule per address and per domain, under the server's order ({@link consentIndex}). */
+/** The rules in force per address and per domain, under the server's order ({@link consentIndex}). */
 export interface ConsentIndex {
+  /** The winner among every rule naming the key, terms or none: the standing decision. */
   readonly bySender: ReadonlyMap<string, RuleDTO>;
   readonly byDomain: ReadonlyMap<string, RuleDTO>;
+  /** Every rule naming the key, for the readers that rank the ones applying to one message. */
+  readonly allBySender: ReadonlyMap<string, readonly RuleDTO[]>;
+  readonly allByDomain: ReadonlyMap<string, readonly RuleDTO[]>;
 }
 
 export interface ConsentCounts {
@@ -165,14 +172,16 @@ function outranks(a: RuleDTO, b: RuleDTO): boolean {
 /**
  * Index the rules actually in force. Skipped: disabled rules; `header` rules (about a message,
  * not a person); rules pointing at the SCREENER (the absence of a decision). Two rules for one key
- * are ranked by the ROUTER'S order — deny over allow, then terms, provenance and id — so a sender's
- * twins present where the organizer files their mail; no instant is read, and the input order
- * decides nothing. A subject- or body-narrowed rule counts as a decision about the WHOLE
- * sender (mail 0050/0052): terms narrow placement, never admission. Never add a term check here.
+ * are ranked by the ROUTER'S order — deny over allow, then terms, provenance and id; no instant is
+ * read, and the input order decides nothing. A subject- or body-narrowed rule counts as a decision
+ * about the WHOLE sender (mail 0050/0052): terms narrow placement ({@link placedDestination}, per
+ * message), never admission. Never add a term check here.
  */
 export function consentIndex(rules: readonly RuleDTO[]): ConsentIndex {
   const bySender = new Map<string, RuleDTO>();
   const byDomain = new Map<string, RuleDTO>();
+  const allBySender = new Map<string, RuleDTO[]>();
+  const allByDomain = new Map<string, RuleDTO[]>();
   for (const r of rules) {
     if (!r.enabled) continue;
     if (r.destination === "ohmail/Screener") continue;
@@ -182,17 +191,38 @@ export function consentIndex(rules: readonly RuleDTO[]): ConsentIndex {
     if (!key) continue;
     const held = target.get(key);
     if (held === undefined || outranks(r, held)) target.set(key, r);
+    const all = r.kind === "sender" ? allBySender : allByDomain;
+    const list = all.get(key);
+    if (list === undefined) all.set(key, [r]);
+    else list.push(r);
   }
-  return { bySender, byDomain };
+  return { bySender, byDomain, allBySender, allByDomain };
+}
+
+/** The rules naming this address and the rules naming its domain. */
+function rulesNaming(index: ConsentIndex, address: string): readonly (readonly RuleDTO[])[] {
+  const addr = senderKey(address);
+  const domain = domainOfAddress(addr);
+  return [index.allBySender.get(addr) ?? [], (domain === null ? undefined : index.allByDomain.get(domain)) ?? []];
+}
+
+/** A rule with no term claims every message of the sender that no narrower rule claims. */
+function isBare(r: RuleDTO): boolean {
+  return subjectTermOf(r) === null && bodyTermOf(r) === null;
 }
 
 /**
- * The destination a decision names for this sender, or `null` when no decision exists — core
- * `standingRule`'s reading: the winner under the router's order among the rules naming the address
- * and its domain. At equal priority the address rule wins, the more specific claim, whichever way
- * the domain rule decides; a higher-priority domain rule wins over it, as the organizer files it.
+ * The ONE destination a decision names for this sender, or `null` when no decision exists. With a
+ * bare rule, the winner among the bare rules (the router files every message no term claims there);
+ * with only narrowed rules, core `standingRule`'s reading over all of them. At equal priority the
+ * address rule wins, the more specific claim; a higher-priority domain rule wins over it.
  */
 export function decidedDestination(index: ConsentIndex, address: string): Folder | null {
+  let bare: RuleDTO | undefined;
+  for (const list of rulesNaming(index, address)) {
+    for (const r of list) if (isBare(r) && (bare === undefined || outranks(r, bare))) bare = r;
+  }
+  if (bare !== undefined) return bare.destination;
   const addr = senderKey(address);
   const exact = index.bySender.get(addr);
   const domain = domainOfAddress(addr);
@@ -200,6 +230,25 @@ export function decidedDestination(index: ConsentIndex, address: string): Folder
   if (exact === undefined) return wide?.destination ?? null;
   if (wide === undefined) return exact.destination;
   return outranks(wide, exact) ? wide.destination : exact.destination;
+}
+
+/**
+ * Where the organizer FILES this message — `evaluateRules`' first two steps: the winner among the
+ * sender's rules whose terms this message satisfies; with none, a standing DENIAL is carried out,
+ * and a standing admission places nothing (`null`). A body term is not read here: the mirror row
+ * does not carry the text the router matches, so a body-narrowed rule places nothing on a client.
+ */
+function placedDestination(index: ConsentIndex, m: EngineMessage): Folder | null {
+  let winner: RuleDTO | undefined;
+  for (const list of rulesNaming(index, m.from.address)) {
+    for (const r of list) {
+      if (!subjectTermSatisfied(r, m.subject ?? "") || !bodyTermSatisfied(r, null)) continue;
+      if (winner === undefined || outranks(r, winner)) winner = r;
+    }
+  }
+  if (winner !== undefined) return winner.destination;
+  const standing = decidedDestination(index, m.from.address);
+  return standing !== null && effectForDestination(standing) === "deny" ? standing : null;
 }
 
 /**
@@ -439,9 +488,16 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
      * with nothing moved; and a DENY rule, the person's own answer, whose mail presents on the
      * screened-out shelf. Only an admission nobody has carried out is a question still open.
      */
-    const heldAtGate = consented && active && m.folder === "ohmail/Screener";
-    if (decided !== null && !heldAtGate) {
-      placeOf.set(m.id, decided);
+    // PLACED BY THE RULE THAT APPLIES TO THIS MESSAGE, as the organizer files it: a narrowed rule
+    // places only the mail its term names. `decided` stays the sender's standing (admission).
+    const placed = placedDestination(index, m);
+    const heldAtGate = placed !== null && CONSENTING_DESTINATIONS.has(placed) && active
+      && m.folder === "ohmail/Screener";
+    if (placed !== null && !heldAtGate) {
+      placeOf.set(m.id, placed);
+    } else if (decided !== null && placed === null) {
+      // Admitted by a narrowed rule that does not name this message: nothing places it.
+      placeOf.set(m.id, m.folder);
     } else if (rulesOnly) {
       placeOf.set(m.id, m.folder);
     } else if (active) {
