@@ -1,6 +1,7 @@
 import {
-  noticeSinkFor, setNoticeSink, UNMETERED, accessOf, isMetered, pricingOf,
-  type AccessPort, type AiPricingMarker, type EntitlementsComposition, type SpendPort, type Tx,
+  noticeSinkFor, setNoticeSink, UNMETERED, accessOf, isMetered, pricingOf, parkedAccountsOf,
+  type AccessPort, type AiPricingMarker, type EntitlementsComposition, type ParkedAccountsReader,
+  type SpendPort, type Tx,
 } from "@trafficflow/db";
 import {
   API_MAX_DURATION_MS, makePooledDb, recordApiFault, entitlementsFaultRow,
@@ -495,6 +496,19 @@ function customerMailerFor(cfg: HostConfig): MailService | null {
  */
 let sinksCache: { key: object; sinks: AlertSink[] } | null = null;
 
+/**
+ * The pager's parked set: the worker roster's reader over this host's memoised client, so both
+ * alert drivers and the roster answer "on duty" alike. `null` without a meter; lazy, so a request
+ * that never runs a pass never composes the client.
+ */
+function parkedAccountsFor(cfg: HostConfig): ParkedAccountsReader | null {
+  if (!cfg.entitlements) return null;
+  return (ids, now) => {
+    const read = parkedAccountsOf(servicesFor(cfg).entitlementsPort as EntitlementsComposition);
+    return read ? read(ids, now) : Promise.resolve(new Set<string>());
+  };
+}
+
 function alertSinksFor(cfg: HostConfig): AlertSink[] {
   if (sinksCache && sinksCache.key === cfg) return sinksCache.sinks;
   const sinks: AlertSink[] = [];
@@ -733,6 +747,7 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
         cronSecret: cfg.alerts.cronSecret ?? undefined,
         sinks: alertSinksFor(cfg),
         environment: cfg.environment,
+        parkedAccounts: parkedAccountsFor(cfg),
       }
       : undefined,
     // ABSENT ⇒ every `GET /admin/*` answers 404 — a deployment with no

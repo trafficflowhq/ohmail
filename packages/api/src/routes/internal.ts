@@ -352,7 +352,9 @@ async function alertPass(
       sinks: cfg.sinks ?? [],
       shards: cfg.shards,
       thresholds: cfg.thresholds,
-      ...(cfg.parkedAccounts ? { parkedAccounts: cfg.parkedAccounts } : {}),
+      // Forwarded as composed, `null` included: `null` is "this host parks nobody", absent is
+      // "unstated", and the page's wording follows which of the two it was told.
+      parkedAccounts: cfg.parkedAccounts,
       ...(cfg.accountsAtCap ? { accountsAtCap: cfg.accountsAtCap } : {}),
       repeatMs: cfg.repeatMs,
       source: "api",

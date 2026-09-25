@@ -311,6 +311,31 @@ export function isMetered(e: EntitlementsComposition): e is EntitlementsPort {
 }
 
 /**
+ * Which of these accounts are PARKED — the one answer both the worker's roster and every alert
+ * pass read, so the roster and the pager cannot disagree about who is on duty. `ok: false` is
+ * parked. `null` on an unmetered host: nobody parks there, and the caller says so explicitly.
+ * The client never throws and a fault answers last-known/allow, so a faulting read syncs more.
+ */
+export type ParkedAccountsReader =
+  (accountIds: readonly string[], now: Date) => Promise<Set<string>>;
+
+/** Bounded fan-out: one `access` per account, eight at a time. */
+export const PARKED_READ_CONCURRENCY = 8;
+
+export function parkedAccountsOf(entitlements: EntitlementsComposition): ParkedAccountsReader | null {
+  if (!isMetered(entitlements)) return null;
+  return async (accountIds) => {
+    const parked = new Set<string>();
+    for (let i = 0; i < accountIds.length; i += PARKED_READ_CONCURRENCY) {
+      const chunk = accountIds.slice(i, i + PARKED_READ_CONCURRENCY);
+      const verdicts = await Promise.all(chunk.map((id) => entitlements.access(id)));
+      chunk.forEach((id, j) => { if (!verdicts[j]!.ok) parked.add(id); });
+    }
+    return parked;
+  };
+}
+
+/**
  * WHAT ONE ACTION COSTS, IN CREDITS — asked, never held. The program that mints the debit states
  * its card on `/v1/access`; a quote is read from that answer so a person sees the figure before
  * anything is spent. `null` means this host states no price: an unmetered host charges nothing,

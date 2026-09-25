@@ -1,4 +1,4 @@
-import { users, providerFamily, UNMETERED, UNMETERED_ACCESS, type Tx } from "@trafficflow/db";
+import { users, providerFamily, UNMETERED, UNMETERED_ACCESS, parkedAccountsOf, type Tx } from "@trafficflow/db";
 import {
   acquireImapSlot, releaseImapSlot, webhookAlertSink,
   recordApiFault,
@@ -595,6 +595,9 @@ export function buildDeps(req: Request, rt: ServerRuntime): ApiDeps {
         secret: cfg.alerts.secret,
         sinks: alertSinksFor(cfg, rt.logger),
         environment: cfg.environment,
+        // `null`: the bag's port is UNMETERED, so this server parks nobody and every stale
+        // mailbox is on duty — the page may say its owner is not receiving mail.
+        parkedAccounts: parkedAccountsOf(UNMETERED),
       }
       : undefined,
     // NO admin, NO adminDb: selfHostRoutes carries no admin group at all — account isolation on

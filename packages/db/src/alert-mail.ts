@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import {
   classifyTransportError, nodePostJson, renderAlertText,
-  type AlertSink, type PostJson,
+  type AlertDeliveryResult, type AlertSink, type PostJson, type ResolutionNotice,
 } from "./alerts.js";
 
 /**
@@ -32,16 +33,15 @@ export interface ResendAlertSinkConfig {
 }
 
 /**
- * How long one notification's Idempotency-Key stays stable across delivery retries. The failure
- * this closes: a POST the provider accepted whose response was lost looks like a failure, the
- * pass releases its claim, and the cadence sends another mail — per minute, for as long as the
- * response path is broken. The design direction stands (a duplicate page beats a swallowed one),
- * so the key is bucketed rather than per-notification-forever: retries inside one window dedupe
- * on the provider, and the inverse hazard — a stored key blocking a page that never sent — is
- * bounded to one bucket. Ten minutes: an order larger than the retry cadence, an order smaller
- * than the one-hour repeat.
+ * How long one notification's Idempotency-Key stays stable across delivery retries. A POST the
+ * provider accepted whose response was lost looks like a failure, and the retry must dedupe
+ * rather than mail again; a stored key blocking a page that never sent is bounded to one bucket.
+ * The key also carries a digest of the exact body: the provider refuses a reused key with a new
+ * body, and a count that moved between two sends inside one bucket silenced the pager for it.
  */
 export const ALERT_IDEMPOTENCY_BUCKET_MS = 10 * 60 * 1000;
+
+const digest = (body: string): string => createHash("sha256").update(body).digest("hex").slice(0, 32);
 
 /**
  * What redaction scrubs BEYOND the one key this sink holds.
@@ -123,46 +123,66 @@ export function resendAlertSink(
     };
   }
 
+  /** One POST under one key; the key is a function of the body, so it cannot meet another. */
+  async function send(body: string, idem: string): Promise<AlertDeliveryResult> {
+    try {
+      const res = await post(RESEND_EMAILS_URL, body, {
+        authorization: `Bearer ${apiKey}`,
+        "Idempotency-Key": idem,
+      });
+      if (res.status >= 200 && res.status < 300) return { ok: true, outcome: "ok" };
+      return {
+        ok: false,
+        outcome: "refused",
+        error: redactCredential(`HTTP ${res.status}${res.body ? ` — ${res.body}` : ""}`, apiKey),
+      };
+    } catch (err) {
+      // Never throws — the other sink must still get its chance — and it says what happened.
+      // Every property goes through {@link asText}: a thrown value owes this formatter nothing.
+      const e = err as { name?: unknown; message?: unknown; cause?: { message?: unknown; code?: unknown } };
+      const causeRaw = e?.cause?.code ?? e?.cause?.message;
+      const cause = causeRaw === undefined || causeRaw === "" ? "" : asText(causeRaw);
+      const name = e?.name === undefined ? "Error" : asText(e.name);
+      const message = e?.message === undefined ? asText(err) : asText(e.message);
+      const text = `${name}: ${message}${cause ? ` (${cause})` : ""}`;
+      return { ok: false, outcome: classifyTransportError(err), error: redactCredential(text, apiKey) };
+    }
+  }
+
   return {
     name: "mail",
     async notify(alerts, ctx) {
-      try {
-        const body = JSON.stringify({
-          from,
-          to: [to],
-          subject: `ohmail ${ctx.environment}: ${alerts.length} alert(s) firing`,
-          text: renderAlertText(alerts, ctx),
-        });
-        // The Idempotency-Key makes a lost RESPONSE distinguishable from a lost SEND on the
-        // provider's side: retries inside one bucket replay the stored result instead of
-        // mailing again. Sorted keys, so evaluation order cannot split one page into two.
-        const bucket = Math.floor(ctx.now.getTime() / ALERT_IDEMPOTENCY_BUCKET_MS);
-        const idem = `tf-alert/${ctx.source}/${bucket}/${alerts.map((a) => a.key).sort().join("+")}`;
-        const res = await post(RESEND_EMAILS_URL, body, {
-          authorization: `Bearer ${apiKey}`,
-          "Idempotency-Key": idem,
-        });
-        if (res.status >= 200 && res.status < 300) return { ok: true, outcome: "ok" };
-        return {
-          ok: false,
-          outcome: "refused",
-          error: redactCredential(
-            `HTTP ${res.status}${res.body ? ` — ${res.body}` : ""}`, apiKey,
-          ),
-        };
-      } catch (err) {
-        // Never throws — the other sink must still get its chance — and it says what
-        // happened, because "the mail arm refused" with no reason attached is the state the
-        // webhook arm spent months in. Every property goes through {@link asText}: a thrown
-        // value owes this formatter nothing, least of all string-typed fields.
-        const e = err as { name?: unknown; message?: unknown; cause?: { message?: unknown; code?: unknown } };
-        const causeRaw = e?.cause?.code ?? e?.cause?.message;
-        const cause = causeRaw === undefined || causeRaw === "" ? "" : asText(causeRaw);
-        const name = e?.name === undefined ? "Error" : asText(e.name);
-        const message = e?.message === undefined ? asText(err) : asText(e.message);
-        const text = `${name}: ${message}${cause ? ` (${cause})` : ""}`;
-        return { ok: false, outcome: classifyTransportError(err), error: redactCredential(text, apiKey) };
-      }
+      const body = JSON.stringify({
+        from,
+        to: [to],
+        subject: `ohmail ${ctx.environment}: ${alerts.length} alert(s) firing`,
+        text: renderAlertText(alerts, ctx),
+      });
+      // Retries of the same page inside one bucket replay the stored result instead of mailing
+      // again; a different body or alert set is a different key, so nothing is refused.
+      const bucket = Math.floor(ctx.now.getTime() / ALERT_IDEMPOTENCY_BUCKET_MS);
+      const keys = alerts.map((a) => a.key).sort().join("+");
+      return send(body, `tf-alert/${ctx.source}/${bucket}/${digest(`${keys}\n${body}`)}`);
+    },
+    async notifyResolved(notices, ctx) {
+      // Built from the notices and the environment only: whichever driver retries, whenever,
+      // sends these exact bytes under this exact key.
+      const body = JSON.stringify({
+        from,
+        to: [to],
+        subject: `ohmail ${ctx.environment}: resolved — ${notices.map((n) => n.key).join(", ")}`,
+        text: renderResolvedText(notices, ctx.environment),
+      });
+      const first = notices[0]!;
+      return send(body, `tf-alert/resolved/${first.key}/${first.resolvedAt}/${digest(body)}`);
     },
   };
+}
+
+/** The resolved notice's text: key, kind, the occurrence's span and its page count. */
+function renderResolvedText(notices: readonly ResolutionNotice[], environment: string): string {
+  const lines = notices.map((n) =>
+    `• ${n.key} (${n.kind}) — firing since ${n.openedAt}, resolved at ${n.resolvedAt}, ` +
+    `paged ${n.pages} time(s). It has stayed resolved since.`);
+  return `ohmail ${environment} — resolved\n\n${lines.join("\n")}`;
 }

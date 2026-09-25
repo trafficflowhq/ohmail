@@ -185,9 +185,9 @@ export interface AlertsConfig {
   thresholds?: Partial<AlertThresholds>;
   /**
    * THE TWO POPULATIONS THE RULES CANNOT READ FROM THIS DATABASE — who is parked, and who is at
-   * their storage cap. Both are limits whoever operates the service sets, so both arrive as
-   * readers the host composes; ABSENT means nobody is parked and nobody is at a cap, which is
-   * the truth on a deployment that meters nothing and the fail-open direction on one that does.
+   * their storage cap. Both arrive as readers the host composes. The parked reader is the one
+   * the worker's roster uses (`parkedAccountsOf`), `null` where nobody parks; absent, the pass
+   * pages without claiming its stale mailboxes are on duty. Absent `accountsAtCap`: nobody.
    */
   parkedAccounts?: EvaluateOptions["parkedAccounts"];
   accountsAtCap?: EvaluateOptions["accountsAtCap"];

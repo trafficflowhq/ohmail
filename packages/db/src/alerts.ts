@@ -7,6 +7,7 @@ import {
 import { imapRefusalsInWindow } from "./imap-admission.js";
 import { apiFaultWindow, poolerRefusalsInWindow } from "./api-faults.js";
 import type { Tx } from "./change-log.js";
+import type { ParkedAccountsReader } from "./entitlements-port.js";
 
 /**
  * One evaluator, one delivery pass, two classes of finding. {@link AlertKind} is authoritative; a
@@ -373,15 +374,27 @@ export const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
 };
 
 /**
- * How long a firing critical alert waits before it pages again. Not zero (the alert address
- * people learn to filter) and not infinite (a fault nobody fixed must resurface). One hour: a
- * night of a broken worker is six mails, not three hundred; an alert seen and forgotten comes
- * back before the customer notices. Critical only, since the renotify policy split the tiers: a
- * standing critical is a production outage and the hourly nag is deliberate; everything else
- * holds for {@link DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS} while unchanged and re-pages at once on a
- * state change ({@link Alert.signature}).
+ * How long a firing critical alert waits before its next hourly reminder. A standing critical
+ * pages {@link DEFAULT_CRITICAL_HOURLY_PAGES} times an hour apart, then holds for
+ * {@link DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS} while unchanged: an hourly mail that runs for days
+ * is a mail nobody reads. Every tier re-pages at once on a state change
+ * ({@link Alert.signature}), so the hold costs nothing on the case that matters.
  */
 export const DEFAULT_ALERT_REPEAT_MS = 60 * 60 * 1000;
+
+/** Confirmed pages, the first included, before an unchanged critical falls to daily. */
+const DEFAULT_CRITICAL_HOURLY_PAGES = 3;
+
+/**
+ * The flap floor. A condition that fires again within this long of resolving continues its
+ * occurrence — send history, `opened_at` — instead of paging at once; past it, a re-open is a
+ * new occurrence. It is also how long a resolution must hold before it is announced.
+ */
+const DEFAULT_ALERT_FLAP_FLOOR_MS = 60 * 60 * 1000;
+
+/** A resolution older than the floor plus this is never announced: stale news, and a deploy
+ *  must not mail about every tombstone it finds. */
+const RESOLUTION_NOTICE_HORIZON_MS = 24 * 60 * 60 * 1000;
 
 /**
  * How long an unchanged standing non-critical alert waits before it pages again. The measured
@@ -452,6 +465,23 @@ export function alertSignature(a: Alert): string {
   return a.signature ?? `${a.severity}|${a.count}`;
 }
 
+/** The largest power of two at or below `n` (0 below 1): a count bucket that moves per doubling. */
+function pow2Floor(n: number): number {
+  return n < 1 ? 0 : 2 ** Math.floor(Math.log2(n));
+}
+
+/** `sync_lag:critical`'s age buckets — the worst mailbox's age, about once per doubling. */
+const SYNC_LAG_AGE_BUCKETS: ReadonlyArray<readonly [string, number]> = [
+  ["2h", 2 * 3600], ["4h", 4 * 3600], ["8h", 8 * 3600], ["16h", 16 * 3600],
+  ["1d", 24 * 3600], ["2d", 48 * 3600], ["4d", 96 * 3600],
+];
+
+function syncLagAgeBucket(seconds: number | null): string {
+  let label = "0";
+  for (const [name, at] of SYNC_LAG_AGE_BUCKETS) if ((seconds ?? 0) >= at) label = name;
+  return label;
+}
+
 /**
  * The effective CLASS of a firing alert — {@link Alert.cls}'s documented default.
  *
@@ -500,16 +530,13 @@ export interface EvaluateOptions {
    */
   driver?: AlertDriver;
   /**
-   * WHICH ACCOUNTS ARE LEGITIMATELY PARKED — composed by the host, absent on a deployment that
-   * meters nothing.
-   *
-   * Rules 4 and 5 exclude an account this deployment is not syncing, so a parked customer
-   * does not page anybody. That answer lives outside this database now, and ABSENT means "no
-   * account is parked": every lagging mailbox is reported, which is what an operator running
-   * their own server wants and is the fail-open direction — a missing reader can only add
-   * pages, never hide one.
+   * WHICH ACCOUNTS ARE PARKED — the roster's own reader (`parkedAccountsOf`), so the pager and
+   * the roster cannot answer differently. `null` states that this host parks nobody: every stale
+   * mailbox is on duty. ABSENT states nothing: stale mailboxes are still reported, but the page
+   * does not claim their owners are cut off, since parked ones may be among them. A reader that
+   * throws reads as absent, so the pass still pages.
    */
-  parkedAccounts?: (accountIds: readonly string[], now: Date) => Promise<Set<string>>;
+  parkedAccounts?: ParkedAccountsReader | null | undefined;
   /**
    * WHO IS AT THEIR STORAGE CAP — composed by the host, for `parkedAccounts`' reason: the cap
    * is a limit the operator sets, not a fact this database holds. Absent ⇒ nobody is at a cap,
@@ -666,10 +693,18 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   const behind = await schemaBehindAlert(db, opts);
   if (behind) return [behind];
 
-  /** Rules 4 and 5's parked set, from the host's reader or empty. One place, so the two rules
-   *  cannot disagree about what "on duty" means. */
-  const parkedOf = async (ids: readonly string[]): Promise<Set<string>> =>
-    ids.length === 0 || !opts.parkedAccounts ? new Set() : opts.parkedAccounts(ids, now);
+  /** Rules 4 and 5's parked set, from the host's reader. One place, so the two rules cannot
+   *  disagree about what "on duty" means; `known` is false when no reader was stated or it threw. */
+  const parkedOf = async (ids: readonly string[]): Promise<{ parked: Set<string>; known: boolean }> => {
+    const reader = opts.parkedAccounts;
+    if (reader === null || (reader && ids.length === 0)) return { parked: new Set(), known: true };
+    if (!reader) return { parked: new Set(), known: false };
+    try {
+      return { parked: await reader(ids, now), known: true };
+    } catch {
+      return { parked: new Set(), known: false };
+    }
+  };
 
   // ── 1. no leader heartbeat > threshold ────────────────────────────────────────────────
   //
@@ -855,7 +890,7 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
     ))
     .groupBy(mailboxes.accountId);
 
-  const parked = await parkedOf(laggingByAccount.map((r) => r.accountId));
+  const { parked, known: dutyKnown } = await parkedOf(laggingByAccount.map((r) => r.accountId));
   const onDuty = laggingByAccount.filter((r) => !parked.has(r.accountId));
   const lagCount = onDuty.reduce((n, r) => n + Number(r.count), 0);
   const parkedCount = laggingByAccount
@@ -883,6 +918,11 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
     : "";
   const minDate = (ds: Array<Date | null>): Date | null =>
     ds.reduce<Date | null>((min, d) => (d && (!min || d < min) ? d : min), null);
+  // What the page may claim follows what was measured: without a parked set, "on duty" and
+  // "not receiving mail" would be said about accounts that may be parked on purpose.
+  const dutyNoun = dutyKnown ? "mailbox(es) the worker is on duty for" : "mailbox(es)";
+  const dutyUnknown = " Which accounts are parked could not be read, so this may include " +
+    "mailboxes that are deliberately not synced.";
 
   // The promotion: how many accounts, as a share of how many there are. The warning tier is a
   // signal by default — a handful of mailboxes past the sustain cut is a throttling provider,
@@ -920,9 +960,10 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
       title: `${warningCount} mailbox${warningCount === 1 ? "" : "es"} behind by more than ` +
         `${humanAge(Math.round(effectiveMs / 1000))}`,
       detail:
-        `${warningCount} mailbox(es) the worker is on duty for have not synced within ` +
+        `${warningCount} ${dutyNoun} have not synced within ` +
         `${humanAge(Math.round(effectiveMs / 1000))}; the worst of them is ` +
-        `${humanAge(oldestSeconds)} behind. Mail delivery to them is delayed.` +
+        `${humanAge(oldestSeconds)} behind.` +
+        (dutyKnown ? " Mail delivery to them is delayed." : dutyUnknown) +
         (lagWide
           ? ` ${laggingAccounts} of ${dutyAccounts} on-duty account(s) are affected ` +
             `(${Math.round(lagShare * 100)}%) — past the promotion cut, so this is being treated ` +
@@ -940,7 +981,9 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
       // spreads from two accounts to twenty at an unchanged mailbox count would flip to an
       // incident and then sit on the signal's own confirmation for the whole unchanged interval,
       // which is the same suppression the tier keys were split to avoid.
-      signature: `${lagWide ? "incident" : "signal"}|${warningCount}|${laggingAccounts}`,
+      // Counts BUCKETED: mailboxes cross the sustain cut on most passes of a slow scan, and a
+      // raw count re-paged each time. A doubling of either population is the change that pages.
+      signature: `${lagWide ? "incident" : "signal"}|${pow2Floor(warningCount)}|${pow2Floor(laggingAccounts)}`,
     });
   }
   if (criticalCount > 0) {
@@ -954,10 +997,12 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
       title: `${criticalCount} mailbox${criticalCount === 1 ? "" : "es"} behind by more than ` +
         `${humanAge(Math.round(t.syncLagCriticalMs / 1000))}`,
       detail:
-        `${criticalCount} mailbox(es) the worker is on duty for have not synced within ` +
+        `${criticalCount} ${dutyNoun} have not synced within ` +
         `${humanAge(Math.round(t.syncLagCriticalMs / 1000))}; the worst is ` +
-        `${humanAge(oldestSeconds)} behind. ` +
-        `${criticalCount === 1 ? "Its owner is" : "Their owners are"} not receiving mail.` +
+        `${humanAge(oldestSeconds)} behind.` +
+        (dutyKnown
+          ? ` ${criticalCount === 1 ? "Its owner is" : "Their owners are"} not receiving mail.`
+          : dutyUnknown) +
         parkedSuffix,
       count: criticalCount,
       oldestSeconds,
@@ -967,6 +1012,9 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
       cls: "incident",
       affectedAccounts: onDuty.filter((r) => Number(r.criticalCount) > 0).length,
       fixHref: "/worker",
+      // The worst age in doubling buckets: a lag that keeps growing re-pages about once per
+      // doubling, and one that stands still falls to the daily reminder.
+      signature: `critical|${pow2Floor(criticalCount)}|${syncLagAgeBucket(oldestSeconds)}`,
     });
   }
 
@@ -978,7 +1026,7 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   // behaving as specified — mail still arrives and organizes, the user has been told — but a
   // human should know who is bumping the ceiling before the support mail arrives.
   const atCap = opts.accountsAtCap ? await opts.accountsAtCap() : [];
-  const capParked = await parkedOf(atCap.map((r) => r.accountId));
+  const { parked: capParked } = await parkedOf(atCap.map((r) => r.accountId));
   const atCapOnDuty = atCap.filter((r) => !capParked.has(r.accountId));
   if (atCapOnDuty.length > 0) {
     const worst = atCapOnDuty.reduce((m, r) => (r.bytes - r.storageBytesLimit > m.bytes - m.storageBytesLimit ? r : m));
@@ -1452,7 +1500,7 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
       // error count moves on every single pass during an outage, so it would re-page every
       // cadence for as long as the incident lasted. A whole percentage point of movement is a
       // real change; the third decimal place is not.
-      signature: `5xx|${Math.round(rate * 100)}`,
+      signature: `5xx|${pow2Floor(Math.round(rate * 100))}`,
     });
   }
 
@@ -1484,9 +1532,9 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
       // The envelope records the fault above the session, so no row carries an account.
       affectedAccounts: null,
       fixHref: "/reliability",
-      // Bucketed to a whole ten, for the reason the rule above buckets its rate: the raw count
-      // moves on every pass during an incident and would re-page each cadence.
-      signature: `faults|${Math.floor(r.faults / 10) * 10}`,
+      // Bucketed per doubling, for the reason the rule above buckets its rate: a count over a
+      // sliding window moves on every pass during an incident, and tens still re-paged each one.
+      signature: `faults|${pow2Floor(r.faults)}`,
     });
   }
 
@@ -1516,7 +1564,7 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
       cls: "incident",
       affectedAccounts: null,
       fixHref: "/reliability",
-      signature: `pooler|${Math.floor(pooler.refusals / 10) * 10}`,
+      signature: `pooler|${pow2Floor(pooler.refusals)}`,
     });
   }
 
@@ -1560,6 +1608,7 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
         // keyed per mailbox — so this rule cannot answer how many accounts are behind it.
         affectedAccounts: null,
         fixHref: "/reliability",
+        signature: `refused|${pow2Floor(refusals)}`,
       });
     }
   } catch (err) {
@@ -1841,6 +1890,24 @@ export function classifyTransportError(err: unknown): AlertSinkOutcome {
 export interface AlertSink {
   readonly name: string;
   notify(alerts: readonly Alert[], ctx: AlertNotifyContext): Promise<boolean | AlertDeliveryResult>;
+  /**
+   * Optional: say once that a condition which paged has stayed resolved past the flap floor.
+   * Same never-throws contract. A retry must be byte-identical, so the text is built from the
+   * notice alone — never from `ctx.now` or `ctx.source`.
+   */
+  notifyResolved?(
+    notices: readonly ResolutionNotice[], ctx: AlertNotifyContext,
+  ): Promise<boolean | AlertDeliveryResult>;
+}
+
+/** One resolution worth announcing: fixed for its (key, resolvedAt), so every retry is equal. */
+export interface ResolutionNotice {
+  key: string;
+  kind: string;
+  openedAt: string;
+  resolvedAt: string;
+  /** Confirmed pages this occurrence sent. */
+  pages: number;
 }
 
 export interface AlertNotifyContext {
@@ -2192,12 +2259,18 @@ export interface AlertPassOptions extends EvaluateOptions {
    * {@link DEFAULT_CLAIM_TTL_MS}. Tests set it small to make lease expiry observable.
    */
   claimTtlMs?: number;
+  /** Default {@link DEFAULT_CRITICAL_HOURLY_PAGES}. */
+  criticalHourlyPages?: number;
+  /** Default {@link DEFAULT_ALERT_FLAP_FLOOR_MS}. */
+  flapFloorMs?: number;
   source?: string;
   environment?: string;
 }
 
 export interface AlertPassResult {
   now: string;
+  /** Keys this pass announced as resolved (the resolution held past the flap floor). */
+  resolutionsTold: string[];
   /** Everything currently wrong. */
   firing: Alert[];
   /** The subset this pass actually notified about (new, or past the repeat interval). */
@@ -2443,6 +2516,54 @@ function notWrittenByANewerPass(at: Date) {
     and coalesce(${alertState.resolvedAt}, '-infinity'::timestamptz) <= ${iso}::timestamptz`;
 }
 
+/**
+ * Announce resolutions that held past the flap floor, one notice per key that paged. The claim is
+ * one fenced UPDATE on the lease (the row lock serialises two drivers); a confirm spends the
+ * occurrence's `notify_count`, so the same resolution is never told twice; a refusal releases the
+ * lease and the next pass retries the identical notice. Sinks without `notifyResolved` are skipped.
+ */
+async function tellResolutions(
+  db: Tx, sinks: readonly AlertSink[], ctx: AlertNotifyContext, floorAt: Date, leaseUntil: Date,
+): Promise<string[]> {
+  const tellers = sinks.filter((s) => typeof s.notifyResolved === "function");
+  if (tellers.length === 0) return [];
+  const horizon = new Date(floorAt.getTime() - RESOLUTION_NOTICE_HORIZON_MS);
+  const owed = await db.update(alertState)
+    .set({ claimedUntil: leaseUntil })
+    .where(and(
+      isNotNull(alertState.resolvedAt),
+      lte(alertState.resolvedAt, floorAt),
+      gt(alertState.resolvedAt, horizon),
+      gt(alertState.notifyCount, 0),
+      or(isNull(alertState.claimedUntil), lte(alertState.claimedUntil, ctx.now)),
+      notWrittenByANewerPass(ctx.now),
+    ))
+    .returning({
+      key: alertState.alertKey, kind: alertState.kind, openedAt: alertState.openedAt,
+      resolvedAt: alertState.resolvedAt, pages: alertState.notifyCount,
+    });
+  const told: string[] = [];
+  const iso = (d: unknown): string => new Date(d as string).toISOString();
+  for (const row of [...owed].sort((a, b) => a.key.localeCompare(b.key))) {
+    const notice: ResolutionNotice = {
+      key: row.key, kind: row.kind, openedAt: iso(row.openedAt),
+      resolvedAt: iso(row.resolvedAt), pages: Number(row.pages),
+    };
+    let ok = false;
+    for (const sink of tellers) {
+      try {
+        const out = await sink.notifyResolved!([notice], ctx);
+        if (typeof out === "boolean" ? out : out.ok) ok = true;
+      } catch { /* never throws by contract; a thrown one is a refusal */ }
+    }
+    await db.update(alertState)
+      .set(ok ? { notifyCount: 0, claimedUntil: null } : { claimedUntil: null })
+      .where(and(eq(alertState.alertKey, row.key), eq(alertState.claimedUntil, leaseUntil)));
+    if (ok) told.push(row.key);
+  }
+  return told;
+}
+
 export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise<AlertPassResult> {
   const now = opts.now ?? new Date();
   const repeatMs = opts.repeatMs ?? DEFAULT_ALERT_REPEAT_MS;
@@ -2489,6 +2610,7 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       // must never be spelled as "it cleared", which is the same rule the scoped-kind exemption
       // above enforces for a rule an arm declines to evaluate.
       resolved: [],
+      resolutionsTold: [],
       delivered,
       failedSinks: failed,
       sinkErrors: errors,
@@ -2536,7 +2658,12 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   //
   // BEFORE the claim, not after: the claim is an UPDATE, so the row has to exist for a first
   // observation to be claimable at all.
+  const flapFloorMs = opts.flapFloorMs ?? DEFAULT_ALERT_FLAP_FLOOR_MS;
+  const floorAt = new Date(now.getTime() - flapFloorMs);
+  const reopenedAfterFloor = sql`(${alertState.resolvedAt} is not null
+    and ${alertState.resolvedAt} <= ${floorAt.toISOString()}::timestamptz)`;
   for (const alert of firing) {
+    const demoted = sql`(${alertState.cls} = 'incident' and ${alertClass(alert)} = 'signal')`;
     await db
       .insert(alertState)
       .values({
@@ -2586,26 +2713,18 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
           fixHref: alert.fixHref ?? null,
           title: alert.title,
           count: alert.count,
-          // A demotion clears the delivery history — the missing half that suppressed a real
-          // outage. `notified_signature` is written only by a confirmed delivery and a signal
-          // never delivers, so a key that pages, drops to a signal, and comes back is compared
-          // against the last incident's signature — identical, and the second outage pages nobody
-          // for up to a day. Demoting therefore ENDS the occurrence: stamp, signature and count
-          // all go, so a later promotion is a first observation the claim pages at once
-          // (promotions leave the history alone — clearing there would re-page every upward
-          // wobble). A re-open ends the occurrence too: clearing only `resolved_at` carried the
-          // old stamps into a new outage, so the claim suppressed its page. A condition that
-          // resolved and fires again is a new occurrence: new `opened_at`, no delivery history.
-          openedAt: sql`case when ${alertState.resolvedAt} is not null
+          // A demotion ENDS the occurrence: stamp, signature and count go, so a later promotion
+          // is a first observation the claim pages at once — kept, a key that paged, dropped to a
+          // signal and came back compared equal and the second outage paged nobody for a day.
+          // A re-open past the flap floor ends it too (new `opened_at`, no history). A re-open
+          // INSIDE the floor continues it: wiping the history there paged every flap at once.
+          openedAt: sql`case when ${reopenedAfterFloor}
             then ${now.toISOString()}::timestamptz else ${alertState.openedAt} end`,
-          notifiedAt: sql`case when ${alertState.resolvedAt} is not null
-              or (${alertState.cls} = 'incident' and ${alertClass(alert)} = 'signal')
+          notifiedAt: sql`case when ${reopenedAfterFloor} or ${demoted}
             then null else ${alertState.notifiedAt} end`,
-          notifiedSignature: sql`case when ${alertState.resolvedAt} is not null
-              or (${alertState.cls} = 'incident' and ${alertClass(alert)} = 'signal')
+          notifiedSignature: sql`case when ${reopenedAfterFloor} or ${demoted}
             then null else ${alertState.notifiedSignature} end`,
-          notifyCount: sql`case when ${alertState.resolvedAt} is not null
-              or (${alertState.cls} = 'incident' and ${alertClass(alert)} = 'signal')
+          notifyCount: sql`case when ${reopenedAfterFloor} or ${demoted}
             then 0 else ${alertState.notifyCount} end`,
           // ── AND THE LEASE GOES WITH THEM, WHICH IS THE CONCURRENT HALF ──────────────
           //
@@ -2645,11 +2764,10 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   // never stamps `notify_count` — those fields record "a human was told", and writing them would
   // make a later promotion read as already delivered.
   const leaseUntil = new Date(now.getTime() + claimTtlMs);
+  const hourlyPages = opts.criticalHourlyPages ?? DEFAULT_CRITICAL_HOURLY_PAGES;
   const claimed: Alert[] = [];
   for (const alert of firing) {
     if (alertClass(alert) !== "incident") continue;
-    const intervalMs = alert.severity === "critical" ? repeatMs : renotifyUnchangedMs;
-    const dueBefore = new Date(now.getTime() - intervalMs);
     // The stale-evaluation floor for the change arm — see the header bullet.
     const changeBefore = new Date(now.getTime() - claimTtlMs);
     const sig = alertSignature(alert);
@@ -2661,6 +2779,8 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
         // THE PERSISTED CLASS, read under the lock — see the check below.
         cls: alertState.cls,
         lastSeenAt: alertState.lastSeenAt,
+        // A critical's interval depends on how many pages this occurrence already sent.
+        notifyCount: alertState.notifyCount,
       }, eq(alertState.alertKey, alert.key))
         .limit(1)
         .for("update");
@@ -2690,6 +2810,9 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       const heldUntil = cur.claimedUntil ? new Date(cur.claimedUntil as unknown as string) : null;
       if (heldUntil !== null && heldUntil.getTime() > now.getTime()) return false; // in flight
       const notifiedAt = cur.notifiedAt ? new Date(cur.notifiedAt as unknown as string) : null;
+      // First page plus two hourly reminders, then daily while unchanged; a change pages at once.
+      const hourly = alert.severity === "critical" && Number(cur.notifyCount ?? 0) < hourlyPages;
+      const dueBefore = new Date(now.getTime() - (hourly ? repeatMs : renotifyUnchangedMs));
       const due =
         notifiedAt === null ||
         notifiedAt.getTime() <= dueBefore.getTime() ||
@@ -2775,8 +2898,8 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
         // instead of deleting made that premise false: the uuid would sit on a tombstone
         // indefinitely on a quiet deployment. So the mark blanks every column that can carry one:
         // the fence needs the key, `last_seen_at` and `resolved_at`; the notification record
-        // stays so a condition re-firing inside its renotify interval does not page twice.
-        // Nothing else on a resolved row is read by anything, and a re-open overwrites all of it.
+        // stays for two readers: a re-open inside the flap floor continues the occurrence with
+        // it, and the resolution notice reads `notify_count`. A re-open overwrites the rest.
         fixHref: null,
         detail: null,
         title: null,
@@ -2788,6 +2911,10 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       .returning({ alertKey: alertState.alertKey })
       .then((rows) => { if (rows.length > 0) resolved.push(key); });
   }
+
+  const resolutionsTold = await tellResolutions(db, sinks, {
+    source: opts.source ?? "api", environment: opts.environment ?? "production", now,
+  }, floorAt, leaseUntil);
 
   const streak = opts.deliveryStreak;
   if (toNotify.length === 0) {
@@ -2807,7 +2934,7 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
     // Nothing was ATTEMPTED, so the streak is neither advanced nor cleared. A quiet hour is
     // not evidence that the pager works — that was the whole shape of the bug this reports.
     return {
-      now: now.toISOString(), firing, notified: [], resolved,
+      now: now.toISOString(), firing, notified: [], resolved, resolutionsTold,
       delivered: [], failedSinks: [], sinkErrors: [], undeliverable: false,
       sinkFailureStreak: streak?.consecutiveFailures ?? 0, escalate: null,
       sinkOutcomes: [], sinkDegraded: [],
@@ -2885,6 +3012,7 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
     firing,
     notified: toNotify,
     resolved,
+    resolutionsTold,
     delivered,
     failedSinks: failed,
     sinkErrors: errors,

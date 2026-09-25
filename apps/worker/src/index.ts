@@ -4,7 +4,7 @@ import {
   pruneIdempotencyKeys, pruneSendFingerprints, noticeSinkFor, setNoticeSink, accountSettings, mailboxCredentials, mailboxes,
   messages, folderState, junkSweepCandidateWhere, closeStoodDownAppointments,
   RELEASED_ORGANIZER_SEND_SENTENCE, capabilitiesColumn, exportPendingMovesOnStandDown,
-  UNMETERED, isMetered, AccountErasedError, type EntitlementsComposition,
+  UNMETERED, isMetered, parkedAccountsOf, AccountErasedError, type EntitlementsComposition,
   type StandDownExport,
 } from "@trafficflow/db";
 import {
@@ -1177,26 +1177,13 @@ export async function startWorkerWithLock(
     const obligations = spend ? refundObligationsOn(db as unknown as Tx) : undefined;
 
     /**
-     * WHICH ACCOUNTS ARE PARKED (mail 0124, the wall) — the roster's reader, composed from the
-     * SAME client the spend sites take and absent on a deployment that meters nothing, which is
-     * the self-host truth: nobody parks. `ok: false ⇒ parked`; the client never throws and a
-     * fault answers last-known/allow — fail-open, the direction the seam documents, because a
-     * faulting reader can only sync MORE and never drop a paying customer. One `access` per
-     * account per pass at bounded concurrency; the client's 60 s cache absorbs the cycle-tail's
-     * second read.
+     * WHICH ACCOUNTS ARE PARKED (mail 0124, the wall) — ONE reader for the roster AND the alert
+     * pass, composed from the SAME client the spend sites take; `null` on a deployment that
+     * meters nothing, the self-host truth: nobody parks. `ok: false ⇒ parked`; a fault answers
+     * last-known/allow, so a faulting reader can only sync more. The pass once read no parked set
+     * and paged hourly about accounts this roster had parked (`alert-pass-callers-name-parked`).
      */
-    const PARKED_READ_CONCURRENCY = 8;
-    const parkedAccountsReader: ParkedAccountsReader | undefined = isMetered(entitlements)
-      ? async (accountIds): Promise<Set<string>> => {
-          const parked = new Set<string>();
-          for (let i = 0; i < accountIds.length; i += PARKED_READ_CONCURRENCY) {
-            const chunk = accountIds.slice(i, i + PARKED_READ_CONCURRENCY);
-            const verdicts = await Promise.all(chunk.map((id) => entitlements.access(id)));
-            chunk.forEach((id, j) => { if (!verdicts[j]!.ok) parked.add(id); });
-          }
-          return parked;
-        }
-      : undefined;
+    const parkedAccountsReader: ParkedAccountsReader | null = parkedAccountsOf(entitlements);
 
     // The LIVE classifier, behind a per-process circuit breaker. ONE circuit for the process, because
     // the failure domain is the shared API key and endpoint — per-mailbox circuits would each burn
@@ -2825,7 +2812,7 @@ export async function startWorkerWithLock(
         });
       }
 
-      const roster = await loadRosterMailboxes(db, selection, new Date(), parkedAccountsReader);
+      const roster = await loadRosterMailboxes(db, selection, new Date(), parkedAccountsReader ?? undefined);
       const selected = roster.served;
       const served = selected.slice(0, maxMailboxes);
       const dropped = selected.slice(maxMailboxes);
@@ -4214,7 +4201,7 @@ export async function startWorkerWithLock(
       let passMailboxes = dutyMailboxes;
       try {
         passMailboxes = await asDatabaseFault("cycle.loadServedAccounts",
-          () => loadEnabledMailboxes(db, selection, new Date(), parkedAccountsReader));
+          () => loadEnabledMailboxes(db, selection, new Date(), parkedAccountsReader ?? undefined));
       } catch (err) {
         noteIfSharedDatabaseFault(err);
         log.error("served_accounts_load_failed", {
@@ -5131,6 +5118,8 @@ export async function startWorkerWithLock(
         const result = await runAlertPass(db as unknown as Tx, {
           sinks: alertSinks, shards: [], source: "worker", environment,
           deliveryStreak: alertDeliveryStreak,
+          // The roster's parked set: an account it does not sync is never on duty for a page.
+          parkedAccounts: parkedAccountsReader,
           // THE DRIVER'S OWN NAME, which is what makes two of the rules possible.
           //
           // `alert_driver_dark` looks at the OTHER driver's row — never its own — because a
