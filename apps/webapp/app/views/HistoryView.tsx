@@ -7,7 +7,7 @@
  * Nothing here has moved — every row names the server folder the message sits in. The mirror only
  * paints first and is replaced in place; no path here reads or writes the mirror's window.
  */
-import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { rowThreadOf } from "../shell/row-thread";
@@ -39,6 +39,17 @@ export function newestFirst(rows: readonly EngineMessage[]): EngineMessage[] {
   });
   keyed.sort((a, b) => b.t - a.t || (a.m.id < b.m.id ? 1 : a.m.id > b.m.id ? -1 : 0));
   return keyed.map((k) => k.m);
+}
+
+/**
+ * Where slot 0 starts in the scroller's content. The window counts its offsets from the first
+ * row, and the explainer note stands above the rows, so a scroll position is this plus the offset.
+ */
+function rowsOrigin(el: HTMLElement): number {
+  const rows = el.querySelector<HTMLElement>(".rows");
+  const first = rows?.firstElementChild ?? rows;
+  if (!first) return 0;
+  return first.getBoundingClientRect().top - el.getBoundingClientRect().top - el.clientTop + el.scrollTop;
 }
 
 export function HistoryView({
@@ -143,7 +154,7 @@ export function HistoryView({
     if (r !== null && r !== "gone") setPicked({ row: r, at: i });
     const el = scrollerRef.current;
     if (el) {
-      const top = win.offsetOf(i);
+      const top = rowsOrigin(el) + win.offsetOf(i);
       if (top < el.scrollTop || top > el.scrollTop + el.clientHeight - win.rowHeight) {
         el.scrollTop = Math.max(0, top - win.rowHeight);
       }
@@ -182,11 +193,65 @@ export function HistoryView({
     },
   });
 
-  /** The rail's jump: place the window at the month's first slot; the effect above fetches it. */
+  /**
+   * A RAIL PRESS HOLDS ITS SLOT AT THE TOP EDGE until the reader moves the list: the rows above it
+   * are priced before they are drawn, and their measured heights would move it after the jump.
+   * The rail marks the pressed month while the press holds (a year too short to reach the top
+   * edge still opens on its press), then the month under the top edge, never the overscan's.
+   */
+  const pin = useRef<{ slot: number; count: number } | null>(null);
+  const [railAt, setRailAt] = useState(0);
+  const slotAt = (y: number): number => {
+    let lo = 0;
+    let hi = Math.max(0, tl.length - 1);
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (win.offsetOf(mid) <= y) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  };
+  useLayoutEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    if (pin.current !== null && pin.current.count !== tl.length) pin.current = null;
+    const held = pin.current;
+    const node = held ? el.querySelector<HTMLElement>(`.rows > [data-index="${held.slot}"]`) : null;
+    if (node) {
+      const d = node.getBoundingClientRect().top - el.getBoundingClientRect().top - el.clientTop;
+      if (Math.abs(d) >= 1) {
+        el.scrollTop += d;
+        el.dispatchEvent(new Event("scroll"));
+      }
+    }
+    const at = held ? held.slot : slotAt(el.scrollTop - rowsOrigin(el) + 0.5);
+    const month = tl.segments.find((s) => at >= s.start && at < s.start + s.count);
+    const next = month ? month.start : at;
+    if (next !== railAt) setRailAt(next);
+  });
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return undefined;
+    const release = () => { pin.current = null; };
+    el.addEventListener("wheel", release, { passive: true });
+    el.addEventListener("touchstart", release, { passive: true });
+    el.addEventListener("pointerdown", release);
+    window.addEventListener("keydown", release, true);
+    return () => {
+      el.removeEventListener("wheel", release);
+      el.removeEventListener("touchstart", release);
+      el.removeEventListener("pointerdown", release);
+      window.removeEventListener("keydown", release, true);
+    };
+  }, []);
+
+  /** The rail's jump: the month's first slot at the top edge; the effect above fetches it. */
   const jumpTo = (start: number) => {
     tl.jump(start);
+    pin.current = { slot: start, count: tl.length };
+    setRailAt(start);
     const el = scrollerRef.current;
-    if (el) el.scrollTop = win.offsetOf(start);
+    if (el) el.scrollTop = rowsOrigin(el) + win.offsetOf(start);
     el?.dispatchEvent(new Event("scroll"));
   };
 
@@ -249,7 +314,7 @@ export function HistoryView({
           {t("explainerMore")}
         </InfoNote>
         {tl.state === "ready" && tl.segments.length > 1 ? (
-          <HistoryRail segments={tl.segments} at={win.start} onJump={jumpTo} />
+          <HistoryRail segments={tl.segments} at={railAt} onJump={jumpTo} />
         ) : null}
         {tl.state === "unanswered" ? (
           <div className="tail-row history-unanswered" role="status">

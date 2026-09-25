@@ -26,7 +26,7 @@ export function HistoryRail({
   onJump,
 }: {
   segments: readonly TimelineSegment[];
-  /** The first slot the window shows — the entry holding it is marked current. */
+  /** A slot of the month on show: the one pressed, else the one under the top edge. Its entry is current. */
   at: number;
   onJump: (start: number) => void;
 }) {
