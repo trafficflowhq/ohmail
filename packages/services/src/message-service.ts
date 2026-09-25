@@ -25,7 +25,6 @@ import {
   encodeListCursor, encodeNullableKeysetCursor,
 } from "./pagination.js";
 import { requireUuid } from "./ids.js";
-import { ownedMessages } from "./owned-messages.js";
 import {
   moveDestinationWord, routeMailboxWrite, writeReaderRequest, type PendingRequest,
 } from "./reader-request.js";
@@ -465,6 +464,17 @@ async function sizedThenFetch<R extends { messageId: string }>(
     const rows = await spec.fetch(db, taken);
     return { items: rows.map(spec.item), nextCursor: spec.cursor(taken, candidates) };
   }, { isolationLevel: "repeatable read", accessMode: "read only" });
+}
+
+/**
+ * EVERY MESSAGE THE ACCOUNT OWNS: its own rows, the deleted ones out. History's list, History's
+ * total and each mailbox's count in Settings ask this one question, so they state it once — the
+ * mailbox count wrote its own WHERE and counted the deleted rows History leaves out. `from` is the
+ * table or alias the statement names; the condition is also the History index's partial predicate.
+ */
+export function ownedMessages(accountId: string, from = "messages"): SQL {
+  const t = sql.identifier(from);
+  return sql`${t}.account_id = ${accountId} and ${t}.deleted_at is null`;
 }
 
 /**
