@@ -235,7 +235,8 @@ export function SenderMenu({
       <div className="sm-now">
         {subject.current
           ? t("nowIn", {
-              place: subject.current === "screener" ? t("placeScreener") : piles[subject.current],
+              place: subject.current === "screener" ? t("placeScreener")
+                : subject.current === "history" ? t("placeHistory") : piles[subject.current],
               count: subject.messages.length,
             })
           : t("nowSpread", { count: subject.messages.length })}

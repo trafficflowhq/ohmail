@@ -2949,6 +2949,7 @@
     "openFor": "Screening for {sender}",
     "aria": "Screening for {sender}",
     "placeScreener": "the Screener",
+    "placeHistory": "History",
     "nowIn": "{count, plural, one {1 message} other {# messages}} — now in {place}",
     "nowSpread": "{count, plural, one {1 message} other {# messages}} — spread across several views",
     "footRule": "Waiting in the Screener, so this becomes a rule: future mail from {sender} files there too. Mail of theirs already filed elsewhere stays where it is.",

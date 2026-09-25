@@ -232,6 +232,9 @@ export async function screenerAutoActPass(
           // The press's own default: the promoted rule reaches this sender's mail that already
           // left the gate. One decision, one meaning, whoever carried it.
           applyRetro: true,
+          // A pass never rewrites the person's own rules: a rule written after the page was read
+          // keeps deciding, as the selection's decided-sender filter would have had it.
+          retargetTwins: false,
         });
       });
       if (applied === null) {

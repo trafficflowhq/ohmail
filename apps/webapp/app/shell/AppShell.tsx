@@ -2038,11 +2038,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       consent.foldersEnabled, consent.resurfaceTime, rememberResurfaceTime, reader, barPanel, nowAt],
   );
 
-  // Resolved here rather than inside the popover so a sender whose last message has just
-  // been moved out from under it closes the popover instead of rendering an empty one.
+  // Resolved here so a sender whose last message has just moved closes the popover instead of
+  // rendering an empty one; the lists' partition rides in, so "Now in" names where rows are shown.
   const senderMenuFor = useMemo(
-    () => (senderMenu ? senderScreening(engine.verbRead(), senderMenu.messageId, senderMenu.address) : null),
-    [senderMenu, reader, derived],
+    () => (senderMenu ? senderScreening(engine.verbRead(), senderMenu.messageId, senderMenu.address, consentView?.placeOf) : null),
+    [senderMenu, reader, derived, consentView],
   );
 
   // Same shape and the same `derived` dep as above, for the same reason: a message whose row has

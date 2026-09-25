@@ -26,6 +26,7 @@ import {
   type RuleDTO,
 } from "@ohmail/client-engine";
 import type { DecisionDestination } from "@ohmail/ui";
+import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { ruleMatchesSender } from "./sender-audit";
 
 /** The five places a sender's mail can be screened to — the DecisionBar's own vocabulary. */
@@ -89,8 +90,8 @@ export const RETRO_VISIBLE_MOVES = 50;
 export interface ScreeningSubject {
   /** Every message the mirror holds for this subject, across all folders. */
   messages: EngineMessage[];
-  /** Where that mail sits, or null when it is spread across more than one view. */
-  current: ScreeningDest | "screener" | null;
+  /** Where the lists show that mail ({@link senderScreening}'s `placeOf`), or null when spread. */
+  current: ScreeningPlace | null;
   /** Still waiting: the ONLY state `POST /screener/:id` will resolve. */
   waiting: boolean;
   /** The representative message id that endpoint takes (the newest held one). */
@@ -115,8 +116,8 @@ export interface SenderScreening {
   name: string | null;
   /** Every message the mirror holds from this sender, across all folders. */
   messages: EngineMessage[];
-  /** Where their mail sits, or null when it is spread across more than one view. */
-  current: ScreeningDest | "screener" | null;
+  /** Where the lists show their mail, or null when it is spread across more than one view. */
+  current: ScreeningPlace | null;
   /** Still waiting: the ONLY state `POST /screener/:id` will resolve. */
   waiting: boolean;
   /** The representative message id that endpoint takes (the newest held one). */
@@ -135,6 +136,9 @@ export interface SenderScreening {
    */
   rules: RuleDTO[];
 }
+
+/** A place the lists show mail in: a pile, the gate, or History (`placeOf` answers `null`). */
+export type ScreeningPlace = ScreeningDest | "screener" | "history";
 
 const DEST_OF_FOLDER = new Map<Folder, ScreeningDest | "screener">([
   [FOLDER_OF_VIEW.ohbox, "ohbox"],
@@ -161,6 +165,8 @@ export function senderScreening(
   reader: EntityReader,
   messageId: string,
   address?: string,
+  /** The shell's consent partition: where each message is SHOWN. Absent, the filed folder. */
+  placeOf?: ReadonlyMap<string, Folder | null>,
 ): SenderScreening | null {
   const seed = reader.get<EngineMessage>("message", messageId);
   if (!seed) return null;
@@ -182,7 +188,7 @@ export function senderScreening(
   mine.sort(byDateDesc);
   theirs.sort(byDateDesc);
 
-  const sender = subjectOf(mine);
+  const sender = subjectOf(mine, placeOf);
   // The chip's display name, from the seed message's own entries: the sender's when the
   // override IS the sender (or there is none), else whatever the To/Cc entry wrote — the same
   // spelling the chip's face wore. Null for an address the seed does not carry.
@@ -201,7 +207,7 @@ export function senderScreening(
     representativeId: sender.representativeId,
     // With no domain there is nothing to widen to, so the domain subject IS the sender subject
     // and `SenderMenu` refuses to offer the switch. It is never a silently-empty second option.
-    scopes: { sender, domain: domain === "" ? sender : subjectOf(theirs) },
+    scopes: { sender, domain: domain === "" ? sender : subjectOf(theirs, placeOf) },
     rules: rulesList(reader).filter((r) => r.enabled && ruleMatchesSender(r, subjectAddress)),
   };
 }
@@ -217,13 +223,21 @@ export function domainOf(address: string): string {
   return at >= 0 ? address.slice(at + 1).trim().toLowerCase() : "";
 }
 
-/** The four facts the sheet renders, plus the sender count, for one already-sorted message set. */
-function subjectOf(messages: EngineMessage[]): ScreeningSubject {
-  const places = new Set(messages.map((m) => DEST_OF_FOLDER.get(m.folder)).filter(Boolean));
+/**
+ * The four facts the sheet renders, plus the sender count, for one already-sorted message set.
+ * `current` is where the LISTS show the mail — a rule's placement, History — never the filed
+ * folder when the two differ; `waiting` and the representative stay physical, the decide's door.
+ */
+function subjectOf(messages: EngineMessage[], placeOf?: ReadonlyMap<string, Folder | null>): ScreeningSubject {
+  const shown = (m: EngineMessage): ScreeningPlace | undefined => {
+    const place = placeOf?.has(m.id) ? placeOf.get(m.id)! : m.folder;
+    return place === null ? "history" : DEST_OF_FOLDER.get(canonicalDestination(place) as Folder);
+  };
+  const places = new Set(messages.map(shown).filter(Boolean));
   const held = messages.filter((m) => m.folder === FOLDER_OF_VIEW.screener);
   return {
     messages,
-    current: places.size === 1 ? ([...places][0] as ScreeningDest | "screener") : null,
+    current: places.size === 1 ? ([...places][0] as ScreeningPlace) : null,
     waiting: held.length > 0,
     // The newest HELD message, because `POST /screener/:id` resolves `:id` against held mail
     // only. Under domain scope that may belong to a different address than the one clicked —

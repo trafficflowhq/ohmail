@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, isNull, ne, sql, type SQL } from "drizzle-orm";
 import { accountSettings, contacts, folderState, messages, rules as rulesTbl } from "./schema-mail.js";
 import { recordChange, recordRuleDelta, type LedgerTx, type Tx } from "./change-log.js";
 import { dialect } from "./dialect/index.js";
@@ -287,6 +287,12 @@ export interface ApplyScreenerDecisionInput {
    * hundred already in Reads had no door to the four hundred.
    */
   applyRetro?: boolean;
+  /**
+   * Retarget the subject's rule twins to {@link appliedFolder}. Defaults `true`: a decision is the
+   * person's answer, and a deny written while the mail waited would otherwise outrank the promoted
+   * rule. A caller that is not a press (the auto-act pass) passes `false` and leaves their rules.
+   */
+  retargetTwins?: boolean;
 }
 
 /** A mailbox whose held bag this decision could NOT touch — the caller decides what to do about it. */
@@ -326,7 +332,7 @@ export async function applyScreenerDecision(
 ): Promise<ApplyScreenerDecisionResult> {
   const {
     accountId, scope, address, appliedFolder, decision, triggeringActionId, now,
-    stampBaseline = true, applyRetro = true,
+    stampBaseline = true, applyRetro = true, retargetTwins = true,
   } = input;
   const domain = domainOf(address);
 
@@ -369,6 +375,27 @@ export async function applyScreenerDecision(
   // replay — `claimIdempotencyKey`'s own `seq` field. The drain has no such replay contract and
   // simply discards it.
   let lastSeq = (await recordRuleDelta(ledger(tx), accountId, [rule!.id], "create"))[0]!;
+
+  // THE SUBJECT'S TWINS — the client's `pressOverTwins`, for this verb: every enabled, term-free
+  // rule of the same kind naming the subject and filing elsewhere now files where the person
+  // decided, so no twin outranks the promoted rule. `RulesService.update`'s retarget: the
+  // destination moves (the effect follows it) and the backlog is re-asked when the answer is yes.
+  if (retargetTwins) {
+    const retargeted = await tx.update(rulesTbl).set({
+      destination: appliedFolder, updatedAt: now,
+      ...(applyRetro ? { retroRequestedAt: now, retroDoneAt: null, retroCursor: null, retroMoved: 0 } : {}),
+    }).where(and(
+      eq(rulesTbl.accountId, accountId),
+      eq(rulesTbl.enabled, true),
+      eq(rulesTbl.kind, scope === "domain" ? "domain" : "sender"),
+      sql`lower(${rulesTbl.match}) = ${scope === "domain" ? domain : address}`,
+      isNull(rulesTbl.subjectContains),
+      isNull(rulesTbl.bodyContains),
+      ne(rulesTbl.destination, appliedFolder),
+    )).returning({ id: rulesTbl.id });
+    const seqs = await recordRuleDelta(ledger(tx), accountId, retargeted.map((r) => r.id), "update");
+    if (seqs.length > 0) lastSeq = seqs[seqs.length - 1]!;
+  }
 
   const heldMail = scope === "domain"
     ? await heldRowsForDomain(tx, accountId, domain)

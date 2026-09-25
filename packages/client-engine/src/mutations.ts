@@ -1,6 +1,8 @@
 import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { replySubject } from "@trafficflow/core/reply-subject";
-import { senderKey } from "./selectors.js";
+import { domainOfAddress } from "./consent-cutline.js";
+import { twinsElsewhere } from "./rule-twins.js";
+import { rulesList, senderKey } from "./selectors.js";
 import type { EntityReader } from "./store.js";
 import {
   FOLDER_OF_VIEW,
@@ -313,8 +315,16 @@ function derivedScreenerEffects(
       move: { from: msg.folder, to: destination },
     }));
 
-  const rule = promotedRule(rep.from, m.scope ?? "sender", destination, ctx);
+  const scope = m.scope ?? "sender";
+  const rule = promotedRule(rep.from, scope, destination, ctx);
   effects.push({ type: "rule", id: rule.id, entity: rule });
+  // The server retargets the subject's twins in the decide's own transaction
+  // (`applyScreenerDecision`), so the overlay does too: a deny twin left standing here went on
+  // presenting the admitted sender's mail in Screened.
+  const match = scope === "domain" ? domainOfAddress(key) : key;
+  for (const twin of match ? twinsElsewhere(rulesList(reader), scope, match, destination) : []) {
+    effects.push({ type: "rule", id: twin.id, entity: { ...twin, destination, updatedAt: iso } });
+  }
   return effects;
 }
 

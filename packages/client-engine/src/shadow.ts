@@ -14,7 +14,7 @@ export const SHADOWED_ROWS = {
   move: ["message"],
   message_delete: ["message"],
   triage_set: ["message", "message_state"],
-  screener_decide: ["message", "screener_sender"],
+  screener_decide: ["message", "screener_sender", "rule"],
   tag_assign: ["message"],
   feed_mark_seen: ["message"],
   mark_seen: ["message", "message_state"],

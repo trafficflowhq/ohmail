@@ -2949,6 +2949,7 @@
     "openFor": "Screening für {sender}",
     "aria": "Screening für {sender}",
     "placeScreener": "den Screener",
+    "placeHistory": "Historie",
     "nowIn": "{count, plural, one {1 Nachricht} other {# Nachrichten}} — jetzt in {place}",
     "nowSpread": "{count, plural, one {1 Nachricht} other {# Nachrichten}} — auf mehrere Ansichten verteilt",
     "footRule": "Wartet im Screener, daher wird das eine Regel: künftige Post von {sender} geht auch dorthin. Post von ihm, die schon anderswo einsortiert ist, bleibt, wo sie ist.",

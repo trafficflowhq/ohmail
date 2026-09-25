@@ -26,6 +26,16 @@ export function ruleTwins(rules: readonly RuleDTO[], kind: "sender" | "domain", 
     && r.match.trim().toLowerCase() === match);
 }
 
+/**
+ * The twins a press at `wanted` rewrites: every one filing elsewhere. The sheet's ladder and the
+ * decide's overlay both read it, so what the list shows after a decide is what the server wrote.
+ */
+export function twinsElsewhere(
+  rules: readonly RuleDTO[], kind: "sender" | "domain", match: string, wanted: Folder,
+): RuleDTO[] {
+  return ruleTwins(rules, kind, match).filter((r) => r.destination !== wanted);
+}
+
 /** The twin the router files the subject's mail by — the minimum under its order, input order aside. */
 export function twinWinner(twins: readonly RuleDTO[]): RuleDTO | null {
   let winner: RuleDTO | null = null;
@@ -40,7 +50,7 @@ export function pressOverTwins(
   if (twins.length === 0) {
     return { state: "created", writes: [{ kind: "rule_create", ruleKind: kind, match, destination: wanted, applyRetro }] };
   }
-  const retargets: EngineMutation[] = twins.filter((r) => r.destination !== wanted)
+  const retargets: EngineMutation[] = twinsElsewhere(twins, kind, match, wanted)
     .map((r) => ({ kind: "rule_update", ruleId: r.id, destination: wanted, applyRetro }));
   // An explicit `applyRetro: true` on a PATCH that does not move the rule is the server's re-arm.
   const rearms: EngineMutation[] = applyRetro
