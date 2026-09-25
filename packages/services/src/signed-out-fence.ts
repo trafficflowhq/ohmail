@@ -85,7 +85,7 @@ const KEPT_TRANSPORTS = ["imap", "smtp"] as const;
  * `meta` carries — a consent marker, a witness, an OAuth block, a key somebody adds tomorrow — is
  * dropped, so no reader of the column can be handed more than where the server is.
  */
-export function keptTransportMeta(value: unknown): SignedOutTransportMeta | null {
+function keptTransportMeta(value: unknown): SignedOutTransportMeta | null {
   if (typeof value !== "object" || value === null) return null;
   const v = value as Record<string, unknown>;
   const kept: SignedOutTransportMeta = {};

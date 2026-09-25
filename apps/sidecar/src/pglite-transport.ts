@@ -54,7 +54,7 @@ const ENOENT = 44, EPERM = 63, EXDEV = 75;
  * forgets it, a listing leaves the names out (a store an older build ran still holds an empty
  * `.lock.out`). Only the root's own ops are replaced; a rename across the boundary refuses (EXDEV).
  */
-export function keepTransportInMemory(FS: EmFs, pgdata: string, names: ReadonlySet<string> = PGLITE_TRANSPORT_NAMES): void {
+function keepTransportInMemory(FS: EmFs, pgdata: string, names: ReadonlySet<string> = PGLITE_TRANSPORT_NAMES): void {
   const root = FS.lookupPath(pgdata).node;
   const disk = root.node_ops;
   const file = FS.filesystems.MEMFS.ops_table?.file;

@@ -31,11 +31,11 @@ interface LaunchBearer {
 }
 
 /** The row's lifetime from the mint and from each renewal. */
-export const LAUNCH_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+const LAUNCH_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 /** After a failed renewal, how long a still-live bearer waits before asking the store again. */
 const RENEW_RETRY_MS = 60_000;
 
-export const LAUNCH_SESSION_EXPIRED = "launch_session_expired";
+const LAUNCH_SESSION_EXPIRED = "launch_session_expired";
 
 /** The one refusal both doors give their own ended bearer; the window names a state from it. */
 export function launchSessionExpiredResponse(): Response {
