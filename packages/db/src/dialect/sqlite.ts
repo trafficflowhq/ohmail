@@ -152,6 +152,55 @@ export function deliverLocalNotifyAtCommit<T extends object>(db: T): T {
   return db;
 }
 
+/**
+ * A typed query as FTS5 syntax that cannot refuse. Every letter-and-digit run is quoted, so an
+ * apostrophe, hyphen, colon or star separates words and is never an operator; a quoted span and a
+ * hyphenated word stay phrases, `-word` excludes and a bare `or` between words is OR — the
+ * spellings the server's web-search parser reads. `match` is null when only exclusions are left
+ * (then `exclude` names them) or nothing is.
+ */
+export function ftsQueryOf(q: string): { match: string | null; exclude: string | null } {
+  const phrase = (s: string): string | null => {
+    const runs = s.match(/[\p{L}\p{N}]+/gu);
+    return runs === null ? null : `"${runs.join(" ")}"`;
+  };
+  const terms: string[] = [];
+  const excluded: string[] = [];
+  for (const m of q.matchAll(/(-?)"([^"]*)"?|(\S+)/g)) {
+    const chunk = m[3];
+    if (chunk !== undefined && /^or$/i.test(chunk)) {
+      if (terms.length > 0 && terms[terms.length - 1] !== "OR") terms.push("OR");
+      continue;
+    }
+    const negated = chunk !== undefined ? chunk.startsWith("-") : m[1] === "-";
+    const term = phrase(chunk ?? m[2] ?? "");
+    if (term === null) continue;
+    (negated ? excluded : terms).push(term);
+  }
+  if (terms[terms.length - 1] === "OR") terms.pop();
+  const positive = terms.join(" ");
+  if (positive === "") return { match: null, exclude: excluded.length === 0 ? null : excluded.join(" OR ") };
+  const head = terms.includes("OR") ? `(${positive})` : positive;
+  return { match: [head, ...excluded.map((e) => `NOT ${e}`)].join(" "), exclude: null };
+}
+
+/** `col` among the rows `table` holds for this query — never a syntax error, whatever was typed. */
+function ftsRows(col: SQL, table: "messages_fts" | "message_bodies_fts" | "kb_entries_fts", q: string): SQL {
+  const f = ftsQueryOf(q);
+  const t = sql.raw(table);
+  if (f.match !== null) return sql`${col} IN (SELECT rowid FROM ${t} WHERE ${t} MATCH ${f.match})`;
+  if (f.exclude !== null) return sql`${col} NOT IN (SELECT rowid FROM ${t} WHERE ${t} MATCH ${f.exclude})`;
+  return sql`0`;
+}
+
+/** The bm25 rank of one row for this query, negated to rank as the server's does; 0 with no match. */
+function ftsRank(rowid: SQL, table: "messages_fts" | "kb_entries_fts", q: string): SQL {
+  const f = ftsQueryOf(q);
+  const t = sql.raw(table);
+  return f.match === null ? sql`0`
+    : sql`-COALESCE((SELECT bm25(${t}) FROM ${t} WHERE ${t} MATCH ${f.match} AND rowid = ${rowid}), 0)`;
+}
+
 export function sqliteDialect(): Dialect {
   return {
     name: "sqlite",
@@ -344,22 +393,17 @@ export function sqliteDialect(): Dialect {
       // corpus qualifies against the `m` and `b` its caller joins.
       lexical: (q: string, corpus: SearchCorpus): SearchArm => {
         if (corpus === "kb") {
-          return {
-            pred: sql`rowid IN (SELECT rowid FROM kb_entries_fts WHERE kb_entries_fts MATCH ${q})`,
-            rank: sql`-COALESCE((SELECT bm25(kb_entries_fts) FROM kb_entries_fts WHERE kb_entries_fts MATCH ${q} AND rowid = kb_entries.rowid), 0)`,
-          };
+          return { pred: ftsRows(sql`rowid`, "kb_entries_fts", q), rank: ftsRank(sql`kb_entries.rowid`, "kb_entries_fts", q) };
         }
         return {
-          pred: sql`(m.rowid IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ${q})
-                  or b.rowid IN (SELECT rowid FROM message_bodies_fts WHERE message_bodies_fts MATCH ${q}))`,
-          rank: sql`-COALESCE((SELECT bm25(messages_fts) FROM messages_fts WHERE messages_fts MATCH ${q} AND rowid = m.rowid), 0)`,
+          pred: sql`(${ftsRows(sql`m.rowid`, "messages_fts", q)} or ${ftsRows(sql`b.rowid`, "message_bodies_fts", q)})`,
+          rank: ftsRank(sql`m.rowid`, "messages_fts", q),
         };
       },
       lexicalArms: (q: string, from: SQL, where: SQL): SQL[] => [
-        sql`select m.id, m.date ${from} where ${where}
-              and m.rowid IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ${q})`,
+        sql`select m.id, m.date ${from} where ${where} and ${ftsRows(sql`m.rowid`, "messages_fts", q)}`,
         sql`select m.id, m.date ${from} join message_bodies b on b.message_id = m.id where ${where}
-              and b.rowid IN (SELECT rowid FROM message_bodies_fts WHERE message_bodies_fts MATCH ${q})`,
+              and ${ftsRows(sql`b.rowid`, "message_bodies_fts", q)}`,
       ],
       fuzzy: (q: string, corpus: SearchCorpus, _opts): SearchArm => {
         // There is no trigram index to have, so this is the degrade the server also falls back to
@@ -383,14 +427,8 @@ export function sqliteDialect(): Dialect {
       // The two FTS5 tables as the two word arms: subject/sender ranked by bm25, the body by
       // recency, as the server's arms rank. FTS5 reads a quoted span as a phrase.
       words: (q: string): MailWordArms => ({
-        head: {
-          pred: sql`m.rowid IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ${q})`,
-          rank: sql`-COALESCE((SELECT bm25(messages_fts) FROM messages_fts WHERE messages_fts MATCH ${q} AND rowid = m.rowid), 0)`,
-        },
-        text: {
-          pred: sql`b.rowid IN (SELECT rowid FROM message_bodies_fts WHERE message_bodies_fts MATCH ${q})`,
-          rank: sql`coalesce(m.date, 0)`,
-        },
+        head: { pred: ftsRows(sql`m.rowid`, "messages_fts", q), rank: ftsRank(sql`m.rowid`, "messages_fts", q) },
+        text: { pred: ftsRows(sql`b.rowid`, "message_bodies_fts", q), rank: sql`coalesce(m.date, 0)` },
       }),
       // The same two FTS5 tables as `words`, each word as itself and, from four letters, as the
       // start of a longer one (`"elevat"*`). No stemmer here, so a prefix IS the whole-word reach.
