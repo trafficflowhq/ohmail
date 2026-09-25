@@ -14,7 +14,6 @@ import {
   type LayoutChangeEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { forwardOffered, type ForwardAsk } from "@ohmail/client-engine";
 import { Copy } from "../copy";
 import { useLocale } from "../i18n/LocaleProvider";
 import { useTheme } from "../theme";
@@ -27,6 +26,7 @@ import {
   dayAtHour,
   dayNine,
   effectiveSignature,
+  forwardOffered,
   moveTargetsFor,
   moveTargetLabel,
   nextWeekAt,
@@ -44,6 +44,7 @@ import {
   todayEvening,
   tomorrowAt,
   tomorrowNine,
+  type ForwardAsk,
   type ResurfaceHorizon,
   type SignatureState,
   type WorldMail,

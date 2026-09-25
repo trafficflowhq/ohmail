@@ -336,6 +336,8 @@ export type WorldPileState = "reply_later" | "set_aside" | "bubbled_up" | "resur
  */
 /** How long the reader may say "loading" over a husk moved out of Junk — the engine's number. */
 export { JUNK_REFILL_BOUND_MS } from "@ohmail/client-engine";
+/** Forward's one predicate and its ask, for the reader — the engine's own, through this seam. */
+export { forwardOffered, type ForwardAsk } from "@ohmail/client-engine";
 
 export type WorldMail = Mail & {
   attachments?: WorldAttachment[];
