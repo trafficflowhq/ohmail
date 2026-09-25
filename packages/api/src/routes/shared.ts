@@ -12,8 +12,8 @@ import {
 import type { DraftPort } from "@trafficflow/core/mail";
 import {
   accessOf, isMetered,
-  type AccessPort, type AccessVerdict, type EntitlementsComposition, type EntitlementsPort,
-  type RefundObligationPort, type SpendPort,
+  type AccessPort, type AccessReadOpts, type AccessVerdict, type EntitlementsComposition,
+  type EntitlementsPort, type RefundObligationPort, type SpendPort,
 } from "@trafficflow/db";
 import type { ImapAdmissionPort, ApiDeps } from "../deps.js";
 
@@ -94,7 +94,7 @@ export function accessPortOf(deps: ApiDeps): AccessPort | undefined {
  * an install whose operator simply has no entitlements program.
  */
 export async function accessFor(
-  deps: ApiDeps, accountId: string, opts?: { fresh?: boolean },
+  deps: ApiDeps, accountId: string, opts?: AccessReadOpts,
 ): Promise<AccessVerdict | null> {
   const e = entitlementsOf(deps);
   return e === null ? null : accessOf(e, accountId, opts);

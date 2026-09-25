@@ -106,6 +106,28 @@ export function accessRefusedMayReach(route: { method: string; pattern: string; 
 }
 
 /**
+ * HOW THE ACCESS ARM MAY ANSWER A ROUTE. A `read` — a GET whose class writes nothing — may answer
+ * on a held allow while the verdict is re-read behind it; a `write` waits for the answer. `null`
+ * is a class this table does not know: the gate waits on it, and the census refuses it by name.
+ * Keyed on the class, so a new {@link CostClass} does not compile until it is classed here.
+ */
+export type AccessRouteClass = "read" | "write";
+
+const ACCESS_CLASS_OF_GET: Readonly<Record<CostClass, AccessRouteClass>> = {
+  unauthenticated: "write", ceremony: "write", read: "read", work: "write", connection: "write",
+  paid: "write",
+};
+
+export function accessRouteClassOf(
+  route: { method: unknown; cost: unknown },
+): AccessRouteClass | null {
+  if (typeof route.method !== "string" || typeof route.cost !== "string") return null;
+  if (!Object.prototype.hasOwnProperty.call(ACCESS_CLASS_OF_GET, route.cost)) return null;
+  return route.method.toUpperCase() === "GET"
+    ? ACCESS_CLASS_OF_GET[route.cost as CostClass] : "write";
+}
+
+/**
  * True iff `cost` is a class an unverified account may reach. Deliberately takes `unknown`:
  * the caller is a middleware reading a field that a JavaScript caller or an un-typechecked
  * test route can leave undefined, and the answer for "no declaration" must be `false`.

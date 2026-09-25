@@ -9,7 +9,7 @@ import { csrfTokenFor } from "./csrf.js";
 import { errorResponse } from "./responses.js";
 import { lookupIdempotent, storedResponse, type StoredIdempotent } from "./idempotency.js";
 import type { ApiDeps, SessionVia } from "./deps.js";
-import { accessRefusedMayReach, unverifiedMayReach } from "./router.js";
+import { accessRefusedMayReach, accessRouteClassOf, unverifiedMayReach } from "./router.js";
 import { accessFor, parseCookies } from "./routes/shared.js";
 import type { Handler, Route } from "./router.js";
 
@@ -525,7 +525,11 @@ export const withSpendGate: Middleware = (next, route) => async (req, deps, para
    * doors in `accessRefusedMayReach` stay open.
    */
   if (deps.session && !accessRefusedMayReach(route)) {
-    const verdict = await accessFor(deps, deps.session.accountId);
+    // A READ route may answer on a held allow while it is re-read behind it; everything else,
+    // an unclassed route included, waits for the answer (`accessRouteClassOf`).
+    const read = accessRouteClassOf(route) === "read";
+    const verdict = await accessFor(
+      deps, deps.session.accountId, read ? { staleAllow: true } : undefined);
     if (verdict && !verdict.ok) {
       // KEEP status 402 and code `subscription_required`: three shipped clients key their lock
       // on this code, and renaming it silently disables every one of them. `lifecycle` is the

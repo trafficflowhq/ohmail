@@ -1,7 +1,7 @@
 import {
   UNMETERED_ACCESS,
   type AccessLifecycle, type AccessLifecycleState, type AccessClosedReason, type ActionPrices,
-  type AccessRefusal, type AccessVerdict, type EntitlementsPort,
+  type AccessReadOpts, type AccessRefusal, type AccessVerdict, type EntitlementsPort,
   type ReleaseOutcome, type ReleaseReceipt, type SpendAction, type SpendMeta, type SpendOutcome,
   type SpendRelease,
 } from "./entitlements-port.js";
@@ -44,6 +44,15 @@ export const ACCESS_TTL_MS = 60_000;
  * the fault arm's own (last verdict, else allow); `fresh` reads are never held.
  */
 export const ACCESS_FAULT_HOLD_MS = ENTITLEMENTS_CALL_BUDGET_MS;
+
+/**
+ * How old a held ALLOW a READ route may answer on while it is re-read behind it: ten minutes. A
+ * read route writes and spends nothing, and the refresh it starts is the answer every later
+ * request reads, so a refusal reaches the next one. A longer gap is a new session, and its first
+ * read asks first, so an account that moved meets the wall at once. On 2026-09-25 the first read
+ * after the 60 s TTL waited ~500 ms on the program; a held refusal is never served this way.
+ */
+export const ACCESS_STALE_ALLOW_MS = 10 * 60_000;
 
 /**
  * The account `/health` asks about when no real access read has carried the price card yet. The
@@ -338,8 +347,9 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
     } catch { /* observability is never load-bearing */ }
   };
 
-  /** Per-account verdicts. `freshUntil` bounds REUSE; the value itself is kept for the fault arm. */
-  const cache = new Map<string, { verdict: AccessVerdict; freshUntil: number }>();
+  /** Per-account verdicts. `freshUntil` bounds REUSE, `readAt` a read route's stale allow; the
+   *  value itself is kept for the fault arm. */
+  const cache = new Map<string, { verdict: AccessVerdict; readAt: number; freshUntil: number }>();
   /**
    * AT MOST ONE `/v1/access` CALL IN FLIGHT PER ACCOUNT, shared by every read that finds it —
    * a `fresh` one too. One image-heavy message sent 40-80 parallel calls for one account and
@@ -414,7 +424,7 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
         const priced = card !== null && !("bad" in card);
         if (priced) pricesStated = true;
         const verdict: AccessVerdict = read.ok && priced ? { ...read, prices: card } : read;
-        cache.set(accountId, { verdict, freshUntil: at + ttlMs });
+        cache.set(accountId, { verdict, readAt: at, freshUntil: at + ttlMs });
         faultHeldUntil.delete(accountId);
         return verdict;
       }
@@ -438,7 +448,7 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
   };
 
   const client: EntitlementsClient = {
-    async access(accountId: string, opts?: { fresh?: boolean }): Promise<AccessVerdict> {
+    async access(accountId: string, opts?: AccessReadOpts): Promise<AccessVerdict> {
       const at = clock();
       const held = cache.get(accountId);
       // `fresh` SKIPS THE REUSE AND THE HOLD, NOTHING ELSE: the held verdict is still what the
@@ -448,6 +458,13 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       if (!opts?.fresh) {
         if (held && held.freshUntil > at) return held.verdict;
         if ((faultHeldUntil.get(accountId) ?? 0) > at) return held?.verdict ?? UNMETERED_ACCESS;
+        // A READ route answers on a held ALLOW inside the bound; the refresh runs behind it through
+        // the one call in flight, and a write arriving meanwhile joins it. A held refusal waits.
+        // Nobody awaits the refresh: a fault is held as ever, and a rejection has no reader.
+        if (opts?.staleAllow && held?.verdict.ok && at - held.readAt < ACCESS_STALE_ALLOW_MS) {
+          void shared(accountId).catch(() => undefined);
+          return held.verdict;
+        }
       }
       // The fault arm: the last thing we knew, however stale, and otherwise allow.
       return (await shared(accountId)) ?? held?.verdict ?? UNMETERED_ACCESS;

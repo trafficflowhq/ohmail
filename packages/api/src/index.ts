@@ -76,6 +76,8 @@ export {
   UNVERIFIED_MAY_REACH, unverifiedMayReach,
   // The lock's open doors, for the census that asserts every route is classified for it.
   ACCESS_REFUSED_MAY_REACH, ACCESS_REFUSED_MAY_REACH_ROUTES, accessRefusedMayReach,
+  // Which routes the access arm may answer on a held allow — read by the same census.
+  accessRouteClassOf, type AccessRouteClass,
   type CostClass,
   // What a second arrival of a spending route costs — declared on the route, judged by
   // `idempotency-census.test.ts`. Exported so the census reads the type rather than a copy of it.

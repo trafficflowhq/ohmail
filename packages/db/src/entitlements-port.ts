@@ -201,6 +201,16 @@ export interface RefundObligationPort {
  */
 export type ReleaseOutcome = "none" | "cancelled" | "cancel_failed";
 
+/**
+ * How a read of `access` may be answered. `fresh` asks past every cache and hold; `staleAllow` is
+ * a READ route's: an ALLOW held a little past its TTL answers at once and is re-read behind it,
+ * and a held refusal is asked about again first. One or the other, never both — a read cannot ask
+ * for the newest answer and accept an old one.
+ */
+export type AccessReadOpts =
+  | { fresh?: boolean; staleAllow?: never }
+  | { staleAllow: true; fresh?: never };
+
 export interface EntitlementsPort {
   /**
    * NEVER THROWS: a transport fault answers with the last verdict this process saw for the
@@ -212,7 +222,7 @@ export interface EntitlementsPort {
    * condition that produced it. Never on the mail path: a per-request dial there is the thing
    * the cache exists to prevent. A read joins a call for the account already in flight.
    */
-  access(accountId: string, opts?: { fresh?: boolean }): Promise<AccessVerdict>;
+  access(accountId: string, opts?: AccessReadOpts): Promise<AccessVerdict>;
   /**
    * A fresh read that says when it could not ask: the verdict of an answer, or `"fault"` where
    * `access` would answer the last verdict it knew. For a door that acts irreversibly on the
@@ -299,7 +309,7 @@ export const UNMETERED_ACCESS: AccessVerdict = {
 /** Read access through whatever this host declared. The unmetered arm dials nothing, which is what
  *  makes an unmetered install unable to depend on a network answer. */
 export async function accessOf(
-  entitlements: EntitlementsComposition, accountId: string, opts?: { fresh?: boolean },
+  entitlements: EntitlementsComposition, accountId: string, opts?: AccessReadOpts,
 ): Promise<AccessVerdict> {
   if (entitlements === UNMETERED) return UNMETERED_ACCESS;
   return entitlements.access(accountId, opts);

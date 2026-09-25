@@ -403,7 +403,7 @@ export {
   UNPRICED, pricingOf, type ActionPricing, type ActionPrices, type AiPricingMarker,
   type EntitlementsPort, type EntitlementsComposition,
   type SpendPort, type SpendComposition, type SpendMeta, type AccessPort,
-  type AccessVerdict, type AccessLimits, type AccessRefusal,
+  type AccessVerdict, type AccessLimits, type AccessRefusal, type AccessReadOpts,
   type AccessLifecycle, type AccessLifecycleState, type AccessClosedReason,
   type SpendOutcome, type SpendAction, type SpendRelease, type ReleaseOutcome,
   type ReleaseReceipt, type RefundObligation, type RefundObligationPort,
