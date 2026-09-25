@@ -379,8 +379,21 @@ automatically. The **root** is the durable thing — it is valid for years, and
 installing it once is the whole ceremony. Never copy the server certificate
 itself to a client; copy the root.
 
-A command-line client that reads Node's trust store — the desktop app in
-self-host mode among them — takes the same file through `NODE_EXTRA_CA_CERTS`:
+The desktop app does not read the system store. It reads the root from one
+file, `cloud-ca.pem` in its data folder, and trusts it for the server you set
+the app up with and no other:
+
+- **Linux:** `~/.local/share/io.ohmail.desktop/cloud-ca.pem`
+- **macOS:** `~/Library/Application Support/io.ohmail.desktop/cloud-ca.pem`
+- **Windows:** `%APPDATA%\io.ohmail.desktop\cloud-ca.pem`
+
+Those are the release-page builds; a sandboxed build such as the Flatpak keeps
+its data folder inside the sandbox. Either way the address step of "Your own
+server" shows the exact path on that computer, and a certificate refusal names
+it too. Copy the root there under that name and open the app again.
+
+A command-line client that reads Node's trust store takes the same file
+through `NODE_EXTRA_CA_CERTS`:
 
 ```sh
 NODE_EXTRA_CA_CERTS=/path/to/ohmail-local-ca.crt <command>

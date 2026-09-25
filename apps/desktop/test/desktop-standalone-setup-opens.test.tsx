@@ -85,9 +85,9 @@ const EMPTY_SNAPSHOT = JSON.stringify({ asOfSeq: 0, changes: [], nextCursor: nul
  * of what this test needs the shell to model: the door's own sequence (configure → settle → seal
  * → configure → settle) then runs for real against it.
  */
-function freshInstall(): { urls: string[] } {
+function freshInstall(shellFacts: Record<string, unknown> = {}): { urls: string[] } {
   const urls: string[] = [];
-  let status: Record<string, unknown> = { state: "not_configured", mode: null };
+  let status: Record<string, unknown> = { state: "not_configured", mode: null, ...shellFacts };
 
   host.__TAURI_INTERNALS__ = {
     transformCallback: () => 1,
@@ -284,5 +284,22 @@ describe("connecting on the standalone door opens guided setup", () => {
        no host and `#/first-run` would draw nothing whatever the route said. Navigating there
        anyway would be a dead route on a working install. */
     expect(window.location.hash).toBe("");
+  });
+});
+
+/**
+ * THE GATE HANDS THE CHOOSER THE SHELL'S PATH. `engine_status` names the one file the operator's
+ * certificate authority is read from; the first-run chooser's server door says that path, handed
+ * down by the gate rather than asked for again.
+ */
+describe("the first-run chooser names where a private certificate authority goes", () => {
+  it("says the path engine_status names under the server door's address field", async () => {
+    freshInstall({ operatorCaFile: "/data/ohmail/cloud-ca.pem" });
+    const el = await render();
+    expect(el.textContent).toContain("Which mailbox is this?");
+    await openDoor(el, "Your own server");
+    const hint = [...el.querySelectorAll(".join-hint")].map((p) => p.textContent ?? "")
+      .find((t) => t.includes("root certificate")) ?? "";
+    expect(hint).toContain("save its root certificate as /data/ohmail/cloud-ca.pem first.");
   });
 });

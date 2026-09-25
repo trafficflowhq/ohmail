@@ -798,10 +798,14 @@ export function DesktopGate() {
     );
   }
 
+  /* The one path the shell reads the operator's certificate authority from, for both choosers. */
+  const caFile = shell?.kind === "status" ? shell.status.operatorCaFile ?? null : null;
+
   if (gate.kind === "choose" || adoptionHeld || pairingHeld) {
     return (
       <DoorChooser
         addressless
+        operatorCaFile={caFile}
         onAdoption={setAdoption}
         onPairing={() => setPairing("held")}
         onEntered={(r) => {
@@ -853,6 +857,7 @@ export function DesktopGate() {
     >
     <DoorChooser
       start={overlay}
+      operatorCaFile={caFile}
       /* "Sign in again" is not "choose the cloud door again": the door is already chosen, and
          re-configuring it would replace the engine — taking somebody's mail off the screen
          for the length of a restart to change nothing. */

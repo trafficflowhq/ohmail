@@ -241,7 +241,10 @@ describe("the door chooser", () => {
     mount = null;
   });
 
-  const render = async (start: "doors" | "local" | "server" | "cloud" = "doors"): Promise<HTMLElement> => {
+  const render = async (
+    start: "doors" | "local" | "server" | "cloud" = "doors",
+    operatorCaFile: string | null = null,
+  ): Promise<HTMLElement> => {
     const { DoorChooser } = await import("../src/DoorChooser.js");
     mount = document.createElement("div");
     document.body.append(mount);
@@ -251,7 +254,7 @@ describe("the door chooser", () => {
         h(
           NextIntlClientProvider,
           { locale: "en", messages: en as never, timeZone: "Europe/Zurich" },
-          h(DoorChooser, { start, onEntered: () => {} }),
+          h(DoorChooser, { start, onEntered: () => {}, operatorCaFile }),
         ),
       );
     });
@@ -559,6 +562,26 @@ describe("the door chooser", () => {
     expect(shown).toContain("cloud-ca.pem");
     // And it does NOT walk on to ask for a password.
     expect(el.querySelector("#server-password")).toBeNull();
+  });
+
+  /* THE ONE PATH, BEFORE ANY REFUSAL. The shell names the file its launch composes and the probe
+     loads (the gate hands it down from `engine_status`); the hint says that path, so the operator
+     never has to guess which folder "the app's data folder" is. */
+  const caHint = (el: HTMLElement): string =>
+    [...el.querySelectorAll(".join-hint")].map((p) => p.textContent ?? "")
+      .find((t) => t.includes("root certificate")) ?? "";
+
+  it("names the path the shell reads a private CA from, under the address field", async () => {
+    install();
+    const el = await render("server", "/data/ohmail/cloud-ca.pem");
+    expect(caHint(el)).toContain("save its root certificate as /data/ohmail/cloud-ca.pem first.");
+    expect(caHint(el)).not.toContain("this app's data folder");
+  });
+
+  it("says the data folder, and no guessed path, when the shell names none", async () => {
+    install();
+    const el = await render("server");
+    expect(caHint(el)).toContain("in a file named cloud-ca.pem in this app's data folder first.");
   });
 
   it("says a server that answers but is not ohmail is the wrong ADDRESS, not the wrong password", async () => {

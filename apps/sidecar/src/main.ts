@@ -329,6 +329,11 @@ export function cloudConfigFromEnv(env: NodeJS.ProcessEnv = process.env): CloudS
     // `host-pin-probe.ts`'s to rule on, and a mismatch refuses the connection with an actionable
     // sentence, better than a launch dying here with a parse error.
     ...(env.OHMAIL_HOST_PIN?.trim() ? { hostPin: env.OHMAIL_HOST_PIN.trim() } : {}),
+    // WHERE THE OPERATOR'S CERTIFICATE AUTHORITY IS — the shell's one path, the file its launch
+    // composes, so the probe and the refusal read and name that file (`operator-ca-fetch.ts`).
+    ...(env.OHMAIL_OPERATOR_CA_FILE?.trim()
+      ? { operatorCaFile: env.OHMAIL_OPERATOR_CA_FILE.trim() }
+      : {}),
   };
 }
 

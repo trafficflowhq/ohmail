@@ -424,6 +424,67 @@ pub const OPERATOR_CA_FILE: &str = "cloud-ca.pem";
 /// the finding this record closes. See [`operator_ca_for`].
 pub const OPERATOR_CA_RECORD_FILE: &str = "cloud-ca.json";
 
+/// The variable a cloud door's engine reads [`operator_ca_file`] from.
+pub const OPERATOR_CA_FILE_VAR: &str = "OHMAIL_OPERATOR_CA_FILE";
+
+/// THE ONE PLACE the operator's certificate authority goes: the app's data folder, beside
+/// `config.json` and the record. The launch composes it, the engine's probe is handed this same
+/// path by [`OPERATOR_CA_FILE_VAR`], and every sentence about the file names it.
+pub fn operator_ca_file(root: &Path) -> PathBuf {
+    root.join(OPERATOR_CA_FILE)
+}
+
+/// Where the probe looked before it was handed the path: the cloud engine's own data directory.
+/// Still read for one release, so a file put there keeps working; see [`installed_operator_ca`].
+fn old_operator_ca_file(root: &Path) -> PathBuf {
+    data_dir(root, Mode::Cloud).join(OPERATOR_CA_FILE)
+}
+
+/// The file this install's authority is read from: [`operator_ca_file`] when it is there, else the
+/// old folder's copy. Whenever the old folder holds one, the log says once which file was used.
+fn installed_operator_ca(root: &Path) -> Option<PathBuf> {
+    let named = operator_ca_file(root);
+    let old = old_operator_ca_file(root);
+    let used = if named.is_file() {
+        named.clone()
+    } else if old.is_file() {
+        old.clone()
+    } else {
+        return None;
+    };
+    if old.is_file() && first_note_of(&old) {
+        if used == old {
+            crate::engine::log_line(format_args!(
+                "{OPERATOR_CA_FILE} was read from {}, a folder this version reads for one more \
+                 release; move it to {}",
+                old.display(),
+                named.display()
+            ));
+        } else {
+            crate::engine::log_line(format_args!(
+                "{} is used and the copy in {} is not read; that copy can be removed",
+                named.display(),
+                old.display()
+            ));
+        }
+    }
+    Some(used)
+}
+
+/// Old-folder paths already said by this process: every spawn composes the launch again.
+static OLD_FOLDER_SAID: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// True the first time `old` is asked about in this process, and never again.
+fn first_note_of(old: &Path) -> bool {
+    match OLD_FOLDER_SAID.lock() {
+        Ok(mut said) if !said.iter().any(|p| p == old) => {
+            said.push(old.to_path_buf());
+            true
+        }
+        _ => false,
+    }
+}
+
 /// A door's ORIGIN — scheme, host and non-default port, lower-cased, with no path.
 ///
 /// [`door_host`] is the reader that decides whether an address can be read at all, and it
@@ -493,10 +554,9 @@ enum OperatorCa {
 /// `adopt` is false on the candidate walk: a candidate is a question about somebody else's machine
 /// rather than a door, and binding this install's authority to one would be a record nobody chose.
 fn operator_ca_for(root: &Path, cloud_url: &str, adopt: bool) -> OperatorCa {
-    let ca = root.join(OPERATOR_CA_FILE);
-    if !ca.is_file() {
+    let Some(ca) = installed_operator_ca(root) else {
         return OperatorCa::Absent;
-    }
+    };
     let Some(origin) = door_origin(cloud_url) else {
         return OperatorCa::Withhold(format!(
             "this door's address names no server this app can read, so {OPERATOR_CA_FILE} is not \
@@ -507,8 +567,9 @@ fn operator_ca_for(root: &Path, cloud_url: &str, adopt: bool) -> OperatorCa {
         Ok(bytes) => sha256_hex(&bytes),
         Err(err) => {
             return OperatorCa::Withhold(format!(
-                "{OPERATOR_CA_FILE} could not be read ({err}), so it is not being used to check \
-                 this server's identity"
+                "{} could not be read ({err}), so it is not being used to check this server's \
+                 identity",
+                ca.display()
             ))
         }
     };
@@ -518,15 +579,17 @@ fn operator_ca_for(root: &Path, cloud_url: &str, adopt: bool) -> OperatorCa {
             OperatorCa::Compose(ca)
         }
         Some((installed_for, _)) if installed_for != origin => OperatorCa::Withhold(format!(
-            "the certificate authority installed here belongs to {installed_for}, and this door is \
-             {origin}, so it is not being used to check this server's identity. Remove \
-             {OPERATOR_CA_RECORD_FILE} from this app's data folder to install the authority for \
-             the door you are on."
+            "the certificate authority in {} belongs to {installed_for}, and this door is \
+             {origin}, so it is not being used to check this server's identity. Remove {} to \
+             install the authority for the door you are on.",
+            ca.display(),
+            record.display()
         )),
         Some((installed_for, _)) => OperatorCa::Withhold(format!(
-            "{OPERATOR_CA_FILE} has changed since it was installed for {installed_for}, so it is \
-             not being used to check this server's identity. Remove {OPERATOR_CA_RECORD_FILE} from \
-             this app's data folder to install the file that is there now."
+            "{} has changed since it was installed for {installed_for}, so it is not being used \
+             to check this server's identity. Remove {} to install the file that is there now.",
+            ca.display(),
+            record.display()
         )),
         None if !adopt => OperatorCa::Withhold(format!(
             "{OPERATOR_CA_FILE} names no server it was installed for, and a candidate walk does \
@@ -964,6 +1027,12 @@ fn env_for_door(config: &Config, root: &Path, adopt: bool) -> Vec<(OsString, OsS
             // mutation. See the module header for what happens without it.
             env.push(pair("OHMAIL_MODE", "cloud".to_string()));
             env.push(pair("OHMAIL_CLOUD_URL", c.cloud_url.clone()));
+            // The path the probe reads the operator's authority from, whether or not a file is
+            // there yet: it is read at probe time, and it is the file this launch composes.
+            env.push((
+                OsString::from(OPERATOR_CA_FILE_VAR),
+                operator_ca_file(root).into_os_string(),
+            ));
             if let Some(address) = &c.address {
                 env.push(pair("OHMAIL_MAILBOX_ADDRESS", address.clone()));
             }

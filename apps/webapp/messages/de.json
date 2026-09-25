@@ -3504,6 +3504,8 @@
     "serverAddress": "Deine ohmail-Adresse auf diesem Server",
     "serverCaHintBefore": "Wenn dein Server eigene Zertifikate ausstellt, leg sein Stammzertifikat zuerst in eine Datei namens",
     "serverCaHintAfter": "im Datenordner dieser App. ohmail prüft Zertifikate und kann das nicht umgehen.",
+    "serverCaPathBefore": "Wenn dein Server eigene Zertifikate ausstellt, speichere sein Stammzertifikat zuerst unter",
+    "serverCaPathAfter": "ab. ohmail prüft Zertifikate und kann das nicht umgehen.",
     "serverReached": "{server} erreicht. Anmeldung als {address}.",
     "serverChecking": "Dein Server wird geprüft…",
     "serverContinue": "Weiter",

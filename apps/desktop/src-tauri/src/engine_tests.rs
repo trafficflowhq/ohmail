@@ -4056,6 +4056,29 @@ fn the_opener_is_handed_the_address_and_not_the_bundle() {
 // case below is the one that keeps that unrepresentable.
 
 #[test]
+fn the_status_names_the_path_the_operator_ca_is_read_from() {
+    // The door's address step tells an operator where their certificate authority goes, and the
+    // shell is the one process that knows the folder; the status carries the path it resolves.
+    let root = candidate_root("operator-ca-status");
+    let mut shell = Shell::around(Engine::inert(EngineState::NotConfigured {
+        missing: vec![crate::config::CONFIG_FILE_NAME.to_string()],
+        door: None,
+    }));
+    shell.paths.app_data = Some(root.clone());
+    let status = shell.status();
+    let expected = root.join(crate::config::OPERATOR_CA_FILE).to_string_lossy().into_owned();
+    assert_eq!(
+        status.get("operatorCaFile").and_then(|v| v.as_str()),
+        Some(expected.as_str()),
+        "the status names no path for the operator's certificate authority: {status}"
+    );
+    // No data folder, no path: a guess would be a sentence naming a file nothing reads.
+    let bare = Shell::around(Engine::inert(EngineState::Stopped));
+    assert!(bare.status().get("operatorCaFile").is_none());
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
 fn the_unlock_press_refuses_while_the_engine_has_not_given_up() {
     let calm = Shell::around(Engine::inert(EngineState::Stopped));
     let said = calm

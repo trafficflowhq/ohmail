@@ -145,8 +145,8 @@ export interface SelfHostStep {
  * from the shell: `state === "not_configured"` means no mirror, no sealed session, nothing to
  * cost, so that install configures FIRST and the probing engine IS the candidate's. An install
  * that already holds a door probes first too, and its private CA is in place either way: the
- * candidate probe loads `cloud-ca.pem` itself at the moment it dials, rather than inheriting
- * whatever roots the running engine was launched with (`apps/sidecar/src/operator-ca-fetch.ts`).
+ * candidate probe loads `cloud-ca.pem` from the shell's path at the moment it dials, rather than
+ * inheriting whatever roots the running engine was launched with (`operator-ca-fetch.ts`).
  */
 export async function configureSelfHostDoor(typedOrigin: string, address: string): Promise<SelfHostStep> {
   const addressProblem = selfHostProblem(typedOrigin);

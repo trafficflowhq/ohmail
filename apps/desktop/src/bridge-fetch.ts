@@ -505,6 +505,12 @@ export interface EngineStatus {
   reason?: string;
   missing?: string[];
   lookedFor?: string;
+  /**
+   * THE ONE PATH the operator's certificate authority is read from (`config.rs`'s
+   * `operator_ca_file`), which the self-hosted door names. Absent where the shell has no data
+   * folder, and then the door says "this app's data folder" rather than a guessed path.
+   */
+  operatorCaFile?: string;
 }
 
 /** The local door: the user's own mail server, opened from this machine. */

@@ -110,6 +110,12 @@ export function DoorChooser({
    * answers, and nothing the gate reads in between may take the card away.
    */
   onPairing,
+  /**
+   * THE ONE PATH the shell reads the operator's certificate authority from — `engine_status`'s
+   * `operatorCaFile`, handed down by the gate that already holds the status, so the chooser asks
+   * the shell nothing of its own. Null names the data folder instead of a guessed path.
+   */
+  operatorCaFile = null,
 }: {
   onEntered: (result: DoorResult) => void;
   start?: Step;
@@ -121,6 +127,7 @@ export function DoorChooser({
   addressless?: boolean;
   onAdoption?: (holding: boolean) => void;
   onPairing?: () => void;
+  operatorCaFile?: string | null;
 }) {
   const [step, setStep] = useState<Step>(start);
   const [busy, setBusy] = useState(false);
@@ -377,6 +384,7 @@ export function DoorChooser({
             problem={problem}
             suggestion={suggestion}
             reached={reachedServer}
+            caFile={operatorCaFile}
             onBack={() => {
               setProblem(null);
               setSuggestion(null);
@@ -934,6 +942,7 @@ function ServerDoor({
   problem,
   suggestion,
   reached,
+  caFile,
   onBack,
   onCancel,
   onProve,
@@ -953,6 +962,8 @@ function ServerDoor({
   suggestion: HostSuggestion | null;
   /** The server the address step proved, or null while it has not been proved yet. */
   reached: string | null;
+  /** Where the shell reads the operator's certificate authority, or null when it named none. */
+  caFile: string | null;
   onBack: () => void;
   onCancel?: () => void;
   onProve: (origin: string, address: string) => void;
@@ -1025,14 +1036,23 @@ function ServerDoor({
           {/* SAID BEFORE THE REFUSAL, not only after it. A self-hoster on a private name is
               GOING to hit this — their stack issues its own certificates, correctly — and a
               person who has already read what to do recognises the refusal instead of
-              debugging it. The path is `cloud-origin.ts`'s constant, so the hint and the
-              engine's own sentence cannot name two different files. */}
+              debugging it. The path is the shell's own, the file its launch composes and the
+              engine's probe loads, so the hint and the refusal name one file. */}
           {/* TWO KEYS AROUND ONE CONSTANT. The file name is rendered as code and is not a word,
               so it is not a placeholder in a sentence — the sentence is split around it, and each
               half is translated on its own. */}
           <p className="join-hint">
-            {DOOR_COPY.serverCaHintBefore}{" "}
-            <code>{OPERATOR_CA_FILE}</code> {DOOR_COPY.serverCaHintAfter}
+            {caFile === null ? (
+              <>
+                {DOOR_COPY.serverCaHintBefore}{" "}
+                <code>{OPERATOR_CA_FILE}</code> {DOOR_COPY.serverCaHintAfter}
+              </>
+            ) : (
+              <>
+                {DOOR_COPY.serverCaPathBefore}{" "}
+                <code>{caFile}</code> {DOOR_COPY.serverCaPathAfter}
+              </>
+            )}
           </p>
         </>
       ) : (

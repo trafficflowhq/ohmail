@@ -896,6 +896,96 @@ fn a_candidate_walk_never_adopts_the_operator_ca() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+// ── One folder for the operator's certificate authority ──────────────────────────────────────
+//
+// The launch composed `<app data>/cloud-ca.pem` while the engine's probe read the file from its own
+// data directory, `<app data>/engine-cloud/`: two readers, two folders, and no sentence naming
+// either. The shell resolves the one path and hands it to the engine; the old folder is still
+// read for one release.
+
+#[test]
+fn every_cloud_engine_is_handed_the_one_path_the_launch_reads() {
+    let dir = std::env::temp_dir().join(format!("ohmail-config-ca-one-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("mkdir");
+    let named = dir.join(OPERATOR_CA_FILE).to_string_lossy().into_owned();
+
+    // THE ROW: the probe runs in the cloud engine, so every cloud door's engine is told the path
+    // the launch composes, whether or not a file is there yet — it is read at probe time.
+    for config in [cloud_door(), self_hosted_door()] {
+        let env = env_map(&env_for(&config, &dir));
+        assert_eq!(
+            env.get("OHMAIL_OPERATOR_CA_FILE"),
+            Some(&named),
+            "the engine was not told where the launch reads the authority, for {config:?}"
+        );
+    }
+    // The candidate's engine runs in a directory of its own and is told the SAME path.
+    let env = env_map(&env_for_in(&self_hosted_door(), &dir, &candidate_data_dir(&dir)).expect("env"));
+    assert_eq!(env.get("OHMAIL_OPERATOR_CA_FILE"), Some(&named), "the candidate was told another path");
+    // A local door's engine dials no ohmail server, so it is told nothing.
+    assert!(!env_map(&env_for(&local_door(), &dir)).contains_key("OHMAIL_OPERATOR_CA_FILE"));
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_file_in_the_old_folder_is_honoured_for_one_release_and_the_named_folder_wins() {
+    let root = std::env::temp_dir().join(format!("ohmail-config-ca-old-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+
+    // THE OLD FOLDER ONLY — where the probe used to read it. A self-hoster who followed the probe
+    // keeps a working launch for one release.
+    let a = root.join("install-old");
+    let old = data_dir(&a, Mode::Cloud).join(OPERATOR_CA_FILE);
+    fs::create_dir_all(old.parent().expect("parent")).expect("mkdir");
+    fs::write(&old, "-----BEGIN CERTIFICATE-----\nroot in the old folder\n").expect("write");
+    assert_eq!(
+        env_map(&env_for(&self_hosted_door(), &a)).get("NODE_EXTRA_CA_CERTS").map(String::as_str),
+        Some(old.to_string_lossy().as_ref()),
+        "a file in the folder the probe used to read was dropped at launch",
+    );
+
+    // BOTH FOLDERS: the named one wins, and the record is written for its bytes.
+    let b = root.join("install-both");
+    let named = b.join(OPERATOR_CA_FILE);
+    let old = data_dir(&b, Mode::Cloud).join(OPERATOR_CA_FILE);
+    fs::create_dir_all(old.parent().expect("parent")).expect("mkdir");
+    fs::write(&named, "-----BEGIN CERTIFICATE-----\nthe named root\n").expect("write");
+    fs::write(&old, "-----BEGIN CERTIFICATE-----\nan older root\n").expect("write");
+    assert_eq!(
+        env_map(&env_for(&self_hosted_door(), &b)).get("NODE_EXTRA_CA_CERTS").map(String::as_str),
+        Some(named.to_string_lossy().as_ref()),
+        "the old folder's copy won over the named one",
+    );
+    // The positive control: with the old copy gone the named file is still composed.
+    fs::remove_file(&old).expect("rm");
+    assert!(env_map(&env_for(&self_hosted_door(), &b)).contains_key("NODE_EXTRA_CA_CERTS"));
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_old_folder_is_said_once_per_path() {
+    // Every spawn composes the launch again, so the line naming the old folder is said once per
+    // process and path — a restarting engine must not fill the log with it.
+    let old = std::env::temp_dir()
+        .join(format!("ohmail-config-ca-said-{}", std::process::id()))
+        .join(OPERATOR_CA_FILE);
+    assert!(first_note_of(&old), "the first read of the old folder was not said");
+    assert!(!first_note_of(&old), "the old folder was said again at the next launch");
+    assert!(first_note_of(&old.with_file_name("elsewhere.pem")), "one path swallowed another's line");
+}
+
+#[test]
+fn the_operator_ca_variable_is_the_one_the_engine_reads() {
+    // The path crosses a language boundary by NAME, so the engine's reader is read as text, the way
+    // the file name's spelling is checked below: a drift would hand the probe nothing.
+    let main = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sidecar/src/main.ts");
+    let source = fs::read_to_string(&main)
+        .unwrap_or_else(|e| panic!("could not read {}: {e}", main.display()));
+    let needle = format!("env.{OPERATOR_CA_FILE_VAR}");
+    assert!(source.contains(&needle), "the engine does not read {needle}");
+}
+
 #[test]
 fn the_managed_base_is_recognised_through_its_harmless_spellings() {
     // A trailing slash, a folded case, the DEFAULT PORT SPELLED OUT and the DNS root dot are all

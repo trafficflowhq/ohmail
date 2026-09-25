@@ -2235,6 +2235,12 @@ impl Shell {
             if self.paths.app_data.as_deref().is_some_and(|root| config::switch_path(root).exists()) {
                 object.insert("switchPending".into(), true.into());
             }
+            // The one path the operator's certificate authority is read from, for the door's
+            // sentence; no data folder, no path, rather than a guess naming a file nothing reads.
+            if let Some(root) = &self.paths.app_data {
+                let file = config::operator_ca_file(root);
+                object.insert("operatorCaFile".into(), file.to_string_lossy().into_owned().into());
+            }
         }
         out
     }

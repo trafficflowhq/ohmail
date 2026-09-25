@@ -50,7 +50,7 @@ import {
 } from "./cloud-origin.js";
 import { createHostFetch, probeHostPin } from "./host-pin-probe.js";
 import { createAdoptedDoor, DoorFileError } from "./adopted-door.js";
-import { probeTransport } from "./operator-ca-fetch.js";
+import { operatorCaFiles, probeTransport } from "./operator-ca-fetch.js";
 import { originNeedsPin } from "@trafficflow/core/pair-link";
 import type { Diagnostic } from "./log.js";
 import { startEngineVitals } from "./vitals.js";
@@ -116,6 +116,12 @@ export interface CloudSidecarConfig {
    * with no fingerprint. An explicit {@link fetchImpl} wins — the test seam, unreachable from config.
    */
   hostPin?: string;
+  /**
+   * Where the operator's certificate authority is read from — the shell's one path
+   * (`OHMAIL_OPERATOR_CA_FILE`), named by every refusal about it. Absent on an engine started by
+   * hand, which reads `cloud-ca.pem` in {@link dataDir}; see `operator-ca-fetch.ts`.
+   */
+  operatorCaFile?: string;
   pageLimit?: number;
   pollIntervalMs?: number;
   /** How long `/search` waits for the account before the mirror answers; absent, `ACCOUNT_FIRST_BOUND_MS`. */
@@ -492,7 +498,11 @@ export const PAIR_SERVED_WAIT_MS = 10_000;
  * `UNABLE_TO_GET_ISSUER_CERT_LOCALLY` (measured against the running stack) — the honest answer names
  * the `NODE_EXTRA_CA_CERTS` file to install, never an offer to skip verification, which nothing here can do.
  */
-export async function probeCloudServer(cloudUrl: string, fetchImpl: typeof fetch): Promise<Response> {
+export async function probeCloudServer(
+  cloudUrl: string,
+  fetchImpl: typeof fetch,
+  caFile?: string,
+): Promise<Response> {
   const base = cloudUrl.replace(/\/+$/, "");
   const target = `${base}/hello`;
   /* `more` is the structured half of a refusal whose remedy is mechanical — today only the
@@ -513,7 +523,7 @@ export async function probeCloudServer(cloudUrl: string, fetchImpl: typeof fetch
       signal: AbortSignal.timeout(PROBE_DEADLINE_MS),
     });
   } catch (err) {
-    return refuse(...describeProbeFailure(err, target));
+    return refuse(...describeProbeFailure(err, target, caFile));
   }
 
   if (!res.ok) {
@@ -638,14 +648,18 @@ async function refuseUnlessDesktopHost(said: Response, origin: string): Promise<
  * retried; a transport failure or an ohmail server already identified and REFUSED is not — repeating
  * it at a longer path produces the same failure and a worse sentence.
  */
-export async function probeCloudDoor(origin: string, fetchImpl: typeof fetch): Promise<Response> {
+export async function probeCloudDoor(
+  origin: string,
+  fetchImpl: typeof fetch,
+  caFile?: string,
+): Promise<Response> {
   const root = origin.replace(/\/+$/, "");
-  const atRoot = await probeCloudServer(root, fetchImpl);
+  const atRoot = await probeCloudServer(root, fetchImpl, caFile);
   if (atRoot.ok) return atRoot;
 
   const kind = await refusalKind(atRoot);
   if (kind !== "status" && kind !== "not_ohmail") return atRoot;
-  return probeCloudServer(apiBaseFor(root), fetchImpl);
+  return probeCloudServer(apiBaseFor(root), fetchImpl, caFile);
 }
 
 /**
@@ -690,6 +704,7 @@ const TLS_FAILURE_CODES = new Set([
 export function describeProbeFailure(
   err: unknown,
   target: string,
+  caFile?: string,
 ): [message: string, kind: string, more?: Record<string, unknown>] {
   const failure = transportFailure(err);
   const code = failure?.code ?? null;
@@ -724,7 +739,9 @@ export function describeProbeFailure(
       `${target} answered, but its certificate is signed by an authority this computer does not ` +
         "trust — which is what a server that issues its own certificates looks like from here. " +
         `ohmail verifies certificates and will not skip that. Put your server's root certificate ` +
-        `in a file named ${OPERATOR_CA_FILE} in this app's data folder and open ohmail again, or ` +
+        (caFile
+          ? `in ${caFile} and open ohmail again, or `
+          : `in a file named ${OPERATOR_CA_FILE} in this app's data folder and open ohmail again, or `) +
         "give the server a certificate from an authority this computer already trusts.",
       "tls_trust",
     ];
@@ -1366,7 +1383,11 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           /* No body, or not JSON: probe what this engine is configured for. */
         }
         if (candidate === null || candidate === undefined) {
-          return probeCloudServer(cloudBase, config.fetchImpl ?? fetch);
+          return probeCloudServer(
+            cloudBase,
+            config.fetchImpl ?? fetch,
+            config.hostPin ? undefined : operatorCaFiles(config).file,
+          );
         }
         if (typeof candidate !== "string") {
           return json(
@@ -1479,14 +1500,18 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
 
         /* THE ORIGIN, NOT A BASE — `probeCloudDoor` decides whether the API is at the root or
            under `/api` from the server's own greeting, not from anything this window could know.
-           AND IT DIALS WITH THE OPERATOR'S OWN CA, read from the data folder at THIS MOMENT: the
+           AND IT DIALS WITH THE OPERATOR'S OWN CA, read at THIS MOMENT from the shell's path: the
            candidate is somebody's own server and usually issues its own certificates, whose trust
            used to arrive only as `NODE_EXTRA_CA_CERTS` at launch — which a process already running
            cannot be given, so an install moving to such a server probed with the previous door's
            trust and was refused for a reason nothing the person typed could fix. `probeTransport`
            falls back to the platform's `fetch` when no CA is installed, so a publicly-trusted
            server is dialled exactly as before. */
-        return probeCloudDoor(origin, injectedFetch ?? probeTransport(config.dataDir, log));
+        return probeCloudDoor(
+          origin,
+          injectedFetch ?? probeTransport(config, log),
+          operatorCaFiles(config).file,
+        );
       }
 
       if (req.method === "POST" && path === "/cloud/signin/challenge") {

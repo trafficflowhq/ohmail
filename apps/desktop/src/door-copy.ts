@@ -118,6 +118,12 @@ const EN = {
     "If your server issues its own certificates, put its root certificate in a file named",
   serverCaHintAfter:
     "in this app's data folder first. ohmail verifies certificates and has no way to skip that.",
+  /* THE SAME HINT WITH THE PATH, once the shell has named it — the file its launch composes and
+     the probe loads, so the operator is told the one place both read. */
+  serverCaPathBefore:
+    "If your server issues its own certificates, save its root certificate as",
+  serverCaPathAfter:
+    "first. ohmail verifies certificates and has no way to skip that.",
   serverReached: (server: string, address: string) => `Reached ${server}. Signing in as ${address}.`,
   serverChecking: "Checking your server…",
   serverContinue: "Continue",

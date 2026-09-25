@@ -10,8 +10,8 @@ import type { Diagnostic } from "./log.js";
 
 /**
  * THE OPERATOR'S OWN CERTIFICATE AUTHORITY, ACTIVE IN THE PROCESS THAT IS DOING THE PROBING. A
- * self-hosted server usually issues its own certificates, trusted by a `cloud-ca.pem` in the data
- * folder. That file used to reach the engine only as `NODE_EXTRA_CA_CERTS` at LAUNCH, so an
+ * self-hosted server usually issues its own certificates, trusted by a `cloud-ca.pem` in the app's
+ * data folder. That file used to reach the engine only as `NODE_EXTRA_CA_CERTS` at LAUNCH, so an
  * install moving to a private-CA server probed through the already-running engine — started before
  * the door was chosen — and failed on a trust nothing typeable could fix. So the CANDIDATE probe
  * reads the file at probe time and adds it to the system roots for that one connection, verifying
@@ -19,20 +19,62 @@ import type { Diagnostic } from "./log.js";
  * doing so lives in one other file in this directory, which `host-pin-probe.test.ts` counts.
  */
 
+/**
+ * WHERE THE FILE IS. The shell resolves the one path (`config.rs`'s `operator_ca_file`) and hands
+ * it over as `OHMAIL_OPERATOR_CA_FILE`, so the probe reads the file the launch composes. Absent on
+ * an engine started by hand, which reads its own data directory as it always did.
+ */
+interface OperatorCaPlace {
+  dataDir: string;
+  operatorCaFile?: string;
+}
+
+/**
+ * The file to read, and the folder read for ONE more release: the engine's own data directory,
+ * where this probe looked before it was handed the path. `oldFile` is null when the two are one.
+ */
+export function operatorCaFiles(place: OperatorCaPlace): { file: string; oldFile: string | null } {
+  const inDataDir = join(place.dataDir, OPERATOR_CA_FILE);
+  const file = place.operatorCaFile?.trim() || inDataDir;
+  return { file, oldFile: file === inDataDir ? null : inDataDir };
+}
+
+/** Old-folder paths already said by this process: a door walk probes more than once. */
+const oldFolderSaid = new Set<string>();
+
 /** How long a probe connection waits. The caller's own deadline bounds the request above this. */
 const CONNECT_TIMEOUT_MS = 12_000;
 
-/**
- * The operator's CA, or null when there is none to load. A file that is absent is the ordinary
- * case and says nothing; a file that is present and unusable is LOGGED, because somebody put it
- * there on purpose and a silent fallback would send them to check their server instead of the file.
- */
-export function operatorCa(dataDir: string, log?: Diagnostic): string | null {
-  let pem: string;
+/** The file's text, or null when there is no file to read. */
+function readPem(path: string): string | null {
   try {
-    pem = readFileSync(join(dataDir, OPERATOR_CA_FILE), "utf8");
+    return readFileSync(path, "utf8");
   } catch {
     return null;
+  }
+}
+
+/**
+ * The operator's CA, or null when there is none to load. A file that is absent is the ordinary
+ * case and says nothing; a file that is present and unusable is LOGGED with its path, because
+ * somebody put it there on purpose and a silent fallback would send them to check their server.
+ * The named file wins over the old folder's copy, and an old-folder copy is said once, by name.
+ */
+export function operatorCa(place: OperatorCaPlace, log?: Diagnostic): string | null {
+  const { file, oldFile } = operatorCaFiles(place);
+  const named = readPem(file);
+  const old = oldFile === null ? null : readPem(oldFile);
+  const used = named !== null ? file : old !== null ? oldFile : null;
+  const pem = named ?? old;
+  if (used === null || pem === null) return null;
+  if (oldFile !== null && old !== null && log && !oldFolderSaid.has(oldFile)) {
+    oldFolderSaid.add(oldFile);
+    log("cloud_operator_ca_old_folder", {
+      reason: used === oldFile
+        ? `${OPERATOR_CA_FILE} was read from ${oldFile}, a folder this version reads for one more ` +
+          `release; move it to ${file}`
+        : `${file} is used and the copy in ${oldFile} is not read; that copy can be removed`,
+    });
   }
   try {
     /* PARSED, not pattern-matched: a truncated or PEM-looking file handed to the TLS agent throws
@@ -40,8 +82,8 @@ export function operatorCa(dataDir: string, log?: Diagnostic): string | null {
     new X509Certificate(pem);
   } catch {
     log?.("cloud_operator_ca_unavailable", {
-      reason: "a certificate authority file is present in this app's data folder but could not be " +
-        "read as a certificate, so it is not being used to check the server's identity",
+      reason: `${used} could not be read as a certificate, so it is not being used to check the ` +
+        "server's identity",
     });
     return null;
   }
@@ -115,7 +157,7 @@ export function createOperatorCaFetch(caPem: string): typeof fetch {
  * the platform's `fetch` when there is none. Read at PROBE TIME — the whole point is that this
  * process may have started before the file existed.
  */
-export function probeTransport(dataDir: string, log?: Diagnostic): typeof fetch {
-  const ca = operatorCa(dataDir, log);
+export function probeTransport(place: OperatorCaPlace, log?: Diagnostic): typeof fetch {
+  const ca = operatorCa(place, log);
   return ca === null ? fetch : createOperatorCaFetch(ca);
 }
