@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.25.0] — 2026-09-25
+
 ### Mail resumes promptly after a database outage
 <!-- changes: fix-024-worker-resume-tail.md -->
 
@@ -183,10 +190,44 @@ On a desktop paired with ohmail Cloud, a search made right after signing in, whi
 still arriving on the computer, answers about as fast as one made afterwards. It used to take one
 to two seconds.
 
-### Still to come
+### A mailbox handed to another install stays with it
+<!-- changes: fix-025-lease-not-supplied-is-test-only.md -->
 
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
+When another install takes over organizing a mailbox from the server, the server only reads it:
+read marks made in the web app reach the mail server, the mailbox keeps updating, and the server
+does not claim the mailbox back when the other install lets go.
+
+### A mailbox taken over during a scan is not reported as failing
+<!-- changes: fix-025-lease-not-supplied-is-test-only.md#2 -->
+
+A mailbox another install takes over while the server is scanning it is no longer counted as a
+failed scan.
+
+### Switching off Use folders stops pending Not junk moves
+<!-- changes: fix-025-lease-not-supplied-is-test-only.md#3 -->
+
+Switching off "Use folders" for a mailbox now stops the pending "Not junk" moves at the next
+message, even when some of them are already being moved.
+
+### A desktop paired with ohmail Cloud files your mail by your rules again
+<!-- changes: fix-025-paired-ohbox-keeps-rule-placement.md -->
+
+- On a desktop paired with ohmail Cloud, mail from a sender you have a rule for is shown where the
+  rule puts it even when the app has not yet read your screening settings. Before, a failed read
+  showed every unread message in the Ohbox. The read is now retried.
+
+### A rule for some of a sender's mail files only that mail
+<!-- changes: fix-025-split-rule-places-only-its-subject.md -->
+
+- A rule that files one subject of a sender elsewhere, or screens it out, now places only the
+  messages with that subject. The sender's other mail stays where it was.
+
+### Answer Later and Parked list messages in the same order on every device
+<!-- changes: fix-025-triage-piles-one-order.md -->
+
+- Answer Later and Parked list messages newest first on the web, the desktop and the phone, and Reply
+  Run starts on the same message on each. Resurface lists messages by when they come back, soonest
+  first. Before, each device could show a pile in a different order.
 
 ## [0.24.0] — 2026-09-24
 
@@ -8419,7 +8460,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.0
 [0.24.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.24.0
 [0.23.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.23.2
 [0.23.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.23.1

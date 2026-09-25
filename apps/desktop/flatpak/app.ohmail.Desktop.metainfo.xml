@@ -74,6 +74,41 @@
   </screenshots>
 
   <releases>
+    <release version="0.25.0" date="2026-09-25">
+      <description>
+        <ul>
+          <li>Mail resumes promptly after a database outage</li>
+          <li>A confirmation is not replaced by the automatic suggestions' summary</li>
+          <li>Screen readers hear the phone's buttons become available</li>
+          <li>The Screener shows a held message's full text instead of saying it could not load</li>
+          <li>A sender's rules decide the same way in the organizer and in every app</li>
+          <li>The away responder's replies stay out of the desktop's Ohbox</li>
+          <li>The desktop renews its ohmail Cloud sign-in on schedule</li>
+          <li>A paired desktop keeps its mail on screen when the other computer removes it</li>
+          <li>A paired desktop names the computer it is paired with</li>
+          <li>New mail arrives faster while the app is busy reading</li>
+          <li>Releasing one sender keeps the rule for their domain</li>
+          <li>A freshly paired desktop shows your mail right away</li>
+          <li>A restarted desktop renews its ohmail Cloud sign-in on time</li>
+          <li>Pairing a desktop keeps its card until the pairing answers</li>
+          <li>A repeated Screener suggestion request is never charged twice</li>
+          <li>An organizer that has lost its lease makes no further change, even in the middle of a batch</li>
+          <li>Search on a desktop paired with ohmail Cloud covers your whole mailbox</li>
+          <li>Requests on ohmail Cloud answer faster</li>
+          <li>An invite stays redeemable when others sign up from the same network</li>
+          <li>The desktop says when its ohmail Cloud account was deleted</li>
+          <li>A self-hosted server's Screener quote no longer shows the hosted service's price</li>
+          <li>The desktop app starts on Linux without a keyring service</li>
+          <li>Search on a paired desktop is quick while your mail is still arriving</li>
+          <li>A mailbox handed to another install stays with it</li>
+          <li>A mailbox taken over during a scan is not reported as failing</li>
+          <li>Switching off Use folders stops pending Not junk moves</li>
+          <li>A desktop paired with ohmail Cloud files your mail by your rules again</li>
+          <li>A rule for some of a sender's mail files only that mail</li>
+          <li>Answer Later and Parked list messages in the same order on every device</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.24.0" date="2026-09-24">
       <description>
         <ul>
@@ -137,29 +172,6 @@
           <li>The desktop stays signed in to ohmail Cloud</li>
           <li>Sign in on a new computer by confirming in your browser</li>
           <li>Staying signed in on the web no longer depends on a busy server</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.22.1" date="2026-09-23">
-      <description>
-        <ul>
-          <li>In the admin console, clearing the Microsoft secret asks first and never discards a secret you just typed; a console page that fails to load says so instead of staying blank</li>
-          <li>The desktop's own door</li>
-          <li>Turning off same-network access keeps the port</li>
-          <li>A signed-out tab stops hammering the server</li>
-          <li>Files that failed to load are asked for again</li>
-          <li>The phone's Servers screen, message bar and mail rows</li>
-          <li>On the phone, an error on one screen no longer closes the app</li>
-          <li>A row's actions no longer sit on the row</li>
-          <li>Obvious spam is filed for you the moment it is recognised, when you have asked for that</li>
-          <li>On iPhone, the app's diagnostics reach the system log, so a shipped build can be read</li>
-          <li>An account is never erased on a date the metering program worked out before it knew about it</li>
-          <li>Attaching a photo on the phone</li>
-          <li>The Ohbox can be cleared of older mail from senders you never decided about</li>
-          <li>On iPhone, the local copy of your mail stays out of the phone's backup, and Settings says so only where it is true</li>
-          <li>A certificate authority is trusted for the server you installed it for</li>
-          <li>A saved sign-in survives a crash in the middle of saving</li>
-          <li>Backspace and Delete no longer file a message while you are writing</li>
         </ul>
       </description>
     </release>
