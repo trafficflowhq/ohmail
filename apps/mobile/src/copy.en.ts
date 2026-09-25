@@ -49,6 +49,8 @@ const TABLE = {
    * still negotiates, and the desktop door is Android-only ({@link doorSelfCert}).
    */
   doorsLead: "One question, four answers — which machine does the organizing?",
+  /* The card's heading, on first run and on the Servers screen: what the four answers are. */
+  doorsHead: "What organizes your mail",
 
   doorCloud: "ohmail Cloud",
   doorCloudSay:
@@ -358,7 +360,6 @@ const TABLE = {
     "Pair this phone with the computer or server that holds your mail. Pairing is a QR code or a short-lived token, and no password is typed for it.",
   serversActive: "Connected",
   serversProfiles: "Paired servers",
-  serversAdd: "Add a server",
   /* The phone's own row in the list. It names what the row IS and promises nothing about what is
      happening right now: this phone files this mailbox only while the app is running, which the
      limitations screen and the Settings line both state, and a subtitle that said otherwise would

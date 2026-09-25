@@ -1,14 +1,14 @@
 /**
- * The four doors, on a phone — one component rendered by the first-run screen and the Servers
- * screen's "Add a server" panel: the same question at two moments. The desktop asks which
- * machine does the organizing; the phone now has its own door — an engine inside this app
- * dialling the person's IMAP server. The fourth door is offered only where an engine is
- * registered (`standaloneAvailable`) — a build fact, not a flag. The other three: ohmail
- * Cloud (negotiates `/hello`; a non-pairing server gets a sentence), your own server (the
- * address step, so address faults become address sentences), your own computer (trust is
- * `net/host-pinning.ts`'s ceremony). One extra LAN line renders only where `canPin()` is false.
+ * The four doors, on a phone — one component for the first-run screen and the Servers screen,
+ * under one heading that names what the four are. A door that answers in place renders its answer
+ * inside itself (`doors-answer.ts`). The fourth door, an engine inside this app dialling the
+ * person's IMAP server, is offered only where an engine is registered (`standaloneAvailable`) — a
+ * build fact, not a flag. The other three: ohmail Cloud (negotiates `/hello`; a non-pairing server
+ * gets a sentence), your own server (the address step, so address faults become address
+ * sentences), your own computer (trust is `net/host-pinning.ts`'s ceremony). One extra LAN line
+ * renders only where `canPin()` is false.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { refuse, sayRefusal, type Refusal } from "../refusal";
 import { Platform, TextInput, View } from "react-native";
 import { Copy } from "../copy";
@@ -21,19 +21,7 @@ import { canPin, isNotTls } from "../net/host-pinning";
 import { addressProblem, parseServerAddress } from "../net/server-base";
 import { useTheme } from "../theme";
 import { Button, Panel, Rule, Section, TapRow, Txt } from "./base";
-
-/** Which door is open, and how far into it. `null` = the three tiles. */
-type Open = null | "self";
-
-/**
- * What the address step has established. `probed` carries the two facts a self-hoster needs and
- * the previous build swallowed: what answered, and where its mail API turned out to be.
- */
-type Probe =
-  | { k: "idle" }
-  | { k: "asking" }
-  | { k: "probed"; origin: string; flavor: string; base: string; prefixed: boolean }
-  | { k: "failed"; sentence: Refusal };
+import { IDLE, pressDoor, probeUnder, type AnsweringDoor, type OpenDoor, type Probe } from "./doors-answer";
 
 /** One sentence per non-pairing outcome — the honest end of a flow, never a dead control. */
 export function sentenceFor(n: Negotiation, step?: PickerStep): Refusal {
@@ -71,9 +59,9 @@ export function Doors({
   lead?: boolean;
 }) {
   const conn = useConnection();
-  const [open, setOpen] = useState<Open>(null);
+  const [open, setOpen] = useState<OpenDoor>(null);
   const [address, setAddress] = useState("");
-  const [probe, setProbe] = useState<Probe>({ k: "idle" });
+  const [probe, setProbe] = useState<Probe>(IDLE);
   /**
    * Which check is the newest — the request-identity guard, and it closes a real state bleed.
    * `check` awaits two round trips and nothing stopped an older one from landing on top of a
@@ -92,13 +80,14 @@ export function Doors({
    * an ohmail server and whether it pairs; the base probe says where its mail API is, which on
    * a one-origin self-host stack is not the address that was typed — a pairing that skipped it
    * mirrored nothing for ever. Both go through the connection layer (`ask`, `probeBase`), so
-   * this file opens no socket and names no address (a census rule). `measureBase` is false for
-   * the Cloud card: the hosted address is a constant (`MANAGED_ORIGIN`), so the probe could
-   * only return what it was given while adding a round trip that can fail. Nothing is skipped
-   * either way — `pairWithServer` measures for itself, for every origin.
+   * this file opens no socket and names no address (a census rule). The Cloud card skips the
+   * base probe: the hosted address is a constant (`MANAGED_ORIGIN`), so the probe could only
+   * return what it was given while adding a round trip that can fail. Nothing is skipped either
+   * way — `pairWithServer` measures for itself, for every origin. Every probe names its door.
    */
   const check = useCallback(
-    async (typed: string, measureBase: boolean) => {
+    async (typed: string, door: AnsweringDoor) => {
+      const measureBase = door === "self";
       /* THE TICKET. Taken before anything awaits, so a check that never gets past the parse still
          supersedes an older one in flight — pressing a door IS abandoning the previous question. */
       const ticket = (latest.current += 1);
@@ -106,7 +95,7 @@ export function Doors({
 
       const problem = addressProblem(typed);
       if (problem !== null) {
-        setProbe({ k: "failed", sentence: problem });
+        setProbe({ k: "failed", door, sentence: problem });
         return;
       }
       /* Non-null: `addressProblem` returned null, so the parse succeeded. Asserted rather than
@@ -114,33 +103,34 @@ export function Doors({
          checks — and the NORMALIZED origin is what travels on, never the raw typing. */
       const origin = parseServerAddress(typed);
       if (origin === null) {
-        setProbe({ k: "failed", sentence: addressProblem(typed) ?? refuse("notOhmail") });
+        setProbe({ k: "failed", door, sentence: addressProblem(typed) ?? refuse("notOhmail") });
         return;
       }
-      setProbe({ k: "asking" });
+      setProbe({ k: "asking", door });
       const answer = await conn.ask(origin);
       if (!mine()) return;
       if (answer.kind !== "hello") {
-        setProbe({ k: "failed", sentence: sentenceFor(answer) });
+        setProbe({ k: "failed", door, sentence: sentenceFor(answer) });
         return;
       }
       const step = nextStep(answer.hello);
       if (step.kind !== "pair") {
-        setProbe({ k: "failed", sentence: sentenceFor(answer, step) });
+        setProbe({ k: "failed", door, sentence: sentenceFor(answer, step) });
         return;
       }
       if (!measureBase) {
-        setProbe({ k: "probed", origin, flavor: answer.hello.flavor, base: origin, prefixed: false });
+        setProbe({ k: "probed", door, origin, flavor: answer.hello.flavor, base: origin, prefixed: false });
         return;
       }
       const base = await conn.probeBase(origin);
       if (!mine()) return;
       if (base.kind === "refused") {
-        setProbe({ k: "failed", sentence: base.reason });
+        setProbe({ k: "failed", door, sentence: base.reason });
         return;
       }
       setProbe({
         k: "probed",
+        door,
         origin,
         flavor: answer.hello.flavor,
         base: base.base,
@@ -149,6 +139,8 @@ export function Doors({
     },
     [conn],
   );
+  /** The address step's own probe — never another door's check that landed late. */
+  const selfProbe = probeUnder("self", open, probe);
 
   return (
     <>
@@ -161,61 +153,64 @@ export function Doors({
       ) : null}
 
       <Panel style={{ paddingBottom: 16 }}>
-        <Section style={{ paddingTop: 16 }}>{Copy.serversAdd}</Section>
+        <Section style={{ paddingTop: 16 }}>{Copy.doorsHead}</Section>
 
         {/* THE ORDER IS FEWEST CONDITIONS FIRST — see the deck's own note. Cloud, then a server
             the person runs, then a computer on their network, whose code carries a key and whose
-            phone half is Android today. */}
+            phone half is Android today. A door that answers renders the answer INSIDE itself, so
+            it stands under the option pressed and nowhere else. */}
         <Door
           name={Copy.doorCloud}
           say={Copy.doorCloudSay}
           onPress={() => {
             /* The Cloud card NEGOTIATES for real rather than routing on this deck's word: if the
                hosted service ever answers `pairing: false`, the person reads the server's answer
-               and not a stale sentence from a source file. */
-            setOpen(null);
-            /* `false` — no base probe. See `check`'s note: this address is this app's own constant,
-               so the probe could only return it, and its one possible outcome beyond that is a
-               failure sentence on the door that has always worked. */
-            void check(MANAGED_ORIGIN, false);
+               and not a stale sentence from a source file. No base probe — see `check`. */
+            setOpen((v) => pressDoor(v, "cloud"));
+            void check(MANAGED_ORIGIN, "cloud");
           }}
-        />
+        >
+          {open === "cloud" ? (
+            <View style={{ paddingHorizontal: 16, paddingTop: 6 }}>
+              <Result probe={probeUnder("cloud", open, probe)} onScan={onScan} onTypeToken={onTypeToken} />
+            </View>
+          ) : null}
+        </Door>
         <Rule inset={20} />
         <Door
           name={Copy.doorOwnServer}
           say={Copy.doorOwnServerSay}
           onPress={() => {
-            setOpen((v) => (v === "self" ? null : "self"));
-            setProbe({ k: "idle" });
+            setOpen((v) => pressDoor(v, "self"));
+            setProbe(IDLE);
           }}
-        />
-        {open === "self" ? (
-          <View style={{ paddingHorizontal: 16, paddingTop: 6, gap: 10 }}>
-            <Txt variant="hint" tone="ink3">
-              {Copy.doorSelfLead}
-            </Txt>
-            <AddressField
-              value={address}
-              onChange={setAddress}
-              /* LOCKED FROM THE MOMENT THE CHECK STARTS, not from the moment it answers — review
-                 named the window. It read `probe.k === "probed"`, so the field was editable WHILE
-                 asking: type A, press Continue, replace it with B, and A's answer locks the field
-                 showing B while the pair buttons carry A. The token for B would then be sent to A.
-                 Editable only in the two states where nothing is in flight and nothing is proved. */
-              locked={probe.k === "asking" || probe.k === "probed"}
-            />
-            <Txt variant="hint" tone="ink3">
-              {Copy.doorSelfCert}
-            </Txt>
-            <Button
-              label={probe.k === "asking" ? Copy.doorSelfChecking : Copy.doorSelfGo}
-              variant="solid"
-              disabled={probe.k === "asking" || probe.k === "probed" || !address.trim()}
-              onPress={() => void check(address, true)}
-            />
-            <Result probe={probe} onScan={onScan} onTypeToken={onTypeToken} />
-          </View>
-        ) : null}
+        >
+          {open === "self" ? (
+            <View style={{ paddingHorizontal: 16, paddingTop: 6, gap: 10 }}>
+              <Txt variant="hint" tone="ink3">
+                {Copy.doorSelfLead}
+              </Txt>
+              <AddressField
+                value={address}
+                onChange={setAddress}
+                /* LOCKED FROM THE MOMENT THE CHECK STARTS, not from the moment it answers: editable
+                   while asking, a typed B could be locked under A's answer and B's token sent to A.
+                   Editable only while nothing is in flight and nothing is proved. */
+                locked={selfProbe.k === "asking" || selfProbe.k === "probed"}
+              />
+              <Txt variant="hint" tone="ink3">
+                {Copy.doorSelfCert}
+              </Txt>
+              <Button
+                label={selfProbe.k === "asking" ? Copy.doorSelfChecking : Copy.doorSelfGo}
+                variant="solid"
+                disabled={selfProbe.k === "asking" || selfProbe.k === "probed" || !address.trim()}
+                onPress={() => void check(address, "self")}
+              />
+              <Result probe={probeUnder("self", open, probe)} onScan={onScan} onTypeToken={onTypeToken} />
+            </View>
+          ) : null}
+        </Door>
         <Rule inset={20} />
         <Door name={Copy.doorDesktop} say={Copy.doorDesktopSay} onPress={onScan} />
         {/* THE ONE CONDITION THIS DOOR HAS, BEFORE THE SCAN RATHER THAN AFTER IT. `canPin()` is
@@ -229,12 +224,6 @@ export function Doors({
             </Txt>
           </View>
         )}
-
-        {open === null ? (
-          <View style={{ paddingHorizontal: 16, paddingTop: 6 }}>
-            <Result probe={probe} onScan={onScan} onTypeToken={onTypeToken} />
-          </View>
-        ) : null}
 
         {/* ── THE FOURTH DOOR, UNDER THE THIRD ──────────────────────────────────────────────
             Same anatomy as the other three, no accent and no badge: position is the loudest signal
@@ -312,41 +301,48 @@ function Result({
   );
 }
 
+/** One option and, below it, whatever it answered — one component, so the two cannot drift apart. */
 function Door({
   name,
   say,
   need,
   onPress,
+  children,
 }: {
   name: string;
   say: string;
   /** The third line — what the door asks for next, or (door four) the condition it comes with. */
   need?: string;
   onPress: () => void;
+  /** This door's answer, rendered under its row. The routing doors have none. */
+  children?: ReactNode;
 }) {
   return (
-    <TapRow
-      onPress={onPress}
-      accessibilityRole="button"
-      /**
-       * The name AND the sentence — an explicit label replaces the one React Native would
-       * derive from the child text, and the sentence is not decoration here. Carrying only the
-       * name, a screen reader announced "Your own computer, button" and dropped "open Settings
-       * → Devices there and scan its code" — the whole answer of which machine organizes and
-       * what to do next. One label with both, rather than a `hint`: a hint is spoken after a
-       * pause and can be turned off entirely, and this sentence is not supplementary to the
-       * choice — it IS the choice.
-       */
-      accessibilityLabel={Copy.ariaNameThenSentence(name, need === undefined ? say : `${say} ${need}`)}
-      style={{ marginHorizontal: 8, paddingHorizontal: 12, paddingVertical: 12, gap: 3 }}
-    >
-      <Txt variant="navLabel">{name}</Txt>
-      <Txt variant="hint" tone="ink3">{say}</Txt>
-      {/* THE THIRD LINE IS IN THE LABEL TOO, for the reason the second one is: on door four it is
-          the decision-bearing sentence, and a reader who heard "Standalone on this phone" and not
-          "only while the app is open" has been told the wrong thing. */}
-      {need !== undefined ? <Txt variant="hint" tone="ink3">{need}</Txt> : null}
-    </TapRow>
+    <View>
+      <TapRow
+        onPress={onPress}
+        accessibilityRole="button"
+        /**
+         * The name AND the sentence — an explicit label replaces the one React Native would
+         * derive from the child text, and the sentence is not decoration here. Carrying only the
+         * name, a screen reader announced "Your own computer, button" and dropped "open Settings
+         * → Devices there and scan its code" — the whole answer of which machine organizes and
+         * what to do next. One label with both, rather than a `hint`: a hint is spoken after a
+         * pause and can be turned off entirely, and this sentence is not supplementary to the
+         * choice — it IS the choice.
+         */
+        accessibilityLabel={Copy.ariaNameThenSentence(name, need === undefined ? say : `${say} ${need}`)}
+        style={{ marginHorizontal: 8, paddingHorizontal: 12, paddingVertical: 12, gap: 3 }}
+      >
+        <Txt variant="navLabel">{name}</Txt>
+        <Txt variant="hint" tone="ink3">{say}</Txt>
+        {/* THE THIRD LINE IS IN THE LABEL TOO, for the reason the second one is: on door four it is
+            the decision-bearing sentence, and a reader who heard "Standalone on this phone" and not
+            "only while the app is open" has been told the wrong thing. */}
+        {need !== undefined ? <Txt variant="hint" tone="ink3">{need}</Txt> : null}
+      </TapRow>
+      {children}
+    </View>
   );
 }
 

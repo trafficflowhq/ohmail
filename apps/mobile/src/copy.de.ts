@@ -31,6 +31,7 @@ export const DE: Deck = {
   /* ------------------------------------------------------------------ doors */
 
   doorsLead: "Eine Frage, vier Antworten — welcher Rechner organisiert?",
+  doorsHead: "Was deine Post organisiert",
 
   doorCloud: "ohmail Cloud",
   doorCloudSay:
@@ -221,7 +222,6 @@ export const DE: Deck = {
     "Koppele dieses Telefon mit dem Computer oder Server, auf dem deine Post liegt. Gekoppelt wird über einen QR-Code oder einen kurzlebigen Token, und dafür wird kein Passwort eingetippt.",
   serversActive: "Verbunden",
   serversProfiles: "Gekoppelte Server",
-  serversAdd: "Server hinzufügen",
   /* Die eigene Zeile des Telefons in der Liste. Sie benennt, was der Eintrag IST, und verspricht
      nichts über den Augenblick — siehe die englische Fassung. */
   serversOrganizedHere: "Das Postfach, das dieses Telefon selbst geöffnet hat.",
