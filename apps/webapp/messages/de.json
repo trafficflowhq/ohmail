@@ -3012,7 +3012,7 @@
       "header": "Eine Regel von dir auf dem Header {match} sortiert Post in {place}."
     },
     "auditWhyGate": "Wartet am Screener. Über diesen Absender ist noch nichts entschieden.",
-    "auditWhyArrival": "Beim Eintreffen einsortiert. Keine deiner Regeln deckt sie ab, also hat etwas anderes entschieden — meist, dass du diesem Absender schon geantwortet hattest.",
+    "auditWhyArrival": "Beim Eintreffen einsortiert. ohmail sieht keine Regel von dir, die sie jetzt hierher sortieren würde — meist liegt sie hier, weil du diesem Absender schon geantwortet hattest.",
     "auditSuggestion": "Von der KI vorgeschlagen: {rationale}",
     "retroToggle": "Auch die Post verschieben, die schon im Postfach liegt",
     "retroToggleAria": "Die Regel auch auf Post anwenden, die schon hier ist",

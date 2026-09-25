@@ -3012,7 +3012,7 @@
       "header": "A rule you made on the {match} header files mail into {place}."
     },
     "auditWhyGate": "Waiting at the Screener. Nothing has been decided about this sender yet.",
-    "auditWhyArrival": "Filed when it arrived. No rule of yours covers it, so something else decided — most often that you had already replied to this sender.",
+    "auditWhyArrival": "Filed when it arrived. ohmail sees no rule of yours that would file it here now — most often it is here because you had already replied to this sender.",
     "auditSuggestion": "Suggested by AI: {rationale}",
     "retroToggle": "Also move the mail already in your mailbox",
     "retroToggleAria": "Also apply the rule to mail already here",
