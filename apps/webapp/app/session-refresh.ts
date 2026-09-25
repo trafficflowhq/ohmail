@@ -9,6 +9,7 @@
  * — `next.config.mjs` carries the dedicated rewrite (`REFRESH_PATH`).
  */
 
+import { isSessionRefusal } from "@ohmail/client-engine";
 import { csrfToken } from "./csrf";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "./shell/confirm-schedule";
 import { readOwner } from "./shell/owner-cookie";
@@ -323,25 +324,26 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> 
       // sixty seconds confirming one), but the refresh endpoint IS the recovery path — its coded
       // 401 means the family is revoked, with no stronger confirmation to wait for; a 204 is the
       // opposite fact with the same authority (`markSessionAlive` publishes a revival). The death
-      // latch additionally requires OUR error envelope: a 401
-      // with no parseable `error.code` is a platform interposing itself.
+      // latch additionally requires the door's own refusal code: a 401 without one is a platform
+      // interposing itself.
       if (res.status === 204) {
         recordRefresh({ outcome: "minted", status: 204, code: null, errorClass: null, retryAfterMs: null });
         markSessionAlive();
         return true;
       }
-      // Read ONCE, for both facts: whether the envelope is ours, and which refusal it names.
+      // Read ONCE, for both facts: whether the envelope is ours, and which code it names. Only the
+      // refresh door's own refusal is a verdict (`isSessionRefusal`, the phone's reading too).
       const code = res.status === 401 ? await refusalCode(res) : null;
-      if (code !== null) {
+      if (isSessionRefusal(res.status, code)) {
         recordRefresh({ outcome: "revoked", status: 401, code, errorClass: null, retryAfterMs: null });
         markSessionDead();
         return false;
       }
-      // Everything else: an uncoded 401 (a platform interposing), a 5xx, a 403, a body this
-      // client cannot read. The refresh did not happen and nothing was learned about the
-      // session — which is a different fact from "revoked" and is recorded as one.
+      // Everything else: an uncoded 401 or one naming another code (a platform interposing), a
+      // 5xx, a 403, a body this client cannot read. The refresh did not happen and nothing was
+      // learned about the session — which is a different fact from "revoked" and is recorded as one.
       recordRefresh({
-        outcome: "unavailable", status: res.status, code: await faultCode(res), errorClass: null,
+        outcome: "unavailable", status: res.status, code: code ?? await faultCode(res), errorClass: null,
         retryAfterMs: retryAfterMsOf(res) ?? null,
       });
       return false;
