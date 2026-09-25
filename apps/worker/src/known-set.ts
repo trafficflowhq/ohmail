@@ -244,6 +244,8 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   // reads
   "findByDedupKey", "findByMessageIdHeader", "listMessageFailures", "primaryInstanceVanished",
   "getFolderState", "listRules", "knownSenders", "findThreadParent", "listThreadBacklog",
+  // `mailboxes.address` — a table this projection does not join.
+  "ownAddresses",
   // `away_replies`, one column, `LIMIT 1` — a table this projection does not join at all.
   "isOwnAwayReply",
   /* The correspondent predicate's reply arm and the consent point it is read from: reads of
@@ -271,6 +273,8 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   "claimMessageFailures", "resolveMessageFailure", "upgradeDedupKey", "insertMessageBody",
   "insertAttachments", "upsertFolderState", "completeFolderState", "adoptFolderState",
   "setFolderConflict", "deferFolderReconcile",
+  // `folder_state.desired_folder` + `change_log` for own mail at the gate — neither is projected.
+  "releaseOwnMailAtGate",
   "deferFlagReconcile", "recordAudit", "recordAuditMany", "recordChange",
   /* `recordChanges` is `recordChange` for a list — the same two tables (`change_log` and the
      account's seq counter), neither of them in the projection. Named separately because the list

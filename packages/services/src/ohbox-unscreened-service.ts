@@ -119,11 +119,14 @@ function asRuleInput(row: UnscreenedRow): NormalizedMessage {
  * default: the `people_only` refinement sits inside the winning-allow branch, so no posture can
  * make an answer `screener` or unmake one.
  */
-function gateWouldScreen(row: UnscreenedRow, rules: readonly Rule[], known: ReadonlySet<string>): boolean {
+function gateWouldScreen(
+  row: UnscreenedRow, rules: readonly Rule[], known: ReadonlySet<string>, own: ReadonlySet<string>,
+): boolean {
   return evaluateRules({
     msg: asRuleInput(row),
     rules: rules as Rule[],
     knownSenders: known,
+    ownAddresses: own,
     auth: "unavailable",
     ohboxPolicy: DEFAULT_OHBOX_POLICY,
   }).source === "screener";
@@ -149,6 +152,7 @@ async function unscreenedWalk(
   const ownRows = await t.select({ address: mailboxes.address }).from(mailboxes)
     .where(eq(mailboxes.accountId, accountId));
   const ownAddresses = ownRows.map((r) => r.address.toLowerCase());
+  const ownSet: ReadonlySet<string> = new Set(ownAddresses);
   /* THE TWO WIDE COLUMNS ARE READ ONLY WHERE A RULE READS THEM, and which rule reads which is the
      whole of the condition. `headers` is read by ONE arm of the gate that can precede a `screener`
      answer — a `header` rule, which names a header and nobody's address; `message_bodies.text` by
@@ -171,7 +175,7 @@ async function unscreenedWalk(
     if (rows.length === 0) break;
     for (const row of rows) {
       if (out.length >= OHBOX_UNSCREENED_MESSAGES_MAX) break;
-      if (gateWouldScreen(row, rules, known)) out.push(row);
+      if (gateWouldScreen(row, rules, known, ownSet)) out.push(row);
     }
     afterId = rows[rows.length - 1]!.messageId;
     if (rows.length < OHBOX_UNSCREENED_BATCH) break;

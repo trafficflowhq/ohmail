@@ -463,6 +463,8 @@ export interface RepoPort {
   setFolderConflict(messageId: string, s: FolderStateRow): Promise<void>;
   listRules(accountId: string): Promise<Rule[]>;
   knownSenders(accountId: string): Promise<Set<string>>;
+  /** The account's own mailbox addresses, lower-cased — `@trafficflow/db#readOwnAddresses`. */
+  ownAddresses(accountId: string): Promise<Set<string>>;
   /**
    * Has this account written to `sender` — `correspondent.ts#correspondentsAmong`, its REPLY arm:
    * `references` (bracket-free, as `threadKeyOf` parses them) name a Sent copy this account wrote

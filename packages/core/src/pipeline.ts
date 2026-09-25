@@ -566,6 +566,12 @@ export interface PlanDeps {
    * new stranger mid-window lands where the server delivered it.
    */
   importDecisionOpen?: boolean;
+  /**
+   * The account's own mailbox addresses, lower-cased, resolved once per page by the cycle (the
+   * `correspondenceSince` discipline: no statement per message). ABSENT asks the repo — never an
+   * empty set, which would hold the account's own mail at the gate.
+   */
+  ownAddresses?: ReadonlySet<string>;
 }
 
 /**
@@ -913,8 +919,9 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
 
     const rules = await repo.listRules(accountId);
     const known = await repo.knownSenders(accountId);
+    const ownAddresses = deps.ownAddresses ?? await repo.ownAddresses(accountId);
     let decision = evaluateRules({
-      msg: normalized, rules, knownSenders: known, auth: authVerdict, ohboxPolicy,
+      msg: normalized, rules, knownSenders: known, auth: authVerdict, ohboxPolicy, ownAddresses,
     });
     /* A CORRESPONDENT IS NEVER FIRST CONTACT. Asked only where the gate would hold for want of a
        known author — a rule, a standing denial and a failed authentication all stand — and
@@ -924,7 +931,7 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
     if (correspondent !== null) {
       decision = evaluateRules({
         msg: normalized, rules, knownSenders: new Set([...known, correspondent.author]),
-        auth: authVerdict, ohboxPolicy,
+        auth: authVerdict, ohboxPolicy, ownAddresses,
       });
     }
 
@@ -1037,6 +1044,8 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
       classifier &&
       routing &&
       correspondent === null &&
+      // The unclear residue BY NAME: `own` also carries no destination and is never a question.
+      decision.source === "unclear" &&
       decision.destination == null &&
       // `{ mailboxId }` ONLY. This used to pass `dedupKey: key`, and `key` is
       // `mid:${messageIdHeader}` — the raw Message-ID, chosen by the sending server, carrying the

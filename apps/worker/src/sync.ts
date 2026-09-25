@@ -15,7 +15,7 @@ import { LeaseUnavailableError } from "@trafficflow/core/adapters/organizer-leas
 // the erasure refusal the ingest repository raises: `apps/sidecar/src/engine.ts` already imports
 // this barrel beside this file, so it adds no module to the engine bundle. `@trafficflow/db/cloud`
 // is the half that may not be named here.
-import { MailboxErasedError } from "@trafficflow/db";
+import { MailboxErasedError, OWN_MAIL_RELEASE_BATCH } from "@trafficflow/db";
 import type { FilingRefusalClass, OrganizerRole } from "@trafficflow/db";
 import type { WorkerRepo, DrizzleRepo, PendingFolderState, PendingFlagState } from "@trafficflow/core/adapters/drizzle-repo";
 import { ClassifierFaultError } from "./classifier-fault.js";
@@ -1283,9 +1283,10 @@ async function syncCycleWithin(
   // Read only when this page holds one of the account's own Sent copies — the one plan that
   // uses it — so an idle cycle and an inbound-only page pay no statement for it.
   const correspondenceSince = await consentPointFor(deps, readerMode, batch.creates);
+  const ownAddresses = await ownAddressesFor(deps, readerMode, batch.creates);
   for (const ch of [...batch.creates, ...batch.moves]) {
     await attempt(ch, async () => {
-      const plan = await planChange(ch, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, correspondenceSince, importDecisionOpen, readerMode });
+      const plan = await planChange(ch, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, correspondenceSince, importDecisionOpen, readerMode, ...(ownAddresses !== undefined ? { ownAddresses } : {}) });
       await fencedIngest(deps, async (txRepo) => {
         // The mailbox is asked about INSIDE this transaction, never before it: `planChange` above
         // ran outside any transaction and may have spent a classifier call there, which is exactly
@@ -1461,6 +1462,23 @@ async function syncCycleWithin(
     }
   }
 
+  /* THE ONE-TIME RELEASE OF OWN MAIL THE GATE HELD (`@trafficflow/db#releaseOwnMailAtGate`): the
+     router no longer holds it, and what it filed there before goes back to INBOX. Desired-state
+     only, organizer only, one bounded page per visit; the reconcile below makes the moves. A
+     refusal stops the cycle; any other failure waits for the next visit — the selection is its
+     own resume point. */
+  if (!readerMode && !ownMailReleaseDone.has(mailboxId)) {
+    try {
+      const released = await fencedLiveGroup(deps,
+        (r) => r.releaseOwnMailAtGate(accountId, mailboxId, OWN_MAIL_RELEASE_BATCH));
+      if (released < OWN_MAIL_RELEASE_BATCH) ownMailReleaseDone.add(mailboxId);
+      if (released > 0) log?.info("own_mail_released", { mailboxId, accountId, released });
+    } catch (err) {
+      rethrowRefusal(err);
+      log?.warn("own_mail_release_failed", { mailboxId, accountId, err });
+    }
+  }
+
   // The reconciler's own refusal gets the pass's name for the junk restore's reason — its arms
   // otherwise report a removal as bookkeeping that "did not commit", which is a sentence about
   // our database when the fact is that the mailbox has gone. Rethrown: terminal for the cycle,
@@ -1501,6 +1519,24 @@ async function syncCycleWithin(
  * organizer decides who is known), for a page holding none of the account's own Sent copies, and
  * for a repo that cannot say, which is the direction that grants no consent.
  */
+/**
+ * Mailboxes whose own-mail release came back short in THIS process. A one-time repair reading the
+ * account's own mail is asked once per mailbox per process start (again after a full page), never
+ * on every visit.
+ */
+const ownMailReleaseDone = new Set<string>();
+
+/**
+ * `PlanDeps.ownAddresses` for one page — read once, and only when the page holds mail the gate
+ * decides (not the account's own Sent copies, not a passive folder, never for a reader).
+ */
+async function ownAddressesFor(
+  deps: SyncDeps, readerMode: boolean, creates: readonly { ownAuthored?: boolean; passive?: boolean }[],
+): Promise<ReadonlySet<string> | undefined> {
+  if (readerMode || !creates.some((c) => c.ownAuthored !== true && c.passive !== true)) return undefined;
+  return deps.repo.ownAddresses(deps.accountId);
+}
+
 async function consentPointFor(
   deps: SyncDeps, readerMode: boolean, creates: readonly { ownAuthored?: boolean }[],
 ): Promise<Date | undefined> {

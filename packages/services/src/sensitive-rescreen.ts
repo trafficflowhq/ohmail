@@ -245,6 +245,7 @@ export async function runSensitiveRescreen(
   const ownRows = await tx.select({ address: mailboxes.address }).from(mailboxes)
     .where(eq(mailboxes.accountId, accountId));
   const ownAddresses = ownRows.map((r) => r.address.toLowerCase());
+  const ownSet: ReadonlySet<string> = new Set(ownAddresses);
 
   let examined = 0;
   let rescreened = 0;
@@ -318,7 +319,7 @@ export async function runSensitiveRescreen(
         // `evaluateRules` reads `"fail"` and nothing else — only a provider's explicit failure
         // for the claimed author changes an answer, and only towards the Screener.
         const decision = evaluateRules({
-          msg: asRuleInput(row), rules, knownSenders: known,
+          msg: asRuleInput(row), rules, knownSenders: known, ownAddresses: ownSet,
           auth: authVerdictFromHeaders(row.headers, row.fromAddress, trustedAuthservIds),
           // LENIENT, and it must stay so: this pass acts ONLY on `source === "screener"` (the
           // known-sender-with-a-fail demotion it exists for). A `people_only` demotion answers

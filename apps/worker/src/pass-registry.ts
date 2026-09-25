@@ -78,6 +78,17 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "the visit's leased adapter; writes through the fenced group",
   },
   {
+    name: "own_mail_release",
+    module: `${DB}/own-mail.ts`, entry: "releaseOwnMailAtGate",
+    // Called through the visit's repo (`WorkerRepo.releaseOwnMailAtGate`); the desktop engine runs
+    // the same visit, so both doors release.
+    triggers: ["visit"],
+    cadence: "every organizer visit, before the reconcile; a no-op once nothing of the account's own sits at the gate",
+    budget: "OWN_MAIL_RELEASE_BATCH rows per visit",
+    owns: "own-address mail the router filed into ohmail/Screener before it stopped doing so goes back to INBOX, once",
+    fence: "the fenced live group (desired-state only); the visit's reconcile makes the moves under the lease",
+  },
+  {
     name: "junk_sweep",
     module: `${W}/junk-sweep.ts`, entry: "junkSweepPass",
     triggers: ["visit", "cli"], cli: ["run-junk-sweep.ts"],

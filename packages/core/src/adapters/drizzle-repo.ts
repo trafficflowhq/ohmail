@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass } from "@trafficflow/db";
+import { accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass, readOwnAddresses, releaseOwnMailAtGate } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, ExternalOverrideInput, ExternalOverrideOutcome,
   StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
@@ -588,6 +588,11 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * `MailboxDTO.pendingMoves` still counts it. See {@link deferFolderReconcile}.
    */
   listPendingFolderStates(mailboxId: string, limit?: number): Promise<PendingFolderState[]>;
+  /**
+   * The one-time release of own-address mail WE filed at the gate — `@trafficflow/db#releaseOwnMailAtGate`.
+   * Desired-state only, inside the caller's transaction; returns how many rows it released.
+   */
+  releaseOwnMailAtGate(accountId: string, mailboxId: string, limit: number): Promise<number>;
   /**
    * Defer one refused move: record the refusal and when it may be attempted again (mail 0058).
    * Writes `attempts`, `next_attempt_at` and `error_class`, nothing else: touching the intent
@@ -1804,6 +1809,16 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   async knownSenders(accountId: string): Promise<Set<string>> {
     const rows = await this.db.select({ address: contactsTbl.address }).from(contactsTbl).where(eq(contactsTbl.accountId, accountId));
     return new Set(rows.map((r) => r.address.toLowerCase()));
+  }
+
+  /** {@link RepoPort.ownAddresses} — the set `senderIsOwnSql` tests, read whole. */
+  async ownAddresses(accountId: string): Promise<Set<string>> {
+    return readOwnAddresses(this.db as unknown as Tx, accountId);
+  }
+
+  /** {@link WorkerRepo.releaseOwnMailAtGate} — the caller's transaction, this repo's dialect. */
+  async releaseOwnMailAtGate(accountId: string, mailboxId: string, limit: number): Promise<number> {
+    return releaseOwnMailAtGate(this.db as LedgerTx, this.d, { accountId, mailboxId, limit });
   }
 
   /** {@link RepoPort.isCorrespondent} — the reply arm of the one predicate, on this connection. */

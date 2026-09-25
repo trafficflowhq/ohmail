@@ -259,6 +259,7 @@ export async function ruleRetroPass(
     if (result.moved >= budget) { result.capped = true; break; }
     result.rules++;
     const own = await ownFor(row.accountId);
+    const ownSet: ReadonlySet<string> = new Set(own);
 
     let pages = 0;
     let exhausted = false;
@@ -327,7 +328,7 @@ export async function ruleRetroPass(
           if (result.moved + moved >= budget) { capped = true; break; }
 
           const decision = evaluateRules({
-            msg: ruleInputOf(c), rules, knownSenders: known,
+            msg: ruleInputOf(c), rules, knownSenders: known, ownAddresses: ownSet,
             auth: authVerdictFromHeaders(c.headers, c.fromAddress, await trustFor(c.mailboxId)),
             // LENIENT here, and deliberately: this pass acts ONLY on `source === "rule"` (below),
             // so the `people_only` demotion — which answers `source: "policy"` — could never change

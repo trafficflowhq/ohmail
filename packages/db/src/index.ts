@@ -374,6 +374,9 @@ export {
   type CutlineFacts, type ResolvedCutline,
 } from "./screener-cutline.js";
 
+/** The account's own addresses, read whole for the router's gate, and the one-time release of own mail it filed there. */
+export { readOwnAddresses, releaseOwnMailAtGate, OWN_MAIL_RELEASE_BATCH } from "./own-mail.js";
+
 /**
  * The portable profile's import markers — the found-document record the organizer writes and
  * the user-answer record that releases its hold. Same barrel and the same closure rule as the

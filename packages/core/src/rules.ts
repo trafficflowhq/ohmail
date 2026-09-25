@@ -217,6 +217,12 @@ export interface EvaluateRulesInput {
    * it under the lenient policy — the `dormancy_days`/`trustedAuthservIds` zero-writer trap.
    */
   ohboxPolicy: OhboxPolicy;
+  /**
+   * REQUIRED — the account's own mailbox addresses, lower-cased (`@trafficflow/db#readOwnAddresses`,
+   * the set `senderIsOwnSql` tests). The gate never holds the account's own mail; an empty set
+   * would hold it silently, so every caller names the set it read.
+   */
+  ownAddresses: ReadonlySet<string>;
 }
 
 export interface RuleDecision {
@@ -231,7 +237,7 @@ export interface RuleDecision {
    * instead, so the client can render the "keep in my Ohbox" affordance without the learning reads
    * ever seeing it as consent.
    */
-  source: "rule" | "header" | "screener" | "unclear" | "policy";
+  source: "rule" | "header" | "screener" | "unclear" | "policy" | "own";
   /**
    * The allow rule a `source: "policy"` demotion moved this message past. `null` for every other
    * source. Present so the affordance can name the sender and so a routing-decision row can record
@@ -1205,17 +1211,17 @@ function policyDemotion(
 }
 
 /**
- * The consent gate, in the only order that is correct. Five steps: (1) the user's own rules,
- * resolved by a TOTAL order — a user decision outranks anything we infer, including the gate; (2)
- * the account's {@link standingRule} for this sender, whether or not a term claimed THIS message;
- * (3) a POSITIVE authenticated-known check; (4) fail closed to `ohmail/Screener` for an unknown,
- * absent, unparseable or ambiguous sender; (5) THEN {@link headerHeuristic}, refinement only.
+ * The consent gate, in the only order that is correct: (1) the user's own rules, resolved by a
+ * TOTAL order — a user decision outranks anything we infer, including the gate; (2) the account's
+ * {@link standingRule} for this sender, whether or not a term claimed THIS message; (3) a POSITIVE
+ * authenticated-known check; (4) fail closed to `ohmail/Screener` for an unknown, absent, unparseable
+ * or ambiguous sender, never an own address; (5) THEN {@link headerHeuristic}, refinement only.
  * `"fail"` — the only thing `input.auth` does — screens a message otherwise allowed: a DENY rule
  * is never weakened, nothing is ever REQUIRED. One refinement, {@link policyDemotion}, between
  * allow-side piles only; its `matchedRuleId` is `null` so the learning path is taught no consent.
  */
 export function evaluateRules(input: EvaluateRulesInput): RuleDecision {
-  const { msg, rules, knownSenders, auth, ohboxPolicy } = input;
+  const { msg, rules, knownSenders, auth, ohboxPolicy, ownAddresses } = input;
 
   const author = authorAddress(msg);
   const screened: RuleDecision = { destination: "ohmail/Screener", matchedRuleId: null, source: "screener" };
@@ -1241,7 +1247,16 @@ export function evaluateRules(input: EvaluateRulesInput): RuleDecision {
   if (standing && effectForDestination(standing.destination) === "deny") {
     return { destination: standing.destination, matchedRuleId: standing.id, source: "rule" };
   }
-  if (standing === null && !isKnownAuthor(author, knownSenders)) return screened;
+  if (standing === null && !isKnownAuthor(author, knownSenders)) {
+    /* THE ACCOUNT ITSELF IS NOT FIRST CONTACT: its own mail keeps the place the mailbox gave it
+       (`destination: null`, `source: "own"` — no pile, no AI question), where every other mail
+       program and a person who has left ohmail expect it. `fail` still screens: a forged own
+       `From` is not the account's mail. */
+    if (author !== null && ownAddresses.has(author.toLowerCase()) && auth !== "fail") {
+      return { destination: null, matchedRuleId: null, source: "own" };
+    }
+    return screened;
+  }
   if (auth === "fail") return screened;
 
   const heur = headerHeuristic(msg);

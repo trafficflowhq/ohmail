@@ -294,6 +294,7 @@ export async function ohboxTidyPass(
   const ownRows = await db.select({ address: mailboxes.address }).from(mailboxes)
     .where(eq(mailboxes.accountId, accountId));
   const ownAddresses = ownRows.map((r) => r.address.toLowerCase());
+  const ownSet: ReadonlySet<string> = new Set(ownAddresses);
 
   const result: OhboxTidyResult = { ...EMPTY(), ran: true };
   let afterId: string | null = settings?.cursor ?? null;
@@ -376,7 +377,7 @@ export async function ohboxTidyPass(
 
           const msg = ruleInputOf(c);
           const decision = evaluateRules({
-            msg, rules, knownSenders: known,
+            msg, rules, knownSenders: known, ownAddresses: ownSet,
             auth: authVerdictFromHeaders(c.headers, c.fromAddress, await trustFor(c.mailboxId)),
             ohboxPolicy: livePolicy,
           });
