@@ -421,6 +421,15 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
         pending.current = null;
         return;
       }
+      /* A KEY A FIELD HAS HANDLED IS THE FIELD'S. Under the App Router React listens on
+         `document` beside this listener, so a field's `stopPropagation` cannot stop it: both
+         of its answers are read here instead. Prevented or stopped, no binding runs and a chord
+         in flight ends. One rule for every key: Escape closes the innermost open thing (the
+         address suggestions, a popover) and only the next Escape reaches the view. */
+      if (e.defaultPrevented || e.cancelBubble) {
+        pending.current = null;
+        return;
+      }
       const typing = isTypingTarget(e.target);
       /*
        * A mounted composer suspends every chord a writer could press — measured on the deployed

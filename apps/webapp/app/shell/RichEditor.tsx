@@ -225,6 +225,12 @@ export function RichEditor({
     // flag rather than a `typeof window` guard.
     immediatelyRender: false,
     editorProps: {
+      /* ⌘↵ AND ⌘⇧↵ ARE SEND'S. TipTap's HardBreak binds Mod-Enter and ProseMirror prevents a key
+         a binding takes, so the keymap, which leaves a handled key alone, never heard Send.
+         Answering `true` here skips ProseMirror's handling without claiming the key. */
+      handleDOMEvents: {
+        keydown: (_view, e) => e.key === "Enter" && (e.metaKey || e.ctrlKey),
+      },
       attributes: {
         /**
          * The body is a multi-line text box, and it has to say so. ProseMirror's surface is a

@@ -589,7 +589,7 @@ export function useShellKeys({
       // typing guard already keeps them out of this editor (`isTypingTarget` answers true for a `contenteditable` as
       // it did for the textarea); this chord does not collide with any of them. The rich editor does not swallow it.
 
-      // ProseMirror's keymap handles `Enter` and `Shift-Enter` and has no `Mod-Enter` binding, so the event is not
+      // TipTap binds `Mod-Enter` to a line break, and `RichEditor` skips that binding for this chord, so the event is not
       // consumed and reaches the document listener this registry hangs on — which is why the chord stays here rather
       // than being reimplemented inside the editor's own `onKeyDown`. It calls the same `sendReply` the button does,
       // so the send lock, the empty-body guard and the whole failure surface apply identically — there is no second
