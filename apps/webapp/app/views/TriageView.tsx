@@ -10,7 +10,7 @@
  * `onStartFR` is the `f` key's callback, the shell fills it from `piles.replyLater`, and a completed reply clears
  * `reply_later` — `test/triage-split.test.ts` pins both ends.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { rowThreadOf } from "../shell/row-thread";
@@ -28,6 +28,7 @@ import { avatarOf, rowStamp, hueOf, resurfaceLabel, rowAddress, senderName, tags
 import { useKeyBindings } from "../shell/keymap";
 import { useZoneNav } from "../shell/zone-nav";
 import { readColumnHidden } from "../shell/narrow";
+import { useListWindow } from "../shell/list-window";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { TRIAGE_PILES, type TriagePileId } from "../shell/routing";
 
@@ -225,15 +226,27 @@ export function TriageView({
    * where the column is hidden it is the sheet, the same answer a tap gets (`openRow`).
    */
   const navAt = shown ? openable.findIndex((m) => m.id === shown.id) : -1;
+  /** The pile is a window (`useListWindow`): a horizon has no upper bound, so it mounts the slice on screen. */
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const win = useListWindow({ scrollerRef, count: entries.length });
   const selectRow = (id: string): void => {
     setSelectedId(id);
     // Keep the new cursor in view — the registry preventDefaults the arrows, so nothing
     // scrolls natively. `?.` on the METHOD: jsdom mounts this view without implementing it.
-    queueMicrotask(() =>
-      document
-        .querySelector<HTMLElement>(`.view-triage .row[data-id="${CSS.escape(id)}"]`)
-        ?.scrollIntoView?.({ block: "nearest" }),
-    );
+    // A row the window has not mounted is reached through its slot, which mounts it.
+    queueMicrotask(() => {
+      const row = document.querySelector<HTMLElement>(`.view-triage .row[data-id="${CSS.escape(id)}"]`);
+      if (row) {
+        row.scrollIntoView?.({ block: "nearest" });
+        return;
+      }
+      const el = scrollerRef.current;
+      const at = entries.findIndex((e) => e.messageId === id);
+      if (el && at >= 0) {
+        el.scrollTop = Math.max(0, win.offsetOf(at) - win.rowHeight);
+        el.dispatchEvent(new Event("scroll"));
+      }
+    });
   };
   useZoneNav({
     list: {
@@ -281,7 +294,7 @@ export function TriageView({
          focusable control on screen whose press does nothing — the inert affordance the
          product removes wherever it finds one. Same `.row` chrome, no interaction. */
       return (
-        <div className={done ? "row seen fr-done" : "row seen"} key={`orphan-${index}`}>
+        <div className={done ? "row seen fr-done" : "row seen"} key={`orphan-${index}`} data-index={index}>
           <span className="row-top">
             <span className="who">{entry.title}</span>
             {when ? <span className="t num">{when}</span> : null}
@@ -299,6 +312,7 @@ export function TriageView({
         spoken={rowBadge.spoken}
         key={m.id}
         id={m.id}
+        windowIndex={index}
         from={senderName(m)}
         address={rowAddress(m)}
         {...avatarOf(m)}
@@ -352,6 +366,7 @@ export function TriageView({
       <ListPane
         title={t("title")}
         meta={t("meta", { count: total })}
+        scrollerRef={scrollerRef}
         header={
           <>
             <SegmentedControl<TriagePileId>
@@ -390,7 +405,11 @@ export function TriageView({
       >
         <ListRows ariaLabel={t("title")}>
           {entries.length ? (
-            entries.map(row)
+            <>
+              {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
+              {entries.slice(win.start, win.end).map((e, k) => row(e, win.start + k))}
+              {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
+            </>
           ) : (
             /* THE PILE'S OWN EMPTINESS, in the `.empty` shape every other pile uses. It states
                what the pile is FOR, which is the only useful thing to say about an empty one —

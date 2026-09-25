@@ -14,7 +14,7 @@
  * (`tag_rename`/`tag_delete` via `tagAdmin`), and Delete states the count and that the messages do not move BEFORE it
  * asks — a tag is ohmail's own row.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { rowThreadOf } from "../shell/row-thread";
@@ -25,6 +25,7 @@ import { avatarOf, rowStamp, hueOf, placeLabel, rowAddress, senderName, tagsOfMe
 import { useZoneNav } from "../shell/zone-nav";
 import { useMessageVerbs } from "../shell/message-verbs";
 import { readColumnHidden } from "../shell/narrow";
+import { useListWindow } from "../shell/list-window";
 
 
 export interface TagAdmin {
@@ -139,15 +140,27 @@ export function TagView({
    * sheet, the same answer a tap gets (`openRow`).
    */
   const navAt = shown ? messages.findIndex((m) => m.id === shown.id) : -1;
+  /** The list is a window (`useListWindow`): a tag has no upper bound, so it mounts the slice on screen. */
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const win = useListWindow({ scrollerRef, count: messages.length });
   const selectRow = (id: string): void => {
     setSelectedId(id);
     // Keep the new cursor in view — the registry preventDefaults the arrows, so nothing
     // scrolls natively. `?.` on the METHOD: jsdom mounts this view without implementing it.
-    queueMicrotask(() =>
-      document
-        .querySelector<HTMLElement>(`.view-tag .row[data-id="${CSS.escape(id)}"]`)
-        ?.scrollIntoView?.({ block: "nearest" }),
-    );
+    // A row the window has not mounted is reached through its slot, which mounts it.
+    queueMicrotask(() => {
+      const row = document.querySelector<HTMLElement>(`.view-tag .row[data-id="${CSS.escape(id)}"]`);
+      if (row) {
+        row.scrollIntoView?.({ block: "nearest" });
+        return;
+      }
+      const el = scrollerRef.current;
+      const at = messages.findIndex((m) => m.id === id);
+      if (el && at >= 0) {
+        el.scrollTop = Math.max(0, win.offsetOf(at) - win.rowHeight);
+        el.dispatchEvent(new Event("scroll"));
+      }
+    });
   };
   /* THE NINE MESSAGE VERBS, over this view's own cursor. Without this declaration the
      shell's bindings register `disabled` here (they act on `focused`, which has no arm for
@@ -193,6 +206,7 @@ export function TagView({
       <ListPane
         title={tag.name}
         meta={t("metaCount", { count: messages.length })}
+        scrollerRef={scrollerRef}
         header={
           admin ? (
             <div className="tag-head">
@@ -203,11 +217,14 @@ export function TagView({
       >
         <ListRows ariaLabel={tag.name}>
           {messages.length ? (
-            messages.map((m) => (
+            <>
+            {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
+            {messages.slice(win.start, win.end).map((m, k) => (
               <MessageRow
                 spoken={rowBadge.spoken}
                 key={m.id}
                 id={m.id}
+                windowIndex={win.start + k}
                 from={senderName(m)}
                 address={rowAddress(m)}
                 {...avatarOf(m)}
@@ -229,7 +246,9 @@ export function TagView({
                 place={placeLabel(m.folder)}
                 onClick={() => openRow(m)}
               />
-            ))
+            ))}
+            {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
+            </>
           ) : (
             <div className="empty">
               <span className="glyph">🏷</span>

@@ -27,13 +27,18 @@ import { useLoadingGrace } from "../shell/loading-grace";
 import { HistoryRail } from "./HistoryRail";
 import "./history-rail.css";
 
-/** The mirror's rows in the store's reading order: `date desc nulls last, id desc`. */
+/**
+ * The mirror's rows in the store's reading order: `date desc nulls last, id desc`. Each date is
+ * parsed once, not per comparison — the comparator parsed two dates per comparison, n log n of
+ * them on every visit to History.
+ */
 export function newestFirst(rows: readonly EngineMessage[]): EngineMessage[] {
-  const at = (m: EngineMessage): number => {
+  const keyed = rows.map((m) => {
     const t = Date.parse(m.date ?? "");
-    return Number.isFinite(t) ? t : Number.NEGATIVE_INFINITY;
-  };
-  return [...rows].sort((a, b) => at(b) - at(a) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+    return { m, t: Number.isFinite(t) ? t : Number.NEGATIVE_INFINITY };
+  });
+  keyed.sort((a, b) => b.t - a.t || (a.m.id < b.m.id ? 1 : a.m.id > b.m.id ? -1 : 0));
+  return keyed.map((k) => k.m);
 }
 
 export function HistoryView({
