@@ -1400,10 +1400,11 @@ export function screenerSegments(
    * THE ACCOUNT'S OWN ADDRESSES — the same list the partition was given
    * ({@link ConsentOptions.ownAddresses}), read through the same predicate.
    *
-   * Own mail is never a WAITING row wherever it sits. `consentPartition` keeps such a row in its
-   * own place, so a message physically in `ohmail/Screener` used to group into the queue and ask
-   * the account to screen itself while the partition counted no undecided sender behind it.
-   * Absent ⇒ the mirror's `mailbox` rows, the partition's own fallback; `[]` ⇒ nobody.
+   * Own mail is never a WAITING row wherever it sits. Over the projection the partition already
+   * presents own mail held at the gate in the INBOX; this guard is the answer for a RAW reader
+   * (no partition yet), where that message still reads `ohmail/Screener` and would ask the
+   * account to screen itself. Absent ⇒ the mirror's `mailbox` rows, the partition's own
+   * fallback; `[]` ⇒ nobody.
    */
   ownAddresses?: Iterable<string>,
 ): ScreenerSegments {

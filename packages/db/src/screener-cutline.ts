@@ -218,3 +218,17 @@ export function senderIsDecidedSql(d: Dialect, accountId: string, senderExpr: SQ
         and not ${ruleFor(sql`rd.destination = ${CUTLINE_GATE_FOLDER}`)})
   )`;
 }
+
+/**
+ * IS THIS SENDER THE ACCOUNT ITSELF — one of its own mailbox addresses. The account is never one
+ * of its own correspondents, so its mail is never a Screener decision: the count leaves it out and
+ * the queue's page and the auto-suggest set never list it. The client's twin is
+ * `client-engine#ownAddressKeys`, which presents such mail at the gate in the INBOX.
+ */
+export function senderIsOwnSql(d: Dialect, accountId: string, senderExpr: SQL): SQL {
+  return sql`exists (
+    select 1 from mailboxes mo
+     where mo.account_id = ${d.castUuid(accountId)}
+       and lower(mo.address) = ${senderExpr}
+  )`;
+}

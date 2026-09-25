@@ -1276,9 +1276,9 @@ export function liveScreener(
   server: readonly ServerWaitingSender[] | null = null,
 ): WorldScreener {
   const waitingKeys = new Set((server ?? []).map((s) => senderKey(s.address)));
-  // `v.ownAddresses` rides in for the reason it rides into `presentedWorld`: the projection keeps
-  // an own-address row in its own place, so without it a self-addressed message in the Screener
-  // folder is a waiting row and the reader queues in their own queue.
+  // `v.ownAddresses` rides in for the reason it rides into `presentedWorld`: the queue asks the
+  // partition's own predicate, so a self-addressed message is never a waiting row here — the
+  // projection presents one held at the gate in the INBOX.
   const queueReader = server === null ? pres : gateReader(pres, waitingKeys);
   const segments = screenerSegments(queueReader, v.now, v.locale ?? "en", v.zone, v.ownAddresses);
   const map = (rows: ScreenerSenderDTO[]) =>

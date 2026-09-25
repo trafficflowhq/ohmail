@@ -2,7 +2,7 @@ import { and, asc, desc, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   accountSettings, folderState, messages,
-  resolveCutline, senderIsActiveSql, senderIsDecidedSql, type ResolvedCutline,
+  resolveCutline, senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, type ResolvedCutline,
   screenerAttemptKey, storeScreenerSuggestion,
   screenerSuggestedSenderExists, hasScreenerSuggestionForSender,
   decisionCanBeApplied, readRequestEligibility,
@@ -587,6 +587,8 @@ async function selectCandidates(
       // argument reaches it twice: a sender the Screener no longer lists is a sender no surface
       // shows, and buying advice about them is money spent on a question nobody is asked.
       sql`not ${senderIsDecidedSql(d, opts.accountId, sql`lower(${reps.fromAddress})`)}`,
+      // (6) THE ACCOUNT ITSELF — its own mail at the gate is no decision, so no advice is bought on it.
+      sql`not ${senderIsOwnSql(d, opts.accountId, sql`lower(${reps.fromAddress})`)}`,
     ))
     .orderBy(asc(reps.createdAt), asc(reps.messageId))
     .limit(opts.limit);

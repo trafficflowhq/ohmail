@@ -13,7 +13,7 @@ import {
   UNPRICED,
   // 0.14.1, 0.14.1 — the request path. See `screener-apply.ts` and `organizer-role.ts` in
   // `@trafficflow/db` for why the transactional core and the eligibility read live there.
-  resolveCutline, senderIsActiveSql, senderIsDecidedSql, type ResolvedCutline,
+  resolveCutline, senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, type ResolvedCutline,
   heldRowById, applyScreenerDecision, AccountErasedError, readAccountErasedAt, domainOf,
   readRequestEligibility, decisionCanBeApplied,
   listOutstandingForAccount,
@@ -1563,6 +1563,8 @@ export class ScreenerReadService {
         eq(reps.rank, 1),
         active,
         sql`not ${senderIsDecidedSql(d, ctx.accountId, sql`lower(${reps.fromAddress})`)}`,
+        // The account is not one of its own correspondents: its mail at the gate is no decision.
+        sql`not ${senderIsOwnSql(d, ctx.accountId, sql`lower(${reps.fromAddress})`)}`,
         opts.after
           // Row comparison, which is the `date desc, id desc` keyset written as one expression:
           // strictly "older" than the cursor tuple, with the id breaking a shared date. Bound

@@ -133,14 +133,12 @@ export interface ConsentOptions {
    */
   screeningScope?: "window" | "all_time" | string | null;
   /**
-   * The account's own mailbox addresses. Mail from these is the user
-   * writing, so it is never a candidate for a place and never makes anybody
-   * active. Most of it sits in Sent (already outside the presented set),
-   * but self-sent mail and providers that file into INBOX as well land in
-   * presented folders — without this the user appears in their own Screener
-   * queue. Defaults to the mirror's mailbox rows, which can be empty; a
-   * caller that knows the addresses should pass them
-   * (`consent-cutline.pg.test.ts` pins the server's answer to this one).
+   * The account's own mailbox addresses. Mail from these is the user writing: never queued or
+   * retired, never making anybody active, and held at the gate presented in the INBOX. Most of it
+   * sits in Sent (outside the presented set), but self-sent mail and providers that file into
+   * INBOX as well land in presented folders — without this the user appears in their own Screener
+   * queue. Defaults to the mirror's mailbox rows, which can be empty; a caller that knows the
+   * addresses should pass them (`consent-cutline.pg.test.ts` pins the server's answer to this one).
    */
   ownAddresses?: Iterable<string>;
   /**
@@ -446,9 +444,10 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
     }
 
     const key = senderKey(m.from.address);
-    // The user is not one of their own correspondents. Their mail keeps the place it is in —
-    // never History, which is a queue of people who have not been screened.
-    if (own.has(key)) { placeOf.set(m.id, m.folder); continue; }
+    /* The user is not one of their own correspondents: their mail is never History (a queue of
+       people who have not been screened) and never a Screener decision. Held at the gate it
+       presents in the INBOX — nothing moves on the server; elsewhere it keeps its place. */
+    if (own.has(key)) { placeOf.set(m.id, m.folder === "ohmail/Screener" ? "INBOX" : m.folder); continue; }
     const decided = decidedDestination(index, m.from.address);
     const consented = decided !== null && CONSENTING_DESTINATIONS.has(decided);
     if (consented) consentedSenders.add(key);
@@ -461,7 +460,7 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
      * a dormant one's was deleted from the projected list entirely (History). Either way the Ohbox's pinned group —
      * the state's only home, `ohboxView.resurfaced` — never saw it, so a message the user explicitly asked to see
      * again was, at the very moment they asked to see it, in NO list at all. Reachable by search, filed nowhere:
-     * measured on a live mailbox. So a resurfaced row keeps its physical place.
+     * measured on a live mailbox. So a resurfaced row keeps its place — the INBOX when it sits at the gate.
      */
 
     /**
@@ -471,7 +470,8 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
      * ordinary rules below. Only `resurfaced`: the bottom piles are each a visible home of their own, so their rows
      * are never orphaned by this loop.
      */
-    if (isResurfaced(m)) { placeOf.set(m.id, m.folder); continue; }
+    // Held at the gate it presents in the INBOX, so the pin is its one surface and no waiting row holds it.
+    if (isResurfaced(m)) { placeOf.set(m.id, m.folder === "ohmail/Screener" ? "INBOX" : m.folder); continue; }
 
     // An explicit placement is already an answer. Never second-guessed.
     if (!UNDECIDED_RESIDENCES.has(m.folder)) { placeOf.set(m.id, m.folder); continue; }

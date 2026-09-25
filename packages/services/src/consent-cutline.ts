@@ -4,6 +4,7 @@ import type { ServiceContext } from "./context.js";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import {
   activeSenderExpr, anyOf, cutlineInstant, destinationIsDecisionSql, resolveCutline, senderIsDecidedSql,
+  senderIsOwnSql,
 } from "@trafficflow/db";
 
 /**
@@ -146,9 +147,7 @@ export async function cutlineCounts(
   // owns the rule for all three readers. They were closures here while this was the only one.
   const at = cutlineInstant({ date: sql`m.date`, arrivedAt: sql`m.created_at` });
   const rows = await d.exec(ctx.db, sql`
-    with own as (
-      select lower(address) a from mailboxes where account_id = ${d.castUuid(ctx.accountId)}
-    ),
+    with
     -- The destination test comes from destinationIsDecisionSql, never a local comparison: this
     -- file spelled one itself, so it read a DENY rule as a decision while the queue page did not,
     -- and the same sender was first-time waiting on one screen and already decided on the other
@@ -183,7 +182,8 @@ export async function cutlineCounts(
         join folder_state fs on fs.message_id = m.id
        where m.account_id = ${d.castUuid(ctx.accountId)}
          and fs.desired_folder in ${folders}
-         and lower(m.from_address) not in (select a from own)
+         -- The account itself, by the one predicate the queue page and the suggest set ask too.
+         and not ${senderIsOwnSql(d, ctx.accountId, sql`lower(m.from_address)`)}
        group by 1
     ),
     classified as (
