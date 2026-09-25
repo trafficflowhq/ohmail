@@ -167,6 +167,13 @@ describe("the desktop pane's heading names the door, never ohmail Cloud for a se
   /* The heading said "Cloud mailboxes" on every hosted door, a self-hosted server's and a paired
      computer's included. The local and managed doors are the controls and keep their words. */
   const heading = (): string => mountPoint?.querySelector("h2")?.textContent ?? "";
+  /* Text node by node: `textContent` fuses a label and the sentence after it into one word. */
+  const said = (): string => {
+    const walker = document.createTreeWalker(mountPoint!, NodeFilter.SHOW_TEXT);
+    const parts: string[] = [];
+    while (walker.nextNode()) parts.push(walker.currentNode.textContent ?? "");
+    return parts.join(" ");
+  };
   const unmountNow = async (): Promise<void> => {
     if (root) await act(async () => { root!.unmount(); });
     mountPoint?.remove();
@@ -183,6 +190,8 @@ describe("the desktop pane's heading names the door, never ohmail Cloud for a se
     ] as const) {
       await render(props);
       expect(heading(), JSON.stringify(props)).toBe(want);
+      // The needle the self-hosted case asks reads the managed heading, so it can match.
+      if (props.door === "cloud") expect(said()).toMatch(/\bCloud\b/);
       await unmountNow();
     }
   });
@@ -193,7 +202,7 @@ describe("the desktop pane's heading names the door, never ohmail Cloud for a se
       for (const [locale, want] of [["en", copy.modeSelfhost], ["de", copyDe.modeSelfhost]] as const) {
         await render({ door: "cloud", flavor: "selfhost" }, locale);
         expect(heading()).toBe(want);
-        expect(mountPoint!.textContent ?? "", `${locale} names Cloud on a self-hosted door`).not.toMatch(/\bCloud\b/);
+        expect(said(), `${locale} names Cloud on a self-hosted door`).not.toMatch(/\bCloud\b/);
         await unmountNow();
       }
     }
@@ -203,6 +212,6 @@ describe("the desktop pane's heading names the door, never ohmail Cloud for a se
     FACTS = [ORGANIZING];
     await render({ door: "cloud", host: "studio", flavor: "desktop-host" });
     expect(heading()).toBe(copy.modeHost!.replace("{name}", "studio"));
-    expect(mountPoint!.textContent ?? "").not.toMatch(/\bCloud\b/);
+    expect(said()).not.toMatch(/\bCloud\b/);
   });
 });
