@@ -1,13 +1,13 @@
 /**
  * Search — ONE list, the webapp SearchView's contract in the one-pane shape: the mirror's instant
  * index paints first, the store's page (`state/store-views.ts#useStoreSearch`) then replaces it in
- * place, and the rest is History's list mechanism — equal slots measured off the rows, pages by
+ * place, and the rest is History's list mechanism — slots measured off their own rows, pages by
  * the store's cursor as they scroll into view, at most three held. The SIMILAR tier stands under
  * its own heading and only when nothing matched exactly; the verdict says what was searched and
  * how fast. An address-shaped query that settles empty offers the address door: All · From them ·
  * To them.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactElement } from "react";
 import { TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { Copy } from "../src/copy";
@@ -23,7 +23,7 @@ import { DetailBar } from "../src/ui/chrome";
 import { Gated } from "../src/ui/Gated";
 import { MailList, type ListGroup } from "../src/ui/MailList";
 import { MailRow } from "../src/ui/MailRow";
-import { grownSlot, HISTORY_SLOT_FIRST_PAINT } from "../src/ui/history-slot";
+import { SlotHeights } from "../src/ui/history-slot";
 import { Segmented } from "../src/ui/Segmented";
 import { useLocale } from "../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
@@ -81,9 +81,12 @@ function SearchBody() {
   const found = store.ready && store.totalExact ? Math.max(store.total, store.length) : shownItems.length + shownSimilar.length;
   /** Where slot 0 sits in the scroll content, learnt from its own frame. */
   const top = useRef(0);
-  /* History's slot rule (`history-slot.ts`): one height for every store slot, read off the rows. */
-  const [slot, setSlot] = useState(HISTORY_SLOT_FIRST_PAINT);
-  const onRowHeight = useCallback((height: number) => setSlot((s) => grownSlot(s, height)), []);
+  /* History's slot rule (`history-slot.ts`), one ledger per question: a slot index is a hit of it. */
+  const heights = useMemo(() => new SlotHeights(), [trimmed, addr]);
+  const [, redraw] = useReducer((n: number) => n + 1, 0);
+  const onRowHeight = useCallback((i: number, height: number) => {
+    if (heights.record(i, height)) redraw();
+  }, [heights]);
   const door = answer !== null ? addressShaped(trimmed) : null;
   const verdict = addr !== null ? null : store.verdict === "searching" ? Copy.searchWholeSearching
     : store.verdict === "ready"
@@ -146,14 +149,14 @@ function SearchBody() {
           }
           const m = store.rowAt(r.slot);
           return (
-            <View style={{ height: m === "gone" ? 0 : slot, overflow: "hidden" }}>
-              {m === "gone" ? null : m === null ? (
+            <View style={{ height: m === "gone" ? 0 : heights.heightOf(r.slot), overflow: "hidden" }}>
+              {m === "gone" ? <View onLayout={() => onRowHeight(r.slot, 0)} /> : m === null ? (
                 <View style={{ flex: 1, justifyContent: "center", gap: 8, paddingHorizontal: 12 }}>
                   <View style={{ height: 10, width: "46%", borderRadius: 5, backgroundColor: t.c.tint2 }} />
                   <View style={{ height: 10, width: "72%", borderRadius: 5, backgroundColor: t.c.tint2 }} />
                 </View>
               ) : (
-                <View onLayout={(e) => onRowHeight(e.nativeEvent.layout.height)}>
+                <View onLayout={(e) => onRowHeight(r.slot, e.nativeEvent.layout.height)}>
                   <MailRow
                     m={m}
                     onPress={() => {
@@ -171,8 +174,9 @@ function SearchBody() {
         /* The slots on screen are asked for; near the end of the list, the store's next page. */
         onScroll={(e) => {
           const { contentOffset, layoutMeasurement, contentSize } = e.nativeEvent;
-          const first = Math.floor(Math.max(0, contentOffset.y - top.current) / slot);
-          store.want(Math.max(0, first - 8), first + Math.ceil(layoutMeasurement.height / slot) + 9);
+          const y = Math.max(0, contentOffset.y - top.current);
+          const first = heights.indexAt(y, store.length);
+          store.want(Math.max(0, first - 8), heights.indexAt(y + layoutMeasurement.height, store.length) + 10);
           if (contentOffset.y + layoutMeasurement.height >= contentSize.height - 480) store.loadMore();
         }}
         scrollEventThrottle={100}

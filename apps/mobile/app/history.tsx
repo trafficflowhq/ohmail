@@ -1,12 +1,12 @@
 /**
  * History — every message you own, newest first, back to the first one; the phone's half of the
  * webapp's `HistoryView.tsx`, over the same timeline walker (`state/store-views.ts`). The list is
- * the store's total as equal slots (their height measured off the rows) in the one `MailList`,
+ * the store's total as slots (each its own row's measured height) in the one `MailList`,
  * pages fetched as they scroll into view, a year strip on the right edge jumping anywhere, and the
  * mirror's rows painting first until page one replaces them in place. Nothing has moved: every row
  * states its server folder.
  */
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useReducer, useRef, useState } from "react";
 import { View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 
 import { Copy } from "../src/copy";
@@ -20,7 +20,7 @@ import { MailList } from "../src/ui/MailList";
 import { MessageReader } from "../src/ui/MessageReader";
 import { Gated } from "../src/ui/Gated";
 import { MailRow } from "../src/ui/MailRow";
-import { grownSlot, HISTORY_SLOT_FIRST_PAINT } from "../src/ui/history-slot";
+import { SlotHeights } from "../src/ui/history-slot";
 import { SkeletonList } from "../src/ui/Skeleton";
 import { useLocale } from "../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
@@ -48,22 +48,26 @@ function HistoryBody() {
   const scrollTo = useRef<((y: number) => void) | null>(null);
   /** Where slot 0 sits in the scroll content, learnt from its own frame. */
   const top = useRef(0);
-  /* One height for every slot, so a scroll offset is a slot and a jump lands without measuring each
-     row — read off the rows as they lay out (`history-slot.ts`), never a constant that fits one font. */
-  const [slot, setSlot] = useState(HISTORY_SLOT_FIRST_PAINT);
-  const onRowHeight = useCallback((height: number) => setSlot((s) => grownSlot(s, height)), []);
+  /* Each slot its own row's height, read off the rows as they lay out (`history-slot.ts`), so a
+     scroll offset and a jump are sums over the ledger and one tall row widens only itself. */
+  const [heights] = useState(() => new SlotHeights());
+  const [, redraw] = useReducer((n: number) => n + 1, 0);
+  const onRowHeight = useCallback((i: number, height: number) => {
+    if (heights.record(i, height)) redraw();
+  }, [heights]);
   /* The slots, as positions only: rows are read per slot from the walker's cache at render. */
   const slots = useMemo(() => Array.from({ length: h.length }, (_, i) => i), [h.length]);
   const groups = useMemo(() => [{ key: "history", rows: slots }], [slots]);
 
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, layoutMeasurement } = e.nativeEvent;
-    const first = Math.floor(Math.max(0, contentOffset.y - top.current) / slot);
-    h.want(Math.max(0, first - 8), first + Math.ceil(layoutMeasurement.height / slot) + 9);
+    const y = Math.max(0, contentOffset.y - top.current);
+    const first = heights.indexAt(y, h.length);
+    h.want(Math.max(0, first - 8), heights.indexAt(y + layoutMeasurement.height, h.length) + 10);
   };
   const jump = (start: number) => {
     h.jump(start);
-    scrollTo.current?.(top.current + start * slot);
+    scrollTo.current?.(top.current + heights.offsetOf(start));
   };
 
   const meta = h.state === "ready" && h.total !== null
@@ -80,14 +84,14 @@ function HistoryBody() {
           renderRow={(i) => {
             const m = h.rowAt(i);
             return (
-              <View style={{ height: m === "gone" ? 0 : slot, overflow: "hidden" }}>
-                {m === "gone" ? null : m === null ? (
+              <View style={{ height: m === "gone" ? 0 : heights.heightOf(i), overflow: "hidden" }}>
+                {m === "gone" ? <View onLayout={() => onRowHeight(i, 0)} /> : m === null ? (
                   <View style={{ flex: 1, justifyContent: "center", gap: 8, paddingHorizontal: 12 }}>
                     <View style={{ height: 10, width: "46%", borderRadius: 5, backgroundColor: t.c.tint2 }} />
                     <View style={{ height: 10, width: "72%", borderRadius: 5, backgroundColor: t.c.tint2 }} />
                   </View>
                 ) : (
-                  <View onLayout={(e) => onRowHeight(e.nativeEvent.layout.height)}>
+                  <View onLayout={(e) => onRowHeight(i, e.nativeEvent.layout.height)}>
                     <MailRow m={m} onPress={() => {
                       const src = h.sourceAt(i);
                       if (src) w.store.open(src);
