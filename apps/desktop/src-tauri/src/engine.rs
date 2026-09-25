@@ -1823,13 +1823,10 @@ impl Shell {
             missing: vec![config::CONFIG_FILE_NAME.to_string()],
             door: None,
         }));
-        match fs::remove_dir_all(&dir) {
-            Ok(()) => {}
-            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-            Err(err) => log_line(format_args!(
-                "the candidate's directory could not be removed ({err}); it holds no door, and the \
-                 next candidate replaces it"
-            )),
+        if let Err(reason) = clear_candidate_slot(root) {
+            log_line(format_args!(
+                "{reason}; it holds no door, and the next candidate replaces it"
+            ));
         }
         outcome
     }
@@ -1990,7 +1987,7 @@ impl Shell {
         let _door = self.door.lock().expect("shell door");
         let root = self.paths.app_data.clone().unwrap_or_default();
         if let Some(switch) = config::read_switch(&root)? {
-            let deferred = config::keep_switch(&root, &switch)?;
+            let deferred = config::keep_switch(&root, &switch, &|| clear_candidate_slot(&root))?;
             log_line(format_args!("the pairing was accepted; the door it replaced is retired"));
             if let Some(reason) = deferred {
                 log_line(format_args!("its set-aside copy stays until the next launch ({reason})"));
@@ -2010,7 +2007,7 @@ impl Shell {
         };
         let mut outcome = Ok(());
         self.replace_with(|| {
-            match config::undo_switch(&root, &path, &switch) {
+            match config::undo_switch(&root, &path, &switch, &|| clear_candidate_slot(&root)) {
                 Ok(()) => log_line(format_args!("the pairing did not finish; the door it replaced is back")),
                 Err(reason) => outcome = Err(reason),
             }
@@ -2265,6 +2262,18 @@ fn door_fields(object: &mut serde_json::Map<String, serde_json::Value>, config: 
     }
 }
 
+/// Empty the candidate slot — the one directory this module removes, named by `config.rs`'s
+/// constant. A refused candidate is undone by it, and so is whatever a door switch moved there to
+/// discard: a pairing's own directory when it is undone, and the copy it set aside once accepted.
+fn clear_candidate_slot(root: &Path) -> Result<(), String> {
+    let dir = config::candidate_data_dir(root);
+    match fs::remove_dir_all(&dir) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(format!("the candidate's directory could not be removed ({err})")),
+    }
+}
+
 /// The disk half of [`Shell::switch_door`], run with the engine stopped. A pending switch is undone
 /// first; a provisional one is recorded, then its directory set aside, then the door written — and
 /// a step that fails undoes the ones before it, so the old door's engine is what starts again.
@@ -2275,13 +2284,14 @@ fn switch_on_disk(
     pending: Option<&config::DoorSwitch>,
     provisional: bool,
 ) -> Result<(), String> {
+    let clear = || clear_candidate_slot(root);
     if let Some(switch) = pending {
-        config::undo_switch(root, path, switch)?;
+        config::undo_switch(root, path, switch, &clear)?;
         log_line(format_args!("a pairing that had not been answered was set aside for this switch"));
     }
     let kept = match provisional.then(|| config::read_door_file(path)).flatten() {
         Some(file) => {
-            let switch = config::record_switch(root, &file, next.mode())?;
+            let switch = config::record_switch(root, &file, next.mode(), &clear)?;
             if let Err(reason) = config::set_aside(root, &switch) {
                 let _ = config::remove(&config::switch_path(root));
                 return Err(reason);
@@ -2292,7 +2302,7 @@ fn switch_on_disk(
     };
     if let Err(reason) = config::write(path, next) {
         if let Some(switch) = &kept {
-            let _ = config::undo_switch(root, path, switch);
+            let _ = config::undo_switch(root, path, switch, &clear);
         }
         return Err(reason);
     }
@@ -2313,8 +2323,9 @@ fn log_configured(config: &Config, provisional: bool) {
 /// switch's unfinished retire is finished. Host mode's launch decision reads the door after this.
 pub fn recover_door_switch(paths: &ShellPaths) {
     let (Some(root), Some(path)) = (paths.app_data.as_deref(), paths.config_path()) else { return };
+    let clear = || clear_candidate_slot(root);
     match config::read_switch(root) {
-        Ok(Some(switch)) => match config::undo_switch(root, &path, &switch) {
+        Ok(Some(switch)) => match config::undo_switch(root, &path, &switch, &clear) {
             Ok(()) => log_line(format_args!(
                 "a pairing the last run did not finish was undone; the door it replaced is back"
             )),
@@ -2324,7 +2335,7 @@ pub fn recover_door_switch(paths: &ShellPaths) {
         },
         Ok(None) => {
             for mode in [Mode::Local, Mode::Cloud] {
-                if let Err(reason) = config::retire_replaced(root, mode) {
+                if let Err(reason) = config::retire_replaced(root, mode, &clear) {
                     log_line(format_args!("a retired door's copy could not be removed ({reason})"));
                 }
             }

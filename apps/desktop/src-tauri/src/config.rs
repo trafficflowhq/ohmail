@@ -17,8 +17,8 @@
 //! the app's data directory — so switching doors cannot mix one mirror into the other. **The
 //! directory a switch leaves behind is FROZEN, never deleted.** The mail is on the user's server
 //! or in the hosted account, this machine's copy is a convenience, and a door switch that silently
-//! destroyed the old one would make going back expensive for no reason. The one removal here is a
-//! pairing's set-aside copy, retired once the pairing is accepted (the foot of this file).
+//! destroyed the old one would make going back expensive for no reason. Nothing here removes a
+//! directory; a pairing's set-aside copy is retired once accepted through the candidate slot.
 //!
 //! ── THE ONE COMPOSITION THAT IS SAFETY-CRITICAL ────────────────────────────────────────────
 //!
@@ -1402,11 +1402,19 @@ pub fn read_switch(root: &Path) -> Result<Option<DoorSwitch>, String> {
     Ok(Some(DoorSwitch { replaced_file: replaced_file.to_string(), dir, moved }))
 }
 
+/// What empties the candidate slot: `engine.rs`'s one directory removal, by the constant name.
+pub type ClearSlot<'a> = &'a dyn Fn() -> Result<(), String>;
+
 /// Write the record of a switch from the door in `replaced_file` to a door that opens `dir`'s
 /// directory. Written BEFORE anything moves, so every later step is undone from it.
-pub fn record_switch(root: &Path, replaced_file: &str, dir: Mode) -> Result<DoorSwitch, String> {
+pub fn record_switch(
+    root: &Path,
+    replaced_file: &str,
+    dir: Mode,
+    clear: ClearSlot,
+) -> Result<DoorSwitch, String> {
     // A set-aside directory with no record is an accepted switch's unfinished retire.
-    retire_replaced(root, dir)?;
+    retire_replaced(root, dir, clear)?;
     let moved = data_dir(root, dir).exists();
     let body = serde_json::to_vec_pretty(&serde_json::json!({
         "replaced": replaced_file, "dir": dir.as_str(), "moved": moved,
@@ -1428,11 +1436,16 @@ pub fn set_aside(root: &Path, switch: &DoorSwitch) -> Result<(), String> {
 
 /// Put the replaced door back: its directory where it was, the new door's gone, its
 /// `config.json`, and the record last. Every step is safe to run again after a kill mid-way.
-pub fn undo_switch(root: &Path, config_path: &Path, switch: &DoorSwitch) -> Result<(), String> {
+pub fn undo_switch(
+    root: &Path,
+    config_path: &Path,
+    switch: &DoorSwitch,
+    clear: ClearSlot,
+) -> Result<(), String> {
     let (dir, aside) = (data_dir(root, switch.dir), replaced_store(root, switch.dir));
     // With `moved`, an absent set-aside directory means it is already back where it was.
     if !switch.moved || aside.exists() {
-        remove_tree(&dir)?;
+        discard_dir(root, &dir, clear)?;
     }
     if switch.moved && aside.exists() {
         fs::rename(&aside, &dir)
@@ -1444,21 +1457,29 @@ pub fn undo_switch(root: &Path, config_path: &Path, switch: &DoorSwitch) -> Resu
 
 /// Keep the new door. Removing the record IS the commit, and an `Err` means nothing changed. The
 /// set-aside directory follows it; one that would not go is the `Ok` reason, retired at next launch.
-pub fn keep_switch(root: &Path, switch: &DoorSwitch) -> Result<Option<String>, String> {
+pub fn keep_switch(
+    root: &Path,
+    switch: &DoorSwitch,
+    clear: ClearSlot,
+) -> Result<Option<String>, String> {
     remove(&switch_path(root))?;
-    Ok(retire_replaced(root, switch.dir).err())
+    Ok(retire_replaced(root, switch.dir, clear).err())
 }
 
-/// Remove a set-aside directory. Every caller has no record on disk: before one is written, after
+/// Retire a set-aside directory. Every caller has no record on disk: before one is written, after
 /// the commit removed it, or at a launch that read none.
-pub fn retire_replaced(root: &Path, mode: Mode) -> Result<(), String> {
-    remove_tree(&replaced_store(root, mode))
+pub fn retire_replaced(root: &Path, mode: Mode, clear: ClearSlot) -> Result<(), String> {
+    discard_dir(root, &replaced_store(root, mode), clear)
 }
 
-fn remove_tree(dir: &Path) -> Result<(), String> {
-    match fs::remove_dir_all(dir) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(format!("{} could not be removed ({err})", dir.display())),
+/// Take a directory off the data root by moving it into the candidate slot and emptying that slot.
+/// Nothing here removes a directory: the one removal is the slot's, by its constant name.
+fn discard_dir(root: &Path, dir: &Path, clear: ClearSlot) -> Result<(), String> {
+    if !dir.exists() {
+        return Ok(());
     }
+    clear()?;
+    fs::rename(dir, candidate_data_dir(root))
+        .map_err(|err| format!("{} could not be moved off ({err})", dir.display()))?;
+    clear()
 }

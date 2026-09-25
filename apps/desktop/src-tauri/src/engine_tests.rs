@@ -4413,7 +4413,7 @@ fn a_kill_mid_pairing_leaves_the_replaced_door_for_the_next_launch() {
         let before = bytes_under(&root);
         let path = root.join(crate::config::CONFIG_FILE_NAME);
         let file = crate::config::read_door_file(&path).expect("the door file");
-        let switch = crate::config::record_switch(&root, &file, Mode::Cloud).expect("recorded");
+        let switch = crate::config::record_switch(&root, &file, Mode::Cloud, &|| clear_candidate_slot(&root)).expect("recorded");
         if stop >= 2 {
             crate::config::set_aside(&root, &switch).expect("set aside");
         }
@@ -4450,7 +4450,7 @@ fn a_restore_or_a_commit_cut_short_is_finished_by_the_next_launch() {
     let before = bytes_under(&root);
     let path = root.join(crate::config::CONFIG_FILE_NAME);
     let file = crate::config::read_door_file(&path).expect("the door file");
-    let switch = crate::config::record_switch(&root, &file, Mode::Cloud).expect("recorded");
+    let switch = crate::config::record_switch(&root, &file, Mode::Cloud, &|| clear_candidate_slot(&root)).expect("recorded");
     crate::config::set_aside(&root, &switch).expect("set aside");
     pairing_wrote(&root);
     fs::remove_dir_all(root.join("engine-cloud")).expect("the pairing's directory, removed");
