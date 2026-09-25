@@ -129,6 +129,9 @@ async function writeClaim(tx: Tx, i: IdempotencyClaimInput, takeOver: SQL): Prom
         seq: row.seq,
         expiresAt: row.expiresAt,
         createdAt: row.createdAt,
+        // A takeover writes a NEW answer, so an erasure's stamp on the row it replaces goes with
+        // the old one; left standing, every replay of the new answer would be a 410.
+        erasedAt: null,
       },
       // ONLY the row `takeOver` names — for a claim, an already-expired one. A live row belongs
       // to whoever committed it and must make this claim fail.
