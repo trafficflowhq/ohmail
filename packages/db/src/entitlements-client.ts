@@ -38,6 +38,14 @@ export type EntitlementsPath =
 export const ACCESS_TTL_MS = 60_000;
 
 /**
+ * How long a FAILED access read answers for its account before this process asks again: one
+ * call budget. On 2026-09-25 the program finished a timed-out burst 5.2-6.1 s after it began, so
+ * a call one budget after the timeout lands behind that backlog, not in it. The held answer is
+ * the fault arm's own (last verdict, else allow); `fresh` reads are never held.
+ */
+export const ACCESS_FAULT_HOLD_MS = ENTITLEMENTS_CALL_BUDGET_MS;
+
+/**
  * The account `/health` asks about when no real access read has carried the price card yet. The
  * nil uuid names nobody, and the program's answer for an unknown account writes nothing (no
  * manage link is minted for it), so the probe reads the card and moves no state.
@@ -332,6 +340,14 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
 
   /** Per-account verdicts. `freshUntil` bounds REUSE; the value itself is kept for the fault arm. */
   const cache = new Map<string, { verdict: AccessVerdict; freshUntil: number }>();
+  /**
+   * AT MOST ONE `/v1/access` CALL IN FLIGHT PER ACCOUNT, shared by every read that finds it —
+   * a `fresh` one too. One image-heavy message sent 40-80 parallel calls for one account and
+   * all of them timed out. An entry leaves as its call settles, inside the call's budget.
+   */
+  const inflight = new Map<string, Promise<AccessVerdict | null>>();
+  /** Until when an account's last failed read answers for it ({@link ACCESS_FAULT_HOLD_MS}). */
+  const faultHeldUntil = new Map<string, number>();
   /** Latched by the first 200 that carried a readable card — `/health`'s `plane` reading. */
   let pricesStated = false;
 
@@ -383,34 +399,62 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
     }
   };
 
+  /** One read of the program: the verdict it cached, or `null` for every fault (then held). */
+  const ask = async (accountId: string): Promise<AccessVerdict | null> => {
+    const at = clock();
+    const res = await post("/v1/access", { accountId });
+    // A 200 is the only answer. 400/401/503 are not verdicts about this account (the contract's
+    // own status table), so they take the fault path without being reported as drift.
+    if (res && res.status === 200) {
+      const read = res.bodyIsJson ? verdictOf(res.body) : { bad: "body" };
+      if ("bad" in read) named("/v1/access", res.status, read.bad);
+      else {
+        const card = pricesOf(obj(res.body)?.prices);
+        if (card !== null && "bad" in card) named("/v1/access", res.status, card.bad);
+        const priced = card !== null && !("bad" in card);
+        if (priced) pricesStated = true;
+        const verdict: AccessVerdict = read.ok && priced ? { ...read, prices: card } : read;
+        cache.set(accountId, { verdict, freshUntil: at + ttlMs });
+        faultHeldUntil.delete(accountId);
+        return verdict;
+      }
+    }
+    // Expired holds leave as a new one is written, so the map keeps one budget's faults.
+    const now = clock();
+    for (const [id, until] of faultHeldUntil) if (until <= now) faultHeldUntil.delete(id);
+    faultHeldUntil.set(accountId, now + ACCESS_FAULT_HOLD_MS);
+    return null;
+  };
+
+  /** The call in flight for this account, or a new one. Its rejection reaches every waiter. */
+  const shared = (accountId: string): Promise<AccessVerdict | null> => {
+    const running = inflight.get(accountId);
+    if (running !== undefined) return running;
+    const started: Promise<AccessVerdict | null> = ask(accountId).finally(() => {
+      if (inflight.get(accountId) === started) inflight.delete(accountId);
+    });
+    inflight.set(accountId, started);
+    return started;
+  };
+
   const client: EntitlementsClient = {
     async access(accountId: string, opts?: { fresh?: boolean }): Promise<AccessVerdict> {
       const at = clock();
       const held = cache.get(accountId);
-      // `fresh` SKIPS THE REUSE AND NOTHING ELSE: the held verdict is still what the fault arm
-      // below answers with, because "we could not ask again" is not evidence that the last
-      // answer is wrong. Bypassing the read is the whole point — a cached refusal asked about a
-      // minute after the program recovered is how a funded account gets a payment demand.
-      if (!opts?.fresh && held && held.freshUntil > at) return held.verdict;
-
-      const res = await post("/v1/access", { accountId });
-      // A 200 is the only answer. 400/401/503 are not verdicts about this account (the contract's
-      // own status table), so they take the fault path without being reported as drift.
-      if (res && res.status === 200) {
-        const read = res.bodyIsJson ? verdictOf(res.body) : { bad: "body" };
-        if ("bad" in read) named("/v1/access", res.status, read.bad);
-        else {
-          const card = pricesOf(obj(res.body)?.prices);
-          if (card !== null && "bad" in card) named("/v1/access", res.status, card.bad);
-          const priced = card !== null && !("bad" in card);
-          if (priced) pricesStated = true;
-          const verdict: AccessVerdict = read.ok && priced ? { ...read, prices: card } : read;
-          cache.set(accountId, { verdict, freshUntil: at + ttlMs });
-          return verdict;
-        }
+      // `fresh` SKIPS THE REUSE AND THE HOLD, NOTHING ELSE: the held verdict is still what the
+      // fault arm answers with, because "we could not ask again" is not evidence that the last
+      // answer is wrong. A cached refusal asked about a minute after the program recovered is
+      // how a funded account gets a payment demand.
+      if (!opts?.fresh) {
+        if (held && held.freshUntil > at) return held.verdict;
+        if ((faultHeldUntil.get(accountId) ?? 0) > at) return held?.verdict ?? UNMETERED_ACCESS;
       }
       // The fault arm: the last thing we knew, however stale, and otherwise allow.
-      return held?.verdict ?? UNMETERED_ACCESS;
+      return (await shared(accountId)) ?? held?.verdict ?? UNMETERED_ACCESS;
+    },
+
+    async accessOrFault(accountId: string): Promise<AccessVerdict | "fault"> {
+      return (await shared(accountId)) ?? "fault";
     },
 
     async spend(

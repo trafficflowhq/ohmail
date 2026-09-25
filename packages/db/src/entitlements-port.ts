@@ -207,12 +207,18 @@ export interface EntitlementsPort {
    * account, or with none `ok: true` and unbounded limits. An entitlements outage must not lock
    * a paying customer out of their mail, which is also why implementations cache.
    *
-   * `fresh: true` skips the held verdict and asks again — for the ONE caller that must not read
-   * a cached refusal, the cross-check deciding whether an AI spend refusal may become a payment
-   * demand, because a held refusal outlives the condition that produced it. Never on the mail
-   * path: a per-request dial there is the thing the cache exists to prevent.
+   * `fresh: true` skips the held verdict and asks again — for a caller that must not read a
+   * cached refusal (the wall, the AI refusal cross-check), because a held refusal outlives the
+   * condition that produced it. Never on the mail path: a per-request dial there is the thing
+   * the cache exists to prevent. A read joins a call for the account already in flight.
    */
   access(accountId: string, opts?: { fresh?: boolean }): Promise<AccessVerdict>;
+  /**
+   * A fresh read that says when it could not ask: the verdict of an answer, or `"fault"` where
+   * `access` would answer the last verdict it knew. For a door that acts irreversibly on the
+   * answer (erasure), where a remembered verdict is not evidence. Never throws on a fault.
+   */
+  accessOrFault(accountId: string): Promise<AccessVerdict | "fault">;
   /**
    * Charge one AI action against `attemptKey`, which names the unit of WORK so retries are free.
    * `attemptKey` is the BARE key — the message, `<messageId>:<hashed client key>`, the run id —

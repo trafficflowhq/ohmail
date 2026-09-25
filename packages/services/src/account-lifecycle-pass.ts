@@ -50,6 +50,7 @@ export interface AccountLifecyclePassDeps {
   /** The entitlements program, or what a route composes from it. Never throws (the port's rule). */
   port: {
     access(accountId: string): Promise<AccessVerdict>;
+    accessOrFault(accountId: string): Promise<AccessVerdict | "fault">;
     releaseAccount(accountId: string): Promise<ReleaseOutcome>;
   };
   /**
@@ -230,11 +231,22 @@ export async function runAccountLifecyclePass(
           }
 
           if (erasureDue(lc, now())) {
-            // THE VERDICT IS RE-READ AT THE ERASURE DOOR. The page's read can be minutes old on a
-            // long run, and somebody who subscribed again in between must keep their data. The
-            // re-read sits AHEAD of the money stop so a skip touches nothing at all — a released
-            // subscription is not recoverable by returning early.
-            const fresh = (await deps.port.access(id)).lifecycle;
+            // THE PROGRAM IS ASKED AGAIN AT THE ERASURE DOOR, past every cache, and only its
+            // answer erases: a read it did not answer skips, and the next run asks again. The
+            // page's verdict can be a minute old or the fault arm's last known one, and somebody
+            // who subscribed again must keep their data. The read sits AHEAD of the money stop
+            // so a skip touches nothing — a released subscription is not recoverable.
+            const answer = await deps.port.accessOrFault(id);
+            if (answer === "fault") {
+              result.faults += 1;
+              log.warn("account_erasure_skipped_unanswered", {
+                accountId: id,
+                reason: "the entitlements program did not answer at the erasure door; nothing " +
+                  "was released or erased, and the next run asks again",
+              });
+              return;
+            }
+            const fresh = answer.lifecycle;
             if (!fresh || !erasureDue(fresh, now())) {
               log.info("account_erasure_skipped_reactivated", {
                 accountId: id,
