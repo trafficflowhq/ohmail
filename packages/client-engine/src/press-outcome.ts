@@ -56,7 +56,7 @@ export function pressOutcome(input: {
   for (const m of input.subject) {
     if (!isOrganizedFolder(m.physicalFolder ?? m.folder)) continue;
     const shown = input.presented.get<EngineMessage>("message", m.id);
-    const where = shown === undefined ? null : shown.folder;
+    const where = shown === undefined ? null : canonicalDestination(shown.folder) as Folder;
     if (where !== null && canonicalDestination(where) === place) { at++; continue; }
     const by = placedRule(index, m);
     const ruled = by !== null && canonicalDestination(by.destination) !== place ? by : null;
