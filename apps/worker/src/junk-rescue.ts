@@ -85,13 +85,25 @@ export async function junkRescuePass(deps: JunkRescueDeps): Promise<JunkRescueRe
     }
     try {
       await assertMayWriteToMailbox(deps.writeAuthority);
+      // "Use folders" read AT THIS PRESS, not with the listing: switched off mid-pass, the door
+      // declines this move and the command is dropped below, as one already off at listing is.
+      const foldersOff = (await repo.getMailbox(mailboxId))?.foldersOff === true;
       await adapter.move(
         { folder: row.folder, ref: makeRef(row.uidValidity, row.uid) }, "INBOX",
-        writeDoorOf(deps.writeAuthority),
+        writeDoorOf(deps.writeAuthority, { foldersOff }),
       );
       await deps.write((r) => r.resolveJunkRescue(row.id));
       result.moved += 1;
     } catch (err) {
+      if (err instanceof WriteDeclinedError && err.reason === "folders_off") {
+        await deps.write((r) => r.resolveJunkRescue(row.id));
+        result.voided += 1;
+        log?.info("junk_rescue_dropped", {
+          mailboxId, accountId,
+          reason: "the mailbox was switched off under Use folders during this pass; nothing moves",
+        });
+        continue;
+      }
       if (isRefusal(err)) throw err;
       if (err instanceof MessageGoneError) {
         // The provider (or another client) took it first, or the folder was renumbered under the

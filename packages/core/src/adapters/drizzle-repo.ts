@@ -342,8 +342,9 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * list at all. Returns whether the witness still matched; false means a newer press owns the row.
    */
   completeFlagState(messageId: string, c: FlagCompletion): Promise<boolean>;
+  /** `foldersOff`: switched off under "Use folders" at this read — a per-press pass asks it fresh. */
   getMailbox(mailboxId: string): Promise<
-    { id: string; accountId: string; address: string; kickstartAt: Date | null } | null
+    { id: string; accountId: string; address: string; kickstartAt: Date | null; foldersOff: boolean } | null
   >;
   /**
    * This mailbox's `status`, HELD at `share` strength for the rest of the caller's transaction —
@@ -2194,7 +2195,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     return rows[0]
       ? {
         id: rows[0].id, accountId: rows[0].accountId, address: rows[0].address,
-        kickstartAt: rows[0].kickstartAt ?? null,
+        kickstartAt: rows[0].kickstartAt ?? null, foldersOff: rows[0].foldersDisabledAt != null,
       }
       : null;
   }
