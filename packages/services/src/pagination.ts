@@ -4,9 +4,9 @@ import { ServiceError } from "./errors.js";
  * Opaque list cursors (contract §1.5) — independent from the `/sync` seq cursor. TWO WIRE SHAPES:
  * most encoders write the last entity ID and page by `id`; four — `MessageService`,
  * `ScreenerService`, `PrivacyService.listTrackerEvents`, `WorkflowsService.listRuns` — write
- * `${millis}:${uuid}` because they order by (date, id). The triage keyset writes a bare uuid
- * despite its (date, id) intent, so it is in the first family. A validator written from a
- * one-shape reading would turn the second page of those four routes into a 400.
+ * `${millis}:${uuid}` because they order by (date, id), and so does `TriageService.listByState`
+ * for a pile ordered by arrival; Resurface writes the three-part {@link decodeReturnKeysetCursor}.
+ * A validator written from a one-shape reading would turn the second page of those routes into a 400.
  */
 export function encodeListCursor(id: string): string {
   return Buffer.from(id, "utf8").toString("base64url");
@@ -142,6 +142,30 @@ export function decodeNullableKeysetCursor(cursor: string): { millis: number | n
 /** Mint a {@link decodeNullableKeysetCursor} cursor. `null` is a POSITION, not a missing value. */
 export function encodeNullableKeysetCursor(millis: number | null, id: string): string {
   return encodeListCursor(`${millis === null ? "null" : millis}:${id}`);
+}
+
+const CURSOR_RETURN_KEYSET = new RegExp(
+  "^(null|-?\\d{1,16}):(-?\\d{1,16}):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$", "i",
+);
+const epochOr400 = (raw: string): number => {
+  const n = Number(raw);
+  return Number.isFinite(n) && n <= MAX_EPOCH_MS && n >= MIN_EPOCH_MS ? n : invalidCursor();
+};
+
+/**
+ * The Resurface pile's keyset: `(return | null, arrival, id)` for a list ordered by return time
+ * soonest first (none last), then arrival newest first, then id. Only that route issues it, and it
+ * refuses every two-part shape, as the two-part decoders refuse it.
+ */
+export function decodeReturnKeysetCursor(cursor: string): { returnAt: number | null; at: number; id: string } {
+  const m = CURSOR_RETURN_KEYSET.exec(decodedOr400(cursor));
+  if (!m) invalidCursor();
+  return { returnAt: m![1] === "null" ? null : epochOr400(m![1]!), at: epochOr400(m![2]!), id: m![3]! };
+}
+
+/** Mint a {@link decodeReturnKeysetCursor} cursor. */
+export function encodeReturnKeysetCursor(returnAt: number | null, at: number, id: string): string {
+  return encodeListCursor(`${returnAt === null ? "null" : returnAt}:${at}:${id}`);
 }
 
 export const DEFAULT_PAGE_LIMIT = 50;

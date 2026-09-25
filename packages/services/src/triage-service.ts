@@ -1,16 +1,39 @@
-import { and, asc, eq, gt, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import { assertOrganizerRole, messages, messageStates, folderState, claimIdempotencyKey, recordChange, type Tx } from "@trafficflow/db";
 import { bridgeTx, bridgeDb, type Db, type ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import {
-  materializeMessage, materializeMessageState, materializeMessagesInOrder,
+  materializeMessage, materializeMessageState, materializeMessagesInOrder, sortAtOf, SORT_TOLERANCE_MS,
 } from "./dto/materialize.js";
 import { newForYouFilters } from "./message-service.js";
-import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
+import {
+  clampLimit, decodeKeysetCursor, decodeListCursor, decodeReturnKeysetCursor, encodeListCursor,
+  encodeReturnKeysetCursor,
+} from "./pagination.js";
 import type { MessageDTO, MessageStateDTO, Page, TriageState } from "./dto/types.js";
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
+
+/**
+ * `sortAtOf(date, arrived_at) ?? date` in SQL, over millisecond-truncated inputs so the value
+ * round-trips through a cursor; an undated row reads as the epoch, as `byDateDesc` reads it.
+ * {@link arrivalMillis} is the same instant from the row, and the two are held equal by test.
+ */
+function arrivalInstant(db: Db): SQL {
+  const d = dialect(db);
+  const date = d.truncMs(messages.date);
+  const arrived = d.truncMs(messages.arrivedAt);
+  const tol = d.interval(SORT_TOLERANCE_MS);
+  return sql`coalesce(case when ${arrived} is null then ${date} when ${date} is null then ${arrived}
+    when ${date} between ${arrived} - ${tol} and ${arrived} + ${tol} then ${date} else ${arrived} end, ${d.ts(new Date(0))})`;
+}
+
+/** The row's arrival instant in milliseconds — {@link arrivalInstant}'s value, from JavaScript. */
+function arrivalMillis(date: Date | null, arrivedAt: Date | null): number {
+  const instant = sortAtOf(date, arrivedAt) ?? (date && !Number.isNaN(date.getTime()) ? date.toISOString() : undefined);
+  return instant ? Date.parse(instant) : 0;
+}
 /** Materialize inside the ambient tx (reads its uncommitted writes) — same query surface as Db. */
 const asDb = (tx: Tx): Db => bridgeDb(tx);
 
@@ -248,18 +271,39 @@ export class TriageService {
     return this.setState(ctx, messageId, { state: "none" });
   }
 
-  /** The bottom piles: messages currently in a given triage state. */
+  /**
+   * The bottom piles: messages currently in a given triage state, in the pile's own order — the one
+   * every client renders (`triagePiles`' `PILE_ORDER`). Resurface (`bubbled_up`): return time soonest
+   * first, none last, then arrival. Every other state: arrival newest first (`sortAt ?? date`, an
+   * undated row at the epoch as the client reads it), id breaking a tie. Keyset-paged on those keys.
+   */
   async listByState(ctx: ServiceContext, state: TriageState, opts: ListOptions = {}): Promise<Page<MessageDTO>> {
     const limit = clampLimit(opts.limit);
+    const d = dialect(ctx.db);
+    const at = arrivalInstant(ctx.db);
+    const ret = d.truncMs(messageStates.bubbleUpAt);
+    const byReturn = state === "bubbled_up";
     const filters = [
       eq(messageStates.accountId, ctx.accountId),
       eq(messageStates.state, state),
     ];
-    if (opts.cursor) filters.push(gt(messageStates.messageId, decodeListCursor(opts.cursor)));
+    if (opts.cursor) {
+      const pos = byReturn ? decodeReturnKeysetCursor(opts.cursor)
+        : ((k) => ({ returnAt: null, at: k.millis, id: k.id }))(decodeKeysetCursor(opts.cursor));
+      const tail = or(lt(at, d.ts(new Date(pos.at))), and(eq(at, d.ts(new Date(pos.at))), lt(messages.id, pos.id)))!;
+      filters.push(!byReturn ? tail
+        : pos.returnAt === null ? and(isNull(ret), tail)!
+          : or(sql`${ret} > ${d.ts(new Date(pos.returnAt))}`, isNull(ret), and(eq(ret, d.ts(new Date(pos.returnAt))), tail))!);
+    }
+    const order = [...(byReturn ? [sql`${ret} asc nulls last`] : []), sql`${at} desc`, desc(messages.id)];
 
     // scoped-by: `filters` above leads with eq(messageStates.accountId, ctx.accountId)
-    const rows = await ctx.db.select({ messageId: messageStates.messageId }).from(messageStates)
-      .where(and(...filters)).orderBy(asc(messageStates.messageId)).limit(limit + 1);
+    const rows = await ctx.db.select({
+      messageId: messageStates.messageId, bubbleUpAt: messageStates.bubbleUpAt,
+      date: messages.date, arrivedAt: messages.arrivedAt,
+    }).from(messageStates)
+      .innerJoin(messages, and(eq(messages.id, messageStates.messageId), eq(messages.accountId, ctx.accountId)))
+      .where(and(...filters)).orderBy(...order).limit(limit + 1);
 
     const pageRows = rows.slice(0, limit);
     // The batch, for the reason at `MessageService.list`: round-trips constant in the page size,
@@ -267,7 +311,10 @@ export class TriageService {
     const items = await materializeMessagesInOrder(
       ctx.db, ctx.accountId, pageRows.map((r) => r.messageId), { deleted: "include" },
     );
-    const nextCursor = rows.length > limit ? encodeListCursor(pageRows[pageRows.length - 1]!.messageId) : null;
+    const last = pageRows[pageRows.length - 1];
+    const nextCursor = rows.length <= limit || !last ? null : byReturn
+      ? encodeReturnKeysetCursor(last.bubbleUpAt?.getTime() ?? null, arrivalMillis(last.date, last.arrivedAt), last.messageId)
+      : encodeListCursor(`${arrivalMillis(last.date, last.arrivedAt)}:${last.messageId}`);
     return { items, nextCursor };
   }
 
