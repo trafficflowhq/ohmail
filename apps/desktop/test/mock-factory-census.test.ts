@@ -85,7 +85,7 @@ describe("apps/desktop/test — a mock factory spreads importActual", () => {
     // The bridge-fetch rigs are named because they are the measured subject.
     const found = all();
     expect(found.length).toBeGreaterThanOrEqual(8);
-    expect(found.filter((f) => f.specifier === "../src/bridge-fetch.js").length).toBe(6);
+    expect(found.filter((f) => f.specifier === "../src/bridge-fetch.js").length).toBe(7);
   });
 
   it("every factory spreads the real module", () => {
