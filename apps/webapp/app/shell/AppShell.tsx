@@ -216,7 +216,7 @@ import {
   resolveReplyFrom,
   type ReplyEnvelopeEdit,
 } from "./compose-from";
-import { MessageChromeProvider } from "./message-chrome";
+import { MessageChromeProvider, type BodyTarget } from "./message-chrome";
 import { SenderMenu, type SenderMenuState } from "./SenderMenu";
 import { SenderAuditPanel } from "./SenderAuditPanel";
 import { attributeMessages } from "./sender-audit";
@@ -1650,10 +1650,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     }
     openOlderBody(messageId, opts?.retry ? { retry: true } : {});
   });
-  const bodyOfMessage = useStableCallback((m: EngineMessage) => {
-    if (engine.read().get<EngineMessage>("message", m.id) !== undefined) {
-      return bodyOf(engine.read(), m);
-    }
+  const bodyOfMessage = useStableCallback((m: BodyTarget) => {
+    const live = engine.read().get<EngineMessage>("message", m.id);
+    if (live !== undefined) return bodyOf(engine.read(), live);
     return olderBodyFor(m);
   });
 

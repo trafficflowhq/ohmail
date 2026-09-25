@@ -773,6 +773,13 @@ export interface ScreenerHeldMail {
   time: string;
   body: string;
   /**
+   * The message's own snippet and read state, on a DERIVED row. A surface draws the body through
+   * its reader's door (the webapp's `useDrawnBody`), which rests on the snippet; `body` below is
+   * this derivation's copy and does not move when a body lands under a derived stamp.
+   */
+  snippet?: string;
+  unread?: boolean;
+  /**
    * WHAT `body` ACTUALLY IS. Absent ⇒ `full`, which is the fixture world:
    * a `screener_sender` entity carries its held bodies verbatim and there is nothing to
    * hydrate. A DERIVED row — every row on a Cloud account — starts at `snippet` and moves

@@ -33,6 +33,13 @@ import type { RemoteImagesChrome } from "./remote-images";
  */
 export type MessageBarPanel = "move" | "resurface" | "delete";
 
+/**
+ * WHAT A BODY IS ASKED FOR BY — the message's id, and the snippet a reach-past row rests on. A
+ * mirror row is resolved by id inside the door (`AppShell`'s `bodyOfMessage`), so a caller holding
+ * a derived copy (the Screener's held row) and one holding the row itself get the same answer.
+ */
+export type BodyTarget = Pick<EngineMessage, "id" | "snippet"> & { body?: string };
+
 export interface MessageChrome {
   /**
    * The reader's own addresses, so the header can fold a recipient that IS
@@ -332,7 +339,7 @@ export interface MessageChrome {
    * `state` is the whole point — a pane receiving only text could not tell
    * a fetch in flight from a completed one, the failure that shipped first.
    */
-  bodyOf: (message: EngineMessage) => MessageBody;
+  bodyOf: (message: BodyTarget) => MessageBody;
   /**
    * Ask again — the reading pane's only way out of a failed body. Reads and
    * Receipts recover for free (collapse and re-expand a card fires

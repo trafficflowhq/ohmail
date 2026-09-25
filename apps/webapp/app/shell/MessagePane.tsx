@@ -25,7 +25,7 @@ import { ForwardAskStrip } from "./ForwardAsk";
 import { inlineForwardKey } from "./mail-send";
 import { chordKeys, useBinding, useKeyPress, useModGlyph } from "./keymap";
 import { useBodyStalled, useJunkRefill, useMessageChrome, type MessageBarPanel } from "./message-chrome";
-import { useBodyArrival } from "./body-slice";
+import { useDrawnBody } from "./body-slice";
 import { subscribeSessionRevival, useSessionDead } from "./session-truth";
 import { endOpen } from "./ui-vitals";
 import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
@@ -1566,8 +1566,7 @@ export function MessagePane({
   /* THE SUBSCRIPTION THAT MAKES THE READ LIVE. The shell no longer re-renders for a body — its
      derivations key on a stamp bodies do not move — so this pane asks for its own message's
      arrival. Without it the loading marker's snippet would stand until something else moved. */
-  useBodyArrival(message.id);
-  const body = chrome.bodyOf(message);
+  const body = useDrawnBody(message);
 
   /**
    * THE OPEN MARK ENDS HERE — `list → body painted`, the number the 0.19.1 budget names.

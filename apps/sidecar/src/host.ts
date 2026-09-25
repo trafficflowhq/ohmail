@@ -22,7 +22,7 @@ import { decodeRequest, encodeResponse, type ErrorHeader, type MailboxHeader, ty
 const SNAPSHOT_ROUTE = "/sync/snapshot";
 
 /**
- * The single-body read, matched on the path `describeRoute` answers. Its 404 is logged by pattern
+ * The single-body read, matched on the path `describeRoute` answers. Each one is logged by pattern
  * (`BODY_ROUTE_PATTERN`), never with the message id the path carries.
  */
 const BODY_ROUTE = /^\/messages\/[^/]+\/body$/;
@@ -109,14 +109,16 @@ export function serveOverStdio(opts: StdioHostOptions): StdioHost {
             status: res.status,
           });
         }
-        /* EXCEPT A BODY THAT IS NOT HERE. The window renders a 404 on the body read as "Couldn't
-           load the full message", so it is a line a census can count (2026-09-24). */
-        if (res.status === 404 && BODY_ROUTE.test(describeRoute(header.url))) {
-          log("body_not_found", {
+        /* EVERY SINGLE-BODY READ IS A LINE, whatever it answered: a held preview that read its
+           body and never drew it left this log silent, which read as "never asked" (2026-09-25).
+           By pattern only — the path carries the message id. */
+        if (BODY_ROUTE.test(describeRoute(header.url))) {
+          log("body_read", {
             requestId: header.id,
             method: describeMethod(header.method),
             route: BODY_ROUTE_PATTERN,
             status: res.status,
+            latencyMs: Date.now() - startedAt,
           });
         }
         if (describeRoute(header.url) === SNAPSHOT_ROUTE) {

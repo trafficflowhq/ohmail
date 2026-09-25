@@ -7,12 +7,14 @@
  *
  * The shell's derivations key on {@link useDerivedVersion}, which bodies do not move — so a
  * surface that draws one must ask here, or it goes on showing the loading marker's snippet
- * (`derived-stamp-census.test.ts` refuses a `bodyOf` draw with no subscription). {@link
- * useBodyArrival} draws ONE message; {@link useBodyStamp} draws many in a loop.
+ * (`derived-stamp-census.test.ts` refuses a `bodyOf` draw with no subscription). {@link useDrawnBody}
+ * draws ONE message with its subscription; {@link useBodyStamp} draws many in a loop.
  */
 
 import { useCallback, useSyncExternalStore } from "react";
+import type { MessageBody } from "@ohmail/client-engine";
 import { useEngineOrNull } from "./engine";
+import { useMessageChrome, type BodyTarget } from "./message-chrome";
 
 /** Unsubscribing from nothing — a bare harness mount has no engine, and nothing will arrive. */
 const NOTHING_TO_STOP = (): void => {};
@@ -58,4 +60,35 @@ export function useBodyStamp(): number {
     () => (engine === null ? 0 : engine.read().stampOf("message_body")),
     () => 0,
   );
+}
+
+/**
+ * THE ONE DOOR A DRAWN BODY IS READ THROUGH — the reader's (`MessagePane`, `MessageCard`) and the
+ * Screener's held preview's. The chrome's `bodyOf` is the shell's single answer (mirror row or
+ * reach-past door), and the arrival subscription is taken with it, so no surface can draw a body
+ * that stopped moving. The held preview used to draw the queue's DERIVED copy, which the derived
+ * stamp never re-derives for a body: read and never shown on a quiet mailbox (2026-09-25).
+ */
+export function useDrawnBody(target: BodyTarget): MessageBody;
+export function useDrawnBody(target: BodyTarget | null): MessageBody | null;
+export function useDrawnBody(target: BodyTarget | null): MessageBody | null {
+  const chrome = useMessageChrome();
+  useBodyArrival(target?.id ?? null);
+  return target === null ? null : chrome.bodyOf(target);
+}
+
+/**
+ * The drawn STATES of several bodies through the same door, as one string — for a surface keyed on
+ * them rather than drawing them (the Screener's anchor re-runs when a held entry grows). A `null`
+ * target is a row that carries its own body and contributes an empty slot.
+ */
+export function useDrawnStates(targets: ReadonlyArray<BodyTarget | null>): string {
+  const engine = useEngineOrNull();
+  const chrome = useMessageChrome();
+  const subscribe = useCallback(
+    (cb: () => void) => (engine === null ? NOTHING_TO_STOP : engine.subscribe(cb)),
+    [engine],
+  );
+  const states = (): string => targets.map((t) => (t === null ? "" : chrome.bodyOf(t).state)).join(",");
+  return useSyncExternalStore(subscribe, states, () => "");
 }

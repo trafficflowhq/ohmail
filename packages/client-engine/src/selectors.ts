@@ -1233,6 +1233,8 @@ function heldOf(
     subject: m.subject,
     time: messageDisplayTime(m, now, zone, locale),
     body: body.text,
+    snippet: m.snippet,
+    unread: m.unread,
     bodyState: body.state,
     // Carried so the preview can render the mail the way the reading pane does. `bodyOf`
     // reports `html` only on a hydrated `ready` body, so this is null until `hydrateBody`

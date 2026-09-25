@@ -34,7 +34,7 @@ import {
 } from "./format";
 import { displayAddress } from "./idn";
 import { useBodyStalled, useJunkRefill, useMessageChrome } from "./message-chrome";
-import { useBodyArrival } from "./body-slice";
+import { useDrawnBody } from "./body-slice";
 import { MessageRecipients } from "./MessageRecipients";
 import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
 
@@ -283,8 +283,7 @@ export function MessageCard({
   /* THIS CARD'S OWN BODY ARRIVAL — see `body-slice.ts`. The shell no longer re-renders for a
      body, and a conversation mounts many of these: each waits on its own message, so a sibling's
      body landing redraws nothing here. */
-  useBodyArrival(message.id);
-  const body = chrome.bodyOf(message);
+  const body = useDrawnBody(message);
   const waiting = body.state === "loading" || body.state === "snippet";
   const stalled = useBodyStalled(message.id, waiting);
   // The focused pane's rule for a verdict's husk outside Junk: loading, re-asked, bounded.

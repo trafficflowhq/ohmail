@@ -13,6 +13,7 @@ import { useTranslations } from "next-intl";
 import type {
   BodyState,
   ListSurface,
+  ScreenerHeldMail,
   ScreenerSenderDTO,
   UnsubscribeHeaderState,
   UnsubscribeResult,
@@ -56,7 +57,8 @@ import { useListWindow } from "../shell/list-window";
 /* The reader surfaces' own bound on "still coming" — one mechanism, not a second one shaped like
    it. See {@link useBodyStalled} for why the deadline is derived from the engine's rather than
    picked, and `HeldMail` below for why this pile needs it too. */
-import { useBodyStalled } from "../shell/message-chrome";
+import { useBodyStalled, type BodyTarget } from "../shell/message-chrome";
+import { useDrawnBody, useDrawnStates } from "../shell/body-slice";
 import { heldBodyAsks } from "../shell/held-body-asks";
 import { goScreener, goSettings, type ScreenerSegmentId } from "../shell/routing";
 import { APPLY_PILE_ORDER, hasRealSuggestion, type PendingDecision } from "../shell/screener-state";
@@ -829,8 +831,9 @@ export function ScreenerView({
    * anchor is a pixel. It is the states and not the ids (`heldKey`, further down, is the ids and
    * drives the hydration): the ids are stable for the whole time the sender is selected, which is
    * precisely why keying the anchor on them left it computed against collapsed snippets for ever.
+   * Read through the reader's door: the queue's own copy does not move when a body lands.
    */
-  const heldBodyKey = heldOfCurrent.map((held) => held.bodyState ?? "").join(",");
+  const heldBodyKey = useDrawnStates(heldOfCurrent.map(drawnTarget));
 
   useEffect(() => {
     setChoosing(null);
@@ -1265,6 +1268,8 @@ export function ScreenerView({
           }
           heldCount={w.held.length}
           heldLabel={rowBadge.held(w.held.length)}
+          /* UNREAD WHILE ANY HELD MESSAGE IS: without it the row was spoken "Read" (`row-spoken.ts`). */
+          unread={w.held.some((h) => h.unread === true)}
           /* QUICK-ADJUST, on the row. Every branch of it goes through `state.decide` — the same
              funnel the decision bar, the five keys and both bulks use — so a row press earns
              the undo window, the read clamp, the rule promotion and the past-the-gate branch
@@ -1714,6 +1719,14 @@ function newestHeld(w: ScreenerSenderDTO) {
 }
 
 /**
+ * A held row's message for the reader's door, or `null` for a row that carries its own body. A
+ * DERIVED row always has a `bodyState` (the selector resolved one); a fixture row never does.
+ */
+function drawnTarget(h: ScreenerHeldMail): BodyTarget | null {
+  return h.bodyState === undefined ? null : { id: h.id, snippet: h.snippet ?? h.body };
+}
+
+/**
  * The remote-image consent wiring for ONE held message, resolved exactly as `MessagePane`
  * resolves it: `remoteLoaded` is the OR of the stored flag and this session's consent (the
  * body record is not re-fetched on consent, so without the second term the button would write
@@ -1851,21 +1864,22 @@ export function HeldUnsubscribe({
  */
 export function HeldMail({
   messageId,
+  message,
   from,
   address,
   subject,
   time,
-  body,
-  html,
-  bodyState,
+  body: carriedBody,
+  html: carriedHtml,
+  bodyState: carriedState,
   bodyStall,
   remoteLoaded,
   imageProxy,
   onLoadRemote,
   loadTrackingPixels,
   onRetry,
-  unsubscribe,
-  unsubscribeUrl,
+  unsubscribe: carriedUnsubscribe,
+  unsubscribeUrl: carriedUnsubscribeUrl,
   onUnsubscribe,
   trackerNote,
   dull,
@@ -1875,6 +1889,12 @@ export function HeldMail({
    * Absent on a mount that cannot name one (a fixture, a bare test), where the subject stands in.
    */
   messageId?: string;
+  /**
+   * THE MIRROR MESSAGE THIS PREVIEW DRAWS — present ⇒ text, html, state and posture come from the
+   * reader's door ({@link useDrawnBody}) and the carried fields below are ignored. Absent on a row
+   * that brings its own body: a fixture sender, the junk window.
+   */
+  message?: BodyTarget | null;
   from: string;
   address?: string;
   subject: string;
@@ -1913,6 +1933,12 @@ export function HeldMail({
   dull?: boolean;
 }) {
   const t = useTranslations("body");
+  const drawn = useDrawnBody(message ?? null);
+  const body = drawn ? drawn.text : carriedBody;
+  const html = drawn ? drawn.html : carriedHtml;
+  const bodyState: BodyState | undefined = drawn ? drawn.state : carriedState;
+  const unsubscribe = drawn ? drawn.unsubscribe : carriedUnsubscribe;
+  const unsubscribeUrl = drawn ? drawn.unsubscribeUrl : carriedUnsubscribeUrl;
   /**
    * WHAT THIS MESSAGE HAD REFUSED, as the viewer reports it (`MessageBody.onNotice`) — worn in the
    * head line as the glyph and two-word caption the stream card and the message header wear, so
@@ -2030,7 +2056,7 @@ export function HeldMail({
         <MessageBody
           text={body}
           html={html}
-          remoteLoaded={remoteLoaded}
+          remoteLoaded={(drawn?.loadedRemoteContent ?? false) || (remoteLoaded ?? false)}
           imageProxy={imageProxy}
           onLoadRemote={onLoadRemote}
           loadTrackingPixels={loadTrackingPixels ?? false}
@@ -2431,6 +2457,7 @@ function WaitingPreview({
           <HeldMail
             key={h.id}
             messageId={h.id}
+            message={drawnTarget(h)}
             from={displayAddressee(sender.from.name, sender.from.address)}
             address={displayAddressUnder(sender.from.name, sender.from.address)}
             subject={h.subject}
@@ -2534,6 +2561,7 @@ function ScreenedPreview({
           <HeldMail
             key={h.id}
             messageId={h.id}
+            message={drawnTarget(h)}
             from={displayAddressee(sender.from.name, sender.from.address)}
             address={displayAddressUnder(sender.from.name, sender.from.address)}
             subject={h.subject}
@@ -2646,6 +2674,7 @@ function SpamPreview({
           <HeldMail
             key={h.id}
             messageId={h.id}
+            message={drawnTarget(h)}
             from={displayAddressee(row.sender.from.name, row.sender.from.address)}
             address={displayAddressUnder(row.sender.from.name, row.sender.from.address)}
             subject={h.subject}
