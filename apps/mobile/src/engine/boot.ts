@@ -585,8 +585,8 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
     // Every drain carries the client's complete type vocabulary — the cellular rule above.
     types: MOBILE_SYNC_TYPES,
     uuid: deps.uuid,
-    // No wake signal attached: this build polls /sync. `attachWakeSignal` stays the seam a
-    // push wake would feed later.
+    // No wake signal attached: this build polls /sync, on the connection layer's cadence
+    // (`net/drain-cadence.ts`). `attachWakeSignal` stays the seam a push wake would feed later.
     //
     // THE HOST OWNS THE OUTBOX REPLAY. This app routes EVERY flush result: `flushQueued`
     // (state/live.ts) reads `pendingMutations()` for each key's kind before flushing, and the

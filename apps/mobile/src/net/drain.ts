@@ -18,9 +18,35 @@ export interface DrainEngine {
 
 import { faultDetail, type RefusalArg } from "../refusal";
 
+/** How a round of record ended — what the drain line ({@link drainLine}) is written from. */
+export type RoundOutcome =
+  | { ok: true; first: boolean }
+  | { ok: false; first: boolean; err: unknown; failures: number };
+
+/**
+ * THE DRAIN LINE — one per settled round, in the desktop's own words (`cloud_pull_applied`,
+ * `cloud_pull_failed`), so a phone that stops draining reads as a gap in `logcat` rather than as
+ * silence. Content-free by construction: a boolean, a closed door name and the engine's own
+ * failure record (`classifyWindowSyncFailure`, handed in by the seam: a closed reason, a class
+ * name, a status, a code — never a message).
+ */
+export function drainLine(
+  outcome: RoundOutcome,
+  door: "paired" | "standalone",
+  classify: (err: unknown, attempt: number) => object,
+): string {
+  if (outcome.ok) {
+    return JSON.stringify({ service: "sync", event: "cloud_pull_applied", door, first: outcome.first });
+  }
+  const failure = classify(outcome.err, outcome.failures);
+  return JSON.stringify({ service: "sync", event: "cloud_pull_failed", door, first: outcome.first, ...failure });
+}
+
 export class SyncRunner {
   /** The round in the air, or null — teardown awaits it before closing the mirror. */
   private inflight: Promise<void> | null = null;
+  /** Consecutive failed rounds of record; zero after any success. The cadence backs off on it. */
+  private failed = 0;
 
   constructor(
     private readonly on: {
@@ -32,6 +58,8 @@ export class SyncRunner {
        * follows a language change like everything else on the screen.
        */
       error(reason: RefusalArg | null): void;
+      /** Every round of record as it settles — the drain line's writer. */
+      settled?(outcome: RoundOutcome): void;
     },
   ) {}
 
@@ -60,9 +88,11 @@ export class SyncRunner {
       // SYNCHRONOUSLY is an ordinary failed round — its sentence reported, its busy flag
       // dropped — never an unregistered one the record gates would silence.
       await Promise.resolve();
+      let outcome: RoundOutcome = { ok: true, first };
       try {
         await (first ? engine.start() : engine.syncOnce());
       } catch (err) {
+        outcome = { ok: false, first, err, failures: this.failed + 1 };
         if (this.inflight === self.round) this.on.error(faultDetail(err));
         // Re-sync memory with disk so the torn-flush guard's refusal window closes and the
         // retry re-fetches the failed page instead of writing past it. Through a thenable so
@@ -70,8 +100,10 @@ export class SyncRunner {
         await Promise.resolve().then(() => engine.hydrate()).catch(() => undefined);
       } finally {
         if (this.inflight === self.round) {
+          this.failed = outcome.ok ? 0 : this.failed + 1;
           this.on.syncing(false);
           this.inflight = null;
+          try { this.on.settled?.(outcome); } catch { /* a log line is never worth a round */ }
         }
       }
     })();
@@ -90,6 +122,11 @@ export class SyncRunner {
     return this.inflight;
   }
 
+  /** Consecutive failed rounds of record — 0 after a success. */
+  failures(): number {
+    return this.failed;
+  }
+
   /**
    * THE OWNING SESSION IS LEAVING — the round in the air no longer speaks for the UI.
    *
@@ -105,6 +142,7 @@ export class SyncRunner {
       this.inflight = null;
       this.on.syncing(false);
     }
+    this.failed = 0;
     this.on.error(null);
   }
 }

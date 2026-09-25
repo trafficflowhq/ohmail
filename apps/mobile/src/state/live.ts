@@ -4252,6 +4252,15 @@ export function staleAsOf(
 }
 
 /**
+ * THE STALE LABEL'S SENTENCE. "Catching up" is an activity, so it is said only while a round is in
+ * flight; otherwise the age alone — "As of Fri 09:00". It used to follow the AGE: five minutes after
+ * the one drain an open phone said "catching up" with nothing running, for as long as it stayed open.
+ */
+export function staleSaid(stale: string, draining: boolean): string {
+  return draining ? Copy.staleAsOf(stale) : Copy.staleAsOfIdle(stale);
+}
+
+/**
  * HOW LONG AN OUTAGE RUNS BEFORE THE SENTENCE STOPS PROMISING A RECONNECT (ruled, 2026-09-11).
  *
  * Under it the app says it is re-dialling, which is true: the phone profile's ladder is

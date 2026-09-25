@@ -159,6 +159,8 @@ export interface World {
      * settles; the derivation clears it in the same world re-derive that applies the drain.
      */
     staleAsOf: string | null;
+    /** A sync round is in flight (`conn.syncing`) — the only time the label may say "catching up". */
+    draining: boolean;
     /**
      * WHETHER THE MAIL SERVER CAN BE REACHED — the engine's own answer, ranked into one verdict
      * (`live.ts#connectionSay`). `null` is "nothing has said": a paired session, a build with no
@@ -545,7 +547,7 @@ const LIVE_VERDICT_BEAT_MS = 15_000;
 function emptyWorld(actions: WorldActions): World {
   return {
     live: false,
-    boot: { settled: false, syncFailure: null, staleAsOf: null, connection: null, firstSync: null },
+    boot: { settled: false, syncFailure: null, staleAsOf: null, draining: false, connection: null, firstSync: null },
     // Nothing is queued on the empty world, so nothing was given up on. `EMPTY_ABANDONED` rather
     // than a fresh `[]`: this object is compared by identity in places, and a new array per call
     // is the same re-render trap `useAbandoned` avoids on the web.
@@ -1543,6 +1545,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         // The appearing direction is time's alone — a phone sitting open crosses the threshold
         // with no store write — so `freshBeat` ticks when the verdict changes.
         staleAsOf: staleAsOf(engine, zone),
+        draining: conn.syncing,
         /* THE DOOR'S OWN WORD, re-read per derivation like the two above. It is NOT in this
            memo's dependency array and cannot be: the door read is module state, not React
            state, so there is nothing here to depend on. The watcher below is what re-derives

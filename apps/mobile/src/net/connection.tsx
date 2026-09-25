@@ -9,7 +9,8 @@
  * as ids, re-read from the keystore inside the gate; the dead signal lands on `ended`.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Platform } from "react-native";
+import { AppState, Platform } from "react-native";
+import { classifyWindowSyncFailure } from "@ohmail/client-engine";
 import { Copy } from "../copy";
 import { faultDetail, refuse, type Refusal, type RefusalArg } from "../refusal";
 import { LOCAL_ENGINE_ORIGIN, mirrorExists, mirrorOwnerKey } from "../engine/boot";
@@ -34,7 +35,8 @@ import { nativeHostPinning } from "./host-pinning-native";
 import { unifiedPushDistributor } from "./unified-push";
 import type { ServerProfile } from "../state/servers";
 import type { FetchLike } from "./bearer";
-import { SyncRunner } from "./drain";
+import { SyncRunner, drainLine } from "./drain";
+import { keepDraining, type AppLifecycle } from "./drain-cadence";
 import { organizeHere, readMailboxes } from "./mailboxes";
 import {
   connectProfileById,
@@ -151,6 +153,15 @@ export function useConnection(): Connection {
  * captured string: this module is imported long before a language is resolved.
  */
 const SUPERSEDED = (): Refusal => refuse("connectSuperseded");
+
+/** React Native's `AppState`, as the drain cadence reads it (`net/drain-cadence.ts`). */
+const appLifecycle: AppLifecycle = {
+  now: () => AppState.currentState,
+  subscribe: (listener) => {
+    const sub = AppState.addEventListener("change", listener);
+    return () => { sub.remove(); };
+  },
+};
 
 /**
  * Open it again, and wire it to the app's lifecycle — the relaunch's twin of the door screen.
@@ -277,7 +288,15 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   const runner = (runnerRef.current ??= new SyncRunner({
     syncing: setSyncing,
     error: setSyncError,
+    /* THE DRAIN LINE — one per round of record, through the app's one sink (`drain.ts#drainLine`). */
+    settled: (outcome) => {
+      const at = live.now();
+      const door = at.k === "live" && at.session.standalone ? "standalone" : "paired";
+      engineLogSink()(drainLine(outcome, door, classifyWindowSyncFailure));
+    },
   }));
+  /** The live session's drain cadence and whose it is — stopped by that session's teardown. */
+  const cadence = useRef<{ session: ConnectedSession; stop: () => void } | null>(null);
   /** Unsubscribe from the current session's dead signal on teardown. */
   const offDead = useRef<(() => void) | null>(null);
 
@@ -295,6 +314,10 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   const teardown = useCallback((session: ConnectedSession): Promise<void> => {
     offDead.current?.();
     offDead.current = null;
+    if (cadence.current?.session === session) {
+      cadence.current.stop();
+      cadence.current = null;
+    }
     const inFlight = runner.inFlight() ?? Promise.resolve();
     runner.disown();
     // RETURNED, not only scheduled. Every caller but one wants this fire-and-forget (leaving a
@@ -412,6 +435,22 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       clearance.current.set(session, gate);
       void gate.then((ok) => {
         if (ok) void drain(session, true);
+        /* AND EVERY ROUND AFTER IT while the app is in front, behind the same clearance — before
+           this nothing drained again until a press or a push wake (`net/drain-cadence.ts`). */
+        const atCadence = live.now();
+        if (!ok || atCadence.k !== "live" || atCadence.session !== session) return;
+        cadence.current?.stop();
+        cadence.current = {
+          session,
+          stop: keepDraining({
+            lifecycle: appLifecycle,
+            round: () => {
+              const atRound = live.now();
+              if (atRound.k !== "live" || atRound.session !== session) return Promise.resolve(0);
+              return runner.request(session.engine).then(() => runner.failures());
+            },
+          }),
+        };
       });
     },
     [drain, refreshProfiles, runner, teardown],

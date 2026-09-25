@@ -15,7 +15,7 @@ import { sayArg } from "../refusal";
 import { useTheme } from "../theme";
 import { useWorld, useWorldToast } from "../state/world";
 import { AT_REST, riseForAction, riseForNotice, riseForPress, type Rise, type ToastEntry } from "../state/toast-one";
-import { connectionSaid, firstSyncContinuesSaid } from "../state/live";
+import { connectionSaid, firstSyncContinuesSaid, staleSaid } from "../state/live";
 import { Icon } from "./Icon";
 import { usePaneChrome } from "./pane-chrome";
 import { usePosture } from "./posture";
@@ -38,9 +38,7 @@ export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
   // drain settles. In the shared chrome rather than any screen, the SyncBar lesson: a view can
   // only speak about itself, and the next tab added must get the sentence for free. The world
   // layer derives it (`boot.staleAsOf`, sentence-ready time or null); this renders words.
-  // "Catching up" only while it is TRUE: a failed round with nothing scheduled drops the
-  // activity claim and states the age alone (`staleAsOfIdle`) — the web ladder makes the same
-  // call by ranking its failure arms above the stale arm.
+  // "Catching up" only while a round is IN FLIGHT (`live.ts#staleSaid`); otherwise the age alone.
   const world = useWorld();
   const boot = world.boot;
   const stale = boot.staleAsOf;
@@ -101,7 +99,7 @@ export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
           accessibilityRole="text"
           style={{ paddingHorizontal: 16, paddingBottom: 4 }}
         >
-          {boot.syncFailure !== null ? Copy.staleAsOfIdle(stale) : Copy.staleAsOf(stale)}
+          {staleSaid(stale, boot.draining)}
         </Txt>
       ) : continuing !== null ? (
         <Txt
