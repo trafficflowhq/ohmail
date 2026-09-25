@@ -175,6 +175,76 @@ export function claimLeftBehind(m: {
   return m.organizedByThisInstall === true;
 }
 
+/* ── WHO FILES A MAILBOX THIS INSTALL ORGANIZES ─────────────────────────────────────────────
+   The organizer block renders only where the ROLE says this install files the mailbox (the
+   promotion clears every holder column), so what is left to say is which install this is, and
+   the door answers that. The browser said "This computer files this mailbox" about a mailbox
+   ohmail Cloud files, which reads as closing the laptop stopping it. One table, both panes. */
+
+/** Who files a mailbox this install organizes: a desktop, ohmail Cloud, or a self-hosted server. */
+export type FilerSelf = "computer" | "cloud" | "server";
+
+const FILER_KEYS = {
+  organizing: {
+    computer: "stateOrganizingHere", cloud: "stateOrganizingCloud", server: "stateOrganizingServer",
+  },
+  stopWhat: {
+    computer: "stopOrganizingWhat", cloud: "stopOrganizingWhatCloud", server: "stopOrganizingWhatServer",
+  },
+  stopQueued: {
+    computer: "stopOrganizingQueued", cloud: "stopOrganizingQueuedCloud", server: "stopOrganizingQueuedServer",
+  },
+  stopNot: {
+    computer: "stopOrganizingNot", cloud: "stopOrganizingNotCloud", server: "stopOrganizingNotServer",
+  },
+  siblingLapse: {
+    computer: "stopOrganizingSiblingLapse",
+    cloud: "stopOrganizingSiblingLapseCloud",
+    server: "stopOrganizingSiblingLapseServer",
+  },
+} as const satisfies Record<string, Record<FilerSelf, string>>;
+
+/** One sentence about the install that files the mailbox. */
+export type FilerSentence = keyof typeof FILER_KEYS;
+
+/** The `mailboxes` key for {@link FilerSentence} said about {@link FilerSelf}. */
+export function filerKey(sentence: FilerSentence, self: FilerSelf): string {
+  return FILER_KEYS[sentence][self];
+}
+
+/** A paired desktop's organizer is the other computer, named as that pane names it. */
+const FILER_HOST_SIBLING_LAPSE = "stopOrganizingSiblingLapseHost";
+
+/** Every key this table can answer — the catalogue census reads it. */
+export const FILER_KEY_SET: readonly string[] = [
+  ...Object.values(FILER_KEYS).flatMap((row) => Object.values(row)),
+  FILER_HOST_SIBLING_LAPSE,
+];
+
+/**
+ * The refused stop is the one organizer sentence a hosted or paired desktop row can carry, so it
+ * alone takes the other computer as its subject.
+ */
+export function siblingLapseSentence(
+  self: FilerSelf | { host: string },
+): { key: string; params: Record<string, string> } {
+  if (typeof self === "object") return { key: FILER_HOST_SIBLING_LAPSE, params: { name: self.host } };
+  return { key: filerKey("siblingLapse", self), params: {} };
+}
+
+/** A browser build files as the managed service, or as the self-hosted server it is served by. */
+export const webFiler = (selfHostBuild: boolean): FilerSelf => (selfHostBuild ? "server" : "cloud");
+
+/**
+ * A desktop files as this computer on its own door. A hosted door's organizer is the server it
+ * reads: the self-hosted one when the engine says `selfhost`, otherwise the managed service — the
+ * reading the pane's own heading already takes for every hosted door.
+ */
+export function desktopFiler(door: string | null | undefined, flavor?: string | null): FilerSelf {
+  if (door !== "cloud") return "computer";
+  return flavor === "selfhost" ? "server" : "cloud";
+}
+
 /**
 /**
  * ONE ROW, AS BOTH DERIVATIONS BELOW NEED TO SEE IT.

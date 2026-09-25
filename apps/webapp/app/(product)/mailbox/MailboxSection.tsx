@@ -68,7 +68,9 @@ import {
   noPortProbeSentence, probeReasonOf, probeTlsOf, type ProbeTlsInfo,
 } from "../../shell/probe-refusal";
 import { AGO_COPY, agoStamp, dayStamp } from "../../shell/format";
-import { claimLeftBehind, isSyncBlockReason, readerStandDown, showInboundQuiet } from "../../shell/mail-state";
+import {
+  claimLeftBehind, filerKey, isSyncBlockReason, readerStandDown, showInboundQuiet, webFiler,
+} from "../../shell/mail-state";
 import { useMailState } from "../../shell/MailStateProvider";
 import { useEngineOrNull } from "../../shell/engine";
 import { displayAddress } from "../../shell/idn";
@@ -393,6 +395,8 @@ export function useLatestWins(alive: { current: boolean }): () => LatestWins {
 
 export function MailboxSection() {
   const t = useTranslations("mailboxes");
+  /* Who files a mailbox this pane's server organizes: ohmail Cloud, or the self-hosted server. */
+  const filer = webFiler(SELF_HOST_BUILD);
   /**
    * The `blocked_*` sentences are the SHELL's, shared rather than copied.
    *
@@ -865,8 +869,8 @@ export function MailboxSection() {
       const result = await mailboxApi.release(id);
       if (!wins.publish()) return;
       setNotice(
-        result.outcome === "requested" ? t("stopOrganizingQueued")
-          : result.outcome === "not_organizing" ? t("stopOrganizingNot")
+        result.outcome === "requested" ? t(filerKey("stopQueued", filer))
+          : result.outcome === "not_organizing" ? t(filerKey("stopNot", filer))
             : t("organizerDisconnected"),
       );
       // The row's role moves at the worker's gate, not here, so the pane re-reads rather than
@@ -881,7 +885,7 @@ export function MailboxSection() {
          removal would leave a stale press spinning for ever. */
       if (alive.current) setReleasing((q) => { const n = new Set(q); n.delete(id); return n; });
     }
-  }, [afterWrite, listWins, t]);
+  }, [afterWrite, filer, listWins, t]);
 
   const confirmTakeover = useCallback(async (id: string): Promise<TakeoverVerdict> => {
     setError(null);
@@ -2259,9 +2263,9 @@ export function MailboxSection() {
                            wears the doc's sentence, never the ordinary pending one. */
                         : m.releaseRequestedAt
                           ? (m.releaseRefusal === "sibling_lapse"
-                            ? t("stopOrganizingSiblingLapse")
+                            ? t(filerKey("siblingLapse", filer))
                             : t("stopOrganizingPending"))
-                          : t("stateOrganizingHere")
+                          : t(filerKey("organizing", filer))
                     }
                     action={releaseFor === m.id || (!stranded && m.releaseRequestedAt) ? undefined : (
                       <Button
@@ -2280,7 +2284,7 @@ export function MailboxSection() {
                       is red. */}
                   {releaseFor === m.id ? (
                     <div className="mbx-handover">
-                      <p className="mbx-handover-what">{stranded ? t("releaseClaimWhat") : t("stopOrganizingWhat")}</p>
+                      <p className="mbx-handover-what">{stranded ? t("releaseClaimWhat") : t(filerKey("stopWhat", filer))}</p>
                       <SettingsActions>
                         <Button
                           variant="primary"

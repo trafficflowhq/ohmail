@@ -55,7 +55,7 @@ import { DesktopSubscription, useDesktopManageOffer } from "./DesktopSubscriptio
 import { DesktopAccessLock } from "./DesktopAccessLock.js";
 import { DesktopWebSection } from "./DesktopWebSection.js";
 import {
-  accountDoorFor, awayDoorFor, consentDoorFor, firstRunDoorFor, gateFor,
+  accountDoorFor, awayDoorFor, consentDoorFor, firstRunDoorFor, flavorOf, gateFor,
   hostDoorFor, isDesktopHost, mailMount, pairedHostOf, pairedViaOf, profileImportDoorFor, readShell,
   suggestDoorFor, type HostedSession, type Shell,
 } from "./doors.js";
@@ -1188,6 +1188,7 @@ export function DesktopGate() {
                wording without it, which is wrong but not broken; a sentence with a hole in it
                would be both. */
             host={paired ? hostLabel : null}
+            flavor={flavorOf(status)}
             onShellStatus={onStatus}
           />
         ) } : {})}

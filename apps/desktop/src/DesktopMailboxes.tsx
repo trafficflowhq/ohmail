@@ -28,7 +28,8 @@ import {
 } from "@ohmail/ui";
 
 import {
-  deviceHoldings, holdingsSpeak, readerStandDown, showInboundQuiet, type MailboxFacts,
+  desktopFiler, deviceHoldings, holdingsSpeak, readerStandDown, showInboundQuiet, siblingLapseSentence,
+  type MailboxFacts,
 } from "../../webapp/app/shell/mail-state";
 import { addressKey } from "../../webapp/app/shell/address-key";
 import { agoStamp, dayStamp } from "../../webapp/app/shell/format";
@@ -607,7 +608,7 @@ function statusOf(door?: string | null): EngineStatus | null {
  * confirmation states the extra consequence only when it is true.
  */
 export function DesktopMailboxes(
-  { door, host, onShellStatus }: {
+  { door, host, flavor, onShellStatus }: {
     door?: string | null;
     /**
      * THE OTHER COMPUTER THIS INSTALL READS THROUGH, when it reads through one.
@@ -619,6 +620,8 @@ export function DesktopMailboxes(
      * which works perfectly well through a host — would have gone with the wording.
      */
     host?: string | null;
+    /** The hosted door's server, as `flavorOf` reads it — it decides who a hosted row says files. */
+    flavor?: string | null;
     onShellStatus?: (next: EngineStatus) => void;
   },
 ) {
@@ -897,6 +900,10 @@ export function DesktopMailboxes(
      does is the cloud door's; what changes is what this pane may claim. */
   const paired = cloud && !!host;
   const heading = cloud ? t("modeCloud") : t("desktopModeLocal");
+  /* WHO FILES WHAT THIS DOOR SHOWS, for the one organizer sentence a hosted or paired row can
+     carry — the refused stop. This computer on its own door; the server or the other computer
+     on the rest. */
+  const lapse = siblingLapseSentence(paired ? { host: host! } : desktopFiler(door, flavor));
 
   /**
    * ASK FOR A FRESH PASS OVER ONE MAILBOX. 202 — nothing is synced when this returns. The
@@ -1611,10 +1618,11 @@ export function DesktopMailboxes(
                      clone — used to wear the ordinary pending sentence for ever, a false
                      "in progress" at exactly the moment a person is fighting a clone. The
                      DTO's `releaseRefusal` is the discriminator and this sentence is the
-                     doc's own (§4): it names the holder — another copy of this computer —
-                     and what ends the wait. Absent (an older engine), pending stands. */
+                     doc's own (§4): it names the holder — another copy of whatever files
+                     the mailbox (`lapse`) — and what ends the wait. Absent (an older engine),
+                     pending stands. */
                   ? (m.releaseRefusal === "sibling_lapse"
-                    ? t("stopOrganizingSiblingLapse")
+                    ? t(lapse.key, lapse.params)
                     : t("stopOrganizingPending"))
                   : t("stateOrganizingHere"))
               : role === "released"
@@ -1736,12 +1744,14 @@ export function DesktopMailboxes(
                organizer row with a pending release (it is `already_organizing` only when the
                request is null) and stamps the authorization the engine's release arm compares
                against, so the later press stands and nothing is recorded as released. */
-            m.releaseRequestedAt ? (
+            /* LOCAL DOOR ONLY, as `reclaim` is: a hosted or paired door serves no takeover, and
+               the organizer its gloss says keeps organizing is not this computer there. */
+            m.releaseRequestedAt ? (cloud ? null : (
               <span className="mbx-verb">
                 <Button className="mbx-btn" onClick={() => setClaimFor(m.id)}>{t("organizeHere")}</Button>
                 <Gloss placement="chip" text={t("organizeHereCountermandWhat")} />
               </span>
-            ) : (
+            )) : (
               <span className="mbx-verb">
                 <Button variant="ghost" className="mbx-quiet" onClick={() => setReleaseFor(m.id)}>
                   {t("stopOrganizingHandBack")}
