@@ -284,13 +284,16 @@ function withAcquireCeiling(
 /**
  * Thrown when a statement sent in one flush met a parameter the describe would have bound
  * differently: text or a number where the server's type has its own serializer (boolean, bytea),
- * or a flat array where it wanted something else. The statement HAS run: the refusal rides its
- * answer, so a transaction rolls back and a lone write stands. Pass the value as its own type.
+ * or a flat array where it wanted something else. Pass the value as its own type. The statement
+ * HAS run, and cannot be checked first: the server's types arrive with its result, after the Sync.
+ * `committed` says which case this is — outside a transaction the Sync committed it and a retry
+ * repeats the write; inside one it stands only if the transaction commits.
  */
 export class DbParameterTypeError extends Error {
   readonly code = "db_parameter_type";
-  constructor(readonly position: number, readonly oid: number) {
-    super(`parameter $${position} met server type ${oid}, which binds it differently from its text`);
+  constructor(readonly position: number, readonly oid: number, readonly committed: boolean) {
+    super(`parameter $${position} met server type ${oid}, which binds it differently from its text; the statement ran `
+      + (committed ? "outside a transaction and is committed — do not retry it" : "inside a transaction and stands only if it commits"));
     this.name = "DbParameterTypeError";
   }
 }
@@ -352,7 +355,9 @@ function divergent(q: FlushQuery, params: readonly unknown[], untyped: readonly 
  * than the describe would have. `onexecute` false keeps each statement alone on its connection,
  * as the describe did: the pool's pipelining is unchanged.
  */
-function sendInOneFlush(query: object, params: readonly unknown[], untyped: readonly number[], s: () => Serializers): void {
+function sendInOneFlush(
+  query: object, params: readonly unknown[], untyped: readonly number[], s: () => Serializers, lone: boolean,
+): void {
   const q = query as FlushQuery;
   Object.defineProperty(q, "describeFirst", {
     configurable: true,
@@ -363,7 +368,7 @@ function sendInOneFlush(query: object, params: readonly unknown[], untyped: read
   q.resolve = (rows) => {
     const at = divergent(q, params, untyped, s());
     if (at === null) settle(rows);
-    else q.reject(new DbParameterTypeError(at + 1, q.statement?.types[at] ?? 0));
+    else q.reject(new DbParameterTypeError(at + 1, q.statement?.types[at] ?? 0, lone));
   };
 }
 
@@ -377,21 +382,23 @@ const holdConnection = (): boolean => false;
 function withOneFlush(client: ReturnType<typeof postgres>): ReturnType<typeof postgres> {
   type Sql = ReturnType<typeof postgres>;
   const serializers = (): Serializers => (client.options as unknown as { serializers: Serializers }).serializers;
-  const unsafeOf = (t: Sql) => (text: string, params: unknown[] = [], options: Record<string, unknown> = {}) => {
+  const unsafeOf = (t: Sql, lone: boolean) => (text: string, params: unknown[] = [], options: Record<string, unknown> = {}) => {
     const flat = params.length > 0 && !("onexecute" in options) ? flatArgs(params) : null;
     if (flat === null) return t.unsafe(text, params as never[], options);
     // `onexecute` is the driver's own query option; its types do not list it.
     const query = t.unsafe(text, flat.args as never[], { ...options, onexecute: holdConnection } as never);
-    sendInOneFlush(query, params, flat.untyped, serializers);
+    sendInOneFlush(query, params, flat.untyped, serializers, lone);
     return query;
   };
   const within = (args: unknown[]): unknown[] => {
     const fn = args[args.length - 1];
-    return typeof fn === "function" ? [...args.slice(0, -1), (sql: Sql) => (fn as (s: Sql) => unknown)(door(sql))] : args;
+    return typeof fn === "function" ? [...args.slice(0, -1), (sql: Sql) => (fn as (s: Sql) => unknown)(door(sql, false))] : args;
   };
-  const door = (sql: Sql): Sql => new Proxy(sql, {
+  // `lone`: the pool's own handle, where each statement is its own transaction; `begin` and
+  // `savepoint` hand their callbacks a scoped handle inside one.
+  const door = (sql: Sql, lone: boolean): Sql => new Proxy(sql, {
     get(target, prop) {
-      if (prop === "unsafe") return unsafeOf(target);
+      if (prop === "unsafe") return unsafeOf(target, lone);
       if (prop === "begin" || prop === "savepoint") {
         const open = Reflect.get(target, prop) as ((...a: unknown[]) => unknown) | undefined;
         return open === undefined ? undefined : (...a: unknown[]) => open(...within(a));
@@ -400,7 +407,7 @@ function withOneFlush(client: ReturnType<typeof postgres>): ReturnType<typeof po
       return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
     },
   });
-  return door(client);
+  return door(client, true);
 }
 
 // Serverless request-scoped Db. One pool per connection string, module-cached so a warm instance
