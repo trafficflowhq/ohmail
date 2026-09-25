@@ -30,14 +30,12 @@ import { readOwner } from "./owner-cookie";
  */
 export interface ConsentTransport {
   /**
-   * Can the server behind this wire actually STORE the folders flag — the one capability this transport
-   * declares, because the route cannot be asked. `foldersRoutes` are mounted on the hosted table alone;
-   * `localRoutes` wraps the consent group in `withoutFoldersFlag` (the read REMOVES `foldersEnabledAt`,
-   * the PATCH drops it), yet the GET still answers 200 and `known` still goes true — so the shared shell
-   * drew the whole Folders pane on standalone: a switch that flips, writes nothing, snaps back. Declared
-   * by whoever built the wire, the only place that knows the route table, rather than inferred from the
-   * absent field, which a server too old to have the column omits for another reason. Required, not
-   * optional: an absent field here would select the branch that draws the dead pane.
+   * Can the server behind this wire STORE the folders flag — the transport's half of the answer.
+   * `foldersRoutes` are mounted on the hosted table alone; `localRoutes` wraps the consent group in
+   * `withoutFoldersFlag` (the read REMOVES `foldersEnabledAt`, the PATCH drops it). `false` withholds
+   * the pane whatever the server says; `true` defers to the read, which carries the axis only where
+   * the flag is kept ({@link ConsentState.foldersStorable}). Required, not optional: an absent field
+   * here would select the branch that draws the dead pane.
    */
   foldersStorable: boolean;
   state: () => Promise<ConsentStateWire>;
@@ -137,16 +135,9 @@ function failureOf(err: unknown, attempt: number): ConsentReadFailure {
 
 /** The hosted transport — the browser talking to the API this app was written against. */
 const CLOUD_CONSENT: ConsentTransport = {
-  /* The managed API mounts `foldersRoutes`, so this is true of the browser
-     tab this transport was written for — a static claim about a route table
-     this client cannot interrogate. A self-host server inherits
-     `withoutFoldersFlag`, so its web client draws the same pane that cannot
-     store, and this constant says otherwise; a desktop self-host door takes
-     the hosted wire and inherits the same wrong answer. The honest answer
-     is the server's to give: `features` on `/hello` — one `folders` word
-     closes all three surfaces. Until then this is exact for the managed
-     deployment and one release ahead of the truth for a self-hosted one.
-     See `apps/desktop/src/local-consent.ts`. */
+  /* True for every server this tab may reach, and the READ decides: a self-hosted
+     server inherits `withoutFoldersFlag`, whose consent read carries no
+     `foldersEnabledAt`, so the hook withholds the pane there. */
   foldersStorable: true,
   state: () => consentApi.state(),
   setAutoSuggest: (enabled) => consentApi.setAutoSuggest(enabled),
@@ -364,12 +355,11 @@ export interface ConsentState {
    */
   cloudClient: boolean;
   /**
-   * CAN THE SERVER BEHIND THIS WIRE STORE THE FOLDERS FLAG — the transport's own declaration,
-   * republished so the one consumer that must not draw a dead pane can read it beside `known`.
-   *
-   * Derived from the live wire rather than stored, exactly as {@link cloudClient} is, so no
-   * `setState` can leave it behind and no resting value can be mistaken for an answer. See
-   * {@link ConsentTransport.foldersStorable} for what the field asserts and what it cost.
+   * CAN THE SERVER BEHIND THIS WIRE STORE THE FOLDERS FLAG — the one consumer that must not draw a
+   * dead pane reads it beside `known`. Two halves, both required: the transport's declaration
+   * ({@link ConsentTransport.foldersStorable}) and the LIVE read carrying `foldersEnabledAt` at all
+   * (null or an instant). A self-hosted server's read omits the key, the phone's rule (`net/consent.ts`).
+   * False at rest and from the boot cache: only a server answer draws the switch.
    */
   foldersStorable: boolean;
   /**
@@ -806,7 +796,11 @@ export function useConsentState(
           // because the state object carries them. Nothing may read them off `state`.
           standalone: false,
           cloudClient: false,
-          foldersStorable: false,
+          // THE SERVER'S HALF of the folders capability: does this read CARRY the axis. Present
+          // (null or an instant) is a door that stores the flag; ABSENT is `withoutFoldersFlag`,
+          // every door built from `localRoutes` — a self-hosted server included. Live reads only:
+          // the boot cache never sets it, so the pane waits for the server's own answer.
+          foldersStorable: "foldersEnabledAt" in wire,
         });
         appliedSeq.current = mine;
         knownRef.current = true;
@@ -1178,11 +1172,10 @@ export function useConsentState(
     ...presented,
     standalone: active && !reachable,
     cloudClient: apiConfigured(),
-    /* From the WIRE, so it answers for the transport actually in use rather than for the one this
-       build would fall back to — and only while a wire is reachable at all: with none, the pane it
-       gates is already withheld by `known`, and claiming a capability for a server nobody is
-       talking to would be a second answer to a question that has none. */
-    foldersStorable: reachable && link.current.foldersStorable,
+    /* The transport's declaration AND the server's own read: the browser's wire declares true
+       for every server it may reach, and only the read can say a self-hosted one drops the flag.
+       Only while a wire is reachable at all — with none there is no server to answer for. */
+    foldersStorable: reachable && link.current.foldersStorable && presented.foldersStorable,
     setThemeFace,
     setResurfaceTime,
     setAutoSuggest,

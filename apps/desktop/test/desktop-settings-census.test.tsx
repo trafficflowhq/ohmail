@@ -333,27 +333,22 @@ const MATRIX: Record<PaneId, Record<Door, Cell>> = {
   folders: {
     managedWeb: { state: "present", why: "`foldersRoutes` are mounted on the hosted table" },
     selfHostWeb: {
-      state: "inert",
+      state: "absent",
       why:
         "`selfHostRoutes` spreads `localRoutes` whole, so it inherits `withoutFoldersFlag` and " +
-        "mounts no folder verb — the read forces the flag off and the write is dropped. The " +
-        "browser's transport cannot interrogate its route table, so the honest signal is a " +
-        "`/hello` feature word beside `pairing` — until there is one, a tab against a " +
-        "self-hosted server draws a switch that snaps back",
+        "mounts no folder verb; its consent read carries no `foldersEnabledAt`, and the shared " +
+        "hook withholds the pane on that answer (`ConsentState.foldersStorable`)",
     },
     desktopCloud: {
       state: "present",
       why: "`/folders*` is not served locally, so all four verbs reach the account through the proxy",
     },
     desktopSelfHost: {
-      state: "inert",
+      state: "absent",
       why:
-        "the same wire as `desktopCloud` — the self-host door is `{ mode: \"cloud\" }` — pointed at " +
-        "a server that mounts `selfHostRoutes` and therefore strips the flag. PRE-EXISTING rather " +
-        "than introduced by the transport capability: this door drew the pane before the field " +
-        "existed and draws it still. It is not closed by a `flavor` probe in the window, because " +
-        "the honest signal is the same `/hello` feature word the self-hosted TAB needs — one " +
-        "mechanism at the server for all three surfaces, rather than a probe that word deletes",
+        "the same wire as `desktopCloud` — the self-host door is `{ mode: \"cloud\" }` — whose " +
+        "server strips the flag, so the forwarded consent read carries no `foldersEnabledAt` and " +
+        "the shared hook withholds the pane; driven below as the cloud door over that answer",
     },
     desktopStandalone: {
       state: "absent",
@@ -491,9 +486,9 @@ const MAILBOXES = JSON.stringify({
   items: [{ id: "mbx-1", address: "someone@example.com", status: "connected", lastSyncAt: null }],
 });
 /**
- * A consent row as a HOSTED table answers it. The standalone engine answers the same shape with
- * `foldersEnabledAt` forced null — which is exactly why the folders capability cannot be read off
- * this body, and is declared by the transport instead.
+ * A consent row as a HOSTED table answers it. A door built from `localRoutes` — the standalone
+ * engine, a self-hosted server — answers the same shape WITHOUT `foldersEnabledAt`
+ * (`withoutFoldersFlag`); {@link consentBody} is reassigned to that answer where a case needs it.
  */
 const CONSENT = JSON.stringify({
   seedConfirmedAt: "2026-01-01T00:00:00.000Z",
@@ -509,6 +504,7 @@ const CONSENT = JSON.stringify({
   signatures: {},
   themeFace: null,
 });
+let consentBody = CONSENT;
 const AWAY = JSON.stringify({
   enabled: false, text: "", startsAt: null, endsAt: null,
   audience: "screened_in", throttle: "per_day",
@@ -548,7 +544,7 @@ function fakeShell(status: EngineStatus, signedIn: boolean): void {
         if (url === "/health") return encode(200, JSON.stringify({ signedIn }));
         if (url.startsWith("/sync/snapshot")) return encode(200, EMPTY_SNAPSHOT);
         if (url.startsWith("/mailboxes")) return encode(200, MAILBOXES);
-        if (url.startsWith("/consent")) return encode(200, CONSENT);
+        if (url.startsWith("/consent")) return encode(200, consentBody);
         if (url.startsWith("/away-responder")) return encode(200, AWAY);
         // The Subscription pane's one read. A URL here is the managed answer; `MANAGE_ABSENT`
         // below drives the other arm, where the pane draws nothing at all.
@@ -603,6 +599,7 @@ async function navFor(status: EngineStatus, signedIn: boolean): Promise<string[]
 }
 
 afterEach(async () => {
+  consentBody = CONSENT;
   manageLink = "https://account.example/manage?t=abc";
   metered = true;
   enginePaths.length = 0;
@@ -816,6 +813,17 @@ describe("SET-C — the desktop's two doors draw exactly what the census says", 
   it("the standalone door", async () => {
     const nav = await navFor(LOCAL_SERVING, true);
     expect(nav.sort()).toEqual(drawnOn("desktopStandalone").map(label).sort());
+  });
+
+  /* THE `desktopSelfHost` FOLDERS CELL, DRIVEN: the cloud door over a self-hosted server's own
+     consent read, which carries no `foldersEnabledAt`. Same engine and session as the cloud door
+     above; the one answer that differs is the one that removes the entry. */
+  it("a cloud door whose server drops the folders flag draws no Folders entry", async () => {
+    const { foldersEnabledAt: _absent, ...selfHosted } = JSON.parse(CONSENT) as Record<string, unknown>;
+    consentBody = JSON.stringify(selfHosted);
+    const nav = await navFor(CLOUD_SERVING, true);
+    expect(nav, "a self-hosted server's door was offered a switch it cannot keep").not.toContain(label("folders"));
+    expect(nav.sort()).toEqual(drawnOn("desktopCloud").filter((p) => p !== "folders").map(label).sort());
   });
 
   /**

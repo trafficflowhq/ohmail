@@ -3092,15 +3092,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                  * master switch that flipped, stored nothing and snapped back.
                  */
 
-                /* The capability is declared by the TRANSPORT, where it can be declared
-                   truthfully on exactly one of the four wires — the standalone door's. The old
-                   ending, "because only the thing that built the wire knows which route table
-                   is behind it", is a claim about all of them and false of three: the browser's
-                   constant cannot interrogate its server, and the desktop's hosted wire serves
-                   BOTH the managed door and the self-host one — the same `{ mode: "cloud" }`
-                   pointed at a different table. See {@link ConsentTransport.foldersStorable}
-                   for what each wire can honestly say and for the `/hello` word that would
-                   settle all four at the server. */
+                /* The capability is the transport's declaration AND the server's own consent
+                   read: a door that drops the flag (`withoutFoldersFlag` — the standalone
+                   engine, a self-hosted server behind the browser or the desktop's hosted
+                   wire) answers without `foldersEnabledAt`, so no switch is drawn there. See
+                   {@link ConsentState.foldersStorable}. */
                 foldersSection={demo || !consent.known || !consent.foldersStorable ? undefined : (
                   <FoldersRow
                     on={consent.foldersEnabled}

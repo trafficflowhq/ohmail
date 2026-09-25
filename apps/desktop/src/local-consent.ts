@@ -37,14 +37,10 @@ export const consentOverBridge: ConsentTransport = {
   ...consentVia(bridgeFetch),
   readFailed: reportConsentReadFailure,
   /* THE MANAGED TABLE MOUNTS `foldersRoutes`: `/folders*` is not in `cloud-read.ts`, so all
-     four verbs fall through to the write-through proxy and the account answers — true of an
-     install connected to the managed service. `mode` has two values but the app has THREE
-     doors: `configureSelfHostDoor` opens as `{ mode: "cloud", cloudUrl: <their origin> }` and
-     `selfHostRoutes` spreads `localRoutes` whole, inheriting `withoutFoldersFlag` — there the
-     flag reads off and the write is dropped, so the pane draws a switch that snaps back.
-     Deliberately NOT fixed by a `flavor` probe here: the honest signal is a `/hello` feature
-     word beside `pairing`, which the browser needs anyway and which would delete a probe the
-     day it lands. Pre-existing, recorded as such in the settings census. */
+     four verbs fall through to the write-through proxy and the account answers. The self-host
+     door is the same `{ mode: "cloud" }` wire over `selfHostRoutes`, which inherits
+     `withoutFoldersFlag`: its consent read carries no `foldersEnabledAt`, and the shared hook
+     withholds the pane on that answer (`ConsentState.foldersStorable`). */
   foldersStorable: true,
 };
 
