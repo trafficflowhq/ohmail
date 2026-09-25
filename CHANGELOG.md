@@ -161,6 +161,28 @@ A desktop signed in to an ohmail Cloud account that was deleted now says so, sto
 server, and offers to set the computer up on its own. Before, it showed an empty mailbox or asked
 to sign in again.
 
+### A self-hosted server's Screener quote no longer shows the hosted service's price
+<!-- changes: fix-024-ledger-pricing-out-of-the-engine.md -->
+
+On a self-hosted server the Screener's suggestion quote no longer shows the hosted service's credit
+price: nothing is metered there, so it reads 0 credits.
+
+### The desktop app starts on Linux without a keyring service
+<!-- changes: fix-025-key-file-fallback-when-the-store-cannot-open.md -->
+
+On a Linux session with no Secret Service (no session bus, or a window manager with neither GNOME
+Keyring nor KWallet running) the app stayed unconnected and its log read that the keystore could not
+be opened. It now keeps this install's key in the `install-key` file beside its data and starts. A
+locked keyring is not stepped around: the app says it is locked and asks you to unlock it. The log
+names the store each start used, as `key source file` or `key source platform:secret-service`.
+
+### Search on a paired desktop is quick while your mail is still arriving
+<!-- changes: fix-025-paired-search-seconds-while-the-mirror-fills.md -->
+
+On a desktop paired with ohmail Cloud, a search made right after signing in, while your mail is
+still arriving on the computer, answers about as fast as one made afterwards. It used to take one
+to two seconds.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
