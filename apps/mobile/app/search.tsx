@@ -1,12 +1,13 @@
 /**
  * Search — ONE list, the webapp SearchView's contract in the one-pane shape: the mirror's instant
  * index paints first, the store's page (`state/store-views.ts#useStoreSearch`) then replaces it in
- * place, and the rest is History's list mechanism — fixed-height slots, pages by the store's
- * cursor as they scroll into view, at most three held. The SIMILAR tier stands under its own
- * heading and only when nothing matched exactly; the verdict says what was searched and how fast.
- * An address-shaped query that settles empty offers the address door: All · From them · To them.
+ * place, and the rest is History's list mechanism — equal slots measured off the rows, pages by
+ * the store's cursor as they scroll into view, at most three held. The SIMILAR tier stands under
+ * its own heading and only when nothing matched exactly; the verdict says what was searched and
+ * how fast. An address-shaped query that settles empty offers the address door: All · From them ·
+ * To them.
  */
-import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { Copy } from "../src/copy";
@@ -22,13 +23,11 @@ import { DetailBar } from "../src/ui/chrome";
 import { Gated } from "../src/ui/Gated";
 import { MailList, type ListGroup } from "../src/ui/MailList";
 import { MailRow } from "../src/ui/MailRow";
+import { grownSlot, HISTORY_SLOT_FIRST_PAINT } from "../src/ui/history-slot";
 import { Segmented } from "../src/ui/Segmented";
 import { useLocale } from "../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 import type { WorldMail } from "../src/state/world";
-
-/** One store slot's height — History's, so a scroll offset is a slot without measuring. */
-const SLOT_PX = 84;
 
 /** A row of the one list: the device's own, or a store slot read at render. */
 type Row = { key: string; device: WorldMail } | { key: string; slot: number };
@@ -82,6 +81,9 @@ function SearchBody() {
   const found = store.ready && store.totalExact ? Math.max(store.total, store.length) : shownItems.length + shownSimilar.length;
   /** Where slot 0 sits in the scroll content, learnt from its own frame. */
   const top = useRef(0);
+  /* History's slot rule (`history-slot.ts`): one height for every store slot, read off the rows. */
+  const [slot, setSlot] = useState(HISTORY_SLOT_FIRST_PAINT);
+  const onRowHeight = useCallback((height: number) => setSlot((s) => grownSlot(s, height)), []);
   const door = answer !== null ? addressShaped(trimmed) : null;
   const verdict = addr !== null ? null : store.verdict === "searching" ? Copy.searchWholeSearching
     : store.verdict === "ready"
@@ -144,21 +146,23 @@ function SearchBody() {
           }
           const m = store.rowAt(r.slot);
           return (
-            <View style={{ height: m === "gone" ? 0 : SLOT_PX, overflow: "hidden" }}>
+            <View style={{ height: m === "gone" ? 0 : slot, overflow: "hidden" }}>
               {m === "gone" ? null : m === null ? (
                 <View style={{ flex: 1, justifyContent: "center", gap: 8, paddingHorizontal: 12 }}>
                   <View style={{ height: 10, width: "46%", borderRadius: 5, backgroundColor: t.c.tint2 }} />
                   <View style={{ height: 10, width: "72%", borderRadius: 5, backgroundColor: t.c.tint2 }} />
                 </View>
               ) : (
-                <MailRow
-                  m={m}
-                  onPress={() => {
-                    const src = store.sourceAt(r.slot);
-                    if (src) w.store.open(src);
-                    router.push(`/message/${m.id}`);
-                  }}
-                />
+                <View onLayout={(e) => onRowHeight(e.nativeEvent.layout.height)}>
+                  <MailRow
+                    m={m}
+                    onPress={() => {
+                      const src = store.sourceAt(r.slot);
+                      if (src) w.store.open(src);
+                      router.push(`/message/${m.id}`);
+                    }}
+                  />
+                </View>
               )}
             </View>
           );
@@ -167,8 +171,8 @@ function SearchBody() {
         /* The slots on screen are asked for; near the end of the list, the store's next page. */
         onScroll={(e) => {
           const { contentOffset, layoutMeasurement, contentSize } = e.nativeEvent;
-          const first = Math.floor(Math.max(0, contentOffset.y - top.current) / SLOT_PX);
-          store.want(Math.max(0, first - 8), first + Math.ceil(layoutMeasurement.height / SLOT_PX) + 9);
+          const first = Math.floor(Math.max(0, contentOffset.y - top.current) / slot);
+          store.want(Math.max(0, first - 8), first + Math.ceil(layoutMeasurement.height / slot) + 9);
           if (contentOffset.y + layoutMeasurement.height >= contentSize.height - 480) store.loadMore();
         }}
         scrollEventThrottle={100}
