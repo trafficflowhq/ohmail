@@ -19,6 +19,7 @@ import {
 } from "@trafficflow/db/dialect";
 import { createStoreScheduler, currentStoreLane, scheduleStoreLanes, type StoreLaneCensus } from "./store-lanes.js";
 import { LocalStoreFs } from "./pglite-transport.js";
+import { keepIngestPlans } from "./pglite-plans.js";
 import type { Diagnostic } from "./log.js";
 
 /**
@@ -1297,6 +1298,9 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
      * why FIFO is the defect.
      */
     const lanes = createStoreScheduler();
+    /* FIRST, beneath the relaxed commits and the scheduler, so both still wrap the whole statement
+       and every transaction's `query` is the planned one. See `pglite-plans.ts`. */
+    keepIngestPlans(client);
     /* BEFORE the scheduler, so an admission still wraps a whole transaction rather than sitting
        inside one. See {@link relaxIngestCommits}: the migrator below runs outside every lane and
        therefore keeps the default, which is what a schema change and its journal row need. */
