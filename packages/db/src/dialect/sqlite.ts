@@ -9,7 +9,7 @@
  * explicitly because this dialect's `like` folds ASCII only.
  */
 import { sql, type SQL } from "drizzle-orm";
-import { assertComparable, assertJsonKey } from "./index.js";
+import { assertComparable, assertJsonKey, PART_PREFIX_MIN_CHARS, partWordsOf } from "./index.js";
 import type { Dialect, LockOptions, MailWordArms, SearchArm, SearchCorpus } from "./index.js";
 
 /**
@@ -392,6 +392,18 @@ export function sqliteDialect(): Dialect {
           rank: sql`coalesce(m.date, 0)`,
         },
       }),
+      // The same two FTS5 tables as `words`, each word as itself and, from four letters, as the
+      // start of a longer one (`"elevat"*`). No stemmer here, so a prefix IS the whole-word reach.
+      partWords: (q: string): MailWordArms | null => {
+        const words = partWordsOf(q);
+        if (words === null) return null;
+        const match = words.map((w) => ([...w].length >= PART_PREFIX_MIN_CHARS ? `"${w}"*` : `"${w}"`)).join(" ");
+        const recency = sql`coalesce(m.date, 0)`;
+        return {
+          head: { pred: sql`m.rowid IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ${match})`, rank: recency },
+          text: { pred: sql`b.rowid IN (SELECT rowid FROM message_bodies_fts WHERE message_bodies_fts MATCH ${match})`, rank: recency },
+        };
+      },
       substring: (q: string): SearchArm => {
         // Every row, whether or not it has a search document yet: this store has no index for a
         // substring either way, so the header columns and the recipients' `terms` are one scan.

@@ -44,6 +44,14 @@ const SEARCH_ARM_FACTOR = 4;
  * and costs the window. A narrow word has fewer matches than the window, so its ranking is exact.
  */
 const SEARCH_RANK_WINDOW_FACTOR = 40;
+/**
+ * A BOUNDED arm walks at most this many cuts' worth of the newest messages. The planner prices a
+ * part's tsquery (`word:*` and its stems) at a per-term floor, never by its matches: a rare part
+ * was planned as a walk of the whole mailbox asking every body (131 ms in the budget file, for no
+ * match), a common one as a read of every match. So the walk has a bound, and the GIN is the
+ * fallback for a part too rare to fill it.
+ */
+const SEARCH_PART_WALK_FACTOR = 6;
 /** How many senders the sender facet returns. */
 const SENDER_FACET_LIMIT = 10;
 
@@ -53,8 +61,13 @@ const SENDER_FACET_LIMIT = 10;
  * punctuated (`pha/Bet` inside `Alpha/Beta`, one lexeme to the word arms).
  */
 function substringOpen(q: string): boolean {
-  if (q.includes('"') || /(^|\s)-\S/.test(q)) return false;
+  if (exactAsked(q)) return false;
   return [...q].length >= SUBSTRING_MIN_CHARS || holdsPunctuation(q);
+}
+
+/** A quoted phrase or a `-term`: the reader asking for exactly these words, never parts of them. */
+function exactAsked(q: string): boolean {
+  return q.includes('"') || /(^|\s)-\S/.test(q);
 }
 
 export interface SearchFilters {
@@ -300,7 +313,11 @@ interface Branch { readonly pred: SQL; readonly rank: SQL }
  * An arm: its branches (one per index), cut at its top-K after they are merged. `ranked`: ordered
  * by its rank within the newest candidates; otherwise newest first, read off the History index.
  */
-interface Arm { readonly name: string; readonly ranked: boolean; readonly branches: readonly Branch[] }
+interface Arm {
+  readonly name: string; readonly ranked: boolean; readonly branches: readonly Branch[];
+  /** A recency arm whose selectivity the planner cannot see: see {@link SEARCH_PART_WALK_FACTOR}. */
+  readonly bounded?: boolean;
+}
 
 /** A relevance cursor: the last row's fused score, date and id, and the tier it belongs to. */
 interface RelevanceCursor { readonly k: "r"; readonly t: SearchTier; readonly s: number; readonly d: number | null; readonly i: string }
@@ -424,6 +441,23 @@ export class SearchService {
       { name: "head", ranked: true, branches: [own(words.head), ...(legacy ? [bare(legacy.words.head)] : [])] },
       { name: "text", ranked: false, branches: [own(words.text), ...(legacy ? [bare(legacy.words.text)] : [])] },
     ];
+    // A part of a word finds what the whole word finds: the same vectors as `head` and `text`,
+    // each word also read as the start of a longer one (`elevat` reaches `elevation`). On Postgres
+    // ONE bounded arm over both, so a common part's walk fills at once; the device store's FTS5
+    // reads have no such misplan and keep two plain arms (one branch each: no union there).
+    const part = exactAsked(q) ? null : d.search.partWords(q);
+    const old = legacy?.part ?? null;
+    if (part !== null && d.name === "pg") {
+      out.push({
+        name: "part", ranked: false, bounded: true,
+        branches: [own(part.head), own(part.text), ...(old ? [bare(old.head), bare(old.text)] : [])],
+      });
+    } else if (part !== null) {
+      out.push(
+        { name: "part-head", ranked: false, branches: [own(part.head), ...(old ? [bare(old.head)] : [])] },
+        { name: "part-text", ranked: false, branches: [own(part.text), ...(old ? [bare(old.text)] : [])] },
+      );
+    }
     if (substringOpen(q)) {
       out.push({
         name: "substring",
@@ -444,14 +478,38 @@ export class SearchService {
     const branch = (b: Branch): SQL => sql`(select m.id as id, m.date as date, ${arm.ranked ? b.rank : sql`0`} as rank
       ${this.from} where ${where} and ${b.pred}
       order by m.date desc nulls last, m.id desc limit ${cut})`;
-    const merged = arm.branches.length === 1
-      ? branch(arm.branches[0]!)
+    const merged = arm.bounded ? this.boundedRead(where, arm.branches, k)
+      : arm.branches.length === 1 ? branch(arm.branches[0]!)
       : sql`(select id, date, max(rank) as rank from (${sql.join(arm.branches.map(branch), sql` union all `)}) u group by id, date)`;
     // `SQL_RANK_ORDER`'s key sequence (a recency arm's rank is the constant its branches wrote).
     const rank = sql`m.rank`;
     return sql`select m.id, row_number() over (order by ${rank} desc, m.date desc nulls last, m.id desc) as r
                from (select m.id, m.date, m.rank from ${merged} m
                      order by ${rank} desc, m.date desc nulls last, m.id desc limit ${k}) m`;
+  }
+
+  /**
+   * A bounded arm's newest K. The newest {@link SEARCH_PART_WALK_FACTOR} × K messages under the
+   * filters are walked in order, each asked every branch by itself (`limit 1 offset 0` keeps it a
+   * per-row question: no join, so no read of every match); when they hold fewer than K, each
+   * branch's matches are read instead, under a sort key no index serves (`date is null` first is
+   * `nulls last`), so off its GIN. Exactly one of the two answers.
+   */
+  private boundedRead(where: SQL, branches: readonly Branch[], k: number): SQL {
+    const newest = sql`select m.id as id, m.date as date from messages m left join folder_state fs on fs.message_id = m.id
+      where ${where} order by m.date desc nulls last, m.id desc limit ${SEARCH_PART_WALK_FACTOR * k}`;
+    const hit = sql`exists (select 1 from messages m left join message_search s on s.message_id = m.id
+      left join message_bodies b on b.message_id = m.id
+      where m.id = w.id and (${sql.join(branches.map((b) => b.pred), sql` or `)}) limit 1 offset 0)`;
+    const walked = sql`select w.id as id, w.date as date from (${newest}) w where ${hit}
+      order by w.date desc nulls last, w.id desc limit ${k}`;
+    const read = (b: Branch): SQL => sql`select id, date from (select m.id as id, m.date as date ${this.from}
+      where ${where} and ${b.pred} order by (m.date is null), m.date desc, m.id desc limit ${k}) r`;
+    const matched = sql`select id, date from (${sql.join(branches.map(read), sql` union all `)}) u group by id, date`;
+    return sql`(with pw as (${walked})
+      select id, date, 0 as rank from pw where (select count(*) from pw) >= ${k}
+      union all
+      select id, date, 0 as rank from (${matched}) pm where (select count(*) from pw) < ${k})`;
   }
 
   /** The union of every branch's id set — what `total` and the facets count over. */

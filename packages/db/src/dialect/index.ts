@@ -199,8 +199,26 @@ export interface MailWordArms {
  */
 export interface UnindexedMailArms {
   readonly words: MailWordArms;
+  /** {@link Dialect.search.partWords} over the pre-0125 columns; `null` when the query has no part. */
+  readonly part: MailWordArms | null;
   readonly substring: readonly SearchArm[];
   readonly fuzzy: readonly SearchArm[];
+}
+
+/** From this many characters a query word is also read as the START of a longer word. */
+export const PART_PREFIX_MIN_CHARS = 4;
+/** More words than this and the part-word arm stays shut: each word costs one prefix read. */
+export const PART_MAX_WORDS = 8;
+
+/**
+ * The words of a query as the part-word arm reads them — letter and digit runs, as typed — or
+ * `null` when the arm has nothing to add: no word reaches {@link PART_PREFIX_MIN_CHARS}, or there
+ * are more than {@link PART_MAX_WORDS}. Both stores' `partWords` take their words from here.
+ */
+export function partWordsOf(q: string): string[] | null {
+  const words = q.match(/[\p{L}\p{N}]+/gu) ?? [];
+  if (words.length === 0 || words.length > PART_MAX_WORDS) return null;
+  return words.some((w) => [...w].length >= PART_PREFIX_MIN_CHARS) ? words : null;
 }
 
 /**
@@ -520,6 +538,13 @@ export interface Dialect {
     fuzzy(q: string, corpus: SearchCorpus, opts: { trigram: boolean; threshold: number }): SearchArm;
     /** See {@link MailWordArms}. A quoted span is a phrase on both stores' query parsers. */
     words(q: string): MailWordArms;
+    /**
+     * THE PART-WORD ARMS, over the same indexed text as {@link words}: each word of
+     * {@link partWordsOf} matches as itself and, from {@link PART_PREFIX_MIN_CHARS} characters,
+     * as the start of a longer word, ANDed across words. A part therefore finds at least what the
+     * whole word finds. `null` when the query has no such word.
+     */
+    partWords(q: string): MailWordArms | null;
     /**
      * The query's characters inside the mail corpus's header text (subject, people, attachment
      * names) — `axa` inside `myAXA`. Ranked by word similarity where trigrams exist, else recency.
