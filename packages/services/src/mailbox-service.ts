@@ -585,7 +585,7 @@ const tlsRefusalMessage = (tls: ProbeTlsDetail, transport: ProbeTransport): stri
 /**
  * The refusal a failed probe becomes. `details.reason` carries the taxonomy member so a client
  * can render its own copy; the message is the server's own sentence and is what `JoinScreen`
- * (which reads `messageOf(err)` verbatim) shows. A `tls` refusal may carry {@link ProbeTlsDetail},
+ * shows, except where it names a port that form has no field for. A `tls` refusal may carry {@link ProbeTlsDetail},
  * which sharpens both the sentence and the details a client can build its own copy from.
  */
 /** Which transport a probe refusal is about — the webapp uses it to blame the right field. */

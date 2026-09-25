@@ -3731,6 +3731,15 @@ input.set-tag-input {
 .join-error-note .join-error-use {
   margin-top: 8px;
 }
+/* A refusal told where the press was sits between the last field and the button it answers. */
+.join-error.at-press,
+.join-error-note.at-press {
+  margin: 16px 0 0;
+}
+.join-error.at-press + .join-actions,
+.join-error-note.at-press + .join-actions {
+  margin-top: 12px;
+}
 .join-actions {
   display: flex;
   align-items: center;

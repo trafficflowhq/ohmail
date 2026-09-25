@@ -800,21 +800,6 @@ function LocalDoor({
       <h1>{DOOR_COPY.localTitle}</h1>
       <p>{DOOR_COPY.localLead(machineWord())}</p>
 
-      {/* ── THE REFUSAL, AND THE HOST IT NAMED ────────────────────────────────────────────────
-          `onUse` is passed ONLY while the host fields are on screen. Behind a named provider the
-          host is this app's own fact and there is no field to fill, so the sentence names the
-          host (as it did before this control existed) and no control presses into nothing. */}
-      <DoorProblem
-        problem={problem}
-        suggestion={suggestion}
-        {...(manual
-          ? {
-              onUse: (offer: HostSuggestion) =>
-                set(offer.transport === "smtp" ? "smtpHost" : "imapHost", offer.host),
-            }
-          : {})}
-      />
-
       <ProviderPicker
         value={fields.providerId || null}
         onChange={(id) => {
@@ -902,6 +887,21 @@ function LocalDoor({
         </>
       ) : null}
 
+      {/* ── THE REFUSAL, AND THE HOST IT NAMED, BESIDE THE BUTTON THAT WAS PRESSED ────────────
+          `onUse` is passed ONLY while the host fields are on screen. Behind a named provider the
+          host is this app's own fact and there is no field to fill, so the sentence names the
+          host (as it did before this control existed) and no control presses into nothing. */}
+      <DoorProblem
+        problem={problem}
+        suggestion={suggestion}
+        atPress
+        {...(manual
+          ? {
+              onUse: (offer: HostSuggestion) =>
+                set(offer.transport === "smtp" ? "smtpHost" : "imapHost", offer.host),
+            }
+          : {})}
+      />
       <div className="join-actions">
         <Button variant="primary" type="submit" disabled={busy}>
           {busy ? DOOR_COPY.localOpening : DOOR_COPY.localOpen}

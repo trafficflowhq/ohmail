@@ -16,6 +16,7 @@
  */
 import { Button } from "@ohmail/ui";
 
+import { useRefusalAtThePress } from "../../webapp/app/shell/refusal-at-the-press";
 import { DOOR_COPY } from "./door-copy.js";
 import type { HostSuggestion } from "./doors.js";
 
@@ -23,18 +24,23 @@ export function DoorProblem({
   problem,
   suggestion,
   onUse,
+  atPress = false,
 }: {
   problem: string | null;
   /** The host the probe named, or null when the refusal named none. */
   suggestion?: HostSuggestion | null;
   /** Fill the field this suggestion belongs in. Absent where the screen has no such field. */
   onUse?: (suggestion: HostSuggestion) => void;
+  /** Drawn between the last field and the button it answers, rather than above the form. */
+  atPress?: boolean;
 }): JSX.Element | null {
+  /* Brought into view and focused as it appears, wherever the card draws it. */
+  const said = useRefusalAtThePress<HTMLParagraphElement>(problem);
   if (!problem) return null;
   const offer = suggestion && onUse ? suggestion : null;
   return (
-    <div className="join-error-note">
-      <p className="join-error">{problem}</p>
+    <div className={atPress ? "join-error-note at-press" : "join-error-note"}>
+      <p ref={said} className="join-error" tabIndex={-1}>{problem}</p>
       {offer ? (
         <Button
           variant="ghost"

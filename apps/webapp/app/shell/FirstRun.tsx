@@ -23,6 +23,7 @@ import type { DecisionDestination, DecisionScope } from "@ohmail/ui";
 import { useDecisionBarCopy } from "./decision-copy";
 import { useKeyBindings } from "./keymap";
 import { PROVIDERS, hostsFor, providerById, providerLabel, type ProviderPreset } from "./providers";
+import { noPortProbeKey } from "./no-port-sentence";
 import {
   deriveOnboardingStep, onboardingPath, sendingLine,
   type OnboardingFacts, type OnboardingStep,
@@ -1113,9 +1114,14 @@ export function FirstRun({
               {!testing && verdict !== null && "reason" in verdict ? (
                 <SettingsVerdict
                   state="bad"
-                  headline={verdict.reason
-                    ? tm(`probe_${verdict.reason}` as "probe_auth")
-                    : verdict.message ?? tm("probe_unknown")}
+                  headline={(() => {
+                    /* Behind a named provider the form shows no host and no port, so neither is named. */
+                    const noPort = preset.manual ? null : noPortProbeKey(verdict.reason, false);
+                    if (noPort) return tm(noPort, { field: "none" });
+                    return verdict.reason
+                      ? tm(`probe_${verdict.reason}` as "probe_auth")
+                      : verdict.message ?? tm("probe_unknown");
+                  })()}
                 />
               ) : null}
               {problem ? <SettingsVerdict state="bad" headline={problem} /> : null}

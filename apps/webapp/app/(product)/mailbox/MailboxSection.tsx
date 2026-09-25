@@ -43,7 +43,6 @@ import {
 import { goFirstRun } from "../../shell/routing";
 import { useCeremonyGeneration } from "../ceremony-generation";
 import {
-  ApiError,
   apiConfigured,
   account,
   assertPasskey,
@@ -65,6 +64,9 @@ import {
 } from "./oauth-return";
 import { hostsFor, providerById, providerLabel, type ProviderPreset } from "../../shell/providers";
 import { ProviderPicker } from "../../shell/ProviderPicker";
+import {
+  noPortProbeSentence, probeReasonOf, probeTlsOf, type ProbeTlsInfo,
+} from "../../shell/probe-refusal";
 import { AGO_COPY, agoStamp, dayStamp } from "../../shell/format";
 import { claimLeftBehind, isSyncBlockReason, readerStandDown, showInboundQuiet } from "../../shell/mail-state";
 import { useMailState } from "../../shell/MailStateProvider";
@@ -337,70 +339,8 @@ export function groupByAddress(items: MailboxDTO[]): AddressGroup[] {
   });
 }
 
-/**
- * WHICH OF THE FOUR THINGS FAILED, IN THIS PANE'S OWN WORDS. `POST /mailboxes` now tries the credentials before
- * storing them and refuses with `mailbox_probe_failed` plus `details.reason`, a member of the SAME seven-value
- * taxonomy the worker's classifier emits. That is the whole reason this reads `reason` and not the sentence: one
- * vocabulary for one set of failures, so a mistyped host and a wrong password cannot drift back into sharing a
- * sentence. IT IS `probe_*`, NOT `err_*`, AND THAT IS NOT DUPLICATION. The `err_*` lines all begin "Sync failed",
- * which is a claim about a mailbox that exists and has a worker attached to it. Nothing has been stored when this
- * fires — there is no mailbox and there was no sync — so reusing them would ship a false sentence in the deploy that
- * removes one.
- */
-
-/**
- * UNKNOWN REASONS FALL BACK TO THE SERVER'S OWN SENTENCE rather than to a generic apology: a newer API that adds a
- * taxonomy member must degrade to something true, and the server's message is always exactly that. It is also what
- * `JoinScreen` shows, since it renders `messageOf` directly — so the two connect surfaces never disagree about a
- * failure, they only differ in how localizable the words are.
- */
-const PROBE_REASONS = new Set([
-  "auth", "connect", "tls", "timeout", "storage", "sync", "unknown",
-]);
-
-export function probeReasonOf(err: unknown): string | null {
-  if (!(err instanceof ApiError) || err.code !== "mailbox_probe_failed") return null;
-  const reason = (err.details as { reason?: unknown } | null | undefined)?.reason;
-  return typeof reason === "string" && PROBE_REASONS.has(reason) ? reason : null;
-}
-
-/**
- * THE TLS REFUSAL, IN DETAIL — `details.tls` on a `tls` reason, when the server could say more
- * than "certificate refused". Two kinds change what the form OFFERS rather than just what it
- * says: `hostname_mismatch` may carry `suggestedHost` (the vanity-CNAME shape — the certificate
- * is valid and names the provider's real host, so one press moves the field to a name the server
- * can prove), and `tls_unavailable` unlocks the explicit plaintext opt-in for a server that has
- * no TLS at all. `transport` says WHICH field is to blame; everything here degrades to the plain
- * `probe_tls` sentence when a newer server sends a kind this build has no copy for.
- */
-const PROBE_TLS_KINDS = new Set([
-  "hostname_mismatch", "expired", "not_yet_valid", "self_signed", "untrusted", "tls_unavailable", "generic",
-]);
-
-export interface ProbeTlsInfo {
-  kind: string;
-  transport: "imap" | "smtp";
-  certHost?: string;
-  expectedHost?: string;
-  suggestedHost?: string;
-}
-
-export function probeTlsOf(err: unknown): ProbeTlsInfo | null {
-  if (!(err instanceof ApiError) || err.code !== "mailbox_probe_failed") return null;
-  const details = err.details as { tls?: unknown; transport?: unknown } | null | undefined;
-  const tls = details?.tls;
-  if (!tls || typeof tls !== "object") return null;
-  const record = tls as Record<string, unknown>;
-  if (typeof record.kind !== "string" || !PROBE_TLS_KINDS.has(record.kind)) return null;
-  const str = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
-  return {
-    kind: record.kind,
-    transport: details?.transport === "smtp" ? "smtp" : "imap",
-    certHost: str(record.certHost),
-    expectedHost: str(record.expectedHost),
-    suggestedHost: str(record.suggestedHost),
-  };
-}
+/* The readers moved to `shell/probe-refusal.ts`, shared with /join; re-exported for this pane's importers. */
+export { probeReasonOf, probeTlsOf, type ProbeTlsInfo };
 
 /**
  * "Fix both fields in one press" — should applying a canonical-host suggestion to the failing
@@ -1631,7 +1571,9 @@ export function MailboxSection() {
         setStage("form");
         setChallenge(null);
         setPassword("");
-        setError(probeErrorCopy(err, reason));
+        // The connect form has no port field, so its refusal names none (`noPortProbeSentence`).
+        const said = noPortProbeSentence(err, chosen.manual === true);
+        setError(said ? t(said.key, { field: said.field }) : probeErrorCopy(err, reason));
         setBusy(false);
         return;
       }
@@ -2056,7 +1998,9 @@ export function MailboxSection() {
     // EVERY field edit, not only on a host change.
   }, [clearVerdict]);
   const [probeOk, setProbeOk] = useState<{ host: string; user: string; folders: number | null } | null>(null);
-  const [probeBad, setProbeBad] = useState<{ reason: string | null; message: string } | null>(null);
+  const [probeBad, setProbeBad] = useState<{
+    reason: string | null; message: string; noPort: ReturnType<typeof noPortProbeSentence>;
+  } | null>(null);
   /** Enough typed to ask the question at all — the same three fields the endpoint requires. */
   const canProbe = Boolean(typed.provider && typed.address.trim() && typed.pass);
   /**
@@ -2109,7 +2053,11 @@ export function MailboxSection() {
       setProbeOk(r);
     } catch (err) {
       if (probeSeq.current !== mine) return;
-      setProbeBad({ reason: probeReasonOf(err), message: messageOf(err) });
+      setProbeBad({
+        reason: probeReasonOf(err), message: messageOf(err),
+        // This verdict never rendered TLS kinds, so every certificate refusal takes the generic no-port sentence.
+        noPort: noPortProbeSentence(err, typed.provider?.manual === true, "generic"),
+      });
     } finally {
       // The BUSY flag is the newest request's alone as well, or an overtaken test would leave the
       // button enabled while a later one is still running.
@@ -2856,9 +2804,11 @@ export function MailboxSection() {
           {!microsoftOauth && !probing && probeBad ? (
             <SettingsVerdict
               state="bad"
-              headline={probeBad.reason
-                ? t(`probe_${probeBad.reason}` as "probe_auth")
-                : probeBad.message}
+              headline={probeBad.noPort
+                ? t(probeBad.noPort.key, { field: probeBad.noPort.field })
+                : probeBad.reason
+                  ? t(`probe_${probeBad.reason}` as "probe_auth")
+                  : probeBad.message}
             />
           ) : null}
         </form>

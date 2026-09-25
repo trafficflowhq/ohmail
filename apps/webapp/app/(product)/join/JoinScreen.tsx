@@ -33,6 +33,8 @@ import {
 import { hostsFor, providerById, type ProviderPreset } from "../../shell/providers";
 import { displayAddress } from "../../shell/idn";
 import { ProviderPicker } from "../../shell/ProviderPicker";
+import { noPortProbeSentence } from "../../shell/probe-refusal";
+import { useRefusalAtThePress } from "../../shell/refusal-at-the-press";
 import { SELF_HOST_BUILD } from "../../hello";
 import { JOIN_INVITE_KEY, signupPosture } from "../../invite-posture";
 
@@ -93,6 +95,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
   publicSignup?: boolean;
 }) {
   const t = useTranslations("join");
+  const tm = useTranslations("mailboxes");
   /* `bootstrap` is a `useCallback([])` — its identity drives the mount effect, so a translator
      in its dependency list would re-run it on every render. The ref is the same device
      `remote-images.ts` uses for `onFailed`, and for the same reason. */
@@ -328,7 +331,8 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
     return () => { cancelled = true; };
   }, [step]);
 
-  const run = async (fn: () => Promise<void>): Promise<void> => {
+  /** `sentenceOf` puts a step's own words on a refusal it knows; null leaves the server's sentence. */
+  const run = async (fn: () => Promise<void>, sentenceOf?: (err: unknown) => string | null): Promise<void> => {
     setBusy(true);
     setError(null);
     try {
@@ -390,7 +394,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
         setStep("plan");
         setError(messageOf(err));
       } else {
-        setError(messageOf(err));
+        setError(sentenceOf?.(err) ?? messageOf(err));
       }
     } finally {
       setBusy(false);
@@ -570,8 +574,8 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
           host: imapHost.trim(),
           // A manual provider sends no port/TLS mode — the server's probe walks the standard
           // ladder (993 implicit TLS, then 143 STARTTLS) and stores what it proved. This screen
-          // shows the server's own refusal sentence verbatim, which now names certificates,
-          // hosts and suggestions precisely; the richer one-press flows live in Settings.
+          // shows the server's own refusal sentence, except one that names a port (see the
+          // `sentenceOf` below); the richer one-press flows live in Settings.
           ...(chosen.manual ? {} : { port: chosen.imap.port, secure: chosen.imap.secure }),
           user: (mbUser.trim() || address), pass: mbPass,
         },
@@ -586,8 +590,19 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
       setMbPass("");
       setConnected(dto);
       setStep("done");
+    }, (err) => {
+      // This form has no port field, so a refusal that would tell the person to check one says
+      // what the form holds instead: the server name on the generic entry, nothing behind a preset.
+      const said = noPortProbeSentence(err, chosen.manual === true);
+      return said ? tm(said.key, { field: said.field }) : null;
     });
   };
+
+  /* The mailbox step's refusal sits beside Connect, and is brought into view and focused. */
+  const mailboxRefusalAt = useRefusalAtThePress<HTMLParagraphElement>(step === "mailbox" ? error : null);
+  const mailboxRefusal = error ? (
+    <p ref={mailboxRefusalAt} className="join-error at-press" role="alert" tabIndex={-1}>{error}</p>
+  ) : null;
 
   // ── Render ────────────────────────────────────────────────────────────────────────────
 
@@ -624,7 +639,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
 
   return (
     <Shell title={t(`step_${step}_title`)} step={step} rail={needsInvite ? RAIL_BASE : RAIL_OPEN}>
-      {error && <p className="join-error" role="alert">{error}</p>}
+      {error && step !== "mailbox" && <p className="join-error" role="alert">{error}</p>}
 
       {step === "invite" && (
         <form onSubmit={submitInvite}>
@@ -874,6 +889,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
               />
               <p className="join-hint">{t("appPasswordHint")}</p>
 
+              {mailboxRefusal}
               <div className="join-actions">
                 <Button variant="primary" type="submit" disabled={busy}>
                   {busy ? t("working") : t("connectMailbox")}
@@ -881,6 +897,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
               </div>
             </>
           )}
+          {provider ? null : mailboxRefusal}
         </form>
       )}
 
