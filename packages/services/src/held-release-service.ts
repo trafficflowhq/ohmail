@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
   accountSettings, auditAction, auditLog, destinationIsDecisionSql, folderState, mailboxes,
   messages, recordRuleDelta, rules as rulesTbl, type LedgerTx, type Tx,
@@ -66,7 +66,10 @@ export interface HeldReleaseSummary {
   total: number;
   /** The identity of THIS set — what a dismissal names. Empty groups fingerprint to "". */
   fingerprint: string;
-  /** True when the account dismissed exactly this set. A changed set re-offers by construction. */
+  /**
+   * True when the account dismissed this set and no held mail joined it since: a set that only
+   * shrank stays dismissed, new held mail re-offers ({@link heldReleaseNewest}).
+   */
   dismissed: boolean;
 }
 
@@ -219,6 +222,50 @@ export async function heldReleaseTotal(
   return Number(row?.n ?? 0);
 }
 
+/**
+ * WHEN THE HELD SET LAST GAINED A MEMBER, in epoch ms — the latest instant one of its (message,
+ * rule) pairs joined: the message placed at the gate, or its rule written or back from its walk.
+ * Read back as `Date`s through the columns and compared in JavaScript, never in SQL, because the
+ * server's stamps carry microseconds the stored anchor does not. 0 for no groups.
+ */
+async function heldReleaseNewest(
+  db: Tx, accountId: string, groups: readonly HeldReleaseGroup[],
+): Promise<number> {
+  if (groups.length === 0) return 0;
+  const d = dialect(db);
+  // This account's own group keys, bounded by `HELD_RELEASE_GROUPS_MAX`, as in `heldReleaseTotal`.
+  const ids = groups.map((g) => g.ruleId);
+  const [placed] = await db
+    .select({ at: folderState.updatedAt })
+    .from(rulesTbl)
+    .innerJoin(messages, and(eq(messages.accountId, rulesTbl.accountId), ruleClaimsSender(d)))
+    .innerJoin(folderState, eq(folderState.messageId, messages.id))
+    .where(and(decidedRule(accountId), heldAtGate(accountId), inArray(rulesTbl.id, ids)))
+    .orderBy(desc(folderState.updatedAt))
+    .limit(1);
+  const decided = await db
+    .select({ created: rulesTbl.createdAt, walked: rulesTbl.retroDoneAt })
+    .from(rulesTbl)
+    .where(and(eq(rulesTbl.accountId, accountId), inArray(rulesTbl.id, ids)));
+  let newest = placed?.at?.getTime() ?? 0;
+  for (const r of decided) newest = Math.max(newest, r.created.getTime(), r.walked?.getTime() ?? 0);
+  return newest;
+}
+
+/**
+ * A dismissal as stored: `<fingerprint>@<newest entry it covered, epoch ms>`, or a bare
+ * fingerprint — what a press over a set that moved since its read records, and every dismissal
+ * written before the anchor existed; both read by equality.
+ */
+const DISMISSAL_ANCHOR = "@";
+function readDismissal(stored: string | null): { fingerprint: string; anchor: number | null } | null {
+  if (stored === null || stored === "") return null;
+  const i = stored.lastIndexOf(DISMISSAL_ANCHOR);
+  const tail = i > 0 ? stored.slice(i + 1) : "";
+  if (!/^\d{1,16}$/.test(tail)) return { fingerprint: stored, anchor: null };
+  return { fingerprint: stored.slice(0, i), anchor: Number(tail) };
+}
+
 /** The whole screen in one read: the groups, their distinct total, and the dismissal state. */
 export async function heldReleaseSummary(
   db: Tx, accountId: string,
@@ -229,28 +276,32 @@ export async function heldReleaseSummary(
     .select({ dismissed: accountSettings.heldReleaseDismissed })
     .from(accountSettings)
     .where(eq(accountSettings.accountId, accountId));
-  return {
-    groups,
-    total: await heldReleaseTotal(db, accountId, groups),
-    fingerprint,
-    // "" (no groups) never reads dismissed: there is no offer to have said "not now" to.
-    dismissed: fingerprint !== "" && (row?.dismissed ?? null) === fingerprint,
-  };
+  const stored = readDismissal(row?.dismissed ?? null);
+  // "" (no groups) never reads dismissed: there is no offer to have said "not now" to.
+  let dismissed = false;
+  if (fingerprint !== "" && stored !== null) {
+    dismissed = stored.anchor === null
+      ? stored.fingerprint === fingerprint
+      : await heldReleaseNewest(db, accountId, groups) <= stored.anchor;
+  }
+  return { groups, total: await heldReleaseTotal(db, accountId, groups), fingerprint, dismissed };
 }
 
 /**
- * "NOT NOW" — record which exact offer the account dismissed. The fingerprint is the CLIENT'S,
- * from the read it showed: storing what was on screen (never a re-derivation) means a set that
- * changed between the read and the press stays offered, because the stored value then matches
- * nothing. One row per account (`account_settings` upsert), bounded before the write — the
- * migration's CHECK is the belt. Clearing is not offered: a dismissal is superseded by the set
- * changing, which is the only honest way back.
+ * "NOT NOW" — record the offer the account dismissed. The fingerprint is the CLIENT'S, from the
+ * read it showed: when it still names the set, the dismissal is anchored at the newest entry of
+ * that set (never before this clock's now), and only mail joining after it re-offers; when the
+ * set moved since the read, the bare fingerprint matches nothing and the offer stays. One row
+ * per account, bounded before the write — the migration's CHECK is the belt. Clearing is not
+ * offered: new held mail is the only honest way back.
  */
 export async function dismissHeldRelease(
   ctx: ServiceContext, opts: { fingerprint?: unknown },
 ): Promise<{ dismissed: true }> {
   const fp = opts.fingerprint;
-  if (typeof fp !== "string" || fp.length === 0 || fp.length > 128) {
+  // `@` is the stored form's separator, and no fingerprint the server issues carries one.
+  if (typeof fp !== "string" || fp.length === 0 || fp.length > 128
+      || fp.includes(DISMISSAL_ANCHOR)) {
     throw new ServiceError("validation_failed", 400, "fingerprint must be a short string");
   }
   /* THE DOORBELL, in the same transaction and after the row (`recordSettingsChange`'s lock
@@ -258,11 +309,18 @@ export async function dismissHeldRelease(
      device kept the offer it had read until its shell remounted. Each engine re-asks its one
      held-release door when the settings stamp moves (`OhmailEngine.ringHeldReleaseBell`). */
   await withAccountTx(ctx, async (t) => {
+    const now = ctx.now();
+    const groups = await heldReleaseGroups(bridgeTx(t), ctx.accountId);
+    let value = fp;
+    if (groups.length > 0 && heldReleaseFingerprint(groups) === fp) {
+      const newest = await heldReleaseNewest(bridgeTx(t), ctx.accountId, groups);
+      value = `${fp}${DISMISSAL_ANCHOR}${Math.max(now.getTime(), newest)}`;
+    }
     await t.insert(accountSettings)
-      .values({ accountId: ctx.accountId, heldReleaseDismissed: fp, updatedAt: ctx.now() })
+      .values({ accountId: ctx.accountId, heldReleaseDismissed: value, updatedAt: now })
       .onConflictDoUpdate({
         target: accountSettings.accountId,
-        set: { heldReleaseDismissed: fp, updatedAt: ctx.now() },
+        set: { heldReleaseDismissed: value, updatedAt: now },
       });
     await recordSettingsChange(t, ctx.accountId);
   });
