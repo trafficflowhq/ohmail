@@ -11,9 +11,10 @@
 /**
  * It answers "which slice is on screen" from the scroller's own `scrollTop`/`clientHeight`, and
  * the caller renders that slice between two spacers, so scroll height, scrollbar and position are
- * what they would have been with every row mounted. Lists at or below
- * {@link FULL_RANGE_MAX_ROWS} render whole; `clientHeight` of 0 reads as
- * {@link FALLBACK_VIEWPORT_PX} — over-render, never hide mail.
+ * what they would have been with every row mounted. A list whose items carry `data-index` windows
+ * above {@link MEASURED_FULL_RANGE_MAX_ROWS}; one that stamps none renders whole up to
+ * {@link FULL_RANGE_MAX_ROWS}. `clientHeight` of 0 reads as {@link FALLBACK_VIEWPORT_PX} —
+ * over-render, never hide mail.
  */
 
 /**
@@ -52,11 +53,19 @@ export const FALLBACK_VIEWPORT_PX = 1200;
 const OVERSCAN_ROWS = 8;
 
 /**
- * Lists no longer than this are rendered whole: a few screens of rows cost little to mount, and
- * arithmetic that reserves nothing cannot be wrong about anything. Above it the window runs on
- * measured heights — an unbounded render is the cost this product has already paid once.
+ * A list whose items carry no `data-index` renders whole up to this: the window could price its
+ * rows only at one measured height, and rows of mixed height then drift past the reader — the
+ * 0.19.2 defect. Above it such a list windows anyway; an unbounded render is worse.
  */
 export const FULL_RANGE_MAX_ROWS = 500;
+
+/**
+ * A list whose items carry `data-index` is measured row by row and windows above this — a
+ * switch into a pile of a few hundred rows then mounts a screenful. Which floor applies is read
+ * in the first layout pass, before paint: the first render assumes the stamp, and a list that
+ * turns out to stamp nothing re-renders whole before anything is drawn.
+ */
+export const MEASURED_FULL_RANGE_MAX_ROWS = 50;
 
 export interface ListWindow {
   /** First index to render, inclusive. */
@@ -118,6 +127,8 @@ export function useListWindow({
   const anchor = useRef<{ index: number; offset: number; count: number } | null>(null);
   /** Bumped when a measurement moves, which is what makes the sums below recompute. */
   const [samples, setSamples] = useState(0);
+  /** Did the first layout pass find `data-index` items? `null` until a pass has drawn some. */
+  const [stamped, setStamped] = useState<boolean | null>(null);
 
   const sample = useCallback(() => {
     const el = scrollerRef.current;
@@ -198,7 +209,7 @@ export function useListWindow({
     return lo;
   };
 
-  const windowed = count > FULL_RANGE_MAX_ROWS;
+  const windowed = count > (stamped === false ? FULL_RANGE_MAX_ROWS : MEASURED_FULL_RANGE_MAX_ROWS);
   const visibleStart = Math.max(0, Math.min(count, indexAt(scrollTop) - overscan));
   const visibleEnd = Math.min(count, indexAt(scrollTop + height) + 1 + overscan);
   const start = windowed ? Math.max(0, Math.min(count, indexAt(scrollTop) - overscan)) : 0;
@@ -217,10 +228,13 @@ export function useListWindow({
     const el = scrollerRef.current;
     if (!el) return;
     let moved = false;
+    let found = false;
     for (const node of el.querySelectorAll<HTMLElement>("[data-index]")) {
       const i = Number(node.dataset.index);
+      if (!Number.isInteger(i) || i < 0 || i >= count) continue;
+      found = true;
       const h = node.offsetHeight;
-      if (!Number.isInteger(i) || i < 0 || i >= count || h <= 0) continue;
+      if (h <= 0) continue;
       const was = heights.current.get(i);
       if (was === undefined || Math.abs(was - h) >= 1) {
         heights.current.set(i, h);
@@ -229,6 +243,13 @@ export function useListWindow({
       }
     }
     if (moved) setSamples((n) => n + 1);
+    /* THE FLOOR, decided once and before paint: a list that drew items and stamped none is priced
+       at one height, so it goes back to rendering whole below FULL_RANGE_MAX_ROWS. */
+    if (stamped === null && count > 0) setStamped(found);
+    /* ONE ANCHOR. A measured list is anchored below (`scrollTop` follows the item under the top
+       edge); the browser's own scroll anchoring on top of it corrects the same move twice — a
+       row growing above the viewport moved the rows on screen by its growth, the other way. */
+    if (found && el.style.overflowAnchor !== "none") el.style.overflowAnchor = "none";
 
     if (heights.current.size === 0) {
       /* The pre-cache fallback, for a list that stamps no index: one row's height, taken only at

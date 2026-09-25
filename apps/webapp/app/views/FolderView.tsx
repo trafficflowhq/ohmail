@@ -178,12 +178,21 @@ export function FolderView({
   const selectRow = (id: string): void => {
     setSelectedId(id);
     // Keep the new cursor in view. `?.` on the METHOD, not only the node: jsdom mounts this
-    // view without implementing scrollIntoView (RulesView's precedent).
-    queueMicrotask(() =>
-      document
-        .querySelector<HTMLElement>(`.view-folder .row[data-id="${CSS.escape(id)}"]`)
-        ?.scrollIntoView?.({ block: "nearest" }),
-    );
+    // view without implementing scrollIntoView (RulesView's precedent). A row the window has
+    // not mounted is reached through its slot, which mounts it (TagView's rule).
+    queueMicrotask(() => {
+      const row = document.querySelector<HTMLElement>(`.view-folder .row[data-id="${CSS.escape(id)}"]`);
+      if (row) {
+        row.scrollIntoView?.({ block: "nearest" });
+        return;
+      }
+      const el = scrollerRef.current;
+      const at = ordered.findIndex((m) => m.id === id);
+      if (el && at >= 0) {
+        el.scrollTop = Math.max(0, win.offsetOf(at) - win.rowHeight);
+        el.dispatchEvent(new Event("scroll"));
+      }
+    });
   };
   /* THE NINE MESSAGE VERBS, over this view's own cursor. Without this declaration the
      shell's bindings register `disabled` here (they act on `focused`, which has no arm for
@@ -242,7 +251,7 @@ export function FolderView({
     const idx = ordered.findIndex((m) => m.id === locateId);
     if (idx >= win.start && idx < win.end) return;
     const el = scrollerRef.current;
-    if (el) el.scrollTop = Math.max(0, idx * win.rowHeight - el.clientHeight / 2);
+    if (el) el.scrollTop = Math.max(0, win.offsetOf(idx) - el.clientHeight / 2);
     // Only the target and its arrival: the window's fields are read at fire time, and
     // re-running on every scroll-driven change would re-scroll the list under the user.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -266,7 +275,8 @@ export function FolderView({
               {ordered.slice(win.start, win.end).map((m, i) => {
                 const index = win.start + i;
                 // Each group's label rides its first row, so labels appear exactly where the
-                // grouping puts them and unmount with the rows they head.
+                // grouping puts them and unmount with the rows they head. The slot's `data-index`
+                // is on the wrapper, so the window measures the label with its row.
                 const label =
                   index === 0 && unreadRows.length > 0
                     ? to("newForYou")
@@ -274,7 +284,7 @@ export function FolderView({
                       ? to("previouslySeen")
                       : null;
                 return (
-                  <div key={m.id}>
+                  <div key={m.id} data-index={index}>
                     {label ? <ListGroupLabel>{label}</ListGroupLabel> : null}
                     <MessageRow
                       spoken={rowBadge.spoken}

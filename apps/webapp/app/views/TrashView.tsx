@@ -169,12 +169,21 @@ export function TrashView({
   const selectRow = (id: string): void => {
     setSelectedId(id);
     // `?.` on the METHOD as well as the node — jsdom mounts this view without implementing
-    // scrollIntoView (`FolderView`'s precedent, from `RulesView`'s).
-    queueMicrotask(() =>
-      document
-        .querySelector<HTMLElement>(`.view-trash .row[data-id="${CSS.escape(id)}"]`)
-        ?.scrollIntoView?.({ block: "nearest" }),
-    );
+    // scrollIntoView (`FolderView`'s precedent, from `RulesView`'s). A row the window has not
+    // mounted is reached through its slot, which mounts it (TagView's rule).
+    queueMicrotask(() => {
+      const row = document.querySelector<HTMLElement>(`.view-trash .row[data-id="${CSS.escape(id)}"]`);
+      if (row) {
+        row.scrollIntoView?.({ block: "nearest" });
+        return;
+      }
+      const el = scrollerRef.current;
+      const at = rows.findIndex((m) => m.id === id);
+      if (el && at >= 0) {
+        el.scrollTop = Math.max(0, win.offsetOf(at) - win.rowHeight);
+        el.dispatchEvent(new Event("scroll"));
+      }
+    });
   };
 
   /* ↓/↑ WALK THE LIST AS RENDERED. No `useMessageVerbs` here, deliberately: the nine message
@@ -220,7 +229,7 @@ export function TrashView({
     const idx = rows.findIndex((m) => m.id === locateId);
     if (idx >= win.start && idx < win.end) return;
     const el = scrollerRef.current;
-    if (el) el.scrollTop = Math.max(0, idx * win.rowHeight - el.clientHeight / 2);
+    if (el) el.scrollTop = Math.max(0, win.offsetOf(idx) - el.clientHeight / 2);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locateId, locateFound]);
 
@@ -240,11 +249,12 @@ export function TrashView({
           ) : rows.length ? (
             <>
               {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
-              {rows.slice(win.start, win.end).map((m) => (
+              {rows.slice(win.start, win.end).map((m, k) => (
                 <MessageRow
                   spoken={rowBadge.spoken}
                   key={m.id}
                   id={m.id}
+                  windowIndex={win.start + k}
                   from={senderName(m)}
                   address={rowAddress(m)}
                   {...avatarOf(m)}

@@ -200,13 +200,18 @@ export function ReceiptsView({
    * the whole argument): mounting a card per message before first paint was the dominant cost
    * of switching into this view, exactly as it was for Reads.
    */
-  const win = useListWindow({ scrollerRef: listScrollerRef, count: all.length });
-  // The windowed slice, split at the line's junction exactly as `ReadsView` splits its window.
+  /* ONE INDEX SPACE, the Ohbox's: the fresh rows, the line, the seen rows. Every item carries its
+     slot as `data-index`, so the window measures the rows and the line where they stand. */
+  const seenBase = fresh + (waterline != null ? 1 : 0);
+  const seenCount = all.length - fresh;
+  const win = useListWindow({ scrollerRef: listScrollerRef, count: seenBase + seenCount });
   const freshFrom = Math.min(win.start, fresh);
   const freshTo = Math.min(win.end, fresh);
-  const seenFrom = Math.max(0, win.start - fresh);
-  const seenTo = Math.max(0, win.end - fresh);
+  const seenFrom = Math.min(Math.max(0, win.start - seenBase), seenCount);
+  const seenTo = Math.min(Math.max(0, win.end - seenBase), seenCount);
   const showWaterline = waterline != null && win.start <= fresh && win.end > fresh;
+  /** A row's slot in that space, from its place in `all`. */
+  const windowIndexOf = (idx: number): number => (idx < fresh ? idx : seenBase + (idx - fresh));
   const streamIds = useMemo(() => all.map((m) => m.id), [all]);
   /** The pile's order by id, for the leave-range tracker — see `StreamShell.pileIndexOf`. */
   const pileIndex = useMemo(() => {
@@ -317,10 +322,11 @@ export function ReceiptsView({
        a search jump deep into the pile had no row to scroll to and arrived unmarked. Same
        mechanism and reasoning as `ReadsView`'s effect of this name. */
     const idx = all.findIndex((m) => m.id === cur);
-    if (idx >= 0 && (idx < win.start || idx >= win.end)) {
+    const slot = windowIndexOf(idx);
+    if (idx >= 0 && (slot < win.start || slot >= win.end)) {
       const el = listScrollerRef.current;
       if (el) {
-        el.scrollTop = Math.max(0, idx * win.rowHeight - el.clientHeight / 2);
+        el.scrollTop = Math.max(0, win.offsetOf(slot) - el.clientHeight / 2);
         return;
       }
     }
@@ -442,11 +448,14 @@ export function ReceiptsView({
     );
   };
 
-  const row = (m: EngineMessage) => (
+  /* `windowIndex` is passed explicitly by each mapper — never `.map(row)`, which would stamp the
+     array index as the slot (the Ohbox's warning). */
+  const row = (m: EngineMessage, windowIndex: number) => (
     <MessageRow
       spoken={rowBadge.spoken}
       key={m.id}
       id={m.id}
+      windowIndex={windowIndex}
       from={senderName(m)}
       address={rowAddress(m)}
       {...avatarOf(m)}
@@ -503,9 +512,13 @@ export function ReceiptsView({
             the fresh slice, the waterline when the junction is inside the window, the seen
             slice. */}
         {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
-        <ListRows ariaLabel={t("title")}>{all.slice(freshFrom, freshTo).map(row)}</ListRows>
-        {showWaterline ? <Waterline label={tr("waterline")} meta={wlMeta} /> : null}
-        <ListRows ariaLabel={tr("waterline")}>{all.slice(fresh + seenFrom, fresh + seenTo).map(row)}</ListRows>
+        <ListRows ariaLabel={t("title")}>
+          {all.slice(freshFrom, freshTo).map((m, k) => row(m, freshFrom + k))}
+        </ListRows>
+        {showWaterline ? <Waterline label={tr("waterline")} meta={wlMeta} index={fresh} /> : null}
+        <ListRows ariaLabel={tr("waterline")}>
+          {all.slice(fresh + seenFrom, fresh + seenTo).map((m, k) => row(m, seenBase + seenFrom + k))}
+        </ListRows>
         {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
         {/* No-collapse rule: every receipt is a real row above — and the line is still a claim
             about where the pile ends, so it waits for a mirror that can be spoken for. */}

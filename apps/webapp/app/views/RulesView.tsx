@@ -56,11 +56,9 @@ export const RULE_DESTINATIONS: readonly Folder[] = [
 ];
 
 /**
- * The height a rule row occupies, in pixels — fixed, so the window's spacer arithmetic is exact
- * without a per-row measurement. Every row is two ellipsised lines and a fixed-height control
- * cluster (see rules.css), so this is the height of all of them; `useListWindow` measures a
- * `.row` element it will not find here and falls back to this estimate, which is the real value
- * because the CSS fixes it. Kept in step with `.rules-item{height}` in rules.css.
+ * The height a rule row occupies, in pixels — fixed by `.rules-item{height}` in rules.css (two
+ * ellipsised lines and a fixed control cluster). The window's first-frame estimate; every drawn
+ * row carries its `data-index` and is measured, like every other windowed list.
  */
 const RULE_ROW_PX = 64;
 
@@ -397,14 +395,12 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
                 than a margin, so the scroller's scroll height and scrollbar match every row
                 mounted; `aria-hidden` because this is geometry. The open confirm is the one
                 non-row child (SET-M4), rendered directly under its target row so the disclosure
-                is read AT the rule it is about, and Cancel leaves the reader in place. The
-                spacers ignore its height on purpose: per-row bookkeeping would re-couple the
-                window to variable heights, the oscillation `useListWindow` avoids. The error is
-                bounded by one confirm's height (~2 rows) and the 8-row overscan covers it; when
-                the row scrolls out, the confirm unmounts and returns with it — `open` state
-                unaffected. */}
+                is read AT the rule it is about, and Cancel leaves the reader in place. It carries
+                no slot, so the spacers leave its height out: the error is one confirm (~2 rows),
+                inside the 8-row overscan; when the row scrolls out, the confirm unmounts and
+                returns with it — `open` state unaffected. */}
             {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
-            {filtered.slice(win.start, win.end).map((rule) => {
+            {filtered.slice(win.start, win.end).map((rule, k) => {
               const what = whatOf(rule);
               const origin = t(`origin.${rule.provenance}`);
               const meta = rule.enabled
@@ -416,6 +412,7 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
                   <div
                     className={openHere ? "rules-item editing" : "rules-item"}
                     data-rule-id={rule.id}
+                    data-index={win.start + k}
                   >
                     <span className="body">
                       <b className="what">{what}</b>

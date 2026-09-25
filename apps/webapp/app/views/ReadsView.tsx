@@ -234,12 +234,26 @@ export function ReadsView({
    * below — because its cards are variable-height and `useListWindow`'s fixed-row arithmetic
    * does not fit them. The waterline and the AI chip sit inside the windowed slice.
    */
-  const win = useListWindow({ scrollerRef: listScrollerRef, count: all.length });
   const freshCount = partition.fresh.length;
-  const freshFrom = Math.min(win.start, freshCount);
-  const freshTo = Math.min(win.end, freshCount);
-  const seenFrom = Math.max(0, win.start - freshCount);
-  const seenTo = Math.max(0, win.end - freshCount);
+  /* ONE INDEX SPACE, the Ohbox's: the fresh rows with the AI chip after its row, the line, the
+     seen rows. Every item carries its slot as `data-index`, so the window measures all of them
+     where they stand — a chip or a line outside the sums moved every row below it on and off. */
+  const chipAfter = aiChip ? partition.fresh.findIndex((m) => m.id === aiChip.afterId) : -1;
+  const chipAt = chipAfter >= 0 ? chipAfter + 1 : -1;
+  const freshSpan = freshCount + (chipAt >= 0 ? 1 : 0);
+  const seenBase = freshSpan + (partition.waterline != null ? 1 : 0);
+  const win = useListWindow({ scrollerRef: listScrollerRef, count: seenBase + partition.seen.length });
+  /** Fresh rows whose slot is below window index `w`. */
+  const freshBefore = (w: number): number =>
+    Math.min(freshCount, Math.max(0, chipAt >= 0 && w > chipAt ? w - 1 : w));
+  const freshFrom = freshBefore(win.start);
+  const freshTo = freshBefore(win.end);
+  const seenFrom = Math.min(Math.max(0, win.start - seenBase), partition.seen.length);
+  const seenTo = Math.min(Math.max(0, win.end - seenBase), partition.seen.length);
+  const chipShown = chipAt >= 0 && win.start <= chipAt && win.end > chipAt;
+  /** A row's slot, from its place in `all` (`[fresh, seen]`). */
+  const windowIndexOf = (idx: number): number =>
+    idx < freshCount ? idx + (chipAt >= 0 && idx >= chipAt ? 1 : 0) : seenBase + (idx - freshCount);
   /**
    * The stream is a sliding window over the same `[fresh, seen]` order — only cards near the
    * viewport are in the DOM, with measured-height spacers standing in for the rest
@@ -349,7 +363,7 @@ export function ReadsView({
   }, [closeTo]);
   // The waterline marks the fresh/seen junction; render it only when that junction is inside
   // the mounted window, so it travels with the boundary instead of pinning to the list top.
-  const showWaterline = partition.waterline != null && win.start <= freshCount && win.end > freshCount;
+  const showWaterline = partition.waterline != null && win.start <= freshSpan && win.end > freshSpan;
   const unreadCount = all.filter((m) => m.unread).length;
   /**
    * WHAT THE PANE COUNTS: the BADGE — the fresh side of the line that is still unread on the
@@ -465,10 +479,11 @@ export function ReadsView({
      * takes the `scrollIntoView` path exactly as before.
      */
     const idx = all.findIndex((m) => m.id === cur);
-    if (idx >= 0 && (idx < win.start || idx >= win.end)) {
+    const slot = windowIndexOf(idx);
+    if (idx >= 0 && (slot < win.start || slot >= win.end)) {
       const el = listScrollerRef.current;
       if (el) {
-        el.scrollTop = Math.max(0, idx * win.rowHeight - el.clientHeight / 2);
+        el.scrollTop = Math.max(0, win.offsetOf(slot) - el.clientHeight / 2);
         return;
       }
     }
@@ -556,13 +571,16 @@ export function ReadsView({
      ARE the reading — so no reader zone is declared and → from the list stays inert. */
   useZoneNav({ list: { up: stepUp, down: stepDown, followId: current ?? null } });
 
-  const row = (m: EngineMessage) => {
+  /* `windowIndex` is passed explicitly by each mapper — never `.map(row)`, which would stamp the
+     array index as the slot (the Ohbox's warning). */
+  const row = (m: EngineMessage, windowIndex: number) => {
     const mailbox = mailboxLabelOf?.(m.mailboxId) ?? undefined;
     return (
     <MessageRow
       spoken={rowBadge.spoken}
       key={m.id}
       id={m.id}
+      windowIndex={windowIndex}
       from={senderName(m)}
       address={rowAddress(m)}
       {...avatarOf(m)}
@@ -654,8 +672,8 @@ export function ReadsView({
   };
 
   const chipRow =
-    aiChip && partition.fresh.some((m) => m.id === aiChip.afterId) ? (
-      <div className="reads-chip-row">
+    aiChip && chipAt >= 0 ? (
+      <div className="reads-chip-row" data-index={chipAt}>
         {chipState === "approved" ? (
           <Chip icon="check">{aiChip.approvedLabel}</Chip>
         ) : chipState === "corrected" ? (
@@ -708,17 +726,25 @@ export function ReadsView({
             their own row containers, but each renders only its share of the mounted window. */}
         {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
         <ListRows ariaLabel={t("title")}>
-          {partition.fresh.slice(freshFrom, freshTo).map((m) => (
-            <span key={m.id} style={{ display: "contents" }}>
-              {row(m)}
-              {aiChip?.afterId === m.id ? chipRow : null}
-            </span>
-          ))}
+          {/* The chip rides after its row; when the window starts AT the chip, before the next. */}
+          {chipShown && freshFrom === chipAt && freshFrom === freshTo ? chipRow : null}
+          {partition.fresh.slice(freshFrom, freshTo).map((m, k) => {
+            const p = freshFrom + k;
+            return (
+              <span key={m.id} style={{ display: "contents" }}>
+                {chipShown && p === chipAt && k === 0 ? chipRow : null}
+                {row(m, windowIndexOf(p))}
+                {chipShown && p === chipAfter ? chipRow : null}
+              </span>
+            );
+          })}
         </ListRows>
         {showWaterline ? (
-          <Waterline label={t("waterline")} meta={wlMeta} />
+          <Waterline label={t("waterline")} meta={wlMeta} index={freshSpan} />
         ) : null}
-        <ListRows ariaLabel={t("waterline")}>{partition.seen.slice(seenFrom, seenTo).map(row)}</ListRows>
+        <ListRows ariaLabel={t("waterline")}>
+          {partition.seen.slice(seenFrom, seenTo).map((m, k) => row(m, seenBase + seenFrom + k))}
+        </ListRows>
         {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
         <div className="tail-row">{t("tail")}</div>
       </ListPane>
