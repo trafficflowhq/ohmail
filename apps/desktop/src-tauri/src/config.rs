@@ -1449,11 +1449,9 @@ pub fn keep_switch(root: &Path, switch: &DoorSwitch) -> Result<Option<String>, S
     Ok(retire_replaced(root, switch.dir).err())
 }
 
-/// Remove a set-aside directory — only ever one no record points at.
+/// Remove a set-aside directory. Every caller has no record on disk: before one is written, after
+/// the commit removed it, or at a launch that read none.
 pub fn retire_replaced(root: &Path, mode: Mode) -> Result<(), String> {
-    if switch_path(root).exists() {
-        return Ok(());
-    }
     remove_tree(&replaced_store(root, mode))
 }
 

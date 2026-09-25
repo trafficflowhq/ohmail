@@ -68,6 +68,7 @@ const ANSWERS = {
   paired: { status: 200, body: { status: "paired", mailboxId: "mbx-paired" } },
   invalid_pair_code: { status: 401, body: { error: { code: "invalid_pair_code", message: "that pairing code was not accepted" } } },
   host_refused: { status: 502, body: { error: { code: "host_refused", message: "that computer answered HTTP 403 to the code" } } },
+  pair_account_mismatch: { status: 409, body: { error: { code: "pair_account_mismatch", message: "a different account" } } },
 } as const;
 type Answer = keyof typeof ANSWERS | "never";
 
@@ -79,7 +80,10 @@ type Answer = keyof typeof ANSWERS | "never";
  */
 function fakeShell(opts: {
   door: Door; answer: Answer; redeemMs?: number; pairStartMs?: number; probeOnLocal?: boolean;
+  /** The shell refuses this many restores first (a gesture in flight, a directory held). */
+  restoreRefusals?: number;
 }) {
+  let restoreRefusals = opts.restoreRefusals ?? 0;
   let door: Door | null = opts.door;
   let replaced: Door | null = null;
   let startedAt = -Infinity;
@@ -122,6 +126,11 @@ function fakeShell(opts: {
         return status();
       }
       if (command === "engine_switch_restore") {
+        if (replaced && restoreRefusals > 0) {
+          restoreRefusals -= 1;
+          log.push("restore refused");
+          throw new Error("the replaced door could not be put back yet");
+        }
         log.push(`restore${replaced ? "" : " (nothing kept)"}`);
         if (replaced) {
           door = replaced;
@@ -316,6 +325,31 @@ describe("a pairing the other computer refuses hands back the door it replaced",
     expect(shell.replaced()).toBeNull();
     expect(readsNotPaired()).toBe(false);
     expect(buttons(DOOR_COPY.installSwitchAction)).toHaveLength(1);
+  });
+});
+
+describe("every way off the pairing card puts the replaced door back", () => {
+  it("a restore the shell refused is asked again when the card is left", async () => {
+    const shell = fakeShell({ door: LOCAL_DOOR, answer: "invalid_pair_code", restoreRefusals: 1 });
+    expect(await openPairingFromSettings()).toBe(true);
+    await press(DOOR_COPY.hostPair);
+    await until("the card's sentence", () => el!.querySelector(".join-error") !== null, 20_000);
+    expect(shell.replaced(), "the refused restore left nothing to put back").not.toBeNull();
+    await leaveTheCard();
+    console.info(`RESTORE REFUSED door on disk ${String(shell.door()?.flavor ?? shell.door()?.mode)} || ${shell.log.join(", ")}`);
+    expect(shell.door()).toEqual(LOCAL_DOOR);
+    expect(shell.replaced()).toBeNull();
+    expect(readsNotPaired()).toBe(false);
+  });
+
+  it("an account mismatch on a provisional pairing is undone, and offers no Start over", async () => {
+    /* The pairing opened a fresh directory, so there is no other account's mail to start over from. */
+    const shell = fakeShell({ door: LOCAL_DOOR, answer: "pair_account_mismatch" });
+    expect(await openPairingFromSettings()).toBe(true);
+    await press(DOOR_COPY.hostPair);
+    await until("the card's sentence", () => el!.querySelector(".join-error") !== null, 20_000);
+    expect(buttons(DOOR_COPY.hostStartOver), "Start over offered over a door already put back").toHaveLength(0);
+    expect(shell.door()).toEqual(LOCAL_DOOR);
   });
 });
 
