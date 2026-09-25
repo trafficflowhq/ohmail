@@ -13,6 +13,288 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### A desktop left open for days keeps syncing
+<!-- changes: fix-025-paired-desktop-open-past-a-day.md -->
+
+The desktop app keeps syncing when it is left open for more than a day, whether it is paired with
+ohmail Cloud or reads your own mail server. It used to stop after a day and ask to be reopened.
+
+### A sender's message list names the rule that decides
+<!-- changes: fix-025-low-rows-clients.md -->
+
+The list of every message from a sender says, for each message, which of your rules files that
+sender's mail where it sits. It named the newest rule pointing at the message's folder, even when a
+different rule decides: with one rule letting a sender into the Inbox and a newer one screening them
+out, an Inbox message from before the screen-out named the Inbox rule. It now names the rule ohmail
+applies, and no rule when that rule files the mail somewhere else. Such a message now says that
+no rule ohmail can see would file it where it is, rather than that no rule covers it.
+
+### A phone control that cannot be pressed now dims
+<!-- changes: fix-025-low-rows-clients.md -->
+
+On the phone, the attachment buttons in a message, Try again and Discard under unsaved changes, the
+wake-up distributor rows in Settings and the remove button on a compose attachment were already
+announced as unavailable to a screen reader while busy, and kept their full look. They now dim the
+way the other buttons do.
+
+### Every pairing refusal is in your language
+<!-- changes: fix-025-low-rows-clients.md -->
+
+When you pair a desktop with another computer and it turns the pairing away for too many attempts,
+the card said so in English on a German desktop. The same held for six rarer refusals: the other
+computer naming no account, returning no session, and four this desktop gives itself before
+anything is spent. Each now reads in English and German.
+
+### Pressing Ohbox on a screened-out sender brings their mail back
+
+A sender can have two rules: one letting them into the Ohbox and one screening them out. The
+screen-out decides, so their mail was screened, and pressing Ohbox on the sender said a rule was
+already sending their future mail there and changed nothing. Pressing a place on a sender now
+changes the rule that decides: every rule for that sender pointing somewhere else moves to the
+place you pressed, and the Rules page lists them all there. "Already" is said only when the rule
+that decides already files their mail where you pressed. The web and desktop apps share the
+change.
+
+### The sender sheet shows where their mail is, and a decision overrides older rules
+
+The sender sheet's "now in" line and its check mark named the folder a sender's mail is filed in.
+A rule can show that mail somewhere else — a screen-out shows Inbox mail in Screened, a News rule
+shows it in News, and a stranger's old read mail sits in History — and the sheet now names the
+place the lists show it in. Deciding a sender in the Screener wrote a new rule beside the ones
+already there, so an older screen-out kept deciding: their waiting mail went to the Ohbox and
+their next message was screened. A decision now moves every rule for that sender to the place you
+chose, and the list shows them there as soon as you press. The web, desktop and phone apps share
+the change.
+
+### A pairing another computer refuses leaves your desktop as it was
+<!-- changes: fix-025-switched-door-restores-the-replaced-door.md -->
+
+When a desktop that already reads your mail pairs with another computer from Settings, it keeps
+its connection and its copy of your mail until that computer accepts. If the other computer
+refuses, the pairing runs out of time, or ohmail is closed mid-pairing, the desktop goes back to
+the mailbox it showed, with the same copy. Until now the pairing replaced the connection before the
+other computer answered and discarded the copy, and a refusal left the desktop showing "Not
+paired".
+
+### A retried workflow creation from a proposal returns its first answer
+<!-- changes: fix-025-low-rows-server.md -->
+
+- `POST /workflows` with `fromProposalId` now stores its answer under the request's
+  `Idempotency-Key`, so a retry after a lost response returns the workflow it created instead of
+  404.
+
+### The first page of a broad search on ohmail Cloud comes back sooner
+<!-- changes: search-025-server-budget.md -->
+
+A search for a word in many messages no longer waits, before its first page, on the database's
+estimate of how many match. The count that follows the page still says about how many, then the
+exact number.
+
+### Switching views is quick on large mailboxes
+<!-- changes: fix-025-desktop-view-switch-renderer.md -->
+
+Switching between the Ohbox, the Screener and History no longer waits on the size of the
+mailbox. The Screener, tags and triage piles draw only the rows on screen, as the Ohbox and
+History already did.
+
+### Long lists scroll by exactly what you scroll
+<!-- changes: fix-025-list-window-below-500.md -->
+
+News and Receipts measure every row they draw, as the Ohbox has since 0.19.3, so a list of more
+than 500 rows with and without a preview line no longer moves its rows faster than the scroll.
+A list of a few hundred rows now mounts only the rows on screen, so switching to it is quicker.
+
+### Screen readers hear how long a list is
+<!-- changes: fix-025-list-window-size.md -->
+
+A list of more than 50 rows draws only the rows on screen, and a screen reader counted only
+those: a long Ohbox was announced as a list of a dozen or so rows, and a row's position as its
+place among them. Every list now states its full length and each row's position in it — the
+Ohbox, News, Receipts, folders, Trash, Rules, History, Search, the triage piles, tags and the
+Screener. Reading a list line by line and the browser's find-in-page still reach only the rows
+on screen.
+
+### The desktop's first import makes far fewer file-system calls
+<!-- changes: fix-025-engine-file-ops-per-message.md -->
+
+- The desktop engine's local database no longer opens and truncates files in its data folder for
+  every request it answers, so importing mail spends less processor time per message.
+
+### The desktop's first import plans its database statements once
+<!-- changes: fix-025-pglite-plans-size-once.md -->
+
+- The desktop engine's local database keeps the plan of each statement an import repeats instead of
+  working it out again for every message, so a first import makes fewer file-system calls and spends
+  less processor time per message.
+
+### The desktop engine's check for mail deleted on the server reads the mailbox once
+<!-- changes: fix-025-orphan-scan-sizes-once.md -->
+
+- The engine's check for messages the server no longer holds looked up every stored message on its
+  own on every sync, and on the desktop each lookup measured a table on disk again. It now reads the
+  mailbox's messages and their server copies in one pass, so a first import makes fewer file-system
+  calls and each sync spends less time on the check.
+
+### Pressing a year in History opens that year
+<!-- changes: fix-025-history-rail-year.md -->
+
+On a mailbox spanning several years, a year press in History's rail opened the newer year beside
+it, so the oldest months were out of the rail's reach. A year or month press now puts that
+period's first message at the top of the list and lists that year's months.
+
+### Opening a message marks it read everywhere, even if you close the tab right after
+<!-- changes: fix-025-open-saves-the-read.md -->
+
+A message you open in the Ohbox, or rest on for two seconds in the split view, is saved as read at that
+moment. The read used to be sent only when you opened another message, so the unread count and your
+other devices kept it unread, and a reload or a closed tab lost it. The message keeps its place in the
+list until you move on.
+
+### Escape in the address suggestions closes the suggestions, not the message
+<!-- changes: fix-025-escape-in-recipients.md -->
+
+With the address suggestions open, Escape closes the suggestions and leaves the message open; the
+next Escape closes it and keeps the draft. Escape in the link box closes only the link box, and ⌘K
+in the message body opens it without the command palette.
+
+### Search's empty state reads as separate sentences
+<!-- changes: fix-025-search-empty-state-sentences.md -->
+
+- When a search finds nothing, the note that search does not reach your mail server's own junk
+  folder stands on its own line, and a screen reader reads it apart from the result line. On the
+  web and the desktop apps.
+- On a desktop paired with ohmail Cloud, a search answered by this computer's copy while Cloud
+  cannot be reached no longer says that older mail is still being indexed.
+- The desktop's View menu calls the Ctrl+2 view News, as the app does.
+
+### The phone stays signed in through a Wi-Fi sign-in page or a blocked network
+<!-- changes: fix-025-refresh-signs-out-only-on-a-refusal.md -->
+
+The phone, and a browser paired with the desktop app, no longer sign out when a Wi-Fi sign-in
+page, a firewall or a proxy answers while the session renews. They keep the session and try again;
+only a refusal from the server signs them out.
+
+### Editing a rule made before the News rename no longer moves it
+<!-- changes: fix-025-server-lows.md -->
+
+Rules made before News was renamed from Reads counted as moved when an edit named the same
+folder, so the rule was renamed and the mail it had already filed was queued to be sorted again.
+The rule keeps its folder now, and its earlier mail is sorted again only when you ask for that.
+
+### The browser stays signed in when a proxy answers a session renewal
+<!-- changes: fix-025-server-lows.md -->
+
+A browser signed out when a proxy or a hosting platform in front of the server answered a
+session renewal with an error code of its own. It keeps the session now and tries again; only the
+server's refusal signs it out.
+
+### The message list is no longer downloaded again on every sync
+<!-- changes: fix-025-local-window-sync-410-loop.md -->
+
+When the sync service refused to continue from the message list it had just sent, the app
+discarded that list and downloaded it again on every sync. It now keeps the list it has and tries
+a fresh one after a minute, then at longer intervals up to half an hour. On the desktop, the web
+and the phone.
+
+### A refused connection is said next to the Connect button
+<!-- changes: fix-025-connect-refusal-where-the-press-was.md -->
+
+When a mailbox cannot be connected during setup, the reason appears beside the Connect button
+and takes focus, instead of at the top of a form that has scrolled away. The desktop's own-server
+door does the same. A refused connection no longer asks you to check a port or a server the form
+has no field for.
+
+### An idle account no longer makes the app download its message list again
+<!-- changes: fix-025-prune-keeps-the-newest-change.md -->
+
+On an account with no new mail for a while, the server's clean-up of old sync history could
+remove its newest entry, and every sync after that was refused until something in the mailbox
+changed. The clean-up keeps that entry now, and an account it already reached recovers on its
+next sync without anything to run. On the web, the desktop paired with a server and the phone.
+
+### Rules that file into News are one place
+<!-- changes: fix-025-one-news-chip-and-the-phone-history-chip.md -->
+
+Rules made before News was renamed from Reads showed under a second News chip in Settings > Rules,
+and Revoke all covered only one of them. They are one chip now. Screening a sender into News no
+longer rewrites or duplicates a rule that already files them there.
+
+### The phone's History shows each message's folder
+<!-- changes: fix-025-one-news-chip-and-the-phone-history-chip.md -->
+
+History on the phone cut the folder chip under each row to a sliver, and Search cut a result's
+badge line the same way. The rows now make room for everything in them, so both read whole at any
+text size.
+
+### The phone's About says what the app does
+<!-- changes: fix-025-phone-lows.md -->
+
+About said writing a new message would come with a later update; it has shipped. On a phone that organizes its own
+mailbox, About no longer says it is paired.
+
+### No endless indexing sentence on the phone
+<!-- changes: fix-025-phone-lows.md -->
+
+A phone that organizes its own mailbox showed "Older mail is still being indexed" under every search, with a figure
+that never moved. Its search finds all of the mailbox without that index, and the sentence is gone.
+
+### History rows keep their own height on the phone
+<!-- changes: fix-025-phone-lows.md -->
+
+One History or Search row whose badges wrapped to a second line made every row taller. Each row now takes its own
+height.
+
+### Settings names who files each mailbox
+<!-- changes: fix-025-mailboxes-pane.md -->
+
+On the web, Settings → Mailboxes said "This computer files this mailbox" about a mailbox ohmail
+Cloud organizes, which read as if closing the browser stopped the filing. The organizing sentence
+and the stop control's sentences now name ohmail Cloud, or this server on a self-hosted install. The
+desktop app says "this computer" for the mailboxes it organizes itself, and names ohmail Cloud or
+the computer it is paired with where those organize.
+
+### A mailbox's message count leaves deleted mail out
+<!-- changes: fix-025-mailboxes-pane.md -->
+
+Settings → Mailboxes counted each mailbox's deleted messages too, so its figures added up to more
+than History's "every message you own". The count now includes only the mail you have.
+
+### A self-hosted install no longer calls itself ohmail Cloud
+<!-- changes: fix-025-selfhost-says-this-server.md -->
+
+On a self-hosted server, Settings → Mailboxes said "Cloud" about the server itself: "Cloud is not
+organizing this mailbox, but its claim is still on it", "This takes Cloud's claim off the mailbox",
+"Another ohmail Cloud install has claimed this mailbox" and "Take over on Cloud…" with its effect
+and answers. Those sentences now name this server, or another ohmail server for a claim held
+elsewhere. The desktop app heads a self-hosted server's mailboxes "Mailboxes on this server" and a
+paired computer's "Mailboxes on" that computer's name; it said "Cloud mailboxes" for both.
+
+### A self-hosted server's certificate authority is read from one file
+<!-- changes: fix-025-operator-ca-one-folder.md -->
+
+The desktop app reads your own server's root certificate from one file, `cloud-ca.pem` in its data
+folder, both when it checks the address and when it connects. The address step of "Your own
+server" shows the file's full path, and a certificate refusal names it. A copy in the folder the
+address check used to read is still used for one more release.
+
+### Signing in again works on a mailbox that was signed out
+<!-- changes: fix-025-sign-in-again-stores-the-password-on-a-bare-mailbox.md -->
+
+After signing out of a computer with several mailboxes and reconnecting only one, the others
+asked for a password and refused it with "imap host is required". Signing out now keeps where
+each mailbox's server is, never its password, so entering the password under Sign in again
+connects that mailbox and it starts syncing. Signing out also removes the outgoing server's
+stored password, which it used to leave behind.
+
+### Signing in again works for mailboxes signed out on an earlier version
+<!-- changes: fix-025-sign-in-again-after-an-earlier-sign-out.md -->
+
+A mailbox signed out on an earlier version kept no record of its incoming server, and Sign in
+again refused its password with "imap host is required". Sign in again now finds the server from
+the provider the mailbox was added with, or from its outgoing server. Where neither says, it asks
+for the incoming server once, with the username filled in. The outgoing server's password those
+sign-outs left stored is removed when the app starts.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
