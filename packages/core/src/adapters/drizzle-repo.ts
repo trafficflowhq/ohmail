@@ -723,6 +723,31 @@ function dueNow(col: AnyPgColumn): SQL | undefined {
 /** Rows per `recordChanges` INSERT inside the rename swap — see the chunk note at the call. */
 const RENAME_CHANGE_CHUNK = 2000;
 
+/** Candidates the reaper checks per statement — see {@link instancelessCandidates}. */
+const REAPER_CHECK_CHUNK = 64;
+
+/**
+ * The reaper's candidates, in id order: the mailbox's live located messages EXCEPT the ids its
+ * instances name — one set operation, so each table is read once and nothing is probed per
+ * message (a per-message probe re-scanned the instance table, and sized it, once a message).
+ * A SUPERSET of the victims: a message with no instance at all is never among those ids. The
+ * caller applies the whole predicate to these ids alone, so the answer is the full scan's.
+ * Module-level so the known-set census enumerates operations, not fragment builders.
+ */
+async function instancelessCandidates(db: Db, accountId: string, mailboxId: string): Promise<string[]> {
+  const rows = await db.select({ id: messages.id }).from(messages)
+    .where(and(
+      eq(messages.mailboxId, mailboxId),
+      eq(messages.accountId, accountId),
+      isNull(messages.deletedAt),
+      sql`${messages.nativeLocator} is not null`,
+    ))
+    .except(db.select({ id: messageInstances.messageId }).from(messageInstances)
+      .where(eq(messageInstances.mailboxId, mailboxId)))
+    .orderBy(asc(messages.id));
+  return rows.map((r) => r.id);
+}
+
 /* `SQLWrapper` and never `unknown`: what this takes is a column or a fragment, and both are
    SQL entities. Typed `unknown` the parameter also admitted a bare JavaScript value, which reaches
    a raw template with no column encoder — the class that made a phone's stop record nothing. The
@@ -1322,30 +1347,41 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * Mail 0065 — the reaper `forgetInstanceAt`'s doc promised. See the interface doc for the
    * predicate and each exclusion; the husk runs BEFORE the `change_log` row on the lock-order
    * rule (`insertMessageBody` step 1 — counter row, then seq row, in that order everywhere).
+   * It runs once a cycle, so its cost follows the instance-less rows, not the mailbox: see
+   * {@link instancelessCandidates} and {@link REAPER_CHECK_CHUNK}.
    */
   async tombstoneInstanceless(accountId: string, mailboxId: string, limit: number): Promise<number> {
-    const victims = await this.db.select({ id: messages.id }).from(messages)
-      .where(and(
-        eq(messages.mailboxId, mailboxId),
-        eq(messages.accountId, accountId),
-        isNull(messages.deletedAt),
-        sql`${messages.nativeLocator} is not null`,
-        sql`not exists (select 1 from ${messageInstances}
-              where ${messageInstances.messageId} = ${messages.id})`,
-        // The junk-parked signature — reconciled while divergent — which only the `satisfiedBy`
-        // completion writes: there, "no watched instance" is the design, not a disappearance.
-        sql`not exists (select 1 from ${folderState}
-              where ${folderState.messageId} = ${messages.id}
-                and ${folderState.reconcileStatus} = 'reconciled'
-                and ${folderState.desiredFolder} <> ${folderState.observedFolder})`,
-      ))
-      .orderBy(asc(messages.id))
-      .limit(limit);
-    for (const v of victims) {
+    const candidates = await instancelessCandidates(this.db, accountId, mailboxId);
+    const victims: string[] = [];
+    for (let at = 0; at < candidates.length && victims.length < limit; at += REAPER_CHECK_CHUNK) {
+      const chunk = candidates.slice(at, at + REAPER_CHECK_CHUNK);
+      // Padded with its own last id, so the statement's text (and its plan) is one for every chunk.
+      while (chunk.length < REAPER_CHECK_CHUNK) chunk.push(chunk[chunk.length - 1]!);
+      const rows = await this.db.select({ id: messages.id }).from(messages)
+        .where(and(
+          inArray(messages.id, chunk),
+          eq(messages.mailboxId, mailboxId),
+          eq(messages.accountId, accountId),
+          isNull(messages.deletedAt),
+          sql`${messages.nativeLocator} is not null`,
+          sql`not exists (select 1 from ${messageInstances}
+                where ${messageInstances.messageId} = ${messages.id})`,
+          // The junk-parked signature — reconciled while divergent — which only the `satisfiedBy`
+          // completion writes: there, "no watched instance" is the design, not a disappearance.
+          sql`not exists (select 1 from ${folderState}
+                where ${folderState.messageId} = ${messages.id}
+                  and ${folderState.reconcileStatus} = 'reconciled'
+                  and ${folderState.desiredFolder} <> ${folderState.observedFolder})`,
+        ))
+        .orderBy(asc(messages.id))
+        .limit(limit - victims.length);
+      for (const r of rows) victims.push(r.id);
+    }
+    for (const id of victims) {
       await this.db.update(messages).set({ deletedAt: new Date(), updatedAt: new Date() })
-        .where(eq(messages.id, v.id));
-      await this.huskBody(accountId, v.id, "expunged");
-      await this.recordChange({ accountId, entityType: "message", entityId: v.id, op: "delete", meta: null });
+        .where(eq(messages.id, id));
+      await this.huskBody(accountId, id, "expunged");
+      await this.recordChange({ accountId, entityType: "message", entityId: id, op: "delete", meta: null });
     }
     return victims.length;
   }
