@@ -1366,24 +1366,27 @@ async function applyAccountUpsert(
  * `away_replies` row naming the reply's Message-ID, and the wire carries neither the ledger nor raw
  * headers. So a flagged row writes that one fact, once per id; `false` or absent writes nothing,
  * because the hosted ledger never un-answers anybody. The row is the account's and names one
- * mailbox, so the fence asks both stamps first, account then mailbox, and an erased one SKIPS the
- * write as every replay arm here does: its refusal is caught, never thrown past the page.
+ * mailbox, so a flagged row asks both stamps before its first statement, account then mailbox, in
+ * the page's own transaction, and an erased one SKIPS the write as every replay arm here does: its
+ * refusal is caught, never thrown past the page. An unflagged row writes nothing and asks nothing.
  */
 async function mirrorAutoReply(
   tx: Tx, dia: Dialect, world: LocalWorld, mailboxId: string,
   m: Pick<MessageDTO, "autoReplyByUs" | "messageIdHeader" | "to" | "date">, now: Date,
 ): Promise<boolean> {
+  const header = (m.messageIdHeader ?? "").trim();
+  // A CARRIER, not a reader of what the row means (the engagement census's line): only a TRUE flag
+  // is a fact to write, so it is asked in the positive form.
+  const flagged = m.autoReplyByUs === true;
+  if (!flagged || header === "") return false;
+  // THE FENCE, after the flag and before the first statement: asked first, it cost every mirrored
+  // message two reads on a first sync for a row that writes nothing.
   try {
     await fenceErased(tx, dia, { accountId: world.accountId, mailboxId });
   } catch (err) {
     if (err instanceof AccountErasedError || err instanceof MailboxErasedError) return false;
     throw err;
   }
-  const header = (m.messageIdHeader ?? "").trim();
-  // A CARRIER, not a reader of what the row means (the engagement census's line): only a TRUE flag
-  // is a fact to write, so it is asked in the positive form.
-  const flagged = m.autoReplyByUs === true;
-  if (!flagged || header === "") return false;
   const minted = `<${header}>`;
   const held = await tx.select({ id: awayReplies.id }).from(awayReplies)
     .where(and(eq(awayReplies.accountId, world.accountId), eq(awayReplies.mintedMessageId, minted)))
