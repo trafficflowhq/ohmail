@@ -5,8 +5,8 @@
  * mutations behind them (`src/state/live.ts`, mirrored from `AppShell.onMessageAction`) —
  * arranged for a thumb: the bar pins to the bottom; everything else stands in the More sheet.
  * The webapp's absence rules hold: Reply all only where `replyAllRecipients` admitted an
- * envelope, Forward never on `no_forward`, the read slot holds one of its three faces. The AI
- * drafter is not here — no engine verb, so an absent control, never a dead one.
+ * envelope, Forward always (a `no_forward` message asks once), the read slot holds one of its
+ * three faces. The AI drafter is not here — no engine verb, so an absent control, never a dead one.
  */
 import { Fragment, useEffect, useRef, useState } from "react";
 import {
@@ -146,14 +146,28 @@ export function MessageActions({
 
   const a = w.actions;
   const close = () => setOpen(null);
-  /** Forward is always offered (`forwardOffered`); a `no_forward` message asks once first. */
-  const openForward = () => setOpen(m.forwardAsk ? "forward-ask" : { compose: "forward" });
 
   /* The reader may leave (the delete committed) OR be gone already (the person backed out during
      the window). The window still commits the delete either way; only the NAVIGATION is guarded,
      so a commit after the reader is gone does not over-pop a screen it no longer owns. */
   const mounted = useRef(true);
   useEffect(() => () => { mounted.current = false; }, []);
+  const shownId = useRef(m.id);
+  shownId.current = m.id;
+
+  /**
+   * Forward is always offered (`forwardOffered`). A row the mirror does not hold has its body read
+   * through the reader's door first (`forwardFetch`), and a `no_forward` message asks once. A read
+   * that settles after the reader moved to another message opens nothing.
+   */
+  const openForward = () => {
+    const id = m.id;
+    const ask = m.forwardAsk;
+    const go = () => setOpen(ask ? "forward-ask" : { compose: "forward" });
+    const reading = a.forwardFetch(id);
+    if (reading === null) { go(); return; }
+    void reading.then(() => { if (mounted.current && shownId.current === id) go(); });
+  };
 
   /**
    * WHICH PRESENTATION THIS POSTURE TAKES (`reader-verbs.ts`, the census-walked model): the

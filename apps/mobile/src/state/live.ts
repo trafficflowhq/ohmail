@@ -1545,7 +1545,12 @@ export function storeSearchWalkerFor(engine: OhmailEngine): StoreSearchWalker {
  * `readerOffMirror`: set by the list that opened it, with its body read on open through
  * `engine.readBodyOffMirror` (returned, never written). One entry; the mirror's row wins.
  */
-let offMirror: { row: EngineMessage; body: { state: "loading" | "full" | "failed"; text: string; html: string | null } | null } | null = null;
+let offMirror: {
+  row: EngineMessage;
+  body: { state: "loading" | "full" | "failed"; text: string; html: string | null } | null;
+  /** The body read in flight or last settled — what a Forward press waits on (`forwardFetch`). */
+  read: Promise<void> | null;
+} | null = null;
 let offMirrorRev = 0;
 const offMirrorListeners = new Set<() => void>();
 const offMirrorMoved = (): void => {
@@ -1554,7 +1559,7 @@ const offMirrorMoved = (): void => {
 };
 export function openOffMirror(m: EngineMessage): void {
   if (offMirror?.row.id === m.id) return;
-  offMirror = { row: m, body: null };
+  offMirror = { row: m, body: null, read: null };
   offMirrorMoved();
 }
 export const subscribeOffMirror = (fn: () => void): (() => void) => {
@@ -1583,7 +1588,7 @@ export function hydrateOffMirror(engine: OhmailEngine, id: string): boolean {
   if (held.body !== null && held.body.state !== "failed") return true;
   held.body = { state: "loading", text: "", html: null };
   offMirrorMoved();
-  void engine.readBodyOffMirror(id).then((out) => {
+  held.read = engine.readBodyOffMirror(id).then((out) => {
     if (offMirror !== held) return;
     held.body = out.state === "ready"
       ? { state: "full", text: out.text, html: out.html }
@@ -1591,6 +1596,15 @@ export function hydrateOffMirror(engine: OhmailEngine, id: string): boolean {
     offMirrorMoved();
   });
   return true;
+}
+
+/**
+ * The same read, awaited: joins one in flight, re-asks a failed one, and settles at once over a
+ * body already read. `null` where the row is not the reader's off-mirror row. Never rejects.
+ */
+function offMirrorBodyRead(engine: OhmailEngine, id: string): Promise<void> | null {
+  if (!hydrateOffMirror(engine, id)) return null;
+  return offMirror?.row.id === id && offMirror.read !== null ? offMirror.read : Promise.resolve();
 }
 
 /* ─────────────────────────────────────────────────────────────────── search */
@@ -2182,6 +2196,12 @@ export interface LiveWorldActions {
   /** An explicit re-ask for one message's full text (a card expand, a reopen). */
   hydrateMessage(id: string): void;
   /**
+   * WHAT A FORWARD PRESS WAITS ON BEFORE IT OPENS — `forwardPress(m, held).fetch`: a row the mirror
+   * does not hold has its body read through the reader's door, so the server can quote it. `null`
+   * opens at once; the promise never rejects, and a failed read still opens (the send says why).
+   */
+  forwardFetch(messageId: string): Promise<void> | null;
+  /**
    * PUT A GIVEN-UP CHANGE BACK IN THE QUEUE — under its ORIGINAL Idempotency-Key, so an attempt
    * that committed and only lost its answer replays that answer instead of sending a second copy.
    * Parity with the browser's "Try again"; the engine owns the rule, this is the phone's door to it.
@@ -2543,6 +2563,13 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   };
 
   const hydrateMessage = (id: string): void => hydrateSmart(id);
+
+  const forwardFetch = (messageId: string): Promise<void> | null => {
+    const m = messageOf(messageId);
+    if (!m) return null;
+    const held = engine.read().get<EngineMessage>("message", messageId) !== undefined;
+    return forwardPress(m, held).fetch ? offMirrorBodyRead(engine, messageId) : null;
+  };
 
   /**
    * The held bag's bodies, batched (`hydrateThread` → `GET /messages/bodies`), with the
@@ -3754,7 +3781,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     async discardAbandoned(id) {
       await engine.discardAbandoned(id);
     },
-    openMessage, hydrateMessage, hydrateHeld, loadInlineImages, openAttachmentBytes,
+    openMessage, hydrateMessage, forwardFetch, hydrateHeld, loadInlineImages, openAttachmentBytes,
     releaseAttachments,
     sweepFeed, leaveFeed, decide, release, setPile,
     pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, markAllSeen, move,
@@ -3783,6 +3810,8 @@ export interface WorldActions {
   releaseAttachments(messageId: string): void;
   /** An explicit re-ask for one message's full text (a card expand, a reopen). */
   hydrateMessage(id: string): void;
+  /** A Forward press's read first — see {@link LiveWorldActions.forwardFetch}. */
+  forwardFetch(messageId: string): Promise<void> | null;
   /**
    * The two verbs on a change the engine gave up on — see {@link LiveWorldActions.retryAbandoned}.
    * Awaited by the caller (the chrome disables the row while one is in flight), so unlike most of
@@ -3888,6 +3917,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     releaseAttachments: (id) => current().releaseAttachments(id),
     openAttachmentBytes: (id, attachmentId) => current().openAttachmentBytes(id, attachmentId),
     hydrateMessage: (id) => current().hydrateMessage(id),
+    forwardFetch: (id) => current().forwardFetch(id),
     retryAbandoned: (id) => current().retryAbandoned(id),
     discardAbandoned: (id) => current().discardAbandoned(id),
     hydrateHeld: (ids) => current().hydrateHeld(ids),

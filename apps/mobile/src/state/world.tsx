@@ -482,6 +482,7 @@ const NO_ACTIONS: WorldActions = {
   openAttachmentBytes: async () => ({ state: "unavailable" as const }),
   releaseAttachments: () => undefined,
   hydrateMessage: () => undefined,
+  forwardFetch: () => null,
   // The empty world has no engine and nothing queued; the resolved promise keeps the facade's
   // shape honest for a caller that awaits it.
   // The empty world has no engine; the shape is kept honest for a caller that reads the result.
@@ -1220,6 +1221,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           openAttachmentBytes: (id, attachmentId) => acts.openAttachmentBytes(id, attachmentId),
           releaseAttachments: (id) => acts.releaseAttachments(id),
           hydrateMessage: (id) => acts.hydrateMessage(id),
+          forwardFetch: (id) => acts.forwardFetch(id),
           retryAbandoned: (id) => acts.retryAbandoned(id),
           discardAbandoned: (id) => acts.discardAbandoned(id),
           hydrateHeld: (ids) => acts.hydrateHeld(ids),
