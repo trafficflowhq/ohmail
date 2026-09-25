@@ -199,7 +199,7 @@ import {
   resolveExpiredLaunchSession,
   type LocalRosterRow, type LocalWorld,
 } from "./identity.js";
-import { launchSessionExpiredResponse, mintLaunchBearer } from "./launch-bearer.js";
+import { isEndedBearerExit, launchSessionExpiredResponse, mintLaunchBearer } from "./launch-bearer.js";
 // ONE RUNTIME PER MAILBOX, held in a map. The record, the map and the seed decision live in
 // `roster.ts`; what stays here is the assembly that fills one in and the routes that add and
 // remove them. See that file's header for what is per mailbox and what is per install.
@@ -7243,15 +7243,18 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         /* THE WINDOW'S BEARER IS RENEWED BEFORE ANY DOOR READS THE STORE (`launch-bearer.ts`), so
            a window left open does not expire under the person. Ended — its row revoked, or past
            its expiry with the store refusing the renewal — it is refused BY NAME on every route,
-           as on the Cloud door. A fault here (the clock) falls through to the pipeline, whose
-           envelope answers and logs it. */
+           as on the Cloud door, but the ways out (`ENDED_BEARER_EXITS`): sign-out's door asks its
+           own question of an expired bearer below. A fault here (the clock) falls through to the
+           pipeline, whose envelope answers and logs it. */
         const auth = req.headers.get("authorization") ?? "";
         const presented = /^Bearer\s+/i.test(auth) ? auth.replace(/^Bearer\s+/i, "").trim() : "";
         let refused = false;
         try {
           refused = presented !== "" && (await session.decide(presented, now())) === "refused";
         } catch { /* the pipeline below meets the same fault inside its envelope */ }
-        if (refused) return launchSessionExpiredResponse();
+        if (refused && !isEndedBearerExit(req.method, new URL(req.url).pathname)) {
+          return launchSessionExpiredResponse();
+        }
         /* THE WINDOW'S OWN PULL FAILURE, into this log. Its own door, ahead of the local-action
            chain: it carries no mailbox, writes nothing, and is authorised by the same launch
            bearer every local door reads. See `window-report.ts`. */

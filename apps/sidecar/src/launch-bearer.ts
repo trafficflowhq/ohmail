@@ -47,6 +47,18 @@ export function launchSessionExpiredResponse(): Response {
   );
 }
 
+/* THE WAYS OUT, the local door's only routes that an ended bearer still reaches. Sign-out ends a
+   broken session, so it may not need a live one: its door asks its own question of an expired
+   bearer (`resolveExpiredLaunchSession`) and still refuses a revoked or unknown one. Every other
+   route is refused by name before it is read. */
+export const ENDED_BEARER_EXITS: ReadonlyArray<{ readonly method: string; readonly path: string }> = [
+  { method: "DELETE", path: "/local/stored-login" },
+];
+
+export function isEndedBearerExit(method: string, path: string): boolean {
+  return ENDED_BEARER_EXITS.some((exit) => exit.method === method && exit.path === path);
+}
+
 export async function mintLaunchBearer(
   db: LocalDb, world: LocalWorld, now: Date, log?: Diagnostic,
 ): Promise<LaunchBearer> {
