@@ -1,17 +1,24 @@
-import { and, desc, eq, isNull, ne, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql, type SQL } from "drizzle-orm";
 import { accountSettings, contacts, folderState, messages, rules as rulesTbl } from "./schema-mail.js";
-import { recordChange, recordRuleDelta, type LedgerTx, type Tx } from "./change-log.js";
+import { recordChanges, recordRuleDelta, type ChangeInput, type LedgerTx, type Tx } from "./change-log.js";
 import { dialect } from "./dialect/index.js";
 import { AccountErasedError, readAccountErasedAt } from "./erasure-fence.js";
 import { readOrganizerRole } from "./organizer-role.js";
 import { recordLearningSignal } from "./learning-signal.js";
-import { upsertDesiredSeen } from "./flag-intent.js";
+import { upsertDesiredSeenMany } from "./flag-intent.js";
 
 /**
  * `@trafficflow/core/rule-order#RULE_PRIORITY_MAX`, copied: this package does not import core.
  * `rules-priority-bound.test.ts` (services) pins the two equal; the drain reads it here.
  */
 export const RULE_PRIORITY_MAX = 1000;
+
+/**
+ * How many held messages one set of a decision's writes carries: `@trafficflow/core`'s
+ * `FILING_BATCH_MAX`, copied for the same reason; `screener-decide-statements.test.ts` (services)
+ * pins the two equal. A decision's statements grow with these sets, not with its messages.
+ */
+export const DECISION_BATCH_MAX = 50;
 
 /**
  * `recordChange` wants `LedgerTx` (`PgTransaction`, narrower than `Tx`/`PgDatabase`) because it is
@@ -255,12 +262,18 @@ async function rerouteHeldBag(
     writable.push(...bag);
   }
 
+  // IN SETS OF DECISION_BATCH_MAX, inside the one transaction: each set is one guarded upsert,
+  // one read-intent upsert and one `messages` update for the rows it moved, and one change-log
+  // append whose rows keep the per-message order (move, then its update). Nothing commits until
+  // the decision does, so the grouping is invisible to every reader.
   let lastSeq: bigint | null = null;
-  for (const m of writable) {
-    const [hit] = await tx.insert(folderState).values({
+  const markRead = MARK_READ_ON_DECIDE.has(appliedFolder);
+  for (let i = 0; i < writable.length; i += DECISION_BATCH_MAX) {
+    const batch = writable.slice(i, i + DECISION_BATCH_MAX);
+    const hits = await tx.insert(folderState).values(batch.map((m) => ({
       messageId: m.messageId, desiredFolder: appliedFolder, observedFolder: m.observedFolder,
       lastSetBy: "us", reconcileStatus: "pending", conflict: false,
-    }).onConflictDoUpdate({
+    }))).onConflictDoUpdate({
       target: folderState.messageId,
       set: {
         desiredFolder: appliedFolder, lastSetBy: "us", reconcileStatus: "pending", conflict: false,
@@ -270,22 +283,27 @@ async function rerouteHeldBag(
       // header for the misfiled-bulletins defect this guard closes.
       setWhere: eq(folderState.desiredFolder, SCREENER_FOLDER),
     }).returning({ messageId: folderState.messageId });
-    if (!hit) continue;
-    rerouted.push(m);
-    lastSeq = await recordChange(ledger(tx), {
-      accountId, entityType: "message", entityId: m.messageId, op: "move",
-      meta: { from: m.observedFolder, to: appliedFolder },
-    });
+    const hit = new Set(hits.map((h) => h.messageId));
+    const moved = batch.filter((m) => hit.has(m.messageId));
+    if (moved.length === 0) continue;
+    rerouted.push(...moved);
 
-    if (MARK_READ_ON_DECIDE.has(appliedFolder)) {
-      await upsertDesiredSeen(tx, m.messageId, !m.unread, true, now);
+    if (markRead) {
+      await upsertDesiredSeenMany(tx, moved.map((m) => ({ id: m.messageId, observedSeen: !m.unread })), true, now);
       await tx.update(messages)
         .set({ unread: false, lastReadAt: now, updatedAt: now })
-        .where(and(eq(messages.id, m.messageId), eq(messages.accountId, accountId)));
-      lastSeq = await recordChange(ledger(tx), {
-        accountId, entityType: "message", entityId: m.messageId, op: "update", meta: null,
-      });
+        .where(and(inArray(messages.id, moved.map((m) => m.messageId)), eq(messages.accountId, accountId)));
     }
+    const changes: ChangeInput[] = [];
+    for (const m of moved) {
+      changes.push({
+        accountId, entityType: "message", entityId: m.messageId, op: "move",
+        meta: { from: m.observedFolder, to: appliedFolder },
+      });
+      if (markRead) changes.push({ accountId, entityType: "message", entityId: m.messageId, op: "update", meta: null });
+    }
+    const seqs = await recordChanges(ledger(tx), changes);
+    lastSeq = seqs[seqs.length - 1]!;
   }
 
   return { rerouted, heldElsewhere, lastSeq };

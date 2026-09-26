@@ -78,7 +78,7 @@ export {
 // idempotency replay — none of them belong at this layer, and the DECIDE INPUT VALIDATION stays in
 // services too, because it needs `@trafficflow/core`'s `effectForDestination`).
 export {
-  SCREENER_FOLDER, DECIDABLE_FOLDERS, admitsDestination, domainOf,
+  SCREENER_FOLDER, DECIDABLE_FOLDERS, DECISION_BATCH_MAX, admitsDestination, domainOf,
   heldRowById, heldRowsForSender, heldRowsForDomain, rerouteOwnHeldBag,
   applyScreenerDecision, validateRequestPayload,
   type AppliedScreenerRow, type ApplyScreenerDecisionInput, type ApplyScreenerDecisionResult,
