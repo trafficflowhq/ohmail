@@ -572,6 +572,8 @@ export interface Dialect {
      * row — or `null` on a store that keeps none worth asking. An ESTIMATE, labelled as one.
      */
     estimateRows(db: unknown, statement: SQL): Promise<number | null>;
+    /** {@link estimateRows} for several statements in ONE plan, in their order; `null` each where none is kept. */
+    estimateRowsEach(db: unknown, statements: readonly SQL[]): Promise<Array<number | null>>;
     /**
      * The body's INSERT and its search document's upsert as ONE statement — a data-modifying CTE
      * whose answer is how many body rows the first half wrote — or `null` on a store that has no

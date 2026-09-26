@@ -360,6 +360,19 @@ export function pgDialect(): Dialect {
         const n = plan?.[0]?.Plan?.["Plan Rows"];
         return typeof n === "number" && Number.isFinite(n) ? Math.round(n) : null;
       },
+      estimateRowsEach: async (db: unknown, statements: readonly SQL[]): Promise<Array<number | null>> => {
+        const one = (s: SQL) => pgDialect().search.estimateRows(db, s);
+        if (statements.length < 2) return Promise.all(statements.map(one));
+        // One EXPLAIN: an Append keeps each branch's own estimate. Any other shape asks each apart.
+        const all = sql.join(statements.map((s, i) => sql`select 1 from (${s}) ${sql.raw(`e${i}`)}`), sql` union all `);
+        const rows = await pgDialect().exec(db, sql`explain (format json) ${all}`);
+        const cell = rows[0]?.[0];
+        type Node = { "Node Type"?: string; "Plan Rows"?: number; Plans?: Node[] };
+        const top = ((typeof cell === "string" ? JSON.parse(cell) : cell) as Array<{ Plan?: Node }> | undefined)?.[0]?.Plan;
+        const kids = top?.["Node Type"] === "Append" ? top.Plans ?? [] : [];
+        if (kids.length !== statements.length) return Promise.all(statements.map(one));
+        return kids.map((k) => (typeof k["Plan Rows"] === "number" && Number.isFinite(k["Plan Rows"]) ? Math.round(k["Plan Rows"]) : null));
+      },
       withDocument: (bodyInsert: SQL, documentUpsert: SQL): SQL =>
         sql`with body as (${bodyInsert}) ${documentUpsert} returning (select count(*) from body)::int as body_rows`,
       document: (p: SearchDocumentParts) => ({

@@ -641,14 +641,19 @@ export class SearchService {
   /**
    * THE ESTIMATE of a cut match set, off the index and the statistics: an arm under its cut is
    * counted exactly by its own size, a cut arm by the planner's expected rows; the union is at
-   * least its largest arm and at least the candidates it fused.
+   * least its largest arm and at least the candidates it fused, and at most the planner's reading
+   * of the mailbox under the filters (a join's estimate can exceed the table it reads: "about
+   * 75,246" of 74,003). Every cut arm and the mailbox are asked in ONE plan.
    */
   private async estimateOf(
     ctx: ServiceContext, d: Dialect, where: SQL, arms: readonly Arm[], sizes: readonly number[], k: number, candidates: number,
   ): Promise<number> {
-    const perArm = await Promise.all(arms.map(async (a, i) => (sizes[i]! < k ? sizes[i]!
-      : (await d.search.estimateRows(ctx.db, this.unionSql(where, [a]))) ?? sizes[i]!)));
-    return Math.max(candidates, ...perArm);
+    const cut = arms.flatMap((_, i) => (sizes[i]! < k ? [] : [i]));
+    const mailbox = sql`select m.id as id from messages m left join folder_state fs on fs.message_id = m.id where ${where}`;
+    const read = await d.search.estimateRowsEach(ctx.db, [...cut.map((i) => this.unionSql(where, [arms[i]!])), mailbox]);
+    const about = Math.max(candidates, ...arms.map((_, i) => (cut.includes(i) ? read[cut.indexOf(i)] ?? sizes[i]! : sizes[i]!)));
+    const upper = read[cut.length] ?? null;
+    return upper === null ? about : Math.max(candidates, Math.min(about, upper));
   }
 
   /**
