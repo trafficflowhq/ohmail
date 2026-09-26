@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { Button } from "@ohmail/ui";
+import { Button, Spinner } from "@ohmail/ui";
 // The ONE correct way out — revokes server-side and wipes the local mirror. The sign-out guard
 // asserts every `auth.logout` call in this app goes through it, so never call logout directly.
 import { signOut } from "../../sign-out";
@@ -12,6 +12,8 @@ import { saveBlob } from "../../shell/attachments";
 import { ApiError, account, type AccessRefusedFacts, type AccountLifecycle } from "../../api-client";
 import { AccountSection } from "./AccountSection";
 import { leaveForManagePage } from "./SubscriptionSection";
+import { useWallLift } from "../../shell/wall-lift";
+import { opensTheWall } from "../../access-verdict";
 
 /**
  * The wall — what an account the service has refused sees instead of its mail. Three things it
@@ -20,6 +22,7 @@ import { leaveForManagePage } from "./SubscriptionSection";
  * a trap. It deletes nothing and wipes nothing on its own, and its facts come from the 402 the
  * gate answered rather than from a read of its own. The way back MINTS AT THE PRESS: a link held
  * from the 402 lives ten minutes and once, so `manageUrl` only decides whether the button exists.
+ * It lifts itself only on the service's fresh `access: "open"` (`useWallLift`), via `onLifted`.
  */
 
 /** What the headline says, and the date it carries. `null` = the undated sentence. */
@@ -50,8 +53,15 @@ export function exportFilename(now: Date): string {
   return `ohmail-settings-${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}.json`;
 }
 
-export function AccessLock({ facts }: { facts: AccessRefusedFacts }) {
+export function AccessLock(
+  { facts, onLifted }: { facts: AccessRefusedFacts; onLifted?: () => void },
+) {
   const t = useTranslations("accessLock");
+  const { check, armPoll, checkAgain } = useWallLift({
+    lifts: async () => opensTheWall(await account.access({ fresh: true })),
+    onLifted,
+    owner: readOwner(),
+  });
   const [signingOut, setSigningOut] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportFailed, setExportFailed] = useState(false);
@@ -69,6 +79,8 @@ export function AccessLock({ facts }: { facts: AccessRefusedFacts }) {
     try {
       const url = (await account.manageLink({ lang }))?.url;
       if (typeof url === "string" && url.length > 0) {
+        // The return is a poll: in this document if it survives the hand-off, in the next one if not.
+        armPoll();
         leaveForManagePage(url);
         return;
       }
@@ -79,7 +91,7 @@ export function AccessLock({ facts }: { facts: AccessRefusedFacts }) {
     } finally {
       setMinting(false);
     }
-  }, [lang, minting]);
+  }, [armPoll, lang, minting]);
 
   const doSignOut = useCallback(async () => {
     setSigningOut(true);
@@ -177,6 +189,19 @@ export function AccessLock({ facts }: { facts: AccessRefusedFacts }) {
               <Button onClick={() => setDeleting(false)}>{t("back")}</Button>
             </div>
           )
+          : check === "checking"
+          ? (
+            /* While the answer is in flight nothing else is true to offer; the way out stays. */
+            <>
+              <div className="wall-check" role="status" aria-busy="true">
+                <Spinner className="mbx-spin" />
+                <span>{t("checking")}</span>
+              </div>
+              <div className="gate-actions">
+                <Button onClick={doSignOut} disabled={signingOut}>{t("signOut")}</Button>
+              </div>
+            </>
+          )
           : (
             <>
               {/* THE ACTIONS ARE THE PAGE'S ONLY EMPHASIS, one column, in the order a person
@@ -184,6 +209,14 @@ export function AccessLock({ facts }: { facts: AccessRefusedFacts }) {
                   what it does underneath, because two of the three cannot be undone by pressing
                   again. */}
               <div className="wall-actions">
+                {check === "pending"
+                  ? (
+                    <>
+                      <p className="wall-note" role="status">{t("pending")}</p>
+                      <Button className="wall-act" onClick={checkAgain}>{t("checkAgain")}</Button>
+                    </>
+                  )
+                  : null}
                 {/* Rendered ONLY where the service operates a page: `manageUrl` is that fact and
                     nothing more. The address itself is minted by the press. */}
                 {facts.manageUrl

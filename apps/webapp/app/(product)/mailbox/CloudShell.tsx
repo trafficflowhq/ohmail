@@ -1,11 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Spinner } from "@ohmail/ui";
 import { AppShell } from "../../shell/AppShell";
 import type { MailboxFacts } from "../../shell/mail-state";
 import { toMailboxFacts } from "./mailbox-facts";
 import { buildToken } from "../../shell/app-update";
 import { startBuildWatch } from "../../shell/build-watch";
+import { reviveStandingDown } from "../../shell/sync-scheduler";
 import { useResolvedDemoModeFrom } from "../../shell/engine";
 import { COMPOSE_ATTACH_STAGED_SURFACE_BYTES } from "../../components/ComposeAttach";
 import {
@@ -27,6 +29,7 @@ import { MailboxSection } from "./MailboxSection";
 import { SubscriptionSection, useManageOffer } from "./SubscriptionSection";
 import { beginOAuthReturn } from "./oauth-return";
 import { useCloudFirstRun } from "./useCloudFirstRun";
+import { useFirstPaintGate } from "./useFirstPaintGate";
 
 /**
  * The Microsoft consent return, at module scope — before the router, before
@@ -95,19 +98,25 @@ export function CloudShell({ demo }: { demo: boolean }) {
    */
   /**
    * Has the service refused this account? Subscribed once, for the whole
-   * client: any door may answer `402 subscription_required`, so it is
-   * raised here rather than at two hundred call sites, and the whole
-   * surface swaps for the lock screen — mail beside a refusal is the state
-   * this prevents. It never unsets itself: a refusal is a fact about the
-   * account, and a later request that happens to succeed is not evidence it
-   * was lifted — signing in again after paying is what clears it. Not on
-   * the demo: no server, no account to refuse.
+   * client: any door may answer `402 subscription_required`, and an access
+   * read may answer `refused`, so it is raised here rather than at two
+   * hundred call sites and the whole surface swaps for the lock screen —
+   * mail beside a refusal is the state this prevents. It is cleared by ONE
+   * thing: the wall's own fresh read answering `access: "open"`. A
+   * door's incidental 200 is not evidence the refusal was lifted and
+   * clears nothing. Not on the demo: no server, no account to refuse.
    */
   const [refused, setRefused] = useState<AccessRefusedFacts | null>(null);
   useEffect(() => {
     if (resolvedDemo) return;
     return onAccessRefused((facts) => setRefused((held) => held ?? facts));
   }, [resolvedDemo]);
+  const firstPaint = useFirstPaintGate(resolvedDemo, (facts) => setRefused((held) => held ?? facts));
+  /** The lift: the shell mounts again and the drain loop picks up from its stored cursors. */
+  const lift = useCallback(() => {
+    setRefused(null);
+    reviveStandingDown();
+  }, []);
 
   const userInvites = useUserInvites(resolvedDemo);
 
@@ -197,8 +206,22 @@ export function CloudShell({ demo }: { demo: boolean }) {
   if (refused) {
     return (
       <AccountLocale>
-        <AccessLock facts={refused} />
+        <AccessLock facts={refused} onLifted={lift} />
       </AccountLocale>
+    );
+  }
+
+  /* The server's frame and the client's first are the same empty gate the shell has always
+     opened with; the verdict is asked only after hydration, behind the wordmark. */
+  if (firstPaint === "hydrating") return <div className="gate" aria-busy="true" aria-live="polite" />;
+  if (firstPaint === "asking") {
+    return (
+      <main className="gate" aria-busy="true">
+        <div className="gate-card">
+          <span className="wordmark"><b><em>oh</em>mail</b></span>
+          <Spinner className="mbx-spin" />
+        </div>
+      </main>
     );
   }
 

@@ -3303,6 +3303,25 @@ input.set-tag-input {
   line-height: 1.55;
   margin: 6px 2px 2px;
 }
+/* The two states of the wall's read after a hand-off: the row that stands in for the actions while
+   the answer is in flight (the hairline kept, so the card does not jump), and the quiet line above
+   the actions when the payment has not been confirmed yet. */
+.gate-card .wall-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 22px 0 18px;
+  margin: 0 0 18px;
+  border-top: 1px solid var(--hair);
+  font-size:calc(13px + var(--type-up));
+  color: var(--ink2);
+}
+.gate-card .wall-note {
+  font-size:calc(12px + var(--type-up));
+  color: var(--ink2);
+  line-height: 1.55;
+  margin: 8px 2px 4px;
+}
 /* The erasure ceremony, in place. It is Settings → Account's own pane, so it brings its own
    layout; all this does is give it the card's width back and put the way out under it. */
 .gate-card .wall-erase {

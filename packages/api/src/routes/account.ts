@@ -134,6 +134,7 @@ export const accountRoutes: Route[] = [
    * must see a reopening within seconds, not a cached refusal for a minute; every OTHER door
    * keeps the 60 s cache. `metered: false` is a host with no program. `canAddMailbox` is not
    * derivable from the numbers: an account may keep the mailboxes it has and be forbidden another.
+   * `access` is the gate's own `verdict.ok` in a word — the one field a wall lifts on.
    */
   {
     method: "GET",
@@ -147,7 +148,7 @@ export const accountRoutes: Route[] = [
       if (verdict === null) return json({ metered: false }, 200);
       if (!verdict.ok) {
         return json({
-          metered: true, canAddMailbox: false, mailboxes: 0, aiEnabled: false,
+          metered: true, access: "refused", canAddMailbox: false, mailboxes: 0, aiEnabled: false,
           ...(verdict.lifecycle ? { lifecycle: verdict.lifecycle } : {}),
           ...(verdict.manageUrl ? { manageUrl: verdict.manageUrl } : {}),
           exportPath: "/account/export",
@@ -161,6 +162,7 @@ export const accountRoutes: Route[] = [
       const caughtUp = verdict.lifecycle ? await reopenedCatchUp(deps, ctx) : null;
       return json({
         metered: true,
+        access: "open",
         canAddMailbox: verdict.limits.canAddMailbox,
         mailboxes: verdict.limits.mailboxes,
         // `aiEnabled` IS THE VERDICT'S OWN FIELD and was being read and dropped. It is what a

@@ -15,6 +15,8 @@ import {
 } from "./session-refresh";
 import { sessionMayAsk } from "./shell/session-truth";
 import { readOwner, readOwnerMarker, rememberOwner } from "./shell/owner-cookie";
+import { refusedFactsOf, verdictOf } from "./access-verdict";
+import { STALE_REFUSAL_MS, storeVerdict } from "./shell/wall-lift";
 
 /** The `/api` prefix the same-origin rewrite serves, or `null` on a build with no API armed. */
 export const API_BASE: string | null = process.env.NEXT_PUBLIC_API_BASE ?? null;
@@ -776,6 +778,13 @@ export interface AccessRefusedFacts {
 type AccessRefusedSink = (facts: AccessRefusedFacts) => void;
 let accessRefusedSink: AccessRefusedSink | null = null;
 
+/** When this client last heard `open`, for {@link STALE_REFUSAL_MS}'s window. */
+let openFor: { owner: string | null; at: number } | null = null;
+
+function refusalIsStale(owner: string | null): boolean {
+  return openFor !== null && openFor.owner === owner && Date.now() - openFor.at < STALE_REFUSAL_MS;
+}
+
 /**
  * Subscribe to access refusals. Returns the unsubscribe. LAST WRITER WINS — there is one shell
  * per document, and a second subscriber would mean two surfaces disagreeing about the same fact.
@@ -788,6 +797,9 @@ export function onAccessRefused(sink: AccessRefusedSink): () => void {
 /** Narrow the envelope's `details`. An unrecognised reason is `payment_required` — the arm whose
  *  remedy is a link the customer can act on, rather than one that reads as our fault. */
 function notifyAccessRefused(details: unknown): void {
+  const owner = readOwner();
+  if (refusalIsStale(owner)) return;
+  storeVerdict(owner, "closed");
   const sink = accessRefusedSink;
   if (!sink) return;
   const d = (details ?? {}) as {
@@ -1865,6 +1877,11 @@ export type AccountAccess =
        * predates the wall, and absent draws nothing — the banner has no state to name.
        */
       lifecycle?: AccountLifecycle;
+      /**
+       * THE VERDICT ITSELF, from the one the gate reads. Absent from an older API, and absent is
+       * neither: a wall lifts on `"open"` and on nothing else.
+       */
+      access?: "open" | "refused";
       /** The subscription page, when the refused arm named one. */
       manageUrl?: string;
       /** Where the settings document is served, when this server serves one. */
@@ -2443,15 +2460,36 @@ function accessRead(fresh: boolean): Promise<AccountAccess> {
   const entry = { owner, answer, settled: false };
   accessHeld = entry;
   void answer.then(
-    () => { entry.settled = true; },
+    (a) => { entry.settled = true; noteVerdict(owner, a); },
     () => { entry.settled = true; if (accessHeld === entry) accessHeld = null; },
   );
   return answer;
 }
 
+/**
+ * Every answer is the service's fresh word: stored for the next first paint, an open one opens the
+ * stale-402 window, and a refused one raises the wall like a 402 would.
+ */
+function noteVerdict(owner: string | null, a: AccountAccess): void {
+  const verdict = verdictOf(a);
+  if (verdict === null) return;
+  storeVerdict(owner, verdict);
+  if (verdict === "open") {
+    if (a.metered) openFor = { owner, at: Date.now() };
+    return;
+  }
+  openFor = null;
+  const facts = refusedFactsOf(a);
+  const sink = accessRefusedSink;
+  if (facts !== null && sink !== null) {
+    try { sink(facts); } catch { /* the answer stands either way */ }
+  }
+}
+
 /** Forget the held verdict — for a test, and for any act that changes what the account may do. */
 export function forgetAccess(): void {
   accessHeld = null;
+  openFor = null;
 }
 
 export const account = {

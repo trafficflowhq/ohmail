@@ -15,6 +15,7 @@ import { SCREENER_INTENTS_PREFIX } from "./shell/screener-intents";
 import { DELETE_INTENTS_PREFIX } from "./shell/delete-intents";
 import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
 import { READING_ALONG_PREFIX } from "./shell/reading-along";
+import { ACCESS_VERDICT_PREFIX, HANDOFF_KEY } from "./shell/wall-lift";
 import { SEND_LOCKS_PREFIX } from "./shell/send-lock";
 import { SESSION_MINTED_KEY } from "./session-refresh";
 
@@ -181,6 +182,9 @@ export async function forgetThisBrowser(
     READING_ALONG_PREFIX,
     // When this jar last received a session: it goes with the session it describes.
     SESSION_MINTED_KEY,
+    // `ohmail.access.<owner>` — where the service last found this account. Left behind it would
+    // decide the next account's first paint on this browser from somebody else's standing.
+    ACCESS_VERDICT_PREFIX,
   ]);
   survivors.push(...durable.survivors);
   // The mirror-name registry is swept BY `clearAllMirrors` itself (it removes the names it proved
@@ -210,6 +214,13 @@ export async function forgetThisBrowser(
   } catch {
     deviceCeremonySwept = false;
     survivors.push("ohmail.deviceCeremony");
+  }
+  // The wall's note that this tab pressed the hand-off: an account id and a time, per tab.
+  try {
+    sessionStorage.removeItem(HANDOFF_KEY);
+  } catch {
+    deviceCeremonySwept = false;
+    survivors.push(HANDOFF_KEY);
   }
   const wipe = await clearAllMirrors(owner);
   return {

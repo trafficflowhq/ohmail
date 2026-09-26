@@ -162,8 +162,8 @@ function tell(): void {
  *
  * A LATER 200 CLEARS NOTHING (the browser shell's rule): a refused account's own reads still
  * answer, and a cached page answering 200 behind the wall would flicker the app back for somebody
- * whose account is closed. Signing in again clears it and nothing else does
- * ({@link clearAccessLock}).
+ * whose account is closed. Here signing in again clears it ({@link clearAccessLock}); the browser
+ * shell also lifts on the service's own fresh `access: "open"` answer, and nothing else.
  *
  * The NEWEST facts win while it stands: a later closure's date replaces the first one heard.
  */
@@ -174,7 +174,7 @@ export function raiseAccessLock(facts: AccessRefusedFacts): void {
 
 /**
  * Take the wall down. The ONE caller is the connection layer, at the moment a session is
- * established — signing in again is the gesture that clears it, on every surface.
+ * established — on this surface, signing in again is the gesture that clears it.
  */
 export function clearAccessLock(): void {
   if (locked === null) return;
