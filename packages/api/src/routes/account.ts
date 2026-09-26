@@ -10,7 +10,7 @@ import { accountLifecycleNotices } from "@trafficflow/db/cloud";
 import { ServiceError } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { clearSessionCookies } from "../cookies.js";
-import { accessFor, cookieSurface, entitlementsPort, json } from "./shared.js";
+import { accessFor, cookieSurface, entitlementsPort, json, readBody } from "./shared.js";
 import type { ApiDeps } from "../deps.js";
 import type { Route } from "../router.js";
 
@@ -177,13 +177,12 @@ export const accountRoutes: Route[] = [
   },
   /**
    * `POST /account/manage-link` — the one door to the subscription page; an account with no
-   * subscription gets a plan choice there. `paid`: the port's answer is a network hop to a third
-   * party, and a verified address is the right floor for a door minting a link to a page holding
-   * payment details. Also the one `paid` route a refused account may reach
-   * (`ACCESS_REFUSED_MAY_REACH_ROUTES`): the way back to paying cannot be behind the lock. The
-   * account comes from the session; there is no body. 404 has two causes — no such program here
-   * (the ordinary self-host answer), or a program that does not know an account we just
-   * authenticated; the client's contract-fault report names the second.
+   * subscription gets a plan choice there. `paid`: a network hop to a third party, and a verified
+   * address is the floor for a link to a page holding payment details. The one `paid` route a
+   * refused account may reach (`ACCESS_REFUSED_MAY_REACH_ROUTES`): the way back to paying is not
+   * behind the lock. The account is the session's; the optional body names only the page's
+   * language, one of two words, and anything else is dropped. 404 has two causes — no such program
+   * here, or a program that does not know an account we just authenticated.
    */
   {
     method: "POST",
@@ -193,8 +192,12 @@ export const accountRoutes: Route[] = [
     replay: "ephemeral",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
+      // A body that is JSON but not an object (`null`, a string) names no language either.
+      const lang = (await readBody<{ lang?: unknown } | null>(req))?.lang;
       const port = entitlementsPort(deps);
-      const link = port ? await port.manageLink(ctx.accountId) : null;
+      const link = port
+        ? await port.manageLink(ctx.accountId, lang === "de" || lang === "en" ? lang : undefined)
+        : null;
       if (!link) {
         throw new ServiceError(
           "no_manage_surface", 404,

@@ -513,8 +513,9 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       return res?.status === 200 ? "settled" : "unreachable";
     },
 
-    async manageLink(accountId: string): Promise<{ url: string } | null> {
-      const res = await post("/v1/manage-link", { accountId });
+    async manageLink(accountId: string, lang?: "de" | "en"): Promise<{ url: string } | null> {
+      // Named only when the caller chose one: an older program reads `accountId` alone.
+      const res = await post("/v1/manage-link", { accountId, ...(lang ? { lang } : {}) });
       if (!res || res.status !== 200 || !res.bodyIsJson) return null;
       const b = obj(res.body);
       // `{url: null}` is an ANSWER — the program does not know this account. Only a body that

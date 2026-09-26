@@ -254,9 +254,10 @@ export interface EntitlementsPort {
    * also the only route to a FIRST subscription — which is why `null` means one thing, that the
    * program does not know this account, and not "nothing to manage".
    *
-   * Render the row, or the onboarding link, only when a URL comes back; never store one.
+   * Render the row, or the onboarding link, only when a URL comes back; never store one. `lang`
+   * is the page's language; absent, the page picks its own.
    */
-  manageLink(accountId: string): Promise<{ url: string } | null>;
+  manageLink(accountId: string, lang?: "de" | "en"): Promise<{ url: string } | null>;
   /** The person is being erased: stop the money. Bounded and never throwing, because Article 17
    *  may not be withheld because a payment processor is unreachable. */
   releaseAccount(accountId: string): Promise<ReleaseOutcome>;
