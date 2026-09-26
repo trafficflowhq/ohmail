@@ -13,6 +13,147 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### The desktop app recovers when its window stops
+<!-- changes: fix-025-desktop-recovers.md -->
+
+On Linux, focusing the New tag field with an accessibility tool could stop the window, which then
+ignored every click until ohmail was relaunched. That field no longer does this, and a window that
+stops is reloaded with a sentence saying so; if it stops again soon after, ohmail offers to
+relaunch.
+
+### The server does much less database work while nothing changes
+<!-- changes: cloud-025-db-load.md -->
+
+The Screener's automatic filing reads only the held mail that arrived or changed since its last
+pass, and walks the whole queue at most hourly. `GET /consent` no longer computes per-sender counts
+on every read; ask with `?counts=1` to get them. Marking many messages read costs the same few
+statements for one message as for two hundred, a sync cycle writes a folder's cursor only when it
+moved, and the stale-device alert costs the same for any number of devices and is logged once, not
+on every pass.
+
+### The phone names a mail server certificate it will not accept
+<!-- changes: fix-025-phone-does-what-it-says.md -->
+
+When the phone refuses a mail server's certificate, connecting stops with a sentence that says so,
+before your password is sent. A mailbox whose certificate is refused later shows the same fact
+instead of "Connection lost. Reconnecting…", and tries again the next time ohmail opens rather than
+every few seconds.
+
+### Closing the phone's composer keeps what you wrote
+<!-- changes: fix-025-phone-does-what-it-says.md -->
+
+Cancel, a tap beside the composer and the back gesture now keep your text as a draft before the
+composer closes, with Undo on the confirmation to throw it away. A reply is kept under the message
+it answers. Attachments are not kept in a draft, and a composer holding only files asks first.
+
+### A Screener decision on the phone moves the older mail in your mailbox
+<!-- changes: fix-025-phone-does-what-it-says.md -->
+
+When you decide on a sender whose older mail is still in INBOX, the phone and the desktop's local
+mode now move that mail on your mail server, so every mail app sees it in its new place.
+
+### The phone's hand-back no longer fails on a dropped connection
+<!-- changes: fix-025-phone-does-what-it-says.md -->
+
+When the phone does not organize in the background (battery saver on, or notifications off), it
+gives the mailbox back as it leaves the screen. When that had to wait until the app was open again,
+it failed on a connection the mail server had dropped and your other computer waited about ten
+minutes; it now goes over a fresh connection, and Settings says when it arrived late.
+
+### Photos attach at the web's picture quality
+<!-- changes: fix-025-phone-does-what-it-says.md -->
+
+The phone makes JPEG and PNG pictures smaller before it checks the size limit, with the same
+Picture quality levels as the web (Medium by default, in Settings). A picture that would not get
+smaller is attached as it was, and Original never re-encodes.
+
+### Renewing after a trial or a lapsed subscription takes you back to a working mailbox
+<!-- changes: web-026-renew-flow.md -->
+
+The account screen's Subscribe button now fetches a fresh link to your account page when pressed,
+so it no longer lands on an expired link, and the page opens in your language. After signing in,
+a closed account sees the account screen first rather than an empty Ohbox. Once the payment is
+confirmed the screen lifts by itself, mail sync resumes where it stopped and the catch-up note
+appears; the red "couldn't refresh" line no longer shows while the account is closed. Returning
+from the payment page works whether or not the browser is still signed in.
+
+### A sent message deleted in another mail app leaves ohmail
+<!-- changes: fix-025-deleted-on-the-server-leaves-ohmail.md -->
+
+A message you delete from Sent in another mail app now leaves History, Search and every device at
+the next sync of that mailbox, as a deletion in any other folder does. Before, ohmail kept it.
+
+### A removed mailbox's conversations leave every device
+<!-- changes: fix-025-deleted-on-the-server-leaves-ohmail.md -->
+
+When you remove or erase a mailbox, the conversations only that mailbox was in now also leave the
+phone and desktop apps, not only the server. A conversation another mailbox is in stays.
+
+### A computer that only reads a mailbox shows the organizer's arrangement
+<!-- changes: fix-025-reader-shows-the-organizers-arrangement.md -->
+
+When another install organizes a mailbox, a computer that only reads it now shows the Ohbox and the
+Screener the way the organizer arranged them: a sender let in there is in the Ohbox here too, not
+waiting in the Screener. The arrangement comes from the settings copy the reading computer refreshes
+every few minutes, and it still moves and screens nothing itself.
+
+### "Not now" keeps the settings saved in your mailbox
+<!-- changes: fix-025-not-now-keeps-the-mailbox-settings.md -->
+
+- "Not now" on "We found your ohmail settings on this mailbox" no longer lets this ohmail replace
+  the settings another ohmail saved in the mailbox a few minutes later. They stay in the mailbox,
+  and Settings → Mailboxes offers to import them or to save this ohmail's settings in their place.
+
+### On the phone, the account screen lifts by itself once the account is open again
+<!-- changes: mobile-026-renew-flow.md -->
+
+The phone checks the account whenever you come back to the app and once a minute while the account
+screen shows, and the screen goes away as soon as the account is active again, without signing in
+again. After pairing, or when the account was closed at the last check, a closed account sees the
+account screen before any mail list, and mail sync waits quietly instead of reporting a failure.
+
+### ohmail unsubscribes you automatically only from senders you screened out
+<!-- changes: fix-025-acts-only-on-what-you-asked.md -->
+
+Mail that an import or the automatic filing placed in Screened or Spam no longer leads ohmail to
+leave a mailing list on your behalf. Screening a sender out yourself still does, and the
+Unsubscribe button still works on mail in Screened or Spam.
+
+### The phone says when screening a sender out also unsubscribes you
+<!-- changes: fix-025-acts-only-on-what-you-asked.md -->
+
+Screening a sender out or marking them spam on the phone now says that ohmail is also unsubscribing
+you, as the web does, whenever automatic unsubscribe is on.
+
+### A rule's past mail is moved by the server, and mail you acted on stays put
+<!-- changes: fix-025-acts-only-on-what-you-asked.md -->
+
+Applying a new rule to mail already filed no longer moves up to 50 messages from the app at once.
+The server moves the past mail and leaves alone messages you replied to, filed yourself or set
+aside.
+
+### An AI draft that cannot finish in time stops with a clear sentence
+<!-- changes: fix-025-acts-only-on-what-you-asked.md -->
+
+On a slow day a draft that could not be written in time now stops and says so, instead of running
+out of time with no answer.
+
+### Setup asks before it takes a mailbox over
+<!-- changes: fix-025-takeover-setup-keeps-its-word.md -->
+
+Setting up a mailbox that another computer organizes waits until it knows who organizes it, and
+moves organizing here only after "Organize here instead". A Screener decision made before the
+takeover lands is kept as a rule, and the last setup step says the takeover is under way.
+
+### Mail over STARTTLS on the phone
+<!-- changes: fix-025-phone-standalone-send-arrives.md -->
+
+A mailbox reached over port 143 keeps syncing after its connection is secured, where it used to stop
+after the first few kilobytes and show "Connection lost. Reconnecting…". A send whose outgoing
+connection could not be secured, or whose sign-in was refused, now says which and can be sent again,
+instead of "We couldn't confirm this send". Pressing Send over a send that could not be confirmed
+says why nothing was sent a second time.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
