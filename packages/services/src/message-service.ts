@@ -62,6 +62,12 @@ const FOLDERS: Destination[] = [
 ];
 const FOLDER_SET = new Set<string>(FOLDERS);
 
+/** The user-folder path a Trash row's restore must look up, or `null` when the origin needs none. */
+function restoreLookup(trashedFrom: string | null): string | null {
+  if (trashedFrom === null || trashedFrom === "") return null;
+  return FOLDER_SET.has(canonicalDestination(trashedFrom)) ? null : trashedFrom;
+}
+
 /**
  * The stored-row match for a view's folder: rows written before the 0.22 rename spell the News
  * pile `ohmail/Reads`, and a feed view that matched only the canonical name would silently
@@ -635,6 +641,7 @@ export class MessageService {
     const dtos = await materializeMessages(
       ctx.db, ctx.accountId, pageRows.map((r) => r.id), { deleted: "include" },
     );
+    const restoreTo = await this.restoreTargets(ctx, pageRows);
     const items: TrashRowDTO[] = [];
     for (const r of pageRows) {
       const dto = dtos.get(r.id);
@@ -642,7 +649,7 @@ export class MessageService {
       items.push({
         ...dto,
         trashedAt: r.trashedAt.toISOString(),
-        restoreTo: await this.resolveRestoreTarget(ctx, r.mailboxId, r.trashedFrom),
+        restoreTo: restoreTo(r.mailboxId, r.trashedFrom),
       });
     }
     const last = pageRows[pageRows.length - 1];
@@ -662,22 +669,31 @@ export class MessageService {
    * "Use folders" participation filter: that answers "is this folder a surface", this asks "does
    * the server have it". Account-scoped through the `mailboxes` join.
    */
-  private async resolveRestoreTarget(
-    ctx: ServiceContext, mailboxId: string, trashedFrom: string | null,
-  ): Promise<string> {
-    if (trashedFrom === null || trashedFrom === "") return "INBOX";
-    // A row trashed before the 0.22 rename says `ohmail/Reads`; it restores to the News pile.
-    if (FOLDER_SET.has(canonicalDestination(trashedFrom))) return canonicalDestination(trashedFrom);
-    const [live] = await ctx.db.select({ id: mailboxFolders.id })
-      .from(mailboxFolders)
-      .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
-      .where(and(
-        eq(mailboxFolders.mailboxId, mailboxId),
-        eq(mailboxFolders.folder, trashedFrom),
-        eq(mailboxes.accountId, ctx.accountId),
-      ))
-      .limit(1);
-    return live ? trashedFrom : "INBOX";
+  private async restoreTargets(
+    ctx: ServiceContext, rows: readonly { mailboxId: string; trashedFrom: string | null }[],
+  ): Promise<(mailboxId: string, trashedFrom: string | null) => string> {
+    /* ONE READ FOR A WHOLE PAGE: the distinct mailboxes and folders the rows name, asked together;
+       each row is answered from the pairs that came back. Rows needing no lookup ask nothing. */
+    const asked = rows.filter((r) => restoreLookup(r.trashedFrom) !== null);
+    const live = new Set<string>();
+    if (asked.length > 0) {
+      const found = await ctx.db.select({ mailboxId: mailboxFolders.mailboxId, folder: mailboxFolders.folder })
+        .from(mailboxFolders)
+        .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
+        .where(and(
+          inArray(mailboxFolders.mailboxId, [...new Set(asked.map((r) => r.mailboxId))]),
+          inArray(mailboxFolders.folder, [...new Set(asked.map((r) => r.trashedFrom!))]),
+          eq(mailboxes.accountId, ctx.accountId),
+        ));
+      for (const f of found) live.add(JSON.stringify([f.mailboxId, f.folder]));
+    }
+    return (mailboxId, trashedFrom) => {
+      if (trashedFrom === null || trashedFrom === "") return "INBOX";
+      const folder = restoreLookup(trashedFrom);
+      // A row trashed before the 0.22 rename says `ohmail/Reads`; it restores to the News pile.
+      if (folder === null) return canonicalDestination(trashedFrom);
+      return live.has(JSON.stringify([mailboxId, folder])) ? folder : "INBOX";
+    };
   }
 
   /**
@@ -1487,7 +1503,9 @@ export class MessageService {
         throw new ServiceError("not_in_trash", 409, "this message is not in Trash");
       }
 
-      const target = await this.resolveRestoreTarget(ctx, msg.mailboxId, fs.trashedFrom);
+      const target = (await this.restoreTargets(ctx, [{ mailboxId: msg.mailboxId, trashedFrom: fs.trashedFrom }]))(
+        msg.mailboxId, fs.trashedFrom,
+      );
       const now = ctx.now();
       filed = msg.mailboxId;
       /* `trashed_from: null` — the origin has been spent. A message restored and deleted again
