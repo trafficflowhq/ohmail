@@ -383,6 +383,20 @@ export const mailboxRoutes: Route[] = [
   },
   {
     method: "POST",
+    pattern: "/mailboxes/:id/profile-import/replace",
+    relay: true,
+    // `work`, as decline: one marker row, no dial. It releases the organizer's write hold on the
+    // named document, whose next flush overwrites it with this account's settings.
+    cost: "work",
+    replay: "state",
+    handler: async (req, deps, params) => {
+      const body = await readBody<{ fingerprint?: string }>(req);
+      await profileImport(deps).replace(serviceContext(deps, req), params.id!, body);
+      return jsonResponse({ replaced: true });
+    },
+  },
+  {
+    method: "POST",
     /**
      * Test a connection without making one — the action every mailbox form was missing: all
      * fourteen failure sentences were reachable only as the by-product of a create. No `:id`,

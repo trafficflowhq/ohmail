@@ -21,7 +21,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useFormatter, useLocale, useTranslations } from "next-intl";
-import { Button } from "@ohmail/ui";
+import { Button, SettingsActions, SettingsSection, SettingsSubhead, SettingsVerdict } from "@ohmail/ui";
 import {
   ApiError, apiConfigured, profileImport as profileImportApi,
   type ProfileImportAppliedWire, type ProfileImportCandidateWire, type ProfileImportCountsWire,
@@ -42,7 +42,9 @@ export const PROFILE_IMPORT_RECHECK_MS = 5 * 60 * 1000;
  * the right behaviour. Excluding it from this type is what keeps that true at compile time
  * rather than by the reader happening to fall through.
  */
-type OfferCandidate = Exclude<ProfileImportCandidateWire, { state: "none" } | { state: "too_large" }>;
+type OfferCandidate = Exclude<
+  ProfileImportCandidateWire, { state: "none" } | { state: "too_large" } | { state: "declined" }
+>;
 
 export interface ProfileImportOffer {
   mailboxId: string;
@@ -75,6 +77,8 @@ export interface ProfileImportTransport {
   candidate(mailboxId: string): Promise<ProfileImportCandidateWire>;
   apply(mailboxId: string, fingerprint: string): Promise<ProfileImportAppliedWire>;
   decline(mailboxId: string, subject: { fingerprint?: string; v?: number }): Promise<unknown>;
+  /** The Settings row's "save this ohmail's settings to the mailbox" — see `api-client`. */
+  replace(mailboxId: string, fingerprint: string): Promise<unknown>;
 }
 
 export interface ProfileImportState {
@@ -91,6 +95,7 @@ const HOSTED: ProfileImportTransport = {
   candidate: (id) => profileImportApi.candidate(id),
   apply: (id, fingerprint) => profileImportApi.apply(id, fingerprint),
   decline: (id, subject) => profileImportApi.decline(id, subject),
+  replace: (id, fingerprint) => profileImportApi.replace(id, fingerprint),
 };
 
 /**
@@ -439,5 +444,145 @@ export function ProfileImportCard({
         <Button variant="ghost" onClick={onNotNow} disabled={busy}>{t("later")}</Button>
       </div>
     </section>
+  );
+}
+
+/** A "Not now" answer whose document still stands in the mailbox. */
+type DeclinedCandidate = Extract<ProfileImportCandidateWire, { state: "declined" }>;
+
+/** The tolerant reader again: a `declined` row is shown only when fully formed, as for `found`. */
+function asDeclined(dto: unknown): DeclinedCandidate | null {
+  if (typeof dto !== "object" || dto === null || (dto as { state?: unknown }).state !== "declined") return null;
+  const found = asOffer({ ...(dto as Record<string, unknown>), state: "found" });
+  return found !== null && found.state === "found" ? { ...found, state: "declined" } : null;
+}
+
+type SavedRowPhase =
+  | { kind: "idle" }
+  | { kind: "busy"; verb: "import" | "replace" }
+  | { kind: "failed"; message: string | null }
+  | { kind: "imported"; applied: ProfileImportAppliedWire }
+  | { kind: "replaced" };
+
+interface SavedRow { mailboxId: string; address: string; candidate: DeclinedCandidate }
+
+/**
+ * SETTINGS → MAILBOXES: THE DECLINED DOCUMENTS. "Not now" keeps the found settings in the mailbox
+ * and this install's own off it; this is where the person later imports them, or replaces them
+ * with this ohmail's. Asked once when the pane opens, over the card's transport; a failed ask
+ * shows nothing, and each row keeps its buttons through a refused press.
+ */
+export function SavedProfileSection({
+  mailboxes, transport,
+}: {
+  mailboxes: ReadonlyArray<{ id: string; address: string }> | null;
+  transport?: ProfileImportTransport;
+}) {
+  const t = useTranslations("profileImport");
+  const locale = useLocale();
+  const format = useFormatter();
+  const [rows, setRows] = useState<SavedRow[]>([]);
+  const [phases, setPhases] = useState<Record<string, SavedRowPhase>>({});
+  const held = useRef(transport);
+  held.current = transport;
+  const list = useRef(mailboxes);
+  list.current = mailboxes;
+  const idsKey = (mailboxes ?? []).map((m) => m.id).sort().join(",");
+
+  useEffect(() => {
+    const via = held.current ?? (apiConfigured() ? HOSTED : null);
+    const boxes = list.current;
+    if (!via || boxes === null) return;
+    let live = true;
+    void Promise.all(boxes.map(async (m): Promise<SavedRow | null> => {
+      try {
+        const candidate = asDeclined(await via.candidate(m.id));
+        return candidate ? { mailboxId: m.id, address: m.address, candidate } : null;
+      } catch {
+        return null;
+      }
+    })).then((found) => {
+      if (live) setRows(found.filter((r): r is SavedRow => r !== null));
+    });
+    return () => { live = false; };
+  }, [idsKey]);
+
+  const press = useCallback((row: SavedRow, verb: "import" | "replace") => {
+    const via = held.current ?? (apiConfigured() ? HOSTED : null);
+    if (!via) return;
+    const set = (phase: SavedRowPhase): void => setPhases((prev) => ({ ...prev, [row.mailboxId]: phase }));
+    set({ kind: "busy", verb });
+    void (async () => {
+      try {
+        if (verb === "import") {
+          set({ kind: "imported", applied: await via.apply(row.mailboxId, row.candidate.fingerprint) });
+        } else {
+          await via.replace(row.mailboxId, row.candidate.fingerprint);
+          set({ kind: "replaced" });
+        }
+      } catch (err) {
+        set({ kind: "failed", message: failureSentence(err, held.current !== undefined) });
+      }
+    })();
+  }, []);
+
+  if (rows.length === 0) return null;
+  return (
+    <>
+      {rows.map((row) => {
+        const phase = phases[row.mailboxId] ?? { kind: "idle" };
+        const { counts, updatedAt, producer } = row.candidate;
+        const details = detailsOf(t, locale, counts);
+        const savedDate = new Date(updatedAt);
+        const when = Number.isNaN(savedDate.getTime()) ? null : format.dateTime(savedDate, { dateStyle: "long" });
+        const busy = phase.kind === "busy";
+        const imported = phase.kind === "imported" ? detailsOf(t, locale, phase.applied.imported) : "";
+        return (
+          <SettingsSection key={row.mailboxId}>
+            <SettingsSubhead>{t("savedTitle", { address: displayAddress(row.address) })}</SettingsSubhead>
+            {details ? <p className="set-note-inline">{t("holds", { details })}</p> : null}
+            {when !== null ? (
+              <p className="set-note-inline">
+                {producer.kind === "cloud" ? t("savedByCloud", { when })
+                  : producer.kind === "local" ? t("savedByLocal", { when })
+                    : t("savedBy", { when })}
+              </p>
+            ) : null}
+            <p className="set-note-inline">{t("savedBody")}</p>
+            {phase.kind === "imported" ? (
+              <SettingsVerdict
+                state="ok"
+                headline={t("doneTitle")}
+                {...(imported ? { detail: t("doneDetails", { details: imported }) } : {})}
+              />
+            ) : phase.kind === "replaced" ? (
+              <SettingsVerdict state="ok" headline={t("replacedTitle")} />
+            ) : (
+              <>
+                {phase.kind === "failed" ? (
+                  <SettingsVerdict
+                    state="bad"
+                    headline={t("errorTitle")}
+                    detail={phase.message ?? t("errorGeneric")}
+                    hint={t("errorRetry")}
+                  />
+                ) : null}
+                <p className="set-note-inline">
+                  {details ? t("replaceNote", { details }) : t("replaceNoteBare")}
+                </p>
+                <SettingsActions>
+                  <Button onClick={() => press(row, "import")} disabled={busy}>
+                    {busy && phase.verb === "import" ? t("importing") : t("import")}
+                  </Button>
+                  <Button variant="ghost" onClick={() => press(row, "replace")} disabled={busy}>
+                    {busy && phase.verb === "replace" ? t("replacing") : t("replace")}
+                  </Button>
+                </SettingsActions>
+              </>
+            )}
+          </SettingsSection>
+        );
+      })}
+    </>
   );
 }

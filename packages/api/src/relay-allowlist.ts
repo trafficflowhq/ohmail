@@ -150,6 +150,7 @@ export const RELAY_ALLOWLIST: readonly RelaySpec[] = [
   { method: "POST", pattern: "/mailboxes/:id/organizer-notice/dismiss" },
   { method: "POST", pattern: "/mailboxes/:id/profile-import" },
   { method: "POST", pattern: "/mailboxes/:id/profile-import/decline" },
+  { method: "POST", pattern: "/mailboxes/:id/profile-import/replace" },
   { method: "POST", pattern: "/mailboxes/:id/release" },
   { method: "POST", pattern: "/mailboxes/:id/resync" },
   { method: "POST", pattern: "/mailboxes/oauth/microsoft/complete" },

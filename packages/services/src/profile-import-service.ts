@@ -1,9 +1,10 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  assertOrganizerRole,
+  assertOrganizerRole, readOrganizerRole,
   awayResponders, contacts, mailboxes, notifyRules, rules, tags,
-  latestProfileFoundMarker, profileImportResolutionExists, recordProfileImportResolution,
+  latestProfileFoundMarker, profileImportResolutionExists, profileImportWriteReleased,
+  recordProfileImportResolution,
   recordChanges, ruleDelta,
   type ChangeInput, type Tx,
 } from "@trafficflow/db";
@@ -27,9 +28,9 @@ import { MAX_TAG_NAME_CHARS } from "./tags-service.js";
  * format). Never auto-applied — the organizer records a found-marker and the decision comes here:
  * `candidate` (marker first, then a FRESH mailbox read, so the confirm counts are the
  * document's), `apply` (natural-key writes in one transaction, resolution marker alongside),
- * `decline` (dismissed durably). MERGE RULE: the profile wins for every key it names; unnamed
- * local rows stay. Idempotent; applied rules do NOT request the retroactive pass. Rules pass the
- * product's own create validation (failures SKIPPED, counted); a NEWER format offers nothing.
+ * `decline` (dismissed durably), `replace` (this install's settings may overwrite it). MERGE:
+ * the profile wins for every key it names, unnamed local rows stay; idempotent, no retroactive
+ * pass, rules through the product's own validation (failures SKIPPED); NEWER offers nothing.
  */
 
 /** A fresh read of the mailbox's profile document. Built by the route from the live adapter. */
@@ -57,6 +58,18 @@ export type ProfileImportCandidateDTO =
   }
   /** Written by a later ohmail. Nothing is offered — a partial import would be a silent loss. */
   | { state: "newer"; v: number }
+  /**
+   * Answered "Not now" and still in the mailbox, never overwritten. Settings offers Import or
+   * Replace. Read from the found-marker alone, so it never dials; the counts are the document's
+   * as it was detected.
+   */
+  | {
+    state: "declined";
+    fingerprint: string;
+    updatedAt: string;
+    producer: { kind: string; version: string };
+    counts: ProfileImportCounts;
+  }
   /**
    * Too large to apply in one transaction. Nothing is offered, as for `newer`: a partial import
    * is a settings restore that silently omits some. It carries the offending list, both numbers
@@ -204,6 +217,27 @@ function refuseOversizedProfile(doc: OrganizerProfileDoc): void {
   }
 }
 
+/**
+ * The declined answer, from the found-marker's own payload (`profile.ts#writeMarker`). A marker
+ * missing any of its fields (an older row) offers nothing rather than a row with holes in it.
+ */
+function declinedFrom(
+  fingerprint: string, m: Awaited<ReturnType<typeof latestProfileFoundMarker>> & object,
+): ProfileImportCandidateDTO {
+  const c = m.counts;
+  if (typeof m.updatedAt !== "string" || !m.producer || !c) return { state: "none" };
+  return {
+    state: "declined",
+    fingerprint,
+    updatedAt: m.updatedAt,
+    producer: { kind: m.producer.kind, version: m.producer.version },
+    counts: {
+      screener: c.screener, rules: c.rules, notifyRules: c.notifyRules, tags: c.tagNames,
+      awayResponder: c.awayResponder > 0,
+    },
+  };
+}
+
 /** Counts of a document, in the confirm screen's units. */
 function countsOf(doc: OrganizerProfileDoc): ProfileImportCounts {
   return {
@@ -221,16 +255,21 @@ export class ProfileImportService {
    *
    * The MARKER decides whether the mailbox is dialled at all: no marker, an unheld one (the
    * incumbent-organizer posture — last-incumbent-wins, nothing to import), or one the user has
-   * already answered, and the answer is `none` from one indexed read. Only an OPEN question
-   * costs an IMAP connection, and what it returns is the folder's CURRENT document — fresher
-   * than the marker, so a document that changed since detection is offered as what it now is,
-   * under its own fingerprint, and one that disappeared is not offered at all.
+   * already answered, and the answer is `none` (or `declined`, for a "Not now" whose document
+   * still stands) from indexed reads alone. Only an OPEN question costs an IMAP connection, and
+   * it returns the folder's CURRENT document, so changed content is offered under its own
+   * fingerprint and a vanished document is not offered at all.
    */
   async candidate(
     ctx: ServiceContext, mailboxId: string, opts: { read: ProfileReader },
   ): Promise<ProfileImportCandidateDTO> {
     await this.assertMailbox(ctx, mailboxId);
     const db = asTx(ctx);
+
+    // ONLY AN ORGANIZER IS ASKED. A demoted reader keeps its organizer-era marker, and a
+    // `declined` answer there would offer a write press on an install that never writes.
+    const role = await readOrganizerRole(db, dialect(ctx.db), ctx.accountId, mailboxId);
+    if (role?.role !== "organizer") return { state: "none" };
 
     const marker = await latestProfileFoundMarker(db, ctx.accountId, mailboxId);
     if (!marker) return { state: "none" };
@@ -254,7 +293,11 @@ export class ProfileImportService {
     if (await profileImportResolutionExists(db, {
       accountId: ctx.accountId, mailboxId, fingerprint: marker.fingerprint,
     })) {
-      return { state: "none" };
+      // Answered. A decline leaves the document standing and the write held, and Settings says so.
+      if (await profileImportWriteReleased(db, {
+        accountId: ctx.accountId, mailboxId, fingerprint: marker.fingerprint,
+      })) return { state: "none" };
+      return declinedFrom(marker.fingerprint, marker);
     }
 
     const fresh = await this.readFresh(opts.read);
@@ -620,11 +663,10 @@ export class ProfileImportService {
   }
 
   /**
-   * The user said keep local. Nothing is applied, nothing in the mailbox is touched — the
-   * declined document stays where it is, still readable by whatever wrote it — and the durable
-   * resolution dismisses the prompt and releases the organizer's hold, so this install's own
-   * configuration travels again. Keyed to the exact content that was declined: a DIFFERENT
-   * document appearing later legitimately re-asks.
+   * The user said "Not now". Nothing is applied and nothing in the mailbox is touched: the durable
+   * resolution dismisses the prompt and settles routing, and the organizer's write hold STANDS, so
+   * the declined document stays in the mailbox (see {@link replace}). Keyed to the exact content
+   * declined: a DIFFERENT document appearing later legitimately re-asks.
    */
   async decline(
     ctx: ServiceContext, mailboxId: string, body: { fingerprint?: unknown; v?: unknown },
@@ -651,6 +693,29 @@ export class ProfileImportService {
         // Dismissing the "written by a newer ohmail" notice. There is no payload to fingerprint
         // at this version, so the answer is keyed to the refused version number instead.
         : { accountId: ctx.accountId, mailboxId, decision: "declined", newerV: newerV! });
+    });
+  }
+
+  /**
+   * "Save this ohmail's settings to the mailbox": releases the organizer's write hold on the exact
+   * document named, so its next flush overwrites it. Applies nothing and never dials; the same
+   * lock and write-once row as {@link decline}. A newer-format document cannot be replaced, and a
+   * reader is refused (409): it does not write this mailbox's settings.
+   */
+  async replace(
+    ctx: ServiceContext, mailboxId: string, body: { fingerprint?: unknown },
+  ): Promise<void> {
+    await this.assertMailbox(ctx, mailboxId);
+    const fingerprint = body.fingerprint;
+    if (typeof fingerprint !== "string" || fingerprint.length === 0) {
+      throw new ServiceError("validation_failed", 400, "fingerprint is required");
+    }
+    await asTx(ctx).transaction(async (tx) => {
+      await dialect(ctx.db).advisoryLock(tx, PROFILE_IMPORT_LOCK_CLASS, ctx.accountId);
+      await assertOrganizerRole(tx, dialect(ctx.db), ctx.accountId, mailboxId);
+      await recordProfileImportResolution(tx, {
+        accountId: ctx.accountId, mailboxId, decision: "replaced", fingerprint,
+      });
     });
   }
 

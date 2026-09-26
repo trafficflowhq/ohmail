@@ -1367,7 +1367,7 @@ export function DesktopGate() {
            anything is applied. The same transport-not-a-section rule as the away responder — the
            card, the counts and the fingerprint-as-consent have ONE implementation and only the
            wire is injected — but a different door rule, because the engine on this machine
-           serves the three routes ITSELF on the standalone door and forwards them to the account
+           serves the four routes ITSELF on the standalone door and forwards them to the account
            on the hosted one. `profileImportDoorFor` is the rule, a pure function a test drives. */
         {...(profileImportDoorFor(status, hostedSession) !== null ? { profileImportTransport: profileImportOverBridge } : {})}
         /* SETTINGS → SCREENER AND GENERAL, THE ACCOUNT'S OWN ROW — the dormancy dial, the

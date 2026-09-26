@@ -1809,6 +1809,18 @@ export type ProfileImportCandidateWire =
   }
   | { state: "newer"; v: number }
   /**
+   * Answered "Not now" and still standing in the mailbox, which this install does not overwrite.
+   * Settings shows it with two presses, {@link profileImport.apply} and
+   * {@link profileImport.replace}; the card never offers it again. Counts as detected.
+   */
+  | {
+    state: "declined";
+    fingerprint: string;
+    updatedAt: string;
+    producer: { kind: string; version: string };
+    counts: ProfileImportCountsWire;
+  }
+  /**
    * The document holds more entries in one of its lists than the server will apply in a single
    * transaction, so nothing is offered — the same answer `newer` gives, for a different reason.
    *
@@ -1845,6 +1857,14 @@ export const profileImport = {
   decline: (mailboxId: string, subject: { fingerprint?: string; v?: number }) =>
     api<{ dismissed: boolean }>(`/mailboxes/${mailboxId}/profile-import/decline`, {
       method: "POST", body: subject,
+    }),
+  /**
+   * "Save this ohmail's settings to the mailbox": the organizer overwrites the named document at
+   * its next flush. Applies nothing and never dials.
+   */
+  replace: (mailboxId: string, fingerprint: string) =>
+    api<{ replaced: boolean }>(`/mailboxes/${mailboxId}/profile-import/replace`, {
+      method: "POST", body: { fingerprint },
     }),
 };
 

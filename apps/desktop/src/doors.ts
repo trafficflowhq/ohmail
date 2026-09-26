@@ -335,7 +335,7 @@ export function awayDoorFor(
  * to either must not be a silent change to the other (`accountDoorFor`'s rule). STANDALONE —
  * always, even without the mailbox password: the card's resting question is a marker read the
  * engine answers without dialling, and gating on the credential would silence the ask exactly
- * when somebody is mid-setup. HOSTED, SIGNED IN — the engine forwards the three routes to the
+ * when somebody is mid-setup. HOSTED, SIGNED IN — the engine forwards the four routes to the
  * account with the bearer. Signed out — `null`, `suggestDoorFor`'s rule.
  */
 export function profileImportDoorFor(
@@ -344,7 +344,7 @@ export function profileImportDoorFor(
 ): "local" | "cloud" | null {
   if (status?.mode === "local") return "local";
   /* PAIRED TO ANOTHER COMPUTER — the CLOUD shape, and this is the one branch in the family where
-     the paired door is not a third thing. The three routes are forwarded to the host with the
+     the paired door is not a third thing. The four routes are forwarded to the host with the
      bearer exactly as they are forwarded to an account, the durable answer is the host's, and the
      question the card asks — "this mailbox arrived carrying settings; shall I apply them?" — is
      asked once for the mailbox rather than once per machine reading it. A person answering here

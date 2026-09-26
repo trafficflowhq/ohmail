@@ -35,8 +35,9 @@ export function mailboxFactsOverBearer(
 }
 
 /**
- * The profile-import card's three calls over the bearer. The rejection contract the shared card
- * relies on — the message is the ENGINE's own sentence — rides in from `profileImportVia`.
+ * The profile-import calls (the card's three, the Settings row's replace) over the bearer. The
+ * rejection contract the shared card relies on — the message is the ENGINE's own sentence — rides
+ * in from `profileImportVia`.
  */
 export function profileImportOverBearer(bearer: BearerManager): ProfileImportTransport {
   return profileImportVia(bearer.fetch);

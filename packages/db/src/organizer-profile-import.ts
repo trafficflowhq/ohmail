@@ -24,16 +24,19 @@ export const PROFILE_FOUND_AUDIT_ACTION = "organizer_profile_found";
 
 /**
  * The `audit_log.action` under which the USER'S ANSWER to a found document is recorded. Payload:
- * `{ mailboxId, fingerprint, decision: "imported" | "declined", v? }` — `fingerprint` names the
- * exact document content answered (null for the `newer` state, which has no readable payload; `v`
- * carries the refused version). The row is the durable half of both buttons: Import writes it in
- * the same transaction as the applied sections, Not-now writes it alone. Either way the
- * organizer's next admitted cycle reads it and releases the hold — the local store, imported-into
- * or deliberately kept, is the user-ratified truth from that moment, and write-behind resumes.
+ * `{ mailboxId, fingerprint, decision: "imported" | "declined" | "replaced", v? }` — `fingerprint`
+ * names the exact document content answered (null for the `newer` state; `v` carries the refused
+ * version). Any answer settles ROUTING. Only `imported` and `replaced` release WRITE-BEHIND
+ * ({@link profileImportWriteReleased}): a decline keeps the document in the mailbox, because it
+ * is the only copy there of the other install's settings.
  */
 export const PROFILE_IMPORT_RESOLVED_AUDIT_ACTION = "organizer_profile_import_resolved";
 
-export type ProfileImportDecision = "imported" | "declined";
+/**
+ * `replaced` is the explicit "save this ohmail's settings to the mailbox": nothing is applied, and
+ * the organizer may now overwrite the answered document.
+ */
+export type ProfileImportDecision = "imported" | "declined" | "replaced";
 
 /** The found-marker payload, as `apps/worker/src/profile.ts#writeMarker` shapes it. */
 export interface ProfileFoundMarker {
@@ -180,10 +183,33 @@ export async function profileImportResolutionExists(
 }
 
 /**
+ * MAY THE ORGANIZER OVERWRITE THIS DOCUMENT? Only after an import or an explicit replace. Routing
+ * asks {@link profileImportResolutionExists} instead, where a decline counts. The decisions are a
+ * LITERAL list: drizzle flattens a bound array in a raw fragment, and `->>` is the form the SQLite
+ * twin already runs. Fingerprint only — a newer-format document is never written over.
+ */
+export async function profileImportWriteReleased(
+  db: Tx, o: { accountId: string; mailboxId: string; fingerprint: string },
+): Promise<boolean> {
+  const rows = await db.select({ id: auditLog.id })
+    .from(auditLog)
+    .where(and(
+      eq(auditLog.accountId, o.accountId),
+      eq(auditLog.action, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION),
+      sql`${auditLog.payload}->>'mailboxId' = ${o.mailboxId}`,
+      sql`${auditLog.payload}->>'fingerprint' = ${o.fingerprint}`,
+      sql`${auditLog.payload}->>'decision' in ('imported', 'replaced')`,
+    ))
+    .limit(1);
+  return rows.length > 0;
+}
+
+/**
  * Record the user's answer, once. A second identical answer writes nothing — the apply path is
  * idempotent end to end, and a retried decline must not grow the audit table — while a
  * DIFFERENT answer for the same document (declined, then later imported) is a new fact and a
- * new row; the reader above asks "was it answered at all", to which either row says yes.
+ * new row; `profileImportResolutionExists` asks "was it answered at all", to which either row says
+ * yes, and a declined-then-replaced document carries both rows.
  *
  * Callable inside the apply transaction, which is the point: the applied sections and the
  * resolution that releases the organizer's hold commit together or not at all.

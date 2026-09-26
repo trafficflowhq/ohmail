@@ -1,6 +1,6 @@
 /**
- * THE PROFILE-IMPORT CARD'S THREE CALLS — over an injected transport, and with no door here.
- * The card is the shared client's (`app/shell/ProfileImportCard.tsx`); the route, the narrowing
+ * THE PROFILE-IMPORT CALLS — the card's three and the Settings row's replace — over an injected
+ * transport, with no door here. The card is the shared client's; the route, the narrowing
  * and the engine's-own-sentence rule for a refusal live here once for both doors: the desktop
  * window over its bridge (`local-profile-import.ts`) and the served host client over its bearer
  * socket (`host-client/transports.ts`). No transport is imported — the served host client has
@@ -12,7 +12,7 @@
 import type { ProfileImportTransport } from "../../webapp/app/shell/ProfileImportCard";
 import type { ProfileImportAppliedWire, ProfileImportCandidateWire } from "../../webapp/app/api-client";
 
-/** The transport shape the three calls ride — the bridge's, without importing the bridge. */
+/** The transport shape the calls ride — the bridge's, without importing the bridge. */
 export type ProfileImportFetch = (url: string, init?: unknown) => Promise<Response>;
 
 /**
@@ -43,10 +43,10 @@ async function wireOf<T>(res: Response): Promise<T> {
 }
 
 /**
- * The three calls the shared card makes, over an injected transport function.
+ * The four calls the shared card and the Settings row make, over an injected transport function.
  *
  * A factory over the FETCH rather than over anything else, because the desktop now has two
- * consumers of the same three routes and the same refusal contract: the window (the bridge down
+ * consumers of the same four routes and the same refusal contract: the window (the bridge down
  * the pipe) and the served host-client (the loopback socket, bearer-authenticated — see
  * `host-client/transports.ts`). The wire narrowing and the engine's-own-sentence rule live once,
  * here, whichever transport carries the bytes.
@@ -69,6 +69,14 @@ export function profileImportVia(fetchImpl: ProfileImportFetch): ProfileImportTr
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(subject),
+        }),
+      ),
+    replace: async (mailboxId, fingerprint) =>
+      wireOf<{ replaced: boolean }>(
+        await fetchImpl(`${profileImportPath(mailboxId)}/replace`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ fingerprint }),
         }),
       ),
   };

@@ -378,6 +378,7 @@ export function SettingsView({
   tagAdmin,
   accountSection,
   mailboxSection,
+  savedSettingsSection,
   seedSection,
   aiSection,
   billingSection,
@@ -465,6 +466,12 @@ export function SettingsView({
    * file.
    */
   mailboxSection?: ReactNode;
+  /**
+   * The settings documents answered "Not now" that still stand in a mailbox, with their Import and
+   * Replace presses (`ProfileImportCard.tsx#SavedProfileSection`). Rendered under
+   * {@link mailboxSection} in the same pane, so it exists only where that pane does.
+   */
+  savedSettingsSection?: ReactNode;
   /**
    * THE WAY BACK TO THE SENT-MAIL REVIEW — the bottom section of the Screener pane. The review is offered when an
    * account has never answered it and takes the whole stage while it is owed, and "Not now" makes it go away. Without
@@ -1195,6 +1202,7 @@ export function SettingsView({
               account (the built-tested-unreachable branch). The node names its own mode; the nav
               entry above is present only when it is wired. See {@link mailboxSection}. */}
           {shown === "mailboxes" ? mailboxSection : null}
+          {shown === "mailboxes" && mailboxSection ? savedSettingsSection : null}
 
           {shown === "ai" ? aiSection : null}
 

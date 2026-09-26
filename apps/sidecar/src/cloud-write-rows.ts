@@ -85,6 +85,7 @@ export const WRITE_ROWS: Readonly<Record<string, WriteRoute>> = {
   "POST /mailboxes/:id/organizer-notice/dismiss": mbx,
   "POST /mailboxes/:id/profile-import": { rows: "sync+mailboxes", verbs: [] },
   "POST /mailboxes/:id/profile-import/decline": none,
+  "POST /mailboxes/:id/profile-import/replace": none,
   "POST /mailboxes/:id/release": mbx,
   "POST /mailboxes/:id/resync": none,
   "POST /mailboxes/oauth/microsoft/complete": mbx,

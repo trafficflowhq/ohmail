@@ -2,7 +2,7 @@
  * "WE FOUND YOUR OHMAIL SETTINGS ON THIS MAILBOX" IN THE DESKTOP WINDOW — the transport, and
  * deliberately nothing else. The card, the counts-in-words, the fingerprint-as-consent and the
  * durable "Not now" are the shared client's (`app/shell/ProfileImportCard.tsx`); this window's
- * Cloud client is a refusing stub, so the three calls go down the pipe to the engine. Live on
+ * Cloud client is a refusing stub, so the four calls go down the pipe to the engine. Live on
  * BOTH doors (`profileImportDoorFor` in `doors.js`): standalone serves the confirm routes from
  * the store on this machine, hosted forwards all three to the account — a dismissal here
  * dismisses everywhere. A rejection's `message` is the ENGINE's own sentence, shown verbatim.

@@ -1,6 +1,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import {
   PROFILE_FOUND_AUDIT_ACTION, auditLog, latestProfileFoundMarker, profileImportResolutionExists,
+  profileImportWriteReleased,
   mailboxProfileMirror, recordMailboxProfileChange,
   type LedgerTx, type Tx, auditAction, fencedAccountWrite,} from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -130,8 +131,8 @@ export interface OrganizerProfileSyncDeps {
  * `none`/`unreadable` ⇒ write-behind runs. `found` and OURS ⇒ our own (maybe stale) write, seeds the
  * dirty check. `found`, FOREIGN, content-identical ⇒ in sync. `found`, FOREIGN, DIFFERENT ⇒ the import
  * case, write-behind HOLDS: the decision is the human confirm flow's, surfaced by a log line and a
- * durable `audit_log` marker; the hold releases on CONVERGENCE (local equals the document) or the
- * durable `organizer_profile_import_resolved` marker. `newer` (later format) ⇒ never overwritten.
+ * durable `audit_log` marker; the hold releases on CONVERGENCE or an `imported`/`replaced` answer
+ * (a decline settles routing only, and the document stays). `newer` ⇒ never overwritten.
  */
 export class OrganizerProfileSync {
   private seeded = false;
@@ -439,14 +440,12 @@ export class OrganizerProfileSync {
   }
 
   /**
-   * THE CYCLE-EDGE READ OF THE HOLD — releases a hold the user has already ANSWERED before the
-   * next routing decision is made. {@link importDecisionOpen} alone is the write-behind's view,
-   * and the write-behind is DEBOUNCED (five minutes by default): a release that waited for the
-   * next flush tick would keep adopting strangers' mail as `last_set_by: 'external'` for a whole
-   * write interval after the person decided. One indexed read per cycle,
-   * only while a decision is open. A read fault keeps the hold — the answer could not be read,
-   * the next cycle retries, and holding is the reversible direction: an adopted message can
-   * still be screened by the person; a screened message was already the defect.
+   * THE CYCLE-EDGE READ OF THE HOLD — releases a hold whose release is already on record without
+   * waiting out the debounced flush tick. A found hold releases on `imported`/`replaced` only (a
+   * decline keeps the declined document from being overwritten; routing reads a decline through
+   * {@link importDecisionOpenNow}); a newer-format hold releases on its dismissal. One indexed
+   * read per cycle, only while a hold is armed. A read fault keeps the hold — the reversible
+   * direction.
    */
   async importDecisionOpenFresh(): Promise<boolean> {
     if (this.holdFingerprint === null && this.holdNewerV === null) return false;
@@ -460,12 +459,13 @@ export class OrganizerProfileSync {
       // (the surface answered the folder's CURRENT document while this hold still keys the old
       // one) is covered by the rehold itself: its replacement check refuses an already-answered
       // document, so the swap lands as a lapse and the gate resumes within a flush interval.
-      const answered = await profileImportResolutionExists(deps.db, {
-        accountId: deps.accountId, mailboxId: deps.mailboxId,
-        ...(this.holdFingerprint !== null
-          ? { fingerprint: this.holdFingerprint }
-          : { newerV: this.holdNewerV! }),
-      });
+      const answered = this.holdFingerprint !== null
+        ? await profileImportWriteReleased(deps.db, {
+          accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: this.holdFingerprint,
+        })
+        : await profileImportResolutionExists(deps.db, {
+          accountId: deps.accountId, mailboxId: deps.mailboxId, newerV: this.holdNewerV!,
+        });
       if (answered) {
         // RE-DERIVE before the gate resumes (rounds 7 and 8): the folder may already ask a NEW
         // question — the previous organizer's late flush replacing the answered document — and
@@ -650,7 +650,8 @@ export class OrganizerProfileSync {
     const { deps } = this;
     if (still.state === "found" && still.installId !== deps.self.installId) {
       const newFp = profileFingerprint(still.doc);
-      if (!localSaysWhatTheDocumentSays(local, still.doc) && !(await profileImportResolutionExists(deps.db, {
+      // The WRITE question: a declined replacement is still held, or the next write prunes it.
+      if (!localSaysWhatTheDocumentSays(local, still.doc) && !(await profileImportWriteReleased(deps.db, {
         accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: newFp,
       }))) {
         return { kind: "found", fingerprint: newFp, doc: still.doc };
@@ -856,16 +857,12 @@ export class OrganizerProfileSync {
           await this.writeMarker({ state: "lapsed", fingerprint: fp, v: null }, log);
           return;
         }
-        // THE OTHER RELEASE: the user answered, and the answer did not equal the document.
-        // Convergence alone cannot end an import MERGED into existing local config (fingerprints never
-        // meet) or a DECLINE; both are recorded durably by the import surface
-        // (`organizer_profile_import_resolved`, keyed to the held document's fingerprint), and either
-        // means the local store is the user-ratified truth. The hold releases; the held fingerprint
-        // moves to `seenForeignFingerprint` so the next write may supersede THROUGH the engine's
-        // foreign gate. One indexed read per flush interval on the EXACT held fingerprint only; the
-        // old "any answer since the hold began" valve is gone because `reholdFromFolder` now moves the
-        // hold onto the folder's CURRENT document, so a STALE answer cannot release an open question.
-        const resolved = await profileImportResolutionExists(deps.db, {
+        // THE OTHER RELEASE: an import MERGED into local config (fingerprints never meet) or an
+        // explicit replace, recorded against the EXACT held fingerprint. The hold releases and the
+        // held fingerprint moves to `seenForeignFingerprints`, so the next write supersedes it
+        // through the engine's foreign gate. A DECLINE is not a release: it settles routing only,
+        // and the declined document stays in the folder until the person imports or replaces it.
+        const resolved = await profileImportWriteReleased(deps.db, {
           accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: this.holdFingerprint,
         });
         if (!resolved) {
@@ -968,13 +965,24 @@ export class OrganizerProfileSync {
           this.holdSince = null;
         }
       } else {
-        // A foreign document appeared under an established organizer (the transient overlap's
-        // loser, or a hand-back mid-race). The INCUMBENT posture surfaces it — log + durable
-        // marker, never held for import: last-incumbent-wins says our store is this mailbox's
-        // truth — and records its fingerprint so the NEXT write may supersede it. If the lease
-        // changes hands before then, we never write again and the document stands: convergent
-        // both ways.
         const foreignFp = profileFingerprint(result.doc);
+        // A NEVER-OWNED organizer meeting a document that landed after its seed takes the takeover
+        // posture: hold it and write the held marker the surface answers, unless an import or a
+        // replace already released it. Superseding here would prune it with nobody asked.
+        if (this.lastWrittenFingerprint === null && !(await profileImportWriteReleased(deps.db, {
+          accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: foreignFp,
+        }))) {
+          this.holdFingerprint = foreignFp;
+          this.holdSince = now;
+          log("organizer_profile_detected", {
+            mailboxId: deps.mailboxId, accountId: deps.accountId, state: "found",
+          });
+          await this.writeMarker({ state: "found", doc: result.doc, fingerprint: foreignFp, heldForImport: true }, log);
+          return;
+        }
+        // An ESTABLISHED organizer meeting one (the transient overlap's loser, or a hand-back
+        // mid-race) surfaces it unheld — last-incumbent-wins — and records its fingerprint so the
+        // NEXT write may supersede it. If the lease changes hands first, the document stands.
         this.seenForeignFingerprints.add(foreignFp);
         log("organizer_profile_detected", {
           mailboxId: deps.mailboxId, accountId: deps.accountId, state: "found_midflight",

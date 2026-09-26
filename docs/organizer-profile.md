@@ -356,8 +356,10 @@ call its own does two things with the one question the document poses, and
 refuses to answer it itself:
 
 - **The write-behind holds.** The found document is surfaced for the user's
-  import decision and is never overwritten while that decision is open — a
-  decline or an applied import releases the hold.
+  import decision and is never overwritten while that decision is open. An
+  applied import, or saving this install's settings to the mailbox from
+  Settings, releases the hold. "Not now" answers the question for screening
+  and leaves the found document in the mailbox.
 - **The consent gate holds with it.** While the decision is open, mail whose
   only verdict would be the gate's own ("nobody has ruled on this sender")
   keeps the folder the mailbox already has it in, instead of being re-screened

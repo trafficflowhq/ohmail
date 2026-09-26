@@ -107,7 +107,9 @@ import { AwayResponderRow, type AwayTransport } from "./AwayResponderRow";
 import { AwayNotice, useAwayNotice } from "./AwayNotice";
 import { OhmarchyOffer, useOhmarchyOffer } from "./OhmarchyOffer";
 import type { ApplyFaceAllDevices } from "./FaceRow";
-import { ProfileImportCard, useProfileImport, type ProfileImportTransport } from "./ProfileImportCard";
+import {
+  ProfileImportCard, SavedProfileSection, useProfileImport, type ProfileImportTransport,
+} from "./ProfileImportCard";
 import {
   COMPOSE_SEND_KEY, heldRowUnverified, inlineForwardKey, promoteOrphanedReplyLane,
   REPLY_DRAFT_PREFIX, SEND_IN_FLIGHT_PHASES,
@@ -3018,6 +3020,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                    be a form posting to a server this tab is not talking to. The demo keeps
                    the fixture list, which is the honest thing for it to show. */
                 mailboxSection={demo ? undefined : mailboxSection}
+                /* "Not now" answers standing in a mailbox, over the card's own transport. */
+                savedSettingsSection={demo ? undefined : (
+                  <SavedProfileSection mailboxes={facts} transport={profileImportTransport} />
+                )}
                 /* THE DOOR BACK TO THE REVIEW. Built here rather than injected from
                    `CloudShell` like the four panes above it, because the only thing it does
                    is flip this component's own state — the review is a stage view, not a

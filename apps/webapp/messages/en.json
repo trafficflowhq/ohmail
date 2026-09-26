@@ -3475,7 +3475,14 @@
     "errorRetry": "Try again.",
     "newerTitle": "Settings from a newer ohmail",
     "newerBody": "{address} carries settings saved by a newer version of ohmail. Update ohmail to import them — nothing is lost in the meantime.",
-    "newerDismiss": "Dismiss"
+    "newerDismiss": "Dismiss",
+    "savedTitle": "Settings saved on {address}",
+    "savedBody": "You chose Not now, so they stay in the mailbox, and the settings you make in this ohmail do not travel with it until you choose.",
+    "replace": "Save this ohmail's settings to the mailbox",
+    "replacing": "Saving…",
+    "replaceNote": "Saving replaces {details} in the mailbox with this ohmail's own settings within a few minutes. While this ohmail has none of its own, the mailbox keeps them.",
+    "replaceNoteBare": "Saving replaces the settings in the mailbox with this ohmail's own within a few minutes. While this ohmail has none of its own, the mailbox keeps them.",
+    "replacedTitle": "This ohmail's settings go to the mailbox within a few minutes."
   },
   "notFound": {
     "title": "This page doesn't exist.",

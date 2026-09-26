@@ -8,7 +8,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 
 import messages from "../../webapp/messages/en.json";
-import { ProfileImportCard, useProfileImport } from "../../webapp/app/shell/ProfileImportCard";
+import { ProfileImportCard, SavedProfileSection, useProfileImport } from "../../webapp/app/shell/ProfileImportCard";
 import { profileImportDoorFor } from "../src/doors.js";
 import { profileImportOverBridge, profileImportPath } from "../src/local-profile-import.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
@@ -39,6 +39,8 @@ import type { EngineStatus } from "../src/bridge-fetch.js";
  *     this install's own), the hosted door only signed in. `profileImportDoorFor` is the rule,
  *     as a pure function a test drives.
  *  5. NOTHING REACHES THE CLOUD CLIENT. `fetch` is booby-trapped below.
+ *  6. THE SETTINGS ROW FOR A "NOT NOW" rides the same pipe: its Import and "Save this ohmail's
+ *     settings to the mailbox" presses reach the engine's own apply and replace routes.
  */
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -110,6 +112,9 @@ function engineAnswering(): void {
       }
       if (url === `${profileImportPath(MB.id)}/decline` && method === "POST") {
         return encode(200, JSON.stringify({ dismissed: true }));
+      }
+      if (url === `${profileImportPath(MB.id)}/replace` && method === "POST") {
+        return encode(200, JSON.stringify({ replaced: true }));
       }
       return encode(404, JSON.stringify({ error: { code: "not_found", message: "no such route" } }));
     },
@@ -240,6 +245,56 @@ describe("the restore card over the bridge", () => {
     // The decision survives the refusal: the offer and both buttons are still there.
     expect(button("Import settings")).toBeDefined();
     expect(button("Not now")).toBeDefined();
+  });
+});
+
+describe("the Settings row for a declined document, over the bridge", () => {
+  /** The REAL row over the REAL bridge transport, as `AppShell` renders it in the Mailboxes pane. */
+  async function mountRow(): Promise<void> {
+    hostEl = document.createElement("div");
+    document.body.append(hostEl);
+    root = createRoot(hostEl);
+    await act(async () => {
+      root.render(
+        h(NextIntlClientProvider, {
+          locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-18T12:00:00.000Z"),
+          children: h(SavedProfileSection, { mailboxes: [MB], transport: profileImportOverBridge }),
+        }),
+      );
+    });
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  }
+
+  beforeEach(() => {
+    candidate = { ...candidate, state: "declined" };
+  });
+
+  it("a declined document renders with its counts, and Save posts the replace to the engine", async () => {
+    await mountRow();
+    expect(asked).toEqual([{ method: "GET", url: profileImportPath(MB.id), body: null }]);
+    expect(hostEl.textContent).toContain("Settings saved on sam@example.com");
+    expect(hostEl.textContent).toContain("2 rules");
+    expect(hostEl.textContent).toContain("within a few minutes");
+    await click(button("Save this ohmail's settings to the mailbox"));
+    expect(asked.filter((a) => a.method === "POST")).toEqual([
+      { method: "POST", url: `${profileImportPath(MB.id)}/replace`, body: { fingerprint: FINGERPRINT } },
+    ]);
+    expect(hostEl.textContent).toContain("This ohmail's settings go to the mailbox within a few minutes.");
+  });
+
+  it("Import from the row sends the exact fingerprint to the engine's apply route", async () => {
+    await mountRow();
+    await click(button("Import settings"));
+    expect(asked.filter((a) => a.method === "POST")).toEqual([
+      { method: "POST", url: profileImportPath(MB.id), body: { fingerprint: FINGERPRINT } },
+    ]);
+    expect(hostEl.textContent).toContain("Your settings are back");
+  });
+
+  it("an open question is the card's, not the row's: a found document renders no row", async () => {
+    candidate = { ...candidate, state: "found" };
+    await mountRow();
+    expect(hostEl.textContent).toBe("");
   });
 });
 

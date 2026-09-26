@@ -3475,7 +3475,14 @@
     "errorRetry": "Versuch es noch mal.",
     "newerTitle": "Einstellungen aus einem neueren ohmail",
     "newerBody": "{address} trägt Einstellungen aus einer neueren ohmail-Version. Aktualisiere ohmail, um sie zu importieren — bis dahin geht nichts verloren.",
-    "newerDismiss": "Ausblenden"
+    "newerDismiss": "Ausblenden",
+    "savedTitle": "In {address} gespeicherte Einstellungen",
+    "savedBody": "Du hast sie nicht importiert. Sie bleiben im Postfach, und die Einstellungen aus diesem ohmail wandern nicht mit dem Postfach, bis du dich entscheidest.",
+    "replace": "Einstellungen dieses ohmail im Postfach speichern",
+    "replacing": "Speichere …",
+    "replaceNote": "Das Speichern ersetzt {details} im Postfach innerhalb weniger Minuten durch die Einstellungen dieses ohmail. Solange dieses ohmail keine eigenen hat, behält das Postfach sie.",
+    "replaceNoteBare": "Das Speichern ersetzt die Einstellungen im Postfach innerhalb weniger Minuten durch die dieses ohmail. Solange dieses ohmail keine eigenen hat, behält das Postfach sie.",
+    "replacedTitle": "Die Einstellungen dieses ohmail gehen innerhalb weniger Minuten ins Postfach."
   },
   "notFound": {
     "title": "Diese Seite gibt es nicht.",
