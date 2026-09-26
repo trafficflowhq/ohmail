@@ -9,8 +9,8 @@
  * control that goes nowhere.
  */
 import { View } from "react-native";
-import { Copy } from "../../src/copy";
 import { useWorld } from "../../src/state/world";
+import { phoneBannerLines } from "../../src/state/live";
 import { Panel, Screen, Scroller, Txt } from "../../src/ui/base";
 import { TopBar } from "../../src/ui/chrome";
 import { MoreNav } from "../../src/ui/MoreNav";
@@ -50,12 +50,10 @@ function MoreBody() {
           {w.mailboxes.organizer ? (
             <View style={{ marginTop: 10 }}>
               <Txt variant="meta" numberOfLines={2}>
-                {Copy.phoneBanner(w.mailboxes.organizer.name)}
+                {phoneBannerLines(w.mailboxes.organizer).head}
               </Txt>
               <Txt variant="meta" tone="ink3" style={{ marginTop: 2 }}>
-                {w.mailboxes.organizer.stopped
-                  ? Copy.phoneBannerStopped(w.mailboxes.organizer.name)
-                  : Copy.phoneBannerWhy}
+                {phoneBannerLines(w.mailboxes.organizer).why}
               </Txt>
             </View>
           ) : null}

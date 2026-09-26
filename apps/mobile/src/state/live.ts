@@ -98,6 +98,7 @@ import {
   forwardPress,
   tagsCrossView,
   type ForwardAsk,
+  holderIsLive,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
 import { activeLocale } from "../i18n/locale";
@@ -650,11 +651,22 @@ export function phoneOrganizer(
   return {
     name: first.organizedBy!.name!,
     kind: first.organizedBy!.kind ?? null,
-    /* STOPPED ONLY IF EVERY ROW SAYS SO. With one holder across several mailboxes a mixed
-       answer means the claim is still being renewed somewhere, and "stopped organizing" would
-       be the more alarming of the two sentences told on the weaker evidence. */
-    stopped: named.every((m) => m.organizerState === "stopped"),
+    /* STOPPED ONLY IF EVERY ROW SAYS SO, by the reader refusal's decider. With one holder across
+       several mailboxes a mixed answer means the claim is still being renewed somewhere, and
+       "stopped organizing" would be the more alarming sentence told on the weaker evidence. */
+    stopped: named.every((m) => !holderIsLive({ by: m.organizedBy, state: m.organizerState })),
   };
+}
+
+/**
+ * THE BANNER'S TWO LINES. A holder that stopped organizes nothing, so the head says that rather
+ * than "Organized by" a machine that stopped, and the line under it names the machine and what
+ * waits meanwhile.
+ */
+export function phoneBannerLines(o: PhoneOrganizer): { head: string; why: string } {
+  return o.stopped
+    ? { head: Copy.phoneStateNotOrganized, why: Copy.phoneBannerStopped(o.name) }
+    : { head: Copy.phoneBanner(o.name), why: Copy.phoneBannerWhy };
 }
 
 /** The reply-all envelope: who stands on the To line, and who rides Cc. */
