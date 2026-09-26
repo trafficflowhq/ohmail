@@ -12,7 +12,7 @@ import {
   markScreenerSuggestOwed, owedSuggestAccounts, clearScreenerSuggestOwed, pushSubscriptions,
   pruneErasedBearers } from "@trafficflow/db/cloud";
 import {
-  runAlertPass,
+  runAlertPass, firingToLog,
   webhookAlertSink,
   resendAlertSink,
   telegramAlertSink,
@@ -5109,6 +5109,8 @@ export async function startWorkerWithLock(
       }
     }
 
+    /** What this process last logged per firing alert — see `firingToLog`. */
+    const alertFiringLogged = new Map<string, string>();
     /**
      * One alert pass, from the WORKER side. It covers the DB-visible rules (stuck sends, sync lag and
      * their neighbours) and deliberately does NOT include itself: `shards: []` skips the leader-
@@ -5136,7 +5138,7 @@ export async function startWorkerWithLock(
           // database" and "the API is ahead of the database" stay two findings with two fixes.
           driver: "worker",
         });
-        for (const alert of result.firing) {
+        for (const alert of firingToLog(alertFiringLogged, result.firing)) {
           log.warn("alert_firing", {
             alertKey: alert.key, kind: alert.kind, severity: alert.severity,
             count: alert.count, oldestSeconds: alert.oldestSeconds, detail: alert.detail,

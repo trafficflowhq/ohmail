@@ -1,5 +1,5 @@
 import {
-  runAlertPass, listOpenAlerts, newDeliveryStreak,
+  runAlertPass, listOpenAlerts, newDeliveryStreak, firingToLog,
   sinkHealthOf,
   type AlertSink,
 } from "@trafficflow/db/cloud";
@@ -298,6 +298,8 @@ function alertsArmed(
  * signal, and it is free. See `DeliveryStreak` for why this is not a table.
  */
 const apiDeliveryStreak = newDeliveryStreak();
+/** What this warm instance last logged per firing alert — see {@link firingToLog}. */
+const apiFiringLogged = new Map<string, string>();
 
 /**
  * How many passes this instance has completed, and the only reason it is counted:
@@ -366,7 +368,7 @@ async function alertPass(
       driver: "api",
     });
 
-    for (const alert of result.firing) {
+    for (const alert of firingToLog(apiFiringLogged, result.firing)) {
       log.warn("alert_firing", {
         alertKey: alert.key, kind: alert.kind, severity: alert.severity,
         count: alert.count, oldestSeconds: alert.oldestSeconds, detail: alert.detail,

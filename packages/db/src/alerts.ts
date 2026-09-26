@@ -1,4 +1,4 @@
-import { and, eq, gt, isNotNull, isNull, lt, lte, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, eq, exists, gt, isNotNull, isNull, lt, lte, ne, or, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import {
   alertPassRuns, alertState, authEvents,
@@ -463,6 +463,23 @@ export interface Alert {
 /** The effective signature of a firing alert — {@link Alert.signature}'s documented default. */
 export function alertSignature(a: Alert): string {
   return a.signature ?? `${a.severity}|${a.count}`;
+}
+
+/**
+ * The firing alerts worth an `alert_firing` line on this pass: new to this process, or with a
+ * changed signature. `logged` is the caller's per-process memory; a key that stopped firing is
+ * forgotten, so its return logs again. A standing alert's record is `alert_state`, not the log.
+ */
+export function firingToLog(logged: Map<string, string>, firing: readonly Alert[]): Alert[] {
+  const out: Alert[] = [];
+  const live = new Set<string>();
+  for (const a of firing) {
+    live.add(a.key);
+    const sig = alertSignature(a);
+    if (logged.get(a.key) !== sig) { out.push(a); logged.set(a.key, sig); }
+  }
+  for (const key of [...logged.keys()]) if (!live.has(key)) logged.delete(key);
+  return out;
 }
 
 /** The largest power of two at or below `n` (0 below 1): a count bucket that moves per doubling. */
@@ -1083,36 +1100,44 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   const deviceStaleCut = new Date(now.getTime() - t.deviceSyncStaleMs);
   const deviceArmCut = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
   try {
-    const staleDevices = await db
+    // ONE STATEMENT FOR EVERY DEVICE, both arms, however many are stale: the moved-on and armed
+    // probes as EXISTS over the same named columns, so the count never multiplies the statements.
+    const movedOnSince = (at: AnyPgColumn) => exists(db.select({ one: sql`1` }).from(mailboxes)
+      .where(and(eq(mailboxes.accountId, devices.accountId), gt(mailboxes.lastSyncAt, at))));
+    const candidates = await db
       .select({
         id: devices.id,
         accountId: devices.accountId,
         kind: devices.kind,
         lastSyncedAt: devices.lastSyncedAt,
+        createdAt: devices.createdAt,
       })
       .from(devices)
       .where(and(
         ne(devices.kind, "web"),
-        isNotNull(devices.lastSyncedAt),
-        lt(devices.lastSyncedAt, deviceStaleCut),
+        or(
+          and(
+            isNotNull(devices.lastSyncedAt), lt(devices.lastSyncedAt, deviceStaleCut),
+            movedOnSince(devices.lastSyncedAt),
+            exists(db.select({ one: sql`1` }).from(sessions).where(and(
+              eq(sessions.deviceId, devices.id),
+              or(isNull(sessions.revokedAt), gt(sessions.revokedAt, deviceArmCut)),
+            ))),
+          ),
+          // The never-synced arm — see its block below for why a NULL stamp is an assertion.
+          and(
+            isNull(devices.lastSyncedAt), lt(devices.createdAt, deviceStaleCut),
+            movedOnSince(devices.createdAt),
+            exists(db.select({ one: sql`1` }).from(sessions).where(and(
+              eq(sessions.deviceId, devices.id),
+              isNull(sessions.revokedAt),
+              gt(sessions.lastSeenAt, deviceStaleCut),
+            ))),
+          ),
+        ),
       ));
-    for (const d of staleDevices) {
-      if (d.lastSyncedAt == null) continue; // isNotNull above; narrows the type
-      const movedOn = await db
-        .select({ id: mailboxes.id })
-        .from(mailboxes)
-        .where(and(eq(mailboxes.accountId, d.accountId), gt(mailboxes.lastSyncAt, d.lastSyncedAt)))
-        .limit(1);
-      if (movedOn.length === 0) continue;
-      const armed = await db
-        .select({ deviceId: sessions.deviceId })
-        .from(sessions)
-        .where(and(
-          eq(sessions.deviceId, d.id),
-          or(isNull(sessions.revokedAt), gt(sessions.revokedAt, deviceArmCut)),
-        ))
-        .limit(1);
-      if (armed.length === 0) continue;
+    for (const d of candidates) {
+      if (d.lastSyncedAt == null) continue;
       const staleSeconds = secondsBetween(now, d.lastSyncedAt);
       alerts.push({
         key: `device_sync_stale:${d.id}`,
@@ -1148,38 +1173,8 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
     // a pairing taken back; one with an unrevoked but frozen session is a dead pairing handshake.
     // The stamped arm keeps its wider revoked-within-14-days window: there a working mirror went
     // dark and its person does not know.
-    const neverSynced = await db
-      .select({
-        id: devices.id,
-        accountId: devices.accountId,
-        kind: devices.kind,
-        createdAt: devices.createdAt,
-      })
-      .from(devices)
-      .where(and(
-        ne(devices.kind, "web"),
-        isNull(devices.lastSyncedAt),
-        lt(devices.createdAt, deviceStaleCut),
-      ));
-    for (const d of neverSynced) {
-      const movedOn = await db
-        .select({ id: mailboxes.id })
-        .from(mailboxes)
-        .where(and(eq(mailboxes.accountId, d.accountId), gt(mailboxes.lastSyncAt, d.createdAt)))
-        .limit(1);
-      if (movedOn.length === 0) continue;
-      const armed = await db
-        .select({ deviceId: sessions.deviceId })
-        .from(sessions)
-        .where(and(
-          eq(sessions.deviceId, d.id),
-          isNull(sessions.revokedAt),
-          // STILL MAKING REQUESTS — the gate the header argues. A live-but-frozen session
-          // (last seen at its own mint, weeks back) is a dead handshake and fires nothing.
-          gt(sessions.lastSeenAt, deviceStaleCut),
-        ))
-        .limit(1);
-      if (armed.length === 0) continue;
+    for (const d of candidates) {
+      if (d.lastSyncedAt != null) continue;
       const staleSeconds = secondsBetween(now, d.createdAt);
       alerts.push({
         key: `device_sync_stale:${d.id}`,
