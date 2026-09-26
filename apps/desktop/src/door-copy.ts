@@ -710,8 +710,9 @@ const EN = {
      Neither a sign-out nor a broken mailbox, so neither of their sentences. The one way on is
      this computer on its own; `gateFoot` below says the mail on the person's server is fine. */
   gateAccountErased: (machine: string) =>
-    `The ohmail account this ${machine} was signed in to was deleted, so nothing new arrives `
-    + `here. Set this ${machine} up on its own to keep reading your mail from your own server.`,
+    `The ohmail account this ${machine} was signed in to was deleted, so its copy of your mail `
+    + `was removed from this ${machine}. Set this ${machine} up on its own to keep reading your mail `
+    + `from your own server.`,
   gateOpening: "Opening…",
   bootCreatingStore: "Setting up your local mail store…",
   bootOpeningStore: "Opening your local mail store…",

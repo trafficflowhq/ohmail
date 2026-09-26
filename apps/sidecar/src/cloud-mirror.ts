@@ -3688,8 +3688,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         accountErased = true;
         reachable = false;
         cfg.log?.("cloud_account_erased", {
-          reason: "the hosted account has been deleted; this copy of the mail stays on this " +
-            "computer, readable, and nothing more is mirrored into it",
+          reason: "the hosted account has been deleted; nothing more is mirrored, and the engine " +
+            "removes this computer's copy of that account's mail",
         });
         return 0;
       }

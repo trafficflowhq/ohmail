@@ -156,10 +156,14 @@ export function encodeMirrorRecord(
   base: string | null,
   account: string | null = null,
   discardPending = false,
+  /** The hosted account was ERASED — see {@link MirrorRecord.erased}. */
+  erased = false,
 ): string {
-  /* THE FLAG IS OMITTED WHEN FALSE, so an ordinary record is byte-identical to what every build
-     before this wrote and a reader that has never heard of it is unaffected. */
-  return JSON.stringify(discardPending ? { address, base, account, discardPending } : { address, base, account });
+  /* THE FLAGS ARE OMITTED WHEN FALSE, so an ordinary record is byte-identical to what every build
+     before this wrote and a reader that has never heard of them is unaffected. */
+  return JSON.stringify({
+    address, base, account, ...(discardPending ? { discardPending } : {}), ...(erased ? { erased } : {}),
+  });
 }
 
 /**
@@ -175,7 +179,7 @@ export function decodeMirrorRecord(raw: string): MirrorRecord {
   if (text.startsWith("{")) {
     try {
       const parsed = JSON.parse(text) as {
-        address?: unknown; base?: unknown; account?: unknown; discardPending?: unknown;
+        address?: unknown; base?: unknown; account?: unknown; discardPending?: unknown; erased?: unknown;
       };
       /* `null` AND NOT `""`, and the difference decides whether a mirror survives. An empty
          string is an address that WAS configured and is blank, which `sameOwner` matches against
@@ -192,13 +196,16 @@ export function decodeMirrorRecord(raw: string): MirrorRecord {
       /* TRUE ONLY FOR THE EXACT BOOLEAN. Anything else — absent, a string, a number — is the
          ordinary state, because this flag causes a DELETION and a value nobody deliberately wrote
          must never select that branch. */
-      return { address, base, account, discardPending: parsed.discardPending === true, legacy: false };
+      return {
+        address, base, account, discardPending: parsed.discardPending === true, erased: parsed.erased === true,
+        legacy: false,
+      };
     } catch {
       /* A torn or truncated write. Falls through to the legacy read, which yields an address that
          matches nothing — the same answer an empty file gives, and the safe one. */
     }
   }
-  return { address: text, base: null, account: null, discardPending: false, legacy: true };
+  return { address: text, base: null, account: null, discardPending: false, erased: false, legacy: true };
 }
 
 export interface MirrorRecord {
@@ -237,6 +244,12 @@ export interface MirrorRecord {
    * `enforceMirrorOwner`.
    */
   discardPending: boolean;
+  /**
+   * The hosted account this directory mirrored was ERASED. Written with `discardPending` by the
+   * erased-account discard, carried across the launch that performs it, and dropped by the next
+   * session's record, so `/health.accountErased` says so after a relaunch until somebody signs in.
+   */
+  erased: boolean;
   /**
    * True when this record is the ONE-ADDRESS shape an earlier build wrote — load-bearing, not
    * informational. A `null` base means two different things by shape, and collapsing them leaks a

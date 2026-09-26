@@ -2,6 +2,9 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { StaticKeyProvider, type KeyProvider } from "@trafficflow/core/mail";
+import { eq } from "drizzle-orm";
+import { mailboxes, recordMailboxRemoved, type LedgerTx, type Tx } from "@trafficflow/db";
+import { deleteMailboxRows } from "./local-mirror.js";
 import {
   resolveSession, syncService, ServiceError, isUuid,
   type EntityType, type ServiceContext, type SyncResponse,
@@ -474,10 +477,20 @@ export function enforceMirrorOwner(
       recordedAddress,
       servedBase,
       addressChanged || serverChanged ? null : priorRecord?.account ?? null,
+      false,
+      // AN ERASED ACCOUNT IS SAID ACROSS THE DISCARD that removed its mirror, until a session writes
+      // a record of its own. Another address or server is another world with nothing to say.
+      !addressChanged && !serverChanged && priorRecord?.erased === true,
     ),
     { mode: 0o600 },
   );
   return foreign;
+}
+
+/** Did this directory's hosted account get erased? From the record; `false` for none. */
+export function readMirrorErased(dataDir: string): boolean {
+  const raw = readMirrorRecordRaw(dataDir);
+  return raw === null ? false : decodeMirrorRecord(raw).erased;
 }
 
 /** How long the door waits for a server to say hello. Short: somebody is watching a spinner. */
@@ -1063,10 +1076,10 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     /**
      * THE HOSTED ACCOUNT WAS DELETED — latched by the session's `account_erased` refusal and
      * cleared only when a new session is activated. It outlives the teardown that discards the
-     * seal, so `/health` keeps saying it after `authed` is gone; a relaunch holds no seal and
-     * starts at sign-in, which is the truth then.
+     * seal, so `/health` keeps saying it after `authed` is gone, and the record carries it across
+     * a relaunch (`readMirrorErased`) until a session writes a record of its own.
      */
-    let accountErasedLatch = false;
+    let accountErasedLatch = readMirrorErased(config.dataDir);
 
     const activate = (tokens: CloudTokens): Authed => {
       // A NEW session is a new answer about its account: a sign-in after the card starts clean.
@@ -1093,18 +1106,22 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           // surface. Fire-and-forget: this fires from inside a pull's own refresh, and the
           // teardown's stop() resolves only after that pull fails out — awaiting is the deadlock.
           // A DELETED account takes the same teardown and latches first, so the window says so.
-          if (code === ACCOUNT_ERASED) accountErasedLatch = true;
+          const erased = code === ACCOUNT_ERASED;
+          if (erased) accountErasedLatch = true;
           log?.("cloud_session_renewal_failed", {
             code,
-            reason: code === ACCOUNT_ERASED
+            reason: erased
               ? "the hosted account was deleted; the engine discards its session and asks the " +
-                "hosted API nothing more, and the mail already here stays readable"
+                "hosted API nothing more, and this computer's copy of that account's mail is removed"
               : "the hosted API refused to renew the session; the engine returns to sign-in " +
                 "and the mirror keeps serving what it holds",
           });
-          sessionTeardown = signOut().catch(() => undefined).finally(() => {
-            sessionTeardown = null;
-          });
+          // AFTER the teardown, never beside it: `signOut` awaits the mirror's stop, so no drain
+          // is writing when the erased account's copy is removed.
+          sessionTeardown = signOut().then(() => (erased ? discardErasedMirror() : undefined))
+            .catch(() => undefined).finally(() => {
+              sessionTeardown = null;
+            });
         },
       });
       setHostedSession(auth.session());
@@ -1240,6 +1257,47 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     };
 
     /**
+     * THE ERASED ACCOUNT'S COPY GOES — every piece of it a cache of an account that no longer
+     * exists. Now: every mailbox's mail (`deleteMailboxRows`, the walk a hosted mailbox erasure
+     * runs here) with a removal receipt each, in ONE transaction, so a mounted window and any phone
+     * paired to this door drop it; the cursor and the window's outbox. At the next launch: the
+     * database whole, through the staged discard. Stays: the key, `config.json`, a local-mode
+     * directory (never this one) and the mail server's mailbox, which nothing here can reach.
+     */
+    const discardErasedMirror = async (): Promise<void> => {
+      let mailboxesRemoved = 0;
+      try {
+        await db.transaction(async (tx) => {
+          const rows = await tx.select({ id: mailboxes.id }).from(mailboxes)
+            .where(eq(mailboxes.accountId, world.accountId));
+          for (const row of rows) {
+            await deleteMailboxRows(tx as unknown as Tx, row.id);
+            await recordMailboxRemoved(tx as unknown as LedgerTx, world.accountId, row.id);
+          }
+          mailboxesRemoved = rows.length;
+        });
+      } catch (err) {
+        log?.("cloud_account_erased_discard_failed", {
+          err, reason: "the deleted account's mail could not be removed now; the next launch removes the database",
+        });
+      }
+      await windowOutbox.discard().catch(() => undefined);
+      rmSync(join(config.dataDir, "cloud-cursor.json"), { force: true });
+      const prior = readMirrorRecordRaw(config.dataDir);
+      const record = prior === null ? null : decodeMirrorRecord(prior);
+      writeFileSync(
+        join(config.dataDir, MIRROR_OWNER_FILE),
+        encodeMirrorRecord(record?.address ?? config.address, record?.base ?? cloudBase, null, true, true),
+        { mode: 0o600 },
+      );
+      log?.("cloud_account_erased_discarded", {
+        count: mailboxesRemoved,
+        reason: "the hosted account was deleted, so its mail was removed from this computer and the " +
+          "database is removed at the next start",
+      });
+    };
+
+    /**
      * THE PENDING DOOR'S ADOPTION, in one synchronous step so no other request in this process
      * sees half of it: the door file first (the commit — created once, refused when any door is
      * there), then the mirror-owner record when it names nobody. A record that fails to write is
@@ -1323,8 +1381,8 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           sealFailure: authed === null ? null : authed.auth.sealState().reason,
           /* THE MIRROR'S OWN STOP. `online: false` alone reads as a network blip a later poll
              clears; this one says the hosted account was deleted and nothing more will arrive.
-             The mail already here stays readable — signing out never deletes mail, and neither
-             does this. */
+             Its copy of the mail is removed from this computer (`discardErasedMirror`); the
+             mailbox on the mail server is untouched. */
           accountErased: accountErasedLatch || (authed !== null && authed.mirror.accountErased()),
           /* THE PENDING DOOR, and whether its claim has adopted an account yet. `adopted` means the
              door on disk now names that account and the window relaunches this engine behind it. */

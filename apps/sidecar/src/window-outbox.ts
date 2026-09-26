@@ -69,6 +69,8 @@ export interface WindowOutboxDeps {
 
 interface WindowOutbox {
   handle(req: Request): Promise<Response>;
+  /** Drop every queued change, in memory and on disk — the erased-account discard. */
+  discard(): Promise<void>;
 }
 
 export function createWindowOutbox(deps: WindowOutboxDeps): WindowOutbox {
@@ -181,6 +183,10 @@ export function createWindowOutbox(deps: WindowOutboxDeps): WindowOutbox {
   };
 
   return {
+    discard: () => serial(async () => {
+      held = new Map();
+      for (const f of WINDOW_OUTBOX_FILES) await unlink(join(deps.dataDir, f)).catch(() => undefined);
+    }),
     async handle(req) {
       if (!(await deps.authorized(req))) {
         return json(401, { error: { code: "unauthorized", message: "authentication required" } });
