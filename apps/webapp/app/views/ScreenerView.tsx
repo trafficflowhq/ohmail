@@ -818,6 +818,17 @@ export function ScreenerView({
   const junkCurrent = junkActive
     ? junkItems.find((i) => junkKeyOf(i) === activeId) ?? null
     : null;
+  /**
+   * FULL-SCREEN IS A CLAIM THAT A SENDER IS ON SCREEN. On a phone the preview is a fixed layer
+   * over the whole app, so honoured with nothing to show it was a blank page over every control,
+   * and the last decision of every session ended there. Honoured only while the selection
+   * resolves, and handed back on that same condition, whichever way the sender left (this
+   * decision, another surface, an emptied segment). Undo returns the sender to the list only.
+   */
+  const fullShown = full && (junkActive ? junkCurrent !== null : current !== null);
+  useEffect(() => {
+    if (full && !fullShown) onFull(false);
+  }, [full, fullShown, onFull]);
   const scopeOf = (s: ScreenerSenderDTO): DecisionScope =>
     scopes.get(s.id) ?? s.scope ?? "sender";
 
@@ -1378,7 +1389,7 @@ export function ScreenerView({
   };
 
   return (
-    <section className={full ? "view split view-screener scn-full" : "view split view-screener"}>
+    <section className={fullShown ? "view split view-screener scn-full" : "view split view-screener"}>
       <ListPane
         scrollerRef={listScrollerRef}
         title={t("title")}
