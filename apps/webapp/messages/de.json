@@ -1129,6 +1129,8 @@
     "addressDevice": "{count, plural, one {1 neuere} other {# neuere}}",
     "addressArchive": "{count, plural, one {1 in deinem ganzen Postfach} other {# in deinem ganzen Postfach}}",
     "addressArchiveBySender": "{count, plural, one {1 in deinem ganzen Postfach (nach Absender)} other {# in deinem ganzen Postfach (nach Absender)}}",
+    "addressArchiveSynced": "{count, plural, one {1 in der bisher synchronisierten Post} other {# in der bisher synchronisierten Post}}",
+    "addressArchiveBySenderSynced": "{count, plural, one {1 in der bisher synchronisierten Post (nach Absender)} other {# in der bisher synchronisierten Post (nach Absender)}}",
     "addressArchiveBySenderWhy": "Dein ganzes Postfach wird nur nach Absender durchsucht, diese Zahl zählt also die Post, die diese Adresse geschickt hat. Ältere Post an sie ist noch nicht mitgezählt.",
     "addressArchiveNoRecipients": "dein ganzes Postfach lässt sich noch nicht nach Empfänger durchsuchen",
     "addressArchiveNoRecipientsWhy": "Diese Liste zeigt die neuere Post an diese Adresse. Ältere Post an sie kann noch nicht aufgeführt werden.",

@@ -1129,6 +1129,8 @@
     "addressDevice": "{count, plural, one {1 recent} other {# recent}}",
     "addressArchive": "{count, plural, one {1 in your whole mailbox} other {# in your whole mailbox}}",
     "addressArchiveBySender": "{count, plural, one {1 in your whole mailbox (by sender)} other {# in your whole mailbox (by sender)}}",
+    "addressArchiveSynced": "{count, plural, one {1 in the mail synced so far} other {# in the mail synced so far}}",
+    "addressArchiveBySenderSynced": "{count, plural, one {1 in the mail synced so far (by sender)} other {# in the mail synced so far (by sender)}}",
     "addressArchiveBySenderWhy": "Your whole mailbox is searched by sender only, so this number counts the mail this address sent. Older mail sent to it is not counted yet.",
     "addressArchiveNoRecipients": "your whole mailbox cannot be searched by recipient yet",
     "addressArchiveNoRecipientsWhy": "This list is the recent mail sent to this address. Older mail sent to it cannot be listed yet.",

@@ -840,13 +840,14 @@ export class HttpAdapter implements EngineAdapter {
     if (opts.limit !== undefined) q.set("limit", String(opts.limit));
     const res = await this.request("GET", `/search?${q.toString()}`);
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json()) as { items?: EngineMessage[]; total?: number; direction?: string };
+    const wire = (await res.json()) as { items?: EngineMessage[]; total?: number; direction?: string; importing?: unknown };
     return {
       items: Array.isArray(wire.items) ? wire.items : [],
       total: typeof wire.total === "number" ? wire.total : (wire.items?.length ?? 0),
       // Forward-compatible (§8): the engine re-reads this against its own vocabulary and falls
       // back to `from`, so an unknown word never reaches a label. Passed through as-is here.
       ...(wire.direction !== undefined ? { direction: wire.direction as ServerAddressWire["direction"] } : {}),
+      ...(wire.importing === true ? { importing: true as const } : {}),
     };
   }
 

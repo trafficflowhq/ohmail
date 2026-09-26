@@ -789,6 +789,8 @@ export interface ServerAddressWire {
   total: number;
   /** Which side the server actually searched. Absent ⇒ `from`, the only direction it serves. */
   direction?: ServerAddressDirection;
+  /** Present while the store has not taken in the whole mailbox: `total` is of the mail synced so far. */
+  importing?: true;
 }
 
 /**
@@ -1139,7 +1141,7 @@ export function errorClassOf(err: unknown): string {
  */
 export type ServerAddressOutcome =
   | { state: "unavailable" }
-  | { state: "ready"; items: EngineMessage[]; total: number; direction: ServerAddressDirection }
+  | { state: "ready"; items: EngineMessage[]; total: number; direction: ServerAddressDirection; importing?: true }
   | { state: "failed"; error: string };
 
 /**
@@ -7746,6 +7748,7 @@ export class OhmailEngine {
           direction: (SERVER_ADDRESS_DIRECTIONS as readonly string[]).includes(wire.direction ?? "")
             ? (wire.direction as ServerAddressDirection)
             : "from",
+          ...(wire.importing === true ? { importing: true as const } : {}),
         };
       })
       .catch((err: unknown): ServerAddressOutcome => ({

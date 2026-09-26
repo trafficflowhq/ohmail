@@ -50,7 +50,8 @@ export const ADDRESS_DIRECTIONS: readonly AddressDirection[] = ["any", "from", "
  */
 export type AddressArchive =
   | { state: "searching" }
-  | { state: "ready"; items: EngineMessage[]; total: number; direction: AddressDirection }
+  /** `importing`: the store has not taken in the whole mailbox, so `total` is of the mail synced so far. */
+  | { state: "ready"; items: EngineMessage[]; total: number; direction: AddressDirection; importing: boolean }
   /**
    * `retry` hangs off THIS arm and no other, so "ask again" cannot be offered where there is
    * nothing to ask again: `unavailable` means there is no archive behind this client at all and
@@ -182,7 +183,7 @@ export function useAddressView({
       // `ready` with nothing, and the direction the archive serves — byte for byte what
       // `OhmailEngine.searchAddressServer` itself answers for a blank address, so the contract
       // and the engine cannot disagree about what "nothing to ask" looks like.
-      setPass({ address, outcome: { state: "ready", items: [], total: 0, direction: "from" } });
+      setPass({ address, outcome: { state: "ready", items: [], total: 0, direction: "from", importing: false } });
       return;
     }
     if (!available) {
@@ -205,6 +206,7 @@ export function useAddressView({
                 items: outcome.items,
                 total: outcome.total,
                 direction: outcome.direction,
+                importing: outcome.importing === true,
               }
               : outcome.state === "failed"
                 ? { state: "failed", error: outcome.error, retry: () => setRetryTick((n) => n + 1) }

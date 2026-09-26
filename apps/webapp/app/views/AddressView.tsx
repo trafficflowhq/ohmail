@@ -188,7 +188,7 @@ export function AddressView({
         </button>
       </>
     ) : view.coverage === "complete" ? (
-      t("addressArchive", { count: archive.total })
+      t(archive.importing ? "addressArchiveSynced" : "addressArchive", { count: archive.total })
     ) : direction === "to" ? (
       <>
         {t("addressArchiveNoRecipients")}{" "}
@@ -196,7 +196,7 @@ export function AddressView({
       </>
     ) : (
       <>
-        {t("addressArchiveBySender", { count: archive.total })}{" "}
+        {t(archive.importing ? "addressArchiveBySenderSynced" : "addressArchiveBySender", { count: archive.total })}{" "}
         <Gloss placement="meta" text={t("addressArchiveBySenderWhy")} />
       </>
     );
@@ -218,6 +218,10 @@ export function AddressView({
       <b className="addr-device">{deviceHalf}</b>
       <span className={archiveIsSentence ? "addr-archive sentence" : "addr-archive"}>{archiveHalf}</span>
       {archiveShown ? <span className="addr-archive">{archiveShown}</span> : null}
+      {/* A first sync: the archive's number is of the mail synced so far, and the line says the rest is not in. */}
+      {archive.state === "ready" && archive.importing ? (
+        <span className="addr-archive sentence" data-testid="address-syncing">{t("syncing")}</span>
+      ) : null}
     </>
   );
 

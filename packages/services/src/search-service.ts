@@ -276,6 +276,8 @@ export interface AddressSearchResult {
    * same rows, and only this field lets the second one label them honestly.
    */
   direction: AddressSearchDirection;
+  /** Present while the store has not taken in the whole mailbox ({@link importOpen}): `total` is of the mail synced so far. */
+  importing?: true;
 }
 
 /** The empty facets — a blank query, or a query nothing matches. */
@@ -959,7 +961,8 @@ export class SearchService {
     const where = this.whereSql(d, ctx.accountId, {});
     const pred = sql`lower(m.from_address) = lower(${address})`;
 
-    const total = await this.count(ctx, d, sql`select m.id as id ${this.from} where ${where} and ${pred}`);
+    // The count carries the coverage fact in its own statement: no round trip for it.
+    const [total, importing] = await this.count(ctx, d, sql`select m.id as id ${this.from} where ${where} and ${pred}`);
     /* THROUGH THE SEAM, AND THE ROWS COME BACK POSITIONAL.
      *
      * `d.exec` answers `unknown[][]` on both stores — its own contract says positional is the shape
@@ -982,7 +985,7 @@ export class SearchService {
       const dto = byId.get(id);
       if (dto) items.push(dto);
     }
-    return { items, total, direction: opts.direction };
+    return { items, total, direction: opts.direction, ...(importing ? { importing: true as const } : {}) };
   }
 
   // ── counts & facets over the union of the tier's arms ─────────────────────────────────
@@ -1011,7 +1014,7 @@ export class SearchService {
     const tx = ctx.db as unknown as { transaction: <R>(f: (t: unknown) => Promise<R>) => Promise<R> };
     if (known.has(ctx.accountId)) {
       // The warm settings carry no parameter, so the import rides them with the account inlined.
-      const warm = sql`select ${importOpen(ctx.accountId, { inline: true })} as importing, s.* from (${setup}) s`;
+      const warm = sql`select ${importOpen(d, ctx.accountId, ctx.now(), { inline: true })} as importing, s.* from (${setup}) s`;
       return tx.transaction(async (t) => {
         const { out, settings } = await afterSettingsRead(t, d, warm, () => fn(t, { built: true, trigram }));
         return covered(out, truthy(settings[0]?.[0]));
@@ -1021,7 +1024,7 @@ export class SearchService {
     const marker = sql`exists (select 1 from ${accountSettings}
       where ${accountSettings.accountId} = ${ctx.accountId} and ${accountSettings.searchIndexBuiltAt} is not null)`;
     return tx.transaction(async (t) => {
-      const [row] = await d.exec(t, sql`select ${marker} as built, ${importOpen(ctx.accountId)} as importing, s.* from (${setup}) s`);
+      const [row] = await d.exec(t, sql`select ${marker} as built, ${importOpen(d, ctx.accountId, ctx.now())} as importing, s.* from (${setup}) s`);
       const built = truthy(row?.[0]);
       if (built) {
         if (known.size >= MARKER_MEMO_MAX) known.clear();
@@ -1049,11 +1052,11 @@ export class SearchService {
     return tx.transaction((t) => afterSettings(t, d, setup, () => fn(t)));
   }
 
-  /** How many messages the union matches — ONE count over the union, each branch on its index. */
-  private async count(ctx: ServiceContext, d: Dialect, ids: SQL, tier: SearchTier = "exact"): Promise<number> {
+  /** How many messages the union matches — ONE count over the union, each branch on its index — and {@link importOpen}. */
+  private async count(ctx: ServiceContext, d: Dialect, ids: SQL, tier: SearchTier = "exact"): Promise<[number, boolean]> {
     const rows = await this.inSession(ctx, d, { tier, preferIndexes: true }, (db) =>
-      d.exec(db, sql`select ${d.castInt(sql`count(*)`)} as n from (${ids}) u`));
-    return Number(rows[0]?.[0] ?? 0);
+      d.exec(db, sql`select ${d.castInt(sql`count(*)`)} as n, ${importOpen(d, ctx.accountId, ctx.now())} as importing from (${ids}) u`));
+    return [Number(rows[0]?.[0] ?? 0), truthy(rows[0]?.[1])];
   }
 
   /**
