@@ -3502,15 +3502,13 @@ export async function startWorkerWithLock(
             );
             /* And cache the organizer's settings document, once per reader cycle (mail 0094). A
              * reader's own responder/rule/window/signature rows are inert: the ones in force are in the
-             * published document of the install that HOLDS this mailbox. The panes rendered the local
-             * rows anyway (ruling 6's Critical), so the reader keeps a copy and
-             * `GET /mailboxes/:id/profile` serves that. A SIBLING of `refreshReaderHolder`, not a line
-             * inside it: that function RETURNS EARLY when none of the six holder columns moved (its
-             * zero-writes steady state), and folded in, the mirror would refresh only when the HOLDER
-             * changed — while the document changes far more often, so a settings pane would sit on a
-             * stale copy. Probed, not asserted (`profileIo` is an accessor a double need not carry).
-             * The document read cannot throw past it; its own SELECT and writes can, so the call is
-             * tagged: a dead database met here is the shard's fault, never this mailbox's. */
+             * published document of the install that HOLDS this mailbox, so the reader keeps a copy
+             * and `GET /mailboxes/:id/profile` serves that (ruling 6's Critical). A SIBLING of
+             * `refreshReaderHolder`, not a line inside it: that one RETURNS EARLY when no holder column
+             * moved, so folded in, the mirror would refresh only when the HOLDER changed. Probed, not
+             * asserted (`profileIo` is an accessor a double need not carry). The document read cannot
+             * throw past it; its own SELECT and writes can, so the call is tagged: a dead database met
+             * here is the shard's fault, never this mailbox's. */
             const mkIo = (rt.adapter as Partial<{
               profileIo(id: { installId: string; mailboxId: string }): ProfileIo;
             }>).profileIo;
