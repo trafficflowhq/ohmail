@@ -7438,6 +7438,13 @@
     },
     {
         "type": "file",
+        "url": "https://registry.npmjs.org/ws/-/ws-8.22.0.tgz",
+        "sha512": "61d82073df3bf913b40275ad67fed6abd16d36f72b2f56ff44ed2e77d9968d43e00ebb00030412179d6c9b6866d57a1f6d4ff88e4a4612c2c5b1967153ed433a",
+        "dest-filename": "2073df3bf913b40275ad67fed6abd16d36f72b2f56ff44ed2e77d9968d43e00ebb00030412179d6c9b6866d57a1f6d4ff88e4a4612c2c5b1967153ed433a",
+        "dest": "flatpak-node/npm-cache/_cacache/content-v2/sha512/61/d8"
+    },
+    {
+        "type": "file",
         "url": "https://registry.npmjs.org/xcode/-/xcode-3.0.1.tgz",
         "sha512": "902cf993b27b5db26d8c004ebe47399499a488387c5618d5086362a9d282b1c995a5d554a440325efd719822e4409e5db07ab1dc83cee175be3530e153f7dab4",
         "dest-filename": "f993b27b5db26d8c004ebe47399499a488387c5618d5086362a9d282b1c995a5d554a440325efd719822e4409e5db07ab1dc83cee175be3530e153f7dab4",
@@ -9080,6 +9087,12 @@
         "contents": "3e90ae4d5fd6077be903ac36a180f20382029b10\t{\"key\": \"make-fetch-happen:request-cache:https://registry.npmjs.org/on-finished/-/on-finished-2.4.1.tgz\", \"integrity\": \"sha512-oVlzkg3ENAhCk2zdv7IJwd/QUD4z2RxRwpkcGY8psCVcCYZNq4wYnVWALHM+brtuJjePWiYF/ClmuDr8Ch5+kg==\", \"time\": 0, \"size\": 5052, \"metadata\": {\"url\": \"https://registry.npmjs.org/on-finished/-/on-finished-2.4.1.tgz\", \"reqHeaders\": {}, \"resHeaders\": {}}}",
         "dest-filename": "6189df0792aa97c0ff62a3061969d948332c3ee59c2f5a1f48e473406b43",
         "dest": "flatpak-node/npm-cache/_cacache/index-v5/33/84"
+    },
+    {
+        "type": "inline",
+        "contents": "3ea25aaca629be3bf2ab8d2be46bed6f07319b49\t{\"key\": \"make-fetch-happen:request-cache:https://registry.npmjs.org/ws/-/ws-8.22.0.tgz\", \"integrity\": \"sha512-Ydggc987+RO0AnWtZ/7Wq9FtNvcrL1b/RO0ud9mWjUPgDrsAAwQSF51sm2hm1XofbU/4jkpGEsLFsZZxU+1DOg==\", \"time\": 0, \"size\": 35094, \"metadata\": {\"url\": \"https://registry.npmjs.org/ws/-/ws-8.22.0.tgz\", \"reqHeaders\": {}, \"resHeaders\": {}}}",
+        "dest-filename": "cdc278b6ba59bdf866db881b7f83c00215a177f5f9d46e61931e358cce57",
+        "dest": "flatpak-node/npm-cache/_cacache/index-v5/f5/7f"
     },
     {
         "type": "inline",
