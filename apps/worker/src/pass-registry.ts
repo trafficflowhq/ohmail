@@ -169,8 +169,8 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   {
     name: "rule_retro",
     module: `${W}/rule-retro.ts`, entry: "ruleRetroPass",
-    triggers: ["cycle-tail"],
-    cadence: "every cycle tail, per account, while retro-apply commands are pending",
+    triggers: ["cycle-tail", "sidecar-drain"],
+    cadence: "every cycle tail, per account, while retro-apply commands are pending; on a standalone install at the head of every organizer drain",
     budget: "RULE_RETRO_BATCH / RULE_RETRO_WRITES_PER_CYCLE / RULE_RETRO_MAX_PAGES",
     owns: "a rule's retroactive apply reaches the existing backlog, resumably",
     fence: "leader lock; desired-state writes only (the reconciler carries them to IMAP)",

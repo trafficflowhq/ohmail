@@ -7,9 +7,11 @@ import {
 import {
   DEFAULT_OHBOX_POLICY, ORGANIZED_FOLDERS, authVerdictFromHeaders, canonicalDestination, evaluateRules,
   silentLogger, type Destination, type Logger, type NormalizedMessage, type Rule,
-} from "@trafficflow/core";
+  /* The mail leaf, never the barrel: the local engines bundle this pass, and a value import from
+     the barrel carries the model half into them (the engine census refuses the build). */
+} from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { carryDialect, dialect } from "@trafficflow/db/dialect";
+import { carryDialect, dialect, type Dialect } from "@trafficflow/db/dialect";
 import { perMailboxAuthservTrust, ruleInputOf, upsertDesired } from "./rule-pass.js";
 
 /* APPLYING A NEW RULE TO MAIL ALREADY FILED — writes desired-state intent, never opens IMAP.
@@ -275,14 +277,18 @@ export async function ruleRetroPass(
     for (; pages < maxPages; pages++) {
       if (result.moved >= budget) { result.capped = true; break; }
 
-      const page = await db.transaction(async (tx) => {
+      const page = await db.transaction(async (txRaw) => {
+        /* THE DEVICE STORE RUNS THIS PASS TOO (the phone's and the desktop's local door), so every
+           Postgres-only spelling goes through the seam; on the server the SQL is the same. */
+        const tx = carryDialect(db, txRaw as object) as typeof txRaw;
+        const d = dialect(tx);
         // THE RULE ROW IS THE SERIALIZATION POINT, TAKEN FIRST. Re-reading the rule `FOR UPDATE`
         // inside the page transaction makes a second driver (worker cycle vs failover) block, wake
         // with the winner's committed cursor and page forward — so `change_log` gains one `move`, not
         // two. It is also the revoke check (a disabled/deleted rule stops at the next page boundary).
         // Lock order is consistent: `rules` before `folder_state`, both before the
         // `account_sync_state` counter `recordChange` takes — the order every other writer uses.
-        const [live] = await tx.select({
+        const [live] = await d.forUpdate(tx.select({
           id: rulesTbl.id, accountId: rulesTbl.accountId, kind: rulesTbl.kind,
           match: rulesTbl.match, destination: rulesTbl.destination, cursor: rulesTbl.retroCursor,
           releaseHeldAt: rulesTbl.releaseHeldAt, retroRequestedAt: rulesTbl.retroRequestedAt,
@@ -293,8 +299,7 @@ export async function ruleRetroPass(
             isNotNull(rulesTbl.retroRequestedAt),
             ...(deps.force ? [] : [isNull(rulesTbl.retroDoneAt)]),
           ))
-          .limit(1)
-          .for("update");
+          .limit(1));
         if (!live) {
           return { gone: true, rows: 0, moved: 0, kept: 0, cursor: null, resumedFrom: null, done: false };
         }
@@ -308,9 +313,7 @@ export async function ruleRetroPass(
         // and before `folder_state` (plain reads of `rules`/`contacts`, no row lock). Use
         // `carryDialect`, not the bare handle: a `tx` object lacks the connection's dialect brand, so
         // a repo built straight from `tx` refuses its first locking statement.
-        const pageRepo = makeDrizzleRepo(
-          carryDialect(db, tx) as unknown as Parameters<typeof makeDrizzleRepo>[0],
-        );
+        const pageRepo = makeDrizzleRepo(tx as unknown as Parameters<typeof makeDrizzleRepo>[0]);
         const rules: Rule[] = await pageRepo.listRules(rule.accountId);
         const known: ReadonlySet<string> = await pageRepo.knownSenders(rule.accountId);
 
@@ -402,7 +405,7 @@ export async function ruleRetroPass(
           await tx.update(rulesTbl)
             .set({
               retroCursor: sql`case when ${rulesTbl.retroCursor} is not distinct from ${rule.cursor}
-                               then ${lastId}::uuid else ${rulesTbl.retroCursor} end`,
+                               then ${d.castUuid(lastId)} else ${rulesTbl.retroCursor} end`,
               retroMoved: sql`${rulesTbl.retroMoved} + ${moved}`,
             })
             .where(eq(rulesTbl.id, rule.id));
@@ -515,13 +518,14 @@ async function stampRetroDone(
   db: Tx, accountId: string, a: { ruleId: string; outside: SQL; walkedTo: string | null; now: Date },
 ): Promise<{ doneAt: Date | null; cursor: string | null } | undefined> {
   return db.transaction(async (tx) => {
+    const d = dialect(tx);
     const [decided] = await tx.update(rulesTbl)
       .set({
         retroDoneAt: sql`case
           when ${a.outside} then ${rulesTbl.retroDoneAt}
-          when ${rulesTbl.retroCursor} is distinct from ${a.walkedTo === null ? sql`null` : sql`${a.walkedTo}::uuid`}
+          when ${rulesTbl.retroCursor} is distinct from ${a.walkedTo === null ? sql`null` : d.castUuid(a.walkedTo)}
             then ${rulesTbl.retroDoneAt}
-          else ${a.now.toISOString()}::timestamptz end`,
+          else ${d.ts(a.now)} end`,
         retroCursor: sql`case when ${a.outside} then null else ${rulesTbl.retroCursor} end`,
       })
       .where(and(eq(rulesTbl.id, a.ruleId), isNull(rulesTbl.retroDoneAt)))
@@ -565,9 +569,10 @@ async function selectCandidates(
   opts: { rule: OwedRule; ownAddresses: readonly string[]; limit: number; afterId: string | null },
 ): Promise<RetroRow[]> {
   const { rule } = opts;
+  const d = dialect(t);
   const filters = [
     eq(messages.accountId, rule.accountId),
-    matchPredicate(rule),
+    matchPredicate(rule, d),
     sql`${folderState.desiredFolder} <> ${rule.destination}`,
     // A RULE MAY ONLY MOVE MAIL OUT OF A FOLDER ohmail ORGANIZES — an ALLOW-LIST over the six and the
     // legacy News spelling, never `desired_folder <> rule.destination` alone, which would empty a
@@ -643,16 +648,16 @@ async function selectCandidates(
    * the number that moves). The message-level exclusions above bind a release run unchanged.
    */
   if (!isReleaseRun(rule)) {
-    filters.push(sql`not ${weAnsweredThisSenderWhere(dialect(t), {
+    filters.push(sql`not ${weAnsweredThisSenderWhere(d, {
       accountId: messages.accountId as unknown as SQL,
       threadId: messages.threadId as unknown as SQL,
       fromAddress: messages.fromAddress as unknown as SQL,
       ownAddresses: opts.ownAddresses,
     })}`);
   }
-  if (opts.afterId) filters.push(gt(messages.id, sql`${opts.afterId}::uuid`));
+  if (opts.afterId) filters.push(gt(messages.id, d.castUuid(opts.afterId)));
 
-  const rows = await t.select({
+  const rows = await d.forUpdate(t.select({
     messageId: messages.id,
     mailboxId: messages.mailboxId,
     fromAddress: messages.fromAddress,
@@ -668,8 +673,7 @@ async function selectCandidates(
     .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
     .where(and(...filters))
     .orderBy(asc(messages.id))
-    .limit(opts.limit)
-    .for("update", { of: folderState });
+    .limit(opts.limit), { of: folderState });
 
   return rows.map((r) => ({
     messageId: r.messageId,
@@ -693,13 +697,12 @@ async function selectCandidates(
  * matches NOTHING (no surface composes one — `rule_create` has no `header` member), completing
  * immediately having moved nothing rather than matching every message.
  */
-function matchPredicate(rule: OwedRule) {
+function matchPredicate(rule: OwedRule, d: Dialect) {
   const match = rule.match.trim().toLowerCase();
   if (match === "") return sql`false`;
   if (rule.kind === "sender") return sql`lower(${messages.fromAddress}) = ${match}`;
-  if (rule.kind === "domain") {
-    return sql`substring(lower(${messages.fromAddress}) from position('@' in lower(${messages.fromAddress})) + 1) = ${match}`;
-  }
+  // The seam's spelling is the server's own expression, so the domain index still serves it.
+  if (rule.kind === "domain") return sql`${d.domainOf(messages.fromAddress)} = ${match}`;
   return sql`false`;
 }
 

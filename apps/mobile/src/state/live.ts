@@ -2934,8 +2934,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     } else {
       // PAST THE GATE (mirrored from the webapp's shape): this sender's mail is only
       // PRESENTED at the gate — a decide would 404 on both ends. A rule with `applyRetro`
-      // re-presents the whole bag the moment it lands, and the server's retro pass makes the
-      // filing physical; no move is composed here because nothing is physically at the gate.
+      // re-presents the whole bag the moment it lands, and the retro pass makes the filing
+      // physical — the hosted worker's, or on a standalone phone this engine's own drain; no move
+      // is composed here because nothing is physically at the gate.
       const match = scope === "domain" ? domainOf(row.address).toLowerCase() : row.address.trim().toLowerCase();
       landed = watched(
         engine.mutate({

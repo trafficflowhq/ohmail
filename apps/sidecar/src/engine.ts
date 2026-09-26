@@ -9,7 +9,7 @@ import {
   ImapAdapter, ImapConnectionClosedError, WORKER_NET_TIMEOUTS, WriteDeclinedError, buildImapAuth,
   type ImapConfig, type MailboxAdapter, type CredMetaAuth, type NetTimeouts,
 } from "@trafficflow/core/adapters/imap";
-import { makeDrizzleRepo, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import { makeDrizzleRepo, mailboxProviderAuthservIds, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 // The release refusal's OWN class, from the one module that throws it: `releaseOwnClaim` tells a
 // live-sibling refusal (`nonce_unknown` — the pane owes the sibling-lapse sentence) from "could not look".
 import { ClaimReleaseError } from "@trafficflow/core/adapters/organizer-lease";
@@ -167,6 +167,10 @@ import {
 // SAME function against the store that is authoritative here. A local reimplementation would be a
 // second answer to "when is a resurface due", which is the one thing that must not differ.
 import { bubbleUpPass } from "@trafficflow/worker/bubble-up";
+/* A RULE'S "APPLY TO EXISTING MAIL", the worker's pass for bubble-up's reason: on this door the
+   store is the authority and no worker will walk the backlog, so without it a Screener decision
+   re-presented the old mail while the mailbox kept it where it was. */
+import { ruleRetroPass } from "@trafficflow/worker/rule-retro";
 import { screenerAutoSuggestPass } from "@trafficflow/worker/screener-auto-suggest";
 import { screenerAutoActPass, type ScreenerAutoActSettings } from "@trafficflow/worker/screener-auto-act";
 import { threadJoinHealPass, type ThreadJoinHealCursor } from "@trafficflow/worker/thread-join-heal";
@@ -2204,6 +2208,36 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           err,
           reason: "scheduled resurfaces could not be flipped this pass; the rows stay due and " +
             "the next poll tries again, and mail continues to be filed either way",
+        });
+      }
+    };
+
+    /**
+     * APPLY A RULE TO THE MAIL ALREADY FILED — the worker's `ruleRetroPass`, behind the organizer
+     * gate like the flip above. It writes desired state only (`folder_state` + a `move` row); the
+     * cycles that follow in the same drain reconcile it to IMAP. Its own write budget bounds it, and
+     * a failure is contained: the rule stays owed and the next drain resumes from its cursor.
+     */
+    const retroDue = async (): Promise<void> => {
+      try {
+        /* THE TRUST IS READ BEFORE THE WALK, off each credential row's own IMAP host (the worker's
+           resolution). The pass asks for it inside its page transaction, and on this door's one
+           connection a read on the outer handle there waits for that transaction for ever. */
+        const trust = new Map<string, ReadonlySet<string>>();
+        for (const id of runtimes.all().map((rt) => rt.mailboxId)) {
+          trust.set(id, await mailboxProviderAuthservIds(db, id));
+        }
+        const { moved, completed, capped } = await ruleRetroPass(db as unknown as Tx, {
+          accountId: world.accountId,
+          trustedAuthservIdsFor: async (_tx, mailboxId) => trust.get(mailboxId) ?? new Set<string>(),
+          ...(config.logger === undefined ? {} : { log: config.logger }),
+        });
+        if (moved > 0 || completed > 0) log("rule_retro_pass", { moved, applied: completed, capped });
+      } catch (err) {
+        log("rule_retro_failed", {
+          err,
+          reason: "no rule was marked applied and no cursor advanced past uncommitted work, so " +
+            "the next drain resumes; mail already desired is carried by the reconciler",
         });
       }
     };
@@ -5103,6 +5137,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            to rather than reworded. Literal and on one line, like its neighbours — `reader-drain`
            reads this file and a source census cannot see through a brace. */
         if (organizing) await onceForTheAccount(resurfaceDue);
+        /* A RULE'S RETRO WALK, before the cycles for the same reason: the moves it desires are
+           reconciled by the cycles of THIS drain. Organizer only, literal, on one line. */
+        if (organizing) await onceForTheAccount(retroDue);
         // Due appointments next, ahead of the cycles: a scheduled send has a clock and must not
         // wait out a backlog drain nor be skipped by an inbound cycle's throw (its SMTP dial fails
         // independently and the pass re-arms the row). ORGANIZER ONLY, per `SyncDeps.role`: a
