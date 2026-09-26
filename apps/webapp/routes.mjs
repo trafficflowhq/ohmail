@@ -96,7 +96,9 @@ export const REFRESH_PATH = "/auth/refresh";
  * canonical-host redirect and the nonce CSP. `edge: false` costs no edge invocation and MUST
  * say why; a silent opt-out is refused by the drift guard.
  *
- * @typedef {{ path: string, edge: boolean, why?: string }} OwnRoute
+ * `handler: true` marks a path a ROUTE HANDLER answers rather than a page (see `HANDLER_PATHS`).
+ *
+ * @typedef {{ path: string, edge: boolean, handler?: boolean, why?: string }} OwnRoute
  * @type {readonly Readonly<OwnRoute>[]}
  */
 export const OWN_ROUTES = Object.freeze(/** @type {OwnRoute[]} */ ([
@@ -163,11 +165,13 @@ export const OWN_ROUTES = Object.freeze(/** @type {OwnRoute[]} */ ([
   {
     path: "/manifest.webmanifest",
     edge: false,
+    handler: true,
     why: "a static asset — a function in front of it buys nothing",
   },
   {
     path: "/api/waitlist",
     edge: false,
+    handler: true,
     why: "a route handler, not a document — see the shadow note above",
   },
   {
@@ -177,6 +181,7 @@ export const OWN_ROUTES = Object.freeze(/** @type {OwnRoute[]} */ ([
     // about the WEB deployment rather than about the API.
     path: "/version",
     edge: false,
+    handler: true,
     why: "the manifest's class — machine-read JSON, no session, no document, no canonical-host"
       + " redirect to make",
   },
@@ -187,6 +192,7 @@ export const OWN_ROUTES = Object.freeze(/** @type {OwnRoute[]} */ ([
     // no token configured the route has no body, which is the 404 the path gave before it existed.
     path: "/flathub-verification",
     edge: false,
+    handler: true,
     why: "`/version`'s class — a machine-read token one crawler fetches, carrying no session and"
       + " rendering no document",
   },
@@ -218,6 +224,16 @@ export const FLATHUB_VERIFICATION = Object.freeze([
 
 /** Every rewrite that needs no environment. A build with rewrites at all emits all of them. */
 export const STATIC_REWRITES = Object.freeze([...FLATHUB_VERIFICATION]);
+
+/**
+ * The non-API paths a ROUTE HANDLER answers, and the rewrite sources that land on one: the only
+ * paths besides `/api/*` and `/auth/refresh` where `middleware.ts` lets a request body through.
+ * Every other path this origin answers is a page, and no page takes a body.
+ */
+export const HANDLER_PATHS = Object.freeze((() => {
+  const handlers = OWN_ROUTES.filter((r) => r.handler).map((r) => r.path);
+  return [...handlers, ...STATIC_REWRITES.filter((r) => handlers.includes(r.destination)).map((r) => r.source)];
+})());
 
 /**
  * THE WHOLE `rewrites()` ANSWER, for an origin or for none.

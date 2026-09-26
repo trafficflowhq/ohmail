@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { resolveApiOrigin, resolveInternalApiOrigin } from "./app/api-origin";
 import { canonicalRedirect } from "./app/canonical-host";
+import { API_BASE, HANDLER_PATHS, REFRESH_PATH } from "./routes.mjs";
 import { newNonce, nonceCsp } from "./app/security-headers";
 import {
   APP_ROUTE, DOOR_ROUTE, RESUME_COOKIE, RESUME_ROUTE, SESSION_COOKIE, resolveSurface,
@@ -167,8 +168,31 @@ function clientKey(request: NextRequest): string {
   return request.headers.get("x-real-ip") ?? "unknown";
 }
 
+/**
+ * NO PAGE TAKES A REQUEST BODY. Next decodes a POST to any App Router page as a Server Action
+ * BEFORE it looks the action up, and that decoder is where the React Server Components
+ * denial-of-service advisories live; this app has no Server Action. So a page answers GET and
+ * HEAD only, a `Next-Action` header is refused on any method, and the refusal is a bare 405
+ * that reads nothing of the body. `/api/*`, `/auth/refresh` and `HANDLER_PATHS` are not pages.
+ */
+function refusesPageBody(request: NextRequest): boolean {
+  const { pathname } = request.nextUrl;
+  if (pathname === API_BASE || pathname.startsWith(`${API_BASE}/`) || pathname === REFRESH_PATH) return false;
+  if (HANDLER_PATHS.includes(pathname)) return false;
+  return (request.method !== "GET" && request.method !== "HEAD") || request.headers.has("next-action");
+}
+
+const methodNotAllowed = (): NextResponse =>
+  new NextResponse("Method Not Allowed", {
+    status: 405,
+    headers: { Allow: "GET, HEAD", "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+  });
+
 export async function middleware(request: NextRequest): Promise<NextResponse> {
   const { pathname } = request.nextUrl;
+
+  // 0. A body never reaches a page, on any host — see `refusesPageBody`.
+  if (refusesPageBody(request)) return methodNotAllowed();
 
   // 1. THE CANONICAL HOST, before anything else and before any cost is spent. A host that
   //    is declared as a redirect must never serve the product — see `app/canonical-host.ts`
@@ -384,15 +408,22 @@ function withPathname(request: NextRequest, pathname: string): URL {
  * redirect and for nothing else. The gate's `pathname` early return above fires before it, so it
  * costs one edge invocation and no fetch, exactly like `/privacy`.
  *
- * NOTHING BUT PATH LITERALS BELONGS INSIDE THE ARRAY, comments included. Both drift guards read
- * this list by pulling every double-quoted string out of the bracket span, so a note containing
- * `"/"` reads as a duplicate matcher entry and fails the comparison against the table — which
- * is a guard failure that looks exactly like a routing mistake. Measured while adding `/de`.
+ * PATH LITERALS FIRST, THEN THE TWO CONDITIONAL ARMS, and no comment inside the array. Both
+ * drift guards read the literals by pulling every double-quoted string out of the span before
+ * the first `{`, so a note containing `"/"` reads as a duplicate matcher entry. Measured while
+ * adding `/de`.
+ *
+ * The two arms reach EVERY page — the catch-all and `/demo` too — but only for a request that
+ * carries `Next-Action` or a body type, the only requests Next's action decoder reads; a plain
+ * GET off the list still costs no edge invocation, and `/api`, `/auth/refresh` and `/_next` never
+ * run this function.
  */
 export const config = {
   matcher: [
     "/", "/mailbox", "/resume", "/login", "/join", "/join/invite", "/setup", "/verify-email",
     "/link-desktop", "/authorize-desktop", "/approve", "/subscribed", "/de", "/privacy", "/imprint",
     "/subprocessors",
+    { source: "/((?!api(?:/|$)|auth/refresh$|_next/).*)", has: [{ type: "header", key: "next-action" }] },
+    { source: "/((?!api(?:/|$)|auth/refresh$|_next/).*)", has: [{ type: "header", key: "content-type" }] },
   ],
 };
