@@ -259,6 +259,9 @@ export interface WorkerStats {
    * or all-failed cycle must not refresh freshness, or `/health` lies about a dead leader.
    */
   lastCycleAt: Date | null;
+  /** The last rotation's wall clock, and the last completed tail walk's work time (ms). */
+  lastRotationMs: number | null;
+  lastTailMs: number | null;
   /**
    * Every configured pager arm, and whether it is actually delivering. The startup line has always
    * named the arms (`alertSinks:["mail"]`), and a name is not a state: an arm that has refused every
@@ -774,6 +777,9 @@ export async function startWorkerWithLock(
     let stopped = false;
     let lockLost = false;
     let lastCycleAt: Date | null = null;
+    /** The last rotation's and the last completed tail's wall clock, for `/health` and `cycle_phases`. */
+    let lastRotationMs: number | null = null;
+    let lastTailMs: number | null = null;
     let dutyAccounts: string[] = [];
     /* THE ROSTER ROWS BEHIND `dutyAccounts`, kept because a per-account pass that writes mail state
        needs to know WHICH MAILBOXES of that account this process organizes — an account id cannot
@@ -4064,6 +4070,12 @@ export async function startWorkerWithLock(
           // woken admission is captured first — the visit stamps `last_sync_at` eagerly for
           // exactly the woken ones (see `visitMailbox`).
           const wokenVisit = rt.wokenAt !== null;
+          // How long the doorbell waited for its turn — read before the wake is spent.
+          if (rt.wokenAt !== null) {
+            log.info("wake_admitted", {
+              mailboxId: rt.mailboxId, accountId: rt.accountId, wakeLatencyMs: Date.now() - rt.wokenAt,
+            });
+          }
           rt.wokenAt = null;
           const heavy = rt.owesBacklog;
           busyAccounts.add(rt.accountId);
@@ -4187,6 +4199,22 @@ export async function startWorkerWithLock(
         );
       }
 
+      // THE ROTATION ENDS HERE. Freshness and the pulse are stamped now, so `/health` does not wait
+      // on the per-account passes below; FRESHNESS HONESTY is unchanged: advance only when work
+      // succeeded or there was nothing to sync, so a dead leader never looks fresh.
+      const rotationMs = Date.now() - passStartedMs;
+      lastRotationMs = rotationMs;
+      if (succeeded > 0 || expected === 0) lastCycleAt = new Date();
+      await beat();
+      const tailStartedMs = Date.now();
+      const sections: Array<{ section: string; ms: number }> = [];
+      let lapFrom = tailStartedMs;
+      const lap = (section: string): void => {
+        const now = Date.now();
+        sections.push({ section, ms: now - lapFrom });
+        lapFrom = now;
+      };
+
       // The DB passes run over the shard's full enabled set, not the attached duty. This used to be
       // `dutyAccounts` (`accountsOf(served)`, capped at `maxMailboxes`), a cap that exists to bound
       // IMAP CONNECTIONS and nothing else — and neither pass below opens one, so an account whose
@@ -4213,6 +4241,7 @@ export async function startWorkerWithLock(
         });
       }
       const passAccounts = accountsOf(passMailboxes);
+      lap("pass_accounts");
 
       // ── SERVE THE SUGGEST-OWED ACCOUNTS FIRST (cloud 0039) ──────────────────────────────
       // Accounts whose ingest HELD a first-contact sender since their last suggest visit, served
@@ -4289,6 +4318,8 @@ export async function startWorkerWithLock(
         }
       }
 
+      lap("screener_suggest_owed");
+
       // The bubble-up resurfacing pass, in the loop and time-gated. It lives here rather than a platform
       // cron because `runBubbleUpCron` takes `acquireLeaderLock(…, leaderLockKeyFor(shardIndex))` — the
       // SAME lock this process holds — so a platform cron on this shard would be a process whose only
@@ -4328,6 +4359,8 @@ export async function startWorkerWithLock(
         }
       }
 
+      lap("bubble_up");
+
       // Per-account DB passes, isolated per account so one account's workflow
       // error can never abort another account's drain — nor the sync cycle.
       for (const accountId of passAccounts) {
@@ -4349,6 +4382,8 @@ export async function startWorkerWithLock(
           log.error("workflow_drain_failed", { accountId, err });
         }
       }
+
+      lap("workflow");
 
       // Give back the mail stuck at the screening gate behind a decision the account already made.
       // BEFORE the retro pass below and in its own try/catch and loop, for that loop's reason: one
@@ -4378,6 +4413,8 @@ export async function startWorkerWithLock(
           });
         }
       }
+
+      lap("gate_release");
 
       // Apply a new rule to mail that is already filed. Its OWN try/catch and loop, not folded into the
       // workflow block, for that block's reason: one account's failure must not skip the rest. It runs
@@ -4412,6 +4449,8 @@ export async function startWorkerWithLock(
         }
       }
 
+      lap("rule_retro");
+
       // File the already-misfiled automated mail out of the Ohbox. Its OWN try/catch and loop: one
       // account's failure must not skip the rest. It is the durable, one-time-per-opt-in half of the
       // `people_only` posture — the live engine demotes NEW mail, this re-routes the backlog placed
@@ -4442,6 +4481,8 @@ export async function startWorkerWithLock(
           });
         }
       }
+
+      lap("ohbox_tidy");
 
       // Rejoin the conversations a forward split. A forward re-entering the mailbox carries no
       // References, so one human conversation becomes two header chains and renders as two threads —
@@ -4491,6 +4532,8 @@ export async function startWorkerWithLock(
         }
       }
 
+      lap("thread_join_heal");
+
       // ── THE INBOUND-QUIET PASS: notice the mailbox a provider-side forward emptied ──────
       //
       // The forwarding-detection heuristic (mail 0078, `inbound-quiet.ts` carries the predicate
@@ -4521,6 +4564,8 @@ export async function startWorkerWithLock(
           }
         }
       }
+
+      lap("inbound_quiet");
 
       // Re-deliver `autoReplyByUs` to mirrors that predate it. The flag is computed at materialize
       // time, so it reaches a message only when a change_log row for that message does — and every
@@ -4562,6 +4607,8 @@ export async function startWorkerWithLock(
         }
       }
 
+      lap("away_reply_flag_redeliver");
+
       // ── TRIM THE ROLLING WINDOW: at the storage cap, the oldest stored bodies husk ──────
       //
       // Its OWN try/catch and loop, like every pass here: one account's failure must not skip
@@ -4589,6 +4636,8 @@ export async function startWorkerWithLock(
         }
       }
 
+      lap("storage_evict");
+
       // ── NOBODY THIS ACCOUNT WROTE TO WAITS AT THE GATE ──────────────────────────────────
       //
       // Before the three Screener passes below, so a held correspondent is released rather than
@@ -4609,6 +4658,8 @@ export async function startWorkerWithLock(
           });
         }
       }
+
+      lap("screener_correspondent_retro");
 
       // ── FILE THE OBVIOUS BULK OUT OF THE SCREENER, FOR OPTED-IN ACCOUNTS ────────────────
       //
@@ -4637,6 +4688,8 @@ export async function startWorkerWithLock(
           });
         }
       }
+
+      lap("screener_auto_apply");
 
       // Buy the model's advice about incoming held senders. Its OWN try/catch and loop. It runs AFTER
       // the deterministic auto-apply above, load-bearing: that pass files the obvious bulk OUT of the
@@ -4679,6 +4732,8 @@ export async function startWorkerWithLock(
         }
       }
 
+      lap("screener_auto_suggest");
+
       // ── ACT ON THE STORED SUGGESTIONS, FOR OPTED-IN ACCOUNTS ────────────────────────────
       //
       // "Act on suggestions for me": the senders whose stored advice is confident are filed through
@@ -4704,6 +4759,8 @@ export async function startWorkerWithLock(
         }
       }
 
+      lap("screener_auto_act");
+
       // ── THE ERASURES PEOPLE ASKED FOR (mail 0126) ─────────────────────────────────────
       //
       // "Remove and erase" stamps the mailbox and answers; this is the sweep it promised, every
@@ -4728,6 +4785,8 @@ export async function startWorkerWithLock(
             "is the resume point, so the next cycle continues from what is left",
         });
       }
+
+      lap("mailbox_erasure");
 
       // ── Global maintenance, leader-only and time-gated (~hourly) ────────────────────
       //
@@ -4876,14 +4935,10 @@ export async function startWorkerWithLock(
         await retentionPrunePass(db as unknown as Tx, new Date(), log);
       }
 
-      // FRESHNESS HONESTY: advance only when work actually succeeded, or when there was
-      // genuinely nothing to sync. An all-failed or zero-connected cycle must NOT refresh
-      // /health, or a dead leader looks perfectly fresh forever.
-      if (succeeded > 0 || expected === 0) lastCycleAt = new Date();
-
-      // ── The pulse. LAST in the cycle, so `lastCycleAt` is already the value this
-      //    cycle produced and the row never claims a freshness the worker has not earned.
-      await beat();
+      lap("global_maintenance");
+      // One line per cycle: where the time went, rotation and each tail section apart.
+      lastTailMs = Date.now() - tailStartedMs;
+      log.info("cycle_phases", { rotationMs, tailMs: lastTailMs, sections });
 
       // Backfill drain. A mailbox mid-backfill is drained as fast as the queue allows instead of one
       // bounded batch per `pollIntervalMs` (at two hundred messages a cycle, a 60 s poll would take a
@@ -5527,6 +5582,8 @@ export async function startWorkerWithLock(
           // here. `[]` when the arm is unconfigured, on shards > 0, or after quiescing.
           apiCron: apiCron?.health() ?? [],
           parkedReader: parkedAccountsReader ? "composed" : "absent",
+          lastRotationMs,
+          lastTailMs,
         };
       },
       stop(): Promise<void> {

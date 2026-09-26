@@ -228,6 +228,11 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // a clock, naming no mailbox and no message — and it is the only number that says which of the
   // two arms a cold start took and what the ordering cost the mail.
   "waitedMs",
+  // THE WORKER CYCLE'S SPLIT (`cycle_phases`, `wake_admitted`), added WITH their call sites: the
+  // rotation's and the tail's wall clock, each tail section's ms under a section NAME the code
+  // chose, the tail's turn count, and how long a doorbell waited for its visit. Integers from a
+  // clock and closed section names, naming no mailbox content.
+  "rotationMs", "tailMs", "tailWallMs", "turns", "sections", "section", "ms", "wakeLatencyMs",
   // AND WHAT ONE BOOTSTRAP PAGE COST THE SERVER (`snapshot_page`), added WITH its call site. One
   // `Date.now()` delta beside the frame's own `bytes`, which is already above: together they are
   // the page count, the page size and the server's time per page that a shipped build could not
