@@ -382,10 +382,24 @@ function forgetMirrorNames(gone: readonly string[]): void {
  * decision stayed on disk. An empty `remaining` is the only thing that means "this browser holds no mirror" — and
  * only when `inventory` is `complete`. Anything else is the caller's to say out loud.
  */
-export async function clearAllMirrors(owner?: string, factory?: IDBFactory): Promise<WipeVerdict> {
+export async function clearAllMirrors(
+  owner?: string,
+  factory?: IDBFactory,
+  /**
+   * `only: true` deletes `owner`'s mirror and NOTHING else — the erased-account door, where another
+   * account's mirror on this origin is not the erasure's to take. The origin epoch does not move
+   * either: it would fence every other account's live store. The named mirror's own connections
+   * are fenced by the delete (`onversionchange`), and every other tab runs the same door.
+   */
+  opts: { only?: boolean } = {},
+): Promise<WipeVerdict> {
   const f = factory ?? (typeof indexedDB !== "undefined" ? indexedDB : undefined);
   // No IndexedDB at all: nothing was ever written, so there is nothing to be unsure about.
   if (!f) return { remaining: [], inventory: "complete" };
+  if (opts.only === true) {
+    if (!owner) return { remaining: [], inventory: "complete" };
+    return clearOneMirror(f, mirrorDbName(owner));
+  }
   // THE EPOCH MOVES FIRST, before anything is enumerated or deleted. Every store instance that
   // existed a moment ago is now fenced, including ones that have not opened yet — which is the
   // race a per-connection `versionchange` cannot reach. See {@link WIPE_EPOCH}.
@@ -460,6 +474,36 @@ export async function clearAllMirrors(owner?: string, factory?: IDBFactory): Pro
   // make a later sign-out re-delete names that are already gone.
   forgetMirrorNames([...names].filter((n) => !stillHere.has(n)));
   return { remaining, inventory };
+}
+
+/**
+ * One named mirror, deleted and read back: the delete's own outcome, then `databases()` where it
+ * exists (a name it still lists is still there). `complete` — the question is about ONE name, and
+ * both witnesses were asked. Only that name's registry record is dropped, and only once it is gone.
+ */
+async function clearOneMirror(f: IDBFactory, name: string): Promise<WipeVerdict> {
+  let here = (await deleteDatabase(f, name)) !== "deleted";
+  if (typeof f.databases === "function") {
+    try {
+      if ((await f.databases()).some((i) => i.name === name)) here = true;
+    } catch {
+      /* the delete's outcome stands */
+    }
+  }
+  if (!here) forgetMirrorNames([name]);
+  return { remaining: here ? [name] : [], inventory: "complete" };
+}
+
+/**
+ * Has this origin opened `owner`'s mirror? The registry record the store writes before it opens one
+ * (`rememberMirror`), read synchronously. `false` for a jar that cannot be read.
+ */
+export function holdsMirrorOf(owner: string): boolean {
+  try {
+    return globalThis.localStorage?.getItem(`${MIRROR_REGISTRY_PREFIX}${mirrorDbName(owner)}`) != null;
+  } catch {
+    return false;
+  }
 }
 
 /**

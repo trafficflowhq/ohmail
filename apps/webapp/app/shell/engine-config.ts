@@ -4,8 +4,10 @@ import {
   IndexedDbMirrorStore,
   OhmailEngine,
   purgeLegacyMirror,
+  sessionEndedResponse,
   type StorePolicy,
 } from "@ohmail/client-engine";
+import { ERASED_DECLARATION, erasedAwareFetch } from "./account-erased";
 import { createSyncGate, registerSyncGate, type WakeStreamLike } from "./sync-scheduler";
 import { sessionFetch, sessionMayAsk } from "./session-truth";
 
@@ -209,9 +211,16 @@ export function createEngine(
        * `fetch` — EVERY PRESS AND EVERY PAGE LEAVES THROUGH THE SESSION'S TRANSPORT: a request the
        * lapsed access refused is renewed and sent once more under its own key (`api-client.ts`),
        * the recovery the desktop's and the phone's bearer managers already make on theirs.
+       * AND IT DECLARES AND HEARS AN ERASED ACCOUNT (`account-erased.ts`): a `410 account_erased`
+       * goes to the erased door, and the adapter is handed the dead session's refusal instead — the
+       * 410 reads to it as a cursor expiry, whose remedy is a re-bootstrap against a gone account.
        */
       adapter: gate.guard(
-        new HttpAdapter({ baseUrl: apiBase, stageAttachments: true, mayAsk: sessionMayAsk, fetch: sessionFetch }),
+        new HttpAdapter({
+          baseUrl: apiBase, stageAttachments: true, mayAsk: sessionMayAsk,
+          headers: () => ({ ...ERASED_DECLARATION }),
+          fetch: erasedAwareFetch(sessionFetch, sessionEndedResponse),
+        }),
       ),
       ...(persist ? { store: new IndexedDbMirrorStore({ owner: owner! }) } : {}),
       storePolicy: BROWSER_WINDOW,

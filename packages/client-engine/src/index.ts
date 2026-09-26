@@ -30,6 +30,8 @@ export type { PressAnswer, PressTally, PressVerdict } from "./press-verdict.js";
  * Barrel for `session-gate`'s reason: both hosts compile the engine and the module imports nothing.
  */
 export {
+  ACCOUNT_ERASED,
+  ERASED_ANSWER_HEADER,
   isSessionRefusal,
   readRefreshAnswer,
   SESSION_REFUSAL_CODES,
@@ -276,6 +278,7 @@ export {
   LEGACY_MIRROR_DB,
   MIRROR_DB_PREFIX,
   clearAllMirrors,
+  holdsMirrorOf,
   mirrorDbName,
   purgeLegacyMirror,
   type IndexedDbMirrorStoreOptions,

@@ -40,6 +40,7 @@
 
 import { useSyncExternalStore } from "react";
 import { createSessionHeal, type SessionHeal } from "@ohmail/client-engine";
+import { accountErasedOwner, subscribeAccountErased } from "./account-erased";
 
 let dead = false;
 let revivals = 0;
@@ -66,10 +67,18 @@ export function markSessionDead(): void {
   if (dead) return;
   dead = true;
   // Armed BEFORE the listeners run: a listener that reads the store must find the tab already in
-  // its settled dead state, schedule and all, rather than halfway into it.
-  healSchedule().arm();
+  // its settled dead state, schedule and all, rather than halfway into it. Never over an ERASED
+  // account: no refresh can mint one again (`account-erased.ts`).
+  if (accountErasedOwner() === null) healSchedule().arm();
   for (const l of deathListeners) l();
 }
+
+/* AN ERASED ACCOUNT IS A DEATH WITH NO WAY BACK: the schedule is disarmed and every reader of
+   this store hears the change. The latch is the erased door's; this store only reads it. */
+subscribeAccountErased(() => {
+  if (accountErasedOwner() !== null) heal?.disarm();
+  for (const l of deathListeners) l();
+});
 
 /**
  * A session exists again — a 204 from `/auth/refresh` set fresh cookies. Clears the death flag
@@ -90,7 +99,7 @@ export function markSessionAlive(): void {
 
 /** The confirmed fact. `false` is the resting answer on every build without a session client. */
 export function sessionIsDead(): boolean {
-  return dead;
+  return dead || accountErasedOwner() !== null;
 }
 
 export function subscribeSessionTruth(cb: () => void): () => void {
@@ -139,7 +148,7 @@ export function probeSessionNow(): void {
   // and under a dead session every surface holds some — so answering each one with a refresh is
   // the poll storm with a different name on it. The schedule armed by `markSessionDead` is the
   // only thing that asks from here on, and it asks at most once per step.
-  if (dead) return;
+  if (dead || accountErasedOwner() !== null) return;
   probe?.();
 }
 
@@ -151,7 +160,7 @@ export function probeSessionNow(): void {
  * asked: they are how the answer changes (`api()` names them by the list it already keeps).
  */
 export function sessionMayAsk(): boolean {
-  return !dead;
+  return !dead && accountErasedOwner() === null;
 }
 
 /** How many heal attempts the current death has made — exposed for assertions, not for rendering. */
@@ -159,7 +168,7 @@ export function sessionHealAttempts(): number {
   return heal?.attempts() ?? 0;
 }
 
-const getDead = (): boolean => dead;
+const getDead = (): boolean => sessionIsDead();
 /** The server snapshot: a server render can never have observed a death. */
 const getServerDead = (): boolean => false;
 

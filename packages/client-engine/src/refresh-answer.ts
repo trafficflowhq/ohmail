@@ -13,11 +13,20 @@ export const SESSION_REFUSAL_CODES: ReadonlySet<string> = new Set([
   "refresh_missing", "refresh_expired", "refresh_revoked", "unauthorized",
 ]);
 
-/** `fault.code` is a vocabulary word for a log line — the envelope's code or `http_<status>`. */
+/**
+ * `fault.code` is a vocabulary word for a log line — the envelope's code or `http_<status>`.
+ * `erased` is `410 account_erased`: the account is gone, and `account` is the one the server named
+ * (`X-Ohmail-Account`, null when absent) — the caller ends the session only for its own account.
+ */
 export type RefreshAnswer =
   | { kind: "minted"; tokens: { accessToken: string; refreshToken: string } }
   | { kind: "refused"; code: string; message: string | null }
+  | { kind: "erased"; account: string | null }
   | { kind: "fault"; code: string };
+
+/** The request header a client names `account_erased` in; the server answers 401 without it. */
+export const ERASED_ANSWER_HEADER = "x-ohmail-accepts";
+export const ACCOUNT_ERASED = "account_erased";
 
 /** Our envelope's code shape; anything else is not ours and names nothing. */
 const CODE_SHAPE = /^[a-z][a-z0-9_]{0,47}$/;
@@ -52,6 +61,9 @@ export async function readRefreshAnswer(res: Response): Promise<RefreshAnswer> {
   const code = typeof error?.code === "string" && CODE_SHAPE.test(error.code) ? error.code : null;
   if (isSessionRefusal(res.status, code)) {
     return { kind: "refused", code, message: typeof error?.message === "string" ? error.message : null };
+  }
+  if (res.status === 410 && code === ACCOUNT_ERASED) {
+    return { kind: "erased", account: res.headers.get("X-Ohmail-Account") };
   }
   return { kind: "fault", code: code ?? `http_${res.status}` };
 }

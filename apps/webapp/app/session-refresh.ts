@@ -15,6 +15,9 @@ import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "./shell/confirm-schedule";
 import { durableSet } from "./shell/durable";
 import { readOwner } from "./shell/owner-cookie";
 import {
+  ERASED_DECLARATION, clearAccountErased, erasedAnswerOf, erasedCapture, hearAccountErased,
+} from "./shell/account-erased";
+import {
   markSessionAlive, markSessionDead, registerSessionProbe, sessionIsDead, subscribeSessionRevival,
   subscribeSessionTruth,
 } from "./shell/session-truth";
@@ -316,10 +319,13 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> 
       // Read INSIDE the lock, not before it: a queued tab must send the cookie and CSRF value
       // current AFTER the winner's rotation landed, which is the whole point of queueing.
       const csrf = csrfToken();
+      // Who this refresh leaves under — BEFORE it goes: an erased account's answer clears the jar.
+      const erasedBefore = erasedCapture();
       const res = await fetch(REFRESH_ENDPOINT, {
         method: "POST",
         headers: {
           accept: "application/json",
+          ...ERASED_DECLARATION,
           ...(csrf ? { "X-CSRF-Token": csrf } : {}),
         },
         cache: "no-store",
@@ -339,6 +345,17 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> 
         noteSessionMinted();
         markSessionAlive();
         return true;
+      }
+      // THE ACCOUNT WAS ERASED: the erased door's, never `markSessionDead` — no heal schedule
+      // can mint a session for an account that is gone (`shell/account-erased.ts`).
+      const erased = await erasedAnswerOf(res);
+      if (erased !== null) {
+        const heard = hearAccountErased(erased.named, erasedBefore) === "erased";
+        recordRefresh({
+          outcome: heard ? "revoked" : "unavailable", status: 410, code: "account_erased", errorClass: null,
+          retryAfterMs: null,
+        });
+        return false;
       }
       // Read ONCE, for both facts: whether the envelope is ours, and which code it names. Only the
       // refresh door's own refusal is a verdict (`isSessionRefusal`, the phone's reading too).
@@ -451,6 +468,8 @@ export const SESSION_MINTED_KEY = "ohmail.session.mintedAt";
 let mintedHere: number | null = null;
 
 function noteSessionMinted(): void {
+  // A new session is the one gesture that lifts an erased-account wall (`account-erased.ts`).
+  clearAccountErased();
   mintedHere = Date.now();
   durableSet(SESSION_MINTED_KEY, String(mintedHere), "session-mint");
 }

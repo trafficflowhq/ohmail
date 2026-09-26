@@ -18,6 +18,9 @@ import { readOwner, readOwnerMarker, rememberOwner } from "./shell/owner-cookie"
 import { refusedFactsOf, verdictOf } from "./access-verdict";
 import { storeVerdict } from "./shell/wall-lift";
 import { forgetOpenVerdict, markOpenVerdict, refusalIsStale } from "./shell/access-window";
+import {
+  ACCOUNT_ERASED, ERASED_DECLARATION, clearAccountErased, erasedCapture, hearAccountErased,
+} from "./shell/account-erased";
 
 /** The `/api` prefix the same-origin rewrite serves, or `null` on a build with no API armed. */
 export const API_BASE: string | null = process.env.NEXT_PUBLIC_API_BASE ?? null;
@@ -385,6 +388,7 @@ function checkAnswerOwner(path: string, seen: string | null | undefined, ceremon
     if (seen === null) return;              // established nothing — never "still you"
     bindApiOwner(seen);
     rememberOwner(seen);                    // the pair, and it must be a pair: see `rememberOwner`
+    clearAccountErased();                   // a sign-in lifts an erased-account wall
     return;
   }
 
@@ -486,7 +490,7 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
   if (writesSessionCookies(path)) {
     return withSessionCookieLock(async () => {
       const seen: { account?: string | null } = {};
-      const answer = await attempt<T>(path, opts, seen);
+      const answer = await hearing<T>(path, opts, seen);
       answerHolds();
       checkAnswerOwner(path, seen.account, ceremony);
       return answer;
@@ -495,7 +499,7 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
 
   try {
     const seen: { account?: string | null } = {};
-    const answer = await attempt<T>(path, opts, seen);
+    const answer = await hearing<T>(path, opts, seen);
     mustHold();
     checkAnswerOwner(path, seen.account, ceremony);
     return answer;
@@ -522,7 +526,7 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
     mustHold();
     // A second failure is the real answer: the caller sees the refused request, not a loop.
     const seenAgain: { account?: string | null } = {};
-    const retried = await attempt<T>(path, opts, seenAgain);
+    const retried = await hearing<T>(path, opts, seenAgain);
     mustHold();
     // The retry is a fresh answer and gets the fresh answer's check. A recovery rotates the
     // session, so this is the arm where the account behind the cookie is most likely to have
@@ -678,6 +682,25 @@ export function ownerRefusalCodes(): readonly string[] {
   return Object.values(OWNER_REFUSALS).map(([code]) => code);
 }
 
+/**
+ * {@link attempt}, hearing an erased account. Who the request leaves under is read BEFORE it goes;
+ * a `410 account_erased` then goes to the erased door with the account the server named. A 410
+ * naming another account than the jar's is somebody else's answer. Never recoverable: no refresh.
+ */
+async function hearing<T>(path: string, opts: RequestOptions, seen: { account?: string | null }): Promise<T> {
+  const before = erasedCapture();
+  try {
+    return await attempt<T>(path, opts, seen);
+  } catch (err) {
+    if (!(err instanceof ApiError) || err.status !== 410 || err.code !== ACCOUNT_ERASED) throw err;
+    if (hearAccountErased(seen.account ?? null, before) === "not-ours") {
+      reResolveApiOwner();
+      throw responseNotOurs();
+    }
+    throw err;
+  }
+}
+
 async function attempt<T>(
   path: string,
   opts: RequestOptions = {},
@@ -689,7 +712,8 @@ async function attempt<T>(
     throw new ApiError(0, "api_unconfigured", "This build is not connected to an ohmail server.");
   }
   const method = opts.method ?? "GET";
-  const headers: Record<string, string> = { ...opts.headers };
+  // Every ask declares it understands `410 account_erased` — see `shell/account-erased.ts`.
+  const headers: Record<string, string> = { ...ERASED_DECLARATION, ...opts.headers };
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
   if (method !== "GET") {
     const csrf = csrfToken();

@@ -3942,7 +3942,11 @@
     "openAccount": "Open your ohmail account",
     "openInBrowser": "Open ohmail.app in a browser to manage or delete this account.",
     "manage": "Manage subscription",
-    "signOut": "Sign out"
+    "signOut": "Sign out",
+    "erasedTitle": "This ohmail account was deleted.",
+    "erasedBody": "Its copy of your mail is gone from this browser. The mail on your mail server is untouched.",
+    "erasedBlocked": "Another ohmail tab is still holding the copy open, so it could not be removed yet. Close ohmail's other tabs and reload this page.",
+    "erasedHome": "Back to the start page"
   },
   "subscribed": {
     "title": "Back to ohmail.",

@@ -1,6 +1,6 @@
 import { clearAllMirrors } from "@ohmail/client-engine";
 import { auth } from "./api-client";
-import { clearBootCaches, dropLocalStorageKeys } from "./shell/boot-cache";
+import { clearBootCaches, dropLocalStorageKeys, dropLocalStorageKeysWhere } from "./shell/boot-cache";
 import {
   COMPOSE_DRAFT_PREFIX, COMPOSE_ROW_PREFIX, COMPOSE_SESSION_PREFIX, forgetComposeRows,
   LEGACY_COMPOSE_DRAFT_KEY,
@@ -10,7 +10,7 @@ import {
   NOTIFICATION_SUBSCRIPTION_PREFIX, revokeWakeRegistration,
 } from "./shell/notification-settings";
 import { bindApiOwner, blockApiOwner } from "./api-client";
-import { forgetOwner, markSignedOutPending } from "./shell/owner-cookie";
+import { forgetOwner, markSignedOutPending, readOwner } from "./shell/owner-cookie";
 import { SCREENER_INTENTS_PREFIX } from "./shell/screener-intents";
 import { DELETE_INTENTS_PREFIX } from "./shell/delete-intents";
 import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
@@ -18,6 +18,7 @@ import { READING_ALONG_PREFIX } from "./shell/reading-along";
 import { ACCESS_VERDICT_PREFIX, HANDOFF_KEY } from "./shell/wall-lift";
 import { SEND_LOCKS_PREFIX } from "./shell/send-lock";
 import { SESSION_MINTED_KEY } from "./session-refresh";
+import { ERASED_KEY } from "./shell/account-erased";
 
 /**
  * The one correct way to sign out of the web client. `POST /auth/logout` revokes the session and clears
@@ -79,12 +80,23 @@ export async function forgetThisBrowser(
      * by the sync gate. Not an account id; `readOwner` never hands it back as one.
      */
     serverHeld?: boolean;
+    /**
+     * TRUE: forget `owner` and nothing of anybody else — the erased-account door. Its mirror, its
+     * boot caches and every store keyed to it go; another account's mirror and keys on this
+     * browser stay. The jar-wide stores (reply buffers, the session stamp, the wake registration)
+     * go as on sign-out: they belong to the jar's session, which was this account's. The marker
+     * and this client's binding are touched only when they name `owner`.
+     */
+    only?: boolean;
   } = {},
 ): Promise<{
   remaining: string[];
   inventoryComplete: boolean;
 }> {
-  if (opts.serverHeld) markSignedOutPending();
+  const only = opts.only === true && owner !== undefined;
+  if (only) {
+    if (readOwner() === owner) forgetOwner();
+  } else if (opts.serverHeld) markSignedOutPending();
   else forgetOwner();
   /*
    * And the Cloud client, which is where this got it exactly backwards. A CONFIRMED sign-out
@@ -96,7 +108,8 @@ export async function forgetThisBrowser(
    * BLOCKS: account surfaces refuse, only the ceremony still goes out — the logout stays retryable
    * and the front door open.
    */
-  if (opts.serverHeld) blockApiOwner();
+  if (only) { /* the binding is the erased door's wall, not a sign-out's */ }
+  else if (opts.serverHeld) blockApiOwner();
   else bindApiOwner(null);
   /*
    * The wake registration goes first, before the id that names it is swept. This browser is the only party that knows
@@ -113,7 +126,7 @@ export async function forgetThisBrowser(
   // remembered so the next boot can paint the partitioned piles before the server answers
   // (`shell/boot-cache.ts`). Cleared by prefix, not by owner — this browser forgets, including
   // whatever an earlier account left behind.
-  const boot = clearBootCaches();
+  const boot = clearBootCaches(only ? owner : undefined);
   const survivors = [...boot.survivors];
   // The durable-decision stores, which are mail and are NOT in the mirror:
   // the send lanes, the Screener's intent journal, and the compose scratch
@@ -124,7 +137,7 @@ export async function forgetThisBrowser(
   // key it holds. Scoping a key to an account is not what makes a sign-out
   // reach it: the compose scratch was account-scoped and the sweep was
   // simply never told; the reply buffers are keyed by message id and lane.
-  const durable = dropLocalStorageKeys([
+  const durable = sweepFor(only ? owner! : null, [
     SEND_LOCKS_PREFIX,
     SCREENER_INTENTS_PREFIX,
     // The DELETE journal, for the Screener journal's reason exactly: it is a scheduled write
@@ -185,6 +198,9 @@ export async function forgetThisBrowser(
     // `ohmail.access.<owner>` — where the service last found this account. Left behind it would
     // decide the next account's first paint on this browser from somebody else's standing.
     ACCESS_VERDICT_PREFIX,
+    // The erased-account word, which names an erased account's id (`shell/account-erased.ts`).
+    // The erased door writes it after this sweep, so its own sweep never removes it.
+    ERASED_KEY,
   ]);
   survivors.push(...durable.survivors);
   // The mirror-name registry is swept BY `clearAllMirrors` itself (it removes the names it proved
@@ -222,7 +238,7 @@ export async function forgetThisBrowser(
     deviceCeremonySwept = false;
     survivors.push(HANDOFF_KEY);
   }
-  const wipe = await clearAllMirrors(owner);
+  const wipe = only ? await clearAllMirrors(owner, undefined, { only: true }) : await clearAllMirrors(owner);
   return {
     remaining: [...survivors, ...wipe.remaining].sort(),
     // EVERY store has to be answerable, not just the mirrors. A jar that could not be walked
@@ -230,6 +246,28 @@ export async function forgetThisBrowser(
     inventoryComplete: wipe.inventory === "complete" && boot.enumerated && durable.enumerated
       && deviceCeremonySwept,
   };
+}
+
+/**
+ * The prefixes whose keys are `<prefix><owner>…` — read off each module's key function. The rest
+ * of the sweep's list is keyed by message id, by nothing, or by the jar's session.
+ */
+const OWNER_KEYED: readonly string[] = [
+  SEND_LOCKS_PREFIX, SCREENER_INTENTS_PREFIX, DELETE_INTENTS_PREFIX, ROUTING_INTENTS_PREFIX,
+  COMPOSE_DRAFT_PREFIX, COMPOSE_SESSION_PREFIX, COMPOSE_ROW_PREFIX, READING_ALONG_PREFIX,
+];
+
+/**
+ * The sweep, whole (`owner` null) or for ONE account: an owner-keyed prefix then matches only
+ * `<prefix><owner>`, and the legacy compose key only itself — as a prefix it would also match
+ * every account's `ohmail.ui.compose.<owner>.` buffers.
+ */
+function sweepFor(owner: string | null, list: readonly string[]) {
+  if (owner === null) return dropLocalStorageKeys(list);
+  return dropLocalStorageKeysWhere((key) => list.some((p) =>
+    p === LEGACY_COMPOSE_DRAFT_KEY ? key === p
+      : OWNER_KEYED.includes(p) ? key.startsWith(`${p}${owner}`)
+        : key.startsWith(p)));
 }
 
 export async function signOut(owner?: string): Promise<SignOutResult> {

@@ -69,7 +69,9 @@ export function writeBootCache(scope: string, owner: string, value: unknown): vo
  * some earlier account left behind is exactly what must not survive the one act whose meaning
  * is leaving nothing behind.
  */
-export function clearBootCaches(): LocalSweep {
+export function clearBootCaches(owner?: string): LocalSweep {
+  // `owner` narrows it to one account's caches — the erased-account door, which is not a sign-out.
+  if (owner !== undefined) return dropLocalStorageKeysWhere((k) => k.startsWith(PREFIX) && k.endsWith(`.${owner}`));
   return dropLocalStorageKeys([PREFIX]);
 }
 
@@ -91,11 +93,16 @@ export interface LocalSweep {
  * THE KEYS THAT SURVIVED. See the read-back below for why `void` was not enough.
  */
 export function dropLocalStorageKeys(prefixes: readonly string[]): LocalSweep {
+  return dropLocalStorageKeysWhere((key) => prefixes.some((p) => key.startsWith(p)));
+}
+
+/** {@link dropLocalStorageKeys} for any rule over the key — the same pass, removal and read-back. */
+export function dropLocalStorageKeysWhere(doom: (key: string) => boolean): LocalSweep {
   try {
     const doomed: string[] = [];
     for (let i = 0; i < window.localStorage.length; i++) {
       const key = window.localStorage.key(i);
-      if (key !== null && prefixes.some((p) => key.startsWith(p))) doomed.push(key);
+      if (key !== null && doom(key)) doomed.push(key);
     }
     for (const key of doomed) {
       try {

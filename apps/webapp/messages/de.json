@@ -3942,7 +3942,11 @@
     "openAccount": "Dein ohmail-Konto öffnen",
     "openInBrowser": "Öffne ohmail.app im Browser, um dieses Konto zu verwalten oder zu löschen.",
     "manage": "Abo verwalten",
-    "signOut": "Abmelden"
+    "signOut": "Abmelden",
+    "erasedTitle": "Dieses ohmail-Konto wurde gelöscht.",
+    "erasedBody": "Seine Kopie deiner Post ist aus diesem Browser entfernt. Die Post auf deinem Mailserver ist unberührt.",
+    "erasedBlocked": "Ein anderer ohmail-Tab hält die Kopie noch offen, deshalb konnte sie noch nicht entfernt werden. Schliesse die anderen ohmail-Tabs und lade diese Seite neu.",
+    "erasedHome": "Zurück zur Startseite"
   },
   "subscribed": {
     "title": "Zurück zu ohmail.",

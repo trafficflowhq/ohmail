@@ -18,6 +18,8 @@ import { readOwner } from "../../shell/owner-cookie";
 import { resolveOwnerOutcome } from "../session-outcome";
 import { AboutSection } from "./AboutSection";
 import { AccessLock } from "./AccessLock";
+import { ErasedWall } from "./ErasedWall";
+import { useErasedWall, watchErasedElsewhere } from "../../erased-door";
 import { AccountLocale } from "./AccountLocale";
 import { AiSection } from "./AiSection";
 import { LifecycleBanner } from "./LifecycleBanner";
@@ -118,6 +120,18 @@ export function CloudShell({ demo }: { demo: boolean }) {
     reviveStandingDown();
   }, []);
 
+  /**
+   * HAS THIS ACCOUNT BEEN ERASED ELSEWHERE? The erased door (`erased-door.ts`, registered by the
+   * import above) latches on the server's `410 account_erased` and drops this browser's copy; the
+   * wall outranks the 402 lock — a deleted account has nothing left to pay for. Every other tab
+   * hears it through the door's cross-tab word. Not on the demo: no account to erase.
+   */
+  const erased = useErasedWall();
+  useEffect(() => {
+    if (resolvedDemo) return;
+    return watchErasedElsewhere();
+  }, [resolvedDemo]);
+
   const userInvites = useUserInvites(resolvedDemo);
 
   /**
@@ -203,6 +217,13 @@ export function CloudShell({ demo }: { demo: boolean }) {
   // is the one Settings control a standalone install also has, so the row
   // is shared and only the account write is injected. The lock replaces the
   // shell entirely — after the hooks, inside `AccountLocale`.
+  if (erased) {
+    return (
+      <AccountLocale>
+        <ErasedWall blocked={(erased.remaining ?? []).some((n) => n.startsWith("ohmail-mirror"))} />
+      </AccountLocale>
+    );
+  }
   if (refused) {
     return (
       <AccountLocale>
