@@ -1,5 +1,6 @@
 import { renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { open, rename, unlink, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 
 /**
  * STAGE AND RENAME — the one atomic write this process has, in one place.
@@ -45,7 +46,9 @@ export async function writeAtomicFile(path: string, contents: string, mode: numb
 /**
  * The same, with the staged bytes flushed to the disk BEFORE the rename — for a file whose loss
  * on a power cut is a person's lost work (the window's queued changes), not a re-derivable cache.
- * Without the flush a rename can reach the disk ahead of the data it names.
+ * Without the flush a rename can reach the disk ahead of the data it names. The directory is
+ * flushed AFTER it: the rename is an entry in the directory, and until that entry is on the disk
+ * a power cut brings back the previous file.
  */
 export async function writeAtomicFileSynced(path: string, contents: string, mode: number): Promise<void> {
   const tmp = tempFor(path);
@@ -58,8 +61,27 @@ export async function writeAtomicFileSynced(path: string, contents: string, mode
       await fh.close();
     }
     await rename(tmp, path);
+    await syncDirectory(dirname(path));
   } catch (err) {
     await unlink(tmp).catch(() => undefined);
     throw err;
+  }
+}
+
+/**
+ * Flush a directory's entries. Windows cannot open a directory for a flush, so there the file's
+ * own flush stands alone. A filesystem with no directory flush (EINVAL, ENOTSUP) has nothing more
+ * to give; any other refusal fails the write, so the caller is not told a change is kept.
+ */
+async function syncDirectory(dir: string): Promise<void> {
+  if (process.platform === "win32") return;
+  const handle = await open(dir, "r");
+  try {
+    await handle.sync();
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "EINVAL" && code !== "ENOTSUP") throw err;
+  } finally {
+    await handle.close();
   }
 }
