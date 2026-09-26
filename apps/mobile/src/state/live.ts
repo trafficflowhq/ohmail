@@ -96,6 +96,7 @@ import {
   resurfacedThreads,
   conversationSize,
   forwardPress,
+  tagsCrossView,
   type ForwardAsk,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
@@ -108,7 +109,8 @@ import {
   type AnyRoutingIntent, type ConsentOptions, type PressForecast, type PressResolution, type RulesInPlay,
   type ScreenIntent,
 } from "@ohmail/client-engine";
-import { destLabel, DESTINATIONS as SCREEN_DESTS } from "./model";
+import { destLabel, DESTINATIONS as SCREEN_DESTS, type MailTag } from "./model";
+import { tagHueOf } from "../theme/palette";
 import { ACCESS_REFUSED_CODE } from "../net/access-lock";
 import { folderLeafOf, folderUnreadCounts } from "./folders";
 /* Move/Junk: the mail now, the sender's routing after the window. See the module. */
@@ -208,6 +210,8 @@ export interface WorldView {
    * which is not the same thing as a read still in flight.
    */
   screening?: ScreeningPosture;
+  /** The account's tags ({@link liveTags}), so a row can wear the ones its labels name. */
+  tags?: readonly WorldTag[];
 }
 
 /** What labelling a delivery needs of a mailbox — `PhoneMailbox`'s three relevant fields. */
@@ -586,6 +590,10 @@ function toMail(reader: EntityReader, m: EngineMessage, v: WorldView): WorldMail
     noForward: m.sensitivity?.no_forward === true,
     forwardAsk: forwardPress(m).ask,
     labels: [...(m.labels ?? [])],
+    ...(() => {
+      const marks = tagMarksOf(m.labels, v.tags);
+      return marks.length > 0 ? { tags: marks } : {};
+    })(),
     ...(m.rationale ? { rationale: m.rationale } : {}),
     ...(m.trackerNote ? { trackerNote: m.trackerNote } : {}),
     ...(m.amount ? { amount: m.amount } : {}),
@@ -805,6 +813,53 @@ export function liveTags(reader: EntityReader): WorldTag[] {
     .list<TagDTO>("tag")
     .map((t) => ({ id: t.id, name: t.name, hue: t.hue }))
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** The tags a message carries, as drawn — the web's `tagsOfMessage`, in the tag list's order. */
+export function tagMarksOf(
+  labels: readonly string[] | undefined, tags: readonly WorldTag[] | undefined,
+): MailTag[] {
+  if (!labels || labels.length === 0 || !tags) return [];
+  return tags.filter((t) => labels.includes(t.id)).map((t) => ({ id: t.id, name: t.name, hue: tagHueOf(t.hue) }));
+}
+
+/** One tag's mail as a list screen draws it: newest first, and how much of it is unread. */
+export interface WorldTagItems {
+  rows: WorldMail[];
+  unread: number;
+  total: number;
+}
+
+export interface WorldTagged {
+  /** How many presented messages carry the tag — the count beside it in the places list. */
+  count: (tagId: string) => number;
+  items: (tagId: string) => WorldTagItems;
+}
+
+/**
+ * THE TAG LISTS — the web's `tagsCrossView` over the same projection the other lists read. The
+ * mirror holds every tagged message whatever the window: the engine pins them and the snapshot
+ * serves them as its labeled tail, so this is the store's set. Derived once per projection, on
+ * the first read; rows are mapped per tag when a screen asks.
+ */
+export function liveTagged(pres: EntityReader, v: WorldView): WorldTagged {
+  let groups: Map<string, EngineMessage[]> | null = null;
+  const rows = new Map<string, WorldTagItems>();
+  const of = (id: string): EngineMessage[] => {
+    groups ??= new Map(tagsCrossView(pres).map((g) => [g.tag.id, g.messages]));
+    return groups.get(id) ?? [];
+  };
+  return {
+    count: (id) => of(id).length,
+    items: (id) => {
+      const held = rows.get(id);
+      if (held) return held;
+      const list = of(id).map((m) => toMail(pres, m, v));
+      const made = { rows: list, unread: list.filter((m) => m.unread).length, total: list.length };
+      rows.set(id, made);
+      return made;
+    },
+  };
 }
 
 /**

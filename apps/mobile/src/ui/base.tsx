@@ -3,7 +3,7 @@
  * here, and everything here reads `useTheme()` — no colour literals below the theme module
  * (`test/theme.test.ts` greps for them). The vocabulary is the prototype's, one to one:
  *   Screen (`body`) · Panel (`.list-col`, radius 20, lift-1) · ViewHead (`.vhead`) ·
- *   Section (`.grouplabel`) · Badge (`.badge`) · TagChip (`.tagchip`) · Chip (`.chip`) ·
+ *   Section (`.grouplabel`) · Badge (`.badge`) · TagChip (`.tagchip`) · TagDot (`.tdot`) · Chip (`.chip`) ·
  *   Button (`.btn`) · Tail (`.tail-row`) · Waterline (`.waterline`)
  */
 import { useCallback, useState, type ReactElement, type ReactNode } from "react";
@@ -315,6 +315,12 @@ export function TagChip({ name, ink, bg }: { name: string; ink: string; bg: stri
       <Text style={[t.type.tagchip, { color: ink }]}>{name}</Text>
     </View>
   );
+}
+
+/** `.tdot` — a tag's mark in a list of places: its ink at three quarters, the rail's dot. */
+export function TagDot({ ink }: { ink: string }) {
+  const t = useTheme();
+  return <View style={{ width: 8, height: 8, borderRadius: t.radius.dot, backgroundColor: ink, opacity: 0.75 }} />;
 }
 
 /** `.chip` — a message chip. `pending` is the AI wash; `outline` the affordance. */

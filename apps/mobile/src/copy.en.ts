@@ -2082,6 +2082,12 @@ const TABLE = {
   tagUntagged: (name: string) => `Untagged “${name}”.`,
   tagNotOnServer:
     "Tags are stored by ohmail, not in your mailbox. Your folders are real IMAP folders and survive if you leave; tags don’t — erasing your account erases them.",
+  /** The places list's Tags group and one tag's screen (the web's `rail.tags`, `tag.*`). */
+  tagsTitle: "Tags",
+  tagMeta: (n: number) => `${n} message${n === 1 ? "" : "s"}`,
+  tagEmptyTitle: "Nothing carries this tag yet.",
+  tagEmptyHint: "Open a message and choose Tag to add it.",
+  tagGone: "That tag is no longer here.",
   /** The screening sheet: where THIS SENDER's mail goes, from the open message. */
 
   /* ─────────────────────────────── screens the census could not see until it read JSX ─────── */

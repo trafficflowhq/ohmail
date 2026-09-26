@@ -8,6 +8,7 @@
  * deck, so a language switch is visible on the next read exactly as everywhere else.
  */
 import { Copy } from "../copy";
+import type { TagHueName } from "../theme/palette";
 
 /* ------------------------------------------------------------------ types */
 
@@ -100,11 +101,20 @@ export interface Mail {
    * count was 0 on every row of every list.
    */
   threadCount?: number;
+  /** The tags this message carries, in the tag list's order; absent where it carries none. */
+  tags?: readonly MailTag[];
   /**
    * The rest of the conversation, oldest → newest, excluding this message.
    * Rendered in full in the reading view — never summarised into a count.
    */
   earlier: Held[];
+}
+
+/** A tag as a row and the reader draw it: its name and the hue it paints (clamped). */
+export interface MailTag {
+  id: string;
+  name: string;
+  hue: TagHueName;
 }
 
 export interface PileItem {

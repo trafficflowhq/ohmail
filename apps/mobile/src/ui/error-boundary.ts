@@ -16,7 +16,7 @@ import { engineLogSink, type EngineLogSink } from "../engine/engine-log";
 export const SURFACES = [
   "shell", "reader", "composer",
   "ohbox", "screener", "reads", "receipts", "more",
-  "settings", "history", "scheduled", "triage", "trash", "drafts", "folder", "away",
+  "settings", "history", "scheduled", "triage", "trash", "drafts", "folder", "tag", "away",
   "servers", "scan", "connect", "welcome", "standalone", "search",
 ] as const;
 export type Surface = (typeof SURFACES)[number];
@@ -116,6 +116,7 @@ export function surfaceLabel(surface: Surface): string {
     case "trash": return Copy.trashTitle;
     case "drafts": return Copy.draftsTitle;
     case "folder": return Copy.folders;
+    case "tag": return Copy.tagsTitle;
     case "away": return Copy.awayTitle;
     case "servers": return Copy.serversTitle;
     case "scan": return Copy.scanTitle;

@@ -76,6 +76,7 @@ import {
   liveSearch,
   sendingMailboxId,
   liveTags,
+  liveTagged,
   mirrorSettled,
   phoneOrganizer,
   presentedWorld,
@@ -113,6 +114,7 @@ import {
   type WorldScreener,
   type WorldSearch,
   type WorldTag,
+  type WorldTagged,
   type WorldView,
   type ConnectionSay,
   type FirstSyncSay,
@@ -147,7 +149,7 @@ import {
 
 export type {
   FolderEntity, MoveTarget, PhoneOrganizer, ScreenerRow, WorldActions, WorldHistory, WorldMail,
-  WorldPile, WorldScheduled, WorldScreener, WorldSearch, WorldTag, WorldDraft, DraftHeldSays,
+  WorldPile, WorldScheduled, WorldScreener, WorldSearch, WorldTag, WorldTagged, WorldDraft, DraftHeldSays,
   DraftSendAgainOutcome,
 } from "./live";
 
@@ -317,6 +319,8 @@ export interface World {
   pilesMeta: string;
   /** The account's tags, for the message screen's tag sheet — the mirror's `tag` entities. */
   tags: WorldTag[];
+  /** Each tag's mail, for the places list's Tags group and the tag screen (`liveTagged`). */
+  tagged: WorldTagged;
   /**
    * THE SCHEDULED SENDS (Send later, mail 0077) — every draft wearing an appointment, soonest
    * first, already read in the reader's clock (`live.ts#liveScheduled`). Ungated: an
@@ -609,6 +613,7 @@ function emptyWorld(actions: WorldActions): World {
     piles: [],
     pilesMeta: "",
     tags: [],
+    tagged: { count: () => 0, items: () => ({ rows: [], unread: 0, total: 0 }) },
     scheduled: [],
     drafts: [],
     folders: {
@@ -1439,6 +1444,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
        Waiting for an answer that can never arrive would withhold the Screener for the life of
        the session, so that door is `unsupplied`: settled, retiring nobody, marked as nothing. */
     const posture: ScreeningPosture = session.standalone ? SCREENING_UNSUPPLIED : screening;
+    /* The RAW mirror, like the webapp's `reader.list<TagDTO>("tag")` — tags are not projected. */
+    const tagsNow = liveTags(engine.read());
     const v: WorldView = {
       now: new Date(), zone, locale, foldersEnabled: foldersOn,
       // Before the first read this is `[]`, which is `NO_OWN_ADDRESSES` — the posture this
@@ -1449,6 +1456,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       mailboxes: mailboxes ?? [],
       // The SAME posture the partition below is taken under — the shelves read it for the marker.
       screening: posture,
+      tags: tagsNow,
     };
     /* A HELD DELETE'S ROW LEAVES EVERY LIST AT THE PRESS while the mirror keeps it — the
        webapp's `hideMessages` composition, over the base BOTH presentations read: the window
@@ -1542,8 +1550,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       history: { ...history, meta: Copy.historyMeta(history.total) },
       piles,
       pilesMeta: Copy.metaItems(pileTotal),
-      // The RAW mirror, like the webapp's `reader.list<TagDTO>("tag")` — tags are not projected.
-      tags: liveTags(engine.read()),
+      tags: tagsNow,
+      tagged: liveTagged(pres, v),
       // Also raw, and for the same reason: a draft is not presented mail and never passes
       // through the consent cutline. `v` carries the clock the appointment is read in.
       scheduled: liveScheduled(engine.read(), v),
@@ -1592,6 +1600,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       message: (id) => liveMessage(engine, id, {
         now: new Date(), zone, locale, foldersEnabled: foldersOn,
         ownAddresses: addressesNow.current, mailboxes: mailboxes ?? [], screening: posture,
+        tags: tagsNow,
       }),
       filesOf: (id) => liveFiles(engine, id),
       /* The same hiding reader and view the lists derive from — a held-deleted row must not

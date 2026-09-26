@@ -1354,6 +1354,11 @@ export const DE: Deck = {
   tagUntagged: (name: string) => `Tag „${name}“ entfernt.`,
   tagNotOnServer:
     "Tags speichert ohmail, nicht dein Postfach. Deine Ordner sind echte IMAP-Ordner und bleiben, wenn du gehst; Tags nicht — wenn du dein Konto löschst, sind sie weg.",
+  tagsTitle: "Tags",
+  tagMeta: (n: number) => `${n === 1 ? "1 Nachricht" : `${n} Nachrichten`}`,
+  tagEmptyTitle: "Noch nichts trägt diesen Tag.",
+  tagEmptyHint: "Öffne eine Nachricht und wähle Tag, um ihn zu setzen.",
+  tagGone: "Diesen Tag gibt es hier nicht mehr.",
 
 
   screenerNothingDeleted: "Es wurde nichts gelöscht. Jede zurückgehaltene Nachricht ist einen Tipp entfernt, vollständig.",

@@ -12,7 +12,7 @@ import { Copy } from "../copy";
 import type { Mail } from "../state/model";
 
 /** The badge facts this surface has. The head — name, subject, stamp, read state — comes first. */
-export type PhoneRowBadgeKind = "thread" | "protected" | "newSince" | "tracker" | "place" | "amount";
+export type PhoneRowBadgeKind = "thread" | "protected" | "newSince" | "tracker" | "place" | "amount" | "tag";
 
 /** The web's order, restricted to the badges this row wears. */
 export const PHONE_ROW_BADGE_ORDER: readonly PhoneRowBadgeKind[] = [
@@ -22,6 +22,7 @@ export const PHONE_ROW_BADGE_ORDER: readonly PhoneRowBadgeKind[] = [
   "tracker",
   "place",
   "amount",
+  "tag",
 ];
 
 export interface PhoneRowBadgeFact {
@@ -59,6 +60,7 @@ export function rowBadgeFacts(m: Mail): PhoneRowBadgeFact[] {
   if (m.trackerNote) said.push({ kind: "tracker", text: trackerShort(m.trackerNote) });
   if (m.historyPlace) said.push({ kind: "place", text: m.historyPlace });
   if (m.amount) said.push({ kind: "amount", text: m.amount });
+  if (m.tags) for (const t of m.tags) said.push({ kind: "tag", text: t.name });
   const rank = (f: PhoneRowBadgeFact) => PHONE_ROW_BADGE_ORDER.indexOf(f.kind);
   return said.sort((a, b) => rank(a) - rank(b));
 }

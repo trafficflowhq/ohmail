@@ -11,12 +11,14 @@ import { router } from "expo-router";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { useWorld } from "../state/world";
-import { Rule, Section, TapRow, Txt } from "./base";
+import { tagHueOf } from "../theme/palette";
+import { Rule, Section, TagDot, TapRow, Txt } from "./base";
 import { FoldersGroup } from "./FoldersGroup";
 import { Icon } from "./Icon";
 
 export function MoreNav({ onNavigate }: { onNavigate?: () => void }) {
   const w = useWorld();
+  const t = useTheme();
   const pileCountOf = (kind: string) => w.piles.find((p) => p.kind === kind)?.items.length ?? 0;
   const go = (path: string) => {
     onNavigate?.();
@@ -30,10 +32,29 @@ export function MoreNav({ onNavigate }: { onNavigate?: () => void }) {
       <Nav label={Copy.setAside} count={pileCountOf("setAside")} onPress={() => go("/triage")} />
       <Nav label={Copy.resurface} count={pileCountOf("resurface")} onPress={() => go("/triage")} />
 
+      {/* TAGS — the web rail's group, above Folders as there: each tag with the count of its
+          mail, opening the tag's list. Present while the account has a tag; tags are made
+          from a message's Tag sheet, so a heading over nothing would teach nothing. The count
+          is silent while unsettled, the piles' reason. */}
+      {w.tags.length > 0 ? (
+        <>
+          <Section>{Copy.tagsTitle}</Section>
+          {w.tags.map((tag) => (
+            <Nav
+              key={tag.id}
+              label={tag.name}
+              dot={t.c.tag[tagHueOf(tag.hue)].ink}
+              count={w.boot.settled ? w.tagged.count(tag.id) : undefined}
+              onPress={() => go(`/tag/${encodeURIComponent(tag.id)}`)}
+            />
+          ))}
+        </>
+      ) : null}
+
       {/* THE FOLDERS GROUP — rendered ONLY while the account's "Use folders" flag is on
           (the server's consent answer), so the flag-off screen is the pre-feature screen
-          (FOLDERS-SPEC.md §10). The rail's own placement: below the piles, above the
-          utility rows — the webapp puts it under Tags, which this screen does not have.
+          (FOLDERS-SPEC.md §10). The rail's own placement: below the piles and Tags, above
+          the utility rows.
           The stage-2 verbs (spec §18) ride the world's own actions — the engine's
           folder_create/rename/delete family, plus the summary read for the delete
           confirm's server-truth counts. */}
@@ -118,6 +139,7 @@ export function MoreNav({ onNavigate }: { onNavigate?: () => void }) {
 export function Nav({
   label,
   sub,
+  dot,
   count,
   chevron,
   onPress,
@@ -125,6 +147,8 @@ export function Nav({
   label: string;
   /** The rail's own second line, where the browser carries one (`rail.historyTitle`). */
   sub?: string;
+  /** A tag's ink — the rail's dot before its name. */
+  dot?: string;
   count?: number;
   chevron?: boolean;
   onPress: () => void;
@@ -149,6 +173,7 @@ export function Nav({
         gap: 10,
       }}
     >
+      {dot !== undefined ? <TagDot ink={dot} /> : null}
       <View style={{ flexShrink: 1 }}>
         <Txt variant="navLabel">{label}</Txt>
         {sub ? (

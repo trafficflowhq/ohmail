@@ -16,7 +16,7 @@ import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { useWorld } from "../state/world";
 import { shareAttachmentBytes } from "../mail/open-attachment-native";
-import { Chip, Panel, Screen, Scroller, Tap, Txt } from "./base";
+import { Chip, Panel, Screen, Scroller, Tap, TagChip, Txt } from "./base";
 import { DetailBar } from "./chrome";
 import { Icon } from "./Icon";
 import { MailBodyFrame } from "./MailBodyFrame";
@@ -170,7 +170,7 @@ export function MessageReader({
             {m.subject}
           </Txt>
 
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7, marginBottom: 20 }}>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7, alignItems: "center", marginBottom: 20 }}>
             {m.rationale ? (
               <Chip icon="route" style={{ maxWidth: "100%" }}>
                 {m.rationale}
@@ -185,6 +185,12 @@ export function MessageReader({
                 {Copy.deliveredTo(m.mailboxLabel)}
               </Chip>
             ) : null}
+            {/* The tags it carries — the row's capsules, the web reader's tag chips. */}
+            {m.tags
+              ? m.tags.map((tag) => (
+                <TagChip key={tag.id} name={tag.name} ink={t.c.tag[tag.hue].ink} bg={t.c.tag[tag.hue].bg} />
+              ))
+              : null}
           </View>
 
           {m.protected ? <ProtectedBlock label={m.protected.label} policy={m.protected.policy} /> : null}

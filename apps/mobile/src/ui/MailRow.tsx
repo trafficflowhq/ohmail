@@ -13,7 +13,7 @@ import { useTheme } from "../theme";
 import type { Mail } from "../state/model";
 import { useWorld } from "../state/world";
 import { moveTargetsFor, type WorldMail, type WorldPileState } from "../state/live";
-import { Badge, TapRow, Txt } from "./base";
+import { Badge, TagChip, TapRow, Txt } from "./base";
 import { Icon } from "./Icon";
 import { mailRowSpoken, threadOfRow, trackerShort } from "./row-spoken";
 import { faceLabel, rowActionVerb, rowActions, type RowActionVerb } from "./row-actions";
@@ -46,7 +46,8 @@ export function MailRow({
      a Resurfaced row wears nothing else in a list — so the chip saying somebody wrote since this
      came back rendered for no row on this phone. `test/mail-row-badges-spoken.test.ts` reads
      this condition against the badges below rather than trusting the next person to remember. */
-  const badges = !!m.protected || !!m.trackerNote || thread > 1 || !!m.historyPlace || !!m.newSince;
+  const badges = !!m.protected || !!m.trackerNote || thread > 1 || !!m.historyPlace || !!m.newSince
+    || !!m.tags;
 
   /* THE READ SLOT'S FACE, from the one rule the reader's bar uses (`row-swipe.ts#readFaceOf`):
      Done on a resurfaced row, otherwise Mark as read / Mark unread. The swipe must press the
@@ -176,7 +177,7 @@ export function MailRow({
       ) : null}
 
       {badges ? (
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 7 }}>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, alignItems: "center", marginTop: 7 }}>
           {m.protected ? (
             <Badge icon="shield" tone="accent">
               {Copy.protectedLead}
@@ -191,6 +192,12 @@ export function MailRow({
               folder, and the only honest badge is the server's own (the webapp row's `place`). */}
           {m.historyPlace ? <Badge tone="place">{m.historyPlace}</Badge> : null}
           {m.trackerNote ? <Badge icon="shield">{trackerShort(m.trackerNote)}</Badge> : null}
+          {/* THE TAGS, in the web row's hue capsule — the same marks its list draws. */}
+          {m.tags
+            ? m.tags.map((tag) => (
+              <TagChip key={tag.id} name={tag.name} ink={t.c.tag[tag.hue].ink} bg={t.c.tag[tag.hue].bg} />
+            ))
+            : null}
         </View>
       ) : null}
     </TapRow>

@@ -12,7 +12,21 @@ import { css, oklch, type Oklch } from "./oklch";
 import { ohmarchyPalettes } from "./ohmarchy";
 
 export type SchemeName = "light" | "dark";
-export type TagHueName = "moss" | "ochre" | "rosewood";
+
+/**
+ * The ten tag hues the web paints, in the tokens' wheel order (`@ohmail/tokens` `color.tag`,
+ * which the web's `TAG_HUES` equals). A tag stores its hue as one of these names; anything else
+ * paints moss, the web's `hueOf` clamp — `test/tags-shown.test.ts` holds the list to the tokens.
+ */
+export const TAG_HUES = [
+  "rosewood", "ochre", "olive", "moss", "verdigris", "denim", "indigo", "iris", "mulberry", "heather",
+] as const;
+export type TagHueName = (typeof TAG_HUES)[number];
+
+/** A stored hue as one this palette paints — moss for a name off the list. */
+export function tagHueOf(hue: string): TagHueName {
+  return (TAG_HUES as readonly string[]).includes(hue) ? (hue as TagHueName) : "moss";
+}
 
 /** One tag hue: chip ink + translucent chip background. */
 export interface TagPalette {
@@ -109,6 +123,32 @@ export const glassAuthored: Record<SchemeName, { glass: Oklch; brd: Oklch }> = {
   dark: { glass: oklch(0.255, 0.012, 55, 0.78), brd: oklch(0.95, 0.012, 80, 0.1) },
 };
 
+/**
+ * The seven tag hues past the prototype's three, verbatim from `@ohmail/tokens` (the macOS
+ * palette carries only three, so they live beside `authored`, which the fidelity tests pin to
+ * both sources; `test/tags-shown.test.ts` pins these to the tokens alone).
+ */
+export const wheelAuthored: Record<SchemeName, Record<Exclude<TagHueName, "moss" | "ochre" | "rosewood">, { ink: Oklch; bg: Oklch }>> = {
+  light: {
+    olive: { ink: oklch(0.44, 0.075, 112), bg: oklch(0.57, 0.085, 112, 0.12) }, //     #545621 · #787c3e
+    verdigris: { ink: oklch(0.44, 0.075, 182), bg: oklch(0.57, 0.085, 182, 0.12) }, // #0d6056 · #30887b
+    denim: { ink: oklch(0.44, 0.075, 214), bg: oklch(0.57, 0.09, 214, 0.12) }, //      #085d6c · #248598
+    indigo: { ink: oklch(0.44, 0.095, 250), bg: oklch(0.57, 0.1, 250, 0.12) }, //      #235585 · #467bb0
+    iris: { ink: oklch(0.44, 0.095, 288), bg: oklch(0.57, 0.1, 288, 0.12) }, //        #514984 · #756daf
+    mulberry: { ink: oklch(0.44, 0.095, 320), bg: oklch(0.57, 0.1, 320, 0.12) }, //    #694073 · #91639c
+    heather: { ink: oklch(0.44, 0.09, 352), bg: oklch(0.57, 0.1, 352, 0.12) }, //      #773c58 · #a45d7e
+  },
+  dark: {
+    olive: { ink: oklch(0.81, 0.075, 112), bg: oklch(0.75, 0.085, 112, 0.15) }, //     #c2c68e · #afb474
+    verdigris: { ink: oklch(0.81, 0.075, 182), bg: oklch(0.75, 0.085, 182, 0.15) }, // #89d1c4 · #6cc0b2
+    denim: { ink: oklch(0.81, 0.08, 214), bg: oklch(0.75, 0.09, 214, 0.15) }, //       #82cfe1 · #64bdd1
+    indigo: { ink: oklch(0.81, 0.09, 250), bg: oklch(0.75, 0.1, 250, 0.15) }, //       #94c6f9 · #7cb3eb
+    iris: { ink: oklch(0.81, 0.09, 288), bg: oklch(0.75, 0.1, 288, 0.15) }, //         #bdb8f8 · #aaa4ea
+    mulberry: { ink: oklch(0.81, 0.09, 320), bg: oklch(0.75, 0.1, 320, 0.15) }, //     #dbaee5 · #ca99d6
+    heather: { ink: oklch(0.81, 0.085, 352), bg: oklch(0.75, 0.095, 352, 0.15) }, //   #edabc7 · #dd95b4
+  },
+};
+
 function build(scheme: SchemeName): Palette {
   const a = authored[scheme];
   return {
@@ -135,6 +175,9 @@ function build(scheme: SchemeName): Palette {
       moss: { ink: css(a.tagMossInk), bg: css(a.tagMossBg) },
       ochre: { ink: css(a.tagOchreInk), bg: css(a.tagOchreBg) },
       rosewood: { ink: css(a.tagRosewoodInk), bg: css(a.tagRosewoodBg) },
+      ...Object.fromEntries(
+        Object.entries(wheelAuthored[scheme]).map(([hue, w]) => [hue, { ink: css(w.ink), bg: css(w.bg) }]),
+      ) as Record<keyof (typeof wheelAuthored)["light"], TagPalette>,
     },
   };
 }

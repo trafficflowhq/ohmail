@@ -22,7 +22,7 @@ export interface FaceShadowLayer {
   readonly color: string;
 }
 
-/** The palette per scheme — the same 16 slots + 3 tag hues the paper palette carries. */
+/** The palette per scheme — the same 16 slots + 10 tag hues the paper palette carries. */
 export const ohmarchyPalettes: Record<SchemeName, Palette> = {
   light: {
     scheme: "light",
@@ -45,9 +45,16 @@ export const ohmarchyPalettes: Record<SchemeName, Palette> = {
     glass: "rgba(255,252,240,0.8)",
     glassBrd: "rgba(16,15,15,0.1)",
     tag: {
-      moss: { ink: "#2d7b74", bg: "rgba(58,169,159,0.14)" },
-      ochre: { ink: "#69772f", bg: "rgba(135,154,57,0.14)" },
       rosewood: { ink: "#aa6225", bg: "rgba(208,119,43,0.14)" },
+      ochre: { ink: "#69772f", bg: "rgba(135,154,57,0.14)" },
+      olive: { ink: "#69772f", bg: "rgba(135,154,57,0.14)" },
+      moss: { ink: "#2d7b74", bg: "rgba(58,169,159,0.14)" },
+      verdigris: { ink: "#2d7b74", bg: "rgba(58,169,159,0.14)" },
+      denim: { ink: "#205EA6", bg: "rgba(32,94,166,0.14)" },
+      indigo: { ink: "#205EA6", bg: "rgba(32,94,166,0.14)" },
+      iris: { ink: "#b25183", bg: "rgba(206,93,151,0.14)" },
+      mulberry: { ink: "#b25183", bg: "rgba(206,93,151,0.14)" },
+      heather: { ink: "#c74a3f", bg: "rgba(209,77,65,0.14)" },
     },
   },
   dark: {
@@ -71,9 +78,16 @@ export const ohmarchyPalettes: Record<SchemeName, Palette> = {
     glass: "rgba(26,27,38,0.78)",
     glassBrd: "rgba(169,177,214,0.1)",
     tag: {
-      moss: { ink: "#449dab", bg: "rgba(68,157,171,0.14)" },
-      ochre: { ink: "#9ece6a", bg: "rgba(158,206,106,0.14)" },
       rosewood: { ink: "#ff9e64", bg: "rgba(255,158,100,0.14)" },
+      ochre: { ink: "#9ece6a", bg: "rgba(158,206,106,0.14)" },
+      olive: { ink: "#b9f27c", bg: "rgba(185,242,124,0.14)" },
+      moss: { ink: "#449dab", bg: "rgba(68,157,171,0.14)" },
+      verdigris: { ink: "#449dab", bg: "rgba(68,157,171,0.14)" },
+      denim: { ink: "#7aa2f7", bg: "rgba(122,162,247,0.14)" },
+      indigo: { ink: "#ad8ee6", bg: "rgba(173,142,230,0.14)" },
+      iris: { ink: "#bb9af7", bg: "rgba(187,154,247,0.14)" },
+      mulberry: { ink: "#ff7a93", bg: "rgba(255,122,147,0.14)" },
+      heather: { ink: "#f7768e", bg: "rgba(247,118,142,0.14)" },
     },
   },
 };
