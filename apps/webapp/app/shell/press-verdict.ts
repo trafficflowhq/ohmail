@@ -7,6 +7,7 @@ import {
   mailboxProfiles,
   senderKey,
   stayVerdict,
+  type EngineMessage,
   type EngineMutation,
   type EntityReader,
   type Folder,
@@ -36,7 +37,7 @@ export function screeningVerdict(
   return screeningReadBack(reader, messageId, address, dest, scope, o)?.verdict ?? { key: "none" };
 }
 
-/** {@link screeningVerdict} with the count of pressed rows the list shows at the place; `null` when the seed is gone. */
+/** {@link screeningVerdict} with the pressed rows the list shows at the place; `null` when the seed is gone. */
 export function screeningReadBack(
   reader: EntityReader,
   messageId: string,
@@ -44,7 +45,7 @@ export function screeningReadBack(
   dest: ScreeningDest,
   scope: ScreeningScope,
   o: { consent: ShellConsentFacts; now: Date; ownAddresses: readonly string[]; retro: boolean },
-): { verdict: StayVerdict; at: number } | null {
+): { verdict: StayVerdict; at: number; shown: string[] } | null {
   const s = senderScreening(reader, messageId, address);
   if (!s) return null;
   const presented = presentationReader(reader, consentPartition(reader, shellConsentOptions(o.consent, o.now, o.ownAddresses)));
@@ -52,7 +53,25 @@ export function screeningReadBack(
     presented, subject: s.scopes[scope].messages, rules: rulesList(reader), profiles: mailboxProfiles(reader),
     wanted: FOLDER_OF_VIEW[dest], retro: o.retro,
   });
-  return { verdict: stayVerdict(out, reader), at: out.at };
+  return { verdict: stayVerdict(out, reader), at: out.at, shown: out.shown };
+}
+
+/**
+ * THE PRESSED ROWS THE LIST SHOWS AT THE PLACE, read NOW over the lists' own partition — once before
+ * a press and again at its answer; {@link pressGained} over the two is the count a sentence states.
+ * `consent: null` is the demo, whose lists are the mirror unpartitioned. The subject is the one the
+ * press was planned over, so a seed that left the mirror in between still reads.
+ */
+export function screeningShown(
+  reader: EntityReader,
+  subject: readonly EngineMessage[],
+  dest: ScreeningDest,
+  o: { consent: ShellConsentFacts | null; now: Date; ownAddresses: readonly string[] },
+): string[] {
+  const presented = o.consent === null
+    ? reader
+    : presentationReader(reader, consentPartition(reader, shellConsentOptions(o.consent, o.now, o.ownAddresses)));
+  return pressOutcome({ presented, subject, rules: rulesList(reader), wanted: FOLDER_OF_VIEW[dest], retro: false }).shown;
 }
 
 /**

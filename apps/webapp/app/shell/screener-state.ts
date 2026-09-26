@@ -19,6 +19,7 @@ import {
   heldReleaseFingerprintOf,
   heldReleaseGroups,
   heldReleaseTotalOf,
+  pressGained,
   unscreenedGroups,
   unscreenedTotalOf,
   screenerSegments,
@@ -63,6 +64,7 @@ import {
   senderScreening,
 } from "./sender-screening";
 import { pileNames } from "./decision-copy";
+import { screeningShown } from "./press-verdict";
 import { PLACE_LABEL } from "./format";
 import { displayAddress, displayAddressee, displayDomain, displayDomainLabel } from "./idn";
 import { activeFormatZone } from "./locale";
@@ -522,6 +524,13 @@ export function useScreenerState(
    * `mailbox` rows, which is the demo and any caller with no facts to pass.
    */
   ownAddresses?: readonly string[],
+  /**
+   * The pressed rows the LISTS show at a place, read at the call — `screeningShown` over the shell's
+   * consent facts. A past-the-gate press counts what it gained with it: read before the dispatch and
+   * again at the answer. Absent ⇒ the raw mirror, which is what the demo's lists show.
+   */
+  shownAt: (subject: readonly EngineMessage[], dest: DecisionDestination) => string[] = (subject, dest) =>
+    screeningShown(engine.read(), subject, dest, { consent: null, now: new Date(), ownAddresses: [] }),
 ): ScreenerState {
   const t = useTranslations("screener");
   /* The five pile names as the catalogue has them, so a toast naming a destination uses the
@@ -1009,6 +1018,10 @@ export function useScreenerState(
         // The toast's subject, not the rule's — the rule was already written from `plan`.
         const who = d.scope === "domain" ? displayDomain(sender.domain) : displayAddress(sender.address);
         const place = PLACE_LABEL[dest] ?? dest;
+        // THE COUNT IS WHAT THE LIST GAINED, never `plan.moved`: the rule re-presents their INBOX mail
+        // with no move at all, so a count of the moves said fewer than the Ohbox gained.
+        const subject = sender.scopes[d.scope].messages;
+        const before = shownAt(subject, dest);
         void dispatchScreeningChange(plan, (m) => engine.mutate(m)).then((key) => {
           done();
           // THE SENTENCE IS UNCHANGED — `toastRuleFailed` says "… moved, but the rule couldn't be
@@ -1018,7 +1031,7 @@ export function useScreenerState(
           // plans no `move` at all) the sender comes back into the queue, and it used to come back
           // looking untouched while the only record faded with the toast.
           if (key === "toastRuleFailed") markRefused(id);
-          toast(ts(key, { sender: who, place, count: plan.moved }));
+          toast(ts(key, { sender: who, place, count: pressGained(before, shownAt(subject, dest)) }));
         }, () => { done(); refuse(d); });
       } else {
         // The representative is gone from the mirror — and this branch was

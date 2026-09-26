@@ -30,6 +30,8 @@ export interface PressStay {
 export interface PressOutcome {
   /** Pressed rows the list shows at the pressed place. */
   at: number;
+  /** Their ids — read before a press too, for {@link pressGained}. */
+  shown: string[];
   /** Every other pressed row, grouped by cause, place and rule; empty is the only success. */
   away: PressStay[];
 }
@@ -53,12 +55,12 @@ export function pressOutcome(input: {
   const place = canonicalDestination(input.wanted);
   const index = consentIndex(input.rules, input.profiles);
   const groups = new Map<string, PressStay>();
-  let at = 0;
+  const atPlace: string[] = [];
   for (const m of input.subject) {
     if (!isOrganizedFolder(m.physicalFolder ?? m.folder)) continue;
     const shown = input.presented.get<EngineMessage>("message", m.id);
     const where = shown === undefined ? null : canonicalDestination(shown.folder) as Folder;
-    if (where !== null && canonicalDestination(where) === place) { at++; continue; }
+    if (where !== null && canonicalDestination(where) === place) { atPlace.push(m.id); continue; }
     const by = placedRule(index, m);
     const ruled = by !== null && canonicalDestination(by.destination) !== place ? by : null;
     const cause: PressStayCause = ruled !== null ? causeOf(ruled)
@@ -68,7 +70,18 @@ export function pressOutcome(input: {
     if (held) held.messageIds.push(m.id);
     else groups.set(key, { cause, place: where, messageIds: [m.id], rule: ruled });
   }
-  return { at, away: [...groups.values()] };
+  return { at: atPlace.length, shown: atPlace, away: [...groups.values()] };
+}
+
+/**
+ * THE COUNT A PRESS SENTENCE STATES: pressed rows the list shows at the place after the press that
+ * it did not show there before — moved there, or already filed there and now presented there.
+ * Never the server's moves: a sender with one letter moved and one re-presented gained two.
+ * `before` is {@link PressOutcome.shown} over the same lists, read before anything was dispatched.
+ */
+export function pressGained(before: readonly string[], after: readonly string[]): number {
+  const was = new Set(before);
+  return after.filter((id) => !was.has(id)).length;
 }
 
 function causeOf(r: RuleDTO): PressStayCause {

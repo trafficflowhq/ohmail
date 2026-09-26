@@ -18,6 +18,7 @@ import {
   consentPartition,
   inverseMutations,
   pressForecast,
+  pressGained,
   ruleFingerprint,
   rulesInPlay,
   rulesList,
@@ -43,7 +44,7 @@ import { readerMoveRefusal } from "./mail-state";
 import type { BulkAction, MessageAction } from "./MessagePane";
 import { shellConsentOptions, type ShellConsentFacts } from "./consent-options";
 import {
-  moveInBatches, retroOf, screeningReadBack, screeningVerdict, verdictAction, verdictKeyOf, writtenRuleIds,
+  moveInBatches, retroOf, screeningReadBack, screeningShown, verdictAction, verdictKeyOf, writtenRuleIds,
 } from "./press-verdict";
 import type { PressWatch } from "./press-watch";
 import { rulePastMail, ruleRetarget } from "./rule-past-mail";
@@ -199,17 +200,26 @@ export function useShellVerbs({
     // The SUBJECT of the sentence follows the scope, or a domain decision would report
     // itself as being about the one address the user happened to click.
     const who = scope === "domain" ? displayDomain(sender.domain) : displayAddress(sender.address);
+    /* THE COUNT A SENTENCE STATES IS WHAT THE LIST GAINED (`pressGained`): the rows shown at the
+       place now and not before the press, never the plan's moves — a rule re-presents mail that
+       never moves. Read here, before anything is dispatched, and again at the answer. */
+    const subject = sender.scopes[scope].messages;
+    const shownNow = () => screeningShown(engine.verbRead(), subject, dest, {
+      consent: demo ? null : consent, now: nowAt(), ownAddresses,
+    });
+    const before = shownNow();
     /* SUCCESS IS SAID ONLY OVER THE LIST READ AGAIN: a pressed row the list shows elsewhere is
        named with its count and cause (`press-verdict.ts`). A refusal, a queue and another
        organizer's wait keep their own sentences — none of them has placed anything yet. */
     const say = (key: ScreeningToastKey | "toastAlready") => {
-      const v: StayVerdict = READS_BACK.has(key) && !demo
-        ? screeningVerdict(engine.verbRead(), messageId, address, dest, scope, {
+      const back = READS_BACK.has(key) && !demo
+        ? screeningReadBack(engine.verbRead(), messageId, address, dest, scope, {
             consent, now: nowAt(), ownAddresses, retro: plan.retro,
           })
-        : { key: "none" };
+        : null;
+      const v: StayVerdict = back?.verdict ?? { key: "none" };
       if (v.key === "none") {
-        toast(t(`screening.${key}`, { sender: who, place, count: plan.moved }));
+        toast(t(`screening.${key}`, { sender: who, place, count: pressGained(before, back?.shown ?? shownNow()) }));
         return;
       }
       sayVerdict(v);
@@ -257,7 +267,10 @@ export function useShellVerbs({
     };
     // Nothing to write and nothing to move: said as before, with no window for nothing.
     if (path === "window" && !demo && (plan.mutations.length > 0 || resolutionExtras(press).length > 0)) {
-      holdScreenPress({ messageId, sender, dest, scope, makeRule, applyRetro, address, press, plan, who, place, sayVerdict });
+      holdScreenPress({
+        messageId, sender, dest, scope, makeRule, applyRetro, address, press, plan, who, place, sayVerdict,
+        before, gained: () => pressGained(before, shownNow()),
+      });
       return;
     }
     if (plan.mutations.length === 0) { say("toastAlready"); return; }
@@ -315,6 +328,8 @@ export function useShellVerbs({
     makeRule: boolean; applyRetro: boolean; address: string | undefined; press: ScreeningPress | undefined;
     plan: ScreeningPlan; who: string; place: string;
     sayVerdict: (v: Exclude<StayVerdict, { key: "none" }>) => void;
+    /** The rows the list showed at the place before the press, and what it has gained since. */
+    before: readonly string[]; gained: () => number;
   }): void => {
     const resolution = p.press?.resolution ?? "keep";
     const forecast = p.press?.forecast
@@ -336,7 +351,7 @@ export function useShellVerbs({
       shown: shown.map((r) => ({ id: r.id, fp: ruleFingerprint(r) })), moves: settled,
       after: (o) => {
         if (o.worst === "rolled_back") {
-          toast(t("screening.toastRuleFailed", { sender: p.who, place: p.place, count: moves.length }));
+          toast(t("screening.toastRuleFailed", { sender: p.who, place: p.place, count: p.gained() }));
           return;
         }
         if (o.worst === "awaiting_organizer") {
@@ -348,7 +363,7 @@ export function useShellVerbs({
           return;
         }
         if (o.worst === "queued") {
-          toast(t("screening.toastRuleQueued", { sender: p.who, place: p.place, count: moves.length }));
+          toast(t("screening.toastRuleQueued", { sender: p.who, place: p.place, count: p.gained() }));
           return;
         }
         for (const id of o.changed) {
@@ -367,11 +382,15 @@ export function useShellVerbs({
 
   /** The press's own sentence: what it does, before anything is answered — no count. */
   const pressSentence = (
-    p: { applyRetro: boolean; plan: ScreeningPlan; who: string; place: string },
+    p: { applyRetro: boolean; plan: ScreeningPlan; who: string; place: string; before: readonly string[] },
     forecast: PressForecast | null, resolution: "remove" | "keep", shown: readonly RuleDTO[],
   ): string => {
-    if (!p.applyRetro || forecast === null) {
-      return t(`screening.${screeningToast(p.plan, null)}`, { sender: p.who, place: p.place, count: p.plan.moved });
+    // Nothing is known at the press without a forecast, so the sentence names no number.
+    if (forecast === null) return t("screening.toastPressRuled", { place: p.place, sender: p.who });
+    if (!p.applyRetro) {
+      return t(`screening.${screeningToast(p.plan, null)}`, {
+        sender: p.who, place: p.place, count: pressGained(p.before, forecast[resolution].landing),
+      });
     }
     const terms = forecast.groups.filter((g) => g.cause === "term-subject" || g.cause === "term-body").map((g) => g.rule);
     const named = terms.filter((r) => shown.some((x) => x.id === r.id));
@@ -1391,6 +1410,7 @@ export function useShellVerbs({
   const planBulkScreening = useStableCallback((ids: string[], dest: ScreeningDest) => {
     const seen = new Set<string>();
     const plans: EngineMutation[] = [];
+    const subject: EngineMessage[] = [];
     let senders = 0;
     let messages = 0;
     let rules = 0;
@@ -1413,8 +1433,9 @@ export function useShellVerbs({
       messages += plan.moved;
       if (plan.rule) rules++;
       plans.push(...plan.mutations);
+      subject.push(...s.scopes.sender.messages);
     }
-    return { senders, messages, rules, mutations: plans };
+    return { senders, messages, rules, mutations: plans, subject };
   });
 
   const onBulkScreen = useStableCallback(
@@ -1435,6 +1456,10 @@ export function useShellVerbs({
         toast(t("screening.toastBulkNothing", { place }));
         return true;
       }
+      // The count said after is what the lists gained there, read before and at the answer.
+      const facts = { consent: demo ? null : consent, now: nowAt(), ownAddresses };
+      const before = screeningShown(engine.verbRead(), plan.subject, dest, facts);
+      const gained = () => pressGained(before, screeningShown(engine.verbRead(), plan.subject, dest, facts));
       // Two sentences because there are two outcomes, and the second one is permanent. The
       // single-sender path already says which happened; this keeps that vocabulary and adds
       // the only thing bulk introduces — that a selection can contain both. Through the set
@@ -1446,13 +1471,13 @@ export function useShellVerbs({
           ? t("screening.toastBulkRuled", {
               place,
               senders: plan.senders,
-              count: plan.messages,
+              count: gained(),
               rules: plan.rules,
             })
           : t("screening.toastBulkMoved", {
               place,
               senders: plan.senders,
-              count: plan.messages,
+              count: gained(),
             })),
       );
       return true;

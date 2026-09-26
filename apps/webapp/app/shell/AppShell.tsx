@@ -236,6 +236,7 @@ import {
   type ScreeningScope,
   type ScreeningToastKey,
 } from "./sender-screening";
+import { screeningShown } from "./press-verdict";
 import { SubjectRuleSheet } from "./SubjectRuleSheet";
 import { planSubjectRule, subjectRuleContext, subjectRuleToast, type TermField } from "./subject-rule";
 import { senderHitOf } from "./sender-hit";
@@ -1395,11 +1396,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     refreshFacts();
     return answer;
   });
+  /* What a Screener press gained at its place, over the lists' own partition read at the call. */
+  const screenerShownAt = useStableCallback((subject: readonly EngineMessage[], dest: ScreeningDest) =>
+    screeningShown(engine.read(), subject, dest, { consent: demo ? null : consent, now: nowAt(), ownAddresses }));
   const screener = useScreenerState(
     engine, derived, toast, suggestions.suggestions, presented, autoUnsubscribeDiscloses,
     // The SAME addresses `consentView` was built from — the queue's rows and the partition's
     // reckoning read one list, so the reader is never a row in their own Screener.
-    screenerRole, suggestions.outstandingDecisions, ownAddresses,
+    screenerRole, suggestions.outstandingDecisions, ownAddresses, screenerShownAt,
   );
   /**
    * The opt-in's quote, bound to the SAME list the automatic batch will slice.

@@ -775,6 +775,7 @@ export {
 // rows as the list shows them, with the one sentence they earn.
 export { outrankCoveringDomains } from "./address-rank.js";
 export {
+  pressGained,
   pressOutcome,
   stayVerdict,
   type PressOutcome,
