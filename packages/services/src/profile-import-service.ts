@@ -4,20 +4,19 @@ import {
   assertOrganizerRole, readOrganizerRole,
   awayResponders, contacts, mailboxes, notifyRules, rules, tags,
   latestProfileFoundMarker, profileImportResolutionExists, profileImportWriteReleased,
-  recordProfileImportResolution,
+  recordProfileImportResolution, rerouteOwnHeldBag,
   recordChanges, ruleDelta,
   type ChangeInput, type Tx,
 } from "@trafficflow/db";
-import { DESTINATIONS, isAwayPile, awayScopeFitsAudience, type AwayPile } from "@trafficflow/core/mail";
-import { RULE_PRIORITY_MAX } from "@trafficflow/core/rule-order";
+import { isAwayPile, awayScopeFitsAudience, type AwayPile } from "@trafficflow/core/mail";
 import {
   PROFILE_LIST_MAX, PROFILE_VERSION, ProfileUnavailableError, profileFingerprint,
-  type OrganizerProfileDoc, type ProfileReadResult, type ProfileRuleEntry,
+  applicableProfileRule, oversizedProfileList, profileScreenerAddress,
+  type ApplicableProfileRule, type OrganizerProfileDoc, type ProfileReadResult,
 } from "@trafficflow/core/adapters/organizer-profile";
 import { serializeOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
 import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
-import { MAX_BODY_CONTAINS_CHARS, MAX_SUBJECT_CONTAINS_CHARS } from "./rules-service.js";
 import { AWAY_AUDIENCES, nextEnabledAt, type AwayAudience } from "./away-responder-service.js";
 import { AWAY_THROTTLES, type AwayThrottle } from "./away-responder-pass.js";
 import { MAX_TAG_NAME_CHARS } from "./tags-service.js";
@@ -88,9 +87,6 @@ export interface ProfileImportApplied {
   seq: number | null;
 }
 
-const KINDS = new Set(["sender", "domain", "header"]);
-const FOLDER_SET = new Set<string>(DESTINATIONS);
-
 /**
  * The `classid` half of the apply's `pg_advisory_xact_lock(int4, int4)`; the second half is
  * `hashtext(account_id)`. The merge reads the account's rule/notify/tag rows and acts on what it
@@ -109,32 +105,8 @@ const profileUnreadable = (): ServiceError => new ServiceError(
   "The mailbox could not be checked for saved ohmail settings. Try again.",
 );
 
-/** One rule as the apply writes it — the document entry, validated and normalized. */
-interface ApplicableRule {
-  kind: string;
-  match: string;
-  destination: string;
-  priority: number;
-  enabled: boolean;
-  provenance: string;
-  subjectContains: string | null;
-  bodyContains: string | null;
-}
-
-/**
- * A term, normalized as `RulesService.validSubjectContains` normalizes one — or the `invalid`
- * sentinel where the service would 400. The import cannot 400 a document nobody typed into a
- * form, so an invalid term invalidates its RULE (skipped and counted) rather than the request.
- * Coercing a blank term to null instead would silently WIDEN the rule to the sender's whole
- * mail, which is the exact misreading the service refuses.
- */
+/** An unparseable responder date — the entry is skipped rather than the request refused. */
 const INVALID_TERM = Symbol("invalid-term");
-function normTerm(v: string | undefined, max: number): string | null | typeof INVALID_TERM {
-  if (v === undefined || v === null) return null;
-  const term = v.trim();
-  if (term.length === 0 || term.length > max || hasNul(term)) return INVALID_TERM;
-  return term;
-}
 
 /**
  * PostgreSQL text cannot hold a NUL, so a public document's string carrying one would turn the
@@ -142,32 +114,6 @@ function normTerm(v: string | undefined, max: number): string | null | typeof IN
  * honest answer. Checked wherever a document string becomes a stored value.
  */
 const hasNul = (v: string): boolean => v.includes("\u0000");
-
-/** The document rule, admitted under the product's own create rules — or null (skip + count). */
-function applicableRule(r: ProfileRuleEntry): ApplicableRule | null {
-  if (!KINDS.has(r.kind)) return null;
-  if (typeof r.match !== "string" || r.match.length === 0 || hasNul(r.match)) return null;
-  if (!FOLDER_SET.has(r.destination)) return null;
-  // The one priority bound `RulesService` creates under, well inside what the column holds (an
-  // overflow would abort the whole transaction as a 500 dressed as an import).
-  if (!Number.isInteger(r.priority) || r.priority < 0 || r.priority > RULE_PRIORITY_MAX) return null;
-  const subjectContains = normTerm(r.subjectContains, MAX_SUBJECT_CONTAINS_CHARS);
-  const bodyContains = normTerm(r.bodyContains, MAX_BODY_CONTAINS_CHARS);
-  if (subjectContains === INVALID_TERM || bodyContains === INVALID_TERM) return null;
-  if ((subjectContains !== null || bodyContains !== null) && r.kind !== "sender") return null;
-  const provenance = typeof r.provenance === "string" && r.provenance.length > 0 ? r.provenance : "manual";
-  if (hasNul(provenance)) return null;
-  return {
-    kind: r.kind,
-    match: r.match,
-    destination: r.destination,
-    priority: r.priority,
-    enabled: r.enabled === true,
-    provenance,
-    subjectContains,
-    bodyContains,
-  };
-}
 
 /**
  * The natural key a rule is merged under, CASE-FOLDED the way the routing engine folds at match
@@ -183,6 +129,14 @@ const ruleKey = (r: { kind: string; match: string; subjectContains: string | nul
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
+/** The destinations that screen a sender OUT of sight — where the app presents their held mail. */
+const SCREEN_OUT_FOLDERS: ReadonlySet<string> = new Set(["ohmail/Screened", "ohmail/Quarantine"]);
+
+/** A written rule that screens a sender out as a whole: its held bag follows it (see `apply`). */
+const screensOut = (r: ApplicableProfileRule): r is ApplicableProfileRule & { kind: "sender" | "domain" } =>
+  r.enabled && SCREEN_OUT_FOLDERS.has(r.destination) && (r.kind === "sender" || r.kind === "domain")
+  && r.subjectContains === null && r.bodyContains === null;
+
 /**
  * HOW LARGE A DOCUMENT `apply` WILL IMPORT, PER LIST — the format's {@link PROFILE_LIST_MAX},
  * which the serializer publishes within, so a document ohmail wrote always fits. The counts come
@@ -192,22 +146,12 @@ const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
  */
 export const PROFILE_IMPORT_MAX = PROFILE_LIST_MAX;
 
-/** The first list that is over its ceiling, or null. One answer, used by both entry points. */
-function oversizedList(doc: OrganizerProfileDoc): { list: string; count: number; max: number } | null {
-  for (const key of ["screener", "rules", "notifyRules", "tagNames"] as const) {
-    const n = doc[key].length;
-    const max = PROFILE_IMPORT_MAX[key];
-    if (n > max) return { list: key, count: n, max };
-  }
-  return null;
-}
-
 /**
  * Refuse a document whose lists are larger than one transaction should carry. Called BEFORE
  * `apply` opens its transaction, which is the whole point — inside it, the lock is already held.
  */
 function refuseOversizedProfile(doc: OrganizerProfileDoc): void {
-  const over = oversizedList(doc);
+  const over = oversizedProfileList(doc);
   if (over) {
     throw new ServiceError(
       "payload_too_large", 413,
@@ -314,7 +258,7 @@ export class ProfileImportService {
      * COUNTS (free), canonicalize once for the id, then ask whether this exact content was
      * already answered.
      */
-    const over = oversizedList(fresh.doc);
+    const over = oversizedProfileList(fresh.doc);
     const fingerprint = profileFingerprint(fresh.doc);
 
     /**
@@ -422,8 +366,8 @@ export class ProfileImportService {
       // the format specifies; the row becomes the entry, display name included.
       const byAddress = new Map<string, string | null>();
       for (const s of doc.screener) {
-        const address = s.address.trim().toLowerCase();
-        if (address.length === 0 || hasNul(address)) continue;
+        const address = profileScreenerAddress(s);
+        if (address === null) continue;
         const name = s.name !== undefined && !hasNul(s.name) ? s.name : null;
         byAddress.set(address, name);
       }
@@ -437,14 +381,14 @@ export class ProfileImportService {
       }
 
       // ── rules, merged per natural key ──────────────────────────────────────────────────
-      const applicable: ApplicableRule[] = [];
+      const applicable: ApplicableProfileRule[] = [];
       let skippedRules = 0;
       for (const r of doc.rules) {
-        const a = applicableRule(r);
+        const a = applicableProfileRule(r);
         if (a === null) skippedRules += 1;
         else applicable.push(a);
       }
-      const docByKey = new Map<string, ApplicableRule[]>();
+      const docByKey = new Map<string, ApplicableProfileRule[]>();
       for (const a of applicable) {
         const k = ruleKey(a);
         const group = docByKey.get(k);
@@ -463,6 +407,7 @@ export class ProfileImportService {
         if (group) group.push(row);
         else localByKey.set(k, [row]);
       }
+      const screenOuts: ApplicableProfileRule[] = [];
       for (const [key, docRows] of docByKey) {
         const localRows = localByKey.get(key) ?? [];
         const n = Math.max(docRows.length, localRows.length);
@@ -473,6 +418,7 @@ export class ProfileImportService {
             const same = have.destination === want.destination && have.priority === want.priority
               && have.enabled === want.enabled && have.provenance === want.provenance;
             if (same) continue; // already the document's row — no write, no change row
+            if (screensOut(want)) screenOuts.push(want);
             await tx.update(rules).set({
               destination: want.destination, priority: want.priority,
               enabled: want.enabled, provenance: want.provenance, updatedAt: now,
@@ -490,12 +436,26 @@ export class ProfileImportService {
               retroRequestedAt: null,
             }).returning({ id: rules.id });
             changes.push(ruleDelta(ctx.accountId, row!.id, "create"));
+            if (screensOut(want)) screenOuts.push(want);
           } else if (have) {
             // A surplus local duplicate of a key the document names — see the merge rule.
             await tx.delete(rules).where(and(eq(rules.id, have.id), eq(rules.accountId, ctx.accountId)));
             changes.push(ruleDelta(ctx.accountId, have.id, "delete"));
           }
         }
+      }
+
+      /* ── the mail THIS organizer held at the gate for the senders those rules screen out ──
+         The app presents a screened-out sender's held mail on the Screened-out shelf, so without
+         this the mailbox would keep at the gate what every surface says is screened out. The
+         rules still request no retro: only 'us' rows at the gate move (`rerouteOwnHeldBag`). */
+      let rerouteSeq: bigint | null = null;
+      for (const r of screenOuts) {
+        const moved = await rerouteOwnHeldBag(tx, {
+          accountId: ctx.accountId, kind: r.kind as "sender" | "domain", match: r.match,
+          appliedFolder: r.destination, now,
+        });
+        if (moved.lastSeq !== null) rerouteSeq = moved.lastSeq;
       }
 
       // ── notifyRules, keyed by (kind, target); the key is the whole value ───────────────
@@ -657,7 +617,7 @@ export class ProfileImportService {
           awayResponder: awayApplied,
         },
         skippedRules,
-        seq: seqs.length > 0 ? Number(seqs[seqs.length - 1]) : null,
+        seq: seqs.length > 0 ? Number(seqs[seqs.length - 1]) : rerouteSeq === null ? null : Number(rerouteSeq),
       };
     });
   }

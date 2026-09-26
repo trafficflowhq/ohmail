@@ -61,6 +61,14 @@ function rank(table: Readonly<Record<string, number>>, value: string): number {
  */
 export const RULE_PRIORITY_MAX = 1000;
 
+/**
+ * The ceilings on a rule's subject and body terms, mirroring the `rules_subject_contains_nonempty`
+ * and `rules_body_contains_nonempty` CHECKs (mail 0050, 0052). `RulesService` turns a violation
+ * into a 400 and the profile import skips the rule; both read these, so the two doors agree.
+ */
+export const MAX_SUBJECT_CONTAINS_CHARS = 200;
+export const MAX_BODY_CONTAINS_CHARS = 200;
+
 /** `priority` is `integer NOT NULL`, but a non-finite value would poison the comparator. */
 function finitePriority(p: number): number {
   return Number.isFinite(p) ? p : 0;

@@ -8,7 +8,7 @@ import { classifySensitivity, type SensitivityResult } from "./sensitive.js";
 import {
   NO_TRUSTED_AUTHSERV_IDS, DEFAULT_OHBOX_POLICY, authVerdictFromHeaders, autoReplySuppression,
   dsnVerdict, effectForDestination, evaluateRules, gateAuthor, screenerAdmits, type AuthVerdict,
-  type OhboxPolicy,
+  type OhboxPolicy, type Rule,
 } from "./rules.js";
 import { classifyDedup, type DedupOutcome } from "./dedup.js";
 // The leaf predicate, not `adapters/imap.js`: this module is the model layer and naming the
@@ -47,7 +47,7 @@ import type { NormalizedMessage } from "./types.js";
 // A VALUE import, and from `types.js` rather than `adapters/imap-types.js` which re-exports it:
 // that module's entry point carries `imapflow`, and this predicate is deliberately kept in a module
 // with no imports at all so every caller can reach it. See {@link isOrganizedFolder}.
-import { isOrganizedFolder } from "./types.js";
+import { canonicalDestination, isOrganizedFolder } from "./types.js";
 
 /** Confidence a graduated pattern must meet before the AI branch auto-applies. */
 export const AUTO_APPLY_CONFIDENCE_BAR = 0.7;
@@ -557,21 +557,47 @@ export interface PlanDeps {
   correspondenceSince?: Date;
   /**
    * A foreign organizer profile's import decision is open — the routing half of the write-behind
-   * HOLD; ABSENT means inert. Measured in a takeover drill: the profile answered for every
-   * screened sender, the write-behind held it and asked — and the sync loop ran at full authority
-   * meanwhile, moving all 31 INBOX messages of screened senders into the Screener. While open,
-   * the GATE's own verdicts adopt the arrival folder — {@link screeningCutoff}'s subordination —
-   * committed {@link NewPlan.passive}, keeping every retro pass from re-deciding after the
-   * import. The hold ends when the user answers or the document equals local state. The cost: a
-   * new stranger mid-window lands where the server delivered it.
+   * HOLD; ABSENT means closed. Measured in a takeover drill: the sync loop moved all 31 INBOX
+   * messages of the document's screened-in senders into the Screener while the question stood.
+   * While open, a GATE verdict is asked again over the document's gate view ({@link ImportHold}):
+   * mail the document would keep where it is adopts the arrival folder, committed {@link
+   * NewPlan.passive}; a sender unknown to both, or one a document rule screens out whose mail sits
+   * elsewhere, is screened as usual. The hold ends when the user answers or local state agrees.
    */
-  importDecisionOpen?: boolean;
+  importHold?: ImportHold;
   /**
    * The account's own mailbox addresses, lower-cased, resolved once per page by the cycle (the
    * `correspondenceSince` discipline: no statement per message). ABSENT asks the repo — never an
    * empty set, which would hold the account's own mail at the gate.
    */
   ownAddresses?: ReadonlySet<string>;
+}
+
+/**
+ * The open import question as routing reads it. `document`: the gate view Import would write
+ * (`adapters/organizer-profile.ts#profileGateView`). `unreadable`: a newer format, or a hold armed
+ * before the first evaluation — every gate verdict adopts, the one blanket hold left, produced
+ * only by `OrganizerProfileSync.importHoldNow` (a census refuses it anywhere else).
+ */
+export type ImportHold =
+  | { kind: "document"; knownSenders: ReadonlySet<string>; rules: readonly Rule[] }
+  | { kind: "unreadable" };
+
+/**
+ * Whether the held document would keep this message where the server put it: {@link evaluateRules}
+ * over its view, never a second matcher. It keeps mail it lets PAST the gate, and mail its own
+ * decision files to the folder it already sits in (the previous organizer's screen-outs). A gate
+ * verdict, or a denial of mail sitting elsewhere, keeps nothing: holding it would let a stranger in.
+ */
+function documentKeeps(
+  hold: ImportHold, msg: NormalizedMessage, auth: AuthVerdict, ohboxPolicy: OhboxPolicy, arrival: string,
+  ownAddresses: ReadonlySet<string>,
+): boolean {
+  if (hold.kind === "unreadable") return true;
+  const verdict = evaluateRules({ msg, rules: hold.rules, knownSenders: hold.knownSenders, auth, ohboxPolicy, ownAddresses });
+  if (verdict.source === "screener") return false;
+  if (verdict.destination !== null && canonicalDestination(verdict.destination) === canonicalDestination(arrival)) return true;
+  return !(verdict.destination !== null && effectForDestination(verdict.destination) === "deny");
 }
 
 /**
@@ -999,18 +1025,18 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
       authFailed: authVerdict === "fail",
     });
 
-    /* ── THE GATE DEFERS WHILE THE MAILBOX'S TRAVELLING DECISIONS AWAIT THEIR ANSWER ─────────
+    /* ── THE GATE DEFERS TO THE MAILBOX'S TRAVELLING DECISIONS WHILE THEY AWAIT THEIR ANSWER ──
      *
-     * See {@link PlanDeps.importDecisionOpen} — the routing half of the organizer-profile HOLD
-     * (TAKEOVER-RESCREEN). The same two refusals as the baseline block above, for the same
-     * reasons: a `rule` verdict is the user's decision and stands, and the auth-fail demotion is
-     * a statement about THIS message that an open import question must not excuse. No date term:
-     * the window is bounded by the user's answer, not by a clock, and the mail it protects is
-     * precisely the mail whose placement the previous organizer already decided.
+     * See {@link PlanDeps.importHold} (TAKEOVER-RESCREEN). The baseline block's two refusals, for
+     * its reasons: a `rule` verdict stands, and an auth-fail demotion is not excused. The third
+     * term scopes the hold to the document's opinion: only mail it would KEEP where it is holds
+     * its folder, and everything else is screened now, because nothing re-files an adopted row
+     * once the question closes. No date term: the window is bounded by the user's answer.
      */
-    const heldForImport = deps.importDecisionOpen === true
+    const heldForImport = deps.importHold !== undefined
       && decision.source === "screener"
-      && authVerdict !== "fail";
+      && authVerdict !== "fail"
+      && documentKeeps(deps.importHold, normalized, authVerdict, ohboxPolicy, change.locator.folder, ownAddresses);
 
     /* AHEAD OF `sensitive`, which is the one ordering choice here worth stating. A sensitivity
        reading is a heuristic over text; this is a lookup that says what the failed message WAS.
@@ -1111,16 +1137,12 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
         // at commit is what makes "the verdict on the row is the verdict that routed" a
         // property of the code and not of two call sites staying in step.
         authVerdict,
-        // A placement adopted under the import hold is the standing state of the user's mailbox,
-        // not this organizer's decision — `passive` commits `'external'`, keeping every retro
-        // pass from re-deciding after the import lands; without this one word the hold would only
-        // postpone the re-screen it prevents. ONLY when the hold's arm actually decided, two
-        // exclusions: `desired` must equal the arrival folder — the sensitive and bounce lifts
-        // pick INBOX, a REAL move when the mail sits elsewhere, and `reconcileFolders` skips
-        // `external` rows, so a passive-stamped lift would leave the server behind while every
-        // client claims INBOX; and not `admitBounce` even when no move is needed — a corroborated
-        // DSN arriving in the INBOX was still THIS organizer's decision, and an `external` stamp
-        // would hide it from the retro passes entitled to revisit our decisions.
+        // A placement adopted under the import hold — mail the travelling document admits — is the
+        // standing state of the user's mailbox, not this organizer's decision: `passive` commits
+        // `'external'`, out of every retro pass's reach once the import lands. Only where the hold
+        // decided: `desired` must equal the arrival folder (a sensitive or bounce lift to INBOX is a
+        // real move, and `reconcileFolders` skips `external` rows), and never for `admitBounce` — a
+        // corroborated DSN is this organizer's decision even in place.
         ...(heldForImport && !admitBounce && desired === change.locator.folder ? { passive: true } : {}),
         /* `fileBounceAsReceipt` AGAIN, READ ONCE: it decides where the report goes AND that the
            address it was sent to is dead, because those are one fact. ABSENT unless the report is

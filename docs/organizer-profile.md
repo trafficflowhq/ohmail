@@ -360,17 +360,24 @@ refuses to answer it itself:
   applied import, or saving this install's settings to the mailbox from
   Settings, releases the hold. "Not now" answers the question for screening
   and leaves the found document in the mailbox.
-- **The consent gate holds with it.** While the decision is open, mail whose
-  only verdict would be the gate's own ("nobody has ruled on this sender")
-  keeps the folder the mailbox already has it in, instead of being re-screened
-  by a store that has not yet imported the decisions travelling with the
-  mailbox. The mailbox is the master: its standing placement was made under
-  the previous organizer and is not undone by the act of switching. A rule in
-  the incoming store still applies, and a message that fails authentication is
-  still held — the hold defers only the "unknown sender" verdict, and ordinary
+- **The consent gate holds with it, for the senders the document lets
+  through.** While the decision is open, mail from a sender the found
+  document screened in (or admits by a rule) keeps the folder the mailbox
+  already has it in, instead of being re-screened by a store that has not yet
+  imported the decisions travelling with the mailbox. The mailbox is the
+  master: its standing placement was made under the previous organizer and is
+  not undone by the act of switching; so is mail already where the document's
+  own rule files it, such as a screened-out sender's mail in Screened out. A
+  new letter from a sender the document does not know, or from one a document
+  rule screens out, is screened as usual — no answer would let that mail
+  through — and importing the document files the mail ohmail held in the
+  Screener for the senders it screens out. A rule in the incoming store still applies, a message
+  that fails authentication is still held, and a document written by a newer
+  ohmail holds every "unknown sender" verdict until it is dismissed. Ordinary
   screening resumes once the import question is answered: before the next sync
   pass for the document the answer names, and within the organizer's next
-  profile pass when the document changed under an open question.
+  profile pass when the document changed under an open question. Mail kept in
+  place while the question was open is not re-filed afterwards.
 
 ## What a reader in another mail client sees
 

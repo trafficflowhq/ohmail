@@ -1,7 +1,7 @@
 import {
   planChange, commitChange, isOrganizedFolder, MAX_RAW_MESSAGE_BYTES,
   type Change, type ChangePlan, type ClassifierPort, type CommitDeps, type CreditGate,
-  type Logger, type OhboxPolicy, type StorageCap,
+  type ImportHold, type Logger, type OhboxPolicy, type StorageCap,
 } from "@trafficflow/core/mail";
 import {
   WATCHED_FOLDERS, MessageGoneError, WriteDeclinedError, parseRef, FILING_BATCH_MAX,
@@ -179,13 +179,12 @@ export interface SyncDeps {
   screeningCutoff?: Date;
   /**
    * A found FOREIGN organizer profile's import decision is open for this mailbox, so the consent
-   * gate adopts placement instead of re-screening it — see `PlanDeps.importDecisionOpen`
-   * (TAKEOVER-RESCREEN) for the defect and the boundaries. ABSENT ⇒ inert ⇒ byte-identical
-   * routing for the reconcile backstop and every test. The hosts resolve it per cycle from the
-   * profile hold's own state (`profile.ts#OrganizerProfileSync.importDecisionOpen`), the same
-   * one-reading discipline as `screeningCutoff` above.
+   * gate adopts placement for the mail that document admits — see `PlanDeps.importHold`
+   * (TAKEOVER-RESCREEN). ABSENT ⇒ closed ⇒ ordinary screening. The hosts evaluate it per cycle
+   * (`profile.ts#OrganizerProfileSync.importHoldNow`), the one-reading discipline of
+   * `screeningCutoff` above.
    */
-  importDecisionOpen?: boolean;
+  importHold?: ImportHold;
   /**
    * The per-message terminal-failure ledger, one per attached mailbox. ABSENT ⇒ ONE PER CALL, not "no
    * boundary": `apps/sidecar` imports this loop (the desktop engine and the hosted worker run one
@@ -918,7 +917,7 @@ async function cycleWithKnownSet(
 async function syncCycleWithin(
   deps: SyncDeps, at: CyclePageCursor,
 ): Promise<{ hasBacklog: boolean; owesFiling: boolean }> {
-  const { repo, adapter, accountId, mailboxId, classifier, credits, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, importDecisionOpen, storageCap, log } = deps;
+  const { repo, adapter, accountId, mailboxId, classifier, credits, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, importHold, storageCap, log } = deps;
   /**
    * THE ONE DERIVATION. See {@link SyncDeps.role}.
    *
@@ -1302,7 +1301,7 @@ async function syncCycleWithin(
   const ownAddresses = await ownAddressesFor(deps, readerMode, batch.creates);
   for (const ch of [...batch.creates, ...batch.moves]) {
     await attempt(ch, async () => {
-      const plan = await planChange(ch, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, correspondenceSince, importDecisionOpen, readerMode, ...(ownAddresses !== undefined ? { ownAddresses } : {}) });
+      const plan = await planChange(ch, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, correspondenceSince, importHold, readerMode, ...(ownAddresses !== undefined ? { ownAddresses } : {}) });
       await fencedIngest(deps, async (txRepo) => {
         // The mailbox is asked about INSIDE this transaction, never before it: `planChange` above
         // ran outside any transaction and may have spent a classifier call there, which is exactly
@@ -1568,7 +1567,7 @@ async function consentPointFor(
 async function retryFailedMessages(
   deps: SyncDeps, deadLetters: DeadLetterLedger, version: string,
 ): Promise<void> {
-  const { repo, adapter, accountId, mailboxId, classifier, credits, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, importDecisionOpen, storageCap, log } = deps;
+  const { repo, adapter, accountId, mailboxId, classifier, credits, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, importHold, storageCap, log } = deps;
   // The retry runs THE SAME two-phase ingest as the ordinary path, so it derives the mode the
   // same way — see {@link SyncDeps.role}. A reader's owed message is re-ingested as a reader.
   const readerMode = deps.role === "reader";
@@ -1685,7 +1684,7 @@ async function retryFailedMessages(
       // `own_copy` for a Sent twin of mail we hold.
       try {
         const correspondenceSince = await consentPointFor(deps, readerMode, [change]);
-        const plan = await planChange(change, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, correspondenceSince, importDecisionOpen, readerMode });
+        const plan = await planChange(change, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, correspondenceSince, importHold, readerMode });
         // THROUGH THE INGEST'S OWN COMMIT DOOR, and never a second fence. `planChange` above ran
         // outside every transaction exactly as the ordinary path's does, so a removal lands in the
         // same gap and this commit needs the same question asked inside the same transaction —

@@ -145,6 +145,7 @@ export function ProfileImportCard() {
       {savedBy !== null ? <Txt variant="caption" tone="ink3">{savedBy}</Txt> : null}
       {failed !== null ? <Txt variant="note" tone="ink2" accessibilityRole="alert">{failed}</Txt> : null}
       <Txt variant="caption" tone="ink3">{Copy.pfiWillDo}</Txt>
+      <Txt variant="caption" tone="ink3">{Copy.pfiHeldRouting}</Txt>
       <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
         <Button
           label={busy ? Copy.pfiImporting : Copy.pfiImport}

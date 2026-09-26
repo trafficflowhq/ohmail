@@ -2641,7 +2641,7 @@ export async function startWorkerWithLock(
         // after that cycle has already routed: the drill measured a cold takeover moving all 31 INBOX
         // messages of already-screened-in senders into the Screener while the document answering for
         // them sat one FETCH away. This read-only detection runs here — after the lease gate said
-        // organize, before any cycle can route — so `cycle()`'s `importDecisionOpen` is true from the
+        // organize, before any cycle can route — so `cycle()`'s `importHold` is set from the
         // first ingest. Never throws; a read fault retries at the first tick and the residual is at
         // most one pre-fix cycle. Ordinary mailboxes return in one FETCH and arm nothing.
         /* Skipped for a reader: the profile hold is an incoming organizer's question. The third of the
@@ -3455,7 +3455,7 @@ export async function startWorkerWithLock(
              * by the attach that follows a promotion. No attach follows a promotion any more — mail
              * 0083 made READER → ORGANIZER happen IN PLACE — so the promise named a re-attach that was
              * deleted, and the sequence it left open is TAKEOVER-RESCREEN: a claim-back promotes, and
-             * `runSyncCycle` runs this pass with `importDecisionOpen === false` and files the inherited
+             * `runSyncCycle` runs this pass with no `importHold` and files the inherited
              * history into `ohmail/Screener`. BEFORE `runSyncCycle`, like `ensureFolders`: the first
              * cycle does the damage, so arming it afterwards arms it too late. */
             await rt.profile.armHoldFromFolder();
@@ -3559,7 +3559,7 @@ export async function startWorkerWithLock(
             // from the current facts at every cycle edge — never cached: the defects
             // measured that any arm/release choreography over a folder, a store and a
             // resolutions table that all move independently has a mirror-image race for every
-            // ordering. `importDecisionOpenNow` reads what stands NOW (the folder verdict on a
+            // ordering. `importHoldNow` reads what stands NOW (the folder verdict on a
             // clock — a short takeover TTL before the seed, the flush cadence after — plus a
             // serialize and an indexed read only while a foreign document is actually present)
             // and never throws: a faulted read answers the previous cycle, or a provably armed
@@ -3568,13 +3568,13 @@ export async function startWorkerWithLock(
             /* And only an organizer asks it. The flag governs whether the consent gate adopts placement
              * instead of screening, a decision only an organizer makes — a reader files nothing, so the
              * answer cannot change what its cycle does. Asking anyway was not free once the role gate
-             * stopped readers from seeding: `importDecisionOpenNow`'s TTL is the flush interval for a
+             * stopped readers from seeding: `importHoldNow`'s TTL is the flush interval for a
              * SEEDED install and `min(EVAL_TAKEOVER_TTL_MS, flushInterval)` for an unseeded one, so an
              * attached reader — which never seeds — would fetch the whole profile source out of
              * `ohmail/_meta` every 30 s for the life of the attachment instead of settling into the
              * five-minute cadence. A reader that polls a mailbox it does not organize is the model; a
              * reader that FETCHES a document it may not act on is not. */
-              importDecisionOpen: rt.role === "organizer" ? await rt.profile.importDecisionOpenNow() : false,
+              importHold: rt.role === "organizer" ? await rt.profile.importHoldNow() : undefined,
             });
           } catch (err) {
             // Held for the split below — a fence is not a fault.

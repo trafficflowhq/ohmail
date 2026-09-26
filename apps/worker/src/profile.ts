@@ -13,15 +13,15 @@ import { dialect } from "@trafficflow/db/dialect";
    `packages/core/dist/ai/*`, from this one line. `/mail` re-exports `./log.js`, which is where
    `describeError` lives, and the sidecar's own logger already imports from there — so this adds
    nothing to the engine's closure. `lease.ts` carries the same warning for the same reason. */
-import { describeError } from "@trafficflow/core/mail";
+import { describeError, type ImportHold } from "@trafficflow/core/mail";
 import { epochOf, sameEpoch, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
 /* The one post-pass fact — see `flushBeforeLeaving`. `lease.ts` imports nothing from here. */
 import { leaseStoodDown, type OrganizerWriteAuthority } from "./lease.js";
 import { serializeOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
 import {
-  PROFILE_VERSION, ProfileUnavailableError, isEmptyProfilePayload, makeProfileDoc, profileFingerprint,
-  profileFingerprintVersion, readOrganizerProfile, writeOrganizerProfile,
-  type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileIo, type ProfileOp,
+  PROFILE_VERSION, ProfileUnavailableError, isEmptyProfilePayload, makeProfileDoc, oversizedProfileList,
+  profileFingerprint, profileFingerprintVersion, profileGateView, readOrganizerProfile, writeOrganizerProfile,
+  type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileGateView, type ProfileIo, type ProfileOp,
   type ProfileReadResult,
 } from "@trafficflow/core/adapters/organizer-profile";
 
@@ -62,7 +62,7 @@ function localSaysWhatAFingerprintSays(local: OrganizerProfilePayload, fingerpri
 export const DEFAULT_PROFILE_FLUSH_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
- * How often {@link OrganizerProfileSync.importDecisionOpenNow} re-reads the folder BEFORE the
+ * How often {@link OrganizerProfileSync.importHoldNow} re-reads the folder BEFORE the
  * seed — the takeover window, where a document can land late in the permitted overlap. Short
  * enough that a late-landing document holds the gate within one ordinary poll; long enough that
  * a hot backlog drain's back-to-back cycles collapse onto one read (round 18's cost bound).
@@ -328,7 +328,7 @@ export class OrganizerProfileSync {
     this.blockedByNewer = false;
     this.evalCache = null;
     this.lastPreflightAt = 0;
-    this.lastOpenAnswer = false;
+    this.lastHoldAnswer = undefined;
     this.everEvaluated = false;
     /* THE LATCH GOES WITH THE LIFE. A demotion ends the role this failure was reported under,
        and a re-promotion is a new organizing life that has said nothing yet — carrying the latch
@@ -344,43 +344,47 @@ export class OrganizerProfileSync {
   }
 
   /**
-   * Whether a found FOREIGN document's import decision is open for this mailbox — the routing
-   * half of the hold. `runSyncCycle` reads this once per cycle and threads it to `planChange` as
-   * {@link PlanDeps.importDecisionOpen}, which is what stops the consent gate re-screening mail
-   * whose senders the travelling document already answers (TAKEOVER-RESCREEN). The write-behind
-   * half of the same hold is the `holdFingerprint` machinery in {@link onOrganize}.
+   * Whether this process holds the write-behind for a found document — the `holdFingerprint`
+   * machinery in {@link onOrganize}. Routing reads {@link importHoldNow} instead, which evaluates
+   * the question and carries the document's gate view.
    */
   importDecisionOpen(): boolean {
     return this.holdFingerprint !== null || this.holdNewerV !== null;
   }
 
   /**
-   * Whether the previous {@link importDecisionOpenNow} evaluation answered "open" — served when
-   * an evaluation faults, so one bad read costs one stale-answer cycle instead of a flip.
+   * The previous {@link importHoldNow} answer — served when an evaluation faults, so one bad read
+   * costs one stale-answer cycle instead of a flip.
    */
-  private lastOpenAnswer = false;
-  /** Whether {@link importDecisionOpenNow} has ever completed an evaluation — see its catch. */
+  private lastHoldAnswer: ImportHold | undefined = undefined;
+  /** Whether {@link importHoldNow} has ever completed an evaluation — see its catch. */
   private everEvaluated = false;
-  /** The folder verdict the evaluator last read, and when — see the cost note on the evaluator. */
+  /**
+   * The folder verdict the evaluator last read, and when — see the cost note on the evaluator. A
+   * found document keeps its gate view beside the fingerprint (`null`: too large to import, so no
+   * hold); the durable marker stays counts-only.
+   */
   private evalCache: {
     at: number;
-    verdict: { kind: "closed" } | { kind: "found"; fingerprint: string } | { kind: "newer"; v: number };
+    verdict:
+      | { kind: "closed" }
+      | { kind: "found"; fingerprint: string; view: ProfileGateView | null }
+      | { kind: "newer"; v: number };
   } | null = null;
 
   /**
-   * "IS AN IMPORT DECISION OPEN?" — EVALUATED, never choreographed, because an in-memory hold cannot
-   * TRACK a question whose truth lives in three independently-moving places (folder, account store,
-   * resolutions table). ROUTING evaluates it: found, foreign, never-owned-by-us, ≠ local store,
-   * unanswered → open (the takeover hold); newer format, undismissed → open; else → closed, including a
-   * foreign document under an organizer that already OWNS the config (`lastWrittenFingerprint`, round
-   * 16). The FOLDER verdict is cached and re-read every {@link EVAL_TAKEOVER_TTL_MS} while UNSEEDED /
-   * every flush interval while SEEDED, to bound `readOrganizerProfile`'s fetch; the DB side is read
-   * every call while the verdict is a question. NEVER THROWS: answers the armed hold, else the previous evaluation (round 17).
+   * "WHAT DOES ROUTING HOLD FOR AN OPEN IMPORT QUESTION?" — EVALUATED, never choreographed: the truth
+   * lives in the folder, the account store and the resolutions table, which move independently.
+   * Found, foreign, never owned by us, ≠ local store, unanswered, importable → `document` with the
+   * document's gate view; newer format, undismissed → `unreadable`; else closed (`undefined`). The
+   * folder verdict is cached ({@link EVAL_TAKEOVER_TTL_MS} unseeded, the flush interval seeded); the
+   * DB side is read every call. NEVER THROWS: the previous answer, or `unreadable` for an armed hold
+   * before the first evaluation (round 17).
    */
-  async importDecisionOpenNow(): Promise<boolean> {
+  async importHoldNow(): Promise<ImportHold | undefined> {
     const { deps } = this;
     const log = deps.log ?? ((): void => undefined);
-    if (!hasProfileIo(deps.adapter)) return false;
+    if (!hasProfileIo(deps.adapter)) return undefined;
     try {
       const now = (deps.now ?? ((): Date => new Date()))().getTime();
       // A CLOSED verdict cached before a hold was armed is stale by construction (round 19):
@@ -415,26 +419,32 @@ export class OrganizerProfileSync {
           // "mid-supersede"): holding it would freeze the heal it is queued for.
           if (!(this.lastWrittenFingerprint !== null && fp !== this.lastWrittenFingerprint)
             && !this.seenForeignFingerprints.has(fp)) {
-            verdict = { kind: "found", fingerprint: fp };
+            // An oversized document is no hold: Import refuses it, so it is not an answer to one.
+            const view = oversizedProfileList(read.doc) === null ? profileGateView(read.doc) : null;
+            verdict = { kind: "found", fingerprint: fp, view };
           }
         }
         this.evalCache = { at: now, verdict };
       }
       const v = this.evalCache.verdict;
-      let open = false;
+      let hold: ImportHold | undefined;
       if (v.kind === "newer") {
-        open = !(await profileImportResolutionExists(deps.db, {
+        if (!(await profileImportResolutionExists(deps.db, {
           accountId: deps.accountId, mailboxId: deps.mailboxId, newerV: v.v,
-        }));
-      } else if (v.kind === "found") {
+        }))) hold = { kind: "unreadable" };
+      } else if (v.kind === "found" && v.view !== null && this.lastWrittenFingerprint === null
+        && !this.seenForeignFingerprints.has(v.fingerprint)) {
+        /* OWNERSHIP IS ASKED AT EVERY EVALUATION: the verdict can predate the seed that made the
+           document this install's (`found_in_sync`), and a document this organizer owns — its own
+           write, an in-sync seed, a convergence — is never an import question, whatever local says. */
         const local = await serializeOrganizerProfile(deps.db, deps.accountId, deps.mailboxId);
-        open = !localSaysWhatAFingerprintSays(local, v.fingerprint) && !(await profileImportResolutionExists(deps.db, {
+        if (!localSaysWhatAFingerprintSays(local, v.fingerprint) && !(await profileImportResolutionExists(deps.db, {
           accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: v.fingerprint,
-        }));
+        }))) hold = { kind: "document", knownSenders: v.view.knownSenders, rules: v.view.rules };
       }
-      this.lastOpenAnswer = open;
+      this.lastHoldAnswer = hold;
       this.everEvaluated = true;
-      return open;
+      return hold;
     } catch {
       // Before the FIRST successful evaluation, a KNOWN armed hold outranks the (never
       // computed) answer (round 17): the preflight may have armed the write-side hold before
@@ -443,9 +453,9 @@ export class OrganizerProfileSync {
       // evaluation HAS succeeded, its answer is fresher than the write-side hold — which
       // releases on its own debounced cadence and may lag a dismissal by a flush interval.
       if (!this.everEvaluated) {
-        return this.holdFingerprint !== null || this.holdNewerV !== null || this.lastOpenAnswer;
+        return this.holdFingerprint !== null || this.holdNewerV !== null ? { kind: "unreadable" } : this.lastHoldAnswer;
       }
-      return this.lastOpenAnswer;
+      return this.lastHoldAnswer;
     }
   }
 
@@ -453,7 +463,7 @@ export class OrganizerProfileSync {
    * THE CYCLE-EDGE READ OF THE HOLD — releases a hold whose release is already on record without
    * waiting out the debounced flush tick. A found hold releases on `imported`/`replaced` only (a
    * decline keeps the declined document from being overwritten; routing reads a decline through
-   * {@link importDecisionOpenNow}); a newer-format hold releases on its dismissal. One indexed
+   * {@link importHoldNow}); a newer-format hold releases on its dismissal. One indexed
    * read per cycle, only while a hold is armed. A read fault keeps the hold — the reversible
    * direction.
    */
@@ -877,7 +887,7 @@ export class OrganizerProfileSync {
         });
         if (!resolved) {
           // Still unanswered — but only a question the folder still ASKS may keep holding. The
-          // hold now also defers the consent gate (`PlanDeps.importDecisionOpen`), so a hold
+          // hold now also defers the consent gate (`PlanDeps.importHold`), so a hold
           // whose document was expunged or replaced would otherwise track a question the
           // confirm surface is not offering — in either direction (see `reholdFromFolder`).
           await this.reholdFromFolder(io, payload, log);

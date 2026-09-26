@@ -7,7 +7,11 @@ import {
   type MetaIdentity, type Generation,
 } from "./meta-memo.js";
 import { epochOf, uidRefsAtEpoch } from "../epoch.js";
-import { RULE_PRIORITY_MAX } from "../rule-order.js";
+import {
+  MAX_BODY_CONTAINS_CHARS, MAX_SUBJECT_CONTAINS_CHARS, RULE_PRIORITY_MAX, effectForDestination,
+} from "../rule-order.js";
+import { DESTINATIONS, canonicalDestination, type Destination } from "../types.js";
+import type { Rule } from "../rules.js";
 
 /**
  * The portable organizer profile — how a mailbox carries its own organizer configuration. The
@@ -211,6 +215,110 @@ export function isEmptyProfilePayload(p: OrganizerProfilePayload): boolean {
        because this predicate runs on the RAW payload and "publish nothing" must be decided on
        what the payload says rather than on what the canonicaliser would make of it. */
     && (p.signatureHtml ?? null) === null;
+}
+
+/** One document rule as the import writes it: the entry, validated and normalized. */
+export interface ApplicableProfileRule {
+  kind: string;
+  match: string;
+  destination: string;
+  priority: number;
+  enabled: boolean;
+  provenance: string;
+  subjectContains: string | null;
+  bodyContains: string | null;
+}
+
+const PROFILE_RULE_KINDS = new Set(["sender", "domain", "header"]);
+const PROFILE_RULE_FOLDERS = new Set<string>(DESTINATIONS);
+
+/** PostgreSQL text cannot hold a NUL: a document string carrying one is skipped, never stored. */
+const hasNul = (v: string): boolean => v.includes("\u0000");
+
+/**
+ * A term normalized as `RulesService` normalizes one, or `invalid` where the service would 400.
+ * An invalid term invalidates its RULE: coercing it to none would widen the rule to the sender's
+ * whole mail, the exact misreading the service refuses.
+ */
+function profileRuleTerm(v: string | undefined, max: number): string | null | "invalid" {
+  if (v === undefined || v === null) return null;
+  const term = v.trim();
+  if (term.length === 0 || term.length > max || hasNul(term)) return "invalid";
+  return term;
+}
+
+/**
+ * THE ONE CONVERTER: a document rule admitted under the product's own create rules, or `null` (the
+ * import skips and counts it). The import writes what this returns and the import hold asks the
+ * gate about the same rules through {@link profileGateView}, so a rule the import would skip
+ * decides nothing about held mail.
+ */
+export function applicableProfileRule(r: ProfileRuleEntry): ApplicableProfileRule | null {
+  if (!PROFILE_RULE_KINDS.has(r.kind)) return null;
+  if (typeof r.match !== "string" || r.match.length === 0 || hasNul(r.match)) return null;
+  if (!PROFILE_RULE_FOLDERS.has(r.destination)) return null;
+  if (!Number.isInteger(r.priority) || r.priority < 0 || r.priority > RULE_PRIORITY_MAX) return null;
+  const subjectContains = profileRuleTerm(r.subjectContains, MAX_SUBJECT_CONTAINS_CHARS);
+  const bodyContains = profileRuleTerm(r.bodyContains, MAX_BODY_CONTAINS_CHARS);
+  if (subjectContains === "invalid" || bodyContains === "invalid") return null;
+  if ((subjectContains !== null || bodyContains !== null) && r.kind !== "sender") return null;
+  const provenance = typeof r.provenance === "string" && r.provenance.length > 0 ? r.provenance : "manual";
+  if (hasNul(provenance)) return null;
+  return {
+    kind: r.kind, match: r.match, destination: r.destination, priority: r.priority,
+    enabled: r.enabled === true, provenance, subjectContains, bodyContains,
+  };
+}
+
+/** A screener entry's address as the import writes it into `contacts`, or `null` (skipped). */
+export function profileScreenerAddress(s: ProfileScreenerEntry): string | null {
+  const address = s.address.trim().toLowerCase();
+  return address.length === 0 || hasNul(address) ? null : address;
+}
+
+/** The first list over its {@link PROFILE_LIST_MAX} ceiling, or `null`. The import refuses such a document whole. */
+export function oversizedProfileList(
+  doc: OrganizerProfilePayload,
+): { list: string; count: number; max: number } | null {
+  for (const key of ["screener", "rules", "notifyRules", "tagNames"] as const) {
+    const n = doc[key].length;
+    const max = PROFILE_LIST_MAX[key];
+    if (n > max) return { list: key, count: n, max };
+  }
+  return null;
+}
+
+/** What the gate reads of a document: the `contacts` and `rules` an import would write. */
+export interface ProfileGateView {
+  knownSenders: ReadonlySet<string>;
+  rules: readonly Rule[];
+}
+
+/**
+ * THE DOCUMENT'S OPINION AT THE CONSENT GATE, in the shapes `evaluateRules` reads — through the
+ * import's own converters, so the routing hold (`PlanDeps.importHold`) covers exactly the mail an
+ * import would let through. The destination is canonicalized and its effect derived as
+ * `listRules` does; the ids are positional and never stored.
+ */
+export function profileGateView(doc: OrganizerProfilePayload): ProfileGateView {
+  const knownSenders = new Set<string>();
+  for (const s of doc.screener) {
+    const address = profileScreenerAddress(s);
+    if (address !== null) knownSenders.add(address);
+  }
+  const rules: Rule[] = [];
+  doc.rules.forEach((entry, i) => {
+    const a = applicableProfileRule(entry);
+    if (a === null) return;
+    const destination = canonicalDestination(a.destination) as Destination;
+    rules.push({
+      id: `profile-rule-${String(i).padStart(6, "0")}`, kind: a.kind as Rule["kind"], match: a.match,
+      destination, effect: effectForDestination(destination), priority: a.priority,
+      provenance: a.provenance as Rule["provenance"], enabled: a.enabled,
+      subjectContains: a.subjectContains, bodyContains: a.bodyContains,
+    });
+  });
+  return { knownSenders, rules };
 }
 
 /**

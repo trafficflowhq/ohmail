@@ -222,6 +222,92 @@ async function heldRows(
   return rows.map(toAppliedScreenerRow);
 }
 
+/** A held row's author is this address (lower-cased by the caller). */
+const senderIs = (address: string): SQL => sql`lower(${messages.fromAddress}) = ${address}`;
+
+/**
+ * THE HELD-BAG RE-ROUTE, one implementation for the Screener's decision and the profile import.
+ * One bag per mailbox, each mailbox's role read UNDER LOCK (`FOR SHARE`, `assertOrganizerRole`'s
+ * lock) before a row moves, in SORTED mailbox order against the lease gate's exclusive lock. A row
+ * is desired only while it is still the gate (a row that moved on keeps where it went), with a
+ * `change_log` move, and marked read where the decision files it out of sight.
+ */
+async function rerouteHeldBag(
+  tx: Tx, accountId: string, heldMail: readonly AppliedScreenerRow[], appliedFolder: string, now: Date,
+): Promise<{ rerouted: AppliedScreenerRow[]; heldElsewhere: HeldElsewhereMailbox[]; lastSeq: bigint | null }> {
+  const byMailbox = new Map<string, AppliedScreenerRow[]>();
+  for (const m of heldMail) {
+    const bag = byMailbox.get(m.mailboxId);
+    if (bag) bag.push(m); else byMailbox.set(m.mailboxId, [m]);
+  }
+
+  const d = dialect(tx);
+  const rerouted: AppliedScreenerRow[] = [];
+  const heldElsewhere: HeldElsewhereMailbox[] = [];
+  const writable: AppliedScreenerRow[] = [];
+  for (const mbx of [...byMailbox.keys()].sort()) {
+    const bag = byMailbox.get(mbx)!;
+    const role = await readOrganizerRole(tx, d, accountId, mbx, { lock: true });
+    if (!role || role.status === "disabled" || role.role !== "organizer") {
+      heldElsewhere.push({ mailboxId: mbx, held: bag.length });
+      continue;
+    }
+    writable.push(...bag);
+  }
+
+  let lastSeq: bigint | null = null;
+  for (const m of writable) {
+    const [hit] = await tx.insert(folderState).values({
+      messageId: m.messageId, desiredFolder: appliedFolder, observedFolder: m.observedFolder,
+      lastSetBy: "us", reconcileStatus: "pending", conflict: false,
+    }).onConflictDoUpdate({
+      target: folderState.messageId,
+      set: {
+        desiredFolder: appliedFolder, lastSetBy: "us", reconcileStatus: "pending", conflict: false,
+        updatedAt: now,
+      },
+      // A row that has moved ON since `heldMail` was read keeps where it went. See `decide`'s own
+      // header for the misfiled-bulletins defect this guard closes.
+      setWhere: eq(folderState.desiredFolder, SCREENER_FOLDER),
+    }).returning({ messageId: folderState.messageId });
+    if (!hit) continue;
+    rerouted.push(m);
+    lastSeq = await recordChange(ledger(tx), {
+      accountId, entityType: "message", entityId: m.messageId, op: "move",
+      meta: { from: m.observedFolder, to: appliedFolder },
+    });
+
+    if (MARK_READ_ON_DECIDE.has(appliedFolder)) {
+      await upsertDesiredSeen(tx, m.messageId, !m.unread, true, now);
+      await tx.update(messages)
+        .set({ unread: false, lastReadAt: now, updatedAt: now })
+        .where(and(eq(messages.id, m.messageId), eq(messages.accountId, accountId)));
+      lastSeq = await recordChange(ledger(tx), {
+        accountId, entityType: "message", entityId: m.messageId, op: "update", meta: null,
+      });
+    }
+  }
+
+  return { rerouted, heldElsewhere, lastSeq };
+}
+
+/**
+ * THE IMPORT'S SCREEN-OUTS REACH THE MAIL THIS ORGANIZER HELD FOR THEM. For one screen-out rule a
+ * profile import wrote (bare `sender` or `domain`), the held bag it names is re-routed as a
+ * Screener decision re-routes its own — narrowed to `last_set_by = 'us'`: a hand placement
+ * (`'external'`) and another install's (`'peer'`) are never touched. Without it the app presents
+ * the letter as screened out while the mailbox keeps it at the gate.
+ */
+export async function rerouteOwnHeldBag(
+  tx: Tx, input: { accountId: string; kind: "sender" | "domain"; match: string; appliedFolder: string; now: Date },
+): Promise<{ rerouted: number; lastSeq: bigint | null }> {
+  const key = input.match.trim().toLowerCase();
+  const claims = input.kind === "domain" ? domainIs(tx, key) : senderIs(key);
+  const held = await heldRows(tx, input.accountId, and(claims, eq(folderState.lastSetBy, "us")));
+  const moved = await rerouteHeldBag(tx, input.accountId, held, input.appliedFolder, input.now);
+  return { rerouted: moved.rerouted.length, lastSeq: moved.lastSeq };
+}
+
 /** One held message by id, scoped to the account. `null` when it is not currently held. */
 export async function heldRowById(tx: Tx, accountId: string, id: string): Promise<AppliedScreenerRow | null> {
   const rows = await heldRows(tx, accountId, eq(messages.id, id));
@@ -236,7 +322,7 @@ export async function heldRowById(tx: Tx, accountId: string, id: string): Promis
 export async function heldRowsForSender(
   tx: Tx, accountId: string, address: string, mailboxId?: string,
 ): Promise<AppliedScreenerRow[]> {
-  return heldRows(tx, accountId, sql`lower(${messages.fromAddress}) = ${address}`, mailboxId);
+  return heldRows(tx, accountId, senderIs(address), mailboxId);
 }
 
 /**
@@ -246,6 +332,10 @@ export async function heldRowsForSender(
 export async function heldRowsForDomain(
   tx: Tx, accountId: string, domain: string, mailboxId?: string,
 ): Promise<AppliedScreenerRow[]> {
+  return heldRows(tx, accountId, domainIs(tx, domain), mailboxId);
+}
+
+function domainIs(tx: Tx, domain: string): SQL {
   /* BOTH HALVES THROUGH THE SEAM. `position(x IN y)` and `substring(x FROM n)` are SQL SYNTAX and
      not functions — the argument separator is a KEYWORD — which is why no list of function names
      ever caught them, and why the device store answers a syntax error at the query rather than a
@@ -254,10 +344,10 @@ export async function heldRowsForDomain(
   const d = dialect(tx);
   const address = sql`lower(${messages.fromAddress})`;
   const at = d.strpos(address, sql`'@'`);
-  return heldRows(tx, accountId, sql`
+  return sql`
     ${at} > 0
     and ${d.substr(address, sql`${at} + 1`)} = ${domain}
-  `, mailboxId);
+  `;
 }
 
 export interface ApplyScreenerDecisionInput {
@@ -449,61 +539,9 @@ export async function applyScreenerDecision(
     ? await heldRowsForDomain(tx, accountId, domain)
     : await heldRowsForSender(tx, accountId, address);
 
-  // One bag per mailbox, then each mailbox's role read UNDER LOCK (`FOR SHARE`, the same lock
-  // `assertOrganizerRole` takes) before a single row of it moves — the one-organizer fence that
-  // used to be a `mailbox_id` filter on the query. Mailbox ids are visited in SORTED order so two
-  // concurrent decisions lock in one canonical order against the lease gate's exclusive lock.
-  const byMailbox = new Map<string, AppliedScreenerRow[]>();
-  for (const m of heldMail) {
-    const bag = byMailbox.get(m.mailboxId);
-    if (bag) bag.push(m); else byMailbox.set(m.mailboxId, [m]);
-  }
-
-  const d = dialect(tx);
-  const rerouted: AppliedScreenerRow[] = [];
-  const heldElsewhere: HeldElsewhereMailbox[] = [];
-  const writable: AppliedScreenerRow[] = [];
-  for (const mbx of [...byMailbox.keys()].sort()) {
-    const bag = byMailbox.get(mbx)!;
-    const role = await readOrganizerRole(tx, d, accountId, mbx, { lock: true });
-    if (!role || role.status === "disabled" || role.role !== "organizer") {
-      heldElsewhere.push({ mailboxId: mbx, held: bag.length });
-      continue;
-    }
-    writable.push(...bag);
-  }
-
-  for (const m of writable) {
-    const [hit] = await tx.insert(folderState).values({
-      messageId: m.messageId, desiredFolder: appliedFolder, observedFolder: m.observedFolder,
-      lastSetBy: "us", reconcileStatus: "pending", conflict: false,
-    }).onConflictDoUpdate({
-      target: folderState.messageId,
-      set: {
-        desiredFolder: appliedFolder, lastSetBy: "us", reconcileStatus: "pending", conflict: false,
-        updatedAt: now,
-      },
-      // A row that has moved ON since `heldMail` was read keeps where it went. See `decide`'s own
-      // header for the misfiled-bulletins defect this guard closes.
-      setWhere: eq(folderState.desiredFolder, SCREENER_FOLDER),
-    }).returning({ messageId: folderState.messageId });
-    if (!hit) continue;
-    rerouted.push(m);
-    lastSeq = await recordChange(ledger(tx), {
-      accountId, entityType: "message", entityId: m.messageId, op: "move",
-      meta: { from: m.observedFolder, to: appliedFolder },
-    });
-
-    if (MARK_READ_ON_DECIDE.has(appliedFolder)) {
-      await upsertDesiredSeen(tx, m.messageId, !m.unread, true, now);
-      await tx.update(messages)
-        .set({ unread: false, lastReadAt: now, updatedAt: now })
-        .where(and(eq(messages.id, m.messageId), eq(messages.accountId, accountId)));
-      lastSeq = await recordChange(ledger(tx), {
-        accountId, entityType: "message", entityId: m.messageId, op: "update", meta: null,
-      });
-    }
-  }
+  const moved = await rerouteHeldBag(tx, accountId, heldMail, appliedFolder, now);
+  if (moved.lastSeq !== null) lastSeq = moved.lastSeq;
+  const { rerouted, heldElsewhere } = moved;
 
   await recordLearningSignal(tx, accountId, {
     triggeringActionId,

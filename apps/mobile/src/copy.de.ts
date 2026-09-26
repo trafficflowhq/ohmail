@@ -1583,7 +1583,7 @@ export const DE: Deck = {
   pfiSavedByPhone: (when: string) => `Gespeichert ${when} von ohmail auf einem Telefon.`,
   pfiSavedBy: (when: string) => `Gespeichert ${when}.`,
   pfiWillDo:
-    "Der Import fügt sie den Einstellungen dieses Kontos hinzu. Deine Mail wird nicht angefasst, und am Postfach selbst ändert sich nichts. Bis du dich entscheidest, bleiben die Einstellungen aus diesem ohmail hier und wandern nicht mit dem Postfach.",
+    "Der Import fügt sie den Einstellungen dieses Kontos hinzu. Post, die dieses ohmail im Screener zurückgehalten hat, wird für Absender, die sie aussortieren, dort abgelegt, wo sie es sagen, und als gelesen markiert; sonst ändert sich an deiner Mail nichts. Bis du dich entscheidest, bleiben die Einstellungen aus diesem ohmail hier und wandern nicht mit dem Postfach.",
   pfiHeldRouting:
     "Bis du antwortest, bleibt Mail von Absendern, die diese Einstellungen durchlassen, dort, wo sie angekommen ist; andere neue Absender werden wie gewohnt gescreent.",
   pfiImport: "Einstellungen importieren",

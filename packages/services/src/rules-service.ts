@@ -2,7 +2,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { rules, recordRuleDelta, claimIdempotencyKey, type OrganizedBy, type Tx } from "@trafficflow/db";
 import type { Destination } from "@trafficflow/core/mail";
 import { canonicalDestination } from "@trafficflow/core/mail";
-import { RULE_PRIORITY_MAX } from "@trafficflow/core/rule-order";
+import { MAX_BODY_CONTAINS_CHARS, MAX_SUBJECT_CONTAINS_CHARS, RULE_PRIORITY_MAX } from "@trafficflow/core/rule-order";
 import type { RequestKind } from "@trafficflow/core/adapters/organizer-lease";
 import { bridgeTx, bridgeDb, withAccountTx, type Db, type ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
@@ -25,21 +25,12 @@ const FOLDERS: Destination[] = [
 const FOLDER_SET = new Set<string>(FOLDERS);
 
 /**
- * The ceiling on a subject term, mirroring the `rules_subject_contains_nonempty` CHECK (mail 0050).
- *
- * Both layers, deliberately: the CHECK is what holds for every writer including a future importer,
- * and this is what turns a violation into a 400 the client can render instead of a 500 from a
- * constraint the API never mentioned. They must agree — a service limit ABOVE the CHECK is a
- * database error dressed as a validated request.
+ * The term ceilings, mirroring the `rules_*_contains_nonempty` CHECKs (mail 0050, 0052). Both
+ * layers, deliberately: the CHECK holds for every writer, and this turns a violation into a 400
+ * instead of a 500 from a constraint the API never mentioned. Defined beside `RULE_PRIORITY_MAX`
+ * so the profile import's converter in core reads the same numbers.
  */
-export const MAX_SUBJECT_CONTAINS_CHARS = 200;
-
-/**
- * The ceiling on a body term, mirroring `rules_body_contains_nonempty` (mail 0052) on the same
- * two-layer argument. The same number as the subject ceiling deliberately: the term is a needle,
- * and the haystack being a whole message body is not a licence to store a bigger needle.
- */
-export const MAX_BODY_CONTAINS_CHARS = 200;
+export { MAX_SUBJECT_CONTAINS_CHARS, MAX_BODY_CONTAINS_CHARS };
 
 export interface CreateRuleBody {
   kind: string;

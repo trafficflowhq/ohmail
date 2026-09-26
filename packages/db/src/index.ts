@@ -79,7 +79,7 @@ export {
 // services too, because it needs `@trafficflow/core`'s `effectForDestination`).
 export {
   SCREENER_FOLDER, DECIDABLE_FOLDERS, admitsDestination, domainOf,
-  heldRowById, heldRowsForSender, heldRowsForDomain,
+  heldRowById, heldRowsForSender, heldRowsForDomain, rerouteOwnHeldBag,
   applyScreenerDecision, validateRequestPayload,
   type AppliedScreenerRow, type ApplyScreenerDecisionInput, type ApplyScreenerDecisionResult,
   type HeldElsewhereMailbox, type ValidatedRequestPayload,

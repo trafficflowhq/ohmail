@@ -441,6 +441,8 @@ export function ProfileImportCard({
       {errorLine}
       {/* What the button will do, before it is pressed — including what it will not do. */}
       <p className="pfi-note">{t("willDo")}</p>
+      {/* What routing does meanwhile: only mail the document admits is held (`PlanDeps.importHold`). */}
+      <p className="pfi-note">{t("routingWhileOpen")}</p>
       <div className="pfi-actions">
         <Button onClick={onImport} disabled={busy}>
           {busy ? t("importing") : t("import")}

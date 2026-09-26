@@ -217,7 +217,7 @@ export interface OrganizerState {
  */
 export type RuntimeSyncDeps = Omit<
   SyncDeps,
-  "role" | "writeAuthority" | "classifier" | "importDecisionOpen"
+  "role" | "writeAuthority" | "classifier" | "importHold"
   | "ohboxPolicy" | "ohboxBar" | "screeningCutoff"
 >;
 

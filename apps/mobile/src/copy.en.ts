@@ -2399,8 +2399,8 @@ const TABLE = {
   pfiSavedByPhone: (when: string) => `Saved ${when} by ohmail on a phone.`,
   pfiSavedBy: (when: string) => `Saved ${when}.`,
   pfiWillDo:
-    "Importing adds them to this account's settings. Your mail is not touched, and nothing changes in the mailbox itself. Until you choose, the settings you make in this ohmail stay here and do not travel with the mailbox.",
-  /* What the organizer files while the card is unanswered. Drawn once the gate follows it. */
+    "Importing adds them to this account's settings. Mail this ohmail held in the Screener from senders they screen out is filed where they say and marked read; nothing else in your mail changes. Until you choose, the settings you make in this ohmail stay here and do not travel with the mailbox.",
+  /* What the organizer files while the card is unanswered (`PlanDeps.importHold`). */
   pfiHeldRouting:
     "Until you answer, mail from senders these settings let through stays where it arrived; other new senders are screened as usual.",
   pfiImport: "Import settings",

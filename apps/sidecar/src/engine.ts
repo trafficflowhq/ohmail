@@ -5160,7 +5160,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         maxCycles: number, gen: number, conn: MailboxAdapter, organizing: boolean,
       ): Promise<number> => {
         // The marker-surfacing preflight, at the top of the drain both doors share. Routing no
-        // longer depends on it (`importDecisionOpenNow` re-evaluates each cycle) but the confirm
+        // longer depends on it (`importHoldNow` re-evaluates each cycle) but the confirm
         // surface does: the hold it offers is readable only through the durable marker this
         // preflight writes; without it a takeover could route in hold mode with no candidate on
         // screen and no release. One folder read per pre-seed entry, nothing once seeded or held.
@@ -5321,7 +5321,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             // mirror-image race). One `ohmail/_meta` FETCH per cycle; a store serialize and an
             // indexed read only when a foreign document is present; a faulted read answers what
             // the previous cycle answered.
-            importDecisionOpen: await profileSync.importDecisionOpenNow(),
+            importHold: await profileSync.importHoldNow(),
           }));
             cycleServed = true;
             ({ hasBacklog, owesFiling } = outcome);

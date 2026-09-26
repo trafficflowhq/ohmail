@@ -434,7 +434,7 @@ export async function runReconcileCron(
     let cycleError: unknown = null;
     try {
       // The hold is EVALUATED from the current facts before each pass — never cached (see
-      // `importDecisionOpenNow`): an answer landing between the preflight and the first pass,
+      // `importHoldNow`): an answer landing between the preflight and the first pass,
       // or while the first pass drains a large batch, must not leave a pass adopting strangers
       // under a question that has closed — and a document this pass itself just took over (the
       // cron executes authorized takeovers) is seen by the evaluation, marker or no marker. A
@@ -442,7 +442,7 @@ export async function runReconcileCron(
       await permit.check();
       await runSyncCycle({
         ...deps, writeAuthority: cycleWriteAuthority(deps.role, permit),
-        importDecisionOpen: await profileSync.importDecisionOpenNow(),
+        importHold: await profileSync.importHoldNow(),
       });
       // The second cycle is where the once-per-run read was weakest: the FIRST cycle has just spent
       // however long it took draining a mailbox, so this is the ask most likely to find the lease
@@ -452,7 +452,7 @@ export async function runReconcileCron(
         // THE SAME RECEIPT, and it is named at the call rather than folded into `deps` above: the
         // permit is what every page inside the cycle asks, and the census reads this argument list.
         ...deps, writeAuthority: cycleWriteAuthority(deps.role, permit),
-        importDecisionOpen: await profileSync.importDecisionOpenNow(),
+        importHold: await profileSync.importHoldNow(),
       });
     } catch (err) {
       // Held: the drain below runs first, then the arms decide what the throw means.
