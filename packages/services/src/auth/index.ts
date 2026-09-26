@@ -20,6 +20,9 @@ export {
   StaticKeyProvider,
   type PasswordHasher, type KeyProvider,
 } from "./crypto.js";
+export {
+  throttleKeys, throttleKeysFor, THROTTLE_PREFIX, THROTTLE_SUBKEY_INFO, type ThrottleKeys,
+} from "./throttle-keys.js";
 export { DEFAULT_AUTH_CONFIG, makeAuthConfig, surfaceTtls, type SurfaceTtls } from "./config.js";
 export type { SessionSurface } from "./config-types.js";
 /* The test fixture moved out of `config.ts` so that the module every deployment loads no longer

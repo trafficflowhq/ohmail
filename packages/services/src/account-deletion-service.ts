@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNotNull, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, like, or, sql } from "drizzle-orm";
 import {
   accountSettings,
   accountStorage,
@@ -79,6 +79,7 @@ import {
   recordErasedBearers,
 } from "@trafficflow/db/cloud";
 import { bridgeTx, type ServiceContext } from "./context.js";
+import { THROTTLE_PREFIX, type ThrottleKeys } from "./auth/throttle-keys.js";
 import { rowsAffected } from "./rows-affected.js";
 
 /**
@@ -128,7 +129,14 @@ const n = rowsAffected;
  * Idempotent — running it twice is a no-op the second time, which matters because
  * the caller may retry after a network failure.
  */
-export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountResult> {
+/**
+ * `throttleKeys` is what reaches the sign-in throttle rows keyed by an address hash; both
+ * production callers pass it (`account-deletion-callers.test.ts` parses for the call). Without it
+ * those rows are left to the prune.
+ */
+export async function deleteAccount(
+  ctx: ServiceContext, opts: { throttleKeys?: ThrottleKeys } = {},
+): Promise<DeleteAccountResult> {
   const accountId = ctx.accountId;
   const db = ctx.db as unknown as { transaction: <T>(fn: (tx: LedgerTx) => Promise<T>) => Promise<T> };
 
@@ -448,18 +456,27 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     await drop("webauthn_challenges", tx.delete(webauthnChallenges)
       .where(and(isNotNull(webauthnChallenges.userId), inArray(webauthnChallenges.userId, ownUserIds))));
     await drop("credentials", tx.delete(credentials).where(inArray(credentials.userId, ownUserIds)));
-    // `auth_throttle.key` is "user:<id>" or "email:<addr>" — both are personal data, and the two
-    // shapes are two predicates rather than one concatenated array. The strings are now BUILT IN
-    // POSTGRES from the `users` row, so no address is materialized in this process and neither
-    // list carries a bind parameter per user. `::text` is explicit: `id` is a uuid and `||`
-    // against a text literal has no implicit cast for it.
-    const throttleUserKeys = tx.select({ k: sql<string>`'user:' || ${users.id}::text` })
+    // EVERY THROTTLE ROW THAT NAMES THIS ACCOUNT'S PEOPLE (`throttle-keys.ts`): by user id
+    // (`user:`, `factor-day:`, `notice:factor:`), by the keyed hash of each address (`pw:<hA>:`,
+    // `known:<hA>:`, `pwa:<hA>`, `notice:ceiling:<hA>`, and the hashed `email:`), and the legacy
+    // `email:<addr>` a row written before the keys were hashed still carries. The hash needs the
+    // server's subkey, so the addresses are read here; hex keys, so a LIKE prefix has no wildcard.
+    const people = await tx.select({ id: users.id, email: users.email })
       .from(users).where(eq(users.accountId, accountId));
-    const throttleEmailKeys = tx.select({ k: sql<string>`'email:' || ${users.email}` })
-      .from(users).where(eq(users.accountId, accountId));
-    await drop("auth_throttle", tx.delete(authThrottle).where(or(
-      inArray(authThrottle.key, throttleUserKeys),
-      inArray(authThrottle.key, throttleEmailKeys),
+    const exact: string[] = [];
+    const prefixes: string[] = [];
+    for (const p of people) {
+      exact.push(`${THROTTLE_PREFIX.user}${p.id}`, `${THROTTLE_PREFIX.factorDay}${p.id}`,
+        `${THROTTLE_PREFIX.notice}factor:${p.id}`, `email:${p.email}`);
+      if (opts.throttleKeys) {
+        const hA = opts.throttleKeys.address(p.email.trim().toLowerCase());
+        exact.push(`${THROTTLE_PREFIX.addressCeiling}${hA}`, `${THROTTLE_PREFIX.notice}ceiling:${hA}`, `email:${hA}`);
+        prefixes.push(`${THROTTLE_PREFIX.password}${hA}:%`, `${THROTTLE_PREFIX.knownClient}${hA}:%`);
+      }
+    }
+    await drop("auth_throttle", exact.length === 0 ? Promise.resolve(0) : tx.delete(authThrottle).where(or(
+      inArray(authThrottle.key, exact),
+      ...prefixes.map((pattern) => like(authThrottle.key, pattern)),
     )));
     // ── 7b. THE SIGNUP FUNNEL — pseudonymised, not deleted ─────────────────────
     // `invites.email` and `waitlist.email` are the only thing in either row that names a person,

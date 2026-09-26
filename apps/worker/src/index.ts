@@ -10,7 +10,7 @@ import {
 import {
   makeEntitlementsClient, refundObligationsOn, makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout,
   markScreenerSuggestOwed, owedSuggestAccounts, clearScreenerSuggestOwed, pushSubscriptions,
-  pruneErasedBearers } from "@trafficflow/db/cloud";
+  pruneErasedBearers, pruneAuthThrottle } from "@trafficflow/db/cloud";
 import {
   runAlertPass, firingToLog,
   webhookAlertSink,
@@ -4873,6 +4873,14 @@ export async function startWorkerWithLock(
             if (pruned > 0) log.info("erased_bearers_pruned", { pruned });
           } catch (err) {
             log.error("erased_bearers_prune_failed", { err });
+          }
+          // Sign-in throttle rows past retention (48 h; a known client 90 d). The API writes them and
+          // only an erasure deleted them, so every typed address and client hash stayed for ever.
+          try {
+            const pruned = await pruneAuthThrottle(db as unknown as Tx, new Date());
+            if (pruned > 0) log.info("auth_throttle_pruned", { pruned });
+          } catch (err) {
+            log.error("auth_throttle_prune_failed", { err });
           }
           // ── WHAT WE OWE PEOPLE WHOSE SPEND BOUGHT NOTHING ─────────────────────────────────
           // The obligation rows cloud 0036 holds, turned back into credits. On the maintenance

@@ -44,6 +44,8 @@
     "subFirst": "Erst dein Passwort, dann dein zweiter Faktor.",
     "subCode": "Dein Passwort stimmt — jetzt dein zweiter Faktor.",
     "badCredentials": "E-Mail und Passwort passen nicht zusammen. Prüf beides und versuch es nochmal.",
+    "signInSlowed": "Die Anmeldung für diese Adresse ist nach vielen Fehlversuchen von verschiedenen Orten verlangsamt. Warte ein paar Minuten und versuch es nochmal.",
+    "tooManyAttempts": "Zu viele Fehlversuche von diesem Gerät. Warte fünfzehn Minuten und versuch es nochmal.",
     "badCode": "Der Code hat nicht funktioniert. Codes laufen schnell ab — nimm den neuesten.",
     "badPasskey": "Der Passkey wurde nicht akzeptiert. Versuch es nochmal oder nimm eine andere Methode.",
     "passkey": "Mit Passkey fortfahren",

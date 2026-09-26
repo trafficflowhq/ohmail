@@ -322,6 +322,19 @@ export async function cloudSignIn(
   const loginBody = await readJson(loginRes);
   if (!loginRes.ok) {
     opts.log?.("cloud_signin_refused", { status: loginRes.status, reason: "the hosted service refused the login" });
+    // The throttle's two refusals keep their own sentence: "wait" is what to do next, not "retype".
+    if (loginRes.status === 429) {
+      throw new CloudSignInError(
+        "sign_in_slowed", 429,
+        "sign-in to this address is slowed after many failed attempts from different places; wait a few minutes and try again",
+      );
+    }
+    if (loginRes.status === 423) {
+      throw new CloudSignInError(
+        "account_locked", 423,
+        "too many failed attempts from this computer; wait fifteen minutes and try again",
+      );
+    }
     throw new CloudSignInError(
       loginRes.status === 401 || loginRes.status === 400 ? "invalid_credentials" : "hosted_refused",
       loginRes.status === 401 || loginRes.status === 400 ? 401 : 502,

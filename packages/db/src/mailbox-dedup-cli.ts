@@ -7,6 +7,7 @@ import {
 } from "./mailbox-dedup.js";
 import { assertExpectedHost, assertSessionUrl, PROD_DB_HOST_ENV } from "./setup-prod.js";
 import { onNotice } from "./notices.js";
+import { pgTlsOptions } from "./pg-tls.js";
 
 /**
  * `pnpm db:mailboxes:dedup` — the operator's half of {@link findActiveAddressDuplicates}. Default
@@ -59,7 +60,7 @@ async function main(): Promise<number> {
   assertExpectedHost(url, expectedHost);
 
   const { keeps } = parseDedupArgs(process.argv.slice(2));
-  const client = postgres(url, { max: 1, onnotice: onNotice });
+  const client = postgres(url, { ...pgTlsOptions(url), max: 1, onnotice: onNotice });
   const db = drizzle(client);
   const now = new Date();
   try {

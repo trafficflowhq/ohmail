@@ -15,7 +15,7 @@ export interface ApiCronTarget {
   /** Closed name, stable across renames of the path — the key an operator greps for. */
   target: "sessions_reap" | "smtp_size" | "scheduled_send"
     | "send_reconcile" | "away_responder" | "platform_signals" | "unsubscribe_drain"
-    | "account_lifecycle";
+    | "account_lifecycle" | "security_notices";
   /** The API route, poked as `GET {baseUrl}{route}` with the bearer secret. */
   route: string;
   /** The cadence. Jitter (up to {@link jitterMs}) is ADDED per wait, never subtracted. */
@@ -212,6 +212,19 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     // erasure it names is its own invocation.
     timeoutMs: 60 * 1000,
     continues: { eraseRoute: "/internal/account-lifecycle/erase" },
+  },
+  {
+    // THE SIGN-IN THROTTLE'S SECURITY NOTICES: an address ceiling tripped, a pre-session second
+    // factor locked. On the API host, which holds the transactional provider; off the request path
+    // on purpose (the route says why). FIVE MINUTES: a notice about an attack in progress is late
+    // at an hour. An idle run is one indexed read; each row is claimed before its send.
+    target: "security_notices",
+    route: "/internal/security-notices/run",
+    everyMs: 5 * 60 * 1000,
+    // Its own stagger, distinct from every sibling's (the table refuses two alike).
+    firstDelayMs: 6 * 60 * 1000,
+    timeoutMs: 60 * 1000,
+    jitterMs: 30 * 1000,
   },
 ];
 

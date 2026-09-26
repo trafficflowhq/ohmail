@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { ThrottleKeys } from "./auth/throttle-keys.js";
 import { and, asc, eq, exists, gt, isNull, sql } from "drizzle-orm";
 import { accounts, users, accountSettings } from "@trafficflow/db";
 import { accountLifecycleNotices } from "@trafficflow/db/cloud";
@@ -50,6 +51,8 @@ export interface LifecycleNoticeMailer {
 }
 
 export interface AccountLifecyclePassDeps {
+  /** The sign-in throttle keyer, so an erasure reaches the rows keyed by an address hash. */
+  throttleKeys?: ThrottleKeys;
   /**
    * The entitlements program, or what a route composes from it. Never throws (the port's rule).
    * No `access`: its fault arm answers the last verdict known, and nothing this pass does — a
@@ -295,7 +298,7 @@ export type EraseOneOutcome =
  * did not answer, or a verdict that no longer asks for erasure, changes nothing.
  */
 export async function eraseOneDueAccount(
-  db: Db, deps: Pick<AccountLifecyclePassDeps, "port" | "now" | "log">, accountId: string,
+  db: Db, deps: Pick<AccountLifecyclePassDeps, "port" | "now" | "log" | "throttleKeys">, accountId: string,
 ): Promise<EraseOneOutcome> {
   const log = deps.log ?? silentLogger;
   const now = deps.now;
@@ -322,7 +325,7 @@ export async function eraseOneDueAccount(
     return fresh && fresh.state === "closed" ? "reactivated" : "not_due";
   }
   const outcome = await deps.port.releaseAccount(accountId);
-  await deleteAccount({ db, accountId, userId: null, now, requestId: randomUUID() });
+  await deleteAccount({ db, accountId, userId: null, now, requestId: randomUUID() }, { throttleKeys: deps.throttleKeys });
   log.info("account_lifecycle_erased", {
     accountId, subscription: outcome,
     reason: "the retention period ended a day ago or more; the account's data is " +

@@ -296,6 +296,58 @@ function invite(d: InviteData): RenderedEmail {
  * pointed at the app's own device list instead, which they reach the way they
  * always do.
  */
+/**
+ * A security notice (`AuthService.drainSecurityNotices`). The data carries a closed KIND and
+ * nothing a caller wrote. It links to Settings → Devices and never to a password page: there is
+ * no password rotation to send anybody to.
+ */
+export interface SecurityNoticeData {
+  kind: "sign_in_slowed" | "factor_refused";
+  at: string;
+  devicesUrl: string;
+  supportEmail: string;
+}
+
+function securityNotice(d: SecurityNoticeData): RenderedEmail {
+  const url = safeUrl(d.devicesUrl);
+  const slowed = d.kind === "sign_in_slowed";
+  const subject = slowed
+    ? "Failed sign-in attempts on your ohmail account"
+    : "Your ohmail password was used and the second step failed";
+  const lines = slowed
+    ? [
+        "Many attempts to sign in to your ohmail account failed in the last few minutes, from devices that had not signed in before. None of them had your password.",
+        "Sign-in from new devices is slowed for a while. The devices you already use are not affected.",
+        "If you are signing in from a new device, wait a few minutes and try again.",
+        `The devices signed in to your account are listed in Settings → Devices (${url}).`,
+      ]
+    : [
+        "Somebody signed in to your ohmail account with your password and then failed the second step several times.",
+        "If that was you, there is nothing to do.",
+        `If it was not, somebody knows your password and your second factor stopped them. Open ohmail yourself, check Settings → Devices (${url}), and write to ${d.supportEmail} so we can help you secure the account.`,
+      ];
+  const never = "We will never ask you for a code, a password, or a recovery code by email.";
+  return {
+    subject,
+    text: textShell(subject, [...lines, `Time: ${d.at}`, never], [
+      `Reach a human: ${d.supportEmail}`,
+      "TrafficFlow GmbH, Zürich, Switzerland",
+    ]),
+    html: shell({
+      title: subject,
+      blocks: [
+        ...lines.map((l) => esc(l).split(esc(url)).join(`<a href="${esc(url)}" style="color:${ACCENT};">${esc(url)}</a>`)),
+        `<span style="color:${INK2};">Time</span> &nbsp;<strong style="color:${INK};font-weight:600;">${esc(d.at)}</strong>`,
+        `<strong style="color:${INK};font-weight:600;">${never}</strong>`,
+      ],
+      footer: [
+        `Reach a human: <a href="mailto:${esc(d.supportEmail)}" style="color:${ACCENT};">${esc(d.supportEmail)}</a>`,
+        "TrafficFlow GmbH, Zürich, Switzerland",
+      ],
+    }),
+  };
+}
+
 export interface NewDeviceSignInData {
   /** `devices.label` — "Web", "ohmail for Mac", … Never trusted; escaped. */
   device: string;
@@ -648,6 +700,7 @@ export interface TemplateDataMap {
   waitlist_confirmation: WaitlistConfirmationData;
   invite: InviteData;
   new_device_signin: NewDeviceSignInData;
+  security_notice: SecurityNoticeData;
   email_verification: EmailVerificationData;
   operator_alert: OperatorAlertData;
   account_exists: AccountExistsData;
@@ -660,6 +713,7 @@ const RENDERERS: { [K in TemplateName]: (data: TemplateDataMap[K]) => RenderedEm
   waitlist_confirmation: waitlistConfirmation,
   invite,
   new_device_signin: newDeviceSignIn,
+  security_notice: securityNotice,
   email_verification: emailVerification,
   operator_alert: operatorAlert,
   account_exists: accountExists,

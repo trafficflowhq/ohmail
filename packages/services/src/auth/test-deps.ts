@@ -1,4 +1,4 @@
-import { StaticKeyProvider, scryptHasher } from "./crypto.js";
+import { StaticKeyProvider, makeScryptHasher } from "./crypto.js";
 import { makeAuthConfig } from "./config.js";
 import type { AuthConfig, AuthDeps } from "./types.js";
 
@@ -33,7 +33,9 @@ export function makeTestAuthDeps(
       ...over,
     }),
     keyProvider: StaticKeyProvider.fromSecret(Buffer.alloc(32, 7), 1),
-    passwordHasher: scryptHasher,
+    // A cheap cost, so a suite of sign-ins stays fast; the production cost is pinned by
+    // `auth-crypto-cost.test.ts`, and the pad still pays one derivation at each of two costs.
+    passwordHasher: makeScryptHasher({ cost: { ln: 10, r: 8, p: 1 } }),
     ...(mail === undefined ? {} : { mail }),
   };
 }

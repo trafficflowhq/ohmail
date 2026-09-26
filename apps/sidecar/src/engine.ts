@@ -728,6 +728,7 @@ export function refusingKeyProvider(): KeyProvider {
     encrypt: async () => refuse(),
     decrypt: async () => refuse(),
     currentKeyVersion: () => refuse(),
+    deriveSubkey: () => refuse(),
   };
 }
 

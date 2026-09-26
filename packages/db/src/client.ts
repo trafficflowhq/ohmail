@@ -4,6 +4,7 @@ import { schema } from "./schema.js";
 import { onNotice } from "./notices.js";
 import { brandDialect } from "./dialect/index.js";
 import { withPgSocket } from "./pg-socket.js";
+import { pgTlsOptions } from "./pg-tls.js";
 
 let sql: ReturnType<typeof postgres> | null = null;
 
@@ -21,7 +22,7 @@ export const WORKER_POOL_MAX = 5;
 
 /** The long-lived singleton connection — for the always-on worker (one process, one pool). */
 export function makeDb(url: string): PostgresJsDatabase<typeof schema> {
-  sql = postgres(url, withPgSocket({ max: WORKER_POOL_MAX, onnotice: onNotice }));
+  sql = postgres(url, withPgSocket({ ...pgTlsOptions(url), max: WORKER_POOL_MAX, onnotice: onNotice }));
   return brandDialect(drizzle(sql, { schema }), "pg");
 }
 
@@ -45,7 +46,9 @@ export interface OwnedDb {
  * pool. Every worker/cron entry uses this instead.
  */
 export function makeOwnedDb(url: string): OwnedDb {
-  const own = postgres(url, withPgSocket({ max: WORKER_POOL_MAX, connection: WORKER_TIMEOUTS, onnotice: onNotice }));
+  const own = postgres(url, withPgSocket({
+    ...pgTlsOptions(url), max: WORKER_POOL_MAX, connection: WORKER_TIMEOUTS, onnotice: onNotice,
+  }));
   return {
     db: brandDialect(drizzle(own, { schema }), "pg"),
     close: async () => { await own.end({ timeout: 5 }); },
@@ -451,7 +454,7 @@ export function makePooledDb(
   if (!pooled) {
     // `max` is read when this URL's pool is FIRST built; a later handle over it shares that pool.
     pooled = postgres(url, withPgSocket({
-      prepare: false, max: opts.max ?? POOLED_MAX_CONNECTIONS, idle_timeout: 20, connect_timeout: 10,
+      ...pgTlsOptions(url), prepare: false, max: opts.max ?? POOLED_MAX_CONNECTIONS, idle_timeout: 20, connect_timeout: 10,
       connection: POOLED_TIMEOUTS, onnotice: onNotice,
     }));
     pools.set(url, pooled);

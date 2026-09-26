@@ -9,7 +9,7 @@ import type { Tx } from "@trafficflow/db";
 import {
   runAwayResponderPass,
   reapStaleWebSessions, runPlatformSignalPass,
-  runAccountLifecyclePass, eraseOneDueAccount,
+  runAccountLifecyclePass, eraseOneDueAccount, throttleKeysFor,
   runScheduledSendPass, runSendReconcilePass, SEND_RECONCILE_NET_TIMEOUTS,
   startDrainBudget,
   TransientDialRefusal, type AdminDb,
@@ -20,6 +20,7 @@ import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import { makeSendAdapter } from "../send-adapter.js";
 import { MAX_IMAP_PER_MAILBOX } from "../attachments-adapter.js";
 import { accessPortOf, entitlementsPort, imapAdmission, unsubscribes } from "./shared.js";
+import { auth } from "./shared-cloud.js";
 import type { AlertsConfig } from "../deps-cloud.js";
 import type { AlertArmHealth, AlertSinkSummary, ApiDeps } from "../deps.js";
 import type {} from "../deps-cloud.js";
@@ -149,6 +150,13 @@ export const AWAY_RESPONDER_CRON_PATH = "/internal/away/run";
 export const ACCOUNT_LIFECYCLE_CRON_PATH = "/internal/account-lifecycle/run";
 /** The erasure door the sweep's `erasureDue` names, one account per call (`?account=<uuid>`). */
 export const ACCOUNT_LIFECYCLE_ERASE_PATH = "/internal/account-lifecycle/erase";
+
+/**
+ * The sign-in throttle's security notices (`AuthService.drainSecurityNotices`), sent here and never
+ * from the request that earned one: an inline send on the registered branch alone would be a
+ * timing oracle. Named for the worker's `api-cron.ts`, whose literal a census holds to this one.
+ */
+export const SECURITY_NOTICES_CRON_PATH = "/internal/security-notices/run";
 
 /**
  * `makeSendAdapter` under the per-mailbox admission counter — the reconciling pass's dial:
@@ -993,6 +1001,7 @@ export const internalRoutes: Route[] = [
       try {
         const result = await runAccountLifecyclePass(deps.db, {
           port,
+          throttleKeys: throttleKeysFor(deps.keyProvider),
           mail: deps.services?.customerMail ?? null,
           log,
           now: deps.now,
@@ -1042,12 +1051,47 @@ export const internalRoutes: Route[] = [
       const port = entitlementsPort(deps);
       if (!port) return json(200, { skipped: "unmetered" });
       try {
-        const outcome = await eraseOneDueAccount(deps.db, { port, log, now: deps.now }, accountId);
+        const outcome = await eraseOneDueAccount(
+          deps.db, { port, log, now: deps.now, throttleKeys: throttleKeysFor(deps.keyProvider) }, accountId);
         return json(200, outcome === "erased" || outcome === "already_erased"
           ? { outcome } : { skipped: outcome });
       } catch (err) {
         log.error("account_lifecycle_erase_failed", { accountId, err });
         return json(503, { error: { code: "account_lifecycle_erase_failed" } });
+      }
+    },
+  },
+  {
+    /**
+     * `GET /internal/security-notices/run` — mail the notices the sign-in throttle recorded (an
+     * address ceiling tripped, a pre-session second factor locked). The reaper's shape: GET,
+     * either secret, 404 unarmed. Overlapping pokes are safe: each row is claimed before its send.
+     */
+    method: "GET",
+    pattern: SECURITY_NOTICES_CRON_PATH,
+    relay: false,  /* the hosted service's shared-secret intake */
+    cost: "unauthenticated",
+    options: { public: true, anonymous: true, raw: true },
+    handler: async (req, deps) => {
+      const log = (deps.logger ?? silentLogger).child({ route: SECURITY_NOTICES_CRON_PATH });
+      const cfg = deps.alerts;
+      if (!cfg || cfg.secret.trim().length === 0) return json(404, { error: { code: "not_found" } });
+      const cron = cfg.cronSecret?.trim();
+      const authorized = presentsSecret(req, cfg.secret)
+        || (cron !== undefined && cron.length > 0 && presentsSecret(req, cron));
+      if (!authorized) {
+        log.warn("security_notices_unauthorized", {});
+        return json(401, { error: { code: "unauthorized" } });
+      }
+      try {
+        const result = await auth(deps).drainSecurityNotices({
+          db: deps.db, accountId: "", userId: null, now: deps.now, requestId: deps.requestId,
+        });
+        if (result.sent + result.failed + result.dropped > 0) log.info("security_notices_drained", { ...result });
+        return json(200, { now: deps.now().toISOString(), ...result });
+      } catch (err) {
+        log.error("security_notices_failed", { err });
+        return json(503, { error: { code: "security_notices_failed" } });
       }
     },
   },

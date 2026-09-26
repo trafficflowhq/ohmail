@@ -1,4 +1,4 @@
-import { randomBytes, createCipheriv, createDecipheriv, createHash } from "node:crypto";
+import { randomBytes, createCipheriv, createDecipheriv, createHash, hkdfSync } from "node:crypto";
 
 // KeyProvider — envelope encryption. A random per-secret DEK encrypts the plaintext
 // (AES-256-GCM); the DEK is wrapped by a versioned KEK. The default `StaticKeyProvider` holds
@@ -16,6 +16,12 @@ export interface KeyProvider {
   decrypt(ciphertext: string, keyVersion: number): Promise<string>;
   /** The KEK version new secrets are encrypted under. */
   currentKeyVersion(): number;
+  /**
+   * A 32-byte subkey for one purpose: HKDF-SHA256 over the CURRENT KEK, `info` naming the purpose.
+   * The KEK's bytes never leave the provider; a rotation changes every subkey, which a caller
+   * keyed on one accepts by name (the auth throttle resets one window).
+   */
+  deriveSubkey(info: string): Buffer;
 }
 
 interface Envelope {
@@ -83,6 +89,10 @@ export class StaticKeyProvider implements KeyProvider {
 
   currentKeyVersion(): number {
     return this.current;
+  }
+
+  deriveSubkey(info: string): Buffer {
+    return Buffer.from(hkdfSync("sha256", this.kek(this.current), Buffer.alloc(0), info, 32));
   }
 
   private kek(version: number): Buffer {

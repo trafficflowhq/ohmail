@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { argv } from "node:process";
 import postgres from "postgres";
 import { transactionPoolerReason } from "./session-url.js";
+import { pgTlsOptions } from "./pg-tls.js";
 import { STAFF_ADMIN_VIEWS, STAFF_ROLE_LIVE_IN_PRODUCTION } from "./staff-grants.js";
 
 // `fileURLToPath`, never `.pathname` — this checkout lives under a directory with a SPACE.
@@ -69,9 +70,10 @@ async function main(): Promise<number> {
 
   const notices: string[] = [];
   const local = /@(localhost|127\.0\.0\.1|\[::1\])[:/]/.test(url);
+  const tlsOpts = pgTlsOptions(url);
   const sql = postgres(url, {
-    // A local rehearsal container speaks no TLS; a hosted database must.
-    ssl: local ? false : "require",
+    // A local rehearsal container speaks no TLS; a hosted database must, verified where the host is pinned.
+    ...(tlsOpts.ssl ? tlsOpts : { ssl: local ? false : "require" }),
     max: 1,
     onnotice: (n) => notices.push(`${n.severity}: ${n.message}${n.detail ? " — " + n.detail : ""}`),
   });

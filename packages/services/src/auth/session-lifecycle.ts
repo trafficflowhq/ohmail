@@ -579,8 +579,7 @@ export class SessionLifecycle {
 
     if (o.method) await this.audit(db, user, "2fa_verified", o.method, ctx);
     await this.audit(db, user, "login", o.method, ctx);
-    await this.throttleReset(db, `user:${user.id}`);
-    await this.throttleReset(db, `email:${user.email}`);
+    await this.signInCompleted(db, user, ctx);
 
     // Reported here and not at the top, so a ceremony that THROWS after the guard never leaves
     // the response labelled with an account whose session was not in the end established. The
@@ -1206,6 +1205,11 @@ export class SessionLifecycle {
    */
   protected async throttleReset(_db: Tx, _key: string): Promise<void> {
     /* no throttle table on the lifecycle half — see the doc comment */
+  }
+
+  /** What a completed sign-in owes the throttle — see {@link throttleReset}; `AuthService` overrides it. */
+  protected async signInCompleted(_db: Tx, _user: typeof users.$inferSelect, _ctx: ServiceContext): Promise<void> {
+    /* no throttle table on the lifecycle half */
   }
 
   /**

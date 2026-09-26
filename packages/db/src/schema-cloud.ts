@@ -172,7 +172,9 @@ export const authEvents = pgTable("auth_events", {
 
 export const authThrottle = pgTable("auth_throttle", {
   id: uuid("id").defaultRandom().primaryKey(),
-  key: text("key").notNull(),                      // "ip:1.2.3.4" | "user:<id>" | "email:<addr>"
+  // `<prefix><hash>…` or `<prefix><user id>`: an address or client appears only as a keyed hex hash
+  // (`services/src/auth/throttle-keys.ts`); rows past retention go in `pruneAuthThrottle`.
+  key: text("key").notNull(),
   failures: integer("failures").notNull().default(0),
   lockedUntil: timestamp("locked_until", { withTimezone: true }),
   windowStartedAt: timestamp("window_started_at", { withTimezone: true }).defaultNow().notNull(),

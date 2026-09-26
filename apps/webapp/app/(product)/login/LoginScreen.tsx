@@ -44,6 +44,10 @@ type Stage = "password" | "twofa";
 type FactorTried = "password" | "code" | "passkey";
 
 function loginError(err: unknown, tried: FactorTried, t: (key: string) => string): string {
+  // The throttle's two refusals, each its own sentence: a client that renders them as "wrong
+  // password" hides the one thing to do next, which is to wait.
+  if (err instanceof ApiError && err.code === "sign_in_slowed") return t("signInSlowed");
+  if (err instanceof ApiError && err.code === "account_locked") return t("tooManyAttempts");
   if (err instanceof ApiError && err.status === 401) {
     return t(tried === "password" ? "badCredentials" : tried === "code" ? "badCode" : "badPasskey");
   }

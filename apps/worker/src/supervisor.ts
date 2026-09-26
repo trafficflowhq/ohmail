@@ -1,4 +1,5 @@
 import { silentLogger, type Logger } from "@trafficflow/core";
+import { pgTransportOf, verifiedHandshakes } from "@trafficflow/db/cloud";
 import {
   DEFAULT_HEALTH_PORT, DEFAULT_SERVING_NOTHING_MAX_MS, DEFAULT_SHARDS, DEFAULT_STALE_CYCLE_MAX_MS,
   DEFAULT_STANDBY_RETRY_MS,
@@ -173,9 +174,12 @@ export async function runWorkerSupervised(
         // The wall's reader (mail 0124): the worker's own answer once it runs; before that, the
         // config fact it will be composed from — never a fabricated `composed`.
         parkedReader: stats?.parkedReader ?? (config.entitlements ? "composed" : "absent"),
+        dbTls: pgTransportOf(config.databaseUrl) === "verified" && verifiedHandshakes(config.databaseUrl) > 0,
         error,
       };
     },
+    // The whole snapshot, counts included, answers only the configured credential (config.ts).
+    detailSecret: config.healthDetailSecret ?? null,
   });
 
   

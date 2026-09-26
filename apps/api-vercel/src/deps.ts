@@ -5,7 +5,7 @@ import {
 } from "@trafficflow/db";
 import {
   API_MAX_DURATION_MS, makePooledDb, recordApiFault, entitlementsFaultRow,
-  makeEntitlementsClient, refundObligationsOn, SESSION_ACQUIRE_TIMEOUT_MS,
+  makeEntitlementsClient, refundObligationsOn, SESSION_ACQUIRE_TIMEOUT_MS, readDbTls,
   type EntitlementsClient,
 } from "@trafficflow/db/cloud";
 import { adminDbFor, attestStaffDbFault, resetAdminDbs, webhookAlertSink, telegramAlertSink, acquireImapSlot, releaseImapSlot, resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER, // The staging BUCKET client. It sits beside the `attachment_staging` rows rather than with the
@@ -618,6 +618,8 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
       // `/health` can see whether the connection guards still recognise this provider. They
       // silently did not for a day after a database-provider move.
       dbProvider: cfg.dbProvider,
+      // Both transport hops of the runtime pool — the handle above, so its handshakes are the ones counted.
+      dbTls: (reached: boolean) => readDbTls(cfg.databaseUrlPooled, db, reached),
       // Whether this host reaches an entitlements program at all, on dbProvider's pattern.
       // Reads the SAME config member `buildServices` arms from, so the marker cannot disagree
       // with the wiring.

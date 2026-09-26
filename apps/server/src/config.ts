@@ -4,6 +4,7 @@ import {
   type KeyProvider, type KekEnvIdentity, type MicrosoftDeviceClient,
 } from "@trafficflow/core";
 import { transactionPoolerReason, providerFamily } from "@trafficflow/db";
+import { pgTransportReason } from "@trafficflow/db/cloud";
 import { msOAuthEnv, type MsOAuthBootstrap } from "@trafficflow/db/cloud";
 import { makeAuthConfig, type AuthConfig } from "@trafficflow/services";
 import { DEFAULT_SSE, type SseConfig, type BuildIdentitySource } from "@trafficflow/api";
@@ -225,6 +226,7 @@ export function poisonedKeyProvider(reason: string): KeyProvider {
     encrypt: async () => fail(),
     decrypt: async () => fail(),
     currentKeyVersion: () => fail(),
+    deriveSubkey: () => fail(),
   };
 }
 
@@ -473,6 +475,8 @@ export function loadServerConfig(env: NodeJS.ProcessEnv): ServerConfig {
   // the change-wake LISTEN. The reason strings are static and never quote the URL.
   const poolerReason = transactionPoolerReason(databaseUrl);
   if (poolerReason) throw new Error(`DATABASE_URL is unusable on this host: ${poolerReason}`);
+  const transportReason = pgTransportReason(databaseUrl);
+  if (transportReason) throw new Error(`DATABASE_URL is unusable on this host: ${transportReason}`);
 
   const portRaw = trimmed(env, "PORT");
   const port = portRaw === "" ? DEFAULT_PORT : Number(portRaw);

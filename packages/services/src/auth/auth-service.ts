@@ -1,7 +1,7 @@
 import { randomInt, randomUUID } from "node:crypto";
 // `lt` is imported UNDER AN ALIAS: `lt` is the local name every 2FA verify uses for its
 // login-token row, and the shadowing turns a comparison into "call an object".
-import { and, count, desc, eq, gt, inArray, isNotNull, isNull, lt as lessThan, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, gt, inArray, isNotNull, isNull, like, lt as lessThan, or, sql } from "drizzle-orm";
 import {
   accounts, users, devices, sessions, readAccountErasedAt, type Tx,
 } from "@trafficflow/db";
@@ -21,6 +21,7 @@ import {
   pushSubscriptions,
   pruneWebauthnChallenges,
   isErasedBearer,
+  KNOWN_CLIENT_RETENTION_MS,
 } from "@trafficflow/db/cloud";
 import { bridgeTx, type Db, type ServiceContext } from "../context.js";
 import { OAuthCodeReplayed, ServiceError } from "../errors.js";
@@ -37,6 +38,7 @@ import { normalizeRecipient } from "../mail/port.js";
 // works.
 import { EMAIL_VERIFY_PURPOSE } from "../mail/mail-service.js";
 import { generateToken, hashToken, sha256, type PasswordHasher } from "./crypto.js";
+import { throttleKeysFor, THROTTLE_PREFIX, type ThrottleKeys } from "./throttle-keys.js";
 import type { AuthDeps, AuthConfig } from "./types.js";
 import type {
   SessionUser, TwofaEnrolled, LoginResult, SessionEstablished, OAuthTokens,
@@ -287,6 +289,34 @@ const lockedOut = (until: Date): ServiceError => new ServiceError(
   "account_locked", 423, "too many failed attempts",
   { retryAfter: Math.max(1, Math.ceil((until.getTime() - Date.now()) / 1000)) },
 );
+
+/**
+ * The per-address ceiling's refusal: 429, never 423, and a sentence — the account holder's known
+ * clients never meet it, and a client that renders it as "wrong password" hides the cause.
+ * Byte-identical for a registered and an unregistered address: it is decided before the lookup.
+ */
+const signInSlowed = (until: Date): ServiceError => new ServiceError(
+  "sign_in_slowed", 429,
+  "Sign-in to this address is slowed after many failed attempts from different places. Try again in a few minutes.",
+  { retryAfter: Math.max(1, Math.ceil((until.getTime() - Date.now()) / 1000)) },
+);
+
+/** One counter's rule: how many attempts, over what window, locked how long, refused how. */
+interface ThrottlePolicy {
+  max: number;
+  windowMs: number;
+  lockoutMs: number;
+  refuse: (until: Date) => ServiceError;
+}
+
+/** A user id no row can carry — the unknown-address branch's twin reads (`login`). */
+const NO_USER = "00000000-0000-0000-0000-000000000000";
+
+/** A user id's shape, checked before it is bound as a uuid. */
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A security notice is owed at most once per key per day (`noteNotice`). */
+export const NOTICE_EVERY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * The deployment cannot identify clients, so it will not accept anonymous account creation. 503
@@ -561,8 +591,12 @@ export interface TokenBodyRefresh {
  * with the real cloud-half reads and writes.
  */
 export class AuthService extends SessionLifecycle {
+  /** Every throttle key naming an address or a client goes through this — see `throttle-keys.ts`. */
+  private readonly keys: ThrottleKeys;
+
   constructor(private readonly deps: AuthDeps) {
     super(deps);
+    this.keys = throttleKeysFor(deps.keyProvider);
     // Fail fast, at construction, on an unshippable WebAuthn config: zero
     // origins, a malformed one, or an `rpID` that is not a registrable-domain suffix
     // of every allowed origin. Every such deployment would answer 200 at options
@@ -827,26 +861,25 @@ export class AuthService extends SessionLifecycle {
 
     const user = await this.loadUser(db, boundUserId(row.userId));
 
-    // The lockout, on BOTH keys `login` uses — see the header. Ahead of the scrypt verify, so a
-    // locked-out attacker does not even get to spend our CPU, and RESERVED rather than merely
-    // read so that concurrency cannot buy extra guesses ({@link throttleReserve}). This endpoint
-    // takes a password, so leaving it on a check-then-act pair would have reopened the whole
-    // bound the moment `login`'s was closed.
-    await this.throttleReserve(db, `email:${user.email}`);
-    await this.throttleReserve(db, `user:${user.id}`);
+    // The lockout on `login`'s client key, ahead of the scrypt verify so a locked-out client does
+    // not spend our CPU, and RESERVED rather than read ({@link throttleReserve}). The link is
+    // owner-only (it came by mail), so there is no address ceiling here, and a wrong password never
+    // touches `user:<id>` — only a live second-factor lock there is honoured.
+    const { pwKey } = this.passwordKeys(user.email, ctx);
+    await this.throttleReserve(db, pwKey);
+    await this.throttleCheck(db, `user:${user.id}`);
 
     const cred = (await db.select().from(credentials).where(eq(credentials.userId, user.id)).limit(1))[0];
-    const ok = cred ? await this.deps.passwordHasher.verify(password, cred.passwordHash) : false;
+    const ok = await this.deps.passwordHasher.verify(password, cred?.passwordHash ?? await decoyHashFor(this.deps.passwordHasher)) && cred !== undefined;
     if (!ok) {
-      await this.throttleLock(db, `user:${user.id}`);
-      await this.throttleLock(db, `email:${user.email}`);
+      await this.throttleLock(db, pwKey);
       await this.audit(db, user, "login_failed", "password", ctx);
       // `login`'s exact sentence. The token is still live and still single-use.
       throw new ServiceError("unauthorized", 401, "invalid email or password");
     }
 
-    await this.throttleRefund(db, `user:${user.id}`);
-    await this.throttleRefund(db, `email:${user.email}`);
+    await this.throttleRefund(db, pwKey);
+    await this.rehashIfStale(db, user.id, cred!.passwordHash, password);
 
     const methods = await this.enrolledMethods(db, user.id);
 
@@ -934,49 +967,43 @@ export class AuthService extends SessionLifecycle {
       );
     }
 
-    // The attempt is reserved on the EMAIL key first — before the user lookup, so both branches
-    // are behind the same gate. Checking only `user:<id>` made the lockout an account-existence
-    // oracle: past `maxFailures` a registered email answered 423 while an unregistered one
-    // answered 401 for ever. RESERVE, not check: `throttleCheck` was a pure SELECT with the
-    // increment landing after the verify, so N simultaneous requests all read "not locked" and
-    // the effective limit was the attacker's concurrency, not `maxFailures`. See {@link
-    // throttleReserve}.
-    await this.throttleReserve(db, `email:${email}`);
+    // THE KEYS (`throttle-keys.ts`), decided BEFORE the lookup so a registered and an unregistered
+    // address meet the same statements. `pw:<hA>:<hC>` locks THIS client (423). `pwa:<hA>` counts
+    // failures from clients that never signed in here and slows them past the ceiling (429); a
+    // known client skips it. So a stranger holds only their own bucket, never the account holder's.
+    // RESERVED, not read — see {@link throttleReserve}.
+    const { pwKey, ceilingKey, hA, hC } = this.passwordKeys(email, ctx);
+    const known = await this.isKnownClient(db, hA, hC);
+    await this.throttleReserve(db, pwKey);
+    if (!known) await this.reserveCeiling(db, ceilingKey, hA);
 
     // scoped-by: pre-auth sign-in — the row is located by the presented email, throttled and timing-hardened above
     const rows = await db.select().from(users).where(eq(users.email, email)).limit(1);
     const user = rows[0];
 
-    // Constant-time unknown-email path: ALWAYS run a full password verify —
-    // against the real hash when the user exists, against a decoy otherwise — and
-    // fail with the IDENTICAL error either way, so timing/response never leaks
-    // whether the email is registered. The decoy is memoized per hasher
-    // ({@link decoyHashFor}), so this path does not pay an extra `hash()` the known
-    // path never pays.
-    if (!user) {
-      await this.deps.passwordHasher.verify(b.password, await decoyHashFor(this.deps.passwordHasher));
-      await this.throttleLock(db, `email:${email}`);
+    // THE UNKNOWN ADDRESS WALKS THE KNOWN ONE'S STATEMENTS: the factor-lock read and the credential
+    // read run against a user id no row carries, and the verify runs against the decoy whenever
+    // there is no stored hash, so status, statements and hash cost do not tell the two apart. A
+    // password failure never touches `user:<id>`: that key is the second factor's.
+    await this.throttleCheck(db, `user:${user?.id ?? NO_USER}`);
+    const cred = (await db.select().from(credentials)
+      .where(eq(credentials.userId, user?.id ?? NO_USER)).limit(1))[0];
+    const verified = await this.deps.passwordHasher.verify(
+      b.password, cred?.passwordHash ?? await decoyHashFor(this.deps.passwordHasher));
+    if (!verified || !user || !cred) {
+      await this.throttleLock(db, pwKey);
+      if (!known) await this.throttleLock(db, ceilingKey, this.ceilingPolicy());
+      if (user) await this.audit(db, user, "login_failed", "password", ctx);
       throw new ServiceError("unauthorized", 401, "invalid email or password");
     }
 
-    await this.throttleReserve(db, `user:${user.id}`);
-
-    const cred = (await db.select().from(credentials).where(eq(credentials.userId, user.id)).limit(1))[0];
-    const ok = cred ? await this.deps.passwordHasher.verify(b.password, cred.passwordHash) : false;
-    if (!ok) {
-      await this.throttleLock(db, `user:${user.id}`);
-      await this.throttleLock(db, `email:${email}`);
-      await this.audit(db, user, "login_failed", "password", ctx);
-      throw new ServiceError("unauthorized", 401, "invalid email or password");
-    }
-
-    // The password was right, so give the reservations back. Both paths below reach a
-    // `throttleReset` on success, but the `twofa_required` return does NOT — and without a
-    // refund a user who opens the 2FA screen `maxFailures` times without finishing would lock
-    // an account on which nothing has failed. See {@link throttleRefund} for why this is a
-    // decrement and never a reset.
-    await this.throttleRefund(db, `user:${user.id}`);
-    await this.throttleRefund(db, `email:${email}`);
+    // The password was right, so give the reservations back. Both paths below reach
+    // `signInCompleted` on success, but the `twofa_required` return does NOT — and without a
+    // refund a person who opens the 2FA screen `maxFailures` times without finishing would lock
+    // their own client. See {@link throttleRefund} for why this is a decrement and never a reset.
+    await this.throttleRefund(db, pwKey);
+    if (!known) await this.throttleRefund(db, ceilingKey, this.ceilingPolicy());
+    await this.rehashIfStale(db, user.id, cred.passwordHash, b.password);
 
     const methods = await this.enrolledMethods(db, user.id);
 
@@ -1514,13 +1541,16 @@ export class AuthService extends SessionLifecycle {
     // consume, so one live login token can be presented arbitrarily many times at once; with a
     // pure read in front of the verify the second factor had the same concurrency bound the
     // password did, which for a second factor means the whole 2FA gate.
+    // THE DAY CAP, first, so a locked day refuses before the 15-minute counter moves. Pre-session
+    // verifies only: a live session's step-up keeps `user:` alone (a password holder cannot lock it).
+    await this.throttleReserve(db, `${THROTTLE_PREFIX.factorDay}${user.id}`, this.factorDayPolicy());
     await this.throttleReserve(db, `user:${user.id}`);
 
     const ch = await this.consumeChallenge(db, ctx, { loginTokenId: lt.id, type: "authentication" });
     const credId = b.credential?.id as string | undefined;
     const stored = (await this.webauthnCreds(db, user.id)).find((c) => c.credentialId === credId);
     if (!stored) {
-      await this.twofaFail(db, user, ctx);
+      await this.twofaFail(db, user, ctx, true);
       throw new ServiceError("unauthorized", 401, "unknown credential");
     }
 
@@ -1529,7 +1559,7 @@ export class AuthService extends SessionLifecycle {
       // @simplewebauthn REJECTS a regressed signature counter (clone detection).
       result = await verifyAssertion(this.cfg, b.credential, ch.challenge, stored, ch.origin);
     } catch {
-      await this.twofaFail(db, user, ctx);
+      await this.twofaFail(db, user, ctx, true);
       throw new ServiceError("unauthorized", 401, "two-factor verification failed");
     }
 
@@ -1537,6 +1567,7 @@ export class AuthService extends SessionLifecycle {
       .set({ counter: result.newCounter, lastUsedAt: ctx.now() })
       .where(eq(webauthnCredentials.credentialId, stored.credentialId));
     await this.consumeLoginToken(db, lt.id, ctx.now());
+    await this.throttleRefund(db, `${THROTTLE_PREFIX.factorDay}${user.id}`, this.factorDayPolicy());
     // A WebAuthn assertion just succeeded, here. `now` is the factor's real time.
     return this.establish(ctx, user, { method: "webauthn", kind: "web", twofaAt: ctx.now() });
   }
@@ -1623,19 +1654,22 @@ export class AuthService extends SessionLifecycle {
     refuseCrossAccountCredential(ctx, user.accountId);
     // RESERVED, not read: six digits behind a pure-read gate is a code an attacker can spray as
     // wide as their connection count. See {@link throttleReserve}.
+    // THE DAY CAP, first, so a locked day refuses before the 15-minute counter moves. Pre-session
+    // verifies only: a live session's step-up keeps `user:` alone (a password holder cannot lock it).
+    await this.throttleReserve(db, `${THROTTLE_PREFIX.factorDay}${user.id}`, this.factorDayPolicy());
     await this.throttleReserve(db, `user:${user.id}`);
 
     const row = (await db.select().from(totpSecrets)
       .where(and(eq(totpSecrets.userId, user.id), eq(totpSecrets.activated, true))).limit(1))[0];
     if (!row) {
-      await this.twofaFail(db, user, ctx);
+      await this.twofaFail(db, user, ctx, true);
       throw new ServiceError("unauthorized", 401, "two-factor verification failed");
     }
     const secret = await this.deps.keyProvider.decrypt(row.secretEnc, row.keyVersion);
     // Single-use per timestep: reject any token whose step ≤ the last consumed one.
     const v = verifyTotp({ secret, token: b.code, now: ctx.now(), window: this.cfg.totpWindow, afterStep: numOrNull(row.lastConsumedStep) });
     if (!v.valid) {
-      await this.twofaRefused(db, user, ctx, this.replayedTotp(secret, b.code, ctx.now()));
+      await this.twofaRefused(db, user, ctx, this.replayedTotp(secret, b.code, ctx.now()), true);
       throw new ServiceError("unauthorized", 401, "two-factor verification failed");
     }
     // ADVANCE THE STEP CONDITIONALLY — this is what makes "single-use per timestep"
@@ -1660,10 +1694,11 @@ export class AuthService extends SessionLifecycle {
       // answer to a wrong code — the caller must not learn that their code was right — but
       // it is a REPLAY by construction (the code verified; only the step was spent), so it
       // is not counted toward the lockout. See {@link twofaRefused}.
-      await this.twofaRefused(db, user, ctx, true);
+      await this.twofaRefused(db, user, ctx, true, true);
       throw new ServiceError("unauthorized", 401, "two-factor verification failed");
     }
     await this.consumeLoginToken(db, lt.id, ctx.now());
+    await this.throttleRefund(db, `${THROTTLE_PREFIX.factorDay}${user.id}`, this.factorDayPolicy());
     // A TOTP code was just verified, here. `now` is the factor's real time. `kind` is the
     // caller's declaration or `"web"` — either way it derives the cookie window (see the
     // header), so the declaration reaches the device row and nothing else.
@@ -1853,8 +1888,8 @@ export class AuthService extends SessionLifecycle {
       throw new ServiceError("unauthorized", 401, "no active session");
     }
     await this.audit(db, user, "2fa_verified", method, ctx);
+    // A step-up is not a sign-in: it clears the second-factor counter and leaves the password keys.
     await this.throttleReset(db, `user:${user.id}`);
-    await this.throttleReset(db, `email:${user.email}`);
     return { ok: true };
   }
 
@@ -1925,6 +1960,9 @@ export class AuthService extends SessionLifecycle {
     // there answered correctly and destroyed the credential on the way out.
     refuseCrossAccountCredential(ctx, user.accountId);
     // RESERVED, not read — {@link throttleReserve}.
+    // THE DAY CAP, first, so a locked day refuses before the 15-minute counter moves. Pre-session
+    // verifies only: a live session's step-up keeps `user:` alone (a password holder cannot lock it).
+    await this.throttleReserve(db, `${THROTTLE_PREFIX.factorDay}${user.id}`, this.factorDayPolicy());
     await this.throttleReserve(db, `user:${user.id}`);
 
     const hash = hashToken(b.code.trim());
@@ -1935,7 +1973,7 @@ export class AuthService extends SessionLifecycle {
     if (batchId === null) {
       // No codes have ever been generated for this user. Refused exactly like a wrong code —
       // the caller must not learn which of the two it was.
-      await this.twofaFail(db, user, ctx);
+      await this.twofaFail(db, user, ctx, true);
       throw new ServiceError("unauthorized", 401, "two-factor verification failed");
     }
     const row = (await db.select().from(recoveryCodes)
@@ -1947,7 +1985,7 @@ export class AuthService extends SessionLifecycle {
       ))
       .limit(1))[0];
     if (!row) {
-      await this.twofaFail(db, user, ctx);
+      await this.twofaFail(db, user, ctx, true);
       throw new ServiceError("unauthorized", 401, "two-factor verification failed");
     }
     // ONE TRANSACTION, and that single call is the whole fix. The burn used to autocommit and
@@ -1963,9 +2001,10 @@ export class AuthService extends SessionLifecycle {
       // The counted failure has to SURVIVE, so it is written out here rather than inside a
       // transaction that has just rolled back.
       if (!(e instanceof RecoveryCodeAlreadySpent)) throw e;
-      await this.twofaFail(db, user, ctx);
+      await this.twofaFail(db, user, ctx, true);
       throw new ServiceError("unauthorized", 401, "two-factor verification failed");
     }
+    await this.throttleRefund(db, `${THROTTLE_PREFIX.factorDay}${user.id}`, this.factorDayPolicy());
     return { ...spent.est, remainingCodes: spent.remaining };
   }
 
@@ -2371,8 +2410,7 @@ export class AuthService extends SessionLifecycle {
     });
 
     await this.audit(db, user, "enrollment_started", "password", ctx);
-    await this.throttleReset(db, `user:${user.id}`);
-    await this.throttleReset(db, `email:${user.email}`);
+    await this.signInCompleted(db, user, ctx);
 
     // AN ENROLLMENT SESSION IS STILL A SESSION. This mint does not go through `establish` — it
     // writes its own row — so it needs its own report, and without one the zero-factor arms of
@@ -2541,9 +2579,9 @@ export class AuthService extends SessionLifecycle {
    * took crossed the threshold. Using it as the admission decision is the defect
    * {@link throttleReserve} exists to remove; do not reintroduce it in front of a verify.
    */
-  private async throttleCheck(db: Tx, key: string): Promise<void> {
+  private async throttleCheck(db: Tx, key: string, refuse: (until: Date) => ServiceError = lockedOut): Promise<void> {
     const row = (await db.select().from(authThrottle).where(eq(authThrottle.key, key)).limit(1))[0];
-    if (row?.lockedUntil && row.lockedUntil.getTime() > Date.now()) throw lockedOut(row.lockedUntil);
+    if (row?.lockedUntil && row.lockedUntil.getTime() > Date.now()) throw refuse(row.lockedUntil);
   }
 
   /**
@@ -2556,12 +2594,12 @@ export class AuthService extends SessionLifecycle {
    * is admitted, and {@link throttleRefund} keeps a correct password one short from ever locking.
    * Raw `sql` templates take ISO strings, never `Date`s — a 500 on every failed login otherwise.
    */
-  private async throttleReserve(db: Tx, key: string): Promise<void> {
+  private async throttleReserve(db: Tx, key: string, policy: ThrottlePolicy = this.passwordPolicy()): Promise<void> {
     const now = new Date();
-    const max = this.cfg.maxFailures;
+    const max = policy.max;
     const nowIso = now.toISOString();
-    const windowFloor = new Date(now.getTime() - this.cfg.failureWindowMs).toISOString();
-    const lockUntilDate = new Date(now.getTime() + this.cfg.lockoutMs);
+    const windowFloor = new Date(now.getTime() - policy.windowMs).toISOString();
+    const lockUntilDate = new Date(now.getTime() + policy.lockoutMs);
     const lockUntil = lockUntilDate.toISOString();
 
     const live = sql`(${authThrottle.lockedUntil} is not null and ${authThrottle.lockedUntil} > ${nowIso}::timestamptz)`;
@@ -2599,11 +2637,11 @@ export class AuthService extends SessionLifecycle {
     // attempt" must REFUSE rather than admit — `ip-throttle.ts:77-80` makes the same call for
     // the same reason. The other default leaves the endpoint unbounded exactly when its counter
     // is broken.
-    if (!row) throw lockedOut(lockUntilDate);
-    if (row.lockedUntil && row.lockedUntil.getTime() > Date.now()) throw lockedOut(row.lockedUntil);
+    if (!row) throw policy.refuse(lockUntilDate);
+    if (row.lockedUntil && row.lockedUntil.getTime() > Date.now()) throw policy.refuse(row.lockedUntil);
     // The floor beneath arm 3: a `lockoutMs` of 0 would leave the statement's lock already
     // expired, so the count itself has to be able to refuse.
-    if (row.failures > max) throw lockedOut(lockUntilDate);
+    if (row.failures > max) throw policy.refuse(lockUntilDate);
   }
 
   /**
@@ -2614,16 +2652,16 @@ export class AuthService extends SessionLifecycle {
    * rather than extended (arm 1's reason). No INSERT arm: every call site reserves the same key
    * first, so the row exists.
    */
-  private async throttleLock(db: Tx, key: string): Promise<void> {
+  private async throttleLock(db: Tx, key: string, policy: ThrottlePolicy = this.passwordPolicy()): Promise<void> {
     const now = new Date();
     const nowIso = now.toISOString();
-    const lockUntil = new Date(now.getTime() + this.cfg.lockoutMs).toISOString();
+    const lockUntil = new Date(now.getTime() + policy.lockoutMs).toISOString();
     await db.update(authThrottle)
       .set({
         lockedUntil: sql`case
           when ${authThrottle.lockedUntil} is not null and ${authThrottle.lockedUntil} > ${nowIso}::timestamptz
             then ${authThrottle.lockedUntil}
-          when ${authThrottle.failures} >= ${this.cfg.maxFailures} then ${lockUntil}::timestamptz
+          when ${authThrottle.failures} >= ${policy.max} then ${lockUntil}::timestamptz
           else ${authThrottle.lockedUntil} end`,
         updatedAt: now,
       })
@@ -2639,12 +2677,12 @@ export class AuthService extends SessionLifecycle {
    * factor is outstanding would spend budget: five visits to the 2FA screen would lock an account
    * on which nothing failed.
    */
-  private async throttleRefund(db: Tx, key: string): Promise<void> {
+  private async throttleRefund(db: Tx, key: string, policy: ThrottlePolicy = this.passwordPolicy()): Promise<void> {
     const back = sql`greatest(${authThrottle.failures} - 1, 0)`;
     await db.update(authThrottle)
       .set({
         failures: back,
-        lockedUntil: sql`case when (${back}) >= ${this.cfg.maxFailures} then ${authThrottle.lockedUntil} else null end`,
+        lockedUntil: sql`case when (${back}) >= ${policy.max} then ${authThrottle.lockedUntil} else null end`,
         updatedAt: new Date(),
       })
       .where(eq(authThrottle.key, key));
@@ -2661,6 +2699,146 @@ export class AuthService extends SessionLifecycle {
   }
 
   /**
+   * A COMPLETED sign-in (a session minted, the second factor passed where there is one): it clears
+   * this client's password bucket and the factor counter, and marks the client KNOWN for the
+   * address, the one thing that exempts it from the address ceiling. Never on a password alone:
+   * `known:` is what a stranger would need to get past the ceiling. `pwa:` and `factor-day:` stay.
+   */
+  protected override async signInCompleted(db: Tx, user: typeof users.$inferSelect, ctx: ServiceContext): Promise<void> {
+    const { pwKey, hA, hC } = this.passwordKeys(user.email, ctx);
+    await this.throttleReset(db, `user:${user.id}`);
+    await this.throttleReset(db, pwKey);
+    const now = new Date();
+    await db.insert(authThrottle)
+      .values({ key: `${THROTTLE_PREFIX.knownClient}${hA}:${hC}`, failures: 0, windowStartedAt: now, updatedAt: now })
+      .onConflictDoUpdate({ target: authThrottle.key, set: { windowStartedAt: now, updatedAt: now } });
+  }
+
+  /**
+   * A password just VERIFIED under an older cost is written again at the current one. A compare-
+   * and-set on the old hash, so a password changed underneath is never overwritten; best-effort,
+   * so a failed rehash never fails the sign-in (the next one tries again). Never a forced reset.
+   */
+  private async rehashIfStale(db: Tx, userId: string, stored: string, password: string): Promise<void> {
+    const hasher = this.deps.passwordHasher;
+    if (!hasher.needsRehash?.(stored)) return;
+    try {
+      const fresh = await hasher.hash(password);
+      await db.update(credentials).set({ passwordHash: fresh, updatedAt: new Date() })
+        .where(and(eq(credentials.userId, userId), eq(credentials.passwordHash, stored)));
+    } catch {
+      /* the stored hash still verifies; the next sign-in rehashes */
+    }
+  }
+
+  /** The password keys for an address and this request's client — {@link login}. */
+  private passwordKeys(email: string, ctx: ServiceContext): { pwKey: string; ceilingKey: string; hA: string; hC: string } {
+    const hA = this.keys.address(email.trim().toLowerCase());
+    const hC = this.keys.client((ctx.ip ?? "").trim());
+    return { pwKey: `${THROTTLE_PREFIX.password}${hA}:${hC}`, ceilingKey: `${THROTTLE_PREFIX.addressCeiling}${hA}`, hA, hC };
+  }
+
+  /** Has this client completed a sign-in to this address within the retention? */
+  private async isKnownClient(db: Tx, hA: string, hC: string): Promise<boolean> {
+    const row = (await db.select({ at: authThrottle.windowStartedAt }).from(authThrottle)
+      .where(eq(authThrottle.key, `${THROTTLE_PREFIX.knownClient}${hA}:${hC}`)).limit(1))[0];
+    return row !== undefined && row.at.getTime() > Date.now() - KNOWN_CLIENT_RETENTION_MS;
+  }
+
+  /** Reserve the address ceiling; the refusal that trips it owes the account a notice ({@link noteNotice}). */
+  private async reserveCeiling(db: Tx, key: string, hA: string): Promise<void> {
+    try {
+      await this.throttleReserve(db, key, this.ceilingPolicy());
+    } catch (err) {
+      if (err instanceof ServiceError && err.code === "sign_in_slowed") {
+        await this.noteNotice(db, `${THROTTLE_PREFIX.notice}ceiling:${hA}`);
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Record that a security notice is owed — an intent row, drained off the response path by
+   * {@link drainSecurityNotices}. At most one per key per {@link NOTICE_EVERY_MS}: a row younger
+   * than that is left alone. `failures` 1 = owed, 0 = sent; `window_started_at` = when it was owed.
+   */
+  private async noteNotice(db: Tx, key: string): Promise<void> {
+    const now = new Date();
+    const horizon = new Date(now.getTime() - NOTICE_EVERY_MS).toISOString();
+    await db.insert(authThrottle)
+      .values({ key, failures: 1, windowStartedAt: now, updatedAt: now })
+      .onConflictDoUpdate({
+        target: authThrottle.key,
+        set: { failures: 1, windowStartedAt: now, updatedAt: now },
+        setWhere: sql`${authThrottle.windowStartedAt} < ${horizon}::timestamptz`,
+      });
+  }
+
+  /**
+   * SEND THE SECURITY NOTICES {@link noteNotice} RECORDED, off every response path: an inline
+   * send on the registered branch alone is a timing oracle an attacker triggers on purpose at the
+   * ceiling. Run by the internal cron door and the self-hosted server's schedule; bounded per run.
+   * Each row is CLAIMED before its send (two drains never mail twice); a failed send gives it back.
+   * An address with no account behind it is dropped: there is nobody to tell.
+   */
+  async drainSecurityNotices(ctx: ServiceContext, limit = 50): Promise<{ sent: number; dropped: number; failed: number }> {
+    const out = { sent: 0, dropped: 0, failed: 0 };
+    const mail = this.deps.mail;
+    if (!mail) return out;
+    const db = asTx(ctx);
+    const owed = await db.select({ key: authThrottle.key }).from(authThrottle)
+      .where(and(like(authThrottle.key, `${THROTTLE_PREFIX.notice}%`), eq(authThrottle.failures, 1))).limit(limit);
+    let byAddress: Map<string, { id: string; email: string }> | null = null;
+    for (const { key } of owed) {
+      const [, kind = "", subject = ""] = key.split(":");
+      let who: { id: string; email: string } | undefined;
+      if (kind === "factor" && UUID_SHAPE.test(subject)) {
+        who = (await db.select({ id: users.id, email: users.email }).from(users).where(eq(users.id, subject)).limit(1))[0];
+      } else if (kind === "ceiling") {
+        byAddress ??= await this.usersByAddressHash(db);
+        who = byAddress.get(subject);
+      }
+      const claimed = await db.update(authThrottle).set({ failures: 0, updatedAt: new Date() })
+        .where(and(eq(authThrottle.key, key), eq(authThrottle.failures, 1))).returning({ key: authThrottle.key });
+      if (claimed.length === 0) continue;
+      if (!who) { out.dropped++; continue; }
+      let sent = false;
+      try {
+        const r = await mail.sendSecurityNotice(ctx, {
+          to: who.email, kind: kind === "factor" ? "factor_refused" : "sign_in_slowed", at: ctx.now(),
+        });
+        sent = r.status !== "failed";
+      } catch {
+        sent = false;
+      }
+      if (sent) { out.sent++; continue; }
+      out.failed++;
+      await db.update(authThrottle).set({ failures: 1, updatedAt: new Date() }).where(eq(authThrottle.key, key));
+    }
+    return out;
+  }
+
+  /** Every user by the keyed hash of their address — read only while a ceiling notice is owed. */
+  private async usersByAddressHash(db: Tx): Promise<Map<string, { id: string; email: string }>> {
+    const all = await db.select({ id: users.id, email: users.email }).from(users);
+    return new Map(all.map((u) => [this.keys.address(u.email.trim().toLowerCase()), u]));
+  }
+
+  private passwordPolicy(): ThrottlePolicy {
+    return { max: this.cfg.maxFailures, windowMs: this.cfg.failureWindowMs, lockoutMs: this.cfg.lockoutMs, refuse: lockedOut };
+  }
+
+  /** The address ceiling: the rest of the window, as 429. */
+  private ceilingPolicy(): ThrottlePolicy {
+    return { max: this.cfg.maxAddressFailures, windowMs: this.cfg.failureWindowMs, lockoutMs: this.cfg.failureWindowMs, refuse: signInSlowed };
+  }
+
+  /** The pre-session second factor's day cap. */
+  private factorDayPolicy(): ThrottlePolicy {
+    return { max: this.cfg.maxFactorFailuresPerDay, windowMs: this.cfg.factorDayMs, lockoutMs: this.cfg.factorDayMs, refuse: lockedOut };
+  }
+
+  /**
    * A second factor was presented and refused.
    *
    * The attempt was already COUNTED by the `throttleReserve` at the top of the verify — this
@@ -2668,11 +2846,22 @@ export class AuthService extends SessionLifecycle {
    * refusal that crossed the line answers 423 itself rather than 401 followed by a 423 on the
    * next try.
    */
-  private async twofaFail(db: Tx, user: typeof users.$inferSelect, ctx: ServiceContext): Promise<void> {
+  private async twofaFail(
+    db: Tx, user: typeof users.$inferSelect, ctx: ServiceContext, preSession = false,
+  ): Promise<void> {
+    const dayKey = `${THROTTLE_PREFIX.factorDay}${user.id}`;
     await this.throttleLock(db, `user:${user.id}`);
+    if (preSession) await this.throttleLock(db, dayKey, this.factorDayPolicy());
     await this.audit(db, user, "2fa_failed", undefined, ctx);
-    // Surface lockout immediately if this failure crossed the threshold.
-    await this.throttleCheck(db, `user:${user.id}`);
+    // Surface lockout immediately if this failure crossed a threshold. A pre-session lock just
+    // installed means somebody holds the password: the account is owed a notice ({@link noteNotice}).
+    try {
+      await this.throttleCheck(db, `user:${user.id}`);
+      if (preSession) await this.throttleCheck(db, dayKey);
+    } catch (err) {
+      if (preSession) await this.noteNotice(db, `${THROTTLE_PREFIX.notice}factor:${user.id}`);
+      throw err;
+    }
   }
 
   /**
@@ -2695,10 +2884,11 @@ export class AuthService extends SessionLifecycle {
    * `2fa_failed` with a replay detail.
    */
   private async twofaRefused(
-    db: Tx, user: typeof users.$inferSelect, ctx: ServiceContext, replayed: boolean,
+    db: Tx, user: typeof users.$inferSelect, ctx: ServiceContext, replayed: boolean, preSession = false,
   ): Promise<void> {
-    if (!replayed) return this.twofaFail(db, user, ctx);
+    if (!replayed) return this.twofaFail(db, user, ctx, preSession);
     await this.throttleRefund(db, `user:${user.id}`);
+    if (preSession) await this.throttleRefund(db, `${THROTTLE_PREFIX.factorDay}${user.id}`, this.factorDayPolicy());
     await this.audit(db, user, "2fa_failed", undefined, ctx, "single-use timestep replayed");
   }
 

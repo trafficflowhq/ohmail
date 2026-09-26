@@ -11,6 +11,7 @@
 import { argv, env } from "node:process";
 import postgres from "postgres";
 import { transactionPoolerReason } from "./session-url.js";
+import { pgTlsOptions } from "./pg-tls.js";
 import {
   HOST_ROLES, SENSITIVE_PROBE_TABLES, applySupabaseLockdown, closeDataApiEndpoint,
   dataApiProblems, lockdownCensus, probeDataApi, publicRelationNames, supabaseHostRoles,
@@ -67,8 +68,9 @@ async function main(): Promise<number> {
   }
 
   const notices: string[] = [];
+  const tlsOpts = pgTlsOptions(url);
   const sql = postgres(url, {
-    ssl: "require",
+    ...(tlsOpts.ssl ? tlsOpts : { ssl: "require" }),
     max: 1,
     // §2 of the SQL reports an unrevokable default-privilege rule as a WARNING and lets the
     // postcondition decide. An operator who cannot see the warning cannot tell which it was.

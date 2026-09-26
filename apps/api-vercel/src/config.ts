@@ -9,6 +9,7 @@ import { DEFAULT_SSE, type SseConfig, type BuildIdentitySource } from "@trafficf
 // build gate in `next.config.mjs` (duplicated there in JS, because it cannot import TS).
 // `transactionPoolerReason` is its mirror: the LISTEN URL must NOT be the transaction pooler.
 import { runtimeUrlReason, providerFamily, transactionPoolerReason } from "@trafficflow/db";
+import { pgTransportReason } from "@trafficflow/db/cloud";
 import { msOAuthEnv, type MsOAuthBootstrap } from "@trafficflow/db/cloud";
 import { makeAuthConfig, type AuthConfig } from "@trafficflow/services";
 
@@ -131,7 +132,7 @@ export const MAX_SSE_LIFETIME_MS = (EVENTS_MAX_DURATION_S - 10) * 1_000;
 export function loadSseListenUrl(env: NodeJS.ProcessEnv): string | null {
   const raw = (env.DATABASE_URL_SESSION ?? "").trim();
   if (raw === "") return null;
-  const reason = transactionPoolerReason(raw);
+  const reason = transactionPoolerReason(raw) ?? pgTransportReason(raw);
   // Names the VARIABLE and the reason, never the value — the rule with no exceptions.
   if (reason) throw new Error(`DATABASE_URL_SESSION cannot hold a LISTEN: ${reason}`);
   return raw;
@@ -517,7 +518,7 @@ export const buildIdentityError = (
  * URL shape and fails open on an unrecognised host, making a throw safe.
  */
 export function assertPooledUrl(url: string): string {
-  const reason = runtimeUrlReason(url);
+  const reason = runtimeUrlReason(url) ?? pgTransportReason(url);
   if (reason) throw new Error(`DATABASE_URL_POOLED is unusable: ${reason}`);
   return url;
 }
@@ -598,6 +599,7 @@ export function poisonedKeyProvider(reason: string): KeyProvider {
     encrypt: async () => fail(),
     decrypt: async () => fail(),
     currentKeyVersion: () => fail(),
+    deriveSubkey: () => fail(),
   };
 }
 
@@ -1021,7 +1023,7 @@ export function loadStaffDbConfig(env: NodeJS.ProcessEnv): StaffDbLoad {
   }
   // The same `runtimeUrlReason` the product path throws on — REPORTED here, never thrown.
   // The reason string is static and never interpolates the URL: `/health` publishes it.
-  const unusable = runtimeUrlReason(url);
+  const unusable = runtimeUrlReason(url) ?? pgTransportReason(url);
   if (unusable) {
     return refuse(`staff surface unarmed: DATABASE_URL_ADMIN is unusable: ${unusable}`);
   }

@@ -521,6 +521,13 @@ export interface HealthConfig {
    * non-2xx so the scheduled CI health check goes red and mails the operator, and the hosted
    * API's build configuration refuses to build a production host that could reach the state.
    */
+  dbTls?: ((reached: boolean) => Promise<{ dbTls: boolean; dbTlsBackend: boolean | null }>) | null;
+  /**
+   * The database transport, both hops (`readDbTls` in `@trafficflow/db`): `dbTls` is THIS host's
+   * hop, true once a handshake on the runtime pool verified chain and host name; `dbTlsBackend` is
+   * `pg_stat_ssl` for the backend, which behind a pooler is the pooler's hop. `reached` false skips
+   * the backend read. Published on every branch, never a fault, never a 503. Absent ⇒ no keys.
+   */
   dbProvider?: string | null;
   /**
    * Which provider family this host's runtime connection belongs to — one of the fixed

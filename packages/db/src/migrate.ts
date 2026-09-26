@@ -1,6 +1,7 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { onNotice } from "./notices.js";
+import { pgTlsOptions } from "./pg-tls.js";
 import postgres, { type Sql } from "postgres";
 import { adoptBaseline, adoptReissuedOriginals } from "./baseline.js";
 import { assertNoActiveAddressDuplicates } from "./mailbox-dedup.js";
@@ -64,7 +65,7 @@ export async function openMigrationSession(url: string): Promise<MigrationSessio
   let ending = false;
   let lost: MigrationSessionLostError | null = null;
   const raw = postgres(url, {
-    max: 1, onnotice: onNotice, max_lifetime: null,
+    ...pgTlsOptions(url), max: 1, onnotice: onNotice, max_lifetime: null,
     onclose: () => { if (open && !ending && lost === null) lost = new MigrationSessionLostError(); },
   });
   const refuse = (): void => { if (lost !== null) throw lost; };

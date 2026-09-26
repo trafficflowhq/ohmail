@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { AlertSinkHealth } from "@trafficflow/db/cloud";
 import type { ApiCronTargetHealth } from "./api-cron.js";
 
@@ -149,8 +150,40 @@ export interface HealthSnapshot {
    * from config on a standby (nothing is composed yet, and what will be is a config fact).
    */
   parkedReader: "composed" | "absent";
+  /** This process's database hop: a handshake on its pools verified chain and host name (`readDbTls`). */
+  dbTls: boolean;
   /** Present in the fatal state (a failed takeover, or a LOST leader lock). */
   error?: string;
+}
+
+/**
+ * THE KEYS ANYBODY MAY READ — the verdict, the build and KEK identity, and the pager and schedule
+ * arms. An ALLOW-list, so a count added to the snapshot later is private by default: population
+ * counts and the degraded clocks told a stranger how many accounts and mailboxes the service runs
+ * and when sync degrades. The whole snapshot answers a request bearing
+ * `WorkerConfig.healthDetailSecret`; the admin console reads the counts from `worker_heartbeats`.
+ */
+export const PUBLIC_HEALTH_KEYS = [
+  "version", "buildError", "leader", "standby", "takingOver", "healthy", "unhealthyReason",
+  "waitingForLockSeconds", "kekFingerprint", "kekActiveVersion", "kekVersionCount", "kek", "shard",
+  "alertSinks", "apiCron", "parkedReader", "dbTls", "error",
+] as const satisfies readonly (keyof HealthSnapshot)[];
+
+export type PublicHealth = Pick<HealthSnapshot, (typeof PUBLIC_HEALTH_KEYS)[number]>;
+
+/** The snapshot as an unauthenticated caller reads it. */
+export function publicHealth(snap: HealthSnapshot): PublicHealth {
+  const out: Record<string, unknown> = {};
+  for (const key of PUBLIC_HEALTH_KEYS) if (key in snap) out[key] = snap[key];
+  return out as PublicHealth;
+}
+
+/** `Authorization: Bearer <secret>`, compared over digests so neither length nor prefix leaks. */
+function bearerMatches(header: string | undefined, secret: string): boolean {
+  const presented = /^Bearer\s+(.+)$/i.exec(header ?? "")?.[1]?.trim() ?? "";
+  if (presented === "") return false;
+  const digest = (s: string): Buffer => createHash("sha256").update(s).digest();
+  return timingSafeEqual(digest(presented), digest(secret));
 }
 
 /**
@@ -378,11 +411,12 @@ export interface HealthServer {
  * here touches the database, so a health probe can never add load or block on Postgres.
  */
 export async function startHealthServer(
-  opts: { port: number; snapshot: () => HealthSnapshot },
+  opts: { port: number; snapshot: () => HealthSnapshot; detailSecret?: string | null },
 ): Promise<HealthServer> {
   const server = createServer((req, res) => {
     const snap = opts.snapshot();
-    const body = JSON.stringify({ ok: snap.healthy, ...snap });
+    const full = opts.detailSecret ? bearerMatches(req.headers.authorization, opts.detailSecret) : false;
+    const body = JSON.stringify({ ok: snap.healthy, ...(full ? snap : publicHealth(snap)) });
     res.writeHead(snap.healthy ? 200 : 503, {
       "content-type": "application/json",
       "cache-control": "no-store",

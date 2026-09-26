@@ -7,6 +7,7 @@ import {
   type KekEnvIdentity, type Logger, type AnthropicCallReport,
 } from "@trafficflow/core";
 import { transactionPoolerReason, sessionUrlRejection } from "@trafficflow/db";
+import { pgTransportReason } from "@trafficflow/db/cloud";
 import { DEFAULT_ALERT_THRESHOLDS, msOAuthEnv, WORKER_POOL_MAX, type PostJson } from "@trafficflow/db/cloud";
 import type { MailboxAdapter, ImapConfig } from "@trafficflow/core/adapters/imap";
 import { buildIdentityOf, buildVersionOf, type BuildIdentitySource } from "./build-version.js";
@@ -447,6 +448,13 @@ export interface WorkerConfig {
    * and a half-armed schedule that quietly does nothing is the dark-cron failure this replaces.
    */
   apiCron?: { baseUrl: string; secret: string };
+  /**
+   * The credential that reads the WHOLE health snapshot (counts included) as `Authorization: Bearer
+   * …`; everyone else reads liveness only (`health.ts#PUBLIC_HEALTH_KEYS`). `TF_HEALTH_SECRET`, else
+   * the API-cron secret the managed deployment already holds. Absent ⇒ nobody reads the counts over
+   * HTTP; the admin console reads them from `worker_heartbeats`.
+   */
+  healthDetailSecret?: string;
   // ── The organizer lease (mail migration 0027) ───────────────────────────────────────
   /**
    * Who this Cloud deployment is, as an organizer of a mailbox. Every field has a safe default and
@@ -713,6 +721,16 @@ export const buildIdentityErrorOf = (
  * disarming the schedule, because "configured and silently not running" is the exact failure
  * this arm exists to replace. Error messages never include the values.
  */
+/** `TF_HEALTH_SECRET` (at least 24 characters), else `TF_API_CRON_SECRET`, else none. */
+function healthDetailSecretFrom(env: NodeJS.ProcessEnv): string | undefined {
+  const own = env.TF_HEALTH_SECRET?.trim();
+  if (own) {
+    if (own.length < 24) throw new WorkerConfigError("TF_HEALTH_SECRET", "TF_HEALTH_SECRET must be at least 24 characters");
+    return own;
+  }
+  return env.TF_API_CRON_SECRET?.trim() || undefined;
+}
+
 function apiCronFrom(env: NodeJS.ProcessEnv): { baseUrl: string; secret: string } | undefined {
   const url = env.TF_API_CRON_URL?.trim();
   const secret = env.TF_API_CRON_SECRET?.trim();
@@ -809,6 +827,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
   if (poolerReason) {
     throw new WorkerConfigError("DATABASE_URL_SESSION", sessionUrlRejection(poolerReason));
   }
+  // A managed provider's host is dialled with verified TLS; a URL asking for less is refused here, at load.
+  const transportReason = pgTransportReason(url);
+  if (transportReason) throw new WorkerConfigError("DATABASE_URL_SESSION", `DATABASE_URL_SESSION is unusable: ${transportReason}`);
   // env IMAP creds are optional now (bootstrap-only). Present ⇒ require the full set.
   const imap = env.IMAP_HOST ? {
     host: req(env, "IMAP_HOST"), port: Number(env.IMAP_PORT ?? 993), secure: env.IMAP_SECURE !== "false",
@@ -908,6 +929,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     resendApiKey: env.RESEND_API_KEY,
     alertIntervalMs: optInt(env, "TF_ALERT_INTERVAL_MS", DEFAULT_ALERT_INTERVAL_MS),
     apiCron: apiCronFrom(env),
+    healthDetailSecret: healthDetailSecretFrom(env),
     ...loadAttachmentStagingConfig(env),
     ...loadAiPorts(env),
   };

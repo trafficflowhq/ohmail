@@ -146,9 +146,19 @@ export interface AuthConfig {
    * Every such rotation is audited `refresh_replayed`.
    */
   // Lockout
+  /** Password failures one client may make at one address per `failureWindowMs`, then `lockoutMs` for that client. */
   maxFailures: number;
   lockoutMs: number;
   failureWindowMs: number;
+  /**
+   * Password failures at one address from clients that never signed in to it, per
+   * `failureWindowMs`, before sign-in from such clients is slowed (429) for the rest of the window.
+   * The whole online bound for an attacker rotating addresses; a known client never meets it.
+   */
+  maxAddressFailures: number;
+  /** Pre-session second-factor refusals per user per `factorDayMs`, then a `factorDayMs` lock. */
+  maxFactorFailuresPerDay: number;
+  factorDayMs: number;
   /**
    * How many INVITE-path `POST /auth/register` attempts one client may make per
    * `failureWindowMs`, on a counter of its own: open-path attempts never spend it.

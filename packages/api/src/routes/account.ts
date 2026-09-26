@@ -1,5 +1,5 @@
 import { and, desc, eq, gt, sql } from "drizzle-orm";
-import { deleteAccount, withAccountTx } from "@trafficflow/services";
+import { deleteAccount, throttleKeysFor, withAccountTx } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 import { messages } from "@trafficflow/db";
 import type { ReleaseOutcome } from "@trafficflow/db";
@@ -105,7 +105,7 @@ export const accountRoutes: Route[] = [
         }
       }
 
-      const result = await deleteAccount(ctx);
+      const result = await deleteAccount(ctx, { throttleKeys: throttleKeysFor(deps.keyProvider) });
       return json(
         {
           erased: true,

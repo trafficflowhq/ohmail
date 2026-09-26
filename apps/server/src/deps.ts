@@ -1,4 +1,5 @@
 import { users, providerFamily, UNMETERED, UNMETERED_ACCESS, parkedAccountsOf, type Tx } from "@trafficflow/db";
+import { readDbTls } from "@trafficflow/db/cloud";
 import {
   acquireImapSlot, releaseImapSlot, webhookAlertSink,
   recordApiFault,
@@ -536,6 +537,8 @@ export function buildDeps(req: Request, rt: ServerRuntime): ApiDeps {
       // "unrecognized" on an operator's own Postgres is healthy and documented as such — the
       // field exists so the connection guards' blind spots are visible, not as a fault.
       dbProvider: providerFamily(cfg.databaseUrl),
+      // Both transport hops; on an operator's own Postgres beside the server, false is the documented default.
+      dbTls: (reached: boolean) => readDbTls(cfg.databaseUrl, rt.db, reached),
     },
     /**
      * What `GET /push/vapid-key` answers. The PUBLIC half only — see config.ts: this process never

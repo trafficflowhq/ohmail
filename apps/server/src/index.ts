@@ -5,6 +5,7 @@ import { createLogger, UNMETERED_STORAGE_CAP } from "@trafficflow/core";
 import { makeSendAdapter, sendConnections } from "@trafficflow/api";
 import {
   runAwayResponderPass, runScheduledSendPass, runSendReconcilePass, SEND_RECONCILE_NET_TIMEOUTS,
+  type AuthService,
 } from "@trafficflow/services";
 import { loadServerConfig } from "./config.js";
 import { buildDeps, buildServerServices, oauthProviderFor, type ServerRuntime } from "./deps.js";
@@ -224,6 +225,18 @@ async function main(): Promise<void> {
             }
           } catch (err) {
             logger.error("away_responder_pass_failed", { err });
+          }
+
+          // THE SIGN-IN THROTTLE'S SECURITY NOTICES, on the same tick and never from a request (the
+          // hosted door, `SECURITY_NOTICES_CRON_PATH`, says why). Its own try/catch, the containment rule.
+          try {
+            const auth = rt.services.auth as unknown as { drainSecurityNotices?: AuthService["drainSecurityNotices"] };
+            const n = await auth.drainSecurityNotices?.({
+              db: owned.db, accountId: "", userId: null, now: () => new Date(), requestId: "",
+            });
+            if (n && n.sent + n.failed + n.dropped > 0) logger.info("security_notices_drained", { ...n });
+          } catch (err) {
+            logger.error("security_notices_failed", { err });
           }
         } catch (err) {
           // The pass absorbs per-row faults itself; this catches the claim. The appointments

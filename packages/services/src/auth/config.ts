@@ -101,6 +101,10 @@ export const DEFAULT_AUTH_CONFIG: Omit<AuthConfig, "rpID" | "rpName" | "origin">
   maxFailures: 5,
   lockoutMs: 15 * MIN,
   failureWindowMs: 15 * MIN,
+  // 20 per window is 1 920 guesses a day at one address for an attacker rotating clients.
+  maxAddressFailures: 20,
+  maxFactorFailuresPerDay: 20,
+  factorDayMs: 24 * 60 * MIN,
   maxRegistrationsPerWindow: 20,
   maxPublicRegistrationsPerWindow: 5,
   maxDesktopClaimsPerWindow: 10,

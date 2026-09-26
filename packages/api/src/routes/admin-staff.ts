@@ -1,11 +1,12 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { staffSessions, staffUsers, staffAuditLog, authThrottle } from "@trafficflow/db/cloud";
 import {
-  scryptHasher, generateToken, hashToken,
+  scryptHasher, generateToken, hashToken, throttleKeysFor,
   newTotpSecret, totpUri, verifyTotp,
   STAFF_STEP_UP_WINDOW_SECONDS,
 } from "@trafficflow/services";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
+import { clientIp } from "../context.js";
 import type { ApiDeps } from "../deps.js";
 import type { Handler, Route } from "../router.js";
 
@@ -202,20 +203,17 @@ async function throttleRefund(db: ApiDeps["db"], key: string, now: Date): Promis
 }
 
 /**
- * The caller's IP, hashed and truncated.
- *
- * Truncated because the throttle needs an identity, not an address: 16 hex characters is far
- * more than enough to keep two operators apart and cannot be reversed into somebody's home
- * network by whoever reads this table next.
+ * The caller, as a keyed hash of the TRUSTED client IP (`clientIp`: the platform's own header or
+ * the last forwarded hop). The first `x-forwarded-for` hop is whatever the caller wrote, so keying
+ * on it minted a fresh bucket per request; `x-real-ip` is an ordinary header here.
  */
-function ipKey(req: Request): string {
-  const raw = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
-    || req.headers.get("x-real-ip")?.trim()
-    || "unknown";
-  return `staff:ip:${hashToken(raw).slice(0, 16)}`;
+function ipKey(req: Request, deps: ApiDeps): string {
+  return `staff:ip:${throttleKeysFor(deps.keyProvider).client(clientIp(req))}`;
 }
 
-const emailKey = (email: string): string => `staff:email:${email}`;
+/** The typed address, as a keyed hash — never stored as typed (`throttle-keys.ts`). */
+const emailKey = (email: string, deps: ApiDeps): string =>
+  `staff:email:${throttleKeysFor(deps.keyProvider).address(email)}`;
 
 /* ── enrolment tokens ──────────────────────────────────────────────────────────────────── */
 
@@ -390,7 +388,7 @@ async function signIn(
   // budget by doing so, and — see {@link throttleReserve} — a reservation is what makes the
   // five-attempt window a bound on GUESSES rather than a bound on how fast one client can read a
   // row. This was a pure SELECT with the increment after the scrypt and the TOTP compare.
-  const keys = [emailKey(email), ipKey(req)];
+  const keys = [emailKey(email, deps), ipKey(req, deps)];
   for (const key of keys) {
     const verdict = await throttleReserve(deps.db, key, now);
     if (verdict.locked) {
@@ -408,6 +406,16 @@ async function signIn(
   if (!user || !passwordOk) {
     for (const key of keys) await throttleFail(deps.db, key, now);
     return { status: 401, body: { ok: false, status: "invalid" } };
+  }
+  // The customer door's rule (`AuthService.rehashIfStale`): a verified password under an older
+  // cost is written again, a compare-and-set on the old hash, best-effort.
+  if (scryptHasher.needsRehash?.(user.passwordHash)) {
+    try {
+      await deps.db.update(staffUsers).set({ passwordHash: await scryptHasher.hash(password) })
+        .where(and(eq(staffUsers.id, user.id), eq(staffUsers.passwordHash, user.passwordHash)));
+    } catch {
+      /* the stored hash still verifies; the next sign-in rehashes */
+    }
   }
 
   // Password is right and there is no authenticator yet: hand out the short unprivileged
@@ -558,7 +566,7 @@ async function totpConfirm(
   if (!authorized) return { status: 401, body: { error: { code: "unauthorized" } } };
   const staffId = authorized.staffId;
 
-  const ip = ipKey(req);
+  const ip = ipKey(req, deps);
   // RESERVED, not read — the same fix as `signIn`'s. A pure read in front of the TOTP compare
   // makes the six-digit code sprayable as wide as the caller's connection count.
   const verdict = await throttleReserve(deps.db, ip, now);
@@ -595,7 +603,7 @@ async function totpConfirm(
     return { status: 409, body: { error: { code: "enrollment_superseded" } } };
   }
   await throttleClear(deps.db, ip);
-  await throttleClear(deps.db, emailKey(user.email));
+  await throttleClear(deps.db, emailKey(user.email, deps));
 
   // No new session on the session arm — see the note on this function.
   if (authorized.viaSession) {
@@ -657,7 +665,7 @@ async function stepUp(
   const session = await resolveStaffSession(deps.db, token, now);
   if (!session) return { status: 401, body: { ok: false, status: "signed_out" } };
 
-  const ip = ipKey(req);
+  const ip = ipKey(req, deps);
   const verdict = await throttleReserve(deps.db, ip, now);
   if (verdict.locked) {
     return { status: 429, body: { ok: false, status: "throttled", retryAfterSeconds: verdict.retryAfterSeconds } };

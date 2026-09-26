@@ -43,6 +43,8 @@
     "subFirst": "Your password first, then your second factor.",
     "subCode": "Your password checked out — now your second factor.",
     "badCredentials": "That email and password didn't match. Check both and try again.",
+    "signInSlowed": "Sign-in to this address is slowed after many failed attempts from different places. Wait a few minutes and try again.",
+    "tooManyAttempts": "Too many failed attempts from this device. Wait fifteen minutes and try again.",
     "badCode": "That code didn't work. Codes expire quickly — try the newest one.",
     "badPasskey": "That passkey wasn't accepted. Try again, or use another method.",
     "passkey": "Continue with passkey",

@@ -1,5 +1,6 @@
 import postgres from "postgres";
 import { onNotice } from "@trafficflow/db";
+import { pgTlsOptions } from "@trafficflow/db/cloud";
 
 /** Fixed application-wide advisory-lock key for the single-active-worker guarantee. */
 export const LEADER_LOCK_KEY = 4207270001n;
@@ -70,7 +71,7 @@ export async function acquireLeaderLock(url: string, key: bigint = LEADER_LOCK_K
   };
 
   const sql = postgres(url, {
-    max: 1, idle_timeout: 0, max_lifetime: 0,
+    ...pgTlsOptions(url), max: 1, idle_timeout: 0, max_lifetime: 0,
     // Fires when the dedicated connection closes for ANY reason. postgres.js will happily
     // reconnect on the next query — into a session that does NOT hold the lock.
     onclose: () => { markLost("the dedicated lock session closed (postgres.js will reconnect WITHOUT the lock)"); },

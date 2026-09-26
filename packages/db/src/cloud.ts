@@ -317,3 +317,11 @@ export {
  * the hosted session door, pruned by the worker. See `erased-bearers.ts`.
  */
 export { recordErasedBearers, isErasedBearer, pruneErasedBearers } from "./erased-bearers.js";
+export { pruneAuthThrottle, AUTH_THROTTLE_RETENTION_MS, KNOWN_CLIENT_RETENTION_MS } from "./auth-throttle-prune.js";
+// The server-side transport: `node:tls` and a raw `pg_stat_ssl` read, so never on the root entry
+// the desktop engine and the phone bundle load (`dialect-census.test.ts`).
+export {
+  pgTlsOptions, pgTransportOf, pgTransportReason, verifiedHandshakes, PgTransportRefusedError,
+  POOLER_ROOT_CA, type PgTransport,
+} from "./pg-tls.js";
+export { readDbTls, type DbTlsReading } from "./pg-tls-reading.js";

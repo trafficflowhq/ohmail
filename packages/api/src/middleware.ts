@@ -393,7 +393,10 @@ export const withErrorEnvelope: Middleware = (next, route) => async (req, deps, 
         // by cloud 0033's own CHECK as well as by this branch.
         await countFault(deps, route, req, err.httpStatus, err);
       }
-      return errorResponse(err.code, err.httpStatus, err.message, err.details, err.retryable);
+      // A throttle refusal carries its wait (`retryAfter`, seconds); the header is where a client reads it.
+      const wait = (err.details as { retryAfter?: unknown } | undefined)?.retryAfter;
+      return errorResponse(err.code, err.httpStatus, err.message, err.details, err.retryable,
+        typeof wait === "number" && (err.httpStatus === 429 || err.httpStatus === 423) ? { "Retry-After": String(wait) } : undefined);
     }
     log.error("request_unhandled", { method: req.method, route: route.pattern, status: 500, err });
     await countFault(deps, route, req, 500, err);

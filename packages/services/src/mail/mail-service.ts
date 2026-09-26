@@ -369,6 +369,25 @@ export class MailService {
       }));
   }
 
+  /**
+   * A security notice the sign-in throttle recorded (`AuthService.drainSecurityNotices`), never
+   * sent from a request. `transactional`: the recipient is the account's own address, read from
+   * `users`. Keyed on (recipient, kind, day) so a re-driven drain sends once.
+   */
+  async sendSecurityNotice(
+    ctx: MailContext, input: { to: string; kind: "sign_in_slowed" | "factor_refused"; at: Date },
+  ): Promise<MailSendResult> {
+    return this.guarded(ctx, input.to, "transactional", (to) =>
+      this.deps.mailer.send(to, "security_notice", {
+        kind: input.kind,
+        at: formatUtc(input.at),
+        devicesUrl: `${trimSlash(this.cfg.appUrl)}/settings/devices`,
+        supportEmail: this.cfg.supportEmail,
+      }, {
+        idempotencyKey: `security:${hashToken(`${to}|${input.kind}|${input.at.toISOString().slice(0, 10)}`)}`,
+      }));
+  }
+
   // ── 4. Email verification ─────────────────────────────────────────────────────
 
   /**

@@ -1537,6 +1537,16 @@ export const healthRoutes: Route[] = [
         fullCensus ? fullCensus.functionDefinitions : [],
         fullCensus ? fullCensus.foreignKeys : [],
       );
+      // BOTH TRANSPORT HOPS (`HealthConfig.dbTls`), read after the probe so its handshake is counted.
+      // Contracted not to throw; a reading that faults is published as no reading, never a 503.
+      let transport: Record<string, unknown> = {};
+      if (injected?.dbTls) {
+        try {
+          transport = { ...(await injected.dbTls(probe.kind !== "unreachable")) };
+        } catch {
+          transport = {};
+        }
+      }
       if (probe.kind === "unreachable") {
         return healthResponse(503, {
           ok: false,
@@ -1548,6 +1558,7 @@ export const healthRoutes: Route[] = [
           errorCode: probe.errorCode,
           kek,
           dbProvider,
+          ...transport,
           entitlements,
           aiPricing,
           ...pager,
@@ -1558,6 +1569,7 @@ export const healthRoutes: Route[] = [
         return healthResponse(503, {
           ok: false, version, buildSource, ...artifact, dbLatencyMs: probe.dbLatencyMs, error: "database_probe_empty", kek,
           dbProvider,
+          ...transport,
           entitlements,
           aiPricing,
           ...pager,
@@ -1587,6 +1599,7 @@ export const healthRoutes: Route[] = [
           cookieAuth: deps.allowCookieAuth !== false,
           kek,
           dbProvider,
+          ...transport,
           ...pager,
           ...staffFaults,
           ...(liveFault ?? {}),
@@ -1612,6 +1625,7 @@ export const healthRoutes: Route[] = [
         cookieAuth: deps.allowCookieAuth !== false,
         kek,
         dbProvider,
+        ...transport,
         entitlements,
         aiPricing,
         ...pager,
