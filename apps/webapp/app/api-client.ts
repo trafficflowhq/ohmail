@@ -13,7 +13,7 @@ import { csrfToken as readCsrfToken } from "./csrf";
 import {
   isRecoverable, mayRefreshFor, resumeSession, retryAfterMsOf, withSessionCookieLock,
 } from "./session-refresh";
-import { sessionMayAsk } from "./shell/session-truth";
+import { registerSessionTransport, sessionMayAsk } from "./shell/session-truth";
 import { readOwner, readOwnerMarker, rememberOwner } from "./shell/owner-cookie";
 import { refusedFactsOf, verdictOf } from "./access-verdict";
 import { storeVerdict } from "./shell/wall-lift";
@@ -517,6 +517,58 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
     checkAnswerOwner(path, seenAgain.account, ceremony);
     return retried;
   }
+}
+
+/**
+ * THE ENGINE'S CREDENTIAL DOOR ON THE WEB. Every press, `/sync` page and body read the mirror makes
+ * leaves through the adapter `shell/engine-config.ts` builds on this, so it makes `api()`'s one
+ * recovery: a refusal only the lapsed access explains renews through the single refresh and is sent
+ * ONCE more, unchanged but for the renewed jar's CSRF token — the same `Idempotency-Key`, so the
+ * server reads one press. A failed renewal or a second refusal is the answer the caller sees.
+ */
+async function sessionTransport(url: string, init?: RequestInit): Promise<Response> {
+  const first = await fetch(url, init);
+  const path = apiPathOf(url);
+  if (path === null || !mayRefreshFor(path) || writesSessionCookies(path)) return first;
+  if (!isRecoverable(first.status, await refusalCodeOf(first))) return first;
+  // `api()`'s two questions around its refresh: never renew, nor re-send, on another account's jar.
+  if (!apiOwnerHolds(path)) return first;
+  if (!(await resumeSession())) return first;
+  if (!apiOwnerHolds(path)) return first;
+  void first.body?.cancel().catch(() => undefined);
+  return fetch(url, withFreshCsrf(init));
+}
+
+registerSessionTransport(sessionTransport);
+
+/** The API path a transport URL names, or `null` for anything off this client's base (storage PUTs). */
+function apiPathOf(url: string): string | null {
+  if (!API_BASE || !url.startsWith(API_BASE)) return null;
+  const path = url.slice(API_BASE.length).split("?")[0]!;
+  return path.startsWith("/") ? path : null;
+}
+
+/** The refusal's code, read off a copy so the caller still reads the body; only a 403 needs it. */
+async function refusalCodeOf(res: Response): Promise<string | undefined> {
+  if (res.status !== 403) return undefined;
+  try {
+    const code = ((await res.clone().json()) as { error?: { code?: unknown } } | null)?.error?.code;
+    return typeof code === "string" ? code : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The same request under the jar the renewal wrote: its CSRF token replaces the lapsed one. */
+function withFreshCsrf(init?: RequestInit): RequestInit | undefined {
+  const token = csrfToken();
+  if ((init?.method ?? "GET").toUpperCase() === "GET" || token === null) return init;
+  const headers: Record<string, string> = {};
+  for (const [k, v] of Object.entries((init?.headers ?? {}) as Record<string, string>)) {
+    if (k.toLowerCase() !== "x-csrf-token") headers[k] = v;
+  }
+  headers["x-csrf-token"] = token;
+  return { ...init, headers };
 }
 
 /**

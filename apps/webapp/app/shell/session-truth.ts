@@ -112,6 +112,23 @@ export function registerSessionProbe(fn: (() => void) | null): void {
   probe = fn;
 }
 
+type SessionTransport = (url: string, init?: RequestInit) => Promise<Response>;
+/** The Cloud build's credential door for the engine's requests — absent everywhere else. */
+let transport: SessionTransport | null = null;
+
+/** Cloud wiring: `api-client.ts` registers the transport that renews a lapsed access once. */
+export function registerSessionTransport(fn: SessionTransport | null): void {
+  transport = fn;
+}
+
+/**
+ * THE ENGINE'S TRANSPORT ON THIS BUILD, read per request: the registered credential door, or the
+ * platform's fetch where none is (the desktop). `engine-config.ts` hands it to the adapter.
+ */
+export function sessionFetch(url: string, init?: RequestInit): Promise<Response> {
+  return transport !== null ? transport(url, init) : globalThis.fetch(url, init);
+}
+
 /**
  * Ask the registered probe to settle the question NOW. Called by a surface that just received
  * auth-shaped evidence (a coded 401 on a read, the sync loop's unconfirmed refusal). A no-op

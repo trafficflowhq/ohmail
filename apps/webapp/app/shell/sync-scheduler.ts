@@ -14,6 +14,7 @@ import {
 } from "@ohmail/client-engine";
 import { readOwnerMarker, type OwnerMarker } from "./owner-cookie";
 import { refusalIsStale } from "./access-window";
+import { subscribeSessionRevival } from "./session-truth";
 
 /**
  * The wake signal this app did not have — `engine.start()` once was every
@@ -1102,6 +1103,11 @@ export interface SyncSchedulerOptions {
   hiddenPollMs?: number;
   /** The safety cadence under a healthy stream; {@link WAKE_SAFETY_POLL_MS} unless a test shrinks it. */
   wakeSafetyPollMs?: number;
+  /**
+   * Hear every renewed session (a `204` from the refresh). Defaults to `session-truth.ts`'s
+   * revivals, which only the Cloud build publishes; `null` hears none.
+   */
+  renewals?: ((cb: () => void) => () => void) | null;
 }
 
 /**
@@ -1848,6 +1854,20 @@ export function startSyncScheduler(
    */
   gate?.onOpen(wake);
 
+  /*
+   * A RENEWED SESSION ANSWERS THE REFUSAL: a coded 401 waiting on its confirm was the lapsed access,
+   * and a renewal that landed says the session holds, so the confirm drains now rather than at its
+   * cadence. The episode stays open until a drain succeeds — a refusal re-made after a renewal
+   * keeps its sustain clock. A drain in flight answers for itself (its transport renews).
+   */
+  const onRenewed = (): void => {
+    if (stopped || running || refusedAt === null) return;
+    disarm();
+    void tick();
+  };
+  const renewals = options.renewals !== undefined ? options.renewals : subscribeSessionRevival;
+  const stopHearingRenewals = renewals?.(onRenewed) ?? null;
+
   connectStream();
   publish();
   void tick();
@@ -1855,6 +1875,7 @@ export function startSyncScheduler(
   return () => {
     stopped = true;
     REVIVERS.delete(revive);
+    stopHearingRenewals?.();
     disarm();
     closeStream();
     // The eager body pass is fire-and-forget behind the drain and NOT gated (fetchBodies is a

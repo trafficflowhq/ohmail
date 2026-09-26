@@ -7,7 +7,7 @@ import {
   type StorePolicy,
 } from "@ohmail/client-engine";
 import { createSyncGate, registerSyncGate, type WakeStreamLike } from "./sync-scheduler";
-import { sessionMayAsk } from "./session-truth";
+import { sessionFetch, sessionMayAsk } from "./session-truth";
 
 /**
  * The engine decision, extracted so it can be TESTED rather than described. Inside `engine.tsx` (a `"use client"`
@@ -205,8 +205,13 @@ export function createEngine(
        * own 401. Supplied only here — the desktop's and the phone's adapters have no Cloud session
        * to lose and get the permissive default.
        */
+      /*
+       * `fetch` — EVERY PRESS AND EVERY PAGE LEAVES THROUGH THE SESSION'S TRANSPORT: a request the
+       * lapsed access refused is renewed and sent once more under its own key (`api-client.ts`),
+       * the recovery the desktop's and the phone's bearer managers already make on theirs.
+       */
       adapter: gate.guard(
-        new HttpAdapter({ baseUrl: apiBase, stageAttachments: true, mayAsk: sessionMayAsk }),
+        new HttpAdapter({ baseUrl: apiBase, stageAttachments: true, mayAsk: sessionMayAsk, fetch: sessionFetch }),
       ),
       ...(persist ? { store: new IndexedDbMirrorStore({ owner: owner! }) } : {}),
       storePolicy: BROWSER_WINDOW,
