@@ -16,7 +16,7 @@ export {
   renderTemplate, esc, safeUrl, TEMPLATE_NAMES,
   type RenderedEmail, type TemplateName, type TemplateDataMap, type WaitlistTier,
   type WaitlistConfirmationData, type InviteData,
-  type NewDeviceSignInData, type EmailVerificationData, type OperatorAlertData,
+  type NewDeviceSignInData, type SecurityNoticeData, type EmailVerificationData, type OperatorAlertData,
 } from "./templates.js";
 export { mailAlertSink } from "./alert-sink.js";
 export {

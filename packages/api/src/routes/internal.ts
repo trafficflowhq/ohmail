@@ -154,7 +154,7 @@ export const ACCOUNT_LIFECYCLE_ERASE_PATH = "/internal/account-lifecycle/erase";
 /**
  * The sign-in throttle's security notices (`AuthService.drainSecurityNotices`), sent here and never
  * from the request that earned one: an inline send on the registered branch alone would be a
- * timing oracle. Named for the worker's `api-cron.ts`, whose literal a census holds to this one.
+ * timing oracle. Exported for the route's own test; the worker's `api-cron.ts` pokes the same path.
  */
 export const SECURITY_NOTICES_CRON_PATH = "/internal/security-notices/run";
 
