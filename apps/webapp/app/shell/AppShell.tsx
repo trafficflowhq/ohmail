@@ -1080,7 +1080,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * never heard of.
    */
   const reader = engine.read();
-  const toast = useToast();
+  const hostToast = useToast();
   /**
    * THE DISPATCH SPINE — every press that changes mail leaves through `shell-dispatch.ts`: the
    * two undo windows, the routing window, the organizer's refusal vocabulary, the report doors
@@ -1089,8 +1089,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const {
     fileAndRefresh, rosterRef, deleting, restoring, refusalCopy, routing, pressWatch,
-    toastWithUndo, mutateAndReport, mutateSetAndReport, mailboxesOf, runArmedUndo,
-  } = useShellDispatch({ engine, reader, toast, t, demo, refreshFacts });
+    toastWithUndo, mutateAndReport, mutateSetAndReport, mailboxesOf, runArmedUndo, undoToast,
+  } = useShellDispatch({ engine, reader, toast: hostToast, t, demo, refreshFacts });
+  /* Every sentence below leaves through the undo door, so an Undo raised anywhere is one `z` takes. */
+  const toast = undoToast;
 
   const theme = useTheme();
   /* THE SHELL TIMES ITSELF — startup marks, the three interaction percentiles and the frame

@@ -24,7 +24,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { EntityReader, EngineMessage } from "@ohmail/client-engine";
-import type { ToastFn } from "@ohmail/ui";
+import type { UndoToastFn } from "./undo-door";
 import type { DisabledReason, KeyBinding } from "./keymap";
 import { isModalOpen } from "./modal-gate";
 import {
@@ -154,7 +154,8 @@ export interface DeleteUndoDeps {
    * `(id) => engine.mutate({ kind: "message_delete", messageId: id })`.
    */
   mutate: HeldDispatch;
-  toast: ToastFn;
+  /** The shell hands the undo door's toast, so `z` takes this window back as its button does. */
+  toast: UndoToastFn;
   copy: DeleteUndoCopy;
   /** Called whenever the held set changes, with a NEW set. */
   onHeld: (held: ReadonlySet<string>) => void;
@@ -344,6 +345,7 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
       deps.toast(say(deps.copy.deleted, deps.copy.deletedMany, ids.length), {
         action: deps.copy.undo,
         duration: windowMs,
+        undo: true,
         onAction: () => { take(pressId); },
         signal: ends.signal,
       });

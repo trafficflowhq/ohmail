@@ -33,6 +33,7 @@ import { useRoutingUndo } from "./routing-undo";
 import { usePressWatch, type PressWatch } from "./press-watch";
 import { placeLabel } from "./format";
 import { useStableCallback } from "./stable-callback";
+import { createUndoDoor, type UndoToastFn } from "./undo-door";
 
 /**
  * WHAT THE SPINE IS HANDED. Every field is required and none has a default: a forgotten `demo`
@@ -64,6 +65,8 @@ export interface ShellDispatch {
   dispatchPress: (mutation: EngineMutation) => Promise<PressVerdict>;
   queuedSentence: (holder: string | null) => string;
   runArmedUndo: () => boolean;
+  /** The toast every Undo offer is raised through, so `z` presses what the button presses. */
+  undoToast: UndoToastFn;
   toastWithUndo: (
     sentence: string,
     inverses: readonly EngineMutation[],
@@ -78,8 +81,13 @@ export interface ShellDispatch {
 }
 
 export function useShellDispatch({
-  engine, reader, toast, t, demo, refreshFacts,
+  engine, reader, toast: show, t, demo, refreshFacts,
 }: ShellDispatchInput): ShellDispatch {
+  /* THE ONE UNDO DOOR (`undo-door.ts`), built once over the host's toast. Every sentence below
+     goes out through it; only the ones marked `undo` arm `z`. */
+  const showLatest = useStableCallback(show);
+  const door = useMemo(() => createUndoDoor(showLatest), [showLatest]);
+  const toast = door.toast;
   /**
    * Every filing dispatch goes through here. A filing decision writes `folder_state`; the strip
    * reports the outstanding work from `GET /mailboxes`, which is polled every 30 s and on
@@ -330,19 +338,12 @@ export function useShellDispatch({
   /**
    * ONE UNDO FOR EVERY VERB (the 0.20 review) — the toast carries Undo wherever the engine can build
    * the wire's own reversal (`inverseMutations`, read BEFORE the dispatch), and `z` presses the
-   * same offer. Undo dispatches the inverses through the ordinary seam, so the overlay, the outbox
-   * and the refusal vocabulary all apply — never a local state hack. Bounded by `UNDO_MS`, the
-   * Screener's own window; a late press takes nothing back and claims nothing (the armed offer is
-   * consumed before it fires, so it fires at most once).
+   * same offer through the one door (`undo-door.ts`), which every held window's Undo is raised
+   * through as well. Undo dispatches the inverses through the ordinary seam, so the overlay, the
+   * outbox and the refusal vocabulary all apply — never a local state hack. Bounded by `UNDO_MS`,
+   * the Screener's own window; a late press takes nothing back and claims nothing.
    */
-  const undoArm = useRef<{ fire: () => void; at: number } | null>(null);
-  const runArmedUndo = useStableCallback((): boolean => {
-    const arm = undoArm.current;
-    if (!arm || Date.now() - arm.at > UNDO_MS) return false;
-    undoArm.current = null;
-    arm.fire();
-    return true;
-  });
+  const runArmedUndo = door.press;
   /**
    * AND A ROUTING PRESS TAKES BACK A SECOND THING, which is the one shape an inverse cannot
    * carry: the rule it was about has not been sent yet, so Undo CANCELS it rather than reversing
@@ -373,12 +374,7 @@ export function useShellDispatch({
         toast(refusalSentence(tally.firstRefusal));
       });
     };
-    undoArm.current = { fire, at: Date.now() };
-    toast(sentence, {
-      action: t("ohbox.undo"),
-      duration: UNDO_MS,
-      onAction: () => { undoArm.current = null; fire(); },
-    });
+    toast(sentence, { action: t("ohbox.undo"), duration: UNDO_MS, undo: true, onAction: fire });
   });
 
   const mutateAndReport = useStableCallback(
@@ -461,6 +457,7 @@ export function useShellDispatch({
     dispatchPress,
     queuedSentence,
     runArmedUndo,
+    undoToast: toast,
     toastWithUndo,
     mutateAndReport,
     mutateSetAndReport,

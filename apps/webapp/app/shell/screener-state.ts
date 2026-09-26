@@ -72,11 +72,11 @@ import { PLACE_LABEL } from "./format";
 import { displayAddress, displayAddressee, displayDomain, displayDomainLabel } from "./idn";
 import { activeFormatZone } from "./locale";
 import { useAppLocale } from "./LocaleContext";
+import type { UndoToastFn } from "./undo-door";
 import {
   DECISION_QUIET,
   type DecisionDestination,
   type DecisionScope,
-  type ToastFn,
 } from "@ohmail/ui";
 
 export interface SpamRow {
@@ -467,7 +467,8 @@ const ONWARD_HOPS = 8;
 export function useScreenerState(
   engine: OhmailEngine,
   version: number,
-  toast: ToastFn,
+  /** The undo door's toast: the decision's Undo is the offer `z` takes back (`undo-door.ts`). */
+  toast: UndoToastFn,
   /**
    * Suggestions bought THIS SESSION, keyed by sender — `shell/screener-suggest.ts`.
    *
@@ -1228,6 +1229,7 @@ export function useScreenerState(
     toast(message, {
       action: t("toastUndo"),
       duration: UNDO_MS,
+      undo: true,
       onAction: () => undo([id]),
       signal: entry.offer.ends.signal,
     });
@@ -1486,6 +1488,7 @@ export function useScreenerState(
       toast(summary(snaps), {
         action: t("toastUndo"),
         duration: UNDO_MS,
+        undo: true,
         onAction: () => undo(snaps.map((x) => x.id)),
         signal: offer.ends.signal,
       });

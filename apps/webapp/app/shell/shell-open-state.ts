@@ -27,7 +27,7 @@ import {
   type TriagePileEntry,
   type WaterlineMeta,
 } from "@ohmail/client-engine";
-import { type ToastFn } from "@ohmail/ui";
+import type { UndoToastFn } from "./undo-door";
 import { placeFirstRow, useCursorHint, type CursorHost } from "./cursor-placer";
 import { useCursorPlacer } from "./keymap";
 import type { MessageBarPanel } from "./message-chrome";
@@ -208,7 +208,8 @@ export interface ShellOpenStateInput {
   derived: number;
   route: Route;
   t: ReturnType<typeof useTranslations>;
-  toast: ToastFn;
+  /** The undo door's toast (`undo-door.ts`): mark-all's Undo is an offer `z` takes back. */
+  toast: UndoToastFn;
   /** The dispatch seam every read-state write leaves through (`shell-dispatch.ts`). */
   mutateAndReport: ShellDispatch["mutateAndReport"];
   /** Has the mail state settled? The route mirror will not erase a claim before it has. */
@@ -557,6 +558,7 @@ export function useShellOpenState({
     dispatchMarkAllRead((m) => engine.mutate(m), ids);
     toast(t("markAll.done", { count: ids.length }), {
       action: t("markAll.undo"),
+      undo: true,
       onAction: () => { dispatchMarkAll((m) => engine.mutate(m), ids, true); },
       duration: 6000,
     });
