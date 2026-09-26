@@ -11,11 +11,42 @@
  * `AccountLocale.tsx` decorates these controls inside the shell, where a session is proven.
  */
 
-import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
-import { NextIntlClientProvider } from "next-intl";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { IntlErrorCode, NextIntlClientProvider, type IntlError } from "next-intl";
 import { LocaleContext, type LocaleControls } from "../shell/LocaleContext";
-import { LOCALES, rememberLocale, setActiveCatalog, type AppLocale } from "../shell/locale";
+import {
+  LOCALES, normalizeLocale, rememberLocale, setActiveCatalog, type AppLocale,
+} from "../shell/locale";
 import { loadCatalog, type Messages } from "../../i18n/catalog";
+
+/**
+ * The document carries only the first screen's cut (`i18n/first-screen.ts`); the whole catalogue
+ * is a hashed chunk, asked for HERE as this module evaluates in a browser — before hydration, not
+ * after its commit. `<html lang>` is the locale the server resolved, so this is the catalogue the
+ * mount below wants; a document without one starts nothing. Handled, so an unused refusal is quiet.
+ */
+const early: { locale: AppLocale; catalog: Promise<Messages> } | null = (() => {
+  if (typeof document === "undefined") return null;
+  const locale = normalizeLocale(document.documentElement.lang);
+  if (locale === null) return null;
+  const catalog = loadCatalog(locale);
+  catalog.catch(() => {});
+  return { locale, catalog };
+})();
+
+/** A refused chunk is asked for again after this long, doubling, never slower than the cap. */
+const RETRY_FIRST_MS = 500;
+const RETRY_CAP_MS = 30_000;
+
+/**
+ * Until the whole catalogue lands, a namespace the document did not carry is MISSING by design:
+ * it renders nothing — never its dotted key — and is not reported. Any other intl error still is.
+ */
+function quietWhilePending(error: IntlError): void {
+  if (error.code === IntlErrorCode.MISSING_MESSAGE) return;
+  console.error(error);
+}
+const PENDING = { onError: quietWhilePending, getMessageFallback: (): string => "" } as const;
 
 export function LocaleShell({
   initialLocale,
@@ -26,11 +57,34 @@ export function LocaleShell({
   initialMessages: Messages;
   children: ReactNode;
 }) {
-  const [state, setState] = useState<{ locale: AppLocale; messages: Messages }>({
+  /* `complete`: the messages are the whole catalogue. The layout's are the cut, so never at first. */
+  const [state, setState] = useState<{ locale: AppLocale; messages: Messages; complete: boolean }>({
     locale: initialLocale,
     messages: initialMessages,
+    complete: false,
   });
   const [busy, setBusy] = useState(false);
+
+  /**
+   * The rest of the catalogue, once, for the locale the document rendered in. A switch that landed
+   * first wins — its catalogue is already whole and newer. A refused chunk is asked for again with
+   * a doubling wait, so a flaky connection costs time, never the copy.
+   */
+  useEffect(() => {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const attempt = (n: number): void => {
+      const ask = n === 0 && early?.locale === initialLocale ? early.catalog : loadCatalog(initialLocale);
+      ask.then((messages) => {
+        if (stopped) return;
+        setState((s) => (s.complete || s.locale !== initialLocale ? s : { locale: s.locale, messages, complete: true }));
+      }, () => {
+        if (!stopped) timer = setTimeout(() => attempt(n + 1), Math.min(RETRY_CAP_MS, RETRY_FIRST_MS * 2 ** n));
+      });
+    };
+    attempt(0);
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [initialLocale]);
 
   /**
    * The non-hook register, set during render and not in an effect. `format.ts` reads it
@@ -67,7 +121,7 @@ export function LocaleShell({
   const apply = useCallback(async (next: AppLocale): Promise<void> => {
     const messages = await loadCatalog(next);
     rememberLocale(next);
-    setState({ locale: next, messages });
+    setState({ locale: next, messages, complete: true });
   }, []);
 
   const adoptLocale = useCallback(
@@ -118,7 +172,12 @@ export function LocaleShell({
 
   return (
     <LocaleContext.Provider value={controls}>
-      <NextIntlClientProvider locale={state.locale} messages={state.messages} timeZone={zone}>
+      <NextIntlClientProvider
+        locale={state.locale}
+        messages={state.messages}
+        timeZone={zone}
+        {...(state.complete ? {} : PENDING)}
+      >
         {children}
       </NextIntlClientProvider>
     </LocaleContext.Provider>

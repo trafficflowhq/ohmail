@@ -7,6 +7,7 @@ import { Providers } from "./providers";
 import { SELF_HOST_BUILD } from "../self-host-marketing";
 import { DEFAULT_LOCALE, localeFromCookieHeader } from "../shell/locale";
 import { loadCatalog } from "../../i18n/catalog";
+import { firstScreenCatalog } from "../../i18n/first-screen";
 import "../app.css";
 /* AFTER app.css, so the Zero layout's overrides sit later in the cascade than the
    classic narrow blocks they re-arrange (specificity already favors them; order
@@ -122,7 +123,9 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
    * selector is how it is set.
    */
   const locale = localeFromCookieHeader(headers().get("cookie")) ?? DEFAULT_LOCALE;
-  const messages = await loadCatalog(locale);
+  /* The first screen's cut, not the catalogue: this document is `no-store` and re-sent on every
+     load, while the rest is a hashed chunk `LocaleShell` loads once and the browser keeps. */
+  const messages = firstScreenCatalog(await loadCatalog(locale));
   /*
    * The CSP nonce for the one inline script this group writes by hand. `middleware.ts` mints it, puts it on the
    * response's CSP, the request's (so Next stamps its own RSC bootstrap scripts) and on `x-nonce` — which is this;
