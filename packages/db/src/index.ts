@@ -45,7 +45,7 @@ export { ringFilingDoorbell, FILING_DOORBELL_MIN_GAP_MS } from "./filing-doorbel
 // The ONE spelling of the read-state intent — see the module header for why it lives here
 // (both the services and the worker write it, and the worker may not import services at
 // runtime). Reaches `schema-mail.js` alone, so the closure rule above holds.
-export { upsertDesiredSeen } from "./flag-intent.js";
+export { upsertDesiredSeen, upsertDesiredSeenMany } from "./flag-intent.js";
 
 // The ONE spelling of "record a learning signal, bump the graduation counter" — same argument as
 // the line above, moved for 0.14.1 (0.14.1): the organizer's request drain applies a

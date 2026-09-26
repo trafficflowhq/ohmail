@@ -3,9 +3,9 @@ import { randomUUID } from "node:crypto";
 import {
   assertOrganizerRole,
   mailboxes, mailboxFolders, messages, folderState, messageBodies, messageStates, claimIdempotencyKey,
-  recordChange, recordRouteOverride, recordRuleDelta, routeOverrideActionId,
+  recordChange, recordChanges, recordRouteOverride, recordRuleDelta, routeOverrideActionId,
   senderPatternFromAddress,
-  upsertDesiredSeen, ringFilingDoorbell, type LedgerTx, type OrganizedBy, type Tx,
+  upsertDesiredSeen, upsertDesiredSeenMany, ringFilingDoorbell, type LedgerTx, type OrganizedBy, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import type { Destination, NativeLocator } from "@trafficflow/core/mail";
@@ -1119,14 +1119,18 @@ export class MessageService {
       // they were minted per row, one gesture stamped its rows however far apart they landed.
       const at = ctx.now();
       const readAt = unread ? null : at;
-      for (const id of ids) {
-        await tx.update(messages).set({ unread, lastReadAt: readAt, updatedAt: at })
-          .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId)));
-        await upsertDesiredSeen(tx, id, observedById.get(id) ?? false, !unread, at);
-        last = await recordChange(tx, {
-          accountId: ctx.accountId, entityType: "message", entityId: id, op: "update", meta: null,
-        });
-      }
+      // THREE STATEMENTS FOR THE WHOLE BATCH, whatever its size: the message rows, their `\Seen`
+      // intents, then the account's seq row, taken last and held to commit. One change per message
+      // still, allocated in one block in the caller's order.
+      await tx.update(messages).set({ unread, lastReadAt: readAt, updatedAt: at })
+        .where(and(inArray(messages.id, ids), eq(messages.accountId, ctx.accountId)));
+      await upsertDesiredSeenMany(
+        tx, ids.map((id) => ({ id, observedSeen: observedById.get(id) ?? false })), !unread, at,
+      );
+      const seqs = await recordChanges(tx, ids.map((id) => ({
+        accountId: ctx.accountId, entityType: "message" as const, entityId: id, op: "update" as const, meta: null,
+      })));
+      last = seqs[seqs.length - 1] ?? null;
 
       // A DELIBERATE read spends the resurface — see `spendResurface`. Only when marking read
       // (`unread === false`), and never for a GLANCE (`via: "glance"` — the Ohbox dwell commit):
@@ -1495,13 +1499,10 @@ export class MessageService {
         eq(messageStates.state, "resurfaced"),
       ))
       .returning({ id: messageStates.id });
-    let last: bigint | null = null;
-    for (const r of cleared) {
-      last = await recordChange(tx, {
-        accountId: ctx.accountId, entityType: "message_state", entityId: r.id, op: "update", meta: null,
-      });
-    }
-    return last;
+    const seqs = await recordChanges(tx, cleared.map((r) => ({
+      accountId: ctx.accountId, entityType: "message_state" as const, entityId: r.id, op: "update" as const, meta: null,
+    })));
+    return seqs[seqs.length - 1] ?? null;
   }
 
   /** The observed folder: the folder_state truth, else the message's native locator, else INBOX. */

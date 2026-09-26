@@ -16,11 +16,23 @@ import type { Tx } from "./change-log.js";
 export async function upsertDesiredSeen(
   tx: Tx, id: string, observedSeen: boolean, desiredSeen: boolean, now: Date,
 ): Promise<void> {
-  await tx.insert(flagState).values({
-    messageId: id, desiredSeen, observedSeen,
-    lastSetBy: "us", reconcileStatus: desiredSeen === observedSeen ? "reconciled" : "pending",
+  await upsertDesiredSeenMany(tx, [{ id, observedSeen }], desiredSeen, now);
+}
+
+/**
+ * {@link upsertDesiredSeen} for a batch that takes ONE decision: one multi-row statement, each row
+ * carrying its own `observedSeen` for the INSERT arm. Ids must be distinct (one row may not take
+ * the conflict arm twice in a statement); an empty batch writes nothing.
+ */
+export async function upsertDesiredSeenMany(
+  tx: Tx, rows: ReadonlyArray<{ id: string; observedSeen: boolean }>, desiredSeen: boolean, now: Date,
+): Promise<void> {
+  if (rows.length === 0) return;
+  await tx.insert(flagState).values(rows.map((r) => ({
+    messageId: r.id, desiredSeen, observedSeen: r.observedSeen,
+    lastSetBy: "us", reconcileStatus: desiredSeen === r.observedSeen ? "reconciled" : "pending",
     conflict: false,
-  }).onConflictDoUpdate({
+  }))).onConflictDoUpdate({
     target: flagState.messageId,
     set: {
       desiredSeen, lastSetBy: "us", conflict: false, updatedAt: now,
