@@ -74,6 +74,32 @@
   </screenshots>
 
   <releases>
+    <release version="0.25.2" date="2026-09-26">
+      <description>
+        <ul>
+          <li>The first read after a pause no longer waits on the account check</li>
+          <li>Mail from your own addresses stays in your Inbox</li>
+          <li>A last visit or an "as of" more than a week ago shows its date</li>
+          <li>The held-mail offer stays dismissed until new held mail arrives</li>
+          <li>Setup's first pull ends when the import does</li>
+          <li>The web stays signed in across page loads</li>
+          <li>Long lists count from their first row</li>
+          <li>Drafts draws only the rows on screen</li>
+          <li>The phone's History year strip reaches the year</li>
+          <li>Sign out works on a desktop whose sign-in has expired</li>
+          <li>The sender sheet asks before a press over a rule of yours that disagrees</li>
+          <li>On Linux the desktop's mail engine uses less memory</li>
+          <li>Search finds the start of a word wherever the whole word is found</li>
+          <li>Setup names an organizer that stopped</li>
+          <li>A long document is no longer mistaken for a one-time code</li>
+          <li>The desktop app opens without a flash</li>
+          <li>Pictures on a paired phone come through the server's image proxy</li>
+          <li>Removing a mailbox on the desktop deletes all of its rows</li>
+          <li>Changes made on the desktop while Cloud is unreachable are kept until they reach it</li>
+          <li>A Move made just before ohmail closed is no longer lost on the phone</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.25.1" date="2026-09-26">
       <description>
         <ul>
@@ -187,18 +213,6 @@
       <description>
         <ul>
           <li>The desktop's Ohbox matches the web's</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.23.1" date="2026-09-24">
-      <description>
-        <ul>
-          <li>Drafts on the phone ask where you pressed, and a send we could not confirm says so plainly</li>
-          <li>Set up a new computer by confirming in your browser — no address to type</li>
-          <li>News no longer jumps while a card opens as you scroll</li>
-          <li>Someone you wrote to is never treated as spam</li>
-          <li>An Undo stays on screen for its whole window</li>
-          <li>The sign-in card opens at once when ohmail Cloud signs the desktop out</li>
         </ul>
       </description>
     </release>

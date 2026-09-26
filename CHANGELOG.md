@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.25.2] — 2026-09-26
+
 ### The first read after a pause no longer waits on the account check
 <!-- changes: fix-025-read-routes-keep-a-held-verdict.md -->
 
@@ -167,11 +174,6 @@ On the phone, Move, File and Junk wait a few seconds before they set where that 
 so the toast can offer Undo. The waiting press is now saved on the phone before Undo is offered. If
 ohmail is closed or stops during those seconds, the next launch makes the move and says how many
 messages it moved; a press older than a day is not made, and ohmail says so. Android and iOS.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
 
 ## [0.25.1] — 2026-09-26
 
@@ -9010,7 +9012,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.1...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.2...HEAD
+[0.25.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.2
 [0.25.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.1
 [0.25.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.0
 [0.24.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.24.0
