@@ -17,7 +17,7 @@ import { LocaleContext, type LocaleControls } from "../shell/LocaleContext";
 import {
   LOCALES, normalizeLocale, rememberLocale, setActiveCatalog, type AppLocale,
 } from "../shell/locale";
-import { loadCatalog, type Messages } from "../../i18n/catalog";
+import { loadCatalog, loadWholeCatalog, type Messages } from "../../i18n/catalog";
 
 /**
  * The document carries only the first screen's cut (`i18n/first-screen.ts`); the whole catalogue
@@ -29,7 +29,7 @@ const early: { locale: AppLocale; catalog: Promise<Messages> } | null = (() => {
   if (typeof document === "undefined") return null;
   const locale = normalizeLocale(document.documentElement.lang);
   if (locale === null) return null;
-  const catalog = loadCatalog(locale);
+  const catalog = loadWholeCatalog(locale);
   catalog.catch(() => {});
   return { locale, catalog };
 })();
@@ -74,7 +74,7 @@ export function LocaleShell({
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const attempt = (n: number): void => {
-      const ask = n === 0 && early?.locale === initialLocale ? early.catalog : loadCatalog(initialLocale);
+      const ask = n === 0 && early?.locale === initialLocale ? early.catalog : loadWholeCatalog(initialLocale);
       ask.then((messages) => {
         if (stopped) return;
         setState((s) => (s.complete || s.locale !== initialLocale ? s : { locale: s.locale, messages, complete: true }));

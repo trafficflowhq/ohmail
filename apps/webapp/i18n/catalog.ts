@@ -75,9 +75,25 @@ export async function loadCatalog(locale: AppLocale): Promise<Messages> {
   const base = await english();
   if (locale === DEFAULT_LOCALE) return base;
   try {
-    const over = (await OVERLAYS[locale as Overlay]()).default as Messages;
-    return fillFrom(base as never, over as never) as Messages;
+    return await filled(locale, base);
   } catch {
     return base;
   }
+}
+
+/** `locale`'s file filled over English; a file that cannot be loaded rejects. */
+async function filled(locale: AppLocale, base: Messages): Promise<Messages> {
+  const over = (await OVERLAYS[locale as Overlay]()).default as Messages;
+  return fillFrom(base as never, over as never) as Messages;
+}
+
+/**
+ * The same catalogue for the shell's FIRST load, which already renders `locale` from the
+ * document's cut and can ask again: a locale file that did not load REFUSES here instead of
+ * answering English, so a German reader on a flaky connection keeps German and retries rather
+ * than being switched to English for the session.
+ */
+export async function loadWholeCatalog(locale: AppLocale): Promise<Messages> {
+  const base = await english();
+  return locale === DEFAULT_LOCALE ? base : filled(locale, base);
 }
