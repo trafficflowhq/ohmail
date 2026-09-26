@@ -626,6 +626,17 @@ export type LeaseVerdict = OrganizeVerdict | StandDownVerdict | AvailableVerdict
 
 // ── LAYER 1: FORMAT ─────────────────────────────────────────────────────────────────────────
 
+/**
+ * "THIS RECORD CARRIES ITS DISCRIMINATOR", spelled as a SEARCH term every server answers alike —
+ * the one spelling for every `ohmail/_meta` record type (claim, ack, settings document). Every
+ * discriminator is written with the value `1` and every parser admits only `1`. A header value of
+ * `true` compiles to `HEADER <name> ""`, which some servers answer with nothing (Infomaniak,
+ * measured), so the value is asked for instead.
+ */
+export function metaHeaderTerm(name: string): Record<string, string> {
+  return { [name]: "1" };
+}
+
 const H = {
   lease: "X-Ohmail-Lease",
   kind: "X-Ohmail-Organizer-Kind",
@@ -1837,7 +1848,7 @@ export function makeLeasePeekIo(
         const claims = await searchHeaders(
           client,
           at.path,
-          { header: { [H.lease]: true } },
+          { header: metaHeaderTerm(H.lease) },
           { max: META_RECORDS_MAX_PER_FETCH, refuseWhenOver: true, budget },
         );
         if (claims !== null) return claims;
@@ -2689,9 +2700,9 @@ export async function readMetaFolderWindow(
  * the election's claim set, the peek), because a second copy is a second answer to "which
  * messages carry this header". `null`, never `[]`, when the connection cannot ask or the server
  * refuses: could-not-look and there-are-none are different answers — the election refuses on the
- * first and may elect on the second. `true` as a header value compiles to `HEADER <name> ""` —
- * header-PRESENT — measured on GreenMail and Dovecot rather than taken on the RFC's word. The
- * caller holds the lock; this issues no APPEND and no STORE.
+ * first and may elect on the second. Callers spell the header through {@link metaHeaderTerm},
+ * because an empty-value term is answered with nothing on some servers. The caller holds the
+ * lock; this issues no APPEND and no STORE.
  */
 /**
  * An expunge that resolved `true` is not a removal, and this is the only place that says so.
@@ -3446,7 +3457,7 @@ export function makeLeaseIo(
         }
         const invalidated = lastClaimReadFact;
         let gapWasRead = false;
-        const set = await searchHeaders(client, claimPath, { header: { [H.lease]: true } }, {
+        const set = await searchHeaders(client, claimPath, { header: metaHeaderTerm(H.lease) }, {
           budget,
           gapDownTo: ownUid,
           onGapRead: () => { gapWasRead = true; },
@@ -5029,18 +5040,21 @@ export function isAckRecord(raw: string): boolean {
 }
 
 /**
- * IS THE ACK HEADER PRESENT AT ALL — the local twin of `HEADER X-Ohmail-Ack ""`, which is what a
- * `true` header value compiles to on the wire and means PRESENT, whatever it says. Deliberately
- * NOT {@link isAckRecord}, which reads the value: the sweep's fallback has to reach the same set
- * the compound SEARCH reaches or the two forms delete different records, and a provider's answer
- * is not a place to change what a sweep covers.
+ * DOES THE ACK HEADER CARRY `1` — the local twin of the sweep's `HEADER X-Ohmail-Ack 1` term
+ * ({@link metaHeaderTerm}), which matches a value CONTAINING it. Deliberately NOT {@link
+ * isAckRecord}, which reads the value exactly: the sweep's fallback has to reach the same set the
+ * compound SEARCH reaches or the two forms delete different records, and a provider's answer is
+ * not a place to change what a sweep covers.
  */
 function hasAckHeader(raw: string): boolean {
   const headerBlock = raw.split(/\r?\n\r?\n/, 1)[0] ?? "";
+  const want = metaHeaderTerm(AH.ack)[AH.ack]!;
   for (const line of headerBlock.replace(/\r?\n[ \t]+/g, " ").split(/\r?\n/)) {
     const at = line.indexOf(":");
     if (at <= 0) continue;
-    if (line.slice(0, at).trim().toLowerCase() === AH.ack.toLowerCase()) return true;
+    if (line.slice(0, at).trim().toLowerCase() === AH.ack.toLowerCase() && line.slice(at + 1).includes(want)) {
+      return true;
+    }
   }
   return false;
 }
@@ -5522,11 +5536,11 @@ const compoundAckSearchRefused = new WeakSet<object>();
 
 /**
  * THE STALE ACKS IN ONE UID WINDOW, ASKED TWO WAYS. iCloud refuses the compound term
- * (`HEADER X-Ohmail-Ack "" BEFORE <date> UID lo:hi`) and imapflow resolves `false` rather than
+ * (`HEADER X-Ohmail-Ack 1 BEFORE <date> UID lo:hi`) and imapflow resolves `false` rather than
  * rejecting; the sweep is the only thing that ever makes this folder smaller, so that provider's
  * folder only grows until every bounded read of it refuses. The fallback puts the same question
  * with no SEARCH — a uid-range FETCH of the headers this sweep keys on — under the two terms it
- * spelled: the header PRESENT and an INTERNALDATE below a cutoff already floored to midnight.
+ * spelled: the header carrying `1` and an INTERNALDATE below a cutoff already floored to midnight.
  * Same window, same set. `null` is neither form could answer; a window it could not read WHOLE
  * throws instead.
  */
@@ -5535,7 +5549,7 @@ async function staleAckUidsInWindow(
 ): Promise<number[] | null> {
   if (typeof client.search === "function" && !compoundAckSearchRefused.has(client)) {
     const page = await client.search(
-      { header: { [AH.ack]: true }, before, uid: `${lo}:${hi}` }, { uid: true },
+      { header: metaHeaderTerm(AH.ack), before, uid: `${lo}:${hi}` }, { uid: true },
     );
     if (Array.isArray(page)) return page;
     /* Not an exhausted budget and not an empty window: this server declines this form, and it will

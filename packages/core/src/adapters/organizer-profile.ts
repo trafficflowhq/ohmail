@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
-import { META_FOLDER, makeMetaFolderRef, lastSequence, type MetaFolderClient } from "./organizer-lease.js";
+import {
+  META_FOLDER, makeMetaFolderRef, lastSequence, metaHeaderTerm, type MetaFolderClient,
+} from "./organizer-lease.js";
 import { ImapDeadline, IMAP_META_DEADLINE_MS } from "./imap-bounds.js";
 import { readAwayPiles } from "../away-scope.js";
 import {
@@ -82,6 +84,15 @@ const H = {
   profile: "X-Ohmail-Profile",
   installId: "X-Ohmail-Install-Id",
 } as const;
+
+/**
+ * THE SETTINGS SEARCH, the one question every door (desktop, phone, Cloud worker) puts to the
+ * folder through {@link makeProfileIo}. The header term is {@link metaHeaderTerm}'s: the value
+ * every document carries, because an empty-value term is answered with nothing on some servers.
+ */
+function profileSearch(uid: string): { header: Record<string, string>; uid: string } {
+  return { header: metaHeaderTerm(H.profile), uid };
+}
 
 /**
  * DOES THIS MESSAGE CLAIM TO BE A PROFILE AT ALL — the cheap pre-filter the bounded read retains on.
@@ -1297,7 +1308,7 @@ export function makeProfileIo(
           for (let w = 0; w < PROFILE_SEARCH_WINDOW_BUDGET; w++) {
             const lo = Math.max(1, hi - PROFILE_SEARCH_UID_WINDOW + 1);
             const found = await c.search(
-              { header: { [H.profile]: true }, uid: `${lo}:${hi}` }, { uid: true },
+              profileSearch(`${lo}:${hi}`), { uid: true },
             );
             if (!Array.isArray(found)) {
               return {
@@ -1329,7 +1340,7 @@ export function makeProfileIo(
             for (let w = 0; w < PROFILE_SEARCH_WINDOW_BUDGET; w++) {
               const lo = Math.max(bottom, gapHi - PROFILE_SEARCH_UID_WINDOW + 1);
               const found = await c.search(
-                { header: { [H.profile]: true }, uid: `${lo}:${gapHi}` }, { uid: true },
+                profileSearch(`${lo}:${gapHi}`), { uid: true },
               );
               if (!Array.isArray(found)) {
                 return {
@@ -1354,7 +1365,7 @@ export function makeProfileIo(
            * every settings write refusing for the install's life while the row read Up to date. */
           if (count !== undefined && count <= PROFILE_MESSAGES_MAX_PER_FETCH) {
             const all = await c.search(
-              { header: { [H.profile]: true }, uid: "1:*" }, { uid: true },
+              profileSearch("1:*"), { uid: true },
             );
             if (!Array.isArray(all)) {
               return {
@@ -1678,9 +1689,9 @@ export type ProfileReadResult =
      */
     generation: Generation;
     /**
-     * Profile records in the folder BESIDE the chosen one — crash residue, or the loser of a
-     * transient organizer overlap. Zero in the steady state; a caller that owns the mailbox
-     * heals a non-zero residue by rewriting, which expunges everything but its own document.
+     * Profile records BESIDE the chosen one that a rewrite by its writer clears: that install's
+     * older copies (crash residue) and malformed records. Another install's superseded copies are
+     * left alone and not counted, so a caller healing a non-zero residue does not rewrite for ever.
      */
     residue: number;
   }
@@ -1750,6 +1761,52 @@ function malformedProfile(reason: string, ref: unknown): MalformedProfile {
   return ref === undefined ? { malformed: true, reason } : { malformed: true, reason, ref };
 }
 
+/**
+ * THE DOCUMENT A READER TAKES — newest `updatedAt`, ties broken as below. One rule, so the read
+ * and the write agree on which document is current.
+ */
+function newestOf(ok: readonly ParsedProfileMessage[]): ParsedProfileMessage {
+  return [...ok].sort((a, b) => {
+    const at = Date.parse(a.doc!.updatedAt);
+    const bt = Date.parse(b.doc!.updatedAt);
+    const d = (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
+    if (d !== 0) return d;
+    /* THE SAME RULE AS `byCodeUnit`'s header, and this one decides WHICH DOCUMENT WINS.
+       Two records stamped the same instant are separated here, and under `localeCompare` two
+       installs reading the same folder could pick DIFFERENT documents as the newest — after
+       which each would go on believing the other's configuration was a stranger's. A tie-break
+       that is not stable across machines is not a tie-break. */
+    const byDoc = byCodeUnit(JSON.stringify(b.doc), JSON.stringify(a.doc));
+    if (byDoc !== 0) return byDoc;
+    /**
+     * Identical timestamp and identical document, different records — two installs writing the
+     * same configuration. The comparator returned 0, so the winner depended on folder listing
+     * order, and the winner's `installId` decides whether a reader treats the document as its own
+     * or a stranger's. Deterministic now, by the RIGHT key: `ref` DESCENDING — the ref is the uid
+     * and the dance is append-then-expunge, so a higher uid IS a later write. An earlier
+     * tie-break sorted by `installId` — deterministic and meaning nothing — and silently changed
+     * which record won: a promoted reader stopped arming its import hold. `installId` stays as
+     * the final tie-break, where it decides nothing observable.
+     */
+    const refA = Number(a.ref);
+    const refB = Number(b.ref);
+    if (Number.isFinite(refA) && Number.isFinite(refB) && refA !== refB) return refB - refA;
+    return byCodeUnit(String(b.ref ?? ""), String(a.ref ?? ""))
+      || byCodeUnit(String(a.installId ?? ""), String(b.installId ?? ""));
+  })[0]!;
+}
+
+/**
+ * A SUPERSEDED COPY IS LEFT ALONE: a readable document older than the newest, written by another
+ * install than `installId`. No write refuses on one, surfaces one or removes one — the newest
+ * superseded it, and the mailbox keeps it for whoever wrote it. `installId`'s own older copies,
+ * and malformed records, are still cleared by its next write.
+ */
+function isLeftAlone(r: ProfileRecord, newest: ParsedProfileMessage | null, installId: string | null): boolean {
+  if (newest === null || r === newest || isMalformedProfile(r) || r.status !== "ok") return false;
+  return r.installId !== installId;
+}
+
 export async function readOrganizerProfile(io: ProfileIo): Promise<ProfileReadResult> {
   let messages: RawProfileMessage[];
   try {
@@ -1810,34 +1867,7 @@ export async function readOrganizerProfile(io: ProfileIo): Promise<ProfileReadRe
     return { state: "unreadable", reason: first?.reason ?? "unreadable profile" };
   }
 
-  const newest = [...ok].sort((a, b) => {
-    const at = Date.parse(a.doc!.updatedAt);
-    const bt = Date.parse(b.doc!.updatedAt);
-    const d = (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
-    if (d !== 0) return d;
-    /* THE SAME RULE AS `byCodeUnit`'s header, and this one decides WHICH DOCUMENT WINS.
-       Two records stamped the same instant are separated here, and under `localeCompare` two
-       installs reading the same folder could pick DIFFERENT documents as the newest — after
-       which each would go on believing the other's configuration was a stranger's. A tie-break
-       that is not stable across machines is not a tie-break. */
-    const byDoc = byCodeUnit(JSON.stringify(b.doc), JSON.stringify(a.doc));
-    if (byDoc !== 0) return byDoc;
-    /**
-     * Identical timestamp and identical document, different records — two installs writing the
-     * same configuration. The comparator returned 0, so the winner depended on folder listing
-     * order, and the winner's `installId` decides whether a reader treats the document as its own
-     * or a stranger's. Deterministic now, by the RIGHT key: `ref` DESCENDING — the ref is the uid
-     * and the dance is append-then-expunge, so a higher uid IS a later write. An earlier
-     * tie-break sorted by `installId` — deterministic and meaning nothing — and silently changed
-     * which record won: a promoted reader stopped arming its import hold. `installId` stays as
-     * the final tie-break, where it decides nothing observable.
-     */
-    const refA = Number(a.ref);
-    const refB = Number(b.ref);
-    if (Number.isFinite(refA) && Number.isFinite(refB) && refA !== refB) return refB - refA;
-    return byCodeUnit(String(b.ref ?? ""), String(a.ref ?? ""))
-      || byCodeUnit(String(a.installId ?? ""), String(b.installId ?? ""));
-  })[0]!;
+  const newest = newestOf(ok);
 
   return {
     state: "found", doc: newest.doc!, installId: newest.installId, ref: newest.ref,
@@ -1845,7 +1875,7 @@ export async function readOrganizerProfile(io: ProfileIo): Promise<ProfileReadRe
        read parsed, never from the connection at this moment, because by now the caller's adapter
        may have selected another folder entirely. */
     generation,
-    residue: records.length - 1,
+    residue: records.filter((r) => r !== newest && !isLeftAlone(r, newest, newest.installId)).length,
   };
 }
 
@@ -1885,11 +1915,10 @@ export type WriteProfileResult =
  * Write the current profile — append the new copy, THEN expunge the old ones. The order is
  * load-bearing, as for the claim: expunging first means a crash leaves NO profile, which reads as
  * "this mailbox stored no settings"; appending first leaves two, which readers coalesce.
- * Expunged: every other message that parses as a profile record — our older copies, previous
- * organizers' (last-incumbent-wins), corrupt copies. Never touched: anything that is not a
- * profile record — the lease's claims cannot enter the removal set by construction. The one
- * refusal: a NEWER-format document anywhere in the folder — the caller surfaces "written by a
- * newer ohmail" and keeps its local state.
+ * Expunged: the newest document it supersedes (last-incumbent-wins), our older copies, corrupt
+ * copies. Never touched: another install's older copies ({@link isLeftAlone}) and anything that
+ * is not a profile record. Refused: a NEWER-format document anywhere in the folder, and an unseen
+ * foreign newest document (see the result's `foreign` member).
  */
 export async function writeOrganizerProfile(input: WriteProfileInput): Promise<WriteProfileResult> {
   const { io, doc, installId } = input;
@@ -1930,8 +1959,11 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
   // `replaceable` list, or it says exactly what the document being written says.
   const known = new Set(input.replaceable ?? []);
   const docFingerprint = profileFingerprint(doc);
-  const unseen = records.find((r): r is ParsedProfileMessage => {
-    if (isMalformedProfile(r) || r.status !== "ok") return false;
+  // Only the NEWEST can be new information: an older copy is superseded and left alone.
+  const ok = records.filter((r): r is ParsedProfileMessage => !isMalformedProfile(r) && r.status === "ok");
+  const newest = ok.length > 0 ? newestOf(ok) : null;
+  const unseen = [newest].find((r): r is ParsedProfileMessage => {
+    if (r === null) return false;
     if (r.installId === installId) return false;
     // HAVE I SEEN THIS DOCUMENT — asked at the document's OWN version, because that is the
     // identity the caller stored when it surfaced it (and an older ohmail stored before that).
@@ -1946,7 +1978,9 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
 
   // Captured BEFORE the append, so the copy we are about to write can never be in its own
   // removal set — the crash-safety of append-then-expunge depends on that.
-  const oldRefs = records.map((r) => r.ref).filter((r): r is unknown => r !== undefined);
+  const oldRefs = records
+    .filter((r) => !isLeftAlone(r, newest, installId))
+    .map((r) => r.ref).filter((r): r is unknown => r !== undefined);
 
   try {
     await io.appendProfile(formatProfileMessage(doc, { installId }));
