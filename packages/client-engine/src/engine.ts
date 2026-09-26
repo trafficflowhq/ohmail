@@ -936,7 +936,7 @@ export const BODIES_IDS_MAX = 20;
  * with, so it rides here. `draft` is NOT in the set: drafts are paged newest-first like messages.
  */
 export const SNAPSHOT_PAGE_1_STATE_KINDS = [
-  "rule", "approval", "tag", "folder", "settings",
+  "rule", "approval", "tag", "folder", "settings", "mailbox_profile",
 ] as const;
 
 /**

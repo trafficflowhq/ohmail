@@ -13,7 +13,7 @@ import { dialect } from "@trafficflow/db/dialect";
    `describeError` lives, and the sidecar's own logger already imports from there — so this adds
    nothing to the engine's closure. `lease.ts` carries the same warning for the same reason. */
 import { describeError } from "@trafficflow/core/mail";
-import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
+import { epochOf, sameEpoch, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { serializeOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
 import {
   PROFILE_VERSION, ProfileUnavailableError, isEmptyProfilePayload, makeProfileDoc, profileFingerprint,
@@ -1466,7 +1466,7 @@ export async function applyProfileRead(
           set: { accountId: deps.accountId, uidvalidity: epoch, uid, doc: read.doc, readAt: deps.now },
         });
       const same = held !== undefined && held.uid === uid
-        && held.uidvalidity !== null && BigInt(held.uidvalidity) === epoch;
+        && sameEpoch(epochOf(held.uidvalidity), epochOf(epoch));
       if (!same) await recordMailboxProfileChange(tx as unknown as LedgerTx, deps.accountId, deps.mailboxId);
     },
   );
