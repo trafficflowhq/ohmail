@@ -10,11 +10,9 @@
  */
 
 /*
- * No `store`: the mirror is in memory, rebuilt per page load — the authoritative copy is the
- * engine's database on the computer this page is served FROM, and the drain rides the user's
- * own tailnet, a LAN hop; a persistent IndexedDB mirror needs a server-confirmed owner id
- * (the shared client's cross-account lesson), and this door's surface has no session read to
- * confirm one with — if reload cost ever proves real, that is the named follow-up. No
+ * The mirror is in memory, rebuilt per page load from the computer this page is served FROM —
+ * a persistent mirror needs a server-confirmed owner id, which this door cannot read. Only the
+ * queued changes stay in this browser, keyed by the pairing (`host-engine.ts`). A
  * `sendSurfaceMaxTotalBytes` IS passed ({@link HOST_SEND_MAX_TOTAL_BYTES}): a send here rides
  * the host door's adapter and the door declares exactly this ceiling on its service bag
  */
@@ -25,7 +23,6 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { HttpAdapter, OhmailEngine } from "@ohmail/client-engine";
 import { AppShell } from "../../../webapp/app/shell/AppShell";
 import { dropLocalStorageKeys, type LocalSweep } from "../../../webapp/app/shell/boot-cache";
 import { COMPOSE_DRAFT_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "../../../webapp/app/shell/compose";
@@ -35,10 +32,10 @@ import { DELETE_INTENTS_PREFIX } from "../../../webapp/app/shell/delete-intents"
 import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
 import { SEND_LOCKS_PREFIX } from "../../../webapp/app/shell/send-lock";
 import { setStorageOwner } from "../../../webapp/app/shell/storage-owner";
-/* A type-only leaf (see `store-windows.ts`'s header): importing the constant costs this bundle
-   nothing and cannot convey the engine door the host-client scan refuses. */
-import { DESKTOP_WINDOW } from "../../../webapp/app/shell/store-windows";
 import { BearerManager } from "./bearer.js";
+import { createHostClientEngine } from "./host-engine.js";
+import { HostOutboxNotice } from "./HostOutboxNotice.js";
+import { discardHostOutbox, type HostOutboxDiscard } from "./outbox-store.js";
 import { PairScreen } from "./PairScreen.js";
 import {
   consentOverBearer, junkOverBearer, mailboxFactsOverBearer, olderBodyOverBearer,
@@ -99,6 +96,12 @@ function reportSweep(sweep: LocalSweep): void {
   });
 }
 
+/** The queued changes go with the pairing; a database that refused is on record, not done. */
+function reportDiscard(verdict: HostOutboxDiscard): void {
+  if (verdict === "discarded") return;
+  console.warn("ohmail host client: the queued changes kept in this browser could not be discarded");
+}
+
 export function HostGate({ bearer }: { bearer: BearerManager }) {
   const [paired, setPaired] = useState(bearer.paired());
   /** True when the CURRENT unpaired state was a mid-use death — the landing says so. */
@@ -116,6 +119,8 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
         // — but unreachable is not gone, and three of them are mail text on a device somebody
         // just signed out of. See HOST_SCRATCH_PREFIXES.
         reportSweep(dropLocalStorageKeys(HOST_SCRATCH_PREFIXES));
+        // The changes this browser kept for the pairing go with it too, every pairing's.
+        void discardHostOutbox().then(reportDiscard);
         // Land on /pair with the plain sentence — the ruled shape for a rotation failure. The
         // path is replaced (not pushed) so Back cannot return to a dead mailbox.
         window.history.replaceState(null, "", "/pair");
@@ -142,22 +147,15 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
    */
   const scope = bearer.pairScope();
 
-  /*
-   * `storePolicy: DESKTOP_WINDOW` — IN MEMORY IS THE REASON TO BOUND IT, not the reason not to:
-   * this door shipped passing none, so a paired phone or laptop held every row and every hydrated
-   * body for the life of the page. The window is the DESKTOP's rather than a number of its own
-   * (same `AppShell`, same mailbox), and what it evicts is a LAN hop away.
-   */
+  /** WHICH PAIRING THIS BROWSER SAID IT CANNOT KEEP CHANGES FOR — said once, dismissible. */
+  const [unkept, setUnkept] = useState<{ scope: string | null; dismissed: boolean } | null>(null);
+
   const engine = useMemo(
     () =>
       paired
-        ? new OhmailEngine({
-            adapter: new HttpAdapter({
-              baseUrl: "",
-              headers: () => bearer.headers(),
-              fetch: bearer.fetch,
-            }),
-            storePolicy: DESKTOP_WINDOW,
+        ? createHostClientEngine(bearer, {
+            scope,
+            onUnkept: () => setUnkept((u) => (u !== null && u.scope === scope ? u : { scope, dismissed: false })),
           })
         : null,
     // `scope` is the dependency that matters on a RE-PAIR: a fresh redeem mints a new one, so the
@@ -204,6 +202,8 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
           // not make them GONE, and three of them are mail text. Swept here for the same reason
           // and by the same list as the death path.
           reportSweep(dropLocalStorageKeys(HOST_SCRATCH_PREFIXES));
+          // Every earlier pairing's queued changes; the new one keeps its own.
+          void discardHostOutbox({ except: bearer.pairScope() }).then(reportDiscard);
           window.history.replaceState(null, "", "/");
           setDied(false);
           setOnPairPath(false);
@@ -250,6 +250,11 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
          were withheld on a door that serves all of them. The flag in front of the Folders pane
          is still off here and says so (`consentOverBearer`). */
       consentTransport={consent}
+      /* THIS BROWSER WILL NOT KEEP A CHANGE MADE WHILE THE HOST IS AWAY — it refused the
+         database. The shell's strip above the app, said once for the pairing. */
+      accountNotice={unkept !== null && unkept.scope === scope && !unkept.dismissed
+        ? <HostOutboxNotice onDismiss={() => setUnkept((u) => (u ? { ...u, dismissed: true } : u))} />
+        : undefined}
     />
   );
 }

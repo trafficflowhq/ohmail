@@ -147,7 +147,7 @@ describe("the desktop renderer's mirror is bounded by its window", () => {
    * of both defects.
    */
   it("the paired-device gate hands the window to the engine it builds", () => {
-    const src = readFileSync(resolve(HERE, "../src/host-client/HostGate.tsx"), "utf8");
+    const src = readFileSync(resolve(HERE, "../src/host-client/host-engine.ts"), "utf8");
     const at = src.indexOf("new OhmailEngine(");
     expect(at, "the gate builds an engine").toBeGreaterThan(-1);
     expect(src.slice(at, at + 600)).toContain("storePolicy: DESKTOP_WINDOW");

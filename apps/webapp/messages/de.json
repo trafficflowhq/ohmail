@@ -217,7 +217,9 @@
     "revokedBody": "Die Kopplung dieses Geräts ist beendet — sie wurde auf deinem Computer abgemeldet oder ist abgelaufen. Scanne einen frischen QR-Code aus ohmail auf diesem Computer, um neu zu koppeln.",
     "failedTitle": "Dieser Kopplungscode hat nicht funktioniert",
     "badToken": "Kopplungscodes funktionieren einmal und laufen ab. Zeig in ohmail auf deinem Computer einen frischen QR-Code an und scanne ihn erneut.",
-    "footer": "ohmail · deine Post, auf deinem eigenen Computer"
+    "footer": "ohmail · deine Post, auf deinem eigenen Computer",
+    "outboxNotKept": "Änderungen, die du vornimmst, während dein Computer nicht erreichbar ist, werden auf diesem Gerät nicht behalten — dieser Browser verweigert das Speichern. Lass diese Seite offen, bis sie gesendet sind.",
+    "outboxNotKeptDismiss": "Ausblenden"
   },
   "invites": {
     "title": "Einladungen",

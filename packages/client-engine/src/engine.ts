@@ -1651,6 +1651,14 @@ export interface EngineOptions {
    * load, and the entries sit visibly in `pendingMutations()` until their owner flushes.
    */
   outboxAutoReplay?: boolean;
+  /**
+   * A DROPPED WIRE IS THE SERVER OUT OF REACH. `true` where nothing stands between this page and
+   * its server but the transport — the page a paired device opens from a desktop host — so a
+   * `network` or `timeout` refusal is bounded by {@link OUTBOX_UNREACHABLE_CEILING_MS} exactly as
+   * `offline_read_only` is. Absent, only `offline_read_only` is bounded: a laptop off the network
+   * keeps its verbs queued at any age.
+   */
+  outboxTransportIsUnreachable?: boolean;
 }
 
 /**
@@ -2223,6 +2231,8 @@ export class OhmailEngine {
   private localRefusalRev = 0;
   /** {@link EngineOptions.outboxAutoReplay}, resolved once. */
   private readonly autoReplayOn: boolean;
+  /** {@link EngineOptions.outboxTransportIsUnreachable}, resolved once. */
+  private readonly transportIsUnreachable: boolean;
   /** Session-monotonic outbox tiebreak; seeded past every restored entry's `n`. */
   private outboxSeq = 0;
 
@@ -2543,6 +2553,7 @@ export class OhmailEngine {
     this.staleResumeMs = opts.staleResumeMs ?? STALE_RESUME_MS;
     this.replayDeadlineMs = opts.outboxReplayDeadlineMs ?? OUTBOX_REPLAY_DEADLINE_MS;
     this.autoReplayOn = opts.outboxAutoReplay !== false;
+    this.transportIsUnreachable = opts.outboxTransportIsUnreachable === true;
     this.now = opts.now ?? (() => new Date());
     this.bootedAt = this.now().getTime();
     this.uuid = opts.uuid ?? (() => crypto.randomUUID());
@@ -5921,6 +5932,12 @@ export class OhmailEngine {
     } catch { /* an undeleted entry replays idempotently — the safe direction */ }
   }
 
+  /** Is this refusal the server out of reach — see {@link EngineOptions.outboxTransportIsUnreachable}. */
+  private unreachable(err: MutationRejectedError): boolean {
+    if (err.code === "offline_read_only") return true;
+    return this.transportIsUnreachable && (err.code === "network" || err.code === "timeout");
+  }
+
   /**
    * DID THE SERVER LOOK AT THIS VERB AND FAIL IN A WAY NOBODY MODELLED? Only a `true` here spends the give-up
    * ceiling, so this test decides whether a verb can ever be abandoned. It is written to say NO whenever it is
@@ -6842,7 +6859,7 @@ export class OhmailEngine {
           return await this.abandon(p, attempts, rejection);
         }
         // THE UNREACHABLE SERVER'S CEILING — see {@link OUTBOX_UNREACHABLE_CEILING_MS}.
-        if (rejection.code === "offline_read_only"
+        if (this.unreachable(rejection)
             && this.now().getTime() - p.at >= OUTBOX_UNREACHABLE_CEILING_MS) {
           return await this.abandon(p, attempts, rejection);
         }
