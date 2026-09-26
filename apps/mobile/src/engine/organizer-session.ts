@@ -656,6 +656,12 @@ let restrictedSaid = false;
 let notificationsOff = false;
 
 /**
+ * THE LAST HAND-BACK DID NOT LAND BEFORE THE APP WAS FROZEN — `background.ts`'s
+ * `sayHandBackLate`. Its own record for its own sentence; a hand-back that lands in time clears it.
+ */
+let handBackLate = false;
+
+/**
  * Start it, FOR ONE LAUNCH. Answers whether THIS call is the live session, so a caller that cares
  * can say so. The `AppState` subscription is taken first, because the first transition can arrive
  * while this function is still on the stack — a person who opens the door and immediately switches
@@ -683,6 +689,11 @@ export function startOrganizerSession(generation: number, deps: OrganizerSession
     /* THE OTHER CAUSE, ITS OWN RECORD — see {@link notificationsOff}. The background half meets
        this on every Android 13+ install whose notification permission was never granted. */
     announceNotificationsOff: sayNotificationsOff,
+    sayHandBackLate: (late: boolean) => {
+      if (handBackLate === late) return;
+      handBackLate = late;
+      notifyOrganizerState();
+    },
     /* A START THAT DID NOT FINISH STARTING, onto the panel that names this phone — the surface
        `organizeRefused` already owns, because a person asking "is my mail being filed?" is looking
        there. A VALUE and not a sentence: worded at render, so a language change turns it over with
@@ -741,6 +752,9 @@ export const organizerRestrictedSaid = (): boolean => restrictedSaid;
 
 /** See {@link notificationsOff}. The sentence is `Copy.organizerNotificationsOff`. */
 export const organizerNotificationsOffSaid = (): boolean => notificationsOff;
+
+/** See {@link handBackLate}. The sentence is `Copy.organizerHandBackLate`. */
+export const organizerHandBackLateSaid = (): boolean => handBackLate;
 
 /**
  * This phone may not show the organizer's notification. Written by the background half's decline,
@@ -872,6 +886,7 @@ export function pokeOrganizerState(): void {
     live?.organizing.handedBack() ?? false,
     restrictedSaid,
     notificationsOff,
+    handBackLate,
     organizeRefused?.say ?? null,
   ]);
   if (now === lastSeen) return;
@@ -894,6 +909,7 @@ export function forgetOrganizerSessionForTests(): void {
   sessionDeps = null;
   restrictedSaid = false;
   notificationsOff = false;
+  handBackLate = false;
   organizeRefused = null;
   consentArmed = false;
   lastSeen = "";

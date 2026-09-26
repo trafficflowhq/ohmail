@@ -36,13 +36,13 @@ import { backupExclusion, subscribeBackupExclusion } from "../src/engine/backup-
 import { phoneEngineStart } from "../src/engine/engine-artifact";
 import {
   onOrganizerState, organizeRefusal, organizerHandedBack, organizerInstruction,
-  organizerNotificationsOffSaid, organizerRestrictedSaid, organizerStateVersion,
+  organizerHandBackLateSaid, organizerNotificationsOffSaid, organizerRestrictedSaid, organizerStateVersion,
   pressOrganizeHere, standaloneHere,
 } from "../src/engine/organizer-session";
 import { openNotificationSettings } from "../src/engine/notification-permission-native";
 import { NotifyPermission } from "../src/ui/NotifyPermission";
 import { useNotifyPermission } from "../src/ui/useNotifyPermission";
-import { standaloneAvailable } from "../src/engine/standalone-door";
+import { CLAIM_LAPSES_AFTER_MINUTES, standaloneAvailable } from "../src/engine/standalone-door";
 import {
   claimChipLabel,
   claimFrom,
@@ -530,6 +530,13 @@ function ThisPhonePanel() {
                     other. */}
                 {organizerRestrictedSaid() && row.key === HERE_CARD ? (
                   <Txt variant="note" tone="ink2">{Copy.organizerRestricted}</Txt>
+                ) : null}
+                {/* A HAND-BACK THAT DID NOT LAND BEFORE THE FREEZE, said on this phone's card —
+                    the other install could not take the mailbox meanwhile. */}
+                {organizerHandBackLateSaid() && row.key === HERE_CARD ? (
+                  <Txt variant="note" tone="ink2">
+                    {Copy.organizerHandBackLate(CLAIM_LAPSES_AFTER_MINUTES)}
+                  </Txt>
                 ) : null}
                 {/* AND THE OTHER CAUSE, WHICH IS NOT BATTERY SAVER. Both declines used to reach
                     the sentence above, which names battery saver — false on every Android 13+

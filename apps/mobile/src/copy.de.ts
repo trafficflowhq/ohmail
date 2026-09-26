@@ -833,6 +833,9 @@ export const DE: Deck = {
   organizerNotifyNotNow: "Jetzt nicht",
   organizerNotificationsOff:
     "Benachrichtigungen sind aus — organisiert wird nur, solange die App offen ist.",
+  organizerHandBackLate: (minutes: number) =>
+    "Als ohmail zuletzt in den Hintergrund ging, konnte es das Postfach nicht rechtzeitig "
+    + `zurückgeben, deshalb konnte eine andere Maschine es bis zu ${minutes} Minuten nicht übernehmen.`,
   organizerNotificationsSettings: "Benachrichtigungen einstellen",
 
   /* ------------------------------------------------------------- new mail */

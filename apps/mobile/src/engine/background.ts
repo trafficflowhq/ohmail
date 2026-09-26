@@ -182,6 +182,15 @@ export interface BackgroundDeps {
    */
   readonly sayStartFailed: (detail: unknown) => void;
   /**
+   * SAY WHETHER THE LAST HAND-BACK MADE IT BEFORE THE PLATFORM FROZE THE APP. `true` when it could
+   * not look or answered past {@link HAND_BACK_WINDOW_MS} (the claim may have blocked the other
+   * install for the staleness window); `false` when one landed in time, which takes it back.
+   * REQUIRED, so every composition says it: a late hand-back used to be silent.
+   */
+  readonly sayHandBackLate: (late: boolean) => void;
+  /** The wall clock the window is measured on. Absent ⇒ `Date.now`. */
+  readonly now?: () => number;
+  /**
    * How often the service asks the engine whether it still organizes anything — armed with
    * the service and cleared with it, never otherwise. The claim can be lost while the app is
    * backgrounded and nothing in JS chose it: somebody presses "Organize here" on their desktop
@@ -211,6 +220,13 @@ export interface BackgroundDeps {
 
 /** The claim watch's cadence. A minute: the engine's own poll is slower, so this never leads it. */
 export const CLAIM_WATCH_MS = 60_000;
+
+/**
+ * THE FEW SECONDS A PHONE LEAVING THE SCREEN HAS before the platform freezes it. A hand-back that
+ * answers later than this was frozen on the way (it completes at the thaw, on a fresh connection),
+ * so the claim may have blocked the person's other install meanwhile — which is said.
+ */
+export const HAND_BACK_WINDOW_MS = 5_000;
 
 /**
  * HOW MANY TIMES A STOP THE MAIL SERVER WOULD NOT CONFIRM IS ASKED AGAIN, and the wait between.
@@ -338,7 +354,9 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
    * may still hold that mailbox's claim, so "Handed back" would be a false state — the claim lapses
    * instead, and the row Settings renders says nothing that is not true.
    */
+  const clock = deps.now ?? Date.now;
   const handBack = async (why: BackgroundReason): Promise<boolean> => {
+    const startedAt = clock();
     let all: readonly { readonly mailboxId: string; readonly released: number | null }[];
     try {
       all = await deps.engine.handBack();
@@ -347,11 +365,18 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
          complete, which is what decides the state below. */
       log("organizer_hand_back_failed", { err, why });
       handedBack = false;
+      deps.sayHandBackLate(true);
+      moved();
       return false;
     }
     const unknown = all.filter((m) => m.released === null).length;
     handedBack = all.length > 0 && unknown === 0;
+    /* IN TIME, OR SAID — see {@link HAND_BACK_WINDOW_MS}. Measured on the wall clock, which is
+       what a frozen process does not stop. */
+    const late = unknown > 0 || clock() - startedAt > HAND_BACK_WINDOW_MS;
     log("organizer_hand_back", { why, mailboxes: all.length, unresolved: unknown, handedBack });
+    if (late) log("organizer_hand_back_late", { why, unresolved: unknown });
+    deps.sayHandBackLate(late);
     moved();
     return handedBack;
   };

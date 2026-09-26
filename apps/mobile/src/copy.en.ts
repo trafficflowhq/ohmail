@@ -1323,6 +1323,10 @@ const TABLE = {
    */
   organizerNotificationsOff:
     "Notifications are off — organizing runs only while the app is open.",
+  /* A hand-back the platform froze before it landed: the other install waited for the claim. */
+  organizerHandBackLate: (minutes: number) =>
+    "When ohmail last left the screen, it could not hand the mailbox back in time, so another "
+    + `machine could not take it for up to ${minutes} minutes.`,
   /** The only remaining act: Android never shows the prompt again after a refusal. */
   organizerNotificationsSettings: "Open notification settings",
 
