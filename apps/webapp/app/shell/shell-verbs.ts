@@ -46,7 +46,7 @@ import {
   moveInBatches, retroOf, screeningReadBack, screeningVerdict, verdictAction, verdictKeyOf, writtenRuleIds,
 } from "./press-verdict";
 import type { PressWatch } from "./press-watch";
-import { rulePastMail } from "./rule-past-mail";
+import { rulePastMail, ruleRetarget } from "./rule-past-mail";
 import { attributeMessages } from "./sender-audit";
 import { senderHitOf } from "./sender-hit";
 import {
@@ -760,7 +760,7 @@ export function useShellVerbs({
   const revokeRule = useStableCallback((ruleId: string) => engine.mutate({ kind: "rule_delete", ruleId }));
 
   const retargetRule = useStableCallback((ruleId: string, destination: Folder, applyRetro: boolean) =>
-    engine.mutate({ kind: "rule_update", ruleId, destination, applyRetro }));
+    engine.mutate(ruleRetarget(ruleId, destination, applyRetro)));
   /* Read at the press, over the mirror as it is then — the count a Change states. */
   const rulePastMailOf = useStableCallback((rule: RuleDTO, destination: Folder | null) => {
     const reader = engine.read();

@@ -8,10 +8,17 @@
  * a folder counts the ones not already there. `null` is "cannot count here": a header rule and a
  * body term are matched when mail is filed, never against the mirror.
  */
-import { FOLDER_OF_VIEW, retroPassWouldMove, type EngineMessage, type Folder, type RuleDTO } from "@ohmail/client-engine";
+import {
+  FOLDER_OF_VIEW, retroPassWouldMove, type EngineMessage, type EngineMutation, type Folder, type RuleDTO,
+} from "@ohmail/client-engine";
 import { routedRule } from "./sender-audit";
 
 const PLACES: readonly Folder[] = Object.values(FOLDER_OF_VIEW);
+
+/** A Change's wire. The answer always rides: absent, the server re-arms the past mail itself. */
+export function ruleRetarget(ruleId: string, destination: Folder, applyRetro: boolean): EngineMutation {
+  return { kind: "rule_update", ruleId, destination, applyRetro };
+}
 
 export function rulePastMail(
   rule: RuleDTO,
