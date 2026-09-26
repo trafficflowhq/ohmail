@@ -33,6 +33,32 @@ const DEFAULT_KB_K = 5;
 const MAX_THREAD_MESSAGES = 20;
 
 /**
+ * THE ADMISSION ARITHMETIC — never charge for a draft that cannot finish inside the invocation.
+ * The spend call's own budget (the entitlements client's `ENTITLEMENTS_CALL_BUDGET_MS`, restated
+ * because `src` may not name the Cloud barrel; a test pins the two), the least model time a
+ * charge may buy, and what is held back after the model for whichever close runs: the refund
+ * (the owed row, then one release call) or the draft's store and the response.
+ */
+export const DRAFT_ADMISSION = {
+  spendCallCeilingMs: 5_000,
+  minModelMs: 10_000,
+  closeReserveMs: 6_000,
+} as const;
+
+/** When the spend may still start, and when the model call is cut — or `null` where nothing kills a request. */
+export function draftWindow(
+  invocationBudgetMs: number | undefined, startedAt: number,
+  admission: { spendCallCeilingMs: number; minModelMs: number; closeReserveMs: number } = DRAFT_ADMISSION,
+): { admitUntil: number; modelDeadline: number } | null {
+  if (invocationBudgetMs === undefined) return null;
+  const modelDeadline = startedAt + invocationBudgetMs - admission.closeReserveMs;
+  return {
+    modelDeadline,
+    admitUntil: modelDeadline - admission.spendCallCeilingMs - admission.minModelMs,
+  };
+}
+
+/**
  * The per-call drafting deps: the INJECTED DraftPort (mocked in tests; a real
  * `makeSonnetDrafter(new Anthropic())` in prod) plus retrieval knobs. The port is
  * passed per-call — the service itself holds no live model client.
@@ -98,6 +124,17 @@ export class DraftingService {
   constructor(
     private readonly drafts: DraftsService = new DraftsService(),
     private readonly kb: KbService = new KbService(),
+    /**
+     * THE WALL-CLOCK CEILING THIS HOST KILLS A REQUEST AT — the screener's `invocationBudgetMs`,
+     * declared by the composition root and ABSENT for a host that has none (the desktop, a
+     * self-hosted server). Present, a charge is taken only with time left to use it, and the model
+     * call is cut before the kill so the refund can run. See {@link draftWindow}.
+     */
+    private readonly opts: {
+      invocationBudgetMs?: number;
+      /** Test seam: the arithmetic's three numbers. Default {@link DRAFT_ADMISSION}. */
+      admission?: typeof DRAFT_ADMISSION | { spendCallCeilingMs: number; minModelMs: number; closeReserveMs: number };
+    } = {},
   ) {}
 
   async draftFromMessage(
@@ -105,6 +142,9 @@ export class DraftingService {
     messageId: string,
     deps: DraftFromMessageDeps,
   ): Promise<{ draftId: string; seq: number }> {
+    // Measured from the TOP with `Date.now()`, not `ctx.now()`: a frozen test clock would switch
+    // the window off silently — the screener's `admissionDeadline` rule.
+    const window = draftWindow(this.opts.invocationBudgetMs, Date.now(), this.opts.admission);
     // 1. Load the target — account-scoped: a cross-account id is a 404.
     const [target] = await ctx.db
       .select({
@@ -206,6 +246,12 @@ export class DraftingService {
         "AI drafting is metered on this deployment but no refund-obligation store was composed",
       );
     }
+    // THE ADMISSION, before a credit moves: a spend taken with less than the least model time
+    // left buys a call the platform kills, and a kill leaves no refund behind. Refused as the
+    // retryable unavailable it is, with nothing charged.
+    if (window !== null && Date.now() > window.admitUntil) {
+      throw new ServiceError("ai_unavailable", 503, "AI drafting is temporarily unavailable; please retry");
+    }
     const attemptKey = deps.credits ? this.debitKey(target.id, deps) : null;
     /** The attempt THIS request charged, or null. The port's `attempt` is the refund memory. */
     let chargedAttempt: string | null = null;
@@ -283,7 +329,7 @@ export class DraftingService {
     //    into unlimited free drafts.
     let result;
     try {
-      result = await deps.drafter.draft(input);
+      result = await draftWithin(deps.drafter, input, window?.modelDeadline ?? null);
     } catch (err) {
       // `refund: true` only for an attempt THIS request charged. A `duplicate` names an earlier
       // attempt whose work may have been delivered, and reversing that one because this request
@@ -399,4 +445,37 @@ export class DraftingService {
   }
 }
 
+/**
+ * THE MODEL CALL, CUT AT THE DEADLINE. The drafter is handed the signal (the live client stops
+ * retrying and waiting on it) AND raced against it here, so a drafter that ignores the signal
+ * still cannot hold the request past the time the close was promised. A cut is a drafter failure:
+ * the caller's catch takes its one door — the owed row, then the release with `refund: true`.
+ */
+async function draftWithin(
+  drafter: DraftPort, input: DraftInput, deadline: number | null,
+): Promise<Awaited<ReturnType<DraftPort["draft"]>>> {
+  if (deadline === null) return drafter.draft(input);
+  const cut = (): ServiceError =>
+    new ServiceError("ai_unavailable", 503, "the drafting model did not answer in time; please retry");
+  const left = deadline - Date.now();
+  if (left <= 0) throw cut();
+  const ac = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      drafter.draft(input, { signal: ac.signal }),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => { ac.abort(); reject(cut()); }, left);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export const draftingService = new DraftingService();
+
+/** A drafting service for a host that states the ceiling it kills a request at (see the constructor). */
+export function makeDraftingService(opts: { invocationBudgetMs?: number } = {}): DraftingService {
+  return new DraftingService(undefined, undefined, opts);
+}

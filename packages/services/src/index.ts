@@ -253,7 +253,7 @@ export {
   type CreateDraftBody, type PatchDraftBody, type DraftMutation,
 } from "./drafts-service.js";
 export {
-  DraftingService, draftingService,
+  DraftingService, draftingService, makeDraftingService, draftWindow, DRAFT_ADMISSION,
   type DraftFromMessageDeps,
 } from "./drafting-service.js";
 export {

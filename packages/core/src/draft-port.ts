@@ -37,7 +37,16 @@ export interface DraftResult {
   rationale: string;
 }
 
+/**
+ * One call's limits. `signal` ends the call: a host that a platform kills passes the time it has
+ * left, so the call stops before the kill and the charge behind it can be returned. Optional — a
+ * drafter that ignores it is still cut off by its caller, it only keeps its socket open longer.
+ */
+export interface DraftCallOptions {
+  signal?: AbortSignal;
+}
+
 /** Injected into the drafting dependencies; absent on a deployment that offers no drafts. */
 export interface DraftPort {
-  draft(input: DraftInput): Promise<DraftResult>;
+  draft(input: DraftInput, opts?: DraftCallOptions): Promise<DraftResult>;
 }

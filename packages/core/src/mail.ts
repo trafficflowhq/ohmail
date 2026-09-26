@@ -44,7 +44,7 @@ export * from "./message-search.js";
 // it cannot construct one, and nothing here tells it what model would answer.
 export type { ClassifierInput, ClassifierResult, ClassifierPort } from "./classifier-port.js";
 export type {
-  DraftIncoming, DraftContext, DraftInput, DraftResult, DraftPort,
+  DraftIncoming, DraftContext, DraftInput, DraftResult, DraftPort, DraftCallOptions,
 } from "./draft-port.js";
 // The token-source port, from the auth-assembly seam (`adapters/imap-auth.js`) where it is
 // defined — the same line as the two ports above: a consumer of this entry point can be handed

@@ -28,7 +28,7 @@ import {
   nodeRemoteFetch, nodeHostResolver, scryptHasher,
   syncService, makePushService, rulesService, messageService, threadService, triageService,
   searchService, contactsService, snippetsService, notifyRulesService, awayResponderService,
-  attachmentsService, kbService, tagsService, folderOpsService, draftsService, draftingService, sendService,
+  attachmentsService, kbService, tagsService, folderOpsService, draftsService, makeDraftingService, sendService,
   scheduleService,
   SEND_ATTACHMENT_MAX_TOTAL_BYTES,
   makeAttachmentStagingPort,
@@ -193,7 +193,9 @@ function buildServices(cfg: HostConfig): ApiServices {
     drafts: draftsService,
     // Send later's two verbs (mail 0077) — the worker's scheduled-send pass is the sender.
     schedules: scheduleService,
-    drafting: draftingService,
+    /* The drafting call is cut before this host's kill, so a charge that bought nothing is
+       returned by the request that took it (`draftWindow`); the ceiling is the route's own. */
+    drafting: makeDraftingService({ invocationBudgetMs: API_MAX_DURATION_MS }),
     /* THE AI SPEND GATE IS COMPOSED ONCE, NOT PER ROUTE — see `entitlementsPort` below.
      *
      * This was `aiCredits`, a factory building a `debit_draft` gate per request with
@@ -421,9 +423,9 @@ function buildServices(cfg: HostConfig): ApiServices {
   if (anthropicApiKey) {
     lazily(bag, "drafter", () => makeSonnetDrafter(makeAnthropicClient({
       apiKey: anthropicApiKey,
-      // A Vercel function has `maxDuration 60`; a drafting request that outlives it is a 504
-      // the client cannot distinguish from a hang. One retry inside 25 s leaves room for the
-      // context assembly that precedes it and for the draft write that follows.
+      // A Vercel function has `maxDuration 60`, and 25 s twice plus a `retry-after` can outlive
+      // it: the drafting service hands this call the time left before its close reserve
+      // (`draftWindow`), and the client stops retrying and waiting when that runs out.
       timeoutMs: 25_000,
       maxRetries: 1,
       onUsage,

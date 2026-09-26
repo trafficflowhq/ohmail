@@ -240,6 +240,24 @@ function retryAfterMs(headers: Headers): number | null {
 }
 
 /**
+ * One signal that aborts when either does — `AbortSignal.any`, spelled out for runtimes that lack
+ * it. The per-attempt timeout and the caller's deadline are both limits on the same fetch.
+ */
+function eitherSignal(a: AbortSignal, b: AbortSignal): AbortSignal {
+  if (a.aborted) return a;
+  if (b.aborted) return b;
+  const both = new AbortController();
+  const stop = (): void => {
+    both.abort();
+    a.removeEventListener("abort", stop);
+    b.removeEventListener("abort", stop);
+  };
+  a.addEventListener("abort", stop, { once: true });
+  b.addEventListener("abort", stop, { once: true });
+  return both.signal;
+}
+
+/**
  * Build a live client. Constructing it performs NO I/O and validates nothing about the key
  * beyond its presence — key SHAPE is a config concern, asserted at boot by
  * {@link assertAnthropicKey}, so a bad secret fails the deployment rather than the mail.
@@ -284,8 +302,23 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
 
   return {
     messages: {
-      async create(params: unknown): Promise<{ content: unknown; usage?: unknown }> {
+      async create(
+        params: unknown, call?: { signal?: AbortSignal },
+      ): Promise<{ content: unknown; usage?: unknown }> {
         const startedAt = now();
+        // THE CALLER'S DEADLINE BINDS EVERY ATTEMPT AND EVERY WAIT BETWEEN THEM. A per-attempt
+        // timeout plus a `retry-after` of up to 20 s outlived the function it ran in; once the
+        // signal fires no attempt starts and a wait in progress ends, so the caller's own close
+        // (a refund, a sentence) runs inside the time it held back for it.
+        const deadline = call?.signal;
+        const waitFor = async (ms: number): Promise<void> => {
+          if (!deadline) return sleep(ms);
+          if (deadline.aborted) return;
+          await Promise.race([
+            sleep(ms),
+            new Promise<void>((resolve) => deadline.addEventListener("abort", () => resolve(), { once: true })),
+          ]);
+        };
         const requestedModel =
           typeof (params as { model?: unknown } | null)?.model === "string"
             ? (params as { model: string }).model
@@ -297,6 +330,10 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
         let lastError: unknown;
 
         for (;;) {
+          if (deadline?.aborted) {
+            lastError ??= new AnthropicTransportError("anthropic request not started: the caller's deadline passed");
+            break;
+          }
           attempt++;
           let response: Response | undefined;
           let transportError: unknown;
@@ -309,7 +346,7 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
                 "anthropic-version": ANTHROPIC_API_VERSION,
               },
               body,
-              signal: AbortSignal.timeout(timeoutMs),
+              signal: deadline ? eitherSignal(AbortSignal.timeout(timeoutMs), deadline) : AbortSignal.timeout(timeoutMs),
             });
           } catch (err) {
             // Held: the transport fault is classified with the response handling below.
@@ -349,7 +386,7 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
             if (!RETRIABLE_STATUS.has(response.status) || attempt > maxRetries) break;
             const wait = retryAfterMs(response.headers)
               ?? Math.round(backoffMs * 2 ** (attempt - 1) * (0.75 + random() * 0.5));
-            await sleep(wait);
+            await waitFor(wait);
             continue;
           }
 
@@ -358,7 +395,7 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
             transportError,
           );
           if (attempt > maxRetries) break;
-          await sleep(Math.round(backoffMs * 2 ** (attempt - 1) * (0.75 + random() * 0.5)));
+          await waitFor(Math.round(backoffMs * 2 ** (attempt - 1) * (0.75 + random() * 0.5)));
         }
 
         await emit({

@@ -151,14 +151,11 @@ export function useDraftReply(opts: {
          * already been told they cannot afford.
          */
         setPhase("offered");
-        // THE THREE REFUSALS EVERY DEPLOYMENT CAN MAKE COME OUT OF THE CATALOGUE, by their code
-        // — the twin of the Screener's rule, for the same reason: the server's `message` is
-        // English written for a log, and a German reader was being shown it. Everything else
-        // still passes through verbatim, which is what the paragraph above is about.
-        // THE CHARGED-AND-FAILED PAIR FIRST, because it is the only refusal on this path that
-        // says something about the person's MONEY, and the generic arms below say the opposite:
-        // `failedOpaqueEarly` ends "Nothing was charged", which is exactly false here — the spend
-        // landed and the drafter is what failed.
+        // THE THREE REFUSALS EVERY DEPLOYMENT CAN MAKE COME OUT OF THE CATALOGUE, by their code,
+        // for the Screener's reason: the server's `message` is English written for a log.
+        // THE CHARGED-AND-FAILED PAIR FIRST — the only refusal here that knows what happened to
+        // the person's money. An unmodelled fault does not (a killed request answers with no
+        // envelope at all), so `failedOpaqueEarly` says only what the kept key makes true.
         const paid = draftFailureKey(err);
         const key = aiRefusalKey(err);
         setNotice(paid !== null

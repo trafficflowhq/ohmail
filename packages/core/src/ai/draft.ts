@@ -1,5 +1,5 @@
 import type { AnthropicLike } from "./classify.js";
-import type { DraftInput, DraftPort, DraftResult } from "../draft-port.js";
+import type { DraftCallOptions, DraftInput, DraftPort, DraftResult } from "../draft-port.js";
 import {
   DRAFT_PREFIX, DRAFT_RESULT_SCHEMA, coerceDraftResult, draftUserPayload,
 } from "../draft-prompt.js";
@@ -18,7 +18,7 @@ import {
 /* Re-exported so that consumers importing the drafting vocabulary from this module — or from the
  * package barrel, which re-exports this file — are unaffected by the port having moved out. */
 export type {
-  DraftIncoming, DraftContext, DraftInput, DraftResult, DraftPort,
+  DraftIncoming, DraftContext, DraftInput, DraftResult, DraftPort, DraftCallOptions,
 } from "../draft-port.js";
 /* The question, re-exported from the leaf that now owns it. */
 export {
@@ -104,9 +104,9 @@ function extractJsonText(content: unknown): string {
  */
 export function makeSonnetDrafter(client: AnthropicLike, opts: SonnetDrafterOpts = {}): DraftPort {
   return {
-    async draft(input: DraftInput): Promise<DraftResult> {
+    async draft(input: DraftInput, call?: DraftCallOptions): Promise<DraftResult> {
       const params = buildDraftParams(input, opts);
-      const resp = await client.messages.create(params);
+      const resp = await client.messages.create(params, call?.signal ? { signal: call.signal } : undefined);
       const text = extractJsonText(resp.content);
       let parsed: unknown;
       try {

@@ -36,7 +36,8 @@ export type { ClassifyUserPayload } from "../classify-prompt.js";
  * satisfies this shape.
  */
 export interface AnthropicLike {
-  messages: { create(params: unknown): Promise<{ content: unknown; usage?: unknown }> };
+  /** `opts.signal` ends the call, retries and the wait before one included (see `makeAnthropicClient`). */
+  messages: { create(params: unknown, opts?: { signal?: AbortSignal }): Promise<{ content: unknown; usage?: unknown }> };
 }
 
 export interface HaikuClassifierOpts {
