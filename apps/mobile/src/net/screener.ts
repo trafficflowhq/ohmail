@@ -3,14 +3,13 @@ import type { ConnectedSession } from "./pairing.js";
 import { requestBase } from "./request-base";
 import { relayedOf, type RelayedDecision } from "../state/relay";
 /**
- * The waiting queue as the server holds it — `GET /screener` over the paired server. The server's
- * queue is a derivation over mail physically in `ohmail/Screener`, one row per sender
- * (`screener-service.ts#list`), consulting no rules: a sender whose mail is at the gate is waiting,
- * whatever this account decided later. The client partition re-homes a DECIDED sender's gate mail
- * for display, so that sender leaves the derived queue while their mail is still held. On a paired
- * door this read is the Screener's source of truth; the partition is the offline fallback, and the
- * surface says which it shows. Transport is `session.fetch` only; `null` means "could not ask",
- * never "nobody is waiting".
+ * The waiting queue as the server holds it — `GET /screener`, a derivation over mail physically in
+ * `ohmail/Screener`, one row per sender (`screener-service.ts#list`), consulting no rules: a sender
+ * whose mail is at the gate is waiting, whatever this account decided later. The client partition
+ * re-homes a DECIDED sender's gate mail for display, so this read is the Screener's source of truth
+ * and the partition the offline fallback; the surface says which it shows. Every page is asked
+ * through the engine's own door, which remembers each representative it served, so a decision on
+ * a sender this windowed mirror holds no mail of is still sent. `null` means "could not ask".
  */
 
 /** One waiting sender, as the route states them. The representative message, and who sent it. */
@@ -32,26 +31,6 @@ export interface ServerWaitingSender {
  */
 const MAX_PAGES = 25;
 
-/** A row is kept only when it can be acted on: an id to decide against and an address to name. */
-function rowOf(raw: unknown): ServerWaitingSender | null {
-  if (typeof raw !== "object" || raw === null) return null;
-  const r = raw as Record<string, unknown>;
-  const sender = (typeof r.sender === "object" && r.sender !== null ? r.sender : {}) as Record<string, unknown>;
-  const messageId = typeof r.messageId === "string" && r.messageId !== ""
-    ? r.messageId
-    : typeof r.id === "string" ? r.id : "";
-  const address = typeof sender.address === "string" ? sender.address : "";
-  if (messageId === "" || address === "") return null;
-  return {
-    messageId,
-    address,
-    name: typeof sender.name === "string" && sender.name !== "" ? sender.name : null,
-    receivedAt: typeof r.receivedAt === "string" ? r.receivedAt : "",
-    subject: typeof r.subject === "string" ? r.subject : "",
-    snippet: typeof r.snippet === "string" ? r.snippet : "",
-  };
-}
-
 /**
  * Read the whole waiting queue, or `null` for "could not ask". A page can come back EMPTY WITH A
  * CURSOR STILL SET, meaning "keep going" (`screener-service.ts:523`): the page filters decided
@@ -68,17 +47,16 @@ export async function readScreenerWaiting(
     const out: ServerWaitingSender[] = [];
     let cursor: string | null = null;
     for (let page = 0; page < MAX_PAGES; page++) {
-      const q = `?limit=200${cursor === null ? "" : `&cursor=${encodeURIComponent(cursor)}`}`;
-      const res = await session.fetch(`${requestBase(session)}/screener${q}`, { method: "GET" });
-      if (res.status !== 200) return null;
-      const body = (await res.json()) as { items?: unknown; nextCursor?: unknown } | null;
-      const items = Array.isArray(body?.items) ? body.items : null;
-      if (items === null) return null;
-      for (const raw of items) {
-        const row = rowOf(raw);
-        if (row !== null) out.push(row);
+      // The engine's parse keeps a row only when it names a message to decide and an author.
+      const got = await session.engine.screenerWaitingPage(cursor);
+      if (got === null) return null;
+      for (const s of got.senders) {
+        out.push({
+          messageId: s.messageId, address: s.address, name: s.name,
+          receivedAt: s.receivedAt, subject: s.subject, snippet: s.snippet,
+        });
       }
-      cursor = typeof body?.nextCursor === "string" && body.nextCursor !== "" ? body.nextCursor : null;
+      cursor = got.nextCursor;
       if (cursor === null) return out;
     }
     /* The page bound was reached with a cursor still in hand. What is in `out` is a PREFIX of the

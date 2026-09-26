@@ -88,6 +88,7 @@ import {
   soleMessageMailbox,
   stableActions,
   waitingAfterDecide,
+  waitingOnScreen,
   hiddenMessagesReader,
   UNDO_MS,
   type ToastOpts,
@@ -817,6 +818,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   const [screenerServer, setScreenerServer] = useState<readonly ServerWaitingSender[] | null>(null);
   /* This phone's decisions the organizer has not answered yet, on the queue read's cadence. */
   const [relayed, setRelayed] = useState<readonly RelayedDecision[] | null>(null);
+  /** Senders a press on a store-backed row holds off the shelf until its answer — see `waitingOnScreen`. */
+  const [leavingWaiting, setLeavingWaiting] = useState<ReadonlyArray<{ address: string; scope: Scope }>>([]);
   /**
    * THE ACCOUNT'S FACE, and a write in flight. `null` is "the account has no preference", which
    * is also where a fresh session starts — account A's face must never skin account B, the same
@@ -1012,6 +1015,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // account B's, and a stale set would name senders whose mail this mirror does not hold.
     setScreenerServer(null);
     setRelayed(null);
+    setLeavingWaiting([]);
     /* And the FACE, for the same reason and one more: an account's appearance choice is that
        account's state, so the next session starts with none and the device's own pin (which
        outranks it either way) is deliberately left alone — it belongs to the phone, not to
@@ -1179,6 +1183,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         autoUnsubscribe: () => !standaloneNow.current && autoUnsubscribeNow.current,
         /* THE PRESS THAT WAS SENT, MARKED AT ONCE; the next read confirms or replaces it. */
         relayedHere: (decided) => setRelayed((prev) => withSentHere(prev, decided)),
+        // The hold is its own object, so a release takes back exactly the press that made it.
+        leaveWaiting: (decided) => {
+          const hold = { ...decided };
+          setLeavingWaiting((prev) => [...prev, hold]);
+          return () => setLeavingWaiting((prev) => prev.filter((h) => h !== hold));
+        },
       })
       : null),
     [engine, showToast, zone],
@@ -1458,7 +1468,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     /* THE PAIRED DOOR'S QUEUE IS THE SERVER'S SET — see `liveScreener`. `null` here is the
        standalone door and a paired door that has not been answered yet; the derived list then
        stands and the meta below says the count was worked out on this phone. */
-    const screener = liveScreener(pres, v, scopes, screenerServer);
+    const screener = liveScreener(pres, v, scopes, waitingOnScreen(screenerServer, leavingWaiting));
     /* The RAW mirror, not `pres`: the projection deletes History's rows, which is what makes
        History a presentation rather than a folder. See `liveHistory`. */
     const history = liveHistory(base, world.history, v);
@@ -1598,7 +1608,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, session, scopes, zone, locale, actions, version, freshBeat, searchRev, walker, searchWalker, offMirrorRev,
     foldersOn, foldersPending, foldersStorable, setFoldersEnabled, signatures,
-    resurfaceTime, rememberResurfaceTime, screening, screenerServer, relayed, heldDeletes, heldPlaces]);
+    resurfaceTime, rememberResurfaceTime, screening, screenerServer, relayed, leavingWaiting, heldDeletes,
+    heldPlaces]);
 
   /**
    * AND THE WORLD THE SCREENS READ — the projection above plus the facts that move with the

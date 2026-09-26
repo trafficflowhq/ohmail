@@ -5271,15 +5271,15 @@ export class OhmailEngine {
   }
 
   /**
-   * THE QUEUE PAST ITS FIRST PAGE — asked when a person scrolls to the end of the page the mirror
-   * holds, and never written to the mirror (a sender row here is a REST row, not mirror state).
-   * `null` from a door that cannot read the queue. Each representative is remembered so a
-   * decision on it is sent even though the mirror has no row for it.
+   * ONE PAGE OF THE QUEUE FOR A SURFACE THAT WALKS IT — the web past the page the mirror holds, the
+   * phone every page (`cursor` null is the first). Never written to the mirror (a sender row here
+   * is a REST row, not mirror state). `null` from a door that cannot read the queue. Each
+   * representative is remembered so a decision on it is sent even though the mirror has no row.
    */
-  async screenerWaitingPage(cursor: string): Promise<{ senders: ScreenerWaitingSenderDTO[]; nextCursor: string | null } | null> {
+  async screenerWaitingPage(cursor: string | null): Promise<{ senders: ScreenerWaitingSenderDTO[]; nextCursor: string | null } | null> {
     const ask = this.adapter.screenerWaiting;
     if (!ask) return null;
-    const wire = await ask.call(this.adapter, { cursor, limit: SCREENER_WAITING_PAGE });
+    const wire = await ask.call(this.adapter, cursor === null ? { limit: SCREENER_WAITING_PAGE } : { cursor, limit: SCREENER_WAITING_PAGE });
     const [page] = this.store.entries<ScreenerWaitingDTO>(SCREENER_WAITING_TYPE)
       .filter((e) => e.id === SCREENER_WAITING_PAGE_ID);
     const total = page?.entity?.kind === "page" ? page.entity.total : 0;

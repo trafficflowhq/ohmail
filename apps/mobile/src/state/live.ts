@@ -1400,6 +1400,18 @@ export function waitingAfterDecide(
   });
 }
 
+/**
+ * THE SHELF WHILE A PRESS IS IN THE AIR — the cached queue less every sender a decide on a
+ * store-backed row is holding off it ({@link LiveDeps.leaveWaiting}), by the rule a landed decide
+ * retires them with. A released hold that did not land puts the row back.
+ */
+export function waitingOnScreen(
+  server: readonly ServerWaitingSender[] | null,
+  leaving: ReadonlyArray<{ address: string; scope: Scope }>,
+): readonly ServerWaitingSender[] | null {
+  return leaving.reduce<readonly ServerWaitingSender[] | null>((s, d) => waitingAfterDecide(s, d), server);
+}
+
 export interface WorldPile {
   kind: PileKind;
   title: string;
@@ -2359,6 +2371,13 @@ export interface LiveDeps {
   autoUnsubscribe?: () => boolean;
   /** A decision SENT to the organizer: the sender keeps a mark until it answers (`state/relay.ts`). */
   relayedHere?: (decided: { address: string; scope: Scope }) => void;
+  /**
+   * A DECIDE ON A ROW ONLY THE STORE BACKS, FROM THE PRESS TO ITS ANSWER: the holder of the cached
+   * queue keeps the sender off the shelf until the returned release, which the press calls once
+   * the answer is in (after {@link forgetWaiting} on a landed one). The mirror-backed row needs no
+   * hold — the decide's own overlay moves its mail. Absent ⇒ the row stays until the answer.
+   */
+  leaveWaiting?: (decided: { address: string; scope: Scope }) => () => void;
 }
 
 /**
@@ -3047,12 +3066,6 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   const decide = async (row: ScreenerRow, dest: Destination, read: boolean, scope: Scope): Promise<boolean> => {
     const raw = engine.read();
     const rep = raw.get<EngineMessage>("message", row.id);
-    if (!rep) {
-      // The representative left the mirror between the render and the press (a drain, an
-      // eviction). The one silent branch the webapp's commit named — never dispatch nothing.
-      toast(refuse("liveDecideFailed", row.address));
-      return false;
-    }
     // Demote-stays-unread: filing to Screen out or Spam never carries a read verb.
     const readFlag = read && dest !== "screened" && dest !== "spam";
     // A derived row's spam verdict rides the NO branch — `yes` is the verb that ADMITS a
@@ -3071,9 +3084,16 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
      */
     let queuedWith: { name: string | null } | null = null;
     let landed: Promise<PressVerdict>;
-    const decideRoute = physicalFolderOf(rep) === FOLDER_OF_VIEW.screener;
+    const decideRoute = rep === undefined || physicalFolderOf(rep) === FOLDER_OF_VIEW.screener;
     let undo: ToastOpts | undefined;
+    /** Releases a row the store backs from the shelf's hold once the answer is in. */
+    let held: (() => void) | undefined;
     if (decideRoute) {
+      /* A ROW THIS MIRROR DOES NOT BACK IS THE STORE'S: the queue is not windowed and the mirror
+         is, so the decide goes to the store on the door the engine sends the representatives it
+         served through, and only the engine may refuse one it never served. Such a row leaves
+         the shelf at the press and comes back if the press does not land. */
+      if (rep === undefined) held = deps.leaveWaiting?.({ address: row.address, scope });
       landed = engine.mutate({
         kind: "screener_decide",
         senderId: row.id,
@@ -3135,6 +3155,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        the sentences below because both of them are true of a landed decide, including the one
        recorded for another install: the route filters a DECIDED sender out whoever files it. */
     if (v.kind === "applied") deps.forgetWaiting?.({ address: row.address, scope });
+    held?.();
     /* THE DECIDE'S OWN QUEUED SENTENCE COMES FIRST, because it is the more specific one: a
        CONFIRMED decide against a mailbox somebody else organizes carries the holder on
        `pendingWith`, and that names the install as well as the wait. Everything else goes
