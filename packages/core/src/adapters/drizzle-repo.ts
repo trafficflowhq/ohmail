@@ -393,6 +393,10 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
   lockAccountThreadStructure(accountId: string): Promise<void>;
   getMailboxFolders(mailboxId: string): Promise<Array<{ folder: string } & PersistedFolderCursor>>;
   upsertMailboxFolder(mailboxId: string, folder: string, cursor: PersistedFolderCursor): Promise<void>;
+  /** {@link upsertMailboxFolder} for several folders of one mailbox: one fence, one statement. */
+  upsertMailboxFolders(
+    mailboxId: string, entries: ReadonlyArray<{ folder: string; cursor: PersistedFolderCursor }>,
+  ): Promise<void>;
   /**
    * WHERE A BUDGETED PASS STOPPED, for this whole mailbox — `null` clears it (mail 0115).
    *
@@ -2368,27 +2372,32 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   async upsertMailboxFolder(mailboxId: string, folder: string, cursor: PersistedFolderCursor): Promise<void> {
-    /**
-     * `server_exists` is spread, not assigned (mail 0083). Absent means this pass did not open
-     * the folder — the passive fast path skips the SELECT on a provably unchanged folder, and
-     * every fake adapter omits it. Assigning `?? null` would erase the last count somebody
-     * actually observed, once per cycle, collapsing the strip's denominator to folders that
-     * happened to change. An absent value writes nothing on both arms of the upsert; the column
-     * is nullable because NULL means never opened under this build, a different fact from zero.
-     */
-    const exists = cursor.serverExists;
-    // The mailbox tombstone — `insertMessage`'s note, same key and same order.
+    await this.upsertMailboxFolders(mailboxId, [{ folder, cursor }]);
+  }
+
+  async upsertMailboxFolders(
+    mailboxId: string, entries: ReadonlyArray<{ folder: string; cursor: PersistedFolderCursor }>,
+  ): Promise<void> {
+    if (entries.length === 0) return;
+    // The mailbox tombstone — `insertMessage`'s note, same key and same order. Once per mailbox.
     await fenceErasedMailbox(this.db as unknown as Tx, this.d, mailboxId);
-    await this.db.insert(mailboxFolders).values({
+    /**
+     * `server_exists` (mail 0083): absent means this pass did not open the folder (the passive fast
+     * path, every fake adapter), and an absent value must leave the stored count alone — NULL means
+     * never opened under this build, a different fact from zero. One statement carries rows with
+     * and without it, so the conflict arm keeps the stored count wherever the row brought none.
+     */
+    const excluded = (c: string) => sql.raw(`excluded.${c}`);
+    await this.db.insert(mailboxFolders).values(entries.map(({ folder, cursor }) => ({
       mailboxId, folder,
       uidvalidity: BigInt(cursor.uidValidity), uidnext: BigInt(cursor.uidNext), highestmodseq: BigInt(cursor.highestModseq),
-      ...(exists === undefined ? {} : { serverExists: exists }),
-    }).onConflictDoUpdate({
+      serverExists: cursor.serverExists ?? null,
+    }))).onConflictDoUpdate({
       target: [mailboxFolders.mailboxId, mailboxFolders.folder],
       set: {
-        uidvalidity: BigInt(cursor.uidValidity), uidnext: BigInt(cursor.uidNext),
-        highestmodseq: BigInt(cursor.highestModseq), updatedAt: new Date(),
-        ...(exists === undefined ? {} : { serverExists: exists }),
+        uidvalidity: excluded("uidvalidity"), uidnext: excluded("uidnext"),
+        highestmodseq: excluded("highestmodseq"), updatedAt: new Date(),
+        serverExists: sql`coalesce(${excluded("server_exists")}, ${mailboxFolders.serverExists})`,
       },
     });
   }

@@ -363,9 +363,11 @@ export function newCycleCensus(): CycleCensus {
 
 export async function buildCursor(
   repo: WorkerRepo, mailboxId: string, deadLetters?: DeadLetterLedger, census?: CycleCensus,
-  memo?: KnownSetCache,
+  memo?: KnownSetCache, persisted?: Map<string, PersistedFolderCursor>,
 ): Promise<ImapCursor> {
   const folderRows = await repo.getMailboxFolders(mailboxId);
+  // The rows as stored, for the cycle's cursor write to compare against: an unchanged folder is not rewritten.
+  for (const r of folderRows) persisted?.set(r.folder, r);
   const names = new Set<string>(WATCHED_FOLDERS);
   for (const r of folderRows) names.add(r.folder);
   if (census !== undefined) census.cursorBuilds += 1;
@@ -450,6 +452,19 @@ export async function buildCursor(
       ? {}
       : { budgetStop: { folder: stopped.folder, ...stopped.budgetStop } }),
   };
+}
+
+/**
+ * Would writing `next` change the stored row? The three watermarks compared as the numbers the row
+ * holds, and `serverExists` only when this pass observed one (absent leaves the stored count alone).
+ * No stored row is a write.
+ */
+function sameStoredCursor(stored: PersistedFolderCursor | undefined, next: PersistedFolderCursor): boolean {
+  if (stored === undefined) return false;
+  const n = (v: string | number): string => { try { return BigInt(v).toString(); } catch { return String(v); } };
+  return n(stored.uidValidity) === n(next.uidValidity) && n(stored.uidNext) === n(next.uidNext)
+    && n(stored.highestModseq) === n(next.highestModseq)
+    && (next.serverExists === undefined || next.serverExists === stored.serverExists);
 }
 
 /**
@@ -1081,7 +1096,8 @@ async function syncCycleWithin(
     }
   }
 
-  const cursor = await buildCursor(repo, mailboxId, deadLetters, deps.census, deps.knownSet);
+  const persistedFolders = new Map<string, PersistedFolderCursor>();
+  const cursor = await buildCursor(repo, mailboxId, deadLetters, deps.census, deps.knownSet, persistedFolders);
   const batch = await adapter.changesSince(cursor);
   if (deps.census !== undefined) {
     deps.census.observed += batch.creates.length + batch.moves.length
@@ -1411,9 +1427,17 @@ async function syncCycleWithin(
   //
   // A folder in `deferred` is skipped entirely: it holds a change that failed and was not
   // declared consumed, and a cursor written across that is an acknowledgement of work still owed.
+  //
+  // ONLY THE FOLDERS WHOSE CURSOR MOVED, in ONE fenced group: an idle cycle writes no cursor row.
+  const cursorWrites: Array<{ folder: string; cursor: PersistedFolderCursor }> = [];
   for (const [folder, fc] of Object.entries(batch.newCursor.folders)) {
     if (deferred.has(folder)) continue;
-    await fencedLiveGroup(deps, (r) => r.upsertMailboxFolder(mailboxId, folder, epochAware(fc, observedEpochs.get(folder))));
+    const next = epochAware(fc, observedEpochs.get(folder));
+    if (sameStoredCursor(persistedFolders.get(folder), next)) continue;
+    cursorWrites.push({ folder, cursor: next });
+  }
+  if (cursorWrites.length > 0) {
+    await fencedLiveGroup(deps, (r) => r.upsertMailboxFolders(mailboxId, cursorWrites));
   }
 
   // WHERE THE BUDGET STOPPED — written once, HERE, at pass end (mail 0115). Not per page and not
