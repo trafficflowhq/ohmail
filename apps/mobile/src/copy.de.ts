@@ -175,8 +175,8 @@ export const DE: Deck = {
   /* Die Absagen der eigenständigen Tür. Keine davon trägt je das Passwort. */
   standaloneNoEngine:
     "Dieser Build kann auf diesem Telefon kein Postfach organisieren. Verbinde es stattdessen mit einem Computer, einem Server oder ohmail Cloud.",
-  standaloneNoHost:
-    "ohmail braucht deinen Posteingangsserver (IMAP). Öffne die Servereinstellungen und gib seine Adresse an.",
+  standaloneNoHost: "ohmail braucht deinen Posteingangsserver (IMAP). Gib seine Adresse an.",
+  standaloneNoSmtpHost: "ohmail braucht deinen Postausgangsserver (SMTP). Gib seine Adresse an.",
   standaloneNoPort: "Der IMAP-Port ist eine ganze Zahl von 1 bis 65535.",
   standaloneNoSmtpPort: "Der SMTP-Port ist eine ganze Zahl von 1 bis 65535.",
   standaloneSignInRefused:
@@ -1510,6 +1510,25 @@ export const DE: Deck = {
   signInAgainDone: "Angemeldet. Dieses Postfach synchronisiert wieder.",
   signInAgainFailed: (detail: string) =>
     `Dieses Passwort wurde nicht akzeptiert: ${detail}. Auf diesem Telefon hat sich nichts geändert.`,
+
+  /* DIE SERVER DES POSTFACHS, AN ORT UND STELLE BEARBEITET. Mit dem Passwort geprüft, bevor etwas bleibt. */
+  serverSettings: "Servereinstellungen",
+  serverSettingsLead:
+    "ohmail prüft diese Einstellungen mit deinem Passwort, bevor es sie behält. Bis sie funktionieren, ändert sich auf diesem Telefon nichts.",
+  serverSettingsPassword: "Passwort",
+  serverSettingsPasswordHint: "Wird zum Prüfen der neuen Einstellungen verwendet und nur an die eigenen Server dieses Postfachs gesendet.",
+  serverSettingsSave: "Prüfen und speichern",
+  serverSettingsSaving: "Wird geprüft…",
+  serverSettingsCancel: "Abbrechen",
+  serverSettingsSaved: "Gespeichert. Dieses Postfach verwendet jetzt diese Einstellungen.",
+  serverSettingsNoPassword: "Gib das Passwort dieses Postfachs an, um die neuen Einstellungen zu prüfen.",
+  serverSettingsUnreadable: "Dieses Telefon konnte die Servereinstellungen dieses Postfachs nicht lesen. Versuche es noch einmal.",
+  serverSettingsImapUnreachable:
+    "ohmail hat deinen Posteingangsserver (IMAP) unter dieser Adresse und diesem Port nicht erreicht. Prüfe beides — auf diesem Telefon hat sich nichts geändert.",
+  serverSettingsHostWhileOrganizing:
+    "Solange dieses Telefon dieses Postfach organisiert, bleibt sein Posteingangsserver, wie er ist. Beende das Organisieren hier, ändere den Server und organisiere dann wieder hier.",
+  serverSettingsRefused: (detail: string) =>
+    `Diese Einstellungen wurden nicht behalten: ${detail}. Auf diesem Telefon hat sich nichts geändert.`,
 
   mailRowThreadAria: (n: number) =>
     `${n} ${n === 1 ? "Nachricht" : "Nachrichten"} in diesem Gespräch`,

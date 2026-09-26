@@ -31,6 +31,22 @@ export function runsPass(kind: OrganizerKind, pass: OutboundPass): boolean {
 }
 
 /**
+ * WHAT THE SEAL DOOR (`PATCH /local/mailboxes/:id`) DOES AFTER IT KEEPS A CHANGE. On a computer the
+ * window replaces the engine after the configured mailbox's seal, and a refused outgoing server
+ * leaves the mailbox receiving with sending marked unsettled. A phone has no door that replaces its
+ * engine, and a change there is one statement: a refused half refuses the whole, and the running
+ * mailbox follows a kept change in place. Exhaustive over the claim kinds, for the tables' reason.
+ */
+export const COMPOSITION_SEAL: Readonly<Record<OrganizerKind, {
+  readonly doorReplacesEngine: boolean;
+  readonly outgoingMayStayUnsettled: boolean;
+}>> = {
+  local: { doorReplacesEngine: true, outgoingMayStayUnsettled: true },
+  cloud: { doorReplacesEngine: true, outgoingMayStayUnsettled: true },
+  mobile: { doorReplacesEngine: false, outgoingMayStayUnsettled: false },
+};
+
+/**
  * WHAT THE SCHEDULE DOOR SAYS on a composition that keeps no appointments.
  *
  * Server copy, under `STAND_DOWN_SEND_SENTENCES`' rule: whichever client asked quotes it inside

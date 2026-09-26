@@ -71,6 +71,11 @@ export interface StandaloneEngine {
    * this is the same act for the one the APP decides, and the only caller is that refusal.
    */
   forgetStoredLogin(): Promise<boolean>;
+  /**
+   * WHERE THE MAILBOX'S SERVERS ARE, as its stored credentials record them — host, port and TLS
+   * mode for each, never a password. `smtp: null` is no outgoing server; `null` is none stored.
+   */
+  serverSettings(): Promise<PhoneServerSettings | null>;
   /** Force one gated cycle per mailbox, so the lease is re-read now. */
   resume(): Promise<void>;
   /**
@@ -191,6 +196,10 @@ export interface StandaloneEngine {
  * wire could not be read at all.
  */
 export type StartPhoneEngineLogging = { logSink?: EngineLogSink };
+
+/** One server's coordinates, as {@link StandaloneEngine.serverSettings} answers them. */
+export interface PhoneServer { readonly host: string; readonly port: number; readonly secure: boolean }
+export interface PhoneServerSettings { readonly imap: PhoneServer; readonly smtp: PhoneServer | null }
 
 /** The engine's composition root, as the artifact exports it. */
 export type StartPhoneEngine = (deps: {

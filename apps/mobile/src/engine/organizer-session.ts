@@ -9,7 +9,9 @@
  * is already released — a standing notification would say "Organizing" over a reader.
  */
 import { faultDetail, refuse, type Refusal } from "../refusal";
-import type { ClaimHereOutcome, StandaloneEngine, StopOrganizingOutcome } from "./standalone-door";
+import type {
+  ClaimHereOutcome, PhoneServerSettings, StandaloneEngine, StopOrganizingOutcome,
+} from "./standalone-door";
 import {
   createBackgroundOrganizing,
   type AppPhase,
@@ -197,6 +199,17 @@ export async function claimHereStandalone(): Promise<ClaimHereOutcome> {
   if (outcome === "claimed") settingsLeftBehind = null;
   notifyOrganizerState();
   return outcome;
+}
+
+/**
+ * WHERE THE MAILBOX ON THE DOOR IN THIS PROCESS LIVES — the engine's own read of its stored
+ * credentials. `null` where no door is held or the engine could not say: the Settings sheet then
+ * offers nothing to edit rather than a form of guesses.
+ */
+export async function standaloneServerSettings(): Promise<PhoneServerSettings | null> {
+  const held = door;
+  if (held === null) return null;
+  return held.serverSettings().catch(() => null);
 }
 
 /**

@@ -341,6 +341,8 @@ export interface PhoneEngine {
    * has no way to reach the store.
    */
   forgetStoredLogin(): Promise<boolean>;
+  /** Where the mailbox's servers are, as its stored credentials record them. See {@link PhoneServerSettings}. */
+  serverSettings(): Promise<PhoneServerSettings | null>;
   /** What each mailbox reports — the row's answer, not the gate's optimism. */
   runtimes(): { organizer: Record<string, OrganizerState>; connection: Record<string, MailboxConnectionState> };
   /**
@@ -1479,6 +1481,7 @@ async function composePhoneEngine(
     heldElsewhere,
     stopOrganizing,
     forgetStoredLogin: () => sidecar.forgetStoredLogin(),
+    serverSettings: () => storedServers(store.db, sidecar.world.mailboxId),
     runtimes: () => ({ organizer: organizerStatesWithRefusals(), connection: sidecar.connectionStates() }),
     /* THE SAME `log` EVERY LINE ABOVE GOES THROUGH — not a second one built for the app. */
     log,
@@ -1529,4 +1532,32 @@ async function sealedDial(db: LocalDb): Promise<SidecarImapConfig | null> {
        would be a second source for them. */
     auth: { user: typeof meta?.user === "string" && meta.user !== "" ? meta.user : row.address },
   };
+}
+
+/**
+ * WHERE THIS MAILBOX'S SERVERS ARE — the coordinates its stored credentials were proved against,
+ * for the phone's Settings to show and edit. Host, port and TLS mode only: never the password and
+ * never the login, which is the address the app already shows. `smtp: null` is a mailbox with no
+ * outgoing server stored; `null` is a store that records no incoming one.
+ */
+interface PhoneServerSettings {
+  readonly imap: { readonly host: string; readonly port: number; readonly secure: boolean };
+  readonly smtp: { readonly host: string; readonly port: number; readonly secure: boolean } | null;
+}
+
+async function storedServers(db: LocalDb, mailboxId: string | null): Promise<PhoneServerSettings | null> {
+  if (mailboxId === null || mailboxId === "") return null;
+  const rows = await db
+    .select({ transport: mailboxCredentials.transport, meta: mailboxCredentials.meta })
+    .from(mailboxCredentials)
+    .where(eq(mailboxCredentials.mailboxId, mailboxId));
+  /* The device store keeps `meta` as JSON text; the server store as an object. Both are read. */
+  const at = (transport: string): { host: string; port: number; secure: boolean } | null => {
+    const raw = rows.find((r) => r.transport === transport)?.meta as unknown;
+    const m = (typeof raw === "string" ? JSON.parse(raw) : raw) as Record<string, unknown> | null;
+    return m && typeof m.host === "string" && m.host !== "" && typeof m.port === "number"
+      && typeof m.secure === "boolean" ? { host: m.host, port: m.port, secure: m.secure } : null;
+  };
+  const imap = at("imap");
+  return imap === null ? null : { imap, smtp: at("smtp") };
 }

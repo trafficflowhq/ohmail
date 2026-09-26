@@ -14,7 +14,7 @@ import { useCallback, useState, useSyncExternalStore } from "react";
 import { Platform, View } from "react-native";
 import { buildCommit, buildLabel } from "../src/build-info";
 import { Copy } from "../src/copy";
-import { sayRefusal } from "../src/refusal";
+import { refuse, sayRefusal, type Refusal } from "../src/refusal";
 import { type WakeState } from "../src/net/push";
 import { useWake } from "../src/state/wake";
 import {
@@ -31,14 +31,14 @@ import { Sheet, SheetRow } from "../src/ui/Sheet";
 import { Nav } from "../src/ui/MoreNav";
 import { Field } from "../src/ui/Field";
 import { useConnection } from "../src/net/connection";
-import { resupplyPassword } from "../src/net/mailboxes";
+import { changeServerSettings, resupplyPassword } from "../src/net/mailboxes";
 import { backupExclusion, subscribeBackupExclusion } from "../src/engine/backup-exclusion";
 import { phoneEngineStart } from "../src/engine/engine-artifact";
 import {
   onOrganizerState, organizeRefusal, organizerHandedBack, organizerInstruction,
   organizerHandBackLateSaid, organizerNotificationsOffSaid, organizerRestrictedSaid, organizerSettingsLeft,
   organizerStateVersion,
-  pressOrganizeHere, standaloneHere,
+  pressOrganizeHere, standaloneHere, standaloneServerSettings,
 } from "../src/engine/organizer-session";
 import { openNotificationSettings } from "../src/engine/notification-permission-native";
 import { NotifyPermission } from "../src/ui/NotifyPermission";
@@ -53,9 +53,19 @@ import {
   maySignInAgain,
   mayStartHere,
   mayStopHere,
+  portFieldSaid,
   pressSaidLine,
+  refusalField,
+  serverChangeOf,
+  serverFieldsFrom,
+  serverSettingsRefusal,
+  setImapPort,
+  setImapTls,
+  setTyped,
   settingsLeftLine,
   type PressSaid,
+  type ServerField,
+  type StandaloneFields,
 } from "../src/ui/standalone-form";
 import { useLocale, useLocaleControls } from "../src/i18n/LocaleProvider";
 import { type AppLocale } from "../src/i18n/locale";
@@ -428,6 +438,14 @@ function ThisPhonePanel() {
   const [revealed, setRevealed] = useState(false);
   const [sending, setSending] = useState(false);
   const [resupplySaid, setResupplySaid] = useState<{ ok: boolean; detail: string } | null>(null);
+  /* THE SERVER SETTINGS SHEET: its fields (open while non-null) and what the last press said. The
+     password lives in `fields` until the door answers, and leaves it either way. */
+  const [servers, setServers] = useState<{ fields: StandaloneFields; hadSmtp: boolean } | null>(null);
+  const [serverSaid, setServerSaid] = useState<
+    { k: "kept" } | { k: "unreadable" } | { k: "refused"; reason: Refusal } | null
+  >(null);
+  const [serverSending, setServerSending] = useState(false);
+  const [serverRevealed, setServerRevealed] = useState(false);
   /* The live session, for the one request this panel makes — the door in this process on a
      standalone install, which is the only place the verb is offered. */
   const conn = useConnection();
@@ -462,6 +480,25 @@ function ThisPhonePanel() {
    * row; the engine's own release needs no id.
    */
   const here = standaloneHere();
+  /* What each field of the server sheet wears: the press's refusal where it names that field, else
+     the port rule the typed value already breaks. */
+  const serverWears = (field: ServerField | "password"): { error: string } | Record<string, never> => {
+    if (serverSaid?.k === "refused") {
+      const on = refusalField(serverSaid.reason)
+        ?? (serverSaid.reason.say === "standaloneSignInRefused" || serverSaid.reason.say === "serverSettingsNoPassword"
+          ? "password" : null);
+      if (on === field) return { error: sayRefusal(serverSaid.reason) };
+    }
+    const f = servers?.fields;
+    const live = f === undefined ? null
+      : field === "imapPort" ? portFieldSaid(f.imapPort, "imap")
+        : field === "smtpPort" && f.smtpHost.trim() !== "" ? portFieldSaid(f.smtpPort, "smtp")
+          : null;
+    return live === null ? {} : { error: sayRefusal(live) };
+  };
+  const setServerField = (next: (f: StandaloneFields) => StandaloneFields): void => {
+    setServers((cur) => (cur === null ? cur : { ...cur, fields: next(cur.fields) }));
+  };
   /* Only where there is a door to have asked — a paired session's panel says nothing of it. */
   const consentRefusal = here === null ? null : organizeRefusal();
   /* THE SAME VERDICT AND THE SAME SENTENCE THE CHROME RENDERS, from the world rather than
@@ -684,6 +721,28 @@ function ThisPhonePanel() {
                       : Copy.signInAgainFailed(resupplySaid.detail)}
                   </Txt>
                 )}
+                {/* THE SERVERS, EDITED IN PLACE — on the door in this process, beside Sign in again. */}
+                {maySignInAgain(here) && row.key === HERE_CARD ? (
+                  <Button
+                    label={Copy.serverSettings}
+                    variant="quiet"
+                    onPress={() => {
+                      setServerSaid(null);
+                      setServerRevealed(false);
+                      void standaloneServerSettings().then((at) => {
+                        if (at === null) { setServerSaid({ k: "unreadable" }); return; }
+                        setServers({ fields: serverFieldsFrom(at), hadSmtp: at.smtp !== null });
+                      });
+                    }}
+                    style={{ alignSelf: "flex-start", marginTop: 4 }}
+                  />
+                ) : null}
+                {servers !== null || serverSaid === null || serverSaid.k === "refused"
+                  || row.key !== HERE_CARD ? null : (
+                  <Txt variant="note" tone="ink2" accessibilityRole="alert">
+                    {serverSaid.k === "kept" ? Copy.serverSettingsSaved : Copy.serverSettingsUnreadable}
+                  </Txt>
+                )}
               </View>
             </View>
           );
@@ -775,6 +834,109 @@ function ThisPhonePanel() {
             icon="x"
             label={Copy.signInAgainCancel}
             onPress={() => { setNewPassword(""); setResupplying(false); }}
+          />
+        </Sheet>
+      ) : null}
+
+      {/* THE SERVER SETTINGS SHEET — the Connect form's server fields, prefilled from the engine,
+          and the password the door tries them with before it keeps anything. A refusal keeps the
+          sheet open with the sentence on the field it is about. */}
+      {servers !== null ? (
+        <Sheet open onClose={() => setServers(null)} label={Copy.serverSettings} cancel="own">
+          <Txt variant="note" tone="ink2" style={{ paddingHorizontal: 14, paddingBottom: 4 }}>
+            {Copy.serverSettingsLead}
+          </Txt>
+          <Field
+            value={servers.fields.imapHost}
+            onChange={(v) => setServerField((f) => setTyped(f, "imapHost", v))}
+            label={Copy.phoneStandaloneImapHost}
+            {...serverWears("imapHost")}
+            input={{ keyboardType: "url" }}
+          />
+          <Field
+            value={servers.fields.imapPort}
+            onChange={(v) => setServerField((f) => setImapPort(f, v))}
+            label={Copy.phoneStandaloneImapPort}
+            {...serverWears("imapPort")}
+            input={{ inputMode: "numeric", keyboardType: "number-pad", selectTextOnFocus: true }}
+          />
+          <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
+            <Txt variant="sectionLabel" tone="ink3" style={{ paddingBottom: 4 }}>
+              {Copy.phoneStandaloneImapTls}
+            </Txt>
+            <Segmented<"on" | "off">
+              segments={[
+                { value: "on", label: Copy.switchOn },
+                { value: "off", label: Copy.switchOff },
+              ]}
+              value={servers.fields.imapTls ? "on" : "off"}
+              onChange={(v) => setServerField((f) => setImapTls(f, v === "on"))}
+            />
+          </View>
+          <Field
+            value={servers.fields.smtpHost}
+            onChange={(v) => setServerField((f) => setTyped(f, "smtpHost", v))}
+            label={Copy.phoneStandaloneSmtpHost}
+            {...serverWears("smtpHost")}
+            input={{ keyboardType: "url" }}
+          />
+          <Field
+            value={servers.fields.smtpPort}
+            onChange={(v) => setServerField((f) => setTyped(f, "smtpPort", v))}
+            label={Copy.phoneStandaloneSmtpPort}
+            {...serverWears("smtpPort")}
+            input={{ inputMode: "numeric", keyboardType: "number-pad", selectTextOnFocus: true }}
+          />
+          <Field
+            value={servers.fields.password}
+            onChange={(v) => setServerField((f) => ({ ...f, password: v }))}
+            label={Copy.serverSettingsPassword}
+            hint={Copy.serverSettingsPasswordHint}
+            secret
+            revealLabels={{
+              show: Copy.phoneStandaloneShowPassword, hide: Copy.phoneStandaloneHidePassword,
+            }}
+            revealed={serverRevealed}
+            onReveal={setServerRevealed}
+            {...serverWears("password")}
+            input={{ autoCapitalize: "none", autoCorrect: false, autoComplete: "off" }}
+          />
+          {/* A REFUSAL NO FIELD WEARS — the encryption answer, or the engine's own words. */}
+          {serverSaid?.k === "refused" && refusalField(serverSaid.reason) === null
+            && serverSaid.reason.say !== "standaloneSignInRefused"
+            && serverSaid.reason.say !== "serverSettingsNoPassword" ? (
+            <Txt variant="note" tone="ink2" accessibilityRole="alert" style={{ paddingHorizontal: 16, paddingTop: 10 }}>
+              {sayRefusal(serverSaid.reason)}
+            </Txt>
+          ) : null}
+          <SheetRow
+            icon="check"
+            label={serverSending ? Copy.serverSettingsSaving : Copy.serverSettingsSave}
+            onPress={() => {
+              const at = conn.state.k === "live" ? conn.state.session : null;
+              const id = here?.id ?? "";
+              if (serverSending || at === null || id === "") return;
+              /* THE FIELDS' OWN RULES FIRST, so a port nobody can dial never reaches a server. */
+              const early = serverSettingsRefusal(servers.fields, servers.hadSmtp)
+                ?? (servers.fields.password === "" ? refuse("serverSettingsNoPassword") : null);
+              if (early !== null) { setServerSaid({ k: "refused", reason: early }); return; }
+              setServerSending(true);
+              const change = { ...serverChangeOf(servers.fields), password: servers.fields.password };
+              void changeServerSettings(at, id, change).then((outcome) => {
+                setServerSending(false);
+                /* THE SECRET LEAVES THE SHEET EITHER WAY; the sheet closes only on a kept change. */
+                setServerField((f) => ({ ...f, password: "" }));
+                if (outcome.kind === "kept") {
+                  setServers(null);
+                  setServerSaid({ k: "kept" });
+                } else setServerSaid({ k: "refused", reason: outcome.reason });
+              });
+            }}
+          />
+          <SheetRow
+            icon="x"
+            label={Copy.serverSettingsCancel}
+            onPress={() => { setServers(null); setServerSaid(null); }}
           />
         </Sheet>
       ) : null}

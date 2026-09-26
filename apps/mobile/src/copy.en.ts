@@ -305,8 +305,8 @@ const TABLE = {
      carries the password, which is not an argument any of these takes. */
   standaloneNoEngine:
     "This build cannot organize a mailbox on this phone. Connect it to a computer, a server or ohmail Cloud instead.",
-  standaloneNoHost:
-    "ohmail needs your incoming server (IMAP). Open Server settings and give its address.",
+  standaloneNoHost: "ohmail needs your incoming server (IMAP). Give its address.",
+  standaloneNoSmtpHost: "ohmail needs your outgoing server (SMTP). Give its address.",
   standaloneNoPort: "The IMAP port is a whole number from 1 to 65535.",
   standaloneNoSmtpPort: "The SMTP port is a whole number from 1 to 65535.",
   standaloneSignInRefused:
@@ -2307,6 +2307,25 @@ const TABLE = {
   signInAgainDone: "Signed in. This mailbox is syncing again.",
   signInAgainFailed: (detail: string) =>
     `That password was not accepted: ${detail}. Nothing on this phone changed.`,
+
+  /* THE MAILBOX'S SERVERS, EDITED IN PLACE. Tried with the password before anything is kept. */
+  serverSettings: "Server settings",
+  serverSettingsLead:
+    "ohmail tries these settings with your password before it keeps them. Until they work, nothing on this phone changes.",
+  serverSettingsPassword: "Password",
+  serverSettingsPasswordHint: "Used to try the new settings, and sent only to this mailbox's own servers.",
+  serverSettingsSave: "Try and save",
+  serverSettingsSaving: "Trying…",
+  serverSettingsCancel: "Cancel",
+  serverSettingsSaved: "Saved. This mailbox now uses these settings.",
+  serverSettingsNoPassword: "Give this mailbox's password to try the new settings.",
+  serverSettingsUnreadable: "This phone could not read this mailbox's server settings. Try again.",
+  serverSettingsImapUnreachable:
+    "ohmail could not reach your incoming server (IMAP) at that address and port. Check both — nothing on this phone changed.",
+  serverSettingsHostWhileOrganizing:
+    "While this phone organizes this mailbox, its incoming server stays as it is. Stop organizing here, change the server, then start organizing here again.",
+  serverSettingsRefused: (detail: string) =>
+    `Those settings were not kept: ${detail}. Nothing on this phone changed.`,
 
   /* THE ROW'S BADGES, SPOKEN — `ui/row-spoken.ts`. A chip's face ("4", "2 new") read out in a
      list is a number and a word with no referent, so each fact has a sentence of its own here;

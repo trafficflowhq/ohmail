@@ -151,9 +151,12 @@ export type ServerField = (typeof GUESSED)[number];
  */
 const FIELD_OF: Readonly<Partial<Record<RefusalKey, ServerField>>> = {
   standaloneNoHost: "imapHost",
+  serverSettingsImapUnreachable: "imapHost",
+  serverSettingsHostWhileOrganizing: "imapHost",
   standaloneNoPort: "imapPort",
   /* The certificate is the server's: the host name is the field that fixes a mismatch. */
   standaloneCertificateRefused: "imapHost",
+  standaloneNoSmtpHost: "smtpHost",
   standaloneNoSmtpPort: "smtpPort",
   standaloneSmtpSignInRefused: "smtpHost",
   standaloneSmtpNoEncryption: "smtpHost",
@@ -605,4 +608,50 @@ export function pressSaidLine(said: PressSaid, claim: PhoneClaim): string | null
   return said === "stopRefused" ? Copy.settingsStopHereFailed
     : said === "startUnreadable" ? Copy.settingsStartHereUnreadable
       : Copy.settingsStartHereFailed;
+}
+
+/* ══ SETTINGS → THE MAILBOX'S SERVERS ═══════════════════════════════════════════════════════════ */
+
+/** One server's coordinates as the engine states them (`StandaloneEngine.serverSettings`). */
+interface ServerAt { readonly host: string; readonly port: number; readonly secure: boolean }
+
+/**
+ * THE SHEET'S FIELDS, FROM WHAT THE ENGINE SAYS THE SERVERS ARE. Every server field counts as
+ * typed, so nothing re-guesses them; the address and the password are not on this sheet's form.
+ */
+export function serverFieldsFrom(at: { imap: ServerAt; smtp: ServerAt | null }): StandaloneFields {
+  return {
+    ...EMPTY_STANDALONE,
+    imapHost: at.imap.host,
+    imapPort: String(at.imap.port),
+    imapTls: portMeansImplicitTls(at.imap.port),
+    smtpHost: at.smtp?.host ?? "",
+    smtpPort: at.smtp === null ? "" : String(at.smtp.port),
+    typed: new Set(GUESSED),
+  };
+}
+
+/**
+ * WHAT THE SHEET REFUSES BEFORE ANYTHING DIALS — a blank incoming host, a blank outgoing host on a
+ * mailbox that has one (it cannot be removed here), and the port rule. `null` admits the press.
+ */
+export function serverSettingsRefusal(f: StandaloneFields, hadSmtp: boolean): Refusal | null {
+  if (f.imapHost.trim() === "") return refuse("standaloneNoHost");
+  if (hadSmtp && f.smtpHost.trim() === "") return refuse("standaloneNoSmtpHost");
+  return portRefusal(f);
+}
+
+/**
+ * THE CHANGE THE SHEET SENDS — both TLS modes follow their PORT, as on the Connect form, so the
+ * switch is a view of the port and never a second answer to how the password travels.
+ */
+export function serverChangeOf(f: StandaloneFields): { imap: ServerAt; smtp: ServerAt | null } {
+  const imapPort = Number(f.imapPort.trim());
+  const smtpPort = Number(f.smtpPort.trim());
+  return {
+    imap: { host: f.imapHost.trim(), port: imapPort, secure: portMeansImplicitTls(imapPort) },
+    smtp: f.smtpHost.trim() === ""
+      ? null
+      : { host: f.smtpHost.trim(), port: smtpPort, secure: portMeansImplicitTls(smtpPort) },
+  };
 }

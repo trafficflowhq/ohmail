@@ -1,4 +1,5 @@
 import { faultDetail, refuse, sayArg, type Refusal } from "../refusal";
+import type { PhoneServer } from "../engine/standalone-door";
 import type { ConnectedSession } from "./pairing.js";
 /* THE ONE BASE EVERY REQUEST IS COMPOSED OFF — see `request-base.ts`. */
 import { requestBase } from "./request-base";
@@ -392,4 +393,68 @@ export async function resupplyPassword(
     kind: "refused",
     detail: typeof said === "string" && said !== "" ? said : String(res.status),
   };
+}
+
+/** What a server-settings change settled: kept, or refused with the sentence for its field. */
+export type ServerChangeOutcome = { kind: "kept" } | { kind: "refused"; reason: Refusal };
+
+/**
+ * CHANGE WHERE THIS MAILBOX'S SERVERS ARE — `PATCH /local/mailboxes/:id`, the door "Sign in again"
+ * presses, with both blocks and the password. The engine dials the new settings before it keeps
+ * them, so a refusal leaves the working ones; the outgoing host rides the incoming block too, as
+ * the record of which submission server this password was saved for.
+ */
+export async function changeServerSettings(
+  session: ConnectedSession,
+  mailboxId: string,
+  change: { imap: PhoneServer; smtp: PhoneServer | null; password: string },
+): Promise<ServerChangeOutcome> {
+  const { imap, smtp, password } = change;
+  let res: Response;
+  try {
+    res = await session.fetch(
+      `${requestBase(session)}/local/mailboxes/${encodeURIComponent(mailboxId)}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        /* The password is in this body and nowhere else: never logged, never in a refusal. */
+        body: JSON.stringify({
+          imap: { ...imap, pass: password, ...(smtp !== null ? { smtpHost: smtp.host } : {}) },
+          ...(smtp !== null ? { smtp: { ...smtp, pass: password } } : {}),
+        }),
+      },
+    );
+  } catch (err) {
+    return { kind: "refused", reason: refuse("serverSettingsRefused", faultDetail(err)) };
+  }
+  if (res.ok) return { kind: "kept" };
+  const error = await res.json().then(
+    (b) => (b as { error?: ServerChangeError }).error,
+    () => undefined,
+  );
+  return { kind: "refused", reason: serverChangeRefusal(res.status, error) };
+}
+
+/** The door's error body, as far as this phone reads it. */
+export interface ServerChangeError {
+  code?: unknown;
+  message?: unknown;
+  details?: { transport?: unknown; reason?: unknown };
+}
+
+/**
+ * THE SENTENCE A REFUSED CHANGE WEARS — from the probe's transport and reason, so it lands on the
+ * field it is about in the reader's language; anything else quotes the engine's own words.
+ */
+export function serverChangeRefusal(status: number, error: ServerChangeError | undefined): Refusal {
+  if (error?.code === "organizer_host_change_refused") return refuse("serverSettingsHostWhileOrganizing");
+  const d = error?.details;
+  if (error?.code === "mailbox_probe_failed" && d !== undefined) {
+    const out = d.transport === "smtp";
+    if (d.reason === "auth") return refuse(out ? "standaloneSmtpSignInRefused" : "standaloneSignInRefused");
+    if (d.reason === "tls") return refuse(out ? "standaloneSmtpNoEncryption" : "standaloneNoEncryption");
+    return refuse(out ? "standaloneSmtpUnreachable" : "serverSettingsImapUnreachable");
+  }
+  const said = error?.message;
+  return refuse("serverSettingsRefused", typeof said === "string" && said !== "" ? said : String(status));
 }

@@ -102,6 +102,8 @@ import { hostPairRoutes } from "./host-pair-routes.js";
 // beside the API out of one `handleHost`. The route table wins; this covers everything else.
 // See `host-static.ts` for the traversal defense, the caching rule and the credential-page CSP.
 import { createHostStatic } from "./host-static.js";
+// What the seal door does after it keeps a change, per composition (a phone has no engine swap).
+import { COMPOSITION_SEAL } from "./composition-passes.js";
 // The host door's knobs, resolved ONCE (`resolveHostConfig` — pure, never throws, degrades with
 // a surfaced reason), and the door's own send-surface ceiling. See `host-listener.ts`'s header
 // for the whole arrangement; the listener itself is `main.ts`'s to start.
@@ -2586,7 +2588,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * seed's dial is the configuration the shell set, keeping the comparison real; mailboxes
        * #2..N have no configured server to disagree with — their row is the only statement of
        * where they live, so the same predicate correctly never withholds. */
-      const mbImap: SidecarImapConfig = isSeed
+      let mbImap: SidecarImapConfig = isSeed
         ? config.imap
         : {
             host: dialMeta?.host ?? "",
@@ -2982,7 +2984,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * The last one names the launch rather than a connection, and saying `event` there would
        * tell a reader a socket reported its own death when none was dialled.
        */
-      let connectionDeadBy: "event" | "bound" | "heartbeat" | "credential" | null = null;
+      let connectionDeadBy: "event" | "bound" | "heartbeat" | "credential" | "replaced" | null = null;
       /**
        * Whether this runtime has already reported that its connection cannot be probed — once per
        * attachment, since it is a property of the adapter. An adapter with no
@@ -3148,6 +3150,35 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             "connected and this mailbox is not syncing. The row is untouched and is NOT thrown " +
             "away; the next poll reads it again, and re-entering the password re-seals it",
         });
+      };
+
+      /**
+       * FOLLOW THE ROW'S PORT AND TLS MODE — the same mailbox, dialled differently. Only where host
+       * and login are unchanged: a different host is a different mailbox to the lease and is not
+       * followed here. Answers whether the dial moved; the next dial is built from the new values.
+       */
+      const adoptRowDial = async (): Promise<boolean> => {
+        const row = await storedLogin();
+        const meta = (row?.meta ?? null) as
+          { host?: unknown; port?: unknown; secure?: unknown; user?: unknown; insecureConsent?: unknown } | null;
+        if (meta === null || typeof meta.host !== "string" || typeof meta.port !== "number"
+          || typeof meta.secure !== "boolean") return false;
+        const same = (a: unknown, b: string): boolean => typeof a === "string" && a.trim().toLowerCase() === b.trim().toLowerCase();
+        if (!same(meta.host, mbImap.host) || (meta.user !== undefined && !same(meta.user, mbImap.auth.user))) return false;
+        const allowInsecure = meta.insecureConsent === true;
+        if (meta.port === mbImap.port && meta.secure === mbImap.secure
+          && allowInsecure === (mbImap.allowInsecure === true)) return false;
+        const { allowInsecure: _was, ...rest } = mbImap;
+        mbImap = { ...rest, port: meta.port, secure: meta.secure, ...(allowInsecure ? { allowInsecure: true } : {}) };
+        imapConfig.port = meta.port;
+        imapConfig.secure = meta.secure;
+        if (allowInsecure) imapConfig.allowInsecure = true; else delete imapConfig.allowInsecure;
+        log("mailbox_dial_moved", {
+          mailboxId: mb.id,
+          reason: "this mailbox's port or encryption was changed and proved, so the connection is "
+            + "re-opened on the new setting; the claim in ohmail/_meta is kept",
+        });
+        return true;
       };
 
       /**
@@ -6492,7 +6523,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       const rt: LocalMailboxRuntime = {
         mailboxId: mb.id,
         address: mb.address,
-        imap: mbImap,
+        get imap() { return mbImap; },
         get adapter() { return adapter; },
         get syncDeps() { return syncDeps; },
         get timer() { return timer; },
@@ -6599,8 +6630,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          */
         async credentialReplaced(opts) {
           if (stopped) return null;
+          const moved = opts?.followRow === true && await adoptRowDial();
           await rereadCredential();
           clearSignInRefusal("the stored password was replaced");
+          /* THE SAME MAILBOX ON ANOTHER PORT OR TLS MODE: the socket is replaced and the claim is
+             not touched — the re-dial destroys the old connection without a release, and the
+             gate on the new one renews the claim it finds under this install's own nonce. */
+          if (moved && connectionDeadSince === null) {
+            connectionDeadSince = now();
+            connectionDeadBy = "replaced";
+          }
           /* NO LOGIN TO RE-OPEN, SO NO CYCLE. The re-dial acts only on an observed death, and a
              runtime that never dialled has none, so the forced cycle drained over an adapter
              nothing had connected — the TypeError on every first connect. The door's seal is
@@ -8134,7 +8173,30 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                   body.smtp = { pass: incoming.pass };
                 }
               }
-              const dto = await keepingIncoming(body, (b) => deps.services!.mailbox.update(
+              /* WHAT THIS COMPOSITION'S SEAL DOOR DOES — `composition-passes.ts`. On a phone a refused
+                 outgoing half refuses the whole change, so the working settings stay as they were. */
+              const seal = COMPOSITION_SEAL[organizerKind];
+              /* A NEW INCOMING HOST OR LOGIN IS ANOTHER MAILBOX TO THE LEASE. Where no door replaces this
+                 engine and this install holds the claim, it is refused before anything dials: the
+                 person stops organizing here, changes the server and starts again, and the start
+                 claims the new server through the ordinary gate. Not holding it, the change is kept
+                 and the running mailbox re-points below, with nothing to release. */
+              const running = runtimes.get(mailboxId);
+              const differs = (said: unknown, held: string): boolean => typeof said === "string"
+                && said.trim() !== "" && said.trim().toLowerCase() !== held.trim().toLowerCase();
+              const hostMoves = !seal.doorReplacesEngine && running !== undefined
+                && (differs(incoming.host, running.imap.host) || differs(incoming.user, running.imap.auth.user));
+              if (hostMoves && running.organizer.claimed) {
+                log("local_mailbox_host_change_refused", {
+                  mailboxId,
+                  reason: "the incoming server was changed on a mailbox this install organizes, so "
+                    + "nothing was dialled or stored; stopping here first releases the claim",
+                });
+                throw new ServiceError("organizer_host_change_refused", 409,
+                  "While this phone organizes this mailbox, its incoming server stays as it is. Stop "
+                    + "organizing here, change the server, then start organizing here again.");
+              }
+              const write = (b: Record<string, unknown>) => deps.services!.mailbox.update(
                 {
                   db, accountId: core.accountId, userId: core.userId,
                   now, requestId: "", sessionId: core.sessionId ?? null,
@@ -8142,7 +8204,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 mailboxId,
                 b as never,
                 { probe: makeImapProbe(deps, probeOpts), smtpProbe: makeSmtpProbe(deps, smtpProbeOpts) },
-              ));
+              );
+              const dto = seal.outgoingMayStayUnsettled ? await keepingIncoming(body, write) : await write(body);
               if (sealWrite.stale()) {
                 /* BEFORE THE RE-POINT, so a mailbox is never attached on a credential that is
                    about to be removed. Every transport of this mailbox, because the update writes
@@ -8168,7 +8231,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                  nothing else will dial it on this launch. Answered below, outside the re-point's
                  catch: a refusal is the press's answer, never a logged failure. */
               let launched: { rt: LocalMailboxRuntime; answer: Promise<DialAnswer | null> } | null = null;
-              if (live && mailboxId !== world.mailboxId) {
+              if (live && (mailboxId !== world.mailboxId || hostMoves)) {
                 try {
                    /* Detach first, then the attach may THROW. The login is closed and the timer
                       cleared, so the mailbox is not left with no runtime while the log claims it
@@ -8220,9 +8283,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                    logged and not raised — the password IS stored, and answering 500 would tell
                    somebody the opposite of what the store now says. */
                 try {
+                  const followRow = !seal.doorReplacesEngine;
                   if (bare && onTheRow) {
-                    launched = { rt: live, answer: live.credentialReplaced({ launch: true }) };
-                  } else await live.credentialReplaced();
+                    launched = { rt: live, answer: live.credentialReplaced({ launch: true, followRow }) };
+                  } else await live.credentialReplaced({ followRow });
                 } catch (err) {
                   log("local_mailbox_repoint_failed", {
                     err,
@@ -8240,7 +8304,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                  AHEAD of the route table and therefore ahead of `withErrorEnvelope`. The
                  message is the one the door renders beside the password field, so a 4xx must
                  carry it through rather than be flattened. */
-              const e = err as { code?: string; httpStatus?: number; message?: string };
+              const e = err as { code?: string; httpStatus?: number; message?: string; details?: unknown };
               const status = typeof e.httpStatus === "number" ? e.httpStatus : 500;
               log("local_mailbox_seal_failed", { err });
               return new Response(
@@ -8248,6 +8312,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                   error: {
                     code: e.code ?? "internal",
                     message: status === 500 ? "internal error" : (e.message ?? ""),
+                    /* THE PROBE'S TRANSPORT AND REASON TRAVEL, as on the probe route: a phone
+                       words the refusal from them and puts it on the field it is about. */
+                    ...(status === 500 || e.details === undefined ? {} : { details: e.details }),
                   },
                 }),
                 { status, headers: { "content-type": "application/json" } },

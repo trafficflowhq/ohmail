@@ -407,7 +407,9 @@ export interface LocalMailboxRuntime {
    * adapter, the cursors and the claim are left alone, and a read that does not open leaves this
    * runtime exactly as it was.
    */
-  credentialReplaced(opts?: { launch?: boolean }): Promise<DialAnswer | null>;
+  /* `followRow`: also dial the row's port and TLS mode where its host and login are this
+     runtime's — for a composition with no door that replaces the engine (a phone). */
+  credentialReplaced(opts?: { launch?: boolean; followRow?: boolean }): Promise<DialAnswer | null>;
   /**
    * Start this mailbox and answer once its login has opened or been refused — not after the
    * first drain, which is what `start()` waits for. `launch: true` on
