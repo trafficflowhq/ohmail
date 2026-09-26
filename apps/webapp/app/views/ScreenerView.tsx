@@ -64,7 +64,7 @@ import { heldBodyAsks } from "../shell/held-body-asks";
 import { goScreener, goSettings, type ScreenerSegmentId } from "../shell/routing";
 import { APPLY_PILE_ORDER, hasRealSuggestion, type PendingDecision } from "../shell/screener-state";
 /* The one role answer, from the module that derives it — see `mail-state.ts#screenerMode`. */
-import type { ScreenerRole } from "../shell/mail-state";
+import { readerHolder, type ReaderHolding, type ScreenerRole } from "../shell/mail-state";
 import type { HeldBodyStall, ScreenerState, SpamRow } from "../shell/screener-state";
 import type { SuggestBatchControl } from "../shell/screener-suggest";
 import {
@@ -1704,7 +1704,7 @@ export function ScreenerView({
             onUnsubscribe={onUnsubscribe}
             onBack={() => onFull(false)}
             mailboxLabel={mailboxLabelFor(current as ScreenerSenderDTO)}
-            reader={state.role.mode === "organizer" ? null : { name: state.role.name }}
+            reader={readerHolder(state.role)}
           />
         ) : (
           <SpamPreview
@@ -1726,7 +1726,7 @@ export function ScreenerView({
             remoteImages={remoteImages}
             onUnsubscribe={onUnsubscribe}
             onBack={() => onFull(false)}
-            reader={state.role.mode === "organizer" ? null : { name: state.role.name }}
+            reader={readerHolder(state.role)}
           />
         )}
       </div>
@@ -2129,11 +2129,14 @@ export function HeldMail({
  */
 function ReaderNote({
   name,
+  nobody = false,
   variant,
   oauthOnly,
 }: {
   /** The holder's own name, or `null` where this build has none. */
   name: string | null;
+  /** The decider found no live holder (`readerHolder`): a `move` note says nothing organizes it. */
+  nobody?: boolean;
   /**
    * WHICH WITHHOLDING THIS IS — three, and collapsing them was the temptation worth refusing.
    * · `decide` — somebody holds the mailbox and their build cannot take a decision from a reader. Nothing here
@@ -2161,7 +2164,7 @@ function ReaderNote({
     : variant === "move"
       ? {
         title: t("moveBarTitle"),
-        why: name ? t("moveBarWhy", { name }) : t("moveBarWhyUnknown"),
+        why: nobody ? t("moveBarWhyNobody") : name ? t("moveBarWhy", { name }) : t("moveBarWhyUnknown"),
       }
       : {
         title: t("readerBarTitle"),
@@ -2543,7 +2546,7 @@ function ScreenedPreview({
    * NON-NULL ON EVERY READER, in BOTH modes — the release verb is a MOVE, and no organizer takes
    * a move from a reader whatever else it offers. See `screener-state.ts`'s `guardMove`.
    */
-  reader: { name: string | null } | null;
+  reader: ReaderHolding | null;
 }) {
   const t = useTranslations("screener");
   const tm = useTranslations("message");
@@ -2556,7 +2559,7 @@ function ScreenedPreview({
         {/* "Allow" moves the sender's held mail and writes a rule, which is exactly what a
             reader install cannot do. Withheld rather than shown refusing, on the bulk strip's
             rule; the note says once why. */}
-        {reader ? <ReaderNote name={reader.name} variant="move" /> : (
+        {reader ? <ReaderNote name={reader.name} nobody={reader.nobody} variant="move" /> : (
         <div className="d-btns">
           {choosing ? (
             <>
@@ -2651,7 +2654,7 @@ function SpamPreview({
    * NON-NULL ON EVERY READER, in BOTH modes — the rescue is a MOVE, and no organizer takes a
    * move from a reader whatever else it offers. See `screener-state.ts`'s `guardMove`.
    */
-  reader: { name: string | null } | null;
+  reader: ReaderHolding | null;
 }) {
   const t = useTranslations("screener");
   const held = row.sender.held;
@@ -2666,7 +2669,7 @@ function SpamPreview({
             is the demo's own affordance and reaches no endpoint at all. Neither is offered on a
             mailbox this install does not organize. The mail stays viewable, which is the half of
             this segment a reader keeps. */}
-        {reader ? <ReaderNote name={reader.name} variant="move" /> : (
+        {reader ? <ReaderNote name={reader.name} nobody={reader.nobody} variant="move" /> : (
         <div className="d-btns">
           {choosing ? (
             <>

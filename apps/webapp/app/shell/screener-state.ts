@@ -48,7 +48,7 @@ import type { SuggestionOverlay } from "./screener-suggest";
 /* THE ONE ROLE ANSWER, imported rather than restated. `mail-state.ts` owns the derivation the
    mailbox pane renders its own state line from, and a second rule shaped like it here is how two
    surfaces come to describe one mailbox differently. */
-import type { ScreenerRole } from "./mail-state";
+import { readerHolder, type ScreenerRole } from "./mail-state";
 import {
   isNothingOrganizes, organizerRefusalOf, organizerRefusalSentence, type OrganizerRefusal,
 } from "./organizer-refusal";
@@ -1912,7 +1912,7 @@ export function useScreenerState(
    */
   const refuseReadOnly = (): void => {
     // Nothing organizes the mailbox: "another organizer has it" would be false, so say what is true.
-    const r = role.pressRefusal ?? null;
+    const r = role.pressRefusal ?? (readerHolder(role)?.nobody ? { kind: "nobody" as const } : null);
     if (r && (r.kind === "nobody" || r.kind === "starting")) {
       toast(`${t("notFiled")} ${organizerRefusalSentence(r, tWhy)}`);
       return;
@@ -1938,11 +1938,12 @@ export function useScreenerState(
        `mail-state.ts#readerMoveRefusal` asks about NAMED MAILBOXES, which is the right question
        for a message verb and the wrong one for the Screener: its queue does not say which mailbox
        a sender belongs to, so there is no id to pass, and a decision writes an ACCOUNT-scoped
-       rule. The two share the sentence — the same two catalogue keys — and differ in what they
-       ask, which is the honest split. */
-    toast(role.name
-      ? t("readerMoveRefused", { name: role.name })
-      : t("readerMoveRefusedUnknown"));
+       rule. The two share the sentence — the same catalogue keys — and differ in what they
+       ask, which is the honest split. A holder that stopped is nobody, by the decider. */
+    const who = readerHolder(role);
+    toast(who?.nobody
+      ? t("readerMoveRefusedNobody")
+      : role.name ? t("readerMoveRefused", { name: role.name }) : t("readerMoveRefusedUnknown"));
   };
   const guardMove = <A extends unknown[]>(verb: (...args: A) => void) =>
     (role.mode === "organizer" ? verb : ((..._args: A) => refuseMove()));

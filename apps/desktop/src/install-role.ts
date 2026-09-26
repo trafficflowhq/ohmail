@@ -8,6 +8,7 @@
  * React. The predicate is `screenerReadOnly` over `readerStandDown` (`app/shell/mail-state.ts`);
  * `null` means this install organizes — the safe direction. `DOOR_COPY` is the non-hook route.
  */
+import type { ReaderHolding } from "../../webapp/app/shell/mail-state";
 import { DOOR_COPY, machineWord } from "./door-copy.js";
 
 /**
@@ -20,11 +21,13 @@ import { DOOR_COPY, machineWord } from "./door-copy.js";
  * through to the two answers this function has always given.
  */
 export function mailboxRowWhy(
-  readOnly: { name: string | null } | null,
+  readOnly: ReaderHolding | null,
   host?: string | null,
 ): string {
   if (host) return DOOR_COPY.mailboxWhyViaHost(machineWord(), host);
   if (readOnly === null) return DOOR_COPY.mailboxWhyOrganizes;
+  // A holder that stopped is nobody, by the refusal's decider (`readerHolder`).
+  if (readOnly.nobody) return DOOR_COPY.mailboxWhyReadsNobody;
   return readOnly.name
     ? DOOR_COPY.mailboxWhyReadsNamed(readOnly.name)
     : DOOR_COPY.mailboxWhyReads;

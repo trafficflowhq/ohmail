@@ -84,6 +84,13 @@ export { CALENDAR_FALLBACK_FILENAME, isCalendarMime } from "@trafficflow/core/ic
 export { retroPassWouldMove, type RetroCandidateRow } from "@trafficflow/core/destinations";
 
 /**
+ * WHETHER SOMEBODY STILL ORGANIZES A MAILBOX — a named holder whose lease has not lapsed. The
+ * reader refusal's one decider, re-exported from core so the phone's claim card asks what the
+ * server's refusal and the web's panes ask; the phone reaches core only through this package.
+ */
+export { holderIsLive } from "@trafficflow/core/reader-refusal";
+
+/**
  * THE PAIRING LINK'S SHAPE — composed by the desktop's Devices pane, parsed by the phone. Here
  * because this is the one package both of those already compile, and a composer and a parser
  * that disagree is a QR code that cannot be scanned with nothing on either machine to look at.

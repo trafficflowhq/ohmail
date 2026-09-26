@@ -105,9 +105,9 @@ export function DesktopScreening({
           is broken. Withheld where this install organizes: an ordinary pane is unchanged. */}
       {readOnly ? (
         <SettingsNote>
-          {readOnly.name
-            ? t("readerNote", { name: readOnly.name })
-            : t("readerNoteUnknown")}
+          {readOnly.nobody
+            ? t("readerNoteNobody")
+            : readOnly.name ? t("readerNote", { name: readOnly.name }) : t("readerNoteUnknown")}
         </SettingsNote>
       ) : null}
 

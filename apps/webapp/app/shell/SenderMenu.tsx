@@ -110,8 +110,11 @@ export function SenderMenu({
   forecastFor?: (dest: ScreeningDest, scope: ScreeningScope, makeRule: boolean, applyRetro: boolean) => PressForecast | null;
   /** "Their rules": every rule deciding the subject's mail today, as the list places it. */
   rulesFor?: (scope: ScreeningScope) => RulesInPlay | null;
-  /** Another install organizes the subject's mailbox: a rule made here is made on its next pass. */
-  organizer?: { name: string | null } | undefined;
+  /**
+   * Another install organizes the subject's mailbox: a rule made here is made on its next pass.
+   * `nobody` where its lease lapsed (`otherOrganizerOf`, the refusal's decider).
+   */
+  organizer?: { name: string | null; nobody?: boolean } | undefined;
   /** Where the shell's Escape asks the sheet to step back before closing it. */
   backRef?: MutableRefObject<(() => boolean) | null>;
   onOpenDetail: (scope: ScreeningScope) => void;
@@ -531,7 +534,9 @@ export function SenderMenu({
           true. The toast, which does know, names the difference — `screeningToast`. */}
       {organizer && (makeRule || subject.waiting) ? (
         <div className="sm-org">
-          {organizer.name ? t("orgPending", { name: organizer.name }) : t("orgPendingUnnamed")}
+          {organizer.nobody
+            ? t("orgNobody")
+            : organizer.name ? t("orgPending", { name: organizer.name }) : t("orgPendingUnnamed")}
         </div>
       ) : null}
 

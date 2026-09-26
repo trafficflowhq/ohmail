@@ -416,6 +416,9 @@ const EN = {
   mailboxWhyReadsNamed: (name: string) =>
     `The mailbox this copy of ohmail reads. ${name} organizes it.`,
   mailboxWhyReads: "The mailbox this copy of ohmail reads. Another ohmail organizer organizes it.",
+  mailboxWhyReadsNobody:
+    "The mailbox this copy of ohmail reads. Nothing organizes it now — Settings → Mailboxes has "
+    + "the button to organize it here.",
   /* THE PAIRED DOOR'S OWN ROW. `mailboxWhyOrganizes` would be the answer here today and it is
      false: the rows this install mirrors are the HOST's organizer rows, so the reader predicate
      sees nothing to object to and the pane claims this machine organizes a mailbox it only

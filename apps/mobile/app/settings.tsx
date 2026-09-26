@@ -48,6 +48,7 @@ import {
   claimChipLabel,
   claimFrom,
   claimHere,
+  claimHolderOf,
   claimNoteLine,
   type PhoneClaim,
   maySignInAgain,
@@ -539,7 +540,7 @@ function ThisPhonePanel() {
           known: w.mailboxes.known,
           role: row.organizerRole,
           serverHolds: row.organizedByThisInstall,
-          organizer: holderFor(row),
+          organizer: claimHolderOf(row),
         }),
       }));
   if (cards.length === 0) return null;
@@ -944,22 +945,6 @@ function ThisPhonePanel() {
       <NotifyPermission open={notify.open} onAnswer={notify.answer} />
     </>
   );
-}
-
-/**
- * One row's holder in `claimFrom`'s shape — a named holder, or nothing.
- *
- * The KIND rides along: the note under the chip reads it, and dropping it here would give the
- * paired arm the generic sentence for a mailbox a phone organizes. The same fix on both arms.
- */
-function holderFor(row: {
-  organizedBy: { kind: string | null; name: string | null } | null;
-  organizerState: "held" | "stopped" | null;
-}): { name: string; stopped: boolean; kind: string | null } | null {
-  const name = row.organizedBy?.name ?? "";
-  return name === ""
-    ? null
-    : { name, stopped: row.organizerState === "stopped", kind: row.organizedBy?.kind ?? null };
 }
 
 function FacePanel({

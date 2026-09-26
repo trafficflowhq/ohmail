@@ -8,7 +8,7 @@
  * in. Nothing here holds a password beyond the form's own state: {@link StandaloneFields}
  * carries it to the engine once — never logged, stamped into a refusal, or stored.
  */
-import { portMeansImplicitTls, serverGuessFor } from "@ohmail/client-engine";
+import { holderIsLive, portMeansImplicitTls, serverGuessFor } from "@ohmail/client-engine";
 import { Copy } from "../copy";
 /* TYPE ONLY, so the session's module state does not travel into every consumer of this module.
    The mapping from the instruction to a chip is a DECISION and belongs here rather than in a
@@ -423,7 +423,11 @@ export function claimFrom(
    * webapp's own rule one install further (`app/shell/mail-state.ts#noticeKind`). */
   if (read.role === "organizer" || read.serverHolds) return { k: "pairedServer" };
   const holder = read.organizer;
-  if (holder === null) {
+  /* A HOLDER WHOSE LEASE LAPSED IS NOBODY, by the reader refusal's own decider: it organizes
+     nothing, and a card naming it would send somebody to a machine that stopped. */
+  if (holder === null || !holderIsLive({
+    by: { kind: holder.kind ?? null, name: holder.name }, state: holder.stopped ? "stopped" : null,
+  })) {
     /* NOBODY, AND ONLY BECAUSE THE SERVER SAID SO. A holder-less row is `free` only where the role
        says `reader`: null alone cannot tell "nobody has ever claimed it" from "the server that
        answered organizes it". A server that named no role gets no chip rather than a guessed one —
@@ -435,9 +439,24 @@ export function claimFrom(
      another PHONE organizes is organized only while ohmail is open on that phone, which is the one
      thing about a holder that changes what a person should expect of their mail. */
   const kind = holderKind(holder.kind);
-  return holder.name.length > 0
+  return holder.name.trim().length > 0
     ? { k: "theirs", name: holder.name, kind }
     : { k: "theirsUnnamed", kind };
+}
+
+/**
+ * One paired row's holder in {@link claimFrom}'s shape — the recorded holder, or nothing. Whether
+ * it still organizes is `claimFrom`'s question, asked of the reader refusal's decider. The KIND
+ * rides along: the note under the chip reads it, and a phone holder has its own sentence.
+ */
+export function claimHolderOf(row: {
+  organizedBy: { kind: string | null; name: string | null } | null;
+  organizerState: "held" | "stopped" | null;
+}): { name: string; stopped: boolean; kind: string | null } | null {
+  const by = row.organizedBy;
+  return by === null
+    ? null
+    : { name: by.name ?? "", stopped: row.organizerState === "stopped", kind: by.kind ?? null };
 }
 
 /**

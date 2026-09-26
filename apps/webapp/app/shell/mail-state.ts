@@ -28,7 +28,7 @@
    alternative to a second copy of a rule that must never diverge — see `address-key.ts`. */
 import { addressKey } from "./address-key";
 import {
-  holderIsLive, requestRefusalReason, rosterRefusalReason, type RequestRefusalReason,
+  holderIsLive, rosterRefusalReason, type RequestRefusalReason,
 } from "@trafficflow/core/reader-refusal";
 
 export const SYNC_BLOCK_REASONS = [
@@ -372,8 +372,9 @@ export type ScreenerBlockReason = RequestRefusalReason;
 export interface ScreenerRole {
   mode: ScreenerMode;
   /**
-   * The holder's own name for the copy, or `null` where the holder is real but this build has no
-   * name for it — a claim written by a version that recorded none. `null` in `organizer`.
+   * The LIVE holder's own name for the copy, or `null` where the holder is real but this build has
+   * no name for it — a claim written by a version that recorded none. `null` in `organizer`, and
+   * under `no_organizer`, where no holder is live.
    */
   name: string | null;
   /** Only in `blocked`; `null` in the other two. See {@link ScreenerBlockReason}. */
@@ -405,24 +406,26 @@ export function screenerMode(facts: ReadonlyArray<OrganizerRow> | null): Screene
      back on. Nothing files that mailbox, which is precisely what `no_organizer` below says. */
   if (live.some((m) => readerStandDown(m) === null)) return organizes;
 
-  const named = live.map((m) => m.organizedBy?.name).find((n) => n && n.trim()) ?? null;
+  /* ONLY A LIVE HOLDER IS NAMED, by the server's decider: a holder whose lease lapsed organizes
+     nothing, so no sentence built from this role may call it the organizer. */
+  const leaseOf = (m: OrganizerRow) => ({ by: m.organizedBy, state: m.organizerState });
+  const liveName = live.filter((m) => holderIsLive(leaseOf(m)))
+    .map((m) => m.organizedBy?.name).find((n) => n && n.trim()) ?? null;
   /* `=== true` and never a truthy read: absent is "this build cannot tell", and the whole point of
      the field is that it withholds rather than offers. */
   if (live.every((m) => m.organizerAcceptsRequests === true)) {
-    return { mode: "pending", name: named, reason: null, oauthOnly: false };
+    return { mode: "pending", name: liveName, reason: null, oauthOnly: false };
   }
   const oauthOnly = live.every((m) => m.authKind === "oauth");
-  /* THE SERVER'S DECIDER, per row: a LIVE holder that cannot take the decision is outdated; none
-     named, or one whose lease lapsed (`organizerState: "stopped"`), organizes nothing. Outdated
-     names a live holder, so "update ohmail on it" names the machine that still organizes. */
-  const leaseOf = (m: OrganizerRow) => ({ by: m.organizedBy, state: m.organizerState });
+  /* THE SERVER'S DECIDER, over the roster: a LIVE holder that cannot take the decision is
+     outdated; none named, or one whose lease lapsed (`organizerState: "stopped"`), organizes
+     nothing. Outdated names a live holder, so "update ohmail on it" names the machine that still
+     organizes. */
   const reason = rosterRefusalReason(live.map(leaseOf));
-  const liveName = live.filter((m) => requestRefusalReason(leaseOf(m)) === "organizer_outdated")
-    .map((m) => m.organizedBy?.name).find((n) => n && n.trim()) ?? null;
   const asked = live.some((m) => m.organizerRole === "reader" && (m.takeoverAuthorizedAt ?? null) !== null);
   return {
     mode: "blocked",
-    name: reason === "organizer_outdated" ? liveName : named,
+    name: liveName,
     reason,
     oauthOnly,
     ...(asked ? { takeoverAsked: true as const } : {}),
@@ -438,8 +441,20 @@ export function screenerMode(facts: ReadonlyArray<OrganizerRow> | null): Screene
  * `role.mode !== "organizer"` inline would be one edit away from accidentally treating `pending` as organizing on the
  * day somebody adds a fourth mode.
  */
-export function readerHolder(role: ScreenerRole): { name: string | null } | null {
-  return role.mode === "organizer" ? null : { name: role.name };
+export function readerHolder(role: ScreenerRole): ReaderHolding | null {
+  return role.mode === "organizer"
+    ? null
+    : { name: role.name, nobody: role.mode === "blocked" && role.reason === "no_organizer" };
+}
+
+/**
+ * Who a reader's sentence may name. `nobody` is the decider's `no_organizer` — none named, or its
+ * lease lapsed — and then `name` is null: a sentence says nothing organizes the mailbox and points
+ * to Organize here. Otherwise `name` is the live holder's, or null where it recorded none.
+ */
+export interface ReaderHolding {
+  name: string | null;
+  nobody: boolean;
 }
 
 /**
@@ -487,7 +502,7 @@ export function rosterStateOf(
 export function readerMoveRefusal(
   roster: RosterState,
   mailboxIds: ReadonlyArray<string>,
-  say: { named: (name: string) => string; unknown: () => string },
+  say: { named: (name: string) => string; unknown: () => string; nobody: () => string },
 ): string | null {
   /* NO PROBE, NO GATE. On a door with no roster the wire has always been the only authority, and
      it still is — the server refuses a reader's delete with `assertOrganizerRole` exactly as
@@ -505,6 +520,8 @@ export function readerMoveRefusal(
     const row = id ? facts.find((m) => m.id === id && m.status !== "disabled") : undefined;
     if (!row) return say.unknown();
     if (readerStandDown(row) === null) continue;
+    // A holder whose lease lapsed organizes nothing: the refusal's own decider says so.
+    if (!holderIsLive({ by: row.organizedBy, state: row.organizerState })) return say.nobody();
     const name = row.organizedBy?.name && row.organizedBy.name.trim() ? row.organizedBy.name : null;
     return name ? say.named(name) : say.unknown();
   }
@@ -2155,17 +2172,20 @@ export function stripSpeaks(key: MailStateKey): boolean {
 
 /**
  * WHO ORGANIZES THE MAILBOXES A SHEET'S SUBJECT LIVES IN, when it is another install: its name, or
- * `null` when it has none on the wire. `undefined` when this install organizes them (or nothing is
- * recorded), which is when a rule made from the sheet is made now.
+ * `null` when it has none on the wire; `nobody` where the named holder's lease lapsed, by the
+ * refusal's decider. `undefined` when this install organizes them (or nothing is recorded), which
+ * is when a rule made from the sheet is made now.
  */
 export function otherOrganizerOf(
   facts: readonly OrganizerRow[] | null | undefined, mailboxIds: ReadonlySet<string>,
-): { name: string | null } | undefined {
+): ReaderHolding | undefined {
+  let lapsed = false;
   for (const m of facts ?? []) {
     if (m.id === undefined || !mailboxIds.has(m.id) || m.organizerRole !== "reader") continue;
     if (!m.organizedBy || !(m.organizedBy.kind || m.organizedBy.name)) continue;
+    if (!holderIsLive({ by: m.organizedBy, state: m.organizerState })) { lapsed = true; continue; }
     const name = m.organizedBy.name?.trim();
-    return { name: name ? name : null };
+    return { name: name ? name : null, nobody: false };
   }
-  return undefined;
+  return lapsed ? { name: null, nobody: true } : undefined;
 }

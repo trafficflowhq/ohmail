@@ -7,6 +7,7 @@
  * the screen printing them named one mailbox. Structurally typed — no DTO import — so the shell's
  * row type can grow without touching this.
  */
+import { holderIsLive } from "@trafficflow/core/reader-refusal";
 
 /** The unresolvable arm, named: a run that names a mailbox this install does not hold. */
 export type FirstRunSubjectState =
@@ -118,16 +119,20 @@ export function screenerForMailbox<R extends { id: string; held: readonly { id: 
  * mailbox that does not exist yet. A mailbox connected here becomes a consent-less READER and stays one while
  * somebody else holds the lease, and the only place that said so was Settings → Mailboxes.
  *
- * The first row that NAMES a holder, on {@link deriveOnboardingStep} row 3's rule: `kind || name`, never the
- * object, so a server that starts sending `{null,null,null}` names nobody. `null` is "nothing here says".
+ * The first row that NAMES a LIVE holder, by the refusal's own decider: `kind || name`, never the object, so a
+ * server that starts sending `{null,null,null}` names nobody, and a holder whose lease lapsed organizes nothing.
+ * `null` is "nothing here says".
  */
-export function accountOrganizer<T extends { organizedBy?: { kind: string | null; name: string | null } | null }>(
+export function accountOrganizer<T extends {
+  organizedBy?: { kind: string | null; name: string | null } | null;
+  organizerState?: "held" | "stopped" | null;
+}>(
   rows: readonly T[] | null,
 ): { kind: string | null; name: string | null } | null {
   if (rows === null) return null;
   for (const row of rows) {
     const by = row.organizedBy;
-    if (by && (by.kind || by.name)) return { kind: by.kind, name: by.name };
+    if (by && holderIsLive({ by, state: row.organizerState })) return { kind: by.kind, name: by.name };
   }
   return null;
 }

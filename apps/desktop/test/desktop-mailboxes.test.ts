@@ -2802,6 +2802,44 @@ describe("the pane tells the truth about the outage, the holder and the standing
   });
 
   /**
+   * (6e) A HOLDER WHOSE LEASE LAPSED ORGANIZES NOTHING (the refusal's decider): the well does not
+   * promise that a machine that stopped will stop, and the row offers no reading along with it.
+   * The control is (6d), the same row renewing.
+   */
+  it("(6e) a holder that stopped: the well names nobody, and no reading along is offered", async () => {
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "reader",
+      organizedBy: { kind: "local", name: "Studio laptop", since: "2026-08-30T09:00:00.000Z" },
+      organizerState: "stopped",
+      organizeConsentedAt: "2026-08-01T09:00:00.000Z",
+    }];
+    const el = await render("local");
+    expect(buttonSaying(el, mailboxCopy.readerAlongHere!), "reading along with a machine that stopped")
+      .toBeNull();
+    await act(async () => {
+      [...el.querySelectorAll("button")]
+        .find((b) => (b.textContent ?? "").includes("Organize here"))!.click();
+    });
+    const well = (el.querySelector(".mbx-handover-what")?.textContent ?? "").trim();
+    expect(well, "the well never opened").not.toBe("");
+    expect(well).toBe(mailboxCopy.organizeHereWhatNobody!);
+    expect(well, "a machine that stopped was said to stop").not.toContain("Studio laptop");
+  });
+
+  it("(6f) CONTROL — a holder that still renews is offered reading along", async () => {
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "reader",
+      organizedBy: { kind: "local", name: "Studio laptop", since: "2026-08-30T09:00:00.000Z" },
+      organizerState: "held",
+      organizeConsentedAt: "2026-08-01T09:00:00.000Z",
+    }];
+    const el = await render("local");
+    expect(buttonSaying(el, mailboxCopy.readerAlongHere!)).not.toBeNull();
+  });
+
+  /**
    * (4b) THE OTHER WAY A TAKEOVER PRESS IS SUPERSEDED — a stop made somewhere else. This pane
    * never sees the press, only its effect: the row comes back a reader with a NEW release stamp.
    * The note's own clear (in the release handler) cannot fire here, so this is what the stamp

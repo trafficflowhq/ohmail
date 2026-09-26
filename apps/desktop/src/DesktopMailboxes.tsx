@@ -32,6 +32,7 @@ import {
   showInboundQuiet, type MailboxFacts,
 } from "../../webapp/app/shell/mail-state";
 import { addressKey } from "../../webapp/app/shell/address-key";
+import { holderIsLive } from "@trafficflow/core/reader-refusal";
 import { agoStamp, dayStamp } from "../../webapp/app/shell/format";
 import { activeFormatLocale, activeFormatZone } from "../../webapp/app/shell/locale";
 import { useEngineOrNull } from "../../webapp/app/shell/engine";
@@ -1543,6 +1544,12 @@ export function DesktopMailboxes(
     const role: "organizer" | "reader" | "released" =
       !claimable(m) ? "organizer"
         : m.legacyStandDown === true || holder ? "reader" : "released";
+    /* A HOLDER WHOSE LEASE LAPSED ORGANIZES NOTHING, by the refusal's own decider: no sentence
+       here may say it organizes or will stop. A claim that names neither kind nor machine is one
+       this build cannot read, and a legacy row carries no holder: both keep their sentences. */
+    const attributed = Boolean(m.organizedBy && (m.organizedBy.kind || m.organizedBy.name));
+    const lapsed = m.legacyStandDown !== true && attributed
+      && !holderIsLive({ by: m.organizedBy, state: m.organizerState });
     /* THE RELEASE IS A STANDALONE-DOOR CONTROL. On the hosted door these rows are a mirror of an
        account whose organizing is the service's, and the browser's own pane is where that is
        given up — offering it here would be a second door onto one decision, with this one unable
@@ -1734,7 +1741,7 @@ export function DesktopMailboxes(
             somebody would go to look it up. A different install taking the mailbox over re-shows
             everything, because the intention was about the one that was there. Offered only on a
             reader row with a holder to be reading along WITH. */}
-        {role === "reader" && whoOf(m) ? (
+        {role === "reader" && whoOf(m) && !lapsed ? (
           readingAlong(m.id, whoOf(m), undefined, alongSaid) ? (
             <span className="mbx-say-set">{t("readerAlongSet", { name: holderOf(m) })}</span>
           ) : (
@@ -1838,7 +1845,7 @@ export function DesktopMailboxes(
                   happens instead, and names nobody. */}
               {m.legacyStandDown === true
                 ? t("organizeHereWhatLegacy")
-                : role === "released"
+                : role === "released" || lapsed
                   ? t("organizeHereWhatNobody")
                   : t("organizeHereWhat", { name: holderOf(m) })}
             </p>

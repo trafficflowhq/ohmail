@@ -26,6 +26,7 @@ import {
 } from "@ohmail/client-engine";
 import { type ToastFn } from "@ohmail/ui";
 import { readerMoveRefusal, type RosterState } from "./mail-state";
+import { isNothingOrganizes, organizerRefusalOf } from "./organizer-refusal";
 /* Backspace/Delete → Trash, and the window in which it has not happened yet. See the module. */
 import { restoreDispatch, UNDO_MS, useDeleteIntentReplay, useDeleteUndo } from "./delete-undo";
 /* Move/File/Junk → the mail now, the sender's routing after the window. See the module. */
@@ -57,7 +58,7 @@ export interface ShellDispatch {
   rosterRef: MutableRefObject<RosterState>;
   deleting: ReturnType<typeof useDeleteUndo>;
   restoring: ReturnType<typeof useDeleteUndo>;
-  refusalCopy: { named: (name: string) => string; unknown: () => string };
+  refusalCopy: { named: (name: string) => string; unknown: () => string; nobody: () => string };
   routing: ReturnType<typeof useRoutingUndo>;
   /** A sender-sheet press waiting on its backlog pass, told once when it finishes. */
   pressWatch: PressWatch;
@@ -256,6 +257,7 @@ export function useShellDispatch({
     () => ({
       named: (name: string) => t("screener.readerMoveRefused", { name }),
       unknown: () => t("screener.readerMoveRefusedUnknown"),
+      nobody: () => t("screener.readerMoveRefusedNobody"),
     }),
     [t],
   );
@@ -298,8 +300,11 @@ export function useShellDispatch({
 
   const refusalSentence = useStableCallback((err: MutationRejectedError | undefined): string => {
     if (err?.code !== "organized_elsewhere") return t("ohbox.refusedPress");
-    const by = (err.details as { by?: { name?: string | null } } | null | undefined)?.by;
-    const name = by?.name && by.name.trim() ? by.name.trim() : null;
+    /* THE REFUSAL'S OWN REASON, which the server's decider chose: a holder that stopped is
+       `no_organizer`, and naming it as the organizer would send somebody to a machine that stopped. */
+    const r = organizerRefusalOf(err);
+    if (isNothingOrganizes(r)) return t("ohbox.refusedNobody");
+    const name = r?.kind === "outdated" || r?.kind === "elsewhere" ? r.name : null;
     return name ? t("ohbox.refusedOrganized", { name }) : t("ohbox.refusedOrganizedUnknown");
   });
 
