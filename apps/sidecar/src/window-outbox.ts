@@ -72,7 +72,9 @@ interface WindowOutbox {
 }
 
 export function createWindowOutbox(deps: WindowOutboxDeps): WindowOutbox {
-  const path = join(deps.dataDir, WINDOW_OUTBOX_FILE);
+  // AT FIRST USE, never at construction: a door that is built and never read reaches no `path`.
+  let path_: string | null = null;
+  const file = (): string => (path_ ??= join(deps.dataDir, WINDOW_OUTBOX_FILE));
   const write = deps.write ?? ((p: string, c: string) => writeAtomicFileSynced(p, c, 0o600));
   const pageBytes = deps.pageBytes ?? WINDOW_OUTBOX_PAGE_BYTES;
   let held: Map<string, Held> | null = null;
@@ -96,7 +98,7 @@ export function createWindowOutbox(deps: WindowOutboxDeps): WindowOutbox {
     const next = new Map<string, Held>();
     let raw: string | null = null;
     try {
-      raw = await readFile(path, "utf8");
+      raw = await readFile(file(), "utf8");
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     }
@@ -109,7 +111,7 @@ export function createWindowOutbox(deps: WindowOutboxDeps): WindowOutbox {
       if (rows === null) {
         // KEPT ASIDE, NOT DELETED: a file this build cannot read is somebody's queued work, and the
         // next launch must not refuse every read on it either.
-        await rename(path, `${path}.unreadable`).catch(() => undefined);
+        await rename(file(), `${file()}.unreadable`).catch(() => undefined);
         deps.log("window_outbox_read_failed", { reason: "the saved outbox could not be read, so it was set aside and the window starts with none" });
       } else {
         for (const r of rows) {
@@ -123,10 +125,10 @@ export function createWindowOutbox(deps: WindowOutboxDeps): WindowOutbox {
 
   const persist = async (next: Map<string, Held>): Promise<void> => {
     if (next.size === 0) {
-      await unlink(path).catch((err: NodeJS.ErrnoException) => { if (err.code !== "ENOENT") throw err; });
+      await unlink(file()).catch((err: NodeJS.ErrnoException) => { if (err.code !== "ENOENT") throw err; });
       return;
     }
-    await write(path, JSON.stringify({ v: 1, rows: [...next.values()].map((h) => h.row) }));
+    await write(file(), JSON.stringify({ v: 1, rows: [...next.values()].map((h) => h.row) }));
   };
 
   // PAGED BY KEY, not by position: a delete between two pages would shift a position and skip a row.

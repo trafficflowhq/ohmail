@@ -93,7 +93,7 @@ import { createSignOutFence, SIGN_OUT_FENCE_WAIT_MS, type SignOutFence } from ".
 import { requestOrganizerTakeover } from "./organize-here.js";
 // WHICH OUTBOUND PASSES THIS COMPOSITION RUNS — one table read by the pass and by the door, so
 // "a phone keeps no appointments" cannot be true in one of the two places. See its header.
-import { AppointmentsRefused, runsPass, runsStorePass, searchFor } from "./composition-passes.js";
+import { AppointmentsRefused, COMPOSITION_WINDOW_OUTBOX, runsPass, runsStorePass, searchFor } from "./composition-passes.js";
 import { hostPairRoutes } from "./host-pair-routes.js";
 // The static half of the host door — the built browser client the QR sends a phone to, served
 // beside the API out of one `handleHost`. The route table wins; this covers everything else.
@@ -7177,10 +7177,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       const token = header && /^Bearer\s+/i.test(header) ? header.replace(/^Bearer\s+/i, "").trim() : "";
       return token !== "" && (await resolveSession(db, token, now())) !== null;
     };
-    /** The window's queued changes, on this machine — see `window-outbox.ts`. */
-    const windowOutbox = createWindowOutbox({
-      dataDir: config.dataDir, authorized: launchBearerAuthorized, log, scope: () => world.mailboxId,
-    });
+    /** The window's queued changes, on this machine — see `window-outbox.ts`. Not on a phone. */
+    const windowOutbox = COMPOSITION_WINDOW_OUTBOX[organizerKind]
+      ? createWindowOutbox({
+          dataDir: config.dataDir, authorized: launchBearerAuthorized, log, scope: () => world.mailboxId,
+        })
+      : null;
     /* THE SEARCH INDEX FILLS ITSELF IN — the store-only pass, one round per idle tick on power;
        see `search-backfill.ts`. Local door only (`composition-passes.ts`). */
     const searchBackfill = runsStorePass(organizerKind, "search-index-backfill")
@@ -7272,7 +7274,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         if (req.method === "POST" && new URL(req.url).pathname === WINDOW_CONSENT_READ_FAILED_ROUTE) {
           return handleWindowConsentReadFailure(req, { authorized: launchBearerAuthorized, log });
         }
-        if (new URL(req.url).pathname === WINDOW_OUTBOX_ROUTE) return windowOutbox.handle(req);
+        if (windowOutbox && new URL(req.url).pathname === WINDOW_OUTBOX_ROUTE) return windowOutbox.handle(req);
         // How far the local search index has got — the Mailboxes pane's progress arm.
         if (req.method === "GET" && new URL(req.url).pathname === SEARCH_INDEX_ROUTE) {
           return searchIndexDoor(req);

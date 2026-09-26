@@ -82,3 +82,15 @@ const SEARCH_WITHOUT_BACKFILL = new SearchService({ indexFills: false });
 export function searchFor(kind: OrganizerKind): SearchService {
   return runsStorePass(kind, "search-index-backfill") ? searchService : SEARCH_WITHOUT_BACKFILL;
 }
+
+/**
+ * WHICH COMPOSITIONS SERVE THE DESKTOP WINDOW'S OUTBOX DOOR (`window-outbox.ts`). It keeps a
+ * window's queued changes in a file on the computer; a phone's outbox lives in its own store and
+ * the phone has no filesystem, so that composition does not build the door at all. Exhaustive over
+ * the claim kinds for the reason the tables above are.
+ */
+export const COMPOSITION_WINDOW_OUTBOX: Readonly<Record<OrganizerKind, boolean>> = {
+  local: true,
+  cloud: true,
+  mobile: false,
+};

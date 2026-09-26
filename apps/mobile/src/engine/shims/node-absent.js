@@ -13,6 +13,13 @@
 const TABLE = require("./node-absent-members.js");
 
 /**
+ * WHERE A REFUSAL IS WRITTEN DOWN, for a census that must see one a caller swallowed. Only when
+ * something installed the list (`test/phone-composition-reaches-no-node.test.ts`); the app installs
+ * none, so on a device this reads `undefined` and the refusal below is all that happens.
+ */
+const REACHED = Symbol.for("ohmail.node-absent.reached");
+
+/**
  * @param {string} moduleName the module this stands in for, as the failure should name it
  * @param {string[]} [members] its export names. Defaults to the measured list for `moduleName`.
  */
@@ -31,6 +38,8 @@ function absent(moduleName, members) {
   }
   const names = members ?? TABLE[moduleName].members;
   const refuse = (member) => () => {
+    const reached = globalThis[REACHED];
+    if (Array.isArray(reached)) reached.push(`${moduleName}.${member}`);
     throw new Error(
       `${moduleName}.${member}() is not available in this app. The mail engine runs inside the ` +
         "app rather than in a Node process, so there is no filesystem, no HTTP client and no " +
