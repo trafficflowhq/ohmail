@@ -392,6 +392,7 @@ function withPathname(request: NextRequest, pathname: string): URL {
 export const config = {
   matcher: [
     "/", "/mailbox", "/resume", "/login", "/join", "/join/invite", "/setup", "/verify-email",
-    "/link-desktop", "/authorize-desktop", "/approve", "/de", "/privacy", "/imprint", "/subprocessors",
+    "/link-desktop", "/authorize-desktop", "/approve", "/subscribed", "/de", "/privacy", "/imprint",
+    "/subprocessors",
   ],
 };

@@ -67,7 +67,8 @@
     "inviteOnly": "New to ohmail? You can sign up — an invite code is not required.",
     "inviteOnlyBeta": "New to ohmail? Accounts are by invitation during the beta.",
     "inviteOnlySelfhost": "New here? Accounts on this server are created by invitation — ask the person who runs it.",
-    "haveInvite": "Have an invite code?"
+    "haveInvite": "Have an invite code?",
+    "continueManage": "Sign in, and your account page opens."
   },
   "setup": {
     "checkingTitle": "One moment",
@@ -3855,6 +3856,12 @@
     "openInBrowser": "Open ohmail.app in a browser to manage or delete this account.",
     "manage": "Manage subscription",
     "signOut": "Sign out"
+  },
+  "subscribed": {
+    "title": "Back to ohmail.",
+    "body": "As soon as the payment is confirmed, ohmail opens your account again. If ohmail is an app on your home screen, close this window and switch to it.",
+    "open": "Open ohmail",
+    "continuing": "Continuing to ohmail…"
   },
   "appError": {
     "title": "ohmail hit an error.",

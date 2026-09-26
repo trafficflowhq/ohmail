@@ -142,6 +142,16 @@ export const OWN_ROUTES = Object.freeze(/** @type {OwnRoute[]} */ ([
   // a log or a Referer; middleware serves the path as a credential page because the nonce CSP
   // is what stops injected inline script from reading `location.hash`.
   { path: "/join/invite", edge: true },
+  // `/subscribed` is where the payment page returns a person (`app/(product)/subscribed`): public,
+  // no credential in it, matched for the canonical-host redirect like the marketing pages.
+  { path: "/subscribed", edge: true },
+  {
+    // `/account/manage` mints a fresh account-page link and redirects to it (`manage-handoff.ts`).
+    path: "/account/manage",
+    edge: false,
+    why: "a route handler whose every answer is a redirect; on a legacy host it has no session"
+      + " and sends the person to `/login`, which the edge moves to the canonical host",
+  },
   {
     // `/demo` is the real mail client in demo mode (`app/(product)/demo/page.tsx`), framed by
     // the landing. It is a path this deployment answers, so it belongs here.

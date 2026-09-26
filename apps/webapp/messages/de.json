@@ -39,6 +39,7 @@
   },
   "login": {
     "title": "Anmelden",
+    "continueManage": "Melde dich an, dann öffnet sich deine Kontoseite.",
     "sub": "Erst dein Passwort, dann dein zweiter Faktor — Passkey oder Einmalcode.",
     "subFirst": "Erst dein Passwort, dann dein zweiter Faktor.",
     "subCode": "Dein Passwort stimmt — jetzt dein zweiter Faktor.",
@@ -3855,6 +3856,12 @@
     "openInBrowser": "Öffne ohmail.app im Browser, um dieses Konto zu verwalten oder zu löschen.",
     "manage": "Abo verwalten",
     "signOut": "Abmelden"
+  },
+  "subscribed": {
+    "title": "Zurück zu ohmail.",
+    "body": "Sobald die Zahlung bestätigt ist, öffnet ohmail dein Konto wieder. Wenn ohmail als App auf deinem Homescreen liegt, schließ dieses Fenster und wechsle dorthin.",
+    "open": "ohmail öffnen",
+    "continuing": "Weiter zu ohmail …"
   },
   "appError": {
     "title": "In ohmail ist ein Fehler aufgetreten.",

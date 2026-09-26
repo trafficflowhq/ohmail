@@ -28,6 +28,7 @@ import { resolveOwnerOutcome } from "../session-outcome";
 import { REASON_BODY, takeSignedOutNote, type SignedOutReason } from "../resume/signed-out-note";
 // The approval page's way back after an ordinary sign-in: a request id, never a URL.
 import { takeApprovalReturn } from "../approve/approval-return";
+import { leaveFor, type Continuation } from "./continuation";
 
 type Stage = "password" | "twofa";
 
@@ -49,7 +50,9 @@ function loginError(err: unknown, tried: FactorTried, t: (key: string) => string
   return messageOf(err);
 }
 
-export function LoginScreen({ publicSignup = false }: { publicSignup?: boolean }) {
+export function LoginScreen(
+  { publicSignup = false, next = null }: { publicSignup?: boolean; next?: Continuation | null },
+) {
   const t = useTranslations("login");
   const tr = useTranslations("resume");
   /* WHAT THIS DEPLOYMENT ASKS A STRANGER FOR. Read on the server and handed down, the same seam
@@ -57,6 +60,14 @@ export function LoginScreen({ publicSignup = false }: { publicSignup?: boolean }
      Defaulted `false` — an invite-only reading is the safe one to be wrong about. */
   const posture = signupPosture(SELF_HOST_BUILD, publicSignup);
   const router = useRouter();
+
+  /** Once a session exists: the approval page's return, else the named continuation, else the app. */
+  const proceed = (fallback: string, how: "push" | "replace"): void => {
+    const back = takeApprovalReturn();
+    if (back !== null) router[how](back);
+    else if (next !== null) leaveFor(next);
+    else router[how](fallback);
+  };
 
   const [stage, setStage] = useState<Stage>("password");
   const [email, setEmail] = useState("");
@@ -138,7 +149,7 @@ export function LoginScreen({ publicSignup = false }: { publicSignup?: boolean }
       const outcome = await resolveOwnerOutcome({ signal: abort.signal }).catch(() => null);
       if (cancelled || outcome === null) return;
       if (outcome.kind === "owner") {
-        router.replace(takeApprovalReturn() ?? `/${window.location.hash}`);
+        proceed(`/${window.location.hash}`, "replace");
         return;
       }
       // `none` is the server's own answer that there is nothing to forward to, which is
@@ -152,7 +163,8 @@ export function LoginScreen({ publicSignup = false }: { publicSignup?: boolean }
       if (timer !== undefined) clearTimeout(timer);
       abort.abort();
     };
-  }, [configured, router]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `proceed` reads `next`, a server prop
+  }, [configured, router, next]);
 
   /**
    * A fresh self-host server has nobody to sign in. Self-host builds only (compile-time —
@@ -255,7 +267,7 @@ export function LoginScreen({ publicSignup = false }: { publicSignup?: boolean }
     const { options } = await auth.webauthnAssertOptions({ loginToken: challenge.loginToken });
     const credential = await assertPasskey(options);
     await auth.webauthnAssertVerify({ loginToken: challenge.loginToken, credential });
-    router.push(takeApprovalReturn() ?? "/");
+    proceed("/", "push");
   }, "passkey");
 
   const finishWithCode = (e: React.FormEvent) => {
@@ -269,7 +281,7 @@ export function LoginScreen({ publicSignup = false }: { publicSignup?: boolean }
       } else {
         await auth.totpVerify({ loginToken: challenge.loginToken, code: code.trim() });
       }
-      router.push(takeApprovalReturn() ?? "/");
+      proceed("/", "push");
     }, "code");
   };
 
@@ -296,6 +308,7 @@ export function LoginScreen({ publicSignup = false }: { publicSignup?: boolean }
         <span className="wordmark"><b><em>oh</em>mail</b></span>
         <h1>{t("title")}</h1>
         {signedOut && <p className="sub" role="status">{tr(REASON_BODY[signedOut])}</p>}
+        {next !== null ? <p className="sub">{t("continueManage")}</p> : null}
         {/* THE SUBTITLE FOLLOWS THE FACTS ON SCREEN — claims-are-contracts. The old fixed
             "Your password, then your passkey… nothing to type" stood over the TOTP step, which
             was at that moment asking the user to type a six-digit code — directly false for the

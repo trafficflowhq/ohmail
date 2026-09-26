@@ -2,8 +2,9 @@
  * WHERE A SIGNED-OUT BROWSER COMES BACK TO after the ordinary sign-in, for the approval page.
  *
  * An ID and never a URL: the page keeps the request id it was opened with in this tab's
- * `sessionStorage`, and the login screen asks for it once, afterwards. No `?next=` exists, so no
- * link can send a sign-in anywhere; a value that is not a request id, or one older than the
+ * `sessionStorage`, and the login screen asks for it once, afterwards. `/login`'s one `?next=` names
+ * a destination from a closed set (`login/continuation.ts`), so no link can send a sign-in anywhere
+ * else; a value that is not a request id, or one older than the
  * request can live, is dropped. The two writes go through the per-tab durable door, so a jar that
  * refuses them is told the way every other refused write is.
  */
