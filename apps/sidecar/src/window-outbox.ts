@@ -22,11 +22,11 @@ export const WINDOW_OUTBOX_FILES: readonly string[] = [WINDOW_OUTBOX_FILE, `${WI
 export const WINDOW_OUTBOX_TYPES: readonly string[] = ["outbox_entry", "outbox_abandoned"];
 
 /** Under the shell's 32 MiB frame, so one send that crossed the bridge fits in one write. */
-export const WINDOW_OUTBOX_MAX_BODY_BYTES = 31 * 1024 * 1024;
+const WINDOW_OUTBOX_MAX_BODY_BYTES = 31 * 1024 * 1024;
 /** What one GET page carries at most, beside a single row larger than it, which goes alone. */
-export const WINDOW_OUTBOX_PAGE_BYTES = 8 * 1024 * 1024;
+const WINDOW_OUTBOX_PAGE_BYTES = 8 * 1024 * 1024;
 /** The whole set's ceiling. A write past it is refused, so the window says it could not record. */
-export const WINDOW_OUTBOX_MAX_TOTAL_BYTES = 256 * 1024 * 1024;
+const WINDOW_OUTBOX_MAX_TOTAL_BYTES = 256 * 1024 * 1024;
 const MAX_ROWS = 20_000;
 const ID = /^[\x21-\x7e]{1,200}$/;
 
@@ -67,7 +67,7 @@ export interface WindowOutboxDeps {
   pageBytes?: number;
 }
 
-export interface WindowOutbox {
+interface WindowOutbox {
   handle(req: Request): Promise<Response>;
 }
 
