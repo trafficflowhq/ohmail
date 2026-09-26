@@ -414,7 +414,7 @@ export function AccountSection() {
               mirror, and the cookies are already cleared, so `/` re-decides and renders the
               marketing page. */}
           <Button variant="primary" onClick={() => window.location.replace("/")}>
-            {t("doneHome")}
+            {t(SELF_HOST_BUILD ? "doneHomeSelfHost" : "doneHome")}
           </Button>
         </div>
       </Pane>
@@ -495,7 +495,9 @@ export function AccountSection() {
         <div>
           <h3 className="acct-sub">{t("keptTitle")}</h3>
           <ul className="acct-list">
-            <li>{t("kept1")}</li>
+            {/* What THIS server keeps: the managed sentence names a billing row and a processor a
+                self-hosted database has no table for. */}
+            <li>{t(SELF_HOST_BUILD ? "keptSelfHost" : "kept1")}</li>
             {/* GENERIC, and shown only where there is a subscription to speak of. It used to name
                 the plan, which this app no longer knows — and does not need to: what the person
                 is being told is that the money stops with the account, which is true of every

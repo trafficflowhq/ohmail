@@ -386,7 +386,8 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
         // typed email and name are still there.
         setNeedsInvite(true);
         setStep("invite");
-        setError(t("inviteRequiredAfterAll"));
+        // The fallback names who can hand out a code: on a self-hosted server that is its operator.
+        setError(t(SELF_HOST_BUILD ? "inviteRequiredAfterAllSelfHost" : "inviteRequiredAfterAll"));
       } else if (code === "payment_required") {
         // The allowance gate refused for payment. With the corrected step order this is only
         // reachable when Checkout's webhook has not landed, or when a subscription lapsed

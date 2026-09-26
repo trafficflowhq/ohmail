@@ -54,6 +54,10 @@ async function reopenedCatchUp(
   }
 }
 
+/** What an erasure leaves on a host with no billing program: the pseudonymous account row and the token hashes. */
+const RETAINED_UNMETERED =
+  "the account row only, with a random id and no name, and hashes of its sign-in tokens until they expire";
+
 /**
  * `DELETE /account` — Art. 17 erasure, self-serve; the screen is `AccountSection.tsx`. `stepUp:
  * true`: the most destructive call in the API. Not `idempotent`: the second call deletes nothing.
@@ -117,8 +121,9 @@ export const accountRoutes: Route[] = [
           // registered is a fact about the service; the address on the row is not, and it goes.
           redactedTables: result.redacted,
           // Said plainly rather than buried: the operator's own audit trail and the
-          // customer's confirmation mail both read from this.
-          retained: "billing records only, under a pseudonymous account id",
+          // customer's confirmation mail both read from this. A host with no billing program
+          // keeps no billing records, so it names what it does keep.
+          retained: port ? "billing records only, under a pseudonymous account id" : RETAINED_UNMETERED,
           subscription,
         },
         200,
