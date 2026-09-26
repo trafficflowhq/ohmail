@@ -315,12 +315,11 @@ export interface SubjectRulePlan {
 }
 
 /**
- * The rule, and the moves for the mail the user can see. One `rule_create`; the moves are the
- * optimistic half only — `applyRetro` rides the mutation, so the server owns the backlog
- * (`RulesService` stamps `rules.retro_requested_at`, the worker's `ruleRetroPass` walks it in bounded
- * pages). Moves here are capped at {@link RETRO_VISIBLE_MOVES} (an uncapped fan-out is one
- * `POST /messages/:id/move` per message, each taking the account's write lock) and exist only so rows
- * on screen move now. Nothing is retargeted: an exactly identical rule is answered by writing nothing
+ * The rule, or the re-file an existing one names. One `rule_create`; `applyRetro` rides the
+ * mutation, so the server owns the backlog (`RulesService` stamps `rules.retro_requested_at`, the
+ * worker's `ruleRetroPass` walks it in bounded pages) and this press moves none of it. Only an
+ * `already` press moves visible mail, capped at {@link RETRO_VISIBLE_MOVES} (each move takes the
+ * account's write lock). Nothing is retargeted: an exactly identical rule is answered by writing nothing
  * and saying so; a different term is a different rule; same term with a different destination is left
  * as a second row on purpose — the rules surface is where a person resolves it with both texts shown.
  */
@@ -353,16 +352,13 @@ export function planSubjectRule(
       .toLowerCase().includes(clean.toLowerCase()),
   );
   // OUT OF PLACE means out of a place the PASS would move it out of — `retroPassWouldMove`, the
-  // same question `sender-screening.ts` asks, because these moves are the optimistic head of that
-  // pass's set. On `folder !== wanted` alone this sheet moved mail out of the person's own folders
-  // and mail they had set aside, which is what the footer says the pass leaves alone.
+  // same question `sender-screening.ts` asks. On `folder !== wanted` alone this sheet moved mail
+  // out of the person's own folders and mail they had set aside.
   const misplaced = matching.filter((m) => retroPassWouldMove(m, wanted));
 
-  // A term the SERVER would refuse writes NOTHING — no rule and no moves. The moves exist only
-  // as the optimistic half of a rule that is about to hold (or, on an `already` press, the
-  // deliberate re-file of the visible mail the standing rule names); dispatching them beside a
-  // 400 would re-file mail for a rule that was never written. `MAX_SUBJECT_TERM_CHARS` mirrors
-  // the server's own cap (both term fields share the same 200).
+  // A term the SERVER would refuse writes NOTHING — no rule and no moves: dispatching moves
+  // beside a 400 would re-file mail for a rule that was never written. `MAX_SUBJECT_TERM_CHARS`
+  // mirrors the server's own cap (both term fields share the same 200).
   const invalid = clean === "" || clean.length > MAX_SUBJECT_TERM_CHARS;
   const ruleMutations: EngineMutation[] = already || invalid ? [] : [{
     kind: "rule_create",
@@ -374,14 +370,11 @@ export function planSubjectRule(
   }];
 
   const mutations: EngineMutation[] = [...ruleMutations];
-  /* Newest first (the context is sorted), so the slice is the mail the user is looking at — and
-     the past-mail switch is its GATE, as it is in `sender-screening.ts#planScreeningChange`. It
-     used to ride the rule alone while these moves went out regardless, which made "Also move the
-     mail already in your mailbox" false on the one sheet it was rendered in twice. An INVALID term
-     moves nothing (no rule stands behind it); an `already` press keeps its moves — "File these
-     to …" files the visible matching mail the standing rule names, and the sheet offers no switch
-     there precisely because that press is not the rule reaching back. */
-  if (!invalid && (applyRetro || already)) {
+  /* A NEW RULE'S BACKLOG IS THE SERVER PASS'S (THE-CLIENTS-FIFTY): only the pass sees a reply,
+     a hand filing or a decided approval, so `applyRetro` asks it and this press moves nothing.
+     An `already` press keeps its moves — "File these to …" files the visible matching mail the
+     standing rule names, an instruction and not the rule reaching back — newest first, capped. */
+  if (!invalid && already) {
     for (const m of misplaced.slice(0, RETRO_VISIBLE_MOVES)) {
       mutations.push({ kind: "move", messageId: m.id, folder: wanted });
     }

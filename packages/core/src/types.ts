@@ -119,14 +119,13 @@ export interface RetroCandidateRow {
 }
 
 /**
- * WOULD THE SERVER'S RETRO PASS MOVE THIS MESSAGE — the one question both clients ask.
+ * COULD THE SERVER'S RETRO PASS MOVE THIS MESSAGE — the wire's half of the question.
  *
- * The fifty a screening press moves at once must be a SUBSET of what
- * `rule-retro.ts#selectCandidates` would move, or the press undoes filing that pass never
- * touches: the clients filtered on the destination alone and so moved a customer's own folders
- * and mail set aside. Three of the pass's clauses are on the wire — the allow-list over the
+ * Three of `rule-retro.ts#selectCandidates`' clauses are on the wire — the allow-list over the
  * organized six, the idempotency, no triage. Four are NOT (`last_set_by 'external'`, a draft
- * reply, a decided approval, an own reply in the thread), which keeps this a subset.
+ * reply, a decided approval, an own reply in the thread), so this over-counts the pass, and no
+ * press moves a rule's backlog on its answer: the pass moves that itself (THE-CLIENTS-FIFTY).
+ * It counts mail for a sheet, reads a press back, and narrows a move that IS the instruction.
  */
 export function retroPassWouldMove(row: RetroCandidateRow, destination: string): boolean {
   const filed = row.physicalFolder ?? row.folder;

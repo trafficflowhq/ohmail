@@ -31,7 +31,6 @@ import {
   presentationReader,
   presentsUnread,
   pressOverTwins,
-  retroPassWouldMove,
   readsPartition,
   receiptsByDay,
   rulesList,
@@ -3878,10 +3877,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * Screening from the open message — the rule ladder, mirrored from
    * `apps/webapp/app/shell/sender-screening.ts#planScreeningChange`: (1) a subject still waiting
    * at the gate is decided with `screener_decide`, which carries the past-mail answer; (2) past
-   * the gate the twins decide through the one shared `pressOverTwins`. The moves are the
-   * optimistic half, capped at 50, gated on `applyRetro` and narrowed by `retroPassWouldMove` —
-   * see {@link movePastMail}; the rule is awaited and reported, the moves roll their own rows
-   * back. Raw mirror reads.
+   * the gate the twins decide through the one shared `pressOverTwins`. Every branch writes a rule
+   * or a decide, so the backlog is the server pass's and this press moves none of it
+   * (THE-CLIENTS-FIFTY): only the pass sees a reply or a hand filing. Raw mirror reads.
    */
   /** The press's forecast over the raw mirror and the lists' own options (`presentedOptions`). */
   const forecastOf = (
@@ -3947,11 +3945,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       makeRule: true, applyRetro: p.applyRetro, resolution,
       shown: shown.slice(0, 20).map((r) => ({ id: r.id, fp: ruleFingerprint(r) })), at: now().getTime(),
     };
-    // Only the rows the list will show at the place move: under "keep" a kept row stays put.
-    const moves: EngineMutation[] = p.applyRetro
-      ? [...p.subject].filter((x) => landing.has(x.id) && retroPassWouldMove(x, p.wanted)).sort(newestFirst).slice(0, 50)
-        .map((x) => ({ kind: "move", messageId: x.id, folder: p.wanted }))
-      : [];
+    // A RULE'S PAST MAIL IS THE SERVER PASS'S (THE-CLIENTS-FIFTY): the intent always writes the
+    // rule with the past-mail answer, so this press moves none of it; the held window presents the
+    // `landing` rows at the place meanwhile, and the pass moves them.
+    const moves: EngineMutation[] = [];
     const inv = moves.flatMap((mu) => inverseMutations(engine.verbRead(), mu));
     const settled = moves.map((mu) => engine.mutate(mu).catch(() => null));
     const place = destDone(p.dest);
@@ -4040,28 +4037,6 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         : x.from.address.trim().toLowerCase() === match;
     const subject = raw.list<EngineMessage>("message").filter(ofSubject);
 
-    /**
-     * THE PAST-MAIL HALF, AND THE SWITCH IS ITS GATE. "Also move the mail already in your
-     * mailbox" off used to change only the sentence while BOTH branches below still dispatched
-     * up to 50 moves — a person's own filing undone by a control that said not to. The answer is
-     * read HERE, in the one place both branches move through, so the gate cannot be half-applied.
-     * Off: the rule is written and nothing already here is touched. On: the bound stays (the
-     * server's resumable pass owns the rest) and the moves are unawaited, each rolling its own
-     * row back. WHICH mail is `retroPassWouldMove`'s at both call sites: these are the head of
-     * the server's own set, newest first, never a set of this file's own.
-     */
-    const movePastMail = (already: (x: EngineMessage) => boolean): void => {
-      if (!applyRetro) return;
-      subject
-        .filter(already)
-        // NEWEST FIRST, because the fifty are the mail the person is looking at — the webapp's
-        // `sender-screening.ts` sorts for the same reason. Sliced out of the mirror's list order
-        // the fifty were arbitrary, so the messages that moved were not the ones on screen.
-        .sort(newestFirst)
-        .slice(0, 50)
-        .forEach((x) => void engine.mutate({ kind: "move", messageId: x.id, folder: wanted }));
-    };
-
     const waiting = subject
       .filter((x) => physicalFolderOf(x) === FOLDER_OF_VIEW.screener)
       .sort(newestFirst)[0];
@@ -4089,19 +4064,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
           applyRetro,
         }),
       )]);
-      // The decide relocates the HELD rows and promotes the rule — it does not touch the
-      // subject's mail that already left the gate. Those rows are the past-mail half (the
-      // webapp's `planScreeningChange` shape: moves cover what the decide does not), so they
-      // move only when the person asked for it.
-      movePastMail((x) => physicalFolderOf(x) !== FOLDER_OF_VIEW.screener && retroPassWouldMove(x, wanted));
     } else {
       /* THE WEB SHEET'S LADDER, ONE FUNCTION: every twin elsewhere is retargeted, each one already
          at the destination re-armed when the past-mail answer is yes (off, a habit-click writes
          nothing), and one rule written when there is none. */
       const { writes } = pressOverTwins(rulesList(raw), scope, match, wanted, applyRetro);
       ruled = Promise.all([...writes, ...removals].map((w) => watched(engine.mutate(w))));
-      // The optimistic half: what the reader can see moves now; the server's pass does the rest.
-      movePastMail((x) => retroPassWouldMove(x, wanted));
     }
     /* THE SENTENCE FOLLOWS THE ANSWER, not the press: the optimistic "Screened" stood over a
        rule the server had only RECORDED for the organizing install, which is the same claim the

@@ -7,8 +7,8 @@
  * mail moves with `move` and the rule is written with `rule_create` (the old composed `move`s raced
  * `decide` and produced promoted rules pointing at INBOX). `scope: "domain"` widens both halves.
  * Making the rule is the DEFAULT; move-only is the opt-out. "Apply to all previous" belongs to the
- * server (`applyRetro` → the worker's resumable `ruleRetroPass`); the client moves what the user
- * can SEE, and only when they asked for it. Pure: reads the mirror, returns mutations.
+ * server (`applyRetro` → the worker's resumable `ruleRetroPass`), which alone moves a rule's
+ * backlog; the client moves mail only where the move IS the instruction. Pure: returns mutations.
  */
 import {
   FOLDER_OF_VIEW,
@@ -77,14 +77,10 @@ export type ScreeningScope = "sender" | "domain";
 export const RETRO_DEFAULT_ON = true;
 
 /**
- * How many messages the CLIENT still moves itself, newest first. Not a
- * limit on what the user asked for — the server pass applies the rule to
- * all of it. This is the optimistic half: the rows the user is looking at
- * move at once instead of waiting for a worker cycle, a reconcile and a
- * drain. Past what a screen can show, an extra `POST /messages/:id/move`
- * buys nothing visible and costs the account's write lock. Also a bound on
- * the pre-existing defect: this fan-out had no cap, so a domain scope on a
- * big provider fired thousands of requests from a browser.
+ * How many messages a press that IS the instruction (a move with no rule, a subject sheet's "File
+ * these to …") moves itself, newest first. A rule's backlog is never this: the server pass owns it
+ * (see `planScreeningChange`). Each move is its own request on the account's write lock, so past
+ * what a screen can show one buys nothing visible; uncapped, a domain scope fired thousands.
  */
 export const RETRO_VISIBLE_MOVES = 50;
 
@@ -292,10 +288,9 @@ export interface ScreeningPlan {
    */
   ruleScope: ScreeningScope | null;
   /**
-   * Messages the CLIENT moves itself — capped at {@link RETRO_VISIBLE_MOVES}.
-   *
-   * This is no longer the number to put in front of a user, and the toast no longer does: it is
-   * the optimistic half only. {@link ScreeningPlan.matched} is the honest one.
+   * Messages this press files itself: the decide's held bag, or a no-rule move's visible mail
+   * (capped at {@link RETRO_VISIBLE_MOVES}). A rule's backlog is the server pass's and never
+   * counted here. {@link ScreeningPlan.matched} is the number the sheet shows before the click.
    */
   moved: number;
   /**
@@ -409,20 +404,16 @@ export function planScreeningChange(
   }
 
   /**
-   * THE PAST-MAIL HALF, AND THE SWITCH IS ITS GATE. Off used to change the sentence and the rule's
-   * flag while this fan-out dispatched fifty moves anyway; the answer is read HERE, the one place
-   * every branch above passes through. The cap stays because each entry is its own
-   * `POST /messages/:id/move` on the account's write lock (uncapped, a domain scope fired thousands
-   * from a tab), and `messages` is newest-first, so the slice is the mail on screen. WHICH mail is
-   * `retroPassWouldMove`'s, not this file's: the fifty are the head of the server pass's own set,
-   * and `folder !== wanted` alone moved a customer's own folders and mail set aside. With NO rule
-   * (`none`) the move IS the instruction, which is why the sheet withdraws the switch there.
+   * THE PAST-MAIL HALF IS THE SERVER PASS'S, NEVER THIS PRESS'S (THE-CLIENTS-FIFTY). Only the
+   * pass sees a reply, a hand filing or a decided approval, so with a rule in force this press
+   * moves none of the backlog itself: the pass moves exactly its own set. With NO rule (`none`)
+   * the move IS the instruction, capped because each is its own request on the account's write
+   * lock, newest first so the slice is the mail on screen. `outOfPlace` is also the sheet's count.
    */
-  const movesPastMail = applyRetro || ruleState === "none";
   const outOfPlace = subject.messages.filter(
     (m) => retroPassWouldMove(m, wanted) && !movedByDecide.has(m.id),
   );
-  const toMove = movesPastMail ? outOfPlace.slice(0, RETRO_VISIBLE_MOVES) : [];
+  const toMove = ruleState === "none" ? outOfPlace.slice(0, RETRO_VISIBLE_MOVES) : [];
   for (const m of toMove) mutations.push({ kind: "move", messageId: m.id, folder: wanted });
 
   // Every state that leaves a rule in force can now be asked for the backlog: `created` and

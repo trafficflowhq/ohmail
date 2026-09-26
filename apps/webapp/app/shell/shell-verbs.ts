@@ -478,8 +478,8 @@ export function useShellVerbs({
     /**
      * AND IT MOVES THE MESSAGE IT WAS PRESSED ON, not the sender's whole visible backlog.
      *
-     * `planScreeningChange` files every out-of-place message of the subject it can see (up to its
-     * cap) — right for the Screener's sheet, which SHOWS that count before the click, and wrong
+     * `planScreeningChange` files every out-of-place message it can see when the move is the
+     * instruction (up to its cap) — right for a sheet that SHOWS that count, and wrong
      * for a press on one row: dragging one newsletter onto Reads would file the two beside it with
      * nothing having said so. The rule half is kept whole, because that IS the routing; the
      * `screener_decide` is kept whole too, because it re-files the mail it holds itself and

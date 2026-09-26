@@ -2149,16 +2149,15 @@ const TABLE = {
 
   /**
    * The two sentences the screening sheet can truthfully say, one per answer to the past-mail
-   * switch — and the switch now gates the dispatch, so the OFF one is a statement about the code
-   * rather than about the label above it. The verb in the ON one is "applies the rule to": the
-   * server's pass re-evaluates each message through the rules and skips anything replied to,
-   * filed by hand or set aside, and reaches only the mail ohmail itself filed. The bound is named
-   * because the phone moves those first 50 ITSELF, without that narrowing.
+   * switch — and the switch gates the dispatch, so the OFF one is a statement about the code. The
+   * verb in the ON one is "applies the rule to": the server's pass re-evaluates each message
+   * through the rules, skips anything replied to, filed by hand or set aside, and reaches only
+   * the mail ohmail itself filed. The phone moves none of it itself (THE-CLIENTS-FIFTY).
    */
   screeningNote: (target: string) =>
     `Becomes a rule — future mail from ${target} files there automatically. Mail already here stays where it is.`,
   screeningNoteRetro: (target: string) =>
-    `Becomes a rule — future mail from ${target} files there automatically. Up to 50 messages move now; for the rest, ohmail applies the rule to the mail it has already filed for you. Messages you have replied to, filed yourself or set aside are left alone.`,
+    `Becomes a rule — future mail from ${target} files there automatically, and ohmail applies the rule to the mail it has already filed for you. Messages you have replied to, filed yourself or set aside are left alone.`,
   screeningRetroToggle: "Also move the mail already in your mailbox",
   /* ── THE SHEET'S RESOLVE STEP — the web sheet's words, one function per key ── */
   screeningRulesHead: "Their rules",
