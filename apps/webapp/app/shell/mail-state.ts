@@ -23,10 +23,13 @@
  * member — drift is a red test. At runtime an unrecognised reason still
  * produces `blocked` with generic copy: a server that grows a fourth reason must not be answered with silence.
  */
-/* The ONE mailbox-address grouping rule, shared with the Mailboxes pane. This module had no
-   imports at all before it; it has this one because the alternative is a second copy of a rule
-   that must never diverge from the pane's — see `address-key.ts`. */
+/* The ONE mailbox-address grouping rule, shared with the Mailboxes pane, and the ONE reading of
+   why a reader's press has nowhere to go, shared with the server's refusal. Each import is the
+   alternative to a second copy of a rule that must never diverge — see `address-key.ts`. */
 import { addressKey } from "./address-key";
+import {
+  requestRefusalReason, rosterRefusalReason, type RequestRefusalReason,
+} from "@trafficflow/core/reader-refusal";
 
 export const SYNC_BLOCK_REASONS = [
   "lease_unreadable",
@@ -340,14 +343,14 @@ export type ScreenerMode = "organizer" | "pending" | "blocked";
 
 /**
  * WHY A DECISION HAS NOWHERE TO GO — the finer answer under {@link ScreenerMode} `blocked`.
- * · `organizer_outdated` — somebody holds the mailbox and their build cannot take a decision from a reader. The way
- *   out is to take the mailbox over, or to update that install.
- * · `no_organizer` — nobody holds it at all. Nothing is filing this mailbox, which is a different sentence and a
- *   different remedy.
- * The same two words the decision door answers with, so the pane and the refusal cannot come to describe one state
- * differently.
+ * · `organizer_outdated` — a LIVE holder whose build cannot take a decision from a reader. The way out is to take
+ *   the mailbox over, or to update that install.
+ * · `no_organizer` — nobody holds it, or its holder stopped renewing. Nothing is filing this mailbox, which is a
+ *   different sentence and a different remedy.
+ * The decision door's own type and decider (`@trafficflow/core/reader-refusal`), so the pane and the refusal cannot
+ * come to describe one state differently.
  */
-export type ScreenerBlockReason = "organizer_outdated" | "no_organizer";
+export type ScreenerBlockReason = RequestRefusalReason;
 
 export interface ScreenerRole {
   mode: ScreenerMode;
@@ -392,15 +395,18 @@ export function screenerMode(facts: ReadonlyArray<OrganizerRow> | null): Screene
     return { mode: "pending", name: named, reason: null, oauthOnly: false };
   }
   const oauthOnly = live.every((m) => m.authKind === "oauth");
-  /* A HOLDER IS NAMED — the same test `readerStandDown` makes, and for the same reason: the object
-     may exist with three nulls in it. Where no live row names anybody, nothing organizes these
-     mailboxes at all, which is the other sentence and the other remedy. */
-  const anyHolder = live.some((m) => Boolean(m.organizedBy && (m.organizedBy.kind || m.organizedBy.name)));
+  /* THE SERVER'S DECIDER, per row: a LIVE holder that cannot take the decision is outdated; none
+     named, or one whose lease lapsed (`organizerState: "stopped"`), organizes nothing. Outdated
+     names a live holder, so "update ohmail on it" names the machine that still organizes. */
+  const leaseOf = (m: OrganizerRow) => ({ by: m.organizedBy, state: m.organizerState });
+  const reason = rosterRefusalReason(live.map(leaseOf));
+  const liveName = live.filter((m) => requestRefusalReason(leaseOf(m)) === "organizer_outdated")
+    .map((m) => m.organizedBy?.name).find((n) => n && n.trim()) ?? null;
   const asked = live.some((m) => m.organizerRole === "reader" && (m.takeoverAuthorizedAt ?? null) !== null);
   return {
     mode: "blocked",
-    name: named,
-    reason: anyHolder ? "organizer_outdated" : "no_organizer",
+    name: reason === "organizer_outdated" ? liveName : named,
+    reason,
     oauthOnly,
     ...(asked ? { takeoverAsked: true as const } : {}),
   };

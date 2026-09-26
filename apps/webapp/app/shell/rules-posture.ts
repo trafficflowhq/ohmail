@@ -30,9 +30,10 @@ export function rulesPostureOf(facts: ReadonlyArray<Row> | null): RulesPosture {
     && !(m.organizedBy && (m.organizedBy.kind || m.organizedBy.name)));
   if (role.mode === "organizer" && !unheld) return { mode: "organizer" };
   if (role.mode === "pending") return { mode: "pending", name: role.name };
-  const nobody = unheld || role.reason === "no_organizer";
-  if (nobody && live.some((m) => Boolean(m.takeoverAuthorizedAt))) return { mode: "starting" };
-  return { mode: "blocked", reason: nobody ? "no_organizer" : "organizer_outdated", name: role.name };
+  // The reason is `screenerMode`'s, from the server's own decider; an unheld reader is nobody's.
+  const reason = unheld ? "no_organizer" : role.reason ?? "no_organizer";
+  if (reason === "no_organizer" && live.some((m) => Boolean(m.takeoverAuthorizedAt))) return { mode: "starting" };
+  return { mode: "blocked", reason, name: role.name };
 }
 
 /** The refusal a press would meet, before it is pressed — `null` where a press can land. */

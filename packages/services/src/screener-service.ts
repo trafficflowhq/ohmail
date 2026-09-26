@@ -46,6 +46,7 @@ import { correspondentsAmong, makeDrizzleRepo } from "@trafficflow/core/adapters
    advertise (mail 0094). Imported rather than spelled as a constant here so that this door and
    the record it writes cannot disagree about what `screener.decide` requires. */
 import { capabilityForKind } from "@trafficflow/core/adapters/organizer-lease";
+import { requestRefusalReason } from "@trafficflow/core/reader-refusal";
 import { planAccountFanOut, writeReaderRequest, type AccountFanOut, type FanOutTarget } from "./reader-request.js";
 import { bridgeTx, type ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
@@ -1271,8 +1272,7 @@ export class ScreenerReadService {
           tx, ctx.accountId, h.mailboxId, capabilityForKind("screener.decide"),
         );
         throw new OrganizedElsewhereError(
-          h.mailboxId, e?.by ?? { kind: null, name: null, since: null },
-          (e?.by.kind ?? null) === null ? "no_organizer" : "organizer_outdated",
+          h.mailboxId, e?.by ?? { kind: null, name: null, since: null }, requestRefusalReason(e),
         );
       }
 
@@ -1409,8 +1409,7 @@ export class ScreenerReadService {
   ): Promise<ScreenRequestResult> {
     if (!eligibility.capable) {
       throw new OrganizedElsewhereError(
-        v.target.mailboxId, eligibility.by,
-        eligibility.by.kind === null ? "no_organizer" : "organizer_outdated",
+        v.target.mailboxId, eligibility.by, requestRefusalReason(eligibility),
       );
     }
 
@@ -1891,10 +1890,8 @@ export class ScreenerService extends ScreenerReadService {
       throw new OrganizedElsewhereError(
         ineligibleAt?.mailboxId ?? "",
         ineligible?.by ?? { kind: null, name: null, since: null },
-        // `?? null` first: `ineligible?.by.kind` short-circuits to UNDEFINED when the eligibility
-        // read itself returned null, and `undefined === null` is false — so the `no_organizer` arm
-        // was unreachable in exactly the case it names.
-        (ineligible?.by.kind ?? null) === null ? "no_organizer" : "organizer_outdated",
+        // A null eligibility (no row at all) is `no_organizer` inside the decider.
+        requestRefusalReason(ineligible),
       );
     }
 

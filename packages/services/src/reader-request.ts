@@ -10,6 +10,7 @@ import { dialect } from "@trafficflow/db/dialect";
 import {
   capabilityForKind, REQUEST_PAYLOAD_MAX_BYTES, REQUEST_SET_MAX, type RequestKind,
 } from "@trafficflow/core/adapters/organizer-lease";
+import { requestRefusalReason } from "@trafficflow/core/reader-refusal";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 
@@ -56,8 +57,7 @@ export type MailboxRoute =
 /**
  * DECIDE ONE PER-MAILBOX DOOR: write, or ask? Throws `MailboxNotFoundError` when the account does
  * not hold the mailbox (or it is a tombstone), `OrganizedElsewhereError` when the holder will not
- * take this KIND — `organizer_outdated` for a holder that cannot, `no_organizer` for none: two
- * sentences, two affordances, so the reason travels. A PLAIN READ, NOT THE REFUSAL:
+ * take this KIND, with `requestRefusalReason`'s reason. A PLAIN READ, NOT THE REFUSAL:
  * `readRequestEligibility` takes no lock — right for choosing a branch; under READ COMMITTED the
  * worker's lease gate can demote between this read and the write, so the caller still takes
  * `assertOrganizerRole`'s share lock in its own transaction. The capability derives from the
@@ -77,10 +77,7 @@ export async function routeMailboxWrite(
   if (eligibility.status === "disabled") throw new MailboxNotFoundError(mailboxId);
   if (eligibility.role === "organizer") return { route: "organizer" };
   if (!eligibility.capable) {
-    throw new OrganizedElsewhereError(
-      mailboxId, eligibility.by,
-      eligibility.by.kind === null ? "no_organizer" : "organizer_outdated",
-    );
+    throw new OrganizedElsewhereError(mailboxId, eligibility.by, requestRefusalReason(eligibility));
   }
   return { route: "request", holder: eligibility.by };
 }
@@ -201,10 +198,7 @@ export async function planAccountFanOut(
     if (e.role === "organizer") { organized.push(id); continue; }
     if (opts.admitTakeover === true && e.takeoverPending) { awaiting.push(id); continue; }
     if (e.capable) { requestTo.push({ mailboxId: id, holder: e.by }); continue; }
-    refused.push({
-      mailboxId: id, holder: e.by,
-      reason: e.by.kind === null ? "no_organizer" : "organizer_outdated",
-    });
+    refused.push({ mailboxId: id, holder: e.by, reason: requestRefusalReason(e) });
   }
 
   const heldElsewhere = requestTo.length + refused.length;
@@ -212,11 +206,10 @@ export async function planAccountFanOut(
 
   /* NOTHING THIS PRESS COULD DO ANYWHERE. Every live mailbox is held by an install that will not
      take this kind, so there is no local write to make and no request to send — the one state that
-     is still a refusal. Named from the first holder we can name, which is how the copy layer gets
-     a machine into the sentence; a reader whose holder columns are still NULL yields
-     `by.kind === null` and a different sentence. */
+     is still a refusal. A LIVE holder is named first (`organizer_outdated`, the machine to update),
+     which is the client's aggregate too (`rosterRefusalReason`); with none, nothing organizes. */
   if (!writeLocally && requestTo.length === 0) {
-    const named = refused.find((r) => r.holder.kind !== null) ?? refused[0]!;
+    const named = refused.find((r) => r.reason === "organizer_outdated") ?? refused[0]!;
     throw new OrganizedElsewhereError(named.mailboxId, named.holder, named.reason);
   }
 
@@ -423,12 +416,10 @@ export async function planBulkMoveOnReader(
     if (e.role === "organizer") { organized.push(...rows.map((r) => r.id)); continue; }
     if (!e.capable) {
       /* NAMED. `by` carries kind/name/since, so the sentence names the machine that holds it
-         rather than "something else has one of these". The finer reason travels too, now that
-         there IS a channel: `organizer_outdated` is a holder that could be updated, `no_organizer`
-         is a mailbox nothing holds — two sentences, two affordances. */
-      throw new OrganizedElsewhereError(
-        mailboxId, e.by, e.by.kind === null ? "no_organizer" : "organizer_outdated",
-      );
+         rather than "something else has one of these". The finer reason travels too:
+         `organizer_outdated` is a live holder that could be updated, `no_organizer` a mailbox
+         nothing holds or whose holder stopped — two sentences, two affordances. */
+      throw new OrganizedElsewhereError(mailboxId, e.by, requestRefusalReason(e));
     }
     requestTo.push({ mailboxId, holder: e.by, messages: rows });
   }
