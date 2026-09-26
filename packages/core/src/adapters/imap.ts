@@ -2322,13 +2322,14 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   }
 
   /**
-   * The arrival date of every candidate UID, cached per (folder, epoch). A separate fetch from
-   * the RFC822.SIZE one: sizes are needed only for messages past the count cap, dates for every
-   * CANDIDATE — widening the size fetch would silently unbound it. Chunked, because
-   * `ImapFlow.fetch` serialises an array with `range.join(',')` — thousands of UIDs make a
-   * command tens of KB (measured), and date ordering fragments the unknown set so it cannot be a
-   * range. Cached, because re-asking a shrinking set every pass is O(n²/batch) over a drain: read
-   * once, later passes ask only about new arrivals, pruned to the live candidate set.
+   * The arrival date of the candidate UIDs, cached per (folder, epoch). A separate fetch from
+   * the RFC822.SIZE one: sizes are needed only for messages past the count cap, dates for the
+   * candidates — widening the size fetch would silently unbound it. Chunked, because
+   * `ImapFlow.fetch` serialises an array with `range.join(',')` (tens of KB, measured). Cached,
+   * because re-asking a shrinking set every pass is O(n²/batch) over a drain. Paid per UNKNOWN
+   * message, so it is bounded per pass too: highest UIDs (the newest arrivals) first, and no new
+   * chunk once the pass has spent {@link ImapAdapter.DATE_LOOKUP_SHARE} of its clock. The rest
+   * wait for later passes: a burst, or a re-dial's empty cache, no longer spends the whole pass.
    */
   private async arrivalDatesFor(
     folder: string,
@@ -2342,8 +2343,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       this.dateCache.set(folder, entry);
     }
 
-    const misses = uids.filter((u) => !entry!.dates.has(u));
+    const misses = uids.filter((u) => !entry!.dates.has(u)).sort((a, b) => b - a);
     for (let i = 0; i < misses.length; i += ImapAdapter.DATE_FETCH_CHUNK) {
+      if (i > 0 && this.dateLookupSpent()) break;
       const chunk = misses.slice(i, i + ImapAdapter.DATE_FETCH_CHUNK);
       for await (const m of this.client.fetch(
         chunk, { uid: true, internalDate: true, envelope: true }, { uid: true },
@@ -2364,6 +2366,16 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
 
   /** UIDs per date-lookup command. See {@link ImapAdapter.arrivalDatesFor} — ~1.9 KiB on the wire. */
   private static readonly DATE_FETCH_CHUNK = 500;
+
+  /** The part of a pass's clock the date lookup may spend; the page and the rest keep the other. */
+  private static readonly DATE_LOOKUP_SHARE = 0.5;
+
+  /** Has the running pass spent its date share? Outside a pass there is no clock to spend. */
+  private dateLookupSpent(): boolean {
+    const pass = this.cycleDeadline;
+    if (pass === undefined) return false;
+    return IMAP_CYCLE_DEADLINE_MS - pass.remainingMs() >= IMAP_CYCLE_DEADLINE_MS * ImapAdapter.DATE_LOOKUP_SHARE;
+  }
 
   /**
    * Fetch bodies for at most `budget` worth of UIDs, NEWEST MAIL FIRST, and say what was left.
@@ -2405,9 +2417,11 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     }
 
     const dates = await this.arrivalDatesFor(folder, curUidValidity, uids);
-    const newestFirst = orderCandidates(uids, dates);
+    // Only DATED candidates compete for the page. An undated one waits for a later pass, and the
+    // page counts against ALL candidates, so the cursor stays held for it (`truncated`).
+    const newestFirst = orderCandidates(uids.filter((u) => dates.has(u)), dates);
     const slice = newestFirst.slice(0, Math.max(1, budget.messages));
-    let truncated = slice.length < newestFirst.length;
+    let truncated = slice.length < uids.length;
 
     // RFC822.SIZE first: bytes are the budget that actually protects the container, and
     // learning them costs one metadata fetch over an already count-capped list.
