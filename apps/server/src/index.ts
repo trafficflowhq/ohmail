@@ -62,7 +62,9 @@ async function main(): Promise<void> {
 
   logger.info("boot_migrating");
   const report = await setupProdDatabase(cfg.databaseUrl, {
-    log: (msg) => logger.info("db_setup", { msg }),
+    // `setupStep`, not `msg`: a generic key admitted by the census would let any later caller
+    // log a driver message under it. Only this seam writes this one.
+    log: (msg) => logger.info("db_setup", { setupStep: msg }),
   });
   logger.info("boot_migrated", {
     appliedThisRun: report.appliedThisRun,

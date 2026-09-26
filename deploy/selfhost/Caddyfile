@@ -41,7 +41,13 @@
 # compose publishes 80 and 443. A development overlay that moves the front door elsewhere sets
 # OHMAIL_FRONT_DOOR_PORT to the port it moved it to, or this door listens where nothing calls.
 http://:{$OHMAIL_FRONT_DOOR_PORT:80} {
+	# Held across a web swap for reads, as in routes.caddy, so a monitor reads no 502 mid-upgrade.
+	@replayable method GET HEAD OPTIONS
 	handle /version {
+		reverse_proxy @replayable web:3000 {
+			lb_try_duration 10s
+			lb_try_interval 250ms
+		}
 		reverse_proxy web:3000
 	}
 	handle {

@@ -7,8 +7,19 @@
 # `/sync` from a native client hash identically for idempotency. A strip would double-strip
 # `/api/api/…`. `/internal/*` is the shared-secret alert intake an operator's monitor calls — 404
 # until TF_ALERT_SECRET arms it, and nothing in the product's own UI ever uses it.
+#
+# A CONTAINER SWAP IS HELD FOR READS, NOT ANSWERED 502. While `docker compose up -d` replaces api
+# or web the name stops answering for a few seconds, so a GET, HEAD or OPTIONS is re-dialled every
+# 250ms for up to 10s and only then answered 502. Every other method has no window and fails fast:
+# a held POST finds its body spent by the failed first attempt (measured: held 3.5 s, then 502), and
+# nothing that reached the container is ever sent twice.
+@replayable method GET HEAD OPTIONS
 @api path /api /api/* /auth /auth/* /events /health /hello /pair /pair/* /internal /internal/*
 handle @api {
+	reverse_proxy @replayable api:8080 {
+		lb_try_duration 10s
+		lb_try_interval 250ms
+	}
 	reverse_proxy api:8080
 }
 
@@ -21,7 +32,11 @@ handle @staging {
 	reverse_proxy minio:9000
 }
 
-# Everything else is the web application.
+# Everything else is the web application, held across a swap the same way.
 handle {
+	reverse_proxy @replayable web:3000 {
+		lb_try_duration 10s
+		lb_try_interval 250ms
+	}
 	reverse_proxy web:3000
 }

@@ -541,6 +541,25 @@ export const ALLOWED_FIELDS: readonly string[] = [
   //    by a `token` substring rule. See SUBSTRING_EXEMPT_FIELDS.
   "model", "ok", "latencyMs", "inputTokens", "outputTokens", "cacheReadTokens",
   "cacheWriteTokens", "thinkingTokens", "costMicroUsd",
+  // ── The server-side sweep: every name the server's and the organizer's call sites passed and
+  //    this list dropped, admitted once the checker typed its value at every call site in the repo.
+  //    The self-host boot first (`setupStep` is the step sentence `setupProdDatabase` writes over
+  //    names and counts; `appliedThisRun` its journal tags), then numbers and booleans, closed sets,
+  //    row ids, IMAP numbering and timestamps. Still dropped on purpose: `folder`, `landed` and
+  //    `junkFolder` (a server path), `from` and `to` (a subject or an address), `path` (a raw
+  //    request path), and every string its call site does not bound.
+  "setupStep", "appliedThisRun", "migrationsExpected", "origin", "expiresAt", "released",
+  "ackFailures", "appending", "budgetMs", "ceiling", "chargedAttempts", "compactionOwed",
+  "complete", "completed", "contactRowsReleased", "cursor", "deleted", "depth", "dialled",
+  "disturbed", "dryRun", "effectiveMs", "elapsedMs", "escalated", "evicted", "failedPages",
+  "finished", "floor", "freedBytes", "fromPending", "fromSent", "healed", "kept", "lapseMs",
+  "limit", "messagesErased", "orphans", "ownUid", "pages", "protocol", "pruning", "queued", "raced",
+  "read", "reaped", "records", "recounted", "refusedUncorroborated", "remaining", "removed",
+  "rescreened", "residue", "restored", "retentionMs", "retired", "rulesArmed", "seen",
+  "sensitivityExcluded", "size", "staleAfterMs", "steps", "total", "tries", "unrecognised",
+  "voided",
+  "epoch", "fact", "imap", "organizerState", "subscription",
+  "folderId", "ruleId", "uid", "uidValidity", "generation", "decidedAt",
 ] as const;
 
 /**
