@@ -2864,20 +2864,27 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // end to end, because the known-set diff is what detects creates. Sent cannot use that,
         // for two independent reasons the watermark answers: COST — the folder is unbounded and
         // mostly historical, so `DEFAULT_SENT_HISTORY_MESSAGES` bounds what is ingested and the
-        // watermark bounds what is re-read; CORRECTNESS — `own_copy` (`dedup.ts`) stores no row
+        // watermark bounds which bodies are fetched; CORRECTNESS — `own_copy` (`dedup.ts`) stores no row
         // for the Sent twin of a message we already hold, so its UID never enters the known-set
         // and a plain diff would re-fetch its body for ever. A UID is behind the watermark
         // whether or not it produced a row. `enumFloorUid` is what this pass actually looked at:
         // below it, "not in currentSet" means "not enumerated", not "expunged".
         let currentUids: number[];
         let enumFloorUid = 0;
+        /** Below this no UID may be a create — the Sent watermark; 0 everywhere else. */
+        let createFloorUid = 0;
         if (!isSent) {
           currentUids = await this.enumerateUids(folder);
         } else {
           const watermark = uidValidityChanged ? 0 : (prev?.uidNext ?? 0);
           if (watermark > 0) {
-            currentUids = await this.enumerateUidsFrom(watermark, folder);
-            enumFloorUid = watermark;
+            // FROM THE OLDEST REMEMBERED UID, NOT THE WATERMARK: a Sent message
+            // deleted in another mail app must read as an expunge like any other, so every UID
+            // ohmail holds a row for is asked about. UIDs only, one command, bounded by the
+            // known set; creates stay at or above the watermark, so no older body is fetched.
+            enumFloorUid = Math.min(minOf([...effectiveKnown.keys()], watermark), watermark);
+            currentUids = await this.enumerateUidsFrom(enumFloorUid, folder);
+            createFloorUid = watermark;
           } else {
             // First scan (or a UIDVALIDITY reset): the newest N by sequence number.
             currentUids = await this.enumerateNewestUids(sentHistory, folder);
@@ -2904,7 +2911,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // bodies are then discarded. So "mark thousands of messages read" reproduced the same OOM
         // as a cold sync. The unknown-UID diff is a strict superset of the creates
         // `changedSince` could report, so nothing is lost by sourcing them here instead.
-        const unknownUids = currentUids.filter((u) => !effectiveKnown.has(u));
+        const unknownUids = currentUids.filter((u) => u >= createFloorUid && !effectiveKnown.has(u));
         const {
           fetched, truncated, unanswered: withheldUids, oversize: refusedOnSize, budgetSpent,
         } = await this.fetchCapped(unknownUids, folder, curUidValidity, budget);
