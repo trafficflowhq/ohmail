@@ -8,7 +8,7 @@
  * now carries a name persisted BEFORE it submits and repeated until an answer lands.
  */
 
-import { readRefreshAnswer } from "@ohmail/client-engine";
+import { ACCOUNT_ERASED, ERASED_ANSWER_HEADER, readRefreshAnswer, sessionEndedResponse } from "@ohmail/client-engine";
 import type { SessionRenewalDoor } from "@ohmail/client-engine";
 
 /** The wire pair the redeem and the refresh both answer — the desktop manager's exact shape. */
@@ -38,7 +38,7 @@ export interface RefreshVault {
  * this family because a spent token was presented by somebody — the one case a person meets as
  * "pair again" with no reason at all, and the one this app now names.
  */
-export type SessionDeath = "refused" | "revoked";
+export type SessionDeath = "refused" | "revoked" | "erased";
 
 /**
  * Name an attempt. NOT a credential — it authorizes nothing, names no row without the token
@@ -67,6 +67,20 @@ function mintAttemptId(): string {
   return `r${Date.now().toString(36)}${chunk()}${chunk()}`;
 }
 
+/**
+ * Does this answer say THIS profile's account was erased? `410 account_erased` naming `accountId`
+ * in `X-Ohmail-Account`. Reads a clone. A 410 naming nobody or another account says nothing here.
+ */
+async function erasesAccount(res: Response, accountId: string | null): Promise<boolean> {
+  if (res.status !== 410 || accountId === null) return false;
+  try {
+    const code = ((await res.clone().json()) as { error?: { code?: unknown } } | null)?.error?.code;
+    return code === ACCOUNT_ERASED && res.headers.get("X-Ohmail-Account") === accountId;
+  } catch {
+    return false;
+  }
+}
+
 /** The same loose-init fetch shape the engine's HttpAdapter and the desktop manager ride. */
 export type FetchLike = (url: string, init?: unknown) => Promise<Response>;
 
@@ -82,6 +96,8 @@ export class BearerManagerRN implements SessionRenewalDoor {
   private refresh: string | null;
   /** Requests are ABSOLUTE on this platform — there is no served origin to be relative to. */
   private readonly origin: string;
+  /** The account this pairing is for (`ServerProfile.accountId`) — what an erased answer must name. */
+  private readonly accountId: string | null;
   private readonly vault: RefreshVault;
   private readonly fetchImpl: FetchLike;
   /** The single flight — one rotation at a time, because a duplicate presentation reads as theft. */
@@ -114,10 +130,13 @@ export class BearerManagerRN implements SessionRenewalDoor {
      * a relaunch resumes that attempt rather than starting one the server cannot recognise.
      */
     refreshAttempt?: string | null;
+    /** The profile's account id. Absent: an erased answer is never this manager's to act on. */
+    accountId?: string | null;
     vault: RefreshVault;
     fetchImpl?: FetchLike;
   }) {
     this.origin = opts.origin.replace(/\/+$/, "");
+    this.accountId = opts.accountId ?? null;
     this.access = opts.accessToken ?? null;
     this.refresh = opts.refreshToken;
     this.attempt = opts.refreshAttempt ?? null;
@@ -172,7 +191,9 @@ export class BearerManagerRN implements SessionRenewalDoor {
 
   /** The extra-headers seam's value — `HttpAdapterOptions.headers` calls this per request. */
   headers(): Record<string, string> {
-    return this.access !== null ? { authorization: `Bearer ${this.access}` } : {};
+    // Every ask declares it understands `410 account_erased` (the server answers 401 otherwise).
+    const declared = { [ERASED_ANSWER_HEADER]: ACCOUNT_ERASED };
+    return this.access !== null ? { ...declared, authorization: `Bearer ${this.access}` } : declared;
   }
 
   /**
@@ -229,7 +250,7 @@ export class BearerManagerRN implements SessionRenewalDoor {
       try {
         res = await this.fetchImpl(`${this.origin}/auth/refresh`, {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", [ERASED_ANSWER_HEADER]: ACCOUNT_ERASED },
           body: JSON.stringify({ refreshToken: presented, attemptId }),
         });
       } catch {
@@ -241,6 +262,11 @@ export class BearerManagerRN implements SessionRenewalDoor {
       if (answer.kind === "minted") {
         await this.adopt(answer.tokens);
         return true;
+      }
+      if (answer.kind === "erased") {
+        // The account is gone — only when the server named THIS pairing's account. Else the pair stays.
+        if (answer.account !== null && answer.account === this.accountId) await this.die("erased");
+        return false;
       }
       if (answer.kind === "refused") {
         // The server judged the presented token and said no, by name. Definitive: sign out, and
@@ -274,13 +300,25 @@ export class BearerManagerRN implements SessionRenewalDoor {
       headers: { ...(options.headers ?? {}), ...this.headers() },
     });
     const stampedIn = this.generation;
-    const first = await this.fetchImpl(url, stamped());
+    const first = await this.heard(await this.fetchImpl(url, stamped()));
     if (first.status !== 401 || this.refresh === null) return first;
     if (this.generation === stampedIn && !(await this.rotate())) return first;
     // Either the rotation minted a fresh pair, or one had ALREADY happened since this request
     // was stamped — both mean the same thing: replay once under the current generation.
-    return this.fetchImpl(url, stamped());
+    return this.heard(await this.fetchImpl(url, stamped()));
   };
+
+  /**
+   * THE READ PATH'S ERASED ANSWER, heard before the engine sees it: the session dies as `erased`
+   * FIRST, and the engine is handed the dead session's refusal. The 410 itself reads to the
+   * adapter as a cursor expiry, whose remedy — discard and re-bootstrap — would loop on a gone
+   * account every cadence instead of the door's wipe.
+   */
+  private async heard(res: Response): Promise<Response> {
+    if (!(await erasesAccount(res, this.accountId))) return res;
+    await this.die("erased");
+    return sessionEndedResponse();
+  }
 
   /**
    * Sign this device out on purpose: tell the door (best-effort — the local clear must not

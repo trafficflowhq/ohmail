@@ -423,10 +423,20 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         // cause to the device's log, and give the person the one sentence every door shows for
         // this — which ends in the remedy, because "signed out" with no way back is what they
         // used to meet (`net/session-death.ts`).
-        teardown(session);
+        const closed = teardown(session);
         noteSessionDeath(why);
         enter({ k: "ended", reason: deathRefusal(why) });
-        void refreshProfiles();
+        if (why !== "erased") {
+          void refreshProfiles();
+          return;
+        }
+        /* THE ACCOUNT WAS ERASED: this pairing's copy goes — keystore row, profile, this owner's
+           mirror, pin, wake registration — through the Forget verb's own ceremony, once the store
+           handle is closed. Nothing to tell the server: the account and its sessions are gone.
+           Another profile on this phone is not touched. */
+        void forgetProfile(env, session.profile.id, { closed, revoke: async () => true })
+          .catch(() => undefined)
+          .then(() => refreshProfiles());
       }) ?? null;
       enter({ k: "live", session });
       // Only a mismatch acts, and only on the session it was asked about — a verdict that
@@ -465,7 +475,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         };
       });
     },
-    [drain, refreshProfiles, runner, teardown],
+    [drain, env, refreshProfiles, runner, teardown],
   );
 
   /* THE LIFT RESTARTS THE LOOP at once, from its stored cursors, behind the same clearance. */

@@ -9,20 +9,23 @@ import type { SessionDeath } from "./bearer";
  * different ways, and none of the three said what to do next. The remedy is the sentence's last
  * clause and the verb beside it; the CAUSE is a maintainer's fact, so it goes to the log.
  */
-export function deathRefusal(_why: SessionDeath): Refusal {
-  return refuse("pairEnded");
+export function deathRefusal(why: SessionDeath): Refusal {
+  // An ERASED account is not a pairing to scan again: the account is gone, and so is its copy.
+  return why === "erased" ? refuse("accountErased") : refuse("pairEnded");
 }
 
 /**
  * The cause, for whoever reads the device's log. It goes through the engine's sink because the
- * app has exactly one place lines leave from, and it carries a CLOSED SET of two literals and
+ * app has exactly one place lines leave from, and it carries a CLOSED SET of three literals and
  * nothing else — no interpolation, no free text, no identity — so it raises none of the
  * questions the engine's own logger answers (`engine/engine-log.ts`).
  */
 export function noteSessionDeath(why: SessionDeath, sink = engineLogSink()): void {
   sink(why === "revoked"
     ? '{"service":"pairing","event":"session_dead","why":"revoked"}'
-    : '{"service":"pairing","event":"session_dead","why":"refused"}');
+    : why === "erased"
+      ? '{"service":"pairing","event":"session_dead","why":"erased"}'
+      : '{"service":"pairing","event":"session_dead","why":"refused"}');
 }
 
 /** Is this the pairing-ended refusal? The sites that render it offer the scan beside it. */

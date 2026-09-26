@@ -691,6 +691,11 @@ const TABLE = {
     "This phone was signed out because its pairing ended on the server. Pair this phone again.",
   /** The verb beside it, the same word at every site that shows that sentence. */
   pairAgain: "Pair again",
+  /* THE ACCOUNT WAS DELETED — not a pairing that ended: there is nothing to pair with again, and
+     the phone has already dropped the account's copy of the mail (`net/connection.tsx`). */
+  accountErased:
+    "This ohmail account was deleted, so its copy of your mail is gone from this phone. The mail "
+    + "on your mail server is untouched.",
   /*
    * FOUR MORE REDEEM-TIME REFUSALS. They sat inside `net/pairing.ts` behind a stretch of the file
    * the census could not see, and the second of them is the one a phone actually rendered under a

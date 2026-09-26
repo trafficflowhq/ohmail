@@ -405,6 +405,9 @@ export const DE: Deck = {
     "Dieses Telefon wurde abgemeldet, weil seine Kopplung auf dem Server beendet wurde. "
     + "Koppele dieses Telefon erneut.",
   pairAgain: "Erneut koppeln",
+  accountErased:
+    "Dieses ohmail-Konto wurde gelöscht, deshalb ist seine Kopie deiner Post von diesem Telefon "
+    + "entfernt. Die Post auf deinem Mailserver ist unberührt.",
   pairRedeemUnreachable: "dieser Server war nicht erreichbar, um die Kopplung einzulösen",
   pairCodeRejected: "dieser Kopplungscode wurde nicht angenommen — erzeuge einen frischen und scanne erneut",
   pairNoAccountName:

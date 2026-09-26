@@ -1262,6 +1262,8 @@ async function buildSession(
     origin: profile.origin,
     accessToken,
     refreshToken: profile.refreshToken,
+    // What an erased answer must name for this session to end as `erased` (`bearer.ts`).
+    accountId: profile.accountId,
     vault: vaultFor(env.profiles, profile.id),
     ...(env.fetchImpl ? { fetchImpl: env.fetchImpl } : {}),
   });
