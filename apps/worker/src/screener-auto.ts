@@ -1,6 +1,6 @@
-import { and, asc, eq, gt, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, sql, type SQL } from "drizzle-orm";
 import {
-  accountSettings, approvals, auditLog, drafts, folderState, mailboxes,
+  accountSettings, accountSyncState, approvals, auditLog, changeLog, drafts, folderState, mailboxes,
   messageBodies, messageStates, messages, rules as rulesTbl, recordChange,
   weAnsweredThisSenderWhere, type Tx, auditAction,} from "@trafficflow/db";
 import {
@@ -45,6 +45,22 @@ export const SCREENER_AUTO_WRITES_PER_CYCLE = 100;
  */
 export const SCREENER_AUTO_MAX_PAGES = 500;
 
+/** How long an account may go on incremental walks before a full one — the missed-wake backstop. */
+export const SCREENER_AUTO_FULL_EVERY_MS = 60 * 60_000;
+
+/**
+ * Where an account's last COMPLETED walk left it, in worker memory (a restart walks in full). The
+ * next walk reads only held rows whose message moved in `change_log` since `headSeq`; a full walk is
+ * due when the opt-in or the mailbox roster changed, the log was pruned past the mark, a change that
+ * can re-admit a kept row landed (a rule disabled or deleted, a triage state, a draft or decision
+ * withdrawn), or {@link SCREENER_AUTO_FULL_EVERY_MS} passed.
+ */
+export interface ScreenerAutoMark {
+  autoApplyAt: string; roster: string; headSeq: bigint; fullAt: number;
+}
+export type ScreenerAutoWalk = Map<string, ScreenerAutoMark>;
+export const newScreenerAutoWalk = (): ScreenerAutoWalk => new Map();
+
 export interface ScreenerAutoDeps {
   /** Scope to ONE account — the worker loops its served accounts. */
   accountId: string;
@@ -56,6 +72,10 @@ export interface ScreenerAutoDeps {
   writesPerCycle?: number;
   /** Test seam. Default {@link SCREENER_AUTO_MAX_PAGES}. */
   maxPages?: number;
+  /** The per-account marks. Absent ⇒ every call is a full walk. */
+  walk?: ScreenerAutoWalk;
+  /** Test seam. Default {@link SCREENER_AUTO_FULL_EVERY_MS}. */
+  fullEveryMs?: number;
 }
 
 export interface ScreenerAutoResult {
@@ -86,6 +106,8 @@ export interface ScreenerAutoResult {
    * defect this field exists to make visible.
    */
   revoked: boolean;
+  /** Which walk ran: every held row, or only the rows that changed since the account's mark. */
+  mode: "full" | "incremental";
 }
 
 /** One candidate, carrying everything the decision reads — all of it from disk. */
@@ -103,8 +125,13 @@ interface AutoRow {
 
 const EMPTY = (): ScreenerAutoResult => ({
   ran: false, examined: 0, moved: 0, kept: 0, destinations: {}, sensitivityExcluded: 0, capped: false,
-  revoked: false,
+  revoked: false, mode: "full",
 });
+
+/** Change kinds that can make a KEPT row a candidate again without touching its `folder_state`. */
+const READMITS = sql`(${changeLog.entityType} = 'message_state'
+  or (${changeLog.entityType} in ('rule', 'approval') and ${changeLog.op} in ('update', 'delete'))
+  or (${changeLog.entityType} = 'draft' and ${changeLog.op} = 'delete'))`;
 
 /** True ⇒ sensitivity-flagged (`sensitivity_category` set OR `no_ai`) — never auto-moved. */
 function isSensitivityFlagged(row: AutoRow): boolean {
@@ -138,18 +165,26 @@ export async function screenerAutoApplyPass(
   // for every account that has not turned it on — which is every account by default.
   const [settings] = await db.select({ autoApplyAt: accountSettings.screenerAutoApplyAt })
     .from(accountSettings).where(eq(accountSettings.accountId, accountId)).limit(1);
-  if (!settings?.autoApplyAt) return EMPTY();
+  if (!settings?.autoApplyAt) { deps.walk?.delete(accountId); return EMPTY(); }
 
   // Every address this ACCOUNT sends from — for the "the user replied from their own client"
   // exclusion. Read once here rather than in SQL so the candidate query stays one indexable statement.
-  const ownRows = await db.select({ address: mailboxes.address }).from(mailboxes)
-    .where(eq(mailboxes.accountId, accountId));
+  // The same rows are the roster the walk mark is keyed on (a promotion or a re-enable re-admits).
+  const ownRows = await db.select({
+    id: mailboxes.id, address: mailboxes.address, status: mailboxes.status, role: mailboxes.organizerRole,
+  }).from(mailboxes).where(eq(mailboxes.accountId, accountId));
   const ownAddresses = ownRows.map((r) => r.address.toLowerCase());
+  const roster = ownRows.map((r) => `${r.id}:${r.status}:${r.role}:${r.address.toLowerCase()}`).sort().join(",");
 
   const result: ScreenerAutoResult = { ...EMPTY(), ran: true };
+  const plan = await planWalk(db, deps, {
+    accountId, autoApplyAt: new Date(settings.autoApplyAt).toISOString(), roster, now: now(),
+  });
+  result.mode = plan.changed === null ? "full" : "incremental";
   let afterId: string | null = null;
+  const pages = plan.changed === null ? maxPages : Math.ceil(plan.changed.length / batch);
 
-  for (let page = 0; page < maxPages; page++) {
+  for (let page = 0; page < pages; page++) {
     if (result.moved >= budget) { result.capped = true; break; }
 
     const outcome = await db.transaction(async (tx) => {
@@ -172,7 +207,8 @@ export async function screenerAutoApplyPass(
         };
       }
 
-      const candidates = await selectCandidates(tx, { accountId, ownAddresses, limit: batch, afterId });
+      const only = plan.changed?.slice(page * batch, (page + 1) * batch) ?? null;
+      const candidates = await selectCandidates(tx, { accountId, ownAddresses, limit: batch, afterId, only });
 
       let moved = 0;
       let kept = 0;
@@ -243,9 +279,18 @@ export async function screenerAutoApplyPass(
     if (outcome.capped) { result.capped = true; break; }
     // A short page is the end of the queue. A full page of kept rows still advances the cursor past
     // them (it is monotone in `messages.id`, not in candidacy), so the walk terminates.
+    if (plan.changed !== null) continue;
     if (outcome.rows < batch) break;
     afterId = outcome.lastId ?? afterId;
   }
+
+  // THE MARK MOVES ONLY OVER A WALK THAT FINISHED: a capped or revoked walk leaves it where it was,
+  // so the next walk re-reads everything this one did not decide. A full walk that ran out of pages
+  // is capped in effect and moves nothing either.
+  const finished = !result.capped && !result.revoked
+    && (plan.changed !== null || result.examined < maxPages * batch);
+  if (deps.walk && result.revoked) deps.walk.delete(accountId);
+  else if (deps.walk && finished) deps.walk.set(accountId, plan.next);
 
   if (result.moved > 0) {
     log.info("screener_auto_apply", {
@@ -255,6 +300,54 @@ export async function screenerAutoApplyPass(
     });
   }
   return result;
+}
+
+/**
+ * Full or incremental, and the mark a finished walk leaves. One statement, a read with no lock: the
+ * page transactions re-check every row under `FOR UPDATE`. The head is read BEFORE any page, so a
+ * change committed during the walk has a later seq and is the next walk's.
+ */
+async function planWalk(
+  db: Tx, deps: ScreenerAutoDeps,
+  o: { accountId: string; autoApplyAt: string; roster: string; now: Date },
+): Promise<{ changed: string[] | null; next: ScreenerAutoMark }> {
+  if (deps.walk === undefined) {
+    return { changed: null, next: { autoApplyAt: o.autoApplyAt, roster: o.roster, headSeq: 0n, fullAt: 0 } };
+  }
+  const mark = deps.walk.get(o.accountId);
+  const fullEvery = deps.fullEveryMs ?? SCREENER_AUTO_FULL_EVERY_MS;
+  const incremental = mark !== undefined && mark.autoApplyAt === o.autoApplyAt && mark.roster === o.roster
+    && o.now.getTime() - mark.fullAt < fullEvery;
+  const since = incremental ? mark.headSeq : null;
+  const [row] = await db.select({
+    head: accountSyncState.nextSeq,
+    pruned: accountSyncState.prunedThroughSeq,
+    readmit: since === null ? sql<boolean>`false` : sql<boolean>`exists (
+      select 1 from ${changeLog} where ${changeLog.accountId} = ${o.accountId}::uuid
+         and ${changeLog.seq} > ${since.toString()}::bigint and ${READMITS})`,
+    changed: since === null ? sql<string[] | null>`null` : sql<string[] | null>`(
+      select array_agg(distinct cl.entity_id::text) from ${changeLog} cl
+        join ${folderState} fs on fs.message_id = cl.entity_id
+       where cl.account_id = ${o.accountId}::uuid and cl.seq > ${since.toString()}::bigint
+         and cl.entity_type = 'message' and fs.desired_folder = ${SCREENER} and fs.last_set_by = 'us')`,
+  }).from(accountSyncState).where(eq(accountSyncState.accountId, o.accountId)).limit(1);
+  const head = BigInt(row?.head ?? 0n);
+  const stillIncremental = since !== null && head >= since && BigInt(row?.pruned ?? 0n) <= since
+    && row?.readmit !== true;
+  const next: ScreenerAutoMark = {
+    autoApplyAt: o.autoApplyAt, roster: o.roster, headSeq: head,
+    fullAt: stillIncremental ? mark!.fullAt : o.now.getTime(),
+  };
+  if (!stillIncremental) return { changed: null, next };
+  return { changed: idsOf(row?.changed).sort(), next };
+}
+
+/** A uuid[] as either driver hands it back: an array, or Postgres' `{a,b}` text. */
+function idsOf(v: unknown): string[] {
+  if (v == null) return [];
+  if (Array.isArray(v)) return v.map(String);
+  const t = String(v).replace(/^\{|\}$/g, "");
+  return t === "" ? [] : t.split(",");
 }
 
 /**
@@ -269,7 +362,10 @@ export async function screenerAutoApplyPass(
  * {@link screenerAutoApplyPass}. `FOR UPDATE OF folder_state` (not `message_bodies`, LEFT JOIN nullable side). */
 async function selectCandidates(
   t: Tx,
-  opts: { accountId: string; ownAddresses: readonly string[]; limit: number; afterId: string | null },
+  opts: {
+    accountId: string; ownAddresses: readonly string[]; limit: number; afterId: string | null;
+    only: readonly string[] | null;
+  },
 ): Promise<AutoRow[]> {
   const filters = [
     eq(messages.accountId, opts.accountId),
@@ -331,6 +427,7 @@ async function selectCandidates(
     ownAddresses: opts.ownAddresses,
   })}`);
   if (opts.afterId) filters.push(gt(messages.id, sql`${opts.afterId}::uuid`));
+  if (opts.only) filters.push(inArray(messages.id, [...opts.only]));
 
   const rows = await t.select({
     messageId: messages.id,

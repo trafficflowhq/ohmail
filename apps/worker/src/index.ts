@@ -93,7 +93,7 @@ import { gateReleasePass } from "./gate-release.js";
 import { apiFaultPrunePass } from "./api-fault-prune.js";
 import { retentionPrunePass } from "./retention-prune.js";
 import { ohboxTidyPass } from "./ohbox-tidy.js";
-import { screenerAutoApplyPass } from "./screener-auto.js";
+import { newScreenerAutoWalk, screenerAutoApplyPass } from "./screener-auto.js";
 import { screenerAutoActPass } from "./screener-auto-act.js";
 import {
   CORRESPONDENT_RETRO_EVERY_MS, screenerCorrespondentRetroPass,
@@ -805,6 +805,8 @@ export async function startWorkerWithLock(
     let lastBubbleUpAt = 0;
     /** When each served account last had its correspondent retro — due at a new leader's first cycle. */
     const correspondentRetroAt = new Map<string, number>();
+    /** Each opted-in account's auto-apply mark, shared by the owed serve and the cycle tail. */
+    const screenerAutoWalk = newScreenerAutoWalk();
     /**
      * Time-gate for the thread-join heal. Starts "due" like `lastBubbleUpAt`, and here the
      * reason is survival rather than latency: a deployment cadence shorter than
@@ -4246,7 +4248,9 @@ export async function startWorkerWithLock(
           if (stopped) return;
           suggestOwedHints.delete(accountId);
           try {
-            const applied = await screenerAutoApplyPass(db as unknown as Tx, { accountId, log }, new Date());
+            const applied = await screenerAutoApplyPass(
+              db as unknown as Tx, { accountId, log, walk: screenerAutoWalk }, new Date(),
+            );
             if (applied.ran && applied.moved > 0) {
               log.info("screener_auto_apply_pass", { accountId, moved: applied.moved, capped: applied.capped });
             }
@@ -4619,7 +4623,7 @@ export async function startWorkerWithLock(
         if (stopped) return;
         try {
           const { ran, moved, capped } = await screenerAutoApplyPass(
-            db as unknown as Tx, { accountId, log }, new Date(),
+            db as unknown as Tx, { accountId, log, walk: screenerAutoWalk }, new Date(),
           );
           if (ran && moved > 0) {
             log.info("screener_auto_apply_pass", { accountId, moved, capped });
@@ -4627,9 +4631,9 @@ export async function startWorkerWithLock(
         } catch (err) {
           log.error("screener_auto_apply_failed", {
             accountId, err,
-            reason: "nothing is marked and no cursor persists — a moved row leaves the Screener and " +
-              "drops out, so the next cycle re-examines from the top; mail already moved is desired " +
-              "state the reconciler converges independently of this pass",
+            reason: "the account's walk mark was not advanced, so the next cycle re-reads every row " +
+              "this one did not decide; mail already moved is desired state the reconciler " +
+              "converges independently of this pass",
           });
         }
       }
