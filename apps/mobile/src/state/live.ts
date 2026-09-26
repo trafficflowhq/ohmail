@@ -2316,6 +2316,8 @@ export interface LiveDeps {
    * the failure to avoid is the silent unsubscribe.
    */
   autoUnsubscribe?: () => boolean;
+  /** A decision SENT to the organizer: the sender keeps a mark until it answers (`state/relay.ts`). */
+  relayedHere?: (decided: { address: string; scope: Scope }) => void;
 }
 
 /**
@@ -3003,6 +3005,13 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        CONFIRMED decide against a mailbox somebody else organizes carries the holder on
        `pendingWith`, and that names the install as well as the wait. Everything else goes
        through the one speaker, which covers the rule_create arm this branch shares. */
+    /* SENT, NOT DONE: the organizer applies it on its next pass, and the sender keeps a mark
+       until it answers — so the sentence names the machine and the wait. */
+    if (v.kind === "queued" && v.wait === "organizer") {
+      deps.relayedHere?.({ address: row.address, scope });
+      toast(v.holder ? refuse("liveDecideSent", v.holder, target) : refuse("liveDecideSentUnknown", target));
+      return false;
+    }
     const queued = queuedWith as { name: string | null } | null;
     if (v.kind === "applied" && queued !== null) {
       toast(queued.name ? refuse("liveDecidedElsewhere", queued.name, target) : refuse("liveDecidedElsewhereUnknown", target));

@@ -126,6 +126,12 @@ export interface BackgroundEngine {
    */
   claimHere(): Promise<"claimed" | "held" | "unreadable" | "refused">;
   /**
+   * DOES A LIVE FOREIGN CLAIM HOLD THE MAILBOX, as the row says — asked before {@link claimHere},
+   * so a stood-down phone presses only once the holder has gone. `null` is "cannot say" and the
+   * press is made as before. Absent in a composition that predates it: the press is made.
+   */
+  heldElsewhere?(): Promise<boolean | null>;
+  /**
    * What the engine says about each mailbox right now — THREE facts, and no two of them are the
    * negation of another.
    *
@@ -910,6 +916,10 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
       reclaimSkip -= 1;
       return;
     }
+    /* A LIVE HOLDER IS ASKED OF THE ROW, NOT PRESSED: the press would be refused 409 every tick
+       for as long as the other machine organizes. The row turns `stopped` when it leaves. */
+    const held = await (deps.engine.heldElsewhere?.() ?? Promise.resolve(null)).catch(() => null);
+    if (held === true || disposed) return;
     let outcome: "claimed" | "held" | "unreadable" | "refused";
     try {
       outcome = await deps.engine.claimHere();

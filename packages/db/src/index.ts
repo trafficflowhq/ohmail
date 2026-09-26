@@ -90,7 +90,7 @@ export {
 export {
   REQUEST_STATES, TERMINAL_REQUEST_STATES, REFUSAL_VISIBLE_FOR_MS, insertOrganizerRequest, insertOrganizerRequestSet, listPendingRequests,
   listSentRequests, listOutstandingForAccount, markRequestsSent, markRequestsApplied,
-  markRequestsExpired, markRequestsRefused, listStaleSentRequests,
+  markRequestsExpired, markRequestsRefused, listStaleSentRequests, mailboxRowsHeld,
   type RequestState, type OrganizerRequestRow, type OutstandingMatch,
 } from "./organizer-requests.js";
 

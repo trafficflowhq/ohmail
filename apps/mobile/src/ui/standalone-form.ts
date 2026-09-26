@@ -308,6 +308,21 @@ export function mayStartHere(claim: PhoneClaim): boolean {
  * engine refuses the verb: 409, `composition-passes.ts`). A paired session keeps the offer:
  * there the appointment is kept by the install the phone is paired to, which stays on.
  */
+/**
+ * WHY THIS PHONE KEEPS NO APPOINTMENT, in the state it is in: organizing its own mailbox it does
+ * so only while ohmail runs, and reading one it organizes nothing — the install that organizes it
+ * is the one that can keep a later send. `holder` is the named organizer when this phone reads.
+ */
+export function scheduledNotHereSentence(holder: { name: string } | null): string {
+  return holder === null ? Copy.scheduledNotOnThisPhone : Copy.scheduledReaderHere(holder.name);
+}
+
+/** The connect notice's sentence: the holder named, or the claim that named nobody. */
+export function readingAtConnectLine(holder: { name: string }): string {
+  const name = holder.name.trim();
+  return name === "" ? Copy.readingAtConnectUnknown : Copy.readingAtConnect(name);
+}
+
 export function sendLaterOffered(o: {
   standalone: boolean;
   forward: boolean;

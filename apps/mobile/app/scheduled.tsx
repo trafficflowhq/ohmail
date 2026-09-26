@@ -16,6 +16,7 @@ import { Button, Panel, Rule, Screen, Scroller, Txt } from "../src/ui/base";
 import { DetailBar } from "../src/ui/chrome";
 import { Gated } from "../src/ui/Gated";
 import { SkeletonList } from "../src/ui/Skeleton";
+import { scheduledNotHereSentence } from "../src/ui/standalone-form";
 import { useLocale } from "../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 
@@ -59,7 +60,7 @@ function ScheduledBody() {
         {w.standalone ? (
           <Panel style={{ paddingVertical: 14, marginBottom: 12 }}>
             <Txt variant="note" tone="ink2" style={{ paddingHorizontal: 18 }}>
-              {Copy.scheduledNotOnThisPhone}
+              {scheduledNotHereSentence(w.mailboxes.organizer)}
             </Txt>
           </Panel>
         ) : null}

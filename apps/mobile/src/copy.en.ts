@@ -1446,6 +1446,34 @@ const TABLE = {
     `Decided — ${name} files ${target} on its next pass.`,
   liveDecidedElsewhereUnknown: (target: string) =>
     `Decided — the install that organizes this mailbox files ${target} on its next pass.`,
+  /* A decision this phone SENT to the organizer: nothing has moved yet, and the
+     sender keeps a mark until the organizer answers. */
+  liveDecideSent: (name: string, target: string) =>
+    `Sent to ${name} — ${target} is filed there within a few minutes.`,
+  liveDecideSentUnknown: (target: string) =>
+    `Sent to the install that organizes this mailbox — ${target} is filed there within a few minutes.`,
+  /* The sender's mark while the organizer has not answered, and its answer when it refused. The
+     refusal and its reasons are the web client's sentences, byte for byte. */
+  relayWaiting: (name: string) => `Sent to ${name} — waiting for it to apply.`,
+  relayWaitingUnknown: "Sent to the organizer — waiting for it to apply.",
+  relayRefused: (reason: string) => `Not applied — ${reason}`,
+  relayRefusedUnknown: "Not applied. The organizer did not say why.",
+  relayReasonUnauthenticated: "it could not tell the decision came from you",
+  relayReasonConflict: "a different decision for the same sender arrived first",
+  relayReasonAccountErased: "the account it belonged to is gone",
+  relayReasonStale: "it sat unanswered too long",
+  relayReasonUnhandledKind: "it does not know how to carry out that decision",
+  relayReasonInvalidPayload: "it could not read the decision",
+  relayReasonOtherMailbox: "the decision named a mailbox it does not organize",
+  /* Above the decision bar on a mailbox another install organizes, before anything is pressed. */
+  senderSentThere: (name: string) =>
+    `What you decide here is sent to ${name} and applied there within a few minutes.`,
+  /* At connect, when the mailbox turned out to be organized by another install: said once, where
+     the person lands, because the door promised organizing and this phone reads instead. */
+  readingAtConnect: (name: string) =>
+    `This phone reads this mailbox. ${name} organizes it, and what you decide here is sent there.`,
+  readingAtConnectUnknown:
+    "This phone reads this mailbox. Another install organizes it, and what you decide here is sent there.",
   /* A screening press read back from the list: how many are at the place, and what stays where. */
   liveVerdictKept: (count: number, place: string, kept: number, keptPlace: string, term: string) =>
     `${count === 1 ? "1 is" : `${count} are`} in ${place} · ${kept === 1 ? "1 stays" : `${kept} stay`} in ${keptPlace} by your rule »${term}«.`,
@@ -1861,6 +1889,10 @@ const TABLE = {
    */
   scheduledNotOnThisPhone:
     "This phone organizes your mailbox only while ohmail is running on it, so it cannot hold a message for a later time. Send now, or schedule it from a computer or ohmail Cloud.",
+  /* The same absence on a phone that READS the mailbox: it organizes nothing at all, and the
+     install that does is the one that can keep the appointment. */
+  scheduledReaderHere: (name: string) =>
+    `This phone reads your mailbox and ${name} organizes it, so this phone cannot hold a message for a later time. Send now, or schedule it on ${name}.`,
   /*
    * THE AWAY RESPONDER — the one thing this product does that sends mail on its
    * own, and going away is a phone moment. Every sentence is the webapp catalogue's `away.*` word

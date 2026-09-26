@@ -22,6 +22,7 @@ import {
   type Place,
   type ScreenerSeg,
 } from "../state/model";
+import { relayMarkFor, senderSheetLine } from "../state/relay";
 import { useWorld } from "../state/world";
 import { Badge, Button, Panel, Screen, Scroller, Tap, Txt } from "./base";
 import { DetailBar } from "./chrome";
@@ -79,6 +80,10 @@ export function SenderDetail({
   }
 
   const target = row.scope === "domain" ? `@${domainOf(row.address)}` : row.address;
+  /* On a mailbox another install organizes: where a decision goes, and what became of it. */
+  const organizer = w.mailboxes.organizer;
+  const relay = relayMarkFor(row.address, w.screener.relayed, organizer?.name ?? null);
+  const sheetLine = seg === "waiting" ? senderSheetLine(relay, organizer) : null;
 
   return (
     <Screen>
@@ -120,6 +125,16 @@ export function SenderDetail({
                 ) : null}
               </Txt>
             </View>
+          ) : null}
+          {sheetLine !== null ? (
+            <Txt
+              variant="note"
+              tone={relay?.kind === "refused" ? "ink" : "ink2"}
+              accessibilityRole={relay?.kind === "refused" ? "alert" : "text"}
+              style={{ marginTop: 12 }}
+            >
+              {sheetLine}
+            </Txt>
           ) : null}
           {seg === "screened" ? (
             <Txt variant="note" tone="ink2" style={{ marginTop: 12 }}>

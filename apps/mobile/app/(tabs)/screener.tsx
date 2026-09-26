@@ -16,6 +16,7 @@ import { useTheme } from "../../src/theme";
 import { destDone, type ScreenerSeg } from "../../src/state/model";
 import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
+import { relayMarkFor, type RelayMark } from "../../src/state/relay";
 import { useWorld, type ScreenerRow } from "../../src/state/world";
 import { Badge, Empty, Screen, Tail, TapRow, Txt } from "../../src/ui/base";
 import { TopBar } from "../../src/ui/chrome";
@@ -93,7 +94,10 @@ function ScreenerBody() {
   );
 
   const renderRow = (row: ScreenerRow) => {
-    if (seg === "waiting") return <WaitingRow row={row} onPress={() => openRow(row.routeKey)} />;
+    if (seg === "waiting") {
+      const mark = relayMarkFor(row.address, w.screener.relayed, w.mailboxes.organizer?.name ?? null);
+      return <WaitingRow row={row} mark={mark} onPress={() => openRow(row.routeKey)} />;
+    }
     if (seg === "screened") {
       return (
         <TapRow
@@ -186,13 +190,14 @@ function ScreenerBody() {
   );
 }
 
-function WaitingRow({ row, onPress }: { row: ScreenerRow; onPress: () => void }) {
+function WaitingRow({ row, mark, onPress }: { row: ScreenerRow; mark: RelayMark | null; onPress: () => void }) {
   const t = useTheme();
+  const aria = Copy.senderRowAria(row.name, row.address, row.held.length);
   return (
     <TapRow
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={Copy.senderRowAria(row.name, row.address, row.held.length)}
+      accessibilityLabel={mark ? `${aria} ${mark.text}` : aria}
       style={{ paddingHorizontal: 12, paddingVertical: 12 }}
     >
       <View style={{ flexDirection: "row", gap: 12 }}>
@@ -247,6 +252,12 @@ function WaitingRow({ row, onPress }: { row: ScreenerRow; onPress: () => void })
             ) : null}
             <Badge>{Copy.heldCaption(row.held.length)}</Badge>
           </View>
+          {/* THE DECISION THIS PHONE SENT, until the organizer answers it (`state/relay.ts`). */}
+          {mark ? (
+            <Txt variant="caption" tone={mark.kind === "refused" ? "ink" : "ink3"} style={{ marginTop: 6 }}>
+              {mark.text}
+            </Txt>
+          ) : null}
         </View>
       </View>
     </TapRow>

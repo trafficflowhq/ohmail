@@ -1,5 +1,5 @@
 import { and, asc, eq, gt, inArray, lt, or } from "drizzle-orm";
-import { organizerRequests } from "./schema-mail.js";
+import { mailboxes, organizerRequests } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
 import { fenceErased } from "./erasure-fence.js";
 import { dialect } from "./dialect/index.js";
@@ -298,4 +298,20 @@ export async function listStaleSentRequests(
       lt(organizerRequests.sentAt, olderThan),
     ));
   return rows.map(toRow);
+}
+
+/** A mailbox row id is a uuid; any other string names no row, and Postgres refuses it as a bind. */
+const ROW_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Which of `ids` are mailbox rows THIS store holds — any account, removed rows included. The
+ * request channel's mailbox check: a record naming another row of this store is refused, and an
+ * id this store never minted is another install's name for the folder it was read from. One
+ * query per batch, none for an empty set (an empty `IN` is not a statement).
+ */
+export async function mailboxRowsHeld(tx: Tx, ids: Iterable<string>): Promise<Set<string>> {
+  const asked = [...new Set([...ids].filter((id) => ROW_ID.test(id)))];
+  if (asked.length === 0) return new Set();
+  const rows = await tx.select({ id: mailboxes.id }).from(mailboxes).where(inArray(mailboxes.id, asked));
+  return new Set(rows.map((r) => r.id));
 }

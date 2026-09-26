@@ -4427,10 +4427,9 @@ const RH = {
   requestId: "X-Ohmail-Request-Id",
   requestKind: "X-Ohmail-Request-Kind",
   /**
-   * WHICH MAILBOX THE DECISION IS ABOUT, and it is inside the signed body deliberately. An
-   * organizer applies a record only when this equals the mailbox whose folder it
-   * read the record FROM — so a record lifted out of one mailbox's `_meta` and appended to
-   * another's is refused rather than applied to whichever mailbox happened to be draining.
+   * THE WRITER'S OWN ROW ID FOR THE MAILBOX, inside the signed body. Every install mints its own,
+   * so an organizer judges a record about the mailbox whose folder it read it from (the key is
+   * that mailbox's) and refuses only one naming ANOTHER row its own store holds.
    */
   mailboxId: "X-Ohmail-Request-Mailbox",
   installId: "X-Ohmail-Install-Id",
@@ -4952,7 +4951,7 @@ export const REQUEST_REFUSAL_REASONS = [
   "unauthenticated",
   /** The id is already spent by a record with DIFFERENT content — a reused id never applies. */
   "conflict",
-  /** The record names a mailbox other than the one whose folder it was read from. */
+  /** The record names another mailbox row the organizer's own store holds. */
   "wrong_mailbox",
   /** Verified, decoded, and not a decision this build can apply. */
   "invalid_payload",

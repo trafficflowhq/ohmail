@@ -46,6 +46,7 @@ export function startOrganizerSessionNative(
          is the only thing that knows which mailbox its door serves. */
       stopOrganizing: () => engine.stopOrganizing(),
       claimHere: () => engine.claimHere(),
+      heldElsewhere: () => engine.heldElsewhere(),
       /* THE ROW'S ANSWER PER MAILBOX, in the shape the watch reads. A throw propagates: the
          background half treats an unreadable state as "cannot say" and leaves the notification
          standing rather than ending somebody's organizing over a momentary failure.

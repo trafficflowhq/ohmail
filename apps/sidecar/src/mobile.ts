@@ -302,6 +302,12 @@ export interface PhoneEngine {
    */
   claimHere(): Promise<ClaimHereOutcome>;
   /**
+   * IS THE MAILBOX HELD BY A LIVE FOREIGN CLAIM, as the row the gate keeps says — `true` held,
+   * `false` free, `null` the row cannot say. The door's own read, with no press and no mail server:
+   * the claim watch asks it first, so a live holder costs no refused press every minute.
+   */
+  heldElsewhere(): Promise<boolean | null>;
+  /**
    * The person stopped — the half a relaunch can still read. {@link handBack} removes the claim but
    * leaves the ROW saying organizer, serving an app that left the foreground: the next resume takes
    * the mailbox back with no press. A person's stop is the opposite and needs the opposite
@@ -1190,6 +1196,17 @@ async function composePhoneEngine(
    * Written out at each exit rather than through a helper taking the event as an argument: the
    * package's log census parses these call sites for LITERAL event names, so a name reaching the
    * logger through a variable is a line the roster cannot see. */
+  const heldElsewhere = async (): Promise<boolean | null> => {
+    const mailboxId = soleMailbox();
+    if (mailboxId === null) return null;
+    try {
+      const fromRow = await liveForeignHolder(store.db, mailboxId, deps.installId);
+      return fromRow.answer === "held" ? true : fromRow.answer === "free" ? false : null;
+    } catch {
+      return null;
+    }
+  };
+
   const claimHere = async (): Promise<ClaimHereOutcome> => {
     const mailboxId = soleMailbox();
     if (mailboxId === null) {
@@ -1375,6 +1392,7 @@ async function composePhoneEngine(
     handBack: () => sidecar.handBack(),
     resume: () => sidecar.resume(),
     claimHere,
+    heldElsewhere,
     stopOrganizing,
     forgetStoredLogin: () => sidecar.forgetStoredLogin(),
     runtimes: () => ({ organizer: organizerStatesWithRefusals(), connection: sidecar.connectionStates() }),

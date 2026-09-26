@@ -897,6 +897,27 @@ export const DE: Deck = {
     `Entschieden — ${name} sortiert ${target} beim nächsten Durchlauf ein.`,
   liveDecidedElsewhereUnknown: (target: string) =>
     `Entschieden — die Installation, die dieses Postfach organisiert, sortiert ${target} beim nächsten Durchlauf ein.`,
+  liveDecideSent: (name: string, target: string) =>
+    `An ${name} geschickt — ${target} wird dort innerhalb weniger Minuten einsortiert.`,
+  liveDecideSentUnknown: (target: string) =>
+    `An die Installation geschickt, die dieses Postfach organisiert — ${target} wird dort innerhalb weniger Minuten einsortiert.`,
+  relayWaiting: (name: string) => `An ${name} geschickt — wartet darauf, dass es ausgeführt wird.`,
+  relayWaitingUnknown: "An den Organisator geschickt — wartet darauf, dass es ausgeführt wird.",
+  relayRefused: (reason: string) => `Nicht ausgeführt — ${reason}`,
+  relayRefusedUnknown: "Nicht ausgeführt. Der Organisator hat keinen Grund genannt.",
+  relayReasonUnauthenticated: "es konnte nicht erkennen, dass die Entscheidung von dir kam",
+  relayReasonConflict: "für denselben Absender kam zuerst eine andere Entscheidung an",
+  relayReasonAccountErased: "das zugehörige Konto gibt es nicht mehr",
+  relayReasonStale: "sie blieb zu lange unbeantwortet",
+  relayReasonUnhandledKind: "es weiß nicht, wie diese Entscheidung auszuführen ist",
+  relayReasonInvalidPayload: "es konnte die Entscheidung nicht lesen",
+  relayReasonOtherMailbox: "die Entscheidung nannte ein Postfach, das es nicht organisiert",
+  senderSentThere: (name: string) =>
+    `Was du hier entscheidest, wird an ${name} geschickt und dort innerhalb weniger Minuten ausgeführt.`,
+  readingAtConnect: (name: string) =>
+    `Dieses Telefon liest dieses Postfach. ${name} organisiert es, und was du hier entscheidest, wird dorthin geschickt.`,
+  readingAtConnectUnknown:
+    "Dieses Telefon liest dieses Postfach. Eine andere Installation organisiert es, und was du hier entscheidest, wird dorthin geschickt.",
   liveVerdictKept: (count: number, place: string, kept: number, keptPlace: string, term: string) =>
     `${count === 1 ? "1 liegt" : `${count} liegen`} in ${place} · ${kept === 1 ? "1 bleibt" : `${kept} bleiben`} nach deiner Regel »${term}« in ${keptPlace}.`,
   liveVerdictKeptDomain: (count: number, place: string, kept: number, keptPlace: string, domain: string, term: string) =>
@@ -1216,6 +1237,8 @@ export const DE: Deck = {
   scheduledNotSent: "Nicht gesendet",
   scheduledNotOnThisPhone:
     "Dieses Telefon organisiert dein Postfach nur, solange ohmail darauf läuft, und kann eine Nachricht deshalb nicht für einen späteren Zeitpunkt aufbewahren. Sende jetzt, oder plane den Versand auf einem Computer oder in ohmail Cloud.",
+  scheduledReaderHere: (name: string) =>
+    `Dieses Telefon liest dein Postfach und ${name} organisiert es, deshalb kann dieses Telefon keine Nachricht für einen späteren Zeitpunkt aufbewahren. Sende jetzt, oder plane den Versand auf ${name}.`,
 
   awayTitle: "Abwesenheitsantwort",
   awayOn: "An. Antwortet auf neue Mail, aus dem Postfach, in dem sie ankam.",

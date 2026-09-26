@@ -17,6 +17,7 @@ import { LOCAL_ENGINE_ORIGIN, mirrorExists, mirrorOwnerKey } from "../engine/boo
 import { nativeEngineDeps } from "../engine/native";
 import {
   discardStandaloneLaunch, endStandaloneHere, holdStandaloneDoor, organizerDoor, sayOrganizeRefused,
+  sayReadingAtConnect,
   takeConsentPress, sayOrganizerRestricted, standaloneHere, standaloneLaunchGeneration,
 } from "../engine/organizer-session";
 import { engineLogSink } from "../engine/engine-log";
@@ -371,6 +372,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
        device announcing a sync failure for a mailbox whose sync had not failed. See
        `organizer-session.ts#organizeRefused` for where it goes and why. */
     sayOrganizeRefused(outcome.kind === "refused" ? outcome.reason : null);
+    /* AND A LIVE HOLDER IS SAID AT CONNECT, not only under More and Settings: this phone reads. */
+    sayReadingAtConnect(outcome.kind === "held" ? { name: outcome.name } : null);
   }, []);
 
   /**

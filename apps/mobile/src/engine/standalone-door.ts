@@ -84,6 +84,8 @@ export interface StandaloneEngine {
    * another machine organizes — see {@link ClaimHereOutcome}.
    */
   claimHere(): Promise<ClaimHereOutcome>;
+  /** The row's own answer to "does a live foreign claim hold this mailbox" — no press. */
+  heldElsewhere(): Promise<boolean | null>;
   /**
    * THE PERSON'S STOP, WHERE A RELAUNCH CAN STILL READ IT.
    *

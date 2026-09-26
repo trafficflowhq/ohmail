@@ -71,7 +71,7 @@ import {
   type ReaderVerbId,
 } from "./reader-verbs";
 import { Icon, type IconName } from "./Icon";
-import { sendLaterOffered } from "./standalone-form";
+import { scheduledNotHereSentence, sendLaterOffered } from "./standalone-form";
 import {
   admitPicked,
   shrinkPicked,
@@ -1675,7 +1675,7 @@ export function ComposeSheet({
               the control it explains would have been. */}
           {w.standalone && !forward ? (
             <Txt variant="hint" tone="ink3" style={{ paddingBottom: 2 }}>
-              {Copy.scheduledNotOnThisPhone}
+              {scheduledNotHereSentence(w.mailboxes.organizer)}
             </Txt>
           ) : null}
           {/* WHY THERE IS NO SEND LATER over attachments — a draft row stores no files, the

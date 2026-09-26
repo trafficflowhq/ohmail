@@ -8,12 +8,16 @@
  * its own. An empty mailbox renders an honest empty state, never sample mail.
  * The rows go through `MailList`, which mounts a window of them, not the mailbox.
  */
+import { useCallback, useSyncExternalStore } from "react";
 import { View } from "react-native";
 import { Copy } from "../../src/copy";
+import {
+  onOrganizerState, organizerStateVersion, readingAtConnectSaid, sayReadingAtConnect,
+} from "../../src/engine/organizer-session";
 import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
 import { useWorld, type WorldMail } from "../../src/state/world";
-import { Empty, Screen, Tail, Txt } from "../../src/ui/base";
+import { Button, Empty, Panel, Screen, Tail, Txt } from "../../src/ui/base";
 import { Doorbell, TopBar } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
 import { MailList, type ListGroup } from "../../src/ui/MailList";
@@ -21,6 +25,7 @@ import { MailRow } from "../../src/ui/MailRow";
 import { MarkAllRead } from "../../src/ui/MarkAllRead";
 import { MessageReader } from "../../src/ui/MessageReader";
 import { SkeletonList } from "../../src/ui/Skeleton";
+import { readingAtConnectLine } from "../../src/ui/standalone-form";
 import { useLocale } from "../../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 
@@ -42,6 +47,14 @@ function OhboxBody() {
      ever. The selection is the route's `open` param — `src/ui/list-detail.tsx` is the rule. */
   const { open, openRow, close } = useListDetail((id) => `/message/${id}`);
   const { resurfaced, fresh, seen, total, meta } = w.ohbox;
+  /* WHO ORGANIZES THIS MAILBOX, said where the connect lands when it is not this phone. Scoped to
+     the standalone session: the notice is about the engine in this app, never another account. */
+  useSyncExternalStore(
+    useCallback((cb: () => void) => onOrganizerState(cb), []),
+    organizerStateVersion,
+    organizerStateVersion,
+  );
+  const reading = w.standalone ? readingAtConnectSaid() : null;
 
   // Unknown ≠ empty: before this mirror has ever settled a drain, a zero-row Ohbox shows
   // the shape of what is coming, never "All quiet" — `state/surface.ts` is the whole rule.
@@ -69,6 +82,19 @@ function OhboxBody() {
               unread={w.ohbox.unreadIds.length}
               onMarkAll={() => w.actions.markAllSeen(w.ohbox.unreadIds)}
             />
+            {reading ? (
+              <Panel style={{ paddingVertical: 14, paddingHorizontal: 18, marginBottom: 12 }}>
+                <Txt variant="note" tone="ink2" accessibilityRole="text">
+                  {readingAtConnectLine(reading)}
+                </Txt>
+                <Button
+                  label={Copy.stripDismiss}
+                  variant="quiet"
+                  onPress={() => sayReadingAtConnect(null)}
+                  style={{ marginTop: 8, alignSelf: "flex-start" }}
+                />
+              </Panel>
+            ) : null}
             <Doorbell initials={w.doorbell.initials} count={w.doorbell.count} />
           </>
         }

@@ -6,7 +6,7 @@ import {
   applyRuleRequest, validateRulePayload, type RuleRefusal,
   readIdempotencyKey, IDEMPOTENCY_TTL_MS, readAccountErasedAt,
   listPendingRequests, listSentRequests, markRequestsSent, markRequestsApplied,
-  listStaleSentRequests, markRequestsExpired, markRequestsRefused,
+  listStaleSentRequests, markRequestsExpired, markRequestsRefused, mailboxRowsHeld,
   type Tx,
 } from "@trafficflow/db";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
@@ -183,7 +183,7 @@ type WorkerDb = Tx;
  * appended to `ohmail/_meta`, an ordinary IMAP folder, so anyone with APPEND rights could write one
  * (a forged record buys a `promoted` rule, a `contacts` whitelist, a mark-read). So the ORDER of the
  * checks is the security property: bound the headers, refuse an unknown protocol/kind (LEAVE STANDING),
- * VERIFY THE SIGNATURE before any decode, check it names THIS mailbox inside the signed body, refuse a
+ * VERIFY THE SIGNATURE before any decode, refuse one naming ANOTHER row this store holds, refuse a
  * stale decision, only then decode/validate, and apply under a content-bound idempotency key. No key
  * means no channel. After `runSyncCycle` under a time budget (the folder is attacker-writable), and the drain performs no physical move.
  */
@@ -834,6 +834,21 @@ export async function applyMetaRequests(
   let refused = 0;
   let standing = 0;
 
+  /* Which of the batch's other mailbox ids are rows of THIS store — one read, before the loop.
+     `null` when the read failed: those records wait for the next cycle rather than be judged. */
+  let otherRowsHere: Set<string> | null = new Set();
+  const otherIds = new Set(takeWellFormed.map((e) => e.mailboxId).filter((id) => id !== rt.mailboxId));
+  if (otherIds.size > 0) {
+    try {
+      otherRowsHere = await db.transaction((tx) => mailboxRowsHeld(tx, otherIds));
+    } catch (err) {
+      otherRowsHere = null;
+      log("organizer_request_apply_failed", {
+        mailboxId: rt.mailboxId, accountId: rt.accountId, ...refusalFields(err),
+      });
+    }
+  }
+
   /** Refusals and applies both end in "remove this record", batched into ONE STORE+EXPUNGE. */
   const toRemove: unknown[] = [...staleAckRefs];
   /** Acks to append, one per record whose outcome is decided this cycle. `resend`: applied earlier. */
@@ -958,12 +973,19 @@ export async function applyMetaRequests(
       continue;
     }
 
-    // ── (4) IT MUST NAME THE MAILBOX WHOSE FOLDER IT WAS READ FROM ───────────────────────────
+    // ── (4) IT MAY NOT NAME ANOTHER ROW THIS STORE HOLDS ─────────────────────────────────────
     //
-    // The id is inside the signed body, so a genuine record cannot be lifted out of one mailbox's
-    // `_meta` and replayed into another's — the signature still verifies (same account key) but
-    // the mailbox no longer matches, and this is the check that catches it.
-    if (e.mailboxId !== rt.mailboxId) {
+    // Every install mints its own row id, so a reader's id is one this store has usually never
+    // seen, and the record is about the mailbox whose folder it was read from (the key is that
+    // mailbox's). Refused: a record naming another row held HERE, such as a removed-and-re-added
+    // mailbox's old id or a second account's row. The password is the boundary, not this id.
+    const anotherRowHere = e.mailboxId === rt.mailboxId ? false
+      : otherRowsHere === null ? null : otherRowsHere.has(e.mailboxId);
+    if (anotherRowHere === null) {
+      deferred++;
+      continue;
+    }
+    if (anotherRowHere) {
       settle(e, "refused", "wrong_mailbox");
       refused++;
       log("organizer_request_refused", {
@@ -1408,17 +1430,32 @@ export async function driveOutstandingRequests(
         && e.installId === self.installId)
       .map((e) => e.requestId),
   );
-  /* ── AN ACK IS ONLY AN ANSWER FOR THE MAILBOX IT NAMES ────────────────────────────────────
+  /* ── AN ACK NAMING ANOTHER ROW OF THIS STORE IS NOT AN ANSWER HERE ────────────────────────
    *
-   * The mailbox is inside the ack's signed body, so an acknowledgement genuinely produced for one
-   * of the account's mailboxes cannot be copied into another's folder and read as an answer there.
-   * Without this filter it could: the signature verifies (same account key), and arriving at a
-   * lower uid than the real answer it would win the first-wins match below — showing a person a
-   * refusal for a decision that was applied, and inviting a second press that writes a second rule.
+   * The organizer signs ITS OWN row id into the ack, which this store has usually never minted,
+   * so an unknown id is the organizer of this folder answering. An ack naming another row held
+   * here was copied from that mailbox's folder, and would otherwise win the first-wins match
+   * below: a refusal shown for a decision that was applied, and a second press. A failed read
+   * drops the foreign acks this cycle; the rows stay `sent` and are matched on the next.
    */
+  const verified = acksIn(records, key);
+  const foreign = new Set(verified.map((a) => a.mailboxId).filter((id) => id !== rt.mailboxId));
+  let otherRowsHere: Set<string> | null = new Set();
+  if (foreign.size > 0) {
+    try {
+      otherRowsHere = await db.transaction((tx) => mailboxRowsHeld(tx, foreign));
+    } catch (err) {
+      otherRowsHere = null;
+      log("outstanding_requests_list_failed", {
+        mailboxId: rt.mailboxId, accountId: rt.accountId, ...refusalFields(err),
+      });
+    }
+  }
   const ackById = new Map<string, AckRecord>();
-  for (const a of acksIn(records, key)) {
-    if (a.mailboxId !== rt.mailboxId) continue;
+  for (const a of verified) {
+    const answersHere = a.mailboxId === rt.mailboxId
+      || (otherRowsHere !== null && !otherRowsHere.has(a.mailboxId));
+    if (!answersHere) continue;
     if (!ackById.has(a.requestId)) ackById.set(a.requestId, a);
   }
 

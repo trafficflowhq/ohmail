@@ -417,6 +417,22 @@ export function sayOrganizeRefused(reason: Refusal | null): void {
 export const organizeRefusal = (): Refusal | null => organizeRefused;
 
 /**
+ * THE MAILBOX WAS ORGANIZED ELSEWHERE WHEN THIS PHONE CONNECTED — the holder the connect's consent
+ * press was refused to, said once where the person lands: the door promised
+ * organizing and this phone reads instead. `name` is `""` where the claim named nobody.
+ */
+let readingAtConnect: { name: string } | null = null;
+
+/** Record it, or clear it: a dismissal, or a connect that was not refused to a holder. */
+export function sayReadingAtConnect(holder: { name: string } | null): void {
+  readingAtConnect = holder;
+  notifyOrganizerState();
+}
+
+/** The standing connect notice, or `null`. Read by the Ohbox. */
+export const readingAtConnectSaid = (): { name: string } | null => readingAtConnect;
+
+/**
  * The person's hand-back from Settings, on this door — and it is REMEMBERED. This was
  * `held.handBack()`, which leaves the ROW saying organizer so the next resume takes the mailbox
  * back with no press — right for an app leaving the foreground, wrong for a person pressing stop (a

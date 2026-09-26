@@ -37,7 +37,8 @@ import {
 } from "../net/consent";
 import { readMailboxes, type PhoneMailbox } from "../net/mailboxes";
 import { junkFolderSaid } from "./folders";
-import { readScreenerWaiting, type ServerWaitingSender } from "../net/screener";
+import { readRelayedDecisions, readScreenerWaiting, type ServerWaitingSender } from "../net/screener";
+import { withSentHere, type RelayedDecision } from "./relay";
 import { PHONE_CLAIM_NAME, organizesHere } from "../engine/standalone-door";
 /* THE DOOR ANSWERING FOR ITSELF, with no request — `organizer-session.ts` holds the one engine
    this process runs and `standaloneHereFor` is its read, SCOPED to the session being
@@ -290,7 +291,8 @@ export interface World {
     newCount: number;
     meta: string;
   };
-  screener: WorldScreener & { meta: string };
+  /** `relayed`: this phone's decisions still with the organizer — see `state/relay.ts`. */
+  screener: WorldScreener & { meta: string; relayed: readonly RelayedDecision[] | null };
   /**
    * History — mail from senders nobody ever decided about, who then went quiet. The other arm
    * of the partition that fills `screener.waiting`, derived from the same `presentedWorld`
@@ -583,7 +585,7 @@ function emptyWorld(actions: WorldActions): World {
     doorbell: { initials: [], count: 0 },
     reads: { items: [], waterlineAboveId: null, unreadIds: [], waterLabel: Copy.waterline, newCount: 0, meta: "" },
     receipts: { groups: [], waterlineAboveId: null, waterLabel: Copy.waterline, total: 0, newCount: 0, meta: "" },
-    screener: { waiting: [], screened: [], spam: [], meta: "", source: "device", waitingPending: false },
+    screener: { waiting: [], screened: [], spam: [], meta: "", source: "device", waitingPending: false, relayed: null },
     history: { items: [], total: 0, meta: "", pending: false },
     piles: [],
     pilesMeta: "",
@@ -800,6 +802,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * account A's waiting senders must never be account B's queue.
    */
   const [screenerServer, setScreenerServer] = useState<readonly ServerWaitingSender[] | null>(null);
+  /* This phone's decisions the organizer has not answered yet, on the queue read's cadence. */
+  const [relayed, setRelayed] = useState<readonly RelayedDecision[] | null>(null);
   /**
    * THE ACCOUNT'S FACE, and a write in flight. `null` is "the account has no preference", which
    * is also where a fresh session starts — account A's face must never skin account B, the same
@@ -930,6 +934,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     const queueRead = freshestRead<readonly ServerWaitingSender[]>((ans) => {
       if (current.current === m) setScreenerServer(ans);
     });
+    const relayRead = freshestRead<readonly RelayedDecision[]>((ans) => {
+      if (current.current === m) setRelayed(ans);
+    });
     const m = foldersFlag({
       read: () => {
         /* Fired from the flag's read so there is ONE cadence to reason about and one place that
@@ -941,6 +948,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
            the partition is the only authority that exists there, and a request for a route this
            session does not dial would refuse on every cadence for ever. */
         if (!session.standalone) void queueRead(() => readScreenerWaiting(session));
+        /* BOTH DOORS: the decisions this phone sent live where its presses land. */
+        void relayRead(() => readRelayedDecisions(session));
         /* Stamped BEFORE the request leaves — the whole point of the two-phase read. */
         const applyFace = faces.beginRead();
         return sigRead(async () => {
@@ -987,6 +996,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // And the queue, for the mailboxes' reason exactly: account A's waiting senders are not
     // account B's, and a stale set would name senders whose mail this mirror does not hold.
     setScreenerServer(null);
+    setRelayed(null);
     /* And the FACE, for the same reason and one more: an account's appearance choice is that
        account's state, so the next session starts with none and the device's own pin (which
        outranks it either way) is deliberately left alone — it belongs to the phone, not to
@@ -1149,6 +1159,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         forgetWaiting: (decided) => setScreenerServer((prev) => waitingAfterDecide(prev, decided)),
         /* The standalone door sends nothing (its one-click port refuses), so it says nothing. */
         autoUnsubscribe: () => !standaloneNow.current && autoUnsubscribeNow.current,
+        /* THE PRESS THAT WAS SENT, MARKED AT ONCE; the next read confirms or replaces it. */
+        relayedHere: (decided) => setRelayed((prev) => withSentHere(prev, decided)),
       })
       : null),
     [engine, showToast, zone],
@@ -1483,6 +1495,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       },
       screener: {
         ...screener,
+        relayed,
         // A number this phone derived is never shown as the mailbox's own.
         meta: screener.source === "server"
           ? Copy.metaWaiting(screener.waiting.length)
@@ -1563,7 +1576,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, session, scopes, zone, locale, actions, version, freshBeat, searchRev, walker, searchWalker, offMirrorRev,
     foldersOn, foldersPending, foldersStorable, setFoldersEnabled, signatures,
-    resurfaceTime, rememberResurfaceTime, screening, screenerServer, heldDeletes, heldPlaces]);
+    resurfaceTime, rememberResurfaceTime, screening, screenerServer, relayed, heldDeletes, heldPlaces]);
 
   /**
    * AND THE WORLD THE SCREENS READ — the projection above plus the facts that move with the

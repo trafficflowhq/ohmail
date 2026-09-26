@@ -1,6 +1,7 @@
 import type { ConnectedSession } from "./pairing.js";
 /* THE ONE BASE EVERY REQUEST IS COMPOSED OFF — see `request-base.ts`. */
 import { requestBase } from "./request-base";
+import { relayedOf, type RelayedDecision } from "../state/relay";
 /**
  * The waiting queue as the server holds it — `GET /screener` over the paired server. The server's
  * queue is a derivation over mail physically in `ohmail/Screener`, one row per sender
@@ -84,6 +85,23 @@ export async function readScreenerWaiting(
        queue, and a prefix is the short list this read exists to stop reporting — so it is not an
        answer, and the caller keeps the partition's own list instead. */
     return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * THIS PHONE'S OWN DECISIONS STILL WITH THE ORGANIZER — the route's `pendingDecisions`, off one
+ * short page. Asked on both doors: on the standalone door the engine in this app holds the rows,
+ * on a paired one the server does. `null` means "could not ask", never "nothing is waiting".
+ */
+export async function readRelayedDecisions(session: ConnectedSession): Promise<RelayedDecision[] | null> {
+  try {
+    const res = await session.fetch(`${requestBase(session)}/screener?limit=1`, { method: "GET" });
+    if (res.status !== 200) return null;
+    const body = (await res.json()) as { pendingDecisions?: unknown } | null;
+    if (!Array.isArray(body?.pendingDecisions)) return null;
+    return body.pendingDecisions.map(relayedOf).filter((d): d is RelayedDecision => d !== null);
   } catch {
     return null;
   }
