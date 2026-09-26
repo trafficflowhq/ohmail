@@ -24,7 +24,7 @@ import { threadOf, type OhmailEngine } from "@ohmail/client-engine";
 import {
   isAuthListFailure, listRetryIsOffered, type AttachmentItem, type AttachmentsView,
 } from "../components/AttachmentStrip";
-import { desktopAttachmentsEnabled, saveAttachmentToDownloads } from "./open-attachment";
+import { desktopAttachmentsEnabled, saveAttachmentToDownloads, type SaveRefusal } from "./open-attachment";
 import { probeSessionNow, subscribeSessionRevival } from "./session-truth";
 
 /**
@@ -130,8 +130,11 @@ export function saveObjectUrl(url: string, filename: string, doc: Document): voi
   a.remove();
 }
 
-/** How one file reached the person: into their Downloads folder, into the browser's, or not at all. */
-export type Delivery = "saved" | "downloaded" | "refused";
+/**
+ * How one file reached the person: into their Downloads folder, into the browser's, or not at all —
+ * `refused` when there was no shell to ask, a {@link SaveRefusal} when the shell would not save.
+ */
+export type Delivery = "saved" | "downloaded" | "refused" | SaveRefusal;
 
 /**
  * Deliver one file, by whichever route this window actually has — and the same act on both.
@@ -150,7 +153,8 @@ export async function deliverFile(
   doc: Document,
 ): Promise<Delivery> {
   if (desktopAttachmentsEnabled() && blob) {
-    return (await saveAttachmentToDownloads(blob, filename)) ? "saved" : "refused";
+    const answer = await saveAttachmentToDownloads(blob, filename);
+    return answer === true ? "saved" : answer === false ? "refused" : answer;
   }
   saveObjectUrl(url, filename, doc);
   return "downloaded";
@@ -169,6 +173,8 @@ export async function deliverFile(
 export async function deliverAll(
   files: ReadonlyArray<{ blob: Blob | undefined; url: string; filename: string }>,
   doc: Document,
+  /** Each file the shell would not save, with why — the press says it (see {@link deliverFile}). */
+  onRefused?: (why: SaveRefusal) => void,
 ): Promise<number> {
   if (!desktopAttachmentsEnabled()) {
     for (const file of files) saveObjectUrl(file.url, file.filename, doc);
@@ -176,7 +182,9 @@ export async function deliverAll(
   }
   let saved = 0;
   for (const file of files) {
-    if ((await deliverFile(file.blob, file.url, file.filename, doc)) === "saved") saved += 1;
+    const how = await deliverFile(file.blob, file.url, file.filename, doc);
+    if (how === "saved") saved += 1;
+    else if (how === "no-downloads-folder" || how === "not-saved") onRefused?.(how);
   }
   return saved;
 }
@@ -318,6 +326,8 @@ export function useMessageAttachments(
     onSavedToDownloads?: (count: number) => void;
     /** The last pane showing this message let it go; a preview over its bytes must close. */
     onUnshown?: (messageId: string) => void;
+    /** N files the desktop shell would not save, and why — said where the press was. */
+    onSaveRefused?: (why: SaveRefusal, count: number) => void;
   },
 ): AttachmentsChrome | undefined {
   const available = engine.attachmentsAvailable();
@@ -340,6 +350,8 @@ export function useMessageAttachments(
   onSaved.current = opts.onSavedToDownloads;
   const onUnshown = useRef(opts.onUnshown);
   onUnshown.current = opts.onUnshown;
+  const onRefused = useRef(opts.onSaveRefused);
+  onRefused.current = opts.onSaveRefused;
 
   /**
    * Every id whose list THIS selection asked for — the RELEASE SET. The selected message and
@@ -649,8 +661,9 @@ export function useMessageAttachments(
             document,
           );
           // Only the desktop route has anything to announce: a browser download is announced by
-          // the browser, and a refusal already went to the console with the shell's own reason.
+          // the browser. A shell that would not save is said at the press, in the product's words.
           if (how === "saved") onSaved.current?.(1);
+          else if (how === "no-downloads-folder" || how === "not-saved") onRefused.current?.(how, 1);
         }
       })();
     },
@@ -745,6 +758,7 @@ export function useMessageAttachments(
           // downloads), and the desktop arm is sequential and awaited, because each file is a
           // write into a folder shared with everything else this person has downloaded and the
           // collision numbering is settled by the filesystem at the moment of the write.
+          const refusals: SaveRefusal[] = [];
           const intoDownloads = await deliverAll(
             saved.map((item) => ({
               blob: engine.attachmentBlobOf(id, item.id),
@@ -752,8 +766,13 @@ export function useMessageAttachments(
               filename: item.filename,
             })),
             document,
+            (why) => refusals.push(why),
           );
           if (intoDownloads > 0) onSaved.current?.(intoDownloads);
+          // A file the shell would not save has no tile to carry it, so the press says it.
+          if (refusals.length > 0) {
+            onRefused.current?.(refusals.includes("no-downloads-folder") ? "no-downloads-folder" : "not-saved", refusals.length);
+          }
 
           // Reported only when NOTHING could be saved. A partial result needs no toast: every
           // file that could not be fetched is a `failed` tile carrying the server's own sentence,

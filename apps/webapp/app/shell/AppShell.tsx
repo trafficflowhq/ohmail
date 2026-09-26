@@ -1680,6 +1680,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     onSavedToDownloads: (count) => toast(t("ohbox.toastSavedToDownloads", { count })),
     /* A preview belongs to the pane that shows its message; when the last one lets it go, so does the preview. */
     onUnshown: (id) => setPreviewFor((p) => (p?.messageId === id ? null : p)),
+    // The shell would not save: said at the press, never in the shell's own words.
+    onSaveRefused: (why, count) => toast(why === "no-downloads-folder"
+      ? t("ohbox.toastSaveNoDownloads")
+      : t("ohbox.toastSaveRefused", { count })),
   });
 
   /*

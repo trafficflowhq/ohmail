@@ -97,16 +97,26 @@ export async function openAttachmentWithSystemViewer(blob: Blob, filename: strin
 }
 
 /**
- * Ask the shell to save one attachment into the user's Downloads folder. Answers whether it
- * landed, which is what lets the caller say "Saved to Downloads" only when something was.
- *
- * The same wire as its neighbour above — bytes as an array of numbers over the JSON message
- * channel, the same ceiling enforced at both ends — and the same refusal to swallow: a shell that
- * would not save goes to the console, because this family of defects is silent by nature. A
- * `false` covers both "there is no shell here" and "the shell refused", and the caller treats them
- * the same: it does not claim a file was saved.
+ * Why the shell would not save, as the one fact the press can say. The shell's own words are a
+ * diagnostic (they carry an OS error), so they go to the console and a closed set reaches the
+ * screen: this computer names no Downloads folder (a Linux profile with no user-dirs entry), or
+ * the file was not saved.
  */
-export async function saveAttachmentToDownloads(blob: Blob, filename: string): Promise<boolean> {
+export type SaveRefusal = "no-downloads-folder" | "not-saved";
+
+/** The shell's refusal, read by its one stable phrase (`engine.rs#downloads_root`). */
+export function saveRefusalOf(err: unknown): SaveRefusal {
+  const text = typeof err === "string" ? err : err instanceof Error ? err.message : "";
+  return text.includes("named no Downloads folder") ? "no-downloads-folder" : "not-saved";
+}
+
+/**
+ * Ask the shell to save one attachment into the user's Downloads folder. Answers `true` when it
+ * landed, `false` when there is no shell here, and the refusal when the shell would not save —
+ * which the press says (`AttachmentsChrome`), because a press that saves nothing and says nothing
+ * is the defect this seam exists to end. The shell's own reason goes to the console.
+ */
+export async function saveAttachmentToDownloads(blob: Blob, filename: string): Promise<true | false | SaveRefusal> {
   const host = globalThis as { __TAURI_INTERNALS__?: Partial<TauriInternals> };
   const internals = host.__TAURI_INTERNALS__;
   if (typeof internals?.invoke !== "function") return false;
@@ -116,6 +126,6 @@ export async function saveAttachmentToDownloads(blob: Blob, filename: string): P
     return true;
   } catch (err) {
     console.error(`ohmail: the shell would not save ${filename}`, err);
-    return false;
+    return saveRefusalOf(err);
   }
 }
