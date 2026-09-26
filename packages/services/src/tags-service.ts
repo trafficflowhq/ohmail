@@ -31,7 +31,9 @@ export type TagHue = (typeof RENDERABLE_HUES)[number];
  *  way to bloat a row nobody can see. Exported for the profile import, whose tag names arrive
  *  from a public document rather than this service's own validated body and must meet the same
  *  ceiling or be skipped. */
-export const MAX_TAG_NAME_CHARS = 40;
+/* The tag store's ceiling, below both doors that write names: the create here and the import. */
+export { MAX_TAG_NAME_CHARS } from "@trafficflow/core/adapters/organizer-profile-store";
+import { MAX_TAG_NAME_CHARS } from "@trafficflow/core/adapters/organizer-profile-store";
 const MAX_NAME = MAX_TAG_NAME_CHARS;
 
 export interface TagBody {

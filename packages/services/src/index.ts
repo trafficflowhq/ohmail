@@ -226,6 +226,7 @@ export {
 export {
   ProfileImportService, profileImportService, PROFILE_IMPORT_MAX,
   type ProfileImportCandidateDTO, type ProfileImportApplied, type ProfileImportCounts,
+  type ProfileImportHandedOver, type ProfileImportStatusDTO,
   type ProfileReader,
 } from "./profile-import-service.js";
 export {

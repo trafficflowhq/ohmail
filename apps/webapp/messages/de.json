@@ -3535,6 +3535,8 @@
     "routingWhileOpen": "Bis du antwortest, bleibt Mail von Absendern, die diese Einstellungen durchlassen, dort, wo sie angekommen ist; andere neue Absender werden wie gewohnt gescreent.",
     "import": "Einstellungen importieren",
     "importing": "Importiere …",
+    "importingSlow": "Dieses Postfach antwortet langsam, deshalb schließt ohmail den Import im Hintergrund ab. Das Ergebnis erscheint hier.",
+    "importingUnreachable": "ohmail hat dieses Postfach gerade nicht erreicht. Es versucht es im Hintergrund weiter und zeigt das Ergebnis hier.",
     "later": "Nicht jetzt",
     "doneTitle": "Deine Einstellungen sind zurück.",
     "doneDetails": "Importiert: {details}.",

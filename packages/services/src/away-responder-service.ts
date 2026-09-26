@@ -1,6 +1,8 @@
 import { eq } from "drizzle-orm";
 import { awayResponders } from "@trafficflow/db";
-import { canonicalDestination, createLogger } from "@trafficflow/core/mail";
+import {
+  AWAY_AUDIENCES, canonicalDestination, createLogger, nextEnabledAt, type AwayAudience,
+} from "@trafficflow/core/mail";
 import {
   AWAY_ANSWERABLE_PILES, AWAY_PILES_DEFAULT, AWAY_SCREENER_FOLDER, awayScopeFitsAudience,
   DRAFT_BODY_MAX_BYTES, draftBodyOverCeiling, readAwayPiles, utf8ByteLength,
@@ -63,18 +65,6 @@ export interface AwayResponderBody {
 
 const iso = (d: Date | null): string | null => (d ? d.toISOString() : null);
 
-/**
- * The two audiences, as the ONE list both the validator and the DTO type read.
- *
- * The database CHECK (`away_responders_audience_closed`) is the other half and it is not a
- * duplicate: this one turns a bad request into a 400 naming the field, and that one makes a
- * member nobody enumerated unrepresentable regardless of which writer produced it. Widening the
- * audience is the only irreversible thing this feature does — a reply sent to a stranger cannot
- * be recalled — so it is worth having both.
- */
-export const AWAY_AUDIENCES = ["screened_in", "everyone"] as const;
-export type AwayAudience = (typeof AWAY_AUDIENCES)[number];
-
 function toDTO(row: typeof awayResponders.$inferSelect): AwayResponderDTO {
   return {
     enabled: row.enabled,
@@ -110,20 +100,8 @@ const DEFAULT_SHAPE: AwayResponderDTO = {
   audience: "screened_in", throttle: "per_day", piles: [...AWAY_PILES_DEFAULT], updatedAt: null,
 };
 
-/**
- * When the responder's current enablement began — ONE implementation, used by {@link
- * AwayResponderService.put} and `profile-import-service.ts`: two writers of this column
- * disagreeing is the failure it fixes. It moves on the OFF → ON transition only: not enabled →
- * null (keeping the instant would make a re-enable months later answer everything in between);
- * enabled, was off → now (enabling never answers the backlog); enabled, was on → UNCHANGED — the
- * point: an edit mid-trip leaves the floor where it was, so correspondents who wrote before the
- * edit are still answerable. `updated_at` moved on every save, which is why they used to get no
- * reply at all.
- */
-export function nextEnabledAt(prev: Date | null, enabled: boolean, now: Date): Date | null {
-  if (!enabled) return null;
-  return prev ?? now;
-}
+/** When the responder's current enablement began — core's one implementation (the import shares it). */
+export { nextEnabledAt } from "@trafficflow/core/mail";
 
 /**
  * THE REQUEST DOOR'S PILE SCOPE — what one `profile.update` or settings PUT asked for, narrowed.

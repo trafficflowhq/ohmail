@@ -1603,6 +1603,31 @@ export function withForcedRedial(
   });
 }
 
+/**
+ * A PRESS OF IMPORT SETTINGS HANDED TO THE ORGANIZER reaches it now. The shared handler records
+ * the ask and rings `sync_requested_at`, which only the hosted worker reads; here the organizer
+ * is this process, idling up to its poll ceiling, so a 202 starts one drain whose tail runs the
+ * ask. Fire-and-forget, as {@link withForcedRedial}: the answer stays immediate.
+ */
+export function withImportHandover(
+  routes: readonly Route[],
+  runtimeFor: (mailboxId: string) => { syncUntilQuiet(maxCycles?: number): Promise<number> } | undefined,
+): Route[] {
+  return routes.map((r) => {
+    if (r.method !== "POST" || r.pattern !== "/mailboxes/:id/profile-import") return r;
+    return {
+      ...r,
+      handler: async (req, deps, params) => {
+        const res = await r.handler(req, deps, params);
+        if (res.status !== 202 || params.id === undefined) return res;
+        void runtimeFor(params.id)?.syncUntilQuiet(1)
+          .catch(() => { /* the drain reports its own failures; a press must not crash the host */ });
+        return res;
+      },
+    };
+  });
+}
+
 export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
   const log = config.log ?? ((): void => undefined);
   const now = config.now ?? ((): Date => new Date());
@@ -1793,7 +1818,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          the closure is only ever CALLED from a request handler, long after it exists. Local
          composition only — the hosted door proxies its resync to a worker and has no runtime
          here to force. */
-      ...withForcedRedial(localRoutes, (id) => runtimes.get(id), log),
+      ...withImportHandover(withForcedRedial(localRoutes, (id) => runtimes.get(id), log), (id) => runtimes.get(id)),
       ...localAiRoutes(ai),
       ...localAutoSuggestRoutes({ db, accountId: world.accountId, ai, now }),
       // Which addresses this machine could serve same-network access on — the LAN ceremony's
@@ -1811,7 +1836,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * never a second write path. The window-only tables above (`/local/ai`, auto-suggest, the
      * pairing mint) are structurally absent from it.
      */
-    const hostApp: App | null = hostMode ? createApp(desktopHostRoutes) : null;
+    const hostApp: App | null = hostMode
+      ? createApp(withImportHandover(desktopHostRoutes, (id) => runtimes.get(id))) : null;
     /**
      * The static half of the same door — the browser client the QR sends a phone to. Probed NOW,
      * awaited, so `host_assets_missing` lands in the boot log where somebody debugging an

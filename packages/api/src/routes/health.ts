@@ -783,6 +783,10 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // every run and the screener decide writes it, so an API ahead of the migration 42703s both.
   // Deploy order migration → API → worker.
   ["rules", "person_decided_at"],
+  // mail 0128_profile_import_ask — a press of Import settings the organizer finishes. The POST,
+  // the status read and every organizer tick read the row's ask columns, so an API or a worker
+  // ahead of the migration 42703s all three. Deploy order migration → API → worker.
+  ["mailboxes", "profile_import_ask_fingerprint"],
 ] as const;
 
 /**
@@ -1100,7 +1104,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0128_rule_person_decided";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0128_profile_import_ask";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud

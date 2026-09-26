@@ -314,6 +314,15 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     ]
   },
   {
+    "name": "0128_profile_import_ask.sql",
+    "statements": [
+      "ALTER TABLE \"mailboxes\" ADD COLUMN \"profile_import_ask_fingerprint\" text;",
+      "ALTER TABLE \"mailboxes\" ADD COLUMN \"profile_import_ask_at\" integer;",
+      "ALTER TABLE \"mailboxes\" ADD COLUMN \"profile_import_ask_outcome\" text;",
+      "ALTER TABLE \"mailboxes\" ADD COLUMN \"profile_import_ask_reason\" text;"
+    ]
+  },
+  {
     "name": "0128_rule_person_decided.sql",
     "statements": [
       "ALTER TABLE \"rules\" ADD COLUMN \"person_decided_at\" integer;"

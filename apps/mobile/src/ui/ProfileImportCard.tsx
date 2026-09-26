@@ -11,14 +11,14 @@ import { Copy } from "../copy";
 import { useLocale } from "../i18n/LocaleProvider";
 import { useConnection } from "../net/connection";
 import {
-  answerProfileImport, readProfileImport, type ProfileImportQuestion,
+  answerProfileImport, readImportStatus, readProfileImport, type ProfileImportAnswer, type ProfileImportQuestion,
 } from "../net/profile-import";
 import type { ConnectedSession } from "../net/pairing";
 import { useWorld } from "../state/world";
 import { Button, Panel, Txt, useTopPad } from "./base";
 import {
-  askTickets, cardQuestion, countsSaid, failureSaid, mailboxesToAsk, savedBySaid, savedRows,
-  type CardPhase, type MailboxQuestion,
+  IMPORT_STATUS_BEAT_MS, askTickets, cardQuestion, countsSaid, failureSaid, importingSaid, mailboxesToAsk,
+  savedBySaid, savedRows, type CardPhase, type MailboxQuestion,
 } from "./profile-import-card";
 
 /**
@@ -30,6 +30,7 @@ export function useProfileQuestions(): {
   session: ConnectedSession | null;
   rows: MailboxQuestion[];
   set: (mailboxId: string, question: ProfileImportQuestion) => void;
+  bell: number | null;
 } {
   const w = useWorld();
   const conn = useConnection();
@@ -68,13 +69,40 @@ export function useProfileQuestions(): {
   const rows = w.mailboxes.rows
     .filter((r) => answers[r.id] !== undefined)
     .map((r) => ({ mailboxId: r.id, address: r.displayName ?? r.address, question: answers[r.id]! }));
-  return { session, rows, set };
+  return { session, rows, set, bell };
+}
+
+/**
+ * A PRESS THE ORGANIZER IS FINISHING, asked about on the settings doorbell its answer rings and
+ * on a slow beat for a door that rings nothing. `settle` receives each answer the read has.
+ */
+function useImportStatus(
+  session: ConnectedSession | null, target: { mailboxId: string; fingerprint: string } | null,
+  bell: number | null, settle: (a: ProfileImportAnswer) => void,
+): void {
+  const [beat, setBeat] = useState(0);
+  const key = target === null ? null : JSON.stringify([target.mailboxId, target.fingerprint]);
+  const settleRef = useRef(settle);
+  settleRef.current = settle;
+  useEffect(() => {
+    if (key === null) return;
+    const id = setInterval(() => setBeat((n) => n + 1), IMPORT_STATUS_BEAT_MS);
+    return () => clearInterval(id);
+  }, [key]);
+  useEffect(() => {
+    if (session === null || target === null) return;
+    let live = true;
+    void readImportStatus(session, target.mailboxId, target.fingerprint).then((a) => {
+      if (live && a !== null) settleRef.current(a);
+    });
+    return () => { live = false; };
+  }, [session, key, bell, beat]);
 }
 
 export function ProfileImportCard() {
   const locale = useLocale();
   const top = useTopPad(8);
-  const { session, rows, set } = useProfileQuestions();
+  const { session, rows, set, bell } = useProfileQuestions();
   const [phase, setPhase] = useState<CardPhase>({ kind: "asking" });
   const [shownFor, setShownFor] = useState<string | null>(null);
   const current = cardQuestion(rows);
@@ -82,7 +110,7 @@ export function ProfileImportCard() {
 
   /* The card's phase belongs to the mailbox on screen; a different question starts fresh. */
   useEffect(() => {
-    if (current !== null && current.mailboxId !== shownFor && phase.kind !== "imported") {
+    if (current !== null && current.mailboxId !== shownFor && phase.kind !== "imported" && phase.kind !== "importing") {
       setShownFor(current.mailboxId);
       setPhase({ kind: "asking" });
     }
@@ -96,6 +124,7 @@ export function ProfileImportCard() {
     setPhase({ kind: "busy" });
     void answerProfileImport(session, current.mailboxId, verb, subject).then((a) => {
       if (a.kind === "refused") { setPhase({ kind: "failed", message: a.message }); return; }
+      if (a.kind === "importing") { setPhase({ kind: "importing", fingerprint: a.fingerprint, reason: a.reason }); return; }
       if (verb === "import") {
         setPhase({
           kind: "imported",
@@ -110,6 +139,14 @@ export function ProfileImportCard() {
       setPhase({ kind: "asking" });
     });
   }, [session, current, q, locale, set]);
+  const importingFor = phase.kind === "importing" && current !== null
+    ? { mailboxId: current.mailboxId, fingerprint: phase.fingerprint } : null;
+  useImportStatus(session, importingFor, bell, (a) => {
+    if (a.kind === "refused") { setPhase({ kind: "failed", message: a.message }); return; }
+    if (a.kind !== "done") return;
+    setPhase({ kind: "imported", details: a.imported === null ? "" : countsSaid(a.imported), skippedRules: a.skippedRules });
+    if (importingFor !== null) set(importingFor.mailboxId, { state: "none" });
+  });
 
   if (phase.kind === "imported") {
     return (
@@ -122,7 +159,7 @@ export function ProfileImportCard() {
     );
   }
   if (current === null || q === undefined || (q.state !== "found" && q.state !== "newer")) return null;
-  const busy = phase.kind === "busy";
+  const busy = phase.kind === "busy" || phase.kind === "importing";
   const failed = phase.kind === "failed" ? failureSaid(phase.message) : null;
 
   if (q.state === "newer") {
@@ -145,6 +182,7 @@ export function ProfileImportCard() {
       {details ? <Txt variant="note" tone="ink2">{Copy.pfiHolds(details)}</Txt> : null}
       {savedBy !== null ? <Txt variant="caption" tone="ink3">{savedBy}</Txt> : null}
       {failed !== null ? <Txt variant="note" tone="ink2" accessibilityRole="alert">{failed}</Txt> : null}
+      {phase.kind === "importing" ? <Txt variant="note" tone="ink2">{importingSaid(phase.reason)}</Txt> : null}
       <Txt variant="caption" tone="ink3">{Copy.pfiWillDo}</Txt>
       <Txt variant="caption" tone="ink3">{Copy.pfiHeldRouting}</Txt>
       <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
@@ -163,6 +201,7 @@ export function ProfileImportCard() {
 type RowPhase =
   | { kind: "idle" }
   | { kind: "busy"; verb: "import" | "save" }
+  | { kind: "importing"; fingerprint: string; reason: "slow" | "unreachable" | null }
   | { kind: "failed"; message: string | null }
   | { kind: "imported"; details: string }
   | { kind: "saved" };
@@ -174,7 +213,7 @@ type RowPhase =
  */
 export function SavedSettingsPanel() {
   const locale = useLocale();
-  const { session, rows, set } = useProfileQuestions();
+  const { session, rows, set, bell } = useProfileQuestions();
   const [phases, setPhases] = useState<Record<string, RowPhase>>({});
   /* A row stays on screen after its press so its verdict can be read; the door answers `none` next. */
   const [pressed, setPressed] = useState<Record<string, MailboxQuestion>>({});
@@ -186,12 +225,24 @@ export function SavedSettingsPanel() {
     setPressed((prev) => ({ ...prev, [row.mailboxId]: row }));
     void answerProfileImport(session, row.mailboxId, verb, { fingerprint: row.question.fingerprint }).then((a) => {
       if (a.kind === "refused") { put({ kind: "failed", message: a.message }); return; }
+      if (a.kind === "importing") { put({ kind: "importing", fingerprint: a.fingerprint, reason: a.reason }); return; }
       put(verb === "import"
         ? { kind: "imported", details: a.imported === null ? "" : countsSaid(a.imported) }
         : { kind: "saved" });
       set(row.mailboxId, { state: "none" });
     });
   }, [session, locale, set]);
+  /* One handed-over press at a time is asked about; a second waits behind the first's answer. */
+  const waiting = Object.entries(phases).find(([, p]) => p.kind === "importing") as
+    [string, Extract<RowPhase, { kind: "importing" }>] | undefined;
+  useImportStatus(session, waiting ? { mailboxId: waiting[0], fingerprint: waiting[1].fingerprint } : null, bell, (a) => {
+    if (waiting === undefined) return;
+    const [mailboxId] = waiting;
+    if (a.kind === "refused") { setPhases((prev) => ({ ...prev, [mailboxId]: { kind: "failed", message: a.message } })); return; }
+    if (a.kind !== "done") return;
+    setPhases((prev) => ({ ...prev, [mailboxId]: { kind: "imported", details: a.imported === null ? "" : countsSaid(a.imported) } }));
+    set(mailboxId, { state: "none" });
+  });
 
   const listed = [
     ...savedRows(rows),
@@ -206,7 +257,7 @@ export function SavedSettingsPanel() {
         const phase = phases[row.mailboxId] ?? { kind: "idle" };
         const details = countsSaid(q.counts);
         const savedBy = savedBySaid(q.producer, q.updatedAt, locale);
-        const busy = phase.kind === "busy";
+        const busy = phase.kind === "busy" || phase.kind === "importing";
         return (
           <Panel key={row.mailboxId} style={{ paddingVertical: 18, marginBottom: 14 }}>
             <View style={{ paddingHorizontal: 20, gap: 6 }}>
@@ -226,18 +277,19 @@ export function SavedSettingsPanel() {
                   {phase.kind === "failed" ? (
                     <Txt variant="note" tone="ink2" accessibilityRole="alert">{failureSaid(phase.message)}</Txt>
                   ) : null}
+                  {phase.kind === "importing" ? <Txt variant="note" tone="ink2">{importingSaid(phase.reason)}</Txt> : null}
                   <Txt variant="caption" tone="ink3">
                     {details ? Copy.pfiReplaceNote(details) : Copy.pfiReplaceNoteBare}
                   </Txt>
                   <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
                     <Button
-                      label={busy && phase.verb === "import" ? Copy.pfiImporting : Copy.pfiImport}
+                      label={phase.kind === "importing" || (phase.kind === "busy" && phase.verb === "import") ? Copy.pfiImporting : Copy.pfiImport}
                       variant="solid"
                       disabled={busy}
                       onPress={() => press(row, "import")}
                     />
                     <Button
-                      label={busy && phase.verb === "save" ? Copy.pfiReplacing : Copy.pfiReplace}
+                      label={phase.kind === "busy" && phase.verb === "save" ? Copy.pfiReplacing : Copy.pfiReplace}
                       variant="quiet"
                       disabled={busy}
                       onPress={() => press(row, "save")}

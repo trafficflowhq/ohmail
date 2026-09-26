@@ -3535,6 +3535,8 @@
     "routingWhileOpen": "Until you answer, mail from senders these settings let through stays where it arrived; other new senders are screened as usual.",
     "import": "Import settings",
     "importing": "Importing…",
+    "importingSlow": "This mailbox answers slowly, so ohmail finishes the import in the background. The result shows here.",
+    "importingUnreachable": "ohmail could not reach this mailbox just now. It keeps trying in the background and shows the result here.",
     "later": "Not now",
     "doneTitle": "Your settings are back.",
     "doneDetails": "Imported: {details}.",

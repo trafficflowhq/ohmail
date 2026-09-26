@@ -26,6 +26,7 @@ import { Button, SettingsActions, SettingsSection, SettingsSubhead, SettingsVerd
 import {
   ApiError, apiConfigured, profileImport as profileImportApi,
   type ProfileImportAppliedWire, type ProfileImportCandidateWire, type ProfileImportCountsWire,
+  type ProfileImportPendingWire, type ProfileImportStatusWire,
 } from "../api-client";
 import { displayAddress } from "./idn";
 import { isRemovedMailbox } from "./mail-state";
@@ -34,6 +35,13 @@ import { PHONE_HOLDER_WHY_KEY, holderSentence, phoneHolder } from "./reader-hold
 
 /** How often an unanswered mailbox is re-asked, at most. The connect case rides the first beat. */
 export const PROFILE_IMPORT_RECHECK_MS = 5 * 60 * 1000;
+
+/**
+ * How often a press the organizer is finishing is asked about when no doorbell rings — the
+ * doorbell is the fast path (the organizer's answer rings it); this beat is for a server that
+ * rings nothing. The status read is a primary-key read and never dials.
+ */
+export const PROFILE_IMPORT_STATUS_BEAT_MS = 15 * 1000;
 
 /**
  * THE DOORBELL A FIND RINGS — the mirror's `settings` record's seq, or null before one lands. An
@@ -74,8 +82,29 @@ export interface ProfileImportOffer {
 export type ProfileImportPhase =
   | { kind: "offer" }
   | { kind: "applying" }
+  /** Handed to the organizer (202): the card says so and asks {@link ProfileImportTransport.status}. */
+  | { kind: "importing"; fingerprint: string; reason: "slow" | "unreachable" | null }
   | { kind: "failed"; message: string | null }
   | { kind: "done"; applied: ProfileImportAppliedWire };
+
+/** A 202 from the confirm: the read did not fit the request and the organizer finishes it. */
+function isPending(r: ProfileImportAppliedWire | ProfileImportPendingWire): r is ProfileImportPendingWire {
+  return (r as { state?: unknown }).state === "importing";
+}
+
+const NO_COUNTS: ProfileImportCountsWire = { screener: 0, rules: 0, notifyRules: 0, tags: 0, awayResponder: false };
+
+/**
+ * What a status answer means for the card: still importing (null), done, or the server's
+ * refusal sentence. The tolerant reader again — a shape this build does not know keeps waiting.
+ */
+function settledPhase(st: ProfileImportStatusWire): ProfileImportPhase | null {
+  if (st.state === "imported") {
+    return { kind: "done", applied: { imported: st.imported ?? NO_COUNTS, skippedRules: st.skippedRules ?? 0, seq: null } };
+  }
+  if (st.state === "refused") return { kind: "failed", message: typeof st.message === "string" ? st.message : null };
+  return null;
+}
 
 /**
  * The same seam the away notice takes ({@link AwayTransport}'s shape, this feature's verbs), for
@@ -89,7 +118,10 @@ export type ProfileImportPhase =
  */
 export interface ProfileImportTransport {
   candidate(mailboxId: string): Promise<ProfileImportCandidateWire>;
-  apply(mailboxId: string, fingerprint: string): Promise<ProfileImportAppliedWire>;
+  /** 200 applied, or 202 handed to the organizer — then {@link status} is asked. */
+  apply(mailboxId: string, fingerprint: string): Promise<ProfileImportAppliedWire | ProfileImportPendingWire>;
+  /** Where a handed-over press stands. A primary-key read; never a dial. */
+  status(mailboxId: string, fingerprint: string): Promise<ProfileImportStatusWire>;
   decline(mailboxId: string, subject: { fingerprint?: string; v?: number }): Promise<unknown>;
   /** The Settings row's "save this ohmail's settings to the mailbox" — see `api-client`. */
   replace(mailboxId: string, fingerprint: string): Promise<unknown>;
@@ -108,6 +140,7 @@ export interface ProfileImportState {
 const HOSTED: ProfileImportTransport = {
   candidate: (id) => profileImportApi.candidate(id),
   apply: (id, fingerprint) => profileImportApi.apply(id, fingerprint),
+  status: (id, fingerprint) => profileImportApi.status(id, fingerprint),
   decline: (id, subject) => profileImportApi.decline(id, subject),
   replace: (id, fingerprint) => profileImportApi.replace(id, fingerprint),
 };
@@ -221,7 +254,8 @@ export function useProfileImport(
       setOffers((prev) => {
         const current = prev[0];
         const keep = prev.filter((o) =>
-          known.has(o.mailboxId) || (o === current && phaseRef.current.kind === "applying"));
+          known.has(o.mailboxId)
+          || (o === current && (phaseRef.current.kind === "applying" || phaseRef.current.kind === "importing")));
         if (keep.length === prev.length) return prev;
         // The card's lifecycle state belongs to the offer ON SCREEN: pruning it must not leave
         // a stale `failed`/`done` phase to dress the NEXT offer's card.
@@ -308,7 +342,10 @@ export function useProfileImport(
     void (async () => {
       try {
         const applied = await via.apply(mailboxId, candidate.fingerprint);
-        if (mounted.current) setPhase({ kind: "done", applied });
+        if (!mounted.current) return;
+        setPhase(isPending(applied)
+          ? { kind: "importing", fingerprint: applied.fingerprint, reason: applied.reason ?? null }
+          : { kind: "done", applied });
       } catch (err) {
         // The offer and both buttons survive — the SERVER's sentence, verbatim, above them.
         if (mounted.current) setPhase({ kind: "failed", message: failureSentence(err, held.current !== undefined) });
@@ -338,6 +375,28 @@ export function useProfileImport(
   const acknowledge = useCallback(() => {
     if (offer) retire(offer.mailboxId);
   }, [offer, retire]);
+
+  /* A PRESS THE ORGANIZER IS FINISHING is asked about on the doorbell its answer rings, and on a
+     slow beat for a server that rings nothing; a terminal answer replaces the phase once. */
+  const [statusBeat, setStatusBeat] = useState(0);
+  const importing = phase.kind === "importing" ? phase : null;
+  const importingKey = importing && offer ? JSON.stringify([offer.mailboxId, importing.fingerprint]) : null;
+  useEffect(() => {
+    if (importingKey === null) return;
+    const id = setInterval(() => setStatusBeat((n) => n + 1), PROFILE_IMPORT_STATUS_BEAT_MS);
+    return () => clearInterval(id);
+  }, [importingKey]);
+  useEffect(() => {
+    if (importing === null || offer === null) return;
+    const via = held.current ?? (apiConfigured() ? HOSTED : null);
+    if (!via) return;
+    let live = true;
+    void via.status(offer.mailboxId, importing.fingerprint).then((st) => {
+      const next = settledPhase(st);
+      if (live && mounted.current && next !== null) setPhase(next);
+    }).catch(() => { /* could not ask: the next ring or beat asks again */ });
+    return () => { live = false; };
+  }, [importingKey, doorbell, statusBeat]);
 
   return { offer, phase, importNow, notNow, acknowledge };
 }
@@ -383,12 +442,14 @@ export function ProfileImportCard({
   const tm = useTranslations("mailboxes");
   const locale = useLocale();
   const format = useFormatter();
-  const busy = phase.kind === "applying";
+  const busy = phase.kind === "applying" || phase.kind === "importing";
   const failure = phase.kind === "failed" ? phase.message : undefined;
 
+  /* THE SERVER'S SENTENCE IS SAID ONCE: it carries its own advice, so "Try again." follows only
+     the generic line this card composes itself. */
   const errorLine = failure !== undefined ? (
     <p className="pfi-error" role="alert">
-      <strong>{t("errorTitle")}</strong> {failure ?? t("errorGeneric")} {t("errorRetry")}
+      <strong>{t("errorTitle")}</strong> {failure === null ? `${t("errorGeneric")} ${t("errorRetry")}` : failure}
     </p>
   ) : null;
 
@@ -471,6 +532,12 @@ export function ProfileImportCard({
         )
         : null}
       {errorLine}
+      {/* Handed to the organizer: said plainly, and the result replaces this line when it lands. */}
+      {phase.kind === "importing" ? (
+        <p className="pfi-note" role="status">
+          {phase.reason === "unreachable" ? t("importingUnreachable") : t("importingSlow")}
+        </p>
+      ) : null}
       {/* What the button will do, before it is pressed — including what it will not do. */}
       <p className="pfi-note">{t("willDo")}</p>
       {/* What routing does meanwhile: only mail the document admits is held (`PlanDeps.importHold`). */}
@@ -498,6 +565,7 @@ function asDeclined(dto: unknown): DeclinedCandidate | null {
 type SavedRowPhase =
   | { kind: "idle" }
   | { kind: "busy"; verb: "import" | "replace" }
+  | { kind: "importing"; fingerprint: string; reason: "slow" | "unreachable" | null }
   | { kind: "failed"; message: string | null }
   | { kind: "imported"; applied: ProfileImportAppliedWire }
   | { kind: "replaced" };
@@ -553,7 +621,17 @@ export function SavedProfileSection({
     void (async () => {
       try {
         if (verb === "import") {
-          set({ kind: "imported", applied: await via.apply(row.mailboxId, row.candidate.fingerprint) });
+          const applied = await via.apply(row.mailboxId, row.candidate.fingerprint);
+          if (!isPending(applied)) { set({ kind: "imported", applied }); return; }
+          set({ kind: "importing", fingerprint: applied.fingerprint, reason: applied.reason ?? null });
+          /* The organizer finishes it: asked on a slow beat until the answer is terminal. */
+          for (;;) {
+            await new Promise((r) => setTimeout(r, PROFILE_IMPORT_STATUS_BEAT_MS));
+            const next = settledPhase(await via.status(row.mailboxId, applied.fingerprint).catch(() => ({ state: "importing" as const, fingerprint: applied.fingerprint })));
+            if (next === null) continue;
+            set(next.kind === "done" ? { kind: "imported", applied: next.applied } : { kind: "failed", message: next.kind === "failed" ? next.message : null });
+            return;
+          }
         } else {
           await via.replace(row.mailboxId, row.candidate.fingerprint);
           set({ kind: "replaced" });
@@ -573,7 +651,7 @@ export function SavedProfileSection({
         const details = detailsOf(t, locale, counts);
         const savedDate = new Date(updatedAt);
         const when = Number.isNaN(savedDate.getTime()) ? null : format.dateTime(savedDate, { dateStyle: "long" });
-        const busy = phase.kind === "busy";
+        const busy = phase.kind === "busy" || phase.kind === "importing";
         const imported = phase.kind === "imported" ? detailsOf(t, locale, phase.applied.imported) : "";
         return (
           <SettingsSection key={row.mailboxId}>
@@ -602,18 +680,23 @@ export function SavedProfileSection({
                     state="bad"
                     headline={t("errorTitle")}
                     detail={phase.message ?? t("errorGeneric")}
-                    hint={t("errorRetry")}
+                    {...(phase.message === null ? { hint: t("errorRetry") } : {})}
                   />
+                ) : null}
+                {phase.kind === "importing" ? (
+                  <p className="set-note-inline" role="status">
+                    {phase.reason === "unreachable" ? t("importingUnreachable") : t("importingSlow")}
+                  </p>
                 ) : null}
                 <p className="set-note-inline">
                   {details ? t("replaceNote", { details }) : t("replaceNoteBare")}
                 </p>
                 <SettingsActions>
                   <Button onClick={() => press(row, "import")} disabled={busy}>
-                    {busy && phase.verb === "import" ? t("importing") : t("import")}
+                    {phase.kind === "importing" || (phase.kind === "busy" && phase.verb === "import") ? t("importing") : t("import")}
                   </Button>
                   <Button variant="ghost" onClick={() => press(row, "replace")} disabled={busy}>
-                    {busy && phase.verb === "replace" ? t("replacing") : t("replace")}
+                    {phase.kind === "busy" && phase.verb === "replace" ? t("replacing") : t("replace")}
                   </Button>
                 </SettingsActions>
               </>

@@ -1,7 +1,8 @@
 import { and, desc, eq } from "drizzle-orm";
 import {
   PROFILE_FOUND_AUDIT_ACTION, auditLog, latestProfileFoundMarker, profileImportResolutionExists,
-  profileImportWriteReleased,
+  profileImportWriteReleased, askStands, readImportAsk, resolveImportAsk,
+  type ImportAskRefusal,
   mailboxProfileMirror, recordChanges, recordMailboxProfileChange,
   type LedgerTx, type Tx, auditAction, fencedAccountWrite,} from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -17,7 +18,9 @@ import { describeError, type ImportHold } from "@trafficflow/core/mail";
 import { epochOf, sameEpoch, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
 /* The one post-pass fact — see `flushBeforeLeaving`. `lease.ts` imports nothing from here. */
 import { leaseStoodDown, type OrganizerWriteAuthority } from "./lease.js";
-import { serializeOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
+import {
+  applyOrganizerProfile, importRefusalFor, serializeOrganizerProfile,
+} from "@trafficflow/core/adapters/organizer-profile-store";
 import {
   PROFILE_VERSION, ProfileUnavailableError, isEmptyProfilePayload, makeProfileDoc, oversizedProfileList,
   profileFingerprint, profileFingerprintVersion, profileGateView, readOrganizerProfile, writeOrganizerProfile,
@@ -68,6 +71,7 @@ export const DEFAULT_PROFILE_FLUSH_INTERVAL_MS = 5 * 60 * 1000;
  * a hot backlog drain's back-to-back cycles collapse onto one read (round 18's cost bound).
  */
 export const EVAL_TAKEOVER_TTL_MS = 30 * 1000;
+
 
 /**
  * The `audit_log.action` under which a found FOREIGN profile is recorded — the durable marker the
@@ -224,7 +228,6 @@ export class OrganizerProfileSync {
    * it leaves with.
    */
   private failuresNoted = 0;
-
   constructor(private readonly deps: OrganizerProfileSyncDeps) {}
 
   /**
@@ -789,7 +792,15 @@ export class OrganizerProfileSync {
     if (!hasProfileIo(adapter)) return;
     const now = (deps.now ?? ((): Date => new Date()))();
     const interval = deps.flushIntervalMs ?? DEFAULT_PROFILE_FLUSH_INTERVAL_MS;
-    if (this.seeded && now.getTime() - this.lastAttemptAt < interval) return;
+    /* A PRESS HANDED TO THIS ORGANIZER does not wait out the flush interval: one primary-key
+       read of the mailbox row, BEFORE the debounce, every tick. An ask past its TTL is answered
+       `timed_out` here; a standing one is tried on this tick. */
+    const row = await readImportAsk(deps.db, { accountId: deps.accountId, mailboxId: deps.mailboxId })
+      .catch(() => null);
+    const ask = askStands(row, now) ? row : null;
+    const expired = ask === null && row !== null && row.fingerprint !== null && row.outcome === null
+      ? row.fingerprint : null;
+    if (this.seeded && ask === null && expired === null && now.getTime() - this.lastAttemptAt < interval) return;
     this.inFlight = true;
     const failuresAtEntry = this.failuresNoted;
     try {
@@ -822,6 +833,10 @@ export class OrganizerProfileSync {
         await this.seed(io, payload, log);
         this.seeded = true;
       }
+
+      // The press first, so the hold blocks below read its answer on this same tick.
+      if (expired !== null) await this.closeImportAsk(expired, "timed_out", log);
+      if (ask !== null) await this.answerImportAsk(io, ask.fingerprint, now, log);
 
       // ── THE NEWER-FORMAT HOLD'S RELEASE VALVES — before the `blockedByNewer` wall ─────────
       //
@@ -1030,6 +1045,59 @@ export class OrganizerProfileSync {
          recovery being announced in the same drain that reported the fault. */
       if (this.failuresNoted === failuresAtEntry) this.noteTickSucceeded(log);
     }
+  }
+
+  /**
+   * THE IMPORT A PRESS HANDED OVER — the organizer's own read on the PINNED connection, under its
+   * adapter's own deadlines, never a second dial; then the one merge (`applyOrganizerProfile`,
+   * which answers the ask and rings the settings doorbell) or a refusal by name. A read that
+   * throws is not an answer: the ask stands and the next tick tries again, until its TTL.
+   */
+  private async answerImportAsk(
+    io: ProfileIo, fingerprint: string, now: Date, log: (event: string, detail: Record<string, unknown>) => void,
+  ): Promise<void> {
+    const { deps } = this;
+    let read: ProfileReadResult;
+    try {
+      read = await readOrganizerProfile(io);
+    } catch (err) {
+      log("organizer_profile_import_retry", { mailboxId: deps.mailboxId, accountId: deps.accountId, err });
+      return;
+    }
+    const refusal = importRefusalFor(read, fingerprint);
+    if (refusal !== null || read.state !== "found") {
+      await this.closeImportAsk(fingerprint, refusal ?? "changed", log);
+      return;
+    }
+    const doc = read.doc;
+    /* FOR UPDATE at the head, mailbox scope: the merge updates the mailbox row, and a share held
+       while waiting on the merge's lock would deadlock against a request's inline merge. */
+    await fencedAccountWrite(deps.db, { accountId: deps.accountId, mailboxId: deps.mailboxId, lock: "update" }, async (tx) => {
+      await applyOrganizerProfile(tx as LedgerTx, {
+        accountId: deps.accountId, mailboxId: deps.mailboxId, doc, fingerprint, now,
+      });
+      // THE SETTINGS DOORBELL: the card waiting on this press re-asks at the drain that carries it.
+      await recordChanges(tx as LedgerTx, [
+        { accountId: deps.accountId, entityType: "settings", entityId: deps.accountId, op: "update" },
+      ]);
+    });
+    log("organizer_profile_import_answered", { mailboxId: deps.mailboxId, accountId: deps.accountId, outcome: "imported" });
+  }
+
+  /** Answer an ask with a refusal (compare-and-set on its ticket) and ring the settings doorbell. */
+  private async closeImportAsk(
+    fingerprint: string, reason: ImportAskRefusal, log: (event: string, detail: Record<string, unknown>) => void,
+  ): Promise<void> {
+    const { deps } = this;
+    await fencedAccountWrite(deps.db, { accountId: deps.accountId, mailboxId: deps.mailboxId, lock: "update" }, async (tx) => {
+      if (!(await resolveImportAsk(tx, {
+        accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint, outcome: "refused", reason,
+      }))) return;
+      await recordChanges(tx as LedgerTx, [
+        { accountId: deps.accountId, entityType: "settings", entityId: deps.accountId, op: "update" },
+      ]);
+    });
+    log("organizer_profile_import_answered", { mailboxId: deps.mailboxId, accountId: deps.accountId, outcome: reason });
   }
 
   /**

@@ -39,9 +39,14 @@ export type ProfileImportQuestion =
   }
   | { state: "newer"; v: number };
 
-/** What a press settled. `message` is the door's own sentence for a refusal, when it wrote one. */
+/**
+ * What a press settled. `message` is the door's own sentence for a refusal, when it wrote one.
+ * `importing`: the door answered 202 — the read did not fit the request and the mailbox's
+ * organizer finishes the import; {@link readImportStatus} says when.
+ */
 export type ProfileImportAnswer =
   | { kind: "done"; imported: ProfileImportCounts | null; skippedRules: number }
+  | { kind: "importing"; fingerprint: string; reason: "slow" | "unreachable" | null }
   | { kind: "refused"; status: number | null; message: string | null };
 
 function countsOf(raw: unknown): ProfileImportCounts | null {
@@ -132,6 +137,18 @@ export async function answerProfileImport(
   } catch {
     return { kind: "refused", status: null, message: null };
   }
+  if (verb === "import" && res.status === 202) {
+    try {
+      const body = (await res.json()) as Record<string, unknown>;
+      if (body.state === "importing" && typeof body.fingerprint === "string") {
+        const reason = body.reason === "slow" || body.reason === "unreachable" ? body.reason : null;
+        return { kind: "importing", fingerprint: body.fingerprint, reason };
+      }
+    } catch {
+      /* Not the pending shape: read as the refusal it is not, below. */
+    }
+    return { kind: "refused", status: 202, message: null };
+  }
   if (res.status !== 200) return refusalOf(res);
   if (verb !== "import") return { kind: "done", imported: null, skippedRules: 0 };
   try {
@@ -143,5 +160,37 @@ export async function answerProfileImport(
     };
   } catch {
     return { kind: "done", imported: null, skippedRules: 0 };
+  }
+}
+
+/**
+ * WHERE A PRESS THE ORGANIZER IS FINISHING STANDS — `null` while it is still importing or the
+ * door could not be asked; otherwise the answer the press would have had: done with what
+ * arrived, or refused with the door's own sentence. A primary-key read on the door; never a dial.
+ */
+export async function readImportStatus(
+  session: ProfileImportSession, mailboxId: string, fingerprint: string,
+): Promise<ProfileImportAnswer | null> {
+  try {
+    const res = await session.fetch(
+      `${requestBase(session)}${pathOf(mailboxId)}/status?fingerprint=${encodeURIComponent(fingerprint)}`,
+      { method: "GET" },
+    );
+    if (res.status !== 200) return null;
+    const body = (await res.json()) as Record<string, unknown>;
+    if (body.state === "imported") {
+      return {
+        kind: "done",
+        imported: countsOf(body.imported),
+        skippedRules: typeof body.skippedRules === "number" ? body.skippedRules : 0,
+      };
+    }
+    if (body.state === "refused") {
+      const message = typeof body.message === "string" && body.message.trim().length > 0 ? body.message : null;
+      return { kind: "refused", status: 200, message };
+    }
+    return null;
+  } catch {
+    return null;
   }
 }

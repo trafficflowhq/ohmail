@@ -150,8 +150,30 @@ export type AwayNeverReason =
   | "bounce_report"
   | "site_notification";
 
-/** The audiences, as the closed set the service validator and this module share. */
-export type AwayAudience = "screened_in" | "everyone";
+/**
+ * The two audiences, as the ONE list the settings validator, the profile import and the DTO type
+ * read. The database CHECK (`away_responders_audience_closed`) is the other half: this one turns a
+ * bad request into a 400 naming the field, that one makes a member nobody enumerated
+ * unrepresentable whichever writer produced it. Widening the audience is the one irreversible
+ * thing the responder does — a reply sent to a stranger cannot be recalled.
+ */
+export const AWAY_AUDIENCES = ["screened_in", "everyone"] as const;
+export type AwayAudience = (typeof AWAY_AUDIENCES)[number];
+
+/** The throttle members, as the closed set the pass, the service validator and the import share. */
+export const AWAY_THROTTLES = ["always", "per_message", "per_day", "per_week"] as const;
+export type AwayThrottle = (typeof AWAY_THROTTLES)[number];
+
+/**
+ * When the responder's current enablement began — ONE implementation for the settings PUT and
+ * the profile import. It moves on the OFF → ON transition only: off → null, off-to-on → now,
+ * on-to-on → UNCHANGED, so an edit mid-trip leaves the floor where it was and correspondents
+ * who wrote before the edit are still answerable.
+ */
+export function nextEnabledAt(prev: Date | null, enabled: boolean, now: Date): Date | null {
+  if (!enabled) return null;
+  return prev ?? now;
+}
 
 /** One candidate, as the pass has it in hand. Nothing here is a query. */
 export interface AwayCandidate {

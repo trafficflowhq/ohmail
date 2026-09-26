@@ -2450,6 +2450,10 @@ const TABLE = {
     "Until you answer, mail from senders these settings let through stays where it arrived; other new senders are screened as usual.",
   pfiImport: "Import settings",
   pfiImporting: "Importing…",
+  pfiImportingSlow:
+    "This mailbox answers slowly, so ohmail finishes the import in the background. The result shows here.",
+  pfiImportingUnreachable:
+    "ohmail could not reach this mailbox just now. It keeps trying in the background and shows the result here.",
   pfiLater: "Not now",
   pfiDoneTitle: "Your settings are back.",
   pfiDoneDetails: (details: string) => `Imported: ${details}.`,

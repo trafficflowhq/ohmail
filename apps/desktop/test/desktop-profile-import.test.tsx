@@ -85,6 +85,8 @@ let asked: Asked[];
 let candidate: Record<string, unknown>;
 /** When set, the confirmation's POST answers this refusal instead of applying. */
 let applyRefusal: { status: number; code: string; message: string } | null;
+/** When set, the confirmation's POST answers 202 (handed to the organizer) and status answers this. */
+let handedOver: Record<string, unknown> | null = null;
 
 function engineAnswering(): void {
   host.__TAURI_INTERNALS__ = {
@@ -97,6 +99,12 @@ function engineAnswering(): void {
       asked.push({ method, url, body });
       if (url === profileImportPath(MB.id) && method === "GET") {
         return encode(200, JSON.stringify(candidate));
+      }
+      if (url.startsWith(`${profileImportPath(MB.id)}/status?fingerprint=`) && method === "GET") {
+        return encode(200, JSON.stringify(handedOver ?? { state: "refused", reason: "superseded", message: "none" }));
+      }
+      if (url === profileImportPath(MB.id) && method === "POST" && handedOver !== null) {
+        return encode(202, JSON.stringify({ state: "importing", fingerprint: FINGERPRINT, reason: "slow" }));
       }
       if (url === profileImportPath(MB.id) && method === "POST") {
         if (applyRefusal) {
@@ -229,6 +237,21 @@ describe("the restore card over the bridge", () => {
       { method: "POST", url: `${profileImportPath(MB.id)}/decline`, body: { fingerprint: FINGERPRINT } },
     ]);
     expect(card()).toBeNull();
+  });
+
+  it("the engine's 202 is importing, and the status route is asked over the pipe, spelled exactly", async () => {
+    handedOver = { state: "importing", fingerprint: FINGERPRINT };
+    try {
+      expect(await profileImportOverBridge.apply(MB.id, FINGERPRINT))
+        .toEqual({ state: "importing", fingerprint: FINGERPRINT, reason: "slow" });
+      handedOver = { state: "imported", imported: { screener: 1, rules: 2, notifyRules: 0, tags: 1, awayResponder: false }, skippedRules: 0 };
+      expect(await profileImportOverBridge.status(MB.id, FINGERPRINT)).toMatchObject({ state: "imported" });
+      expect(asked.at(-1)).toEqual({
+        method: "GET", url: `${profileImportPath(MB.id)}/status?fingerprint=${FINGERPRINT}`, body: null,
+      });
+    } finally {
+      handedOver = null;
+    }
   });
 
   it("a refused apply puts the ENGINE's sentence on the card — the transport's rejection contract", async () => {

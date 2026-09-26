@@ -64,7 +64,12 @@ export async function stampMailboxErasure(
   tx: Tx, args: { accountId: string; mailboxId: string; now: Date },
 ): Promise<MailboxErasureStamp> {
   const { accountId, mailboxId, now } = args;
-  await tx.update(mailboxes).set({ erasedAt: now })
+  await tx.update(mailboxes).set({
+    erasedAt: now,
+    // A press of Import settings dies with the mailbox: its fingerprint is a hash of the settings.
+    profileImportAskFingerprint: null, profileImportAskAt: null,
+    profileImportAskOutcome: null, profileImportAskReason: null,
+  })
     .where(and(
       eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId), isNull(mailboxes.erasedAt),
     ));

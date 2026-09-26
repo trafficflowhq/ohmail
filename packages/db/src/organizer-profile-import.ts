@@ -218,7 +218,8 @@ export async function profileImportWriteReleased(
  */
 export async function recordProfileImportResolution(
   db: Tx,
-  o: { accountId: string; mailboxId: string; decision: ProfileImportDecision } & ProfileImportSubject,
+  o: { accountId: string; mailboxId: string; decision: ProfileImportDecision; result?: ProfileImportResult }
+    & ProfileImportSubject,
 ): Promise<void> {
   const decisionMatch = sql`${auditLog.payload}->>'decision' = ${o.decision}`;
   const subject = "fingerprint" in o
@@ -248,7 +249,35 @@ export async function recordProfileImportResolution(
       decision: o.decision,
       fingerprint: "fingerprint" in o ? o.fingerprint : null,
       ...("newerV" in o ? { v: o.newerV } : {}),
+      ...(o.result === undefined ? {} : { result: o.result }),
     },
     inverse: null,
   });
+}
+
+/** What an import ARRIVED with, carried on its `imported` resolution for the card to read back. */
+export interface ProfileImportResult {
+  imported: { screener: number; rules: number; notifyRules: number; tags: number; awayResponder: boolean };
+  skippedRules: number;
+}
+
+/**
+ * The result recorded with the `imported` answer for this exact document, or null — none
+ * recorded (an older row) or not imported. Read once, when a handed-over press finished.
+ */
+export async function profileImportResult(
+  db: Tx, o: { accountId: string; mailboxId: string; fingerprint: string },
+): Promise<ProfileImportResult | null> {
+  const [row] = await db.select({ payload: auditLog.payload })
+    .from(auditLog)
+    .where(and(
+      eq(auditLog.accountId, o.accountId),
+      eq(auditLog.action, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION),
+      sql`${auditLog.payload}->>'mailboxId' = ${o.mailboxId}`,
+      sql`${auditLog.payload}->>'fingerprint' = ${o.fingerprint}`,
+      sql`${auditLog.payload}->>'decision' = 'imported'`,
+    ))
+    .limit(1);
+  const r = (row?.payload as { result?: ProfileImportResult } | null | undefined)?.result;
+  return r && typeof r === "object" && typeof r.imported === "object" && r.imported !== null ? r : null;
 }

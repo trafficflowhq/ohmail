@@ -1628,6 +1628,10 @@ export const DE: Deck = {
     "Bis du antwortest, bleibt Mail von Absendern, die diese Einstellungen durchlassen, dort, wo sie angekommen ist; andere neue Absender werden wie gewohnt gescreent.",
   pfiImport: "Einstellungen importieren",
   pfiImporting: "Importiere …",
+  pfiImportingSlow:
+    "Dieses Postfach antwortet langsam, deshalb schließt ohmail den Import im Hintergrund ab. Das Ergebnis erscheint hier.",
+  pfiImportingUnreachable:
+    "ohmail hat dieses Postfach gerade nicht erreicht. Es versucht es im Hintergrund weiter und zeigt das Ergebnis hier.",
   pfiLater: "Nicht jetzt",
   pfiDoneTitle: "Deine Einstellungen sind zurück.",
   pfiDoneDetails: (details: string) => `Importiert: ${details}.`,

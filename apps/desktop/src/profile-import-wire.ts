@@ -1,5 +1,5 @@
 /**
- * THE PROFILE-IMPORT CALLS — the card's three and the Settings row's replace — over an injected
+ * THE PROFILE-IMPORT CALLS — the card's four and the Settings row's replace — over an injected
  * transport, with no door here. The card is the shared client's; the route, the narrowing
  * and the engine's-own-sentence rule for a refusal live here once for both doors: the desktop
  * window over its bridge (`local-profile-import.ts`) and the served host client over its bearer
@@ -10,7 +10,9 @@
  */
 
 import type { ProfileImportTransport } from "../../webapp/app/shell/ProfileImportCard";
-import type { ProfileImportAppliedWire, ProfileImportCandidateWire } from "../../webapp/app/api-client";
+import type {
+  ProfileImportAppliedWire, ProfileImportCandidateWire, ProfileImportPendingWire, ProfileImportStatusWire,
+} from "../../webapp/app/api-client";
 
 /** The transport shape the calls ride — the bridge's, without importing the bridge. */
 export type ProfileImportFetch = (url: string, init?: unknown) => Promise<Response>;
@@ -43,7 +45,7 @@ async function wireOf<T>(res: Response): Promise<T> {
 }
 
 /**
- * The four calls the shared card and the Settings row make, over an injected transport function.
+ * The calls the shared card and the Settings row make, over an injected transport function.
  *
  * A factory over the FETCH rather than over anything else, because the desktop now has two
  * consumers of the same four routes and the same refusal contract: the window (the bridge down
@@ -55,13 +57,18 @@ export function profileImportVia(fetchImpl: ProfileImportFetch): ProfileImportTr
   return {
     candidate: async (mailboxId) =>
       wireOf<ProfileImportCandidateWire>(await fetchImpl(profileImportPath(mailboxId))),
+    /* A 202 is `ok` and carries the pending shape: the engine handed the press to its organizer. */
     apply: async (mailboxId, fingerprint) =>
-      wireOf<ProfileImportAppliedWire>(
+      wireOf<ProfileImportAppliedWire | ProfileImportPendingWire>(
         await fetchImpl(profileImportPath(mailboxId), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ fingerprint }),
         }),
+      ),
+    status: async (mailboxId, fingerprint) =>
+      wireOf<ProfileImportStatusWire>(
+        await fetchImpl(`${profileImportPath(mailboxId)}/status?fingerprint=${encodeURIComponent(fingerprint)}`),
       ),
     decline: async (mailboxId, subject) =>
       wireOf<{ dismissed: boolean }>(

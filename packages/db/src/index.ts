@@ -387,9 +387,15 @@ export { readOwnAddresses, releaseOwnMailAtGate, OWN_MAIL_RELEASE_BATCH } from "
 export {
   PROFILE_FOUND_AUDIT_ACTION, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION,
   latestProfileFoundMarker, profileImportResolutionExists, profileImportWriteReleased,
-  profileImportResolutionSince, recordProfileImportResolution,
-  type ProfileFoundMarker, type ProfileImportDecision, type ProfileImportSubject,
+  profileImportResolutionSince, recordProfileImportResolution, profileImportResult,
+  type ProfileFoundMarker, type ProfileImportDecision, type ProfileImportResult, type ProfileImportSubject,
 } from "./organizer-profile-import.js";
+/* A press the request could not finish, handed to the organizer — one interface, see the module. */
+export {
+  IMPORT_ASK_REFUSALS, PROFILE_IMPORT_ASK_TTL_MS, askStands, isImportAskRefusal, readImportAsk,
+  recordImportAsk, resolveImportAsk,
+  type ImportAskRefusal, type ImportAskRow,
+} from "./profile-import-ask.js";
 
 /**
  * THE ENTITLEMENTS PORT — what a host may be handed to answer "may this account use the service,

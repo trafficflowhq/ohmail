@@ -95,10 +95,25 @@ export function savedBySaid(producer: { kind: string }, updatedAt: string, local
 export type CardPhase =
   | { kind: "asking" }
   | { kind: "busy" }
+  /** Handed to the organizer (202); the result replaces it when the status read has one. */
+  | { kind: "importing"; fingerprint: string; reason: "slow" | "unreachable" | null }
   | { kind: "failed"; message: string | null }
   | { kind: "imported"; details: string; skippedRules: number };
 
-/** The refusal line: the door's own sentence, else the generic one, and the retry. */
+/** How often a press the organizer is finishing is asked about when the doorbell rings nothing. */
+export const IMPORT_STATUS_BEAT_MS = 15 * 1000;
+
+/** The line a handed-over press shows while the organizer finishes it. */
+export function importingSaid(reason: "slow" | "unreachable" | null): string {
+  return reason === "unreachable" ? Copy.pfiImportingUnreachable : Copy.pfiImportingSlow;
+}
+
+/**
+ * The refusal line, SAID ONCE: the door's own sentence carries its own advice, so the retry
+ * follows only the generic line this card composes itself.
+ */
 export function failureSaid(message: string | null): string {
-  return `${Copy.pfiErrorTitle} ${message ?? Copy.pfiErrorGeneric} ${Copy.pfiErrorRetry}`;
+  return message === null
+    ? `${Copy.pfiErrorTitle} ${Copy.pfiErrorGeneric} ${Copy.pfiErrorRetry}`
+    : `${Copy.pfiErrorTitle} ${message}`;
 }

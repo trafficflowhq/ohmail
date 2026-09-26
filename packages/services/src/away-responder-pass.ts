@@ -64,9 +64,9 @@ export const AWAY_BOUNCE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
  */
 export const AWAY_ACCOUNTS_PER_RUN = 50;
 
-/** The throttle members, as the closed set this pass and the service validator share. */
-export const AWAY_THROTTLES = ["always", "per_message", "per_day", "per_week"] as const;
-export type AwayThrottle = (typeof AWAY_THROTTLES)[number];
+/** The throttle members — core's closed set, shared with the service validator and the import. */
+export { AWAY_THROTTLES, type AwayThrottle } from "@trafficflow/core/mail";
+import type { AwayThrottle } from "@trafficflow/core/mail";
 
 /**
  * THE DIAL'S OWN DEADLINE — one budget entered at the top of a send and covering both of its

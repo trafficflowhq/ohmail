@@ -429,6 +429,16 @@ export const mailboxes = pgTable("mailboxes", {
    * row. NULL is "no sign-out kept anything"; `MailboxService.delete` clears it.
    */
   signedOutMeta: jsonb("signed_out_meta").$type<SignedOutMeta>(),
+  /**
+   * A PRESS OF "IMPORT SETTINGS" THE REQUEST COULD NOT FINISH (mail 0128), finished by the
+   * organizer: the document's fingerprint (the ticket), when it was pressed, NULL or
+   * 'imported'/'refused', and why a refusal. Written and read only by `profile-import-ask.ts`,
+   * which closes both value sets; nulled by the mailbox erasure.
+   */
+  profileImportAskFingerprint: text("profile_import_ask_fingerprint"),
+  profileImportAskAt: timestamp("profile_import_ask_at", { withTimezone: true }),
+  profileImportAskOutcome: text("profile_import_ask_outcome"),
+  profileImportAskReason: text("profile_import_ask_reason"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("mailboxes_id_account_uq").on(t.id, t.accountId),
   // ONE ACTIVE MAILBOX PER ADDRESS (mail 0021). PARTIAL, because `delete` is a soft delete to

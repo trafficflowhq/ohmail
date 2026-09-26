@@ -137,7 +137,9 @@ const profileReader = (deps: ApiDeps, mailboxId: string) => async (): Promise<Pr
       isImapDoorTimeout(err)
         ? "the mailbox did not answer in time while its saved settings were being read"
         : "the mailbox could not be dialled to read its saved settings",
-      { op: "list_profiles", cause: err },
+      /* The door's own clock, by CODE: a press that ran out of time here is handed to the
+         organizer as `slow` (`profile-import-service.ts#apply`). */
+      { op: "list_profiles", cause: err, ...(isImapDoorTimeout(err) ? { code: "mailbox_read_timeout" } : {}) },
     );
   }
 };
@@ -363,7 +365,20 @@ export const mailboxRoutes: Route[] = [
       const result = await profileImport(deps).apply(
         serviceContext(deps, req), params.id!, body, { read: profileReader(deps, params.id!) },
       );
-      return jsonResponse(result);
+      // 202: the read did not fit this request and the organizer finishes the import.
+      return jsonResponse(result, { status: "state" in result ? 202 : 200 });
+    },
+  },
+  {
+    method: "GET",
+    pattern: "/mailboxes/:id/profile-import/status",
+    relay: true,
+    // `read`: rows only, no dial — where a press handed to the organizer stands.
+    cost: "read",
+    handler: async (req, deps, params) => {
+      // A fingerprint is a short fixed-length digest; the cap keeps a caller's string off the read.
+      const fingerprint = (new URL(req.url).searchParams.get("fingerprint") ?? "").slice(0, 200) || undefined;
+      return jsonResponse(await profileImport(deps).status(serviceContext(deps, req), params.id!, { fingerprint }));
     },
   },
   {

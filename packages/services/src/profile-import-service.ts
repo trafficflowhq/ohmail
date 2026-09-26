@@ -1,25 +1,23 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole, readOrganizerRole,
-  awayResponders, contacts, mailboxes, notifyRules, rules, tags,
+  mailboxes,
   latestProfileFoundMarker, profileImportResolutionExists, profileImportWriteReleased,
-  recordProfileImportResolution, rerouteOwnHeldBag,
-  recordChanges, ruleDelta,
-  type ChangeInput, type Tx,
+  recordProfileImportResolution,
+  askStands, profileImportResult, readImportAsk, recordImportAsk, ringFilingDoorbell,
+  type ImportAskRefusal, type Tx,
 } from "@trafficflow/db";
-import { isAwayPile, awayScopeFitsAudience, type AwayPile } from "@trafficflow/core/mail";
 import {
-  PROFILE_LIST_MAX, PROFILE_VERSION, ProfileUnavailableError, profileFingerprint,
-  applicableProfileRule, oversizedProfileList, profileScreenerAddress,
-  type ApplicableProfileRule, type OrganizerProfileDoc, type ProfileReadResult,
+  PROFILE_LIST_MAX, PROFILE_VERSION, ProfileUnavailableError, profileFingerprint, oversizedProfileList,
+  type OrganizerProfileDoc, type ProfileReadResult,
 } from "@trafficflow/core/adapters/organizer-profile";
-import { serializeOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
+import {
+  PROFILE_IMPORT_LOCK_CLASS, applyOrganizerProfile, importRefusalFor, serializeOrganizerProfile,
+  type ProfileImportApplied, type ProfileImportCounts,
+} from "@trafficflow/core/adapters/organizer-profile-store";
 import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
-import { AWAY_AUDIENCES, nextEnabledAt, type AwayAudience } from "./away-responder-service.js";
-import { AWAY_THROTTLES, type AwayThrottle } from "./away-responder-pass.js";
-import { MAX_TAG_NAME_CHARS } from "./tags-service.js";
 
 /**
  * THE PROFILE IMPORT — the answer side of the portable organizer profile: a versioned JSON
@@ -34,15 +32,6 @@ import { MAX_TAG_NAME_CHARS } from "./tags-service.js";
 
 /** A fresh read of the mailbox's profile document. Built by the route from the live adapter. */
 export type ProfileReader = () => Promise<ProfileReadResult>;
-
-/** What an import would bring, in the units the confirm screen speaks. */
-export interface ProfileImportCounts {
-  screener: number;
-  rules: number;
-  notifyRules: number;
-  tags: number;
-  awayResponder: boolean;
-}
 
 export type ProfileImportCandidateDTO =
   /** Nothing to ask about. The resting answer, and the only one the cheap no-dial path gives. */
@@ -77,27 +66,31 @@ export type ProfileImportCandidateDTO =
    * yet get a card: the shared reader (`ProfileImportCard#asOffer`) treats any unrecognised state
    * as no offer — safe but silent; the wire half is done, the surface half is not.
    */
-  | { state: "too_large"; fingerprint: string; list: string; count: number; max: number };
-
-export interface ProfileImportApplied {
-  imported: ProfileImportCounts;
-  /** Document rules that failed the product's own validation and were left out. */
-  skippedRules: number;
-  /** The highest change_log seq the apply emitted, or null when everything was already there. */
-  seq: number | null;
-}
+  | { state: "too_large"; fingerprint: string; list: string; count: number; max: number }
+  /** A press handed to the organizer and not yet answered — read from rows, never a dial. */
+  | { state: "importing"; fingerprint: string };
 
 /**
- * The `classid` half of the apply's `pg_advisory_xact_lock(int4, int4)`; the second half is
- * `hashtext(account_id)`. The merge reads the account's rule/notify/tag rows and acts on what it
- * read; two concurrent applies (two tabs answering one card) would each see the pre-state and
- * each insert — a duplicate rule under one natural key, the coin toss the merge rule removes. No
- * single row to lock (the interesting case is the ABSENT row), so the mutex is
- * transaction-scoped, per-account, taken FIRST, released at commit. Nothing else takes this
- * class; no lock is held across a network call — the mailbox re-read happens strictly BEFORE the
- * transaction opens.
+ * A press whose read did not fit the request, handed to the organizer — answered 202. `slow`: the
+ * mailbox answered too slowly for one request; `unreachable`: this request could not dial it;
+ * absent when the same press was already waiting. The card then asks {@link status}.
  */
-export const PROFILE_IMPORT_LOCK_CLASS = 420_727_016;
+export interface ProfileImportHandedOver {
+  state: "importing";
+  fingerprint: string;
+  reason?: "slow" | "unreachable";
+}
+
+/** Why a handed-over press ended without an import: the stored reasons, and `superseded`. */
+type ProfileImportStatusRefusal = ImportAskRefusal | "superseded";
+
+/** Where a handed-over press stands, as `GET …/profile-import/status` answers it. */
+export type ProfileImportStatusDTO =
+  | { state: "importing"; fingerprint: string }
+  | { state: "imported"; imported: ProfileImportCounts | null; skippedRules: number }
+  | { state: "refused"; reason: ProfileImportStatusRefusal; message: string };
+
+export { PROFILE_IMPORT_LOCK_CLASS, type ProfileImportApplied, type ProfileImportCounts };
 
 /** The document could not be read from the mailbox — never "there is nothing to import". */
 const profileUnreadable = (): ServiceError => new ServiceError(
@@ -105,61 +98,48 @@ const profileUnreadable = (): ServiceError => new ServiceError(
   "The mailbox could not be checked for saved ohmail settings. Try again.",
 );
 
-/** An unparseable responder date — the entry is skipped rather than the request refused. */
-const INVALID_TERM = Symbol("invalid-term");
+/** The API door's own clock running out, by code — `imap-budget.ts#imapDoorTimedOut`. */
+const MAILBOX_READ_TIMEOUT = "mailbox_read_timeout";
 
 /**
- * PostgreSQL text cannot hold a NUL, so a public document's string carrying one would turn the
- * merge into a mid-transaction database error — a 500 where "this entry was skipped" is the
- * honest answer. Checked wherever a document string becomes a stored value.
+ * THE SENTENCE FOR EACH REFUSAL, said once and naming what is true — the inline press's 409/413
+ * and the organizer's answer to a handed-over one read the same words.
  */
-const hasNul = (v: string): boolean => v.includes("\u0000");
+const REFUSAL_SENTENCE: Record<ProfileImportStatusRefusal, string> = {
+  changed: "The saved settings changed since you looked. Review them again before importing.",
+  gone: "The saved settings are no longer in the mailbox. Nothing was changed.",
+  newer: "These settings were saved by a newer version of ohmail — update ohmail to import them.",
+  too_large: "These saved settings hold more entries than one import can apply. Nothing was changed.",
+  unreadable: "The saved settings in the mailbox cannot be read. Nothing was changed.",
+  timed_out: "The mailbox did not answer for ten minutes, so the settings were not imported.",
+  not_organizer: "This ohmail no longer organizes the mailbox, so it did not import the settings.",
+  superseded: "A later Import settings replaced this one.",
+};
 
-/**
- * The natural key a rule is merged under, CASE-FOLDED the way the routing engine folds at match
- * time: `Alice@Example.com` and `alice@example.com` are one rule to the thing that files mail,
- * so they must be one key to the thing that merges rules — keyed apart, an import would insert
- * a duplicate whose winner is the priority/id tie-break. The stored row keeps its own casing
- * (a retarget replaces the VALUE fields only); the comparison alone folds. Terms are never `""`
- * after normalization, so the empty slot is unambiguous.
- */
-const ruleKey = (r: { kind: string; match: string; subjectContains: string | null; bodyContains: string | null }): string =>
-  [r.kind, r.match.toLowerCase(), (r.subjectContains ?? "").toLowerCase(), (r.bodyContains ?? "").toLowerCase()]
-    .join("\u0000");
+/** The inline refusals keep the wire codes the clients already read. */
+const INLINE_REFUSAL: Record<ImportAskRefusal, { code: string; status: number }> = {
+  changed: { code: "profile_changed", status: 409 },
+  gone: { code: "profile_changed", status: 409 },
+  newer: { code: "profile_newer", status: 409 },
+  too_large: { code: "payload_too_large", status: 413 },
+  unreadable: { code: "profile_document_unreadable", status: 409 },
+  timed_out: { code: "profile_changed", status: 409 },
+  not_organizer: { code: "not_organizer", status: 409 },
+};
+
+const refusalError = (reason: ImportAskRefusal): ServiceError =>
+  new ServiceError(INLINE_REFUSAL[reason].code, INLINE_REFUSAL[reason].status, REFUSAL_SENTENCE[reason]);
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
-/** The destinations that screen a sender OUT of sight — where the app presents their held mail. */
-const SCREEN_OUT_FOLDERS: ReadonlySet<string> = new Set(["ohmail/Screened", "ohmail/Quarantine"]);
-
-/** A written rule that screens a sender out as a whole: its held bag follows it (see `apply`). */
-const screensOut = (r: ApplicableProfileRule): r is ApplicableProfileRule & { kind: "sender" | "domain" } =>
-  r.enabled && SCREEN_OUT_FOLDERS.has(r.destination) && (r.kind === "sender" || r.kind === "domain")
-  && r.subjectContains === null && r.bodyContains === null;
-
 /**
  * HOW LARGE A DOCUMENT `apply` WILL IMPORT, PER LIST — the format's {@link PROFILE_LIST_MAX},
- * which the serializer publishes within, so a document ohmail wrote always fits. The counts come
- * from a mail server we do not run and would otherwise size the one transaction `apply` walks.
- * A document over it came from elsewhere: REFUSED, not truncated, because a partial import
- * silently omits rules. Refused in `candidate()` too — never offer what `apply` would 413.
+ * which the serializer publishes within, so a document ohmail wrote always fits. A document over
+ * it came from elsewhere: REFUSED, not truncated, because a partial import silently omits rules.
+ * Refused in `candidate()` too — never offer what `apply` would 413.
  */
 export const PROFILE_IMPORT_MAX = PROFILE_LIST_MAX;
 
-/**
- * Refuse a document whose lists are larger than one transaction should carry. Called BEFORE
- * `apply` opens its transaction, which is the whole point — inside it, the lock is already held.
- */
-function refuseOversizedProfile(doc: OrganizerProfileDoc): void {
-  const over = oversizedProfileList(doc);
-  if (over) {
-    throw new ServiceError(
-      "payload_too_large", 413,
-      `these saved settings hold ${over.count} ${over.list} entries, over the ${over.max} this ` +
-        "import can apply in one go. Nothing was changed.",
-    );
-  }
-}
 
 /**
  * The declined answer, from the found-marker's own payload (`profile.ts#writeMarker`). A marker
@@ -234,6 +214,9 @@ export class ProfileImportService {
     // it as the incumbent and will supersede it — offering an import of content the next
     // write-behind flush is about to replace would be asking about a decision already made.
     if (!marker.heldForImport || marker.fingerprint === null) return { state: "none" };
+    // A press already handed to the organizer: the answer is on its way, so nothing is asked again.
+    const asked = await readImportAsk(db, { accountId: ctx.accountId, mailboxId });
+    if (askStands(asked, ctx.now())) return { state: "importing", fingerprint: asked.fingerprint };
     if (await profileImportResolutionExists(db, {
       accountId: ctx.accountId, mailboxId, fingerprint: marker.fingerprint,
     })) {
@@ -313,11 +296,12 @@ export class ProfileImportService {
    * `fingerprint` is REQUIRED and is the confirm screen's receipt: the document is re-read from
    * the mailbox and applied only if its content is still exactly what the user was shown —
    * counts and all. A document that changed in between answers 409 `profile_changed`, and the
-   * screen asks again over the new content rather than applying something nobody confirmed.
+   * screen asks again over the new content rather than applying something nobody confirmed. A
+   * read that does not fit the request hands the press to the organizer (`importing`).
    */
   async apply(
     ctx: ServiceContext, mailboxId: string, body: { fingerprint?: unknown }, opts: { read: ProfileReader },
-  ): Promise<ProfileImportApplied> {
+  ): Promise<ProfileImportApplied | ProfileImportHandedOver> {
     await this.assertMailbox(ctx, mailboxId);
     /**
      * ONLY AN ORGANIZER IMPORTS A TRAVELLING PROFILE (mail 0083). The import writes rules,
@@ -335,291 +319,79 @@ export class ProfileImportService {
       throw new ServiceError("validation_failed", 400, "fingerprint is required");
     }
 
-    const fresh = await this.readFresh(opts.read);
-    if (fresh.state === "newer") {
+    /* THE TICKET FIRST, and no dial when it answers: the same press already waiting is the same
+       202, and one already imported is the 200 it would have been. */
+    const now = ctx.now();
+    const asked = await readImportAsk(asTx(ctx), { accountId: ctx.accountId, mailboxId });
+    if (asked !== null && asked.fingerprint === fingerprint) {
+      if (askStands(asked, now)) return { state: "importing", fingerprint };
+      if (asked.outcome === "imported") {
+        const result = await profileImportResult(asTx(ctx), { accountId: ctx.accountId, mailboxId, fingerprint });
+        if (result !== null) return { ...result, seq: null };
+      }
+    }
+
+    let fresh: ProfileReadResult;
+    try {
+      fresh = await opts.read();
+    } catch (err) {
+      if (!(err instanceof ProfileUnavailableError)) throw err;
+      /* THE READ DID NOT FIT THIS REQUEST — a slow provider, or a dial that failed here. The press
+         is recorded and handed to the organizer, which reads the document on its own connection
+         and applies it through the same merge; the doorbell brings its next cycle forward. */
+      // FOR UPDATE at the head: this transaction writes the mailbox row it fences, and two presses
+      // sharing it first and upgrading after would deadlock (`erasure-fence.ts#readAccountErasedAt`).
+      await withAccountTx(ctx, async (tx) => {
+        await recordImportAsk(tx, { accountId: ctx.accountId, mailboxId, fingerprint, now });
+        await ringFilingDoorbell(tx, mailboxId, now);
+      }, { mailboxId, lock: "update" });
+      return { state: "importing", fingerprint, reason: err.code === MAILBOX_READ_TIMEOUT ? "slow" : "unreachable" };
+    }
+    const refusal = importRefusalFor(fresh, fingerprint);
+    const over = fresh.state === "found" ? oversizedProfileList(fresh.doc) : null;
+    if (refusal === "too_large" && over) {
+      // Inline, the list and both numbers are in hand, so the sentence names them.
       throw new ServiceError(
-        "profile_newer", 409,
-        "These settings were saved by a newer version of ohmail — update ohmail to import them.",
+        "payload_too_large", 413,
+        `these saved settings hold ${over.count} ${over.list} entries, over the ${over.max} this ` +
+          "import can apply in one go. Nothing was changed.",
       );
     }
-    // BEFORE the fingerprint, not after it. `profileFingerprint` copies and locale-sorts all four
-    // arrays and serializes the whole canonical document to hash it — so a ceiling that fires
-    // afterwards is a ceiling on the transaction and on nothing else, while the sort and the
-    // buffer it was meant to prevent have already happened. A review round caught it there.
-    if (fresh.state === "found") refuseOversizedProfile(fresh.doc);
-    if (fresh.state !== "found" || profileFingerprint(fresh.doc) !== fingerprint) {
-      throw new ServiceError(
-        "profile_changed", 409,
-        "The saved settings changed since you looked. Review them again before importing.",
-      );
-    }
+    if (refusal !== null || fresh.state !== "found") throw refusalError(refusal ?? "changed");
     const doc = fresh.doc;
 
-    return withAccountTx(ctx, async (tx) => {
-      // FIRST, before any read the merge will act on — see {@link PROFILE_IMPORT_LOCK_CLASS}.
-      await dialect(ctx.db).advisoryLock(tx, PROFILE_IMPORT_LOCK_CLASS, ctx.accountId);
-      const changes: ChangeInput[] = [];
-      const now = ctx.now();
+    // The account fence alone, as before the hand-over existed: the merge's lock serializes
+    // appliers, and a mailbox share taken ahead of it would deadlock their mailbox-row update.
+    return withAccountTx(ctx, async (tx) => applyOrganizerProfile(tx, {
+      accountId: ctx.accountId, mailboxId, doc, fingerprint, now,
+    }));
+  }
 
-      // ── screener → contacts, keyed by address ──────────────────────────────────────────
-      // Last entry wins within the document (the reader does not deduplicate), lowercased as
-      // the format specifies; the row becomes the entry, display name included.
-      const byAddress = new Map<string, string | null>();
-      for (const s of doc.screener) {
-        const address = profileScreenerAddress(s);
-        if (address === null) continue;
-        const name = s.name !== undefined && !hasNul(s.name) ? s.name : null;
-        byAddress.set(address, name);
-      }
-      for (const [address, name] of byAddress) {
-        await tx.insert(contacts)
-          .values({ accountId: ctx.accountId, address, name })
-          .onConflictDoUpdate({
-            target: [contacts.accountId, contacts.address],
-            set: { name },
-          });
-      }
-
-      // ── rules, merged per natural key ──────────────────────────────────────────────────
-      const applicable: ApplicableProfileRule[] = [];
-      let skippedRules = 0;
-      for (const r of doc.rules) {
-        const a = applicableProfileRule(r);
-        if (a === null) skippedRules += 1;
-        else applicable.push(a);
-      }
-      const docByKey = new Map<string, ApplicableProfileRule[]>();
-      for (const a of applicable) {
-        const k = ruleKey(a);
-        const group = docByKey.get(k);
-        if (group) group.push(a);
-        else docByKey.set(k, [a]);
-      }
-      const localRules = await tx.select({
-        id: rules.id, kind: rules.kind, match: rules.match, destination: rules.destination,
-        priority: rules.priority, enabled: rules.enabled, provenance: rules.provenance,
-        subjectContains: rules.subjectContains, bodyContains: rules.bodyContains,
-      }).from(rules).where(eq(rules.accountId, ctx.accountId)).orderBy(asc(rules.createdAt), asc(rules.id));
-      const localByKey = new Map<string, typeof localRules>();
-      for (const row of localRules) {
-        const k = ruleKey(row);
-        const group = localByKey.get(k);
-        if (group) group.push(row);
-        else localByKey.set(k, [row]);
-      }
-      const screenOuts: ApplicableProfileRule[] = [];
-      for (const [key, docRows] of docByKey) {
-        const localRows = localByKey.get(key) ?? [];
-        const n = Math.max(docRows.length, localRows.length);
-        for (let i = 0; i < n; i++) {
-          const want = docRows[i];
-          const have = localRows[i];
-          if (want && have) {
-            const same = have.destination === want.destination && have.priority === want.priority
-              && have.enabled === want.enabled && have.provenance === want.provenance;
-            if (same) continue; // already the document's row — no write, no change row
-            if (screensOut(want)) screenOuts.push(want);
-            await tx.update(rules).set({
-              destination: want.destination, priority: want.priority,
-              enabled: want.enabled, provenance: want.provenance, updatedAt: now,
-              // Deliberately NOT re-requesting the retroactive pass: an import restores
-              // configuration; the travelling mailbox's mail was filed by its previous
-              // organizer, and a confirm click must not become a bulk re-filing.
-            }).where(and(eq(rules.id, have.id), eq(rules.accountId, ctx.accountId)));
-            changes.push(ruleDelta(ctx.accountId, have.id, "update"));
-          } else if (want) {
-            const [row] = await tx.insert(rules).values({
-              accountId: ctx.accountId,
-              kind: want.kind, match: want.match, destination: want.destination,
-              priority: want.priority, enabled: want.enabled, provenance: want.provenance,
-              subjectContains: want.subjectContains, bodyContains: want.bodyContains,
-              retroRequestedAt: null,
-            }).returning({ id: rules.id });
-            changes.push(ruleDelta(ctx.accountId, row!.id, "create"));
-            if (screensOut(want)) screenOuts.push(want);
-          } else if (have) {
-            // A surplus local duplicate of a key the document names — see the merge rule.
-            await tx.delete(rules).where(and(eq(rules.id, have.id), eq(rules.accountId, ctx.accountId)));
-            changes.push(ruleDelta(ctx.accountId, have.id, "delete"));
-          }
-        }
-      }
-
-      /* ── the mail THIS organizer held at the gate for the senders those rules screen out ──
-         The app presents a screened-out sender's held mail on the Screened-out shelf, so without
-         this the mailbox would keep at the gate what every surface says is screened out. The
-         rules still request no retro: only 'us' rows at the gate move (`rerouteOwnHeldBag`). */
-      let rerouteSeq: bigint | null = null;
-      for (const r of screenOuts) {
-        const moved = await rerouteOwnHeldBag(tx, {
-          accountId: ctx.accountId, kind: r.kind as "sender" | "domain", match: r.match,
-          appliedFolder: r.destination, now,
-        });
-        if (moved.lastSeq !== null) rerouteSeq = moved.lastSeq;
-      }
-
-      // ── notifyRules, keyed by (kind, target); the key is the whole value ───────────────
-      const localNotify = await tx.select({ kind: notifyRules.kind, target: notifyRules.target })
-        .from(notifyRules).where(eq(notifyRules.accountId, ctx.accountId));
-      const notifyHave = new Map<string, number>();
-      const notifyKey = (kind: string, target: string): string => `${kind}\u0000${target.toLowerCase()}`;
-      for (const nr of localNotify) {
-        const k = notifyKey(nr.kind, nr.target);
-        notifyHave.set(k, (notifyHave.get(k) ?? 0) + 1);
-      }
-      let notifyApplied = 0;
-      for (const nr of doc.notifyRules) {
-        if (hasNul(nr.kind) || hasNul(nr.target)) continue;
-        notifyApplied += 1;
-        const k = notifyKey(nr.kind, nr.target);
-        const have = notifyHave.get(k) ?? 0;
-        if (have > 0) { notifyHave.set(k, have - 1); continue; }
-        await tx.insert(notifyRules).values({
-          accountId: ctx.accountId, kind: nr.kind, target: nr.target, createdAt: now,
-        });
-      }
-
-      // ── awayResponder — the single per-account row, replaced wholly when the document
-      //    carries one. The audience is narrowed, never widened, when unrecognised: a reply to
-      //    a stranger cannot be recalled, and `screened_in` is the value the column's own
-      //    default writes.
-      let awayApplied = false;
-      if (doc.awayResponder !== null) {
-        const a = doc.awayResponder;
-        const audience = (AWAY_AUDIENCES as readonly string[]).includes(a.audience) ? a.audience : "screened_in";
-        const date = (v: string | null): Date | null | typeof INVALID_TERM => {
-          if (v === null) return null;
-          const d = new Date(v);
-          return Number.isNaN(d.getTime()) ? INVALID_TERM : d;
-        };
-        const startsAt = date(a.startsAt);
-        const endsAt = date(a.endsAt);
-        // The section is applied WHOLE or not at all, under the away service's own rules: an
-        // unparseable date silently becoming NULL would turn "away for a week" into an
-        // unbounded responder — a widening this import must never be the door for — and a
-        // reversed range is the same refusal the PUT gives. NUL-carrying text cannot be stored.
-        const valid = startsAt !== INVALID_TERM && endsAt !== INVALID_TERM
-          && !(startsAt !== null && endsAt !== null && startsAt.getTime() > endsAt.getTime())
-          && !(a.body !== null && hasNul(a.body));
-        if (valid) {
-          awayApplied = true;
-          const enabled = a.enabled === true;
-          // The throttle is narrowed the same way the audience is, and for a sharper reason: an
-          // unrecognised member here is a document written by a NEWER ohmail than this one, and the
-          // safe reading of a rate we do not understand is the default rate rather than the fastest
-          // one. `per_day` is the column's default and what 0087 wrote onto every migrated row.
-          const throttle = (AWAY_THROTTLES as readonly string[]).includes(a.throttle)
-            ? a.throttle as AwayThrottle : "per_day";
-          /* THE SAME `nextEnabledAt` THE PUT USES — the one implementation, and this is the second
-             writer it exists for. An import that lands on an account whose responder is ALREADY ON
-             must not move the floor, or importing settings mid-trip would strand exactly the
-             backlog `enabled_at` was added to keep answerable. */
-          /* THE SCOPE (mail 0096), and only when the document STATES one. An absent field is a
-             document written before the field existed — it says nothing about scope, so the stored
-             value is left alone rather than reset to the column's Ohbox default, which would
-             narrow the responder on every adoption from an older install. Unrecognised members are
-             dropped, on the same argument the audience and throttle are narrowed on: a value this
-             build cannot act on must not reach a column whose CHECK refuses it. */
-          let piles = a.piles === undefined ? undefined : [...new Set(a.piles.filter(isAwayPile))];
-          /* AND THE SCOPE MUST FIT THE AUDIENCE THIS IMPORT IS APPLYING. The Screener pile may only
-             be answered with the wider audience, and the PUT enforces that UNGATED BY `enabled` —
-             so a row left holding the Screener beside the narrower audience is one the pane cannot
-             save at all, including the save that turns the responder OFF. That reaches the kept
-             scope too: the document may change the audience while saying nothing about scope.
-             Narrowed, as the audience and throttle are, because a document is not a person asking. */
-          const keptOrStored = piles ?? (await tx.select({ piles: awayResponders.piles })
-            .from(awayResponders).where(eq(awayResponders.accountId, ctx.accountId)).limit(1))[0]?.piles;
-          if (keptOrStored !== undefined && !awayScopeFitsAudience(keptOrStored as AwayPile[], audience as AwayAudience)) {
-            piles = (keptOrStored as AwayPile[]).filter((q) => awayScopeFitsAudience([q], audience as AwayAudience));
-          }
-          const [prevAway] = await tx.select({ enabledAt: awayResponders.enabledAt })
-            .from(awayResponders).where(eq(awayResponders.accountId, ctx.accountId)).limit(1);
-          const enabledAt = nextEnabledAt(prevAway?.enabledAt ?? null, enabled, now);
-          await tx.insert(awayResponders).values({
-            accountId: ctx.accountId, enabled,
-            body: a.body,
-            startsAt, endsAt,
-            audience, throttle, enabledAt, updatedAt: now,
-            ...(piles === undefined ? {} : { piles }),
-          }).onConflictDoUpdate({
-            target: awayResponders.accountId,
-            // `subject` is neither read from the document nor written: the responder is reply-only
-            // since 0087. A document produced by an older ohmail still carries one, and it is
-            // ignored exactly as the PUT ignores a legacy client's.
-            set: {
-              enabled, body: a.body,
-              startsAt, endsAt, audience, throttle, enabledAt, updatedAt: now,
-              ...(piles === undefined ? {} : { piles }),
-            },
-          });
-        }
-      }
-
-      // ── tagNames, keyed case-insensitively like the store's own uniqueness ─────────────
-      const localTags = await tx.select({ name: tags.name }).from(tags)
-        .where(eq(tags.accountId, ctx.accountId));
-      const haveTag = new Set(localTags.map((t) => t.name.toLowerCase()));
-      let tagsApplied = 0;
-      for (const rawName of doc.tagNames) {
-        // The tag store's own hygiene, applied to a public document's names: trimmed, bounded
-        // by the same ceiling the create refuses over, never a control byte.
-        const name = rawName.trim();
-        if (name.length === 0 || name.length > MAX_TAG_NAME_CHARS || hasNul(name)) continue;
-        tagsApplied += 1;
-        if (haveTag.has(name.toLowerCase())) continue;
-        haveTag.add(name.toLowerCase());
-        const [row] = await tx.insert(tags).values({
-          accountId: ctx.accountId, name, createdAt: now, updatedAt: now,
-        }).returning({ id: tags.id });
-        changes.push({ accountId: ctx.accountId, entityType: "tag", entityId: row!.id, op: "create", meta: null });
-      }
-
-      /**
-       * signature — the one PER-MAILBOX field in the document (mail 0094). Applied like every
-       * section above: a skipped section is a setting the person loses silently. It also makes
-       * the import TERMINATE: the organizer's hold releases when the local serialization equals
-       * the held document, and `signature` is part of that serialization — an importer skipping
-       * it would never converge and the prompt would return every cycle. Written to THIS mailbox,
-       * scoped by account as well as id — the same predicate the serializer reads through. `null`
-       * is written as `null`: "no signature" is a statement, and treating it as "leave what is
-       * here" would make the import non-idempotent.
-       */
-      await tx.update(mailboxes).set({
-        signature: doc.signature,
-        /* BOTH HALVES OR NEITHER, and the `??` is what makes it terminate. The two columns are one
-           value — a markup save derives the text, a plain save clears the markup — so applying the
-           text alone would leave this mailbox's old formatting under somebody else's words. An
-           ABSENT key means "this sign-off has no formatting", which is `null` in the column, so it
-           is written as `null` rather than left alone: the import's convergence test compares the
-           local serialization to the held document, and a column the importer never clears makes
-           them differ for ever. */
-        signatureHtml: doc.signatureHtml ?? null,
-      })
-        .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)));
-
-      // One allocation for every change row (contacts/notify/away are REST-only, so only the
-      // rule and tag writes wake the mirrors), then the answer itself — in THIS transaction, so
-      // the applied sections and the resolution that releases the organizer's hold are one
-      // commit. A crash between them cannot leave settings applied with the hold still on.
-      const seqs = await recordChanges(tx, changes);
-      await recordProfileImportResolution(tx, {
-        accountId: ctx.accountId, mailboxId, decision: "imported", fingerprint,
-      });
-
-      return {
-        // What ARRIVED, never what the document claimed: the difference is the skipped entries,
-        // and a confirmation that repeated the claim would overstate the restore.
-        imported: {
-          screener: byAddress.size,
-          rules: applicable.length,
-          notifyRules: notifyApplied,
-          tags: tagsApplied,
-          awayResponder: awayApplied,
-        },
-        skippedRules,
-        seq: seqs.length > 0 ? Number(seqs[seqs.length - 1]) : rerouteSeq === null ? null : Number(rerouteSeq),
-      };
-    });
+  /**
+   * Where a press handed to the organizer stands: `importing` while it waits inside the TTL,
+   * then `imported` with what arrived, or `refused` naming what is true — `timed_out` from the
+   * press's own age when no organizer answered, `superseded` when a later press replaced it.
+   * One primary-key read; never dials.
+   */
+  async status(
+    ctx: ServiceContext, mailboxId: string, query: { fingerprint?: unknown },
+  ): Promise<ProfileImportStatusDTO> {
+    await this.assertMailbox(ctx, mailboxId);
+    const fingerprint = query.fingerprint;
+    if (typeof fingerprint !== "string" || fingerprint.length === 0 || fingerprint.length > 200) {
+      throw new ServiceError("validation_failed", 400, "fingerprint is required");
+    }
+    const row = await readImportAsk(asTx(ctx), { accountId: ctx.accountId, mailboxId });
+    const refused = (reason: ProfileImportStatusRefusal): ProfileImportStatusDTO =>
+      ({ state: "refused", reason, message: REFUSAL_SENTENCE[reason] });
+    if (row === null || row.fingerprint !== fingerprint) return refused("superseded");
+    if (row.outcome === "imported") {
+      const result = await profileImportResult(asTx(ctx), { accountId: ctx.accountId, mailboxId, fingerprint });
+      return { state: "imported", imported: result?.imported ?? null, skippedRules: result?.skippedRules ?? 0 };
+    }
+    if (row.outcome === "refused") return refused(row.reason ?? "unreadable");
+    if (row.organizerRole !== "organizer") return refused("not_organizer");
+    return askStands(row, ctx.now()) ? { state: "importing", fingerprint } : refused("timed_out");
   }
 
   /**

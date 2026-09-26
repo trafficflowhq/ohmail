@@ -423,6 +423,11 @@ export const mailboxes = sqliteTable("mailboxes", {
   erasureDoneAt: integer("erasure_done_at", { mode: "timestamp_ms" }),
   /** Mail 0127 — what a sign-out kept of where this mailbox lives; see the pg twin. LAST for 0111's reason. */
   signedOutMeta: text("signed_out_meta", { mode: "json" }).$type<SignedOutMeta>(),
+  /** Mail 0128 — a press of Import settings the organizer finishes; see the pg twin. LAST for 0111's reason. */
+  profileImportAskFingerprint: text("profile_import_ask_fingerprint"),
+  profileImportAskAt: integer("profile_import_ask_at", { mode: "timestamp_ms" }),
+  profileImportAskOutcome: text("profile_import_ask_outcome"),
+  profileImportAskReason: text("profile_import_ask_reason"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("mailboxes_id_account_uq").on(t.id, t.accountId),
   // ONE ACTIVE MAILBOX PER ADDRESS (mail 0021). PARTIAL, because `delete` is a soft delete to

@@ -1929,6 +1929,23 @@ export interface ProfileImportAppliedWire {
   seq: number | null;
 }
 
+/**
+ * `POST …/profile-import` answered 202: the read did not fit the request, and the mailbox's
+ * organizer finishes the import. `reason` is `slow` or `unreachable` when this press found out,
+ * absent when the same press was already waiting. Ask {@link profileImport.status} after.
+ */
+export interface ProfileImportPendingWire {
+  state: "importing";
+  fingerprint: string;
+  reason?: "slow" | "unreachable";
+}
+
+/** `GET …/profile-import/status` — where a handed-over press stands. Never dials. */
+export type ProfileImportStatusWire =
+  | { state: "importing"; fingerprint: string }
+  | { state: "imported"; imported: ProfileImportCountsWire | null; skippedRules: number }
+  | { state: "refused"; reason: string; message: string };
+
 export const profileImport = {
   candidate: (mailboxId: string) =>
     api<ProfileImportCandidateWire>(`/mailboxes/${mailboxId}/profile-import`),
@@ -1937,9 +1954,14 @@ export const profileImport = {
    * (409 `profile_changed`) if the document no longer matches the fingerprint the user saw.
    */
   apply: (mailboxId: string, fingerprint: string) =>
-    api<ProfileImportAppliedWire>(`/mailboxes/${mailboxId}/profile-import`, {
+    api<ProfileImportAppliedWire | ProfileImportPendingWire>(`/mailboxes/${mailboxId}/profile-import`, {
       method: "POST", body: { fingerprint },
     }),
+  /** Where a press answered 202 stands; asked on the settings doorbell until it is terminal. */
+  status: (mailboxId: string, fingerprint: string) =>
+    api<ProfileImportStatusWire>(
+      `/mailboxes/${mailboxId}/profile-import/status?fingerprint=${encodeURIComponent(fingerprint)}`,
+    ),
   /**
    * Keep local. Durable — the same content never asks again, on this or any later visit —
    * and inert: nothing is applied and nothing in the mailbox is touched. A `newer` notice is
