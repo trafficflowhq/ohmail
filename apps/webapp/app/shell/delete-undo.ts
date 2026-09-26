@@ -581,6 +581,11 @@ export function deleteKeyBindings(input: {
    * mail. Optional, so a caller with nothing to explain says nothing.
    */
   disabledReason?: DisabledReason;
+  /**
+   * CAN THIS HOST PLACE A CURSOR — false where no selection reaches `focused` (the shell over
+   * Trash or the Screener). `no_cursor` then gives way to the caller's own reason. Default true.
+   */
+  placeable?: boolean;
   run: (m: EngineMessage) => void;
 }): KeyBinding[] {
   const disabled = input.focused == null || !input.canDelete;
@@ -598,7 +603,7 @@ export function deleteKeyBindings(input: {
    * still the honest answer: the cursor is what is missing, and whatever the gates then say about the row the cursor
    * lands on is the same answer a click would have got.
    */
-  const noCursor = input.focused == null;
+  const noCursor = input.focused == null && input.placeable !== false;
   const parked = noCursor ? ({ disabledReason: "no_cursor" } as const) : {};
   /**
    * A HELD KEY IS ONE PRESS, AND A QUESTION ON SCREEN OWNS THE KEY. Both are `when` conditions, which is what makes

@@ -23,6 +23,13 @@ import { useCursorPlacer, type PlacerScope } from "./keymap";
  */
 export const CURSOR_HINT_MS = 2400;
 
+/**
+ * THE ROUTES WHOSE CURSOR THE SHELL HOLDS — the three `focused` reads and the only ones the shell's
+ * placer places on. Its message verbs say "select a message first" here and nowhere else: in Trash
+ * or the Screener no selection reaches them, so the sentence would promise a press that cannot work.
+ */
+export const SHELL_CURSOR_VIEWS: ReadonlySet<string> = new Set(["ohbox", "reads", "receipts"]);
+
 /** The least a row has to be for a cursor to stand on it. */
 export interface CursorRow {
   id: string;

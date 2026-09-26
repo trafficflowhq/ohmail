@@ -28,7 +28,7 @@ import {
   type WaterlineMeta,
 } from "@ohmail/client-engine";
 import type { UndoToastFn } from "./undo-door";
-import { placeFirstRow, useCursorHint, type CursorHost } from "./cursor-placer";
+import { placeFirstRow, SHELL_CURSOR_VIEWS, useCursorHint, type CursorHost } from "./cursor-placer";
 import { useCursorPlacer } from "./keymap";
 import type { MessageBarPanel } from "./message-chrome";
 import { readColumnHidden } from "./narrow";
@@ -1095,6 +1095,7 @@ export function useShellOpenState({
    */
   const sayCursorPlaced = useCursorHint();
   const placeCursor = useStableCallback((label: string): boolean => {
+    if (!SHELL_CURSOR_VIEWS.has(route.view)) return false;
     const current = focused?.id ?? null;
     const host: CursorHost =
       route.view === "ohbox"

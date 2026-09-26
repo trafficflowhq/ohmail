@@ -32,7 +32,8 @@ import type { ConsentState } from "./consent-state";
 import { deleteKeyBindings } from "./delete-undo";
 import { FoldersRailGroup, type FolderVerbs } from "./FoldersRailGroup";
 import { hueOf } from "./format";
-import { useKeyBindings, type KeyBinding } from "./keymap";
+import { SHELL_CURSOR_VIEWS } from "./cursor-placer";
+import { useEnabledBinding, useKeyBindings, useKeyPress, type KeyBinding } from "./keymap";
 import { pressResurfaceKey } from "./message-verbs";
 import type { MailboxFacts } from "./mail-state";
 import { isModalOpen } from "./modal-gate";
@@ -427,9 +428,13 @@ export function useShellKeys({
    * row the mirror does not hold, `d` with the folders foundation off. Placing a cursor for one of those would show a
    * sentence promising a second press that cannot work. NOT on `f`, `mod+Enter` or the two Zero exits: none of them
    * rests on a cursor (an empty Answer Later pile, no run in flight, no reply open, no sheet up), and `p` is an `app`
-   * verb — the dispatcher's rule is scoped to `message` for exactly that reason.
+   * verb — the dispatcher's rule is scoped to `message` for exactly that reason. Only where the shell holds the
+   * cursor (`SHELL_CURSOR_VIEWS`): over Trash or the Screener no selection reaches these verbs.
    */
-  const noCursor = focused == null ? ({ disabledReason: "no_cursor" } as const) : {};
+  const cursorHere = SHELL_CURSOR_VIEWS.has(route.view);
+  const noCursor = focused == null && cursorHere ? ({ disabledReason: "no_cursor" } as const) : {};
+  /* ⌫ and ⌦ in Trash: the product's no-erase sentence is their reason there, and nowhere else. */
+  const deleteReason = route.view === "trash" ? ({ disabledReason: "no_erase" } as const) : {};
 
   /* `b`, and the palette row that prints it, through `pressResurfaceKey` — asked of the mirror's
      row, since `focused` can be the reader's snapshot from before the booking. */
@@ -751,7 +756,8 @@ export function useShellKeys({
            behind, and would take the two keycaps out of the documentation exactly where a reader
            is most likely to reach for them. */
         && route.view !== "trash",
-      disabledReason: "no_erase",
+      placeable: cursorHere,
+      ...deleteReason,
       run: (m) => onMessageAction("delete", m),
     }),
     /* ⇧⌫ — RESTORE, and only in Trash. The mirror image of ⌫: the key that removes mail from a
@@ -856,6 +862,8 @@ export function useShellKeys({
   }), [demo, mailboxSection, aiSection, awaySupported, consent.known, consent.foldersStorable, consent.signaturesKnown, facts, desktopSection, devicesSection, billingSection, invitesSection, securitySection, accountSection, aboutSection]);
 
   /* ── the palette command map (every command from the prototype) ── */
+  const moveKey = useEnabledBinding("m");
+  const pressKey = useKeyPress();
   const commands: Command[] = useMemo(() => {
     const list: Command[] = [
       /* THE DESTINATION ROWS READ THE REGISTRY'S OWN WORDING (`shortcuts.*`), not a second copy
@@ -942,6 +950,15 @@ export function useShellKeys({
     /* The demo's own ruling for layout controls: "palette and hotkeys only" — no rail
        button, no Settings row (named in the 3b close-out). */
     list.push({ id: "layout", label: t("palette.cycleLayout"), keys: ["w"], run: cycleLayout });
+    /* MOVE IS THE `m` KEY'S ROW: it presses the live `m` binding, so it opens the strip the key
+       opens, on the message the key names, and rests exactly where the key rests. */
+    list.push({
+      id: "move",
+      label: t("shortcuts.move"),
+      keys: ["m"],
+      disabled: moveKey == null,
+      run: () => { pressKey("m"); },
+    });
     list.push({
       id: "resurface",
       label: t("palette.resurfaceSel"),
@@ -952,7 +969,7 @@ export function useShellKeys({
       },
     });
     return list;
-  }, [t, tags, selectedOhbox, toggleTag, theme, onMessageAction, resurfaceByKey, startFR, engine, settingsWired, goSettings]);
+  }, [t, tags, selectedOhbox, toggleTag, theme, onMessageAction, resurfaceByKey, startFR, engine, settingsWired, goSettings, moveKey, pressKey]);
 
   /**
    * THE ONE NUMBER A NATIVE SHELL IS TOLD — see `AppShell`'s `onUnread`.
