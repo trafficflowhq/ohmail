@@ -2258,6 +2258,7 @@
     "signOutUnverified": "ohmail could not confirm that the mail cached in this browser is gone: this browser will not say which local databases it holds. Your session is ended. Clear this site's data in your browser settings to be certain, or use a different browser to sign in here.",
     "signOutServerRefused": "The mail cached in this browser is removed, but the session could not be ended on the server: {reason} Your sign-in may still work until you try again — press Sign out once more, or revoke this device from the Devices list.",
     "erasedMirrorBlocked": "Your account is erased. The mail cached in this browser could not be removed, because another ohmail tab is holding it open — close ohmail's other tabs and reload this page.",
+    "eraseRefused": "Your account was not deleted and nothing was removed. Start the confirmation again to retry.",
     "loading": "Checking this session…",
     "mail": "Your mail is on your own server, in the ohmail folders it is filed into. This deletes our copy; your mailbox stays exactly as organized as it is now.",
     "goneTitle": "Erased",

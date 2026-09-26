@@ -470,11 +470,24 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
    */
   const ceremony = opts.ceremony === true;
 
+  /*
+   * The same question after the answer, with ONE state admitted: a clears-only answer (`DELETE
+   * /account`) expires `tf_owner` itself, so the marker's absence afterwards is that answer's own
+   * effect, not a jar that moved in flight — the lock below is held across it, and the header check
+   * still names whose account the answer was for. Refused, a completed erasure read "this browser
+   * has lost the name of the account": no wipe, no receipt.
+   */
+  const answerHolds = (): void => {
+    const verdict = apiOwnerVerdict(path, { ...(ceremony ? { ceremony: true } : {}) });
+    if (verdict === "absent" && (CLEARS_ONLY as readonly string[]).includes(path)) return;
+    if (verdict !== "holds") throw ownerRefusal(verdict);
+  };
+
   if (writesSessionCookies(path)) {
     return withSessionCookieLock(async () => {
       const seen: { account?: string | null } = {};
       const answer = await attempt<T>(path, opts, seen);
-      mustHold();
+      answerHolds();
       checkAnswerOwner(path, seen.account, ceremony);
       return answer;
     });

@@ -263,10 +263,20 @@ export function AccountSection() {
       setStage("done");
     } catch (err) {
       if (!alive.current) return;
-      setStage("factor");
-      fail(err);
+      // THE FACTOR IS SPENT: the verify's login token is single-use, so staying on the factor step
+      // made the retry's code a bare 401. Back to the top. A refusal the SERVER
+      // answered rolled its one transaction back, and is said in our words, never its "internal
+      // error"; a request that never got an answer keeps the client's own sentence, which claims
+      // nothing about whether the erasure landed.
+      ceremony.end();
+      setStage("facts");
+      setChallenge(null);
+      setTyped("");
+      setCode("");
+      setBusy(false);
+      setError(err instanceof ApiError && err.status >= 400 ? t("eraseRefused") : messageOf(err));
     }
-  }, []);
+  }, [ceremony, t]);
 
   /**
    * Shared tail of all three second factors, and THE ONE DOOR the generation is read at — one

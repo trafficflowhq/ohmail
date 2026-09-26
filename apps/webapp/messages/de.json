@@ -2258,6 +2258,7 @@
     "signOutUnverified": "ohmail konnte nicht bestätigen, dass die in diesem Browser zwischengespeicherte Post entfernt ist: Dieser Browser gibt nicht preis, welche lokalen Datenbanken er hält. Ihre Sitzung ist beendet. Löschen Sie die Websitedaten in den Browsereinstellungen, um sicherzugehen, oder melden Sie sich in einem anderen Browser an.",
     "signOutServerRefused": "Die in diesem Browser zwischengespeicherte Post ist entfernt, aber die Sitzung konnte auf dem Server nicht beendet werden: {reason} Ihre Anmeldung funktioniert möglicherweise weiter, bis Sie es erneut versuchen — tippen Sie noch einmal auf Abmelden oder widerrufen Sie dieses Gerät in der Geräteliste.",
     "erasedMirrorBlocked": "Ihr Konto ist gelöscht. Die in diesem Browser zwischengespeicherte Post konnte nicht entfernt werden, weil ein anderer ohmail-Tab sie offen hält — schliessen Sie die anderen ohmail-Tabs und laden Sie diese Seite neu.",
+    "eraseRefused": "Dein Konto wurde nicht gelöscht, und es wurde nichts entfernt. Beginne die Bestätigung von vorn, um es erneut zu versuchen.",
     "loading": "Diese Sitzung wird geprüft …",
     "mail": "Deine Post liegt auf deinem eigenen Server, in den ohmail-Ordnern, in die sie einsortiert ist. Das hier löscht unsere Kopie; dein Postfach bleibt genau so organisiert, wie es jetzt ist.",
     "goneTitle": "Gelöscht",
