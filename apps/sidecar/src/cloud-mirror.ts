@@ -39,7 +39,7 @@ import type { LocalWorld } from "./identity.js";
 import { retryAfterMs, type CloudAuth } from "./cloud-auth.js";
 import { stampSynced } from "./sync-stamp.js";
 import { createFirstSyncReporter } from "./first-sync.js";
-import { deleteMailboxRows, mirroredMessageCount } from "./local-mirror.js";
+import { announceExclusiveThreads, deleteMailboxRows, mirroredMessageCount } from "./local-mirror.js";
 import type { Diagnostic } from "./log.js";
 import { loopHold, loopTurn } from "./loop-hold.js";
 
@@ -1956,6 +1956,9 @@ async function applyPage(
     };
     const deleteOne = async (t: Tx, ch: SyncChange): Promise<void> => {
       const detached: DetachedSurvivor[] = [];
+      /* An erased mailbox's own conversations are announced before the walk takes them — the hosted
+         feed tombstones them itself; these are rows it never named (an older erasure, a standalone era). */
+      if (ch.type === "mailbox") await announceExclusiveThreads(t, world.accountId, ch.id);
       if (await applyDelete(t, ch, detached)) {
         await record(t, ch.type, ch.id, "delete");
         appliedKeys?.add(`${ch.type}:${ch.id}`);

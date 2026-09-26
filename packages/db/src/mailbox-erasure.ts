@@ -242,11 +242,11 @@ async function eraseMessages(
   // scoped-by: ids — a page of this mailbox's messages read by the step
   await drop("flag_state", tx.delete(flagState).where(inArray(flagState.messageId, ids)));
 
-  await eraseExclusiveThreads(tx, accountId, mailboxId, page, drop);
+  const threadSeq = await eraseExclusiveThreads(tx, accountId, mailboxId, page, drop);
 
   // scoped-by: ids — a page of this mailbox's messages read by the step
   await drop("messages", tx.delete(messages).where(inArray(messages.id, ids)));
-  return { messagesErased: ids.length, draftsUnanchored, seq: seqs[seqs.length - 1] ?? null };
+  return { messagesErased: ids.length, draftsUnanchored, seq: threadSeq ?? seqs[seqs.length - 1] ?? null };
 }
 
 /**
@@ -254,18 +254,19 @@ async function eraseMessages(
  * the PARTICIPANTS, and its notes what the person wrote, so leaving them is a mailbox that still
  * answers with its own mail. Shared threads survive and lose only this mailbox's messages. For an
  * exclusive one, every message of this mailbox in it is unhooked (later pages included) and a
- * sibling's draft keeps its text and loses the thread, before the thread row goes.
+ * sibling's draft keeps its text and loses the thread, before the thread row goes. Each one gets
+ * a `thread` delete in the same transaction, so every mirror drops it; returns the last seq.
  */
 async function eraseExclusiveThreads(
   tx: LedgerTx, accountId: string, mailboxId: string,
   page: Array<{ threadId: string | null }>,
   drop: (table: string, run: Promise<unknown>) => Promise<void>,
-): Promise<void> {
+): Promise<bigint | null> {
   // Both counts on every page, zero included: "no thread was this mailbox's alone" is an answer.
   await drop("threads", Promise.resolve(0));
   await drop("thread_notes", Promise.resolve(0));
   const touched = [...new Set(page.map((r) => r.threadId).filter((t): t is string => t !== null))];
-  if (touched.length === 0) return;
+  if (touched.length === 0) return null;
   const exclusive = (await tx.select({ id: threads.id }).from(threads).where(and(
     eq(threads.accountId, accountId),
     inArray(threads.id, touched),
@@ -274,7 +275,10 @@ async function eraseExclusiveThreads(
       ne(messages.mailboxId, mailboxId),
     ))),
   ))).map((r) => r.id);
-  if (exclusive.length === 0) return;
+  if (exclusive.length === 0) return null;
+  const seqs = await recordChanges(tx, exclusive.map((id) => ({
+    accountId, entityType: "thread" as const, entityId: id, op: "delete" as const, meta: null,
+  })));
   await drop("thread_notes", tx.delete(threadNotes)
     .where(and(eq(threadNotes.accountId, accountId), inArray(threadNotes.threadId, exclusive))));
   await tx.update(drafts).set({ threadId: null })
@@ -285,6 +289,7 @@ async function eraseExclusiveThreads(
   ));
   // scoped-by: exclusive — this account's threads the mailbox alone holds, read just above
   await drop("threads", tx.delete(threads).where(inArray(threads.id, exclusive)));
+  return seqs[seqs.length - 1] ?? null;
 }
 
 /**

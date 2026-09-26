@@ -9,15 +9,15 @@
  * the tombstone and the account's own rows; a thread goes once no other mailbox is in it.
  */
 
-import { and, eq, exists, inArray, isNotNull, ne, notExists, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, exists, inArray, isNotNull, ne, notExists, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   approvals, attachments, awayReplies, awayResponderSent,
   drafts, flagState, folderOps, folderState, junkRescues, mailboxCredentials, mailboxFolders,
   mailboxProfileMirror, messageBodies, messageSearch, messageFailures, messageInstances, messageStates,
   messageTags, messages, organizerRequests, outboundSendFingerprints, outboundSends,
-  recordMailboxRemoved, routingDecisions, threadNotes, threads, trackerEvents, unsubscribeExamined,
-  unsubscribeRecords,
+  recordChanges, recordMailboxRemoved, routingDecisions, threadNotes, threads, trackerEvents,
+  unsubscribeExamined, unsubscribeRecords,
   type LedgerTx, type Tx,
 } from "@trafficflow/db";
 
@@ -79,6 +79,12 @@ export async function wipeLocalMirror(
   db: LocalDb, args: { accountId: string; mailboxId: string },
 ): Promise<void> {
   const { accountId, mailboxId } = args;
+  /* The conversations the walk is about to take are announced FIRST, in their own transaction: a
+     removal retried after a crash re-reads them while they still exist, where a list taken after
+     the walk would be empty. */
+  await db.transaction(async (tx) => {
+    await announceExclusiveThreads(tx as unknown as LedgerTx, accountId, mailboxId);
+  });
   await deleteMailboxRows(db, mailboxId);
 
   /* ── THE RECEIPT, AND IT IS PART OF THE WIPE RATHER THAN BESIDE IT ──
@@ -188,13 +194,9 @@ export async function deleteMailboxRows(db: Tx, mailboxId: string): Promise<void
  * takes a thread out of the next page, and the delete ends it.
  */
 async function deleteExclusiveThreads(db: Tx, mailboxId: string): Promise<void> {
-  const inThread = (mine: boolean) => db.select({ one: sql`1` }).from(messages).where(and(
-    eq(messages.threadId, threads.id),
-    mine ? eq(messages.mailboxId, mailboxId) : ne(messages.mailboxId, mailboxId),
-  ));
   for (;;) {
     const page = (await db.select({ id: threads.id }).from(threads)
-      .where(and(exists(inThread(true)), notExists(inThread(false))))
+      .where(onlyThisMailbox(db, mailboxId))
       .limit(THREAD_PAGE)).map((r) => r.id);
     if (page.length === 0) return;
     await db.delete(threadNotes).where(inArray(threadNotes.threadId, page));
@@ -202,6 +204,38 @@ async function deleteExclusiveThreads(db: Tx, mailboxId: string): Promise<void> 
     await db.update(messages).set({ threadId: null })
       .where(and(eq(messages.mailboxId, mailboxId), inArray(messages.threadId, page)));
     await db.delete(threads).where(inArray(threads.id, page));
+  }
+}
+
+/** A thread this mailbox's messages are in and no other mailbox's are — one spelling for both readers. */
+function onlyThisMailbox(db: Tx, mailboxId: string): SQL | undefined {
+  const inThread = (mine: boolean) => db.select({ one: sql`1` }).from(messages).where(and(
+    eq(messages.threadId, threads.id),
+    mine ? eq(messages.mailboxId, mailboxId) : ne(messages.mailboxId, mailboxId),
+  ));
+  return and(exists(inThread(true)), notExists(inThread(false)));
+}
+
+/**
+ * One `thread` delete on the change log for every conversation {@link deleteExclusiveThreads}
+ * will take, so a mirror drops its subject and participants (a mailbox receipt names no thread).
+ * Written before the walk, in the caller's transaction; ordered pages, since nothing is deleted
+ * here. Returns how many were announced.
+ */
+export async function announceExclusiveThreads(
+  tx: LedgerTx, accountId: string, mailboxId: string,
+): Promise<number> {
+  const db = tx as unknown as Tx;
+  let announced = 0;
+  for (;;) {
+    const page = (await db.select({ id: threads.id }).from(threads)
+      .where(onlyThisMailbox(db, mailboxId))
+      .orderBy(asc(threads.id)).limit(THREAD_PAGE).offset(announced)).map((r) => r.id);
+    if (page.length === 0) return announced;
+    await recordChanges(tx, page.map((id) => ({
+      accountId, entityType: "thread" as const, entityId: id, op: "delete" as const, meta: null,
+    })));
+    announced += page.length;
   }
 }
 
