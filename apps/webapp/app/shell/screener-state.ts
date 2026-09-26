@@ -1778,9 +1778,11 @@ export function useScreenerState(
    * overlay moved, and the queue does not flicker.
    */
   const refuseReadOnly = (): void => {
+    /* NOBODY HOLDS IT: no other organizer to name, so the sentence names none (the seen-once
+       self-host note). */
     toast(role.name
       ? t("readerRefused", { name: role.name })
-      : t("readerRefusedUnknown"));
+      : role.reason === "no_organizer" ? t("readerRefusedNobody") : t("readerRefusedUnknown"));
   };
   /**
    * WHAT A READER MAY NOT DO WHATEVER ITS ORGANIZER OFFERS — a MOVE, and the sentence says so. Releasing a
@@ -1814,8 +1816,10 @@ export function useScreenerState(
    * decision would in fact be carried out. What `pending` changes is the sentence AFTERWARDS,
    * which is `markQueued`'s business and not this one's.
    */
+  /* A TAKEOVER THIS INSTALL ASKED FOR goes through: the door keeps the decision as a rule until the
+     claim lands, and answers 202 or 409 where it cannot. */
   const guard = <A extends unknown[]>(verb: (...args: A) => void) =>
-    (role.mode === "blocked" ? ((..._args: A) => refuseReadOnly()) : verb);
+    (role.mode === "blocked" && role.takeoverAsked !== true ? ((..._args: A) => refuseReadOnly()) : verb);
 
   /* ── MAIL HELD AT THE GATE BEHIND A RULE ITS OWNER ALREADY WROTE ──────────────────────────────
    *

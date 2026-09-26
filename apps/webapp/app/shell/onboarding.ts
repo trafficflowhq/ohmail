@@ -96,6 +96,16 @@ export interface OnboardingMailbox {
    */
   organizerEventAt?: string | null;
   /**
+   * THE STANDING PRESS TO ORGANIZE HERE, spent by the gate in the statement that writes the role.
+   * Read by the SCREEN (`takeoverState`), not by this derivation. Absent is an older server.
+   */
+  takeoverAuthorizedAt?: string | null;
+  /**
+   * `false` while the door has not read the lease yet — see `MailboxFacts.organizerChecked`. Read
+   * by the SCREEN (`holderAnswered`), not by this derivation.
+   */
+  organizerChecked?: boolean;
+  /**
    * WHEN somebody agreed to let ohmail organize this mailbox. Absent and `null` both mean
    * "nobody has", which is what makes the consent step the unmet condition — the safe direction,
    * because the cost of being wrong is a consent screen shown twice, and the cost of the inverse

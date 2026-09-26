@@ -159,6 +159,12 @@ export interface AccountFanOut {
   requestTo: FanOutTarget[];
   /** Held elsewhere by an install that cannot take this kind. */
   refused: FanOutRefusal[];
+  /**
+   * Readers this install was asked to organize, the claim not landed yet (`takeoverPending`). Only
+   * filled on `admitTakeover`: the write is made here, no request goes to the holder the claim
+   * displaces, and the organizing pass that follows the claim carries it out.
+   */
+  awaiting: string[];
 }
 
 /**
@@ -173,6 +179,7 @@ export interface AccountFanOut {
  */
 export async function planAccountFanOut(
   tx: Tx, accountId: string, kind: RequestKind,
+  opts: { admitTakeover?: boolean } = {},
 ): Promise<AccountFanOut> {
   // Live mailboxes only. A tombstone organizes nothing — `assertAccountOrganizes`' own reason: the
   // row keeps whatever `organizer_role` it had at removal, so counting it would let an account
@@ -184,6 +191,7 @@ export async function planAccountFanOut(
   const organized: string[] = [];
   const requestTo: FanOutTarget[] = [];
   const refused: FanOutRefusal[] = [];
+  const awaiting: string[] = [];
 
   for (const { id } of live) {
     const e = await readRequestEligibility(tx, accountId, id, capabilityForKind(kind));
@@ -191,6 +199,7 @@ export async function planAccountFanOut(
     // reason to refuse and not a place to send anything.
     if (!e || e.status === "disabled") continue;
     if (e.role === "organizer") { organized.push(id); continue; }
+    if (opts.admitTakeover === true && e.takeoverPending) { awaiting.push(id); continue; }
     if (e.capable) { requestTo.push({ mailboxId: id, holder: e.by }); continue; }
     refused.push({
       mailboxId: id, holder: e.by,
@@ -199,7 +208,7 @@ export async function planAccountFanOut(
   }
 
   const heldElsewhere = requestTo.length + refused.length;
-  const writeLocally = organized.length > 0 || heldElsewhere === 0;
+  const writeLocally = organized.length > 0 || awaiting.length > 0 || heldElsewhere === 0;
 
   /* NOTHING THIS PRESS COULD DO ANYWHERE. Every live mailbox is held by an install that will not
      take this kind, so there is no local write to make and no request to send — the one state that
@@ -211,7 +220,7 @@ export async function planAccountFanOut(
     throw new OrganizedElsewhereError(named.mailboxId, named.holder, named.reason);
   }
 
-  return { writeLocally, organized, requestTo, refused };
+  return { writeLocally, organized, requestTo, refused, awaiting };
 }
 
 /**

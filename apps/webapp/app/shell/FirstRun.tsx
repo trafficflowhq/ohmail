@@ -28,10 +28,12 @@ import {
   deriveOnboardingStep, onboardingPath, sendingLine,
   type OnboardingFacts, type OnboardingStep,
 } from "./onboarding";
-import type { FirstRunHost, FirstRunMailboxInput, FirstRunProbeOk } from "./first-run-host";
+import type {
+  FirstRunHost, FirstRunMailboxInput, FirstRunOrganizeOutcome, FirstRunProbeOk,
+} from "./first-run-host";
 import { pullEtaMs, pullRate, pullRemaining, pullSampleStep, type PullSample } from "./pull-rate";
 import {
-  type HolderWho, holderSentence, holderStopped, holderVerdict, readerHolder,
+  type HolderWho, holderAnswered, holderSentence, holderStopped, holderVerdict, readerHolder, takeoverState,
 } from "./reader-holder";
 import "./first-run.css";
 
@@ -82,6 +84,13 @@ const DECIDE_LEGEND: Array<{ key: string; copy: "decideOhbox" | "decideReads" | 
  * the facts say, which is the behaviour before this wait existed.
  */
 const SETTLE_MS = 4_000;
+
+/**
+ * HOW LONG AGREE WAITS FOR THE DOOR'S FIRST LOOK AT WHO HOLDS THE MAILBOX. A look that fails
+ * answers too (unreadable), so this bounds only an engine that never reaches its first pass;
+ * past it Agree is offered and the press is a join, which yields to a live claim at the fence.
+ */
+export const HOLDER_CHECK_MS = 60_000;
 
 /** The history-depth options. `365` is the default and wears the word for it. */
 const WINDOWS = ["90", "180", "365", "all"] as const;
@@ -451,6 +460,19 @@ export function FirstRun({
    * gets the question again — being asked twice costs a screen, not being asked costs a mailbox.
    */
   const [claimAnsweredFor, setClaimAnsweredFor] = useState<string | null>(null);
+  /**
+   * A TAKEOVER THIS RUN ASKED FOR — pressed over a mailbox a holder was named on — and the newest
+   * stamp a read showed for it, the floor `takeoverState` orders a refusal against. Keyed by
+   * mailbox on `consented`'s rule. The summary reads it: Done may not say "this computer reads"
+   * while the takeover the person just asked for is under way.
+   */
+  const [takeoverAsk, setTakeoverAsk] = useState<{ mailboxId: string; floor: string | null } | null>(null);
+  /** The guided decision's sender, once pressed in this run — the summary says where it stands. */
+  const [decidedName, setDecidedName] = useState<string | null>(null);
+  /** The mailbox whose first look outlasted {@link HOLDER_CHECK_MS}; Agree is offered for it. */
+  const [checkExpiredFor, setCheckExpiredFor] = useState<string | null>(null);
+  /** Agree met the door's second-factor check: the prompt is open for this mailbox. */
+  const [stepUpFor, setStepUpFor] = useState<string | null>(null);
 
   /**
    * The read that put a holder on the claim question, as a floor for every
@@ -492,6 +514,30 @@ export function FirstRun({
       at: raiseStamp(prior, facts.mailbox?.organizerEventAt),
     };
   }, [step, facts.mailbox, mailboxId]);
+  const seenStamp = wireFacts.mailbox?.takeoverAuthorizedAt ?? null;
+  useEffect(() => {
+    if (seenStamp === null) return;
+    setTakeoverAsk((ask) => {
+      if (ask === null || ask.mailboxId !== mailboxId) return ask;
+      const floor = raiseStamp(ask.floor, seenStamp);
+      return floor === ask.floor ? ask : { ...ask, floor };
+    });
+  }, [seenStamp, mailboxId]);
+  /* AGREE WAITS FOR THE LOOK. Until the door has read who holds the mailbox, a live holder may be
+     one read away, and the guard below moves this run to the claim question when it lands. */
+  const answered = holderAnswered(facts.mailbox);
+  const checking = !answered && checkExpiredFor !== mailboxId;
+  useEffect(() => {
+    if (step !== "window" || answered || mailboxId === null) return;
+    const timer = setTimeout(() => setCheckExpiredFor(mailboxId), HOLDER_CHECK_MS);
+    return () => clearTimeout(timer);
+  }, [step, answered, mailboxId]);
+  const takeover = takeoverState(
+    facts.mailbox,
+    takeoverAsk !== null && takeoverAsk.mailboxId === mailboxId
+      ? { floor: takeoverAsk.floor ?? wireFacts.mailbox?.organizeConsentedAt ?? null }
+      : null,
+  );
   const path = useMemo(() => onboardingPath(facts, add === true), [facts, add]);
 
   /**
@@ -504,7 +550,11 @@ export function FirstRun({
    * build). A re-run's SUCCESS names its next screen (`keepCursor`, not optional there); its FAILURE stays on
    * the screen carrying the explaining sentence. A first run is untouched.
    */
-  const run = useCallback(async (write: () => Promise<void>, keepCursor?: OnboardingStep) => {
+  const run = useCallback(async (
+    write: () => Promise<void>, keepCursor?: OnboardingStep,
+    /** A refusal stays on this screen with its sentence, never a silent step back. */
+    opts: { stayOnFailure?: boolean } = {},
+  ) => {
     /* THE FORM'S GENERATION AT THE MOMENT THIS STARTED. `retireTest` advances it on every edit, so
        this is exactly "has the form moved since I was sent". A WRITE needs it for the same reason
        the test does, and it was missed because a write looks like it cannot be overtaken: press
@@ -546,11 +596,63 @@ export function FirstRun({
         setProblem(host.probeMessage(err) ?? String((err as { message?: string })?.message ?? err));
       }
       await settle();
-      setAt(rerun === true ? here : null);
+      setAt(rerun === true || opts.stayOnFailure === true ? here : null);
     } finally {
       setBusy(false);
     }
   }, [host, onRefresh, rerun, step]);
+
+  /**
+   * AGREE AND START ORGANIZING — one press, and a step-up refusal asks for the code and runs the same
+   * press once more (`retried`). A refusal stays here with its sentence, never a silent step back.
+   */
+  const agree = (retried: boolean) => {
+    if (!mailboxId || checking) return;
+    /* A TAKEOVER ONLY BY NAME: the person chose "Organize here instead" in this run.
+       Every other Agree is a join, which yields to a live claim it has not been shown. */
+    const intent = claimAnsweredFor === mailboxId && elsewhereChoice === "here" ? "takeover" : "join";
+    void run(async () => {
+      let outcome: FirstRunOrganizeOutcome;
+      try {
+        outcome = await host.organize(mailboxId, {
+          screening: win === "all"
+            ? { scope: "all_time" }
+            : { dormancyDays: Number(win), scope: "window" },
+          intent,
+        });
+      } catch (err) {
+        if (host.stepUp?.required(err)) {
+          setStepUpFor(retried ? null : mailboxId);
+          throw new Error(t("windowStepUp"));
+        }
+        throw err;
+      }
+      /* Refused over a live holder: nothing stored, and the re-read lands on the claim
+         question. */
+      if (outcome === "held") return;
+      /* ── A PRESS THAT STORED NOTHING MAY NOT LOOK LIKE ONE THAT WORKED ───────────
+       *
+       * Every reply to this call is a 200, including the one for a mailbox that is no
+       * longer there — so until `organize` answered, the stage advanced identically
+       * whether the window had been stored or not. Throwing puts the sentence in the
+       * screen's own verdict and leaves the cursor here, which is the rule the rest of
+       * this flow's copy is written to: a control may not report having acted when it
+       * has not. */
+      if (outcome === "gone") throw new Error(t("windowGone"));
+      // The write's own result, applied before the re-read lands. See `consented`.
+      setConsented({ mailboxId, at: new Date().toISOString() });
+      /* A READER'S AGREE ASKED FOR A CLAIM the gate has still to answer — a takeover, or the
+         first claim on a mailbox nothing holds. Done says so until the row answers. */
+      if (facts.mailbox?.organizerRole === "reader") setTakeoverAsk({ mailboxId, floor: null });
+    /* ── ON A RE-RUN THE CURSOR NAMES THE NEXT SCREEN, BECAUSE NOTHING ELSE CAN ─────
+     *
+     * See `run`. A re-run is cursor-driven — a finished account derives to "nothing to
+     * do" — so a cleared cursor here means the consent statement, which is the screen
+     * this press came FROM. That was an infinite loop on the button that ends setup's
+     * only irreversible-sounding sentence. On a first run the cursor is cleared and the
+     * derivation answers, which it now can: consent has just been stamped. */
+    }, rerun === true ? "ai" : undefined, { stayOnFailure: true });
+  };
 
   /** Move inside the run — the Back and Continue verbs, and nothing else. */
   const goTo = useCallback((next: OnboardingStep) => {
@@ -1193,8 +1295,9 @@ export function FirstRun({
             if (!facts.mailbox?.organizeConsentedAt) { forward(); return; }
             if (!mailboxId) return;
             void run(async () => {
-              await host.organize(mailboxId, {});
+              await host.organize(mailboxId, { intent: "takeover" });
               setClaimed(true);
+              setTakeoverAsk({ mailboxId, floor: null });
             }, "elsewhere");
           },
           (
@@ -1306,41 +1409,14 @@ export function FirstRun({
         )) : null}
 
         {step === "window" ? screen(
-          () => {
-            if (!mailboxId) return;
-            void run(async () => {
-              const outcome = await host.organize(mailboxId, {
-                screening: win === "all"
-                  ? { scope: "all_time" }
-                  : { dormancyDays: Number(win), scope: "window" },
-              });
-              /* ── A PRESS THAT STORED NOTHING MAY NOT LOOK LIKE ONE THAT WORKED ───────────
-               *
-               * Every reply to this call is a 200, including the one for a mailbox that is no
-               * longer there — so until `organize` answered, the stage advanced identically
-               * whether the window had been stored or not. Throwing puts the sentence in the
-               * screen's own verdict and leaves the cursor here, which is the rule the rest of
-               * this flow's copy is written to: a control may not report having acted when it
-               * has not. */
-              if (outcome === "gone") throw new Error(t("windowGone"));
-              // The write's own result, applied before the re-read lands. See `consented`.
-              setConsented({ mailboxId, at: new Date().toISOString() });
-            /* ── ON A RE-RUN THE CURSOR NAMES THE NEXT SCREEN, BECAUSE NOTHING ELSE CAN ─────
-             *
-             * See `run`. A re-run is cursor-driven — a finished account derives to "nothing to
-             * do" — so a cleared cursor here means the consent statement, which is the screen
-             * this press came FROM. That was an infinite loop on the button that ends setup's
-             * only irreversible-sounding sentence. On a first run the cursor is cleared and the
-             * derivation answers, which it now can: consent has just been stamped. */
-            }, rerun === true ? "ai" : undefined);
-          },
+          () => { agree(false); },
           (
             <>
               <h1 id={`${ids}-title`}>{t("windowTitle")}</h1>
               <p className="sub">{t("windowLead")}</p>
               <SettingsChoice
                 name={`${ids}-window`} ariaLabel={t("windowTitle")} value={win}
-                onChange={setWin} disabled={busy}
+                onChange={setWin} disabled={busy || checking}
                 options={[
                   { id: "90" as const, label: t("win90") },
                   { id: "180" as const, label: t("win180") },
@@ -1354,10 +1430,22 @@ export function FirstRun({
                   imply one. */}
               <p className="set-note-inline">{t("windowLater")}</p>
               <p className="ob-consent ob-window-recap">{firstSentence(t("consentBody"))}</p>
+              {checking ? <SettingsVerdict state="wait" headline={t("windowCheckingHolder")} /> : null}
               {problem ? <SettingsVerdict state="bad" headline={problem} /> : null}
-              {foot({ back: true, primary: next(busy ? t("agreeing") : t("agree")) })}
+              {foot({ back: true, primary: next(busy ? t("agreeing") : t("agree"), { disabled: checking }) })}
             </>
           ),
+        ) : null}
+        {/* THE DOOR'S SECOND-FACTOR PROMPT, outside the step's form (it carries its own). A verified
+            factor runs the same press once more; Cancel leaves the sentence above standing. */}
+        {step === "window" && stepUpFor !== null && stepUpFor === mailboxId && host.stepUp ? (
+          <div className="ob-stepup">
+            {host.stepUp.prompt({
+              onVerified: () => { setStepUpFor(null); agree(true); },
+              onCancel: () => setStepUpFor(null),
+              onDiscarded: () => setStepUpFor(null),
+            })}
+          </div>
         ) : null}
 
         {step === "ai" ? screen(
@@ -1506,6 +1594,7 @@ export function FirstRun({
                 scope={scope} onScopeChange={setScope} copy={decideBarCopy} keyboard
                 onDecide={(dest, opts) => {
                   decide.onDecide(dest, { markRead: opts.markRead, scope });
+                  setDecidedName(decide.name);
                   // FORWARD, NOT RE-DERIVED. The queue may still hold senders — it usually does
                   // — and the derivation would answer "decide" again. The guided step is one
                   // decision by construction; the rest of the queue is the Screener's.
@@ -1536,8 +1625,24 @@ export function FirstRun({
         {step === "summary" ? screen(leave, (
           <>
             <h1 id={`${ids}-title`}>{organizing ? t("doneTitle") : t("doneReaderTitle")}</h1>
+            {takeover === "refused" ? (
+              <SettingsVerdict state="bad" headline={t("doneTakeoverRefused", {
+                name: holderName(facts) ?? tm("readerHolderUnknown"),
+              })} />
+            ) : null}
             <div className="ob-done">
-              {organizing ? (
+              {/* THE TAKEOVER UNDER WAY, from the row (`takeoverState`): not the reader's "moves
+                  nothing, you can organize later" over a press that has just asked to organize. */}
+              {!organizing && takeover === "asked" ? (
+                <>
+                  <SettingsRow label={held === "nobody" ? t("doneStartLands") : t("doneTakeoverLands")}
+                    description={t("doneTakeoverLandsWhy")} />
+                  {decidedName !== null ? (
+                    <SettingsRow label={t("doneTakeoverDecided", { name: decidedName })}
+                      description={t("doneTakeoverDecidedWhy")} />
+                  ) : null}
+                </>
+              ) : organizing ? (
                 <>
                   {/* THE COUNTS ARE MESSAGES, AND THE LABEL SAID SENDERS. `pull.screened` is the
                       mirror's size minus what History lists — a count of MESSAGES that went
@@ -1634,7 +1739,8 @@ export function FirstRun({
 
         {confirm === "cancel" ? (
           <div className="ob-confirm">
-            <p>{t("cancelWhat")}</p>
+            {/* NOTHING AGREED IS NOT "WHAT YOU AGREED TO STAYS AGREED" — a refused Agree stored nothing. */}
+            <p>{facts.mailbox && !facts.mailbox.organizeConsentedAt ? t("cancelWhatNothingAgreed") : t("cancelWhat")}</p>
             <SettingsActions>
               <Button variant="primary" onClick={leave} disabled={busy}>{t("cancelConfirm")}</Button>
               <Button variant="ghost" onClick={() => setConfirm(null)}>{t("back")}</Button>

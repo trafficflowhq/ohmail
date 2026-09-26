@@ -281,6 +281,10 @@ export interface LocalMailboxRuntime {
   /** The portable organizer profile's write-behind, per mailbox because the document lives in
    *  that mailbox's own `ohmail/_meta`. */
   profileSync: OrganizerProfileSync;
+  /** Has this process read the lease for this mailbox since attach — a peek (held, stopped, none
+   *  or unreadable) or the gate's own read. Read-only; the two reads are its writers. Setup waits
+   *  on it before it offers Agree, because a NULL `organizer_state` is "nobody" and "not looked". */
+  readonly holderLooked: boolean;
 
   // ── THE FOURTEENTH ───────────────────────────────────────────────────────────────────────────
   /**

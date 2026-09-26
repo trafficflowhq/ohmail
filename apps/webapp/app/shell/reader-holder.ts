@@ -83,6 +83,42 @@ export function holderStopped(
   return mailbox?.organizerState === "stopped";
 }
 
+/**
+ * HAS THE DOOR READ THE LEASE FOR THIS ROW. A reader row the local engine has not peeked for
+ * says `organizerChecked: false`, and its NULL `organizerState` then means "not looked", not
+ * "nobody". Absent answers yes, which is every organizer row and every door that cannot say.
+ */
+export function holderAnswered(
+  mailbox: { organizerRole?: "organizer" | "reader"; organizerChecked?: boolean } | null | undefined,
+): boolean {
+  return mailbox?.organizerRole !== "reader" || mailbox.organizerChecked !== false;
+}
+
+/** Where a takeover this run asked for stands — see {@link takeoverState}. */
+export type TakeoverState = "asked" | "landed" | "refused";
+
+/**
+ * THE TAKEOVER THIS RUN ASKED FOR, read off the same row as {@link holderStopped}. `landed` once
+ * the row says organizer; `asked` while the stamp stands; `refused` once the gate spent it and
+ * wrote an organizer event after `floor` (the stamp or consent the run saw, on the server's
+ * clock) with the row still a reader. A read with neither is from before the press: `asked`.
+ * `null`: this run asked for no takeover.
+ */
+export function takeoverState(
+  mailbox: {
+    organizerRole?: "organizer" | "reader"; takeoverAuthorizedAt?: string | null;
+    organizerEventAt?: string | null;
+  } | null | undefined,
+  asked: { floor: string | null } | null,
+): TakeoverState | null {
+  if (asked === null || !mailbox) return null;
+  if (mailbox.organizerRole !== "reader") return "landed";
+  if ((mailbox.takeoverAuthorizedAt ?? null) !== null) return "asked";
+  const event = Date.parse(mailbox.organizerEventAt ?? "");
+  const floor = Date.parse(asked.floor ?? "");
+  return Number.isFinite(event) && Number.isFinite(floor) && event > floor ? "refused" : "asked";
+}
+
 /* ── A PHONE IS THE THIRD HOLDER KIND, AND FOUR SURFACES HAD ARMS FOR TWO ───────────────────
    `OrganizerKind` is `local | cloud | mobile`. The rail, the desktop mailboxes pane, both
    first-run reader rows and the restore card branched on `local` and `cloud` and let a phone

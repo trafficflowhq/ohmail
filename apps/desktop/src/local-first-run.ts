@@ -13,7 +13,7 @@ import { useCallback, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
 import type {
-  FirstRunHost, FirstRunMailboxInput, FirstRunOrganizeOutcome, FirstRunProbeOk,
+  FirstRunHost, FirstRunMailboxInput, FirstRunOrganizeIntent, FirstRunOrganizeOutcome, FirstRunProbeOk,
 } from "../../webapp/app/shell/first-run-host";
 import type { OnboardingAi } from "../../webapp/app/shell/onboarding";
 import { durableSet, type DurableWrite } from "@ohmail/client-engine/durable";
@@ -373,7 +373,10 @@ export function useLocalFirstRun(opts: LocalFirstRunOptions): FirstRunHost | und
 
   const organize = useCallback(async (
     mailboxId: string,
-    body: { imap?: { pass: string }; screening?: { dormancyDays?: number; scope?: "window" | "all_time" } },
+    body: {
+      imap?: { pass: string }; screening?: { dormancyDays?: number; scope?: "window" | "all_time" };
+      intent?: FirstRunOrganizeIntent;
+    },
   ): Promise<FirstRunOrganizeOutcome> => {
     /**
      * AGREE AND START ORGANIZING — consent, baseline, window and scope in one transaction.
@@ -389,13 +392,17 @@ export function useLocalFirstRun(opts: LocalFirstRunOptions): FirstRunHost | und
        organizes (the stamp is refused and the window IS written), and `removed`/`no_mailbox` are
        a mailbox that is not there, which stores nothing. The stage advances on the first two and
        must not on the last two. See {@link FirstRunOrganizeOutcome}. */
-    const r = await jsonOf<{ outcome?: string }>(
-      await bridgeFetch(organizePath(mailboxId), {
-        method: "POST",
-        headers: JSON_HEADERS,
-        body: JSON.stringify(body.screening ? { screening: body.screening } : {}),
+    const res = await bridgeFetch(organizePath(mailboxId), {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({
+        ...(body.screening ? { screening: body.screening } : {}),
+        ...(body.intent ? { intent: body.intent } : {}),
       }),
-    );
+    });
+    /* 409 is the door's refusal over a live holder this press did not ask to displace. */
+    if (res.status === 409) return "held";
+    const r = await jsonOf<{ outcome?: string }>(res);
     return r.outcome === "authorized" || r.outcome === "already_organizing" ? "stored" : "gone";
   }, []);
 

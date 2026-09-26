@@ -16,15 +16,16 @@
  * resting value is not an answer.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type {
   FirstRunHost, FirstRunMailboxInput, FirstRunOrganizeOutcome,
 } from "../../shell/first-run-host";
 import type { OnboardingAi } from "../../shell/onboarding";
 import {
-  ApiError, aiSettings, consent as consentApi, mailboxes as mailboxApi, messageOf,
+  ApiError, aiSettings, codeOf, consent as consentApi, mailboxes as mailboxApi, messageOf,
 } from "../../api-client";
+import { StepUpPrompt } from "./StepUpPrompt";
 import { SELF_HOST_BUILD, serverHello } from "../../hello";
 import { probeReasonOf } from "./MailboxSection";
 
@@ -145,7 +146,10 @@ export function useCloudFirstRun(demo: boolean, pairNode?: ReactNode): FirstRunH
 
   const organize = useCallback(async (
     id: string,
-    body: { imap?: { pass: string }; screening?: { dormancyDays?: number; scope?: "window" | "all_time" } },
+    body: {
+      imap?: { pass: string }; screening?: { dormancyDays?: number; scope?: "window" | "all_time" };
+      intent?: "join" | "takeover";
+    },
   ): Promise<FirstRunOrganizeOutcome> => {
     /* THE OUTCOME IS READ, not discarded. All three replies are 200s: `authorized` is the first
        consent, `already_organizing` is a re-run of setup on a mailbox this account already
@@ -204,6 +208,12 @@ export function useCloudFirstRun(demo: boolean, pairNode?: ReactNode): FirstRunH
       probeMessage: (err: unknown) => (err instanceof ApiError ? messageOf(err) : null),
       ...(SELF_HOST_BUILD && operatorAi !== undefined ? { selfhostAi: operatorAi } : {}),
       ...(pairNode ? { pairNode } : {}),
+      /* The hosted consent route is step-up gated; the setup's Agree asks for the code with the
+         same prompt Settings uses, then presses once more. */
+      stepUp: {
+        required: (err: unknown) => codeOf(err) === "step_up_required",
+        prompt: (p) => createElement(StepUpPrompt, p),
+      },
     } satisfies FirstRunHost;
   }, [ai, complete, connect, demo, forgetMailbox, operatorAi, organize, pairNode, probe, writeAi]);
 }

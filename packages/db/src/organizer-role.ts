@@ -419,6 +419,13 @@ export interface RequestEligibility {
    * and answers not-found instead.
    */
   status: string;
+  /**
+   * THIS INSTALL WAS ASKED TO ORGANIZE THE MAILBOX AND THE CLAIM HAS NOT LANDED: a reader row whose
+   * takeover stamp stands, pressed as a takeover, or as a join over a holder that stopped (a join
+   * yields to a live claim, so it wins nothing there). The gate spends the stamp and writes the
+   * role in one statement, so this is never true of a row the lease has answered.
+   */
+  takeoverPending: boolean;
 }
 
 /**
@@ -454,6 +461,8 @@ export async function readRequestEligibility(
     name: mailboxes.organizedByName,
     since: mailboxes.organizedSince,
     status: mailboxes.status,
+    takeoverAt: mailboxes.takeoverAuthorizedAt,
+    intent: mailboxes.takeoverIntent,
   })
     .from(mailboxes)
     .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId)))
@@ -470,6 +479,8 @@ export async function readRequestEligibility(
     state,
     capable,
     status: row.status,
+    takeoverPending: row.status !== "disabled" && role === "reader" && row.takeoverAt !== null
+      && (row.intent === "takeover" || state !== "held"),
     by: {
       kind: isOrganizerKind(row.kind) ? row.kind : null,
       name: row.name ?? null,

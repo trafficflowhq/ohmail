@@ -229,6 +229,11 @@ export interface ScreenRequestedMailbox {
 export interface ScreenDecisionMailboxes {
   filed: string[];
   requested: ScreenRequestedMailbox[];
+  /**
+   * Mailboxes this install was asked to organize and does not yet: the rule is written, the held
+   * mail moves on the first organizing pass after the claim lands. Absent when there are none.
+   */
+  awaiting?: string[];
 }
 
 export interface ScreenDecisionResult {
@@ -1144,8 +1149,12 @@ export class ScreenerReadService {
      * under a `FOR SHARE` lock (`applyScreenerDecision`, per mailbox). `planAccountFanOut` throws
      * `OrganizedElsewhereError` itself when nothing anywhere could take this decision.
      */
-    const fanOut = await planAccountFanOut(asTx(ctx), ctx.accountId, "screener.decide");
-    if (fanOut.organized.length > 0) {
+    /* A TAKEOVER THIS INSTALL WAS ASKED FOR COUNTS AS ORGANIZING HERE: the decision is a rule the
+       moment it is made, and a request to the holder the claim displaces would never be applied. */
+    const fanOut = await planAccountFanOut(
+      asTx(ctx), ctx.accountId, "screener.decide", { admitTakeover: true },
+    );
+    if (fanOut.organized.length > 0 || fanOut.awaiting.length > 0) {
       return this.applyAsOrganizer(ctx, id, v, fanOut, opts);
     }
     return this.requestAsReader(ctx, id, v, eligibility, fanOut, opts);
@@ -1223,11 +1232,15 @@ export class ScreenerReadService {
       const holders = new Map<string, OrganizedBy>(
         fanOut.requestTo.map((t: FanOutTarget) => [t.mailboxId, t.holder]),
       );
+      const awaiting: string[] = [];
       for (const h of applied.heldElsewhere) {
         if (holders.has(h.mailboxId)) continue;
         const e = await readRequestEligibility(
           tx, ctx.accountId, h.mailboxId, capabilityForKind("screener.decide"),
         );
+        /* Read under the role lock `applyScreenerDecision` took on this row, so the gate cannot
+           spend the stamp before this commits: the bag waits here for the pass after the claim. */
+        if (e?.takeoverPending) { awaiting.push(h.mailboxId); continue; }
         if (decisionCanBeApplied(e) && e!.role !== "organizer") holders.set(h.mailboxId, e!.by);
       }
       const requested: ScreenRequestedMailbox[] = [];
@@ -1242,7 +1255,8 @@ export class ScreenerReadService {
       // organized mailbox was demoted between the plan and the locks and no holder can take a
       // request. The old single-mailbox refusal, kept — the throw rolls the promoted rule back,
       // so a 409 never leaves dead configuration behind.
-      if (filed.length === 0 && requested.length === 0 && applied.heldElsewhere.length > 0) {
+      if (filed.length === 0 && requested.length === 0 && awaiting.length === 0
+        && applied.heldElsewhere.length > 0) {
         const h = applied.heldElsewhere[0]!;
         const e = await readRequestEligibility(
           tx, ctx.accountId, h.mailboxId, capabilityForKind("screener.decide"),
@@ -1255,7 +1269,7 @@ export class ScreenerReadService {
 
       const dto: ScreenDecisionResult = {
         messageId: id, appliedFolder, createdRuleId: applied.createdRuleId,
-        mailboxes: { filed, requested },
+        mailboxes: { filed, requested, ...(awaiting.length > 0 ? { awaiting } : {}) },
       };
 
       // Store the verbatim response IN this tx so a commit-then-crash retry

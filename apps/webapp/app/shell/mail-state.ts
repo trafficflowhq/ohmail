@@ -293,6 +293,7 @@ type OrganizerRow = Parameters<typeof readerStandDown>[0] & {
   authKind?: string;
   organizerEventAt?: string | null;
   organizerEventSeenAt?: string | null;
+  takeoverAuthorizedAt?: string | null;
 };
 
 /**
@@ -347,6 +348,12 @@ export interface ScreenerRole {
   /** Only in `blocked`; `null` in the other two. See {@link ScreenerBlockReason}. */
   reason: ScreenerBlockReason | null;
   /**
+   * THIS INSTALL WAS ASKED TO ORGANIZE A LIVE READER ROW and the claim has not landed: its takeover
+   * stamp stands. Only in `blocked`. A decision then goes to the door, which keeps it as a rule
+   * until the claim lands rather than being refused here.
+   */
+  takeoverAsked?: true;
+  /**
    * EVERY live reader is signed in with OAuth — so the refusal is permanent for this release
    * rather than a build somebody can update.
    *
@@ -378,11 +385,13 @@ export function screenerMode(facts: ReadonlyArray<OrganizerRow> | null): Screene
      may exist with three nulls in it. Where no live row names anybody, nothing organizes these
      mailboxes at all, which is the other sentence and the other remedy. */
   const anyHolder = live.some((m) => Boolean(m.organizedBy && (m.organizedBy.kind || m.organizedBy.name)));
+  const asked = live.some((m) => m.organizerRole === "reader" && (m.takeoverAuthorizedAt ?? null) !== null);
   return {
     mode: "blocked",
     name: named,
     reason: anyHolder ? "organizer_outdated" : "no_organizer",
     oauthOnly,
+    ...(asked ? { takeoverAsked: true as const } : {}),
   };
 }
 
@@ -700,6 +709,12 @@ export interface MailboxFacts {
    * answered, rather than showing it for ever. ABSENT is an older server and changes nothing.
    */
   takeoverAuthorizedAt?: string | null;
+  /**
+   * `false` while the local engine has not read the lease for this reader row, when its NULL
+   * `organizerState` is "not looked" rather than "nobody". Absent is every other case and every
+   * door that cannot say. Setup waits on it before offering Agree.
+   */
+  organizerChecked?: boolean;
   /**
    * Would a decision made here be accepted by whoever organizes this
    * mailbox? `true` only where a press has somewhere to go. Absent and

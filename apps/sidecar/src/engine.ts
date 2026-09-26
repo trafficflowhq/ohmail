@@ -92,7 +92,7 @@ import { createSignOutFence, SIGN_OUT_FENCE_WAIT_MS, type SignOutFence } from ".
 // The exit from a stand-down, as a ceremony rather than a flag — the SAME function the
 // `organize-here` CLI runs. See its header for why status, reason and the one-shot stamp move
 // together, and this file's `handle` for why the desktop door needs a route onto it.
-import { requestOrganizerTakeover } from "./organize-here.js";
+import { liveForeignHolder, requestOrganizerTakeover } from "./organize-here.js";
 // WHICH OUTBOUND PASSES THIS COMPOSITION RUNS — one table read by the pass and by the door, so
 // "a phone keeps no appointments" cannot be true in one of the two places. See its header.
 import { AppointmentsRefused, COMPOSITION_WINDOW_OUTBOX, runsPass, runsStorePass, searchFor } from "./composition-passes.js";
@@ -1423,9 +1423,15 @@ async function discloseLocalSyncFailures(
   states: readonly {
     mailboxId: string;
     connection: { unreachableSince: Date | null; signInRefused: boolean };
+    /** Absent on a caller that cannot say, which overlays nothing. */
+    holderLooked?: boolean;
   }[],
   at: Date,
 ): Promise<Response> {
+  /* A READER ROW THIS PROCESS HAS NOT PEEKED FOR YET says `organizerChecked: false`: its NULL
+     `organizer_state` is "not looked", not "nobody", and setup waits on it before offering Agree.
+     Absent everywhere else, which is the answer an older engine gives. */
+  const unlooked = new Set(states.filter((r) => r.holderLooked === false).map((r) => r.mailboxId));
   const failures = new Map<string, MailboxErrorCode>();
   for (const r of states) {
     if (r.connection.signInRefused) failures.set(r.mailboxId, "auth");
@@ -1434,7 +1440,7 @@ async function discloseLocalSyncFailures(
       failures.set(r.mailboxId, "connect");
     }
   }
-  if (failures.size === 0) return res;
+  if (failures.size === 0 && unlooked.size === 0) return res;
   let body: unknown;
   try {
     body = await res.clone().json();
@@ -1444,14 +1450,16 @@ async function discloseLocalSyncFailures(
   const items = (body as { items?: unknown } | null)?.items;
   if (!Array.isArray(items)) return res;
   const overlaid = items.map((row) => {
-    const m = row as { id?: unknown; status?: unknown } | null;
+    const m = row as { id?: unknown; status?: unknown; organizerRole?: unknown } | null;
+    const id = m && typeof m.id === "string" ? m.id : null;
+    const checked = id !== null && m!.organizerRole === "reader" && unlooked.has(id)
+      ? { organizerChecked: false } : {};
     // Only a row that claims health is overlaid: `disabled` (tombstone, stand-down) is a
     // louder, truer fact about the row than this install's socket, and stays untouched.
-    const code = m && typeof m.id === "string" && m.status === "connected"
-      ? failures.get(m.id) : undefined;
+    const code = id !== null && m!.status === "connected" ? failures.get(id) : undefined;
     return code !== undefined
-      ? { ...(row as object), status: "error", errorCode: code }
-      : row;
+      ? { ...(row as object), ...checked, status: "error", errorCode: code }
+      : { ...(row as object), ...checked };
   });
   return new Response(JSON.stringify({ ...(body as object), items: overlaid }), {
     status: res.status, headers: { "content-type": "application/json" },
@@ -3888,6 +3896,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             longest. */
         installId: string | null;
       } = { kind: null, name: null, since: null, state: null, capabilities: null, installId: null };
+      /** Has a peek or the gate's lease read ANSWERED since attach — `LocalMailboxRuntime.holderLooked`. */
+      let holderLooked = false;
 
       /**
        * An install that is not the organizer looks, and still does not claim. Two arms reach
@@ -3946,6 +3956,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       };
 
       const notePeekedHolder = async (reason: MailboxDisabledReason | null): Promise<void> => {
+        try {
+          await notePeekedHolderOnce(reason);
+        } finally {
+          holderLooked = true;
+        }
+      };
+      const notePeekedHolderOnce = async (reason: MailboxDisabledReason | null): Promise<void> => {
         try {
           const answered = await peekOrganizer();
           /* THE THIRD ANSWER, AND IT IS NOT `free`. A look that did not happen leaves the four
@@ -4539,6 +4556,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           log,
         };
         const outcome = await readMailboxLease({ ...leaseArgs, now: gateAskedAt });
+        holderLooked = true;
         /* SPENT BY THE GATE THAT READ IT, and only once it RETURNED: a cycle that threw on the
            network never offered the correction to the lease, and spending it there would lose the
            one renewal it licenses until the person set their clock again. */
@@ -6491,6 +6509,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            the write path can know. See the field. */
         get leasePendingNonce() { return leasePendingNonce; },
         get profileSync() { return profileSync; },
+        get holderLooked() { return holderLooked; },
         /* THE CONNECTION'S OWN ANSWER, derived and never stored: the pair of closure fields IS
            the state, and this shapes them for a caller. `reachable` is the negation of "we have
            observed a death that no re-dial has undone" — not a probe, and deliberately not one:
@@ -7581,16 +7600,34 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                   ...(raw.scope === undefined ? {} : { scope: raw.scope as "window" | "all_time" }),
                 }
               : undefined;
+            /* A TAKEOVER IS ASKED FOR BY NAME. Only "Organize here instead" sends `"takeover"`;
+               anything else is a join, which yields to a live claim at the fence. The window
+               ships with this engine and the phone's door forwards `"join"`, so nothing here
+               relied on an absent verb meaning more. */
+            const intent = body.intent === "takeover" ? "takeover" : "join";
+            if (intent !== "takeover") {
+              /* AND OVER A HOLDER THE ROW ALREADY SHOWS RENEWING, THE PRESS IS REFUSED, with the
+                 holder named: setup has not asked the claim question yet. The phone door's 409. */
+              const seen = await liveForeignHolder(db, mailboxId, installId).catch(() => null);
+              if (seen?.answer === "held") {
+                log("local_mailbox_organize_refused", {
+                  verdict: "held",
+                  reason: "another install is renewing its claim and this press did not ask to take "
+                    + "the mailbox over, so nothing was written; setup asks the claim question",
+                });
+                return new Response(
+                  JSON.stringify({
+                    error: { code: "organized_elsewhere", message: "another install is organizing this mailbox" },
+                    holder: seen.holder,
+                  }),
+                  { status: 409, headers: { "content-type": "application/json" } },
+                );
+              }
+            }
             try {
               const result = await requestOrganizerTakeover(db, {
                 mailboxId, now: now(), accountId: core.accountId,
-                /* THE VERB, AND THE BODY MAY ONLY WEAKEN IT — `packages/api`'s `organizeInputOf`
-                   rule, spelled the same way on this door because this door writes the same
-                   stamp. `"join"` is the one admitted value; anything else is the takeover this
-                   desktop's button has always meant. The PHONE's door does not depend on its app
-                   sending it (`mobile.ts` writes it over every consent request it forwards), so a
-                   caller can ask for less than the button and never for more. */
-                intent: body.intent === "join" ? "join" : "takeover",
+                intent,
                 ...(screening ? { screening } : {}),
               });
               log("local_mailbox_organize_consented", {

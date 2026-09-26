@@ -1301,6 +1301,13 @@ export class HttpAdapter implements EngineAdapter {
             .find((n) => typeof n === "string" && n.trim() !== "");
           return { changes: [], seq, pendingWith: { name: typeof named === "string" ? named : null } };
         }
+        /* A TAKEOVER NOT LANDED YET: the rule is written and the held mail moves once this install
+           organizes. To the queue that is the same fact as a queued half — decided, not carried
+           out — so the sender stays out of it instead of coming back on the confirm. */
+        const awaiting = (decided as { mailboxes?: { awaiting?: unknown } } | null)?.mailboxes?.awaiting;
+        if (Array.isArray(awaiting) && awaiting.length > 0) {
+          return { changes: [], seq, pendingWith: { name: null } };
+        }
         return { changes: [], seq };
       }
 

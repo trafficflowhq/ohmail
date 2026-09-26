@@ -493,6 +493,58 @@ export async function requestOrganizerTakeover(
   return { outcome: "authorized", previousReason: standDownMemory(row), mailboxId: row.id };
 }
 
+/**
+ * Who holds this mailbox, if it is not this install. The row's holder columns, as the gate's last
+ * peek left them: `organizer_state` is `held` only while a claim in `ohmail/_meta` is still being
+ * renewed, so it is LIVENESS, not the row's memory of a stand-down. `disabled_reason` is that
+ * memory and outlives the holder, which is why it is not read here — a mailbox whose laptop has
+ * gone away must not be refused to the phone in front of the person. A claim carrying OUR install
+ * id is not foreign (own-role resumption after a crash or restore); a NULL stored id is a live
+ * claim from a build that records no id, so it stays refused as another install.
+ */
+export type RowHolderAnswer =
+  /** A live foreign claim, as the last look left it. The fast path, and the only `held`. */
+  | { readonly answer: "held"; readonly holder: { readonly name: string; readonly kind: string } }
+  /** A look ANSWERED and named nobody this press has to yield to. */
+  | { readonly answer: "free" }
+  /**
+   * THE COLUMNS CANNOT SAY. `organizer_state` NULL is two facts in one value — "nobody has ever
+   * organized this mailbox" and "we have not looked" — and the schema says so in its own comment.
+   * A door cannot tell them apart from the row, so it stops reading the row and looks.
+   */
+  | { readonly answer: "unknown" };
+
+export async function liveForeignHolder(
+  db: LocalDb,
+  mailboxId: string,
+  ourInstallId: string,
+): Promise<RowHolderAnswer> {
+  const [row] = await db
+    .select({
+      role: mailboxes.organizerRole,
+      state: mailboxes.organizerState,
+      name: mailboxes.organizedByName,
+      kind: mailboxes.organizedByKind,
+      holderInstallId: mailboxes.organizedByInstallId,
+    })
+    .from(mailboxes)
+    .where(eq(mailboxes.id, mailboxId))
+    .limit(1);
+  /* NO ROW is not a free mailbox — it is a mailbox this door knows nothing about, and the route
+     behind it will answer for the id. `free` here would be a decision taken on an absence. */
+  if (row === undefined) return { answer: "unknown" };
+  /* AN ORGANIZER OF RECORD has already been through the gate for this mailbox; the press is a
+     second becoming and the route answers it idempotently. Nothing to yield to and nothing to
+     look up. */
+  if (row.role !== "reader") return { answer: "free" };
+  /* `stopped` IS AN ANSWER — somebody was organizing and nothing has renewed since, which is the
+     gate's own `available`. Only NULL is the unlooked-at state. */
+  if (row.state === null) return { answer: "unknown" };
+  if (row.state !== "held") return { answer: "free" };
+  if (row.holderInstallId !== null && row.holderInstallId === ourInstallId) return { answer: "free" };
+  return { answer: "held", holder: { name: row.name ?? "", kind: row.kind ?? "" } };
+}
+
 /** What the command says for each outcome. One line each; nothing needs a paragraph. */
 export const TAKEOVER_MESSAGES: Record<TakeoverAuthorizationOutcome, string> = {
   authorized:

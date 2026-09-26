@@ -1464,6 +1464,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         // column and null is a mailbox nothing has happened to, and the rule that reads it
         // treats both as "no ordering evidence" rather than as evidence of anything.
         organizerEventAt: firstRunMailbox.organizerEventAt,
+        // The takeover's pending half, for the summary's `takeoverState`. Untouched, like the rest.
+        takeoverAuthorizedAt: firstRunMailbox.takeoverAuthorizedAt,
+        organizerChecked: firstRunMailbox.organizerChecked,
         // FORWARDED UNTOUCHED, both of them. `mailbox-facts.ts` states the rule and the two
         // measured failures behind it: absent and null are different answers on these fields,
         // and a `?? null` at this seam is what destroyed the distinction the last two times.

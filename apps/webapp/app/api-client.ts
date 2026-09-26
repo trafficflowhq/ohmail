@@ -1632,6 +1632,8 @@ export const mailboxes = {
   organize: (id: string, body: {
     imap?: { pass: string };
     screening?: { dormancyDays?: number; scope?: "window" | "all_time" };
+    /** `"join"` yields to a live claim; absent is the takeover the Settings button means. */
+    intent?: "join" | "takeover";
   } = {}) =>
     api<MailboxTakeover>(`/mailboxes/${id}/organize`, { method: "POST", body }),
 

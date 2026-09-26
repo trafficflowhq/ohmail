@@ -132,6 +132,7 @@ describe("the desktop mailbox-facts seam", () => {
          the projection never answers a refusal without the request it explains. */
       releaseRefusal: null,
       takeoverAuthorizedAt: null,
+      organizerChecked: false,
       organizerAcceptsRequests: false,
       /* HOW the mailbox is signed in. On this door it is always a password — the local engine
          has no OAuth ceremony — but the field is on the wire and the shell reads it, so the

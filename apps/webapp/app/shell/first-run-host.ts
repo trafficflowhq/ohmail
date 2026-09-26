@@ -66,7 +66,29 @@ export type FirstRunOrganizeOutcome =
    * There was nothing to organize — the mailbox is disconnected, removed, or unknown to this
    * door. NOTHING was written, so the flow may not advance and must say so.
    */
-  | "gone";
+  | "gone"
+  /**
+   * Refused, nothing written: another install is renewing its claim and the press did not ask to
+   * take the mailbox over. The flow re-reads and asks the claim question.
+   */
+  | "held";
+
+/**
+ * WHAT THE PRESS ASKS FOR. `"takeover"` only after the person chose "Organize here instead";
+ * `"join"` yields to a live claim at the fence. Both doors admit both.
+ */
+export type FirstRunOrganizeIntent = "join" | "takeover";
+
+/**
+ * THE DOOR'S OWN SECOND-FACTOR PROMPT, where Agree can meet one. The hosted consent route is
+ * step-up gated, and a refusal there is a code to ask for, then the same press once more.
+ */
+export interface FirstRunStepUp {
+  /** Is this refusal the door asking for a fresh second factor? */
+  required: (err: unknown) => boolean;
+  /** The prompt; `onVerified` retries the refused press. */
+  prompt: (p: { onVerified: () => void; onCancel: () => void; onDiscarded: () => void }) => ReactNode;
+}
 
 export interface FirstRunHost {
   /** Which door is asking — it decides which steps exist at all (see {@link OnboardingDoor}). */
@@ -117,7 +139,10 @@ export interface FirstRunHost {
    */
   organize: (
     mailboxId: string,
-    body: { imap?: { pass: string }; screening?: { dormancyDays?: number; scope?: "window" | "all_time" } },
+    body: {
+      imap?: { pass: string }; screening?: { dormancyDays?: number; scope?: "window" | "all_time" };
+      intent?: FirstRunOrganizeIntent;
+    },
   ) => Promise<FirstRunOrganizeOutcome>;
 
   /**
@@ -172,4 +197,7 @@ export interface FirstRunHost {
    * where the door does not pair, and the step is then skipped rather than rendered empty.
    */
   pairNode?: ReactNode;
+
+  /** The door's second-factor prompt — absent where Agree meets none (the local door). */
+  stepUp?: FirstRunStepUp;
 }
