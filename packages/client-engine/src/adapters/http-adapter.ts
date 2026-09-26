@@ -926,7 +926,7 @@ export class HttpAdapter implements EngineAdapter {
    */
   async timeline(): Promise<StoreTimeline | null> {
     const zone = this.readerZone();
-    const res = await this.request("GET", `/messages/timeline${zone ? `?zone=${encodeURIComponent(zone)}` : ""}`);
+    const res = await this.request("GET", zone ? `/messages/timeline?zone=${encodeURIComponent(zone)}` : "/messages/timeline");
     if (!res.ok) throw await this.rejectionOf(res);
     return readTimelineWire(await res.json());
   }
