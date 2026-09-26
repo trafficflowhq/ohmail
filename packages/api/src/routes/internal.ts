@@ -9,12 +9,13 @@ import type { Tx } from "@trafficflow/db";
 import {
   runAwayResponderPass,
   reapStaleWebSessions, runPlatformSignalPass,
-  runAccountLifecyclePass,
+  runAccountLifecyclePass, eraseOneDueAccount,
   runScheduledSendPass, runSendReconcilePass, SEND_RECONCILE_NET_TIMEOUTS,
   startDrainBudget,
   TransientDialRefusal, type AdminDb,
 } from "@trafficflow/services";
 import { UNSUB_DRAIN_RUN_BUDGET_MS, type SendAdapter } from "@trafficflow/core/mail";
+import { isUuid } from "@trafficflow/services/mail";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import { makeSendAdapter } from "../send-adapter.js";
 import { MAX_IMAP_PER_MAILBOX } from "../attachments-adapter.js";
@@ -146,6 +147,8 @@ export const AWAY_RESPONDER_CRON_PATH = "/internal/away/run";
  * mail through the transactional mail provider, which only this host holds.
  */
 export const ACCOUNT_LIFECYCLE_CRON_PATH = "/internal/account-lifecycle/run";
+/** The erasure door the sweep's `erasureDue` names, one account per call (`?account=<uuid>`). */
+export const ACCOUNT_LIFECYCLE_ERASE_PATH = "/internal/account-lifecycle/erase";
 
 /**
  * `makeSendAdapter` under the per-mailbox admission counter — the reconciling pass's dial:
@@ -957,14 +960,11 @@ export const internalRoutes: Route[] = [
   },
   {
     /**
-     * `GET /internal/account-lifecycle/run` — the wall's nightly pass (cloud 0040): the trial,
-     * closure and erasure-week notices, idempotent by the notices PK on the plane's own anchors,
-     * and the erasure once `erasureAt` + a day of slack has passed AND that date clears the
-     * plane's own lifecycle epoch — through `deleteAccount`, exactly as `DELETE /account` runs
-     * it, the only other caller. The reaper's shape: GET, either secret, 404 unarmed. Unmetered
-     * hosts answer 200 `{skipped}` — no plane, no lifecycle, nothing owed. Overlapping pokes are
-     * safe: every notice is claimed by PK insert and the erasure is idempotent by
-     * `accounts.erased_at`.
+     * `GET /internal/account-lifecycle/run[?after=<uuid>]` — the wall's nightly sweep (cloud
+     * 0040): the trial, closure and erasure-week notices, idempotent by the notices PK on the
+     * plane's own anchors. It names the accounts due for erasure (`erasureDue`) and erases none;
+     * it stops at its 45 s budget and answers `next`, which the caller passes back as `?after=`.
+     * The reaper's shape: GET, either secret, 404 unarmed; unmetered hosts answer 200 `{skipped}`.
      */
     method: "GET",
     pattern: ACCOUNT_LIFECYCLE_CRON_PATH,
@@ -984,6 +984,8 @@ export const internalRoutes: Route[] = [
         log.warn("account_lifecycle_unauthorized", {});
         return json(401, { error: { code: "unauthorized" } });
       }
+      const after = new URL(req.url).searchParams.get("after");
+      if (after !== null && !isUuid(after)) return json(400, { error: { code: "bad_after" } });
       const port = entitlementsPort(deps);
       // No entitlements program ⇒ no lifecycle to read and nothing owed — the billing
       // reconciliation's unconfigured answer, not a 5xx.
@@ -994,16 +996,58 @@ export const internalRoutes: Route[] = [
           mail: deps.services?.customerMail ?? null,
           log,
           now: deps.now,
+          after,
         });
-        const acted = result.erased + result.faults
+        const { erasureDue, next, ...counts } = result;
+        const acted = erasureDue.length + result.faults
           + result.sent.trial_two_days + result.sent.closed + result.sent.erasure_week;
-        if (acted > 0) log.info("account_lifecycle_pass", { ...result });
+        if (acted > 0) log.info("account_lifecycle_pass", { ...counts, due: erasureDue.length, capped: next !== null });
         return json(200, { now: deps.now().toISOString(), ...result });
       } catch (err) {
         // `raw` means no error envelope above this handler; it must never throw. Per-account
         // faults are absorbed inside the pass — this catches only the iteration itself.
         log.error("account_lifecycle_pass_failed", { err });
         return json(503, { error: { code: "account_lifecycle_pass_failed" } });
+      }
+    },
+  },
+  {
+    /**
+     * `GET /internal/account-lifecycle/erase?account=<uuid>` — one erasure the sweep named, in its
+     * own invocation so `deleteAccount`'s one transaction has the platform ceiling to itself. The
+     * program is asked again at this door and only its answer erases; idempotent by
+     * `accounts.erased_at`, so a repeated poke answers `already_erased`. A non-due id answers 200
+     * `{skipped: "not_due"}`. The run route's shape: GET, either secret, 404 unarmed.
+     */
+    method: "GET",
+    pattern: ACCOUNT_LIFECYCLE_ERASE_PATH,
+    relay: false,  /* the hosted service's shared-secret intake */
+    cost: "unauthenticated",
+    options: { public: true, anonymous: true, raw: true },
+    handler: async (req, deps) => {
+      const log = (deps.logger ?? silentLogger).child({ route: ACCOUNT_LIFECYCLE_ERASE_PATH });
+      const cfg = deps.alerts;
+      if (!cfg || cfg.secret.trim().length === 0) {
+        return json(404, { error: { code: "not_found" } });
+      }
+      const cron = cfg.cronSecret?.trim();
+      const authorized = presentsSecret(req, cfg.secret)
+        || (cron !== undefined && cron.length > 0 && presentsSecret(req, cron));
+      if (!authorized) {
+        log.warn("account_lifecycle_unauthorized", {});
+        return json(401, { error: { code: "unauthorized" } });
+      }
+      const accountId = new URL(req.url).searchParams.get("account");
+      if (accountId === null || !isUuid(accountId)) return json(400, { error: { code: "bad_account" } });
+      const port = entitlementsPort(deps);
+      if (!port) return json(200, { skipped: "unmetered" });
+      try {
+        const outcome = await eraseOneDueAccount(deps.db, { port, log, now: deps.now }, accountId);
+        return json(200, outcome === "erased" || outcome === "already_erased"
+          ? { outcome } : { skipped: outcome });
+      } catch (err) {
+        log.error("account_lifecycle_erase_failed", { accountId, err });
+        return json(503, { error: { code: "account_lifecycle_erase_failed" } });
       }
     },
   },

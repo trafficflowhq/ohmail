@@ -233,6 +233,9 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // chose, the tail's turn count, and how long a doorbell waited for its visit. Integers from a
   // clock and closed section names, naming no mailbox content.
   "rotationMs", "tailMs", "tailWallMs", "turns", "sections", "section", "ms", "wakeLatencyMs",
+  // The nightly account sweep's counts (`account_lifecycle_pass`): accounts with a lifecycle
+  // block, notices owed with no mailer configured, and erasures it named for the erase door.
+  "withLifecycle", "unmailable", "due",
   // AND WHAT ONE BOOTSTRAP PAGE COST THE SERVER (`snapshot_page`), added WITH its call site. One
   // `Date.now()` delta beside the frame's own `bytes`, which is already above: together they are
   // the page count, the page size and the server's time per page that a shipped build could not

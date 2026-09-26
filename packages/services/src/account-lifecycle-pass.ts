@@ -14,9 +14,10 @@ import type { MailContext } from "./mail/index.js";
  * the plane ANSWERED for the account, and owes at most one mail per FACT: idempotency is DERIVED
  * from the `account_lifecycle_notices` PRIMARY KEY (account, kind, anchor), where `anchor` is the
  * plane's own ISO instant — never a clock read here. No state machine, no closure table: a re-run
- * inserts nothing, a NEW closure is a new anchor. The ERASURE runs here and in `DELETE /account`
- * and NOWHERE ELSE: when `erasureAt + 24 h <= now` (a day of slack against plane↔API clock skew)
- * and the date clears the plane's own epoch, it calls `deleteAccount` as the route does.
+ * inserts nothing, a NEW closure is a new anchor. The sweep only NAMES the accounts due for erasure
+ * (`erasureDue`); each is erased in its own invocation by {@link eraseOneDueAccount}, and that door
+ * and `DELETE /account` are the only callers of `deleteAccount`. A sweep stops at its wall-clock
+ * budget and answers `next`, the id to go on after.
  */
 
 /** How far ahead the trial reminder looks — "two days left", the flow's own words. */
@@ -25,6 +26,10 @@ export const TRIAL_REMINDER_AHEAD_MS = 2 * 24 * 60 * 60 * 1000;
 export const ERASURE_REMINDER_AHEAD_MS = 7 * 24 * 60 * 60 * 1000;
 /** The slack past `erasureAt` before anything is erased. */
 export const ERASURE_SLACK_MS = 24 * 60 * 60 * 1000;
+/** One sweep's wall clock, under the platform's 60 s ceiling; checked before every chunk. */
+export const ACCOUNT_LIFECYCLE_BUDGET_MS = 45_000;
+/** Due erasures one sweep names before it stops and answers `next` — bounds the answer's size. */
+export const ERASURE_DUE_PER_RUN = 100;
 
 /**
  * The one method this pass needs of `MailService` — structural, so the API's dependency bag
@@ -66,6 +71,11 @@ export interface AccountLifecyclePassDeps {
   log?: Logger;
   /** Accounts read from the plane at once. The plane's own budget bounds each call. */
   concurrency?: number;
+  /** Go on after this account id — the previous sweep's `next`. */
+  after?: string | null;
+  /** Test seams: the wall-clock budget and the clock it is read from. */
+  budgetMs?: number;
+  clock?: () => number;
 }
 
 export interface AccountLifecyclePassResult {
@@ -77,10 +87,12 @@ export interface AccountLifecyclePassResult {
   sent: { trial_two_days: number; closed: number; erasure_week: number };
   /** Owed notices left unclaimed because no mailer is configured. */
   unmailable: number;
-  /** Accounts erased this run (`erasureAt` + slack passed). */
-  erased: number;
-  /** Per-account faults absorbed (unanswered reads, failed sends, failed erasures). */
+  /** Accounts whose erasure is due, for {@link eraseOneDueAccount} one at a time. Never erased here. */
+  erasureDue: string[];
+  /** Per-account faults absorbed (unanswered reads, failed sends). */
   faults: number;
+  /** The id to go on after when the budget or the due bound stopped the sweep; null at the end. */
+  next: string | null;
 }
 
 interface DueNotice {
@@ -165,16 +177,21 @@ export async function runAccountLifecyclePass(
   const log = deps.log ?? silentLogger;
   const now = deps.now;
   const concurrency = deps.concurrency ?? 4;
+  const clock = deps.clock ?? Date.now;
+  const started = clock();
+  const budgetMs = deps.budgetMs ?? ACCOUNT_LIFECYCLE_BUDGET_MS;
   const result: AccountLifecyclePassResult = {
     accounts: 0, withLifecycle: 0,
     sent: { trial_two_days: 0, closed: 0, erasure_week: 0 },
-    unmailable: 0, erased: 0, faults: 0,
+    unmailable: 0, erasureDue: [], faults: 0, next: null,
   };
 
   let epochAbsentSaid = false;
-  // Keyset pages over the live accounts — the erased are out by the WHERE, and an account this
-  // very run erases sets `erased_at` so no later page or run meets it again.
-  let after: string | null = null;
+  // Keyset pages over the live accounts — the erased are out by the WHERE. `done` is the last id
+  // whose chunk finished: a sweep stopped before a chunk answers it as `next`.
+  let after: string | null = deps.after ?? null;
+  let done: string | null = after;
+  let chunks = 0;
   for (;;) {
     const page: Array<{ id: string }> = await db
       .select({ id: accounts.id })
@@ -190,7 +207,14 @@ export async function runAccountLifecyclePass(
     after = page[page.length - 1]!.id;
 
     for (let i = 0; i < page.length; i += concurrency) {
+      // Never before the first chunk, so every sweep moves `next` forward.
+      if (chunks > 0 && (clock() - started >= budgetMs || result.erasureDue.length >= ERASURE_DUE_PER_RUN)) {
+        result.next = done;
+        return result;
+      }
       const chunk = page.slice(i, i + concurrency);
+      done = chunk[chunk.length - 1]!.id;
+      chunks += 1;
       await Promise.all(chunk.map(async ({ id }) => {
         result.accounts += 1;
         try {
@@ -245,44 +269,9 @@ export async function runAccountLifecyclePass(
             });
           }
 
-          if (erasureDue(lc, now())) {
-            // THE PROGRAM IS ASKED AGAIN AT THE ERASURE DOOR, past every cache, and only its
-            // answer erases: a read it did not answer skips, and the next run asks again. The
-            // page's answer came before the notices went out, and somebody who subscribed again
-            // meanwhile must keep their data. The read sits AHEAD of the money stop so a skip
-            // touches nothing — a released subscription is not recoverable.
-            const answer = await deps.port.accessOrFault(id);
-            if (answer === "fault") {
-              result.faults += 1;
-              log.warn("account_erasure_skipped_unanswered", {
-                accountId: id,
-                reason: "the entitlements program did not answer at the erasure door; nothing " +
-                  "was released or erased, and the next run asks again",
-              });
-              return;
-            }
-            const fresh = answer.lifecycle;
-            if (!fresh || !erasureDue(fresh, now())) {
-              log.info("account_erasure_skipped_reactivated", {
-                accountId: id,
-                reason: "the verdict read at the erasure door no longer asks for erasure — the " +
-                  "account was reactivated or its retention moved; nothing was released or erased",
-              });
-              return;
-            }
-            // STOP THE MONEY first, exactly as `DELETE /account` does; a cancel failure does not
-            // block erasure — the port answers rather than throwing, and the outcome is logged.
-            const outcome = await deps.port.releaseAccount(id);
-            await deleteAccount({
-              db, accountId: id, userId: null, now, requestId: randomUUID(),
-            });
-            result.erased += 1;
-            log.info("account_lifecycle_erased", {
-              accountId: id, subscription: outcome,
-              reason: "the retention period ended a day ago or more; the account's data is " +
-                "erased through the same path DELETE /account runs, and the mailbox is untouched",
-            });
-          }
+          // DUE IS NAMED, NEVER ACTED ON HERE: the erasure runs in its own invocation, where one
+          // large account's single transaction cannot cost the rest of the sweep its budget.
+          if (erasureDue(lc, now())) result.erasureDue.push(id);
         } catch (err) {
           result.faults += 1;
           log.error("account_lifecycle_account_failed", {
@@ -295,6 +284,53 @@ export async function runAccountLifecyclePass(
     }
   }
   return result;
+}
+
+/** What the erasure door did for one account — a closed set, answered on the route. */
+export type EraseOneOutcome =
+  | "erased" | "already_erased" | "not_due" | "unanswered" | "reactivated";
+
+/**
+ * THE ERASURE DOOR, one account per call: the program is asked AGAIN, past every cache, and only
+ * its answer erases; the money is stopped first, exactly as `DELETE /account` does, and then
+ * `deleteAccount` runs its ONE transaction. Idempotent by `accounts.erased_at`. A read the program
+ * did not answer, or a verdict that no longer asks for erasure, changes nothing.
+ */
+export async function eraseOneDueAccount(
+  db: Db, deps: Pick<AccountLifecyclePassDeps, "port" | "now" | "log">, accountId: string,
+): Promise<EraseOneOutcome> {
+  const log = deps.log ?? silentLogger;
+  const now = deps.now;
+  const [row] = await db.select({ erasedAt: accounts.erasedAt }).from(accounts)
+    .where(eq(accounts.id, accountId)).limit(1);
+  if (!row) return "not_due";
+  if (row.erasedAt !== null) return "already_erased";
+  const answer = await deps.port.accessOrFault(accountId);
+  if (answer === "fault") {
+    log.warn("account_erasure_skipped_unanswered", {
+      accountId,
+      reason: "the entitlements program did not answer at the erasure door; nothing " +
+        "was released or erased, and the next run asks again",
+    });
+    return "unanswered";
+  }
+  const fresh = answer.lifecycle;
+  if (!fresh || !erasureDue(fresh, now())) {
+    log.info("account_erasure_skipped_reactivated", {
+      accountId,
+      reason: "the verdict read at the erasure door does not ask for erasure — the account " +
+        "was reactivated, its retention moved, or it was never due; nothing was released or erased",
+    });
+    return fresh && fresh.state === "closed" ? "reactivated" : "not_due";
+  }
+  const outcome = await deps.port.releaseAccount(accountId);
+  await deleteAccount({ db, accountId, userId: null, now, requestId: randomUUID() });
+  log.info("account_lifecycle_erased", {
+    accountId, subscription: outcome,
+    reason: "the retention period ended a day ago or more; the account's data is " +
+      "erased through the same path DELETE /account runs, and the mailbox is untouched",
+  });
+  return "erased";
 }
 
 /** Claim one notice by its PK, send it, and un-claim on a FAILED send so the next run retries. */

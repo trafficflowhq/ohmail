@@ -299,11 +299,13 @@ export {
   deleteAccount, type DeleteAccountResult,
 } from "./account-deletion-service.js";
 // The wall's nightly pass (cloud 0040): the reminder mails, idempotent by the notices PK, and
-// the erasure through the same path DELETE /account runs.
+// the erasure door, one account per call, through the same path DELETE /account runs.
 export {
-  runAccountLifecyclePass, noticesDue, erasureDue, erasureClearsEpoch,
+  runAccountLifecyclePass, eraseOneDueAccount, noticesDue, erasureDue, erasureClearsEpoch,
   TRIAL_REMINDER_AHEAD_MS, ERASURE_REMINDER_AHEAD_MS, ERASURE_SLACK_MS,
+  ACCOUNT_LIFECYCLE_BUDGET_MS, ERASURE_DUE_PER_RUN,
   type AccountLifecyclePassDeps, type AccountLifecyclePassResult, type LifecycleNoticeMailer,
+  type EraseOneOutcome,
 } from "./account-lifecycle-pass.js";
 export * from "./auth/index.js";
 // Transactional mail: MailerPort, the policy layer above it, and the templates —
