@@ -174,6 +174,12 @@ export interface SearchResult {
   indexed?: { done: number; total: number };
 }
 
+/** One tier's page rows as their DTOs, the cursor after them, and whether an arm was cut. */
+interface TierRows {
+  items: MessageDTO[]; next: Omit<RelevanceCursor, "t"> | Omit<OrderedCursor, "t"> | null;
+  cut: boolean; candidates: number;
+}
+
 /** One page, before the summary is joined to it. */
 interface SearchPage {
   items: MessageDTO[];
@@ -524,18 +530,25 @@ export class SearchService {
    * typo tier ranks its newest K only: every candidate costs one similarity, and the tier is a
    * guess list, where the closest recent guesses are the useful ones.
    */
-  private fusedArms(d: Dialect, where: SQL, arms: readonly Arm[], tier: SearchTier, limit: number): {
-    k: number; named: SQL; all: SQL; sizes: SQL[];
-  } {
+  private fusedArms(
+    d: Dialect, where: SQL, arms: readonly Arm[], tier: SearchTier, limit: number,
+    opts: { prefix?: string; gate?: SQL } = {},
+  ): { k: number; named: SQL; all: SQL; sizes: SQL[]; sizeNames: string[] } {
     const k = SEARCH_ARM_FACTOR * limit;
     const window = tier === "similar" ? k : SEARCH_RANK_WINDOW_FACTOR * limit;
     const armSqls = arms.map((a) => this.armSql(where, a, k, window));
-    const a = (i: number): SQL => sql.raw("a" + String(i));
+    const pre = opts.prefix ?? "";
+    const a = (i: number): SQL => sql.raw(pre + "a" + String(i));
+    const sizeNames = armSqls.map((_, i) => pre + "n" + String(i));
+    // A gated arm is counted only when its gate holds, so a count never starts the arm either.
+    const size = (i: number): SQL => (opts.gate === undefined ? sql`(select count(*) from ${a(i)})`
+      : sql`(case when ${opts.gate} then (select count(*) from ${a(i)}) else 0 end)`);
     return {
       k,
       named: sql.join(armSqls.map((x, i) => sql`${a(i)} as (${x})`), sql`, `),
       all: sql.join(armSqls.map((_, i) => sql`select id, r from ${a(i)}`), sql` union all `),
-      sizes: armSqls.map((_, i) => sql`${d.castInt(sql`(select count(*) from ${a(i)})`)} as ${sql.raw("n" + String(i))}`),
+      sizes: armSqls.map((_, i) => sql`${d.castInt(size(i))} as ${sql.raw(sizeNames[i]!)}`),
+      sizeNames,
     };
   }
 
@@ -567,8 +580,12 @@ export class SearchService {
     const where = this.whereSql(d, ctx.accountId, opts.filters ?? {});
 
     // ONE session for the page: its settings and the marker, the tier's rows joined into their
-    // DTOs, and the typo tier in the same transaction when the exact tier is empty.
+    // DTOs, and the typo tier in the same transaction when the exact tier is empty — on Postgres
+    // in the same statement ({@link firstRelevancePage}).
     const { tier, got } = await this.session(ctx, d, async (db, built) => {
+      if (cursor === null && sort === "relevance" && d.name === "pg") {
+        return this.firstRelevancePage(ctx, db, d, q, where, limit, built);
+      }
       let t: SearchTier = cursor?.t ?? "exact";
       let rows = await this.pageRows(ctx, db, d, q, t, where, sort, limit, cursor, built);
       if (cursor === null && t === "exact" && rows.items.length === 0) {
@@ -584,16 +601,55 @@ export class SearchService {
   }
 
   /**
+   * THE FIRST RELEVANCE PAGE AND ITS TYPO TIER AS ONE STATEMENT, for a store where a statement is
+   * a round trip: the typo arms sit behind a count of the exact tier's fused rows, which Postgres
+   * plans as a one-time filter, so they never start when the exact tier answers and a closest-
+   * words page costs the round trips of an exact one. No row at all answers as the typo tier.
+   */
+  private async firstRelevancePage(
+    ctx: ServiceContext, db: unknown, d: Dialect, q: string, where: SQL, limit: number, built: StoreFacts,
+  ): Promise<{ tier: SearchTier; got: TierRows }> {
+    const none = sql`(select count(*) from fused_e) = 0`;
+    const e = this.fusedArms(d, where, this.arms(ctx, d, q, "exact", built), "exact", limit);
+    const s = this.fusedArms(d, where, this.arms(ctx, d, q, "similar", built), "similar", limit, { prefix: "s", gate: none });
+    const score = d.castInt(sql`sum(${sql.raw(String(RRF_SCALE))} / (${sql.raw(String(RRF_K))} + r))`);
+    const rows = await materializePage(db as Db, ctx.accountId, {
+      rows: sql`
+      with ${e.named}, fused_e as (select id, ${score} as score from (${e.all}) x group by id),
+      ${s.named}, fused_s as (select id, ${score} as score from (${s.all}) x where ${none} group by id),
+      fused as (select id, score, 0 as t from fused_e union all select id, score, 1 as t from fused_s)
+      select f.id as id, f.score as score, f.t as t, ${d.castInt(sql`(select count(*) from fused)`)} as fused,
+        ${sql.join([...e.sizes, ...s.sizes], sql`, `)}
+      from fused f join messages m on m.id = f.id
+      order by f.score desc, m.date desc nulls last, f.id desc
+      limit ${limit + 1}`,
+      keys: ["score", "t", "fused", ...e.sizeNames, ...s.sizeNames],
+      order: sql`p.score desc, ${messages.date} desc nulls last, ${messages.id} desc`,
+    });
+    const page = rows.slice(0, limit);
+    const last = page[page.length - 1];
+    const tier: SearchTier = rows.length > 0 && Number(rows[0]!.keys[1]) === 0 ? "exact" : "similar";
+    const sizes = (rows[0]?.keys ?? []).slice(3).map((n) => Number(n));
+    const own = tier === "exact" ? sizes.slice(0, e.sizes.length) : sizes.slice(e.sizes.length);
+    return {
+      tier,
+      got: {
+        items: page.map((r) => r.dto),
+        next: rows.length > limit && last ? { k: "r", s: Number(last.keys[0]), d: millisOf(last.dto.date), i: last.dto.id } : null,
+        cut: own.some((n) => n >= e.k),
+        candidates: Number(rows[0]?.keys[2] ?? 0),
+      },
+    };
+  }
+
+  /**
    * The rows of one page of one tier as their DTOs, and the cursor after them — the tier's
    * statement is the source the materializing read joins, so the page is ONE statement on `db`.
    */
   private async pageRows(
     ctx: ServiceContext, db: unknown, d: Dialect, q: string, tier: SearchTier, where: SQL,
     sort: SearchSort, limit: number, cursor: SearchCursor | null, built: StoreFacts,
-  ): Promise<{
-    items: MessageDTO[]; next: Omit<RelevanceCursor, "t"> | Omit<OrderedCursor, "t"> | null;
-    cut: boolean; candidates: number;
-  }> {
+  ): Promise<TierRows> {
     const arms = this.arms(ctx, d, q, tier, built);
     // The page's arms read newest first off the History index or their own GIN — never a table
     // scan, which the planner picks for a word in a large share of the store (it does not price
