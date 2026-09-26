@@ -154,6 +154,262 @@ connection could not be secured, or whose sign-in was refused, now says which an
 instead of "We couldn't confirm this send". Pressing Send over a send that could not be confirmed
 says why nothing was sent a second time.
 
+### A decision made where you read your mailbox reaches the install that organizes it
+<!-- changes: fix-025-reader-decision-reaches-the-organizer.md -->
+
+On a phone or a computer that reads a mailbox another install organizes, a Screener decision was
+refused by the organizing install and nothing said so. It is now applied there, usually within a
+few minutes. Until then the phone marks the sender as sent, and a refusal is shown with its reason.
+A phone connecting to a mailbox another install organizes says at once that it reads it, stops
+asking every minute to organize it, and no longer says in the composer that it organizes it.
+
+### ohmail opens again after being closed while it set up a mailbox
+<!-- changes: fix-025-early-kill-never-bricks-the-desktop.md -->
+
+- Closing or losing ohmail in the first seconds after opening a mailbox could leave its copy of the
+  mail on the computer half made, and ohmail could then not open on that computer at all. It now
+  sets such a copy aside and makes a new one. When ohmail cannot open its copy for another reason,
+  the window offers Start over on this computer instead of advice to restart that does not help.
+
+### The phone says when it has no network, and catches up as soon as it is back
+<!-- changes: fix-025-offline-and-rules-tell-the-truth.md -->
+
+With no network, the phone's top line says so, a pull-down says so instead of doing nothing, and
+search and History say the phone is offline rather than blaming the server. When the network
+returns, the phone fetches new mail at once instead of after up to a minute.
+
+### Changing a rule lists every place, and says what happens to the mail already filed
+<!-- changes: fix-025-offline-and-rules-tell-the-truth.md -->
+
+Settings → Rules → Change now lists every place a rule can file into, with the current one marked,
+so a rule changed away from Screened out can be set back. It asks whether to move the mail already
+filed, says how many messages match before you choose, and names what moves afterwards, with Undo.
+
+### On the phone, a Move says when it decides where a sender's mail goes, and Undo takes back both
+<!-- changes: fix-025-phone-move-says-it-decides-the-sender.md -->
+
+Moving a message on the phone also changes where that sender's future mail goes. The toast now says
+so, as the web app does, and Undo takes back the move and the sender's rule together for as long as
+the toast offers it. Moving one message no longer also moves the sender's other mail already in that
+place. A move that changes no rule still says only where the message went. Android and iOS.
+
+### An open History shows new mail
+<!-- changes: fix-025-open-history-shows-new-mail.md -->
+
+- History left open now shows mail as it arrives, within one sync, on the web, the desktop app and
+  the phone. The message you are reading and your place in the list stay where they are; new mail
+  appears above.
+
+### The staff-role hardening script can be run again
+<!-- changes: cloud-025-admin-console-works.md -->
+
+On a database an earlier version of `scripts/harden-staff-role.sql` provisioned, a rerun stopped at
+the script's own check of the `admin` schema. It now drops the view that version created and
+completes.
+
+### Files are listed on a message wherever it is opened
+<!-- changes: fix-025-every-file-is-shown.md -->
+
+- A message with a plain-text body and a file showed no file when it was opened anywhere but the
+  Ohbox: in the reader over History or Search, a folder, a tag or a pile. Every place a message
+  opens now lists its files to look at or save, whatever the body's type. On the phone, a message
+  opened from History or Search that is older than the mail kept on the phone lists its files too.
+
+### The app says what happened
+<!-- changes: fix-025-the-app-says-what-happened.md -->
+
+Offline, the mail list says it cannot reach the mail server from the first minute, and Pull new mail
+says so instead of spinning into silence. A download the desktop cannot save, and a computer whose
+keyring is locked or missing, are said in plain words. A forward dates the original in the sender's
+own time zone and language, and History counts its months by the calendar the dates on its rows are
+read in.
+
+### A message sent from the phone with no network waits, and goes once it is back
+<!-- changes: fix-025-phone-offline-arrivals-are-filed.md -->
+
+On a phone that organizes its own mailbox, Send with no network now says the message goes when
+the network is back and sends it once the phone is online again, instead of failing without a
+word and leaving another draft for every press. A message cancelled while it waits stays in Drafts.
+
+### Files are shown on held mail and on every open card
+<!-- changes: fix-025-files-on-every-card.md -->
+
+- The Screener's preview of held mail and an open News or Receipts card now list the message's
+  files to look at or save, whatever the body's type, so a receipt's PDF invoice is on the card.
+  On the phone, the earlier messages of a conversation, the Screener's held mail and an open News
+  card list their files too.
+
+### Removing a mailbox leaves the other mailboxes as they were
+<!-- changes: fix-025-removing-a-mailbox-keeps-the-others.md -->
+
+Removing or erasing one of several mailboxes no longer leaves waiting senders missing from the
+Screener of the mailboxes that stay, and the removed mailbox's settings card and its entry in
+Settings → Mailboxes now go with it.
+
+### Punctuated searches answer alike everywhere, and the closest words come sooner
+<!-- changes: fix-025-search-hyphen-and-fallback.md -->
+
+On a phone that keeps its mail on the device, a search holding an apostrophe, a colon, a bracket
+or a word such as "the" or "not" now finds what ohmail Cloud finds for it. On ohmail Cloud and the
+desktop, a search with no exact match reads its closest words in the same database request.
+
+### A self-hosted server says only what it keeps after an account is deleted
+<!-- changes: fix-025-self-host-says-only-what-it-keeps.md -->
+
+On a self-hosted server, Settings → Account → Delete your account listed a billing row, a credit
+ledger and a subscription record as kept, and the receipt said billing records were kept. A
+self-hosted server has none of them. Both now name what it keeps: an account row with a random id
+and no name, and until they expire, hashes of its sign-in tokens, so an app still signed in is told
+the account is gone. The receipt's button reads Done instead of naming ohmail.app, and /join tells
+a visitor who still needs an invite code to ask the person who runs the server.
+
+### Security updates for the mail parser and the web pages
+<!-- changes: cloud-025-dependency-advisories.md -->
+
+- The mail parser is updated, so a message with a very long address list no longer holds up the
+  server that reads it.
+- A web page no longer accepts a request body: a request that could only reach the page framework's
+  internal action decoder is refused before it is read.
+
+### The Screener counts every waiting sender, however large the mailbox
+<!-- changes: fix-025-screener-reads-the-store.md -->
+
+The Screener's waiting senders and their count now come from the server's queue on every app, so
+senders whose mail is older than what the device keeps are no longer missing and adding a second
+mailbox no longer lowers the count; mail from someone you have written to shows in the Ohbox.
+
+### New mail is filed without waiting for background work
+<!-- changes: cloud-025-worker-tail-yields-to-new-mail.md -->
+
+The server's per-account background passes run after each round of mailbox checks and give way
+to a mailbox whose new-mail signal fired, so mail from a sender you already decided is filed within
+seconds instead of after those passes finish.
+
+### The phone answers for settings saved in the mailbox
+<!-- changes: fix-025-phone-organizes-with-a-settings-document.md -->
+
+- A phone organizing a mailbox that carries settings another ohmail saved there now shows "We found
+  your ohmail settings on this mailbox" and lists a "Not now" in Settings, as the web and the
+  desktop do; until you answer, it files no new sender into the Screener and saves none of its
+  decisions to the mailbox.
+
+### A found settings document no longer lets strangers past the Screener
+<!-- changes: fix-025-held-routing-screens-strangers.md -->
+
+- While "We found your ohmail settings on this mailbox" waits for an answer, a new sender those
+  settings do not know is screened as usual. Mail from senders the settings let through stays
+  where it arrived, and the card says so. Importing files the mail ohmail held in the Screener for
+  the senders those settings screen out. Settings that already match this ohmail's own hold nothing.
+
+### A change kept while Cloud is out of reach survives a power cut
+<!-- changes: fix-025-review-0252-lows.md -->
+
+A change the desktop keeps while ohmail Cloud cannot be reached is on the disk before the app
+counts it as kept, so a power cut right after it no longer loses it.
+
+### A code mail sent as HTML only is recognised again
+<!-- changes: fix-025-review-0252-lows.md -->
+
+A one-time code mail sent as HTML only, with the code in a table and nothing in its subject naming
+it, is treated as sensitive again; a long document with a table of numbers still is not.
+
+### The message you are reading keeps its place until you move on
+<!-- changes: fix-025-a-read-row-stays-in-new.md -->
+
+Opening an unread message in the Ohbox marks it read, and it now stays where it is in New while it
+is open. It moves to Earlier, at its place by arrival, when you open another message, close it or
+leave the Ohbox. It could leave New a moment after it was opened, while you were still reading it.
+Mail read on another device still moves at once.
+
+### Failed sign-ins lock the device that made them, not your account
+<!-- changes: cloud-025-sec-code.md -->
+
+Five wrong passwords now lock only the device they came from; many failures from devices that
+never signed in to an address slow sign-in from new devices for a few minutes instead of locking
+anybody out, and the devices you already use are never slowed. Wrong second-factor codes are
+capped at twenty a day, and the account's owner gets an email when a lock is set. New passwords
+are hashed at a higher cost, and older hashes are upgraded the next time you sign in.
+
+### A paired device keeps the changes made while the computer is out of reach
+<!-- changes: fix-025-paired-page-keeps-its-changes.md -->
+
+A delete, move, read mark, draft or send made on a device paired to a desktop while that computer
+cannot be reached is kept in the device's browser and sent once when the page next reaches it; a
+change still waiting a day after it was made appears under unsaved changes.
+
+### A phone started again shows its mail while it signs in
+<!-- changes: fix-025-phone-shows-its-mail-at-once.md -->
+
+On a phone that organizes its own mailbox, opening the app again showed a loading screen until it
+had signed in to the mail server and finished a first pass. It now shows the mail it already holds
+at once and signs in behind it; new mail follows within seconds. If the mail server refuses the
+sign-in, the mail stays on screen and the phone says the sign-in was refused.
+
+### Accepting a sender says how many of their messages are now there
+<!-- changes: fix-025-the-count-is-what-you-gain.md -->
+
+- Accepting a sender, from the Screener, the sender sheet or a selection, says how many of their
+  messages are now in the place you chose, including mail that was already in your Inbox. It used
+  to count only the messages that were moved.
+
+### The demo's Earlier card describes the order read mail keeps
+<!-- changes: fix-025-the-count-is-what-you-gain.md -->
+
+- The landing page demo now says read mail sits under Earlier in the order it arrived.
+
+### The app downloads less on every visit
+<!-- changes: cloud-025-web-speed.md -->
+
+A page of the app or a sign-in screen no longer carries the whole translation catalogue: it
+carries the text its first screen shows, and the rest is a file your browser keeps until the
+translations change. Pictures in a message you open again now come from your browser's cache for a
+day instead of five minutes.
+
+### Moving one letter leaves the sender's other mail where it is
+<!-- changes: fix-025-self-host-move-and-resurface.md -->
+
+Moving a single message to News or Receipts now moves only that message; the sender's other mail
+stays in the Ohbox until it is moved, as the confirmation says.
+
+### A refused decision says it was refused
+<!-- changes: fix-025-self-host-move-and-resurface.md -->
+
+When the server refuses a Screener decision, the app now says nothing moved and the sender is
+still waiting, instead of confirming the move.
+
+### b in the Resurface pile opens the chooser
+<!-- changes: fix-025-self-host-move-and-resurface.md -->
+
+Pressing b on a message waiting to resurface opens the same chooser as the Resurface button,
+with Now first, instead of cancelling it.
+
+### Move, Delete and Restore keys work in News, Receipts and Trash
+<!-- changes: fix-025-self-host-move-and-resurface.md -->
+
+In News and Receipts, m and d open Move and Delete on the card the cursor is on, and in Trash
+⇧⌫ restores the selected message.
+
+### A refused rule change says why
+<!-- changes: fix-025-a-refused-revoke-says-why.md -->
+
+On an install that only reads a mailbox nothing organizes, Revoke and Change on Settings → Rules
+were refused with a notice that named no reason; the page now keeps the refusal with its reason and
+what to do, and says so before the press while nothing organizes the mailbox.
+
+### A Screener decision on a mailbox nothing organizes says so
+<!-- changes: fix-025-a-refused-revoke-says-why.md -->
+
+On an install that only reads a mailbox nothing organizes, a Screener decision said it was filed and
+was refused a few seconds later; it now says at the press that nothing was filed and why, and a
+decision the server refuses names the reason.
+
+### A Screener row the phone holds no mail of can be decided
+<!-- changes: fix-025-phone-screener-row-from-the-store-presses.md -->
+
+- On a large mailbox the phone's Screener lists senders whose held mail is older than what the
+  phone keeps; Let in and Screen out on such a sender now reach the server instead of saying the
+  decision could not be saved.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
