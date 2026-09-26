@@ -49,14 +49,6 @@ export function storeVerdict(owner: string | null, verdict: StoredVerdict): void
 export const FIRST_PAINT_VERDICT_MS = 3_000;
 
 /**
- * HOW LONG A 402 IS DISBELIEVED AFTER AN OPEN VERDICT: the service's own verdict cache
- * (`ACCESS_TTL_MS`, `packages/db/src/entitlements-client.ts`). The open answer is read fresh, but
- * another API instance may hold the old refusal that long; its 402 must not re-raise the wall a
- * person has just watched lift. The drain loop still stands down on it.
- */
-export const STALE_REFUSAL_MS = 60_000;
-
-/**
  * A HAND-OFF PRESS IN THIS TAB. The web hand-off leaves in the same tab, so the wall a person comes
  * back to is a new document; this note is how it knows to poll rather than wait for the minute.
  * An account id and a time, per tab; `signOut` removes it.

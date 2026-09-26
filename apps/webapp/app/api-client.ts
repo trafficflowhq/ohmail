@@ -16,7 +16,8 @@ import {
 import { sessionMayAsk } from "./shell/session-truth";
 import { readOwner, readOwnerMarker, rememberOwner } from "./shell/owner-cookie";
 import { refusedFactsOf, verdictOf } from "./access-verdict";
-import { STALE_REFUSAL_MS, storeVerdict } from "./shell/wall-lift";
+import { storeVerdict } from "./shell/wall-lift";
+import { forgetOpenVerdict, markOpenVerdict, refusalIsStale } from "./shell/access-window";
 
 /** The `/api` prefix the same-origin rewrite serves, or `null` on a build with no API armed. */
 export const API_BASE: string | null = process.env.NEXT_PUBLIC_API_BASE ?? null;
@@ -778,12 +779,6 @@ export interface AccessRefusedFacts {
 type AccessRefusedSink = (facts: AccessRefusedFacts) => void;
 let accessRefusedSink: AccessRefusedSink | null = null;
 
-/** When this client last heard `open`, for {@link STALE_REFUSAL_MS}'s window. */
-let openFor: { owner: string | null; at: number } | null = null;
-
-function refusalIsStale(owner: string | null): boolean {
-  return openFor !== null && openFor.owner === owner && Date.now() - openFor.at < STALE_REFUSAL_MS;
-}
 
 /**
  * Subscribe to access refusals. Returns the unsubscribe. LAST WRITER WINS — there is one shell
@@ -797,8 +792,9 @@ export function onAccessRefused(sink: AccessRefusedSink): () => void {
 /** Narrow the envelope's `details`. An unrecognised reason is `payment_required` — the arm whose
  *  remedy is a link the customer can act on, rather than one that reads as our fault. */
 function notifyAccessRefused(details: unknown): void {
+  // The drain loop reads the same decision (`shell/access-window.ts`).
+  if (refusalIsStale()) return;
   const owner = readOwner();
-  if (refusalIsStale(owner)) return;
   storeVerdict(owner, "closed");
   const sink = accessRefusedSink;
   if (!sink) return;
@@ -2475,10 +2471,10 @@ function noteVerdict(owner: string | null, a: AccountAccess): void {
   if (verdict === null) return;
   storeVerdict(owner, verdict);
   if (verdict === "open") {
-    if (a.metered) openFor = { owner, at: Date.now() };
+    if (a.metered) markOpenVerdict(owner);
     return;
   }
-  openFor = null;
+  forgetOpenVerdict();
   const facts = refusedFactsOf(a);
   const sink = accessRefusedSink;
   if (facts !== null && sink !== null) {
@@ -2489,7 +2485,7 @@ function noteVerdict(owner: string | null, a: AccountAccess): void {
 /** Forget the held verdict — for a test, and for any act that changes what the account may do. */
 export function forgetAccess(): void {
   accessHeld = null;
-  openFor = null;
+  forgetOpenVerdict();
 }
 
 export const account = {

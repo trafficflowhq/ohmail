@@ -13,6 +13,7 @@ import {
   type SyncResponse,
 } from "@ohmail/client-engine";
 import { readOwnerMarker, type OwnerMarker } from "./owner-cookie";
+import { refusalIsStale } from "./access-window";
 
 /**
  * The wake signal this app did not have — `engine.start()` once was every
@@ -1131,9 +1132,14 @@ function isTerminalRefusal(err: unknown): boolean {
     && err.code !== null;
 }
 
-/** The service's own refusal of the ACCOUNT — our envelope's code, never a bare status. */
+/**
+ * The service's own refusal of the ACCOUNT — our envelope's code, never a bare status — and not a
+ * stale one: inside the window after an open verdict it is a transient, the same decision the
+ * wall's sink reads (`access-window.ts`), so the loop never stands down with no wall to revive it.
+ */
 function isAccessRefusal(err: unknown): boolean {
-  return err instanceof MutationRejectedError && err.status === 402 && err.code === "subscription_required";
+  return err instanceof MutationRejectedError && err.status === 402 && err.code === "subscription_required"
+    && !refusalIsStale();
 }
 
 /** Every live loop's revive, so the shell can restart the ones a refusal stood down. */

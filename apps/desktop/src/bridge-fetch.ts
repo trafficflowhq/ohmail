@@ -24,7 +24,8 @@ import {
 } from "@ohmail/client-engine";
 import { DESKTOP_WINDOW } from "../../webapp/app/shell/store-windows.js";
 import { WindowOutboxStore } from "./window-outbox-store.js";
-import { STALE_REFUSAL_MS, storeVerdict } from "../../webapp/app/shell/wall-lift.js";
+import { storeVerdict } from "../../webapp/app/shell/wall-lift.js";
+import { forgetOpenVerdict, markOpenVerdict, refusalIsStale } from "../../webapp/app/shell/access-window.js";
 import { storageOwner } from "../../webapp/app/shell/storage-owner.js";
 
 /**
@@ -132,8 +133,6 @@ export interface AccessRefusedFacts {
 
 type AccessRefusedSink = (facts: AccessRefusedFacts) => void;
 let accessRefusedSink: AccessRefusedSink | null = null;
-/** When this window last heard the account `open` — the browser tab's stale-402 window. */
-let openAt: number | null = null;
 
 /**
  * An answer of the account's own read, seen on its way to the caller: stored for the next first
@@ -149,10 +148,10 @@ function noticeAccessAnswer(status: number, body: Uint8Array): void {
   }
   if (answer === null || answer.metered !== true) return;
   if (answer.access === "open") {
-    openAt = Date.now();
+    markOpenVerdict(storageOwner());
     storeVerdict(storageOwner(), "open");
   } else if (answer.access === "refused") {
-    openAt = null;
+    forgetOpenVerdict();
     storeVerdict(storageOwner(), "closed");
   }
 }
@@ -187,7 +186,8 @@ function noticeAccessRefusal(status: number, body: Uint8Array): void {
     return; /* Not JSON. A 402 this client cannot read is not one it may act on. */
   }
   if (env?.code !== ACCESS_REFUSED_CODE) return;
-  if (openAt !== null && Date.now() - openAt < STALE_REFUSAL_MS) return;
+  // The one staleness decision, shared with the drain loop (`shell/access-window.ts`).
+  if (refusalIsStale()) return;
   storeVerdict(storageOwner(), "closed");
   const d = (env.details ?? {}) as { reason?: unknown; manageUrl?: unknown; lifecycle?: unknown };
   const url = typeof d.manageUrl === "string" && d.manageUrl.length > 0 ? d.manageUrl : undefined;
