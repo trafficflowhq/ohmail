@@ -23,6 +23,7 @@ import {
   type ReplyEnvelopePlan,
 } from "./compose-from";
 import type { MailSend } from "./compose";
+import { activeFormatLocale, activeFormatZone } from "./locale";
 
 /** The forward's audience: the user's edit, or the refusable empty set — never a derivation. */
 export function forwardEnvelopePlan(
@@ -58,6 +59,8 @@ export function forwardSend(
     inReplyTo: null,
     forwardOf: parent.id,
     ...(input.confirmed === true ? { forwardConfirmed: true } : {}),
+    // The quoted header names the original's date on the reader's clock, as the rows read it.
+    forwardClock: { zone: activeFormatZone(), locale: activeFormatLocale() },
     subject: forwardSubject(parent.subject),
     body: input.body,
     ...(input.html ? { html: input.html } : {}),

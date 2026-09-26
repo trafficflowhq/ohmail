@@ -2202,6 +2202,8 @@ export class HttpAdapter implements EngineAdapter {
       stagedAttachmentIds?: string[];
       forwardOf?: string;
       forwardConfirmed?: true;
+      forwardZone?: string;
+      forwardLocale?: string;
       ifContentRevision?: string;
     } = {};
     // WHICH VERSION OF THE ROW THIS PRESS SAW — see `revisionForKey`. Absent only where the server
@@ -2219,6 +2221,10 @@ export class HttpAdapter implements EngineAdapter {
     else if (!alreadyPresented && m.attachments && m.attachments.length) sendBody.attachments = m.attachments;
     if (m.forwardOf) sendBody.forwardOf = m.forwardOf;
     if (m.forwardOf && m.forwardConfirmed === true) sendBody.forwardConfirmed = true;
+    if (m.forwardOf && m.forwardClock) {
+      sendBody.forwardZone = m.forwardClock.zone;
+      sendBody.forwardLocale = m.forwardClock.locale;
+    }
     const res = await this.request("POST", `/drafts/${draftId}/send`, {
       idempotencyKey,
       ...(Object.keys(sendBody).length ? { body: sendBody } : {}),

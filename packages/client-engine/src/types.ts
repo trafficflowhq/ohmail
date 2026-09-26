@@ -1244,6 +1244,11 @@ export type EngineMutation =
        */
       forwardConfirmed?: boolean;
       /**
+       * The sender's clock for a forward: the IANA zone and language the quoted header names the
+       * original's date in. Unstated, the server writes it in UTC and English.
+       */
+      forwardClock?: { zone: string; locale: string };
+      /**
        * The draft row this message already is, when there is one. A compose
        * autosaves through `draft_save`, so naming the row makes the send
        * USE it: the adapter skips `POST /drafts` and goes straight to

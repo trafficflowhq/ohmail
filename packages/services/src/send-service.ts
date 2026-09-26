@@ -21,6 +21,7 @@ import { draftContentRevision } from "./draft-revision.js";
 import type { AttachmentAdapter, OpenAdapter } from "./attachments-service.js";
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
 import { htmlToPlainText, sanitizeOutboundHtml } from "./outbound-html.js";
+import { forwardedDate } from "./reader-clock.js";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
@@ -72,8 +73,10 @@ function forwardedQuote(
   orig: { from: string; date: Date | null; subject: string },
   originalText: string,
   originalHtml: string | null,
+  clock: { zone?: string; locale?: string } = {},
 ): { text: string; html: string } {
-  const dateStr = orig.date ? orig.date.toISOString() : "";
+  // The date as the SENDER reads it, both parts: a raw ISO instant was what every forward carried.
+  const dateStr = orig.date ? forwardedDate(orig.date, clock.zone, clock.locale) : "";
   const headerLines = [
     "---------- Forwarded message ----------",
     `From: ${orig.from}`,
@@ -250,6 +253,9 @@ export interface SendInput {
    * Without it such a forward is refused (403); with it the forward proceeds like any other.
    */
   forwardConfirmed?: boolean;
+  /** The sender's IANA zone and locale, for the date in the quoted header. Unstated: UTC, English. */
+  forwardZone?: string;
+  forwardLocale?: string;
   /**
    * WHICH VERSION OF THE DRAFT THIS PRESS WAS COMPOSED AGAINST — the `DraftDTO.contentRevision`
    * the client last saw, carried back so the send can assert the row is still the one it wrote.
@@ -1436,6 +1442,7 @@ export class SendService {
         const quoted = forwardedQuote(
           { from: orig.fromAddress, date: orig.date, subject: orig.subject },
           body.text ?? "", body.html ?? null,
+          { zone: input.forwardZone, locale: input.forwardLocale },
         );
         fwdText = quoted.text;
         fwdHtml = quoted.html;

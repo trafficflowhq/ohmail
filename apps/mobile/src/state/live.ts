@@ -98,6 +98,7 @@ import {
   type ForwardAsk,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
+import { activeLocale } from "../i18n/locale";
 import { blobToBase64 } from "../mail/blob-base64";
 import { logAttachmentRefusal } from "../engine/engine-log";
 import { refuse, type Refusal, type RefusalArg } from "../refusal";
@@ -3873,6 +3874,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         inReplyTo: null,
         forwardOf: messageId,
         ...(sensitive && confirmed ? { forwardConfirmed: true } : {}),
+        // The quoted header names the original's date on this phone's clock and in its language.
+        forwardClock: { zone: readerZone(), locale: activeLocale() },
         subject: forwardSubject(m.subject),
         // The mailbox the original arrived in — the same sender a reply gets from `enrich`.
         // A forward has no parent-derived From of its own, and the send refuses without one.

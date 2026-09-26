@@ -1,6 +1,6 @@
 import {
   ServiceError, SEND_ATTACHMENT_FIELD_MAX_CHARS, SEND_MAX_ATTACHMENT_PARTS, dedupeStagedIds,
-  requireUuid,
+  requireUuid, parseReaderLocale, parseReaderZone,
   type CreateDraftBody, type PatchDraftBody, type SendResolution,
 } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
@@ -29,6 +29,9 @@ interface SendRequestBody {
   forwardOf?: string;
   /** The person confirmed forwarding a no_forward original after the ask. Only `true` counts. */
   forwardConfirmed?: unknown;
+  /** The sender's IANA zone and language tag, for the date the quoted header gives the original. */
+  forwardZone?: unknown;
+  forwardLocale?: unknown;
   /**
    * WHICH VERSION OF THE DRAFT THIS PRESS WAS COMPOSED AGAINST — the `DraftDTO.contentRevision`
    * the client last saw. The send refuses a row that has moved off it (`draft_changed`, 409) and
@@ -321,6 +324,8 @@ export const draftsRoutes: Route[] = [
       const stagedAttachmentIds = readStagedIds(body.stagedAttachmentIds);
       const forwardOf = typeof body.forwardOf === "string" && body.forwardOf.length > 0 ? body.forwardOf : undefined;
       const forwardConfirmed = forwardOf !== undefined && body.forwardConfirmed === true;
+      const forwardZone = forwardOf ? parseReaderZone(body.forwardZone, "forwardZone") : undefined;
+      const forwardLocale = forwardOf ? parseReaderLocale(body.forwardLocale, "forwardLocale") : undefined;
       // THE ROW THIS PRESS SAW. Threaded to `SendService.reserve`, which compares it against the
       // row it locks — see `SendInput.ifContentRevision`.
       const ifContentRevision = readContentRevision(body.ifContentRevision);
@@ -360,6 +365,8 @@ export const draftsRoutes: Route[] = [
         },
         { attachments, stagedAttachmentIds, forwardOf,
           ...(forwardConfirmed ? { forwardConfirmed } : {}),
+          ...(forwardZone ? { forwardZone } : {}),
+          ...(forwardLocale ? { forwardLocale } : {}),
           ...(ifContentRevision ? { ifContentRevision } : {}) },
       );
       switch (result.status) {
