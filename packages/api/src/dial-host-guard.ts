@@ -42,7 +42,10 @@ export async function clearedFor(
 function hostRefusal(err: unknown, transport: "imap" | "smtp"): unknown {
   if (!(err instanceof ServiceError)) return err;
   const leg = transport === "imap" ? "incoming (IMAP)" : "outgoing (SMTP)";
-  if (err.message.endsWith(UNRESOLVED)) return new Error(`the ${leg} server's hostname did not resolve`);
+  // The socket's own code, as before the guard: the send reads an unresolved host by it.
+  if (err.message.endsWith(UNRESOLVED)) {
+    return Object.assign(new Error(`the ${leg} server's hostname did not resolve`), { code: "ENOTFOUND" });
+  }
   return new ServiceError(
     "mailbox_host_refused", 502,
     `This mailbox's ${leg} server is at an address that is not one this service will connect to. `

@@ -81,6 +81,9 @@ export function SendStatus({
              */
             ? send.code === "mailbox_disabled"
               ? { tone: "error", text: t("statusMailboxDisabled") }
+              /* The person's mail server could not be reached at the dial: nothing left, draft kept. */
+              : send.code === "send_unreachable"
+                ? { tone: "error", text: t("statusUnreachable") }
               : send.code === "forward_original_unavailable"
                 ? { tone: "error", text: t("statusForwardOriginalUnavailable") }
               /**

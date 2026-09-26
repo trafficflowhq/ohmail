@@ -714,6 +714,63 @@ function startAttemptCeiling(ms: number): AttemptCeiling {
 }
 
 /**
+ * The Drafts-row sentence when the person's mail server could not be reached at the dial: refused,
+ * unresolved, unreachable, hung up or silent before anything was offered. The same promise as
+ * {@link SEND_FAILED_SENTENCE} — nothing left, and Send is the retry.
+ */
+export const SEND_UNREACHABLE_SENTENCE =
+  "This was not sent — your mail server could not be reached. Send it again.";
+
+/**
+ * 424, NOT 5xx: the dependency that failed is the person's own mail server, the privacy route's
+ * rule. As a 5xx every outage of somebody's mail server counted in the API's error-rate alerts
+ * and logged as our fault. A fault of ours in the same window keeps its 500.
+ */
+export const SEND_UNREACHABLE_STATUS = 424;
+
+/**
+ * The dial failures that mean the mail server could not be reached: the socket and DNS errnos,
+ * and imapflow's own for a server that timed out, hung up or never greeted. An ALLOW-LIST — a
+ * code nobody classified is ours — and TLS and login refusals are deliberately not in it.
+ */
+const MAIL_SERVER_UNREACHABLE_CODES: ReadonlySet<string> = new Set([
+  "ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH", "EHOSTDOWN", "ENETUNREACH",
+  "ENETDOWN", "EADDRNOTAVAIL", "ECONNRESET", "ECONNABORTED", "EPIPE", "ETIMEDOUT",
+  "CONNECT_TIMEOUT", "GREETING_TIMEOUT", "ETIMEOUT",
+  "NoConnection", "EConnectionClosed", "ClosedAfterConnectText", "ClosedAfterConnectTLS",
+]);
+
+/** Did this dial fail because the mail server could not be reached? By code, never by message. */
+export function mailServerUnreachable(err: unknown): boolean {
+  if (typeof err !== "object" || err === null || err instanceof ServiceError) return false;
+  const code = (err as { code?: unknown }).code;
+  return typeof code === "string" && MAIL_SERVER_UNREACHABLE_CODES.has(code);
+}
+
+/**
+ * THE REFUSAL FOR AN UNREACHABLE MAIL SERVER, with the dial's own error as `cause` for the log.
+ * Raised only at the exchanges with the person's mail server inside the pre-SMTP window
+ * ({@link atMailServer}), so object storage and our own code never wear it, and the reconciler,
+ * which dials without this door, still reads the raw error and defers.
+ */
+export class MailServerUnreachable extends ServiceError {
+  constructor(cause: unknown) {
+    super("send_unreachable", SEND_UNREACHABLE_STATUS, SEND_UNREACHABLE_SENTENCE, undefined, false);
+    this.name = "MailServerUnreachable";
+    (this as { cause?: unknown }).cause = cause;
+  }
+}
+
+/** One exchange with the person's own mail server; an unreachable server becomes the refusal. */
+async function atMailServer<T>(exchange: () => Promise<T>): Promise<T> {
+  try {
+    return await exchange();
+  } catch (err) {
+    throw mailServerUnreachable(err) ? new MailServerUnreachable(err) : err;
+  }
+}
+
+/**
  * Race a phase against the attempt ceiling. The losing promise is NOT cancelled and must not be —
  * there is no way to un-send an envelope. On a host whose process outlives the response (the
  * desktop's local engine) the abandoned submission runs to its own finalizer: the row flips to
@@ -846,12 +903,15 @@ export class SendService {
       // assembly + dial, which is exactly the kind of number that sends the next reader looking
       // in the wrong place.
       let tDial = tWindow;
+      // Set once assembly is done: a ceiling reached while dialling ran out on the mail server's clock.
+      let dialling = false;
       // ONE promise for the whole window, so the ceiling races the window and not one call in it.
       const opening = (async () => {
         await this.assemble(ctx, reservation, deps, input);
         tDial = Date.now();
         phases.assembleMs = tDial - tWindow;
-        return deps.openSendAdapter(mailboxId);
+        dialling = true;
+        return atMailServer(() => deps.openSendAdapter(mailboxId));
       })();
       let opened: { timedOut: true } | { timedOut: false; value: Awaited<ReturnType<OpenSendAdapter>> };
       try {
@@ -862,6 +922,10 @@ export class SendService {
         // else is a diagnostic and gets the standing sentence instead.
         await this.finalizeFailed(ctx, sendId, draftId,
           err instanceof ServiceError ? err.message : SEND_FAILED_SENTENCE);
+        // The envelope does not log a 4xx, so the dial's own class and code are said here, once.
+        if (err instanceof MailServerUnreachable) {
+          (deps.log ?? defaultLog).warn("send_mail_server_unreachable", { draftId, accountId: ctx.accountId, err });
+        }
         // The line is owed here too. This arm is the ONE class of failure the pre-SMTP window
         // exists for, and it was the one attempt that settled without saying what it cost —
         // "one line per settled attempt" was false for exactly the case somebody investigating
@@ -894,7 +958,9 @@ export class SendService {
         // ohmail is still trying" — over a non-delivery the server had already recorded and
         // explained, and threw away `SEND_TIMEOUT_SENTENCE`, which exists to be read. Terminal
         // here means the sentence renders and Send is the retry, which is the truth.
-        throw new ServiceError("send_timeout", 504, SEND_TIMEOUT_SENTENCE, undefined, false);
+        // During the dial the clock ran out on the person's mail server (424); during assembly
+        // it may have been our own storage, so that half keeps its 504.
+        throw new ServiceError("send_timeout", dialling ? SEND_UNREACHABLE_STATUS : 504, SEND_TIMEOUT_SENTENCE, undefined, false);
       }
       adapter = opened.value;
 
@@ -1701,7 +1767,8 @@ export class SendService {
     openFetchAdapter: OpenAdapter,
   ): Promise<void> {
     if (forward.parts.length === 0) return;
-    const adapter = await openFetchAdapter(forward.mailboxId);
+    // The forward's original is read from the person's own mail server: the send's dial rule.
+    const adapter = await atMailServer(() => openFetchAdapter(forward.mailboxId));
     try {
       let locator = forward.locator;
       let reResolved = false;
@@ -1710,7 +1777,7 @@ export class SendService {
       for (const part of forward.parts) {
         let bytes: Awaited<ReturnType<AttachmentAdapter["fetchPart"]>>;
         try {
-          bytes = await adapter.fetchPart(locator, part.partId);
+          bytes = await atMailServer(() => adapter.fetchPart(locator, part.partId));
         } catch (err) {
           if (!isMessageGone(err) || reResolved) throw this.forwardSourceGone(err);
           reResolved = true;
@@ -1729,7 +1796,7 @@ export class SendService {
           // instead of the sentence that tells them nothing was sent and what to do. The honest
           // outcome must not depend on how many times the locator moved.
           try {
-            bytes = await adapter.fetchPart(locator, part.partId);
+            bytes = await atMailServer(() => adapter.fetchPart(locator, part.partId));
           } catch (retryErr) {
             throw this.forwardSourceGone(retryErr);
           }
