@@ -5,9 +5,8 @@
  * UNTOUCHED, because a screen that only says no reads as data loss; and leave every door open,
  * because a lock with no way out is a trap. It deletes nothing and wipes nothing of its own.
  *
- * It DECIDES nothing — `wall-says.ts` answers the lines and the actions, `wall-lift.ts` when to
- * ask whether it may lift, this renders them: there is no React Native renderer here, so a screen
- * choosing its own sentences measures nothing. The way back MINTS ITS LINK AT THE PRESS.
+ * It DECIDES nothing — `wall-says.ts` answers the lines and actions, `wall-lift.ts` when to ask
+ * whether it may lift; this renders them. The way back MINTS ITS LINK AT THE PRESS.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -231,7 +230,7 @@ export function AccountWall(
                 ) : null}
               </View>
               {mintRefusal !== null && mintRefusal.on === action.id ? (
-                <Txt variant="caption" tone="ink2" accessibilityRole="alert">
+                <Txt variant="note" tone="ink2" accessibilityRole="alert">
                   {mintRefusal.why === "unverified" ? Copy.wallMintUnverified : Copy.wallMintFailed}
                 </Txt>
               ) : null}

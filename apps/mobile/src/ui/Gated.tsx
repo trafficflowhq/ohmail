@@ -61,8 +61,9 @@ function useFirstPaint(session: ConnectedSession | null): boolean {
 function AccessGate() {
   const t = useTheme();
   return (
-    <Screen style={{ justifyContent: "center", paddingHorizontal: 24 }}>
-      <Panel style={{ padding: 24, gap: 18 }}>
+    <Screen style={{ justifyContent: "center" }}>
+      {/* A margin, not padding: `Screen` owns its horizontal padding (the safe-area insets). */}
+      <Panel style={{ marginHorizontal: 24, padding: 24, gap: 18 }}>
         <Wordmark color={t.c.ink} dot={t.c.accent} size={22} />
         <View accessibilityRole="progressbar" style={{ alignItems: "flex-start" }}>
           <ActivityIndicator size="small" color={t.c.accent} />

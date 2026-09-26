@@ -147,7 +147,7 @@ export function LifecycleStrip({ session }: { session: ConnectedSession | null }
         <Button label={Copy.stripLater} variant="quiet" onPress={putAway} />
       </View>
       {refused !== null ? (
-        <Txt variant="caption" tone="ink2" accessibilityRole="alert">
+        <Txt variant="note" tone="ink2" accessibilityRole="alert">
           {refused === "unverified" ? Copy.wallMintUnverified : Copy.wallMintFailed}
         </Txt>
       ) : null}
