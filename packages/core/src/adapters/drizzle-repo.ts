@@ -2387,7 +2387,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
      * never opened under this build, a different fact from zero. One statement carries rows with
      * and without it, so the conflict arm keeps the stored count wherever the row brought none.
      */
-    const excluded = (c: string) => sql.raw(`excluded.${c}`);
+    const excluded = (c: string) => sql.raw("excluded." + c);
     await this.db.insert(mailboxFolders).values(entries.map(({ folder, cursor }) => ({
       mailboxId, folder,
       uidvalidity: BigInt(cursor.uidValidity), uidnext: BigInt(cursor.uidNext), highestmodseq: BigInt(cursor.highestModseq),
