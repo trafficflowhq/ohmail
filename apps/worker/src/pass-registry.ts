@@ -138,7 +138,8 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "the attach arm's adapter, pre-dispatch",
   },
 
-  /* ── CYCLE-TAIL (per served account, after the dispatcher settles a cycle) ───────────── */
+  /* ── CYCLE-TAIL (per served account: the queue entry behind each rotation, walked as the
+        `cycle-tail-plan.ts` sections with one cursor, yielding between slices to a wake) ── */
   {
     name: "bubble_up",
     module: `${W}/bubble-up-pass.ts`, entry: "bubbleUpPass",
@@ -248,7 +249,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     module: `${W}/screener-auto.ts`, entry: "screenerAutoApplyPass",
     triggers: ["cycle-tail"],
     cadence: "every cycle tail, per account with auto-apply on",
-    budget: "SCREENER_AUTO_BATCH / SCREENER_AUTO_WRITES_PER_CYCLE / SCREENER_AUTO_MAX_PAGES",
+    budget: "SCREENER_AUTO_BATCH / SCREENER_AUTO_WRITES_PER_CYCLE / SCREENER_AUTO_MAX_PAGES; a TAIL_SLICE_BUDGET_MS `until` clock in the tail, the walk resuming at its cursor",
     // THIS ROW SAID "accepted screener suggestions become decisions without a press, exactly as
     // the press would" and the pass has never read a suggestion: it judges each held message
     // itself with the strong-bulk floor and files to News/Receipts only. What the row described
@@ -261,7 +262,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     module: `${W}/screener-auto-act.ts`, entry: "screenerAutoActPass",
     triggers: ["cycle-tail", "sidecar-drain"],
     cadence: "every cycle tail and every local drain tail, per account with auto-apply on",
-    budget: "SCREENER_ACT_SENDERS_PER_CYCLE senders per account per cycle; one transaction each",
+    budget: "SCREENER_ACT_SENDERS_PER_CYCLE senders per account per cycle; one transaction each; a TAIL_SLICE_BUDGET_MS `until` clock in the tail",
     owns: "a waiting sender whose stored suggestion is at or above the bar is filed exactly as the press files them",
     fence: "leader lock; the decision path is `applyScreenerDecision` — the manual Apply's and the drain's one implementation",
   },
@@ -279,7 +280,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     module: `${W}/screener-auto-suggest.ts`, entry: "screenerAutoSuggestPass",
     triggers: ["cycle-tail", "sidecar-drain"],
     cadence: "every cycle tail, per account with suggestions on, watermark-resumed",
-    budget: "AUTO_SUGGEST_BATCH per run; spend-gated through the caller-supplied credits gate",
+    budget: "AUTO_SUGGEST_BATCH per run; spend-gated through the caller-supplied credits gate; a TAIL_SLICE_BUDGET_MS `until` clock in the tail",
     owns: "new screener senders get a suggestion as they arrive (same watermark/cap/order as the surface)",
     fence: "leader lock; the ledger is reached only through the injected gate (the local engine injects none)",
   },

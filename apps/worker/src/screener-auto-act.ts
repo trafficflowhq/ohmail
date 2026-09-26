@@ -53,6 +53,9 @@ export interface ScreenerAutoActDeps {
   admitBar?: number;
   /** The account_settings row the caller already read this cycle; absent ⇒ the pass reads it. */
   settings?: ScreenerAutoActSettings;
+  /** The cycle tail's clock, asked before each sender this pass would file after the first. A kept
+   *  sender costs no statement and a filed one leaves the Screener, so a stop loses no progress. */
+  until?: () => boolean;
 }
 
 type SettingsRow = typeof accountSettings.$inferSelect;
@@ -190,6 +193,7 @@ export async function screenerAutoActPass(
     accountId, senders: waiting.map((w) => w.address), references: "held",
   });
 
+  let planned = 0;
   for (const sender of waiting) {
     if (correspondents.has(sender.address)) {
       result.kept++;
@@ -198,6 +202,7 @@ export async function screenerAutoActPass(
     }
     const plan = plannedDecision(sender.address, advice.get(sender.address), bars);
     if (!plan) { result.kept++; continue; }
+    if (planned++ > 0 && deps.until?.()) { result.capped = true; break; }
 
     // Could a decision land on the mailbox this sender waits in — the shared question the suggest
     // pass asks before it spends — AND is THIS install the organizer? Both, because the second is

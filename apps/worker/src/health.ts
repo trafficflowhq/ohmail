@@ -104,6 +104,8 @@ export interface HealthSnapshot {
   /** The last rotation's wall clock and the last completed tail walk's work time, in ms. */
   lastRotationMs: number | null;
   lastTailMs: number | null;
+  /** Where a tail walk in progress is: section, account index, of how many. Null between walks. */
+  tail: { section: string; account: number; of: number } | null;
   /** Ring fingerprint of EVERY loaded KEK version (`kekRingFingerprint`), not the active one. */
   kekFingerprint: string | null;
   /** The version new secrets are written under — the persisted `key_version`. */

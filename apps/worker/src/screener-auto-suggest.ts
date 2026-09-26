@@ -47,6 +47,9 @@ export const AUTO_SUGGEST_BATCH = 10;
 export interface ScreenerAutoSuggestDeps {
   /** Scope to ONE account — the worker loops its served accounts. */
   accountId: string;
+  /** The cycle tail's clock, asked before each purchase after the first; a bought sender leaves
+   *  the candidate set, so the next call goes on at the next unbought one. */
+  until?: () => boolean;
   /**
    * The model, resolved for THIS cycle.
    *
@@ -242,6 +245,7 @@ export async function screenerAutoSuggestPass(
   })));
 
   for (const [index, c] of candidates.entries()) {
+    if (index > 0 && deps.until?.()) { result.capped = true; break; }
     // The set-wide check above, for this candidate. Never undefined — `senderCheckAll` answers one
     // per input, in order — and an empty one would silently disarm the cap, so it is asserted.
     const checked: SenderSignals = signals[index] ?? { senderDomain: "", urgency: false };

@@ -51,8 +51,10 @@ import {
   DEFAULT_LOCK_HEARTBEAT_MS, DEFAULT_MAILBOX_RETRY_MS, DEFAULT_MAX_SYNC_FAILURES,
   DEFAULT_ALERT_INTERVAL_MS, DEFAULT_SYNC_BLOCK_GRACE_MS,
   DEFAULT_LEASE_UNAVAILABLE_DETACH_MS, resolveCycleLanes, CYCLE_FAST_LANES, CYCLE_WAKE_REVISITS,
+  resolveTailTurn, TAIL_SLICE_BUDGET_MS,
   type WorkerConfig,
 } from "./config.js";
+import { TAIL_SECTION_PLAN, type TailSectionName } from "./cycle-tail-plan.js";
 import {
   anyDegradedCause, type DegradedCauses, type UnservedBreakdown,
 } from "./health.js";
@@ -262,6 +264,8 @@ export interface WorkerStats {
   /** The last rotation's wall clock, and the last completed tail walk's work time (ms). */
   lastRotationMs: number | null;
   lastTailMs: number | null;
+  /** Where a tail walk in progress is — section name, account INDEX and count; null between walks. */
+  tail: { section: string; account: number; of: number } | null;
   /**
    * Every configured pager arm, and whether it is actually delivering. The startup line has always
    * named the arms (`alertSinks:["mail"]`), and a name is not a state: an arm that has refused every
@@ -1088,9 +1092,9 @@ export async function startWorkerWithLock(
     //    adapter a sync cycle is using, and stop() must be able to wait for whatever is in
     //    flight before it closes the DB and releases the lock.
     //
-    //    ONE QUEUE, BUT NOT ONE ENTRY PER CYCLE — see `yieldToRoster`. A cycle serves
-    //    the pass it is holding up BETWEEN two mailboxes, from inside its own entry, so nothing
-    //    ever runs concurrently and the sentence above still holds literally.
+    //    ONE QUEUE, AND A CYCLE IS TWO ENTRIES: the rotation, which serves a roster pass it is
+    //    holding up BETWEEN two mailboxes (`yieldToRoster`), and the per-account tail behind it
+    //    (`cycleTail`), which yields between slices. Nothing ever runs concurrently.
     let tail: Promise<unknown> = Promise.resolve();
     function serialize<T>(fn: () => Promise<T>): Promise<T> {
       const run = tail.then(fn, fn);
@@ -4199,22 +4203,89 @@ export async function startWorkerWithLock(
         );
       }
 
-      // THE ROTATION ENDS HERE. Freshness and the pulse are stamped now, so `/health` does not wait
-      // on the per-account passes below; FRESHNESS HONESTY is unchanged: advance only when work
-      // succeeded or there was nothing to sync, so a dead leader never looks fresh.
+      // THE ROTATION ENDS HERE. Freshness and the pulse are stamped now, before the per-account
+      // passes; FRESHNESS HONESTY is unchanged: advance only when work succeeded or there was
+      // nothing to sync, so a dead leader never looks fresh.
       const rotationMs = Date.now() - passStartedMs;
       lastRotationMs = rotationMs;
       if (succeeded > 0 || expected === 0) lastCycleAt = new Date();
       await beat();
-      const tailStartedMs = Date.now();
-      const sections: Array<{ section: string; ms: number }> = [];
-      let lapFrom = tailStartedMs;
-      const lap = (section: string): void => {
-        const now = Date.now();
-        sections.push({ section, ms: now - lapFrom });
-        lapFrom = now;
-      };
+      // …and the per-account passes run next, as their own queue entry behind this one.
+      kickTail();
 
+      // Backfill drain. A mailbox mid-backfill is drained as fast as the queue allows instead of one
+      // bounded batch per `pollIntervalMs` (at two hundred messages a cycle, a 60 s poll would take a
+      // twenty-thousand-message mailbox ~100 hours). Queued through `kickCycle`, so it lands on the
+      // SAME serial queue as the roster pass and cannot starve reconciliation. Termination: a truncated
+      // batch always ADMITS at least one message, and every admitted message leaves a durable trace the
+      // next known-set reflects (a row, an instance, or a failure-ledger row), so the unknown set
+      // strictly shrinks. The earlier "always commits at least one message" wording was FALSIFIED in
+      // production (2026-08-29): an admitted create whose dedup arm REPOINTED the primary instead of
+      // recording an instance learned nothing, so the re-kick fired every ~2.3 minutes for ever — the
+      // shrink guarantee is a property of `pipeline.ts`'s dedup arms and `fetchCapped`, not admission alone.
+      if (backlogged.length > 0 && !stopped) {
+        log.info("backfill_progress", {
+          mailboxes: backlogged.length, sample: backlogged.slice(0, 3),
+          reason: "adapter reported a truncated batch — re-kicking rather than waiting for the poll interval",
+        });
+        kickCycle();
+      } else {
+        // …and only once the MESSAGE backlog is drained does the THREAD backlog get a slice.
+        // A mailbox still streaming its first sync has better uses for the queue, and the mail
+        // arriving during it is threaded at ingest anyway — so waiting costs nothing but the
+        // slices themselves, which are one-shot.
+        kickThreadBackfill();
+      }
+    }
+
+    // ── THE CYCLE TAIL: the per-account passes, walked AFTER the rotation as their own queue entry ──
+    //
+    // One table, one loop, one cursor. The walk takes a snapshot of the shard's accounts at its
+    // start and moves section-major through `TAIL_SECTIONS`; between two slices it yields to a woken
+    // mailbox once the turn has run `tailTurn.minTurnMs`, and to whatever is queued once it has run
+    // `tailTurn.turnBudgetMs`. A yield re-queues the tail behind the wake's cycle and the next turn
+    // resumes at the cursor — never at the top, so no account's passes run twice in one walk. It
+    // never opens IMAP (`cycle-tail-census.test.ts`) and is never concurrent with a rotation.
+    interface TailWalk {
+      /** The shard's enabled mailboxes and their accounts, read once when the walk began. */
+      mailboxes: readonly EnabledMailbox[];
+      accounts: readonly string[];
+      /** Index into `TAIL_SECTIONS`, and the accounts that section walks once entered (null: not yet). */
+      section: number;
+      list: readonly string[] | null;
+      index: number;
+      rotationMs: number;
+      startedAt: number;
+      workMs: number;
+      turns: number;
+      sectionMs: number[];
+    }
+    interface TailSection {
+      /** The spelling `cycle_phases` and `/health` use (`cycle-tail-plan.ts`). */
+      name: TailSectionName;
+      /** Asked once when the walk reaches the section; false skips it whole. */
+      gate?: () => boolean;
+      /** One shard-wide slice instead of one per account. */
+      shard?: true;
+      /** Once on entry: the accounts this section walks (default: the snapshot). */
+      enter?: (accounts: readonly string[]) => Promise<readonly string[]>;
+      run: (accountId: string, walk: TailWalk) => Promise<void>;
+    }
+    const tailTurn = resolveTailTurn(config.tailTurn);
+    let tailWalk: TailWalk | null = null;
+    let tailQueued = false;
+    /** The owed serve's read instant: a hold landing mid-walk keeps its mark for the next walk. */
+    let owedReadAt = new Date(0);
+    /** An `until` for one pass call — the shape `mailboxErasurePass` takes. */
+    const sliceUntil = (): (() => boolean) => {
+      const at = Date.now();
+      return () => Date.now() - at >= TAIL_SLICE_BUDGET_MS;
+    };
+    /** A doorbell is waiting — the same field `noteWake` sets and admission spends. */
+    const anyWoken = (): boolean => [...runtimes.values()].some((rt) => rt.wokenAt !== null);
+
+    /** The shard-wide enabled set the walk runs over; a database fault falls back to the duty. */
+    async function tailSnapshot(): Promise<readonly EnabledMailbox[]> {
       // The DB passes run over the shard's full enabled set, not the attached duty. This used to be
       // `dutyAccounts` (`accountsOf(served)`, capped at `maxMailboxes`), a cap that exists to bound
       // IMAP CONNECTIONS and nothing else — and neither pass below opens one, so an account whose
@@ -4224,7 +4295,7 @@ export async function startWorkerWithLock(
       // (`shardPredicate` is `hashtext(account_id) % shards`). DELIBERATE SCOPE: the list derives from
       // ENABLED MAILBOXES, so a fully-disabled account gets no drain, time scan or bubble-up flip
       // (the intended semantics — a suspended account's automation must not keep firing). FALLBACK, not
-      // failure: a database fault degrades to the old narrower list. cycle() has exactly ONE preemption point.
+      // failure: a database fault degrades to the old narrower list. The tail yields between slices (above).
       /* THE ROWS, and the accounts DERIVED from them — `loadServedAccounts` is exactly
          `accountsOf(await loadEnabledMailboxes(…))` and threw the rows away, which is the mailbox
          scope the bubble-up pass below now needs. One read, same shard predicate, same fallback. */
@@ -4240,45 +4311,49 @@ export async function startWorkerWithLock(
             "over the ATTACHED duty only, so an account past the mailbox cap is skipped once",
         });
       }
-      const passAccounts = accountsOf(passMailboxes);
-      lap("pass_accounts");
+      return passMailboxes;
+    }
 
-      // ── SERVE THE SUGGEST-OWED ACCOUNTS FIRST (cloud 0039) ──────────────────────────────
-      // Accounts whose ingest HELD a first-contact sender since their last suggest visit, served
-      // at the TOP of the pass sections — the section chain is why a suggestion trailed a landing
-      // by over a minute while every piece was healthy. Two sources, union'd: the durable table
-      // (survives a crash) and the in-process hints (visible to the SAME cycle that ingested).
-      // Intersected with THIS shard's served set; per account, auto-apply still runs BEFORE the
-      // buy (the suggest section's load-bearing order). The mark is cleared only up to the read
-      // instant, so a hold landing mid-serve keeps its row; the unconditional suggest section
-      // below stays as the backstop. All four spend bounds live in the pass, untouched here.
-      {
-        const owedReadAt = new Date();
-        let owedRows: Array<{ accountId: string; owedAt: Date }> = [];
-        try {
-          owedRows = await owedSuggestAccounts(db as unknown as Tx);
-        } catch (err) {
-          noteIfSharedDatabaseFault(err);
-          log.warn("screener_suggest_owed_read_failed", {
-            err,
-            reason: "the owed marks could not be read; every opted-in account is still served " +
-              "by the suggest section below this cycle — latency, not loss",
-          });
-        }
-        const servedHere = new Set(passAccounts);
-        const owed: string[] = [];
-        for (const r of owedRows) {
-          if (servedHere.has(r.accountId) && !owed.includes(r.accountId)) owed.push(r.accountId);
-        }
-        for (const a of suggestOwedHints) {
-          if (servedHere.has(a) && !owed.includes(a)) owed.push(a);
-        }
-        for (const accountId of owed) {
-          if (stopped) return;
+    // BEGIN TAIL_IMPL — the no-IMAP census reads this block: no adapter, runtime or lease here.
+    const TAIL_IMPL: { readonly [K in TailSectionName]: Omit<TailSection, "name"> } = {
+      screener_suggest_owed: {
+        // ── SERVE THE SUGGEST-OWED ACCOUNTS FIRST (cloud 0039) ──────────────────────────────
+        // Accounts whose ingest HELD a first-contact sender since their last suggest visit, served
+        // at the TOP of the pass sections — the section chain is why a suggestion trailed a landing
+        // by over a minute while every piece was healthy. Two sources, union'd: the durable table
+        // (survives a crash) and the in-process hints (visible to the SAME cycle that ingested).
+        // Intersected with THIS shard's served set; per account, auto-apply still runs BEFORE the
+        // buy (the suggest section's load-bearing order). The mark is cleared only up to the read
+        // instant, so a hold landing mid-serve keeps its row; the unconditional suggest section
+        // below stays as the backstop. All four spend bounds live in the pass, untouched here.
+        enter: async (accounts) => {
+          owedReadAt = new Date();
+          let owedRows: Array<{ accountId: string; owedAt: Date }> = [];
+          try {
+            owedRows = await owedSuggestAccounts(db as unknown as Tx);
+          } catch (err) {
+            noteIfSharedDatabaseFault(err);
+            log.warn("screener_suggest_owed_read_failed", {
+              err,
+              reason: "the owed marks could not be read; every opted-in account is still served " +
+                "by the suggest section below this cycle — latency, not loss",
+            });
+          }
+          const servedHere = new Set(accounts);
+          const owed: string[] = [];
+          for (const r of owedRows) {
+            if (servedHere.has(r.accountId) && !owed.includes(r.accountId)) owed.push(r.accountId);
+          }
+          for (const a of suggestOwedHints) {
+            if (servedHere.has(a) && !owed.includes(a)) owed.push(a);
+          }
+          return owed;
+        },
+        run: async (accountId) => {
           suggestOwedHints.delete(accountId);
           try {
             const applied = await screenerAutoApplyPass(
-              db as unknown as Tx, { accountId, log, walk: screenerAutoWalk }, new Date(),
+              db as unknown as Tx, { accountId, log, walk: screenerAutoWalk, until: sliceUntil() }, new Date(),
             );
             if (applied.ran && applied.moved > 0) {
               log.info("screener_auto_apply_pass", { accountId, moved: applied.moved, capped: applied.capped });
@@ -4287,7 +4362,7 @@ export async function startWorkerWithLock(
             const { ran, bought, chargedAttempts, stopped: why, capped } = await screenerAutoSuggestPass(
               db as unknown as Tx,
               {
-                accountId, log,
+                accountId, log, until: sliceUntil(),
                 classifier: classifierCircuit?.port(),
                 ...(spend ? { credits: spend } : {}),
                 ...(obligations ? { obligations } : {}),
@@ -4303,7 +4378,7 @@ export async function startWorkerWithLock(
             // AND ACT ON WHAT IS NOW STORED, for an account that asked us to. Here rather than a
             // cycle later because the advice this serve just bought is the advice the setting
             // promises to act on; the pass files nothing for an account that has not opted in.
-            const acted = await screenerAutoActPass(db as unknown as Tx, { accountId, log }, new Date());
+            const acted = await screenerAutoActPass(db as unknown as Tx, { accountId, log, until: sliceUntil() }, new Date());
             if (acted.ran && (acted.filed > 0 || acted.failed > 0)) {
               log.info("screener_auto_act_pass", { accountId, applied: acted.filed, failed: acted.failed });
             }
@@ -4315,25 +4390,25 @@ export async function startWorkerWithLock(
                 "retries it; nothing is marked twice and the suggest section below still runs",
             });
           }
-        }
-      }
-
-      lap("screener_suggest_owed");
-
-      // The bubble-up resurfacing pass, in the loop and time-gated. It lives here rather than a platform
-      // cron because `runBubbleUpCron` takes `acquireLeaderLock(…, leaderLockKeyFor(shardIndex))` — the
-      // SAME lock this process holds — so a platform cron on this shard would be a process whose only
-      // function, while the worker is healthy, is to start, fail to take the lock and exit; the wrapper
-      // is a manual backstop for a DEAD worker. Until this call, nothing in production flipped
-      // `bubbled_up` back, so `AppShell`'s resurface shortcut showed a DATED promise ("Resurfaces
-      // {when}") no code could keep. BEFORE the workflow block, since a message coming due may satisfy
-      // a `time` trigger this tick. TIME-GATED, not per-cycle-unconditional and not its own
-      // `setInterval` — a second off-queue writer is unearned for one query per account, and an
-      // off-queue pass can close an adapter the cycle is walking.
-      if (Date.now() - lastBubbleUpAt >= BUBBLE_UP_EVERY_MS) {
-        lastBubbleUpAt = Date.now();
-        for (const accountId of passAccounts) {
-          if (stopped) return;
+        },
+      },
+      bubble_up: {
+        // The bubble-up resurfacing pass, in the loop and time-gated. It lives here rather than a platform
+        // cron because `runBubbleUpCron` takes `acquireLeaderLock(…, leaderLockKeyFor(shardIndex))` — the
+        // SAME lock this process holds — so a platform cron on this shard would be a process whose only
+        // function, while the worker is healthy, is to start, fail to take the lock and exit; the wrapper
+        // is a manual backstop for a DEAD worker. Until this call, nothing in production flipped
+        // `bubbled_up` back, so `AppShell`'s resurface shortcut showed a DATED promise ("Resurfaces
+        // {when}") no code could keep. BEFORE the workflow block, since a message coming due may satisfy
+        // a `time` trigger this tick. TIME-GATED, not per-cycle-unconditional and not its own
+        // `setInterval` — a second off-queue writer is unearned for one query per account, and an
+        // off-queue pass can close an adapter the cycle is walking.
+        gate: () => {
+          if (Date.now() - lastBubbleUpAt < BUBBLE_UP_EVERY_MS) return false;
+          lastBubbleUpAt = Date.now();
+          return true;
+        },
+        run: async (accountId, walk) => {
           try {
             // Scoped per account even though this process is the only writer of its shard: the
             // pass's own header explains why (an unscoped pass under a shard-specific lock
@@ -4345,7 +4420,7 @@ export async function startWorkerWithLock(
                account this process reads entirely yields an empty set and flips nothing. */
             const { flipped } = await asDatabaseFault("cycle.bubbleUpPass",
               () => bubbleUpPass(db as unknown as Tx, new Date(), {
-                accountId, mailboxIds: organizedMailboxIdsOf(passMailboxes, accountId),
+                accountId, mailboxIds: organizedMailboxIdsOf(walk.mailboxes, accountId),
               }));
             if (flipped > 0) log.info("bubble_up_flipped", { accountId, flipped });
           } catch (err) {
@@ -4356,147 +4431,139 @@ export async function startWorkerWithLock(
                 "retries it, the predicate is the row's own state and nothing is marked",
             });
           }
-        }
-      }
-
-      lap("bubble_up");
-
-      // Per-account DB passes, isolated per account so one account's workflow
-      // error can never abort another account's drain — nor the sync cycle.
-      for (const accountId of passAccounts) {
-        if (stopped) return;
-        try {
-          const nowTick = new Date();
-          await asDatabaseFault("cycle.workflowTimeScanPass",
-            () => workflowTimeScanPass(db as unknown as Tx, { accountId }, nowTick));
-          // NOT wrapped in `asDatabaseFault`: the drain calls the DRAFTER, so a model outage
-          // throws from inside it and must not be tagged as our database — the same subtraction
-          // `sensitiveBackfillPass` gets, for the same reason.
-          await workflowDrainPass(
-            db as unknown as Tx,
-            { drafter: config.drafter ?? unconfiguredDrafter, accountId, ...(spend ? { credits: spend } : {}) },
-            nowTick,
-          );
-        } catch (err) {
-          noteIfSharedDatabaseFault(err);
-          log.error("workflow_drain_failed", { accountId, err });
-        }
-      }
-
-      lap("workflow");
-
-      // Give back the mail stuck at the screening gate behind a decision the account already made.
-      // BEFORE the retro pass below and in its own try/catch and loop, for that loop's reason: one
-      // account's failure must not skip the rest. Running first is deliberate — it arms the release
-      // licence on rules the retro pass then walks in the SAME cycle, so an affected account is
-      // repaired in one pass of the tail instead of two. For every account already swept the call is
-      // one indexed read of `account_settings` and no more, and it stops for ever once the marker is
-      // stamped. It needs nothing beyond the db and core packages, the same dependency reason the
-      // two passes below state without naming the forbidden package (`deps.test.ts` scans this
-      // file's raw text).
-      for (const accountId of passAccounts) {
-        if (stopped) return;
-        try {
-          const r = await gateReleasePass(db as unknown as Tx, { accountId, log }, new Date());
-          if (r.ran && (r.rulesArmed > 0 || r.contactRowsReleased > 0 || r.completed)) {
-            log.info("gate_release_swept", {
-              accountId, rulesArmed: r.rulesArmed,
-              contactRowsReleased: r.contactRowsReleased, completed: r.completed,
+        },
+      },
+      workflow: {
+        // Per-account DB passes, isolated per account so one account's workflow
+        // error can never abort another account's drain — nor the sync cycle.
+        run: async (accountId) => {
+          try {
+            const nowTick = new Date();
+            await asDatabaseFault("cycle.workflowTimeScanPass",
+              () => workflowTimeScanPass(db as unknown as Tx, { accountId }, nowTick));
+            // NOT wrapped in `asDatabaseFault`: the drain calls the DRAFTER, so a model outage
+            // throws from inside it and must not be tagged as our database — the same subtraction
+            // `sensitiveBackfillPass` gets, for the same reason.
+            await workflowDrainPass(
+              db as unknown as Tx,
+              { drafter: config.drafter ?? unconfiguredDrafter, accountId, ...(spend ? { credits: spend } : {}) },
+              nowTick,
+            );
+          } catch (err) {
+            noteIfSharedDatabaseFault(err);
+            log.error("workflow_drain_failed", { accountId, err });
+          }
+        },
+      },
+      gate_release: {
+        // Give back the mail stuck at the screening gate behind a decision the account already made.
+        // BEFORE the retro pass below and in its own try/catch and loop, for that loop's reason: one
+        // account's failure must not skip the rest. Running first is deliberate — it arms the release
+        // licence on rules the retro pass then walks in the SAME cycle, so an affected account is
+        // repaired in one pass of the tail instead of two. For every account already swept the call is
+        // one indexed read of `account_settings` and no more, and it stops for ever once the marker is
+        // stamped. It needs nothing beyond the db and core packages, the same dependency reason the
+        // two passes below state without naming the forbidden package (`deps.test.ts` scans this
+        // file's raw text).
+        run: async (accountId) => {
+          try {
+            const r = await gateReleasePass(db as unknown as Tx, { accountId, log }, new Date());
+            if (r.ran && (r.rulesArmed > 0 || r.contactRowsReleased > 0 || r.completed)) {
+              log.info("gate_release_swept", {
+                accountId, rulesArmed: r.rulesArmed,
+                contactRowsReleased: r.contactRowsReleased, completed: r.completed,
+              });
+            }
+          } catch (err) {
+            log.error("gate_release_failed", {
+              accountId, err,
+              reason: "no account was marked swept, so the next cycle starts it again; a rule this " +
+                "pass already armed is in flight and drops out of its own selection, and a row it " +
+                "already released is desired into the Ohbox and no longer at the gate",
             });
           }
-        } catch (err) {
-          log.error("gate_release_failed", {
-            accountId, err,
-            reason: "no account was marked swept, so the next cycle starts it again; a rule this " +
-              "pass already armed is in flight and drops out of its own selection, and a row it " +
-              "already released is desired into the Ohbox and no longer at the gate",
-          });
-        }
-      }
-
-      lap("gate_release");
-
-      // Apply a new rule to mail that is already filed. Its OWN try/catch and loop, not folded into the
-      // workflow block, for that block's reason: one account's failure must not skip the rest. It runs
-      // HERE, on the worker, not the API host, because writing thousands of `folder_state` rows inside
-      // `POST /rules` is what this slice stops — the sheet used to fire one `POST /messages/:id/move`
-      // per match from the browser, each taking the account's sync-state row lock, abandoning the rest
-      // if the tab closed. The pass needs nothing from the services package (the db and core packages
-      // are its whole imports), which makes this the right host. The package is named in prose, not
-      // backticks, on purpose: `deps.test.ts` scans this file's raw TEXT and does not strip comments.
-      // NOT time-gated, unlike `bubbleUpPass`: its per-cycle write budget bounds it, its owed probe is
-      // one indexed query, and a user who clicked a destination is waiting for their mail to move.
-      for (const accountId of passAccounts) {
-        if (stopped) return;
-        try {
-          const { moved, completed, capped } = await ruleRetroPass(
-            db as unknown as Tx,
-            // Per-MAILBOX trust, off the credential row's own IMAP host, because one
-            // account's mailboxes can sit at different providers. The pass caches per mailbox.
-            { accountId, log, trustedAuthservIdsFor: mailboxProviderAuthservIds },
-            new Date(),
-          );
-          if (moved > 0 || completed > 0) {
-            log.info("rule_retro_pass", { accountId, moved, completed, capped });
+        },
+      },
+      rule_retro: {
+        // Apply a new rule to mail that is already filed. Its OWN try/catch and loop, not folded into the
+        // workflow block, for that block's reason: one account's failure must not skip the rest. It runs
+        // HERE, on the worker, not the API host, because writing thousands of `folder_state` rows inside
+        // `POST /rules` is what this slice stops — the sheet used to fire one `POST /messages/:id/move`
+        // per match from the browser, each taking the account's sync-state row lock, abandoning the rest
+        // if the tab closed. The pass needs nothing from the services package (the db and core packages
+        // are its whole imports), which makes this the right host. The package is named in prose, not
+        // backticks, on purpose: `deps.test.ts` scans this file's raw TEXT and does not strip comments.
+        // NOT time-gated, unlike `bubbleUpPass`: its per-cycle write budget bounds it, its owed probe is
+        // one indexed query, and a user who clicked a destination is waiting for their mail to move.
+        run: async (accountId) => {
+          try {
+            const { moved, completed, capped } = await ruleRetroPass(
+              db as unknown as Tx,
+              // Per-MAILBOX trust, off the credential row's own IMAP host, because one
+              // account's mailboxes can sit at different providers. The pass caches per mailbox.
+              { accountId, log, trustedAuthservIdsFor: mailboxProviderAuthservIds },
+              new Date(),
+            );
+            if (moved > 0 || completed > 0) {
+              log.info("rule_retro_pass", { accountId, moved, completed, capped });
+            }
+          } catch (err) {
+            log.error("rule_retro_failed", {
+              accountId, err,
+              reason: "no rule was marked applied and no cursor advanced past uncommitted work, " +
+                "so the next cycle resumes from `retro_cursor`; mail already moved is desired " +
+                "state the reconciler converges independently of this pass",
+            });
           }
-        } catch (err) {
-          log.error("rule_retro_failed", {
-            accountId, err,
-            reason: "no rule was marked applied and no cursor advanced past uncommitted work, " +
-              "so the next cycle resumes from `retro_cursor`; mail already moved is desired " +
-              "state the reconciler converges independently of this pass",
-          });
-        }
-      }
-
-      lap("rule_retro");
-
-      // File the already-misfiled automated mail out of the Ohbox. Its OWN try/catch and loop: one
-      // account's failure must not skip the rest. It is the durable, one-time-per-opt-in half of the
-      // `people_only` posture — the live engine demotes NEW mail, this re-routes the backlog placed
-      // before the account opted in. Like the retro pass it lives here and needs nothing beyond the db
-      // and core packages (the same dependency reason, stated without naming the forbidden package
-      // because `deps.test.ts` scans this file's raw text). It is owed work only for an account that
-      // flipped to `people_only` or pressed "tidy now", which one PK read checks; for every other
-      // account the call is that read and no more. NOT time-gated: its per-cycle write budget bounds it,
-      // and an owner who just opted in is waiting for their Ohbox to shrink.
-      for (const accountId of passAccounts) {
-        if (stopped) return;
-        try {
-          const { ran, moved, completed, capped } = await ohboxTidyPass(
-            db as unknown as Tx,
-            // Same per-mailbox trust as the retro pass above, same canonical resolver.
-            { accountId, log, trustedAuthservIdsFor: mailboxProviderAuthservIds },
-            new Date(),
-          );
-          if (ran && (moved > 0 || completed)) {
-            log.info("ohbox_tidy_pass", { accountId, moved, completed, capped });
+        },
+      },
+      ohbox_tidy: {
+        // File the already-misfiled automated mail out of the Ohbox. Its OWN try/catch and loop: one
+        // account's failure must not skip the rest. It is the durable, one-time-per-opt-in half of the
+        // `people_only` posture — the live engine demotes NEW mail, this re-routes the backlog placed
+        // before the account opted in. Like the retro pass it lives here and needs nothing beyond the db
+        // and core packages (the same dependency reason, stated without naming the forbidden package
+        // because `deps.test.ts` scans this file's raw text). It is owed work only for an account that
+        // flipped to `people_only` or pressed "tidy now", which one PK read checks; for every other
+        // account the call is that read and no more. NOT time-gated: its per-cycle write budget bounds it,
+        // and an owner who just opted in is waiting for their Ohbox to shrink.
+        run: async (accountId) => {
+          try {
+            const { ran, moved, completed, capped } = await ohboxTidyPass(
+              db as unknown as Tx,
+              // Same per-mailbox trust as the retro pass above, same canonical resolver.
+              { accountId, log, trustedAuthservIdsFor: mailboxProviderAuthservIds },
+              new Date(),
+            );
+            if (ran && (moved > 0 || completed)) {
+              log.info("ohbox_tidy_pass", { accountId, moved, completed, capped });
+            }
+          } catch (err) {
+            log.error("ohbox_tidy_failed", {
+              accountId, err,
+              reason: "no account was marked done and the cursor advanced only past committed pages, " +
+                "so the next cycle resumes from `ohbox_tidy_cursor`; mail already moved is desired " +
+                "state the reconciler converges independently of this pass",
+            });
           }
-        } catch (err) {
-          log.error("ohbox_tidy_failed", {
-            accountId, err,
-            reason: "no account was marked done and the cursor advanced only past committed pages, " +
-              "so the next cycle resumes from `ohbox_tidy_cursor`; mail already moved is desired " +
-              "state the reconciler converges independently of this pass",
-          });
-        }
-      }
-
-      lap("ohbox_tidy");
-
-      // Rejoin the conversations a forward split. A forward re-entering the mailbox carries no
-      // References, so one human conversation becomes two header chains and renders as two threads —
-      // correctly, under the ingest rule, which is why no ingest change can close it. The heal merges
-      // them once the evidence completes (`conversationJoinVerdict` — same account, same base subject,
-      // the same non-self correspondent on BOTH chains, the later opening with a reply/forward prefix,
-      // inside a 14-day window), performing exactly the merge `POST /threads/merge` performs, change
-      // rows included. TIME-GATED like `bubbleUpPass` and unlike the retro/tidy passes, because nobody
-      // is waiting on it: it repairs presentation, its own budget bounds a run, and its pre-filter is a
-      // per-account GROUP BY that would buy nothing per-cycle. Its OWN try/catch and loop.
-      if (Date.now() - lastThreadJoinHealAt >= THREAD_JOIN_HEAL_EVERY_MS) {
-        lastThreadJoinHealAt = Date.now();
-        for (const accountId of passAccounts) {
-          if (stopped) return;
+        },
+      },
+      thread_join_heal: {
+        // Rejoin the conversations a forward split. A forward re-entering the mailbox carries no
+        // References, so one human conversation becomes two header chains and renders as two threads —
+        // correctly, under the ingest rule, which is why no ingest change can close it. The heal merges
+        // them once the evidence completes (`conversationJoinVerdict` — same account, same base subject,
+        // the same non-self correspondent on BOTH chains, the later opening with a reply/forward prefix,
+        // inside a 14-day window), performing exactly the merge `POST /threads/merge` performs, change
+        // rows included. TIME-GATED like `bubbleUpPass` and unlike the retro/tidy passes, because nobody
+        // is waiting on it: it repairs presentation, its own budget bounds a run, and its pre-filter is a
+        // per-account GROUP BY that would buy nothing per-cycle. Its OWN try/catch and loop.
+        gate: () => {
+          if (Date.now() - lastThreadJoinHealAt < THREAD_JOIN_HEAL_EVERY_MS) return false;
+          lastThreadJoinHealAt = Date.now();
+          return true;
+        },
+        run: async (accountId) => {
           try {
             const r = await asDatabaseFault("cycle.threadJoinHealPass",
               () => threadJoinHealPass({
@@ -4529,24 +4596,24 @@ export async function startWorkerWithLock(
                 "re-reads reality and resumes",
             });
           }
-        }
-      }
-
-      lap("thread_join_heal");
-
-      // ── THE INBOUND-QUIET PASS: notice the mailbox a provider-side forward emptied ──────
-      //
-      // The forwarding-detection heuristic (mail 0078, `inbound-quiet.ts` carries the predicate
-      // and the incident). TIME-GATED like the heal above and for its reason: the pass judges
-      // fortnight-wide windows, so nothing a user can perceive changes between two cycles, and
-      // per-cycle it would be a fleet-wide grouped aggregate bought against no latency. Scoped
-      // per account under this shard's lock (bubble-up's argument), its OWN try/catch and loop
-      // so one account's failure must not skip the rest — and never a cycle abort: the notice
-      // is observability, and mail continues to be filed either way.
-      if (Date.now() - lastInboundQuietAt >= INBOUND_QUIET_EVERY_MS) {
-        lastInboundQuietAt = Date.now();
-        for (const accountId of passAccounts) {
-          if (stopped) return;
+        },
+      },
+      inbound_quiet: {
+        // ── THE INBOUND-QUIET PASS: notice the mailbox a provider-side forward emptied ──────
+        //
+        // The forwarding-detection heuristic (mail 0078, `inbound-quiet.ts` carries the predicate
+        // and the incident). TIME-GATED like the heal above and for its reason: the pass judges
+        // fortnight-wide windows, so nothing a user can perceive changes between two cycles, and
+        // per-cycle it would be a fleet-wide grouped aggregate bought against no latency. Scoped
+        // per account under this shard's lock (bubble-up's argument), its OWN try/catch and loop
+        // so one account's failure must not skip the rest — and never a cycle abort: the notice
+        // is observability, and mail continues to be filed either way.
+        gate: () => {
+          if (Date.now() - lastInboundQuietAt < INBOUND_QUIET_EVERY_MS) return false;
+          lastInboundQuietAt = Date.now();
+          return true;
+        },
+        run: async (accountId) => {
           try {
             const r = await asDatabaseFault("cycle.inboundQuietPass",
               () => inboundQuietPass(db as unknown as Tx, new Date(), { accountId }));
@@ -4562,407 +4629,460 @@ export async function startWorkerWithLock(
                 "re-reads reality — syncing is untouched",
             });
           }
-        }
-      }
-
-      lap("inbound_quiet");
-
-      // Re-deliver `autoReplyByUs` to mirrors that predate it. The flag is computed at materialize
-      // time, so it reaches a message only when a change_log row for that message does — and every
-      // responder reply already in somebody's Ohbox was written before the flag existed, so without
-      // this pass the client filters on a field those rows do not carry and the replies stay in
-      // "Earlier" for ever, the fix invisible on exactly the mailboxes that reported the bug (found by
-      // review as a HIGH). ONCE PER PROCESS, on the first cycle (see the gate's docblock for why no
-      // durable marker). Its OWN try/catch and loop, and it must never abort a cycle: it writes no
-      // state of its own, moves nothing and touches no message row — a change_log row is a re-read
-      // instruction — so the next gated run simply re-reads reality.
-      if (!awayReplySweep.done
-          && Date.now() - lastAwayReplySweepAt >= AWAY_REPLY_REDELIVER_RETRY_MS) {
-        lastAwayReplySweepAt = Date.now();
-        // The GATE IS THE SWEEP'S, closed after its own loop and only on a clean full pass. It
-        // used to be a boolean set here, before the accounts were walked, which retired the whole
-        // fleet's sweep on one account's failure. Its per-account try/catch keeps that shape — one
-        // account's failure must not skip the rest — and reports through `onError`.
-        const r = await asDatabaseFault("cycle.awayReplySweep",
-          () => awayReplySweep.runOnce(db as unknown as Tx, passAccounts, {
-            log,
-            onError: (accountId, err) => {
-              noteIfSharedDatabaseFault(err);
-              log.error("away_reply_flag_redeliver_failed", {
-                accountId, err,
-                reason: "no change row for this account committed partially — each page is one " +
-                  "transaction — the account keeps its cursor, the sweep stays owed, and the " +
-                  "next attempt resumes there; no message was moved or altered",
-              });
-            },
-          }));
-        if (r.redelivered > 0 || r.failed > 0) {
-          // `capped` carries "the sweep is still owed", NOT a field named `done`:
-          // `ALLOWED_FIELDS` drops an unregistered key silently, so `done` would vanish from the
-          // line. Inverted rather than renamed, because `capped` already means "the walk did not
-          // reach the end" everywhere else in this cycle.
-          log.info("away_reply_sweep", {
-            accounts: r.accounts, marked: r.redelivered, failed: r.failed, capped: !r.done,
-          });
-        }
-      }
-
-      lap("away_reply_flag_redeliver");
-
-      // ── TRIM THE ROLLING WINDOW: at the storage cap, the oldest stored bodies husk ──────
-      //
-      // Its OWN try/catch and loop, like every pass here: one account's failure must not skip
-      // the rest. For every account under its high-water mark the pass is two indexed reads and
-      // no more; over it, bounded rounds of bounded batches, resuming next cycle
-      // (`storage-evict.ts` carries the hysteresis argument). Registered in this SERIAL
-      // per-account section deliberately — the repair passes order body-row-then-counter, the
-      // evictor counter-then-body-rows, and serial execution per account is what keeps the two
-      // orderings from ever facing each other.
-      for (const accountId of passAccounts) {
-        if (stopped) return;
-        try {
-          const { ran, evicted, freedBytes, capped } = await storageEvictPass(
-            db as unknown as Tx, { accountId, log, storageCap: storageCapFor }, new Date(),
-          );
-          if (ran && evicted > 0) {
-            log.info("storage_evict_pass", { accountId, evicted, freedBytes, capped });
-          }
-        } catch (err) {
-          log.error("storage_evict_failed", {
-            accountId, err,
-            reason: "each round is one transaction, so a failure loses nothing durable; the " +
-              "counter and the husks move together or not at all, and the next cycle re-probes",
-          });
-        }
-      }
-
-      lap("storage_evict");
-
-      // ── NOBODY THIS ACCOUNT WROTE TO WAITS AT THE GATE ──────────────────────────────────
-      //
-      // Before the three Screener passes below, so a held correspondent is released rather than
-      // bought a suggestion or acted on. Hourly per account: its evidence moves when somebody
-      // writes, and the ingest already admits their new mail at once. Its own try/catch.
-      for (const accountId of passAccounts) {
-        if (stopped) return;
-        if (Date.now() - (correspondentRetroAt.get(accountId) ?? 0) < CORRESPONDENT_RETRO_EVERY_MS) continue;
-        correspondentRetroAt.set(accountId, Date.now());
-        try {
-          await screenerCorrespondentRetroPass(db as unknown as Tx, { accountId, log });
-        } catch (err) {
-          noteIfSharedDatabaseFault(err);
-          log.error("screener_correspondent_retro_failed", {
-            accountId, err,
-            reason: "each sender is released in its own transaction and nothing is marked, so the "
-              + "next hour re-reads the same evidence; new mail from them is admitted at ingest meanwhile",
-          });
-        }
-      }
-
-      lap("screener_correspondent_retro");
-
-      // ── FILE THE OBVIOUS BULK OUT OF THE SCREENER, FOR OPTED-IN ACCOUNTS ────────────────
-      //
-      // Its OWN try/catch and loop, for the reason the blocks above have one: one account's failure
-      // must not skip the rest. Unlike those two this is not owed-once backfill — it is a standing
-      // OPT-IN, off by default, so for every account that has not turned it on the pass is a single
-      // PK read and no more (the `screener_auto_apply_at IS NOT NULL` probe). It applies DETERMINISTIC
-      // routing only (the strong-bulk floor), never the model and never a spend, keeps sensitivity-
-      // flagged mail at the gate, and writes reversible intents the reconciler converges — same as
-      // the passes above, and like them it lives here on the worker needing nothing beyond db + core.
-      for (const accountId of passAccounts) {
-        if (stopped) return;
-        try {
-          const { ran, moved, capped } = await screenerAutoApplyPass(
-            db as unknown as Tx, { accountId, log, walk: screenerAutoWalk }, new Date(),
-          );
-          if (ran && moved > 0) {
-            log.info("screener_auto_apply_pass", { accountId, moved, capped });
-          }
-        } catch (err) {
-          log.error("screener_auto_apply_failed", {
-            accountId, err,
-            reason: "the account's walk mark was not advanced, so the next cycle re-reads every row " +
-              "this one did not decide; mail already moved is desired state the reconciler " +
-              "converges independently of this pass",
-          });
-        }
-      }
-
-      lap("screener_auto_apply");
-
-      // Buy the model's advice about incoming held senders. Its OWN try/catch and loop. It runs AFTER
-      // the deterministic auto-apply above, load-bearing: that pass files the obvious bulk OUT of the
-      // Screener with no model and no spend, so anything it takes this cycle is a sender this one never
-      // pays to ask about (wrong way round and the account buys advice about newsletters about to be
-      // filed for free). The ONLY pass here that spends money, and the only thing in the product that
-      // spends with no press in the same minute — three bounds hold it (the `auto_suggest_at`
-      // watermark, a ten-sender page per account per cycle, and `spend()` before every model call with
-      // the first refusal stopping the account). Off by default. It books the SAME `debit_classify`
-      // reason ingest meters with (the `classify:screener:<message_id>` source is a real duplicate
-      // check), but the `screener` ACTION — an exclusive claim and the screening-only setup grant first.
-      for (const accountId of passAccounts) {
-        if (stopped) return;
-        try {
-          // The Ohbox bar, so a suggestion bought here asks the same question a user-pressed one
-          // does. Read through the same 30-second cache the sync loop fills for every served
-          // account, so this is a hit rather than a read per account per cycle.
-          const screening = await screeningFor(accountId);
-          const { ran, bought, chargedAttempts, stopped: why, capped } = await screenerAutoSuggestPass(
-            db as unknown as Tx,
-            {
-              accountId, log,
-              classifier: classifierCircuit?.port(),
-              ...(spend ? { credits: spend } : {}),
-              ...(obligations ? { obligations } : {}),
-              ...(screening.ohboxBar ? { ohboxBar: screening.ohboxBar } : {}),
-            },
-          );
-          if (ran && (bought > 0 || why)) {
-            log.info("screener_auto_suggest_pass", { accountId, bought, chargedAttempts, stopped: why, capped });
-          }
-        } catch (err) {
-          log.error("screener_auto_suggest_failed", {
-            accountId, err,
-            reason: "nothing is marked and no cursor persists — a sender whose suggestion was " +
-              "stored drops out of the candidate query, so the next cycle resumes at the next " +
-              "unbought sender; a charge with no stored row is retried free (the ledger source " +
-              "is the message, so the retry answers `duplicate`)",
-          });
-        }
-      }
-
-      lap("screener_auto_suggest");
-
-      // ── ACT ON THE STORED SUGGESTIONS, FOR OPTED-IN ACCOUNTS ────────────────────────────
-      //
-      // "Act on suggestions for me": the senders whose stored advice is confident are filed through
-      // `applyScreenerDecision`, the door a press uses. Its OWN try/catch and loop for the reason
-      // the blocks above have one. AFTER the suggest pass, so advice bought this cycle is acted on
-      // this cycle. It reads advice and never buys it — no model, no spend, no claim.
-      for (const accountId of passAccounts) {
-        if (stopped) return;
-        try {
-          const acted = await screenerAutoActPass(db as unknown as Tx, { accountId, log }, new Date());
-          if (acted.ran && (acted.filed > 0 || acted.failed > 0)) {
-            log.info("screener_auto_act_pass", {
-              accountId, applied: acted.filed, failed: acted.failed, capped: acted.capped,
+        },
+      },
+      away_reply_flag_redeliver: {
+        // Re-deliver `autoReplyByUs` to mirrors that predate it. The flag is computed at materialize
+        // time, so it reaches a message only when a change_log row for that message does — and every
+        // responder reply already in somebody's Ohbox was written before the flag existed, so without
+        // this pass the client filters on a field those rows do not carry and the replies stay in
+        // "Earlier" for ever, the fix invisible on exactly the mailboxes that reported the bug (found by
+        // review as a HIGH). ONCE PER PROCESS, on the first cycle (see the gate's docblock for why no
+        // durable marker). Its OWN try/catch and loop, and it must never abort a cycle: it writes no
+        // state of its own, moves nothing and touches no message row — a change_log row is a re-read
+        // instruction — so the next gated run simply re-reads reality.
+        shard: true,
+        gate: () => {
+          if (awayReplySweep.done || Date.now() - lastAwayReplySweepAt < AWAY_REPLY_REDELIVER_RETRY_MS) return false;
+          lastAwayReplySweepAt = Date.now();
+          return true;
+        },
+        run: async (_accountId, walk) => {
+          // The GATE IS THE SWEEP'S, closed after its own loop and only on a clean full pass. It
+          // used to be a boolean set here, before the accounts were walked, which retired the whole
+          // fleet's sweep on one account's failure. Its per-account try/catch keeps that shape — one
+          // account's failure must not skip the rest — and reports through `onError`.
+          const r = await asDatabaseFault("cycle.awayReplySweep",
+            () => awayReplySweep.runOnce(db as unknown as Tx, [...walk.accounts], {
+              log,
+              onError: (accountId, err) => {
+                noteIfSharedDatabaseFault(err);
+                log.error("away_reply_flag_redeliver_failed", {
+                  accountId, err,
+                  reason: "no change row for this account committed partially — each page is one " +
+                    "transaction — the account keeps its cursor, the sweep stays owed, and the " +
+                    "next attempt resumes there; no message was moved or altered",
+                });
+              },
+            }));
+          if (r.redelivered > 0 || r.failed > 0) {
+            // `capped` carries "the sweep is still owed", NOT a field named `done`:
+            // `ALLOWED_FIELDS` drops an unregistered key silently, so `done` would vanish from the
+            // line. Inverted rather than renamed, because `capped` already means "the walk did not
+            // reach the end" everywhere else in this cycle.
+            log.info("away_reply_sweep", {
+              accounts: r.accounts, marked: r.redelivered, failed: r.failed, capped: !r.done,
             });
           }
-        } catch (err) {
-          log.error("screener_auto_act_failed", {
-            accountId, err,
-            reason: "no sender was filed past the failure and nothing is marked — a filed sender " +
-              "leaves the Screener and stops being a candidate, so the next cycle resumes at the " +
-              "next waiting sender and every one of them still carries its own Apply",
-          });
-        }
-      }
-
-      lap("screener_auto_act");
-
-      // ── THE ERASURES PEOPLE ASKED FOR (mail 0126) ─────────────────────────────────────
-      //
-      // "Remove and erase" stamps the mailbox and answers; this is the sweep it promised, every
-      // cycle because somebody is watching "Erasing — N messages left" count down. Bounded in
-      // steps and wall clock inside the pass, one indexed read over the owed stamps when there is
-      // nothing to do. Its OWN try/catch: every step is its own transaction, so a failure leaves
-      // what committed and the next cycle resumes from the stamp — never a cycle abort.
-      try {
-        const erased = await asDatabaseFault("cycle.mailboxErasurePass",
-          () => mailboxErasurePass(db as unknown as Tx, { now: () => new Date(), shard: shardFilter(selection) }));
-        if (erased.steps > 0) {
-          log.info("mailbox_erasure_pass", {
-            mailboxes: erased.mailboxes, steps: erased.steps, finished: erased.finished,
-            messagesErased: erased.messagesErased,
-          });
-        }
-      } catch (err) {
-        noteIfSharedDatabaseFault(err);
-        log.error("mailbox_erasure_failed", {
-          err,
-          reason: "the erasure steps that committed stand, each is one transaction, and the stamp " +
-            "is the resume point, so the next cycle continues from what is left",
-        });
-      }
-
-      lap("mailbox_erasure");
-
-      // ── Global maintenance, leader-only and time-gated (~hourly) ────────────────────
-      //
-      // `idempotency_keys` rows are written by every mutation and read only by a retry, so
-      // nothing ever revisits them: without a sweep the table grows for the lifetime of the
-      // deployment. `expires_at` is a 24-hour promise the API now ENFORCES on lookup, and this
-      // is the other half — the rows actually going away. It belongs here rather than in a
-      // platform cron because the worker is already the single elected writer, so exactly one
-      // process runs it, and a failure is a logged warning, never a cycle abort.
-      if (Date.now() - lastMaintenanceAt >= MAINTENANCE_EVERY_MS) {
-        lastMaintenanceAt = Date.now();
-        try {
-          const pruned = await pruneIdempotencyKeys(db as unknown as Tx, new Date());
-          if (pruned > 0) log.info("idempotency_pruned", { pruned });
-        } catch (err) {
-          log.error("idempotency_prune_failed", { err });
-        }
-        // An erased account's token hashes (cloud 0043) answer nothing past their own expiry;
-        // the erasure writes them and nothing else ever revisits them, so they go here.
-        try {
-          const pruned = await pruneErasedBearers(db as unknown as Tx, new Date());
-          if (pruned > 0) log.info("erased_bearers_pruned", { pruned });
-        } catch (err) {
-          log.error("erased_bearers_prune_failed", { err });
-        }
-        // ── WHAT WE OWE PEOPLE WHOSE SPEND BOUGHT NOTHING ─────────────────────────────────
+        },
+      },
+      storage_evict: {
+        // ── TRIM THE ROLLING WINDOW: at the storage cap, the oldest stored bodies husk ──────
         //
-        // The obligation rows cloud 0036 holds, turned back into credits. It rides the
-        // maintenance cadence rather than the per-account loop because a debt belongs to an
-        // ACCOUNT and not to a mailbox, and because the claim statement reads the whole table
-        // once: a per-account version would be one query per served account per cycle to find,
-        // almost always, nothing. Leader-only, like its neighbours, and the row's own lease is
-        // what makes that a performance property rather than a correctness one.
-        //
-        // NEVER THROWS by contract, so no try/catch would earn its place here — but the pass
-        // itself is the thing that must not take down a worker that is syncing mail, and that is
-        // stated where it is implemented.
-        await refundObligationDrainPass(db as unknown as Tx, {
-          ...(spend ? { credits: spend } : {}), log,
-        });
-        // ── SPENT SEND-CONTENT CLAIMS ──────────────────────────────────────────────────
-        //
-        // HYGIENE, and it is worth saying plainly because the neighbouring sweep above is not:
-        // no send's answer depends on this running. The window inside which an identical message
-        // is refused is compared against the request clock in the send path, so a claim this
-        // deletes had already stopped refusing anything. That is deliberate — a standalone
-        // install runs the same send path and has no maintenance pass at all, so an expiry that
-        // depended on pruning would be unbounded on every desktop.
-        try {
-          const fps = await pruneSendFingerprints(db as unknown as Tx, new Date());
-          if (fps > 0) log.info("send_fingerprints_pruned", { pruned: fps });
-        } catch (err) {
-          log.error("send_fingerprint_prune_failed", { err });
-        }
-        // Expired staged attachment bytes: the object, then the row. A hosted send puts attachment
-        // bytes in a private bucket and references them; the row carries a 24-hour `expires_at` and
-        // this is the half that makes that a fact. Same slot as the prune above (the worker is the
-        // single elected writer). The abandoned upload is the case that matters — a ticket minted, a
-        // compose window closed, no object written — and `remove` treats a storage 404 as success so
-        // that row goes (reading it as failure would keep every abandoned ticket for the deployment's
-        // life). It DRAINS: this took ONE 200-row page per hourly slot, which any faster account
-        // outran, starving cleanup for everyone; `sweepExpiredStagingFor` now pages until empty under a
-        // row ceiling and wall-clock budget. `drained: false` is a WARNING even though nothing threw —
-        // a clean-looking number over a growing bucket is exactly what went wrong before.
-        if (stagingStorage) {
+        // Its OWN try/catch and loop, like every pass here: one account's failure must not skip
+        // the rest. For every account under its high-water mark the pass is two indexed reads and
+        // no more; over it, bounded rounds of bounded batches, resuming next cycle
+        // (`storage-evict.ts` carries the hysteresis argument). Registered in this SERIAL
+        // per-account section deliberately — the repair passes order body-row-then-counter, the
+        // evictor counter-then-body-rows, and serial execution per account is what keeps the two
+        // orderings from ever facing each other.
+        run: async (accountId) => {
           try {
-            const sweep = await sweepExpiredStagingFor(db as unknown as Tx, stagingStorage, new Date());
-            if (sweep.deleted > 0 || sweep.pages > 0) {
-              log.info("attachment_staging_swept", {
-                swept: sweep.deleted, pages: sweep.pages, drained: sweep.drained,
-                stoppedBy: sweep.stoppedBy, failedPages: sweep.failedPages,
-              });
+            const { ran, evicted, freedBytes, capped } = await storageEvictPass(
+              db as unknown as Tx, { accountId, log, storageCap: storageCapFor }, new Date(),
+            );
+            if (ran && evicted > 0) {
+              log.info("storage_evict_pass", { accountId, evicted, freedBytes, capped });
             }
-            if (!sweep.drained && sweep.pages > 0) {
-              log.warn("attachment_staging_backlog", {
-                swept: sweep.deleted, pages: sweep.pages,
-                stoppedBy: sweep.stoppedBy, failedPages: sweep.failedPages,
-                reason: sweep.failedPages > 0
-                  ? "object storage refused at least one delete; those rows keep their objects and " +
-                    "the next pass retries them, and the drain paged past them so nothing behind " +
-                    "them is stalled"
-                  : "the pass hit its per-invocation bound with rows still expired; the next pass " +
-                    "resumes from the oldest of them. Sustained, this means the ceiling is below " +
-                    "what this deployment produces and wants raising",
+          } catch (err) {
+            log.error("storage_evict_failed", {
+              accountId, err,
+              reason: "each round is one transaction, so a failure loses nothing durable; the " +
+                "counter and the husks move together or not at all, and the next cycle re-probes",
+            });
+          }
+        },
+      },
+      screener_correspondent_retro: {
+        // ── NOBODY THIS ACCOUNT WROTE TO WAITS AT THE GATE ──────────────────────────────────
+        //
+        // Before the three Screener passes below, so a held correspondent is released rather than
+        // bought a suggestion or acted on. Hourly per account: its evidence moves when somebody
+        // writes, and the ingest already admits their new mail at once. Its own try/catch.
+        run: async (accountId) => {
+          if (Date.now() - (correspondentRetroAt.get(accountId) ?? 0) < CORRESPONDENT_RETRO_EVERY_MS) return;
+          correspondentRetroAt.set(accountId, Date.now());
+          try {
+            await screenerCorrespondentRetroPass(db as unknown as Tx, { accountId, log });
+          } catch (err) {
+            noteIfSharedDatabaseFault(err);
+            log.error("screener_correspondent_retro_failed", {
+              accountId, err,
+              reason: "each sender is released in its own transaction and nothing is marked, so the "
+                + "next hour re-reads the same evidence; new mail from them is admitted at ingest meanwhile",
+            });
+          }
+        },
+      },
+      screener_auto_apply: {
+        // ── FILE THE OBVIOUS BULK OUT OF THE SCREENER, FOR OPTED-IN ACCOUNTS ────────────────
+        //
+        // Its OWN try/catch and loop, for the reason the blocks above have one: one account's failure
+        // must not skip the rest. Unlike those two this is not owed-once backfill — it is a standing
+        // OPT-IN, off by default, so for every account that has not turned it on the pass is a single
+        // PK read and no more (the `screener_auto_apply_at IS NOT NULL` probe). It applies DETERMINISTIC
+        // routing only (the strong-bulk floor), never the model and never a spend, keeps sensitivity-
+        // flagged mail at the gate, and writes reversible intents the reconciler converges — same as
+        // the passes above, and like them it lives here on the worker needing nothing beyond db + core.
+        run: async (accountId) => {
+          try {
+            const { ran, moved, capped } = await screenerAutoApplyPass(
+              db as unknown as Tx, { accountId, log, walk: screenerAutoWalk, until: sliceUntil() }, new Date(),
+            );
+            if (ran && moved > 0) {
+              log.info("screener_auto_apply_pass", { accountId, moved, capped });
+            }
+          } catch (err) {
+            log.error("screener_auto_apply_failed", {
+              accountId, err,
+              reason: "the account's walk mark was not advanced, so the next cycle re-reads every row " +
+                "this one did not decide; mail already moved is desired state the reconciler " +
+                "converges independently of this pass",
+            });
+          }
+        },
+      },
+      screener_auto_suggest: {
+        // Buy the model's advice about incoming held senders. Its OWN try/catch and loop. It runs AFTER
+        // the deterministic auto-apply above, load-bearing: that pass files the obvious bulk OUT of the
+        // Screener with no model and no spend, so anything it takes this cycle is a sender this one never
+        // pays to ask about (wrong way round and the account buys advice about newsletters about to be
+        // filed for free). The ONLY pass here that spends money, and the only thing in the product that
+        // spends with no press in the same minute — three bounds hold it (the `auto_suggest_at`
+        // watermark, a ten-sender page per account per cycle, and `spend()` before every model call with
+        // the first refusal stopping the account). Off by default. It books the SAME `debit_classify`
+        // reason ingest meters with (the `classify:screener:<message_id>` source is a real duplicate
+        // check), but the `screener` ACTION — an exclusive claim and the screening-only setup grant first.
+        run: async (accountId) => {
+          try {
+            // The Ohbox bar, so a suggestion bought here asks the same question a user-pressed one
+            // does. Read through the same 30-second cache the sync loop fills for every served
+            // account, so this is a hit rather than a read per account per cycle.
+            const screening = await screeningFor(accountId);
+            const { ran, bought, chargedAttempts, stopped: why, capped } = await screenerAutoSuggestPass(
+              db as unknown as Tx,
+              {
+                accountId, log, until: sliceUntil(),
+                classifier: classifierCircuit?.port(),
+                ...(spend ? { credits: spend } : {}),
+                ...(obligations ? { obligations } : {}),
+                ...(screening.ohboxBar ? { ohboxBar: screening.ohboxBar } : {}),
+              },
+            );
+            if (ran && (bought > 0 || why)) {
+              log.info("screener_auto_suggest_pass", { accountId, bought, chargedAttempts, stopped: why, capped });
+            }
+          } catch (err) {
+            log.error("screener_auto_suggest_failed", {
+              accountId, err,
+              reason: "nothing is marked and no cursor persists — a sender whose suggestion was " +
+                "stored drops out of the candidate query, so the next cycle resumes at the next " +
+                "unbought sender; a charge with no stored row is retried free (the ledger source " +
+                "is the message, so the retry answers `duplicate`)",
+            });
+          }
+        },
+      },
+      screener_auto_act: {
+        // ── ACT ON THE STORED SUGGESTIONS, FOR OPTED-IN ACCOUNTS ────────────────────────────
+        //
+        // "Act on suggestions for me": the senders whose stored advice is confident are filed through
+        // `applyScreenerDecision`, the door a press uses. Its OWN try/catch and loop for the reason
+        // the blocks above have one. AFTER the suggest pass, so advice bought this cycle is acted on
+        // this cycle. It reads advice and never buys it — no model, no spend, no claim.
+        run: async (accountId) => {
+          try {
+            const acted = await screenerAutoActPass(db as unknown as Tx, { accountId, log, until: sliceUntil() }, new Date());
+            if (acted.ran && (acted.filed > 0 || acted.failed > 0)) {
+              log.info("screener_auto_act_pass", {
+                accountId, applied: acted.filed, failed: acted.failed, capped: acted.capped,
               });
             }
           } catch (err) {
-            log.error("attachment_staging_sweep_failed", {
+            log.error("screener_auto_act_failed", {
+              accountId, err,
+              reason: "no sender was filed past the failure and nothing is marked — a filed sender " +
+                "leaves the Screener and stops being a candidate, so the next cycle resumes at the " +
+                "next waiting sender and every one of them still carries its own Apply",
+            });
+          }
+        },
+      },
+      mailbox_erasure: {
+        // ── THE ERASURES PEOPLE ASKED FOR (mail 0126) ─────────────────────────────────────
+        //
+        // "Remove and erase" stamps the mailbox and answers; this is the sweep it promised, every
+        // cycle because somebody is watching "Erasing — N messages left" count down. Bounded in
+        // steps and wall clock inside the pass, one indexed read over the owed stamps when there is
+        // nothing to do. Its OWN try/catch: every step is its own transaction, so a failure leaves
+        // what committed and the next cycle resumes from the stamp — never a cycle abort.
+        shard: true,
+        run: async () => {
+          try {
+            const erased = await asDatabaseFault("cycle.mailboxErasurePass",
+              () => mailboxErasurePass(db as unknown as Tx, { now: () => new Date(), shard: shardFilter(selection) }));
+            if (erased.steps > 0) {
+              log.info("mailbox_erasure_pass", {
+                mailboxes: erased.mailboxes, steps: erased.steps, finished: erased.finished,
+                messagesErased: erased.messagesErased,
+              });
+            }
+          } catch (err) {
+            noteIfSharedDatabaseFault(err);
+            log.error("mailbox_erasure_failed", {
               err,
-              reason: "the rows stay and the next maintenance pass retries — objects are deleted " +
-                "before their rows, so nothing is orphaned by a failure here",
+              reason: "the erasure steps that committed stand, each is one transaction, and the stamp " +
+                "is the resume point, so the next cycle continues from what is left",
             });
           }
-          /* AND THE OBJECTS NO TICKET NAMES — the half the sweep above cannot reach.
-           *
-           * That one works from tickets, so the one thing it can never see is an object whose
-           * ticket is gone: a signed upload grant outlives the erasure that expired its ticket
-           * and the sweep that removed its object, and the bytes it writes afterwards sit in the
-           * bucket with nothing anywhere pointing at them. This walks the bucket instead and
-           * deletes what no ticket names, bounded by age so it cannot race a live mint. Same
-           * slot, after the expiry sweep: an object the sweep just removed is not a candidate,
-           * and one whose row the sweep just deleted is younger than the age bound anyway.
-           * COUNTS ONLY in the log — an object path names an account and a ticket. */
+        },
+      },
+      global_maintenance: {
+        // ── Global maintenance, leader-only and time-gated (~hourly) ────────────────────
+        //
+        // `idempotency_keys` rows are written by every mutation and read only by a retry, so
+        // nothing ever revisits them: without a sweep the table grows for the lifetime of the
+        // deployment. `expires_at` is a 24-hour promise the API now ENFORCES on lookup, and this
+        // is the other half — the rows actually going away. It belongs here rather than in a
+        // platform cron because the worker is already the single elected writer, so exactly one
+        // process runs it, and a failure is a logged warning, never a cycle abort.
+        shard: true,
+        gate: () => {
+          if (Date.now() - lastMaintenanceAt < MAINTENANCE_EVERY_MS) return false;
+          lastMaintenanceAt = Date.now();
+          return true;
+        },
+        run: async () => {
           try {
-            const rec = await reconcileStagingOrphansFor(
-              db as unknown as Tx, stagingStorage, new Date());
-            if (rec.orphans > 0 || rec.unrecognised > 0 || !rec.complete) {
-              log.info("attachment_staging_reconciled", {
-                scanned: rec.scanned, orphans: rec.orphans, deleted: rec.deleted,
-                unrecognised: rec.unrecognised, pages: rec.pages,
-                stoppedBy: rec.stoppedBy, complete: rec.complete,
-              });
-            }
-            if (rec.unrecognised > 0) {
-              log.warn("attachment_staging_foreign_objects", {
-                unrecognised: rec.unrecognised,
-                reason: "objects in the staging bucket whose path is not one this deployment " +
-                  "writes. Counted and left alone: this bucket is supposed to hold nothing else",
-              });
-            }
+            const pruned = await pruneIdempotencyKeys(db as unknown as Tx, new Date());
+            if (pruned > 0) log.info("idempotency_pruned", { pruned });
           } catch (err) {
-            if (err instanceof StagingListingUnsupportedError) {
-              log.warn("attachment_staging_reconcile_unsupported", {
-                reason: "this storage cannot list its bucket, so an object whose ticket is gone " +
-                  "can never be found; the expiry sweep alone cannot promise an empty bucket",
-              });
-            } else {
-              log.error("attachment_staging_reconcile_failed", {
+            log.error("idempotency_prune_failed", { err });
+          }
+          // An erased account's token hashes (cloud 0043) answer nothing past their own expiry;
+          // the erasure writes them and nothing else ever revisits them, so they go here.
+          try {
+            const pruned = await pruneErasedBearers(db as unknown as Tx, new Date());
+            if (pruned > 0) log.info("erased_bearers_pruned", { pruned });
+          } catch (err) {
+            log.error("erased_bearers_prune_failed", { err });
+          }
+          // ── WHAT WE OWE PEOPLE WHOSE SPEND BOUGHT NOTHING ─────────────────────────────────
+          //
+          // The obligation rows cloud 0036 holds, turned back into credits. It rides the
+          // maintenance cadence rather than the per-account loop because a debt belongs to an
+          // ACCOUNT and not to a mailbox, and because the claim statement reads the whole table
+          // once: a per-account version would be one query per served account per cycle to find,
+          // almost always, nothing. Leader-only, like its neighbours, and the row's own lease is
+          // what makes that a performance property rather than a correctness one.
+          //
+          // NEVER THROWS by contract, so no try/catch would earn its place here — but the pass
+          // itself is the thing that must not take down a worker that is syncing mail, and that is
+          // stated where it is implemented.
+          await refundObligationDrainPass(db as unknown as Tx, {
+            ...(spend ? { credits: spend } : {}), log,
+          });
+          // ── SPENT SEND-CONTENT CLAIMS ──────────────────────────────────────────────────
+          //
+          // HYGIENE, and it is worth saying plainly because the neighbouring sweep above is not:
+          // no send's answer depends on this running. The window inside which an identical message
+          // is refused is compared against the request clock in the send path, so a claim this
+          // deletes had already stopped refusing anything. That is deliberate — a standalone
+          // install runs the same send path and has no maintenance pass at all, so an expiry that
+          // depended on pruning would be unbounded on every desktop.
+          try {
+            const fps = await pruneSendFingerprints(db as unknown as Tx, new Date());
+            if (fps > 0) log.info("send_fingerprints_pruned", { pruned: fps });
+          } catch (err) {
+            log.error("send_fingerprint_prune_failed", { err });
+          }
+          // Expired staged attachment bytes: the object, then the row. A hosted send puts attachment
+          // bytes in a private bucket and references them; the row carries a 24-hour `expires_at` and
+          // this is the half that makes that a fact. Same slot as the prune above (the worker is the
+          // single elected writer). The abandoned upload is the case that matters — a ticket minted, a
+          // compose window closed, no object written — and `remove` treats a storage 404 as success so
+          // that row goes (reading it as failure would keep every abandoned ticket for the deployment's
+          // life). It DRAINS: this took ONE 200-row page per hourly slot, which any faster account
+          // outran, starving cleanup for everyone; `sweepExpiredStagingFor` now pages until empty under a
+          // row ceiling and wall-clock budget. `drained: false` is a WARNING even though nothing threw —
+          // a clean-looking number over a growing bucket is exactly what went wrong before.
+          if (stagingStorage) {
+            try {
+              const sweep = await sweepExpiredStagingFor(db as unknown as Tx, stagingStorage, new Date());
+              if (sweep.deleted > 0 || sweep.pages > 0) {
+                log.info("attachment_staging_swept", {
+                  swept: sweep.deleted, pages: sweep.pages, drained: sweep.drained,
+                  stoppedBy: sweep.stoppedBy, failedPages: sweep.failedPages,
+                });
+              }
+              if (!sweep.drained && sweep.pages > 0) {
+                log.warn("attachment_staging_backlog", {
+                  swept: sweep.deleted, pages: sweep.pages,
+                  stoppedBy: sweep.stoppedBy, failedPages: sweep.failedPages,
+                  reason: sweep.failedPages > 0
+                    ? "object storage refused at least one delete; those rows keep their objects and " +
+                      "the next pass retries them, and the drain paged past them so nothing behind " +
+                      "them is stalled"
+                    : "the pass hit its per-invocation bound with rows still expired; the next pass " +
+                      "resumes from the oldest of them. Sustained, this means the ceiling is below " +
+                      "what this deployment produces and wants raising",
+                });
+              }
+            } catch (err) {
+              log.error("attachment_staging_sweep_failed", {
                 err,
-                reason: "nothing was deleted and nothing was recorded as deleted; the next " +
-                  "maintenance pass walks the bucket again from the start",
+                reason: "the rows stay and the next maintenance pass retries — objects are deleted " +
+                  "before their rows, so nothing is orphaned by a failure here",
               });
             }
+            /* AND THE OBJECTS NO TICKET NAMES — the half the sweep above cannot reach.
+             *
+             * That one works from tickets, so the one thing it can never see is an object whose
+             * ticket is gone: a signed upload grant outlives the erasure that expired its ticket
+             * and the sweep that removed its object, and the bytes it writes afterwards sit in the
+             * bucket with nothing anywhere pointing at them. This walks the bucket instead and
+             * deletes what no ticket names, bounded by age so it cannot race a live mint. Same
+             * slot, after the expiry sweep: an object the sweep just removed is not a candidate,
+             * and one whose row the sweep just deleted is younger than the age bound anyway.
+             * COUNTS ONLY in the log — an object path names an account and a ticket. */
+            try {
+              const rec = await reconcileStagingOrphansFor(
+                db as unknown as Tx, stagingStorage, new Date());
+              if (rec.orphans > 0 || rec.unrecognised > 0 || !rec.complete) {
+                log.info("attachment_staging_reconciled", {
+                  scanned: rec.scanned, orphans: rec.orphans, deleted: rec.deleted,
+                  unrecognised: rec.unrecognised, pages: rec.pages,
+                  stoppedBy: rec.stoppedBy, complete: rec.complete,
+                });
+              }
+              if (rec.unrecognised > 0) {
+                log.warn("attachment_staging_foreign_objects", {
+                  unrecognised: rec.unrecognised,
+                  reason: "objects in the staging bucket whose path is not one this deployment " +
+                    "writes. Counted and left alone: this bucket is supposed to hold nothing else",
+                });
+              }
+            } catch (err) {
+              if (err instanceof StagingListingUnsupportedError) {
+                log.warn("attachment_staging_reconcile_unsupported", {
+                  reason: "this storage cannot list its bucket, so an object whose ticket is gone " +
+                    "can never be found; the expiry sweep alone cannot promise an empty bucket",
+                });
+              } else {
+                log.error("attachment_staging_reconcile_failed", {
+                  err,
+                  reason: "nothing was deleted and nothing was recorded as deleted; the next " +
+                    "maintenance pass walks the bucket again from the start",
+                });
+              }
+            }
+          } else {
+            log.info("attachment_staging_sweep_skipped", {
+              reason: "no staging bucket is configured on this worker; if the API stages, its " +
+                "bucket is not being swept",
+            });
           }
-        } else {
-          log.info("attachment_staging_sweep_skipped", {
-            reason: "no staging bucket is configured on this worker; if the API stages, its " +
-              "bucket is not being swept",
-          });
+
+          // ── RETENTION — change_log compaction plus the audit_log / auth_events fixed-age
+          // prunes. Same slot as its neighbours (the worker is the single elected writer, and a
+          // failure is a logged warning, never a cycle abort — the pass states that itself). The
+          // horizons live in ONE place, `@trafficflow/db/cloud`'s `retention.ts`.
+          await retentionPrunePass(db as unknown as Tx, new Date(), log);
+        },
+      },
+    };
+    // END TAIL_IMPL
+    const TAIL_SECTIONS: readonly TailSection[] =
+      TAIL_SECTION_PLAN.map((p) => ({ name: p.name, ...TAIL_IMPL[p.name] }));
+
+    function kickTail(): void {
+      if (stopped || tailQueued) return;
+      tailQueued = true;
+      void serialize(async () => { tailQueued = false; await cycleTail(); }).catch((err: unknown) => {
+        if (isSharedDatabaseFault(err)) noteDatabaseFault(err);
+        log.error("cycle_tail_failed_unexpectedly", { err });
+      });
+    }
+
+    /** One turn of the walk. Never throws past a slice: a failed slice is logged and passed. */
+    async function cycleTail(): Promise<void> {
+      if (stopped) return;
+      const turnStarted = Date.now();
+      if (tailWalk === null) {
+        const mailboxesNow = await tailSnapshot();
+        tailWalk = {
+          mailboxes: mailboxesNow, accounts: accountsOf(mailboxesNow), section: 0, list: null, index: 0,
+          rotationMs: lastRotationMs ?? 0, startedAt: turnStarted, workMs: 0, turns: 0,
+          sectionMs: TAIL_SECTIONS.map(() => 0),
+        };
+      }
+      const walk = tailWalk;
+      walk.turns++;
+      const clockIn = (at: number): void => { walk.sectionMs[walk.section]! += Date.now() - at; };
+      try {
+        for (; walk.section < TAIL_SECTIONS.length; walk.section++, walk.list = null) {
+          const s = TAIL_SECTIONS[walk.section]!;
+          if (walk.list === null) {
+            if (s.gate && !s.gate()) continue;
+            const at = Date.now();
+            walk.list = s.shard ? [""] : s.enter ? await s.enter(walk.accounts) : walk.accounts;
+            walk.index = 0;
+            clockIn(at);
+          }
+          for (; walk.index < walk.list.length; walk.index++) {
+            if (stopped) return;
+            // THE ONLY YIELD POINTS. A wake ahead of the rest of the walk once the floor has run; a
+            // poll cycle does not preempt (it would starve the walk to one slice per rotation).
+            const elapsed = Date.now() - turnStarted;
+            const woken = elapsed >= tailTurn.minTurnMs && anyWoken();
+            if (woken || elapsed >= tailTurn.turnBudgetMs) {
+              if (woken) kickCycle();
+              kickTail();
+              return;
+            }
+            await config.tailSliceHook?.(s.name, walk.index);
+            const at = Date.now();
+            try {
+              await s.run(walk.list[walk.index]!, walk);
+            } catch (err) {
+              noteIfSharedDatabaseFault(err);
+              log.error("cycle_tail_section_failed", {
+                section: s.name, err,
+                reason: "this slice's pass threw past its own handling; the walk goes on to the next " +
+                  "slice, and the pass's own resume point is the next walk's",
+              });
+            }
+            clockIn(at);
+          }
         }
-
-        // ── RETENTION — change_log compaction plus the audit_log / auth_events fixed-age
-        // prunes. Same slot as its neighbours (the worker is the single elected writer, and a
-        // failure is a logged warning, never a cycle abort — the pass states that itself). The
-        // horizons live in ONE place, `@trafficflow/db/cloud`'s `retention.ts`.
-        await retentionPrunePass(db as unknown as Tx, new Date(), log);
+      } finally {
+        walk.workMs += Date.now() - turnStarted;
       }
+      // THE WALK IS OVER: one line with where its time went, and the next rotation starts a new one.
+      tailWalk = null;
+      lastTailMs = walk.workMs;
+      log.info("cycle_phases", {
+        rotationMs: walk.rotationMs, tailMs: walk.workMs, tailWallMs: Date.now() - walk.startedAt,
+        turns: walk.turns,
+        sections: TAIL_SECTIONS.map((s, i) => ({ section: s.name, ms: walk.sectionMs[i]! })),
+      });
+    }
 
-      lap("global_maintenance");
-      // One line per cycle: where the time went, rotation and each tail section apart.
-      lastTailMs = Date.now() - tailStartedMs;
-      log.info("cycle_phases", { rotationMs, tailMs: lastTailMs, sections });
-
-      // Backfill drain. A mailbox mid-backfill is drained as fast as the queue allows instead of one
-      // bounded batch per `pollIntervalMs` (at two hundred messages a cycle, a 60 s poll would take a
-      // twenty-thousand-message mailbox ~100 hours). Queued through `kickCycle`, so it lands on the
-      // SAME serial queue as the roster pass and cannot starve reconciliation. Termination: a truncated
-      // batch always ADMITS at least one message, and every admitted message leaves a durable trace the
-      // next known-set reflects (a row, an instance, or a failure-ledger row), so the unknown set
-      // strictly shrinks. The earlier "always commits at least one message" wording was FALSIFIED in
-      // production (2026-08-29): an admitted create whose dedup arm REPOINTED the primary instead of
-      // recording an instance learned nothing, so the re-kick fired every ~2.3 minutes for ever — the
-      // shrink guarantee is a property of `pipeline.ts`'s dedup arms and `fetchCapped`, not admission alone.
-      if (backlogged.length > 0 && !stopped) {
-        log.info("backfill_progress", {
-          mailboxes: backlogged.length, sample: backlogged.slice(0, 3),
-          reason: "adapter reported a truncated batch — re-kicking rather than waiting for the poll interval",
-        });
-        kickCycle();
-      } else {
-        // …and only once the MESSAGE backlog is drained does the THREAD backlog get a slice.
-        // A mailbox still streaming its first sync has better uses for the queue, and the mail
-        // arriving during it is threaded at ingest anyway — so waiting costs nothing but the
-        // slices themselves, which are one-shot.
-        kickThreadBackfill();
-      }
+    /** Where the walk is, for `/health` — an index, never an account id. */
+    function tailPosition(): { section: string; account: number; of: number } | null {
+      const w = tailWalk;
+      if (w === null || w.section >= TAIL_SECTIONS.length) return null;
+      return { section: TAIL_SECTIONS[w.section]!.name, account: w.index, of: (w.list ?? w.accounts).length };
     }
 
     // The thread backfill, behind the cycle and bounded. What the first version got wrong was
@@ -5269,8 +5389,8 @@ export async function startWorkerWithLock(
       void serialize(async () => { cycleQueued = false; await cycle(); }).catch((err: unknown) => {
         // A DATABASE FAULT THAT ESCAPED THE ROTATION LOOP IS STILL THE SHARD-WIDE CONDITION.
         //
-        // `cycle()` does more than walk mailboxes — the per-account passes below the loop each
-        // catch their own, but this is the backstop, and without this line a fault that reached
+        // `cycle()` does more than walk mailboxes — its post-loop bookkeeping catches its own,
+        // but this is the backstop, and without this line a fault that reached
         // it would be an `error` line and NOTHING ELSE: `/health` would keep answering
         // `degraded: false` about a worker that has stopped syncing. Recorded through the same
         // one-incident path, so it cannot double-announce an outage the loop already named.
@@ -5584,6 +5704,7 @@ export async function startWorkerWithLock(
           parkedReader: parkedAccountsReader ? "composed" : "absent",
           lastRotationMs,
           lastTailMs,
+          tail: tailPosition(),
         };
       },
       stop(): Promise<void> {

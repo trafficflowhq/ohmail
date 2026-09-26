@@ -154,6 +154,7 @@ export async function runWorkerSupervised(
         lagSeconds: lastCycleAt ? Math.round((Date.now() - lastCycleAt.getTime()) / 1000) : null,
         lastRotationMs: stats?.lastRotationMs ?? null,
         lastTailMs: stats?.lastTailMs ?? null,
+        tail: stats?.tail ?? null,
         // The KEK identity, published field-for-field (risk 2). The API host renders the
         // same `kekEnvIdentity()` object, so drift is a one-glance JSON comparison.
         kekFingerprint: config.kek?.fingerprint ?? null,

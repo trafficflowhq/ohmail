@@ -63,6 +63,35 @@ export const CYCLE_FAST_LANES = 1;
  * FOUR is deliberately small — past it the mailbox keeps its wake and leads the next pass.
  */
 export const CYCLE_WAKE_REVISITS = 4;
+/**
+ * THE CYCLE TAIL'S TURN. The per-account passes run after the rotation as their own queue entry and
+ * yield between slices: to a woken mailbox once a turn has run {@link TAIL_MIN_TURN_MS}, and to
+ * everything queued once it has run {@link TAIL_TURN_BUDGET_MS} — under the 30 s roster interval.
+ * The floor is what keeps a chatty IDLE from cutting the tail to one slice per wake; a settled tail
+ * on the largest seeded lane account measured about two seconds.
+ */
+export const TAIL_MIN_TURN_MS = 2_000;
+export const TAIL_TURN_BUDGET_MS = 20_000;
+/** A tail section whose worst case exceeds this runs under an `until` clock of this length. */
+export const TAIL_SLICE_BUDGET_MS = 3_000;
+
+/** The turn a tail takes. A zero, a fraction or a floor above the budget refuses: a tail that
+ *  yields before its first slice, or never, is not a setting. */
+export function resolveTailTurn(
+  requested: { minTurnMs?: number; turnBudgetMs?: number } | undefined,
+): { minTurnMs: number; turnBudgetMs: number } {
+  const minTurnMs = requested?.minTurnMs ?? TAIL_MIN_TURN_MS;
+  const turnBudgetMs = requested?.turnBudgetMs ?? TAIL_TURN_BUDGET_MS;
+  for (const [name, v] of [["minTurnMs", minTurnMs], ["turnBudgetMs", turnBudgetMs]] as const) {
+    if (!Number.isInteger(v) || v < 1) {
+      throw new WorkerConfigError("tailTurn", `tailTurn.${name} must be a positive integer (got ${v})`);
+    }
+  }
+  if (minTurnMs > turnBudgetMs) {
+    throw new WorkerConfigError("tailTurn", "tailTurn.minTurnMs may not exceed tailTurn.turnBudgetMs");
+  }
+  return { minTurnMs, turnBudgetMs };
+}
 /** Standby lock-retry backoff — a hot spare re-tries every 15 s. */
 export const DEFAULT_STANDBY_RETRY_MS = 15_000;
 /**
@@ -306,6 +335,12 @@ export interface WorkerConfig {
    *  sleeps past the IMAP socket timeout, or one that throws, and watch neither reach the
    *  attach path nor the process's exit code — the two properties the placement fix exists for. */
   threadBackfill?: ThreadBackfillPass;
+  /** TEST SEAM (never populated by `loadConfig`): the tail's turn, resolved by {@link resolveTailTurn}.
+   *  Production takes the constants; a test cannot wait out twenty seconds. */
+  tailTurn?: { minTurnMs?: number; turnBudgetMs?: number };
+  /** TEST SEAM (never populated by `loadConfig`): awaited before every tail slice with its section
+   *  name and account index, so an ordering test can park a slice and read the trace. */
+  tailSliceHook?: (section: string, accountIndex: number) => Promise<void>;
   /**
    * The INJECTED ClassifierPort the routing pipeline's AI branch calls. The field an earlier comment
    * said did not exist yet. Absent ⇒ rules-only routing: no AI branch, no debit — still the shipped

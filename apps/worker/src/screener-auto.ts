@@ -58,8 +58,13 @@ export const SCREENER_AUTO_FULL_EVERY_MS = 60 * 60_000;
 export interface ScreenerAutoMark {
   autoApplyAt: string; roster: string; headSeq: bigint; fullAt: number;
 }
-export type ScreenerAutoWalk = Map<string, ScreenerAutoMark>;
-export const newScreenerAutoWalk = (): ScreenerAutoWalk => new Map();
+/** Where a walk stopped by its `until` clock goes on: the mark it will leave, and its cursor. */
+export interface ScreenerAutoResume {
+  next: ScreenerAutoMark; changed: string[] | null; afterId: string | null; page: number;
+}
+export type ScreenerAutoWalk = Map<string, ScreenerAutoMark> & { resumes?: Map<string, ScreenerAutoResume> };
+export const newScreenerAutoWalk = (): ScreenerAutoWalk =>
+  Object.assign(new Map<string, ScreenerAutoMark>(), { resumes: new Map<string, ScreenerAutoResume>() });
 
 export interface ScreenerAutoDeps {
   /** Scope to ONE account — the worker loops its served accounts. */
@@ -76,6 +81,12 @@ export interface ScreenerAutoDeps {
   walk?: ScreenerAutoWalk;
   /** Test seam. Default {@link SCREENER_AUTO_FULL_EVERY_MS}. */
   fullEveryMs?: number;
+  /**
+   * The cycle tail's clock, asked before every page after the first. A walk it stops RESUMES at its
+   * cursor on the next call (`walk.resumes`), so a walk longer than the clock still finishes and the
+   * mark still moves; without a resume memory it is a cap.
+   */
+  until?: () => boolean;
 }
 
 export interface ScreenerAutoResult {
@@ -165,7 +176,7 @@ export async function screenerAutoApplyPass(
   // for every account that has not turned it on — which is every account by default.
   const [settings] = await db.select({ autoApplyAt: accountSettings.screenerAutoApplyAt })
     .from(accountSettings).where(eq(accountSettings.accountId, accountId)).limit(1);
-  if (!settings?.autoApplyAt) { deps.walk?.delete(accountId); return EMPTY(); }
+  if (!settings?.autoApplyAt) { deps.walk?.delete(accountId); deps.walk?.resumes?.delete(accountId); return EMPTY(); }
 
   // Every address this ACCOUNT sends from — for the "the user replied from their own client"
   // exclusion. Read once here rather than in SQL so the candidate query stays one indexable statement.
@@ -177,15 +188,27 @@ export async function screenerAutoApplyPass(
   const roster = ownRows.map((r) => `${r.id}:${r.status}:${r.role}:${r.address.toLowerCase()}`).sort().join(",");
 
   const result: ScreenerAutoResult = { ...EMPTY(), ran: true };
-  const plan = await planWalk(db, deps, {
-    accountId, autoApplyAt: new Date(settings.autoApplyAt).toISOString(), roster, now: now(),
-  });
+  const autoApplyAt = new Date(settings.autoApplyAt).toISOString();
+  // A walk the clock stopped goes on where it stopped, under the mark it read before its first page
+  // — the same walk, only longer. Taken once: a revoke, a finish or a cap leaves no resume behind.
+  const held = deps.walk?.resumes?.get(accountId);
+  deps.walk?.resumes?.delete(accountId);
+  const resume = held && held.next.autoApplyAt === autoApplyAt && held.next.roster === roster ? held : undefined;
+  const plan = resume ? { changed: resume.changed, next: resume.next }
+    : await planWalk(db, deps, { accountId, autoApplyAt, roster, now: now() });
   result.mode = plan.changed === null ? "full" : "incremental";
-  let afterId: string | null = null;
+  let afterId: string | null = resume?.afterId ?? null;
   const pages = plan.changed === null ? maxPages : Math.ceil(plan.changed.length / batch);
+  let clockStop = false;
 
-  for (let page = 0; page < pages; page++) {
+  for (let page = plan.changed === null ? 0 : resume?.page ?? 0, ran = 0; page < pages; page++, ran++) {
     if (result.moved >= budget) { result.capped = true; break; }
+    if (ran > 0 && deps.until?.()) {
+      clockStop = true;
+      result.capped = true;
+      deps.walk?.resumes?.set(accountId, { next: plan.next, changed: plan.changed, afterId, page });
+      break;
+    }
 
     const outcome = await db.transaction(async (tx) => {
       // THE OPT-IN IS RE-READ HERE, LOCKED, AND IT IS THE REVOKE CHECK. The probe above runs ONCE; the
@@ -287,7 +310,7 @@ export async function screenerAutoApplyPass(
   // THE MARK MOVES ONLY OVER A WALK THAT FINISHED: a capped or revoked walk leaves it where it was,
   // so the next walk re-reads everything this one did not decide. A full walk that ran out of pages
   // is capped in effect and moves nothing either.
-  const finished = !result.capped && !result.revoked
+  const finished = !result.capped && !result.revoked && !clockStop
     && (plan.changed !== null || result.examined < maxPages * batch);
   if (deps.walk && result.revoked) deps.walk.delete(accountId);
   else if (deps.walk && finished) deps.walk.set(accountId, plan.next);
