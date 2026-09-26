@@ -159,6 +159,8 @@ export interface StandaloneEngine {
        * absent must read as "the engine did not say" rather than as a password to ask for.
        */
       needsCredential?: boolean;
+      /** THE SERVER'S CERTIFICATE WAS REFUSED — optional for `needsCredential`'s reason. */
+      certificateRefused?: boolean;
       /**
        * AND WHAT THE FIRST SYNC OF THIS MAILBOX PRODUCED — `pending`, `finished`, or
        * `produced_nothing_readable`. The third is the one no surface could report: a drain came
@@ -340,7 +342,7 @@ export type StandaloneOutcome =
  * `cause` walk and hop bound are the engine's: the adapter wraps, and reading only the
  * outermost error would answer `false` for the wrapped shape this exists to recognise.
  */
-const flagged = (err: unknown, flag: "authenticationFailed" | "tlsFailed"): boolean => {
+const flagged = (err: unknown, flag: "authenticationFailed" | "tlsFailed" | "certificateRefused"): boolean => {
   for (let e: unknown = err, hops = 0; e !== null && e !== undefined && hops < 8; hops++) {
     if ((e as Record<string, unknown>)[flag] === true) return true;
     e = (e as { cause?: unknown }).cause;
@@ -353,6 +355,9 @@ export const signInRefused = (err: unknown): boolean => flagged(err, "authentica
 
 /** The server offered no encrypted way in on that port, or one that could not be trusted. */
 export const encryptionRefused = (err: unknown): boolean => flagged(err, "tlsFailed");
+
+/** The narrower half of the one above: this phone would not accept the server's certificate. */
+export const certificateRefused = (err: unknown): boolean => flagged(err, "certificateRefused");
 
 /**
  * Open it. Two refusals before the engine is asked anything, and after that the engine's own.
@@ -397,6 +402,8 @@ export async function openStandaloneMailbox(
      * person needs here is about their password or their port, not about STARTTLS. So each becomes
      * a KEYED refusal with no arguments — which also means neither can carry the password. */
     if (signInRefused(err)) return { ok: false, reason: refuse("standaloneSignInRefused") };
+    /* Before the encryption arm: a refused certificate is encrypted, and "try port 993" is false. */
+    if (certificateRefused(err)) return { ok: false, reason: refuse("standaloneCertificateRefused") };
     if (encryptionRefused(err)) return { ok: false, reason: refuse("standaloneNoEncryption") };
     /* `faultDetail`, never `String(err)`: it words a fault THIS APP authored (a store fault
        becomes a keyed refusal, rendered in the reader's language at the moment it is shown) and

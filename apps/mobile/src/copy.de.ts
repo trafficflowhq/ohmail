@@ -179,6 +179,8 @@ export const DE: Deck = {
     "Dein Mailserver hat diese Adresse und dieses Passwort nicht akzeptiert. Prüfe beides und versuche es erneut — es wurde nichts gespeichert.",
   standaloneNoEncryption:
     "Dein Mailserver bietet auf diesem Port keine verschlüsselte Verbindung, und ohmail sendet dein Passwort nicht im Klartext. Versuche Port 993 in den Servereinstellungen.",
+  standaloneCertificateRefused:
+    "Dieses Telefon hat das Zertifikat deines Mailservers nicht akzeptiert, ohmail hat also abgebrochen, bevor das Passwort rausging. Prüfe mit deinem Anbieter den Namen des Posteingangsservers.",
   standaloneRefused: (detail: string) =>
     `Das Öffnen des Postfachs wurde abgebrochen: ${detail}`,
   /* Die drei des Neustarts. Jede benennt ein anderes Fehlen. */
@@ -1420,6 +1422,8 @@ export const DE: Deck = {
   screeningVerdictChanged: (term: string) => `Deine Regel »${term}« wurde inzwischen geändert und bleibt deshalb, wie sie ist.`,
 
   connectionSignInRefused: "Der Mailserver hat die Anmeldung abgelehnt.",
+  connectionCertificateRefused:
+    "Dieses Telefon hat das Zertifikat des Mailservers nicht akzeptiert und deshalb abgebrochen, bevor das Passwort rausging.",
   signInAgain: "Erneut anmelden",
   signInAgainLead:
     "Hast du das Passwort dieses Postfachs bei deinem Anbieter geändert? Gib ohmail das neue. Die Post, die schon auf diesem Telefon ist, bleibt, wo sie ist.",

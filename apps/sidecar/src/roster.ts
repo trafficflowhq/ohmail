@@ -116,6 +116,12 @@ export interface MailboxConnectionState {
    */
   signInRefused: boolean;
   /**
+   * THIS DEVICE REFUSED THE SERVER'S CERTIFICATE, so no password was sent. Not an outage: the
+   * automatic re-dial stops (a person's retry or a foreground resume asks again) and the surface
+   * names the certificate rather than promising a reconnect.
+   */
+  certificateRefused: boolean;
+  /**
    * NO PASSWORD ON THIS INSTALL FOR THIS MAILBOX, so nothing was ever dialled — its own state,
    * and neither {@link reachable} nor an outage. Set where a runtime starts with no usable
    * login and returns without opening a socket: `reachable` used to stay true there because it

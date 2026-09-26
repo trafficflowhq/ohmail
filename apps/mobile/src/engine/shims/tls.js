@@ -35,6 +35,30 @@ function withNameOrNoSni(options) {
 }
 
 /**
+ * A CERTIFICATE THE PLATFORM REFUSED, said as one — `tlsFailed` and `certificateRefused`.
+ *
+ * The platform socket reports a failed handshake as a bare message (a string on both native
+ * halves), so imapflow's implicit-TLS dial rejected with no flag and the engine read the refusal as
+ * an outage: "Reconnecting…" for ever over a certificate nothing would accept. Only the certificate
+ * class is stamped — a refused or timed-out TCP connect before the handshake is still an outage.
+ * Android names the Java exception; iOS names the Secure Transport code; node (the suite's stand-in)
+ * says "certificate".
+ */
+const CERTIFICATE_REFUSAL =
+  /certificat|CertPath|trust anchor|SSLPeerUnverified|Hostname \S+ not verified|kCFStreamErrorDomainSSL error -98(?:07|08|12|13|14|15|43)\b|errSSL(?:XCertChainInvalid|NoRootCert|UnknownRootCert|CertExpired|CertNotYetValid|HostNameMismatch)/i;
+const CERTIFICATE_CODE = /CERT|SELF_SIGNED|UNABLE_TO_(?:GET_ISSUER|VERIFY)/;
+
+function handshakeRefusal(err) {
+  const message = err instanceof Error ? err.message : String(err);
+  const code = err instanceof Error && typeof err.code === "string" ? err.code : "";
+  if (!CERTIFICATE_REFUSAL.test(message) && !CERTIFICATE_CODE.test(code)) return err;
+  const e = err instanceof Error ? err : new Error(message);
+  e.tlsFailed = true;
+  e.certificateRefused = true;
+  return e;
+}
+
+/**
  * `tls.connect(options[, listener])`. `options.socket` present ⇒ the STARTTLS upgrade: take the
  * bridge's underlying native socket and hand it to the platform's TLS socket, which begins the
  * handshake on that same connection; absent ⇒ a fresh TLS dial. The returned bridge emits
@@ -57,7 +81,10 @@ function connect(options, listener) {
     native = TcpSocket.connectTLS(withNameOrNoSni(options), () => undefined);
   }
 
-  const bridge = new NativeSocketBridge(native);
+  /* Until the handshake is confirmed, an error may be the platform refusing the certificate. */
+  let secured = false;
+  const bridge = new NativeSocketBridge(native, (err) => (secured ? err : handshakeRefusal(err)));
+  bridge.once("secureConnect", () => { secured = true; });
   /* FORWARDED SEPARATELY from `connect`: the handshake finishing is a different fact from the
      connection opening, and only this one means the bytes after it are protected. */
   native.on("secureConnect", () => { bridge.emit("secureConnect"); });
@@ -115,6 +142,7 @@ module.exports = {
   /* Exported for the guards that drive them with the shapes the platform produces. */
   withNameOrNoSni,
   confirmUpgrade,
+  handshakeRefusal,
   TLSSocket: NativeSocketBridge,
   /* `connect` handles both routes, so there is no second entry point to keep in step. */
   createServer: unsupported("createServer"),

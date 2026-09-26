@@ -241,6 +241,8 @@ export interface StandaloneHere {
   readonly unreachableSince: string | null;
   /** The server answered and rejected the sign-in — not an outage, and not retried. */
   readonly signInRefused: boolean;
+  /** This phone refused the server's certificate — not an outage; `false` while unsaid. */
+  readonly certificateRefused: boolean;
   /**
    * NO PASSWORD ON THIS PHONE FOR THIS MAILBOX — nothing was dialled, so it is neither reachable
    * nor an outage. The engine's own field, re-spelled nowhere. `false` while the engine has not
@@ -278,6 +280,7 @@ export function standaloneHere(): StandaloneHere | null {
   let reachable: boolean | null = null;
   let unreachableSince: string | null = null;
   let signInRefused = false;
+  let certificateRefused = false;
   let needsCredential = false;
   /** `null` until the engine has said — see the field. */
   let firstSync: string | null = null;
@@ -346,6 +349,7 @@ export function standaloneHere(): StandaloneHere | null {
     if (conn.length > 0) {
       reachable = conn.every((c) => c.reachable);
       signInRefused = conn.some((c) => c.signInRefused);
+      certificateRefused = conn.some((c) => c.certificateRefused === true);
       /* `some`, like the refusal beside it and unlike `reachable`: the news is that a mailbox on
          this phone is waiting for a password, and a second healthy link does not answer it. */
       needsCredential = conn.some((c) => c.needsCredential === true);
@@ -374,7 +378,7 @@ export function standaloneHere(): StandaloneHere | null {
   }
   return {
     id, address: held.address, organizing, releaseRequestedAt, heldBy, reachable,
-    unreachableSince, signInRefused, needsCredential, firstSync,
+    unreachableSince, signInRefused, certificateRefused, needsCredential, firstSync,
   };
 }
 

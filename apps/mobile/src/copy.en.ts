@@ -308,6 +308,8 @@ const TABLE = {
     "Your mail server would not accept that address and password. Check them and try again — nothing has been saved.",
   standaloneNoEncryption:
     "Your mail server offers no encrypted connection on that port, and ohmail will not send your password in the clear. Try port 993 in Server settings.",
+  standaloneCertificateRefused:
+    "This phone would not accept your mail server's certificate, so ohmail stopped before sending your password. Check the incoming server's name with your provider.",
   standaloneRefused: (detail: string) =>
     `Opening the mailbox stopped: ${detail}`,
   /* The relaunch's own three, and each one names a different absence: nothing sealed, a mailbox
@@ -2188,6 +2190,9 @@ const TABLE = {
      The refusal was silent here while nothing could be done about it. Now something can be, so
      it is said and the verb is beside it. */
   connectionSignInRefused: "The mail server refused the sign-in.",
+  /* Not an outage: nothing is re-dialling a certificate this phone refused. */
+  connectionCertificateRefused:
+    "This phone would not accept the mail server's certificate, so it stopped before sending your password.",
   signInAgain: "Sign in again",
   signInAgainLead:
     "Changed this mailbox's password at your provider? Give ohmail the new one. The mail already on this phone stays where it is.",

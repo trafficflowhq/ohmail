@@ -37,7 +37,9 @@ function setSocketLog(log) {
  * there is one writable door, not one per transport.
  */
 class NativeSocketBridge extends Duplex {
-  constructor(native) {
+  /* `mapError` lets the TLS shim name a refused handshake before any listener sees it; absent,
+     the platform's error travels unchanged. */
+  constructor(native, mapError) {
     /* `emitClose: false` — this bridge emits its own `close`, from the native socket's, so the
        stream layer must not emit a second one. Before it did, and a consumer-initiated
        `destroy()` produced two closes for one connection. */
@@ -70,7 +72,7 @@ class NativeSocketBridge extends Duplex {
       this.connecting = false;
       this.emit("connect");
     });
-    native.on("error", (err) => { this.emit("error", err); });
+    native.on("error", (err) => { this.emit("error", typeof mapError === "function" ? mapError(err) : err); });
     native.on("timeout", () => { this.emit("timeout"); });
     native.on("close", (hadError) => {
       this.connecting = false;

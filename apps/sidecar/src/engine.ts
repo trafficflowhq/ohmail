@@ -1307,6 +1307,19 @@ export function tlsRefused(err: unknown): boolean {
 }
 
 /**
+ * WAS IT THE CERTIFICATE — the one TLS refusal a re-dial cannot talk its way past. Read off the
+ * flag the phone's TLS shim stamps on a handshake the platform refused (`shims/tls.js`); no other
+ * transport sets it. Narrower than {@link tlsRefused}, which also covers a server with no STARTTLS.
+ */
+export function certificateRefused(err: unknown): boolean {
+  for (let e: unknown = err, hops = 0; e !== null && e !== undefined && hops < 8; hops++) {
+    if ((e as { certificateRefused?: unknown }).certificateRefused === true) return true;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+/**
  * Did the server reject our credentials — one bit, deliberately narrower than the worker's.
  * `classifyMailboxError` is the real taxonomy and this is not a second copy: it answers one question
  * where that answers six, and it is not imported for a structural reason — that module imports `makeDb`
@@ -2921,6 +2934,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * and `test/credential-paths-clear-refusal.test.ts` is the census over which path reaches which.
        */
       let signInRefused = false;
+      /**
+       * THE SERVER'S CERTIFICATE WAS REFUSED — see {@link certificateRefused}. Stops the automatic
+       * ladder (a certificate does not heal in five seconds, and a phone that keeps dialling says
+       * "Reconnecting…" over a refusal). A person's forced dial or a foreground resume still asks,
+       * rationed by the press floor; a dial that gets through clears it.
+       */
+      let certificateRefusedNow = false;
       /**
        * THE STORED PASSWORD THIS LAUNCH COULD NOT DIAL WITH — see {@link CredentialBlock}.
        *
@@ -6156,6 +6176,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * attempted at all; the second may, so it is attempted on a widening interval instead of
          * four times a minute. */
         if (signInRefused) return;
+        /* A REFUSED CERTIFICATE WAITS FOR A PERSON, not for the ladder — see the field. */
+        if (certificateRefusedNow && !force) return;
         /* THE PRESS SKIPS THE LADDER, AND THE FLOOR UNDER THE PRESS IS ITS OWN. See
            {@link forcedNotBefore}: a forced dial that failed a moment ago has not become worth
            repeating because somebody pressed again. ABOVE the credential arm below, because the
@@ -6244,6 +6266,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           connectionDeadBy = null;
           redialAttempts = 0;
           redialNotBefore = 0;
+          /* The handshake went through, so the certificate is no longer the answer. */
+          certificateRefusedNow = false;
           /* The press's floor goes with the ladder — DEFENCE, not a watched invariant, said here
            * so a later reader does not take it for a guarantee. Its contrary state is unreachable:
            * a FORCED dial runs only once the floor has passed, so a later press is admitted whether
@@ -6283,7 +6307,18 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * A refused sign-in stops the automatic re-dial for good; anything else widens the
            * wait. Without this the log line below was literally true — "the next poll tries
            * again" — and that was the defect, not the remedy. */
-          if (credentialsRefused(err)) {
+          if (certificateRefused(err)) {
+            /* No password was sent: the platform refused the handshake before LOGIN. Force or
+               not, the press floor rations the next ask; the automatic ladder stops here. */
+            certificateRefusedNow = true;
+            forcedNotBefore = Date.now() + reconnect.ladderMs[0]!;
+            log("mailbox_certificate_check_failed", {
+              err, mailboxId: mb.id,
+              reason: "this device would not accept the mail server's certificate, so nothing " +
+                "was sent and the automatic re-dial stops; a person's retry or the next " +
+                "foreground asks again",
+            });
+          } else if (credentialsRefused(err)) {
             signInRefused = true;
             log("mailbox_sign_in_failed", {
               err, mailboxId: mb.id,
@@ -6441,6 +6476,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                answered and said no is the wrong sentence: it sends somebody to look at their
                network when the answer is their password. */
             signInRefused,
+            /* THE CERTIFICATE, named apart from an outage: nothing is re-dialling it. */
+            certificateRefused: certificateRefusedNow,
             /* AND WHAT THE FIRST SYNC PRODUCED, read in the same pass for the reason the record's
                own header gives: two reads would be two clocks. */
             firstSync: firstSync.state(),
@@ -6569,6 +6606,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              * catch has ALREADY closed it (`connection-release.e2e.test.ts`), and a second close
              * here closed the login twice. */
             noteConnectionDead(err, generation, null);
+            if (certificateRefused(err)) certificateRefusedNow = true;
             if (credentialsRefused(err)) {
               signInRefused = true;
               log("mailbox_sign_in_failed", {

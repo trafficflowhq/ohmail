@@ -152,6 +152,8 @@ export function mayConnect(fields: StandaloneFields): boolean {
 const SERVER_FIELD_REFUSALS: ReadonlySet<RefusalKey> = new Set<RefusalKey>([
   "standaloneNoHost",
   "standaloneNoPort",
+  /* The certificate is the server's: the host name is the field that fixes a mismatch. */
+  "standaloneCertificateRefused",
 ]);
 
 /** Does this refusal name the server fields? See {@link SERVER_FIELD_REFUSALS}. */

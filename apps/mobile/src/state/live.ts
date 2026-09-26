@@ -4551,6 +4551,8 @@ export const RECONNECT_PROMISE_MS = 5 * 60_000;
 export type ConnectionSay =
   | { readonly kind: "reachable" }
   | { readonly kind: "refused" }
+  /** This phone refused the server's certificate — no password sent, nothing re-dialling. */
+  | { readonly kind: "certificate" }
   /** No password on this phone for this mailbox — nothing was dialled and nothing is retrying. */
   | { readonly kind: "needsCredential" }
   | { readonly kind: "lost" }
@@ -4579,6 +4581,7 @@ export function connectionSaid(verdict: ConnectionSay | null): string | null {
      a state with no remedy said nothing rather than saying a thing somebody could not act on.
      The remedy is beside it now, so the fact is said in the same words every other surface uses. */
   if (verdict.kind === "refused") return Copy.connectionSignInRefused;
+  if (verdict.kind === "certificate") return Copy.connectionCertificateRefused;
   if (verdict.kind === "needsCredential") return Copy.connectionNeedsPassword;
   return verdict.kind === "lost" ? Copy.connectionLost : Copy.connectionGoneSince(verdict.since);
 }
@@ -4588,6 +4591,7 @@ export function connectionSay(
     reachable: boolean | null;
     unreachableSince: string | null;
     signInRefused: boolean;
+    certificateRefused?: boolean;
     needsCredential?: boolean;
   } | null,
   now: Date,
@@ -4598,6 +4602,9 @@ export function connectionSay(
      un-retried: both flags are set, and the arm that says "Reconnecting…" would be a promise
      nothing is keeping. */
   if (here.signInRefused) return { kind: "refused" };
+  /* ABOVE the outage arms for the refusal's reason: "Reconnecting…" would be a promise nothing
+     keeps, and the remedy is the server's certificate, not the network. */
+  if (here.certificateRefused === true) return { kind: "certificate" };
   /* ABOVE `reachable` AND ABOVE THE OUTAGE ARMS BELOW, for the reason `refused` is above both:
      nothing was dialled, so "Connection lost. Reconnecting…" is a promise nothing is keeping and
      an outage clock is a duration there is no start for. The remedy is a password. */
