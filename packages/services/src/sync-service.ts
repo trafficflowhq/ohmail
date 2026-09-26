@@ -76,6 +76,31 @@ const DEFAULT_LIMIT = 500;
 const MAX_LIMIT = 2000;
 
 /**
+ * How many of a change page's prefetches run at once: the pooled handle's connections
+ * (`POOLED_MAX_CONNECTIONS` in `@trafficflow/db`, not imported — that door is the hosted half and
+ * this service also runs on the local stores). A fifth would only queue behind a busy connection.
+ * `test/sync-page-prefetch-concurrency.test.ts` holds the two numbers together.
+ */
+export const PREFETCH_CONCURRENCY = 4;
+
+/** Run `tasks` with at most `limit` in flight, answers in task order; the first refusal is the answer. */
+async function atMost<T extends readonly (() => Promise<unknown>)[]>(
+  limit: number, tasks: T,
+): Promise<{ -readonly [K in keyof T]: Awaited<ReturnType<T[K]>> }> {
+  const out: unknown[] = new Array(tasks.length);
+  let next = 0;
+  let refused = false;
+  const lane = async (): Promise<void> => {
+    while (!refused && next < tasks.length) {
+      const i = next++;
+      try { out[i] = await tasks[i]!(); } catch (err) { refused = true; throw err; }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, lane));
+  return out as { -readonly [K in keyof T]: Awaited<ReturnType<T[K]>> };
+}
+
+/**
  * THE BACKLOG DIET'S ENGAGEMENT THRESHOLD. A resuming cursor whose span behind the horizon
  * (`max(seq) − since`, exact — the seq is gap-free) exceeds this is served COALESCED pages: the
  * latest change per entity in a bounded scan window, materialized at CURRENT state. At or below
@@ -583,10 +608,8 @@ export class SyncService {
      * types stay per-row, which is correct and rare. Both batch readers apply the same
      * `accountId` predicate the per-row calls did — this changes cost and nothing else.
      */
-    const messageIds = rows.filter((r) => r.entityType === "message" && r.op !== "delete").map((r) => r.entityId);
-    const prefetched = await materializeMessages(db, accountId, messageIds);
-    const threadIds = rows.filter((r) => r.entityType === "thread" && r.op !== "delete").map((r) => r.entityId);
-    const prefetchedThreads = await materializeThreads(db, accountId, threadIds);
+    const idsOf = (t: EntityType): string[] =>
+      rows.filter((r) => r.entityType === t && r.op !== "delete").map((r) => r.entityId);
 
     /**
      * `folder` JOINS THE PREFETCH — measured, like the two above. Folder changes arrive in
@@ -598,10 +621,7 @@ export class SyncService {
      * TWO queries flat: one flag read, one `userFoldersByIds`. Same scoping, same
      * null-means-tombstone semantics.
      */
-    const folderIds = rows.filter((r) => r.entityType === "folder" && r.op !== "delete").map((r) => r.entityId);
-    const prefetchedFolders = folderIds.length > 0 && await foldersEnabled(db, accountId)
-      ? await userFoldersByIds(db, accountId, folderIds)
-      : new Map<string, UserFolderRow>();
+    const folderIds = idsOf("folder");
 
     /**
      * THE REMAINING SMALL-STATE TYPES JOIN THE PREFETCH — measured, like the three above. A
@@ -613,14 +633,25 @@ export class SyncService {
      * functions are shared with the per-id readers so the paths cannot drift. `settings` is
      * memoized rather than batched: one row per account, every change row names the same id.
      */
-    const idsOf = (t: EntityType): string[] =>
-      rows.filter((r) => r.entityType === t && r.op !== "delete").map((r) => r.entityId);
-    const prefetchedStates = await materializeMessageStates(db, accountId, idsOf("message_state"));
-    const prefetchedDecisions = await materializeRoutingDecisions(db, accountId, idsOf("routing_decision"));
-    const prefetchedApprovals = await materializeApprovals(db, accountId, idsOf("approval"));
-    const prefetchedRules = await materializeRules(db, accountId, idsOf("rule"));
-    const prefetchedDrafts = await materializeDrafts(db, accountId, idsOf("draft"));
-    const prefetchedTags = await materializeTags(db, accountId, idsOf("tag"));
+    /* AND THEY RUN TOGETHER: each reads the page's own ids and nothing another returns — the one
+       ordering is the folder flag gating the folder read, inside its own task — so a mixed page
+       pays the slowest of them instead of their sum, PREFETCH_CONCURRENCY at a time. */
+    const [
+      prefetched, prefetchedThreads, prefetchedFolders, prefetchedStates, prefetchedDecisions,
+      prefetchedApprovals, prefetchedRules, prefetchedDrafts, prefetchedTags,
+    ] = await atMost(PREFETCH_CONCURRENCY, [
+      () => materializeMessages(db, accountId, idsOf("message")),
+      () => materializeThreads(db, accountId, idsOf("thread")),
+      async () => folderIds.length > 0 && await foldersEnabled(db, accountId)
+        ? userFoldersByIds(db, accountId, folderIds)
+        : new Map<string, UserFolderRow>(),
+      () => materializeMessageStates(db, accountId, idsOf("message_state")),
+      () => materializeRoutingDecisions(db, accountId, idsOf("routing_decision")),
+      () => materializeApprovals(db, accountId, idsOf("approval")),
+      () => materializeRules(db, accountId, idsOf("rule")),
+      () => materializeDrafts(db, accountId, idsOf("draft")),
+      () => materializeTags(db, accountId, idsOf("tag")),
+    ] as const);
     const settingsMemo = new Map<string, unknown | null>();
 
     const prefetched2 = new Map<EntityType, Map<string, unknown>>([
