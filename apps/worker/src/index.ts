@@ -4878,17 +4878,12 @@ export async function startWorkerWithLock(
             log.error("erased_bearers_prune_failed", { err });
           }
           // ── WHAT WE OWE PEOPLE WHOSE SPEND BOUGHT NOTHING ─────────────────────────────────
-          //
-          // The obligation rows cloud 0036 holds, turned back into credits. It rides the
-          // maintenance cadence rather than the per-account loop because a debt belongs to an
-          // ACCOUNT and not to a mailbox, and because the claim statement reads the whole table
-          // once: a per-account version would be one query per served account per cycle to find,
-          // almost always, nothing. Leader-only, like its neighbours, and the row's own lease is
-          // what makes that a performance property rather than a correctness one.
-          //
-          // NEVER THROWS by contract, so no try/catch would earn its place here — but the pass
-          // itself is the thing that must not take down a worker that is syncing mail, and that is
-          // stated where it is implemented.
+          // The obligation rows cloud 0036 holds, turned back into credits. On the maintenance
+          // cadence rather than per account: a debt belongs to an ACCOUNT, and the claim statement
+          // reads the whole table once, so a per-account version would be one query per served
+          // account to find, almost always, nothing. Leader-only; the row's own lease makes that a
+          // performance property rather than a correctness one. NEVER THROWS by contract — the
+          // pass states why where it is implemented.
           await refundObligationDrainPass(db as unknown as Tx, {
             ...(spend ? { credits: spend } : {}), log,
           });

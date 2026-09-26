@@ -9,15 +9,13 @@ import { deleteAccount } from "./account-deletion-service.js";
 import type { MailContext } from "./mail/index.js";
 
 /**
- * THE NIGHTLY ACCOUNT-LIFECYCLE PASS (cloud 0040, the wall) — the reminder mails and the erasure.
- * It iterates `accounts WHERE erased_at IS NULL` having at least one user, acts only on a verdict
- * the plane ANSWERED for the account, and owes at most one mail per FACT: idempotency is DERIVED
- * from the `account_lifecycle_notices` PRIMARY KEY (account, kind, anchor), where `anchor` is the
- * plane's own ISO instant — never a clock read here. No state machine, no closure table: a re-run
- * inserts nothing, a NEW closure is a new anchor. The sweep only NAMES the accounts due for erasure
- * (`erasureDue`); each is erased in its own invocation by {@link eraseOneDueAccount}, and that door
- * and `DELETE /account` are the only callers of `deleteAccount`. A sweep stops at its wall-clock
- * budget and answers `next`, the id to go on after.
+ * THE NIGHTLY ACCOUNT-LIFECYCLE PASS (cloud 0040, the wall) — the reminder mails, and naming the
+ * erasures. It iterates `accounts WHERE erased_at IS NULL` having at least one user, acts only on a
+ * verdict the plane ANSWERED, and owes at most one mail per FACT: idempotency is the
+ * `account_lifecycle_notices` PRIMARY KEY (account, kind, anchor), `anchor` the plane's own ISO
+ * instant. A re-run inserts nothing, a NEW closure is a new anchor. Due erasures are NAMED
+ * (`erasureDue`) and each is erased in its own call by {@link eraseOneDueAccount}, which with
+ * `DELETE /account` is the only caller of `deleteAccount`. The sweep stops at its budget with `next`.
  */
 
 /** How far ahead the trial reminder looks — "two days left", the flow's own words. */
