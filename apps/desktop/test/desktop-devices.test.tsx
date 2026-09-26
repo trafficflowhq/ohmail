@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -152,14 +152,29 @@ afterEach(async () => {
   if (root) await act(async () => root.unmount());
   hostEl?.remove();
   delete globe.__TAURI_INTERNALS__;
+  vi.useRealTimers();
 });
 
 async function flush(): Promise<void> {
   // The mount effect chains up to three awaits (host_state → probe/lists → json) — settle them.
+  // On a fake clock the same six turns are taken by running what is due now, never by moving it.
   await act(async () => {
-    for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
+    for (let i = 0; i < 6; i++) {
+      if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(0);
+      else await new Promise((r) => setTimeout(r, 0));
+    }
   });
 }
+
+/* The pane's poll on a FAKE clock: a case that waits "longer than the poll interval" moves the
+   clock past it instead of sleeping, so every such wait is exact and costs nothing. */
+const fakeClock = (): void => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+};
+const pastPolls = async (ms: number): Promise<void> => {
+  await act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+  await flush();
+};
 
 async function mount(messages: Record<string, unknown> = en as never): Promise<void> {
   hostEl = document.createElement("div");
@@ -585,6 +600,7 @@ describe("off-state problems are honored — the ladder is not only the probe's"
      *
      * So the wait here is longer than the poll interval, and the assertion is that nothing moved.
      */
+    fakeClock();
     installShell({
       hostState: OFF,
       tailscale: RUNNING,
@@ -594,9 +610,7 @@ describe("off-state problems are honored — the ladder is not only the probe's"
     await mount();
     await click(button(enHost.enable!));
     expect(text()).toContain(enHost.guideNotRunning!);
-    await act(async () => {
-      await new Promise((done) => setTimeout(done, 6000));
-    });
+    await pastPolls(6000);
     expect(text()).toContain(enHost.guideNotRunning!);
   }, 20_000);
 
@@ -610,6 +624,7 @@ describe("off-state problems are honored — the ladder is not only the probe's"
      * The boundary is a CONFIRMED off state — the one place a background read destroys
      * information. "We have never heard back" is not that, so it retries.
      */
+    fakeClock();
     let attempts = 0;
     globe.__TAURI_INTERNALS__ = {
       invoke: (command) => {
@@ -624,9 +639,7 @@ describe("off-state problems are honored — the ladder is not only the probe's"
     };
     await mount();
     expect(text()).toContain(enHost.checking!);
-    await act(async () => {
-      await new Promise((done) => setTimeout(done, 6000));
-    });
+    await pastPolls(6000);
     expect(attempts).toBeGreaterThan(1);
     expect(text()).not.toContain(enHost.checking!);
     expect(button(enHost.enable!)).toBeTruthy();
@@ -639,6 +652,7 @@ describe("off-state problems are honored — the ladder is not only the probe's"
      * `tailscale_status` then rejects, host state is set — so a retry gated on that alone stops —
      * while the probe stays unresolved and the off ladder renders "Checking…" for ever.
      */
+    fakeClock();
     let probes = 0;
     globe.__TAURI_INTERNALS__ = {
       invoke: (command) => {
@@ -653,9 +667,7 @@ describe("off-state problems are honored — the ladder is not only the probe's"
     };
     await mount();
     expect(text()).toContain(enHost.checking!);
-    await act(async () => {
-      await new Promise((done) => setTimeout(done, 6000));
-    });
+    await pastPolls(6000);
     expect(probes).toBeGreaterThan(1);
     expect(text()).not.toContain(enHost.checking!);
   }, 20_000);
@@ -667,6 +679,7 @@ describe("off-state problems are honored — the ladder is not only the probe's"
      * `tailscale` subprocess every five seconds for as long as the window stayed open. A stuck
      * attempt is still an attempt.
      */
+    fakeClock();
     let probes = 0;
     globe.__TAURI_INTERNALS__ = {
       invoke: (command) => {
@@ -679,9 +692,7 @@ describe("off-state problems are honored — the ladder is not only the probe's"
       },
     };
     await mount();
-    await act(async () => {
-      await new Promise((done) => setTimeout(done, 12_000));
-    });
+    await pastPolls(12_000);
     // Two full poll intervals have passed and the mount's own probe is still out there.
     expect(probes).toBe(1);
   }, 30_000);
@@ -777,6 +788,7 @@ describe("a rejected disarm re-reads the world instead of keeping the serving sn
      * own escape hatch — which is why "the opening read finished" is a recorded fact and not a
      * deduction from shared state.
      */
+    fakeClock();
     let disarmed = false;
     installShell({
       hostState: () => (disarmed ? OFF : SERVING),
@@ -792,9 +804,7 @@ describe("a rejected disarm re-reads the world instead of keeping the serving sn
     await click(button(enHost.off!));
     await click(button(enHost.off!));
     expect(text()).toContain("the settings file could not be written");
-    await act(async () => {
-      await new Promise((done) => setTimeout(done, 6000));
-    });
+    await pastPolls(6000);
     expect(text()).toContain("the settings file could not be written");
   }, 20_000);
 });

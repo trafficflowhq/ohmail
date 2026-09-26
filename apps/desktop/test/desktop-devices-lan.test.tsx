@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -96,11 +96,16 @@ afterEach(async () => {
   if (root) await act(async () => root.unmount());
   hostEl?.remove();
   delete globe.__TAURI_INTERNALS__;
+  vi.useRealTimers();
 });
 
 async function flush(): Promise<void> {
   await act(async () => {
-    for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
+    // On a fake clock the same six turns run what is due now, never moving the clock.
+    for (let i = 0; i < 6; i++) {
+      if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(0);
+      else await new Promise((r) => setTimeout(r, 0));
+    }
   });
 }
 
@@ -228,6 +233,8 @@ describe("the serving LAN row and its honest copy", () => {
      */
     // `shell` closes over this object, so changing it changes what the next poll is told —
     // which is the engine noticing that the operator ran the command.
+    // The pane's poll on a FAKE clock: past one interval by moving the clock, not by sleeping.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
     const world = {
       hostState: { ...BOTH, lanState: "blocked" } as unknown,
       tailscale: RUNNING,
@@ -237,9 +244,7 @@ describe("the serving LAN row and its honest copy", () => {
     await mount();
     expect(text()).toContain("sudo ufw allow 47800/tcp");
     world.hostState = { ...BOTH };
-    await act(async () => {
-      await new Promise((done) => setTimeout(done, 6000));
-    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
     await flush();
     expect(text()).not.toContain("sudo ufw allow 47800/tcp");
     expect(text()).toContain("The mail API is served at https://192.168.1.23:47800");

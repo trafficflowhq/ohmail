@@ -315,6 +315,7 @@ describe("the window's lift and first paint", () => {
   });
   afterEach(() => {
     delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    vi.useRealTimers();
   });
 
   async function lock(onLifted: () => void): Promise<void> {
@@ -332,6 +333,9 @@ describe("the window's lift and first paint", () => {
   }
 
   it("a focus read answering open lifts the lock; refused and an older API's silence do not", async () => {
+    // The return debounce reads the clock, so only `Date` is faked: past it by moving the clock,
+    // never by sleeping 1.6 s; every timer the lock arms stays real.
+    vi.useFakeTimers({ toFake: ["Date"] });
     let lifted = 0;
     await lock(() => { lifted += 1; });
     await act(async () => { window.dispatchEvent(new Event("focus")); });
@@ -339,12 +343,12 @@ describe("the window's lift and first paint", () => {
     expect(accessReads).toBe(1);
     expect(lifted).toBe(0);
     accessBody = { metered: true, canAddMailbox: true, mailboxes: 5 };
-    await new Promise((r) => setTimeout(r, 1_600));
+    vi.advanceTimersByTime(1_600);
     await act(async () => { window.dispatchEvent(new Event("focus")); });
     await settle();
     expect(lifted).toBe(0);
     accessBody = OPEN;
-    await new Promise((r) => setTimeout(r, 1_600));
+    vi.advanceTimersByTime(1_600);
     await act(async () => { window.dispatchEvent(new Event("focus")); });
     await settle();
     expect(accessReads).toBe(3);
