@@ -615,6 +615,14 @@ function installShellStub(window) {
         if (url === "/account/access" && (payload?.method ?? "GET") === "GET") {
           return Promise.resolve(frame(200, "OK", { metered: false }));
         }
+        /* THE WINDOW'S OUTBOX — `GET /local/window/outbox?scope=…`, read at boot so changes queued
+           while Cloud was unreachable are sent at this launch (`window-outbox-store.ts`). A fresh
+           profile has none: the door's own empty page, `{ rows: [], next: null }`
+           (`apps/sidecar/src/window-outbox.ts`). GET only — a POST is a queued change, which this
+           boot never makes. Added AFTER the check named it red. */
+        if (url.startsWith("/local/window/outbox?") && (payload?.method ?? "GET") === "GET") {
+          return Promise.resolve(frame(200, "OK", { rows: [], next: null }));
+        }
         /* RECORDED, not silently 404'd into a console error the checks would then
            report as a product defect. A surface that starts calling a second route
            at boot has to be modelled here; until it is, this says so by name. */
