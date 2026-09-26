@@ -670,8 +670,10 @@ const CODE_PROXIMITY = 40;
 const COMMERCE_QUALIFIER =
   "order|tracking|track|promo|promotional|promotion|discount|coupon|voucher|gift|referral|" +
   "refer|area|zip|postal|dialling|dialing|country|bar|product|store|shop|redemption|redeem|" +
-  "reward|rewards|loyalty|membership|booking|reservation|reference|invoice|quote";
+  "reward|rewards|loyalty|membership|booking|reservation|reference|invoice|quote|sort|tax";
 const COMMERCE_BEFORE = new RegExp(`\\b(?:${COMMERCE_QUALIFIER})\\s+\\w*$`, "i");
+/** The same family where the qualifier FOLLOWS the noun: `codice cliente`, `code client`, `code postal`. */
+const COMMERCE_AFTER = /^[\s:-]*(?:cliente|client|fiscale|postale|postal)\b/i;
 
 /**
  * Credential nouns with NO commerce reading, matched as SUBSTRINGS because in the wild they arrive
@@ -698,8 +700,8 @@ const TAN_ACRONYM = /\bTANs?\b/;
 
 /** A bare 4–8 digit run that is not part of a longer number, a price, a #-order-no, or a currency. */
 const BARE_LOOSE_RUN = /(?<![\p{L}\d#€$£])\d{4,8}(?![.,]?\d)/gu;
-/** A spaced/dashed group of 2–4-digit chunks — the `44 12 90` shape. */
-const GROUPED_LOOSE_RUN = /(?<![\p{L}\d#+])\d{2,4}(?:[ -]\d{2,4}){1,3}(?!\d)/gu;
+/** A spaced/dashed group of 2–4-digit chunks — the `44 12 90` shape; decimals after it make an amount. */
+const GROUPED_LOOSE_RUN = /(?<![\p{L}\d#+])\d{2,4}(?:[ -]\d{2,4}){1,3}(?![.,]?\d)/gu;
 /** An ISO-ish date wearing the grouped-run shape (`2026-08-30`, `2026 08 30`): not a code. */
 const GROUPED_ISO_DATE = /^\d{4}[- ]\d{2}[- ]\d{2}$/;
 /** A four-digit year, the one bare-run shape that collides with a real code. */
@@ -713,7 +715,8 @@ function hasCredentialCue(numeric: string, raw: string): boolean {
   let m: RegExpExecArray | null;
   while ((m = CRED_NOUN_GENERIC.exec(numeric)) !== null) {
     const before = numeric.slice(Math.max(0, m.index - 24), m.index);
-    if (!COMMERCE_BEFORE.test(before)) return true;
+    const after = numeric.slice(m.index + m[0].length, m.index + m[0].length + 16);
+    if (!COMMERCE_BEFORE.test(before) && !COMMERCE_AFTER.test(after)) return true;
   }
   return false;
 }
@@ -745,9 +748,14 @@ function codeRunSpans(numeric: string): Array<[number, number]> {
 function looseNumericCode(numeric: string, raw: string): boolean {
   for (const [start, end] of codeRunSpans(numeric)) {
     const window = numeric.slice(Math.max(0, start - CODE_PROXIMITY), end + CODE_PROXIMITY);
-    if (hasCredentialCue(window, raw)) return true;
+    if (hasCredentialCue(window, "")) return true;
   }
-  return false;
+  // `TAN` is case-sensitive, so it is read on the cased form in that form's OWN windows. Handed the
+  // whole of `raw`, one "TAN" anywhere paired with every IBAN group in a bank letter.
+  if (!TAN_ACRONYM.test(raw)) return false;
+  const cased = foldDigits(raw);
+  return codeRunSpans(cased).some(([start, end]) =>
+    TAN_ACRONYM.test(cased.slice(Math.max(0, start - CODE_PROXIMITY), end + CODE_PROXIMITY)));
 }
 
 /**
@@ -1367,6 +1375,67 @@ function alternativesDiverge(text: string, htmlText: string): boolean {
 const NESTED_MESSAGE = /^message\/(rfc822|global)/i;
 const NESTED_FILENAME = /\.(eml|msg|mht|mhtml)$/i;
 
+/* ══════════════════════════════════════════════════════════════════════════════════════════
+ * 8a. A CUE IS A MENTION UNLESS THE MESSAGE BACKS IT
+ * ════════════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Under this many prose words (URLs removed) a notice may NAME a credential without showing it:
+ * "Your PIN" / "Keep this to yourself" (every such positive the tests pin is 9–25 words). At any
+ * greater length a cue counts only when the message backs it: the subject names it, a code stands
+ * beside it or alone on a line ({@link cueBackedByCode}), or an auth link delivers a token. A tax
+ * return says "Zugangscode" and "bestätigen Sie Ihre" and backs neither; a bank's code mail under a
+ * 300-word footer backs its cue with the code.
+ */
+const SHORT_NOTICE_WORDS = 40;
+const PROSE_URL = /https?:\/\/[^\s<>"')\]]+/gi;
+
+/** Subject plus the longer body alternative: text and HTML carry the same words, counted once. */
+function noticeWords(subject: string, text: string, htmlText: string): number {
+  const n = (s: string): number => words(s.replace(PROSE_URL, " ")).length;
+  return n(subject) + Math.max(n(text), n(htmlText));
+}
+
+/** A code-shaped token: a digit run {@link codeRunSpans} admits, or a letters-and-digits token. */
+function codeSpans(s: string): Array<[number, number]> {
+  const spans = codeRunSpans(s);
+  for (const m of s.matchAll(MIXED_ALNUM_TOKEN)) spans.push([m.index, m.index + m[0].length]);
+  return spans;
+}
+
+/** The vocabulary again as global matchers, for where each cue STANDS rather than whether it does. */
+const CUE_AT = {
+  otp: new RegExp(OTP.source, "gi"), world: new RegExp(WORLD_OTP.source, "gi"), pin: /\bPIN\b/g,
+  password_reset: new RegExp(RESET.source, "gi"), verification: new RegExp(VERIFY.source, "gi"),
+  security_alert: new RegExp(ALERT.source, "gi"),
+};
+
+/**
+ * Is a cue of `category` backed by a code? Either a code stands alone on a line of plain text,
+ * which is how a notice presents one and where prose never puts one (not HTML: a table cell comes
+ * out of tag stripping as a line of its own), or a code-shaped token sits within
+ * {@link CODE_PROXIMITY} of the cue, found by POSITION on the form its vocabulary matches on; a
+ * sliced window cut `Zugangscode` in half 44 characters before its code.
+ */
+function cueBackedByCode(rep: Representation, category: SensitivityCategory): boolean {
+  const numeric = rep.canonical.numeric;
+  if (rep.label !== "html" && numeric.split("\n").some((line) => TOKEN_ONLY.test(line))) return true;
+  const forms: Array<[RegExp, string]> = category === "otp"
+    ? [[CUE_AT.otp, numeric], [CUE_AT.world, foldDigits(rep.canonical.plain)], [CUE_AT.pin, foldDigits(rep.raw)]]
+    : [[CUE_AT[category], numeric]];
+  if (category === "otp" && schemeNameNearCode(proseOnly(numeric))) return true;
+  for (const [re, form] of forms) {
+    const spans = codeSpans(form);
+    if (spans.length === 0) continue;
+    for (const m of proseOnly(form).matchAll(re)) {
+      const from = m.index - CODE_PROXIMITY;
+      const to = m.index + m[0].length + CODE_PROXIMITY;
+      if (spans.some(([start, end]) => start <= to && end >= from)) return true;
+    }
+  }
+  return false;
+}
+
 export function classifySensitivity(msg: NormalizedMessage): SensitivityResult {
   const reasons = new Set<IndeterminateReason>();
 
@@ -1400,11 +1469,23 @@ export function classifySensitivity(msg: NormalizedMessage): SensitivityResult {
   if (filenames) reps.push({ label: "attachments", raw: filenames, canonical: canonicalise(filenames) });
   decoded.forEach((d, i) => reps.push({ label: `decoded:${i}`, raw: d, canonical: canonicalise(d) }));
 
-  // ── The UNION is the positive answer (the HTML-only case): a match in ANY representation is a match ──
+  // Prose density for the auth-URL gate: URL-stripped words across every human-visible field. A
+  // message dominated by a link is a credential DELIVERY; a document that merely CONTAINS a link
+  // is prose whose incidental login/tracking URL is not a credential. See {@link authCredentialUrlIn}.
+  const lowProse =
+    words(`${subject}\n${text}\n${htmlText}`.replace(/https?:\/\/[^\s<>"')\]]+/gi, " ")).length
+    < AUTH_LOW_PROSE;
+
+  // ── The UNION is the positive answer (the HTML-only case): a match in ANY representation is a
+  // match, once the message backs its cue (section 8a) ──────────────────────────────────────
+  const short = noticeWords(subject, text, htmlText) < SHORT_NOTICE_WORDS;
+  let delivered: boolean | undefined;
+  const deliversLink = (): boolean => (delivered ??= reps.some((r) =>
+    authCredentialUrlIn(r.raw, lowProse) || authCredentialUrlIn(r.canonical.plain, lowProse)));
   const hits = new Set<SensitivityCategory>();
   for (const rep of reps) {
     const c = categoryOf(rep);
-    if (c) hits.add(c);
+    if (c && (short || rep.label === "subject" || cueBackedByCode(rep, c) || deliversLink())) hits.add(c);
   }
   const category = PRECEDENCE.find((c) => hits.has(c)) ?? null;
 
@@ -1419,13 +1500,6 @@ export function classifySensitivity(msg: NormalizedMessage): SensitivityResult {
     if (allWords.length >= LANG_PROBE_MIN_WORDS && !allWords.some((w) => STOPWORDS.has(w))) {
       reasons.add("unrecognised_language");
     }
-
-    // Prose density for the auth-URL gate: URL-stripped words across every human-visible field. A
-    // message dominated by a link is a credential DELIVERY; a document that merely CONTAINS a link
-    // is prose whose incidental login/tracking URL is not a credential. See {@link authCredentialUrlIn}.
-    const lowProse =
-      words(`${subject}\n${text}\n${htmlText}`.replace(/https?:\/\/[^\s<>"')\]]+/gi, " ")).length
-      < AUTH_LOW_PROSE;
 
     for (const rep of reps) {
       if (credentialShapeIn(rep)) {
