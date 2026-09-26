@@ -344,6 +344,11 @@ state.
 Only the active organizer writes — the organizer lease already serializes
 writers, so last-incumbent-wins and no merge algorithm exists.
 
+An install that only reads the mailbox keeps a copy of the current document,
+read again every few minutes, and shows the mail where the organizer's rules
+place it. It applies none of them itself: nothing is moved or screened by a
+reading install.
+
 ## A found document holds the writer — and the screening
 
 An organizer that takes over a mailbox and finds a foreign document it cannot
