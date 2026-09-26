@@ -1,4 +1,4 @@
-//! How many allocator arenas the ENGINE the shell spawns is allowed.
+//! How the allocator of the ENGINE the shell spawns is set: its arena cap and its mmap threshold.
 //!
 //! glibc gives a contending thread its own arena — the main one on the brk heap, each other one a
 //! 64 MiB mmap'd region. Measured on the Omarchy guest, capping them in the WEBVIEW's process is a
@@ -23,14 +23,30 @@ pub const ENGINE_ARENA_MAX: Option<&str> = Some("2");
 /// The variable glibc reads. Named once, here.
 pub const ARENA_MAX_VAR: &str = "MALLOC_ARENA_MAX";
 
-/// Put the cap on the engine's command, if there is one to put.
+/// The fixed mmap threshold the engine is spawned with, in bytes, or `None`.
 ///
-/// On the command and not in this process's environment: glibc reads the variable when a process
-/// starts, so a child spawned with it gets it, and nothing else does.
+/// The JavaScript engine optimizes the store's WebAssembly on background threads, in 32 KiB
+/// zone segments from malloc. Under glibc's sliding threshold those segments are carved from an
+/// arena and stay resident once the compile is over, by an amount that depends on timing; a
+/// FIXED threshold maps each one and hands it back when it is freed. Measured at the engine's
+/// boot line under the cap above: 368.3-439.6 MB without it, 335.7-337.5 MB with it, the
+/// optimizing tier kept.
+pub const ENGINE_MMAP_THRESHOLD: Option<&str> = Some("32768");
+
+/// The variable glibc reads for it, trailing underscore included. Named once, here.
+pub const MMAP_THRESHOLD_VAR: &str = "MALLOC_MMAP_THRESHOLD_";
+
+/// Put the cap and the threshold on the engine's command, where there is one to put.
+///
+/// On the command and not in this process's environment: glibc reads the variables when a
+/// process starts, so a child spawned with them gets them, and nothing else does.
 pub fn apply_to_engine(command: &mut Command) {
     if cfg!(target_os = "linux") {
         if let Some(value) = ENGINE_ARENA_MAX {
             command.env(ARENA_MAX_VAR, value);
+        }
+        if let Some(value) = ENGINE_MMAP_THRESHOLD {
+            command.env(MMAP_THRESHOLD_VAR, value);
         }
     }
 }

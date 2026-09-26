@@ -47,12 +47,12 @@ export const BUDGETS = {
    * so as a ceiling it could not pass on any build. */
   rendererGoalKb: 400 * 1024,
   /* The mail engine, steady. Measured: 378.8 MB settled on an empty install, and 450 MB settled
-   * with five and twenty-five thousand messages. 470 MB for 0.25.1: on the hosted runner the
-   * engine reads 18 MB more from boot on (0.25.0 469.7 MB at boot and 459.9 settled; 0.25.1 488.5
-   * at boot and 478.3 / 480.2 settled), and a local run of both builds is flat from settle to
-   * +15 min (0.25.1 381.9 -> 385.3 MB, 0.25.0 388.0 -> 389.1). The ceiling returns to 450 MB once
-   * the rise is found and fixed. */
-  engineRssKb: 470 * 1024,
+   * with five and twenty-five thousand messages. The shell now spawns the engine with a fixed
+   * mmap threshold (`allocator_arenas.rs`), so the optimizing compiler's scratch memory is handed
+   * back instead of staying resident by an amount that depends on timing: the engine read
+   * 368-467 MB at boot without it and 336-338 MB with it. A reading near this ceiling is that
+   * retention come back. */
+  engineRssKb: 450 * 1024,
   /* The engine's own boot, from its `boot_phases.totalReadyMs`. NO MEASUREMENT BEHIND IT YET, and
    * the table rules it `records`. */
   engineReadyMs: 4000,
@@ -399,7 +399,7 @@ export function collect({ samples, log, uiInBundle, uiFields, expectMessages, fi
     const { kb: engineKb, why: unitWhy } = engineRssKbFromBytes(rssBytes);
     if (engineKb === null) return { refused: unitWhy };
     add("engine_rss", "DECIDES", engineKb < BUDGETS.engineRssKb ? "PASS" : "FAIL",
-      `${engineKb} kB against ${BUDGETS.engineRssKb} kB`, "measured: 450 MB settled at five and twenty-five thousand messages; 470 MB while the 0.25.1 boot rise is open");
+      `${engineKb} kB against ${BUDGETS.engineRssKb} kB`, "measured: 450 MB settled at five and twenty-five thousand messages");
   }
 
   /* The fixture has to have been imported, or every figure above is a reading of an empty app

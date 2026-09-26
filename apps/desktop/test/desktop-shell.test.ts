@@ -651,6 +651,7 @@ describe("the Rust side", () => {
   it("caps the engine's allocator arenas on the child, never on this process", () => {
     const main = read("src-tauri/src/main.rs");
     expect(main, "the cap must not be set process-wide").not.toMatch(/MALLOC_ARENA_MAX/);
+    expect(main, "the threshold must not be set process-wide").not.toMatch(/MALLOC_MMAP_THRESHOLD_/);
     expect(main, "main must not call a process-wide arena setter").not.toMatch(
       /allocator_arenas::apply\(\)/,
     );
@@ -694,8 +695,9 @@ describe("the Rust side", () => {
    */
   it("does not take the allocator cap back off the engine's command", () => {
     expect(read("src-tauri/src/engine.rs")).not.toMatch(/\benv_clear\(/);
-    expect(read("src-tauri/src/config.rs")).not.toMatch(/MALLOC_ARENA_MAX/);
-    expect(read("src-tauri/src/host.rs")).not.toMatch(/MALLOC_ARENA_MAX/);
+    for (const file of ["src-tauri/src/config.rs", "src-tauri/src/host.rs"]) {
+      expect(read(file), file).not.toMatch(/MALLOC_ARENA_MAX|MALLOC_MMAP_THRESHOLD_/);
+    }
   });
 
   /**

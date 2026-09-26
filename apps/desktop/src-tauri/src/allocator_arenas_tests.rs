@@ -1,6 +1,8 @@
-//! What the cap is allowed to be, and that it reaches the child and nothing else.
+//! What the cap and the threshold may be, and that they reach the child and nothing else.
 
-use super::{apply_to_engine, ARENA_MAX_VAR, ENGINE_ARENA_MAX};
+use super::{
+    apply_to_engine, ARENA_MAX_VAR, ENGINE_ARENA_MAX, ENGINE_MMAP_THRESHOLD, MMAP_THRESHOLD_VAR,
+};
 use std::process::Command;
 
 #[test]
@@ -28,4 +30,43 @@ fn the_cap_never_touches_this_process() {
     let mut command = Command::new("/bin/true");
     apply_to_engine(&mut command);
     assert_eq!(std::env::var_os(ARENA_MAX_VAR), before);
+}
+
+#[test]
+fn the_threshold_variable_is_the_one_glibc_reads() {
+    assert_eq!(MMAP_THRESHOLD_VAR, "MALLOC_MMAP_THRESHOLD_");
+}
+
+#[test]
+fn a_threshold_that_exists_hands_the_compile_segments_back() {
+    // The optimizing compiler's zone segments are 32 KiB: above that they are carved from an
+    // arena again (64 KiB measured partial), and below a page every small allocation is a map.
+    if let Some(value) = ENGINE_MMAP_THRESHOLD {
+        let n: u32 = value.parse().expect("the threshold must parse as a number of bytes");
+        assert!(n >= 4096, "a threshold below a page maps every small allocation");
+        assert!(n <= 32 * 1024, "above 32 KiB the compile segments stay in the arenas");
+    }
+}
+
+#[test]
+fn the_threshold_reaches_the_engine_command_on_linux() {
+    let mut command = Command::new("/bin/true");
+    apply_to_engine(&mut command);
+    let set = command
+        .get_envs()
+        .find(|(key, _)| *key == MMAP_THRESHOLD_VAR)
+        .and_then(|(_, value)| value.map(|v| v.to_string_lossy().into_owned()));
+    if cfg!(target_os = "linux") {
+        assert_eq!(set.as_deref(), ENGINE_MMAP_THRESHOLD);
+    } else {
+        assert_eq!(set, None, "no other platform's allocator reads it");
+    }
+}
+
+#[test]
+fn the_threshold_never_touches_this_process() {
+    let before = std::env::var_os(MMAP_THRESHOLD_VAR);
+    let mut command = Command::new("/bin/true");
+    apply_to_engine(&mut command);
+    assert_eq!(std::env::var_os(MMAP_THRESHOLD_VAR), before);
 }
