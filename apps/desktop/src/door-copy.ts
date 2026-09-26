@@ -640,6 +640,18 @@ const EN = {
     "Your mail is untouched. It is on your own server, or in your hosted account, and this app "
     + "has not changed either.",
   gateTryAgain: "Try again",
+  /* ── THE KEY STORE WOULD NOT ANSWER — before any mailbox was chosen, so no "your mailbox" ──
+     The library's own error ("Couldn't access platform storage: SS error: …") is the log's; the
+     card names the store in this platform's words and the remedy, which is a relaunch: the shell
+     resolves the key once, at launch. */
+  gateKeyringTitle:
+    "This computer's keyring is not available",
+  gateKeyringWhy:
+    "ohmail keeps the key that protects your mailbox passwords in your login keyring, and the keyring did not answer: it is locked, or this computer has none. Unlock it, or create a login keyring (in GNOME with Passwords and Keys, in KDE with KWallet), then quit ohmail and open it again.",
+  gateKeychainWhy:
+    "ohmail keeps the key that protects your mailbox passwords in your login keychain, and the keychain did not answer. Unlock the login keychain in Keychain Access, then quit ohmail and open it again.",
+  gateCredentialsWhy:
+    "ohmail keeps the key that protects your mailbox passwords in Windows Credential Manager, and it did not answer. Quit ohmail and open it again; if it keeps happening, ohmail's log file has the details.",
   /* ── A LOCKED LOCAL STORE, in person words ───────────────────────────────────────────────
      The engine reclaims a provably-stale lock on its own; what reaches this card is the residue
      it may not decide alone — a record it cannot read (a torn file after a power cut) or a live
@@ -819,5 +831,18 @@ export function machineWord(): string {
     case "Mac": return DOOR_COPY.machineMac;
     case "PC": return DOOR_COPY.machinePc;
     default: return DOOR_COPY.machineComputer;
+  }
+}
+
+/**
+ * WHICH KEY STORE THE KEYRING CARD NAMES, by the platform this build is for (`BUILD_PLATFORM`):
+ * the Mac's login keychain, Windows' Credential Manager, and the login keyring everywhere else —
+ * the Secret Service a Linux desktop's keyring daemon serves.
+ */
+export function keyringSentence(platform: string): string {
+  switch (platform) {
+    case "darwin": return DOOR_COPY.gateKeychainWhy;
+    case "win32": return DOOR_COPY.gateCredentialsWhy;
+    default: return DOOR_COPY.gateKeyringWhy;
   }
 }

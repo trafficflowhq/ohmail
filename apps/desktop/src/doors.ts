@@ -55,8 +55,10 @@ export type Gate =
    * There is an engine and something is wrong with it. `reason` is the shell's own sentence;
    * `failureClass` is present when that sentence embeds the sidecar's structured log line, and
    * it is what the pane renders BY — the raw line reaches no person. See {@link failureClassOf}.
+   * `keyring` is the key store refusing (`no_key`): the card says so in its own words and the
+   * library's error, which `reason` still carries for the log, reaches nobody.
    */
-  | { kind: "notice"; reason: string; failureClass?: string }
+  | { kind: "notice"; reason: string; failureClass?: string; keyring?: true }
   /** A door is chosen and the engine is behind it. The mail client renders. */
   | { kind: "app" };
 
@@ -107,6 +109,7 @@ export function gateFor(shell: Shell): Gate {
           status.reason ??
           "This computer's keystore would not give up the key this install seals your password " +
             "under.",
+        keyring: true,
       };
     case "failed": {
       const reason = status.reason ?? "The mail engine stopped and did not come back.";

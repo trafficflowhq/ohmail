@@ -15,11 +15,16 @@ import { Button } from "@ohmail/ui";
 import { DOOR_COPY } from "./door-copy.js";
 
 export interface GateNoticeProps {
+  /** The headline, when the state is not "cannot open your mailbox" — the key store's card. */
+  title?: string;
   /** What went wrong, as one sentence. The only thing the three callers disagree about. */
   reason: string;
-  /** The label on the primary action — `desktopDoor.gateTryAgain` or `…reload`. */
-  actionLabel: string;
-  onAction: () => void;
+  /**
+   * The label on the primary action — `desktopDoor.gateTryAgain` or `…reload`. Absent where no
+   * press in this window changes the state: a button that re-reads the same answer is a lie.
+   */
+  actionLabel?: string;
+  onAction?: () => void;
   /**
    * A SECOND WAY OUT, when the state genuinely has two — and only then. Three of the four
    * callers have exactly one honest remedy and pass nothing here: an engine that will not
@@ -36,6 +41,7 @@ export interface GateNoticeProps {
 }
 
 export function GateNotice({
+  title,
   reason,
   actionLabel,
   onAction,
@@ -47,10 +53,10 @@ export function GateNotice({
     <div className="gate">
       <div className="gate-card">
         <span className="wordmark"><b>ohmail</b><em>.</em></span>
-        <h1>{DOOR_COPY.gateCannotOpen}</h1>
+        <h1>{title ?? DOOR_COPY.gateCannotOpen}</h1>
         <p>{reason}</p>
         <div className="gate-actions">
-          <Button onClick={onAction}>{actionLabel}</Button>
+          {actionLabel && onAction ? <Button onClick={onAction}>{actionLabel}</Button> : null}
           {/* GHOST, so the two do not read as equals. Re-pairing is what most people want and
               keeps everything as it is; setting this machine up on its own discards the copy and
               takes over the organizing, which is a bigger decision and should not be one press

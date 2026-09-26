@@ -47,7 +47,8 @@ import { readMailboxFacts } from "./local-mailbox-facts.js";
 import { desktopNotificationHost } from "./notify-host.js";
 import { DesktopScreening } from "./DesktopScreening.js";
 import { GateNotice } from "./GateNotice.js";
-import { DOOR_COPY, machineWord } from "./door-copy.js";
+import { DOOR_COPY, keyringSentence, machineWord } from "./door-copy.js";
+import { BUILD_PLATFORM } from "./platform.js";
 import { desktopPaneLabel, DesktopSettings } from "./DesktopSettings.js";
 import { DesktopAiAccount } from "./DesktopAiAccount.js";
 import { linksOutToBilling } from "./distribution.js";
@@ -791,6 +792,17 @@ export function DesktopGate() {
        after it paints whatever the restart then says. */
     if (gate.failureClass === "LocalStoreOpenError") {
       return <StartOverNotice onSettled={() => void refresh()} />;
+    }
+    /* THE KEY STORE WOULD NOT ANSWER. Its own card: a keyring is the fact, the platform's store
+       and the remedy are the sentence, and no button — the shell resolves the key at launch, so
+       only a relaunch reads the unlocked store. The library's error stays in the log. */
+    if (gate.keyring === true) {
+      return (
+        <GateNotice
+          title={DOOR_COPY.gateKeyringTitle}
+          reason={keyringSentence(BUILD_PLATFORM)}
+        />
+      );
     }
     if (gate.failureClass !== undefined) {
       const locked = gate.failureClass === "DataDirLockedError";
