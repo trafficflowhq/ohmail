@@ -14,6 +14,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { SegmentedControl, SettingsRow } from "@ohmail/ui";
+import { DEFAULT_DORMANCY_DAYS } from "@ohmail/client-engine";
 
 /**
  * The rungs the dial offers, in days — the onboarding flow's ladder, which is the same question
@@ -99,17 +100,12 @@ export function DormancyRow({
   };
 
   /**
-   * The rungs on screen — the ladder, plus the stored window when it is not on it. The band is
-   * 1–365 and the ladder is three of those values, so an account can hold a window this control
-   * does not offer: the product default (60) is exactly such a value. Rendering the ladder alone
-   * would leave the control with NOTHING selected over a real stored setting — a segmented control
-   * showing no selection reads as "unset", a lie about a value the server is counting with. So
-   * the stored window joins the ladder when not already on it, in order, and disappears the moment
-   * the person moves off it.
+   * The rungs on screen — the ladder, the product default, and the stored window when it is on
+   * neither. The DEFAULT is always offered and labelled: it used to join only while stored, so once
+   * somebody tried 90 no screen could choose 60 again. A stored window off the ladder (120, say)
+   * still joins, in order, or the control would show nothing selected over a real setting.
    */
-  const rungs = PRESETS.includes(days as (typeof PRESETS)[number])
-    ? [...PRESETS]
-    : [...PRESETS, days].sort((a, b) => a - b);
+  const rungs = [...new Set<number>([...PRESETS, DEFAULT_DORMANCY_DAYS, days])].sort((a, b) => a - b);
 
   return (
     <>
@@ -123,7 +119,10 @@ export function DormancyRow({
             onChange={choose}
             className="dormancy-seg"
             options={[
-              ...rungs.map((d) => ({ id: String(d), label: t("dormancy.dayLabel", { days: d }) })),
+              ...rungs.map((d) => ({
+                id: String(d),
+                label: t(d === DEFAULT_DORMANCY_DAYS ? "dormancy.dayLabelDefault" : "dormancy.dayLabel", { days: d }),
+              })),
               // LAST, and outside the numbers, because it is where the numbers stop being the
               // answer. Keyboard reaches it exactly as it reaches the others and for the same
               // reason: `SegmentedControl` renders every option as a real `<button>` inside a

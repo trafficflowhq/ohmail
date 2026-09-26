@@ -1168,14 +1168,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     if (pulled > 0 || mailState.settled) markStartup("listUsable");
   }, [pulled, mailState.settled]);
   /**
-   * The account's language wins over this device's — riding the `GET /consent` this shell
-   * already makes. Both preferences are needed: localStorage is what a standalone install and
-   * the sign-in screen have; the account column is what makes "my mail is in German" true on a
-   * machine that has never seen this account. `adoptLocale`, never `setLocale` — the latter
-   * WRITES the account, and adopting a value that came FROM the account would PATCH it back on
-   * every boot of every tab. Null means the account has no preference and the device stands (no
-   * `else` arm: this effect only moves the language TOWARDS an account's answer). Absent
-   * provider = demo and unit tests; nothing to adopt into.
+   * The account's language, offered to the host — riding the `GET /consent` this shell already
+   * makes; the account column is what makes "my mail is in German" true on a machine that has
+   * never seen this account. `adoptLocale`, never `setLocale`: the latter WRITES the account, and
+   * adopting a value that came FROM it would PATCH it back on every boot of every tab. The host
+   * decides what an adoption may move (`LocaleControls.adoptLocale`): this read can be older than
+   * a press. Null means no preference and the device stands. Absent provider: nothing to adopt into.
    */
   const localeControls = useAppLocale();
   const accountLocale = consent.locale;

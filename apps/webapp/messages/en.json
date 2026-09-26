@@ -1379,6 +1379,7 @@
       "title": "When a sender goes quiet",
       "description": "Days of quiet before a sender you've never decided about waits in History instead of the Screener.",
       "dayLabel": "{days}",
+      "dayLabelDefault": "{days} (default)",
       "allTime": "All time",
       "ariaLabel": "Days before a sender goes quiet",
       "microcopy": "This only changes who the Screener asks you about. No mail moves, and anything unread always shows.",

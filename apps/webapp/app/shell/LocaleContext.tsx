@@ -27,14 +27,11 @@ export interface LocaleControls {
    */
   setLocale: (next: AppLocale) => Promise<void>;
   /**
-   * Apply without asking the server — the boot adoption, a separate verb on purpose. When
-   * `GET /consent` lands it carries the account's stored locale, which WINS over what this device
-   * remembered (an account preference follows you to a machine you have never signed in on).
-   * Adopting it must not travel back through {@link setLocale}: on the Cloud client that method's
-   * job is to WRITE the account, so adoption would PATCH the value it just read, on every tab, on
-   * every boot — and a failed write of a value nobody changed would reject into a control nobody
-   * touched. Adoption is local-only: remember on this device, swap the catalogue, nothing else.
-   * `AppShell` is the only caller.
+   * Apply the account's language without writing it back — the boot adoption, a separate verb so it
+   * never PATCHes the value it just read. The HOST decides what it may move: on the Cloud the
+   * account wins over what this browser remembered, except against a write this tab made (an older
+   * read does not undo a press); an `install` host keeps a language it already holds and takes the
+   * account's only while it holds none. Local-only either way. `AppShell` is the only caller.
    */
   adoptLocale: (next: AppLocale) => Promise<void>;
   /** A switch is in flight — the selector disables itself rather than queueing two. */

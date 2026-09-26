@@ -1379,6 +1379,7 @@
       "title": "Wenn ein Absender still wird",
       "description": "Tage Stille, bis ein Absender, über den du nie entschieden hast, in der Historie statt im Screener wartet.",
       "dayLabel": "{days}",
+      "dayLabelDefault": "{days} (Standard)",
       "allTime": "Gesamter Zeitraum",
       "ariaLabel": "Tage, bis ein Absender als still gilt",
       "microcopy": "Das ändert nur, über wen der Screener dich fragt. Es wird keine Post verschoben, und Ungelesenes wird immer gezeigt.",

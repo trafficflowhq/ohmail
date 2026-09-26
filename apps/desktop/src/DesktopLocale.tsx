@@ -72,20 +72,31 @@ export function DesktopLocale({ children }: { children: ReactNode }) {
     document.documentElement.lang = locale;
   }
 
+  /* THE INSTALL'S LANGUAGE STANDS. The hosted door's consent read carries the account's language
+     and the shared shell adopts it — but this host writes the language nowhere else, so an adopted
+     account answer put back every press of English and returned at each launch. A language this
+     install holds (pressed here, or adopted once) outranks the account; an empty install takes it. */
+  const holds = useRef<boolean | null>(null);
+  if (holds.current === null) holds.current = readStoredLocale() !== null;
+
   const apply = useCallback(async (next: AppLocale): Promise<void> => {
+    holds.current = true;
     rememberLocale(next);
     setLocale(next);
   }, []);
+  const adopt = useCallback(async (next: AppLocale): Promise<void> => {
+    if (holds.current) return;
+    await apply(next);
+  }, [apply]);
 
   const controls = useMemo<LocaleControls>(
     () => ({
       locale,
       locales: LOCALES,
-      /* SAME FUNCTION FOR BOTH VERBS, and that is the honest shape here rather than a shortcut:
-         `setLocale` and `adoptLocale` differ only in whether they write an ACCOUNT, and this build
-         has none. There is nothing for the second one to skip. */
+      /* No account write on either verb: this build has none. The press applies; the adoption
+         applies only to an install that holds no language yet. */
       setLocale: apply,
-      adoptLocale: apply,
+      adoptLocale: adopt,
       /* Never busy: both catalogues are already in the bundle, so a switch is a synchronous state
          change with nothing to wait for. */
       busy: false,
@@ -95,7 +106,7 @@ export function DesktopLocale({ children }: { children: ReactNode }) {
          this app everywhere you sign in" here, which promised a sync no code performs. */
       scope: "install" as const,
     }),
-    [locale, apply],
+    [locale, apply, adopt],
   );
 
   return (
