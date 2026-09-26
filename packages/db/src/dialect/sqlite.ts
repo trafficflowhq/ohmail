@@ -153,29 +153,85 @@ export function deliverLocalNotifyAtCommit<T extends object>(db: T): T {
 }
 
 /**
- * A typed query as FTS5 syntax that cannot refuse. Every letter-and-digit run is quoted, so an
- * apostrophe, hyphen, colon or star separates words and is never an operator; a quoted span and a
- * hyphenated word stay phrases, `-word` excludes and a bare `or` between words is OR — the
- * spellings the server's web-search parser reads. `match` is null when only exclusions are left
- * (then `exclude` names them) or nothing is.
+ * Postgres's `english` stopwords (`tsearch_data/english.stop`), which its parser drops from a query
+ * and a part-word arm alike. `and`, `or` and `not` are among them, so FTS5's operator words go too.
+ * This index keeps every word, so a query that kept one asked for a word the server never asks for.
  */
-export function ftsQueryOf(q: string): { match: string | null; exclude: string | null } {
-  const phrase = (s: string): string | null => {
-    const runs = s.match(/[\p{L}\p{N}]+/gu);
-    return runs === null ? null : `"${runs.join(" ")}"`;
-  };
+export const ENGLISH_STOPWORDS: ReadonlySet<string> = new Set(`
+  i me my myself we our ours ourselves you your yours yourself yourselves he him his
+  himself she her hers herself it its itself they them their theirs themselves what which who
+  whom this that these those am is are was were be been being have has had
+  having do does did doing a an the and but if or because as until while
+  of at by for with about against between into through during before after above below to
+  from up down in out on off over under again further then once here there when
+  where why how all any both each few more most other some such no nor not
+  only own same so than too very s t can will just don should now
+`.trim().split(/\s+/));
+
+/** Between words, as `websearch_to_tsquery` reads them: `! & | ( ) < :` separate ANDed words. */
+const QUERY_SEPARATOR = /[\s!&|()<:]/u;
+/** A join the server's parser keeps inside one token (`sign-in`, `3.14`, `and/or`, an address). */
+const WORD_JOIN = /^[-./@]$/;
+
+/**
+ * One typed operand as an FTS5 phrase of its letter-and-digit runs, or null. A stopword at either
+ * end is dropped as the server drops it (`o'brien's` is `o brien`), unless a word join binds it to
+ * its neighbour (`sign-in` stays two words); one inside a phrase stays, since the text holds it.
+ */
+function phraseOf(text: string): string | null {
+  const runs = [...text.matchAll(/[\p{L}\p{N}]+/gu)].map((m) => ({ w: m[0], at: m.index, end: m.index + m[0].length }));
+  const bound = (i: number): boolean =>
+    (i > 0 && WORD_JOIN.test(text.slice(runs[i - 1]!.end, runs[i]!.at)))
+    || (i < runs.length - 1 && WORD_JOIN.test(text.slice(runs[i]!.end, runs[i + 1]!.at)));
+  const drop = (i: number): boolean => ENGLISH_STOPWORDS.has(runs[i]!.w.toLowerCase()) && !bound(i);
+  let lo = 0;
+  let hi = runs.length - 1;
+  while (lo <= hi && drop(lo)) lo++;
+  while (hi >= lo && drop(hi)) hi--;
+  return lo > hi ? null : `"${runs.slice(lo, hi + 1).map((r) => r.w).join(" ")}"`;
+}
+
+/**
+ * A typed query as FTS5 syntax that cannot refuse, read the way `websearch_to_tsquery` reads it:
+ * a quoted span or a punctuated word is a phrase, `-` before a word excludes it (`--` does not), a
+ * bare `or` between words is OR, and the server's stopwords are dropped. `"parts"` is the part-word
+ * arm's reading: every word, from four letters also as the start of a longer one. `match` is null
+ * when only exclusions are left (then `exclude` names them) or nothing is.
+ */
+export function ftsQueryOf(q: string, mode: "words" | "parts" = "words"): { match: string | null; exclude: string | null } {
+  if (mode === "parts") {
+    const words = partWordsOf(q);
+    const kept = (words ?? []).filter((w, i) => !ENGLISH_STOPWORDS.has(w.toLowerCase())
+      || (i === words!.length - 1 && [...w].length >= PART_PREFIX_MIN_CHARS));
+    const match = kept.map((w) => ([...w].length >= PART_PREFIX_MIN_CHARS ? `"${w}"*` : `"${w}"`)).join(" ");
+    return { match: match === "" ? null : match, exclude: null };
+  }
   const terms: string[] = [];
   const excluded: string[] = [];
-  for (const m of q.matchAll(/(-?)"([^"]*)"?|(\S+)/g)) {
-    const chunk = m[3];
-    if (chunk !== undefined && /^or$/i.test(chunk)) {
+  let dashes = 0;
+  for (let i = 0; i < q.length;) {
+    const c = q[i]!;
+    if (QUERY_SEPARATOR.test(c)) { i++; continue; }
+    if (c === "-") { dashes++; i++; continue; }
+    let text: string;
+    if (c === '"') {
+      const close = q.indexOf('"', i + 1);
+      text = q.slice(i + 1, close < 0 ? q.length : close);
+      i = close < 0 ? q.length : close + 1;
+    } else {
+      let j = i;
+      while (j < q.length && q[j] !== '"' && !QUERY_SEPARATOR.test(q[j]!)) j++;
+      text = q.slice(i, j);
+      i = j;
+    }
+    const negated = dashes % 2 === 1;
+    dashes = 0;
+    if (c !== '"' && !negated && /^or$/i.test(text)) {
       if (terms.length > 0 && terms[terms.length - 1] !== "OR") terms.push("OR");
       continue;
     }
-    const negated = chunk !== undefined ? chunk.startsWith("-") : m[1] === "-";
-    const term = phrase(chunk ?? m[2] ?? "");
-    if (term === null) continue;
-    (negated ? excluded : terms).push(term);
+    const term = phraseOf(text);
+    if (term !== null) (negated ? excluded : terms).push(term);
   }
   if (terms[terms.length - 1] === "OR") terms.pop();
   const positive = terms.join(" ");
@@ -185,8 +241,10 @@ export function ftsQueryOf(q: string): { match: string | null; exclude: string |
 }
 
 /** `col` among the rows `table` holds for this query — never a syntax error, whatever was typed. */
-function ftsRows(col: SQL, table: "messages_fts" | "message_bodies_fts" | "kb_entries_fts", q: string): SQL {
-  const f = ftsQueryOf(q);
+function ftsRows(
+  col: SQL, table: "messages_fts" | "message_bodies_fts" | "kb_entries_fts", q: string, mode: "words" | "parts" = "words",
+): SQL {
+  const f = ftsQueryOf(q, mode);
   const t = sql.raw(table);
   if (f.match !== null) return sql`${col} IN (SELECT rowid FROM ${t} WHERE ${t} MATCH ${f.match})`;
   if (f.exclude !== null) return sql`${col} NOT IN (SELECT rowid FROM ${t} WHERE ${t} MATCH ${f.exclude})`;
@@ -433,13 +491,11 @@ export function sqliteDialect(): Dialect {
       // The same two FTS5 tables as `words`, each word as itself and, from four letters, as the
       // start of a longer one (`"elevat"*`). No stemmer here, so a prefix IS the whole-word reach.
       partWords: (q: string): MailWordArms | null => {
-        const words = partWordsOf(q);
-        if (words === null) return null;
-        const match = words.map((w) => ([...w].length >= PART_PREFIX_MIN_CHARS ? `"${w}"*` : `"${w}"`)).join(" ");
+        if (partWordsOf(q) === null) return null;
         const recency = sql`coalesce(m.date, 0)`;
         return {
-          head: { pred: sql`m.rowid IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ${match})`, rank: recency },
-          text: { pred: sql`b.rowid IN (SELECT rowid FROM message_bodies_fts WHERE message_bodies_fts MATCH ${match})`, rank: recency },
+          head: { pred: ftsRows(sql`m.rowid`, "messages_fts", q, "parts"), rank: recency },
+          text: { pred: ftsRows(sql`b.rowid`, "message_bodies_fts", q, "parts"), rank: recency },
         };
       },
       substring: (q: string): SearchArm => {
