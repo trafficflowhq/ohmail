@@ -9,9 +9,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from
 import { useTranslations } from "next-intl";
 import { FOLDER_OF_VIEW, forwardOffered, isResurfaced, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
 import { Button, Chip, DatePicker, Icon, InfoNote, Kbd, ReadingPane } from "@ohmail/ui";
-import { AttachmentStrip } from "../components/AttachmentStrip";
-import { isPreviewable } from "../components/AttachmentPreview";
-import { opensInSystemViewer } from "./open-attachment";
+import { MessageFiles } from "./MessageFiles";
 import { MessageBody } from "../components/MessageBody";
 import { ConversationPanels } from "./Conversation";
 import { MessageHeader } from "./MessageCard";
@@ -1702,51 +1700,12 @@ export function MessagePane({
 
   /*
    * The strip travels WITH the body, so every place that renders the focused message gets it and
-   * none of them has to remember.
+   * none of them has to remember. `MessageFiles` holds the list it draws.
    */
-  const attachments = chrome.attachments;
   const focusedMessage = (
     <>
       {focusedBody}
-      {attachments ? (
-        <AttachmentStrip
-          /* EVERY PART IS LISTED, whichever way the body draws — the body may paint an inline
-             logo in place, and it still stays downloadable here, marked and grouped after the
-             real files (the 2026-09-19 ruling). The same opts go to `onDownloadAll`, because the
-             head counts what this list holds and the button must save the same set. */
-          items={attachments.itemsOf(message.id, { includeInlineParts: true })}
-          /* SAVING IS THE SECOND VERB NOW — the corner control on a tile that can be looked at,
-             and the whole tile on one that cannot. Every attachment can be saved, whatever else
-             it can do, so this is never withheld. */
-          onOpen={(attachmentId) => attachments.open(message.id, attachmentId)}
-          /**
-           * Looking is what a press does, and WHICH files offer it is decided here rather than in the strip — the
-           * strip stays a pure component, and the answer is a security judgement with one owner. A type this app can
-           * draw inline (image, PDF, text) opens the Quick-Look overlay; everything else — a docx, a zip, and an SVG,
-           * a document that executes script — cannot be previewed and its tile saves. The metadata carries the type
-           * whatever the byte state, so the decision needs no fetch. The swap changed the geometry, not this line:
-           * `isPreviewable` is the same predicate with the same refusals.
-           */
-
-          /**
-           * On the desktop a PDF is not one of them — `opensInSystemViewer` subtracts: that window cannot draw a PDF
-           * (the renderer needs a worker, the policy is `worker-src 'none'`, both bundles alias the library away), so
-           * the eye there was a viewer whose only outcome was a panel saying to download instead. Without the eye,
-           * the tile's press is the one it has always advertised: it saves the PDF into this computer's Downloads
-           * folder, where the reader opens it in whatever they read PDFs with. It answers false everywhere else,
-           * including the whole web app.
-           */
-          onPreview={(attachmentId) => chrome.openAttachmentPreview(message.id, attachmentId)}
-          canPreview={(item) => isPreviewable(item.mimeType) && !opensInSystemViewer(item.mimeType)}
-          onDownloadAll={() => attachments.downloadAll(message.id, { includeInlineParts: true })}
-          downloadingAll={attachments.downloadingAll(message.id)}
-          /* THE EVENT CARD's feed: a calendar part whose decoded text is in hand renders as
-             the event it carries (what · when · where · who), in place of its tile. The map
-             is filled by the same effect that loads the list — engine-budgeted — and stays
-             empty wherever fetching was refused, which keeps the plain tile standing. */
-          calendarTextOf={(attachmentId) => attachments.calendarTextsOf(message.id).get(attachmentId)}
-        />
-      ) : null}
+      <MessageFiles messageId={message.id} />
     </>
   );
 

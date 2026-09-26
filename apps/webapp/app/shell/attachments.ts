@@ -103,6 +103,14 @@ export interface AttachmentsChrome {
    * then, and empty is the strip's signal to keep the plain tile standing.
    */
   calendarTextsOf(messageId: string): ReadonlyMap<string, string>;
+  /**
+   * HOLD one message's list while a pane shows it; the return releases the hold. A list nobody
+   * asked for reads as the silent first-ask state for ever, so every pane that renders a strip
+   * holds its own message (`MessageFiles`), whichever surface mounted it. Counted per id: one
+   * message can stand in two panes, and only the last release lets its list go, unless the
+   * selection above still owns it.
+   */
+  hold(messageId: string): () => void;
 }
 
 /**
@@ -242,7 +250,7 @@ function attachmentsFingerprint(engine: OhmailEngine, ids: Iterable<string>): st
 function useEngineNotice(
   engine: OhmailEngine,
   watching: boolean,
-  held: { current: ReadonlySet<string> },
+  held: () => Iterable<string>,
 ): string {
   const subscribe = useCallback(
     (onChange: () => void) => (watching ? engine.subscribe(onChange) : () => {}),
@@ -250,9 +258,20 @@ function useEngineNotice(
   );
   return useSyncExternalStore(
     subscribe,
-    () => (watching ? attachmentsFingerprint(engine, held.current) : ""),
+    () => (watching ? attachmentsFingerprint(engine, held()) : ""),
     () => "",
   );
+}
+
+/**
+ * Let one message's list go. A failure the strip ANSWERED is kept, so a re-open renders the same
+ * answer instead of polling a refusal that cannot change; a failure with a Try again goes, so a
+ * fresh open asks once more. One predicate decides both, the same one the row's press reads.
+ */
+function releaseList(engine: OhmailEngine, id: string): void {
+  const held = engine.attachmentsOf(id);
+  const answered = held.state === "failed" && !listRetryIsOffered(held.code, held.retryable);
+  engine.releaseAttachments(id, answered ? { keepFailure: true } : {});
 }
 
 /**
@@ -297,6 +316,8 @@ export function useMessageAttachments(
      * this app cannot see.
      */
     onSavedToDownloads?: (count: number) => void;
+    /** The last pane showing this message let it go; a preview over its bytes must close. */
+    onUnshown?: (messageId: string) => void;
   },
 ): AttachmentsChrome | undefined {
   const available = engine.attachmentsAvailable();
@@ -317,6 +338,8 @@ export function useMessageAttachments(
   onFailed.current = opts.onDownloadAllFailed;
   const onSaved = useRef(opts.onSavedToDownloads);
   onSaved.current = opts.onSavedToDownloads;
+  const onUnshown = useRef(opts.onUnshown);
+  onUnshown.current = opts.onUnshown;
 
   /**
    * Every id whose list THIS selection asked for — the RELEASE SET. The selected message and
@@ -326,11 +349,19 @@ export function useMessageAttachments(
    * release set a render input, which it is not.
    */
   const loaded = useRef<Set<string>>(new Set());
+  /** Per-id hold counts from the panes on screen ({@link AttachmentsChrome.hold}). */
+  const holds = useRef<Map<string, number>>(new Map());
+  const wanted = useCallback((id: string): boolean => loaded.current.has(id) || holds.current.has(id), []);
+  const wantedIds = useCallback(function* (): Iterable<string> {
+    yield* loaded.current;
+    for (const id of holds.current.keys()) if (!loaded.current.has(id)) yield id;
+  }, []);
 
-  /* THE SUBSCRIPTION, declared here because it fingerprints the release set above. `watching` is
-     the same condition this hook's own two effects open with: with no message selected it asks
-     for no list, holds no release set and has nothing whose state could move. */
-  useEngineNotice(engine, available && messageId !== null, loaded);
+  /* THE SUBSCRIPTION, over every id something on screen wants: the selection's release set and
+     every pane's hold. Open whenever the capability exists, because a pane can hold a message
+     with nothing selected (the reader over History); an empty set fingerprints to "" and so
+     re-renders nothing. */
+  useEngineNotice(engine, available, wantedIds);
 
   /**
    * The engine THIS COMMIT serves — read by completions and by the standing crew, because both
@@ -370,7 +401,7 @@ export function useMessageAttachments(
          * which case even a matching id belongs to a different mirror and acting on it would
          * write the old world's answer into the new one's bookkeeping (review finding).
          */
-        if (engineRef.current !== engine || !loaded.current.has(id)) {
+        if (engineRef.current !== engine || !wanted(id)) {
           engine.releaseAttachments(id);
           return;
         }
@@ -381,7 +412,7 @@ export function useMessageAttachments(
         if (outcome.state === "ready" && outcome.items.length > 0) void engine.loadCalendarTexts(id);
       });
     },
-    [engine],
+    [engine, wanted],
   );
 
   useEffect(() => {
@@ -391,18 +422,11 @@ export function useMessageAttachments(
     return () => {
       // The whole selection's worth — the focused message AND every sibling the effect below
       // asked for. `releaseAttachments` itself declines to drop a live sent-copy seed, so
-      // sweeping the set is safe against the optimistic-copy lifecycle.
-      //
-      // A FAILURE THE STRIP ANSWERED IS KEPT, and that is what makes the next open of this
-      // message honest either way: a failure with a Try again goes with the release, so a fresh
-      // open asks once more (the gesture a person makes when something did not load); a failure
-      // with no press — this message is not yours, there is no such message — stays, so a re-open
-      // renders the same answer instead of polling a refusal that cannot change. One predicate
-      // decides both, the same one the row's press reads.
+      // sweeping the set is safe against the optimistic-copy lifecycle. A pane still showing an
+      // id keeps it, and that pane's last release lets it go (`releaseList` keeps an answered
+      // failure either way).
       for (const id of loaded.current) {
-        const held = engine.attachmentsOf(id);
-        const answered = held.state === "failed" && !listRetryIsOffered(held.code, held.retryable);
-        engine.releaseAttachments(id, answered ? { keepFailure: true } : {});
+        if (!holds.current.has(id)) releaseList(engine, id);
       }
       loaded.current.clear();
     };
@@ -435,6 +459,8 @@ export function useMessageAttachments(
    * spawning a second one, and `listWorkers` never exceeds the cap for the hook's lifetime.
    */
   const pendingLists = useRef<string[]>([]);
+  /** Held ids waiting for a worker — never replaced by the conversation sweep, which owns the first queue only. */
+  const pendingHolds = useRef<string[]>([]);
   const listWorkers = useRef(0);
   /**
    * A worker asks through THIS ref, never through a captured `ask`: the crew outlives effect
@@ -462,15 +488,25 @@ export function useMessageAttachments(
     // resuming in the commit-to-passive gap must find nothing stale to take. The passive sweep
     // refills it with the committed conversation when the flush arrives.
     pendingLists.current = [];
+    pendingHolds.current = [];
   }, [engine, ask]);
   const pump = useCallback((): void => {
-    while (listWorkers.current < SIBLING_LIST_CONCURRENCY && pendingLists.current.length > 0) {
+    while (
+      listWorkers.current < SIBLING_LIST_CONCURRENCY
+      && (pendingLists.current.length > 0 || pendingHolds.current.length > 0)
+    ) {
       listWorkers.current += 1;
       void (async () => {
         try {
           for (;;) {
             const id = pendingLists.current.shift();
-            if (id === undefined) return;
+            if (id === undefined) {
+              // A held id is asked only while it is still held and nobody else has asked for it.
+              const heldId = pendingHolds.current.shift();
+              if (heldId === undefined) return;
+              if (holds.current.has(heldId) && !loaded.current.has(heldId)) await askRef.current(heldId);
+              continue;
+            }
             /*
              * The release set is joined at DEQUEUE, not at enqueue. An unstarted id holds no
              * engine state to release, and membership is also the replacement run's skip test
@@ -526,14 +562,14 @@ export function useMessageAttachments(
       // The whole release set, not the focused id alone: a sibling panel's list 401s the same
       // way the focused one does, and a revival that healed one strip while its neighbour kept
       // "Your session ended" would be the original defect kept on the panels added since.
-      for (const id of loaded.current) {
+      for (const id of [...wantedIds()]) {
         const held = engine.attachmentsOf(id);
         if (held.state !== "failed" || !isAuthListFailure(held.code)) continue;
         engine.releaseAttachments(id);
         void engine.loadAttachments(id);
       }
     });
-  }, [engine, messageId, available]);
+  }, [engine, messageId, available, wantedIds]);
 
   /**
    * The engine's outcome, carried across unchanged but for one addition: the failed variant
@@ -740,6 +776,32 @@ export function useMessageAttachments(
 
   const downloadingAllOf = useCallback((id: string): boolean => downloadingAll.has(id), [downloadingAll]);
 
+  /* The release goes to the engine that was HELD, and runs once however often it is called. */
+  const hold = useCallback(
+    (id: string): (() => void) => {
+      const count = holds.current.get(id) ?? 0;
+      holds.current.set(id, count + 1);
+      if (count === 0 && !loaded.current.has(id)) {
+        pendingHolds.current.push(id);
+        pump();
+      }
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        const left = (holds.current.get(id) ?? 1) - 1;
+        if (left > 0) {
+          holds.current.set(id, left);
+          return;
+        }
+        holds.current.delete(id);
+        if (!loaded.current.has(id)) releaseList(engine, id);
+        onUnshown.current?.(id);
+      };
+    },
+    [engine, pump],
+  );
+
   /**
    * ONE OBJECT, not a fresh literal per render.
    *
@@ -751,9 +813,9 @@ export function useMessageAttachments(
   const chrome = useMemo(
     (): AttachmentsChrome => ({
       itemsOf, open, ensure, blobOf, downloadAll, downloadingAll: downloadingAllOf,
-      cidImagesOf, needCidImages, calendarTextsOf,
+      cidImagesOf, needCidImages, calendarTextsOf, hold,
     }),
-    [itemsOf, open, ensure, blobOf, downloadAll, downloadingAllOf, cidImagesOf, needCidImages, calendarTextsOf],
+    [itemsOf, open, ensure, blobOf, downloadAll, downloadingAllOf, cidImagesOf, needCidImages, calendarTextsOf, hold],
   );
 
   return available ? chrome : undefined;

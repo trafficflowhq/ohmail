@@ -1678,6 +1678,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
        held key-for-key against the STRIP's own `COPY` table (`locale-shim-parity.test.ts`), and a
        sentence only this file speaks would be a dead entry in it. */
     onSavedToDownloads: (count) => toast(t("ohbox.toastSavedToDownloads", { count })),
+    /* A preview belongs to the pane that shows its message; when the last one lets it go, so does the preview. */
+    onUnshown: (id) => setPreviewFor((p) => (p?.messageId === id ? null : p)),
   });
 
   /*

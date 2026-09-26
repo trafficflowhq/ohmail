@@ -15,11 +15,9 @@ import { useTranslations } from "next-intl";
 import { Avatar, Badge, Button, Icon } from "@ohmail/ui";
 import { forwardOffered, isForwardedByUs, isProtectedMessage, type EngineMessage } from "@ohmail/client-engine";
 import { AwayMark } from "./AwayMark";
-import { isPreviewable } from "../components/AttachmentPreview";
-import { AttachmentStrip } from "../components/AttachmentStrip";
 import { MessageBody } from "../components/MessageBody";
 import { BlockNoticeGloss, type BlockNotice } from "../components/BlockNotice";
-import { opensInSystemViewer } from "./open-attachment";
+import { MessageFiles } from "./MessageFiles";
 import { replyAllRecipients } from "./compose-from";
 import {
   avatarHue,
@@ -327,16 +325,11 @@ export function MessageCard({
     [chrome.remoteImages, message.id],
   );
 
-  /**
-   * THE SIBLING'S FILES — the found defect this block closes: A conversation panel rendered header and body and
-   * NOTHING said the message carried files: the strip lived only on the focused panel, so a reader's own sent reply —
-   * ingested from the Sent folder with its attachments extracted and stamped — showed none of them anywhere on the
-   * open thread. The strip below is the same `AttachmentStrip` over the same chrome reads the focused pane uses
-   * (`itemsOf` / `open` / `downloadAll` — the metadata ask lives in `useMessageAttachments`, which loads the whole
-   * conversation's lists); `isProtectedMessage` gates it for the reason the focused pane's does: a protected message
-   * renders no content, and a file a sender attached is content.
+  /*
+   * THE SIBLING'S FILES: a conversation panel shows its own message's files through the same
+   * `MessageFiles` the focused pane uses, which holds that message's list itself. A protected
+   * message renders no content, and a file a sender attached is content.
    */
-  const attachments = isProtectedMessage(message) ? undefined : chrome.attachments;
 
   const loadingNote: ReactNode = !stalled && waiting ? <p className="hm-state">{tb("loading")}</p> : null;
   /**
@@ -400,23 +393,7 @@ export function MessageCard({
             onNotice={onNotice}
           />
         </div>
-        {attachments ? (
-          <AttachmentStrip
-            /* Same list discipline as the focused pane: every part is listed, inline pictures
-               marked and grouped after the files, and `onDownloadAll` enumerates the same set
-               the head just counted. */
-            items={attachments.itemsOf(message.id, { includeInlineParts: true })}
-            onOpen={(attachmentId) => attachments.open(message.id, attachmentId)}
-            /* The same preview judgement with the same owner — `isPreviewable` minus the desktop's
-               system-viewer types — dispatching THIS panel's message id, so pressing a file on an
-               older message never requires first making it the focused one. */
-            onPreview={(attachmentId) => chrome.openAttachmentPreview(message.id, attachmentId)}
-            canPreview={(item) => isPreviewable(item.mimeType) && !opensInSystemViewer(item.mimeType)}
-            onDownloadAll={() => attachments.downloadAll(message.id, { includeInlineParts: true })}
-            downloadingAll={attachments.downloadingAll(message.id)}
-            calendarTextOf={(attachmentId) => attachments.calendarTextsOf(message.id).get(attachmentId)}
-          />
-        ) : null}
+        {isProtectedMessage(message) ? null : <MessageFiles messageId={message.id} />}
         {loadingNote}
         {withheldNote}
         {failedNote}

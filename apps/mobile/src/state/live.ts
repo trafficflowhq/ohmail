@@ -1560,6 +1560,12 @@ export function liveMessage(engine: OhmailEngine, id: string, v: WorldView): Wor
   row.html = hydrated.html;
   row.loadedRemoteContent = hydrated.loadedRemoteContent;
   row.inlineImages = engine.inlineImagesOf(id);
+  withFiles(engine, id, row);
+  return row;
+}
+
+/** The reading row's files, off the engine's own list; the mirror row and the off-mirror row share it. */
+function withFiles(engine: OhmailEngine, id: string, row: WorldMail): void {
   const EVERY_PART = { includeInlineImages: true, includeInlineParts: true };
   const atts = engine.attachmentsOf(id, EVERY_PART);
   if (atts.state === "ready" && atts.items.length > 0) {
@@ -1574,7 +1580,6 @@ export function liveMessage(engine: OhmailEngine, id: string, v: WorldView): Wor
       state: item.state,
     }));
   }
-  return row;
 }
 
 
@@ -1643,6 +1648,9 @@ export const subscribeOffMirror = (fn: () => void): (() => void) => {
   return () => offMirrorListeners.delete(fn);
 };
 export const offMirrorRevision = (): number => offMirrorRev;
+/** The reader's off-mirror row when it is this id, else `undefined`. */
+const offMirrorRowOf = (id: string): EngineMessage | undefined =>
+  offMirror !== null && offMirror.row.id === id ? offMirror.row : undefined;
 
 function offMirrorMail(engine: OhmailEngine, id: string, v: WorldView): WorldMail | undefined {
   if (offMirror === null || offMirror.row.id !== id) return undefined;
@@ -1654,6 +1662,7 @@ function offMirrorMail(engine: OhmailEngine, id: string, v: WorldView): WorldMai
     row.html = b.state === "full" ? b.html : null;
   }
   row.earlier = [];
+  withFiles(engine, id, row);
   return row;
 }
 
@@ -2809,7 +2818,13 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
 
   const openMessage = async (id: string): Promise<boolean> => {
     const m = engine.read().get<EngineMessage>("message", id);
-    if (!m) return false;
+    if (!m) {
+      // A row the mirror does not hold (a History or Search hit) lists its files too: the list is
+      // the server's, asked by id, and the reader's cleanup releases it as it does any other.
+      const off = offMirrorRowOf(id);
+      if (off?.hasAttachments) void engine.loadAttachments(id).catch(() => undefined);
+      return false;
+    }
     // The full text, the conversation's members, and the file list — all render-side asks;
     // failures degrade to the snippet with its honest bodyState, never to an error screen.
     hydrateSmart(id);

@@ -433,14 +433,17 @@ describe("the window entry arms it", () => {
 });
 
 describe("the reading pane withholds the in-app viewer for the type this build cannot draw", () => {
-  it("MessagePane asks `opensInSystemViewer` alongside `isPreviewable`", () => {
-    const rel = "apps/webapp/app/shell/MessagePane.tsx";
-    let pane: string;
-    try {
-      pane = readFileSync(resolve(process.cwd(), rel), "utf8");
-    } catch {
-      pane = readFileSync(resolve(process.cwd(), "../webapp/app/shell/MessagePane.tsx"), "utf8");
-    }
+  it("MessageFiles asks `opensInSystemViewer` alongside `isPreviewable`", () => {
+    // The strip is `MessageFiles`, which every reading pane renders; the pane is held to it.
+    const read = (name: string): string => {
+      try {
+        return readFileSync(resolve(process.cwd(), `apps/webapp/app/shell/${name}`), "utf8");
+      } catch {
+        return readFileSync(resolve(process.cwd(), `../webapp/app/shell/${name}`), "utf8");
+      }
+    };
+    expect(read("MessagePane.tsx")).toMatch(/<MessageFiles messageId=\{message\.id\} \/>/);
+    const pane = read("MessageFiles.tsx");
     expect(pane).toMatch(
       /canPreview=\{\(item\) => isPreviewable\(item\.mimeType\) && !opensInSystemViewer\(item\.mimeType\)\}/,
     );

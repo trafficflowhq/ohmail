@@ -14,7 +14,6 @@ import type { useTranslations } from "next-intl";
 import {
   isResurfaced,
   senderKey,
-  threadOf,
   VIEW_OF_FOLDER,
   waterlineIdOf,
   type ConsentPartition,
@@ -431,33 +430,20 @@ export function useShellOpenState({
 
   /**
    * DERIVE-CLOSE the Quick-Look overlay when the message it belongs to stops being the open
-   * one — a different row selected, a view change, the reader closed. `attachments` are held
-   * for `selectedOhbox` only and their `blob:` URLs are revoked the moment it moves, so a
-   * preview left standing across the switch would render revoked bytes. Closing is derived from
-   * the selection rather than remembered at every call site that can change it.
+   * one. Two triggers: an Ohbox selection MOVE, here, because the seam's cleanup revokes the
+   * conversation's byte state on exactly that trigger; and the last pane showing the message
+   * letting it go (the reader closed, a column re-pointed, a sibling a drain deleted), which
+   * `useMessageAttachments` reports as `onUnshown` and `AppShell` answers. A membership test on
+   * the Ohbox thread stood here and closed every preview opened outside it, the reader's included.
    */
   const previewSelection = useRef<string | null>(null);
   useEffect(() => {
     const before = previewSelection.current;
     previewSelection.current = selectedOhbox?.id ?? null;
     if (!previewFor) return;
-    /*
-     * Members of the ACTIVE conversation keep their previews under a standing selection: the seam
-     * holds lists and bytes for the whole conversation, and a focused-id-only test closed a
-     * sibling's overlay in the same breath its eye opened it. Two bounds keep the widened guard
-     * honest: ANY selection move closes the overlay (the seam's cleanup revokes the conversation's
-     * byte state on exactly that trigger), and `version` is a dependency, so a previewed sibling a
-     * drain deletes or rethreads no longer holds its overlay open. The previous selection is a ref
-     * — bookkeeping, not a render input.
-     */
-    const held =
-      before === (selectedOhbox?.id ?? null) &&
-      selectedOhbox != null &&
-      (previewFor.messageId === selectedOhbox.id ||
-        threadOf(reader, selectedOhbox.id).some((m) => m.id === previewFor.messageId));
-    if (!held) setPreviewFor(null);
+    if (before !== (selectedOhbox?.id ?? null)) setPreviewFor(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [previewFor, selectedOhbox?.id, derived]);
+  }, [previewFor, selectedOhbox?.id]);
 
   /**
    * What the reader is showing, read from the mirror on every render.
