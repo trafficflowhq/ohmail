@@ -1708,6 +1708,15 @@ const MODELLED_WAIT_CODES = new Set([
 export const OUTBOX_MAX_SERVER_FAILURES = 8;
 
 /**
+ * HOW LONG A VERB MAY WAIT ON AN UNREACHABLE SERVER BEFORE A PERSON IS SHOWN IT. `offline_read_only`
+ * spends none of the ceiling above, because the verb is fine and the server is not there; without
+ * a bound a change made on a desktop whose hosted account stays out of reach waited for ever with
+ * nothing on screen saying so. Past a day it moves to the unsaved-changes list, where Try again
+ * replays it under its original key and Discard drops it. Measured from when the verb was made.
+ */
+export const OUTBOX_UNREACHABLE_CEILING_MS = 24 * 60 * 60 * 1000;
+
+/**
  * The first backoff after a server-answered failure, doubling to {@link OUTBOX_BACKOFF_CAP_MS}. 30 s rather than
  * brisk because the retry buys nothing on its own: the verb already has its Idempotency-Key, so there is no race to
  * win, and a poisoned verb retried quickly is just a faster loop. The window is ~63 MINUTES, and this comment once
@@ -2067,6 +2076,12 @@ export class OhmailEngine {
   private drainEpoch = 0;
   /** {@link OhmailEngine.restoreOutbox}'s latch. */
   private outboxRestored = false;
+  /**
+   * Restored verbs whose target was not in the mirror at the restore — the desktop window's mirror
+   * is empty until its first drain. Painted at a drain's settle once the rows are there, so a
+   * delete queued before a relaunch does not show the message again while it waits.
+   */
+  private readonly unpaintedRestored = new Set<string>();
   /**
    * TRUE once the store is known to hold what disk holds — `hydrate()` resolved, or a host called
    * `restoreOutbox()` after loading it itself. {@link restoreOutboxIfLoaded} reads this so the
@@ -2897,6 +2912,7 @@ export class OhmailEngine {
         const asExpressed = () => new Date(e.at);
         const effects = mutationEffects(this.verbView, e.mutation, { now: asExpressed, uuid: this.uuid });
         if (effects.length > 0) this.overlays.set(e.id, effects);
+        else this.unpaintedRestored.add(e.id);
       } catch { /* a malformed or out-of-vocabulary mutation paints nothing; the wire decides */ }
       this.queue.push({
         id: e.id, key: e.key, mutation: e.mutation, at: e.at, n: e.n, restored: true,
@@ -2944,6 +2960,28 @@ export class OhmailEngine {
     this.queue.sort((a, b) => (a.at - b.at) || (a.n - b.n));
     this.overlayRev++;
     this.notify();
+  }
+
+  /**
+   * Paint the restored verbs {@link unpaintedRestored} names, once their rows are in the mirror.
+   * Only a verb still QUEUED is painted: one already dispatched owns its own overlay, and one that
+   * settled has none to show. At the verb's own moment, as the restore paints it. True when any
+   * overlay moved.
+   */
+  private repaintRestored(): boolean {
+    let moved = false;
+    for (const id of [...this.unpaintedRestored]) {
+      const q = this.queue.find((p) => p.id === id);
+      if (!q || this.overlays.has(id)) { this.unpaintedRestored.delete(id); continue; }
+      try {
+        const effects = mutationEffects(this.verbView, q.mutation, { now: () => new Date(q.at), uuid: this.uuid });
+        if (effects.length === 0) continue;
+        this.overlays.set(id, effects);
+        moved = true;
+      } catch { /* paints nothing, as at the restore */ }
+      this.unpaintedRestored.delete(id);
+    }
+    return moved;
   }
 
   private async drain(): Promise<void> {
@@ -3122,6 +3160,7 @@ export class OhmailEngine {
       const before = this.optimisticSent.size;
       this.reconcileOptimisticSent();
       if (this.optimisticSent.size !== before) { this.overlayRev++; this.notify(); }
+      if (this.repaintRestored()) { this.overlayRev++; this.notify(); }
       // THE DRAIN'S LAST WORD: this mirror was fully caught up at this moment, on this device's
       // own clock. Written at COMPLETION and nowhere earlier — a drain that fails or aborts
       // mid-backlog leaves the old stamp standing, so the next drain still reads as a stale
@@ -6526,6 +6565,11 @@ export class OhmailEngine {
         const attempts = (p.attempts ?? 0) + (counts ? 1 : 0);
 
         if (counts && attempts >= OUTBOX_MAX_SERVER_FAILURES) {
+          return await this.abandon(p, attempts, rejection);
+        }
+        // THE UNREACHABLE SERVER'S CEILING — see {@link OUTBOX_UNREACHABLE_CEILING_MS}.
+        if (rejection.code === "offline_read_only"
+            && this.now().getTime() - p.at >= OUTBOX_UNREACHABLE_CEILING_MS) {
           return await this.abandon(p, attempts, rejection);
         }
 

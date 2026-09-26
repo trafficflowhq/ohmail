@@ -34,6 +34,7 @@ import {
   handleWindowConsentReadFailure, handleWindowSearchPhases, handleWindowSyncFailure,
   WINDOW_CONSENT_READ_FAILED_ROUTE, WINDOW_SEARCH_PHASES_ROUTE, WINDOW_SYNC_FAILED_ROUTE,
 } from "./window-report.js";
+import { WINDOW_OUTBOX_FILES, WINDOW_OUTBOX_ROUTE, createWindowOutbox } from "./window-outbox.js";
 import { createWriteThroughProxy, type WriteThroughProxy } from "./cloud-proxy.js";
 import {
   accountAnswer,
@@ -418,9 +419,10 @@ export function enforceMirrorOwner(
 
        On the other two paths nothing has been sealed for the world being arrived at, so the seal
        there belongs to the world being left and must go — which is what it has always done. */
+    // The window's queued changes belong to the world being left on every path.
     const stale = askedToStartOver && !addressChanged && !serverChanged
-      ? ["pgdata", "cloud-cursor.json"]
-      : ["pgdata", "cloud-cursor.json", "cloud-tokens.seal"];
+      ? ["pgdata", "cloud-cursor.json", ...WINDOW_OUTBOX_FILES]
+      : ["pgdata", "cloud-cursor.json", "cloud-tokens.seal", ...WINDOW_OUTBOX_FILES];
     // The database, its cursor and (usually) the previous account's sealed session are all stale.
     // Remove them so the new account bootstraps from empty rather than inheriting a stranger's mail.
     for (const name of stale) {
@@ -913,6 +915,12 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
        Named ONCE, when a mailbox list first gives this world a row, by the rule a relaunch applies
        (`ensureLocalWorld` again), and told to the shell before the pairing's answer goes out. */
     let served = world.mailboxId;
+    /* The window's outbox, scoped to the mailbox this launch serves. Built after
+       `enforceMirrorOwner`, so it never reads a file that check discarded; the launch bearer is
+       read by the request pipeline before this door is reached. */
+    const windowOutbox = createWindowOutbox({
+      dataDir: config.dataDir, authorized: async () => true, log: log ?? (() => undefined), scope: () => served,
+    });
     const servedWaiters = new Set<() => void>();
     const nameServedMailbox = async (): Promise<void> => {
       if (served !== "") return;
@@ -1350,6 +1358,11 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           ? handleWindowSyncFailure(req, deps)
           : handleWindowConsentReadFailure(req, deps);
       }
+
+      /* THE WINDOW'S QUEUED CHANGES, kept on this machine (`window-outbox.ts`). Every write on this
+         door waits for the hosted account, so a change made while it is out of reach lives here
+         until it reaches it — the one local write this door makes. */
+      if (path === WINDOW_OUTBOX_ROUTE) return windowOutbox.handle(req);
 
       /* THE WINDOW'S HELD QUESTION (`session-watch.ts`): answered the moment the session reading
          differs from the one it names, else at the hold bound with `changed: false`. Served before

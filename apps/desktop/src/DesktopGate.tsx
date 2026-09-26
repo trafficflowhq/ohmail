@@ -735,7 +735,7 @@ export function DesktopGate() {
   // One window, one composer, across restarts — see `setComposerScope`.
   setComposerScope("window");
   if (mount.kind === "engine" && live?.key !== mount.key) {
-    setLive({ key: mount.key, engine: createLocalEngine() });
+    setLive({ key: mount.key, engine: createLocalEngine(mount.key) });
   } else if (mount.kind !== "engine" && live !== null) {
     /* Signed out, or the door was given up. Dropping the reference is what takes the mirror — a
        copy of somebody's mail — out of this window's memory; keeping it would leave it sitting

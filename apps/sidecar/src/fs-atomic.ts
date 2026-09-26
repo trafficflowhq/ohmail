@@ -1,5 +1,5 @@
 import { renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { rename, unlink, writeFile } from "node:fs/promises";
+import { open, rename, unlink, writeFile } from "node:fs/promises";
 
 /**
  * STAGE AND RENAME — the one atomic write this process has, in one place.
@@ -35,6 +35,28 @@ export async function writeAtomicFile(path: string, contents: string, mode: numb
   const tmp = tempFor(path);
   await writeFile(tmp, contents, { encoding: "utf8", mode });
   try {
+    await rename(tmp, path);
+  } catch (err) {
+    await unlink(tmp).catch(() => undefined);
+    throw err;
+  }
+}
+
+/**
+ * The same, with the staged bytes flushed to the disk BEFORE the rename — for a file whose loss
+ * on a power cut is a person's lost work (the window's queued changes), not a re-derivable cache.
+ * Without the flush a rename can reach the disk ahead of the data it names.
+ */
+export async function writeAtomicFileSynced(path: string, contents: string, mode: number): Promise<void> {
+  const tmp = tempFor(path);
+  try {
+    const fh = await open(tmp, "w", mode);
+    try {
+      await fh.writeFile(contents, "utf8");
+      await fh.sync();
+    } finally {
+      await fh.close();
+    }
     await rename(tmp, path);
   } catch (err) {
     await unlink(tmp).catch(() => undefined);

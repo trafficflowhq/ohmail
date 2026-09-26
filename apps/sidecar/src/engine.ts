@@ -218,6 +218,7 @@ import {
   handleWindowConsentReadFailure, handleWindowSearchPhases, handleWindowSyncFailure,
   WINDOW_CONSENT_READ_FAILED_ROUTE, WINDOW_SEARCH_PHASES_ROUTE, WINDOW_SYNC_FAILED_ROUTE,
 } from "./window-report.js";
+import { WINDOW_OUTBOX_ROUTE, createWindowOutbox } from "./window-outbox.js";
 import { createAttentionClock } from "./attention.js";
 import type { PowerVerdict } from "./host-power.js";
 import { startSearchIndexBackfill } from "./search-backfill.js";
@@ -7176,6 +7177,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       const token = header && /^Bearer\s+/i.test(header) ? header.replace(/^Bearer\s+/i, "").trim() : "";
       return token !== "" && (await resolveSession(db, token, now())) !== null;
     };
+    /** The window's queued changes, on this machine — see `window-outbox.ts`. */
+    const windowOutbox = createWindowOutbox({
+      dataDir: config.dataDir, authorized: launchBearerAuthorized, log, scope: () => world.mailboxId,
+    });
     /* THE SEARCH INDEX FILLS ITSELF IN — the store-only pass, one round per idle tick on power;
        see `search-backfill.ts`. Local door only (`composition-passes.ts`). */
     const searchBackfill = runsStorePass(organizerKind, "search-index-backfill")
@@ -7267,6 +7272,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         if (req.method === "POST" && new URL(req.url).pathname === WINDOW_CONSENT_READ_FAILED_ROUTE) {
           return handleWindowConsentReadFailure(req, { authorized: launchBearerAuthorized, log });
         }
+        if (new URL(req.url).pathname === WINDOW_OUTBOX_ROUTE) return windowOutbox.handle(req);
         // How far the local search index has got — the Mailboxes pane's progress arm.
         if (req.method === "GET" && new URL(req.url).pathname === SEARCH_INDEX_ROUTE) {
           return searchIndexDoor(req);

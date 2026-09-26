@@ -23,6 +23,7 @@ import {
   HttpAdapter, OhmailEngine, retryingRead, type WindowSearchPhases, type WindowSyncFailure,
 } from "@ohmail/client-engine";
 import { DESKTOP_WINDOW } from "../../webapp/app/shell/store-windows.js";
+import { WindowOutboxStore } from "./window-outbox-store.js";
 
 /**
  * The shape `HttpAdapterOptions.fetch` is satisfied by.
@@ -730,15 +731,15 @@ export async function reportWindowSyncFailure(record: WindowSyncFailure): Promis
 
 /**
  * The client engine this window runs on — the same `OhmailEngine` the hosted client builds, over
- * the bridge, not a socket. Two things are deliberately withheld. No `storePolicy`: the default
- * `full` kept every message and body in the renderer for the window's life (a core and ~1.5 GB on
- * a large mailbox), so the in-memory projection is bounded while the engine's on-disk store holds
- * the whole mailbox (`OhmailEngine.listOlder`, local `/search`). No `store`: the mirror is rebuilt
- * each launch from a same-machine pipe, so a second on-disk copy would only double the mail. The
- * bootstrap takes `GET /sync/snapshot`, which both doors now answer from the database the deltas
- * come from, so its `asOfSeq` cursor matches the next `/sync` and a cold start paints newest-first.
+ * the bridge, not a socket. `DESKTOP_WINDOW`, never the `full` default that kept every message and
+ * body in the renderer (a core and ~1.5 GB on a large mailbox): the engine's on-disk store holds
+ * the whole mailbox (`OhmailEngine.listOlder`, local `/search`). The mirror is rebuilt each launch
+ * from a same-machine pipe; only the outbox goes to disk (`window-outbox-store.ts`), so a change
+ * made while the server is out of reach is replayed at the next launch. The bootstrap takes
+ * `GET /sync/snapshot`, answered from the database the deltas come from, so its `asOfSeq` cursor
+ * matches the next `/sync` and a cold start paints newest-first.
  */
-export function createLocalEngine(): OhmailEngine {
+export function createLocalEngine(scope: string): OhmailEngine {
   /**
    * `eagerBodies: true` — the desktop window opts in to the eager recent-window hydration
    * (ruling 2026-08-21). The bodies live in the sidecar's store on this same machine, so the
@@ -748,6 +749,7 @@ export function createLocalEngine(): OhmailEngine {
    */
   return new OhmailEngine({
     adapter: createEngineAdapter(),
+    store: new WindowOutboxStore({ scope, write: bridgeFetch, read: retryingBridgeFetch }),
     storePolicy: DESKTOP_WINDOW,
     eagerBodies: true,
   });

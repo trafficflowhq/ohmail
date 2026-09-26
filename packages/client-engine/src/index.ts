@@ -550,6 +550,7 @@ export {
   // The give-up ceiling and its backoff, same reasoning: a guard that hard-codes 8 is asserting
   // against its own copy of the rule rather than against the shipped one.
   OUTBOX_MAX_SERVER_FAILURES,
+  OUTBOX_UNREACHABLE_CEILING_MS,
   OUTBOX_BACKOFF_BASE_MS,
   OUTBOX_BACKOFF_CAP_MS,
   // How many backlog pages share one publish while a drain is catching up. Exported so the
