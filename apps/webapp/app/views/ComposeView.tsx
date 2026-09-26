@@ -806,7 +806,7 @@ export function ComposeView({
               <span className="draft-tag">
                 <Icon name="spark" size={12} /> {t("draftTag")}
               </span>
-              <div className="draft-body">{draft.body}</div>
+              <div className="draft-body msg-plain">{draft.body}</div>
               {draft.rationale ? (
                 <div className="grounding">
                   <Chip variant="rationale">

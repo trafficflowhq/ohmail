@@ -65,7 +65,8 @@
 .sc-rcpts .msg-rcpts{margin-top:6px}
 .sc-clip{position:relative;overflow:hidden;max-height:348px;transition:max-height .5s var(--spring)}
 .scast.short .sc-clip{max-height:none}
-.sc-body{padding:9px 26px 18px;font-size:calc(13.5px + var(--type-up));line-height:1.7;color:var(--ink);white-space:pre-line;max-width:62ch;margin:0}
+/* The preview's line breaks are `.msg-plain`'s (message.css), the one rule for plain text. */
+.sc-body{padding:9px 26px 18px;font-size:calc(13.5px + var(--type-up));line-height:1.7;color:var(--ink);max-width:62ch;margin:0}
 .sc-body + .sc-body{padding-top:0}
 /* The hydration state line: the same weight as .stream-hints, because it is the
    same kind of statement — a fact about the surface, not part of the mail. `.warn` carries

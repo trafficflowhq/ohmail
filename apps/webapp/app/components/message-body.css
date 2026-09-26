@@ -6,9 +6,9 @@
    us is the sheet the letter sits on, the consent bar above it, and the two states.
 
    `.msg-body` (packages/ui/src/composites/message.css) still wraps the whole thing and still
-   carries the plain-text path's type scale; `white-space:pre-line` there is why `.mb` resets
-   it — an html mail is not preformatted, and inheriting `pre-line` puts a blank line between
-   every block the sanitizer produced.
+   carries the plain-text path's type scale. `.mb` says `white-space: normal` so an html mail
+   never inherits a preformatted rule from whatever container hosts it; the plain text's own
+   line breaks are `.msg-plain`'s, set on its paragraphs, which this reset cannot reach.
    ─────────────────────────────────────────────────────────────────────────────────────── */
 
 .mb {

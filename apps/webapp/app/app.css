@@ -1966,11 +1966,11 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   flex-wrap: wrap;
   margin: 0 0 10px;
 }
+/* No `white-space` here: the held mail's line breaks are `.msg-plain`'s, on the paragraphs. */
 .hm-body {
   font-size:calc(13.5px + var(--type-up));
   line-height: 1.7;
   color: var(--ink);
-  white-space: pre-line;
   max-width: 62ch;
 }
 /* A sibling on a conversation whose body has been hydrated renders through the SAME viewer as
@@ -2437,10 +2437,10 @@ textarea.c-input:read-only {
   color: var(--accent-ink);
   margin-bottom: 12px;
 }
+/* The draft's line breaks are `.msg-plain`'s (packages/ui message.css), set on the element. */
 .draft-body {
   font-size:calc(13.5px + var(--type-up));
   line-height: 1.65;
-  white-space: pre-line;
   color: var(--ink);
   max-width: 58ch;
 }

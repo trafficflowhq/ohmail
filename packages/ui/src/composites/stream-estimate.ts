@@ -100,9 +100,9 @@ function wrap(chars: number, px: number, size: number, em: number, cap = Infinit
 /**
  * Lines a PREVIEW takes, respecting the newlines it carries.
  *
- * `.sc-body{white-space:pre-line}` keeps the sender's own line breaks, so counting characters
- * against a column and ignoring them under-counts every plain-text mail — a four-paragraph body
- * is at least seven lines however short its sentences are.
+ * `.sc-body` wears `.msg-plain{white-space:pre-line}`, which keeps the sender's own line breaks,
+ * so counting characters against a column and ignoring them under-counts every plain-text mail —
+ * a four-paragraph body is at least seven lines however short its sentences are.
  */
 function previewLines(text: string, px: number): number {
   let n = 0;

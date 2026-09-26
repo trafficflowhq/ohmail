@@ -395,7 +395,7 @@ export function StreamCard({
           chunks.map((chunk, i) => (
             <Fragment key={i}>
               {i > 0 ? art : null}
-              <p className="sc-body">{chunk.trim()}</p>
+              <p className="sc-body msg-plain">{chunk.trim()}</p>
             </Fragment>
           ))
         )}

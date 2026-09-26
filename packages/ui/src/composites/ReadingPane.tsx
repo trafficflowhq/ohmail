@@ -149,7 +149,7 @@ export function ReadingPane({
       ) : null}
       {subject !== undefined ? <h2>{subject}</h2> : null}
       {chips ? <div className="chips">{chips}</div> : null}
-      {children ?? (body !== undefined ? <p className="msg-body">{body}</p> : null)}
+      {children ?? (body !== undefined ? <p className="msg-body msg-plain">{body}</p> : null)}
       {bodyNote ? (
         <p className={bodyNoteFailed ? "msg-body-state warn" : "msg-body-state"} role="status">
           {bodyNote}

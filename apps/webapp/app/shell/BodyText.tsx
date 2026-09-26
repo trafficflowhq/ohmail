@@ -508,8 +508,13 @@ function renderNodes(nodes: BodyNode[], keyPrefix: string): ReactNode[] {
           </div>
         );
       case "para":
+        /* `msg-plain` is the ONE rule that keeps a plain-text letter's own line breaks, and it sits
+           on the element holding the `\n`, never on a container: a sibling panel's `.pm-body`, the
+           Screener's `.hm-body`, the Trash read and `.mb`'s `white-space: normal` all render this
+           same paragraph, and a container copy is how a sibling panel ran a signature together.
+           Plain path only — a `rich` run's text nodes are markup whitespace and must collapse. */
         return (
-          <p className={node.block.attribution ? "msg-attribution" : "msg-p"} key={key}>
+          <p className={node.block.attribution ? "msg-attribution msg-plain" : "msg-p msg-plain"} key={key}>
             {linkify(node.block.text, key)}
           </p>
         );
