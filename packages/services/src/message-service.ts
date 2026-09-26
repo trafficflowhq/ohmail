@@ -1137,9 +1137,9 @@ export class MessageService {
    * network left half of one flipped. Four load-bearing properties: ONE transaction (a partial
    * batch is unrepresentable); account scoping is a REJECTION — one foreign id fails the whole
    * request with 404, since skipping would let a probe learn from the response length which ids
-   * exist elsewhere; one `recordChange` PER MESSAGE (the delta feed is per-entity; `allocateSeq`
-   * holds the counter lock for the whole transaction); `flag_state` desired-state only, NO IMAP —
-   * `reconcileFlags` applies `\Seen` next cycle.
+   * exist elsewhere; one change row PER MESSAGE (the delta feed is per-entity), written with the
+   * update and the read intent in three statements for the whole request, in the order sent;
+   * `flag_state` desired-state only, NO IMAP — `reconcileFlags` applies `\Seen` next cycle.
    */
   async markSeen(ctx: ServiceContext, body: MarkSeenBody): Promise<MarkSeenResult> {
     if (typeof body.unread !== "boolean") {
@@ -1568,10 +1568,12 @@ export class MessageService {
         eq(messageStates.state, "resurfaced"),
       ))
       .returning({ id: messageStates.id });
-    const seqs = await recordChanges(tx, cleared.map((r): ChangeInput => ({
+    // One append for every pin cleared; none cleared appends nothing and names no seq.
+    if (cleared.length === 0) return null;
+    const seqs = await recordChanges(tx, cleared.map((r) => ({
       accountId: ctx.accountId, entityType: "message_state", entityId: r.id, op: "update", meta: null,
     })));
-    return seqs[seqs.length - 1] ?? null;
+    return seqs[seqs.length - 1]!;
   }
 
   /** The observed folder: the folder_state truth, else the message's native locator, else INBOX. */

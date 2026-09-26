@@ -14,9 +14,10 @@ import { upsertDesiredSeenMany } from "./flag-intent.js";
 export const RULE_PRIORITY_MAX = 1000;
 
 /**
- * How many held messages one set of a decision's writes carries: `@trafficflow/core`'s
- * `FILING_BATCH_MAX`, copied for the same reason; `screener-decide-statements.test.ts` (services)
- * pins the two equal. A decision's statements grow with these sets, not with its messages.
+ * How many messages one set of a per-message write carries — a decision's held mail, the bulk
+ * mark-read route's ids, a read-retro page: `@trafficflow/core`'s `FILING_BATCH_MAX`, copied for
+ * the same reason; `screener-decide-statements.test.ts` (services) pins the two equal. Their
+ * statements grow with these sets, not with their messages.
  */
 export const DECISION_BATCH_MAX = 50;
 

@@ -1,5 +1,7 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
-import { folderState, messages, recordChange, upsertDesiredSeen, type Tx } from "@trafficflow/db";
+import {
+  folderState, messages, recordChanges, upsertDesiredSeenMany, DECISION_BATCH_MAX, type Tx,
+} from "@trafficflow/db";
 import { silentLogger, type Logger } from "@trafficflow/core";
 
 /* MARKING THE SCREENED-OUT + SPAM BACKLOG READ. `decide` now marks a screen-out or spam press read in the
@@ -18,7 +20,7 @@ export const READ_RETRO_FOLDERS: readonly string[] = ["ohmail/Screened", "ohmail
 
 /**
  * Rows written per transaction. The same 100 as the other passes, and for the same reason:
- * {@link recordChange} holds the account's `account_sync_state` row lock for the transaction,
+ * {@link recordChanges} holds the account's `account_sync_state` row lock for the transaction,
  * so a whole-backlog transaction would stall every API write for that account while it drained.
  */
 export const READ_RETRO_BATCH = 100;
@@ -111,23 +113,21 @@ export async function readStateRetroPass(
       result.examined += rows.length;
       if (rows.length === 0) return true;
 
-      for (const row of rows) {
-        // Held/demoted mail has no flag_state row at ingest, so this is the INSERT branch:
-        // observed_seen = false (the candidate is unread), desired_seen = true ⇒ pending ⇒ the
-        // reconciler will add \Seen. On the rare conflict, observed_seen is preserved (worker owns
-        // it) and reconcile_status is recomputed in SQL against the STORED value — THE shared
-        // intent writer (`@trafficflow/db` `flag-intent.ts`); this loop carried its inline twin
-        // until the spelling was unified there.
-        await upsertDesiredSeen(tx, row.id, false, true, now);
-        // The mirror the client renders — written by us, never the reconciler. `unread = false`
-        // negates the candidate predicate, which is the whole of the idempotency.
+      // IN SETS of DECISION_BATCH_MAX: per set one read-intent upsert, one update and one
+      // change-log append in the page's id order. Held/demoted mail has no flag_state row at
+      // ingest, so the intent is the INSERT branch (observed false, desired true ⇒ pending); on a
+      // conflict the STORED observed value decides (`flag-intent.ts`, the one spelling).
+      // `unread = false` negates the candidate predicate, which is the whole of the idempotency.
+      for (let i = 0; i < rows.length; i += DECISION_BATCH_MAX) {
+        const set = rows.slice(i, i + DECISION_BATCH_MAX).map((r) => r.id);
+        await upsertDesiredSeenMany(tx, set.map((id) => ({ id, observedSeen: false })), true, now);
         await tx.update(messages)
           .set({ unread: false, lastReadAt: now, updatedAt: now })
-          .where(eq(messages.id, row.id));
-        await recordChange(tx, {
-          accountId, entityType: "message", entityId: row.id, op: "update", meta: null,
-        });
-        result.marked++;
+          .where(inArray(messages.id, set));
+        await recordChanges(tx, set.map((id) => ({
+          accountId, entityType: "message", entityId: id, op: "update", meta: null,
+        })));
+        result.marked += set.length;
       }
 
       // END OF BACKLOG ⟺ FEWER ROWS THAN ASKED FOR. `< limit`, never `< batch`: when the budget
