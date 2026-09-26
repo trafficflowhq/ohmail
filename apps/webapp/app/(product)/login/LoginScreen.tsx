@@ -307,8 +307,16 @@ export function LoginScreen(
             split across elements. */}
         <span className="wordmark"><b><em>oh</em>mail</b></span>
         <h1>{t("title")}</h1>
-        {signedOut && <p className="sub" role="status">{tr(REASON_BODY[signedOut])}</p>}
-        {next !== null ? <p className="sub">{t("continueManage")}</p> : null}
+        {/* ONE CONTEXT SLOT: why this page is showing (a sign-out's reason) and where it goes on
+            (the named continuation), said before the form and never as a second lede. */}
+        {signedOut !== null || next !== null
+          ? (
+            <p className="sub" role="status">
+              {[signedOut ? tr(REASON_BODY[signedOut]) : null, next !== null ? t("continueManage") : null]
+                .filter((line): line is string => line !== null).join(" ")}
+            </p>
+          )
+          : null}
         {/* THE SUBTITLE FOLLOWS THE FACTS ON SCREEN — claims-are-contracts. The old fixed
             "Your password, then your passkey… nothing to type" stood over the TOTP step, which
             was at that moment asking the user to type a six-digit code — directly false for the
