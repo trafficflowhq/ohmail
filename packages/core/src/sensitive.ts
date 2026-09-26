@@ -251,6 +251,24 @@ function visibleTextFromHtml(html: string): string {
   return decodeEntities(`${text}\n${attrs.join("\n")}`).replace(/[ \t ]+/g, " ");
 }
 
+/** The tags that end a line on the screen; any other tag, and any line break in the source, is a space. */
+const HTML_LINE_TAG =
+  /<\/?(?:address|article|aside|blockquote|br|caption|center|dd|div|dl|dt|fieldset|figcaption|figure|footer|form|h[1-6]|header|hr|li|main|nav|ol|p|pre|section|table|tbody|tfoot|thead|tr|ul)\b[^>]*>/gi;
+
+/**
+ * An HTML part laid out in the lines a reader sees: a block or a table ROW is a line, and the cells
+ * of one row share it. {@link visibleTextFromHtml} keeps the source's own line breaks instead, so a
+ * label cell and its value on two source lines read there as two lines, and a minified part as one.
+ */
+function htmlLayoutLines(html: string): string {
+  return decodeEntities(html
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(script|style|head)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ")
+    .replace(/\s+/g, " ")
+    .replace(HTML_LINE_TAG, "\n")
+    .replace(/<[^>]*>/g, " "));
+}
+
 /* ══════════════════════════════════════════════════════════════════════════════════════════
  * 3. REVERSIBLE ENCODINGS, DECODED LOCALLY (the encoded-content case)
  * ════════════════════════════════════════════════════════════════════════════════════════ */
@@ -1321,6 +1339,8 @@ interface Representation {
   canonical: Canonical;
   /** The raw (pre-canonical) text, for the shape rules that care about case and layout. */
   raw: string;
+  /** The HTML part's markup, laid out only where a rule reads lines ({@link cueBackedByCode}). */
+  markup?: string;
 }
 
 function categoryOf(rep: Representation): SensitivityCategory | null {
@@ -1411,15 +1431,17 @@ const CUE_AT = {
 };
 
 /**
- * Is a cue of `category` backed by a code? Either a code stands alone on a line of plain text,
- * which is how a notice presents one and where prose never puts one (not HTML: a table cell comes
- * out of tag stripping as a line of its own), or a code-shaped token sits within
- * {@link CODE_PROXIMITY} of the cue, found by POSITION on the form its vocabulary matches on; a
- * sliced window cut `Zugangscode` in half 44 characters before its code.
+ * Is a cue of `category` backed by a code? Either a code stands alone on a line, which is how a
+ * notice presents one and where prose never puts one — for an HTML part a line as it is laid out
+ * ({@link htmlLayoutLines}: a code alone in its table row counts, a label beside its value does
+ * not) — or a code-shaped token sits within {@link CODE_PROXIMITY} of the cue, found by POSITION
+ * on the form its vocabulary matches on; a sliced window cut `Zugangscode` in half 44 characters
+ * before its code.
  */
 function cueBackedByCode(rep: Representation, category: SensitivityCategory): boolean {
   const numeric = rep.canonical.numeric;
-  if (rep.label !== "html" && numeric.split("\n").some((line) => TOKEN_ONLY.test(line))) return true;
+  const lines = rep.markup === undefined ? numeric : canonicalise(htmlLayoutLines(rep.markup)).numeric;
+  if (lines.split("\n").some((line) => TOKEN_ONLY.test(line))) return true;
   const forms: Array<[RegExp, string]> = category === "otp"
     ? [[CUE_AT.otp, numeric], [CUE_AT.world, foldDigits(rep.canonical.plain)], [CUE_AT.pin, foldDigits(rep.raw)]]
     : [[CUE_AT[category], numeric]];
@@ -1452,7 +1474,8 @@ export function classifySensitivity(msg: NormalizedMessage): SensitivityResult {
   const subject = cap(msg.subject ?? "", "subject");
   const text = cap(msg.textBody ?? "", "text");
   const htmlRaw = msg.htmlBody ?? "";
-  const htmlText = htmlRaw ? cap(visibleTextFromHtml(cap(htmlRaw, "html")), "html-text") : "";
+  const markup = htmlRaw ? cap(htmlRaw, "html") : "";
+  const htmlText = markup ? cap(visibleTextFromHtml(markup), "html-text") : "";
   const filenames = (msg.attachments ?? [])
     .map((a) => a.filename)
     .filter((f): f is string => typeof f === "string" && f.length > 0)
@@ -1465,7 +1488,7 @@ export function classifySensitivity(msg: NormalizedMessage): SensitivityResult {
     { label: "subject", raw: subject, canonical: canonicalise(subject) },
     { label: "text", raw: text, canonical: canonicalise(text) },
   ];
-  if (htmlText) reps.push({ label: "html", raw: htmlText, canonical: canonicalise(htmlText) });
+  if (htmlText) reps.push({ label: "html", raw: htmlText, canonical: canonicalise(htmlText), markup });
   if (filenames) reps.push({ label: "attachments", raw: filenames, canonical: canonicalise(filenames) });
   decoded.forEach((d, i) => reps.push({ label: `decoded:${i}`, raw: d, canonical: canonicalise(d) }));
 
