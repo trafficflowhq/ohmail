@@ -33,6 +33,8 @@ import {
   focusTargetFor,
   limitationLines,
   mayConnect,
+  portFieldSaid,
+  refusalField,
   refusalNamesServerFields,
   setImapTls,
   setImapPort,
@@ -230,12 +232,28 @@ function Credentials() {
         return;
       }
       setPhase({ k: "failed", reason: outcome.reason });
+      /* A refusal about a server field is worn BY that field, so the disclosure opens to show it. */
+      if (refusalNamesServerFields(outcome.reason)) setAdvanced(true);
     } finally {
       /* ON EVERY EXIT, including a throw: a slot never given back refuses every later press for
          the run of the app, which is the fourth door gone until the app is killed. */
       releaseStandaloneLaunch();
     }
   }, [conn, fields, notify, start]);
+
+  /* What each server field wears: the press's refusal where it names that field, else — for the
+     two ports — the rule the typed value already breaks. */
+  const failedOn = phase.k === "failed" ? refusalField(phase.reason) : null;
+  const wears = (
+    field: "imapHost" | "imapPort" | "smtpHost" | "smtpPort",
+  ): { error: string } | Record<string, never> => {
+    if (phase.k === "failed" && failedOn === field) return { error: sayRefusal(phase.reason) };
+    const live = field === "imapPort" ? portFieldSaid(fields.imapPort, "imap")
+      : field === "smtpPort" && fields.smtpHost.trim() !== ""
+        ? portFieldSaid(fields.smtpPort, "smtp")
+        : null;
+    return live === null ? {} : { error: sayRefusal(live) };
+  };
 
   return (
     <Scroller bounded>
@@ -305,16 +323,16 @@ function Credentials() {
               value={fields.imapHost}
               onChange={(v) => setFields((cur) => setTyped(cur, "imapHost", v))}
               label={Copy.phoneStandaloneImapHost}
-              {...(phase.k === "failed" && refusalNamesServerFields(phase.reason)
-                ? { error: sayRefusal(phase.reason) }
-                : {})}
+              {...wears("imapHost")}
               input={{ keyboardType: "url" }}
             />
             <Field
               value={fields.imapPort}
               onChange={(v) => setFields((cur) => setImapPort(cur, v))}
               label={Copy.phoneStandaloneImapPort}
-              input={{ inputMode: "numeric", keyboardType: "number-pad" }}
+              {...wears("imapPort")}
+              /* SELECTED ON FOCUS, so typing a port replaces the prefilled one (465 over 587 was 587465). */
+              input={{ inputMode: "numeric", keyboardType: "number-pad", selectTextOnFocus: true }}
             />
             <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
               <Txt variant="sectionLabel" tone="ink3" style={{ paddingBottom: 4 }}>
@@ -336,13 +354,15 @@ function Credentials() {
               value={fields.smtpHost}
               onChange={(v) => setFields((cur) => setTyped(cur, "smtpHost", v))}
               label={Copy.phoneStandaloneSmtpHost}
+              {...wears("smtpHost")}
               input={{ keyboardType: "url" }}
             />
             <Field
               value={fields.smtpPort}
               onChange={(v) => setFields((cur) => setTyped(cur, "smtpPort", v))}
               label={Copy.phoneStandaloneSmtpPort}
-              input={{ inputMode: "numeric", keyboardType: "number-pad" }}
+              {...wears("smtpPort")}
+              input={{ inputMode: "numeric", keyboardType: "number-pad", selectTextOnFocus: true }}
             />
           </View>
         ) : null}

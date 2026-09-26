@@ -65,6 +65,7 @@ import {
   // What a sign-out keeps of where a mailbox lives (mail 0127): the one builder the column takes
   // and the reader that re-applies its allow-list.
   signedOutMetaOf, signedOutTransportMeta,
+  type MailboxProbeVerdict,
 } from "@trafficflow/services/mail";
 /* The session LIFECYCLE — the machinery half of the hosted auth service (establish, refresh
  * rotation with reuse detection, family revocation, devices, the paired-device mint), from the
@@ -695,6 +696,16 @@ export interface Sidecar {
    * `keepCoordinates: false` is a refused seal's discard — see the runtime's own method.
    */
   forgetStoredLogin(opts?: { keepCoordinates?: boolean }): Promise<boolean>;
+  /**
+   * DIAL ONE SUBMISSION SERVER NOW — its greeting and AUTH, through this composition's own SMTP
+   * probe (the same seams, deadline and ladder the doors use). Nothing is stored. A phone's
+   * Connect asks it, so an outgoing server that cannot deliver is refused at the press rather
+   * than found at the first send.
+   */
+  probeSubmission(input: {
+    address: string;
+    smtp: { host: string; port: number; secure: boolean; user: string; pass: string };
+  }): Promise<MailboxProbeVerdict>;
   /**
    * Stop polling, let the in-flight cycle finish, GIVE EVERY CLAIM BACK, close IMAP, close and
    * unlock the database. The release is inside each mailbox's `detach()`, between the queue
@@ -8701,6 +8712,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       },
       credentialState: async () => (await seedRuntime()?.credentialState()) ?? "absent",
       forgetStoredLogin: async (opts) => (await seedRuntime()?.forgetStoredLogin(opts)) ?? false,
+      probeSubmission: async (input) => makeSmtpProbe(depsFor(), smtpProbeOpts)({
+        accountId: world.accountId, address: input.address, smtp: input.smtp,
+      }),
       /**
        * START EVERY MAILBOX. Concurrent for `syncUntilQuiet`'s reason, and `allSettled` for it
        * too — with one difference that is the whole of why this is not a bare `Promise.all`:

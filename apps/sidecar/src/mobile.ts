@@ -46,6 +46,7 @@ import {
   type CredentialState,
   type OrganizerState,
   type MailboxConnectionState,
+  type SidecarConfig,
   type SidecarImapConfig,
 } from "./engine.js";
 import type { LocalDb, OpenLocalDb } from "./db.js";
@@ -60,6 +61,7 @@ import { createSidecarLog, describeMethod, describeRoute, type Diagnostic } from
    half. Type-only here, so it erases — but a specifier a later edit turns into a value import
    would carry the whole barrel into a phone's artifact, and the census would be the only witness. */
 import type { LogFields, Logger, LogLevel, LogSink } from "@trafficflow/core/mail";
+import type { MailboxProbeVerdict } from "@trafficflow/services/mail";
 
 /**
  * One statement at a time, one handle, rows as ARRAYS in the statement's column order — the shape
@@ -162,6 +164,12 @@ export interface PhoneEngineDeps {
    * through. Production passes nothing and keeps the engine's five minutes.
    */
   profileFlushIntervalMs?: number;
+  /**
+   * TEST SEAM — how the outgoing server is dialled at Connect. Production passes nothing and dials
+   * for real; with {@link adapterFactory} alone the composition's own double always admits, which
+   * cannot hold the line that a refusing submission server refuses the launch.
+   */
+  smtpDial?: SidecarConfig["smtpDial"];
 }
 
 /**
@@ -570,6 +578,37 @@ export function loggerOver(log: Diagnostic, bound: LogFields = {}): Logger {
 }
 
 /**
+ * WHY THE OUTGOING SERVER REFUSED A CONNECT — a named property, never imapflow's flags: an SMTP
+ * refusal carrying `authenticationFailed` would be read by the app as the INCOMING sign-in and
+ * worded about the wrong server.
+ */
+type SubmissionRefusal = "auth" | "tls" | "unreachable";
+
+class SubmissionRefusedError extends Error {
+  readonly submissionRefused: SubmissionRefusal;
+  constructor(why: SubmissionRefusal) {
+    super(`the outgoing server refused this launch (${why})`);
+    this.name = "SubmissionRefusedError";
+    this.submissionRefused = why;
+  }
+}
+
+/**
+ * WHICH SUBMISSION ANSWERS REFUSE A CONNECT. A server that answered and said no (sign-in,
+ * encryption) always does. Not reaching it refuses only where the INCOMING server answered this
+ * launch: the network was up, so the address or port is wrong. Where the incoming server could not
+ * be reached either, it is the one outage the door already admits, not a wrong setting.
+ */
+export function submissionRefusalOf(
+  verdict: MailboxProbeVerdict, incomingAnswered: boolean,
+): SubmissionRefusal | null {
+  if (verdict.verdict !== "refuse") return null;
+  if (verdict.code === "auth") return "auth";
+  if (verdict.code === "tls") return "tls";
+  return incomingAnswered ? "unreachable" : null;
+}
+
+/**
  * START THE ENGINE IN THIS RUNTIME. The phone's `main()`.
  *
  * @throws when a host-only knob is present, when `machineName` or `installId` is empty, or when a
@@ -706,6 +745,7 @@ async function composePhoneEngine(
        reach both faces or the phone would get the launch's lines and none of the drain's. */
     ...(wired ? { logger: loggerOver(log) } : {}),
     ...(deps.adapterFactory ? { adapterFactory: deps.adapterFactory } : {}),
+    ...(deps.smtpDial ? { smtpDial: deps.smtpDial } : {}),
     // Hex to bytes happens HERE and nowhere else: `Buffer` is bound in this bundle by the builder's
     // `inject`, and the app-side code that reads the keystore has no such global.
     ...(Object.keys(keks).length > 0
@@ -822,6 +862,40 @@ async function composePhoneEngine(
         "this phone had a stored password for this mailbox that it could not use, so nothing was "
           + "signed in. It has been removed — press Connect again.",
       );
+    }
+  }
+  /**
+   * AND THE OUTGOING SERVER, DIALLED AT CONNECT — greeting and AUTH, as the incoming one was. The
+   * seed's submission row is written from this config at boot without a dial, so a port nobody
+   * could reach left the form as connected and the first send was where it failed. Only where
+   * THIS start supplied a password and names an outgoing server; a refusal discards the seal and
+   * stops the engine exactly as an incoming refusal does. See {@link submissionRefusalOf}.
+   */
+  const outgoing = imap?.smtp;
+  if (suppliedPassword && outgoing !== undefined && outgoing.host.trim() !== "") {
+    const verdict = await sidecar.probeSubmission({
+      address: deps.address ?? dial.auth.user,
+      smtp: {
+        host: outgoing.host.trim(), port: outgoing.port, secure: outgoing.secure,
+        user: dial.auth.user, pass: typed as string,
+      },
+    }).catch((err: unknown): MailboxProbeVerdict => {
+      log("mailbox_open_submission_probe_failed", { err, reason: "the outgoing server could not be asked" });
+      return { verdict: "refuse", code: "unknown" };
+    });
+    const refused = submissionRefusalOf(verdict, bounded !== null && bounded.length === 0);
+    if (refused !== null) {
+      log("mailbox_open_submission_refused", {
+        verdict: refused,
+        reason: "the outgoing server could not take mail with these settings, so no engine is "
+          + "handed back and the form names the outgoing server",
+      });
+      await removeRefusedSeal(
+        "the outgoing server refused this launch, so the password it had just sealed is removed "
+          + "and the next press composes from the form again",
+      );
+      await sidecar.stop().catch(() => { /* nothing to keep: the launch is being refused */ });
+      throw new SubmissionRefusedError(refused);
     }
   }
   /* The launch that is still running, or one that failed for a reason a poll may heal. Its own

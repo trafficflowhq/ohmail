@@ -12,7 +12,7 @@ import { portMeansImplicitTls } from "@ohmail/client-engine";
 import { LOCAL_ENGINE_ORIGIN } from "./boot";
 import { faultDetail, refuse, type Refusal } from "../refusal";
 import type { EngineLogSink } from "./engine-log";
-import type { StandaloneFields } from "../ui/standalone-form";
+import { portRefusal, type StandaloneFields } from "../ui/standalone-form";
 
 /**
  * WHAT ASKING FOR THIS PHONE ANSWERED — four states, named, and no `null` among them.
@@ -367,6 +367,20 @@ export const encryptionRefused = (err: unknown): boolean => flagged(err, "tlsFai
 export const certificateRefused = (err: unknown): boolean => flagged(err, "certificateRefused");
 
 /**
+ * THE OUTGOING SERVER'S ANSWER AT CONNECT — the engine's `submissionRefused` property, read
+ * the way the two flags above are read (cause walk, hop bound). Its own property rather than a
+ * flag, so an SMTP sign-in refusal is never worded as the incoming one.
+ */
+export function submissionRefused(err: unknown): "auth" | "tls" | "unreachable" | null {
+  for (let e: unknown = err, hops = 0; e !== null && e !== undefined && hops < 8; hops++) {
+    const why = (e as Record<string, unknown>).submissionRefused;
+    if (why === "auth" || why === "tls" || why === "unreachable") return why;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return null;
+}
+
+/**
  * Open it. Two refusals before the engine is asked anything, and after that the engine's own.
  *
  * The host check is here rather than on the button because a refusal that names the missing field
@@ -381,9 +395,9 @@ export async function openStandaloneMailbox(
   if (start === null) return { ok: false, reason: refuse("standaloneNoEngine") };
   const imap = imapConfigFor(fields);
   if (imap.host.length === 0) return { ok: false, reason: refuse("standaloneNoHost") };
-  if (!Number.isFinite(imap.port) || imap.port <= 0) {
-    return { ok: false, reason: refuse("standaloneNoPort") };
-  }
+  /* BOTH PORTS, before anything dials — the rule the fields wear while they are typed. */
+  const port = portRefusal(fields);
+  if (port !== null) return { ok: false, reason: port };
   try {
     const platform = await deps.platform();
     /* ITS OWN REASON, PASSED THROUGH. See {@link StandaloneDeps.platform}: the alternative is a
@@ -408,6 +422,11 @@ export async function openStandaloneMailbox(
      * message inside a German screen is the defect `refusal.ts` exists for, and the sentence a
      * person needs here is about their password or their port, not about STARTTLS. So each becomes
      * a KEYED refusal with no arguments — which also means neither can carry the password. */
+    /* The outgoing server FIRST: its refusal is its own error, and each answer names that field. */
+    const outgoing = submissionRefused(err);
+    if (outgoing === "auth") return { ok: false, reason: refuse("standaloneSmtpSignInRefused") };
+    if (outgoing === "tls") return { ok: false, reason: refuse("standaloneSmtpNoEncryption") };
+    if (outgoing === "unreachable") return { ok: false, reason: refuse("standaloneSmtpUnreachable") };
     if (signInRefused(err)) return { ok: false, reason: refuse("standaloneSignInRefused") };
     /* Before the encryption arm: a refused certificate is encrypted, and "try port 993" is false. */
     if (certificateRefused(err)) return { ok: false, reason: refuse("standaloneCertificateRefused") };

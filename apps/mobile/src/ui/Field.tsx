@@ -53,6 +53,7 @@ export interface FieldProps {
     | "multiline"
     | "onSubmitEditing"
     | "returnKeyType"
+    | "selectTextOnFocus"
     | "textContentType"
   >;
   /** Focus target — the form hands its first field one so a step lands on the work. */

@@ -307,14 +307,21 @@ const TABLE = {
     "This build cannot organize a mailbox on this phone. Connect it to a computer, a server or ohmail Cloud instead.",
   standaloneNoHost:
     "ohmail needs your incoming server (IMAP). Open Server settings and give its address.",
-  standaloneNoPort:
-    "That IMAP port is not a number ohmail can dial. Open Server settings and check it.",
+  standaloneNoPort: "The IMAP port is a whole number from 1 to 65535.",
+  standaloneNoSmtpPort: "The SMTP port is a whole number from 1 to 65535.",
   standaloneSignInRefused:
     "Your mail server would not accept that address and password. Check them and try again — nothing has been saved.",
   standaloneNoEncryption:
     "Your mail server offers no encrypted connection on that port, and ohmail will not send your password in the clear. Try port 993 in Server settings.",
   standaloneCertificateRefused:
     "This phone would not accept your mail server's certificate, so ohmail stopped before sending your password. Check the incoming server's name with your provider.",
+  /* The outgoing server is dialled at Connect too, and each of its three answers names it. */
+  standaloneSmtpSignInRefused:
+    "Your outgoing server (SMTP) would not accept that address and password. Check it and try again — nothing has been saved.",
+  standaloneSmtpNoEncryption:
+    "Your outgoing server (SMTP) offers no encrypted connection on that port, and ohmail will not send your password in the clear. Try port 465 or 587.",
+  standaloneSmtpUnreachable:
+    "ohmail could not reach your outgoing server (SMTP) at that address and port. Check both and try again — nothing has been saved.",
   standaloneRefused: (detail: string) =>
     `Opening the mailbox stopped: ${detail}`,
   /* The relaunch's own three, and each one names a different absence: nothing sealed, a mailbox

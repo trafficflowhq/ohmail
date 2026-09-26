@@ -14,7 +14,7 @@ import { Copy } from "../copy";
    The mapping from the instruction to a chip is a DECISION and belongs here rather than in a
    component — the header's rule. */
 import type { OrganizeInstruction } from "../engine/organizer-session";
-import type { Refusal, RefusalKey } from "../refusal";
+import { refuse, type Refusal, type RefusalKey } from "../refusal";
 
 /** The two steps. The limitations screen comes first and cannot be skipped. */
 export type StandaloneStep = "limits" | "credentials";
@@ -140,25 +140,64 @@ export function mayConnect(fields: StandaloneFields): boolean {
   return fields.address.trim().length > 0 && fields.password.length > 0;
 }
 
-/**
- * Which refusals the IMAP host field may wear — a short list on purpose. The form attaches a
- * refusal to the incoming-server field while the server disclosure is open; right for the two
- * refusals that name it, false the moment the door gained refusals about the password and
- * encryption — a rejected sign-in pinned under "Incoming server (IMAP)" tells somebody the one
- * thing that is not wrong. Everything not on this list shows beside the verb instead. By key
- * rather than a flag: `RefusalKey` is derived from the deck, so a key that stops existing
- * stops compiling here.
- */
-const SERVER_FIELD_REFUSALS: ReadonlySet<RefusalKey> = new Set<RefusalKey>([
-  "standaloneNoHost",
-  "standaloneNoPort",
-  /* The certificate is the server's: the host name is the field that fixes a mismatch. */
-  "standaloneCertificateRefused",
-]);
+/** The four server fields a refusal can be worn by. */
+export type ServerField = (typeof GUESSED)[number];
 
-/** Does this refusal name the server fields? See {@link SERVER_FIELD_REFUSALS}. */
+/**
+ * WHICH FIELD WEARS WHICH REFUSAL — a short map on purpose. A rejected sign-in pinned under
+ * "Incoming server (IMAP)" tells somebody the one thing that is not wrong, so only a refusal
+ * about a server field is attached to one; everything else shows beside the verb. By key:
+ * `RefusalKey` is derived from the deck, so a key that stops existing stops compiling here.
+ */
+const FIELD_OF: Readonly<Partial<Record<RefusalKey, ServerField>>> = {
+  standaloneNoHost: "imapHost",
+  standaloneNoPort: "imapPort",
+  /* The certificate is the server's: the host name is the field that fixes a mismatch. */
+  standaloneCertificateRefused: "imapHost",
+  standaloneNoSmtpPort: "smtpPort",
+  standaloneSmtpSignInRefused: "smtpHost",
+  standaloneSmtpNoEncryption: "smtpHost",
+  standaloneSmtpUnreachable: "smtpHost",
+};
+
+/** The server field this refusal is about, or `null` for one that belongs beside the verb. */
+export function refusalField(r: Refusal): ServerField | null {
+  return FIELD_OF[r.say] ?? null;
+}
+
+/** Does this refusal name a server field? See {@link refusalField}. */
 export function refusalNamesServerFields(r: Refusal): boolean {
-  return SERVER_FIELD_REFUSALS.has(r.say);
+  return refusalField(r) !== null;
+}
+
+/**
+ * A PORT A SOCKET CAN BE OPENED ON: digits only, a whole number from 1 to 65535. `Number()`
+ * admitted `587465` (typing 465 behind a prefilled 587), `70000`, `1e3` and `""` as `0`, and the
+ * form then left as connected over a submission server nothing could reach.
+ */
+export function portIsDialable(text: string): boolean {
+  const t = text.trim();
+  return /^[0-9]{1,5}$/.test(t) && Number(t) >= 1 && Number(t) <= 65535;
+}
+
+/**
+ * THE PORT RULE, ASKED BEFORE ANYTHING DIALS — the IMAP port always, the SMTP port wherever an
+ * outgoing server is named (a blank one is "no submission server", which has no port to judge).
+ * One question for the Connect press and the Settings edit, so the two cannot disagree.
+ */
+export function portRefusal(f: Pick<StandaloneFields, "imapPort" | "smtpHost" | "smtpPort">): Refusal | null {
+  if (!portIsDialable(f.imapPort)) return refuse("standaloneNoPort");
+  if (f.smtpHost.trim() !== "" && !portIsDialable(f.smtpPort)) return refuse("standaloneNoSmtpPort");
+  return null;
+}
+
+/**
+ * THE SENTENCE A PORT FIELD WEARS WHILE IT IS TYPED — before any press. Silent while empty: the
+ * press answers an empty port, and a field that scolds before anything is typed is noise.
+ */
+export function portFieldSaid(text: string, leg: "imap" | "smtp"): Refusal | null {
+  if (text.trim() === "" || portIsDialable(text)) return null;
+  return leg === "imap" ? refuse("standaloneNoPort") : refuse("standaloneNoSmtpPort");
 }
 
 /**

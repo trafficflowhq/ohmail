@@ -177,14 +177,21 @@ export const DE: Deck = {
     "Dieser Build kann auf diesem Telefon kein Postfach organisieren. Verbinde es stattdessen mit einem Computer, einem Server oder ohmail Cloud.",
   standaloneNoHost:
     "ohmail braucht deinen Posteingangsserver (IMAP). Öffne die Servereinstellungen und gib seine Adresse an.",
-  standaloneNoPort:
-    "Diesen IMAP-Port kann ohmail nicht wählen. Öffne die Servereinstellungen und prüfe ihn.",
+  standaloneNoPort: "Der IMAP-Port ist eine ganze Zahl von 1 bis 65535.",
+  standaloneNoSmtpPort: "Der SMTP-Port ist eine ganze Zahl von 1 bis 65535.",
   standaloneSignInRefused:
     "Dein Mailserver hat diese Adresse und dieses Passwort nicht akzeptiert. Prüfe beides und versuche es erneut — es wurde nichts gespeichert.",
   standaloneNoEncryption:
     "Dein Mailserver bietet auf diesem Port keine verschlüsselte Verbindung, und ohmail sendet dein Passwort nicht im Klartext. Versuche Port 993 in den Servereinstellungen.",
   standaloneCertificateRefused:
     "Dieses Telefon hat das Zertifikat deines Mailservers nicht akzeptiert, ohmail hat also abgebrochen, bevor das Passwort rausging. Prüfe mit deinem Anbieter den Namen des Posteingangsservers.",
+  /* Auch der Postausgangsserver wird beim Verbinden gewählt, und jede seiner drei Antworten nennt ihn. */
+  standaloneSmtpSignInRefused:
+    "Dein Postausgangsserver (SMTP) hat diese Adresse und dieses Passwort nicht akzeptiert. Prüfe ihn und versuche es erneut — es wurde nichts gespeichert.",
+  standaloneSmtpNoEncryption:
+    "Dein Postausgangsserver (SMTP) bietet auf diesem Port keine verschlüsselte Verbindung, und ohmail sendet dein Passwort nicht im Klartext. Versuche Port 465 oder 587.",
+  standaloneSmtpUnreachable:
+    "ohmail hat deinen Postausgangsserver (SMTP) unter dieser Adresse und diesem Port nicht erreicht. Prüfe beides und versuche es erneut — es wurde nichts gespeichert.",
   standaloneRefused: (detail: string) =>
     `Das Öffnen des Postfachs wurde abgebrochen: ${detail}`,
   /* Die drei des Neustarts. Jede benennt ein anderes Fehlen. */
