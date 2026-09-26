@@ -30,21 +30,21 @@
  */
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button, Icon, SettingsNote, SettingsSection, TextField, useToast } from "@ohmail/ui";
-import { pressVerdict, tallyVerdicts } from "@ohmail/client-engine";
+import { Button, Icon, SettingsNote, SettingsSection, Switch, TextField, useToast, type ToastOptions } from "@ohmail/ui";
+import { FOLDER_OF_VIEW, pressVerdict, tallyVerdicts } from "@ohmail/client-engine";
 import type { Folder, PressAnswer, RuleDTO } from "@ohmail/client-engine";
+import { canonicalDestination } from "@trafficflow/core/folder-name";
+import { usePileNames } from "../shell/decision-copy";
 import { placeLabel } from "../shell/format";
+import { RETRO_DEFAULT_ON, SCREENING_DESTS } from "../shell/sender-screening";
 import { displayRuleMatch } from "../shell/idn";
 import { useListWindow } from "../shell/list-window";
 import "./rules.css";
 
 /**
  * The six canonical folders a rule may file into — the same set the server's rule validation
- * enforces, in the order the rail lists them.
- *
- * Named here rather than derived from `VIEW_OF_FOLDER` because this is an OFFER, not a
- * rendering: the picker must not grow a seventh option because a future folder appeared in a
- * lookup table, when the server would answer 400 for it.
+ * enforces, in the order the rail lists them. The facets' order; what Change OFFERS is the
+ * sender sheet's five ({@link changePlaces}), so the two lists cannot drift apart.
  */
 export const RULE_DESTINATIONS: readonly Folder[] = [
   "INBOX",
@@ -54,6 +54,18 @@ export const RULE_DESTINATIONS: readonly Folder[] = [
   "ohmail/Screened",
   "ohmail/Quarantine",
 ];
+
+/**
+ * WHERE A CHANGE MAY SEND A RULE — the sender sheet's five places, in its order, the rule's current
+ * one among them and marked. A destination outside the five (the Screener, a folder of the
+ * mailbox's own) is listed first, marked, so the row being changed always names where it files.
+ */
+export function changePlaces(rule: RuleDTO): Array<{ folder: Folder; current: boolean }> {
+  const here = canonicalDestination(rule.destination);
+  const five = SCREENING_DESTS.map((d) => FOLDER_OF_VIEW[d]);
+  const places = five.map((folder) => ({ folder, current: folder === here }));
+  return places.some((p) => p.current) ? places : [{ folder: here as Folder, current: true }, ...places];
+}
 
 /**
  * The height a rule row occupies, in pixels — fixed by `.rules-item{height}` in rules.css (two
@@ -182,12 +194,22 @@ export interface RulesViewProps {
   rules: RuleDTO[];
   /** `engine.mutate({ kind: "rule_delete", ruleId })`. */
   onRevoke: (ruleId: string) => Promise<RuleOutcome>;
-  /** `engine.mutate({ kind: "rule_update", ruleId, destination })`. */
-  onRetarget: (ruleId: string, destination: Folder) => Promise<RuleOutcome>;
+  /** `engine.mutate({ kind: "rule_update", ruleId, destination, applyRetro })` — the answer always sent. */
+  onRetarget: (ruleId: string, destination: Folder, applyRetro: boolean) => Promise<RuleOutcome>;
+  /** `rule-past-mail.ts#rulePastMail` over the mirror: null where this device cannot count. */
+  pastMail: (rule: RuleDTO, destination: Folder | null) => number | null;
 }
 
-export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
+export function RulesView({ rules, onRevoke, onRetarget, pastMail }: RulesViewProps) {
   const t = useTranslations("rules");
+  const piles = usePileNames();
+  /** A place in the sheet's words where it has one ("Screened out"), else the place label. */
+  const placeName = (folder: Folder): string => {
+    const dest = SCREENING_DESTS.find((d) => FOLDER_OF_VIEW[d] === canonicalDestination(folder));
+    return dest ? piles[dest] : placeLabel(folder);
+  };
+  /** The open Change's past-mail answer — the sheet's default, reset each time a Change opens. */
+  const [retro, setRetro] = useState(RETRO_DEFAULT_ON);
   /* The list's name is the section's own heading, already on screen. */
   const tSettings = useTranslations("settings");
   const toast = useToast();
@@ -252,7 +274,7 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
    * success. The engine keeps a retryable failure on its offline queue with the overlay standing, so the row is
    * correctly gone from the screen — but the server has not been told yet, and "revoked" is a claim about the server.
    */
-  const report = (res: RuleOutcome, ok: string, queued: string, failed: string): void => {
+  const report = (res: RuleOutcome, ok: string, queued: string, failed: string, undo?: ToastOptions): void => {
     const v = pressVerdict(res);
     if (v.kind === "refused") { toast(failed); return; }
     if (v.kind === "queued") {
@@ -265,7 +287,36 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
         : t("toastRuleOrganizerUnknown"));
       return;
     }
-    toast(ok);
+    toast(ok, undo);
+  };
+
+  /**
+   * A CHANGE SAYS WHAT IT DOES TO THE MAIL ALREADY FILED. The answer is always sent:
+   * absent, the server re-arms the past mail on a retarget, which moved a screened-out sender's
+   * mail into the Ohbox under "Mail already filed stays where it is". The count is read before the
+   * press; Undo puts the rule back with the same answer, so the pass moves that mail back too.
+   */
+  const retarget = (rule: RuleDTO, folder: Folder, applyRetro: boolean): void => {
+    setOpen(null);
+    const from = canonicalDestination(rule.destination) as Folder;
+    const place = placeName(folder);
+    const moved = applyRetro ? pastMail(rule, folder) : null;
+    const said = !applyRetro ? t("toastRetargeted", { place })
+      : moved === null ? t("toastRetargetedRetroUncounted", { place })
+        : moved === 0 ? t("toastRetargetedRetroNone", { place })
+          : t("toastRetargetedRetro", { place, count: moved });
+    const back = placeName(from);
+    const undo: ToastOptions = {
+      action: t("undo"),
+      duration: 8000,
+      onAction: () => {
+        void onRetarget(rule.id, from, applyRetro).then((r) =>
+          report(r, t(applyRetro ? "toastRetargetUndoneRetro" : "toastRetargetUndone", { place: back }),
+            t("toastRetargetQueued"), t("toastRetargetFailed")));
+      },
+    };
+    void onRetarget(rule.id, folder, applyRetro).then((r) =>
+      report(r, said, t("toastRetargetQueued"), t("toastRetargetFailed"), undo));
   };
 
   /**
@@ -430,13 +481,14 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
                       <Button
                         variant="ghost"
                         aria-expanded={openHere && open.mode === "retarget"}
-                        onClick={() =>
+                        onClick={() => {
+                          setRetro(RETRO_DEFAULT_ON);
                           setOpen(
                             open?.mode === "retarget" && open.ruleId === rule.id
                               ? null
                               : { mode: "retarget", ruleId: rule.id },
-                          )
-                        }
+                          );
+                        }}
                       >
                         {t("change")}
                       </Button>
@@ -477,38 +529,44 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
                     </div>
                   ) : null}
 
-                  {openHere && open.mode === "retarget" ? (
-                    <div className="rules-confirm" ref={confirmRef}>
-                      <b className="what">{what}</b>
-                      <span>{t("retargetExplain")}</span>
-                      <span className="acts">
-                        {/* The CURRENT destination is not offered — re-filing mail where it
-                            already goes is a no-op the user would have to reason about, and
-                            the row states where that is. */}
-                        {RULE_DESTINATIONS.filter((f) => f !== rule.destination).map((folder) => (
-                          <Button
-                            key={folder}
-                            onClick={() => {
-                              setOpen(null);
-                              void onRetarget(rule.id, folder).then((r) =>
-                                report(
-                                  r,
-                                  t("toastRetargeted", { place: placeLabel(folder) }),
-                                  t("toastRetargetQueued"),
-                                  t("toastRetargetFailed"),
-                                ),
-                              );
-                            }}
-                          >
-                            {placeLabel(folder)}
+                  {openHere && open.mode === "retarget" ? (() => {
+                    const matched = pastMail(rule, null);
+                    return (
+                      <div className="rules-confirm" ref={confirmRef}>
+                        <b className="what">{what}</b>
+                        <span>{t(retro ? "retargetExplainRetro" : "retargetExplain")}</span>
+                        <span className="rules-retro">
+                          <span className="lab">
+                            <b>{t("retroToggle")}</b>
+                            <small>
+                              {matched === null ? t("retroToggleUncounted") : t("retroToggleNote", { count: matched })}
+                            </small>
+                          </span>
+                          <Switch checked={retro} onChange={setRetro} ariaLabel={t("retroToggle")} />
+                        </span>
+                        <span className="acts">
+                          {/* The sender sheet's places, the current one marked and not pressable:
+                              the row names where the rule files, and the list must too. */}
+                          <span className="rules-places">
+                            {changePlaces(rule).map(({ folder, current }) => (
+                              <Button
+                                key={folder}
+                                aria-current={current ? "true" : undefined}
+                                disabled={current}
+                                className={current ? "current" : undefined}
+                                onClick={() => retarget(rule, folder, retro)}
+                              >
+                                {placeName(folder)}
+                              </Button>
+                            ))}
+                          </span>
+                          <Button variant="ghost" onClick={() => setOpen(null)}>
+                            {t("cancel")}
                           </Button>
-                        ))}
-                        <Button variant="ghost" onClick={() => setOpen(null)}>
-                          {t("cancel")}
-                        </Button>
-                      </span>
-                    </div>
-                  ) : null}
+                        </span>
+                      </div>
+                    );
+                  })() : null}
                 </Fragment>
               );
             })}

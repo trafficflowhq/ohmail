@@ -1805,7 +1805,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     bulkToggleTag, bulkVerbs, canDeleteMessage, canReplyAllTo, changeScreening, confirmSubjectRule,
     createTag, createTagAlone, dropTag, lastActed, onMessageAction, onStageClickCapture,
     onStreamAction, openSenderAudit, openSenderMenu, openSubjectRule, openTagPicker, retargetRule,
-    revokeRule, screeningForecast, screeningRules, tagAdmin, toggleTag,
+    revokeRule, rulePastMailOf, screeningForecast, screeningRules, tagAdmin, toggleTag,
   } = useShellVerbs({
     engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses,
     fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, mailboxesOf, refusalCopy,
@@ -2976,7 +2976,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 tagCounts={Object.fromEntries(
                   tagGroups.map((g) => [g.tag.id, g.messages.length]),
                 )}
-                rules={{ items: rules, onRevoke: revokeRule, onRetarget: retargetRule }}
+                rules={{ items: rules, onRevoke: revokeRule, onRetarget: retargetRule, pastMail: rulePastMailOf }}
                 /* Rename and delete. Not gated on `demo`, unlike the four injected panes:
                    both are ordinary engine mutations, so the FixturesAdapter serves them out
                    of `mutationEffects` and the demo is correct with no special case. */

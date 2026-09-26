@@ -433,7 +433,9 @@ export function SettingsView({
     items: RuleDTO[];
     /** `engine.mutate({ kind: "rule_delete", ruleId })` — the RESULT decides what is said. */
     onRevoke: (ruleId: string) => Promise<RuleOutcome>;
-    onRetarget: (ruleId: string, destination: Folder) => Promise<RuleOutcome>;
+    onRetarget: (ruleId: string, destination: Folder, applyRetro: boolean) => Promise<RuleOutcome>;
+    /** How much of a rule's mail a change would ask the pass to move — see `RulesView`. */
+    pastMail: (rule: RuleDTO, destination: Folder | null) => number | null;
   };
   /**
    * CREATE / RENAME / RECOLOUR / DELETE — one object, or a read-only list. The same rule as {@link rules} and for the
@@ -1215,7 +1217,7 @@ export function SettingsView({
           {shown === "devices" ? devicesSection : null}
 
           {shown === "rules" && rules ? (
-            <RulesView rules={rules.items} onRevoke={rules.onRevoke} onRetarget={rules.onRetarget} />
+            <RulesView rules={rules.items} onRevoke={rules.onRevoke} onRetarget={rules.onRetarget} pastMail={rules.pastMail} />
           ) : null}
 
           {shown === "tags" ? (
