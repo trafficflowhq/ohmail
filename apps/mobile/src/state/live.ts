@@ -2009,6 +2009,15 @@ export function sendOutcomeOfResult(r: MutationResult | null): SendOutcome {
 }
 
 /**
+ * THE SENTENCE A FAILED SEND EARNS. A session that never secured its connection or had its login
+ * refused offered nothing, and says which step stopped it; every other failure keeps the plain one.
+ */
+export function failedSendCopy(r: MutationResult | null): "replyNotSecured" | "replyLoginRefused" | "replyFailed" {
+  const code = r?.error?.code;
+  return code === "send_not_secured" ? "replyNotSecured" : code === "send_login_refused" ? "replyLoginRefused" : "replyFailed";
+}
+
+/**
  * A send's result: the outcome, plus — for `queued` alone — the Idempotency-Key the queued
  * mutation stands under, so the composer can follow ITS OWN send through later flushes
  * ({@link flushQueued}'s ledger) and settle when the background retry lands or dies.
@@ -3513,7 +3522,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         outcome === "sent" ? (earlierWent ? earlierWentToast : sentToast)
           : outcome === "queued" ? refuse("replyQueued")
             : outcome === "unverified" ? refuse("replyUnverified")
-              : refuse("replyFailed"),
+              : failedSendCopy(settled) === "replyNotSecured" ? refuse("replyNotSecured")
+                : failedSendCopy(settled) === "replyLoginRefused" ? refuse("replyLoginRefused")
+                  : refuse("replyFailed"),
       );
     }
     return { outcome, ...(outcome === "queued" && first ? { key: first.key } : {}) };

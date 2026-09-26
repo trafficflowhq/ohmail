@@ -89,6 +89,7 @@ import { keepAct, worthKeeping } from "./compose-keep";
 import { Segmented } from "./Segmented";
 import { Sheet, SheetRow, useSheetPanelBounds } from "./Sheet";
 import { SurfaceBoundary } from "./ErrorBoundary";
+import { sendPressAct } from "./send-press";
 
 /**
  * One pick's verdicts, held as KINDS — the sentence is derived where it is shown, so a refusal
@@ -1013,6 +1014,8 @@ export function ComposeSheet({
    * un-send it. The sentence stands in place and the next press dismisses — see `closeComposer`.
    */
   const [alreadySent, setAlreadySent] = useState(false);
+  /** TRUE after Send was pressed over an unconfirmed send — the press says why nothing went. */
+  const [againNote, setAgainNote] = useState(false);
   /**
    * THE SIGNATURE BLOCK'S STATE (`signature.ts`, shared with the webapp composer): `following`
    * until the user speaks, then their edit or their strike stands for THIS message. The sheet
@@ -1159,6 +1162,12 @@ export function ComposeSheet({
      unlit, and the press earns the sentence instead of doing nothing. Every stronger lock
      (sending, queued, unverified) keeps the dead press. */
   const contentOnlyMissing = phase === "idle" && needsContent;
+  const pressAct = sendPressAct({ canSend, contentOnlyMissing, phase });
+  const press = (act: typeof pressAct, andDone = false) => {
+    if (act === "send") void send(null, andDone);
+    else if (act === "needContent") setNeedNote(true);
+    else if (act === "again") setAgainNote(true);
+  };
 
   /**
    * WHAT THE BLOCK SHOWS — and exactly what the send appends (`effectiveSignature`, one
@@ -1548,6 +1557,11 @@ export function ComposeSheet({
               {phase === "queued" ? Copy.replyQueued : Copy.replyUnverified}
             </Txt>
           ) : null}
+          {phase === "unverified" && againNote ? (
+            <Txt variant="caption" tone="ink2" accessibilityRole="alert">
+              {Copy.replyUnverifiedAgain}
+            </Txt>
+          ) : null}
           {/* THE REFUSED CANCEL, SAID IN PLACE — a Cancel that did nothing and rendered nothing
               is a person watching a button not work. An alert, because it answers a press. */}
           {alreadySent ? (
@@ -1712,8 +1726,8 @@ export function ComposeSheet({
               <Button
                 label={Copy.sendAndDone}
                 variant="plain"
-                disabled={!canSend && !contentOnlyMissing}
-                onPress={canSend ? () => void send(null, true) : () => setNeedNote(true)}
+                disabled={pressAct === "none"}
+                onPress={() => press(pressAct, true)}
               />
             ) : null}
             {/* Send keeps its FACE and dims when it cannot be taken — `Button`'s own rule.
@@ -1723,8 +1737,8 @@ export function ComposeSheet({
             <Button
               label={phase === "sending" ? Copy.replySending : Copy.replySend}
               variant="solid"
-              disabled={!canSend && !contentOnlyMissing}
-              onPress={canSend ? () => void send() : () => setNeedNote(true)}
+              disabled={pressAct === "none"}
+              onPress={() => press(pressAct)}
             />
           </View>
         </View>

@@ -1730,6 +1730,11 @@ const TABLE = {
   replyUnverified: "We couldn't confirm this send. Check your Sent folder before sending it again.",
   replyAlreadySent: "Too late to cancel. This message has already been sent.",
   replyFailed: "Sending didn't work. Try again.",
+  /* A send that never got past securing the connection or signing in: nothing left, and why. */
+  replyNotSecured: "Not sent. The connection to your mail server couldn't be secured.",
+  replyLoginRefused: "Not sent. Your mail server refused the sign-in.",
+  /* Send pressed again over an unconfirmed send: a second copy could reach them twice. */
+  replyUnverifiedAgain: "Not sent again. The first send may already have gone, so check your Sent folder first.",
   /* THE COMPOSER'S ATTACHMENTS — the webapp's `compose.attach*` keys, mirrored (the phone has
      two pickers where the web has one input, so the verb splits in two). The cap sentence's
      number comes from the ONE shared bound (`composeAttachCap`, client-engine). */

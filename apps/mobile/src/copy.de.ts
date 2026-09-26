@@ -1137,6 +1137,9 @@ export const DE: Deck = {
   replyUnverified: "Wir konnten diesen Versand nicht bestätigen. Schau in deinen Gesendet-Ordner, bevor du nochmal sendest.",
   replyAlreadySent: "Zu spät zum Abbrechen. Diese Nachricht wurde bereits gesendet.",
   replyFailed: "Senden hat nicht geklappt. Versuch es nochmal.",
+  replyNotSecured: "Nicht gesendet. Die Verbindung zu deinem Mailserver konnte nicht gesichert werden.",
+  replyLoginRefused: "Nicht gesendet. Dein Mailserver hat die Anmeldung abgelehnt.",
+  replyUnverifiedAgain: "Nicht nochmal gesendet. Der erste Versand ist vielleicht schon raus, schau also zuerst in deinen Gesendet-Ordner.",
   /* Die Anhänge des Editors — `apps/webapp/messages/de.json` (`compose.attach*`) byte für Byte,
      wo der Satz dort existiert. */
   attachFile: "Dateien anhängen",
