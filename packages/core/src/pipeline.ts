@@ -346,10 +346,10 @@ export interface NewPlan {
    * the previous organizer an import hold has not yet asked about. It decides ONE thing at
    * commit, the third of the three structural gates: the `folder_state` row is written
    * `last_set_by: 'external'` instead of `'us'` — and every pass that moves mail requires `'us'`
-   * (`rule-retro` the widest, at `["us", "peer"]`), so a passive row is out of every unpressed
-   * mover's reach by DATA, not only by the early return that put it there. What it no longer
-   * decides is WHICH non-`us` value: {@link NewPlan.adoption} says whose it was, and the commit
-   * reads `p.passive ? (p.adoption ?? "external") : "us"` — see {@link readerAdoption}.
+   * (`rule-retro` and the own-mail release the widest, at `["us", "peer"]`), so a passive row is
+   * out of every unpressed mover's reach by DATA, not only by the early return that put it there.
+   * What it no longer decides is WHICH non-`us` value: {@link NewPlan.adoption} says whose it was,
+   * and the commit reads `p.passive ? (p.adoption ?? "external") : "us"` — see {@link readerAdoption}.
    */
   passive?: boolean;
   /**
@@ -712,9 +712,9 @@ function bodySnippet(normalized: NormalizedMessage): string {
  * would turn a promotion into a bulk re-filing. `'external'`: the USER placed it, in a folder of
  * their own. `'peer'`: another install of this account placed it, in a folder ohmail organizes —
  * before it existed a reader wrote `'external'` here, and mail behind a decision already made
- * stayed frozen at the gate. `'peer'` is out of every unpressed mover's reach; only `rule-retro`
- * admits it, on a press. Decided by the WRITER: only the code that knows it is a reader can tell
- * adoption from a person's drag. The `?? "external"` default is pinned by its own control.
+ * stayed frozen at the gate. Only `rule-retro` (on a press) and the own-mail release (own mail at
+ * the gate) move a `'peer'` row. Decided by the WRITER: only the code that knows it is a reader can
+ * tell adoption from a person's drag. The `?? "external"` default is pinned by its own control.
  */
 function readerAdoption(arrivalFolder: string): { adoption?: "peer" } {
   return isOrganizedFolder(arrivalFolder) ? { adoption: "peer" } : {};

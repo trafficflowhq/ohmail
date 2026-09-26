@@ -19,12 +19,14 @@ export async function readOwnAddresses(db: Tx, accountId: string): Promise<Set<s
 export const OWN_MAIL_RELEASE_BATCH = 100;
 
 /**
- * THE ONE-TIME REPAIR: own-address mail the ORGANIZER filed into `ohmail/Screener` before the gate
- * skipped it is desired back into INBOX; the visit's reconciler makes the move. Only rows we placed
- * and that sit settled at the gate (`last_set_by = 'us'`, desired = observed): a person's placement
- * is never selected. Excluded as the router would decide them: a failed authentication (still
- * screened) and a sender/domain rule naming the author. Plus the three user-intent exclusions
- * `gate-release.ts` keeps. Idempotent: a released row is no longer at the gate.
+ * THE ONE-TIME REPAIR: own-address mail an organizer filed into `ohmail/Screener` before the gate
+ * skipped it is desired back into INBOX; the visit's reconciler makes the move. Only rows settled at
+ * the gate (desired = observed) that this install placed (`us`) or met there on its first read as
+ * another install's placement (`peer` — the previous organizer's filing, which no organizer would
+ * otherwise release); a move a person made while this install watched (`external`) is never
+ * selected. Excluded as the router would decide them: a failed authentication (still screened) and
+ * a sender/domain rule naming the author. Plus the three user-intent exclusions `gate-release.ts`
+ * keeps. Idempotent: a released row is no longer at the gate.
  */
 export async function releaseOwnMailAtGate(
   tx: LedgerTx, d: Dialect, o: { accountId: string; mailboxId: string; limit: number; now?: Date },
@@ -41,7 +43,7 @@ export async function releaseOwnMailAtGate(
       inArray(from, own),
       eq(messages.mailboxId, o.mailboxId),
       isNull(messages.deletedAt),
-      eq(folderState.lastSetBy, "us"),
+      inArray(folderState.lastSetBy, ["us", "peer"]),
       eq(folderState.desiredFolder, CUTLINE_GATE_FOLDER),
       eq(folderState.observedFolder, CUTLINE_GATE_FOLDER),
       sql`(${messages.authVerdict} is null or ${messages.authVerdict} <> 'fail')`,

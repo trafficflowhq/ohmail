@@ -582,7 +582,7 @@ async function selectCandidates(
     sql`${folderState.desiredFolder} in ${sql`(${sql.join(
       ORGANIZED_FOLDERS.map((f) => sql`${f}`), sql`, `,
     )})`}`,
-    /* THE ONE PASS THAT ADMITS `'peer'`, AND ONLY BECAUSE A PERSON PRESSED.
+    /* THE ONE PASS THAT ADMITS `'peer'` FOR ANY SENDER, AND ONLY ON A PRESS (own mail: the release).
      * `'peer'` is a placement by ANOTHER install of this account in a folder ohmail organizes,
      * recorded by a READER (`pipeline.ts#readerAdoption`). It was once `'external'` ("hands off, for
      * ever"), which stranded mail behind a decision already made. Safe HERE and nowhere else because

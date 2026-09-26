@@ -85,7 +85,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     triggers: ["visit"],
     cadence: "every organizer visit, before the reconcile; a no-op once nothing of the account's own sits at the gate",
     budget: "OWN_MAIL_RELEASE_BATCH rows per visit",
-    owns: "own-address mail the router filed into ohmail/Screener before it stopped doing so goes back to INBOX, once",
+    owns: "own-address mail a router (this install's or the previous organizer's) filed into ohmail/Screener before it stopped doing so goes back to INBOX, once",
     fence: "the fenced live group (desired-state only); the visit's reconcile makes the moves under the lease",
   },
   {

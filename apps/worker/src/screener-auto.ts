@@ -378,8 +378,8 @@ function idsOf(v: unknown): string[] {
  * Candidates: `folder_state.desired_folder = 'ohmail/Screener'` (held, and the idempotency — a moved row
  * is desired into Reads/Receipts and drops out); `last_set_by = 'us'` (`external` is the user's own client;
  * `'peer'` excluded, since auto-applying to mail nobody on this install decided about is what this pass may
- * not do — only `rule-retro` admits `'peer'`, behind a press); mailbox not `disabled`. User-intent
- * exclusions (siblings' predicates): no enabled `rules` row for sender/domain; no non-`none`
+ * not do — only `rule-retro` admits `'peer'` for any sender, on a press); mailbox not `disabled`.
+ * User-intent exclusions (siblings' predicates): no enabled `rules` row for sender/domain; no non-`none`
  * `message_states`; no `drafts` reply; no DECIDED `approvals` (`status <> 'pending'`); no same-thread
  * own-address reply. SENSITIVITY is NOT a candidate predicate — applied by the single KEEP guard in
  * {@link screenerAutoApplyPass}. `FOR UPDATE OF folder_state` (not `message_bodies`, LEFT JOIN nullable side). */
