@@ -677,7 +677,9 @@ export function InlineReply({
             disabled={inFlight}
             autoFocus
             onChange={(e) => onSubject(e.target.value)}
-            onBlur={() => setEditingSubject(false)}
+            // On focus LEAVING, never the blur: an assistive tool's focus on this field blurs
+            // and refocuses it in one call, and unmounting there killed the desktop's renderer.
+            onFocusLeft={() => setEditingSubject(false)}
             onKeyDown={(e) => {
               if (e.key !== "Enter" && e.key !== "Escape") return;
               // Escape closes the INPUT, not the editor — the escape cascade's innermost rule.

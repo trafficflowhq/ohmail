@@ -3627,6 +3627,7 @@
     "back": "Zurück",
     "cancel": "Abbrechen",
     "reload": "Neu laden",
+    "rendererReloaded": "Das ohmail-Fenster war stehen geblieben und wurde neu geladen.",
     "mailboxLabel": "Postfach",
     "doorNotChosen": "Nicht gewählt",
     "doorNoneWhy": "Auf dieser Installation ist noch kein Postfach gewählt.",

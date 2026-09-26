@@ -109,6 +109,10 @@ mod webview_budget;
 // frame, or at a bound. Always compiled: every build opens the same hidden window.
 mod launch_window;
 
+// A web process that dies is reloaded once with a sentence, and a second death offers a relaunch
+// instead of a dead frame. Always compiled: every build opens the same window.
+mod renderer_recovery;
+
 // How many allocator arenas the engine this shell spawns may have. Applied to that child's
 // command in `engine.rs`, never to this process — `allocator_arenas.rs` has the measurement.
 mod allocator_arenas;
@@ -145,11 +149,6 @@ fn main() {
     let app = builder
         .build(tauri::generate_context!())
         .expect("ohmail: failed to start the Tauri runtime");
-
-    // What the webview is told this window is: one document, not a browser. WebKitGTK's default
-    // cache model and its back/forward cache are sized for a history and many tabs, and this
-    // window has neither. `webview_budget.rs` carries the pair and the reasoning.
-    webview_budget::apply(app.handle());
 
     // HOST MODE IS DECIDED BEFORE THE ENGINE STARTS, because the decision is part of the spawn:
     // an armed install's engine gets three extra environment variables (`host.rs` carries the

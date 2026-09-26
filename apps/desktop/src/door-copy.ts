@@ -350,6 +350,8 @@ const EN = {
   back: "Back",
   cancel: "Cancel",
   reload: "Reload",
+  /* The shell reloaded the window after its web process died (`renderer-reloaded.ts`). */
+  rendererReloaded: "ohmail's window stopped and was reloaded.",
   mailboxLabel: "Mailbox",
   doorNotChosen: "Not chosen",
   doorNoneWhy: "No mailbox has been chosen on this install yet.",

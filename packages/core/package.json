@@ -25,6 +25,7 @@
     "./pair-link": "./src/pair-link.ts",
     "./sender-headers": "./src/sender-headers.ts",
     "./rule-order": "./src/rule-order.ts",
+    "./reader-refusal": "./src/reader-refusal.ts",
     "./outbound-text": "./src/outbound-text.ts",
     "./model-name": "./src/model-name.ts",
     "./transport-frame": "./src/transport-frame.ts"
@@ -33,7 +34,7 @@
     "drizzle-orm": "0.36.4",
     "htmlparser2": "12.0.0",
     "imapflow": "1.5.0",
-    "mailparser": "3.9.14",
+    "mailparser": "3.9.18",
     "nodemailer": "6.10.1",
     "@trafficflow/db": "*"
   }

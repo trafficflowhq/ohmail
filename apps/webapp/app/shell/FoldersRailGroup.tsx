@@ -335,9 +335,10 @@ export function FoldersRailGroup({
                 opts.onCancel();
               }
             }}
-            onBlur={() => {
+            onFocusLeft={() => {
               // A press elsewhere abandons the input; Enter is the only commit. The menu's
-              // own rule: nothing writes to a mailbox because focus wandered.
+              // own rule: nothing writes to a mailbox because focus wandered. On focus LEAVING,
+              // not on the blur: an assistive tool's focus on this field blurs it first.
               opts.onCancel();
             }}
           />

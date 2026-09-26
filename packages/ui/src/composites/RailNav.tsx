@@ -349,8 +349,8 @@ function TagsGroup({
    * the input owns Enter (submit) and Escape (cancel), and STOPS the Escape so the shell's overlay ladder does not
    * also act on a key the innermost open thing already handled. A name that already exists cannot be submitted — the
    * server's unique index is on `lower(name)` — and the reason is said rather than the button silently disabled,
-   * because the user typed it and is owed why. Focus moves to the input the moment it appears; a blur with nothing
-   * typed closes it, so clicking away from an empty field is not a half-open state.
+   * because the user typed it and is owed why. Focus moves to the input the moment it appears; focus leaving with
+   * nothing typed closes it, so clicking away from an empty field is not a half-open state.
    */
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState("");
@@ -446,7 +446,10 @@ function TagsGroup({
                     cancel();
                   }
                 }}
-                onBlur={() => {
+                // Focus LEAVING with nothing typed closes it, never the blur itself: an
+                // assistive tool's focus on this very field blurs and refocuses it in one call,
+                // and unmounting inside that call killed the desktop's web process.
+                onFocusLeft={() => {
                   if (typed.length === 0) cancel();
                 }}
               />

@@ -16,7 +16,8 @@
     "./thread-join-heal": "./src/thread-join-heal.ts",
     "./inbound-quiet": "./src/inbound-quiet.ts",
     "./request-drain": "./src/request-drain.ts",
-    "./known-set": "./src/known-set.ts"
+    "./known-set": "./src/known-set.ts",
+    "./rule-retro": "./src/rule-retro.ts"
   },
   "dependencies": {
     "drizzle-orm": "0.36.4",

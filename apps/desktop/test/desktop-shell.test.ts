@@ -567,7 +567,7 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these twenty-seven files and no others", () => {
+  it("is these twenty-nine files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
       // HOW MANY ALLOCATOR ARENAS THIS APP'S PROCESSES MAY HAVE. glibc gives a contending
@@ -635,6 +635,12 @@ describe("the Rust side", () => {
       // reddens on were not the same. It declares a constant and nothing else: no capability, no
       // syscall, no Tauri. Gated with `vitals.rs`, its only reader, so the preview carries neither.
       "perf_budgets.rs",
+      // A WEB PROCESS THAT DIES IS RELOADED ONCE, THEN OFFERED A RELAUNCH. ALWAYS compiled: every
+      // build opens the same window, and a dead renderer left as a frame is an app that looks open
+      // and answers nothing. It listens to the webview's own termination signal, loads the page's
+      // own address again, and asks through the dialog plugin the updater already carries.
+      "renderer_recovery.rs",
+      "renderer_recovery_tests.rs",
       "updater.rs",
       "updater_tests.rs",
       // WHAT THE RENDERER COSTS. `engine_vitals` measures the sidecar, which is the process that
@@ -649,13 +655,10 @@ describe("the Rust side", () => {
       // watched on every platform's CI.
       "vitals.rs",
       "vitals_tests.rs",
-      // WHAT WEBKITGTK IS TOLD THIS WINDOW IS. The webview was left at the cache model and the
-      // back/forward cache a browser with a history and many tabs wants; this window shows one
-      // document and never navigates back. Neither setting is reachable from the environment, so
-      // the pair is asked for in code — together, through one carrier, because applying one and
-      // not the other costs most of the saving and still looks like a fix. ALWAYS compiled: the
-      // preview opens the same window and asks for the same budget. Linux only so far; WKWebView
-      // has the same pair and is its own change.
+      // WHEN WEBKITGTK GIVES MEMORY BACK, for the whole process: the pressure thresholds, asked
+      // for once at the top of `main`, and never a kill threshold. The per-window cache-model ask
+      // that used to live here never took effect and, measured applied, saved nothing, so it went.
+      // ALWAYS compiled: the preview's process takes the same pressure settings.
       "webview_budget.rs",
       "webview_budget_tests.rs",
     ]);

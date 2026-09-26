@@ -1,34 +1,9 @@
-//! What WebKitGTK is told this window is: one document, not a browser.
+//! When WebKitGTK gives memory back, for this whole process.
 //!
-//! The webview is left at `WEBKIT_CACHE_MODEL_WEB_BROWSER` with the back/forward page cache on —
-//! the settings a browser with a history and many tabs wants. This window shows exactly one
-//! document and has no history to go back to, so both are budget spent on a feature that does not
-//! exist. The pair is applied together and asserted together: setting one and not the other is
-//! the half-applied form this module exists to make unrepresentable.
-//!
-//! Linux only. WKWebView has the same pair and is a separate change.
-
-/// How much WebKitGTK should keep for a page it may show again.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Model {
-    /// One document, shown once. The smallest of the three.
-    DocumentViewer,
-    /// A document with links followed inside it.
-    DocumentBrowser,
-    /// A history and many tabs. WebKitGTK's default, and what this window used to ask for.
-    WebBrowser,
-}
-
-/// The two settings this window asks for, and the only place either is named.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Ask {
-    pub cache_model: Model,
-    /// The back/forward cache. This window never navigates back.
-    pub page_cache: bool,
-}
-
-/// One window, one document, no history.
-pub const ASK: Ask = Ask { cache_model: Model::DocumentViewer, page_cache: false };
+//! The window once also asked for the document-viewer cache model with the back/forward cache
+//! off. That ask ran before the window existed and never took effect; applied from the one
+//! `setup`, a 15-minute image-heavy walk read the same renderer RSS and private memory as without
+//! it (2026-09-26, three builds side by side), so it was removed rather than applied.
 
 /// When WebKit should start giving memory back, and when it should start being rude about it.
 ///
@@ -52,49 +27,9 @@ pub struct Pressure {
 pub const PRESSURE: Pressure =
     Pressure { limit_mib: 1024, conservative: 0.33, strict: 0.5, poll_s: 15.0 };
 
-/// Anything the ask can be carried to. The shipped one is the webview; the tests' one records
-/// what it was asked, so a pair applied by halves fails rather than passes quietly.
-pub trait Sink {
-    fn set_cache_model(&mut self, model: Model);
-    fn set_page_cache(&mut self, enabled: bool);
-}
-
-/// Carry the whole ask. Both calls, always, in this order.
-pub fn apply_to<S: Sink>(sink: &mut S, ask: Ask) {
-    sink.set_cache_model(ask.cache_model);
-    sink.set_page_cache(ask.page_cache);
-}
-
 #[cfg(target_os = "linux")]
 mod gtk_sink {
-    use super::{Ask, Model, Sink};
-    use webkit2gtk::{CacheModel, SettingsExt, WebContextExt, WebViewExt};
     use webkit2gtk::WebsiteDataManager;
-
-    impl From<Model> for CacheModel {
-        fn from(m: Model) -> Self {
-            match m {
-                Model::DocumentViewer => CacheModel::DocumentViewer,
-                Model::DocumentBrowser => CacheModel::DocumentBrowser,
-                Model::WebBrowser => CacheModel::WebBrowser,
-            }
-        }
-    }
-
-    struct WebKit<'a>(&'a webkit2gtk::WebView);
-
-    impl Sink for WebKit<'_> {
-        fn set_cache_model(&mut self, model: Model) {
-            if let Some(context) = WebViewExt::context(self.0) {
-                context.set_cache_model(model.into());
-            }
-        }
-        fn set_page_cache(&mut self, enabled: bool) {
-            if let Some(settings) = WebViewExt::settings(self.0) {
-                settings.set_enable_page_cache(enabled);
-            }
-        }
-    }
 
     /// The process-wide pressure settings, set before any web context exists.
     pub fn pressure(p: super::Pressure) {
@@ -104,23 +39,6 @@ mod gtk_sink {
         s.set_strict_threshold(p.strict);
         s.set_poll_interval(p.poll_s);
         WebsiteDataManager::set_memory_pressure_settings(&mut s);
-    }
-
-    /// Apply the ask to the app's one window, and SAY SO when it cannot be applied. A budget that
-    /// silently failed to be asked for reads exactly like one that was granted, which is the shape
-    /// this whole module is a fix for — so both the missing window and the refused call are named.
-    pub fn apply<R: tauri::Runtime>(app: &tauri::AppHandle<R>, ask: Ask) {
-        use tauri::Manager;
-        let Some(window) = app.get_webview_window("main") else {
-            eprintln!("ohmail: no main window to ask for a webview budget");
-            return;
-        };
-        if let Err(e) = window.with_webview(move |platform| {
-            let view = platform.inner();
-            super::apply_to(&mut WebKit(&view), ask);
-        }) {
-            eprintln!("ohmail: the webview budget was not applied: {e}");
-        }
     }
 }
 
@@ -147,14 +65,6 @@ pub fn apply_process_pressure() {
         }
         gtk_sink::pressure(PRESSURE);
     }
-}
-
-/// Ask WebKitGTK for this window's budget. Off Linux this is nothing yet.
-pub fn apply<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    #[cfg(target_os = "linux")]
-    gtk_sink::apply(app, ASK);
-    #[cfg(not(target_os = "linux"))]
-    let _ = app;
 }
 
 #[cfg(test)]

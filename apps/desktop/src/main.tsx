@@ -18,6 +18,7 @@ import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell
 import { stampColumns } from "../../webapp/app/shell/column-store";
 import { setUiVitalsInterval, setUiVitalsSink } from "../../webapp/app/shell/ui-vitals";
 import { DesktopLocale } from "./DesktopLocale.js";
+import { RendererReloaded, takeReloadedMark } from "./renderer-reloaded.js";
 import "../../webapp/app/app.css";
 // After app.css for the webapp door's reason: the Zero layout ladder (data-layout="zero",
 // stamped by this file's boot block below) re-arranges the same shell in this window too.
@@ -152,6 +153,10 @@ stampColumns();
  */
 const THEME_DOOR = localStorageDoor("theme");
 
+/* THE SHELL'S MARK AFTER A DEAD WEB PROCESS, taken before the first render so the address is
+   clean again before anything routes on it. `renderer-reloaded.ts` says the sentence. */
+const RENDERER_RELOADED = takeReloadedMark();
+
 const root = document.getElementById("root");
 if (!root) throw new Error("ohmail Desktop: #root is missing from index.html");
 
@@ -186,6 +191,7 @@ const paint = (bootFailure: unknown): void =>
           systemScheme={omarchySchemeSource}
         >
           <ToastHost>
+            <RendererReloaded reloaded={RENDERER_RELOADED} />
             {/* THE BOUNDARY IS OUTSIDE THE GATE, and it has to be: a component cannot catch its
                 own render, and the throw this exists for comes from `DesktopGate` building the
                 client engine. `GateBoundary.tsx` has the released build that went white for want

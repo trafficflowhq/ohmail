@@ -19,10 +19,23 @@ import type { OAuthTokens } from "@trafficflow/services";
  * definition (`packages/services/src/auth/config-types.ts`); the browser's copy and the
  * `refresh_tokens` row are re-issued from the same number on every successful
  * `POST /auth/refresh`. The native surface's longer window never reaches this file — a bearer
- * client gets a JSON token pair and no Set-Cookie. No attribute changes for any of this: the
- * rewrite suite asserts `HttpOnly`, `SameSite`, `Secure`, the `tf_refresh` path, and the
- * absence of `Domain=` — every cookie minted here is host-only, and must stay host-only. */
+ * client gets a JSON token pair and no Set-Cookie. Every cookie minted here is host-only (no
+ * `Domain=`) and must stay so; the rewrite suite asserts that beside `HttpOnly`, `SameSite`,
+ * `Secure` and the refresh path. Readers also take each name's `__Host-` spelling ({@link
+ * jarCookie}); these writes keep the bare names until installed desktops read both. */
 const seconds = (ms: number): number => Math.floor(ms / 1000);
+
+/**
+ * THE TWO SPELLINGS EVERY READER TAKES, `__Host-` first. The browser stores a `__Host-` cookie
+ * only from this host, `Secure`, `Path=/` and without `Domain=`, so a sibling host cannot plant
+ * one; when both spellings are present the prefixed one is ours and wins.
+ */
+export const HOST_PREFIX = "__Host-";
+export type CredentialCookie = "tf_session" | "tf_refresh" | "tf_csrf" | "tf_resume" | "tf_owner";
+
+export function jarCookie(jar: Readonly<Record<string, string>>, name: CredentialCookie): string | undefined {
+  return jar[`${HOST_PREFIX}${name}`] ?? jar[name];
+}
 
 /**
  * The name of the RESUME MARKER — see {@link sessionCookies}. Exported because
@@ -52,14 +65,13 @@ export function ownerCookieValue(raw: string | null | undefined): string | null 
 }
 
 /**
- * The web session cookies: `tf_session` (access, HttpOnly), `tf_refresh` (HttpOnly, path-scoped
- * to `/auth/refresh`), `tf_csrf` (readable — the SPA sends the double-submit header), all
- * `SameSite=Strict; Secure`; `tf_resume`, deliberately `Lax` — a browser can hold a recoverable
- * session the server is never told about, and the marker is not a credential, living as long as
- * the refresh token (lengthening `tf_session` or widening `tf_refresh`'s Path stay refused); and
- * `tf_owner`, the account id — an identifier, never a credential — so the client opens the
- * account-named mirror immediately (`packages/client-engine/src/idb.ts` records the shared-name
- * leak): not HttpOnly, host-only, `Secure`, `Strict`, never set for an enrollment session.
+ * The web session cookies: `tf_session` (access, HttpOnly), `tf_refresh` (HttpOnly, scoped to
+ * `/auth/refresh` and read by that one route alone, a census holds it), `tf_csrf` (readable, the
+ * SPA's double-submit header), all `SameSite=Strict; Secure`; `tf_resume`, deliberately `Lax` and
+ * not a credential, living as long as the refresh token so the edge can send a lapsed session to
+ * the resume splash; and `tf_owner`, the account id (an identifier, never a credential) so the
+ * client opens the account-named mirror at once: not HttpOnly, host-only, `Secure`, `Strict`, never
+ * set for an enrollment session.
  */
 export function sessionCookies(
   tokens: OAuthTokens,
@@ -127,7 +139,12 @@ export function clearSessionCookies(): string[] {
     "tf_session=; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=0",
     "tf_refresh=; HttpOnly; SameSite=Strict; Secure; Path=/auth/refresh; Max-Age=0",
     "tf_csrf=; SameSite=Strict; Secure; Path=/; Max-Age=0",
-    `${RESUME_COOKIE}=; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=0`,
+    ...clearResumeCookie(),
     `${OWNER_COOKIE}=; SameSite=Strict; Secure; Path=/; Max-Age=0`,
   ];
+}
+
+/** The resume marker's clear alone, with the attributes it was set with (`Lax` included). */
+export function clearResumeCookie(): string[] {
+  return [`${RESUME_COOKIE}=; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=0`];
 }

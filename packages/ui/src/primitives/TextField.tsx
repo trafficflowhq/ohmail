@@ -1,5 +1,7 @@
 import {
   forwardRef,
+  useRef,
+  type FocusEvent,
   type InputHTMLAttributes,
   type ReactElement,
   type Ref,
@@ -24,6 +26,14 @@ interface TextFieldOwnProps {
   /** Monospace value — a host, a port, a code. Letter-spaced a hair so digits read as digits. */
   mono?: boolean;
   className?: string;
+  /**
+   * Focus LEFT the field and did not come back: asked one task after the blur. An assistive
+   * tool's focus request on a field that already has focus blurs and refocuses it inside one
+   * call, and a field that unmounted on that blur took WebKitGTK's web process with it
+   * (2.52.6, measured). A field that closes itself when focus leaves closes here, never in
+   * `onBlur`.
+   */
+  onFocusLeft?: () => void;
 }
 
 export type TextFieldInputProps = TextFieldOwnProps & { multiline?: false }
@@ -50,22 +60,38 @@ function classes(shape: TextFieldShape | undefined, mono: boolean | undefined, m
  */
 const TextFieldBase = forwardRef<HTMLInputElement | HTMLTextAreaElement, TextFieldProps>(
   function TextField(props, ref) {
+    // The latest callback, read when the deferred check runs: it closes over the render that
+    // is current then, not the one the blur happened in.
+    const left = useRef(props.onFocusLeft);
+    left.current = props.onFocusLeft;
+    const withLeave = <E extends HTMLElement>(onBlur?: (e: FocusEvent<E>) => void) =>
+      props.onFocusLeft === undefined
+        ? onBlur
+        : (e: FocusEvent<E>): void => {
+            onBlur?.(e);
+            const el = e.currentTarget;
+            setTimeout(() => {
+              if (el.isConnected && el.ownerDocument.activeElement !== el) left.current?.();
+            }, 0);
+          };
     if (props.multiline) {
-      const { multiline: _multiline, shape, mono, className, ...rest } = props;
+      const { multiline: _multiline, shape, mono, className, onFocusLeft: _left, onBlur, ...rest } = props;
       return (
         <textarea
           ref={ref as Ref<HTMLTextAreaElement>}
           className={classes(shape, mono, true, className)}
+          onBlur={withLeave(onBlur)}
           {...rest}
         />
       );
     }
-    const { multiline: _multiline, shape, mono, className, type = "text", ...rest } = props;
+    const { multiline: _multiline, shape, mono, className, onFocusLeft: _left, onBlur, type = "text", ...rest } = props;
     return (
       <input
         ref={ref as Ref<HTMLInputElement>}
         type={type}
         className={classes(shape, mono, false, className)}
+        onBlur={withLeave(onBlur)}
         {...rest}
       />
     );

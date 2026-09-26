@@ -179,6 +179,9 @@ pub fn attach<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
             }
         })
         .setup(|app| {
+            // The config window exists from here: its web process is watched from its first
+            // frame (`renderer_recovery.rs`).
+            crate::renderer_recovery::arm(app.handle());
             /* THE FRAME DECISION LIVES HERE FOR ONE REASON: this is the binary's only `setup`,
                and a second one would silently replace it (the header above). The rule itself is
                `frame.rs` — pure, tested against a real Omarchy session's environment and this
