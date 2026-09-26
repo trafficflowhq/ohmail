@@ -15,7 +15,8 @@ export interface HolderLeaseFacts {
   state?: string | null;
 }
 
-function isLive(f: HolderLeaseFacts | null | undefined): boolean {
+/** Is somebody still organizing the mailbox: a named holder whose lease has not lapsed. */
+export function holderIsLive(f: HolderLeaseFacts | null | undefined): boolean {
   const by = f?.by;
   const named = Boolean(by && (by.kind || (by.name && by.name.trim() !== "")));
   return named && f?.state !== "stopped";
@@ -23,10 +24,10 @@ function isLive(f: HolderLeaseFacts | null | undefined): boolean {
 
 /** One mailbox that refused: the reason its refusal carries. */
 export function requestRefusalReason(f: HolderLeaseFacts | null | undefined): RequestRefusalReason {
-  return isLive(f) ? "organizer_outdated" : "no_organizer";
+  return holderIsLive(f) ? "organizer_outdated" : "no_organizer";
 }
 
 /** Several that refused, as one account-wide answer: outdated if any holder is live. */
 export function rosterRefusalReason(rows: readonly (HolderLeaseFacts | null | undefined)[]): RequestRefusalReason {
-  return rows.some(isLive) ? "organizer_outdated" : "no_organizer";
+  return rows.some(holderIsLive) ? "organizer_outdated" : "no_organizer";
 }

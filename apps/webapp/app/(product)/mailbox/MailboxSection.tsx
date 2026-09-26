@@ -69,9 +69,10 @@ import {
 } from "../../shell/probe-refusal";
 import { AGO_COPY, agoStamp, dayStamp } from "../../shell/format";
 import {
-  claimLeftBehind, filerKey, isSyncBlockReason, readerStandDown, showInboundQuiet, standDownKey, webFiler,
-  type WebFiler,
+  claimLeftBehind, filerKey, isSyncBlockReason, readerHolderLapsed, readerStandDown, showInboundQuiet,
+  standDownKey, webFiler, type WebFiler,
 } from "../../shell/mail-state";
+import { holderIsLive } from "@trafficflow/core/reader-refusal";
 import { useMailState } from "../../shell/MailStateProvider";
 import { useEngineOrNull } from "../../shell/engine";
 import { displayAddress } from "../../shell/idn";
@@ -2119,6 +2120,10 @@ export function MailboxSection() {
            install's own. Without it the row offers a takeover — displacing yourself — and the one
            press that actually resolves the state is unreachable from the pane. */
         const stranded = claimLeftBehind(m);
+        /* A HOLDER WHOSE LEASE LAPSED IS NOBODY — the refusal's own decider. "ohmail on your own
+           machine has claimed this mailbox" over a claim nobody renews had a person trusting a
+           laptop that stopped while new mail waited in the Inbox. */
+        const lapsed = standDown !== null && standDown !== "released" && readerHolderLapsed(m);
         return (
           <div className="mbx-row" key={m.id}>
             <div className="mbx-main">
@@ -2196,7 +2201,7 @@ export function MailboxSection() {
                 </>
               ) : standDown && !stranded ? (
                 <>
-                  <span className="mbx-bad">{t(standDownKey(standDown, filer))}</span>
+                  <span className="mbx-bad">{lapsed ? t("standDownLapsed") : t(standDownKey(standDown, filer))}</span>
                   {organizer?.id === m.id ? (
                     <OrganizerPanel
                       state={organizer}
@@ -2209,7 +2214,7 @@ export function MailboxSection() {
                     />
                   ) : (
                     <>
-                      <span className="mbx-sub">{t(filerKey("takeoverHow", filer))}</span>
+                      <span className="mbx-sub">{t(filerKey(lapsed ? "takeoverHowLapsed" : "takeoverHow", filer))}</span>
                       <Button
                         className="mbx-btn"
                         onClick={() => { void checkOrganizer(m.id); }}
@@ -3193,9 +3198,9 @@ interface OrganizerCheck {
  */
 
 /**
- * The effect line is shown in BOTH cases and says exactly what the action does — including the two things people
- * would otherwise have to guess: that the other install stops on its own next check rather than immediately, and that
- * its local copy of the mail is left alone.
+ * The effect line says exactly what the action does. Over a LIVE holder that includes the two things people would
+ * otherwise have to guess: that the other install stops on its own next check rather than immediately, and that its
+ * local copy of the mail is left alone. Over one that stopped it promises nothing about that install.
  */
 function OrganizerPanel({ state, t, filer, now, spent, onCancel, onConfirm }: {
   state: OrganizerCheck;
@@ -3223,10 +3228,17 @@ function OrganizerPanel({ state, t, filer, now, spent, onCancel, onConfirm }: {
         ? (machine ? t("organizerHeldNamed", { machine, when }) : t("organizerHeld", { when }))
         : (machine ? t("organizerStoppedNamed", { machine, when }) : t("organizerStopped", { when }));
 
+  /* WHAT TAKING OVER DOES TO THE HOLDER, by the refusal's own decider over the fresh read: a live
+     one stops at its next check; one that stopped is promised nothing. An unreadable claim keeps
+     the ordinary line — it may be live, and this build cannot say. */
+  const live = peek.unreadable > 0 || holderIsLive({
+    by: holder ? { kind: holder.kind, name: holder.displayName } : null, state: peek.state,
+  });
+
   return (
     <>
       <span className="mbx-sub">{found}</span>
-      <span className="mbx-sub">{t(filerKey("takeoverEffect", filer))}</span>
+      <span className="mbx-sub">{t(filerKey(live ? "takeoverEffect" : "takeoverEffectLapsed", filer))}</span>
       <span className="mbx-actions">
         <Button variant="primary" className="mbx-btn" onClick={onConfirm} disabled={spent}>
           {t("organizerConfirm")}

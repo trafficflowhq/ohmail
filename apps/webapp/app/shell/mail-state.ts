@@ -28,7 +28,7 @@
    alternative to a second copy of a rule that must never diverge — see `address-key.ts`. */
 import { addressKey } from "./address-key";
 import {
-  requestRefusalReason, rosterRefusalReason, type RequestRefusalReason,
+  holderIsLive, requestRefusalReason, rosterRefusalReason, type RequestRefusalReason,
 } from "@trafficflow/core/reader-refusal";
 
 export const SYNC_BLOCK_REASONS = [
@@ -156,6 +156,21 @@ export function readerStandDown(m: {
 }
 
 /**
+ * A READER ROW WHOSE HOLDER IS NOT LIVE — none named, or its lease lapsed — by the refusal's own
+ * decider, so the Mailboxes row says nothing organizes the mailbox where a press would be told the
+ * same. A legacy `disabled` row carries no holder facts and keeps its stored reason.
+ */
+export function readerHolderLapsed(m: {
+  status?: string;
+  organizerRole?: "organizer" | "reader";
+  organizedBy?: { kind: string | null; name: string | null } | null;
+  organizerState?: "held" | "stopped" | null;
+}): boolean {
+  return m.status !== "disabled" && m.organizerRole === "reader"
+    && !holderIsLive({ by: m.organizedBy, state: m.organizerState });
+}
+
+/**
  * This install's own claim is still on the mailbox while this install is not organizing it. A real state: an install
  * that stood down without its claim being removed leaves a record every OTHER install reads as "somebody holds this",
  * so they stand down too — and this one reads their absence the same way. Nothing organizes the mailbox, each side's
@@ -227,8 +242,10 @@ const FILER_KEYS = {
   releaseClaimWhat: { cloud: "releaseClaimWhat", server: "releaseClaimWhatServer" },
   claimedElsewhere: { cloud: "standDown_organized_elsewhere_cloud", server: "standDownClaimedByServer" },
   takeoverHow: { cloud: "standDownHow", server: "standDownHowServer" },
+  takeoverHowLapsed: { cloud: "standDownHowLapsed", server: "standDownHowLapsedServer" },
   takeoverCheck: { cloud: "organizerCheck", server: "organizerCheckServer" },
   takeoverEffect: { cloud: "organizerEffect", server: "organizerEffectServer" },
+  takeoverEffectLapsed: { cloud: "organizerEffectLapsed", server: "organizerEffectLapsedServer" },
   takeoverQueued: { cloud: "organizerQueued", server: "organizerQueuedServer" },
   takeoverAlready: { cloud: "organizerAlready", server: "organizerAlreadyServer" },
 } as const satisfies Record<string, Partial<Record<FilerSelf, string>>>;
