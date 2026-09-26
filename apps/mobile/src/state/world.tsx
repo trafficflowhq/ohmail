@@ -956,10 +956,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
            read that is slow or refused must not hold up the folders answer, which has its own
            epoch and its own correctness. */
         void boxRead(() => readMailboxes(session));
-        /* ONLY A PAIRED DOOR HAS A SERVER TO ASK. On the standalone door this app IS the engine:
-           the partition is the only authority that exists there, and a request for a route this
-           session does not dial would refuse on every cadence for ever. */
-        if (!session.standalone) void queueRead(() => readScreenerWaiting(session));
+        /* THE QUEUE FROM THE STORE, ON BOTH DOORS: the standalone door serves `GET /screener` from
+           the engine in this process, so its shelf is the store's too. The engine's own copy of
+           the first page is what the partition reads, so a sender the store does not list is
+           presented in the Ohbox rather than at the gate. */
+        void queueRead(() => readScreenerWaiting(session));
+        void session.engine.refreshScreenerWaiting().catch(() => { /* the next cadence asks again */ });
         /* BOTH DOORS: the decisions this phone sent live where its presses land. */
         void relayRead(() => readRelayedDecisions(session));
         /* Stamped BEFORE the request leaves — the whole point of the two-phase read. */

@@ -162,6 +162,7 @@ export function pgDialect(): Dialect {
     },
 
     jsonGet: (document, key) => sql`(${document} -> ${assertJsonKey(key)})`,
+    jsonText: (document, key) => sql`(${document} ->> ${assertJsonKey(key)})`,
     jsonIsArray: (value) => sql`jsonb_typeof(${value}) = 'array'`,
 
     /* `||` between two jsonb objects IS the shallow merge, right-hand side winning. The device

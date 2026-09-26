@@ -16,8 +16,10 @@ import {
   type MessageStateDTO,
   type RuleDTO,
   type ScreenerSenderDTO,
+  type ScreenerWaitingDTO,
   type TagDTO,
   type WaterlineMeta,
+  SCREENER_WAITING_TYPE,
   waterlineIdOf,
 } from "./types.js";
 
@@ -287,8 +289,18 @@ function derivedScreenerEffects(
   ctx: EffectContext,
   iso: string,
 ): MutationEffect[] {
-  const rep = reader.get<EngineMessage>("message", m.senderId);
-  if (!rep || rep.folder !== FOLDER_OF_VIEW.screener) return [];
+  const mirrored = reader.get<EngineMessage>("message", m.senderId);
+  // A representative only the STORE holds (the mirror is windowed): the decide is still the
+  // server's to apply, and the overlay takes the sender off the queue page it was pressed on.
+  const stored = mirrored === undefined
+    ? reader.list<ScreenerWaitingDTO>(SCREENER_WAITING_TYPE)
+      .find((r) => r.kind === "sender" && r.messageId === m.senderId)
+    : undefined;
+  if (mirrored === undefined && (stored === undefined || stored.kind !== "sender")) return [];
+  if (mirrored !== undefined && mirrored.folder !== FOLDER_OF_VIEW.screener) return [];
+  const rep = mirrored ?? {
+    from: { name: stored?.kind === "sender" ? stored.name : null, address: stored?.kind === "sender" ? stored.address : "" },
+  };
 
   const key = senderKey(rep.from.address);
   // The folder the SERVER will write, computed from the same two fields it reads. `m.dest` is
@@ -334,6 +346,14 @@ function derivedScreenerEffects(
   const match = scope === "domain" ? domainOfAddress(key) : key;
   for (const twin of match ? twinsElsewhere(rulesList(reader), scope, match, destination) : []) {
     effects.push({ type: "rule", id: twin.id, entity: { ...twin, destination, updatedAt: iso } });
+  }
+  // The subject leaves the store's queue page too, so the count drops at the press.
+  for (const row of reader.list<ScreenerWaitingDTO>(SCREENER_WAITING_TYPE)) {
+    if (row.kind !== "sender") continue;
+    const rowKey = senderKey(row.address);
+    if (scope === "domain" ? domainOfAddress(rowKey) === match : rowKey === key) {
+      effects.push({ type: SCREENER_WAITING_TYPE, id: row.id, entity: null });
+    }
   }
   return effects;
 }

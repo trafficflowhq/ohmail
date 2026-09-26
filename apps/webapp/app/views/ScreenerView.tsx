@@ -840,6 +840,12 @@ export function ScreenerView({
     setChoosing(null);
   }, [activeId, segment]);
 
+  /* OPENING THE SCREENER RE-READS THE QUEUE from the store, so the count it states is fresh. */
+  useEffect(() => {
+    state.rereadWaiting();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /**
    * IS THE SPLIT'S READ COLUMN OFF SCREEN — the ≤900px breakpoint, SUBSCRIBED rather than
    * sampled: a rotation or window-resize reveals `.scn-read` without touching any other
@@ -1382,7 +1388,10 @@ export function ScreenerView({
            only the zero is withheld — and it returns the moment there is one to state. */
         meta={countWhen(
           { settled, count: state.waitingCount, pending: owed },
-          t("metaWaiting", { count: state.waitingCount }),
+          // A count this device derived is never shown as the mailbox's own.
+          state.waitingSource === "device"
+            ? t("metaWaitingOnDevice", { count: state.waitingCount })
+            : t("metaWaiting", { count: state.waitingCount }),
         )}
         header={
           <div className="scn-head">
@@ -1617,6 +1626,28 @@ export function ScreenerView({
           ))}
           {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
         </ListRows>
+        {/* THE QUEUE PAST THE PAGE THIS DEVICE HOLDS — a page per press, never on scroll. */}
+        {segment === "waiting" && !junkActive && state.waitingMore.available ? (
+          <div className="tail-row" role="status">
+            {state.waitingMore.failed ? (
+              <>
+                {t("waitingMoreFailed")}{" "}
+                <button type="button" className="btn ghost" onClick={state.waitingMore.load}>
+                  {t("waitingMoreRetry")}
+                </button>
+              </>
+            ) : state.waitingMore.loading ? (
+              <span className="mbx-wait">
+                <Spinner className="mbx-spin" />
+                {t("waitingMoreLoading")}
+              </span>
+            ) : (
+              <button type="button" className="btn ghost" onClick={state.waitingMore.load}>
+                {t("waitingMoreAction")}
+              </button>
+            )}
+          </div>
+        ) : null}
       </ListPane>
 
       <div className="read-col scn-read">

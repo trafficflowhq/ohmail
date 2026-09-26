@@ -22,6 +22,9 @@ import {
   unscreenedGroups,
   unscreenedTotalOf,
   screenerSegments,
+  screenerRowsOfStore,
+  screenerWaitingNames,
+  screenerWaitingOf,
   senderKey,
   pressVerdict,
   PRESS_THREW,
@@ -37,6 +40,7 @@ import {
   type ScreenDest,
   type ScreenerSegments,
   type ScreenerSenderDTO,
+  type ScreenerWaitingSenderDTO,
 } from "@ohmail/client-engine";
 import { scheduleFirstDerivation } from "./first-paint";
 import type { SuggestionOverlay } from "./screener-suggest";
@@ -166,11 +170,31 @@ export interface UnscreenedOffer {
   screen: (addresses?: readonly string[]) => void;
 }
 
+/** The queue past the page the mirror holds — see {@link ScreenerState.waitingMore}. */
+export interface WaitingMore {
+  /** Is there a page after the rows on screen? */
+  available: boolean;
+  loading: boolean;
+  /** The last page asked for did not arrive; `load` asks again. */
+  failed: boolean;
+  load: () => void;
+}
+
 export interface ScreenerState {
   /** Waiting rows to render (rows mid-exit carry `pendingOut`). */
   waiting: ScreenerSenderDTO[];
   /** Waiting minus everything decided — rail badge, doorbell, meta. */
   waitingCount: number;
+  /**
+   * WHOSE COUNT `waitingCount` IS. `store`: the store's own queue, exact whatever the mirror
+   * holds. `device`: this device's derivation over its windowed mirror, because the store has not
+   * answered yet. `local`: a client whose mirror is the whole mailbox (the demo), with no store.
+   */
+  waitingSource: "store" | "device" | "local";
+  /** The store's queue past its first page, a page per press. */
+  waitingMore: WaitingMore;
+  /** Ask the store for the queue's first page again — the Screener calls it when it opens. */
+  rereadWaiting: () => void;
   /**
    * Has the queue's FIRST derivation run? False for the paint renders — the cold pass is
    * deferred to idle — and true for ever after. While false the three segments are WITHHELD
@@ -420,8 +444,20 @@ export function joinSuggestion(
  * the memos downstream see a stable identity across the pre-settle renders.
  */
 const UNDERIVED_SEGMENTS: ScreenerSegments = Object.freeze({
-  waiting: [], screenedOut: [], spam: [],
+  waiting: [], screenedOut: [], spam: [], source: "mirror", waitingTotal: 0, waitingCursor: null,
 });
+
+/** The walk past the first page: `cursor` undefined = not started, null = the queue ended. */
+interface Onward {
+  ask: number;
+  rows: ScreenerWaitingSenderDTO[];
+  cursor: string | null | undefined;
+  loading: boolean;
+  failed: boolean;
+}
+const ONWARD_NONE: Onward = Object.freeze({ ask: -2, rows: [], cursor: undefined, loading: false, failed: false });
+/** How many pages one press may walk past before it stops and offers the next press. */
+const ONWARD_HOPS = 8;
 
 export function useScreenerState(
   engine: OhmailEngine,
@@ -510,6 +546,8 @@ export function useScreenerState(
    * stable, so the coordinator is built once.
    */
   const windows = useMemo(() => createIntentWindows({ onChange: bump }), []);
+  /** Representatives on the pages past the first, which only the store holds — see `dispatchDecision`. */
+  const onwardIds = useRef<ReadonlySet<string>>(new Set());
   const store = useRef({
     pending: new Map<string, PendingEntry>(),
     out: new Set<string>(),
@@ -570,6 +608,57 @@ export function useScreenerState(
     [queueReader, version, locale, ownAddresses, queueSettled],
   );
   const s = store.current;
+
+  /* THE QUEUE PAST ITS FIRST PAGE — asked a page per press, held here and never in the mirror.
+     Keyed to the first page's `ask`: a new first page restarts the walk from its own cursor. */
+  const firstPage = useMemo(() => screenerWaitingOf(reader), [reader, version]);
+  const firstAsk = firstPage?.page.ask ?? -1;
+  const [onward, setOnward] = useState<Onward>(ONWARD_NONE);
+  const onwardLive = onward.ask === firstAsk ? onward : ONWARD_NONE;
+  const onwardRows = useMemo(() => {
+    if (onwardLive.rows.length === 0) return [];
+    const shown = new Set(segments.waiting.map((x) => senderKey(x.from.address)));
+    return screenerRowsOfStore(queueReader, onwardLive.rows, undefined, locale, activeFormatZone(), ownAddresses)
+      .filter((x) => !shown.has(senderKey(x.from.address)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onwardLive.rows, segments, queueReader, version, locale, ownAddresses]);
+  const nextWaitingCursor = onwardLive.cursor === undefined ? segments.waitingCursor : onwardLive.cursor;
+  /* A PRESS BRINGS SOMEBODY NEW. The rows past the page the mirror already shows are the next
+     pages' senders too, so a press walks on (a few pages at most) until a page names somebody who
+     is not on screen, or the queue ends. */
+  const loadMoreWaiting = (): void => {
+    if (nextWaitingCursor === null || onwardLive.loading) return;
+    const ask = firstAsk;
+    const start = nextWaitingCursor;
+    setOnward({ ...onwardLive, ask, loading: true, failed: false });
+    const settle = (next: (cur: Onward) => Onward) =>
+      setOnward((cur) => (cur.ask === ask ? next(cur) : cur));
+    const onScreen = new Set(segments.waiting.map((x) => senderKey(x.from.address)));
+    for (const r of onwardLive.rows) onScreen.add(senderKey(r.address));
+    void (async () => {
+      const rows: ScreenerWaitingSenderDTO[] = [];
+      let cursor: string | null = start;
+      for (let hop = 0; hop < ONWARD_HOPS && cursor !== null; hop++) {
+        const page = await engine.screenerWaitingPage(cursor);
+        if (page === null) throw new Error("no queue here");
+        rows.push(...page.senders);
+        cursor = page.nextCursor;
+        if (page.senders.some((r) => !onScreen.has(senderKey(r.address)))) break;
+      }
+      return { rows, cursor };
+    })().then(
+      (got) => settle((cur) => ({ ask, rows: [...cur.rows, ...got.rows], cursor: got.cursor, loading: false, failed: false })),
+      () => settle((cur) => ({ ...cur, loading: false, failed: true })),
+    );
+  };
+  /* ASKED ON MOUNT, which also arms the engine to ask again at every settle that touches the
+     gate, a rule or the settings, and after every decision the server takes. */
+  useEffect(() => {
+    void engine.refreshScreenerWaiting().catch(() => { /* the device's own count stands, and says so */ });
+  }, [engine]);
+  const rereadWaiting = (): void => {
+    void engine.refreshScreenerWaiting().catch(() => { /* as above */ });
+  };
 
   // Both of these end up inside toast and confirmation SENTENCES, so both name the sender the way
   // a person reads them — an internationalized domain decoded (`idn.ts`). The rule, the mutation
@@ -853,8 +942,11 @@ export function useScreenerState(
     // as gate-physical, the dangerous branch. A fixture (non-derived) row
     // always takes the decide path: served in-process, never a socket.
     const rawRep = engine.read().get<EngineMessage>("message", id);
-    const gatePhysical =
-      !derived || (rawRep != null && physicalFolderOf(rawRep) === FOLDER_OF_VIEW.screener);
+    // A representative only the store holds is at the gate by the store's own word: the page
+    // lists only held mail, and the server resolves the id the decide carries.
+    const storeRep = rawRep == null && (screenerWaitingNames(engine.read(), id) || onwardIds.current.has(id));
+    const gatePhysical = !derived || storeRep
+      || (rawRep != null && physicalFolderOf(rawRep) === FOLDER_OF_VIEW.screener);
 
     if (gatePhysical) {
       // Gate-physical: the decide, exactly as before. Spam must ride the NO
@@ -1112,11 +1204,13 @@ export function useScreenerState(
 
   const withSuggestion = (x: ScreenerSenderDTO): ScreenerSenderDTO => joinSuggestion(x, suggestions);
 
+  const overriddenCount = segments.spam.filter((x) => s.overrides.has(x.id)).length;
   const waiting = useMemo(() => {
     const overridden = segments.spam.filter((x) => s.overrides.has(x.id));
-    return [...segments.waiting, ...overridden].map(withSuggestion);
+    return [...segments.waiting, ...onwardRows, ...overridden].map(withSuggestion);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [segments, version, s.overrides.size, suggestions]);
+  }, [segments, onwardRows, version, s.overrides.size, suggestions]);
+  onwardIds.current = new Set(onwardLive.rows.map((r) => r.messageId));
 
   /**
    * DECIDED HERE, NOT CARRIED OUT YET — this session's presses over the server's own record.
@@ -1216,7 +1310,12 @@ export function useScreenerState(
     const p = decisionFor(x.from.address);
     return p?.state === "refused" ? [{ sender: x, decision: p }] : [];
   });
-  const waitingCount = undecided.length;
+  /* ONE COUNT FOR ONE QUEUE. From the store it is the store's own total, less the rows on screen
+     this session holds out by name (pressed and in their undo window, decided in another tab);
+     from the device it is the rows the window happened to hold, and the meta says so. */
+  const waitingCount = segments.source === "store"
+    ? Math.max(0, segments.waitingTotal + overriddenCount - (waiting.length - undecided.length))
+    : undecided.length;
   // Counted over the SAME set the bulk would act on — including the `hold` exclusion, which is
   // why this predicate must stay a copy of `applyAll`'s and not merely of "has a suggestion".
   // A queue whose every suggestion is a `hold` offers no button at all, which is honest: there
@@ -1740,7 +1839,7 @@ export function useScreenerState(
        snapshot: whichever way that tab resolves it, this one learns from the release. */
     const owned = windows.elsewhere(Date.now(), COMMIT_MS);
     const ready = queue.filter((r) => !owned.has(r.id)
-      && (!r.derived || raw.get<EngineMessage>("message", r.id) != null));
+      && (!r.derived || raw.get<EngineMessage>("message", r.id) != null || screenerWaitingNames(raw, r.id)));
     if (ready.length === 0) return;
     restoredIntents.current = queue.filter((r) => !ready.includes(r));
     for (const r of ready) dispatchDecision(r);
@@ -1926,6 +2025,14 @@ export function useScreenerState(
     unscreened,
     waiting: visibleWaiting,
     waitingCount,
+    waitingSource: segments.source === "store" ? "store" : engine.screenerWaitingAvailable() ? "device" : "local",
+    waitingMore: {
+      available: segments.source === "store" && nextWaitingCursor !== null,
+      loading: onwardLive.loading,
+      failed: onwardLive.failed,
+      load: loadMoreWaiting,
+    },
+    rereadWaiting,
     queueSettled,
     suggestedCount,
     suggestedDests,

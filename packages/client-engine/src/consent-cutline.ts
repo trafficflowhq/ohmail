@@ -10,7 +10,10 @@ import {
 import type { EntityReader } from "./store.js";
 import { ownAddressKeys } from "./own-address.js";
 import { isOwnSent, isResurfaced, messagesByDateDesc, rulesList, senderKey } from "./selectors.js";
-import { MAILBOX_PROFILE_TYPE, type EngineMessage, type Folder, type MailboxProfileEntity, type RuleDTO } from "./types.js";
+import {
+  MAILBOX_PROFILE_TYPE, SCREENER_WAITING_PAGE_ID, SCREENER_WAITING_TYPE, type EngineMessage, type Folder,
+  type MailboxProfileEntity, type RuleDTO, type ScreenerWaitingDTO,
+} from "./types.js";
 
 /* Consent, the cutline, and History. Two rules decide where a message is
    PRESENTED: (1) consent comes from the user's own actions — sitting in the
@@ -311,6 +314,39 @@ function placedDestination(index: ConsentIndex, m: EngineMessage): Folder | null
  * is the moment the mailbox recorded it, the same fact the server's `cutlineInstant` coalesces to.
  * `null` only when the row carries neither, which no server this engine talks to can produce.
  */
+/**
+ * WHAT THE STORE'S QUEUE PAGE SAYS ABOUT ONE SENDER'S MAIL — `true` when it answers "not waiting".
+ * Mail the store keeps OUTSIDE the gate is never held, so a sender the page does not list is not
+ * waiting over it. Mail AT the gate is spoken for only inside the page's range: newer than its last
+ * row (the route orders by the representative's date), or anywhere when the page is the whole
+ * queue. A subject the server is still deciding is left to the Screener's decided rows.
+ */
+function storeSaysNotWaiting(reader: EntityReader): (m: EngineMessage, key: string) => boolean {
+  const rows = reader.list<ScreenerWaitingDTO>(SCREENER_WAITING_TYPE);
+  const page = rows.find((r) => r.kind === "page" && r.id === SCREENER_WAITING_PAGE_ID);
+  if (page === undefined || page.kind !== "page") return () => false;
+  const listed = new Set<string>();
+  let last: { order: number; at: number } | null = null;
+  for (const r of rows) {
+    if (r.kind !== "sender") continue;
+    listed.add(senderKey(r.address));
+    const at = r.receivedAt === "" ? Number.NaN : Date.parse(r.receivedAt);
+    if (last === null || r.order > last.order) last = { order: r.order, at };
+  }
+  // No readable instant on the last row: the page speaks for no gate mail but its own.
+  const boundary = page.nextCursor === null ? -Infinity : last === null ? Infinity
+    : Number.isNaN(last.at) ? Infinity : last.at;
+  const deciding = new Set(page.inFlight.map((d) => `${d.scope}:${d.match}`));
+  return (m, key) => {
+    if (listed.has(key) || deciding.has(`sender:${key}`)) return false;
+    const at = key.lastIndexOf("@");
+    if (at >= 0 && deciding.has(`domain:${key.slice(at + 1)}`)) return false;
+    if (m.folder !== "ohmail/Screener") return true;
+    const ms = m.date ? Date.parse(m.date) : Number.NaN;
+    return !Number.isNaN(ms) && ms > boundary;
+  };
+}
+
 function messageMs(m: EngineMessage): number | null {
   const header = m.date === null ? Number.NaN : new Date(m.date).getTime();
   if (Number.isFinite(header)) return header;
@@ -391,6 +427,7 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
   const messages = reader.list<EngineMessage>("message");
   const index = consentIndex(rulesList(reader), mailboxProfiles(reader));
   const own = ownAddressKeys(reader, opts);
+  const notWaiting = storeSaysNotWaiting(reader);
   /* The user's own folders, when "Use folders" is on (FOLDERS-SPEC.md
    * §16.5). Two gates, both must say yes: the caller's
    * {@link ConsentOptions.foldersEnabled} (the account's consent answer —
@@ -551,6 +588,12 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
     } else if (decided !== null && placed === null) {
       // Admitted by a narrowed rule that does not name this message: nothing places it.
       placeOf.set(m.id, m.folder);
+    } else if (decided === null && (rulesOnly || active) && notWaiting(m, key)) {
+      // THE STORE HAS ANSWERED FOR THIS SENDER: not waiting (a correspondent, a contact, decided
+      // elsewhere), so their mail presents in the Ohbox, never at the gate. The count keeps asking
+      // the cutline's own question, which is the one the SQL twin answers.
+      if (!rulesOnly) activeUndecided.add(key);
+      placeOf.set(m.id, "INBOX");
     } else if (rulesOnly) {
       placeOf.set(m.id, m.folder);
     } else if (active) {

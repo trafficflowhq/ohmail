@@ -27,6 +27,11 @@ import {
   type UnscreenedGroupDTO,
   HELD_RELEASE_TYPE,
   UNSCREENED_TYPE,
+  SCREENER_WAITING_TYPE,
+  SCREENER_WAITING_PAGE_ID,
+  type ScreenerWaitingDTO,
+  type ScreenerWaitingPageDTO,
+  type ScreenerWaitingSenderDTO,
   type ScreenerHeldMail,
   type ScreenerSegment,
   type ScreenerSenderDTO,
@@ -1128,6 +1133,16 @@ export interface ScreenerSegments {
   waiting: ScreenerSenderDTO[];
   screenedOut: ScreenerSenderDTO[];
   spam: ScreenerSenderDTO[];
+  /**
+   * WHICH SET `waiting` IS. `store`: the first page of the store's queue, joined to the mirror's
+   * rows for their held mail. `mirror`: this device's own derivation over a windowed mirror —
+   * the store has not answered, or this door cannot ask.
+   */
+  source: "store" | "mirror";
+  /** How many senders are waiting: the store's own count, or `waiting.length` from the mirror. */
+  waitingTotal: number;
+  /** Where the store's next page starts; null when `waiting` is the whole queue. */
+  waitingCursor: string | null;
 }
 
 /**
@@ -1365,6 +1380,103 @@ export function screenerAdviceAi(reader: EntityReader): Map<string, ScreenerSend
   return out;
 }
 
+/** The store's queue page off the mirror, in the page's order, or null when it has not answered. */
+export function screenerWaitingOf(
+  reader: EntityReader,
+): { page: ScreenerWaitingPageDTO; senders: ScreenerWaitingSenderDTO[] } | null {
+  const rows = reader.list<ScreenerWaitingDTO>(SCREENER_WAITING_TYPE);
+  const page = rows.find((r): r is ScreenerWaitingPageDTO => r.kind === "page" && r.id === SCREENER_WAITING_PAGE_ID);
+  if (page === undefined) return null;
+  const senders = rows.filter((r): r is ScreenerWaitingSenderDTO => r.kind === "sender")
+    .sort((a, b) => a.order - b.order);
+  return { page, senders };
+}
+
+/** Does the store's queue page name this message as a sender's representative? */
+export function screenerWaitingNames(reader: EntityReader, messageId: string): boolean {
+  return reader.list<ScreenerWaitingDTO>(SCREENER_WAITING_TYPE)
+    .some((r) => r.kind === "sender" && r.messageId === messageId);
+}
+
+/** A waiting row for a sender the store lists and the mirror holds none of the held mail of. */
+function storeRow(
+  s: ScreenerWaitingSenderDTO, now: Date, locale: string, zone: string, ai: ScreenerSenderDTO["ai"],
+): ScreenerSenderDTO {
+  const name = s.name || s.address;
+  const time = messageDisplayTime({ date: s.receivedAt === "" ? null : s.receivedAt } as EngineMessage, now, zone, locale);
+  return {
+    id: s.messageId, segment: "waiting", from: { name: s.name, address: s.address },
+    ...(s.mailboxId ? { mailboxId: s.mailboxId } : {}),
+    initial: (name.trim()[0] ?? "?").toUpperCase(), time, scope: "sender", ai,
+    held: [{ id: s.messageId, subject: s.subject, time, body: s.snippet, snippet: s.snippet, bodyState: "snippet" }],
+    derived: true, gatePhysical: true, stored: true,
+    updatedAt: s.receivedAt === "" ? now.toISOString() : s.receivedAt,
+  };
+}
+
+/**
+ * THE STORE'S SENDERS, IN THE STORE'S ORDER — a join, never a union. A sender whose held mail the
+ * mirror presents gets the mirror's row; one whose named message the mirror holds elsewhere is
+ * one the mirror has seen decided since the page was read, and is left out; the rest are minted.
+ */
+function joinStore(
+  reader: EntityReader, senders: readonly ScreenerWaitingSenderDTO[],
+  derived: ReadonlyMap<string, ScreenerSenderDTO>, own: ReadonlySet<string>,
+  now: Date, locale: string, zone: string,
+): ScreenerSenderDTO[] {
+  const advice = newestAdviceBySender(reader);
+  const out: ScreenerSenderDTO[] = [];
+  for (const s of senders) {
+    const key = senderKey(s.address);
+    if (own.has(key)) continue;
+    const dto = derived.get(key);
+    if (dto) { out.push(dto); continue; }
+    if (reader.get<EngineMessage>("message", s.messageId) !== undefined) continue;
+    out.push(storeRow(s, now, locale, zone, suggestionAi(advice.get(key))));
+  }
+  return out;
+}
+
+/**
+ * THE MIRROR'S HELD SENDERS THE PAGE CANNOT SPEAK FOR — older than its last row, while the queue
+ * goes on past it. They may be on a later page, so they stay on screen after the page's own rows
+ * rather than vanish; a sender the page does list, or one newer than its last row, is the page's.
+ */
+function pastThePage(
+  reader: EntityReader, store: { page: ScreenerWaitingPageDTO; senders: ScreenerWaitingSenderDTO[] },
+  derived: ReadonlyMap<string, ScreenerSenderDTO>,
+): ScreenerSenderDTO[] {
+  if (store.page.nextCursor === null) return [];
+  const last = store.senders[store.senders.length - 1];
+  const edge = last === undefined || last.receivedAt === "" ? Number.NaN : Date.parse(last.receivedAt);
+  const listed = new Set(store.senders.map((s) => senderKey(s.address)));
+  const out: ScreenerSenderDTO[] = [];
+  for (const [key, dto] of derived) {
+    if (listed.has(key) || dto.gatePhysical === false) continue;
+    const date = reader.get<EngineMessage>("message", dto.id)?.date;
+    const ms = date ? Date.parse(date) : Number.NaN;
+    if (Number.isNaN(edge) || Number.isNaN(ms) || ms <= edge) out.push(dto);
+  }
+  return out;
+}
+
+/** The derived waiting rows behind one segments answer, for {@link screenerRowsOfStore}. */
+const derivedWaitingOf = new WeakMap<ScreenerSegments, ReadonlyMap<string, ScreenerSenderDTO>>();
+
+/**
+ * ROWS FOR A PAGE OF THE QUEUE PAST THE FIRST — the same join the first page gets, so a sender the
+ * mirror holds shows its held mail wherever in the queue it sits. The arguments are
+ * {@link screenerSegments}' own, so the derivation is the memoised one.
+ */
+export function screenerRowsOfStore(
+  reader: EntityReader, senders: readonly ScreenerWaitingSenderDTO[], now: Date = new Date(),
+  locale = "en", zone = "UTC", ownAddresses?: Iterable<string>,
+): ScreenerSenderDTO[] {
+  const segments = screenerSegments(reader, now, locale, zone, ownAddresses);
+  const own = ownAddressKeys(reader, ownAddresses === undefined ? {} : { ownAddresses });
+  return joinStore(reader, senders, derivedWaitingOf.get(segments) ?? new Map(), own, now, locale, zone);
+}
+
 function heldReleaseClaim(reader: EntityReader): (key: string) => boolean {
   const senders = new Set<string>();
   const domains = new Set<string>();
@@ -1558,11 +1670,25 @@ export function screenerSegments(
     bucket.set(senderKey(s.from.address), s);
   }
 
+  // THE STORE'S QUEUE, when it has answered: the waiting set and its count are the store's.
+  const store = screenerWaitingOf(reader);
+  const waiting = store === null
+    ? [...out.waiting.values()]
+    : [
+      ...joinStore(reader, store.senders, out.waiting, own, now, locale, zone),
+      ...pastThePage(reader, store, out.waiting),
+    ];
   const segments: ScreenerSegments = {
-    waiting: [...out.waiting.values()],
+    waiting,
     screenedOut: [...out.screened_out.values()],
     spam: [...out.spam.values()],
+    source: store === null ? "mirror" : "store",
+    // A row a decision's overlay hides is a sender no longer waiting, before the next answer.
+    waitingTotal: store === null ? waiting.length
+      : Math.max(0, store.page.total - Math.max(0, store.page.rows - store.senders.length)),
+    waitingCursor: store === null ? null : store.page.nextCursor,
   };
+  derivedWaitingOf.set(segments, out.waiting);
   if (memoable) segmentsCache.set(reader, { v: reader.version(), key, out: segments });
   return segments;
 }

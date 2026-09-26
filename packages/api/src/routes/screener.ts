@@ -173,6 +173,8 @@ export const screenerRoutes: Route[] = [
       return jsonResponse({
         items: page.items, nextCursor: page.nextCursor, suggestable: page.suggestable,
         pendingDecisions: page.pendingDecisions,
+        // The queue's exact size, on the first page only — see `ScreenerPage.total`.
+        ...(page.total !== undefined ? { total: page.total } : {}),
       });
     },
   },

@@ -12,7 +12,9 @@
 // core entry point browser bundles may import. Never the barrel or `./mail` from here: both
 // carry mailparser and `node:crypto`, which no consumer of this engine can load.
 import { CALENDAR_FALLBACK_FILENAME, isCalendarMime } from "@trafficflow/core/ics";
-import type { AttachmentWire, EngineAdapter, MutationOutcome, MutationQueued } from "./adapters/adapter.js";
+import type {
+  AttachmentWire, EngineAdapter, MutationOutcome, MutationQueued, ScreenerWaitingItemWire,
+} from "./adapters/adapter.js";
 import { messageIdKey, mutationEffects, replySubject, sentOverlayMessage, type MutationEffect } from "./mutations.js";
 import { SHADOW_DRAIN_BOUND, shadowAgrees, shadowKeysOf, verbTargetsOf, type ShadowKey } from "./shadow.js";
 import {
@@ -23,7 +25,7 @@ import {
   type AddressResult,
   type LocalSearchResult,
 } from "./search.js";
-import { oneSourceReader, rulesList, sendingMailboxId, winningStates } from "./selectors.js";
+import { isOwnSent, oneSourceReader, rulesList, sendingMailboxId, senderKey, winningStates } from "./selectors.js";
 import { outrankCoveringDomains } from "./address-rank.js";
 import { consentIndex, decidedDestination } from "./consent-cutline.js";
 import { flattenResponse } from "./apply.js";
@@ -72,10 +74,15 @@ import {
   type WithheldMarker,
   type HeldReleaseGroupDTO,
   type UnscreenedGroupDTO,
+  type ScreenerWaitingDTO,
+  type ScreenerWaitingPageDTO,
+  type ScreenerWaitingSenderDTO,
   OUTBOX_TYPE,
   OUTBOX_ABANDONED_TYPE,
   HELD_RELEASE_TYPE,
   UNSCREENED_TYPE,
+  SCREENER_WAITING_TYPE,
+  SCREENER_WAITING_PAGE_ID,
 } from "./types.js";
 
 /**
@@ -1962,6 +1969,24 @@ const SEARCH_INDEX_SYNC_MAX = 500;
  */
 const HELD_ARRIVALS_MAX = 200;
 
+/** One queue page as the route clamps it; the mirror holds the first, and a scroll asks the rest. */
+const SCREENER_WAITING_PAGE = 200;
+/** How many pages-onward representatives a decision may still be sent for. */
+const SCREENER_PAGE_REPS_MAX = 5000;
+/** The verbs whose success can change who is waiting at the gate. */
+const QUEUE_VERBS: ReadonlySet<EngineMutation["kind"]> = new Set<EngineMutation["kind"]>([
+  "screener_decide", "rule_create", "rule_update", "rule_delete",
+]);
+
+/** A queue row off the wire as the mirror stores it. */
+function waitingRow(item: ScreenerWaitingItemWire, order: number, total: number): ScreenerWaitingSenderDTO {
+  return {
+    id: `sender:${senderKey(item.address)}`, kind: "sender", order, messageId: item.messageId,
+    address: item.address, name: item.name, receivedAt: item.receivedAt, subject: item.subject,
+    snippet: item.snippet, mailboxId: item.mailboxId, total,
+  };
+}
+
 /**
  * HOW MANY OF THE MESSAGES A SURFACE LAST ASKED TO RENDER THE WINDOWED PRUNE HOLDS ON TO. Exported because it is a
  * policy number a guard depends on, and a guard that hand-copies the number it is checking goes green against a
@@ -2234,6 +2259,14 @@ export class OhmailEngine {
     armed: boolean; stamp: string | null; owed: boolean; seq: number; bell: Promise<void> | null;
     arrivals: Set<string>; rang: number; answered: number;
   } = { armed: false, stamp: null, owed: false, seq: 0, bell: null, arrivals: new Set(), rang: 0, answered: 0 };
+  /**
+   * The store's waiting queue, beside its one door ({@link refreshScreenerWaiting}). `armed`: a
+   * surface asked. `dirty`: a page since the last ask touched the gate, a rule, the settings or a
+   * mailbox, so the settle asks again. `seq`: the newest ask, so an older answer never lands last.
+   */
+  private screenerWait: { armed: boolean; dirty: boolean; seq: number } = { armed: false, dirty: false, seq: 0 };
+  /** Representatives served on pages past the first, which the mirror never holds (capped). */
+  private readonly screenerPageReps = new Set<string>();
   /** Which index answered — see {@link OhmailEngine.searchIndexRevision}. */
   private searchIndexRev = 0;
   /** The in-flight mirror read, so concurrent callers coalesce. See {@link OhmailEngine.hydrate}. */
@@ -3112,6 +3145,8 @@ export class OhmailEngine {
           await this.store.resetForBootstrap(); // cursor → "0"
           // The wipe took the held-release answer too; the settle's bell asks for it again.
           this.heldRelease.owed = true;
+          // …and the queue's page, for the same reason.
+          this.screenerWait.dirty = true;
           // The instant index is an index of the mail that just went. A build walking the old
           // rows would install it over the new mirror and hand back hits that open nothing.
           this.invalidateSearchIndex();
@@ -3205,6 +3240,8 @@ export class OhmailEngine {
       this.sweepAwaitingEcho(epoch);
       // The held-release offer re-asks when this drain moved the settings stamp or brought held mail.
       this.ringHeldReleaseBell();
+      // The queue's page re-asks when this drain touched the gate, a rule, the settings or a mailbox.
+      if (this.screenerWait.armed && this.screenerWait.dirty) this.reaskScreenerWaiting();
       return;
     }
   }
@@ -3818,6 +3855,7 @@ export class OhmailEngine {
     this.noteMessagesRemoved(changes);
     this.noteGateArrivals(changes);
     this.noteStoreArrivals(changes);
+    this.noteQueueChanges(changes);
     this.storePages.adopt(changes);
   }
 
@@ -5125,6 +5163,105 @@ export class OhmailEngine {
     return out.total;
   }
 
+  /** Can this door read the waiting queue from the store at all? */
+  screenerWaitingAvailable(): boolean {
+    return typeof this.adapter.screenerWaiting === "function";
+  }
+
+  /**
+   * THE SCREENER'S WAITING QUEUE, FROM THE STORE — ask the door for the first page and replace the
+   * mirror's copy under ONE version bump. The mirror is windowed and the queue is not, so the set
+   * and its count are the store's. An answer that states no count and is not the whole queue (an
+   * older server) clears the copy, so the surface falls back to this device's own derivation.
+   */
+  async refreshScreenerWaiting(): Promise<void> {
+    const ask = this.adapter.screenerWaiting;
+    if (!ask) return;
+    const w = this.screenerWait;
+    w.armed = true;
+    w.dirty = false;
+    const seq = ++w.seq;
+    let wire;
+    try {
+      wire = await ask.call(this.adapter, { limit: SCREENER_WAITING_PAGE });
+    } catch (err) {
+      if (seq === w.seq) w.dirty = true;
+      throw err;
+    }
+    if (seq !== w.seq) return;
+    const total = wire.total ?? (wire.nextCursor === null ? wire.items.length : null);
+    const puts: Array<{ type: string; id: string; entity: ScreenerWaitingDTO }> = [];
+    if (total !== null) {
+      const seen = new Set<string>();
+      for (const item of wire.items) {
+        const key = senderKey(item.address);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        puts.push({ type: SCREENER_WAITING_TYPE, id: `sender:${key}`, entity: waitingRow(item, seen.size - 1, total) });
+      }
+      const page: ScreenerWaitingPageDTO = {
+        id: SCREENER_WAITING_PAGE_ID, kind: "page", total, nextCursor: wire.nextCursor,
+        inFlight: wire.inFlight, ask: seq, rows: puts.length,
+      };
+      puts.push({ type: SCREENER_WAITING_TYPE, id: SCREENER_WAITING_PAGE_ID, entity: page });
+    }
+    // The complement is read off the STORE, never the overlaid view: a row an overlay hides is
+    // still on disk and would come back when the overlay retires.
+    const keep = new Set(puts.map((p) => p.id));
+    const gone = this.store.entries(SCREENER_WAITING_TYPE).filter((e) => !keep.has(e.id))
+      .map((e) => ({ type: SCREENER_WAITING_TYPE, id: e.id }));
+    await this.store.commitLocal(puts, gone);
+    this.notify();
+  }
+
+  /**
+   * THE QUEUE PAST ITS FIRST PAGE — asked when a person scrolls to the end of the page the mirror
+   * holds, and never written to the mirror (a sender row here is a REST row, not mirror state).
+   * `null` from a door that cannot read the queue. Each representative is remembered so a
+   * decision on it is sent even though the mirror has no row for it.
+   */
+  async screenerWaitingPage(cursor: string): Promise<{ senders: ScreenerWaitingSenderDTO[]; nextCursor: string | null } | null> {
+    const ask = this.adapter.screenerWaiting;
+    if (!ask) return null;
+    const wire = await ask.call(this.adapter, { cursor, limit: SCREENER_WAITING_PAGE });
+    const [page] = this.store.entries<ScreenerWaitingDTO>(SCREENER_WAITING_TYPE)
+      .filter((e) => e.id === SCREENER_WAITING_PAGE_ID);
+    const total = page?.entity?.kind === "page" ? page.entity.total : 0;
+    for (const item of wire.items) {
+      this.screenerPageReps.delete(item.messageId);
+      this.screenerPageReps.add(item.messageId);
+    }
+    for (const id of this.screenerPageReps) {
+      if (this.screenerPageReps.size <= SCREENER_PAGE_REPS_MAX) break;
+      this.screenerPageReps.delete(id);
+    }
+    return { senders: wire.items.map((item, i) => waitingRow(item, i, total)), nextCursor: wire.nextCursor };
+  }
+
+  /** A new ask, superseding any in the air; never awaited, and a failure waits for the next settle. */
+  private reaskScreenerWaiting(): void {
+    void this.refreshScreenerWaiting().catch(() => { /* the next settle asks again */ });
+  }
+
+  /** Did this page touch what the queue is derived from? Read BEFORE the write, like the others. */
+  private noteQueueChanges(changes: SyncChange[]): void {
+    const w = this.screenerWait;
+    if (!w.armed || w.dirty) return;
+    const gate = FOLDER_OF_VIEW.screener;
+    for (const ch of changes) {
+      if (ch.type === "rule" || ch.type === "settings" || ch.type === "mailbox") { w.dirty = true; return; }
+      if (ch.type !== "message") continue;
+      const now = ch.entity as EngineMessage | undefined;
+      const was = this.store.record("message", ch.id)?.entity as EngineMessage | null | undefined;
+      // Own sent mail makes its recipient a correspondent, whom the queue stops asking about.
+      if (ch.move?.to === gate || ch.move?.from === gate || now?.folder === gate || was?.folder === gate
+          || (now !== undefined && isOwnSent(now))) {
+        w.dirty = true;
+        return;
+      }
+    }
+  }
+
   private async putBody(messageId: string, record: MessageBodyRecord | null): Promise<void> {
     await this.store.putLocal("message_body", messageId, record);
     this.holdBody(messageId, record?.state === "ready");
@@ -5343,6 +5480,15 @@ export class OhmailEngine {
    * must be durable at the caller before it is handed over, or this is just a slower `uuid()`.
    */
   async mutate(m: EngineMutation, opts: { key?: string } = {}): Promise<MutationResult> {
+    const result = await this.mutateOnce(m, opts);
+    // A decision the server took changes who is waiting; the page is re-read on this one road.
+    if (result.status !== "rolled_back" && QUEUE_VERBS.has(m.kind) && this.screenerWait.armed) {
+      this.reaskScreenerWaiting();
+    }
+    return result;
+  }
+
+  private async mutateOnce(m: EngineMutation, opts: { key?: string }): Promise<MutationResult> {
     const enriched = this.enrich(m);
     const id = this.uuid();
     const key = opts.key ?? this.uuid();
@@ -5509,6 +5655,11 @@ export class OhmailEngine {
 
   /** Does this verb name message rows by id, none of which the mirror or a page holds? */
   private namesOnlyUnheldRows(m: EngineMutation): boolean {
+    // A queue row from a page past the first: the mirror never held it, and only the server can
+    // resolve the representative, so the decision is sent with nothing to paint.
+    if (m.kind === "screener_decide") {
+      return this.store.record("message", m.senderId) === undefined && this.screenerPageReps.has(m.senderId);
+    }
     const ids = verbTargetsOf(m);
     return ids !== null && ids.every((mid) =>
       this.store.record("message", mid) === undefined && this.storePages.find(mid) === undefined);

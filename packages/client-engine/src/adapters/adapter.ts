@@ -169,6 +169,26 @@ export interface UnscreenedWire {
   max: number;
 }
 
+/** One waiting sender as `GET /screener` lists it: the representative held message and its author. */
+export interface ScreenerWaitingItemWire {
+  messageId: string;
+  address: string;
+  name: string | null;
+  receivedAt: string;
+  subject: string;
+  snippet: string;
+  mailboxId: string | null;
+}
+
+/** One page of the queue. `total` is stated on the first page only; `null` where none was. */
+export interface ScreenerWaitingWire {
+  items: ScreenerWaitingItemWire[];
+  nextCursor: string | null;
+  total: number | null;
+  /** Decisions the server is still carrying out; their senders are on no page. */
+  inFlight: Array<{ scope: "sender" | "domain"; match: string }>;
+}
+
 /** The press's answer: the groups it screened and how many messages they held. */
 export interface UnscreenedResultWire {
   screened: UnscreenedGroupWire[];
@@ -364,6 +384,13 @@ export interface EngineAdapter {
    * ARRIVAL GATE's answer, which `/sync` carries no vocabulary for.
    */
   unscreened?(): Promise<UnscreenedWire>;
+
+  /**
+   * `GET /screener` — one page of the waiting queue, read from the store rather than the mirror,
+   * which is windowed while the queue is not. Optional: a door without it leaves the Screener to
+   * the mirror's own derivation, and the surface says the count is this device's.
+   */
+  screenerWaiting?(page?: { cursor?: string; limit?: number }): Promise<ScreenerWaitingWire>;
 
   /**
    * `POST /screener/unscreened` — THE PRESS. Sends the named sender groups, or every group shown

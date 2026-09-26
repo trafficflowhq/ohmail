@@ -622,6 +622,11 @@
   "screener": {
     "title": "Screener",
     "metaWaiting": "{count, plural, =0 {all clear} one {1 first-time sender waiting} other {# first-time senders waiting}}",
+    "metaWaitingOnDevice": "{count, plural, =0 {none counted on this device} one {1 first-time sender waiting, counted on this device} other {# first-time senders waiting, counted on this device}}",
+    "waitingMoreAction": "Show more senders",
+    "waitingMoreLoading": "Loading more senders…",
+    "waitingMoreFailed": "More senders could not be loaded.",
+    "waitingMoreRetry": "Try again",
     "segWaiting": "Waiting",
     "segScreened": "Screened out",
     "segSpam": "Spam",

@@ -455,6 +455,9 @@ function accountGuarded(
     listAttachments: (id) => adapter.listAttachments(id),
     fetchAttachment: (id) => adapter.fetchAttachment(id),
     fetchAllAttachments: (id) => adapter.fetchAllAttachments(id),
+    // The Screener's queue from the store, forwarded on `listMessages`' rule: a read of this
+    // account's own held senders, whose answer the engine's partition and count are built from.
+    screenerWaiting: (page) => adapter.screenerWaiting(page),
   };
 }
 

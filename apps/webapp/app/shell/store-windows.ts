@@ -39,18 +39,12 @@ import type { StorePolicy } from "@ohmail/client-engine";
 export const BROWSER_WINDOW = { mode: "windowed", days: 90, minRows: 5000, maxRows: 10000 } as const satisfies StorePolicy;
 
 /**
- * THE DESKTOP'S WINDOW — the same size, for a different reason.
- *
- * The standalone window used to pass no policy at all, which is `full`: the renderer held every
- * message and every hydrated body for the life of the window, and `pruneToPolicy` evicts nothing
- * in that mode. On a large mailbox one whole-mirror derivation cost 180–236 ms and the eager
- * pass cost minutes of one core, with RSS at 1.5 GB.
- *
- * The mail is still all on the machine — the engine's own store holds it, which is this tier's
- * promise — so what this bounds is the RENDERER's projection, not the mailbox. Reach-past here is
- * a pipe to a process on the same machine rather than a network round trip, so the desktop has
- * less reason than a browser to hold a large window, not more: the same 90 days and 5 000 rows,
- * kept as its own constant so the two can be pinned and can diverge on a measurement rather than
- * by accident.
+ * THE DESKTOP'S WINDOW — the same size, for a different reason. With no policy the renderer held
+ * every message and body for the life of the window (`full` evicts nothing): on a large mailbox a
+ * whole-mirror derivation cost 180–236 ms and RSS reached 1.5 GB. The mail stays on the machine in
+ * the engine's own store, so this bounds the RENDERER's projection: the lists reach past it (older
+ * mail, History, search) and the Screener's queue and count are the store's; the Ohbox rail's count
+ * is still the projection's own. Reach-past is a pipe to a process on this machine, so the desktop
+ * needs no larger window than a browser — its own constant, so the two diverge only on a measurement.
  */
 export const DESKTOP_WINDOW = { mode: "windowed", days: 90, minRows: 5000, maxRows: 10000 } as const satisfies StorePolicy;

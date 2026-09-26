@@ -432,6 +432,13 @@ export interface Dialect {
    */
   jsonGet(document: SQL | unknown, key: string): SQL;
 
+  /**
+   * The TEXT at one top-level key of a JSON document — a string value as an SQL string, NULL when
+   * the key is missing — for comparing a stored field with an SQL value. {@link jsonGet} is the
+   * JSON twin; the key is guarded the same way.
+   */
+  jsonText(document: SQL | unknown, key: string): SQL;
+
   /** Is this JSON value an array? Asked of {@link jsonGet}'s answer, never of an SQL value. */
   jsonIsArray(value: SQL | unknown): SQL;
 

@@ -922,6 +922,12 @@ export interface ScreenerSenderDTO {
    * `screener-state.ts#commit` re-reads the raw mirror at commit time.
    */
   gatePhysical?: boolean;
+  /**
+   * A waiting row MINTED from the store's queue page: the mirror holds none of this sender's held
+   * mail, so `held` is the one message the page named, at its snippet. A decision on it is the
+   * ordinary decide, sent for a representative only the server holds.
+   */
+  stored?: true;
   updatedAt: ISODateTime;
 }
 
@@ -1751,6 +1757,55 @@ export interface UnscreenedGroupDTO {
    * Messages across EVERY shown group, carried on each row because the mirror stores rows and not
    * a document. Identical on every row of one refresh; a stale row is replaced wholesale.
    */
+  total: number;
+}
+
+/**
+ * THE SCREENER'S WAITING QUEUE AS THE STORE HOLDS IT — one page of `GET /screener`, client-local
+ * (seq 0, never a `/sync` entity) and replaced wholesale by {@link OhmailEngine.refreshScreenerWaiting}.
+ * The mirror is windowed and the queue is not, so the waiting set and its count come from here.
+ * One `page` row names the answer (its absence is "not answered", never "nobody waiting"), and one
+ * `sender` row per sender the page lists, in the page's order.
+ */
+export const SCREENER_WAITING_TYPE = "screener_waiting";
+/** The id of the one `page` row; every sender row's id is `sender:` plus its key. */
+export const SCREENER_WAITING_PAGE_ID = "page";
+
+export type ScreenerWaitingDTO = ScreenerWaitingPageDTO | ScreenerWaitingSenderDTO;
+
+export interface ScreenerWaitingPageDTO {
+  id: typeof SCREENER_WAITING_PAGE_ID;
+  kind: "page";
+  /** Waiting senders across every page — the store's own count. */
+  total: number;
+  /** Where the next page starts, or null when this page is the whole queue. */
+  nextCursor: string | null;
+  /** The subjects of decisions the server is still carrying out, which it leaves off every page. */
+  inFlight: Array<{ scope: "sender" | "domain"; match: string }>;
+  /** Which ask wrote this answer — rises with every refresh, so a reader can tell a newer one. */
+  ask: number;
+  /**
+   * How many sender rows this answer wrote. A decision's overlay hides its sender's row, and the
+   * count on screen drops by the rows hidden, until the next answer states the store's own again.
+   */
+  rows: number;
+}
+
+export interface ScreenerWaitingSenderDTO {
+  id: string;
+  kind: "sender";
+  /** The position on the page, from 0. */
+  order: number;
+  /** The representative held message — the id `POST /screener/:id` resolves. */
+  messageId: string;
+  address: string;
+  name: string | null;
+  /** The representative's instant, ISO, or "" from a row that carried none. */
+  receivedAt: string;
+  subject: string;
+  snippet: string;
+  mailboxId: string | null;
+  /** The page's `total`, on every row for {@link HeldReleaseGroupDTO.total}'s reason. */
   total: number;
 }
 

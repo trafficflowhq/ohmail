@@ -30,7 +30,7 @@ export const MIRROR_ENTITY_TYPES = [
   "folder", "tag", "mailbox", "screener_suggestion", "mailbox_profile",
   // Client-local: the demo world, view metadata, hydrated bodies, the held-release derivation.
   "screener_sender", "triage_item", "view_meta", "message_body", "held_release_group",
-  "unscreened_sender_group",
+  "unscreened_sender_group", "screener_waiting",
   // Client-local and DURABLE: the outbox and its abandoned half.
   "outbox_entry", "outbox_abandoned",
   // Client-local and IN MEMORY: the store's History pages — never written to the store.
@@ -179,6 +179,13 @@ export const MIRROR_BOUNDS: Record<KnownMirrorEntityType, MirrorBound> = {
     why: "a server derivation over the caller's own Ohbox, one row per sender and bounded by the "
       + "server's own group ceiling; every refresh writes the whole set and prunes the "
       + "complement, so it is replaced rather than accumulated",
+  },
+  screener_waiting: {
+    by: "replaced",
+    via: "OhmailEngine.refreshScreenerWaiting",
+    why: "one page of the store's waiting queue plus its page row, bounded by the route's own "
+      + "page ceiling; every refresh writes the whole set and prunes the complement, and the "
+      + "pages onward are never written to the mirror",
   },
   outbox_entry: {
     by: "person",

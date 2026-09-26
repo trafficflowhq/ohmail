@@ -40,7 +40,7 @@ import {
   draftBodyKnown,
   SENDING_STALE_AFTER_MS,
   HELD_SEND_RECHECK_MS,
-  screenerAdviceAi,
+  screenerRowsOfStore,
   screenerSegments,
   senderKey,
   threadOf,
@@ -1299,47 +1299,6 @@ function gateReader(pres: EntityReader, waiting: ReadonlySet<string>): EntityRea
 }
 
 /**
- * A ROW FOR A SENDER THE ROUTE NAMES AND THIS MIRROR CANNOT BACK.
- *
- * The mirror is WINDOWED (90 days, a floor of rows) while the queue is not, so the route can
- * name a sender whose mail this phone does not hold. Such a sender still gets a row — dropping
- * them would put the phone back to showing fewer senders than the server, which is the whole
- * defect — built from what the route itself states. `held` carries the one message the route
- * named, at its own stamp; the sender screen hydrates nothing further, because there is nothing
- * on this device to hydrate from.
- */
-function rowOfServer(
-  s: ServerWaitingSender, v: WorldView, scope: Scope | undefined,
-  /**
-   * The mirror's advice for this sender, joined in by the caller ({@link screenerAdviceAi} by
-   * `senderKey`) — the route's parse carries none, and the suggestion entity is NOT bounded by
-   * the message window (its cascade follows a removal, never an absence), so a sender this
-   * mirror cannot back can still have a live verdict to badge.
-   */
-  ai: ScreenerRow["ai"] = null,
-): ScreenerRow {
-  const name = s.name || s.address;
-  const time = messageDisplayTime({ date: s.receivedAt }, v.now, v.zone, v.locale ?? "en");
-  return {
-    id: s.messageId,
-    routeKey: senderKey(s.address),
-    name,
-    address: s.address,
-    initial: (name.trim()[0] ?? "?").toUpperCase(),
-    time,
-    newestSubject: s.subject,
-    dull: false,
-    scope: scope ?? "sender",
-    ai,
-    held: [{ id: s.messageId, subject: s.subject, time, body: s.snippet, bodyState: "snippet", seen: false }],
-    screenedOn: "",
-    detection: "",
-    // The route only ever names mail it is holding at the gate.
-    gatePhysical: true,
-  };
-}
-
-/**
  * The three shelves — `screenerSegments` over the projection (the queue the webapp renders),
  * reshaped. `scopes` carries the reader's per-sender scope choice (this sender / whole domain),
  * view state rather than a mirror fact, keyed by the STABLE {@link ScreenerRow.routeKey}. On a
@@ -1361,6 +1320,13 @@ export function liveScreener(
   const segments = screenerSegments(queueReader, v.now, v.locale ?? "en", v.zone, v.ownAddresses);
   const map = (rows: ScreenerSenderDTO[]) =>
     rows.map((dto) => rowOf(dto, scopes[senderKey(dto.from.address)]));
+  if (server === null && segments.source === "store" && segments.waitingCursor === null) {
+    // The engine's copy of the store's page IS the whole queue: the store's set, not a derivation.
+    return {
+      waiting: map(segments.waiting), screened: map(segments.screenedOut), spam: map(segments.spam),
+      source: "server", waitingPending: false,
+    };
+  }
   if (server === null) {
     /* THE ANSWER IS NOT IN, SO THIS SHELF IS UNKNOWN — not wide. Without an answer the partition
        runs at `all_time` (`presentedWorld`), which retires nobody: every undecided sender queues
@@ -1382,15 +1348,15 @@ export function liveScreener(
      (decided on another door, or outside the server's own cutline), and a named sender the
      mirror cannot back is minted. So the count on screen is the number the route answered, and
      the two ends cannot disagree about who is waiting. */
-  const derived = new Map(segments.waiting.map((dto) => [senderKey(dto.from.address), dto]));
-  // The mirror's advice, joined onto the rows the derivation cannot back — a minted row's badge
-  // is the same verdict a derived row's is, read through the same selector.
-  const advice = screenerAdviceAi(pres);
-  const waiting = server.map((s) => {
-    const key = senderKey(s.address);
-    const dto = derived.get(key);
-    return dto ? rowOf(dto, scopes[key]) : rowOfServer(s, v, scopes[key], aiOfDto(advice.get(key) ?? null));
-  });
+  // The shared selector's join: the mirror's row where it presents the sender's held mail, a row
+  // minted from the route's own words where the windowed mirror cannot back them.
+  const waiting = screenerRowsOfStore(
+    queueReader, server.map((s, order) => ({
+      id: `sender:${senderKey(s.address)}`, kind: "sender" as const, order, messageId: s.messageId,
+      address: s.address, name: s.name, receivedAt: s.receivedAt, subject: s.subject,
+      snippet: s.snippet, mailboxId: null, total: server.length,
+    })), v.now, v.locale ?? "en", v.zone, v.ownAddresses,
+  ).map((dto) => rowOf(dto, scopes[senderKey(dto.from.address)]));
   return {
     waiting,
     screened: map(segments.screenedOut),

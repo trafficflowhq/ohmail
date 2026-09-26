@@ -353,6 +353,7 @@ export function sqliteDialect(): Dialect {
        read a key holding `.` or `[` as a path into something else. The quote-and-backslash refusal
        is the contract's, one level up. */
     jsonGet: (document, key) => sql`(${document} -> ${`$."${assertJsonKey(key)}"`})`,
+    jsonText: (document, key) => sql`(${document} ->> ${`$."${assertJsonKey(key)}"`})`,
     jsonIsArray: (value) => sql`json_type(${value}) = 'array'`,
 
     /**

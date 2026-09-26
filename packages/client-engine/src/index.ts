@@ -189,6 +189,11 @@ export {
   HELD_RELEASE_TYPE,
   type UnscreenedGroupDTO,
   UNSCREENED_TYPE,
+  SCREENER_WAITING_TYPE,
+  SCREENER_WAITING_PAGE_ID,
+  type ScreenerWaitingDTO,
+  type ScreenerWaitingPageDTO,
+  type ScreenerWaitingSenderDTO,
   type RuleDTO,
   type ScreenerHeldMail,
   type ScreenerSegment,
@@ -359,6 +364,9 @@ export {
   unscreenedTotalOf,
   screenerAdviceAi,
   screenerSegments,
+  screenerRowsOfStore,
+  screenerWaitingOf,
+  screenerWaitingNames,
   senderKey,
   sendingMailboxId,
   triagePiles,
@@ -472,7 +480,10 @@ export {
 } from "./send-and-done.js";
 
 // Adapters.
-export type { EngineAdapter, MutationAnswer, MutationOutcome, MutationQueued, SyncParams } from "./adapters/adapter.js";
+export type {
+  EngineAdapter, MutationAnswer, MutationOutcome, MutationQueued, SyncParams,
+  ScreenerWaitingItemWire, ScreenerWaitingWire,
+} from "./adapters/adapter.js";
 export { DEMO_NOW, FixturesAdapter, parseFixtureTime, type FixturesAdapterOptions } from "./adapters/fixtures-adapter.js";
 export {
   HttpAdapter,

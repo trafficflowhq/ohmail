@@ -943,6 +943,12 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
         ...(adapter.screenUnscreened
           ? { screenUnscreened: gatedPress(adapter.screenUnscreened.bind(adapter), "screening mail from senders you have not decided about") }
           : {}),
+        /* THE SCREENER'S QUEUE FROM THE STORE — a read of the caller's own held senders, gated like
+           the two reads above. Without it the live web path would count the Screener off the
+           windowed mirror, which is what this read exists to replace. */
+        ...(adapter.screenerWaiting
+          ? { screenerWaiting: gatedRead(adapter.screenerWaiting.bind(adapter), "the senders waiting in your Screener") }
+          : {}),
       } satisfies GatedAdapter & { transport: EngineAdapter };
     },
   };

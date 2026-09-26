@@ -30,7 +30,7 @@ import type {
 } from "../engine.js";
 import type {
   AttachmentWire, EngineAdapter, HeldReleaseGroupWire, HeldReleaseResultWire, HeldReleaseWire,
-  UnscreenedGroupWire, UnscreenedResultWire, UnscreenedWire,
+  UnscreenedGroupWire, UnscreenedResultWire, UnscreenedWire, ScreenerWaitingItemWire, ScreenerWaitingWire,
   MutationAnswer, MutationOutcome, MutationQueued, SyncParams,
 } from "./adapter.js";
 import { retryAfterMsOf, retryingRead } from "./retrying-read.js";
@@ -1067,6 +1067,55 @@ export class HttpAdapter implements EngineAdapter {
       groups,
       total: typeof wire.total === "number" && Number.isFinite(wire.total) ? Math.trunc(wire.total) : 0,
       max: typeof wire.max === "number" && Number.isFinite(wire.max) ? Math.trunc(wire.max) : 0,
+    };
+  }
+
+  /** One queue row off the wire, or `null` when it names no message to decide or no author. */
+  private static waitingItemOf(raw: unknown): ScreenerWaitingItemWire | null {
+    if (typeof raw !== "object" || raw === null) return null;
+    const r = raw as Record<string, unknown>;
+    const sender = (typeof r.sender === "object" && r.sender !== null ? r.sender : {}) as Record<string, unknown>;
+    const messageId = typeof r.messageId === "string" ? r.messageId : "";
+    const address = typeof sender.address === "string" ? sender.address : "";
+    if (messageId === "" || address === "") return null;
+    const text = (v: unknown) => (typeof v === "string" ? v : "");
+    return {
+      messageId, address,
+      name: typeof sender.name === "string" && sender.name !== "" ? sender.name : null,
+      receivedAt: text(r.receivedAt), subject: text(r.subject), snippet: text(r.snippet),
+      mailboxId: typeof r.mailboxId === "string" && r.mailboxId !== "" ? r.mailboxId : null,
+    };
+  }
+
+  async screenerWaiting(page: { cursor?: string; limit?: number } = {}): Promise<ScreenerWaitingWire> {
+    const q = new URLSearchParams();
+    if (page.limit !== undefined) q.set("limit", String(page.limit));
+    if (page.cursor) q.set("cursor", page.cursor);
+    const res = await this.request("GET", `/screener?${q.toString()}`);
+    if (!res.ok) throw await this.rejectionOf(res);
+    const wire = (await res.json()) as {
+      items?: unknown; nextCursor?: unknown; total?: unknown; pendingDecisions?: unknown;
+    } | null;
+    // A body that is not a queue page is no answer. Read as an empty page it would say nobody is
+    // waiting, and the partition would present held mail in the Ohbox on the strength of it.
+    if (wire === null || typeof wire !== "object" || !Array.isArray(wire.items)) {
+      throw new Error("GET /screener answered something that is not a queue page");
+    }
+    const items = wire.items.map((i) => HttpAdapter.waitingItemOf(i))
+      .filter((i): i is ScreenerWaitingItemWire => i !== null);
+    // A refused decision is back on the page, so only `pending`/`sent` ones are left off it.
+    const inFlight = (Array.isArray(wire.pendingDecisions) ? wire.pendingDecisions : []).flatMap((raw): ScreenerWaitingWire["inFlight"] => {
+      const d = raw as { subject?: unknown; scope?: unknown; state?: unknown; sent?: unknown };
+      const refused = d.state === "refused";
+      if (refused || typeof d.subject !== "string" || d.subject === "") return [];
+      return d.scope === "sender" || d.scope === "domain" ? [{ scope: d.scope, match: d.subject.toLowerCase() }] : [];
+    });
+    return {
+      items,
+      nextCursor: typeof wire.nextCursor === "string" && wire.nextCursor !== "" ? wire.nextCursor : null,
+      total: typeof wire.total === "number" && Number.isFinite(wire.total) && wire.total >= 0
+        ? Math.trunc(wire.total) : null,
+      inFlight,
     };
   }
 
