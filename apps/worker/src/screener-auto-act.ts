@@ -237,6 +237,8 @@ export async function screenerAutoActPass(
           // lift over their domain rule — that lift is a person's answer about one address.
           retargetTwins: false,
           liftOverDomain: false,
+          // NOT A PRESS: a filing this pass makes never licenses an unsubscribe.
+          decidedBy: "pass",
         });
       });
       if (applied === null) {

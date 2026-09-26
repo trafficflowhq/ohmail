@@ -305,6 +305,13 @@ export interface ApplyScreenerDecisionInput {
    * Defaults `true`, as a press; the auto-act pass passes `false` and never overrules a domain rule.
    */
   liftOverDomain?: boolean;
+  /**
+   * WHO DECIDED — required, no default: the default would be the branch that licenses an
+   * unsubscribe. `person` is a press (the HTTP door, a reader's request drained here); `pass` is
+   * the auto-act pass. Only a person's decision stamps `rules.person_decided_at` on the promoted
+   * rule, which is the automatic unsubscribe pass's whole licence to act.
+   */
+  decidedBy: "person" | "pass";
 }
 
 /**
@@ -360,7 +367,7 @@ export async function applyScreenerDecision(
 ): Promise<ApplyScreenerDecisionResult> {
   const {
     accountId, scope, address, appliedFolder, decision, triggeringActionId, now,
-    stampBaseline = true, applyRetro = true, retargetTwins = true, liftOverDomain = true,
+    stampBaseline = true, applyRetro = true, retargetTwins = true, liftOverDomain = true, decidedBy,
   } = input;
   const domain = domainOf(address);
 
@@ -410,6 +417,7 @@ export async function applyScreenerDecision(
     // surface just carried. NULL when declined — "nobody asked" is a different fact from "asked
     // and finished", and the worker's owed predicate reads exactly that difference.
     retroRequestedAt: applyRetro ? now : null,
+    personDecidedAt: decidedBy === "person" ? now : null,
   }).returning({ id: rulesTbl.id });
   // Tracked and returned so an HTTP caller can re-emit it as `X-Sync-Seq` on an idempotent
   // replay — `claimIdempotencyKey`'s own `seq` field. The drain has no such replay contract and

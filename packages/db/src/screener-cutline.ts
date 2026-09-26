@@ -220,6 +220,31 @@ export function senderIsDecidedSql(d: Dialect, accountId: string, senderExpr: SQ
 }
 
 /**
+ * DID A PERSON SCREEN THIS SENDER OUT — the automatic unsubscribe pass's licence (UD-R4-03). An
+ * enabled `sender`/`domain` rule naming the author, filing to one of `denyFolders`, whose decision
+ * a person made (`person_decided_at`). {@link senderIsDecidedSql}'s claim, with the account as an
+ * EXPRESSION because the drain runs deployment-wide. `senderExpr` is lower-cased by the caller.
+ * Through the dialect only: the phone bundle runs this against its own store.
+ */
+export function senderScreenedOutByPersonSql(
+  d: Dialect, accountExpr: SQL, senderExpr: SQL, denyFolders: readonly string[],
+): SQL {
+  if (denyFolders.length === 0) return sql`false`;
+  const deny = sql`(${sql.join(denyFolders.map((f) => sql`${f}`), sql`, `)})`;
+  return sql`exists (
+    select 1 from rules rp
+     where rp.account_id = ${accountExpr}
+       and rp.enabled
+       and rp.person_decided_at is not null
+       and rp.destination in ${deny}
+       and (
+            (rp.kind = 'sender' and trim(lower(rp.match)) = ${senderExpr})
+         or (rp.kind = 'domain' and trim(lower(rp.match)) = ${d.domainOf(senderExpr)})
+       )
+  )`;
+}
+
+/**
  * IS THIS SENDER THE ACCOUNT ITSELF — one of its own mailbox addresses. The account is never one
  * of its own correspondents, so its mail is never a Screener decision: the count leaves it out and
  * the queue's page and the auto-suggest set never list it. The client's twin is

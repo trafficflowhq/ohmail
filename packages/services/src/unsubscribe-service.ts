@@ -1,7 +1,7 @@
 import { and, asc, eq, gt, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  assertOrganizerRole,
+  assertOrganizerRole, senderScreenedOutByPersonSql,
   accountSettings, mailboxes, messages, messageBodies, folderState, unsubscribeRecords,
   unsubscribeExamined, readDrainCursor, writeDrainCursor, UNSUB_DRAIN_PASS,
   type DrainCursor, type Tx,
@@ -130,6 +130,12 @@ export type UnsubscribeRefusal =
    * {@link UnsubscribeService.onScreenOut}.
    */
   | "sender_identity_unverified"
+  /**
+   * The AUTOMATIC arm declined: no rule a PERSON decided screens this sender out
+   * (`senderScreenedOutByPersonSql`). A reject folder alone is not that — import adoption and the
+   * auto-act pass file there too. Server-only, like the one above: the button never meets it.
+   */
+  | "not_person_decided"
   /** No `List-Unsubscribe` at all. */
   | "no_header"
   /** An unsubscribe route exists but it is `mailto:` — refused, never used. */
@@ -366,13 +372,12 @@ export function startDrainBudget(
 
 /**
  * WHICH MESSAGES MAY BE UNSUBSCRIBED FROM: REJECT DESTINATIONS ONLY, NEVER KEEP DESTINATIONS.
- * `ohmail/Screened` and `ohmail/Quarantine` — the user said no; `folder_state.desired_folder` is
- * the one sink every reject path writes, so naming the destinations covers every route, later
- * ones included. Absent, deliberately: `ohmail/Reads` (removed — mail the user CHOSE TO KEEP);
- * `ohmail/Receipts` (same, sharper: a sender unsubscribed here stops sending the receipt for a
- * purchase already made); `ohmail/Screener` (the user has NOT decided — acting would make first
- * contact itself an unsubscribe); `INBOX` (the user's real mail). These five are the whole
- * `Destination` union, so the set is exhaustive by construction.
+ * `ohmail/Screened` and `ohmail/Quarantine`. Necessary, not sufficient for the automatic arm: the
+ * automatic passes and import adoption file there too, so that arm also needs a rule a person
+ * decided (`senderScreenedOutByPersonSql`, see `run`). Absent, deliberately: `ohmail/Reads` and
+ * `ohmail/Receipts` (mail the user CHOSE TO KEEP — a receipt's sender would stop sending it);
+ * `ohmail/Screener` (not decided — acting would make first contact an unsubscribe); `INBOX`.
+ * These five are the whole `Destination` union, so the set is exhaustive by construction.
  */
 const ACTIONABLE_FOLDERS: ReadonlySet<string> = new Set<Destination>([
   "ohmail/Screened", "ohmail/Quarantine",
@@ -449,6 +454,8 @@ interface MessageRow {
   fromAddress: string;
   headers: Record<string, unknown>;
   desiredFolder: string | null;
+  /** A person's rule screens this sender out — the automatic arm's licence; see {@link run}. */
+  personDecided: boolean;
   /** `connected` | `error` | `disabled`, or `null` where the mailbox row is gone. */
   mailboxStatus: string | null;
 }
@@ -580,6 +587,14 @@ export class UnsubscribeService {
       refuse("sender_identity_unverified", 409,
         "your provider did not confirm who sent this, and ohmail only leaves lists " +
         "automatically for senders it can confirm");
+    }
+
+    // THE AUTOMATIC ARM ACTS ONLY FOR A SENDER A PERSON SCREENED OUT (UD-R4-03). This seam is the
+    // decision and the drain's flag the optimisation: the post-decide courtesy and any direct id
+    // hand-off never pass the drain's walk. The button is a person looking at the mail.
+    if (mode === "automatic" && !row.personDecided) {
+      refuse("not_person_decided", 409,
+        "ohmail leaves a list on its own only for a sender you screened out yourself");
     }
 
     if (header === "no_header") refuse("no_header", 409, "this sender publishes no unsubscribe route");
@@ -761,13 +776,11 @@ export class UnsubscribeService {
   }
 
   /**
-   * THE DRAIN, AND WHY IT REFUSES TO RUN WITHOUT A CUTOFF. `folder_state.desired_folder` is the
-   * single sink every reject path writes, so the STATE is the queue — nothing is enqueued, and a
-   * later reject path is covered the day it is written. `since` IS REQUIRED, NO DEFAULT: a mature
-   * mailbox holds thousands of pre-feature screen-outs, and a drain defaulting to "all of it"
-   * would make thousands of outbound requests — announcing this address to the very spam screened
-   * out because nobody wanted it confirmed live. The sweep happens only because somebody typed
-   * the date. `limit` is required for the same reason at smaller scale.
+   * THE DRAIN, AND WHY IT REFUSES TO RUN WITHOUT A CUTOFF. The PLACEMENT is the queue (a reject
+   * folder, nothing enqueued) and the RULE is the licence: a sender a person screened out.
+   * `since` IS REQUIRED, NO DEFAULT: a mature mailbox holds thousands of old screen-outs, and a
+   * drain defaulting to "all of it" would announce this address to the very spam screened out
+   * because nobody wanted it confirmed live. `limit` is required for the same reason.
    */
   async sweepScreenedOut(
     ctx: ServiceContext,
@@ -815,6 +828,7 @@ export class UnsubscribeService {
       at: folderState.updatedAt,
       accountId: messages.accountId,
       mailboxId: messages.mailboxId,
+      fromAddress: messages.fromAddress,
     })
       .from(folderState)
       .innerJoin(messages, eq(messages.id, folderState.messageId))
@@ -860,7 +874,8 @@ export class UnsubscribeService {
         // mailbox with nothing owed. `case when` collapses both, and NULL (an absent join) is
         // `no` on both, as it was.
         eligible: sql<string>`(case when (
-          ${unsubscribeRecords.id} is null
+          ${senderScreenedOutByPersonSql(d, sql`${page.accountId}`, sql`lower(${page.fromAddress})`, REJECT_DESTINATIONS)}
+          and ${unsubscribeRecords.id} is null
           and ${unsubscribeExamined.messageId} is null
           and ${accountSettings.blockAutoUnsubscribeAt} is null
           and ${mailboxes.status} <> 'disabled'
@@ -1246,6 +1261,11 @@ export class UnsubscribeService {
       fromAddress: messages.fromAddress,
       headers: messageBodies.headers,
       desiredFolder: folderState.desiredFolder,
+      // A VERDICT WORD, for the drain's reason: the stores spell a boolean differently, and an
+      // absent answer must read `no`.
+      personDecided: sql<string>`(case when ${senderScreenedOutByPersonSql(
+        dialect(ctx.db), sql`${messages.accountId}`, sql`lower(${messages.fromAddress})`, REJECT_DESTINATIONS,
+      )} then 'yes' else 'no' end)`,
       // The mailbox's own connected state, read here so the seam below can ask it in the same
       // breath as the role. Disconnection leaves the mirrored mail and the organizer role behind,
       // so the role alone cannot tell whether this mailbox is still ours to act for.
@@ -1273,6 +1293,7 @@ export class UnsubscribeService {
     return {
       mailboxId: row.mailboxId, fromAddress: row.fromAddress,
       headers, desiredFolder: row.desiredFolder, mailboxStatus: row.mailboxStatus,
+      personDecided: row.personDecided === "yes",
     };
   }
 }

@@ -937,6 +937,14 @@ export const rules = pgTable("rules", {
    * compares order, and `sqlite-baseline` reads it back off `PRAGMA table_info`).
    */
   releaseHeldAt: timestamp("release_held_at", { withTimezone: true }),
+  /**
+   * WHEN A PERSON MADE THIS DECISION (mail 0128) — NULL for every rule a pass or an import wrote.
+   * Stamped only by `applyScreenerDecision` for a press (the HTTP decide, a reader's request), never
+   * by the auto-act pass. The automatic unsubscribe pass acts only for a sender such a rule screens
+   * out (`senderScreenedOutByPersonSql`), so an undo, a retarget or a disable ends it with the rule.
+   * LAST, for the reason above.
+   */
+  personDecidedAt: timestamp("person_decided_at", { withTimezone: true }),
 }, (t) => ({
   ixIdAccount: uniqueIndex("rules_id_account_uq").on(t.id, t.accountId),
   /**

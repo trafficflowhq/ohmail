@@ -1191,6 +1191,8 @@ export class ScreenerReadService {
         applied = await applyScreenerDecision(carryDialect(ctx.db, tx) as typeof tx, {
           accountId: ctx.accountId, scope, address, appliedFolder, decision,
           triggeringActionId: `screener:${id}`, now: ctx.now(), applyRetro,
+          // A press: the decision is the person's, so a `no` licenses the unsubscribe pass.
+          decidedBy: "person",
         });
       } catch (err) {
         // `applyScreenerDecision` fences the account itself, first — see its own header. Its

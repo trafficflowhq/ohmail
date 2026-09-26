@@ -897,6 +897,13 @@
       "when": 1791602600031,
       "tag": "0127_mailbox_signed_out_meta",
       "breakpoints": true
+    },
+    {
+      "idx": 128,
+      "version": "7",
+      "when": 1791602600032,
+      "tag": "0128_rule_person_decided",
+      "breakpoints": true
     }
   ]
 }

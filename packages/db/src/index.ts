@@ -367,7 +367,7 @@ export {
  * it is store-neutral — the phone runs the same engine on the device store.
  */
 export {
-  resolveCutline, senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, activeSenderExpr, anyOf,
+  resolveCutline, senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, senderScreenedOutByPersonSql, activeSenderExpr, anyOf,
   cutlineInstant,
   CUTLINE_PRESENTED_FOLDERS, CUTLINE_DEFAULT_DORMANCY_DAYS, CUTLINE_ALLOW_DESTINATIONS,
   CUTLINE_DECIDED_DESTINATIONS, CUTLINE_GATE_FOLDER, destinationIsDecision, destinationIsDecisionSql,

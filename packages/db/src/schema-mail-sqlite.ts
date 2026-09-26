@@ -874,6 +874,8 @@ export const rules = sqliteTable("rules", {
   // both stores APPEND an added column and this file's order is read back off
   // `PRAGMA table_info`.
   releaseHeldAt: integer("release_held_at", { mode: "timestamp_ms" }),
+  // Mail 0128: when a person made this decision — the automatic unsubscribe pass's licence. LAST.
+  personDecidedAt: integer("person_decided_at", { mode: "timestamp_ms" }),
 }, (t) => ({
   ixIdAccount: uniqueIndex("rules_id_account_uq").on(t.id, t.accountId),
   /**

@@ -115,6 +115,8 @@ const KIND_HANDLERS: Readonly<Record<string, KindHandler | undefined>> = {
         // The reader's own past-mail answer, carried across the install boundary rather than
         // re-defaulted here: a decline made on one install must not become consent on another.
         applyRetro: decision.applyRetro,
+        // A READER's press, carried across the install boundary: still the person's decision.
+        decidedBy: "person",
       });
       return { applied: true };
     };
