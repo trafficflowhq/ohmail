@@ -160,14 +160,16 @@ export async function makeSendAdapter(
     return {
       send: async (msg) => {
         const res = await adapter.send(msg);
-        // `appended` carries the Sent-folder APPEND this send just made — the UID the server answered
-        // with, and the exact bytes at it. Dropping it here (which this wrapper used to do) is what
+        // `appended` carries the Sent copy this send appended, or found where the server files its
+        // own — the UID and the exact bytes at it. Dropping it here (which this wrapper used to do) is what
         // left the just-sent message discoverable only by the sync worker's next pass over Sent, a
         // poll interval later. `SendService.projectSentCopy` writes the row from it immediately.
         //
         // The bytes are NOT stored: they are fingerprinted and parsed into the same columns any
         // ingested message gets, and the Buffer is garbage after the request. See `SendResult.raw`
-        // for why the projection may not use anything else as its content source.
+        // for why the projection may not use anything else as its content source. No locator
+        // (a server that files its own copy, not found in time) is nothing to project.
+        if (res.sentLocator === null) return { providerMessageId: res.providerMessageId };
         return { providerMessageId: res.providerMessageId, appended: { locator: res.sentLocator, raw: res.raw } };
       },
       messageInSent: (messageId) => adapter.messageInSent(messageId),

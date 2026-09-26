@@ -865,21 +865,24 @@ export interface OutboundAttachment {
   /** A `related` inline part's Content-ID, carried so a forwarded body's `cid:` refs still resolve. */
   cid?: string;
 }
-export interface SendResult {
+export type SendResult = {
   providerMessageId: string;
   sentLocator: NativeLocator;
   /**
-   * The exact bytes appended to the Sent folder — `MailComposer`'s output, the same Buffer handed
-   * to `client.append`. One consumer, and the reason is an identity rule:
+   * The exact bytes AT `sentLocator` — the ones this send appended, or the server's own copy where
+   * the server files submissions itself. One consumer, and the reason is an identity rule:
    * `identity.ts#messageFingerprint` derives identity from content via `normalizeMime` over raw
    * source, so `sent-record.ts#recordSentMessage` must fingerprint THESE bytes. Rebuilding from
    * the `OutboundMessage` drifts by a byte — a boundary string, a header fold — which is a
-   * different fingerprint and a second `messages` row when the Sent copy is observed,
-   * permanently. Not optional, deliberately: `raw?` would let a future adapter opt out of the
-   * rule silently.
+   * different fingerprint and a second `messages` row when the Sent copy is observed, permanently.
    */
   raw: Buffer;
-}
+} | {
+  providerMessageId: string;
+  /** Delivered, and the server's own Sent copy was not found in time: no locator, no bytes. */
+  sentLocator: null;
+  raw: null;
+};
 
 /** One attachment BLOB fetched on-demand from IMAP — bytes are NEVER persisted (§13.2/§14). */
 export interface FetchedPart { contentType: string; filename: string | null; body: Uint8Array; }

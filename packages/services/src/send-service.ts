@@ -1075,13 +1075,13 @@ export class SendService {
 
   /**
    * PROJECT THE SENT COPY INTO THE DATABASE NOW, instead of waiting for the mailbox re-read.
-   * `ImapAdapter.send` has APPENDed to Sent, so the master holds it; until this, the `messages`
-   * row waited a whole poll interval. A SEPARATE TRANSACTION, AFTER the finalize: folding it in
-   * would put a MIME parse and five writes inside the transaction holding the seq lock — and a
-   * projection failure would roll the finalize back, leaving `pending` for a message ALREADY
-   * DELIVERED. A FAILURE IS LOGGED, NEVER THROWN: the mail is gone, and a 500 for a successful
-   * send is worse than a row the worker writes next cycle anyway. `seq` stays the FINALIZE's: the
-   * client drains after this response, so the row is in the next drain either way.
+   * `ImapAdapter.send` has put it in Sent (or found the server's own copy), so the master holds it;
+   * until this, the `messages` row waited a whole poll interval. A SEPARATE TRANSACTION, AFTER the
+   * finalize: folding it in would put a MIME parse and five writes inside the transaction holding
+   * the seq lock — and a projection failure would roll the finalize back, leaving `pending` for a
+   * message ALREADY DELIVERED. A FAILURE IS LOGGED, NEVER THROWN: the mail is gone, and a 500 for a
+   * successful send is worse than a row the worker writes next cycle anyway. `seq` stays the
+   * FINALIZE's: the client drains after this response, so the row is in the next drain either way.
    */
   private async projectSentCopy(
     ctx: ServiceContext,
@@ -1119,7 +1119,7 @@ export class SendService {
         accountId: ctx.accountId,
         mailboxId,
         err,
-        reason: "the message WAS delivered and appended to the Sent folder; only the local row is " +
+        reason: "the message WAS delivered and is in the Sent folder; only the local row is " +
           "late. The sync worker's Sent-folder pass writes it on its next cycle",
       });
     }

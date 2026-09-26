@@ -190,6 +190,23 @@ type FolderStatus = Pick<StatusObject, "messages" | "uidNext" | "highestModseq" 
 /** Sent-folder names, for servers that do not advertise SPECIAL-USE. Canonical paths only. */
 const SENT_BY_NAME = /^(inbox\/)?sent( items| messages| mail)?$/i;
 
+/**
+ * THE ANNOUNCEMENTS OF A SERVER THAT FILES EVERY SMTP SUBMISSION INTO SENT ITSELF. Gmail's IMAP
+ * says `X-GM-EXT-1` and saves each message its SMTP accepted under Sent Mail, so an APPEND after
+ * the submission is a second copy in every client reading the folder. Read from the capability,
+ * never the host name: a Google Workspace domain is Gmail under any name. Outlook.com and
+ * Microsoft 365 file submissions too and announce nothing that says so (an open gap).
+ */
+export const FILES_SUBMISSIONS_CAPABILITIES: readonly string[] = ["X-GM-EXT-1"];
+
+/**
+ * How a send looks for such a server's own copy: immediately, then after each wait, all inside one
+ * wall clock that also bounds every command of the look. A copy not found inside it is never
+ * replaced by an APPEND: the send records no Sent locator and the Sent-folder pass writes the row.
+ */
+export const SERVER_SENT_COPY_LOOK_WAITS_MS: readonly number[] = [250, 500, 1_000, 1_250];
+export const SERVER_SENT_COPY_FIND_MS = 5_000;
+
 const toMs = (d: unknown): number | null => {
   if (d == null) return null;
   const ms = d instanceof Date ? d.getTime() : new Date(d as string).getTime();
@@ -1151,11 +1168,13 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * `download` all return fixed-size results and can all be left unanswered for ever by a server
    * that stops talking mid-response, parking a pass where no `deadline.check()` is reached.
    */
-  private async bounded<T>(op: Promise<T>, folder?: string): Promise<T> {
+  private async bounded<T>(op: Promise<T>, folder?: string, within?: ImapDeadline): Promise<T> {
     // Silent: `race` rejects, so the caller propagates and the failure is counted there — and
-    // the adapter stays retired, so the NEXT cycle's refusal is counted too.
+    // the adapter stays retired, so the NEXT cycle's refusal is counted too. `within` is a
+    // caller's tighter clock (the send's look for the server's Sent copy), composed, never wider.
     this.assertUsable();
-    return this.readDeadline().race(op, folder, (because) => this.retireConnection(because));
+    return ImapDeadline.soonest(this.readDeadline(), within)
+      .race(op, folder, (because) => this.retireConnection(because));
   }
 
   /**
@@ -1195,8 +1214,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // required — so the inferred type rejects the `{ uid: true }` every call site here passes.
     opts: { uid?: boolean },
     folder?: string,
+    within?: ImapDeadline,
   ): Promise<number[] | false> {
-    const found = await this.bounded(this.client.search(query, opts), folder);
+    const found = await this.bounded(this.client.search(query, opts), folder, within);
     return boundSearchResult(found as number[] | false);
   }
 
@@ -3976,6 +3996,14 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       if (step !== null) throw new SendNotSubmitted(step, err);
       throw err;
     }
+    // A server that filed the submission itself already holds the one Sent copy: find it, never
+    // add a second. Not found in time ⇒ no locator, and the Sent-folder pass writes the row.
+    if (this.serverFilesSubmissions()) {
+      const found = await this.findServerSentCopy(messageId);
+      return found
+        ? { providerMessageId: messageId, sentLocator: found.locator, raw: found.raw }
+        : { providerMessageId: messageId, sentLocator: null, raw: null };
+    }
     // FROM HERE THE MESSAGE HAS LEFT. A fault in building or appending the Sent copy is not a
     // fault of the delivery, so it is raised as `SentCopyAppendFailed` carrying the delivered
     // id — the send service finalizes `sent` and names the missing copy, never `unverified`.
@@ -4003,6 +4031,80 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // reconstructable afterwards: the UID is only in the APPEND response, and the bytes are what
     // decides the message's identity. See {@link SendResult.raw}.
     return { providerMessageId: messageId, sentLocator, raw };
+  }
+
+  /** Does this server file every SMTP submission into Sent itself? See {@link FILES_SUBMISSIONS_CAPABILITIES}. */
+  private serverFilesSubmissions(): boolean {
+    const caps = this.client?.capabilities;
+    return FILES_SUBMISSIONS_CAPABILITIES.some((c) => caps?.has?.(c) === true);
+  }
+
+  /**
+   * The server's own Sent copy of a submission it filed: looked for by Message-ID on the schedule
+   * in {@link SERVER_SENT_COPY_LOOK_WAITS_MS}, then fetched, because the bytes AT the locator are the
+   * only admissible fingerprint source ({@link SendResult}). `null` when no look finds it, when the
+   * hit is not this id or not fully readable, or on any fault — the message has left either way,
+   * and the answer to every one of them is the same: no locator, and no APPEND.
+   */
+  private async findServerSentCopy(messageId: string): Promise<{ locator: NativeLocator; raw: Buffer } | null> {
+    const inner = messageId.replace(/[<>]/g, "").trim();
+    if (!inner) return null;
+    const clock = ImapDeadline.in(SERVER_SENT_COPY_FIND_MS, "read_deadline", () => this.now());
+    try {
+      const sentCanonical = await this.resolveSentFolder();
+      for (let look = 0; look <= SERVER_SENT_COPY_LOOK_WAITS_MS.length; look++) {
+        if (look > 0) {
+          const wait = SERVER_SENT_COPY_LOOK_WAITS_MS[look - 1]!;
+          if (clock.remainingMs() <= wait) return null;
+          await new Promise((r) => setTimeout(r, wait));
+        }
+        const found = await this.serverCopyAt(sentCanonical, inner, messageId, clock);
+        if (found !== undefined) return found;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** One look: the copy, `null` for a hit that cannot be used, `undefined` for nothing there yet. */
+  private async serverCopyAt(
+    sentCanonical: string, inner: string, messageId: string, clock: ImapDeadline,
+  ): Promise<{ locator: NativeLocator; raw: Buffer } | null | undefined> {
+    const lock = await this.bounded(
+      this.client.getMailboxLock(this.toServerPath(sentCanonical)), sentCanonical, clock);
+    try {
+      const hits = await this.searchBounded(
+        { header: { "message-id": inner } }, { uid: true }, sentCanonical, clock);
+      if (!Array.isArray(hits) || hits.length === 0) return undefined;
+      const uid = Math.min(...hits);
+      const mb = this.client.mailbox as MailboxObject | false;
+      const epoch = epochOf(mb ? mb.uidValidity : undefined);
+      if (!epoch.known) return null;
+      // `+ 1` so a copy over the ceiling is seen as over, and drained rather than abandoned: the
+      // read is bounded by the ceiling and the connection stays usable (the candidate probe's rule).
+      const dl = await this.bounded(this.client.download(
+        String(uid), undefined, { uid: true, maxBytes: MAX_RAW_MESSAGE_BYTES + 1 },
+      ), sentCanonical, clock);
+      if (!dl || !dl.content) return null;
+      const chunks: Buffer[] = [];
+      let total = 0;
+      for await (const chunk of dl.content) {
+        try { clock.check(sentCanonical); } catch (err) {
+          if (err instanceof ImapBoundExceeded) this.retireConnection(err);
+          throw err;
+        }
+        total += (chunk as Buffer).length;
+        if (total <= MAX_RAW_MESSAGE_BYTES) chunks.push(chunk as Buffer);
+      }
+      const declared = dl.meta?.expectedSize;
+      if (total > MAX_RAW_MESSAGE_BYTES || (typeof declared === "number" && total < declared)) return null;
+      const raw = Buffer.concat(chunks);
+      if (messageIdFromRaw(raw) !== normalizeMessageId(messageId)) return null;
+      return { locator: { folder: sentCanonical, ref: makeRef(epoch.value, uid) }, raw };
+    } finally {
+      lock.release();
+    }
   }
 
   /**

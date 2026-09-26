@@ -58,12 +58,12 @@ export interface AppendedSent {
 
 /**
  * The minimal send seam SendService drives, injected per-request (prod = `makeSendAdapter` over
- * decrypted mailbox creds; tests = a fake/GreenMail spy). `send` performs SMTP + Sent-append and
- * returns the delivered id; `messageInSent` is the verify-by-Sent probe for crash recovery;
- * `close` tears the connection down. `appended` is optional as a statement about the CALLER:
- * every wrapper of a real `ImapAdapter` can supply it, a spy cannot — a consumer treats absence
- * as "nothing to project", never as an error; the Sent-folder watch is the path that always
- * exists.
+ * decrypted mailbox creds; tests = a fake/GreenMail spy). `send` performs SMTP + the Sent copy
+ * (appended, or the server's own where it files submissions) and returns the delivered id;
+ * `messageInSent` is the verify-by-Sent probe for crash recovery; `close` tears the connection
+ * down. `appended` is absent for a spy and for a server's copy not found in time — a consumer
+ * treats absence as "nothing to project", never as an error; the Sent-folder watch is the path
+ * that always exists.
  */
 export interface SendAdapter {
   send(msg: OutboundMessage): Promise<{ providerMessageId: string; appended?: AppendedSent }>;
