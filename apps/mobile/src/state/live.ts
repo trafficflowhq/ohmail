@@ -2300,6 +2300,14 @@ export interface LiveDeps {
    * retires the sender.
    */
   forgetWaiting?: (decided: { address: string; scope: Scope }) => void;
+  /**
+   * WILL A SCREEN-OUT HERE ALSO SEND THE ONE-CLICK UNSUBSCRIBE — the account's switch on a door
+   * that sends it (`net/consent.ts#FoldersConsent.autoUnsubscribe`), false on the standalone door,
+   * which sends nothing. A GETTER for `ownAddresses`' reason. It changes one sentence and gates
+   * nothing: the server reads its own row at the seam. Absent ⇒ true, the webapp's resting value —
+   * the failure to avoid is the silent unsubscribe.
+   */
+  autoUnsubscribe?: () => boolean;
 }
 
 /**
@@ -2563,6 +2571,13 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   const now = deps.now ?? (() => new Date());
   /** Read at every use, never captured — see {@link LiveDeps.resurfaceTime}. */
   const resurfaceAtClock = (): string | null => deps.resurfaceTime?.() ?? null;
+  /**
+   * DOES THIS PRESS SEND THE SENDER'S UNSUBSCRIBE — the decide route (`screener_decide`) with a
+   * `no`, on a door whose switch is on. Exactly the server's trigger: a rule written past the gate
+   * and a plain move arm nothing, so they say nothing (UD-R4-03 keeps the pass to the same set).
+   */
+  const decidedUnsubscribes = (decideRoute: boolean, decision: "yes" | "no"): boolean =>
+    decideRoute && decision === "no" && (deps.autoUnsubscribe?.() ?? true);
   /**
    * Everything swept per stream DURING THE CURRENT VISIT — the leave commit's anchor pool.
    * CONSUMED by {@link leaveFeed}: a visit's sweep may not leak into the next one, or a
@@ -2919,7 +2934,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
      */
     let queuedWith: { name: string | null } | null = null;
     let landed: Promise<PressVerdict>;
-    if (physicalFolderOf(rep) === FOLDER_OF_VIEW.screener) {
+    const decideRoute = physicalFolderOf(rep) === FOLDER_OF_VIEW.screener;
+    if (decideRoute) {
       landed = engine.mutate({
         kind: "screener_decide",
         senderId: row.id,
@@ -2984,7 +3000,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       toast(queued.name ? refuse("liveDecidedElsewhere", queued.name, target) : refuse("liveDecidedElsewhereUnknown", target));
       return true;
     }
-    return said(v, refuse("liveDecided", destDone(dest), target), refuse("liveDecideFailed", row.address));
+    const decidedSaid = refuse("liveDecided", destDone(dest), target);
+    return said(
+      v,
+      decidedUnsubscribes(decideRoute, decision) ? refuse("liveAlsoUnsubscribing", decidedSaid) : decidedSaid,
+      refuse("liveDecideFailed", row.address),
+    );
   };
 
   const release = async (row: ScreenerRow, dest: Place, segment: "screened" | "spam"): Promise<boolean> => {
@@ -4101,7 +4122,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const lists = deps.presented?.() ?? presentedOf(engine.read(), deps.now?.() ?? new Date(), false, SCREENING_UNSUPPLIED, deps.ownAddresses?.());
     const stay = back.refused === 0 && back.queued === 0
       ? pressReadBack(engine.read(), lists, ofSubject, wanted, destDone(dest), applyRetro) : null;
-    return saidAll(verdicts, stay ?? refuse("liveDecided", destDone(dest), target), refuse("liveDecideFailed", m.from.address));
+    const pressSaid = stay ?? refuse("liveDecided", destDone(dest), target);
+    return saidAll(
+      verdicts,
+      decidedUnsubscribes(waiting !== undefined, decision) ? refuse("liveAlsoUnsubscribing", pressSaid) : pressSaid,
+      refuse("liveDecideFailed", m.from.address),
+    );
   };
 
 /* ── the folder verbs — see the interface's header for the whole optimism model ─────────── */

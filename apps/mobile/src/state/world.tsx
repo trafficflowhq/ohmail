@@ -764,6 +764,11 @@ export function WorldProvider({ children }: { children: ReactNode }) {
      (`live.ts#LiveDeps.resurfaceTime`). Written on every render, so the getter is never stale. */
   const resurfaceTimeNow = useRef<string | null>(null);
   resurfaceTimeNow.current = resurfaceTime;
+  /* The account's unsubscribe switch off the same read, as a ref only: it decides one sentence at
+     the press and draws nothing. Resting ON (`live.ts#LiveDeps.autoUnsubscribe`); reset per session. */
+  const autoUnsubscribeNow = useRef(true);
+  const standaloneNow = useRef(false);
+  standaloneNow.current = session?.standalone === true;
   /**
    * THE ACCOUNT'S CUTLINE ANSWER AND WHETHER IT IS IN — {@link ScreeningPosture}, riding the
    * signatures' read and their exact rule (freshest-successful-read-wins, identity-gated).
@@ -900,6 +905,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       setSignatures(ans.signatures);
       // The resurface time off the SAME answer and the same rule — one read, every fact on it.
       setResurfaceTime(ans.resurfaceTime);
+      autoUnsubscribeNow.current = ans.autoUnsubscribe;
       /* The cutline half of the SAME answer — see `screening` above. A read that landed with no
          cutline fields is `unsupplied`, NOT still-waiting: nothing further is coming from this
          server, so the piles stop being withheld and stand at "retire nobody". */
@@ -969,6 +975,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // …and the time, for the signatures' reason: account A's chosen hour must not decide when
     // account B's mail comes back. Back to `null`, which reads as the product's 09:00.
     setResurfaceTime(null);
+    autoUnsubscribeNow.current = true;
     // …and the cutline answer, for the same reason: a window read off account A must never
     // decide which of account B's senders are worth a decision. Back to `unanswered`, the state
     // a session that has asked nothing yet is actually in.
@@ -1140,6 +1147,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
            stood at construction. The rule itself is `waitingAfterDecide`, beside the shelf it
            describes; nothing here decides who leaves. */
         forgetWaiting: (decided) => setScreenerServer((prev) => waitingAfterDecide(prev, decided)),
+        /* The standalone door sends nothing (its one-click port refuses), so it says nothing. */
+        autoUnsubscribe: () => !standaloneNow.current && autoUnsubscribeNow.current,
       })
       : null),
     [engine, showToast, zone],

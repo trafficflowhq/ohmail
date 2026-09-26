@@ -891,6 +891,8 @@ export const DE: Deck = {
   liveSaveFailed: "Diese Änderung ließ sich nicht speichern. Versuch es nochmal.",
   liveDecided: (dest: string, target: string) =>
     `${dest} — künftige Post von ${target} wird automatisch dorthin einsortiert.`,
+  liveAlsoUnsubscribing: (said: string) =>
+    `${said} ohmail meldet dich dort auch ab, sofern der Absender Ein-Klick-Abmeldung anbietet.`,
   liveDecidedElsewhere: (name: string, target: string) =>
     `Entschieden — ${name} sortiert ${target} beim nächsten Durchlauf ein.`,
   liveDecidedElsewhereUnknown: (target: string) =>

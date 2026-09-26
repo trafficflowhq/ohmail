@@ -1427,6 +1427,13 @@ const TABLE = {
   liveDecided: (dest: string, target: string) =>
     `${dest} — future mail from ${target} files there automatically.`,
   /**
+   * A SCREEN-OUT OR SPAM DECIDE ON A DOOR THAT UNSUBSCRIBES — the webapp's `toastScreened`/`toastSpam`
+   * `unsub` arm, in its words, after whatever the press said. Said only where the account's switch
+   * is on and the door is a server that sends it (never the standalone phone, which sends nothing).
+   */
+  liveAlsoUnsubscribing: (said: string) =>
+    `${said} ohmail is also unsubscribing you, where the sender offers one-click.`,
+  /**
    * THE SAME PRESS ON A MAILBOX THIS PHONE DOES NOT ORGANIZE — and it must not say "files".
    *
    * A phone is never the organizer, so a decision made here is recorded for the install that is

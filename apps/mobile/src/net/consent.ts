@@ -29,7 +29,7 @@ export interface ScreeningAnswer {
   scope: "window" | "all_time";
 }
 
-/** The five fields this app reads off `GET /consent` today. */
+/** The fields this app reads off `GET /consent` today. */
 export interface FoldersConsent {
   on: boolean;
   /**
@@ -79,6 +79,13 @@ export interface FoldersConsent {
    * 09:00 — the hour this app's horizons minted before the setting existed.
    */
   resurfaceTime: string | null;
+  /**
+   * WILL A SCREEN-OUT ALSO SEND THE SENDER'S ONE-CLICK UNSUBSCRIBE — `blockAutoUnsubscribeAt`
+   * absent or `null` (the product default, mail 0054), false only for an instant. The webapp's
+   * `wire.blockAutoUnsubscribeAt == null`, for its reason: absent is an older server, which
+   * still sends, so the phone still says so. It decides a sentence, never a send.
+   */
+  autoUnsubscribe: boolean;
 }
 
 /** `'HH:MM'`, 24-hour — the server's own shape (`RESURFACE_TIME_RE`), shared by value. */
@@ -143,6 +150,7 @@ export async function readFoldersEnabled(session: ConnectedSession): Promise<Fol
       // "never chosen" rather than throwing the whole read away — the face's rule, and here the
       // fallback is what every build did before the setting existed.
       resurfaceTime: resurfaceTimeOf(body.resurfaceTime),
+      autoUnsubscribe: !(typeof body.blockAutoUnsubscribeAt === "string" && body.blockAutoUnsubscribeAt !== ""),
     };
   } catch {
     return null;
