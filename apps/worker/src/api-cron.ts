@@ -38,7 +38,16 @@ export interface ApiCronTarget {
    * backlog to report would answer `null` for ever, which reads as a number nobody wrote.
    */
   readsRemaining?: true;
+  /**
+   * This target's 2xx body carries `next` and `erasureDue`: a non-null `next` is poked again at
+   * once as `?after=<next>`, at most {@link API_CRON_CONTINUATIONS_PER_FIRE} times per fire, and
+   * each id in `erasureDue` is erased through `eraseRoute?account=<id>`, one call per account.
+   */
+  continues?: { eraseRoute: string };
 }
+
+/** Follow-up pokes one fire may make — for the continuation and for the erasures alike. */
+export const API_CRON_CONTINUATIONS_PER_FIRE = 20;
 
 /**
  * The table. Paths are LITERALS on purpose: a census test in the API host's own suite
@@ -199,9 +208,10 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     everyMs: 24 * 60 * 60 * 1000,
     // Its own stagger, past the takeover window, distinct from every sibling's.
     firstDelayMs: 11 * 60 * 1000,
-    // One plane read per live account at bounded concurrency plus a handful of mails: minutes
-    // of headroom for a pass that is seconds at beta scale, mirroring the route's own patience.
-    timeoutMs: 120 * 1000,
+    // The platform's 60 s ceiling: the sweep stops itself at 45 s and answers `next`, and each
+    // erasure it names is its own invocation.
+    timeoutMs: 60 * 1000,
+    continues: { eraseRoute: "/internal/account-lifecycle/erase" },
   },
 ];
 
@@ -299,6 +309,27 @@ export function readRemaining(body: string): number | null | undefined {
   return n;
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * A sweep's continuation, read rather than believed: `next` a uuid or null, `erasureDue` the uuids
+ * in it. A body this side cannot read continues nothing and erases nothing — an older API answers
+ * neither field, which is the same as a finished sweep with nothing due.
+ */
+export function readSweep(body: string): { next: string | null; erasureDue: string[] } {
+  const none = { next: null, erasureDue: [] };
+  if (body.length > 64 * 1024) return none;
+  let parsed: unknown;
+  try { parsed = JSON.parse(body); } catch { return none; }
+  if (typeof parsed !== "object" || parsed === null) return none;
+  const { next, erasureDue } = parsed as { next?: unknown; erasureDue?: unknown };
+  return {
+    next: typeof next === "string" && UUID.test(next) ? next : null,
+    erasureDue: Array.isArray(erasureDue)
+      ? erasureDue.filter((id): id is string => typeof id === "string" && UUID.test(id)) : [],
+  };
+}
+
 export function startApiCron(deps: ApiCronDeps): ApiCronHandle {
   const log = deps.log ?? silentLogger;
   const targets = deps.targets ?? API_CRON_TARGETS;
@@ -325,6 +356,40 @@ export function startApiCron(deps: ApiCronDeps): ApiCronHandle {
     state.timer = setTimer(() => { void runOnce(t); }, baseDelayMs + Math.floor(random() * jitterMs));
   }
 
+  /** One GET with the target's abort bound. Never throws; the body is drained either way. */
+  async function poke(
+    t: ApiCronTarget, path: string,
+  ): Promise<{ outcome: ApiCronOutcome; status: number | null; text: string }> {
+    const state = states.get(t.target)!;
+    const controller = new AbortController();
+    state.controller = controller;
+    const timeout = setTimer(() => { controller.abort(); }, t.timeoutMs);
+    let status: number | null = null;
+    let text = "";
+    try {
+      const res = await fetchImpl(`${baseUrl}${path}`, {
+        method: "GET",
+        headers: { authorization: `Bearer ${deps.secret}` },
+        signal: controller.signal,
+      });
+      status = res.status;
+      // DRAINED either way — keep-alive hygiene; the caller reads only what its target declares.
+      try { text = await res.text(); } catch { /* the status already answered */ }
+      const outcome: ApiCronOutcome = res.ok ? "ok"
+        : res.status === 401 ? "http_401"
+        : res.status === 404 ? "http_404"
+        : "http_error";
+      return { outcome, status, text: res.ok ? text : "" };
+    } catch (err) {
+      const outcome: ApiCronOutcome = controller.signal.aborted ? "timeout" : "unreachable";
+      if (outcome === "unreachable") log.warn("api_cron_unreachable", { route: t.route, err });
+      return { outcome, status, text: "" };
+    } finally {
+      clearTimer(timeout);
+      state.controller = null;
+    }
+  }
+
   /**
    * Never throws — this runs off a timer, and an unhandled rejection here would take down a
    * worker that is syncing mail perfectly well over a scheduling convenience. Every exit arm
@@ -342,47 +407,49 @@ export function startApiCron(deps: ApiCronDeps): ApiCronHandle {
     state.attempts += 1;
     state.lastAttemptAt = now();
     const started = Date.now();
-    const controller = new AbortController();
-    state.controller = controller;
-    const timeout = setTimer(() => { controller.abort(); }, t.timeoutMs);
-    let outcome: ApiCronOutcome;
-    let status: number | null = null;
-    try {
-      const res = await fetchImpl(`${baseUrl}${t.route}`, {
-        method: "GET",
-        headers: { authorization: `Bearer ${deps.secret}` },
-        signal: controller.signal,
-      });
-      status = res.status;
-      // The body is DRAINED either way — keep-alive hygiene — and for every target but the one
-      // that declares it, DROPPED: the API host logs its own passes and closed codes are all
-      // this side keeps. The exception takes ONE number and validates it here rather than
-      // trusting the shape: a body that is not JSON, or whose `remaining` is not a whole
-      // non-negative number, leaves the row's previous answer alone rather than writing a lie.
-      try {
-        const text = await res.text();
-        if (res.ok && t.readsRemaining === true) {
-          const n = readRemaining(text);
-          // `undefined` is the only value that leaves the row's previous answer standing: a body
-          // this side cannot believe writes nothing. A number and an explicit null are both the
-          // pass's own answer and both replace it.
-          if (n !== undefined) state.remaining = n;
-        }
-      } catch { /* the status already answered */ }
-      outcome = res.ok ? "ok"
-        : res.status === 401 ? "http_401"
-        : res.status === 404 ? "http_404"
-        : "http_error";
-    } catch (err) {
-      outcome = controller.signal.aborted ? "timeout" : "unreachable";
-      if (outcome === "unreachable") {
-        log.warn("api_cron_unreachable", { route: t.route, err });
-      }
-    } finally {
-      clearTimer(timeout);
-      state.controller = null;
-      state.inFlight = false;
+    let { outcome, status, text } = await poke(t, t.route);
+    if (outcome === "ok" && t.readsRemaining === true) {
+      // `undefined` is the only value that leaves the row's previous answer standing: a body
+      // this side cannot believe writes nothing. A number and an explicit null are both the
+      // pass's own answer and both replace it.
+      const n = readRemaining(text);
+      if (n !== undefined) state.remaining = n;
     }
+    if (outcome === "ok" && t.continues) {
+      // THE CONTINUATION, then the erasures the sweep named — each its own invocation, capped.
+      let sweep = readSweep(text);
+      const due = [...sweep.erasureDue];
+      let follow = 0;
+      while (sweep.next !== null && follow < API_CRON_CONTINUATIONS_PER_FIRE && !stopped) {
+        follow += 1;
+        ({ outcome, status, text } = await poke(t, `${t.route}?after=${sweep.next}`));
+        if (outcome !== "ok") break;
+        sweep = readSweep(text);
+        due.push(...sweep.erasureDue);
+      }
+      if (outcome === "ok" && sweep.next !== null) {
+        log.warn("api_cron_continuation_capped", {
+          route: t.route, count: follow,
+          reason: "the sweep still had accounts after its follow-up cap; the next fire goes on",
+        });
+      }
+      for (const accountId of due.slice(0, API_CRON_CONTINUATIONS_PER_FIRE)) {
+        if (stopped) break;
+        const erase = await poke(t, `${t.continues.eraseRoute}?account=${accountId}`);
+        if (erase.outcome === "ok") {
+          log.info("api_cron_erase", { route: t.continues.eraseRoute, accountId, status: erase.status ?? undefined });
+        } else {
+          // A 404 is an API that does not serve the door yet (the worker deployed first): said
+          // at ERROR per account, because that erasure is owed until the API catches up.
+          const line = erase.outcome === "http_404" ? log.error.bind(log) : log.warn.bind(log);
+          line("api_cron_erase_failed", {
+            route: t.continues.eraseRoute, accountId, outcome: erase.outcome,
+            status: erase.status ?? undefined,
+          });
+        }
+      }
+    }
+    state.inFlight = false;
     state.outcome = outcome;
     const latencyMs = Date.now() - started;
     if (outcome === "ok") {
