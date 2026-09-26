@@ -2520,12 +2520,11 @@ export const account = {
    * would otherwise report a 500 as "there is nothing here".
    */
   /**
-   * `GET /account/access` — the limits the entitlements program states for this account.
-   *
-   * A REFUSAL never arrives here: a refused account is answered 402 at every `read` door and
-   * this module's own notifier swaps the surface for the lock screen, so the only thing to read
-   * back is "may you add another mailbox, and how many does the plan hold". `metered: false` is
-   * a host with no such program, where both answers are "no limit".
+   * `GET /account/access` — the limits the entitlements program states for this account, and
+   * its verdict in a word. A refused account reads this route too: its answer names
+   * `access: "refused"` and raises the wall through the same sink a 402 does, and
+   * `access: "open"` is the one answer a wall lifts on. `metered: false` is a host with no such
+   * program, where both answers are "no limit".
    */
   /**
    * `fresh` re-asks; without it the session's one answer is handed back. The default is the
