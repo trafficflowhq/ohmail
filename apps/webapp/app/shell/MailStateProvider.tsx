@@ -485,6 +485,12 @@ export function MailStateProvider({
    */
   const readRef = useRef(read);
   useEffect(() => { readRef.current = read; }, [read]);
+  /* A `402` stood the drain loop down. The roster read is a door whose refusal raises the wall, so
+     it is asked now rather than on the next beat of the poll. */
+  useEffect(() => {
+    if (sync.standingDown === true && now.probe) void readRef.current();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sync.standingDown]);
   const refresh = useCallback(() => readRef.current().catch(() => { /* the state says so */ }), []);
 
   const binding = useMemo<MailStateBinding>(

@@ -60,6 +60,13 @@ export interface SyncStatus {
    * absent marker back.
    */
   ownerLost: boolean;
+  /**
+   * THE SERVICE REFUSED THIS ACCOUNT (`402 subscription_required`) and the loop has stood down:
+   * no failure counted, no retry, no timer, until the account opens and {@link reviveStandingDown}
+   * restarts it from its stored cursors. A fact about the account, not about the loop, so nothing
+   * the strip says about sync is true of it. Optional: absent is `false`.
+   */
+  standingDown?: boolean;
 }
 
 /** A live engine before its first tick, and the permanent value for the demo. */
@@ -85,7 +92,8 @@ export function sameSyncStatus(a: SyncStatus, b: SyncStatus): boolean {
     && a.failures === b.failures
     && a.terminal === b.terminal
     && a.refused === b.refused
-    && a.ownerLost === b.ownerLost;
+    && a.ownerLost === b.ownerLost
+    && (a.standingDown === true) === (b.standingDown === true);
 }
 
 /**
@@ -1123,6 +1131,22 @@ function isTerminalRefusal(err: unknown): boolean {
     && err.code !== null;
 }
 
+/** The service's own refusal of the ACCOUNT — our envelope's code, never a bare status. */
+function isAccessRefusal(err: unknown): boolean {
+  return err instanceof MutationRejectedError && err.status === 402 && err.code === "subscription_required";
+}
+
+/** Every live loop's revive, so the shell can restart the ones a refusal stood down. */
+const REVIVERS = new Set<() => void>();
+
+/**
+ * THE ACCOUNT IS OPEN AGAIN: every loop a `402` stood down drains now, from its stored cursors.
+ * Called by the host that read the open verdict; a loop that is not standing down ignores it.
+ */
+export function reviveStandingDown(): void {
+  for (const revive of [...REVIVERS]) revive();
+}
+
 /**
  * Start the sync loop for one engine. Returns the teardown. One timer, armed only after the previous drain has
  * settled: `setInterval` is the trap the Cloud API's `/events` route documents — under latency the ticks stack into a
@@ -1220,6 +1244,8 @@ export function startSyncScheduler(
   let terminalByIdentity = false;
   /** Re-derive the union after either bit moves. Never assign `terminal` any other way. */
   const settleTerminal = (): void => { terminal = terminalByServer || terminalByIdentity; };
+  /** Stood down by a `402` — see {@link SyncStatus.standingDown}. Cleared only by the revive. */
+  let standingDown = false;
   /**
    * WHEN a coded refusal arrived that has not been confirmed. Null when there is none. This is where the fact lives
    * between the two asks. The poll is stopped (a refusal is believed that far immediately: continuing to poll an
@@ -1336,7 +1362,7 @@ export function startSyncScheduler(
   };
 
   const connectStream = (): void => {
-    if (!wakeFactory || streamDead || stopped || stream !== null || !visible()) return;
+    if (!wakeFactory || streamDead || stopped || standingDown || stream !== null || !visible()) return;
     /**
      * AND NOT WHILE THIS MIRROR'S IDENTITY DOES NOT HOLD: `/events` is a SESSION-authenticated stream and the server
      * emits the answering account's sequence on it. Opened without asking, a stale shell for A held a live
@@ -1425,6 +1451,7 @@ export function startSyncScheduler(
     options.onStatus?.({
       bootstrapping, failures, terminal, refused: refusedAt !== null,
       ownerLost: (gate?.identity() ?? "holds") === "revoked",
+      standingDown,
     });
   };
 
@@ -1436,7 +1463,7 @@ export function startSyncScheduler(
 
   const arm = (ms: number): void => {
     disarm();
-    if (stopped || terminal) return;
+    if (stopped || terminal || standingDown) return;
     timerDueAt = Date.now() + ms;
     timer = setTimeout(() => {
       timer = null;
@@ -1491,7 +1518,7 @@ export function startSyncScheduler(
   };
 
   async function tick(): Promise<void> {
-    if (stopped || running) return;
+    if (stopped || running || standingDown) return;
     if (terminal && !revalidating) return;
     running = true;
     options.onDraining?.(true);
@@ -1628,6 +1655,16 @@ export function startSyncScheduler(
         disarm();
         return;
       }
+      if (isAccessRefusal(err)) {
+        // THE ACCOUNT, NOT THE LOOP. Counted as nothing, retried never, and the stream closed:
+        // the shell's wall is the sentence, and the revive is the only way back.
+        standingDown = true;
+        failures = 0;
+        refusedAt = null;
+        disarm();
+        closeStream();
+        return;
+      }
       failures += 1;
       // INTO THE ENGINE'S OWN LOG, on every counted failure. `report` below reaches the window
       // console alone; on the desktop that console is closed, and a drain that rejected on every
@@ -1715,7 +1752,7 @@ export function startSyncScheduler(
    * cadence — the hidden state's whole contract is "once a minute, whatever happens".
    */
   const wake = (): void => {
-    if (stopped) return;
+    if (stopped || standingDown) return;
     if (running) {
       pendingWake = true;
       return;
@@ -1774,9 +1811,18 @@ export function startSyncScheduler(
       // "and if nothing is pending, leave the tab with no timer at all" — the same assumption
       // that starved the stream-error path. Hiding a tab must LEAVE it on a cadence, not
       // depend on having found one.
-      if (!running && !terminal && refusedAt === null) arm(hiddenPollMs);
+      if (!running && !terminal && refusedAt === null && !standingDown) arm(hiddenPollMs);
     }
   };
+
+  const revive = (): void => {
+    if (stopped || !standingDown) return;
+    standingDown = false;
+    publish();
+    connectStream();
+    void tick();
+  };
+  REVIVERS.add(revive);
 
   visibility?.addEventListener("visibilitychange", onVisibility);
   online?.addEventListener("online", wake);
@@ -1796,6 +1842,7 @@ export function startSyncScheduler(
 
   return () => {
     stopped = true;
+    REVIVERS.delete(revive);
     disarm();
     closeStream();
     // The eager body pass is fire-and-forget behind the drain and NOT gated (fetchBodies is a

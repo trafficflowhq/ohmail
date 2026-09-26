@@ -1676,6 +1676,8 @@ export interface MailStateInputs {
   sync: {
     bootstrapping: boolean; failures: number; terminal: boolean; refused: boolean;
     ownerLost: boolean;
+    /** A `402` stood the loop down: the ACCOUNT is refused, and the wall is its sentence. */
+    standingDown?: boolean;
   };
   /** `SYNC_FAILURE_STREAK`, passed in so the surfaces cannot drift from the scheduler. */
   failureStreak: number;
@@ -1795,6 +1797,10 @@ function climb(input: MailStateInputs): MailState {
   // sync here to have a state, and the demo promises that nothing leaves the tab — so it gets
   // the resting value before anything else is even considered.
   if (demo) return QUIET;
+
+  // THE SERVICE REFUSED THE ACCOUNT. The loop stood down on purpose and the shell's wall covers
+  // this surface; "sync failed" would be a sentence about the loop that is false of it.
+  if (sync.standingDown === true) return QUIET;
 
   // ── The loop's own health outranks everything, because it invalidates the evidence ──────
   //
