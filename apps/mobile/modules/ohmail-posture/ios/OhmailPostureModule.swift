@@ -1,4 +1,5 @@
 import ExpoModulesCore
+import Network
 import UIKit
 
 /**
@@ -10,10 +11,32 @@ import UIKit
  * nil: the fold's reserved-region read is newer than every toolchain this repo compiled
  * against, and `derive.ts` covers the open face with the centre-hinge heuristic meanwhile.
  * `getLaunchOverride` is the simulator door (`SIMCTL_CHILD_OHMAIL_POSTURE=<pose>[@canvas]`).
+ * The network door's reader lives here too (`src/net/network-door.ts`): a path monitor answers
+ * "online" or "offline" through `getNetwork`, "unknown" before its first path, and sends
+ * `onNetworkChanged` on each change. The state is read and written under one lock.
  */
 public class OhmailPostureModule: Module {
   /** Apple's model identifiers for the iPhone Duo (iPhone19,4 read on the 27.1 simulator). */
   private static let duoModels: Set<String> = ["iPhone19,4", "iPhone19,5"]
+
+  private var monitor: NWPathMonitor?
+  private let networkLock = NSLock()
+  private var network = "unknown"
+
+  private func readNetwork() -> String {
+    networkLock.lock()
+    defer { networkLock.unlock() }
+    return network
+  }
+
+  /** Stores the reading and answers whether it changed. */
+  private func storeNetwork(_ next: String) -> Bool {
+    networkLock.lock()
+    defer { networkLock.unlock() }
+    if next == network { return false }
+    network = next
+    return true
+  }
 
   private static func modelIdentifier() -> String {
     if let sim = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"], !sim.isEmpty {
@@ -34,7 +57,29 @@ public class OhmailPostureModule: Module {
 
   public func definition() -> ModuleDefinition {
     Name("OhmailPosture")
-    Events("onFoldsChanged")
+    Events("onFoldsChanged", "onNetworkChanged")
+
+    OnCreate {
+      let m = NWPathMonitor()
+      m.pathUpdateHandler = { [weak self] path in
+        guard let self = self else { return }
+        let state = path.status == .satisfied ? "online" : "offline"
+        if self.storeNetwork(state) {
+          self.sendEvent("onNetworkChanged", ["state": state])
+        }
+      }
+      m.start(queue: DispatchQueue(label: "app.ohmail.network"))
+      self.monitor = m
+    }
+
+    OnDestroy {
+      self.monitor?.cancel()
+      self.monitor = nil
+    }
+
+    Function("getNetwork") { () -> String in
+      return self.readNetwork()
+    }
 
     Function("getFolds") { () -> [[String: Any]]? in
       return nil

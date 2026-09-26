@@ -1,5 +1,9 @@
 package app.ohmail.posture
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import androidx.window.layout.FoldingFeature
 import androidx.window.layout.WindowInfoTracker
 import expo.modules.kotlin.modules.Module
@@ -17,11 +21,38 @@ import kotlinx.coroutines.launch
  * event; `getFolds` answers the last reading synchronously, `getHasFold` whether this device
  * ever reported a fold, and `getLaunchOverride` a test run's intent extra
  * (`adb shell am start … --es OHMAIL_POSTURE <pose>`) or process env.
+ *
+ * The network door's reader (`src/net/network-door.ts`) lives here too, so no second module ships:
+ * `getNetwork` answers "online" or "offline" from the default network's INTERNET capability, and a
+ * default-network callback sends `onNetworkChanged`. Any failure answers "unknown", never a throw.
  */
 class OhmailPostureModule : Module() {
   private var job: Job? = null
   private var lastFolds: List<Map<String, Any?>> = emptyList()
   private var sawAnyFold = false
+  private var netCallback: ConnectivityManager.NetworkCallback? = null
+
+  private fun connectivity(): ConnectivityManager? =
+    appContext.reactContext?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+
+  private fun networkState(): String = try {
+    val cm = connectivity()
+    if (cm == null) "unknown" else {
+      val caps = cm.activeNetwork?.let { cm.getNetworkCapabilities(it) }
+      if (caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true) "online" else "offline"
+    }
+  } catch (e: Exception) {
+    "unknown"
+  }
+
+  /** Only a change crosses to JS: capabilities move on every signal-strength step. */
+  @Volatile private var lastNetwork: String? = null
+
+  private fun sendNetwork(state: String) {
+    if (state == lastNetwork) return
+    lastNetwork = state
+    sendEvent("onNetworkChanged", mapOf("state" to state))
+  }
 
   private fun featureMap(f: FoldingFeature, density: Float): Map<String, Any?> = mapOf(
     "bounds" to mapOf(
@@ -37,13 +68,37 @@ class OhmailPostureModule : Module() {
 
   override fun definition() = ModuleDefinition {
     Name("OhmailPosture")
-    Events("onFoldsChanged")
+    Events("onFoldsChanged", "onNetworkChanged")
 
+    Function("getNetwork") { networkState() }
     Function("getFolds") { lastFolds }
     Function("getHasFold") { sawAnyFold }
     Function("getLaunchOverride") {
       appContext.currentActivity?.intent?.getStringExtra("OHMAIL_POSTURE")
         ?: System.getenv("OHMAIL_POSTURE")
+    }
+
+    OnCreate {
+      val cm = connectivity() ?: return@OnCreate
+      val callback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) { sendNetwork(networkState()) }
+        override fun onLost(network: Network) { sendNetwork("offline") }
+        override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+          sendNetwork(if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) "online" else "offline")
+        }
+      }
+      try {
+        cm.registerDefaultNetworkCallback(callback)
+        netCallback = callback
+      } catch (e: Exception) {
+        netCallback = null
+      }
+    }
+
+    OnDestroy {
+      val callback = netCallback ?: return@OnDestroy
+      try { connectivity()?.unregisterNetworkCallback(callback) } catch (e: Exception) { }
+      netCallback = null
     }
 
     OnActivityEntersForeground {
