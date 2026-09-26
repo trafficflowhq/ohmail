@@ -362,7 +362,12 @@ export { JUNK_REFILL_BOUND_MS } from "@ohmail/client-engine";
 /** Forward's one predicate and its ask, for the reader — the engine's own, through this seam. */
 export { forwardOffered, type ForwardAsk } from "@ohmail/client-engine";
 
-export type WorldMail = Mail & {
+/** A conversation member under the opened message, with its own files beside its text. */
+export type WorldEarlier = Held & { attachments?: WorldAttachment[] };
+
+export type WorldMail = Omit<Mail, "earlier"> & {
+  /** The rest of the conversation, oldest → newest, each member with its files. */
+  earlier: WorldEarlier[];
   attachments?: WorldAttachment[];
   bodyState?: BodyState;
   /** WHICH policy emptied a `withheld` body — the reader owes each marker its own sentence. */
@@ -1550,6 +1555,7 @@ export function liveMessage(engine: OhmailEngine, id: string, v: WorldView): Wor
         body: bodyOf(pres, member).text,
         seen: !member.unread,
         ...(forwardedTo ? { face: Copy.forwardedTo(forwardedTo) } : {}),
+        ...filesField(engine, member.id),
       };
     });
   // The reading view's own facts, attached here and not in `toMail`: a list row never pays
@@ -1561,26 +1567,34 @@ export function liveMessage(engine: OhmailEngine, id: string, v: WorldView): Wor
   row.html = hydrated.html;
   row.loadedRemoteContent = hydrated.loadedRemoteContent;
   row.inlineImages = engine.inlineImagesOf(id);
-  withFiles(engine, id, row);
+  Object.assign(row, filesField(engine, id));
   return row;
 }
 
-/** The reading row's files, off the engine's own list; the mirror row and the off-mirror row share it. */
-function withFiles(engine: OhmailEngine, id: string, row: WorldMail): void {
+/** One message's files for a screen that draws them beside a row it holds (the Screener's held mail). */
+export const liveFiles = (engine: OhmailEngine, id: string): WorldAttachment[] | undefined =>
+  filesField(engine, id).attachments;
+
+/**
+ * One message's files, off the engine's own list, as the `attachments` field or nothing. The
+ * opened row, the off-mirror row and every conversation member read them here.
+ */
+function filesField(engine: OhmailEngine, id: string): { attachments?: WorldAttachment[] } {
   const EVERY_PART = { includeInlineImages: true, includeInlineParts: true };
   const atts = engine.attachmentsOf(id, EVERY_PART);
-  if (atts.state === "ready" && atts.items.length > 0) {
-    // Real files first, the body's own pictures after them — the web strip's partition.
-    const items = [...atts.items].sort((a, b) => Number(a.inline) - Number(b.inline));
-    row.attachments = items.map((item) => ({
+  if (atts.state !== "ready" || atts.items.length === 0) return {};
+  // Real files first, the body's own pictures after them — the web strip's partition.
+  const items = [...atts.items].sort((a, b) => Number(a.inline) - Number(b.inline));
+  return {
+    attachments: items.map((item) => ({
       id: item.id,
       filename: item.filename,
       size: sizeLabel(item.sizeBytes),
       inline: item.inline,
       mime: item.mimeType,
       state: item.state,
-    }));
-  }
+    })),
+  };
 }
 
 
@@ -1663,7 +1677,7 @@ function offMirrorMail(engine: OhmailEngine, id: string, v: WorldView): WorldMai
     row.html = b.state === "full" ? b.html : null;
   }
   row.earlier = [];
-  withFiles(engine, id, row);
+  Object.assign(row, filesField(engine, id));
   return row;
 }
 
@@ -1940,6 +1954,9 @@ export function routingReplaySay(r: RoutingReplay): Refusal[] {
 
 /** `PATCH /messages` id cap per request — the webapp's own batch size. */
 const MARK_SEEN_MAX = 200;
+
+/** File lists a reader asks at once for a conversation — the web shell's own bound. */
+const THREAD_LIST_CONCURRENCY = 4;
 
 /**
  * A `mark_seen` wider than the PATCH cap, split — mark-all-read's inverse can carry more ids
@@ -2423,6 +2440,14 @@ export interface LiveWorldActions {
   discardAbandoned(id: string): Promise<void>;
   /** The sender screen's open: fetch every held body so the decision is over real mail. */
   hydrateHeld(ids: string[]): void;
+  /**
+   * HOLD THE FILE LISTS OF THE MESSAGES A SCREEN SHOWS beside a row it already has (the
+   * Screener's held mail, an open News card): each one that has files is asked, and stays until
+   * {@link releaseFiles} is called with the same ids. The reader's open holds its own.
+   */
+  holdFiles(ids: string[]): void;
+  /** Let go what {@link holdFiles} held for the same ids — the screen's leaving. */
+  releaseFiles(ids: string[]): void;
   /** The scroll-seen sweep: mark what the reader scrolled past, in this stream only. */
   sweepFeed(view: FeedView, passedIds: string[]): Promise<boolean>;
   /** Leaving the stream commits the waterline above the newest swept row. */
@@ -2800,6 +2825,66 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return forwardPress(m, held).fetch ? offMirrorBodyRead(engine, messageId) : null;
   };
 
+  /*
+   * THE LISTS A SCREEN SHOWS: the opened message's, each conversation member's, each held
+   * message's, whichever has files, held while the screen stands. Counted per id, because one
+   * message can stand on two screens and only its last release lets its list go. Asked four at a
+   * time (the web's bound); a list that lands after its last release is let go again.
+   */
+  const listHolds = new Map<string, number>();
+  const readerHolds = new Map<string, string[][]>();
+  const listQueue: string[] = [];
+  let listCrew = 0;
+  const pumpLists = (): void => {
+    while (listCrew < THREAD_LIST_CONCURRENCY && listQueue.length > 0) {
+      listCrew += 1;
+      void (async () => {
+        try {
+          for (let next = listQueue.shift(); next !== undefined; next = listQueue.shift()) {
+            if (!listHolds.has(next)) continue;
+            await engine.loadAttachments(next).catch(() => undefined);
+            if (!listHolds.has(next)) engine.releaseAttachments(next);
+          }
+        } finally {
+          listCrew -= 1;
+        }
+      })();
+    }
+  };
+  const withFiles = (ids: readonly string[]): string[] =>
+    ids.filter((lid) => engine.read().get<EngineMessage>("message", lid)?.hasAttachments === true);
+  const holdLists = (readerId: string, ids: readonly string[]): void => {
+    const held = [...new Set(ids)];
+    for (const lid of held) {
+      const n = listHolds.get(lid) ?? 0;
+      listHolds.set(lid, n + 1);
+      if (n === 0) listQueue.push(lid);
+    }
+    readerHolds.set(readerId, [...(readerHolds.get(readerId) ?? []), held]);
+    pumpLists();
+  };
+
+  /** The lists one screen held, let go; answers the ids whose last hold that was. */
+  const letGo = (readerId: string): string[] => {
+    const opens = readerHolds.get(readerId);
+    const held = opens?.pop() ?? [];
+    if (opens?.length === 0) readerHolds.delete(readerId);
+    const gone: string[] = [];
+    for (const lid of held) {
+      const left = (listHolds.get(lid) ?? 1) - 1;
+      if (left > 0) listHolds.set(lid, left);
+      else { listHolds.delete(lid); gone.push(lid); }
+    }
+    return gone;
+  };
+
+  /** A screen's holds, keyed by the ids it shows; a reader's are keyed by the opened id. */
+  const filesKeyOf = (ids: readonly string[]): string => JSON.stringify(["files", ...ids]);
+  const holdFiles = (ids: string[]): void => holdLists(filesKeyOf(ids), withFiles(ids));
+  const releaseFiles = (ids: string[]): void => {
+    for (const lid of letGo(filesKeyOf(ids))) engine.releaseAttachments(lid);
+  };
+
   /**
    * The held bag's bodies, batched (`hydrateThread` → `GET /messages/bodies`), with the
    * failed ones re-asked individually under the retry flag — the batch path has no retry
@@ -2823,15 +2908,15 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       // A row the mirror does not hold (a History or Search hit) lists its files too: the list is
       // the server's, asked by id, and the reader's cleanup releases it as it does any other.
       const off = offMirrorRowOf(id);
-      if (off?.hasAttachments) void engine.loadAttachments(id).catch(() => undefined);
+      holdLists(id, off?.hasAttachments ? [id] : []);
       return false;
     }
-    // The full text, the conversation's members, and the file list — all render-side asks;
+    // The full text, the conversation's members, and the file lists — all render-side asks;
     // failures degrade to the snippet with its honest bodyState, never to an error screen.
     hydrateSmart(id);
     const members = threadOf(engine.read(), id);
     if (members.length > 0) void engine.hydrateThread(members.map((t) => t.id)).catch(() => undefined);
-    if (m.hasAttachments) void engine.loadAttachments(id).catch(() => undefined);
+    holdLists(id, withFiles([id, ...members.map((t) => t.id)]));
     if (!m.unread) return true;
     // A RESURFACED PIN IS NOT SPENT BY OPENING — but the READ LANDS (owner ruling 2026-08-26:
     // reading a resurfaced message sticks like anywhere else). This used to skip pinned rows
@@ -2847,7 +2932,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   };
 
   const releaseAttachments = (messageId: string): void => {
-    engine.releaseAttachments(messageId);
+    // The opened message's pictures and bytes go with its reader, unless another still shows it.
+    for (const lid of new Set([messageId, ...letGo(messageId)])) {
+      if (!listHolds.has(lid)) engine.releaseAttachments(lid);
+    }
   };
 
   const loadInlineImages = (messageId: string, contentIds: string[]): void => {
@@ -4226,7 +4314,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     async discardAbandoned(id) {
       await engine.discardAbandoned(id);
     },
-    openMessage, hydrateMessage, forwardFetch, hydrateHeld, loadInlineImages, openAttachmentBytes,
+    openMessage, hydrateMessage, forwardFetch, hydrateHeld, holdFiles, releaseFiles, loadInlineImages, openAttachmentBytes,
     releaseAttachments,
     sweepFeed, leaveFeed, decide, release, setPile,
     pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, markAllSeen, move,
@@ -4267,6 +4355,9 @@ export interface WorldActions {
   discardAbandoned(id: string): Promise<void>;
   /** The sender screen's open: fetch every held body. */
   hydrateHeld(ids: string[]): void;
+  /** A screen's hold on the file lists it shows — see {@link LiveWorldActions.holdFiles}. */
+  holdFiles(ids: string[]): void;
+  releaseFiles(ids: string[]): void;
   decide(row: ScreenerRow, dest: Destination, read: boolean): void;
   setScope(row: ScreenerRow, scope: Scope): void;
   /** Allow (screened) / Not spam (spam): release the whole held bag to a place. */
@@ -4371,6 +4462,8 @@ export function stableActions(current: () => WorldActions): WorldActions {
     retryAbandoned: (id) => current().retryAbandoned(id),
     discardAbandoned: (id) => current().discardAbandoned(id),
     hydrateHeld: (ids) => current().hydrateHeld(ids),
+    holdFiles: (ids) => current().holdFiles(ids),
+    releaseFiles: (ids) => current().releaseFiles(ids),
     decide: (row, dest, read) => current().decide(row, dest, read),
     setScope: (row, scope) => current().setScope(row, scope),
     allow: (row, dest) => current().allow(row, dest),

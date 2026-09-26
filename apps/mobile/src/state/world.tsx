@@ -103,6 +103,7 @@ import {
   type WorldActions,
   type WorldHistory,
   type PhoneOrganizer,
+  type WorldAttachment,
   type WorldMail,
   type WorldPile,
   type WorldDraft,
@@ -114,6 +115,7 @@ import {
   type WorldView,
   type ConnectionSay,
   type FirstSyncSay,
+  liveFiles,
   mirrorNewestFirst,
   offMirrorRevision,
   openOffMirror,
@@ -429,6 +431,8 @@ export interface World {
     applyAll(face: FaceName): Promise<boolean>;
   };
   message(id: string): WorldMail | undefined;
+  /** One message's files, where a screen shows a row it holds rather than a reading row. */
+  filesOf(id: string): WorldAttachment[] | undefined;
   /**
    * THE STORE'S DOORS — History's walker and Search's whole-mailbox pass, with the row mapping
    * both lists share. History and Search read these, never the mirror's window; the mirror only
@@ -514,6 +518,8 @@ const NO_ACTIONS: WorldActions = {
   retryAbandoned: async (id: string) => ({ id, key: id, status: "rolled_back" as const, seq: null }),
   discardAbandoned: async () => undefined,
   hydrateHeld: () => undefined,
+  holdFiles: () => undefined,
+  releaseFiles: () => undefined,
   decide: () => undefined,
   setScope: () => undefined,
   allow: () => undefined,
@@ -624,6 +630,7 @@ function emptyWorld(actions: WorldActions): World {
     // to. `false` is "not confirmed", which is exactly what nothing-connected means.
     face: { account: null, known: false, pending: false, applyAll: () => Promise.resolve(false) },
     message: () => undefined,
+    filesOf: () => undefined,
     store: {
       walker: null,
       searchWalker: null,
@@ -1290,6 +1297,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           retryAbandoned: (id) => acts.retryAbandoned(id),
           discardAbandoned: (id) => acts.discardAbandoned(id),
           hydrateHeld: (ids) => acts.hydrateHeld(ids),
+          holdFiles: (ids) => acts.holdFiles(ids),
+          releaseFiles: (ids) => acts.releaseFiles(ids),
           decide: (row, dest, read) => void acts.decide(row, dest, read, row.scope),
           setScope: (row, scope) => setScopes((held) => ({ ...held, [row.routeKey]: scope })),
           allow: (row, dest) => void acts.release(row, dest, "screened"),
@@ -1563,6 +1572,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         now: new Date(), zone, locale, foldersEnabled: foldersOn,
         ownAddresses: addressesNow.current, mailboxes: mailboxes ?? [], screening: posture,
       }),
+      filesOf: (id) => liveFiles(engine, id),
       /* The same hiding reader and view the lists derive from — a held-deleted row must not
          survive in search for the window. `searchRev` in this memo's deps is what re-derives
          it when a build settles. */

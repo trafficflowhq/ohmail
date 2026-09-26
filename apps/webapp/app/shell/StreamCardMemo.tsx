@@ -22,6 +22,7 @@ import { MessageRecipients } from "./MessageRecipients";
 import { FoldTableArt, StreamCardToggled, StreamCardWidth } from "./StreamShell";
 import type { RemoteImagesChrome } from "./remote-images";
 import { MessageBody as MessageBodyView } from "../components/MessageBody";
+import { MessageFiles } from "./MessageFiles";
 import { BlockNoticeGloss, type BlockNotice } from "../components/BlockNotice";
 
 /**
@@ -167,6 +168,9 @@ function StreamCardMemoInner({
       failedLabel={failedLabel}
       withheldLabel={withheldLabel}
       bodySlot={bodySlot}
+      /* The one holder every reader uses; the card mounts it only while open, so expanding is
+         the list's ask and a scroll past a collapsed card asks for nothing. */
+      files={<MessageFiles messageId={m.id} />}
       recipients={recipients}
       /* Its own node beside the recipients block and NOT inside its gate: that block asks who else
          was addressed, off the headers, and withholds itself below two recipients; this is a

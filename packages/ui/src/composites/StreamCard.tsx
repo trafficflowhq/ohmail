@@ -87,6 +87,12 @@ export interface StreamCardProps {
    * for it — see `showViewer` below.
    */
   bodySlot?: ReactNode;
+  /**
+   * THE MESSAGE'S FILES, under the body — drawn only while the card is OPEN, so a stream of two
+   * hundred collapsed cards mounts no strip and asks for no list; opening the card is the ask.
+   * A slot: the app passes its own strip, which holds its own list. Default-absent.
+   */
+  files?: ReactNode;
   onSelect?: (id: string) => void;
   /**
    * Called after the expand state flips (collapse-keeping-in-view etc.).
@@ -165,6 +171,7 @@ export function StreamCard({
   failedLabel,
   withheldLabel,
   bodySlot,
+  files,
   onSelect,
   onToggle,
   recipients,
@@ -405,6 +412,13 @@ export function StreamCard({
         ) : null}
         <div className="sc-fade" />
       </div>
+      {/* Outside the clip, so the clamp never hides a file. `onClick` stops here: saving a file
+          must not also re-select the card underneath it. */}
+      {open && files ? (
+        <div className="sc-files" onClick={(e) => e.stopPropagation()}>
+          {files}
+        </div>
+      ) : null}
       <button
         type="button"
         className="sc-x"

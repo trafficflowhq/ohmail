@@ -58,6 +58,7 @@ import { useListWindow } from "../shell/list-window";
    it. See {@link useBodyStalled} for why the deadline is derived from the engine's rather than
    picked, and `HeldMail` below for why this pile needs it too. */
 import { useBodyStalled, type BodyTarget } from "../shell/message-chrome";
+import { MessageFiles } from "../shell/MessageFiles";
 import { useDrawnBody, useDrawnStates } from "../shell/body-slice";
 import { heldBodyAsks } from "../shell/held-body-asks";
 import { goScreener, goSettings, type ScreenerSegmentId } from "../shell/routing";
@@ -1891,8 +1892,8 @@ export function HeldMail({
   messageId?: string;
   /**
    * THE MIRROR MESSAGE THIS PREVIEW DRAWS — present ⇒ text, html, state and posture come from the
-   * reader's door ({@link useDrawnBody}) and the carried fields below are ignored. Absent on a row
-   * that brings its own body: a fixture sender, the junk window.
+   * reader's door ({@link useDrawnBody}) and the carried fields below are ignored, and its files
+   * are listed. Absent on a row that brings its own body: a fixture sender, the junk window.
    */
   message?: BodyTarget | null;
   from: string;
@@ -2063,6 +2064,9 @@ export function HeldMail({
           onNotice={setNotice}
         />
       </div>
+      {/* A held message's files, through the one holder every reader uses. Only a row the mirror
+          backs has a list to ask for; a fixture row and the live Junk window's rows have none. */}
+      {message ? <MessageFiles messageId={message.id} /> : null}
       {note ? (
         <p className={failed ? "hm-state warn" : "hm-state"} role="status">
           {note}{" "}

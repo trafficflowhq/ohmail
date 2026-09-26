@@ -27,6 +27,7 @@ import { useWorld } from "../state/world";
 import { Badge, Button, Panel, Screen, Scroller, Tap, Txt } from "./base";
 import { DetailBar } from "./chrome";
 import { Icon } from "./Icon";
+import { AttachmentTiles } from "./MessageReader";
 import { Segmented } from "./Segmented";
 import { useLocale } from "../i18n/LocaleProvider";
 
@@ -61,10 +62,16 @@ export function SenderDetail({
   // restored before the session went live re-asks against the engine once it exists.
   const heldKey = row ? row.held.map((h) => h.id).join(",") : "";
   const hydrateHeld = w.actions.hydrateHeld;
+  const { holdFiles, releaseFiles } = w.actions;
   const worldKey = w.worldKey;
   useEffect(() => {
-    if (heldKey) hydrateHeld(heldKey.split(","));
-  }, [heldKey, hydrateHeld, worldKey]);
+    if (!heldKey) return;
+    // The held mail's file lists are held for as long as this screen shows the bag.
+    const ids = heldKey.split(",");
+    hydrateHeld(ids);
+    holdFiles(ids);
+    return () => releaseFiles(ids);
+  }, [heldKey, hydrateHeld, holdFiles, releaseFiles, worldKey]);
 
   if (!row) {
     return (
@@ -200,6 +207,8 @@ export function SenderDetail({
             <Txt variant="streamBody" tone="ink" style={{ marginTop: 12 }}>
               {h.body}
             </Txt>
+            {/* The held message's files, through the reader's one strip. */}
+            <AttachmentTiles m={{ id: h.id, attachments: w.filesOf(h.id) }} />
           </Panel>
         ))}
       </Scroller>

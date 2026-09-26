@@ -8,7 +8,7 @@
  * the waterline above the newest issue the reader passed — it moves exactly
  * once per visit. Every issue the world answers renders; no "and 9 more".
  */
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { Copy } from "../../src/copy";
@@ -20,7 +20,7 @@ import { Badge, Empty, Panel, Screen, Tail, TapRow, Txt, Waterline } from "../..
 import { TopBar } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
 import { MailList, type RowFrame } from "../../src/ui/MailList";
-import { MessageReader } from "../../src/ui/MessageReader";
+import { AttachmentTiles, MessageReader } from "../../src/ui/MessageReader";
 import { FadeOut } from "../../src/ui/FadeOut";
 import { MarkAllRead } from "../../src/ui/MarkAllRead";
 import { SkeletonList } from "../../src/ui/Skeleton";
@@ -178,8 +178,18 @@ function StreamCard({
   onOpenBeside?: () => void;
 }) {
   const t = useTheme();
+  const w = useWorld();
   const [open, setOpen] = useState(false);
   const clamped = !open;
+  /* An open card shows the issue's files; the open is the list's ask, so a scroll past a closed
+     card asks for nothing, and closing it lets the list go. */
+  const { holdFiles, releaseFiles } = w.actions;
+  const worldKey = w.worldKey;
+  useEffect(() => {
+    if (!open) return;
+    holdFiles([m.id]);
+    return () => releaseFiles([m.id]);
+  }, [open, m.id, holdFiles, releaseFiles, worldKey]);
   // What the open card is actually showing, said out loud — never a preview presented as
   // the whole issue.
   const bodyNote =
@@ -246,6 +256,11 @@ function StreamCard({
           </View>
         </View>
       </TapRow>
+      {open ? (
+        <View style={{ paddingHorizontal: 18, paddingBottom: 14, marginTop: -14 }}>
+          <AttachmentTiles m={{ id: m.id, attachments: w.filesOf(m.id) }} />
+        </View>
+      ) : null}
     </Panel>
   );
 }

@@ -9,12 +9,12 @@
  * was — continuity as data, not as tree position.
  */
 import { useEffect, useRef, useState } from "react";
-import { JUNK_REFILL_BOUND_MS } from "../state/live";
+import { JUNK_REFILL_BOUND_MS, type WorldAttachment } from "../state/live";
 import { junkLeaving, withheldNote } from "./body-note";
 import { ActivityIndicator, Platform, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
-import { useWorld, type WorldMail } from "../state/world";
+import { useWorld } from "../state/world";
 import { shareAttachmentBytes } from "../mail/open-attachment-native";
 import { Chip, Panel, Screen, Scroller, Tap, Txt } from "./base";
 import { DetailBar } from "./chrome";
@@ -236,6 +236,8 @@ export function MessageReader({
                   <Txt variant="streamBody" tone="ink2" style={{ marginTop: 10 }}>
                     {h.body}
                   </Txt>
+                  {/* Each member's own files: the reader's open asked for its list. */}
+                  <AttachmentTiles m={h} />
                 </Panel>
               ))}
             </View>
@@ -259,8 +261,9 @@ export function MessageReader({
  * OPENS the bytes: one engine fetch under the server's ceiling, then the platform share
  * sheet — viewer, save and send are the platform's own routes. Each refusal renders a
  * sentence on the tile it belongs to; a silent failure here is a person pressing a dead tile.
+ * The phone's one strip: the reader, each conversation member and the Screener's held mail.
  */
-function AttachmentTiles({ m }: { m: WorldMail }) {
+export function AttachmentTiles({ m }: { m: { id: string; attachments?: WorldAttachment[] } }) {
   const t = useTheme();
   const w = useWorld();
   const [busy, setBusy] = useState<string | null>(null);

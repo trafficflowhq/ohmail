@@ -213,6 +213,8 @@
 .scast.pend .sc-clip{min-height:348px}
 .scast.viewer:not(.open) .sc-clip{height:348px}
 .sc-viewer{padding:6px 22px 18px}
+.sc-files{padding:0 26px}
+.sc-files .att-strip{margin-top:4px}
 /* The reading pane's "remote image / stylesheet blocked" bar is noise in the collapsed skim —
    a per-card status line the reader is not yet reading. It returns the moment the card is
    expanded (a full reading context), and is untouched everywhere else the viewer renders. */
