@@ -1560,6 +1560,15 @@ export const STORE_POLICY_GENERATION_META = "storePolicyGeneration";
 export const STORE_POLICY_GENERATION = 1;
 
 /**
+ * A WINDOW A MAILBOX REMOVAL LEFT SHORT. A windowed mirror holds the newest rows of EVERY mailbox,
+ * so a second mailbox's newer mail displaced the first's older rows; its receipt takes that mail
+ * and nothing brings the displaced rows back — no delta names them, and the waiting count stood
+ * below where it was before the mailbox was added. Set when a receipt is news to this mirror,
+ * cleared by {@link OhmailEngine.refillWindow}; durable, so a reload in between still owes it.
+ */
+export const WINDOW_REFILL_OWED_META = "windowRefillOwed";
+
+/**
  * HOW MUCH MAIL THIS READER HAS TAKEN IN, WRITTEN DOWN — the durable half of {@link
  * OhmailEngine.receivedMessages}. The count is a fact about the mirror and the door that fills it
  * is a process: a reloaded tab used to start it again, so the import's progress fell back to the
@@ -3129,7 +3138,10 @@ export class OhmailEngine {
       // later it is gone.
       const highBefore = this.store.maxSeq();
       pagesThisDrain += 1;
-      this.noteApplied(flattenResponse(resp));
+      const flat = flattenResponse(resp);
+      // Before the rows, which tombstone the mailbox the receipt names.
+      await this.noteRemovalOwesRefill(flat);
+      this.noteApplied(flat);
       await this.store.applyResponse(resp);
       // AFTER THE ROWS, NEVER BEFORE. A kill between the two leaves the written count BEHIND the
       // mirror, which the consumer's floor absorbs; the other order leaves it AHEAD, and the rows
@@ -3155,6 +3167,8 @@ export class OhmailEngine {
       // AND THE PASS AT THE SETTLE, ungraced, at the point the mirror is caught up and therefore
       // at its most complete — the last page's own rows are judged here and nowhere earlier. A
       // `full` policy returns immediately.
+      // A removal's short window is refilled BEFORE the settle prune trims it back to the policy.
+      if (await this.refillWindow()) this.notify();
       if (await this.pruneToPolicy()) this.notify();
       // A drain is the one thing that can deliver the REAL Sent row an optimistic copy is standing
       // in for — retire any copy the mirror now holds under the same header (or that has aged out),
@@ -3531,6 +3545,51 @@ export class OhmailEngine {
       cursor = page.nextCursor;
     }
     if (wrote) this.notify();
+  }
+
+  /** A `mailbox` receipt this mirror has not applied yet owes a windowed mirror its refill. */
+  private async noteRemovalOwesRefill(changes: SyncChange[]): Promise<void> {
+    if (this.storePolicy.mode !== "windowed" || !this.snapshotFn) return;
+    const news = changes.some((ch) => ch.type === MAILBOX_TYPE && ch.op === "delete"
+      && !this.store.isTombstoned(MAILBOX_TYPE, ch.id));
+    if (news) await this.store.setMeta(WINDOW_REFILL_OWED_META, true);
+  }
+
+  /**
+   * THE REFILL a removal owes ({@link WINDOW_REFILL_OWED_META}): the snapshot walked ROWS ONLY,
+   * applying what the mirror holds neither live nor as a tombstone — the rows the removed
+   * mailbox's mail displaced. The cursor stays the delta's ({@link freshenStaleResume}'s
+   * argument); a tombstone is never overwritten, so nothing the delta deleted comes back; the
+   * settle prune then trims to the policy. Not counted as received: these rows were taken in
+   * once already. A failed page leaves it owed. Answers whether it wrote anything.
+   */
+  private async refillWindow(): Promise<boolean> {
+    if (this.store.getMeta<boolean>(WINDOW_REFILL_OWED_META) !== true) return false;
+    const snapshot = this.snapshotFn;
+    if (this.storePolicy.mode !== "windowed" || !snapshot || this.snapshotUnavailable) {
+      await this.store.setMeta(WINDOW_REFILL_OWED_META, false);
+      return false;
+    }
+    let cursor: string | undefined;
+    let wrote = false;
+    for (;;) {
+      let page: SyncSnapshotPage;
+      try {
+        page = await snapshot(cursor !== undefined ? { cursor } : {});
+      } catch {
+        return wrote;
+      }
+      const missing = OhmailEngine.withoutSentDraftText(page.changes).filter((ch) =>
+        this.store.get(ch.type, ch.id) === undefined && !this.store.isTombstoned(ch.type, ch.id));
+      if (missing.length > 0) {
+        await this.store.applyChanges(missing);
+        wrote = true;
+      }
+      if (page.nextCursor == null || page.nextCursor === "") break;
+      cursor = page.nextCursor;
+    }
+    await this.store.setMeta(WINDOW_REFILL_OWED_META, false);
+    return wrote;
   }
 
   /**
