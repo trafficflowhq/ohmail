@@ -643,7 +643,12 @@ export const consentRoutes: Route[] = [
       const baselineAt = settings.screeningBaselineAt === null
         ? null
         : new Date(settings.screeningBaselineAt);
-      const counts = await cutlineCounts(ctx, { dormancyDays, baselineAt });
+      // THE SENDER COUNTS ARE AN OPT-IN (`?counts=1`, exactly "1"): a whole-mailbox aggregate that no
+      // first-party client reads, and this route is read on every boot and every phone drain. Absent
+      // from the body otherwise, which every client already reads as unknown.
+      const counts = new URL(req.url).searchParams.get("counts") === "1"
+        ? await cutlineCounts(ctx, { dormancyDays, baselineAt })
+        : undefined;
       /* BOTH SIGNATURE MAPS FROM ONE READ, and it is the read that knows about the ORGANIZER.
          On a mailbox this install only reads, `mailboxes.signature` is a dead local copy and the
          live sign-off is in the organizer's published document; asking for the two maps
@@ -761,7 +766,7 @@ export const consentRoutes: Route[] = [
         // disagreement is a Screener queue whose length does not match its contents. Always one of
         // the two strings — the column is NOT NULL with a default, so there is no unknown to send.
         screeningScope: settings.screeningScope,
-        counts,
+        ...(counts === undefined ? {} : { counts }),
       });
     },
   },

@@ -530,7 +530,7 @@ export interface ConsentStateWire {
     blockAutoUnsubscribeAt?: string | null;
     locale?: string | null;
     resurfaceTime?: string | null;
-    counts: {
+    counts?: {
         decidedSenders: number;
         activeUndecidedSenders: number;
         dormantUndecidedSenders: number;

@@ -171,8 +171,6 @@ export interface ConsentState {
    * four keep today's partition, and the worst case is the sliding window itself.
    */
   screeningBaselineAt: string | null;
-  /** Senders still owed a decision, as the SERVER counts them. */
-  activeUndecidedSenders: number;
   /**
    * IS AUTO-SUGGEST ON — the one field on this object that authorises spending.
    *
@@ -393,7 +391,6 @@ const RESTING: ConsentState = {
   // default: `DEFAULT_DORMANCY_DAYS` is the window the engine uses unasked, whereas a guessed
   // baseline is an assertion that somebody finished screening. See {@link ConsentState.screeningBaselineAt}.
   screeningBaselineAt: null,
-  activeUndecidedSenders: 0,
   autoSuggest: false,
   autoSuggestAt: null,
   // MANUAL AT REST. See {@link ConsentState.blockRemoteImages}: this is the one field whose safe
@@ -710,7 +707,6 @@ export function useConsentState(
           // may be turned into an instant. This is the SAME read that carries `dormancyDays`, so
           // the two halves of the cutoff can never come from different fetches.
           screeningBaselineAt: wire.screeningBaselineAt ?? null,
-          activeUndecidedSenders: wire.counts?.activeUndecidedSenders ?? 0,
           // `== null` covers BOTH null (off) and undefined (an API from before mail 0040).
           // Written as one comparison because the two are the same answer to the only question
           // asked of this field, and splitting them would invite a branch where one of them

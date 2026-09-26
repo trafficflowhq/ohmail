@@ -2088,7 +2088,8 @@ export interface ConsentStateWire {
    * partitions its mirror differently from the server that counted for it.
    */
   screeningScope?: "window" | "all_time";
-  counts: {
+  /** The server's sender counts — present only when the read asked for them with `?counts=1`. */
+  counts?: {
     decidedSenders: number;
     activeUndecidedSenders: number;
     dormantUndecidedSenders: number;
