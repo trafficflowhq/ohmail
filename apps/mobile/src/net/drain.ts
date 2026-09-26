@@ -17,6 +17,17 @@ export interface DrainEngine {
 }
 
 import { faultDetail, type RefusalArg } from "../refusal";
+import { ACCESS_REFUSED_CODE, ACCESS_REFUSED_STATUS } from "./access-lock";
+
+/**
+ * THE SERVICE REFUSED THE ACCOUNT, not the round: the gate's `402 subscription_required`, keyed on
+ * the envelope's code like the sink. The wall is its sentence, so the round counts as no failure
+ * and says nothing; the cadence stands down while the wall stands (`connection.tsx`).
+ */
+export function isAccessRefusal(err: unknown): boolean {
+  const e = (typeof err === "object" && err !== null ? err : {}) as { status?: unknown; code?: unknown };
+  return e.status === ACCESS_REFUSED_STATUS && e.code === ACCESS_REFUSED_CODE;
+}
 
 /** How a round of record ended — what the drain line ({@link drainLine}) is written from. */
 export type RoundOutcome =
@@ -89,18 +100,20 @@ export class SyncRunner {
       // dropped — never an unregistered one the record gates would silence.
       await Promise.resolve();
       let outcome: RoundOutcome = { ok: true, first };
+      let account = false;
       try {
         await (first ? engine.start() : engine.syncOnce());
       } catch (err) {
-        outcome = { ok: false, first, err, failures: this.failed + 1 };
-        if (this.inflight === self.round) this.on.error(faultDetail(err));
+        account = isAccessRefusal(err);
+        outcome = { ok: false, first, err, failures: account ? this.failed : this.failed + 1 };
+        if (this.inflight === self.round && !account) this.on.error(faultDetail(err));
         // Re-sync memory with disk so the torn-flush guard's refusal window closes and the
         // retry re-fetches the failed page instead of writing past it. Through a thenable so
         // even a synchronously-throwing hydrate stays inside this round.
         await Promise.resolve().then(() => engine.hydrate()).catch(() => undefined);
       } finally {
         if (this.inflight === self.round) {
-          this.failed = outcome.ok ? 0 : this.failed + 1;
+          this.failed = outcome.ok ? 0 : account ? this.failed : this.failed + 1;
           this.on.syncing(false);
           this.inflight = null;
           try { this.on.settled?.(outcome); } catch { /* a log line is never worth a round */ }

@@ -17,7 +17,7 @@ import { useLocale } from "../i18n/LocaleProvider";
 import { Button, Panel, Txt, useTopPad } from "./base";
 import { dayStamp } from "./day-stamp";
 import { dismissKey, dismissed, noticeOf, remember, stoodDown, type Notice } from "./lifecycle-strip";
-import { readAccess } from "../net/account";
+import { mintManageLink, readAccess, type ManageLink } from "../net/account";
 import { linksOutToBilling } from "../distribution";
 import { readMailboxes } from "../net/mailboxes";
 import type { PhoneMailbox } from "../net/mailboxes";
@@ -28,10 +28,12 @@ export function LifecycleStrip({ session }: { session: ConnectedSession | null }
   const router = useRouter();
   const [notice, setNotice] = useState<Notice | null>(null);
   const [handedBack, setHandedBack] = useState<PhoneMailbox[]>([]);
-  /* The door the strip's one press opens, as the SERVER gave it. Absent on a deployment with no
-     subscription page, and the press is then not drawn — a button that goes nowhere is worse than
-     no button. */
-  const [manageUrl, setManageUrl] = useState<string | null>(null);
+  /* Does the service operate an account page — `manageUrl` is that fact and nothing more; the
+     press mints its own link. Absent on a deployment with no subscription page, and the press is
+     then not drawn — a button that goes nowhere is worse than no button. */
+  const [offersPage, setOffersPage] = useState(false);
+  const [minting, setMinting] = useState(false);
+  const [refused, setRefused] = useState<Exclude<ManageLink["kind"], "url"> | null>(null);
   const [gone, setGone] = useState(false);
   /* IT IS THE FIRST THING UNDER THE STATUS BAR whenever it draws — the shell mounts it above the
      screen, outside the chrome that pays this everywhere else. Measured on a device with a fixed
@@ -49,7 +51,7 @@ export function LifecycleStrip({ session }: { session: ConnectedSession | null }
       const next = noticeOf(a.lifecycle, a.caughtUp, Date.now());
       if (next === null || dismissed(dismissKey(next, session.ownerKey))) return;
       setNotice(next);
-      setManageUrl(a.manageUrl ?? null);
+      setOffersPage(a.manageUrl !== undefined);
       // Only the catch-up names mailboxes, so only it pays for the roster read.
       if (next.kind !== "caughtUp") return;
       void readMailboxes(session).then((rows) => {
@@ -64,9 +66,18 @@ export function LifecycleStrip({ session }: { session: ConnectedSession | null }
     setGone(true);
   }, [notice, session]);
 
-  const leave = (url: string): void => {
-    /* The SYSTEM browser, always — the page is the service's and the person is signed in there. */
-    void Linking.openURL(url).catch(() => undefined);
+  /* MINTED AT THE PRESS, opened in the SYSTEM browser: a held link lives ten minutes and once. */
+  const leave = async (): Promise<void> => {
+    if (minting || session === null) return;
+    setRefused(null);
+    setMinting(true);
+    try {
+      const link = await mintManageLink(session, locale);
+      if (link.kind === "url") { void Linking.openURL(link.url).catch(() => undefined); return; }
+      setRefused(link.kind);
+    } finally {
+      setMinting(false);
+    }
   };
 
   if (notice === null || gone) return null;
@@ -124,17 +135,22 @@ export function LifecycleStrip({ session }: { session: ConnectedSession | null }
             : Copy.stripTrialEnds(date)}
       </Txt>
       <View style={{ flexDirection: "row", gap: 8 }}>
-        {mayLinkOut && manageUrl !== null ? (
+        {mayLinkOut && offersPage ? (
           <Button
             label={notice.kind === "pastDue" ? Copy.stripFixPayment : Copy.stripSubscribe}
             variant="solid"
-            onPress={() => leave(manageUrl)}
+            onPress={() => { void leave(); }}
           />
         ) : null}
         {/* The way out is always there. A strip somebody cannot put away has to be right about
             how often it appears; this one is right about that AND can be put away. */}
         <Button label={Copy.stripLater} variant="quiet" onPress={putAway} />
       </View>
+      {refused !== null ? (
+        <Txt variant="caption" tone="ink2" accessibilityRole="alert">
+          {refused === "unverified" ? Copy.wallMintUnverified : Copy.wallMintFailed}
+        </Txt>
+      ) : null}
     </Panel>
   );
 }

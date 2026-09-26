@@ -1,5 +1,6 @@
 /**
- * WHAT THE ACCOUNT DOOR SAYS ABOUT THIS ACCOUNT — the two reads the wall and its strips need.
+ * WHAT THE ACCOUNT DOOR SAYS ABOUT THIS ACCOUNT — the two reads the wall and its strips need, and
+ * the one press that mints the way back ({@link mintManageLink}).
  *
  * `GET /account/access` is the ONE fresh read: every other door keeps the 60 s cache, so a strip
  * that must see a reopening within seconds asks here, and it is on the refusal allow-list, so a
@@ -11,12 +12,21 @@
 
 import type { ConnectedSession } from "./pairing.js";
 import { requestBase } from "./request-base";
-import { lifecycleOf, type AccountLifecycle } from "./access-lock";
+import {
+  closeStaleWindow, liftAccessLock, lifecycleOf, raiseAccessLock,
+  type AccessRefusedFacts, type AccountLifecycle,
+} from "./access-lock";
+import { recordVerdict } from "../state/access-verdict";
 
 /** What `GET /account/access` said, reduced to what this phone draws. */
 export interface AccountAccess {
   /** `false` is a host with no entitlements program at all — a self-hosted server. */
   metered: boolean;
+  /**
+   * The gate's own verdict in a word. ABSENT on an API that predates it, and absent is never
+   * read as open: an older server's wall still comes down only by signing in again.
+   */
+  access?: "open" | "refused";
   lifecycle?: AccountLifecycle;
   manageUrl?: string;
   exportPath?: string;
@@ -46,11 +56,51 @@ export function accessOf(body: unknown): AccountAccess | null {
       : undefined;
   return {
     metered: true,
+    ...(raw.access === "open" || raw.access === "refused" ? { access: raw.access } : {}),
     ...(lifecycle ? { lifecycle } : {}),
     ...(manageUrl ? { manageUrl } : {}),
     ...(exportPath ? { exportPath } : {}),
     ...(caughtUp ? { caughtUp } : {}),
   };
+}
+
+/** The one predicate the wall lifts on: the service's own `access: "open"`, and nothing else. */
+export function opensTheWall(a: AccountAccess): boolean {
+  return a.metered && a.access === "open";
+}
+
+/** The wall's facts from a refused answer — the same fields the 402 carries — or `null`. */
+export function refusedFactsOf(a: AccountAccess): AccessRefusedFacts | null {
+  if (!a.metered || a.access !== "refused") return null;
+  const lifecycle = a.lifecycle;
+  // Wire words, never shown: an operator hold, or the arm whose remedy is a door to act on.
+  const reason: AccessRefusedFacts["reason"] =
+    lifecycle?.closedReason === "suspended" ? "suspended" : "payment_required";
+  return {
+    reason,
+    ...(a.manageUrl ? { manageUrl: a.manageUrl } : {}),
+    ...(lifecycle ? { lifecycle } : {}),
+    ...(a.exportPath ? { exportPath: a.exportPath } : {}),
+  };
+}
+
+/**
+ * EVERY ANSWER IS THE SERVICE'S FRESH WORD: an open one lifts the wall and opens the stale-402
+ * window, a refused one raises the wall like a 402 would, and both are kept for the next launch's
+ * first paint. An answer with no `access` says nothing and changes nothing.
+ */
+function noteAccess(session: ConnectedSession, a: AccountAccess): void {
+  if (!a.metered) { recordVerdict(session.profile.id, "open"); return; }
+  if (opensTheWall(a)) {
+    recordVerdict(session.profile.id, "open");
+    liftAccessLock();
+    return;
+  }
+  const facts = refusedFactsOf(a);
+  if (facts === null) return;
+  recordVerdict(session.profile.id, "closed");
+  closeStaleWindow();
+  raiseAccessLock(facts);
 }
 
 /**
@@ -63,9 +113,44 @@ export async function readAccess(session: ConnectedSession): Promise<AccountAcce
   try {
     const res = await session.fetch(`${requestBase(session)}/account/access`, { method: "GET" });
     if (res.status !== 200) return null;
-    return accessOf((await res.json()) as unknown);
+    const a = accessOf((await res.json()) as unknown);
+    if (a !== null) noteAccess(session, a);
+    return a;
   } catch {
     return null;
+  }
+}
+
+/** What a press on the way back got: the page to open, or why there is none. */
+export type ManageLink =
+  | { kind: "url"; url: string }
+  /** `403 email_unverified` — the account page needs a confirmed address, said by name. */
+  | { kind: "unverified" }
+  | { kind: "failed" };
+
+/**
+ * MINT THE ACCOUNT-PAGE LINK AT THE PRESS — `POST /account/manage-link` with the app's language.
+ * A link lives ten minutes and once, so none is ever kept: `manageUrl` on a 402 or an access
+ * read only decides whether the button is drawn. Only an https answer is a page to open.
+ */
+export async function mintManageLink(
+  session: ConnectedSession,
+  lang: "de" | "en",
+): Promise<ManageLink> {
+  if (session.standalone) return { kind: "failed" };
+  try {
+    const res = await session.fetch(`${requestBase(session)}/account/manage-link`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ lang }),
+    });
+    const body = (await res.json().catch(() => null)) as
+      { url?: unknown; error?: { code?: unknown } } | null;
+    if (res.status === 403 && body?.error?.code === "email_unverified") return { kind: "unverified" };
+    const url = res.status === 200 ? body?.url : undefined;
+    return typeof url === "string" && url.startsWith("https://") ? { kind: "url", url } : { kind: "failed" };
+  } catch {
+    return { kind: "failed" };
   }
 }
 

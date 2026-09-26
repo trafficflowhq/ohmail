@@ -20,7 +20,7 @@ import {
   takeConsentPress, sayOrganizerRestricted, standaloneHere, standaloneLaunchGeneration,
 } from "../engine/organizer-session";
 import { engineLogSink } from "../engine/engine-log";
-import { clearAccessLock } from "./access-lock";
+import { accessLock, clearAccessLock, onAccessLock } from "./access-lock";
 import { decidedState, type DecidedState } from "./decided";
 import { deathRefusal, noteSessionDeath } from "./session-death";
 import {
@@ -397,12 +397,11 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       // Whatever the PREVIOUS session left standing — a failure sentence, a disowned round —
       // is not this session's status. Idempotent; the teardown path already disowned.
       runner.disown();
-      /* THE WALL COMES DOWN HERE AND NOWHERE ELSE. A later 200 never clears it (the browser
-         shell's rule, `net/access-lock.ts`): a refused account's own doors keep answering, and a
-         cached page behind the wall would flicker the app back for somebody whose account is
-         closed. Establishing a session IS this phone's "sign in again" — pairing, a switch, a
-         reconnect — so it is the one gesture that clears. A cold launch reaches this with the
-         slot already empty, and the first refused request puts the wall straight back. */
+      /* THE WALL COMES DOWN HERE, and otherwise only on the service's fresh `access: "open"`
+         (`net/account.ts`). A later 200 never clears it: a refused account's own doors keep
+         answering, and a cached page behind the wall would flicker the app back. Establishing a
+         session IS this phone's "sign in again" — pairing, a switch, a reconnect — so it is the
+         one gesture that clears. A cold launch reaches this with the slot already empty. */
       clearAccessLock();
       offDead.current?.();
       /* NO DEAD SIGNAL ON THE STANDALONE DOOR, and `null` rather than a subscription that can never
@@ -447,6 +446,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
             round: () => {
               const atRound = live.now();
               if (atRound.k !== "live" || atRound.session !== session) return Promise.resolve(0);
+              /* STOOD DOWN WHILE THE WALL STANDS: every round would be the same 402. */
+              if (accessLock() !== null) return Promise.resolve(0);
               return runner.request(session.engine).then(() => runner.failures());
             },
           }),
@@ -455,6 +456,17 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     },
     [drain, refreshProfiles, runner, teardown],
   );
+
+  /* THE LIFT RESTARTS THE LOOP at once, from its stored cursors, behind the same clearance. */
+  useEffect(() => onAccessLock((facts) => {
+    const at = live.now();
+    if (facts !== null || at.k !== "live") return;
+    const session = at.session;
+    void (clearance.current.get(session) ?? Promise.resolve(false)).then((ok) => {
+      const atDrain = live.now();
+      if (ok && atDrain.k === "live" && atDrain.session === session) void runner.request(session.engine);
+    });
+  }), [live, runner]);
 
   /**
    * The one connect body every gated transition shares: teardown, fresh keystore read BY ID,

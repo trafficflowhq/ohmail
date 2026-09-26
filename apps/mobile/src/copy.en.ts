@@ -2257,6 +2257,17 @@ const TABLE = {
   wallSubscribe: "Subscribe",
   wallOpenAccount: "Open your ohmail account",
   wallManage: "Manage subscription",
+  /* THE WAY BACK'S SIX SENTENCES, the browser wall's own (`accessLock.subscribeHint` …
+     `checkAgain`). The link is minted at the press; these say what it opens, why it did not,
+     and where the check stands on the way back. No processor is named on this screen. */
+  wallSubscribeHint: "Opens your account page: choose a plan, pay, come back here.",
+  wallMintFailed: "The account page could not be opened just now. Try again in a moment.",
+  wallMintUnverified:
+    "The account page needs a confirmed address. Open the link in the mail we sent when you signed up.",
+  wallChecking: "Checking your account…",
+  wallPending:
+    "The payment is not confirmed yet. As soon as it is, this continues on its own — nothing to do.",
+  wallCheckAgain: "Check again",
   wallMoveOut: "Move to self-hosted",
   wallMoveOutHint:
     "Hands over your rules, Screener decisions and settings as one file, which your own install reads when it takes over this mailbox.",

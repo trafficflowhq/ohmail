@@ -27,13 +27,15 @@ export type WallLineKey =
   | "wallOpenInBrowser";
 
 /**
- * What a press does. `manage` and `delete` leave for the system browser; `export` runs here.
- * `servers` is the way out of the screen — a lock with no way out is a trap.
+ * What a press does. `manage` and `delete` mint the account-page link AT THE PRESS and leave for
+ * the system browser — neither carries an address, because a held one lives ten minutes and once.
+ * `export` runs here. `servers` is the way out of the screen — a lock with no way out is a trap.
+ * `hint` on `manage` is the sentence under the way back, where there is one to say.
  */
 export type WallAction =
-  | { id: "manage"; label: string; url: string }
+  | { id: "manage"; label: string; hint?: string }
   | { id: "export"; label: string; hint: string; path: string }
-  | { id: "delete"; label: string; hint: string; url: string }
+  | { id: "delete"; label: string; hint: string }
   | { id: "servers"; label: string };
 
 export interface WallSays {
@@ -109,16 +111,17 @@ export function wallSays(
   }
 
   const actions: WallAction[] = [];
-  /* THE WAY BACK, and only where the service supplied an address — this app holds no plan, no
-     balance and no page of its own to send anybody to. A button that goes nowhere is worse than
-     no button: it is the one control on this screen somebody will press. */
+  /* THE WAY BACK, and only where the service operates an account page (`manageUrl` is that fact
+     and nothing more — the press mints its own link). This app holds no plan, no balance and no
+     page of its own; a button that goes nowhere is the one control somebody will press. */
   if (facts.manageUrl && mayLinkOut) {
     actions.push({
       id: "manage",
       label: lifecycle === undefined
         ? Copy.wallManage
         : held ? Copy.wallOpenAccount : Copy.wallSubscribe,
-      url: facts.manageUrl,
+      /* What the press opens, said only for a closure somebody undoes by paying. */
+      ...(lifecycle !== undefined && !held ? { hint: Copy.wallSubscribeHint } : {}),
     });
   }
   /* THE WAY OUT, on BOTH faces: it opens no page and buys nothing. It hands over the rules, the
@@ -142,7 +145,6 @@ export function wallSays(
       id: "delete",
       label: Copy.wallDeleteNow,
       hint: Copy.wallDeleteElsewhere,
-      url: facts.manageUrl,
     });
   }
   /* The way off the screen. Servers holds disconnect and forget, and this wall replaces the tabs

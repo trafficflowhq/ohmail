@@ -182,9 +182,41 @@ export function clearAccessLock(): void {
   tell();
 }
 
+/**
+ * HOW LONG A 402 IS DISBELIEVED AFTER AN OPEN VERDICT — the service's own verdict cache
+ * (`ACCESS_TTL_MS`, `packages/db/src/entitlements-client.ts`). Another API instance may still
+ * hold the old refusal that long, and its 402 must not re-raise a wall that has just lifted.
+ */
+export const STALE_REFUSAL_MS = 60_000;
+
+let openAt: number | null = null;
+
+/**
+ * THE SERVICE SAID `access: "open"` on the fresh read — the one thing besides signing in again
+ * that takes the wall down (ruled 2026-09-26; `net/account.ts` is the only caller). It also
+ * opens the window in which a 402 is a stale cache rather than a closure.
+ */
+export function liftAccessLock(now: number = Date.now()): void {
+  openAt = now;
+  if (locked === null) return;
+  locked = null;
+  tell();
+}
+
+/** A fresh `refused` answer is the service's own word: the stale window closes at once. */
+export function closeStaleWindow(): void {
+  openAt = null;
+}
+
+/** Is a 402 heard now inside the window an open verdict opened? */
+export function refusalIsStale(now: number = Date.now()): boolean {
+  return openAt !== null && now - openAt >= 0 && now - openAt < STALE_REFUSAL_MS;
+}
+
 /** Tests only: forget the slot AND every watcher, so one case cannot see another's. */
 export function resetAccessLockForTests(): void {
   locked = null;
+  openAt = null;
   watchers.clear();
 }
 
@@ -214,7 +246,8 @@ export function withAccessLock(inner: FetchLike): FetchLike {
       return res;
     }
     const facts = refusalFactsOf(res.status, text);
-    if (facts !== null) raiseAccessLock(facts);
+    // Inside the stale window the 402 is another instance's cached refusal, not a closure.
+    if (facts !== null && !refusalIsStale()) raiseAccessLock(facts);
     return new Response(text, {
       status: res.status,
       statusText: res.statusText,

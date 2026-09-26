@@ -1479,6 +1479,14 @@ export const DE: Deck = {
   wallSubscribe: "Abo abschliessen",
   wallOpenAccount: "Dein ohmail-Konto öffnen",
   wallManage: "Abo verwalten",
+  wallSubscribeHint: "Öffnet deine Kontoseite: Tarif wählen, bezahlen, zurück hierher.",
+  wallMintFailed: "Die Kontoseite konnte gerade nicht geöffnet werden. Versuch es gleich noch einmal.",
+  wallMintUnverified:
+    "Die Kontoseite braucht eine bestätigte Adresse. Öffne den Link in der Mail, die wir bei der Registrierung geschickt haben.",
+  wallChecking: "Stand deines Kontos wird geprüft …",
+  wallPending:
+    "Die Zahlung ist noch nicht bestätigt. Sobald das passiert, geht es hier weiter — du musst nichts tun.",
+  wallCheckAgain: "Erneut prüfen",
   wallMoveOut: "Auf Selbsthosting umziehen",
   wallMoveOutHint:
     "Gibt deine Regeln, Screener-Entscheidungen und Einstellungen als eine Datei weiter, die deine eigene Installation liest, wenn sie dieses Postfach übernimmt.",

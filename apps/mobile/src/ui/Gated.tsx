@@ -8,11 +8,20 @@
  * to — including the wall's way off itself.
  */
 import { Redirect } from "expo-router";
-import { useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import { ActivityIndicator, View } from "react-native";
 import { useConnection } from "../net/connection";
 import { accessLock, onAccessLock } from "../net/access-lock";
+import { readAccess } from "../net/account";
+import type { ConnectedSession } from "../net/pairing";
+import "../state/access-verdict-native";
+import { recordVerdict, storedVerdict, verdictsReady, verdictsSettled } from "../state/access-verdict";
 import { gateFor } from "../state/gate";
+import { useTheme } from "../theme";
 import { AccountWall } from "./AccountWall";
+import { Panel, Screen } from "./base";
+import { awaitFirstPaint, paintsAtOnce, type FirstPaintInputs } from "./first-paint";
+import { Wordmark } from "./Icon";
 import { LifecycleStrip } from "./LifecycleStrip";
 import { BootShell } from "./Skeleton";
 
@@ -21,11 +30,59 @@ function useAccessLock(): ReturnType<typeof accessLock> {
   return useSyncExternalStore(onAccessLock, accessLock, accessLock);
 }
 
+/** Sessions whose first paint is decided — shared by the two `Gated` mounts, so a pushed route asks nothing again. */
+const firstPainted = new WeakSet<ConnectedSession>();
+
+function firstPaintInputs(session: ConnectedSession): FirstPaintInputs {
+  return {
+    refusable: !session.standalone && session.profile.flavor === "managed",
+    ready: verdictsReady,
+    settled: verdictsSettled,
+    stored: () => storedVerdict(session.profile.id),
+    ask: () => readAccess(session),
+  };
+}
+
+/** `true` once this session's mail may paint — at once, or after the bounded verdict read. */
+function useFirstPaint(session: ConnectedSession | null): boolean {
+  const atOnce = session === null || firstPainted.has(session) || paintsAtOnce(firstPaintInputs(session));
+  const [openFor, setOpenFor] = useState<ConnectedSession | null>(null);
+  useEffect(() => {
+    if (session === null || firstPainted.has(session) || paintsAtOnce(firstPaintInputs(session))) return;
+    return awaitFirstPaint(firstPaintInputs(session), () => {
+      firstPainted.add(session);
+      setOpenFor(session);
+    });
+  }, [session]);
+  return atOnce || openFor === session;
+}
+
+/** The frame the first paint waits behind: the mark and a spinner, no sentence and no mail. */
+function AccessGate() {
+  const t = useTheme();
+  return (
+    <Screen style={{ justifyContent: "center", paddingHorizontal: 24 }}>
+      <Panel style={{ padding: 24, gap: 18 }}>
+        <Wordmark color={t.c.ink} dot={t.c.accent} size={22} />
+        <View accessibilityRole="progressbar" style={{ alignItems: "flex-start" }}>
+          <ActivityIndicator size="small" color={t.c.accent} />
+        </View>
+      </Panel>
+    </Screen>
+  );
+}
+
 export function Gated({ children }: { children: ReactNode }) {
   const conn = useConnection();
   const lock = useAccessLock();
   const verdict = gateFor(conn.state, conn.profiles.length, lock);
   const session = conn.state.k === "live" ? conn.state.session : null;
+  const painted = useFirstPaint(session);
+
+  /* A wall the sink raised is this pairing's verdict for the next launch's first paint too. */
+  useEffect(() => {
+    if (lock !== null && session !== null && !session.standalone) recordVerdict(session.profile.id, "closed");
+  }, [lock, session]);
 
   // NOT CONNECTED → the connect flow owns the screen; the mail UI renders only a live
   // mirror. `boot` and `connecting` both paint the instant shell (`BootShell`): the same
@@ -41,6 +98,8 @@ export function Gated({ children }: { children: ReactNode }) {
      service has refused should not be reading mail behind it. It takes nothing away — the mirror
      on this phone is untouched and so is the mailbox. */
   if (verdict.to === "wall") return <AccountWall facts={verdict.facts} session={session} />;
+  /* THE WALL BEFORE MAIL: no stored `open` for this pairing, so the verdict is asked first. */
+  if (!painted) return <AccessGate />;
   /* THE STRIP ABOVE THE APP, in the one mount every gated screen shares: the deadline or the
      catch-up is a fact about the ACCOUNT, not about a pile, so it is drawn once rather than by
      each list. It renders nothing at all whenever there is nothing to say. */
