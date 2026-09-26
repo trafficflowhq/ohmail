@@ -13,6 +13,99 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### The first read after a pause no longer waits on the account check
+<!-- changes: fix-025-read-routes-keep-a-held-verdict.md -->
+
+On a server that checks accounts with an entitlements program, such as ohmail Cloud, the first
+request after a minute without one, often a search, waited for that check. A read now answers at
+once on a check less than ten minutes old and renews it in the background. Anything that changes or
+sends still waits for a current answer, and so does an account the last check refused.
+
+### Mail from your own addresses stays in your Inbox
+<!-- changes: fix-025-router-never-gates-own-mail.md -->
+
+- Mail from one of your own addresses is no longer filed into the Screener folder, so other mail
+  programs show it in your Inbox too. Mail ohmail filed there earlier moves back on the next sync,
+  unless you moved it there yourself.
+
+### A last visit or an "as of" more than a week ago shows its date
+<!-- changes: fix-025-past-instant-labels.md -->
+
+- The last-visit line in News and Receipts, the "As of" note while mail catches up and the
+  phone's "since" note for a lost connection show the date for a time more than a week ago
+  ("3 Aug, 18:40"). Before, they showed only a weekday, which read as this week's. Today's times
+  show the clock alone.
+
+### The held-mail offer stays dismissed until new held mail arrives
+<!-- changes: fix-025-held-offer-lows.md -->
+
+- "Not now" on the Screener's offer to release mail from senders you already decided about now
+  holds until new mail from them is held. Filing, deleting or releasing some of the held mail no
+  longer brings the offer back for the rest.
+- When new mail from such a sender is held, the offer comes back on an open Screener with the
+  sync that brought it, instead of at the next reload.
+
+### Setup's first pull ends when the import does
+<!-- changes: fix-025-selfhost-first-pull-ends.md -->
+
+- After answering "No" to AI, the First pull step could keep saying it was reading the mailbox long
+  after the import had finished. It now goes on to the first decision (or the summary) as soon as
+  the import is done, and says so once everything the server counted is read. Its two counters no
+  longer add up to more mail than the mailbox holds.
+- When the web app renewed its session in the middle of reading History or searching, it said your
+  server did not answer and showed only recent mail. It now asks again once the session is renewed.
+
+### The web stays signed in across page loads
+<!-- changes: fix-025-session-renews-before-expiry.md -->
+
+- The web app renews its session before it expires even after a reload or in a new tab, instead
+  of after a request was refused.
+- On the phone, History and Search ask again once the session is renewed, instead of saying the
+  server did not answer.
+
+### Long lists count from their first row
+<!-- changes: fix-025-list-window-lows.md -->
+
+A long list under a note or a pinned group — History, Drafts, the Ohbox under Resurfaced — could
+leave a blank band at its top or move the row you were reading when a row above it changed
+height. Lists now count their rows from the first one, and a search hit under a tall Resurfaced
+group opens on screen.
+
+### Drafts draws only the rows on screen
+<!-- changes: fix-025-list-window-lows.md -->
+
+Drafts drew every draft and scheduled send at once; it now draws the rows on screen.
+
+### The phone's History year strip reaches the year
+<!-- changes: fix-025-list-window-lows.md -->
+
+Pressing a year in History on the phone could stop at the last row drawn so far. It now lands on
+that year's first message.
+
+### Sign out works on a desktop whose sign-in has expired
+<!-- changes: fix-025-expired-bearer-sign-out-opens.md -->
+
+On a standalone install whose sign-in on this computer had expired, Sign out was refused along
+with everything else, and only quitting the app got out of it. Sign out now works in that state
+and removes the stored passwords as it always did. Everything else still asks for a sign-in.
+
+### The sender sheet asks before a press over a rule of yours that disagrees
+
+The sender sheet now lists Their rules: every rule that decides where this sender's mail goes, with
+how many messages each one files. When their mail sits in two or three places, the sheet says how
+many are where. Pressing a place that one of your rules disagrees with asks first. For a rule on one
+subject of theirs: All their mail, which removes that rule, or Keep the split. For a rule on
+everyone at their domain: Only this address, or change that rule for everyone. For a domain press
+over people there who have rules of their own: keep their rules, or change them too. Enter takes
+the answer already chosen and Escape goes back to the list.
+
+A press on one address can be undone for a few seconds, and your rules are left as they were. Once
+the answers are in, the sheet says how many of their messages are at the place, which ones stay
+elsewhere and why, or that ohmail is still applying the rule to the rest of their mail — and, on web
+and desktop, later that it has. A rule you changed in the meantime is left as it is, and the sheet
+says so. Deciding a sender in the Screener now outranks a rule for their whole domain, as a press
+from the sheet does. Web, desktop and phone.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
