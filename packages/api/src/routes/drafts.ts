@@ -41,6 +41,15 @@ interface SendRequestBody {
   ifContentRevision?: unknown;
 }
 
+/** A parsed value, or `undefined` where the parser refused it. */
+function unlessMalformed<T>(parse: () => T | undefined): T | undefined {
+  try {
+    return parse();
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * The vouched revision, shape-checked. An opaque server-minted sha-256 hex digest, so the shape
  * IS the bound — and a malformed one is a 400 rather than a 409: answering "this draft changed"
@@ -324,8 +333,10 @@ export const draftsRoutes: Route[] = [
       const stagedAttachmentIds = readStagedIds(body.stagedAttachmentIds);
       const forwardOf = typeof body.forwardOf === "string" && body.forwardOf.length > 0 ? body.forwardOf : undefined;
       const forwardConfirmed = forwardOf !== undefined && body.forwardConfirmed === true;
-      const forwardZone = forwardOf ? parseReaderZone(body.forwardZone, "forwardZone") : undefined;
-      const forwardLocale = forwardOf ? parseReaderLocale(body.forwardLocale, "forwardLocale") : undefined;
+      // The sender's clock for the quoted date. A malformed one never refuses a send: the date
+      // then reads in UTC and English, as for a client that states none.
+      const forwardZone = forwardOf ? unlessMalformed(() => parseReaderZone(body.forwardZone, "forwardZone")) : undefined;
+      const forwardLocale = forwardOf ? unlessMalformed(() => parseReaderLocale(body.forwardLocale, "forwardLocale")) : undefined;
       // THE ROW THIS PRESS SAW. Threaded to `SendService.reserve`, which compares it against the
       // row it locks — see `SendInput.ifContentRevision`.
       const ifContentRevision = readContentRevision(body.ifContentRevision);
