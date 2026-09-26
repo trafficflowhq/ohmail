@@ -342,6 +342,13 @@ export function pgDialect(): Dialect {
           sets.push(sql`set_config('pg_trgm.word_similarity_threshold', ${sql.raw(`'${String(t)}'`)}, true)`);
         }
         if (opts.preferIndexes === true) sets.push(sql`set_config('enable_seqscan', 'off', true)`);
+        // JIT and parallel workers never pay back on a search read, and a stock Postgres arms both on
+        // plan cost: a broad word's page on 74k priced 115k (JIT's threshold is 100k), compiled 336
+        // functions in ~60 ms and ran twice as long; its workers' start-up cost ~15 ms more than a
+        // serial plan, and the whole-set counts read no faster with them (self-hosted Postgres 16).
+        if (sets.length > 0) {
+          sets.push(sql`set_config('jit', 'off', true)`, sql`set_config('max_parallel_workers_per_gather', '0', true)`);
+        }
         // Each named apart: a positional read refuses two columns of one name.
         return sets.length === 0 ? null
           : sql`select ${sql.join(sets.map((x, i) => sql`${x} as ${sql.raw(`s${i}`)}`), sql`, `)}`;
