@@ -3508,22 +3508,21 @@ export async function startWorkerWithLock(
              * inside it: that function RETURNS EARLY when none of the six holder columns moved (its
              * zero-writes steady state), and folded in, the mirror would refresh only when the HOLDER
              * changed — while the document changes far more often, so a settings pane would sit on a
-             * stale copy. Probed, not asserted (`profileIo` is an accessor a double need not carry);
-             * never throws (`syncProfileMirror` owns that). */
+             * stale copy. Probed, not asserted (`profileIo` is an accessor a double need not carry).
+             * The document read cannot throw past it; its own SELECT and writes can, so the call is
+             * tagged: a dead database met here is the shard's fault, never this mailbox's. */
             const mkIo = (rt.adapter as Partial<{
               profileIo(id: { installId: string; mailboxId: string }): ProfileIo;
             }>).profileIo;
             if (typeof mkIo === "function") {
-              await syncProfileMirror({
-                db, accountId: rt.accountId, mailboxId: rt.mailboxId,
-                /* A NAMED READER IDENTITY. `readOrganizerProfile` remembers a position per
-                   identity, so borrowing this install's own would let a read and the organizer
-                   write-behind share one anchor. */
-                io: mkIo.call(rt.adapter, {
-                  installId: "reader-profile-mirror", mailboxId: rt.mailboxId,
-                }),
+              /* A NAMED READER IDENTITY. `readOrganizerProfile` remembers a position per
+                 identity, so borrowing this install's own would let a read and the organizer
+                 write-behind share one anchor. */
+              const io = mkIo.call(rt.adapter, { installId: "reader-profile-mirror", mailboxId: rt.mailboxId });
+              await asDatabaseFault("cycle.syncProfileMirror", () => syncProfileMirror({
+                db, accountId: rt.accountId, mailboxId: rt.mailboxId, io,
                 now: new Date(), log: (event, detail) => { log.info(event, detail); },
-              });
+              }));
             }
           } else {
             leaseBlocked.delete(rt.mailboxId);
