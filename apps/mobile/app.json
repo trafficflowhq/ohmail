@@ -3,14 +3,14 @@
     "name": "ohmail",
     "slug": "ohmail",
     "scheme": "ohmail",
-    "version": "0.25.1",
+    "version": "0.25.2",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "bundleIdentifier": "app.ohmail",
-      "buildNumber": "24",
+      "buildNumber": "25",
       "icon": "./assets/icon-ios.png",
       "supportsTablet": true,
       "infoPlist": {
@@ -50,7 +50,7 @@
     },
     "android": {
       "package": "app.ohmail",
-      "versionCode": 24,
+      "versionCode": 25,
       "permissions": [
         "android.permission.POST_NOTIFICATIONS"
       ],
