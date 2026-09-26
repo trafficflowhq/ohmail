@@ -50,6 +50,9 @@ import type { SuggestionOverlay } from "./screener-suggest";
    surfaces come to describe one mailbox differently. */
 import type { ScreenerRole } from "./mail-state";
 import {
+  isNothingOrganizes, organizerRefusalOf, organizerRefusalSentence, type OrganizerRefusal,
+} from "./organizer-refusal";
+import {
   armScreenerIntent,
   disarmScreenerIntent,
   takeScreenerIntents,
@@ -505,7 +508,10 @@ export function useScreenerState(
    * caller that can know (`AppShell`) computes it with `screenerMode` over the same polled rows
    * Settings → Mailboxes reads.
    */
-  role: ScreenerRole = { mode: "organizer", name: null, reason: null, oauthOnly: false },
+  /** `pressRefusal`: the refusal a press here would meet (`postureRefusal`), walled like `blocked`. */
+  role: ScreenerRole & { pressRefusal?: OrganizerRefusal | null } = {
+    mode: "organizer", name: null, reason: null, oauthOnly: false,
+  },
   /**
    * DECISIONS A PREVIOUS SESSION MADE THAT THE ORGANIZER HAS NOT CARRIED OUT YET.
    *
@@ -540,6 +546,10 @@ export function useScreenerState(
   // `toastRuleFailed`, …), chosen from what the server actually returned — so it reads them from
   // the `screening` namespace, exactly as `AppShell#changeScreening` does.
   const ts = useTranslations("screening");
+  /* The WHY of a reader's refusal — the shell's shared sentence (`organizer-refusal.ts`). */
+  const tWhy = useTranslations("ohbox");
+  const whyOf = (err: Parameters<typeof organizerRefusalOf>[0]): string | null =>
+    organizerRefusalSentence(organizerRefusalOf(err, { starting: role.pressRefusal?.kind === "starting" }), tWhy);
   /* "No undo — this browser cannot keep one." ONE sentence for the Screener and the delete key,
      so it lives in the namespace the durability notice uses rather than twice in two piles'. */
   const tSession = useTranslations("session");
@@ -789,11 +799,14 @@ export function useScreenerState(
    * refusal in the same words — all it needs is a name for the sentence,
    * and the intent carries it.
    */
-  const refuse = (d: ScreenerIntent) => {
+  const refuse = (d: ScreenerIntent, err?: Parameters<typeof organizerRefusalOf>[0]) => {
     markRefused(d.id);
     if (d.quiet) return;
+    const sender = displayAddressee(d.from.name, d.from.address);
+    // A refusal that names its reason says it, in place of "try it again", which would not help.
+    const why = whyOf(err);
     toast(
-      t("toastDecideFailed", { sender: displayAddressee(d.from.name, d.from.address) }),
+      why ? `${t("toastDecideNotSaved", { sender })} ${why}` : t("toastDecideFailed", { sender }),
       { duration: UNDO_MS },
     );
   };
@@ -988,7 +1001,7 @@ export function useScreenerState(
         scope: d.scope,
       }).then((res) => {
         done();
-        if (res.status === "rolled_back") { refuse(d); return; }
+        if (res.status === "rolled_back") { refuse(d, res.error); return; }
         /* The organizer took it, and will carry it out later. `pendingWith`
          * is present only where the server queued the decision instead of
          * applying it: nothing moved, no rule written, the mail still in
@@ -1022,7 +1035,11 @@ export function useScreenerState(
         // with no move at all, so a count of the moves said fewer than the Ohbox gained.
         const subject = sender.scopes[d.scope].messages;
         const before = shownAt(subject, dest);
-        void dispatchScreeningChange(plan, (m) => engine.mutate(m)).then((key) => {
+        let refused: Parameters<typeof organizerRefusalOf>[0] = undefined;
+        void dispatchScreeningChange(plan, (m) => engine.mutate(m).then((r) => {
+          if (r.status === "rolled_back" && refused === undefined) refused = r.error;
+          return r;
+        })).then((key) => {
           done();
           // THE SENTENCE IS UNCHANGED — `toastRuleFailed` says "… moved, but the rule couldn't be
           // made. Future mail is unchanged.", which is strictly more informative than a generic
@@ -1031,7 +1048,8 @@ export function useScreenerState(
           // plans no `move` at all) the sender comes back into the queue, and it used to come back
           // looking untouched while the only record faded with the toast.
           if (key === "toastRuleFailed") markRefused(id);
-          toast(ts(key, { sender: who, place, count: pressGained(before, shownAt(subject, dest)) }));
+          const why = key === "toastRuleFailed" ? whyOf(refused) : null;
+          toast(ts(key, { sender: who, place, count: pressGained(before, shownAt(subject, dest)) }) + (why ? ` ${why}` : ""));
         }, () => { done(); refuse(d); });
       } else {
         // The representative is gone from the mirror — and this branch was
@@ -1890,6 +1908,12 @@ export function useScreenerState(
    * overlay moved, and the queue does not flicker.
    */
   const refuseReadOnly = (): void => {
+    // Nothing organizes the mailbox: "another organizer has it" would be false, so say what is true.
+    const r = role.pressRefusal ?? null;
+    if (r && (r.kind === "nobody" || r.kind === "starting")) {
+      toast(`${t("notFiled")} ${organizerRefusalSentence(r, tWhy)}`);
+      return;
+    }
     /* NOBODY HOLDS IT: no other organizer to name, so the sentence names none (the seen-once
        self-host note). */
     toast(role.name
@@ -1931,7 +1955,8 @@ export function useScreenerState(
   /* A TAKEOVER THIS INSTALL ASKED FOR goes through: the door keeps the decision as a rule until the
      claim lands, and answers 202 or 409 where it cannot. */
   const guard = <A extends unknown[]>(verb: (...args: A) => void) =>
-    (role.mode === "blocked" && role.takeoverAsked !== true ? ((..._args: A) => refuseReadOnly()) : verb);
+    (role.takeoverAsked !== true && (role.mode === "blocked" || isNothingOrganizes(role.pressRefusal))
+      ? ((..._args: A) => refuseReadOnly()) : verb);
 
   /* ── MAIL HELD AT THE GATE BEHIND A RULE ITS OWNER ALREADY WROTE ──────────────────────────────
    *

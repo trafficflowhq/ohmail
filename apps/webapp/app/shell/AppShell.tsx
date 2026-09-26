@@ -257,7 +257,7 @@ import { SearchView } from "../views/SearchView";
 import { AddressView } from "../views/AddressView";
 import { TagView } from "../views/TagView";
 import { FolderView } from "../views/FolderView";
-import { rulesPostureOf } from "../views/rules-posture";
+import { postureRefusal, rulesPostureOf } from "./rules-posture";
 import { TrashView } from "../views/TrashView";
 import type { TrashWire } from "./trash-window";
 import { TriageView } from "../views/TriageView";
@@ -1369,9 +1369,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * come to describe one state differently. Memoised on the polled facts and nothing else; the
    * function is pure and has its own table test.
    */
-  const screenerRole = useMemo(() => screenerMode(facts), [facts]);
-  /* The Rules pane's posture: the same roster, plus the standing Organize-here press. */
+  /* The Rules pane's posture: the same roster, plus the standing Organize-here press. The
+     Screener's role carries the refusal it implies, so a press that cannot land says so first. */
   const rulesPosture = useMemo(() => rulesPostureOf(facts), [facts]);
+  const screenerRole = useMemo(
+    () => ({ ...screenerMode(facts), pressRefusal: postureRefusal(rulesPosture) }), [facts, rulesPosture],
+  );
   /* …AND THE DELETE KEY READS THE SAME ROSTER, one mailbox at a time. In an EFFECT rather than
      during render (review finding): a render that yields and is discarded must not publish a
      roster to a committed key handler. The initial `null` is the safe value — `readerMoveRefusal`

@@ -248,9 +248,9 @@ export class OrganizedElsewhereError extends Error {
    */
   constructor(readonly mailboxId: string, by: OrganizedBy, reason?: RequestRefusalReason) {
     super(
-      "another install is organizing this mailbox, so this one is a reader: it mirrors the "
-      + "mailbox and can mark mail read and send, but it does not move, file or delete mail. "
-      + "Choose to organize here instead if you want this install to take it over.",
+      /* The sentence follows the reason, so no holder is claimed for a mailbox nothing
+         organizes — see `refusalMessage` at the foot of this file. */
+      refusalMessage(by, reason),
     );
     this.name = "OrganizedElsewhereError";
     this.details = reason === undefined ? { by } : { by, reason };
@@ -487,4 +487,24 @@ export async function readRequestEligibility(
       since: row.since ? row.since.toISOString() : null,
     },
   };
+}
+
+/**
+ * THE SENTENCE MATCHES THE REASON. "Another install is organizing" was said for every refusal,
+ * including a mailbox nothing organizes; a holder is claimed only where one is named.
+ */
+function refusalMessage(by: OrganizedBy, reason?: RequestRefusalReason): string {
+  const reader = "this install is a reader: it mirrors the mailbox and can mark mail read and send, "
+    + "but it does not move, file or delete mail";
+  if (reason === "no_organizer") {
+    return `nothing organizes this mailbox right now, so ${reader}. Choose to organize here if `
+      + "you want this install to organize it.";
+  }
+  if (reason === "organizer_outdated") {
+    return "the install that organizes this mailbox runs a version that cannot take this change "
+      + "from a reader. Make the change on that install, or update it.";
+  }
+  const named = by.kind !== null || (by.name !== null && by.name.trim() !== "");
+  return `${named ? "another install is organizing this mailbox, so" : "on this mailbox"} ${reader}. `
+    + "Choose to organize here instead if you want this install to take it over.";
 }

@@ -40,7 +40,7 @@ import { RETRO_DEFAULT_ON, SCREENING_DESTS } from "../shell/sender-screening";
 import { displayRuleMatch } from "../shell/idn";
 import { useListWindow } from "../shell/list-window";
 import { organizerRefusalOf, organizerRefusalSentence } from "../shell/organizer-refusal";
-import { postureRefusal, type RulesPosture } from "./rules-posture";
+import { postureRefusal, type RulesPosture } from "../shell/rules-posture";
 import "./rules.css";
 
 /**

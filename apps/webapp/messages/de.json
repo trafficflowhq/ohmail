@@ -843,6 +843,8 @@
     "readerRefused": "Nichts einsortiert — {name} organisiert dieses Postfach, dieser Computer entscheidet also nicht über Absender.",
     "readerRefusedUnknown": "Nichts einsortiert — ein anderer ohmail-Organizer hat dieses Postfach, dieser Computer entscheidet also nicht über Absender.",
     "readerRefusedNobody": "Nichts einsortiert — dieses Postfach organisiert noch nichts. Organisiere es unter Einstellungen → Postfächer und entscheide dann.",
+    "notFiled": "Nichts einsortiert.",
+    "toastDecideNotSaved": "{sender} wartet wieder — diese Entscheidung wurde nicht gespeichert.",
     "readerMoveRefused": "Nichts verschoben — {name} organisiert dieses Postfach, deshalb wird Post dort verschoben.",
     "readerMoveRefusedUnknown": "Nichts verschoben — verschoben wird dort, wo die Installation läuft, die dieses Postfach organisiert.",
     "moveBarTitle": "Dieser Computer verschiebt die Post dieses Postfachs nicht",

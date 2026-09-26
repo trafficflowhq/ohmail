@@ -58,7 +58,7 @@ import { isDemoOwned, storageOwner } from "../shell/storage-owner";
 import { useZoneNav } from "../shell/zone-nav";
 import { settingsPanes } from "./settings-panes";
 import { RulesView, type RuleOutcome } from "./RulesView";
-import type { RulesPosture } from "./rules-posture";
+import type { RulesPosture } from "../shell/rules-posture";
 
 /* Re-exported so every caller that LINKS to a pane keeps its import — `AppShell`, and through it
  * the Screener's "start a plan" offer. The list itself is the ROUTER's now: `#/settings/<pane>`

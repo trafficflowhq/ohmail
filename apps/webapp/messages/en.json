@@ -843,6 +843,8 @@
     "readerRefused": "Nothing was filed — {name} organizes this mailbox, so this computer does not decide about senders.",
     "readerRefusedUnknown": "Nothing was filed — another ohmail organizer has this mailbox, so this computer does not decide about senders.",
     "readerRefusedNobody": "Nothing was filed — nothing organizes this mailbox yet. Organize it from Settings → Mailboxes, then decide.",
+    "notFiled": "Nothing was filed.",
+    "toastDecideNotSaved": "{sender} is back in the queue — that decision was not saved.",
     "readerMoveRefused": "Nothing moved — {name} organizes this mailbox, so mail is moved where it runs.",
     "readerMoveRefusedUnknown": "Nothing moved — the install that organizes this mailbox is where mail is moved.",
     "moveBarTitle": "This computer does not move this mailbox's mail",

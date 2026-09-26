@@ -27,6 +27,11 @@ export function organizerRefusalOf(
   return { kind: "elsewhere", name };
 }
 
+/** A press here cannot land at all — nothing organizes the mailbox, or not yet. */
+export function isNothingOrganizes(r: OrganizerRefusal | null | undefined): boolean {
+  return r?.kind === "nobody" || r?.kind === "starting";
+}
+
 /** `t` is `useTranslations("ohbox")`. `null` in, `null` out, so a caller can chain the reading. */
 export function organizerRefusalSentence(
   r: OrganizerRefusal | null,

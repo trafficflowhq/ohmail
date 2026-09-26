@@ -1,5 +1,5 @@
-import { screenerMode } from "../shell/mail-state";
-import type { OrganizerRefusal } from "../shell/organizer-refusal";
+import { screenerMode } from "./mail-state";
+import type { OrganizerRefusal } from "./organizer-refusal";
 
 /**
  * WHAT A PRESS ON THE RULES PANE CAN DO HERE — the server's `planAccountFanOut`, read from the
@@ -18,16 +18,21 @@ type Row = NonNullable<Parameters<typeof screenerMode>[0]>[number] & {
   takeoverAuthorizedAt?: string | null;
 };
 
-/** `screenerMode`'s aggregation, plus the standing Organize-here press it has no word for. */
+/**
+ * `screenerMode`'s aggregation, plus two states it has no word for: the standing Organize-here
+ * press, and a reader nothing holds that nobody agreed to organize (setup not finished), which
+ * `screenerMode` leaves to the consent screen but where a press is still refused.
+ */
 export function rulesPostureOf(facts: ReadonlyArray<Row> | null): RulesPosture {
   const role = screenerMode(facts);
-  if (role.mode === "organizer") return { mode: "organizer" };
-  if (role.mode === "pending") return { mode: "pending", name: role.name };
   const live = (facts ?? []).filter((m) => m.status !== "disabled");
-  if (role.reason === "no_organizer" && live.some((m) => Boolean(m.takeoverAuthorizedAt))) {
-    return { mode: "starting" };
-  }
-  return { mode: "blocked", reason: role.reason ?? "no_organizer", name: role.name };
+  const unheld = live.length > 0 && live.every((m) => m.organizerRole === "reader"
+    && !(m.organizedBy && (m.organizedBy.kind || m.organizedBy.name)));
+  if (role.mode === "organizer" && !unheld) return { mode: "organizer" };
+  if (role.mode === "pending") return { mode: "pending", name: role.name };
+  const nobody = unheld || role.reason === "no_organizer";
+  if (nobody && live.some((m) => Boolean(m.takeoverAuthorizedAt))) return { mode: "starting" };
+  return { mode: "blocked", reason: nobody ? "no_organizer" : "organizer_outdated", name: role.name };
 }
 
 /** The refusal a press would meet, before it is pressed — `null` where a press can land. */
