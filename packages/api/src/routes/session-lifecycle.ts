@@ -6,6 +6,7 @@ import { csrfTokenFor } from "../csrf.js";
 import type { ApiDeps } from "../deps.js";
 import { accountErasedResponse, erasedAccountBearer, withSessionAcquireCeiling } from "../middleware.js";
 import type { Route } from "../router.js";
+import { sessionEnded } from "../session-end.js";
 import { cookieSurface, json, noContent, parseCookies, readBody } from "./shared.js";
 
 /**
@@ -47,7 +48,7 @@ export const sessionLifecycleRoutes: Route[] = [
     handler: async (req, deps) => {
       const body = await readBody<{ allDevices?: boolean }>(req);
       await sessionLifecycle(deps).logout(serviceContext(deps, req), body);
-      return noContent(cookieSurface(deps) ? clearSessionCookies() : []);
+      return sessionEnded(noContent(cookieSurface(deps) ? clearSessionCookies() : []));
     },
   },
   {
@@ -119,11 +120,11 @@ export const sessionLifecycleRoutes: Route[] = [
           const failure = classifyRefreshFailure(err);
           if (failure === "fault") throw err;
           const refusal = err as ServiceError;
-          return json(
+          return sessionEnded(json(
             { error: { code: refusal.code, message: refusal.message } },
             refusal.httpStatus,
             failure === "session_refused" ? clearSessionCookies() : [],
-          );
+          ));
         }
       }
       // THE NATIVE BRANCH: a bearer client (the desktop app's sidecar, a paired device on the

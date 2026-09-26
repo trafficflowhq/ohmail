@@ -10,6 +10,7 @@ import { accountLifecycleNotices } from "@trafficflow/db/cloud";
 import { ServiceError } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { clearSessionCookies } from "../cookies.js";
+import { sessionEnded } from "../session-end.js";
 import { accessFor, cookieSurface, entitlementsPort, json, readBody } from "./shared.js";
 import type { ApiDeps } from "../deps.js";
 import type { Route } from "../router.js";
@@ -106,7 +107,7 @@ export const accountRoutes: Route[] = [
       }
 
       const result = await deleteAccount(ctx, { throttleKeys: throttleKeysFor(deps.keyProvider) });
-      return json(
+      return sessionEnded(json(
         {
           erased: true,
           usersErased: result.usersErased,
@@ -128,7 +129,7 @@ export const accountRoutes: Route[] = [
         },
         200,
         cookieSurface(deps) ? clearSessionCookies() : [],
-      );
+      ));
     },
   },
   /**
