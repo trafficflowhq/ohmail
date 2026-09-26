@@ -1752,6 +1752,14 @@ const TABLE = {
   composeFrom: (address: string) => `From ${address}`,
   composeSent: "Sent.",
   composeEarlierWent: "This message had already been sent. Your newer text was not sent as a second copy.",
+  /* A CLOSED COMPOSER KEEPS ITS TEXT. The pill's Undo discards the draft it just kept. */
+  composeKept: "Kept in Drafts.",
+  composeKeptWithoutFiles: "Kept in Drafts. The attachments were not kept.",
+  composeKeptQueued: "Kept as a draft. It reaches Drafts once this phone is back online.",
+  composeKeptQueuedWithoutFiles:
+    "Kept as a draft, without the attachments. It reaches Drafts once this phone is back online.",
+  composeKeepFailed: "This could not be kept as a draft. Close again to discard it.",
+  composeKeepFiles: "Drafts do not keep attachments. Close again to discard them.",
   composeNeedRecipient: "Add someone to send it to.",
   composeNoMailbox: "No mailbox on this phone can send yet.",
   composeNoMailboxHint: "Once this phone has mail, you can write from that mailbox.",

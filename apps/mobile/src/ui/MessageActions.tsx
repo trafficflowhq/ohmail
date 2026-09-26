@@ -31,6 +31,7 @@ import {
   moveTargetLabel,
   nextWeekAt,
   nextWeekNine,
+  keptRecipients,
   parseRecipients,
   readerZone,
   resurfaceClock,
@@ -82,6 +83,7 @@ import {
 /* The expo pickers — a `*-native.ts` twin the suite never imports; every rule is in attach.ts. */
 import { nativeAttachPicker } from "../compose/attach-native";
 import { afterWithdraw, cancelAct } from "./send-cancel";
+import { keepAct, worthKeeping } from "./compose-keep";
 import { Segmented } from "./Segmented";
 import { Sheet, SheetRow, useSheetPanelBounds } from "./Sheet";
 import { SurfaceBoundary } from "./ErrorBoundary";
@@ -1046,6 +1048,13 @@ export function ComposeSheet({
   const [attachNotes, setAttachNotes] = useState<AttachNote[]>([]);
   /** TRUE after a press on a Send that lacks only content — cleared the moment content arrives. */
   const [needNote, setNeedNote] = useState(false);
+  /**
+   * WHY THE LAST CLOSE DID NOT CLOSE — the keep failed, or the files cannot be kept. Said in place;
+   * the next close discards (`compose-keep.ts`). Any edit takes it back, so new text is kept again.
+   */
+  const [keepNote, setKeepNote] = useState<"failed" | "files" | null>(null);
+  /** A keep on its way — one row per close, however often the backdrop is tapped meanwhile. */
+  const keeping = useRef(false);
   /* The ONE shared bound (`composeAttachCap`) of the sending mailbox's announced `SIZE` —
      the same pair the send will enforce. The phone declares no surface: its send rides one
      JSON request, so the strict constant is the other arm. */
@@ -1101,6 +1110,8 @@ export function ComposeSheet({
   /** The one refusal this picker can raise, said in place — the webapp's `role="status"` note. */
   const [pastNote, setPastNote] = useState(false);
   const zone = readerZone();
+  /* An edit is a new question: the note about the last close no longer describes what is here. */
+  useEffect(() => { setKeepNote(null); }, [body, subject, to, attachments.length]);
 
   /**
    * THE LOCKED COMPOSER SETTLES ITSELF. A queued send is retried by the world layer's
@@ -1211,7 +1222,28 @@ export function ComposeSheet({
    */
   const closeComposer = () => {
     if (cancelAct({ phase, key: queuedKey, alreadySent }) === "close") {
-      onClose();
+      const act = keepAct({
+        phase, worth: worthKeeping({ fresh, subject, body }), files: attachments.length, armed: keepNote !== null,
+      });
+      if (act === "close") {
+        onClose();
+        return;
+      }
+      if (act === "ask") {
+        setKeepNote("files");
+        return;
+      }
+      if (keeping.current) return;
+      keeping.current = true;
+      void (async () => {
+        const kept = await w.actions.draftKeep({
+          mode, messageId: m?.id ?? null, mailboxId, to: addressed ? keptRecipients(to) : [],
+          subject, body, files: attachments.length,
+        });
+        keeping.current = false;
+        if (kept === "kept") onClose();
+        else setKeepNote("failed");
+      })();
       return;
     }
     void (async () => {
@@ -1639,6 +1671,12 @@ export function ComposeSheet({
           {needNote && needsContent ? (
             <Txt variant="caption" tone="ink2" accessibilityRole="alert">
               {Copy.composeNeedContent}
+            </Txt>
+          ) : null}
+          {/* WHY THE CLOSE STAYED — nothing typed is thrown away without the person being told. */}
+          {keepNote !== null ? (
+            <Txt variant="caption" tone="ink2" accessibilityRole="alert">
+              {keepNote === "failed" ? Copy.composeKeepFailed : Copy.composeKeepFiles}
             </Txt>
           ) : null}
           <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>

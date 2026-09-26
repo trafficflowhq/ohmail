@@ -1160,6 +1160,13 @@ export const DE: Deck = {
   composeFrom: (address: string) => `Von ${address}`,
   composeSent: "Gesendet.",
   composeEarlierWent: "Diese Nachricht wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
+  composeKept: "In den Entwürfen behalten.",
+  composeKeptWithoutFiles: "In den Entwürfen behalten. Die Anhänge wurden nicht behalten.",
+  composeKeptQueued: "Als Entwurf behalten. Er erscheint in den Entwürfen, sobald dieses Telefon wieder online ist.",
+  composeKeptQueuedWithoutFiles:
+    "Als Entwurf behalten, ohne die Anhänge. Er erscheint in den Entwürfen, sobald dieses Telefon wieder online ist.",
+  composeKeepFailed: "Das konnte nicht als Entwurf behalten werden. Schließe noch einmal, um es zu verwerfen.",
+  composeKeepFiles: "Entwürfe behalten keine Anhänge. Schließe noch einmal, um sie zu verwerfen.",
   composeNeedRecipient: "Trag jemanden ein, an den sie gehen soll.",
   composeNoMailbox: "Noch kann kein Postfach auf diesem Telefon senden.",
   composeNoMailboxHint: "Sobald dieses Telefon Post hat, kannst du von diesem Postfach aus schreiben.",

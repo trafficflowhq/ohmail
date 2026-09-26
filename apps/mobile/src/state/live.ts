@@ -18,6 +18,7 @@ import {
   consentPartition,
   decidedDestination,
   forwardSubject,
+  replySubject,
   appointmentStamp,
   messageDisplayTime,
   composeZonedWallClock,
@@ -1942,9 +1943,27 @@ function watched(p: Promise<MutationResult>): Promise<PressVerdict> {
  * hold it — the screens stay logic-free (this module's own charter).
  */
 export function parseRecipients(typed: string): { name: string | null; address: string }[] | null {
-  // Quote-aware split: `"Doe, Alice" <alice@x.org>` is ONE entry — a comma inside double
-  // quotes is part of the display name, not a delimiter. A naive split refused exactly the
-  // shape address books paste.
+  const out: { name: string | null; address: string }[] = [];
+  for (const entry of recipientEntries(typed)) {
+    const one = recipientOf(entry);
+    if (one === null) return null;
+    out.push(one);
+  }
+  return out;
+}
+
+/**
+ * THE ADDRESSES THAT PARSE, and only those — a draft is still being written, so an entry that
+ * does not parse stays unsent rather than refusing the whole keep (the web's draft rule).
+ */
+export function keptRecipients(typed: string): { name: string | null; address: string }[] {
+  return recipientEntries(typed).map(recipientOf).filter((r): r is { name: string | null; address: string } => r !== null);
+}
+
+/* Quote-aware split: `"Doe, Alice" <alice@x.org>` is ONE entry — a comma inside double quotes is
+   part of the display name, not a delimiter. A naive split refused exactly the shape address
+   books paste. */
+function recipientEntries(typed: string): string[] {
   const entries: string[] = [];
   let held = "";
   let quoted = false;
@@ -1956,22 +1975,16 @@ export function parseRecipients(typed: string): { name: string | null; address: 
     } else held = held + ch;
   }
   entries.push(held);
-  const trimmed = entries.map((e) => e.trim()).filter((e) => e !== "");
-  const out: { name: string | null; address: string }[] = [];
-  for (const entry of trimmed) {
-    const angled = /^(.*)<([^<>\s]+@[^<>\s]+\.[^<>\s]+)>$/.exec(entry);
-    if (angled) {
-      const name = angled[1]!.trim().replace(/^"(.*)"$/, "$1");
-      out.push({ name: name === "" ? null : name, address: angled[2]! });
-      continue;
-    }
-    if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(entry)) {
-      out.push({ name: null, address: entry });
-      continue;
-    }
-    return null;
+  return entries.map((e) => e.trim()).filter((e) => e !== "");
+}
+
+function recipientOf(entry: string): { name: string | null; address: string } | null {
+  const angled = /^(.*)<([^<>\s]+@[^<>\s]+\.[^<>\s]+)>$/.exec(entry);
+  if (angled) {
+    const name = angled[1]!.trim().replace(/^"(.*)"$/, "$1");
+    return { name: name === "" ? null : name, address: angled[2]! };
   }
-  return out;
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(entry) ? { name: null, address: entry } : null;
 }
 
 /**
@@ -2165,6 +2178,24 @@ export type DraftDiscardOutcome = "discarded" | "stillSending" | "queued" | "ref
  */
 export type DraftSendAgainOutcome =
   | "sent" | "stillRunning" | "notReached" | "bodyUnknown" | "queued" | "unverified" | "failed";
+
+/**
+ * WHAT A CLOSING COMPOSER HANDS OVER TO BE KEPT — the text on screen and whose message it answers.
+ * `messageId` is the parent of a reply or forward (`null` for a new mail); the envelope of a reply
+ * is derived here as the send derives it. `files` counts attachments a draft row cannot hold.
+ */
+export interface DraftKeep {
+  mode: "reply" | "replyAll" | "forward" | "new";
+  messageId: string | null;
+  mailboxId: string | null;
+  to: EmailAddress[];
+  subject: string;
+  body: string;
+  files: number;
+}
+
+/** `kept` — the account holds it or the outbox does; `refused` — nothing was kept, and said. */
+export type DraftKeepOutcome = "kept" | "refused";
 
 export const UNDO_MS = 8000;
 
@@ -2482,6 +2513,12 @@ export interface LiveWorldActions {
    * card; every other ending is the card's to say, in the row.
    */
   draftSendAgain(draftId: string): Promise<DraftSendAgainOutcome>;
+  /**
+   * KEEP WHAT WAS TYPED — one `draft_save` (create) as the composer closes, so no road out of it
+   * throws text away. `kept` once the account or the outbox holds the row, with an Undo that
+   * discards it; `refused` names nothing and the sheet stays open to say so.
+   */
+  draftKeep(keep: DraftKeep): Promise<DraftKeepOutcome>;
   /** Put a tag on / take it off — `tag_assign`. */
   tagToggle(messageId: string, tag: WorldTag, assigned: boolean): Promise<boolean>;
   /** Tag-or-create: a name that does not exist yet, minted and put on this message in one act. */
@@ -3673,6 +3710,45 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return r.outcome;
   };
 
+  /**
+   * KEEP WHAT WAS TYPED — see {@link LiveWorldActions.draftKeep}. The envelope is the send's: a
+   * reply goes to the parent's sender (reply all to the sheet's own envelope) under `Re:`, a
+   * forward keeps its typed recipients under `Fwd:` (a draft row stores no forward reference),
+   * and a new mail is what was typed. The Undo is the Drafts card's own discard.
+   */
+  const draftKeep = async (k: DraftKeep): Promise<DraftKeepOutcome> => {
+    const parent = k.messageId === null ? undefined : messageOf(k.messageId);
+    const mailboxId = k.mailboxId ?? parent?.mailboxId ?? null;
+    if (mailboxId === null || (k.messageId !== null && !parent)) return "refused";
+    const reply = k.mode === "reply" || k.mode === "replyAll";
+    const env = k.mode === "replyAll" && parent
+      ? replyAllRecipients(parent, deps.ownAddresses?.() ?? NO_OWN_ADDRESSES)
+      : null;
+    const to = reply && parent ? (env ? env.to : [parent.from]) : k.to;
+    const subject = reply && parent
+      ? replySubject(parent.subject)
+      : k.mode === "forward" && parent ? forwardSubject(parent.subject) : k.subject.trim();
+    const r = await engine
+      .mutate({
+        kind: "draft_save", draftId: null, mailboxId,
+        ...(reply && parent ? { inReplyToMessageId: parent.id, threadId: parent.threadId ?? null } : {}),
+        subject, body: k.body, to, cc: env ? env.cc : [], bcc: [],
+      })
+      .then((res) => res, () => null);
+    if (r === null || r.status === "rolled_back") return "refused";
+    const without = k.files > 0;
+    if (r.status === "queued") {
+      toast(refuse(without ? "composeKeptQueuedWithoutFiles" : "composeKeptQueued"));
+      return "kept";
+    }
+    const id = r.entityId;
+    toast(
+      refuse(without ? "composeKeptWithoutFiles" : "composeKept"),
+      id ? { undo: () => { void draftDiscard(id); } } : undefined,
+    );
+    return "kept";
+  };
+
   const sendForward = async (messageId: string, to: EmailAddress[], body: string, sig: string | null = null, attachments: ComposeAttachment[] = [], andDone = false, confirmed = false): Promise<SendResult> => {
     const m = messageOf(messageId);
     // A `no_forward` original leaves only after the sheet's ask was answered (`forwardPress`);
@@ -4065,7 +4141,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     deleteMessage, trashList, trashRestore,
     sendReply, sendForward, sendNew, sendAndDoneOffered, withdrawSend, cancelSchedule, tagToggle, tagCreate, screenSender,
     screeningForecast, screeningRules,
-    draftDiscard, draftResolve, draftSendAgain,
+    draftDiscard, draftResolve, draftSendAgain, draftKeep,
     folderCreate, folderRename, folderDelete, folderDismiss,
   };
 }
@@ -4165,6 +4241,8 @@ export interface WorldActions {
   draftResolve(draftId: string, outcome: "arrived" | "not_arrived"): Promise<boolean>;
   /** Send a held message again — see {@link LiveWorldActions.draftSendAgain}. */
   draftSendAgain(draftId: string): Promise<DraftSendAgainOutcome>;
+  /** Keep what a closing composer holds — see {@link LiveWorldActions.draftKeep}. */
+  draftKeep(keep: DraftKeep): Promise<DraftKeepOutcome>;
   /** What became of a queued send's key — how a locked composer settles. See `World.sendOutcome`. */
   sendOutcome(key: string): "pending" | "confirmed" | "rolled_back" | "unverified" | "unknown";
   tagToggle(messageId: string, tag: WorldTag, assigned: boolean): void;
@@ -4228,6 +4306,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     draftDiscard: (draftId) => current().draftDiscard(draftId),
     draftResolve: (draftId, outcome) => current().draftResolve(draftId, outcome),
     draftSendAgain: (draftId) => current().draftSendAgain(draftId),
+    draftKeep: (keep) => current().draftKeep(keep),
     sendOutcome: (key) => current().sendOutcome(key),
     tagToggle: (id, tag, assigned) => void current().tagToggle(id, tag, assigned),
     tagCreate: (id, name) => void current().tagCreate(id, name),
