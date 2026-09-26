@@ -8,7 +8,6 @@
  */
 import {
   Suspense,
-  lazy,
   useEffect,
   useMemo,
   useState,
@@ -206,6 +205,7 @@ import { OrganizerNotice, type OrganizerNoticeTransport } from "./OrganizerNotic
 /* The OS-answer seam, threaded to `SettingsView` for the hosts that must inject one. */
 import type { NotificationHost } from "./notification-settings";
 import { ViewBoundary } from "./ViewBoundary";
+import { lazyView } from "./lazy-view";
 import { ViewFailCard } from "./ViewFailCard";
 import {
   formatRecipientChips,
@@ -271,8 +271,9 @@ import { durableSessionSet } from "./durable";
    static TYPES: the type imports above cost no bytes, and these factories are the only place
    the two modules may be named — the import-graph census
    (`test/first-load-defers-panes.test.ts`) refuses a static path back in. Both mount behind
-   their existing `effectiveView` seams under one `Suspense` each. */
-const ComposeView = lazy(async () => {
+   their existing `effectiveView` seams under one `Suspense` each, through `lazyView`, so a chunk
+   that failed to load is asked for again on the next open. */
+const ComposeView = lazyView(async () => {
   /* THE EDITOR IN PARALLEL, not after it. Both chunks are needed the moment compose opens, and
      asking for them one after the other is a waterfall of two round trips; `preloadRichEditor`
      is the door's own factory, so this request is the one the `Suspense` inside it awaits. */
@@ -280,7 +281,7 @@ const ComposeView = lazy(async () => {
   const mod = await import("../views/ComposeView");
   return { default: mod.ComposeView };
 });
-const SettingsView = lazy(() =>
+const SettingsView = lazyView(() =>
   import("../views/SettingsView").then((m) => ({ default: m.SettingsView })));
 
 /*

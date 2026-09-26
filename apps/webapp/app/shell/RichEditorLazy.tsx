@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, lazy } from "react";
+import { LoadFailed, lazyView } from "./lazy-view";
 import { isRichEmpty } from "./rich-text";
 import type { RichEditorProps } from "./RichEditor";
 
@@ -12,8 +12,13 @@ import type { RichEditorProps } from "./RichEditor";
  * editor's packages land in a chunk of their own. A static path back in is refused by
  * `test/first-load-defers-editor.test.ts`, which reads a build's own manifest rather than the source.
  */
-const Impl = lazy(() =>
-  import(/* webpackChunkName: "rich-editor" */ "./RichEditor").then((m) => ({ default: m.RichEditor })));
+const Impl = lazyView(
+  () => import(/* webpackChunkName: "rich-editor" */ "./RichEditor").then((m) => ({ default: m.RichEditor })),
+  {
+    loading: (props) => <EditorFrame {...props} />,
+    failed: (retry, props) => <EditorFrame {...props} onRetry={retry} />,
+  },
+);
 
 /**
  * The chunk, asked for before anything renders it. `React.lazy` exposes no preload, so the door
@@ -33,7 +38,7 @@ export function preloadRichEditor(): Promise<unknown> {
  * CSS and no new copy. The caller's own `ariaLabel` names it and `aria-busy` says it is coming,
  * rather than leaving a screen reader with nothing to land on.
  */
-function EditorFrame({ className, ariaLabel, value, editable = true }: RichEditorProps) {
+function EditorFrame({ className, ariaLabel, value, editable = true, onRetry }: RichEditorProps & { onRetry?: () => void }) {
   const cls = [
     "rte",
     isRichEmpty(value) ? "is-empty" : "",
@@ -41,19 +46,16 @@ function EditorFrame({ className, ariaLabel, value, editable = true }: RichEdito
     className ?? "",
   ].filter(Boolean).join(" ");
   return (
-    <div className={cls} role="group" aria-label={ariaLabel} aria-busy="true">
-      <div className="rte-body" />
+    <div className={cls} role="group" aria-label={ariaLabel} aria-busy={onRetry ? undefined : "true"}>
+      {/* A chunk that did not load says so where the editor belongs, with a press that asks again. */}
+      <div className="rte-body">{onRetry ? <LoadFailed onRetry={onRetry} /> : null}</div>
     </div>
   );
 }
 
 /** The editor, byte-identical in props to `RichEditor` — only the arrival is deferred. */
 export function RichEditor(props: RichEditorProps) {
-  return (
-    <Suspense fallback={<EditorFrame {...props} />}>
-      <Impl {...props} />
-    </Suspense>
-  );
+  return <Impl {...props} />;
 }
 
 export type { RichEditorProps };

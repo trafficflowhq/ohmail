@@ -2946,6 +2946,8 @@
     "listHandle": "Breite der Liste"
   },
   "viewError": {
+    "loadFailed": "Dieser Teil von ohmail konnte nicht geladen werden. Prüfe die Verbindung und versuche es erneut.",
+    "tryAgain": "Erneut versuchen",
     "title": "Diese Ansicht wurde nicht geladen.",
     "body": "Beim Zeichnen dieses Bildschirms ist etwas schiefgegangen. An deiner Post wurde nichts verändert.",
     "action": "Neu laden",

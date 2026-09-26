@@ -2946,6 +2946,8 @@
     "listHandle": "List width"
   },
   "viewError": {
+    "loadFailed": "This part of ohmail couldn't load. Check the connection and try again.",
+    "tryAgain": "Try again",
     "title": "This view didn't load.",
     "body": "Something went wrong drawing this screen. Your mail is untouched.",
     "action": "Reload",
