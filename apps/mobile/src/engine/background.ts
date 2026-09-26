@@ -106,9 +106,10 @@ export interface BackgroundEngine {
   /**
    * Force one gated cycle per mailbox, so the lease is re-read now rather than at the next poll
    * tick. The gate claims a free mailbox and stands this install down against a holder; neither
-   * needs a press, and neither can displace anybody.
+   * needs a press, and neither can displace anybody. `served: 0` is a forced cycle that could not
+   * run — nothing was taken back, whatever the call's resolving says.
    */
-  resume(): Promise<void>;
+  resume(): Promise<readonly { readonly mailboxId: string; readonly served: number }[]>;
   /**
    * THE PERSON'S STOP, RECORDED WHERE A RELAUNCH READS IT — the engine's `stopOrganizing`.
    * Separate from {@link handBack} because the two are opposite instructions with opposite
@@ -762,19 +763,24 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
     /* EVERY OTHER WAY BACK IN asks the gate. On iOS the claim was given up on the way out; on
        Android it was given up by a decline or a stop. Either way the lease decides, and the same
        call covers both: claim a free mailbox, stand down against a holder. */
-    handedBack = false;
+    /* `handedBack` STANDS THROUGH THE FORCED CYCLE and is cleared only by one that served every
+       mailbox: a runtime answers `0` for a cycle that failed without throwing, and clearing on
+       the call alone rendered "Nothing organizes this mailbox" over a row that says organizer.
+       Unserved, it is left as it was — "Handed back" after a hand-back, the reader's own state
+       after a person's stop — and the poll owns the retry. */
     try {
-      await deps.engine.resume();
+      const served = await deps.engine.resume();
+      const unserved = served.filter((m) => m.served <= 0).length;
+      if (unserved === 0) handedBack = false;
+      else log("organizer_resume_unserved", { mailboxes: served.length, unserved, handedBack });
       /* AND A START THAT WORKED CLEARS THE SENTENCE the last one left, so a refusal cannot outlive
          the thing it was about — `announceRestricted`'s rule, one fact over. */
       deps.sayStartFailed(null);
     } catch (err) {
-      /* The claim was NOT taken back. `handedBack` returns to true so nothing renders
-         "Organizing" over a mailbox this install does not hold — the resume is retried by the
-         engine's own poll and by the next time the app is opened. AND IT IS SAID: the engine has
-         already spent its own attempts by the time this rejects, so this is the final answer and
-         a silent one leaves a person looking at a mailbox that never changes. */
-      handedBack = true;
+      /* The claim was NOT taken back, so `handedBack` is left as it was — the resume is retried by
+         the engine's own poll and by the next time the app is opened. AND IT IS SAID: the engine
+         has already spent its own attempts by the time this rejects, so this is the final answer
+         and a silent one leaves a person looking at a mailbox that never changes. */
       log("organizer_resume_failed", { err });
       deps.sayStartFailed(err);
     }

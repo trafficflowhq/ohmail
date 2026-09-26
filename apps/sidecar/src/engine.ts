@@ -569,10 +569,11 @@ export interface Sidecar {
    * phone has a caller. Per mailbox it is {@link LocalMailboxRuntime.resume}: the hand-back is
    * cleared and one gated cycle runs, so a free mailbox is claimed and a held one is not.
    *
-   * Best-effort and never throws, for {@link wake}'s reason. What it produced is read back from
-   * {@link organizerStates}, which is the fact the app renders.
+   * One entry per mailbox: `served` is the cycles its forced drain ran, and `0` is a cycle that
+   * could not be served, which a caller must not render as the hand-back being over. A refusal
+   * rejects, naming every mailbox that refused.
    */
-  resume(): Promise<void>;
+  resume(): Promise<readonly { mailboxId: string; served: number }[]>;
   /**
    * WHO HOLDS ONE MAILBOX, ASKED NOW — the engine's own APPEND-less look, in three words.
    *
@@ -3781,10 +3782,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * set by nothing but {@link LocalMailboxRuntime.handBack}. Without it the hand-back was a
        * release the very next poll undid: the timer still armed, the row still organizer, the gate
        * claimed again — an iPhone suspended a second later held a live claim while running nothing,
-       * the one state the hand-back exists to prevent. `handBack` clears the timer AND arms this,
-       * because a timer is not the only way into the gate (a resync, a wake, `syncUntilQuiet`). Not
-       * a second `priorStandDown`: that says another install holds the mailbox and needs a press;
-       * this says "nobody is running here" and `resume()` clears it.
+       * the one state the hand-back exists to prevent. `handBack` arms it synchronously, before
+       * its queue: the gate, the poll, the two signals and each drain's cycle edge all read it.
+       * Not `priorStandDown` (another install holds it): this is "nobody runs here", and
+       * `resume()` clears it.
        */
       let handedBack = false;
       /**
@@ -5330,7 +5331,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         if (markAtStart === null || knownSetMark === null || markAtStart !== knownSetMark) {
           knownSet.drop("the store moved outside the drain");
         }
-        while (!stopped && cycles < maxCycles) {
+        while (!stopped && !handedBack && cycles < maxCycles) {
           /* THE REFUSAL, AT EVERY CYCLE EDGE. A drain runs for up to a hundred cycles and each
              one moves mail, so the question "is this still the connection I gated?" has to be
              asked repeatedly rather than once at the top. Between two edges the pipeline writes
@@ -5422,6 +5423,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           cycles++;
           if (!hasBacklog) inboundDrained = true;
           if (!hasBacklog && !owesFiling) { drained = true; break; }
+          /* THE HAND-BACK'S EDGE, and it has to be HERE, ahead of the yield: on a phone leaving
+             the screen with no service the platform pauses timers, so a latch read after the
+             `setTimeout` below is never read. A cycle's own progress is socket-driven, so this
+             edge is reached in the background; the release then runs next in the queue. */
+          if (handedBack) {
+            log("organizer_hand_back_at_cycle_edge", { mailboxId: mb.id, cycles });
+            break;
+          }
           // Yield, so a backlog drain cannot starve the request handler sharing this event loop.
           await new Promise((r) => setTimeout(r, 0));
         }
@@ -5741,7 +5750,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * its own channel below must not be refused by a receipt from before its demotion. */
           /* A write the lease declined at the command is the same NO for the tail, asked later. */
           const permitStoodDown = organizing && (leaseStoodDown(leasePermit) || drainDeclined);
-          const cycleMayStillWrite = !permitStoodDown
+          /* AND NOTHING AFTER A HAND-BACK: from the latch on this install writes nothing to
+             `ohmail/_meta`, and every round trip here is one the release waits behind. */
+          const cycleMayStillWrite = !permitStoodDown && !handedBack
             && !(cycleError instanceof LeaseUnavailableError
               || cycleError instanceof ConnectionReplacedError);
           if (cycleMayStillWrite) try {
@@ -5794,6 +5805,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // The mail pass's own failure, now that the channel has had its turn. Everything below
           // is the tail of a pass that COMPLETED and must not run for one that did not.
           if (cycleError !== null) throw cycleError;
+          /* NOTHING MORE AFTER A HAND-BACK: the profile publish below writes `ohmail/_meta` too. */
+          if (handedBack) return cycles;
 
           // The portable profile's write-behind tick, behind the gate it rides. After the drain,
           // it reads the store the cycles just wrote, so a burst of verdicts is one comparison.
@@ -5945,7 +5958,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       };
 
       const schedule = (delayMs?: number): void => {
-        if (stopped) return;
+        /* AND NOT AFTER A HAND-BACK: a drain's `.finally(schedule)` would re-arm the poll the
+           latch just cleared. `resume()` clears the latch before it asks. */
+        if (stopped || handedBack) return;
         /* A KICK OUTRANKS AN ORDINARY RE-ARM, and that is a correctness rule rather than a
            preference. `delayMs === undefined` is the tail of a drain; a drain settling just after
            an arrival rang would otherwise clear the kick's timer, put that mail behind a full
@@ -6961,6 +6976,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * only decides whether the caller may report the mailbox handed back — `null` means it may not.
          */
         async handBack() {
+          if (stopped) return 0;
+          /* THE LATCH, BEFORE THE QUEUE and in the caller's tick. A drain in flight stops at its
+             next cycle edge on it, and no poll re-arms behind it; the release below then goes
+             out over the live connection with no timer between the edge and it. A timer here
+             never fires on a phone whose timers are paused, which is where this is called. */
+          handedBack = true;
+          if (timer) { clearTimeout(timer); timer = null; }
           return serialize(async () => {
             if (stopped) return 0;
             /* The release arm's rule: the settings first, while the claim is still ours — on the
@@ -7031,12 +7053,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                  only fact separating a phone that gave the mailbox back from one that holds it. */
               claimed: false,
               ...(settingsLeft === undefined ? {} : { settingsLeft }) };
-            /* THE TIMER GOES WITH THE CLAIM, and the flag closes the doors the timer is not.
-               Releasing alone left the poll armed: it fired, the gate read a row that still says
-               organizer, and the mailbox was claimed again — by an install that was about to be
-               suspended. See {@link handedBack}. */
-            handedBack = true;
-            if (timer) { clearTimeout(timer); timer = null; }
+            /* THE LATCH AND THE TIMER WENT BEFORE THE QUEUE, and are not set again here: a
+               `resume()` that ran after this call and before this body is the later instruction,
+               and re-latching would undo it. See {@link handedBack}. */
             return released;
           });
         },
@@ -7064,8 +7083,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           try {
             const served = await syncUntilQuiet(undefined, { force: true });
             /* `syncUntilQuiet` deliberately does not arm it — its own tail says so — and `handBack`
-               cleared it. `schedule()` returns at `stopped`, so a runtime told to stop is not
-               re-armed by a resume that raced it. */
+               cleared it. `schedule()` returns at `stopped` and at a hand-back latched since,
+               so neither a stop nor a later hand-back is re-armed by a resume that raced it. */
             schedule();
             return served;
           } catch (err) {
@@ -8777,13 +8796,20 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * it. So refusals are collected, since one mailbox's failure must not stop the others
        * starting, and then thrown for the caller to render.
        */
-      resume: async (): Promise<void> => {
+      resume: async () => {
         const runs = runtimes.all();
         const settled = await Promise.allSettled(runs.map((rt) => rt.resume()));
         const refused = settled.flatMap((r, i) => (r.status === "rejected"
           ? [{ mailboxId: runs[i]!.mailboxId, reason: r.reason as unknown }]
           : []));
-        if (refused.length === 0) return;
+        /* THE COUNTS ARE CARRIED, not dropped: a runtime answers `0` for a forced cycle that
+           failed without throwing, and only the count says the mailbox was not taken back. */
+        if (refused.length === 0) {
+          return settled.map((r, i) => ({
+            mailboxId: runs[i]!.mailboxId,
+            served: r.status === "fulfilled" ? r.value : 0,
+          }));
+        }
         /* THE FIRST REFUSAL IS THE ONE THROWN, and the rest ride on it: a caller renders one
            sentence, and an aggregate of one is a worse sentence than the failure itself. The others
            are named on the error so a diagnosis is not one mailbox wide. */

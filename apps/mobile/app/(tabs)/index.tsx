@@ -24,6 +24,7 @@ import { MailList, type ListGroup } from "../../src/ui/MailList";
 import { MailRow } from "../../src/ui/MailRow";
 import { MarkAllRead } from "../../src/ui/MarkAllRead";
 import { MessageReader } from "../../src/ui/MessageReader";
+import { OrganizerStrip } from "../../src/ui/OrganizerStrip";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { readingAtConnectLine } from "../../src/ui/standalone-form";
 import { useLocale } from "../../src/i18n/LocaleProvider";
@@ -95,6 +96,8 @@ function OhboxBody() {
                 />
               </Panel>
             ) : null}
+            {/* Who organizes this mailbox, where it is news — the Settings card's own claim. */}
+            <OrganizerStrip />
             <Doorbell initials={w.doorbell.initials} count={w.doorbell.count} />
           </>
         }

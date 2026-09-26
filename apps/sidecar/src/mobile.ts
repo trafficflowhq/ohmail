@@ -302,9 +302,10 @@ export interface PhoneEngine {
    * Cloud, and this install stands down and reads instead. Neither needs a press, and a resume can
    * never take a mailbox from a machine that has it. NOT {@link wake}, which restores a dead SOCKET
    * and runs no cycle — a hand-back left no socket problem, so a wake would find nothing to do and
-   * the mailbox would stay unclaimed until the next poll tick, which `handBack` has cleared.
+   * the mailbox would stay unclaimed until the next poll tick, which `handBack` has cleared. One
+   * entry per mailbox; `served: 0` is a forced cycle that could not run, so nothing was taken back.
    */
-  resume(): Promise<void>;
+  resume(): Promise<readonly { mailboxId: string; served: number }[]>;
   /**
    * The person asked for this phone — the consent recorded and the claim taken now. A method
    * rather than a request the app composes, because the phone's privacy census admits a URL and a

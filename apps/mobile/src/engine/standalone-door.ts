@@ -77,7 +77,7 @@ export interface StandaloneEngine {
    */
   serverSettings(): Promise<PhoneServerSettings | null>;
   /** Force one gated cycle per mailbox, so the lease is re-read now. */
-  resume(): Promise<void>;
+  resume(): Promise<readonly { mailboxId: string; served: number }[]>;
   /**
    * ASK FOR THIS PHONE — the consent, recorded, and the gate asked now.
    *
