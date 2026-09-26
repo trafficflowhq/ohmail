@@ -1126,6 +1126,7 @@ const TABLE = {
   searchResultsHead: (n: number) => (n === 1 ? "1 result" : `${n} results`),
   searchSimilarHead: "Similar",
   searchSimilarHint: "Nothing matched exactly, so these are the closest words.",
+  searchSimilarHintSynced: "Nothing synced so far matched exactly, so these are the closest words.",
   searchEmptyTitle: "Nothing matched.",
   searchIndexing: "Still reading your recent mail.",
   /* THE WHOLE-MAILBOX VERDICT — the webapp's `search.scopeWhole*`, word for word. */
@@ -1133,6 +1134,11 @@ const TABLE = {
   searchWhole: (n: number) => (n === 0 ? "Searched your whole mailbox — nothing matched" : `Searched your whole mailbox — ${n} matched`),
   searchWholeAtLeast: (n: number) => `Searched your whole mailbox — at least ${n} matched`,
   searchWholeAbout: (n: number) => `Searched your whole mailbox — about ${n} matched`,
+  /* …and over a store that has not taken in the whole mailbox: the webapp's `search.scopeSynced*`. */
+  searchSynced: (n: number) => (n === 0 ? "Searched the mail synced so far — nothing matched" : `Searched the mail synced so far — ${n} matched`),
+  searchSyncedAtLeast: (n: number) => `Searched the mail synced so far — at least ${n} matched`,
+  searchSyncedAbout: (n: number) => `Searched the mail synced so far — about ${n} matched`,
+  searchSyncing: "The rest of your mail has not synced yet.",
   searchServerMs: (ms: number) => `${ms} ms`,
   searchUnanswered: "Your server did not answer — showing the recent mail this device holds.",
   searchWholeRetry: "Search your whole mailbox again",

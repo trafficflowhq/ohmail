@@ -515,6 +515,8 @@ export interface StoreSearchMeta {
   bounded: boolean;
   indexed: { done: number; total: number } | null;
   facets: ServerSearchFacets | null;
+  /** The store has not taken in the whole mailbox: the latest answer's reading. */
+  importing: boolean;
   /** Page one came from a paired desktop's mirror: the verdict is about the mail on this computer. */
   fromMirror: boolean;
 }
@@ -670,7 +672,7 @@ export class StoreSearchWalker {
     const epoch = this.epoch;
     this.meta = {
       total: out.total, totalExact: out.totalExact, about: null, tier: out.tier, ms: out.ms, bounded: out.bounded,
-      indexed: out.indexed, facets: out.facets, fromMirror: out.fromMirror === true,
+      indexed: out.indexed, facets: out.facets, importing: out.importing === true, fromMirror: out.fromMirror === true,
     };
     this.status = "ready";
     if ((this.key?.sort ?? "relevance") === "relevance") {
@@ -694,6 +696,7 @@ export class StoreSearchWalker {
           ...(est.totalExact ? { total: est.total, totalExact: true, about: null } : { about: est.totalEstimate }),
           facets: est.facets ?? this.meta.facets,
           indexed: est.indexed,
+          importing: est.importing === true,
         };
         this.signal.bump();
         if (est.totalExact) return;
@@ -705,6 +708,7 @@ export class StoreSearchWalker {
           ...(sum.totalExact ? { total: sum.total, totalExact: true, about: null } : {}),
           facets: sum.facets ? facetsInPlace(this.meta.facets, sum.facets) : this.meta.facets,
           indexed: sum.indexed,
+          importing: sum.importing === true,
         };
         this.signal.bump();
       }, () => undefined);

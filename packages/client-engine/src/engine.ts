@@ -709,6 +709,8 @@ export interface ServerSearchWire {
   bounded?: boolean;
   /** Present while the store is still indexing this account's older mail. */
   indexed?: { done: number; total: number };
+  /** Present while the store has not taken in the whole mailbox: a first import is still open. */
+  importing?: true;
   /** Counts over the WHOLE match set (the summary part), keyed as the store keys them. */
   facets?: ServerSearchFacets;
   /** A paired desktop's door answered from its mirror, a window of the account, which was unreachable. */
@@ -1068,6 +1070,8 @@ export type ServerSearchOutcome =
     state: "ready"; items: EngineMessage[]; total: number; tier: SearchTier; totalExact: boolean; ms: number | null;
     nextCursor: string | null; bounded: boolean; indexed: { done: number; total: number } | null;
     facets: ServerSearchFacets | null;
+    /** The store answered over part of the mailbox ({@link ServerSearchWire.importing}). */
+    importing?: true;
     /** The answer is a paired desktop's mirror's, not the whole mailbox's ({@link ServerSearchWire.answeredFrom}). */
     fromMirror?: true;
   }
@@ -1085,6 +1089,7 @@ export type ServerEstimateOutcome =
   | {
     state: "ready"; total: number; totalExact: boolean; totalEstimate: number | null; tier: SearchTier;
     ms: number | null; indexed: { done: number; total: number } | null; facets: ServerSearchFacets | null;
+    importing?: true;
     fromMirror?: true;
   }
   | { state: "failed"; error: string; errorClass: string };
@@ -1097,7 +1102,8 @@ function estimateFrom(r: ReadySearch, totalEstimate: unknown): Extract<ServerEst
     ? Math.max(r.total, Math.round(totalEstimate)) : null;
   return {
     state: "ready", total: r.total, totalExact: r.totalExact, totalEstimate: about, tier: r.tier, ms: r.ms,
-    indexed: r.indexed, facets: r.facets, ...(r.fromMirror ? { fromMirror: true as const } : {}),
+    indexed: r.indexed, facets: r.facets, ...(r.importing ? { importing: true as const } : {}),
+    ...(r.fromMirror ? { fromMirror: true as const } : {}),
   };
 }
 
@@ -7657,6 +7663,7 @@ export class OhmailEngine {
           bounded: wire.bounded === true,
           indexed: indexedOf(wire.indexed),
           facets: wire.facets ?? null,
+          ...(wire.importing === true ? { importing: true as const } : {}),
           ...(wire.answeredFrom === "mirror" ? { fromMirror: true as const } : {}),
         };
         return opts.parts === "estimate" ? estimateFrom(ready, wire.totalEstimate) : ready;

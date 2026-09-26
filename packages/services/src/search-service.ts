@@ -9,6 +9,7 @@ import { clampLimit } from "./pagination.js";
 import { ServiceError } from "./errors.js";
 import { storeProbe } from "./store-probe.js";
 import { afterSettings } from "./settings-first.js";
+import { storeStillImporting } from "./search-coverage.js";
 import { instantRefusal, readInstant } from "./instant.js";
 import type { MessageDTO } from "./dto/types.js";
 
@@ -172,6 +173,8 @@ export interface SearchResult {
   bounded: boolean;
   /** Present on a summary while this account's search documents are still being built. */
   indexed?: { done: number; total: number };
+  /** Present on every part while the store has not taken in the whole mailbox ({@link storeStillImporting}). */
+  importing?: true;
 }
 
 /** One tier's page rows as their DTOs, the cursor after them, and whether an arm was cut. */
@@ -807,32 +810,34 @@ export class SearchService {
     const t0 = performance.now();
     const parts: SearchParts = opts.parts ?? "both";
     const ms = (): number => Math.round(performance.now() - t0);
+    // Read beside the answer, never inside its statements: a store mid-import says so on every part.
+    const coverage = storeStillImporting(ctx).then((open) => (open ? { importing: true as const } : {}));
     if (parts === "summary") {
-      const s = await this.summary(ctx, opts);
+      const [s, cov] = await Promise.all([this.summary(ctx, opts), coverage]);
       return {
         items: [], facets: s.facets, total: s.total, tier: s.tier, totalExact: true,
-        nextCursor: null, bounded: false, ...(s.indexed ? { indexed: s.indexed } : {}), ms: ms(),
+        nextCursor: null, bounded: false, ...(s.indexed ? { indexed: s.indexed } : {}), ...cov, ms: ms(),
       };
     }
     if (parts === "estimate") {
-      const e = await this.estimate(ctx, opts);
+      const [e, cov] = await Promise.all([this.estimate(ctx, opts), coverage]);
       return {
         items: [], facets: e.facets, total: e.total, tier: e.tier, totalExact: e.exact,
         ...(e.estimate !== null ? { totalEstimate: e.estimate } : {}),
-        nextCursor: null, bounded: false, ...(e.indexed ? { indexed: e.indexed } : {}), ms: ms(),
+        nextCursor: null, bounded: false, ...(e.indexed ? { indexed: e.indexed } : {}), ...cov, ms: ms(),
       };
     }
-    const page = await this.page(ctx, opts);
+    const [page, cov] = await Promise.all([this.page(ctx, opts), coverage]);
     if (parts === "page") {
       return {
         items: page.items, facets: null, total: page.candidates, tier: page.tier, totalExact: !page.cut,
-        nextCursor: page.nextCursor, bounded: page.bounded, ms: ms(),
+        nextCursor: page.nextCursor, bounded: page.bounded, ...cov, ms: ms(),
       };
     }
     const s = await this.summary(ctx, opts);
     return {
       items: page.items, facets: s.facets, total: s.total, tier: page.tier, totalExact: true,
-      nextCursor: page.nextCursor, bounded: page.bounded, ...(s.indexed ? { indexed: s.indexed } : {}), ms: ms(),
+      nextCursor: page.nextCursor, bounded: page.bounded, ...(s.indexed ? { indexed: s.indexed } : {}), ...cov, ms: ms(),
     };
   }
 

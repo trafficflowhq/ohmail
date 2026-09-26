@@ -674,6 +674,14 @@ export function SearchView({
         {t("scopeWholeRetry")}
       </button>
     </>
+  ) : ready.importing ? (
+    /* The store has not taken in the whole mailbox (a first sync): the line says what it searched. */
+    <>
+      {ready.totalExact ? t("scopeSynced", { total: ready.total })
+        : ready.about !== null ? t("scopeSyncedAbout", { total: ready.about })
+          : t("scopeSyncedAtLeast", { total: ready.total })}
+      {ready.ms !== null ? <> · {t("scopeServerMs", { ms: ready.ms })}</> : null}
+    </>
   ) : (
     <>
       {/* Exact, else the estimate's "about N" (replaced in place by the summary), else the page's bound. */}
@@ -690,6 +698,9 @@ export function SearchView({
         <span className="search-indexing" data-testid="search-indexing">
           {" "}{t("indexing", { percent: Math.floor((100 * ready.indexed.done) / ready.indexed.total) })}
         </span>
+      ) : null}
+      {ready?.importing && !ready.fromMirror ? (
+        <span className="search-indexing" data-testid="search-syncing">{" "}{t("syncing")}</span>
       ) : null}
       {ready?.bounded && walker.atEnd() ? (
         <span className="search-bounded" data-testid="search-bounded">
@@ -844,7 +855,7 @@ export function SearchView({
                     <>
                       {similarOn ? (
                         <div className="results-head" data-similar="head">
-                          <b>{t("similarHead")}</b> {t("similarHint")}
+                          <b>{t("similarHead")}</b> {ready?.importing && !ready.fromMirror ? t("similarHintSynced") : t("similarHint")}
                         </div>
                       ) : null}
                       <div role="list" aria-label={t("title")}>

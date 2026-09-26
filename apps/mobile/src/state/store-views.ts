@@ -114,6 +114,8 @@ export interface PhoneStoreSearch {
   about: number | null;
   ms: number | null;
   indexedPercent: number | null;
+  /** The store has not taken in the whole mailbox (a first sync): the verdict says what it searched. */
+  importing: boolean;
   /** The last relevance page of a cut set: the date orders walk the rest. */
   bounded: boolean;
   /** Ask for the pages covering `[start, end)` — an evicted page is asked again by its cursor. */
@@ -178,6 +180,7 @@ export function useStoreSearch(query: string, deviceIds: readonly string[]): Pho
       about: info?.about ?? null,
       ms: info?.ms ?? null,
       indexedPercent: info?.indexed ? Math.floor((100 * info.indexed.done) / info.indexed.total) : null,
+      importing: info?.importing === true,
       bounded: info !== null && info.bounded && walker !== null && walker.atEnd(),
       want: (start, end) => walker?.want(start, end),
       loadMore: () => walker?.more(),

@@ -109,7 +109,10 @@ function SearchBody() {
               title: Copy.searchResultsHead(found),
               rows: shownItems,
             },
-            { key: "similar", title: Copy.searchSimilarHead, note: Copy.searchSimilarHint, rows: shownSimilar },
+            {
+              key: "similar", title: Copy.searchSimilarHead,
+              note: store.ready && store.importing ? Copy.searchSimilarHintSynced : Copy.searchSimilarHint, rows: shownSimilar,
+            },
           ]
         : [];
 
@@ -218,6 +221,9 @@ function SearchBody() {
               )}
               {store.indexedPercent !== null ? (
                 <Txt variant="note" tone="ink3">{Copy.searchIndexingProgress(store.indexedPercent)}</Txt>
+              ) : null}
+              {store.verdict === "ready" && store.importing ? (
+                <Txt variant="note" tone="ink3">{Copy.searchSyncing}</Txt>
               ) : null}
               {store.bounded ? (
                 <Txt variant="note" tone="ink3">{Copy.searchBounded(store.length)}</Txt>
