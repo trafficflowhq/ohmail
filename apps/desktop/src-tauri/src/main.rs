@@ -105,6 +105,10 @@ mod perf_budgets;
 // preview opens the same window and asks for the same budget.
 mod webview_budget;
 
+// The window opens hidden and is shown on its own canvas once the page has composed its first
+// frame, or at a bound. Always compiled: every build opens the same hidden window.
+mod launch_window;
+
 // How many allocator arenas the engine this shell spawns may have. Applied to that child's
 // command in `engine.rs`, never to this process — `allocator_arenas.rs` has the measurement.
 mod allocator_arenas;
@@ -131,6 +135,12 @@ fn main() {
     // is otherwise immaterial, since `on_menu_event` appends and `setup` is only
     // used here. See `menu.rs` for why a second `setup` would be a silent bug.
     builder = menu::attach(builder);
+    // The preview's page has no command to report its first frame with, so its window is shown
+    // when the document has loaded. The engine build registers the report with its commands.
+    #[cfg(not(feature = "local-engine"))]
+    {
+        builder = launch_window::attach(builder);
+    }
 
     let app = builder
         .build(tauri::generate_context!())

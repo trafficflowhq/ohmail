@@ -68,7 +68,7 @@ describe("tauri.conf.json", () => {
     build: { frontendDist: string };
     app: {
       withGlobalTauri: boolean;
-      windows: { label: string; minWidth: number; dragDropEnabled?: boolean }[];
+      windows: { label: string; minWidth: number; dragDropEnabled?: boolean; visible?: boolean }[];
       security: {
         csp: string;
         freezePrototype: boolean;
@@ -81,6 +81,22 @@ describe("tauri.conf.json", () => {
       windows: { webviewInstallMode: { type: string }; nsis: { installMode: string } };
     };
   };
+
+  /* A HIDDEN WINDOW IS ONLY AS GOOD AS WHAT SHOWS IT. The window is created hidden so no frame
+     of the toolkit's own surface reaches the screen; without the show path that is an app with
+     no window at all, so the three halves are asserted together. */
+  it("creates the main window hidden, and every build has a way to show it", () => {
+    const main = conf.app.windows.find((w) => w.label === "main");
+    expect(main?.visible).toBe(false);
+    // From the one `setup`, where the config window exists: after `build()` it does not yet, and a
+    // show there found nothing and left the app invisible (measured on the guest).
+    expect(read("src-tauri/src/menu.rs")).toMatch(/\.setup\([\s\S]*crate::launch_window::prepare\(app\);\s*Ok\(\(\)\)/);
+    const rust = read("src-tauri/src/main.rs");
+    expect(rust).not.toMatch(/launch_window::prepare/);
+    expect(rust).toMatch(/#\[cfg\(not\(feature = "local-engine"\)\)\]\s*\{\s*builder = launch_window::attach\(builder\);/);
+    expect(read("src-tauri/src/launch_window.rs")).toMatch(/arm_fallback\(launch, FALLBACK,/);
+    expect(read("src/main.tsx")).toMatch(/^reportWindowReady\(\);$/m);
+  });
 
   it("is ohmail, at the release version, under its own identifier", () => {
     expect(conf.productName).toBe("ohmail");
@@ -551,7 +567,7 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these twenty-five files and no others", () => {
+  it("is these twenty-seven files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
       // HOW MANY ALLOCATOR ARENAS THIS APP'S PROCESSES MAY HAVE. glibc gives a contending
@@ -591,6 +607,12 @@ describe("the Rust side", () => {
       // test in this file.
       "host.rs",
       "host_tests.rs",
+      // THE WINDOW OPENS HIDDEN AND IS SHOWN ON ITS OWN CANVAS. ALWAYS compiled: every build opens
+      // the same hidden window, and a build without a way to show it is an invisible app. The
+      // engine build shows it on the page's report, the preview on the document's load, and both
+      // at a bound. It writes one file, the kept canvas, under the app's own data directory.
+      "launch_window.rs",
+      "launch_window_tests.rs",
       "main.rs",
       // The menu bar — the one piece of interface this process draws, and the ONLY file that may
       // install one: a menu goes in through `Builder::setup`, and a second `setup` on the same
@@ -827,6 +849,8 @@ describe("the Rust side", () => {
     // The two update commands are defined in `updater.rs`, which is always compiled; only their
     // registration and their grant are feature-gated, like every other command here.
     const updaterModule = read("src-tauri/src/updater.rs");
+    // The launch window's report is defined beside the show gate it opens.
+    const launchModule = read("src-tauri/src/launch_window.rs");
     const COMMANDS = [
       "engine_status",
       "engine_request",
@@ -930,6 +954,10 @@ describe("the Rust side", () => {
       // `update_poll` is the LAUNCH check's own path — `check(app, false)` — and is silent unless
       // it finds something. It names nothing and takes no argument either.
       "update_poll",
+      // The page's report that its first frame is composed, carrying that frame's canvas as one
+      // `#rrggbb` string the shell parses strictly. The window is created hidden; this paints it
+      // that colour and shows it. `launch_window.rs` has the measurement.
+      "window_ready",
     ];
 
     expect(build).toMatch(/CARGO_FEATURE_LOCAL_ENGINE/);
@@ -965,7 +993,7 @@ describe("the Rust side", () => {
       // `[<(]` because several are generic over the runtime: a command taking an `AppHandle`
       // has to name the runtime it belongs to, or the handler cannot be built for one.
       expect(
-        engine + hostModule + defaultMailModule + omarchyModule + updaterModule,
+        engine + hostModule + defaultMailModule + omarchyModule + updaterModule + launchModule,
         `${command} is not defined`,
       ).toMatch(new RegExp(`fn ${command}[<(]`));
       expect(engine, `${command} is not registered`).toMatch(

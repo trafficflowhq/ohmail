@@ -110,6 +110,7 @@ const WINDOW_COMMANDS: &[&str] = &[
     // a dialog. Routing a daily cadence through the press would put that dialog over
     // somebody's mail every day. `src/updater.rs` carries the reasoning.
     "update_poll",
+    "window_ready",
 ];
 
 fn main() {

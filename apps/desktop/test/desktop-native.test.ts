@@ -11,7 +11,10 @@ import {
   MENU_VIEWS,
   badgeCount,
   codeOfLinkPayload,
+  frameCanvas,
   postOsNotice,
+  reportWindowReady,
+  watchWindowCanvas,
   onMenuCommand,
   onMenuNavigate,
   openWeb,
@@ -602,5 +605,100 @@ describe("the browser handoff, at the window's edge", () => {
     await expect(native.openWeb("link-desktop", CHALLENGE)).resolves.toBeUndefined();
     // The statically imported copy names the same channel as the freshly loaded one.
     expect(native.LINK_CODE_EVENT).toBe(LINK_CODE_EVENT);
+  });
+});
+
+/* THE HIDDEN WINDOW'S REPORT. The shell shows the window when it arrives and paints it the canvas
+   it carries, so the canvas is read as sRGB bytes and the report can never throw into the page. */
+describe("the window's first-frame report", () => {
+  /** A document whose body computes to `css` and whose 1x1 canvas reads back `bytes`. */
+  const docWith = (css: string, bytes: number[]) =>
+    ({
+      body: {},
+      defaultView: { getComputedStyle: () => ({ backgroundColor: css }) },
+      createElement: () => ({
+        getContext: () => ({
+          fillStyle: "",
+          fillRect: () => undefined,
+          getImageData: () => ({ data: Uint8ClampedArray.from(bytes) }),
+        }),
+      }),
+    }) as unknown as Document;
+
+  it("reads the canvas as sRGB bytes, whatever space the style computed in", () => {
+    expect(frameCanvas(docWith("oklch(0.152 0.008 55)", [19, 20, 28, 255]))).toBe("#13141c");
+    expect(frameCanvas(docWith("rgb(242, 239, 228)", [242, 239, 228, 255]))).toBe("#f2efe4");
+  });
+
+  it("reports no canvas for a colour that is not opaque, or a document it cannot read", () => {
+    expect(frameCanvas(docWith("rgba(0, 0, 0, 0)", [0, 0, 0, 0]))).toBeNull();
+    expect(frameCanvas(docWith("", [0, 0, 0, 255]))).toBeNull();
+    expect(frameCanvas({} as unknown as Document)).toBeNull();
+  });
+
+  it("sends the canvas to the shell under its own command", () => {
+    const shell = shellAnswering();
+    reportWindowReady("#13141c");
+    reportWindowReady(null);
+    expect(shell.asked).toEqual([
+      { command: "window_ready", payload: { canvas: "#13141c" } },
+      { command: "window_ready", payload: { canvas: null } },
+    ]);
+  });
+
+  it("is silent without a shell and never throws on a refused report", async () => {
+    expect(() => reportWindowReady("#13141c")).not.toThrow();
+    shellAnswering(() => {
+      throw new Error("not allowed");
+    });
+    expect(() => reportWindowReady("#13141c")).not.toThrow();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+});
+
+describe("the window's canvas, kept in step", () => {
+  const readBack = (bytes: number[]) =>
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      fillStyle: "",
+      fillRect: () => undefined,
+      getImageData: () => ({ data: Uint8ClampedArray.from(bytes) }),
+    } as unknown as CanvasRenderingContext2D);
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    document.documentElement.removeAttribute("data-theme");
+    document.body.style.backgroundColor = "";
+  });
+
+  it("reports the canvas once the stamps that decide it have settled, and once per settle", async () => {
+    vi.useFakeTimers();
+    readBack([19, 20, 28, 255]);
+    document.body.style.backgroundColor = "rgb(19, 20, 28)";
+    const shell = shellAnswering();
+    const stop = watchWindowCanvas(document, 600);
+    document.documentElement.dataset.theme = "dark";
+    await vi.advanceTimersByTimeAsync(300);
+    document.documentElement.dataset.theme = "light";
+    await vi.advanceTimersByTimeAsync(599);
+    expect(shell.asked, "nothing inside the settle").toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(shell.asked).toEqual([{ command: "window_ready", payload: { canvas: "#13141c" } }]);
+    const style = document.createElement("style");
+    document.head.appendChild(style);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(shell.asked).toHaveLength(2);
+    stop();
+    document.documentElement.dataset.theme = "dark";
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(shell.asked, "a stopped watch reports nothing").toHaveLength(2);
+    style.remove();
+  });
+
+  it("watches nothing without a shell", async () => {
+    vi.useFakeTimers();
+    const observe = vi.spyOn(MutationObserver.prototype, "observe");
+    watchWindowCanvas(document, 10)();
+    expect(observe).not.toHaveBeenCalled();
   });
 });

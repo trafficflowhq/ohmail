@@ -31,9 +31,16 @@ import { DOOR_COPY } from "./door-copy.js";
 import { errorSentence, GateBoundary } from "./GateBoundary.js";
 import { GateNotice } from "./GateNotice.js";
 import { installOfflineGuard } from "./offline-guard.js";
-import { reportUiVitals } from "./native.js";
+import { reportUiVitals, reportWindowReady, watchWindowCanvas } from "./native.js";
 
 installOfflineGuard();
+
+/* THE WINDOW'S CANVAS, TO THE SHELL. The head's stamps have run and every stylesheet has loaded
+   (a module script waits for both), so this is the colour the first frame is composed on: a first
+   launch's hidden window is painted it and shown, and every launch keeps it for the next. The
+   watch reports it again whenever the theme, scheme or face moves it. */
+reportWindowReady();
+watchWindowCanvas();
 
 /* ── THE WINDOW'S OWN VITALS GO INTO `engine.log` ────────────────────────────────────────────
    The shared shell times itself on every door and reports every five minutes; in a browser tab

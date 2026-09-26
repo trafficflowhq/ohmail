@@ -201,6 +201,9 @@ pub fn attach<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
             if frame.menu_bar() {
                 install(app.handle())?;
             }
+            // The config window exists from here and is still hidden: the launch window paints
+            // and shows it (`launch_window.rs`), after the frame above is settled.
+            crate::launch_window::prepare(app);
             Ok(())
         })
 }

@@ -71,6 +71,7 @@ const MAILTO_CLAIM_COMMAND = "mailto_claim";
 const DEFAULT_MAIL_STATUS_COMMAND = "default_mail_status";
 const DEFAULT_MAIL_REQUEST_COMMAND = "default_mail_request";
 const UI_VITALS_COMMAND = "ui_vitals";
+const WINDOW_READY_COMMAND = "window_ready";
 
 /**
  * The places on the web this app can open, named as PLACES and never as addresses. A hosted
@@ -417,4 +418,74 @@ export async function reportUiVitals(
   } catch {
     return null;
   }
+}
+
+/**
+ * The colour this document's first frame is composed on, as `#rrggbb`, or null when it is not
+ * one opaque colour. Read through a 1x1 canvas because a computed colour keeps its space
+ * (`oklch(...)` on the paper face) and the shell takes sRGB bytes only.
+ */
+export function frameCanvas(doc: Document = document): string | null {
+  try {
+    const css = doc.defaultView?.getComputedStyle(doc.body).backgroundColor ?? "";
+    if (!css) return null;
+    const ctx = doc.createElement("canvas").getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.fillStyle = css;
+    ctx.fillRect(0, 0, 1, 1);
+    const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+    if (a !== 255) return null;
+    return `#${[r, g, b].map((v) => (v ?? 0).toString(16).padStart(2, "0")).join("")}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * THE WINDOW IS SHOWN WHEN THIS ARRIVES. The shell creates it hidden, paints it `canvas` and
+ * shows it, so the frames before the web view's first one are this document's own colour and not
+ * the toolkit's (`launch_window.rs`). Fire and forget: the shell shows the window at a bound
+ * anyway, and a refused report must never reach the page.
+ */
+export function reportWindowReady(canvas: string | null = frameCanvas()): void {
+  const shell = internals();
+  if (!shell) return;
+  try {
+    void shell.invoke(WINDOW_READY_COMMAND, { canvas }).catch(() => undefined);
+  } catch {
+    /* the shell shows the window at its bound */
+  }
+}
+
+/** Past the scheme crossfade (280 ms) and a view transition's own frame. */
+export const CANVAS_SETTLE_MS = 600;
+
+/**
+ * KEEP THE SHELL'S CANVAS IN STEP. The report above carries the first frame's canvas; the theme
+ * feed, the scheme and the face can change it later in the same launch, and the NEXT launch opens
+ * on whatever the shell kept. So any change to what decides the canvas (the root's stamps, the
+ * feed's style element, the system scheme) is reported again once it has settled.
+ */
+export function watchWindowCanvas(doc: Document = document, settleMs = CANVAS_SETTLE_MS): () => void {
+  if (!internals() || typeof MutationObserver === "undefined") return () => undefined;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const later = () => {
+    if (timer !== null) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      reportWindowReady(frameCanvas(doc));
+    }, settleMs);
+  };
+  const root = new MutationObserver(later);
+  root.observe(doc.documentElement, { attributes: true });
+  const head = new MutationObserver(later);
+  head.observe(doc.head, { childList: true, subtree: true, characterData: true });
+  const scheme = doc.defaultView?.matchMedia?.("(prefers-color-scheme: dark)");
+  scheme?.addEventListener?.("change", later);
+  return () => {
+    root.disconnect();
+    head.disconnect();
+    scheme?.removeEventListener?.("change", later);
+    if (timer !== null) clearTimeout(timer);
+  };
 }
