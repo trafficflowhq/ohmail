@@ -58,6 +58,7 @@ import { isDemoOwned, storageOwner } from "../shell/storage-owner";
 import { useZoneNav } from "../shell/zone-nav";
 import { settingsPanes } from "./settings-panes";
 import { RulesView, type RuleOutcome } from "./RulesView";
+import type { RulesPosture } from "./rules-posture";
 
 /* Re-exported so every caller that LINKS to a pane keeps its import — `AppShell`, and through it
  * the Screener's "start a plan" offer. The list itself is the ROUTER's now: `#/settings/<pane>`
@@ -436,6 +437,8 @@ export function SettingsView({
     onRetarget: (ruleId: string, destination: Folder, applyRetro: boolean) => Promise<RuleOutcome>;
     /** How much of a rule's mail a change would ask the pass to move — see `RulesView`. */
     pastMail: (rule: RuleDTO, destination: Folder | null) => number | null;
+    /** Where a press can land, from the roster — see `RulesPosture`. Absent reads as organizer. */
+    posture?: RulesPosture;
   };
   /**
    * CREATE / RENAME / RECOLOUR / DELETE — one object, or a read-only list. The same rule as {@link rules} and for the
@@ -1217,7 +1220,8 @@ export function SettingsView({
           {shown === "devices" ? devicesSection : null}
 
           {shown === "rules" && rules ? (
-            <RulesView rules={rules.items} onRevoke={rules.onRevoke} onRetarget={rules.onRetarget} pastMail={rules.pastMail} />
+            <RulesView rules={rules.items} onRevoke={rules.onRevoke} onRetarget={rules.onRetarget} pastMail={rules.pastMail}
+              posture={rules.posture} />
           ) : null}
 
           {shown === "tags" ? (

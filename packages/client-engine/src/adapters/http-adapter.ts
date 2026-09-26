@@ -536,6 +536,9 @@ export class HttpAdapter implements EngineAdapter {
       code: shape.code,
       retryable: shape.retryable,
       retryAfterMs: retryAfterMsOf(res),
+      // The refusal's facts, as the send path forwards them: `organized_elsewhere` carries
+      // `{ by, reason }`, and without them no surface can say why a reader's press was refused.
+      ...(wire.error?.details !== undefined ? { details: wire.error.details } : {}),
     });
   }
 
@@ -1248,11 +1251,13 @@ export class HttpAdapter implements EngineAdapter {
       const n = (h as { name?: unknown } | null)?.name;
       return typeof n === "string" && n.trim() !== "" ? n : null;
     };
+    // A rule edit's `travel` is an OBJECT (`RuleTravel`, one leg per held mailbox under
+    // `pending`), not a list — read both, or a rule's holder is never named.
+    const t = b.travel as { pending?: unknown } | null | undefined;
+    const legs: unknown[] = Array.isArray(b.travel) ? b.travel : Array.isArray(t?.pending) ? t!.pending as unknown[] : [];
     const holder = b.holder
       ? named(b.holder)
-      : Array.isArray(b.travel)
-        ? (b.travel.map((t) => named((t as { holder?: unknown } | null)?.holder)).find((n) => n !== null) ?? null)
-        : null;
+      : (legs.map((leg) => named((leg as { holder?: unknown } | null)?.holder)).find((n) => n !== null) ?? null);
     return {
       settlement: "queued",
       queuedWith: { name: holder },

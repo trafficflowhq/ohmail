@@ -600,7 +600,15 @@
     "toastBulkMovedSenders": "{place} — Post von {senders, plural, one {1 Absender} other {# Absendern}} landet ab jetzt dort, {count, plural, =0 {nichts musste verschoben werden} one {1 Nachricht verschoben} other {# Nachrichten verschoben}}.",
     "toastBulkMoveFailed": "Nichts verschoben — die Änderung konnte nicht gespeichert werden. Bitte noch einmal versuchen.",
     "toastBulkMovedPlain": "{place} — {count, plural, one {1 Nachricht} other {# Nachrichten}} verschoben.",
-    "sentNote": "Deine zuletzt gesendete Post steht mit oben. Ältere gesendete Post bleibt auf deinem Server — du findest sie über die Suche."
+    "sentNote": "Deine zuletzt gesendete Post steht mit oben. Ältere gesendete Post bleibt auf deinem Server — du findest sie über die Suche.",
+    "whyRefused": {
+      "nobody": "Nichts organisiert dieses Postfach, also wird eine Änderung von hier nicht ausgeführt. Unter Einstellungen → Postfächer gibt es den Knopf, um es hier zu organisieren.",
+      "starting": "Das Organisieren beginnt hier beim nächsten Durchgang — innerhalb einer Minute. Danach lassen sich Änderungen machen.",
+      "outdated": "{name} organisiert dieses Postfach, und seine ohmail-Version nimmt diese Änderung von hier nicht an. Mach sie dort, oder aktualisiere ohmail darauf.",
+      "outdatedUnknown": "Die Installation, die dieses Postfach organisiert, nimmt diese Änderung von hier nicht an. Mach sie dort, oder aktualisiere ohmail darauf.",
+      "elsewhere": "{name} organisiert dieses Postfach, also wird diese Änderung dort gemacht.",
+      "elsewhereUnknown": "Eine andere ohmail-Installation organisiert dieses Postfach, also wird diese Änderung dort gemacht."
+    }
   },
   "reads": {
     "title": "News",

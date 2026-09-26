@@ -39,6 +39,8 @@ import { placeLabel } from "../shell/format";
 import { RETRO_DEFAULT_ON, SCREENING_DESTS } from "../shell/sender-screening";
 import { displayRuleMatch } from "../shell/idn";
 import { useListWindow } from "../shell/list-window";
+import { organizerRefusalOf, organizerRefusalSentence } from "../shell/organizer-refusal";
+import { postureRefusal, type RulesPosture } from "./rules-posture";
 import "./rules.css";
 
 /**
@@ -198,9 +200,11 @@ export interface RulesViewProps {
   onRetarget: (ruleId: string, destination: Folder, applyRetro: boolean) => Promise<RuleOutcome>;
   /** `rule-past-mail.ts#rulePastMail` over the mirror: null where this device cannot count. */
   pastMail: (rule: RuleDTO, destination: Folder | null) => number | null;
+  /** What a press can do here, from the roster (`rulesPostureOf`); absent reads as organizer. */
+  posture?: RulesPosture;
 }
 
-export function RulesView({ rules, onRevoke, onRetarget, pastMail }: RulesViewProps) {
+export function RulesView({ rules, onRevoke, onRetarget, pastMail, posture }: RulesViewProps) {
   const t = useTranslations("rules");
   const piles = usePileNames();
   /** A place in the sheet's words where it has one ("Screened out"), else the place label. */
@@ -213,6 +217,8 @@ export function RulesView({ rules, onRevoke, onRetarget, pastMail }: RulesViewPr
   /* The list's name is the section's own heading, already on screen. */
   const tSettings = useTranslations("settings");
   const toast = useToast();
+  /* The WHY of a reader's refusal is the shell's shared sentence, not a rules-only one. */
+  const tWhy = useTranslations("ohbox");
 
   /**
    * WHAT A RULE SAYS, IN ONE LINE — and for a subject rule that is TWO terms, not one. `what.sender` renders "mail
@@ -237,6 +243,16 @@ export function RulesView({ rules, onRevoke, onRetarget, pastMail }: RulesViewPr
     return t("whatSubject", { base, term });
   };
   const [open, setOpen] = useState<OpenAction>(null);
+  /**
+   * A REFUSAL STAYS ON THE PANE until the next press — never only a toast, which is gone in
+   * under three seconds and read as nothing said. `why` names the reason and the
+   * way out where the refusal carries one.
+   */
+  const [refusal, setRefusal] = useState<{ lead: string; why: string | null } | null>(null);
+  const whyOf = (err: Parameters<typeof organizerRefusalOf>[0]): string | null =>
+    organizerRefusalSentence(organizerRefusalOf(err, { starting: posture?.mode === "starting" }), tWhy);
+  /* A pane nothing here can act on says so BEFORE the press, and its controls are unavailable. */
+  const lockedWhy = organizerRefusalSentence(postureRefusal(posture), tWhy);
   const [query, setQuery] = useState("");
   const [facet, setFacet] = useState<Folder | "all">("all");
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -276,7 +292,7 @@ export function RulesView({ rules, onRevoke, onRetarget, pastMail }: RulesViewPr
    */
   const report = (res: RuleOutcome, ok: string, queued: string, failed: string, undo?: ToastOptions): void => {
     const v = pressVerdict(res);
-    if (v.kind === "refused") { toast(failed); return; }
+    if (v.kind === "refused") { setRefusal({ lead: failed, why: whyOf(v.refusal) }); return; }
     if (v.kind === "queued") {
       /* THE TWO WAITS ARE DIFFERENT SENTENCES. `retry` is this browser's own queue, which the
          next connection drains. `organizer` is a request recorded for the install that organizes
@@ -298,6 +314,7 @@ export function RulesView({ rules, onRevoke, onRetarget, pastMail }: RulesViewPr
    */
   const retarget = (rule: RuleDTO, folder: Folder, applyRetro: boolean): void => {
     setOpen(null);
+    setRefusal(null);
     const from = canonicalDestination(rule.destination) as Folder;
     const place = placeName(folder);
     const moved = applyRetro ? pastMail(rule, folder) : null;
@@ -329,17 +346,19 @@ export function RulesView({ rules, onRevoke, onRetarget, pastMail }: RulesViewPr
   const runBulk = (ids: string[]): void => {
     setOpen(null);
     const total = ids.length;
+    setRefusal(null);
     void Promise.all(ids.map((id) => onRevoke(id))).then((results) => {
       const vs = results.map(pressVerdict);
       const tally = tallyVerdicts(vs);
+      const why = whyOf(tally.firstRefusal);
       const waiting = vs.filter((v) => v.kind === "queued" && v.wait === "organizer").length;
       if (tally.refused === 0 && tally.applied === total) toast(t("bulkToastRevoked", { count: total }));
       else if (tally.refused === 0 && waiting > 0) {
         toast(tally.holder ? t("toastRuleOrganizer", { name: tally.holder }) : t("toastRuleOrganizerUnknown"));
       }
       else if (tally.refused === 0) toast(t("bulkToastQueued"));
-      else if (tally.applied > 0) toast(t("bulkToastPartial", { ok: tally.applied, count: total }));
-      else toast(t("bulkToastFailed"));
+      else if (tally.applied > 0) setRefusal({ lead: t("bulkToastPartial", { ok: tally.applied, count: total }), why });
+      else setRefusal({ lead: t("bulkToastFailed"), why });
     });
   };
 
@@ -359,6 +378,12 @@ export function RulesView({ rules, onRevoke, onRetarget, pastMail }: RulesViewPr
   return (
     <SettingsSection className="rules-view">
       <p className="set-note-inline">{t("intro")}</p>
+      {lockedWhy ? <p id="rules-locked-why" className="set-note-inline rules-locked" role="note">{lockedWhy}</p> : null}
+      {refusal ? (
+        <p className="set-note-inline rules-refusal" role="alert">
+          <b>{refusal.lead}</b>{refusal.why ? <> {refusal.why}</> : null}
+        </p>
+      ) : null}
 
       {showSearch || showFacets || showBulk ? (
         <div className="rules-toolbar">
@@ -413,6 +438,8 @@ export function RulesView({ rules, onRevoke, onRetarget, pastMail }: RulesViewPr
             <Button
               variant="ghost"
               className="rules-bulk"
+              disabled={lockedWhy !== null}
+              aria-describedby={lockedWhy ? "rules-locked-why" : undefined}
               onClick={() => setOpen(open?.mode === "bulk" ? null : { mode: "bulk" })}
             >
               {t("bulkRevoke", { count: filtered.length })}
@@ -480,6 +507,8 @@ export function RulesView({ rules, onRevoke, onRetarget, pastMail }: RulesViewPr
                     <span className="acts">
                       <Button
                         variant="ghost"
+                        disabled={lockedWhy !== null}
+                        aria-describedby={lockedWhy ? "rules-locked-why" : undefined}
                         aria-expanded={openHere && open.mode === "retarget"}
                         onClick={() => {
                           setRetro(RETRO_DEFAULT_ON);
@@ -494,6 +523,8 @@ export function RulesView({ rules, onRevoke, onRetarget, pastMail }: RulesViewPr
                       </Button>
                       <Button
                         variant="ghost"
+                        disabled={lockedWhy !== null}
+                        aria-describedby={lockedWhy ? "rules-locked-why" : undefined}
                         aria-expanded={openHere && open.mode === "revoke"}
                         onClick={() =>
                           setOpen(
@@ -517,6 +548,7 @@ export function RulesView({ rules, onRevoke, onRetarget, pastMail }: RulesViewPr
                           variant="primary"
                           onClick={() => {
                             setOpen(null);
+                            setRefusal(null);
                             void onRevoke(rule.id).then((r) =>
                               report(r, t("toastRevoked"), t("toastRevokeQueued"), t("toastRevokeFailed")),
                             );

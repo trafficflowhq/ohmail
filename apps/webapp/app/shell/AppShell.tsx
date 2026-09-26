@@ -257,6 +257,7 @@ import { SearchView } from "../views/SearchView";
 import { AddressView } from "../views/AddressView";
 import { TagView } from "../views/TagView";
 import { FolderView } from "../views/FolderView";
+import { rulesPostureOf } from "../views/rules-posture";
 import { TrashView } from "../views/TrashView";
 import type { TrashWire } from "./trash-window";
 import { TriageView } from "../views/TriageView";
@@ -1369,6 +1370,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * function is pure and has its own table test.
    */
   const screenerRole = useMemo(() => screenerMode(facts), [facts]);
+  /* The Rules pane's posture: the same roster, plus the standing Organize-here press. */
+  const rulesPosture = useMemo(() => rulesPostureOf(facts), [facts]);
   /* …AND THE DELETE KEY READS THE SAME ROSTER, one mailbox at a time. In an EFFECT rather than
      during render (review finding): a render that yields and is discarded must not publish a
      roster to a committed key handler. The initial `null` is the safe value — `readerMoveRefusal`
@@ -2986,7 +2989,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 tagCounts={Object.fromEntries(
                   tagGroups.map((g) => [g.tag.id, g.messages.length]),
                 )}
-                rules={{ items: rules, onRevoke: revokeRule, onRetarget: retargetRule, pastMail: rulePastMailOf }}
+                rules={{ items: rules, onRevoke: revokeRule, onRetarget: retargetRule, pastMail: rulePastMailOf, posture: rulesPosture }}
                 /* Rename and delete. Not gated on `demo`, unlike the four injected panes:
                    both are ordinary engine mutations, so the FixturesAdapter serves them out
                    of `mutationEffects` and the demo is correct with no special case. */
