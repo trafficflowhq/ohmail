@@ -106,6 +106,68 @@ and desktop, later that it has. A rule you changed in the meantime is left as it
 says so. Deciding a sender in the Screener now outranks a rule for their whole domain, as a press
 from the sheet does. Web, desktop and phone.
 
+### On Linux the desktop's mail engine uses less memory
+<!-- changes: fix-025-engine-rss-at-boot.md -->
+
+The mail engine starts about 90 MB lighter and peaks about 90 MB lower during the first
+import of a mailbox.
+
+### Search finds the start of a word wherever the whole word is found
+<!-- changes: fix-025-part-word-budget.md -->
+
+From its fourth letter, the start of a word now finds every message the whole word finds, bodies
+included, on ohmail Cloud, on the desktop and on the phone. On a phone that keeps its mail on the
+device, a search holding an apostrophe, a hyphen, a colon, a star or a lone quote mark no longer
+fails.
+
+### Setup names an organizer that stopped
+<!-- changes: fix-025-stale-organizer-step.md -->
+
+Setting up a mailbox whose previous organizer stopped checking in no longer promises a hand-over
+from it. Setup says nothing organizes the mailbox now and offers to organize it here.
+
+### A long document is no longer mistaken for a one-time code
+<!-- changes: fix-025-otp-classifier.md -->
+
+A tax return, an invoice or a contract that only mentions a code, a PIN or a confirmation is no
+longer flagged as sensitive; mail that carries the code or the link still is.
+
+### The desktop app opens without a flash
+<!-- changes: fix-025-desktop-launch-pink-flash.md -->
+
+On Linux the window showed a blank light surface for a moment before the app drew itself, and on
+some machines that moment was pink. The window now opens on the app's own colours.
+
+### Pictures on a paired phone come through the server's image proxy
+<!-- changes: fix-025-privacy-claims-hold.md -->
+
+After Show images, a phone paired with ohmail Cloud or a self-hosted server loads each picture
+through that server, so the sender's server does not see the phone's address. A phone running on
+its own fetches pictures itself and says so before you press. Settings on the desktop and the help
+page now say that the desktop app fetches pictures from your computer.
+
+### Removing a mailbox on the desktop deletes all of its rows
+<!-- changes: fix-025-privacy-claims-hold.md -->
+
+Removing a mailbox on the desktop now also deletes the conversations only that mailbox was in, with
+their notes, its send records, its cached settings and its pending requests. A conversation another
+mailbox is in stays. The same happens when Cloud erases a mailbox this computer mirrors.
+
+### Changes made on the desktop while Cloud is unreachable are kept until they reach it
+<!-- changes: fix-025-desktop-outbox-durable.md -->
+
+A delete, move, read mark, draft or send made on a desktop signed in to ohmail Cloud while Cloud
+cannot be reached is kept on the computer and sent at the next launch, once. A change still waiting
+a day after it was made appears under unsaved changes.
+
+### A Move made just before ohmail closed is no longer lost on the phone
+<!-- changes: fix-025-phone-routing-window-durable.md -->
+
+On the phone, Move, File and Junk wait a few seconds before they set where that sender's mail goes,
+so the toast can offer Undo. The waiting press is now saved on the phone before Undo is offered. If
+ohmail is closed or stops during those seconds, the next launch makes the move and says how many
+messages it moved; a press older than a day is not made, and ohmail says so. Android and iOS.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
