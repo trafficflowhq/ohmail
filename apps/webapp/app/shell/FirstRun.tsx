@@ -30,7 +30,9 @@ import {
 } from "./onboarding";
 import type { FirstRunHost, FirstRunMailboxInput, FirstRunProbeOk } from "./first-run-host";
 import { pullEtaMs, pullRate, pullRemaining, pullSampleStep, type PullSample } from "./pull-rate";
-import { type HolderWho, holderSentence, holderVerdict, readerHolder } from "./reader-holder";
+import {
+  type HolderWho, holderSentence, holderStopped, holderVerdict, readerHolder,
+} from "./reader-holder";
 import "./first-run.css";
 
 /**
@@ -791,6 +793,11 @@ export function FirstRun({
    * install · Since —". `reader-holder.ts` carries the measurement and the wire's own contract.
    */
   const held = readerHolder(facts.mailbox?.organizedBy);
+  /* A HOLDER THAT STOPPED CHECKING IN organizes nothing, so the lead, both choices and the
+     reader summary take their stopped twins: no "stops on its next pass" from an install that
+     runs no pass, no "keeps organizing" over a mailbox nothing organizes. One predicate for
+     every sentence here — see {@link holderStopped}. */
+  const stopped = holderStopped(facts.mailbox);
   /**
    * Is there a date to print — the second fact the two reader surfaces select on, and the second
    * answered by something else. `AppShell` withholds {@link FirstRunProps.organizedSince} when
@@ -1192,8 +1199,8 @@ export function FirstRun({
           },
           (
             <>
-              <h1 id={`${ids}-title`}>{t("elsewhereTitle")}</h1>
-              <p className="sub">{t("elsewhereLead")}</p>
+              <h1 id={`${ids}-title`}>{stopped ? t("elsewhereTitleStopped") : t("elsewhereTitle")}</h1>
+              <p className="sub">{stopped ? t("elsewhereLeadStopped") : t("elsewhereLead")}</p>
               <SettingsBanner
                 label={held === "nobody"
                   ? tm("stateNotOrganized")
@@ -1228,26 +1235,34 @@ export function FirstRun({
                   : tmSaid({
                     kind: facts.mailbox?.organizedBy?.kind ?? (held === "unnamed" ? "unknown" : null),
                     name: holderName(facts),
-                    stopped: facts.mailbox?.organizerState === "stopped",
+                    stopped,
                     since: dated ? organizedSince ?? "" : null,
                     shown: organizedSince ?? "",
                   })}
               />
               <SettingsChoice
-                name={`${ids}-elsewhere`} ariaLabel={t("elsewhereTitle")} value={elsewhereChoice}
+                name={`${ids}-elsewhere`} value={elsewhereChoice}
+                ariaLabel={stopped ? t("elsewhereTitleStopped") : t("elsewhereTitle")}
                 onChange={setElsewhereChoice} disabled={busy}
                 options={[
                   {
-                    id: "here" as const, label: t("elsewhereChoiceHere"),
-                    description: t("elsewhereChoiceHereWhy", {
-                      name: holderName(facts) ?? tm("readerHolderUnknown"),
-                    }),
+                    id: "here" as const,
+                    label: stopped ? t("elsewhereChoiceHereStopped") : t("elsewhereChoiceHere"),
+                    description: stopped
+                      ? t("elsewhereChoiceHereStoppedWhy", {
+                        name: holderName(facts) ?? tm("readerHolderUnknown"),
+                      })
+                      : t("elsewhereChoiceHereWhy", {
+                        name: holderName(facts) ?? tm("readerHolderUnknown"),
+                      }),
                   },
                   {
                     id: "read" as const, label: t("elsewhereChoiceRead"),
-                    description: t("elsewhereChoiceReadWhy", {
-                      name: holderName(facts) ?? tm("readerHolderUnknown"),
-                    }),
+                    description: stopped
+                      ? t("elsewhereChoiceReadStoppedWhy")
+                      : t("elsewhereChoiceReadWhy", {
+                        name: holderName(facts) ?? tm("readerHolderUnknown"),
+                      }),
                   },
                 ]}
               />
@@ -1537,7 +1552,8 @@ export function FirstRun({
                 </>
               ) : (
                 <>
-                  <SettingsRow label={t("doneReaderReads")} description={t("doneReaderReadsWhy")} />
+                  <SettingsRow label={t("doneReaderReads")}
+                    description={stopped ? t("doneReaderReadsWhyStopped") : t("doneReaderReadsWhy")} />
                   {/* WHO ORGANIZES IT AND SINCE WHEN — the same four columns and the same three
                       sentences the elsewhere screen and Settings → Mailboxes render, so the three
                       surfaces cannot describe one state differently. */}
@@ -1562,12 +1578,13 @@ export function FirstRun({
                       : tmSaid({
                         kind: facts.mailbox?.organizedBy?.kind ?? (held === "unnamed" ? "unknown" : null),
                         name: holderName(facts),
-                        stopped: facts.mailbox?.organizerState === "stopped",
+                        stopped,
                         since: dated ? organizedSince ?? "" : null,
                     shown: organizedSince ?? "",
                       })}
                   />
-                  <SettingsRow label={t("doneReaderClaim")} description={t("doneReaderClaimWhy")} />
+                  <SettingsRow label={t("doneReaderClaim")}
+                    description={stopped ? t("doneReaderClaimWhyStopped") : t("doneReaderClaimWhy")} />
                 </>
               )}
             </div>

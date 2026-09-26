@@ -70,6 +70,19 @@ export function holderVerdict(
   return mailbox.organizedBy === null ? "nobody" : "somebody";
 }
 
+/**
+ * HAS THE HOLDER STOPPED CHECKING IN — the lease's own answer, read and never re-derived: `stopped` is
+ * `peekLease`'s verdict against the staleness bound, carried on the row as `organizerState`. The
+ * wire carries no heartbeat, so a surface cannot judge freshness itself. `null` and absent are
+ * "not looked", which is not a stop. Every surface showing the claim question asks this one
+ * function (`first-run-stale-holder.test.tsx`'s census).
+ */
+export function holderStopped(
+  mailbox: { organizerState?: "held" | "stopped" | null } | null | undefined,
+): boolean {
+  return mailbox?.organizerState === "stopped";
+}
+
 /* ── A PHONE IS THE THIRD HOLDER KIND, AND FOUR SURFACES HAD ARMS FOR TWO ───────────────────
    `OrganizerKind` is `local | cloud | mobile`. The rail, the desktop mailboxes pane, both
    first-run reader rows and the restore card branched on `local` and `cloud` and let a phone
