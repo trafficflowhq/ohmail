@@ -9,16 +9,16 @@
 // remote-reference shape, and a frame CSP of `default-src 'none'`. Routing reader html through
 // this instead would trade a default-deny gate for a default-allow one.
 
-/** The stored/surfaced tracker kind. `pixel` = a 1×1/0×0 beacon; `remote_image`
- *  = a remote image from a known tracker host / beacon url that is not a bare
- *  pixel; `read_receipt` is reserved for provider read-receipt beacons. */
+/** The stored/surfaced tracker kind. `pixel` = a beacon by the readers' rule (a declared
+ *  1×1/0×0 or a beacon url); `remote_image` = an image from a known tracker host that is
+ *  neither; `read_receipt` is reserved for provider read-receipt beacons. */
 export type TrackerKind = "pixel" | "remote_image" | "read_receipt";
 
 export interface TrackerHit {
   url: string;          // the original remote url
   host: string;         // its host (lowercased), "" if unparseable
   kind: TrackerKind;    // pixel vs remote_image
-  isPixel: boolean;     // true when 1×1/0×0 dimensions were detected
+  isPixel: boolean;     // a declared 1×1/0×0 or a beacon url — the label the readers show
 }
 
 // A small built-in list of hosts/domains overwhelmingly used for open-tracking
@@ -69,14 +69,19 @@ export function isKnownTracker(host: string): boolean {
   return TRACKER_HOSTS.some((h) => host === h || host.endsWith(`.${h}`) || host.includes(h));
 }
 
-// A "beacon"-shaped url: an image request whose path/query screams open-tracking
-// (an `/open`, `/track`, `/pixel`, `/beacon` segment, a `.gif?…`/`.png?…` with a
-// query string, or a query carrying a message/recipient identifier). Heuristic,
-// deliberately conservative — the dimension + host checks are the primary signal.
-const BEACON_RE = /(?:\/(?:open|track|tracking|beacon|pixel|spy|wf\/open)\b|\.(?:gif|png)\?|[?&](?:mid|eid|uid|rid|recipient|subscriber|campaign|utm_medium=email)\b)/i;
+/**
+ * A beacon url: a beacon word as a PATH segment (`/wf/open?u=…`, `/open.aspx`, `/pixel.gif`) or a
+ * per-recipient key in the query (`?uid=…`, `&recipient=…`). Never the host and no other query:
+ * `p.png?w=120` is a sized picture, and reading its size as a beacon refused a real picture's
+ * fetch. The twin of `@ohmail/client-engine`'s `BEACON_PATH`, the rule's home (this node package
+ * cannot import it; the dependency runs the other way); the web reader's parity suite holds the
+ * literals equal.
+ */
+export const BEACON_PATH =
+  /^[^?#]*[^/?#]\/(?:wf\/open|open|track|tracking|beacon|pixel|spy|imp|impression)(?:[./?#]|$)|[?&](?:mid|eid|uid|rid|recipient|subscriber)\b/i;
 
 export function isBeaconUrl(url: string): boolean {
-  return BEACON_RE.test(url);
+  return BEACON_PATH.test(url);
 }
 
 /** Read `name="…"` / `name='…'` / `name=bare` from a single HTML tag. */
@@ -87,9 +92,9 @@ function attrValue(tag: string, name: string): string | null {
   return (m[2] ?? m[3] ?? m[4] ?? "").trim();
 }
 
-/** Read a single CSS declaration value (e.g. `width`) from a style string. */
+/** Read a single CSS declaration value (e.g. `width`) from a style string, `!important` cut. */
 function styleProp(style: string, prop: string): string | null {
-  const re = new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([^;]+)`, "i");
+  const re = new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([^;!]+)`, "i");
   const m = re.exec(style);
   return m ? m[1]!.trim() : null;
 }
@@ -135,8 +140,8 @@ export function detectTrackers(html: string): TrackerHit[] {
     const tag = m[0];
     const src = attrValue(tag, "src");
     if (!src || !REMOTE.test(src)) continue;             // data:/cid:/relative → not a remote tracker
-    const pixel = isPixelTag(tag);
-    if (!pixel && !isKnownTracker(hostOf(src)) && !isBeaconUrl(src)) continue;  // ordinary remote image
+    const pixel = isPixelTag(tag) || isBeaconUrl(src);
+    if (!pixel && !isKnownTracker(hostOf(src))) continue;  // ordinary remote image
     pushHit(hits, seen, src, pixel);
   }
 
@@ -144,7 +149,7 @@ export function detectTrackers(html: string): TrackerHit[] {
     const url = m[2]!.trim();
     if (!REMOTE.test(url)) continue;
     if (!isKnownTracker(hostOf(url)) && !isBeaconUrl(url)) continue;
-    pushHit(hits, seen, url, false);
+    pushHit(hits, seen, url, isBeaconUrl(url));
   }
 
   for (const m of html.matchAll(/<link\b[^>]*>/gi)) {

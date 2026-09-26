@@ -116,6 +116,18 @@ describe("a picture the desktop already holds the bytes of", () => {
     expect(beacon!.getAttribute("src"), "the tracker was served real bytes").not.toBe(RESOLVED);
   });
 
+  /** A size query on a sized picture is not a beacon: the desktop draws its bytes like any picture. */
+  it("renders a sized picture whose url carries a size query", () => {
+    const sized = "https://images.example/p.png?w=120";
+    const out = sanitizeMailHtml(`<table width="600"><tr><td><img src="${sized}" width="120" height="120"></td></tr></table>`, {
+      imageProxy: null,
+      resolvedRemoteImages: new Map([[sized, RESOLVED]]),
+    });
+    expect(out.blocked.map((b) => b.pixel), "the sized picture was called a tracking pixel").toEqual([false]);
+    const doc = new DOMParser().parseFromString(out.html, "text/html");
+    expect(doc.querySelector("img")!.getAttribute("src"), "the sized picture stayed blank").toBe(RESOLVED);
+  });
+
   /**
    * AND A MAP THAT CARRIES THE BEACON ANYWAY. The map is built by this app, so this is a
    * defence against our own future bug rather than against a sender — which is exactly the

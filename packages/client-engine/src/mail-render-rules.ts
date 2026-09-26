@@ -90,12 +90,16 @@ export const BLANK_GIF =
   "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
 
 /**
- * A url shaped like an open-tracking beacon. The common bulk-sender form —
- * `tracker.example.com/wf/open?u=…` — matches on `/wf/open`; the rest of the alternation is
- * the other spellings the same beacon is published under.
+ * THE BEACON URL — with a declared 1×1/0×0 size ({@link declaresPixelAttrs}), the whole evidence
+ * that a remote image is a tracker: a beacon word as a PATH segment (`/wf/open?u=…`, `/open.aspx`,
+ * `/pixel.gif`), or a per-recipient key in the query (`?uid=…`, `&recipient=…`), which is what makes
+ * a fetch tell the sender that THIS person opened. Never the host, and no other query: a size
+ * (`p.png?w=120`) or a campaign name read as a beacon left real pictures blank with nothing to press.
+ * This leaf is the rule's home. `MessageBody.tsx` (web, desktop) and core's `tracker-blocker.ts`
+ * (the image proxy) carry twins, and the web reader's parity suite holds all three equal.
  */
 export const BEACON_PATH =
-  /(?:\/(?:wf\/open|open|track|tracking|beacon|pixel|imp|impression)(?:[/?#]|$)|\.(?:gif|png)\?)/i;
+  /^[^?#]*[^/?#]\/(?:wf\/open|open|track|tracking|beacon|pixel|spy|imp|impression)(?:[./?#]|$)|[?&](?:mid|eid|uid|rid|recipient|subscriber)\b/i;
 
 /** The host of a url, lowercased, or "" when it will not parse. */
 export function mailHostOfUrl(url: string): string {
@@ -109,7 +113,7 @@ export function mailHostOfUrl(url: string): string {
 /** A CSS/HTML length that is 1 or 0 — `"1"`, `"1px"`, `"0"`. `null` when it is not a number. */
 export function tinyDimension(v: string | null): boolean {
   if (v == null) return false;
-  const n = Number(v.replace(/px$/i, "").trim());
+  const n = Number(v.trim().replace(/px$/i, ""));
   return Number.isFinite(n) && n <= 1;
 }
 

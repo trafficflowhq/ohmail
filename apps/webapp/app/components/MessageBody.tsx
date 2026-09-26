@@ -259,23 +259,23 @@ export interface BlockedAsset {
   /** Where it was named: an image, a CSS `url()`, or an element's `background` attribute. */
   via: "img" | "css" | "attr";
   /**
-   * A beacon rather than a picture. Decided from TWO signals that are in the message itself
-   * — declared 1×1/0×0 dimensions, and a beacon-shaped path — and deliberately NOT from a
-   * host list. the server's tracker-blocker keeps such a list, it is not
-   * importable here (`@trafficflow/core` is a node package: mailparser, `node:crypto`), and
-   * a second copy of it would drift. Nothing is blocked BECAUSE of this flag — everything
-   * remote is blocked either way — so the only thing it can be wrong about is a sentence.
+   * A beacon rather than a picture, decided from the evidence a beacon carries in the message
+   * itself — declared 1×1/0×0 dimensions or a beacon url — never from a host list or a size.
+   * The flag DOES block: a pixel is never fetched, not even after "Show images", while the
+   * account's tracking-pixel switch stands, so a false positive costs a picture (the switch is
+   * how such a picture still loads). That cost is why the rule admits no weaker signal.
    */
   pixel: boolean;
 }
 
 /**
- * A url shaped like an open-tracking beacon. The common bulk-sender form —
- * `tracker.example.com/wf/open?u=…` — matches on `/wf/open`; the rest of the alternation is
- * the other spellings the same beacon is published under.
+ * A url shaped like an open-tracking beacon: a beacon word in its PATH (`/wf/open?u=…`,
+ * `/pixel.gif`) or a per-recipient key in its query (`?uid=…`) — never its host, never a size:
+ * `p.png?w=120` is a sized picture. The twin of `@ohmail/client-engine`'s `BEACON_PATH`, the
+ * rule's home; `test/mail-render-rules-parity.test.ts` holds the literals equal.
  */
 const BEACON_PATH =
-  /(?:\/(?:wf\/open|open|track|tracking|beacon|pixel|imp|impression)(?:[/?#]|$)|\.(?:gif|png)\?)/i;
+  /^[^?#]*[^/?#]\/(?:wf\/open|open|track|tracking|beacon|pixel|spy|imp|impression)(?:[./?#]|$)|[?&](?:mid|eid|uid|rid|recipient|subscriber)\b/i;
 
 /** The host of a url, lowercased, or "" when it will not parse. */
 export function hostOfUrl(url: string): string {
@@ -289,7 +289,7 @@ export function hostOfUrl(url: string): string {
 /** A CSS/HTML length that is 1 or 0 — `"1"`, `"1px"`, `"0"`. `null` when it is not a number. */
 function tinyDimension(v: string | null): boolean {
   if (v == null) return false;
-  const n = Number(v.replace(/px$/i, "").trim());
+  const n = Number(v.trim().replace(/px$/i, ""));
   return Number.isFinite(n) && n <= 1;
 }
 
@@ -2371,8 +2371,8 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
         // never travels — but the ESP still learns that this message was opened, at that minute, because somebody
         // asked. "Show images" is a request for the pictures; nobody consents to a beacon, and there is no image
         // behind one to show. So `pixel` overrides `proxy`. It is decided from the two signals in the message itself
-        // ({@link declaresPixel}, {@link BEACON_PATH}) and it can therefore be wrong in one direction: a 1×1 image
-        // that is genuinely a spacer stays blank. That costs a reader nothing.
+        // ({@link declaresPixel}, {@link BEACON_PATH}) and it can therefore be wrong in one direction: a 1×1 spacer
+        // stays blank, which costs nothing, and a picture at a beacon url stays blank until the pixel switch is off.
 
         // UNLESS THE ACCOUNT SAID OTHERWISE (mail 0072): `loadPixels` is the reader's own switch, off by default, and
         // it lifts exactly this override: a classified beacon then takes the proxy like any picture. It cannot widen
