@@ -521,6 +521,12 @@ const TABLE = {
   connectionNeedsPassword: "This mailbox needs its password again. Enter it to start syncing.",
   connectionGoneSince: (time: string) => `Couldn't reconnect since ${time}`,
 
+  /* THE PHONE HAS NO NETWORK — read from the platform (`net/network-door.ts`), never inferred from
+     a failed request. It outranks both lines above: no network is WHY the link is gone and the
+     mirror stale. The top line and a pull say the first; search and History say the second. */
+  networkOffline: "This phone has no network. ohmail catches up when it is back.",
+  networkOfflineHeld: "This phone has no network — showing the recent mail it holds.",
+
   /* NOTHING HAS BEEN READ FROM THIS MAILBOX, and that is a different fact from the two above —
      both are true at once and both are shown. It deliberately makes NO claim about the link: a
      server that signs you in and then refuses to hand over the mail leaves the connection dead by

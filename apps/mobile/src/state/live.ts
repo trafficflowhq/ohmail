@@ -111,6 +111,7 @@ import { folderLeafOf, folderUnreadCounts } from "./folders";
 /* Move/Junk: the mail now, the sender's routing after the window. See the module. */
 import { holdRouting, holdScreenRouting, undoRouting, type RoutingReplay, type ScreenCommitAnswer } from "./held-routing";
 import type { ScreeningAnswer } from "../net/consent";
+import type { NetworkState } from "../net/network-door";
 import type { ServerWaitingSender } from "../net/screener";
 import {
   destDone,
@@ -4681,6 +4682,31 @@ export function connectionSaid(verdict: ConnectionSay | null): string | null {
   if (verdict.kind === "certificate") return Copy.connectionCertificateRefused;
   if (verdict.kind === "needsCredential") return Copy.connectionNeedsPassword;
   return verdict.kind === "lost" ? Copy.connectionLost : Copy.connectionGoneSince(verdict.since);
+}
+
+/**
+ * THE TOP LINE'S ONE SENTENCE, RANKED — the TopBar renders exactly this. No network outranks
+ * everything: it is WHY the link is gone and the mirror stale, and it is read from
+ * the platform's door, so a paired phone — which has no connection verdict — says it too.
+ */
+export function topLineSaid(o: {
+  network: NetworkState;
+  connection: ConnectionSay | null;
+  stale: string | null;
+  draining: boolean;
+  continuing: string | null;
+}): { text: string; alert: boolean } | null {
+  if (o.network === "offline") return { text: Copy.networkOffline, alert: true };
+  const outage = connectionSaid(o.connection);
+  if (outage !== null) return { text: outage, alert: true };
+  if (o.stale !== null) return { text: staleSaid(o.stale, o.draining), alert: false };
+  return o.continuing !== null ? { text: o.continuing, alert: false } : null;
+}
+
+/** A read the server did not answer, said about its cause: the phone's own network first. */
+export function unansweredSaid(network: NetworkState, surface: "search" | "history"): string {
+  if (network === "offline") return Copy.networkOfflineHeld;
+  return surface === "search" ? Copy.searchUnanswered : Copy.historyStoreUnavailable;
 }
 
 export function connectionSay(

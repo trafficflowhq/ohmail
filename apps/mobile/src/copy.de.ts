@@ -309,6 +309,9 @@ export const DE: Deck = {
   connectionNeedsPassword: "Dieses Postfach braucht sein Passwort erneut. Gib es ein, damit wieder synchronisiert wird.",
   connectionGoneSince: (time: string) => `Seit ${time} keine Verbindung`,
 
+  networkOffline: "Dieses Telefon hat kein Netz. ohmail holt nach, sobald es wieder da ist.",
+  networkOfflineHeld: "Dieses Telefon hat kein Netz — angezeigt wird die neuere Post, die es hat.",
+
   firstSyncNothingReadable: "Aus diesem Postfach konnte noch nichts gelesen werden.",
 
   firstSyncContinuesAt: (folder: string) => `Erste Synchronisierung läuft bei ${folder} weiter`,

@@ -10,6 +10,9 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useConnection } from "../net/connection";
+import { networkNow } from "../net/network-door";
+import { pullRound } from "./pull-round";
+import { useWorldToast } from "./world";
 
 export interface PullToSync {
   refreshing: boolean;
@@ -18,6 +21,7 @@ export interface PullToSync {
 
 export function usePullToSync(): PullToSync {
   const conn = useConnection();
+  const toast = useWorldToast();
   const [refreshing, setRefreshing] = useState(false);
   /** No state write after unmount — the round can outlive the screen that pulled. */
   const alive = useRef(true);
@@ -29,9 +33,10 @@ export function usePullToSync(): PullToSync {
   );
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    void conn.syncNow().finally(() => {
+    // With no network the pull says so and asks nothing (`pull-round.ts`); the spinner ends at once.
+    void pullRound(networkNow(), () => conn.syncNow(), toast.say).finally(() => {
       if (alive.current) setRefreshing(false);
     });
-  }, [conn]);
+  }, [conn, toast]);
   return { refreshing, onRefresh };
 }

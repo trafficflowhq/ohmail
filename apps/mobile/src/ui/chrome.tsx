@@ -15,7 +15,8 @@ import { sayArg } from "../refusal";
 import { useTheme } from "../theme";
 import { useWorld, useWorldToast } from "../state/world";
 import { AT_REST, riseForAction, riseForNotice, riseForPress, type Rise, type ToastEntry } from "../state/toast-one";
-import { connectionSaid, firstSyncContinuesSaid, staleSaid } from "../state/live";
+import { firstSyncContinuesSaid, topLineSaid } from "../state/live";
+import { useNetworkNow } from "../net/network-door";
 import { Icon } from "./Icon";
 import { usePaneChrome } from "./pane-chrome";
 import { usePosture } from "./posture";
@@ -41,18 +42,17 @@ export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
   // "Catching up" only while a round is IN FLIGHT (`live.ts#staleSaid`); otherwise the age alone.
   const world = useWorld();
   const boot = world.boot;
-  const stale = boot.staleAsOf;
-  /* THE CONNECTION OUTRANKS THE FRESHNESS LABEL, and replaces it rather than stacking under it:
-     a link that is gone is WHY the mirror is stale, so two lines would say one thing twice and
-     the weaker of them would be the one claiming "catching up". The wording and which verdicts
-     are silent are `connectionSaid`'s, shared with the Settings panel. */
-  const outage = connectionSaid(boot.connection);
-  /* AND BELOW BOTH: where a budgeted first sync is continuing (`live.ts#firstSyncContinuesSaid`).
-     Ranked under the freshness label rather than over it, which is the browser ladder's own order
-     — a stale mirror is the larger fact, and this explains a mirror that is filling in steps
-     while nothing is wrong. Off the MAILBOX rows, so it is the stop the server wrote down and not
-     an engine's memory of one. */
-  const continuing = firstSyncContinuesSaid(world.mailboxes.rows);
+  /* ONE LINE, RANKED BY `topLineSaid`: no network on the phone (the platform's door), then the
+     connection (`connectionSaid`, shared with Settings), then the mirror's age, then where a
+     budgeted first sync continues (off the MAILBOX rows, the stop the server wrote down). Each
+     replaces the weaker rather than stacking: two lines would say one fact twice. */
+  const line = topLineSaid({
+    network: useNetworkNow(),
+    connection: boot.connection,
+    stale: boot.staleAsOf,
+    draining: boot.draining,
+    continuing: firstSyncContinuesSaid(world.mailboxes.rows),
+  });
   /* THE SIDEBAR TOGGLE, top-left of the LIST PANE on the two-pane postures (prototype v5) —
      provided by the list-detail surface through `pane-chrome`, so every list gets it in the
      same place without threading a prop. One pane provides nothing and nothing renders. */
@@ -83,32 +83,14 @@ export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
         <View style={{ flex: 1 }} />
         {trailing}
       </View>
-      {outage !== null ? (
+      {line !== null ? (
         <Txt
           variant="meta"
           tone="ink3"
-          accessibilityRole="alert"
+          accessibilityRole={line.alert ? "alert" : "text"}
           style={{ paddingHorizontal: 16, paddingBottom: 4 }}
         >
-          {outage}
-        </Txt>
-      ) : stale !== null ? (
-        <Txt
-          variant="meta"
-          tone="ink3"
-          accessibilityRole="text"
-          style={{ paddingHorizontal: 16, paddingBottom: 4 }}
-        >
-          {staleSaid(stale, boot.draining)}
-        </Txt>
-      ) : continuing !== null ? (
-        <Txt
-          variant="meta"
-          tone="ink3"
-          accessibilityRole="text"
-          style={{ paddingHorizontal: 16, paddingBottom: 4 }}
-        >
-          {continuing}
+          {line.text}
         </Txt>
       ) : null}
       {/* BELOW the freshness label and independent of it: a change can be abandoned while the

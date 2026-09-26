@@ -10,6 +10,8 @@ import { useCallback, useMemo, useReducer, useRef, useState } from "react";
 import { View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 
 import { Copy } from "../src/copy";
+import { useNetworkNow } from "../src/net/network-door";
+import { unansweredSaid } from "../src/state/live";
 import { usePullToSync } from "../src/state/pull";
 import { useStoreHistory } from "../src/state/store-views";
 import { useWorld } from "../src/state/world";
@@ -41,6 +43,7 @@ export default function HistoryScreen() {
 function HistoryBody() {
   const t = useTheme();
   const w = useWorld();
+  const network = useNetworkNow();
   const pull = usePullToSync();
   const h = useStoreHistory();
   const { open, openRow, close } = useListDetail((id) => `/message/${id}`);
@@ -135,7 +138,7 @@ function HistoryBody() {
               {more ? <Txt variant="note" tone="ink3" style={{ paddingBottom: 4 }}>{Copy.historyExplainerMore}</Txt> : null}
               {h.state === "unanswered" ? (
                 <Tap onPress={h.retry} accessibilityRole="button" style={{ paddingVertical: 6 }}>
-                  <Txt variant="note" tone="ink3">{Copy.historyStoreUnavailable} <Txt variant="note" tone="accent">{Copy.historyStoreRetry}</Txt></Txt>
+                  <Txt variant="note" tone="ink3">{unansweredSaid(network, "history")} <Txt variant="note" tone="accent">{Copy.historyStoreRetry}</Txt></Txt>
                 </Tap>
               ) : h.state === "loading" && h.length > 0 ? (
                 <Txt variant="note" tone="ink3" style={{ paddingVertical: 6 }}>{Copy.historyLoading}</Txt>

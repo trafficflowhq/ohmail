@@ -482,9 +482,13 @@ export interface WorldToast {
   dismiss(id?: number): void;
   /** The pill's layout report — releases every door waiting in `LiveDeps.painted` (`toast-one.ts#paintGate`). */
   onScreen(): void;
+  /** Raise a sentence nobody's verb raised — a pull with no network (`pull-round.ts`). */
+  say(arg: RefusalArg): void;
 }
 
-const WorldToastContext = createContext<WorldToast>({ slots: NO_TOASTS, dismiss: () => undefined, onScreen: () => undefined });
+const WorldToastContext = createContext<WorldToast>({
+  slots: NO_TOASTS, dismiss: () => undefined, onScreen: () => undefined, say: () => undefined,
+});
 
 export function useWorldToast(): WorldToast {
   return useContext(WorldToastContext);
@@ -686,8 +690,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   /* The sentence-on-screen gate: the pill reports its layout here, the doors await it (below). */
   const gate = useRef(paintGate()).current;
   const worldToast = useMemo<WorldToast>(
-    () => ({ slots: toastShown, dismiss: dismissToast, onScreen: gate.onScreen }),
-    [toastShown, dismissToast, gate],
+    () => ({ slots: toastShown, dismiss: dismissToast, onScreen: gate.onScreen, say: (arg: RefusalArg) => showToast(arg) }),
+    [toastShown, dismissToast, gate, showToast],
   );
 
   /* Per-sender scope choice (this sender / whole domain) — view state on the session,

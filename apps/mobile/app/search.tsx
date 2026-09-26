@@ -13,7 +13,8 @@ import { router } from "expo-router";
 import { Copy } from "../src/copy";
 /* The engine is reached through the seam, never from a screen — `privacy.test.ts`'s
    allow-list is the rule, and the direction union rides out with the rest. */
-import { addressShaped, type AddressDirection } from "../src/state/live";
+import { useNetworkNow } from "../src/net/network-door";
+import { addressShaped, unansweredSaid, type AddressDirection } from "../src/state/live";
 import { searchCountLine } from "../src/state/search-count";
 import { useStoreSearch } from "../src/state/store-views";
 import { useWorld } from "../src/state/world";
@@ -49,6 +50,7 @@ export default function SearchScreen() {
 function SearchBody() {
   const t = useTheme();
   const w = useWorld();
+  const network = useNetworkNow();
   const [q, setQ] = useState("");
   /** The address view this screen switched into — the empty state's door. Typing leaves it. */
   const [addr, setAddr] = useState<string | null>(null);
@@ -91,7 +93,7 @@ function SearchBody() {
   const verdict = addr !== null ? null : store.verdict === "searching" ? Copy.searchWholeSearching
     : store.verdict === "ready"
       ? `${searchCountLine(store)}${store.ms !== null ? ` · ${Copy.searchServerMs(store.ms)}` : ""}`
-      : store.verdict === "unanswered" ? Copy.searchUnanswered : null;
+      : store.verdict === "unanswered" ? unansweredSaid(network, "search") : null;
 
   /* EVERY ROW GOES THROUGH THE WINDOW. One address can hold thousands of this mailbox's
      messages — `messagesWith` returns all of them, unsliced — so the results are a `MailList`

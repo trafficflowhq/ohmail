@@ -38,6 +38,8 @@ import type { ServerProfile } from "../state/servers";
 import type { FetchLike } from "./bearer";
 import { SyncRunner, drainLine } from "./drain";
 import { keepDraining, type AppLifecycle } from "./drain-cadence";
+import { installNetworkReader, networkDoor } from "./network-door";
+import { nativeNetworkReader } from "./network-native";
 import { organizeHere, readMailboxes } from "./mailboxes";
 import {
   connectProfileById,
@@ -201,6 +203,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       // at all, and its absence is a refusal rather than an unpinned connection. `useMemo`'s
       // factory runs during the provider's first render, before any child can call a verb.
       installPinning(nativeHostPinning());
+      // THE NETWORK DOOR'S ONE READER, before any surface asks it (`network-door.ts`).
+      installNetworkReader(nativeNetworkReader());
       return {
         profiles: nativeServerProfiles(),
         engineDeps: nativeEngineDeps(),
@@ -446,6 +450,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
           session,
           stop: keepDraining({
             lifecycle: appLifecycle,
+            network: networkDoor,
             round: () => {
               const atRound = live.now();
               if (atRound.k !== "live" || atRound.session !== session) return Promise.resolve(0);

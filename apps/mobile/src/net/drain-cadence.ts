@@ -22,6 +22,12 @@ export interface AppLifecycle {
   subscribe(listener: (status: string) => void): () => void;
 }
 
+/** The network door, as the cadence reads it (`network-door.ts#NetworkWatch`). */
+export interface CadenceNetwork {
+  now(): string;
+  subscribe(listener: (state: string) => void): () => void;
+}
+
 /** The clock the next round is armed on — `setTimeout` in the app, a hand-turned one in the suite. */
 export interface CadenceTimers {
   set(fn: () => void, ms: number): unknown;
@@ -35,6 +41,8 @@ export interface KeepDraining {
   timers?: CadenceTimers;
   everyMs?: number;
   capMs?: number;
+  /** Absent, or `unknown`, the cadence runs as it always did. */
+  network?: CadenceNetwork;
 }
 
 const realTimers: CadenceTimers = {
@@ -74,6 +82,8 @@ export function keepDraining(opts: KeepDraining): () => void {
   function tick(): void {
     handle = null;
     if (stopped || running || opts.lifecycle.now() !== "active") return;
+    // NO NETWORK ON THE PHONE: nothing to ask, and no failure to count — the return drains.
+    if (opts.network?.now() === "offline") { arm(every); return; }
     running = true;
     void opts.round()
       .catch(() => 1)
@@ -89,11 +99,19 @@ export function keepDraining(opts: KeepDraining): () => void {
     disarm();
     tick();
   });
+  /* THE RETURN OF THE NETWORK DRAINS AT ONCE: it used to wait out a failure
+     backoff of up to a minute, so "As of …" stood for 30-50 s after the phone was back. */
+  const unwatch = opts.network?.subscribe((state) => {
+    if (state !== "online") return;
+    disarm();
+    tick();
+  });
   arm(every);
 
   return () => {
     stopped = true;
     disarm();
     unsubscribe();
+    unwatch?.();
   };
 }
