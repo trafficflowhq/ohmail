@@ -1796,6 +1796,8 @@ const TABLE = {
   /* A send that never got past securing the connection or signing in: nothing left, and why. */
   replyNotSecured: "Not sent. The connection to your mail server couldn't be secured.",
   replyLoginRefused: "Not sent. Your mail server refused the sign-in.",
+  /* The refused send while this phone cannot reach its mail server — said in the composer. */
+  composeNotSentOffline: "Not sent. This phone can't reach your mail server. It's kept in Drafts — send it again once you're back online.",
   /* Send pressed again over an unconfirmed send: a second copy could reach them twice. */
   replyUnverifiedAgain: "Not sent again. The first send may already have gone, so check your Sent folder first.",
   /* THE COMPOSER'S ATTACHMENTS — the webapp's `compose.attach*` keys, mirrored (the phone has

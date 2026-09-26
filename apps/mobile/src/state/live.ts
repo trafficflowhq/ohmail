@@ -2130,7 +2130,9 @@ export function sendOutcomeOfResult(r: MutationResult | null): SendOutcome {
  * THE SENTENCE A FAILED SEND EARNS. A session that never secured its connection or had its login
  * refused offered nothing, and says which step stopped it; every other failure keeps the plain one.
  */
-export function failedSendCopy(r: MutationResult | null): "replyNotSecured" | "replyLoginRefused" | "replyFailed" {
+export type FailedSendCopy = "replyNotSecured" | "replyLoginRefused" | "replyFailed";
+
+export function failedSendCopy(r: MutationResult | null): FailedSendCopy {
   const code = r?.error?.code;
   return code === "send_not_secured" ? "replyNotSecured" : code === "send_login_refused" ? "replyLoginRefused" : "replyFailed";
 }
@@ -2143,6 +2145,13 @@ export function failedSendCopy(r: MutationResult | null): "replyNotSecured" | "r
 export interface SendResult {
   outcome: SendOutcome;
   key?: string;
+  /**
+   * `failed` only: the draft row the refused send left, an ordinary draft again. The composer
+   * binds it, so its next press and its keep are that row and never a second copy of one letter.
+   */
+  draftId?: string;
+  /** `failed` only: which sentence the refusal earned, said in the composer ({@link failedSendCopy}). */
+  failure?: FailedSendCopy;
 }
 
 /**
@@ -2321,6 +2330,8 @@ export interface DraftKeep {
   subject: string;
   body: string;
   files: number;
+  /** The row this composer is bound to ({@link SendResult.draftId}): the keep updates it in place. */
+  draftId?: string | null;
 }
 
 /** `kept` — the account holds it or the outbox does; `refused` — nothing was kept, and said. */
@@ -2610,6 +2621,8 @@ export interface LiveWorldActions {
      * with the Undo that puts the row back in the section it left.
      */
     andDone?: boolean,
+    /** The row a refused press left ({@link SendResult.draftId}) — this press sends that row. */
+    draftId?: string | null,
   ): Promise<SendResult>;
   /**
    * IS THE SECOND SEND ACTION OFFERED for a reply or forward of this message? The engine's one
@@ -2624,7 +2637,7 @@ export interface LiveWorldActions {
    * `attachments` on either verb ride the same mutation the webapp composer sends —
    * base64 on `POST /drafts/:id/send`, nothing stored (`ComposeAttachment`'s own contract).
    */
-  sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null, attachments?: ComposeAttachment[], andDone?: boolean, confirmed?: boolean): Promise<SendResult>;
+  sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null, attachments?: ComposeAttachment[], andDone?: boolean, confirmed?: boolean, draftId?: string | null): Promise<SendResult>;
   /**
    * A MAIL THAT ANSWERS NOTHING — the same `mail_send` with no parent: `inReplyTo` null,
    * no `forwardOf`, the sending mailbox named explicitly because there is no parent to derive
@@ -2639,6 +2652,7 @@ export interface LiveWorldActions {
     sig?: string | null,
     sendAt?: string | null,
     attachments?: ComposeAttachment[],
+    draftId?: string | null,
   ): Promise<SendResult>;
   /**
    * WITHDRAW A QUEUED SEND — Cancel, on the intent. `withdrawn` is the cancellation;
@@ -3772,7 +3786,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
                   : refuse("replyFailed"),
       );
     }
-    return { outcome, ...(outcome === "queued" && first ? { key: first.key } : {}) };
+    return {
+      outcome,
+      ...(outcome === "queued" && first ? { key: first.key } : {}),
+      ...(outcome === "failed" && settled?.entityId ? { draftId: settled.entityId } : {}),
+      ...(outcome === "failed" ? { failure: failedSendCopy(settled) } : {}),
+    };
   };
 
   /**
@@ -3821,6 +3840,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     sendAt: string | null = null,
     attachments: ComposeAttachment[] = [],
     andDone = false,
+    draftId: string | null = null,
   ): Promise<SendResult> => {
     const m = messageOf(messageId);
     const text = body.trim();
@@ -3854,6 +3874,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         // reason — an unattached reply's wire is the wire it always was.
         ...(sendAt ? { sendAt } : {}),
         ...(attachments.length > 0 ? { attachments } : {}),
+        // The row a refused press left (`SendResult.draftId`): this press sends THAT row.
+        ...(draftId ? { draftId } : {}),
       }, sig)),
       // THE CONFIRMED SENTENCE IS THE WHOLE DIFFERENCE, and it is honest rather than
       // convenient: nothing was sent, an appointment was made, and "Reply sent." over a
@@ -4014,9 +4036,14 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const subject = reply && parent
       ? replySubject(parent.subject)
       : k.mode === "forward" && parent ? forwardSubject(parent.subject) : k.subject.trim();
+    /* ONE LETTER, ONE ROW. A composer bound to the row its refused send left keeps INTO that row;
+       the row is a moment old, so a mirror that has not drained it yet is asked to first — an
+       update names a target the engine must already hold. */
+    const bound = k.draftId ?? null;
+    if (bound !== null && !engine.read().get("draft", bound)) await engine.syncOnce().catch(() => undefined);
     const r = await engine
       .mutate({
-        kind: "draft_save", draftId: null, mailboxId,
+        kind: "draft_save", draftId: bound, mailboxId,
         ...(reply && parent ? { inReplyToMessageId: parent.id, threadId: parent.threadId ?? null } : {}),
         subject, body: k.body, to, cc: env ? env.cc : [], bcc: [],
       })
@@ -4027,7 +4054,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       toast(refuse(without ? "composeKeptQueuedWithoutFiles" : "composeKeptQueued"));
       return "kept";
     }
-    const id = r.entityId;
+    const id = r.entityId ?? bound;
     toast(
       refuse(without ? "composeKeptWithoutFiles" : "composeKept"),
       id ? { undo: () => { void draftDiscard(id); } } : undefined,
@@ -4035,7 +4062,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return "kept";
   };
 
-  const sendForward = async (messageId: string, to: EmailAddress[], body: string, sig: string | null = null, attachments: ComposeAttachment[] = [], andDone = false, confirmed = false): Promise<SendResult> => {
+  const sendForward = async (messageId: string, to: EmailAddress[], body: string, sig: string | null = null, attachments: ComposeAttachment[] = [], andDone = false, confirmed = false, draftId: string | null = null): Promise<SendResult> => {
     const m = messageOf(messageId);
     // A `no_forward` original leaves only after the sheet's ask was answered (`forwardPress`);
     // the server refuses it without `forwardConfirmed` too. Told, for the reply belt's reason: a
@@ -4060,6 +4087,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         body,
         to,
         ...(attachments.length > 0 ? { attachments } : {}),
+        ...(draftId ? { draftId } : {}),
       }, sig)),
       Copy.forwarded,
       Copy.forwardEarlierWent,
@@ -4076,6 +4104,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     sig: string | null = null,
     sendAt: string | null = null,
     attachments: ComposeAttachment[] = [],
+    draftId: string | null = null,
   ): Promise<SendResult> => {
     const text = body.trim();
     // TOLD, all three arms — a return before `sent()` renders nothing, and a fresh mail has
@@ -4104,6 +4133,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         to,
         ...(sendAt ? { sendAt } : {}),
         ...(attachments.length > 0 ? { attachments } : {}),
+        ...(draftId ? { draftId } : {}),
       }, sig)),
       sendAt ? Copy.scheduledFor(scheduleLabel(sendAt, now(), zone)) : Copy.composeSent,
       Copy.composeEarlierWent,
@@ -4486,10 +4516,11 @@ export interface WorldActions {
     sendAt?: string | null,
     attachments?: ComposeAttachment[],
     andDone?: boolean,
+    draftId?: string | null,
   ): Promise<SendResult>;
   /** Is Send + Done offered for this source? See {@link LiveWorldActions.sendAndDoneOffered}. */
   sendAndDoneOffered(messageId: string): boolean;
-  sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null, attachments?: ComposeAttachment[], andDone?: boolean, confirmed?: boolean): Promise<SendResult>;
+  sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null, attachments?: ComposeAttachment[], andDone?: boolean, confirmed?: boolean, draftId?: string | null): Promise<SendResult>;
   /** A mail with no parent — see {@link LiveWorldActions.sendNew}. */
   sendNew(
     mailboxId: string | null,
@@ -4499,6 +4530,7 @@ export interface WorldActions {
     sig?: string | null,
     sendAt?: string | null,
     attachments?: ComposeAttachment[],
+    draftId?: string | null,
   ): Promise<SendResult>;
   /** Withdraw a queued send — Cancel. See {@link LiveWorldActions.withdrawSend}. */
   withdrawSend(key: string): Promise<WithdrawOutcome>;
@@ -4567,11 +4599,12 @@ export function stableActions(current: () => WorldActions): WorldActions {
     deleteMessage: (id, opts) => void current().deleteMessage(id, opts),
     trashList: (cursor) => current().trashList(cursor),
     trashRestore: (id) => current().trashRestore(id),
-    sendReply: (id, body, all, sig, sendAt, attachments, andDone) =>
-      current().sendReply(id, body, all, sig, sendAt, attachments, andDone),
-    sendForward: (id, to, body, sig, attachments, andDone, confirmed) =>
-      current().sendForward(id, to, body, sig, attachments, andDone, confirmed),
-    sendNew: (mailboxId, to, subject, body, sig, sendAt, attachments) => current().sendNew(mailboxId, to, subject, body, sig, sendAt, attachments),
+    sendReply: (id, body, all, sig, sendAt, attachments, andDone, draftId) =>
+      current().sendReply(id, body, all, sig, sendAt, attachments, andDone, draftId),
+    sendForward: (id, to, body, sig, attachments, andDone, confirmed, draftId) =>
+      current().sendForward(id, to, body, sig, attachments, andDone, confirmed, draftId),
+    sendNew: (mailboxId, to, subject, body, sig, sendAt, attachments, draftId) =>
+      current().sendNew(mailboxId, to, subject, body, sig, sendAt, attachments, draftId),
     sendAndDoneOffered: (id) => current().sendAndDoneOffered(id),
     withdrawSend: (key) => current().withdrawSend(key),
     cancelSchedule: (draftId) => current().cancelSchedule(draftId),

@@ -54,6 +54,8 @@ import {
   type ConflictGroup,
   type PressForecast,
   type WorldRule,
+  connectionSaid,
+  type FailedSendCopy,
 } from "../state/live";
 import { useWorld } from "../state/world";
 import { BAR, PILL, compactFit } from "./action-bar-layout";
@@ -92,6 +94,7 @@ import { Segmented } from "./Segmented";
 import { Sheet, SheetRow, useSheetPanelBounds } from "./Sheet";
 import { SurfaceBoundary } from "./ErrorBoundary";
 import { sendPressAct } from "./send-press";
+import { failedSendLine } from "./send-failed";
 
 /**
  * One pick's verdicts, held as KINDS — the sentence is derived where it is shown, so a refusal
@@ -1064,6 +1067,14 @@ export function ComposeSheet({
   const [keepNote, setKeepNote] = useState<"failed" | "files" | null>(null);
   /** A keep on its way — one row per close, however often the backdrop is tapped meanwhile. */
   const keeping = useRef(false);
+  /**
+   * THE ROW THIS LETTER IS — set once a refused send names the draft it left. Every later press
+   * sends that row and the keep on close updates it, so one letter is one draft however often
+   * Send is pressed with the network gone. `null` until a refusal names one.
+   */
+  const [draftId, setDraftId] = useState<string | null>(null);
+  /** The last press was refused, and which sentence it earned — said in the sheet, see `send-failed.ts`. */
+  const [failNote, setFailNote] = useState<FailedSendCopy | null>(null);
   /* The ONE shared bound (`composeAttachCap`) of the sending mailbox's announced `SIZE` —
      the same pair the send will enforce. The phone declares no surface: its send rides one
      JSON request, so the strict constant is the other arm. */
@@ -1145,6 +1156,8 @@ export function ComposeSheet({
       // …and the send did NOT go after all, so the too-late sentence may not stand over a
       // re-armed Send. Cleared with the phase that raised it.
       setAlreadySent(false);
+      // The re-armed Send says why it is back: a retry that died is still a refused send.
+      setFailNote("replyFailed");
     }
     else if (settled === "unverified") setPhase("unverified");
     // `unverified` stays locked: the server could not say whether the message left, so the
@@ -1257,7 +1270,7 @@ export function ComposeSheet({
       void (async () => {
         const kept = await w.actions.draftKeep({
           mode, messageId: m?.id ?? null, mailboxId, to: addressed ? keptRecipients(to) : [],
-          subject, body, files: attachments.length,
+          subject, body, files: attachments.length, draftId,
         });
         keeping.current = false;
         if (kept === "kept") onClose();
@@ -1280,12 +1293,13 @@ export function ComposeSheet({
     // message that is already on its way offers rows for an act that may no longer happen.
     setLater(null);
     setPhase("sending");
+    setFailNote(null);
     const files = toComposeAttachments(attachments);
     const result = fresh
-      ? await w.actions.sendNew(mailboxId, recipients ?? [], subject, body, sigText, sendAt, files)
+      ? await w.actions.sendNew(mailboxId, recipients ?? [], subject, body, sigText, sendAt, files, draftId)
       : forward
-        ? await w.actions.sendForward(m!.id, recipients ?? [], body, sigText, files, andDone, forwardConfirmed)
-        : await w.actions.sendReply(m!.id, body, mode === "replyAll", sigText, sendAt, files, andDone);
+        ? await w.actions.sendForward(m!.id, recipients ?? [], body, sigText, files, andDone, forwardConfirmed, draftId)
+        : await w.actions.sendReply(m!.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId);
     if (result.outcome === "sent") {
       onClose();
       return;
@@ -1299,6 +1313,9 @@ export function ComposeSheet({
     // server could not say whether the message left, so a fresh-key re-send is the
     // duplicate-delivery door. Only a plain failure re-arms Send.
     setPhase(result.outcome === "unverified" ? "unverified" : "idle");
+    // A refused send binds the row it left and says why, here: nothing outside this sheet shows.
+    if (result.outcome === "failed" && result.draftId) setDraftId(result.draftId);
+    if (result.outcome === "failed" && result.failure) setFailNote(result.failure);
   };
 
   return (
@@ -1695,6 +1712,18 @@ export function ComposeSheet({
           {needNote && needsContent ? (
             <Txt variant="caption" tone="ink2" accessibilityRole="alert">
               {Copy.composeNeedContent}
+            </Txt>
+          ) : null}
+          {/* THE REFUSED SEND, OR THE CONNECTION, SAID ABOVE THE BUTTONS. The toast and the top bar
+              render under this Modal, so a sentence said only there was a Send press with no answer.
+              An alert for the press's answer; the connection line is a status. */}
+          {failNote !== null && phase === "idle" ? (
+            <Txt variant="caption" tone="ink2" accessibilityRole="alert">
+              {failedSendLine(failNote, w.boot.connection, draftId !== null)}
+            </Txt>
+          ) : phase === "idle" && connectionSaid(w.boot.connection) !== null ? (
+            <Txt variant="caption" tone="ink3">
+              {connectionSaid(w.boot.connection)}
             </Txt>
           ) : null}
           {/* WHY THE CLOSE STAYED — nothing typed is thrown away without the person being told. */}

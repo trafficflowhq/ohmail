@@ -2429,11 +2429,17 @@ export class HttpAdapter implements EngineAdapter {
     }
 
     this.forgetSendKey(idempotencyKey);
+    /* A TERMINAL REFUSAL NAMES THE ROW IT LEFT. The send never went and the row is an ordinary
+       draft again, so the surface may bind it: the next press PUTs and sends THAT row instead of
+       creating a second copy of one letter (measured on a phone with the network cut: one row per
+       press). Unlike `unverified`'s row, this one may be adopted. Terminal refusals only — a
+       retryable one stays on the queue under its key and names nothing. */
+    const leftRow = draftId ?? null;
     if (wire.status === "failed") {
       // A definitively-undelivered prior attempt under this key. Terminal, never retryable.
       throw new MutationRejectedError(
         wire.message ?? "A prior send under this key failed and was not delivered.",
-        { status: res.status, code: "send_failed", retryable: false },
+        { status: res.status, code: "send_failed", retryable: false, entityId: leftRow },
       );
     }
     // NO `status` FIELD AT ALL ⇒ this rejection did not come from `SendService`; it came from
@@ -2442,10 +2448,12 @@ export class HttpAdapter implements EngineAdapter {
     // rather than flattening it to "HTTP 403" is what puts the server's own sentence in front
     // of the user, which is the entire content of the `failed` state on screen.
     const env = wire as WireError;
+    const retryable = env.error?.retryable ?? (res.status >= 500 || res.status === 429);
     throw new MutationRejectedError(env.error?.message ?? `HTTP ${res.status}`, {
       status: res.status,
       code: env.error?.code ?? null,
-      retryable: env.error?.retryable ?? (res.status >= 500 || res.status === 429),
+      retryable,
+      ...(retryable ? {} : { entityId: leftRow }),
       // AND THE HEADER. This branch rebuilds the envelope by hand instead of going through
       // `rejectionFor`, and it silently omitted `Retry-After` — so eight `503 db_busy` answers on
       // the SEND route counted as unmodelled failures and abandoned a send the server had merely

@@ -1185,6 +1185,7 @@ export const DE: Deck = {
   replyFailed: "Senden hat nicht geklappt. Versuch es nochmal.",
   replyNotSecured: "Nicht gesendet. Die Verbindung zu deinem Mailserver konnte nicht gesichert werden.",
   replyLoginRefused: "Nicht gesendet. Dein Mailserver hat die Anmeldung abgelehnt.",
+  composeNotSentOffline: "Nicht gesendet. Dieses Telefon erreicht deinen Mailserver nicht. Die Nachricht liegt in den Entwürfen — sende sie erneut, sobald du wieder online bist.",
   replyUnverifiedAgain: "Nicht nochmal gesendet. Der erste Versand ist vielleicht schon raus, schau also zuerst in deinen Gesendet-Ordner.",
   /* Die Anhänge des Editors — `apps/webapp/messages/de.json` (`compose.attach*`) byte für Byte,
      wo der Satz dort existiert. */
