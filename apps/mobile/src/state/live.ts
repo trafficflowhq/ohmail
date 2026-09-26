@@ -1265,8 +1265,8 @@ function rowOf(dto: ScreenerSenderDTO, scope: Scope | undefined): ScreenerRow {
 
 /**
  * A reader in which the server's waiting senders are at the gate. `screenerSegments` groups over
- * the PROJECTION, which re-homes a DECIDED sender's gate mail to the rule's destination
- * (`consent-cutline.ts`) — right for the Ohbox, wrong for this queue: the mail is still physically
+ * the PROJECTION, which re-homes a DENY-ruled sender's gate mail to the shelf
+ * (`consent-cutline.ts`) — right for the lists, wrong for this queue: the mail is still physically
  * in `ohmail/Screener` and the server still asks about that sender, so the phone was answering a
  * question the server had not asked. So for the queue alone, a message whose PHYSICAL folder is the
  * gate and whose sender the route names is read at the gate. Nothing else moves — the same

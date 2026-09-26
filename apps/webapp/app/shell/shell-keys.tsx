@@ -33,6 +33,7 @@ import { deleteKeyBindings } from "./delete-undo";
 import { FoldersRailGroup, type FolderVerbs } from "./FoldersRailGroup";
 import { hueOf } from "./format";
 import { useKeyBindings, type KeyBinding } from "./keymap";
+import { pressResurfaceKey } from "./message-verbs";
 import type { MailboxFacts } from "./mail-state";
 import { isModalOpen } from "./modal-gate";
 import { readColumnHidden, readColumnHiddenFor, watchNarrow, watchZeroPushTier, zeroPushTier } from "./narrow";
@@ -430,6 +431,15 @@ export function useShellKeys({
    */
   const noCursor = focused == null ? ({ disabledReason: "no_cursor" } as const) : {};
 
+  /* `b`, and the palette row that prints it, through `pressResurfaceKey` — asked of the mirror's
+     row, since `focused` can be the reader's snapshot from before the booking. */
+  const resurfaceByKey = useStableCallback((m: EngineMessage): void =>
+    pressResurfaceKey(
+      engine.verbRead().get<EngineMessage>("message", m.id) ?? m,
+      { barPanel, setBarPanel },
+      (x) => onMessageAction("resurface", x),
+    ));
+
   /* ── the global key map. Views declare their own; see `keymap.tsx` for precedence. ── */
   const globalKeys: KeyBinding[] = [
     { chord: "g o", group: "navigate", label: t("shortcuts.goOhbox"), run: () => go("ohbox") },
@@ -658,7 +668,7 @@ export function useShellKeys({
       label: t("shortcuts.resurface"),
       disabled: focused == null,
       ...noCursor,
-      run: () => focused && onMessageAction("resurface", focused),
+      run: () => focused && resurfaceByKey(focused),
     },
     {
       /* MOVE — opens the bar's destination strip on the focused message (`barPanel`, the
@@ -938,11 +948,11 @@ export function useShellKeys({
       keys: ["b"],
       disabled: selectedOhbox == null,
       run: () => {
-        if (selectedOhbox) onMessageAction("resurface", selectedOhbox);
+        if (selectedOhbox) resurfaceByKey(selectedOhbox);
       },
     });
     return list;
-  }, [t, tags, selectedOhbox, toggleTag, theme, onMessageAction, startFR, engine, settingsWired, goSettings]);
+  }, [t, tags, selectedOhbox, toggleTag, theme, onMessageAction, resurfaceByKey, startFR, engine, settingsWired, goSettings]);
 
   /**
    * THE ONE NUMBER A NATIVE SHELL IS TOLD — see `AppShell`'s `onUnread`.

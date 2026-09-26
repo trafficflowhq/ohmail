@@ -1364,7 +1364,7 @@ export function useShellVerbs({
           dispatchScreeningChange(p.plan, (mu) => fileAndRefresh(engine.mutate(mu)))
             .then((key) => ({ key, moved: p.plan.moved }))))
           .then((answers) => {
-            const done = answers.filter((a) => a.key !== "toastRuleFailed");
+            const done = answers.filter((a) => a.key !== "toastRuleFailed" && a.key !== "toastDecideRefused");
             const moved = done.reduce((n, a) => n + a.moved, 0);
             toast(done.length === 0
               ? t("ohbox.toastBulkMoveFailed")

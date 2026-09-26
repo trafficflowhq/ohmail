@@ -1707,6 +1707,14 @@ export function decodeSeqCursor(cursor: Cursor): number | null {
  */
 export const HELD_RELEASE_TYPE = "held_release_group";
 
+/**
+ * DECIDED SENDERS THE CUTLINE HAS RETIRED, as the consent partition names them — never stored,
+ * answered by `presentationReader` alone. Their unmoved mail stays at the gate, and
+ * a decided sender is not asked about again: the server's queue retires them by the same cutline.
+ * `screenerSegments` reads it beside {@link HELD_RELEASE_TYPE}.
+ */
+export const RETIRED_DECIDED_TYPE = "consent_retired_decided";
+
 /** One group on the release screen: the rule, and how much of its mail is stuck at the gate. */
 export interface HeldReleaseGroupDTO {
   /** The rule's id — this row's own id, and what `releaseHeld` names. */

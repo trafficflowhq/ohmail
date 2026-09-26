@@ -3064,6 +3064,7 @@
     "toastRuleQueued": "{place} — {count, plural, =0 {mail already here stays where it is} one {1 message from {sender} is now there} other {# messages from {sender} are now there}}. The rule for their future mail will be made when you're back online.",
     "toastRuleFailed": "{place} — {count, plural, =0 {mail already here stays where it is} one {1 message from {sender} moved} other {# messages from {sender} moved}}, but the rule couldn't be made. Future mail is unchanged.",
     "toastRuleOrganizer": "Queued for the organizer — mail from {sender} goes to {place} on its next pass, and the rule is made then.",
+    "toastDecideRefused": "{place} — nothing moved: the decision was refused, so {sender} is still waiting in the Screener.",
     "verdictKept": "{count, plural, one {1 is} other {# are}} in {place} · {kept, plural, one {1 stays} other {# stay}} in {keptPlace} by your rule »{term}«.",
     "verdictKeptDomain": "{count, plural, one {1 is} other {# are}} in {place} · {kept, plural, one {1 stays} other {# stay}} in {keptPlace} by your rule for everyone at {domain}, subject contains »{term}«.",
     "verdictMoved": "{place} — {count, plural, one {1 message} other {# messages}} moved.",

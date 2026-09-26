@@ -32,6 +32,8 @@ import { BodyText } from "../shell/BodyText";
 import { useZoneNav } from "../shell/zone-nav";
 import { readColumnHidden } from "../shell/narrow";
 import { useListWindow } from "../shell/list-window";
+import { useKeyBindings } from "../shell/keymap";
+import { isModalOpen } from "../shell/modal-gate";
 import type { TrashPage } from "../shell/trash-page";
 import {
   trashLiveKeyOf, trashLiveState, trashReadVerbs, type TrashWindowControl,
@@ -134,6 +136,17 @@ export function TrashView({
     ? null
     : live?.items.find((i) => trashLiveKeyOf(i) === liveKey) ?? null;
   const shown = openLive === null ? mirroredShown : null;
+  /* ⇧⌫ DOES WHAT THE RESTORE BUTTON BESIDE IT DOES. The shell's own ⇧⌫ acts on `focused`, which
+     never holds a Trash row, so the key the button's chip names restored nothing. Bound here to the
+     row this column shows, with the shell's two conditions; a live row has no restore, so none. */
+  useKeyBindings([{
+    chord: "shift+Backspace",
+    group: "message",
+    label: t("restoreKey"),
+    disabled: shown == null,
+    when: (e) => !e.repeat && !isModalOpen(e.view?.document ?? document),
+    run: () => { if (shown) onAction("restore", shown); },
+  }]);
 
   /* THE BODY OF A TOMBSTONED ROW. The body route answers for a deleted message by design
      (`schema-mail.ts` states it beside the column), which is what makes this view able to show a

@@ -37,7 +37,7 @@ import { StreamShell, type StreamHandle, type StreamLeaveState } from "../shell/
 import { StreamCardMemo } from "../shell/StreamCardMemo";
 import type { RemoteImagesChrome } from "../shell/remote-images";
 import { useStreamWindow } from "../shell/stream-window";
-import { useStreamBar } from "../shell/stream-bar";
+import { useKeyPanelOpensCard, useStreamBar } from "../shell/stream-bar";
 import { useBodyStamp } from "../shell/body-slice";
 import { waterlineStamp } from "../shell/format";
 
@@ -203,6 +203,8 @@ export function ReadsView({
   );
   const allRef = useRef(all);
   allRef.current = all;
+  // A key's strip lands on the card it named (`stream-bar.ts`).
+  useKeyPanelOpensCard(".view-reads", bar.hasBar, (id) => allRef.current.some((m) => m.id === id));
   const onLeaveSeenRef = useRef(onLeaveSeen);
   onLeaveSeenRef.current = onLeaveSeen;
   /**

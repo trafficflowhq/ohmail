@@ -30,7 +30,7 @@ import { StreamShell, type StreamHandle, type StreamLeaveState } from "../shell/
 import { StreamCardMemo } from "../shell/StreamCardMemo";
 import type { RemoteImagesChrome } from "../shell/remote-images";
 import { useStreamWindow } from "../shell/stream-window";
-import { useStreamBar } from "../shell/stream-bar";
+import { useKeyPanelOpensCard, useStreamBar } from "../shell/stream-bar";
 import { useBodyStamp } from "../shell/body-slice";
 
 export function ReceiptsView({
@@ -154,6 +154,8 @@ export function ReceiptsView({
    * while it is still on screen (`stream-bar.ts`).
    */
   const bar = useStreamBar(streamRef);
+  // A key's strip lands on the card it named (`stream-bar.ts`).
+  useKeyPanelOpensCard(".view-receipts", bar.hasBar, (id) => messages.some((m) => m.id === id));
 
   const all = messages;
   const allRef = useRef(all);

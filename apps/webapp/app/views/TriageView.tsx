@@ -26,6 +26,8 @@ import {
 } from "@ohmail/ui";
 import { avatarOf, rowStamp, hueOf, resurfaceLabel, rowAddress, senderName, tagsOfMessage } from "../shell/format";
 import { useKeyBindings } from "../shell/keymap";
+import { useMessageChrome } from "../shell/message-chrome";
+import { pressResurfaceKey } from "../shell/message-verbs";
 import { useZoneNav } from "../shell/zone-nav";
 import { readColumnHidden } from "../shell/narrow";
 import { useListWindow } from "../shell/list-window";
@@ -171,11 +173,12 @@ export function TriageView({
   // on the shell's `focused`, which has no arm for this view, because the cursor here (`shown`) is
   // view-local state the shell cannot see. So the view declares its own, exactly as the registry intends,
   // acting on the message the reading column shows — the same `onAction` seam the pane's footer
-  // dispatches through, so key and button remain one code path; a key naming the pile a message is
-  // already in takes it OUT (`state:"none"`), which makes a mis-key recoverable. `⇧F` joins for the same
+  // dispatches through, so key and button remain one code path; `a`/`e` in the pile a message is
+  // already in take it OUT (`state:"none"`), `b` opens the chooser as its button does. `⇧F` joins for the same
   // reason: the pill prints a `⇧F` keycap from the registry and the shell's binding is `disabled` here —
   // a bar must not advertise a dead key. Gated on `no_forward` like the
   // button (`ActionBar#canForward`); the mirror half needs no gate — every triage row is local.
+  const chrome = useMessageChrome();
   const verbs = shown
     ? ([
         { chord: "a", key: "answerLater", action: "later" },
@@ -199,7 +202,13 @@ export function TriageView({
       chord: v.chord,
       group: "message" as const,
       label: ts(v.key),
-      run: () => shown && onAction(v.action, shown),
+      /* `b` is the Resurface button's chord, so on a booked row it opens that chooser
+         (`pressResurfaceKey`); `a` and `e` still take a row out of their pile. */
+      run: () => {
+        if (!shown) return;
+        if (v.action === "resurface") pressResurfaceKey(shown, chrome, (m) => onAction("resurface", m));
+        else onAction(v.action, shown);
+      },
     })),
   ]);
 

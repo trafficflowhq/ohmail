@@ -26,6 +26,7 @@ import {
   type HeldReleaseGroupDTO,
   type UnscreenedGroupDTO,
   HELD_RELEASE_TYPE,
+  RETIRED_DECIDED_TYPE,
   UNSCREENED_TYPE,
   SCREENER_WAITING_TYPE,
   SCREENER_WAITING_PAGE_ID,
@@ -1488,6 +1489,8 @@ function heldReleaseClaim(reader: EntityReader): (key: string) => boolean {
     if (match === "") continue;
     (g.kind === "domain" ? domains : senders).add(match);
   }
+  // …and a decided sender the cutline retired — standing, not placement (`RETIRED_DECIDED_TYPE`).
+  for (const r of reader.list<{ key: string }>(RETIRED_DECIDED_TYPE)) senders.add(r.key);
   if (senders.size === 0 && domains.size === 0) return () => false;
   return (key: string): boolean => {
     if (senders.has(key)) return true;

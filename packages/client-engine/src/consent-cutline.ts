@@ -11,8 +11,8 @@ import type { EntityReader } from "./store.js";
 import { ownAddressKeys } from "./own-address.js";
 import { isOwnSent, isResurfaced, messagesByDateDesc, rulesList, senderKey } from "./selectors.js";
 import {
-  MAILBOX_PROFILE_TYPE, SCREENER_WAITING_PAGE_ID, SCREENER_WAITING_TYPE, type EngineMessage, type Folder,
-  type MailboxProfileEntity, type RuleDTO, type ScreenerWaitingDTO,
+  MAILBOX_PROFILE_TYPE, RETIRED_DECIDED_TYPE, SCREENER_WAITING_PAGE_ID, SCREENER_WAITING_TYPE, type EngineMessage,
+  type Folder, type MailboxProfileEntity, type RuleDTO, type ScreenerWaitingDTO,
 } from "./types.js";
 
 /* Consent, the cutline, and History. Two rules decide where a message is
@@ -20,8 +20,8 @@ import {
    INBOX is not consent, a decision's record is a rule; (2) decisions rule
    the future — the past moves only on explicit request. For mail in the two
    undecided residences (INBOX, Screener folder): active mail AT THE GATE
-   presents at the gate, admitting rule or none; a ruled sender's other mail
-   presents in the rule's destination (zero server moves); unruled + active
+   presents at the gate, admitting rule or none; a ruled sender's mail stays
+   where the mailbox has it, a DENY rule's on the screened-out shelf; unruled + active
    → Screener; unruled + dormant → History. Explicit placements elsewhere
    are never second-guessed. History has no badge — under a baseline it can
    hold unread backlog, and that is what it is FOR ("Archive" is a verb). */
@@ -107,6 +107,12 @@ export interface ConsentPartition {
   readonly history: readonly EngineMessage[];
   readonly activity: ReadonlyMap<string, SenderActivity>;
   readonly counts: ConsentCounts;
+  /**
+   * Decided senders the cutline has retired whose mail still sits at the gate. Not waiting: an
+   * admission changes standing, not place, and the server's queue retires them by the same
+   * cutline. Read by `screenerSegments` through `presentationReader` (`RETIRED_DECIDED_TYPE`).
+   */
+  readonly retiredDecided: ReadonlySet<string>;
 }
 
 export interface ConsentOptions {
@@ -153,9 +159,10 @@ export interface ConsentOptions {
   ownAddresses?: Iterable<string>;
   /**
    * The account's cutline is NOT KNOWN yet — its `GET /consent` has not answered. A decision is a
-   * rule the mirror already holds, so a ruled sender still presents at the rule's destination; only
-   * the two halves that need the window wait: no unruled sender is queued in the Screener and
-   * nothing is cut to History. An unruled row stays where its folder is, so nothing is hidden.
+   * rule the mirror already holds, so a ruled sender is decided and their mail presents exactly as
+   * with the window known — where the mailbox has it, a DENY rule's on the shelf; only the two halves
+   * that need the window wait: no unruled sender is queued in the Screener and nothing is cut to
+   * History. An unruled row stays where its folder is, so nothing is hidden.
    */
   rulesOnly?: boolean;
 }
@@ -466,6 +473,7 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
   const consentedSenders = new Set<string>();
   const activeUndecided = new Set<string>();
   const dormantUndecided = new Set<string>();
+  const retiredDecided = new Set<string>();
 
   for (const m of messages) {
     /**
@@ -566,28 +574,22 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
     // An explicit placement is already an answer. Never second-guessed.
     if (!UNDECIDED_RESIDENCES.has(m.folder)) { placeOf.set(m.id, m.folder); continue; }
 
-    // With the cutline unknown every sender counts as active for the gate hold below, and an
-    // unruled one keeps its folder (the `rulesOnly` arm) rather than being queued or retired.
+    // With the cutline unknown every sender counts as active, and an unruled one keeps its
+    // folder (the `rulesOnly` arm) rather than being queued or retired.
     const active = rulesOnly || activity.get(key) === "active";
     /**
-     * A RULE THAT HAS NOT MOVED THE MAIL CHANGES NOTHING A PERSON SEES. Mail PHYSICALLY at the
-     * gate presents at the gate whatever admitting destination a rule names: the client never
-     * predicts a destination for held mail, and `GET /screener` — which consults no rules — is
-     * the authority wherever there is a server. Two things keep their projection: the CUTLINE,
-     * so a retired sender (a backfilled backlog is old and read) still presents in the Ohbox
-     * with nothing moved; and a DENY rule, the person's own answer, whose mail presents on the
-     * screened-out shelf. Only an admission nobody has carried out is a question still open.
+     * A RULE THAT HAS NOT MOVED THE MAIL CHANGES NOTHING A PERSON SEES, in either residence and in
+     * every posture. A letter presents at its folder as the wire states it — the server's desired
+     * folder, else where it is — so a move the organizer plans shows the moment it is written, and
+     * a rule nothing carried out (a Move press that left the backlog, a reader's store, a mailbox
+     * nothing organizes) shows nothing. An admission changes the sender's STANDING — decided: never
+     * queued, never cut to History — and never a letter's place. One projection stays: a DENY
+     * rule's mail, the person's own answer, on the screened-out shelf.
      */
-    // PLACED BY THE RULE THAT APPLIES TO THIS MESSAGE, as the organizer files it: a narrowed rule
-    // places only the mail its term names. `decided` stays the sender's standing (admission).
     const placed = placedDestination(index, m);
-    const heldAtGate = placed !== null && CONSENTING_DESTINATIONS.has(placed) && active
-      && m.folder === "ohmail/Screener";
-    if (placed !== null && !heldAtGate) {
-      placeOf.set(m.id, placed);
-    } else if (decided !== null && placed === null) {
-      // Admitted by a narrowed rule that does not name this message: nothing places it.
-      placeOf.set(m.id, m.folder);
+    if (placed !== null || decided !== null) {
+      placeOf.set(m.id, placed !== null && effectForDestination(placed) === "deny" ? placed : m.folder);
+      if (m.folder === "ohmail/Screener" && !active) retiredDecided.add(key);
     } else if (decided === null && (rulesOnly || active) && notWaiting(m, key)) {
       // THE STORE HAS ANSWERED FOR THIS SENDER: not waiting (a correspondent, a contact, decided
       // elsewhere), so their mail presents in the Ohbox, never at the gate. The count keeps asking
@@ -694,6 +696,7 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
     placeOf,
     history,
     activity,
+    retiredDecided,
     counts: {
       consentedSenders: consentedSenders.size,
       activeUndecidedSenders: activeUndecided.size,
@@ -737,6 +740,8 @@ export function presentationReader(reader: EntityReader, partition: ConsentParti
       return (project(v as unknown as EngineMessage) ?? undefined) as T | undefined;
     },
     list<T = unknown>(type: string): T[] {
+      // The partition's own answer, never stored — see `RETIRED_DECIDED_TYPE`.
+      if (type === RETIRED_DECIDED_TYPE) return [...partition.retiredDecided].map((key) => ({ key }) as T);
       if (type !== "message") return reader.list<T>(type);
       /**
        * ITERATE THE BASE READER'S SHARED DATE ORDER, not its raw list. `list()`'s order is

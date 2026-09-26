@@ -244,10 +244,11 @@ export function useShellDerivations({
     // The demo is not partitioned — consent derives from rules and the fixture world has none, so
     // the partition would empty the curated world into History. RULES NEVER WAIT FOR THE READ: until
     // the window is known (`GET /consent`, or the boot's CACHED last answer, `boot-cache.ts`) the
-    // partition runs `rulesOnly` — a ruled sender presents at the rule's destination, an unruled
-    // one stays in its folder, nothing is cut to History. Switched off here, a paired desktop
-    // whose read failed showed every unread INBOX message in its Ohbox, ruled senders included. The
-    // desktop (`consent.standalone`) has no stored window, so the default IS the truth there.
+    // partition runs `rulesOnly` — a ruled sender is decided and their mail stays where the mailbox
+    // has it (a DENY rule's on its shelf), an unruled one stays in its folder, nothing is cut to
+    // History. With no partition at all a paired desktop whose read failed drew screened-out mail
+    // in its Ohbox. The desktop (`consent.standalone`) has no stored window, so the default IS the
+    // truth there.
     () =>
       demo
         ? null

@@ -187,6 +187,7 @@ export {
   type MirrorEntityType,
   type HeldReleaseGroupDTO,
   HELD_RELEASE_TYPE,
+  RETIRED_DECIDED_TYPE,
   type UnscreenedGroupDTO,
   UNSCREENED_TYPE,
   SCREENER_WAITING_TYPE,

@@ -33,7 +33,7 @@ import { useKeyBindings } from "./keymap";
 import { useRowCursorPlacer } from "./cursor-placer";
 /* The two destructive chords, from the module that owns them — see the `⌫ · ⌦` binding below. */
 import { deleteKeyBindings } from "./delete-undo";
-import { useMessageChrome } from "./message-chrome";
+import { useMessageChrome, type MessageChrome } from "./message-chrome";
 import type { MessageAction } from "./MessagePane";
 
 export interface MessageVerbsInput {
@@ -84,6 +84,25 @@ export interface MessageVerbsInput {
 /** The row a verb should anchor its menu to, or null when the window has not mounted it. */
 function anchorFor(scope: string, id: string): HTMLElement | null {
   return document.querySelector<HTMLElement>(`${scope} .row[data-id="${CSS.escape(id)}"]`);
+}
+
+/**
+ * `b` DOES WHAT THE BUTTON IT IS PRINTED ON DOES, wherever it is bound. On a booked row the bar's
+ * Resurface opens the horizon chooser (Now first), so the key opens it too — it used to cancel the
+ * booking, the one answer that button never gives. Unbooked, the key keeps its quick
+ * default; with no chrome setter (a provider-less mount) the verb stands. A toggle, as `m` is.
+ */
+export function pressResurfaceKey(
+  m: EngineMessage,
+  chrome: Pick<MessageChrome, "barPanel" | "setBarPanel">,
+  verb: (m: EngineMessage) => void,
+): void {
+  if (m.triage?.state !== "bubbled_up" || !chrome.setBarPanel) { verb(m); return; }
+  chrome.setBarPanel(
+    chrome.barPanel?.panel === "resurface" && chrome.barPanel.messageId === m.id
+      ? null
+      : { messageId: m.id, panel: "resurface" },
+  );
 }
 
 /**
@@ -203,7 +222,7 @@ export function useMessageVerbs(input: MessageVerbsInput): void {
       label: labels.resurface,
       disabled: none,
       ...parked,
-      run: () => shown && onAction("resurface", shown),
+      run: () => shown && pressResurfaceKey(shown, { barPanel, setBarPanel }, (m) => onAction("resurface", m)),
     },
     {
       /* SCREENING — this SENDER's future mail, anchored to the row so the menu opens where the

@@ -515,7 +515,7 @@ export function splitRoutingPlan(plan: ScreeningPlan): RoutingSplit {
 export type ScreeningToastKey =
   | "toastRuled" | "toastRetargeted" | "toastAlreadyRuled" | "toastAlreadyRuledRetro"
   | "toastRuledFuture" | "toastRuledMoved" | "toastRuleQueued" | "toastRuleFailed" | "toastMoved"
-  | "toastRuleOrganizer";
+  | "toastRuleOrganizer" | "toastDecideRefused";
 
 export function screeningToast(
   plan: ScreeningPlan,
@@ -530,13 +530,15 @@ export function screeningToast(
       // the thing that just happened rather than only the thing that already had.
       return plan.retro ? "toastAlreadyRuledRetro" : "toastAlreadyRuled";
     /**
-     * THE DECIDE PATH IS NOT AWAITED AND KEEPS THE SENTENCE IT SHIPPED WITH. Its rule is
-     * written by the server inside the decision's own transaction — there is no separate
-     * request whose outcome could differ from the decision's — and that path was verified when
-     * it shipped. Widening the await to it would change a shipped behaviour this change was not
-     * asked to touch.
+     * THE DECIDE SPEAKS FROM ITS OWN ANSWER. Its rule is written inside the decision's own
+     * transaction, so the decision IS the outcome — and a refused one (a reader, a mailbox nothing
+     * organizes: 409) moved nothing and made no rule. It used to answer "moved… files there too"
+     * over that refusal; `dispatchScreeningChange` now awaits it.
      */
     case "promoted":
+      if (ruleStatus === "rolled_back") return "toastDecideRefused";
+      if (ruleStatus === "awaiting_organizer") return "toastRuleOrganizer";
+      if (ruleStatus === "queued") return "toastRuleQueued";
       return "toastRuled";
     default:
       if (ruleStatus === "rolled_back") return "toastRuleFailed";
@@ -596,10 +598,15 @@ export async function dispatchScreeningChange(
   mutate: (m: EngineMutation) => Promise<{ status: MutationStatus }>,
 ): Promise<ScreeningToastKey> {
   const rules = plan.ruleMutations.map((m) => mutate(m));
+  /* …AND THE DECIDE, in the plan's own order: a refused decision is the answer the sentence owes.
+     The moves still go unawaited and roll their own rows back. */
+  const decides: Array<Promise<{ status: MutationStatus }>> = [];
   for (const m of plan.mutations) {
-    if (!plan.ruleMutations.includes(m)) void mutate(m);
+    if (plan.ruleMutations.includes(m)) continue;
+    if (m.kind === "screener_decide") decides.push(mutate(m));
+    else void mutate(m);
   }
-  return screeningToast(plan, worstStatus(await Promise.all(rules)));
+  return screeningToast(plan, worstStatus(await Promise.all([...rules, ...decides])));
 }
 
 /**

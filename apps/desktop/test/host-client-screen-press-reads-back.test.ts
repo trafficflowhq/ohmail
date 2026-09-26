@@ -89,7 +89,9 @@ describe("the paired desktop's sender sheet reads its press back from the list",
       rule({ id: "r-bare", destination: "INBOX", provenance: "seeded-from-sent" }),
       rule({ id: "r-split", destination: news as RuleDTO["destination"], subjectContains: TERM, createdAt: "2026-08-19T08:00:00.000Z" }),
     ]);
-    expect(await w.press()).toMatchObject({ key: "kept", count: 1, kept: 1, keptPlace: "ohmail/News", term: TERM });
+    // A rule that has not moved a letter no longer presents it elsewhere: the subject rule never
+    // filed the row, so it is in the Ohbox with the rest (this read "kept in News" before).
+    expect(await w.press()).toEqual({ key: "none" });
   });
 
   it("a higher-priority domain rule into News: the press's rule carries its priority", async () => {
