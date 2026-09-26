@@ -6,15 +6,19 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle, type PgliteDatabase } from "drizzle-orm/pglite";
-import { migrate } from "drizzle-orm/pglite/migrator";
 import { drizzle as drizzleSqliteProxy } from "drizzle-orm/sqlite-proxy";
 import postgres from "postgres";
-import { adoptBaseline } from "./baseline.js";
-import { JOURNALS } from "./migrate.js";
+import { JOURNALS, runMigrations } from "./migrate.js";
 import { schema } from "./schema.js";
 import { assertDistinct, brandDialect, deliverLocalNotifyAtCommit } from "./dialect/index.js";
 import { migrateSqlite } from "./sqlite-migrate.js";
 import { isProtocolOpener } from "./pg-socket.js";
+import {
+  declaredMigrations, journalMismatch, keyInputs, migrateFresh, templateDisabled, templatedPglite, templateKey,
+  type AppliedRow,
+} from "./testing-template.js";
+
+export { declaredMigrations } from "./testing-template.js";
 
 /**
  * Create an in-process PGlite-backed Drizzle client with all migrations applied. Tests only — no
@@ -26,13 +30,14 @@ import { isProtocolOpener } from "./pg-socket.js";
  */
 export async function makeTestDb(): Promise<PgliteDatabase<typeof schema>> {
   if (process.env[TEST_DIALECT_ENV] === "sqlite") return makeSqliteTestDb();
-  const client = new PGlite();
-  const db = brandDialect(drizzle(client, { schema }), "pg");
-  for (const spec of JOURNALS) {
-    await adoptBaseline(db, spec);
-    await migrate(db, { migrationsFolder: spec.dir, migrationsSchema: spec.migrationsSchema });
+  // The template IS that sequence, run once per journal state and verified on load; see
+  // `testing-template.ts`. `OHMAIL_PGLITE_TEMPLATE=0` is a person asking for the replay itself.
+  if (templateDisabled()) {
+    const client = new PGlite();
+    await migrateFresh(client);
+    return brandDialect(drizzle(client, { schema }), "pg");
   }
-  return db;
+  return brandDialect(drizzle(await templatedPglite(), { schema }), "pg");
 }
 
 /**
@@ -205,27 +210,6 @@ export function pgTestUrl(file: string, url: string = PG_TEST_URL, env: NodeJS.P
 /** Set this to `1` in CI so a missing Postgres FAILS the suite instead of skipping it. */
 export const REQUIRE_PG_ENV = "TF_REQUIRE_PG";
 
-/** One applied row of a journal table: the migration's stamp and the sha256 the migrator stored. */
-interface AppliedRow { hash: string; created_at: string | number }
-
-/**
- * `when` → sha256 of the migration file, for every migration this tree declares.
- *
- * The hash is exactly what the migrator writes into a journal table's `hash` column, so a
- * comparison against it needs nothing but the file on disk.
- */
-function declaredMigrations(dir: string): Map<number, string> {
-  const journal = JSON.parse(
-    readFileSync(join(dir, "meta", "_journal.json"), "utf8"),
-  ) as { entries: Array<{ when: number; tag: string }> };
-  const out = new Map<number, string>();
-  for (const e of journal.entries) {
-    const sql = readFileSync(join(dir, `${e.tag}.sql`));
-    out.set(Number(e.when), createHash("sha256").update(sql).digest("hex"));
-  }
-  return out;
-}
-
 /** The first twelve hex characters of a stored hash — enough to tell two apart in a sentence. */
 function shortHash(h: string): string {
   return String(h).slice(0, 12);
@@ -346,11 +330,11 @@ export async function realPgAvailable(url: string = PG_TEST_URL): Promise<boolea
 /**
  * THE MIGRATION SETUP BUDGET — why a hook that builds a database names its own timeout.
  *
- * Building one means replaying both journals, and that grows with every migration added:
- * measured from empty at load 8, 3.1 s, of which the 104 mail entries are 2.2 s and the trigram
- * indexes 18 ms — the JOURNAL is the cost. vitest's default `hookTimeout` is 10 s, and a hook
- * that crosses it fails as `Hook timed out in 10000ms` with no test name attached, which reads
- * as a defect in the code under test and is not one. The margin must beat a BUSY machine.
+ * A `create` replays both journals, and so does the FIRST clone of each sealed template key; that
+ * grows with every migration added (3.1 s from empty at load 8 when mail had 104 entries — the
+ * JOURNAL is the cost). vitest's default `hookTimeout` is 10 s, and a hook that crosses it fails
+ * as `Hook timed out in 10000ms` with no test name attached, which reads as a defect in the code
+ * under test and is not one. The margin must beat a BUSY machine.
  */
 export const MIGRATED_DB_SETUP_BUDGET_MS = 180_000;
 
@@ -375,6 +359,11 @@ export interface ThrowawayDb {
    */
   create(migrate: (url: string) => Promise<unknown>): Promise<void>;
   /**
+   * CREATE it as a clone of this tree's sealed server template ({@link cloneFromTemplate}), for a
+   * file whose subject is not the migrator. A refused clone drops the database, as `create` does.
+   */
+  createFromTemplate(): Promise<void>;
+  /**
    * Remove it. Idempotent and unconditional, so a teardown may call it when {@link create} never
    * ran, threw, or was ABANDONED by a hook timeout — the case a `finally` inside `create` cannot
    * reach, because the hook's promise is rejected while the work behind it is still in flight.
@@ -386,8 +375,8 @@ export interface ThrowawayDb {
 const LOGICAL_NAME = /^[a-z][a-z0-9_]{0,40}$/;
 
 /** An admin session on the maintenance database, with the role's own deadlines cleared. */
-async function adminSession(): Promise<ReturnType<typeof postgres>> {
-  const u = new URL(PG_TEST_URL);
+async function adminSession(serverUrl: string = PG_TEST_URL): Promise<ReturnType<typeof postgres>> {
+  const u = new URL(serverUrl);
   u.pathname = "/postgres";
   const admin = postgres(u.toString(), { max: 1, onnotice: () => { /* quiet */ } });
   // `ROLE_DEFAULT_TIMEOUTS` reaches this session, and a `statement_timeout` that interrupts the
@@ -452,6 +441,20 @@ export function throwawayDb(logical: string): ThrowawayDb {
         throw e;
       }
     },
+    async createFromTemplate() {
+      const admin = await adminSession();
+      try {
+        if (await stateOf(admin, name) !== "absent") await removeWith(admin);
+      } finally {
+        await admin.end({ timeout: 5 });
+      }
+      try {
+        await cloneFromTemplate(PG_TEST_URL, name);
+      } catch (e) {
+        await this.drop().catch(() => { /* the refusal is the one worth reporting */ });
+        throw e;
+      }
+    },
     async drop() {
       const admin = await adminSession();
       try {
@@ -461,6 +464,136 @@ export function throwawayDb(logical: string): ThrowawayDb {
       }
     },
   };
+}
+
+/** The database at `name` on the server `url` names, keeping host, port and credentials. */
+function onServer(url: string, name: string): string {
+  const u = new URL(url);
+  u.pathname = `/${name}`;
+  return u.toString();
+}
+
+/** Both journal tables of the database at `url`, row for row against this tree, or `null`. */
+export async function pgJournalMismatch(url: string): Promise<string | null> {
+  const sql = postgres(url, { max: 1, onnotice: () => { /* quiet */ } });
+  try {
+    for (const spec of JOURNALS) {
+      const table = `"${spec.migrationsSchema.replace(/"/g, '""')}"."__drizzle_migrations"`;
+      const present = await sql.unsafe(`SELECT to_regclass('${table}') IS NOT NULL AS ok`);
+      if (!present[0]?.ok) return `${spec.name}: no ${spec.migrationsSchema}.__drizzle_migrations table`;
+      const rows = await sql.unsafe(`SELECT hash, created_at FROM ${table} ORDER BY created_at`) as unknown as AppliedRow[];
+      const why = journalMismatch(spec, rows, declaredMigrations(spec.dir));
+      if (why !== null) return why;
+    }
+    return null;
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+}
+
+/** A sealed template's name, and the only shape {@link cloneFromTemplate} will unseal or drop. */
+export const PG_TEMPLATE_NAME = /^trafficflow_tpl_[0-9a-f]{16}$/;
+const PG_TEMPLATE_BUILD_NAME = /^trafficflow_tplbuild_[0-9a-f]{16}_[0-9a-f]{8}$/;
+/** A clone target is an identifier interpolated into DDL, and never the shared box. */
+const CLONE_TARGET = /^[a-z][a-z0-9_]{0,62}$/;
+
+/** Unseal and drop a template or a template build — the only two names this may touch. */
+async function dropSealed(admin: ReturnType<typeof postgres>, name: string): Promise<void> {
+  if (!PG_TEMPLATE_NAME.test(name) && !PG_TEMPLATE_BUILD_NAME.test(name)) {
+    throw new Error(`[pg-template] refusing to unseal or drop "${name}": not a template this tool made`);
+  }
+  if (await stateOf(admin, name) === "absent") return;
+  // An INVALID database (a DROP cut short) refuses ALTER; it was unsealed before that drop began.
+  await admin.unsafe(`ALTER DATABASE "${name}" WITH IS_TEMPLATE false`).catch(() => { /* the DROP names it */ });
+  await admin.unsafe(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
+}
+
+/**
+ * THIS TREE'S SEALED TEMPLATE on the admin session's server, built once per key: the PGlite key
+ * plus `server_version_num`. Built under a private name, verified, sealed (no connections, so
+ * nothing can write into it or poison a watermark), then renamed into place; a builder that loses
+ * the rename race drops its own copy and takes the winner's.
+ */
+async function ensurePgTemplate(
+  admin: ReturnType<typeof postgres>, serverUrl: string, say: (line: string) => void, salt: readonly string[],
+): Promise<string> {
+  const version = String((await admin`SHOW server_version_num`)[0]?.server_version_num ?? "");
+  if (!/^[0-9]+$/.test(version)) throw new Error(`[pg-template] SHOW server_version_num read "${version}"`);
+  const key = templateKey({ ...keyInputs(), extra: [`server_version_num:${version}`, ...salt] });
+  const tpl = `trafficflow_tpl_${key}`;
+  const state = await stateOf(admin, tpl);
+  if (state === "present") return tpl;
+  if (state === "invalid") await dropSealed(admin, tpl);
+  const build = `trafficflow_tplbuild_${key}_${createHash("sha256")
+    .update(`${process.pid}:${Date.now()}:${Math.random()}`).digest("hex").slice(0, 8)}`;
+  say(`[pg-template] building ${tpl} from empty (once per journal state and server version)`);
+  await admin.unsafe(`CREATE DATABASE "${build}"`);
+  try {
+    await runMigrations(onServer(serverUrl, build));
+    const why = await pgJournalMismatch(onServer(serverUrl, build));
+    if (why !== null) throw new Error(`[pg-template] the build of ${tpl} does not match this tree and was not published: ${why}`);
+    await admin.unsafe(`ALTER DATABASE "${build}" WITH IS_TEMPLATE true ALLOW_CONNECTIONS false`);
+    try {
+      await admin.unsafe(`ALTER DATABASE "${build}" RENAME TO "${tpl}"`);
+    } catch (e) {
+      if (await stateOf(admin, tpl) !== "present") throw e;
+    }
+  } finally {
+    await dropSealed(admin, build).catch(() => { /* a leftover build name is swept by its shape */ });
+  }
+  return tpl;
+}
+
+/** How {@link cloneFromTemplate} reports and verifies; `salt` keys a private template for a test. */
+export interface CloneOptions {
+  say?: (line: string) => void;
+  verify?: (url: string) => Promise<string | null>;
+  salt?: readonly string[];
+}
+
+/**
+ * CREATE `name` from this tree's sealed template and VERIFY THE CLONE row for row. On a mismatch
+ * the clone and the template are dropped and the template rebuilt once; a second mismatch throws.
+ * `name` must not exist: this creates, and never drops anything it did not create in this call.
+ * Resolves to the template's name.
+ */
+export async function cloneFromTemplate(serverUrl: string, name: string, opts: CloneOptions = {}): Promise<string> {
+  const say = opts.say ?? ((l: string) => { process.stderr.write(`${l}\n`); });
+  const verify = opts.verify ?? pgJournalMismatch;
+  if (!CLONE_TARGET.test(name) || name === SHARED_BOX_DB || PG_TEMPLATE_NAME.test(name) || name === "postgres") {
+    throw new Error(`[pg-template] "${name}" is not a database this clones into`);
+  }
+  const admin = await adminSession(serverUrl);
+  try {
+    let first: string | null = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const tpl = await ensurePgTemplate(admin, serverUrl, say, opts.salt ?? []);
+      await admin.unsafe(`CREATE DATABASE "${name}" TEMPLATE "${tpl}"`);
+      const why = await verify(onServer(serverUrl, name))
+        .catch((e: unknown) => `its journals could not be read (${e instanceof Error ? e.message : String(e)})`);
+      if (why === null) return tpl;
+      await admin.unsafe(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
+      await dropSealed(admin, tpl);
+      if (first !== null) {
+        throw new Error(`[pg-template] ${name}: the clone of ${tpl} failed its verify twice — first: ${first}; after the rebuild: ${why}`);
+      }
+      first = why;
+      say(`[pg-template] the clone of ${tpl} does not match this tree (${why}); the template was dropped, rebuilding once`);
+    }
+    throw new Error("[pg-template] unreachable: the loop returns or throws");
+  } finally {
+    await admin.end({ timeout: 5 });
+  }
+}
+
+/** Unseal and drop one template by name — a test's cleanup of its salted template. */
+export async function dropPgTemplate(serverUrl: string, name: string): Promise<void> {
+  const admin = await adminSession(serverUrl);
+  try {
+    await dropSealed(admin, name);
+  } finally {
+    await admin.end({ timeout: 5 });
+  }
 }
 
 /**
