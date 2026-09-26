@@ -74,6 +74,63 @@
   </screenshots>
 
   <releases>
+    <release version="0.25.1" date="2026-09-26">
+      <description>
+        <ul>
+          <li>A desktop left open for days keeps syncing</li>
+          <li>A sender's message list names the rule that decides</li>
+          <li>A phone control that cannot be pressed now dims</li>
+          <li>Every pairing refusal is in your language</li>
+          <li>Pressing Ohbox on a screened-out sender brings their mail back</li>
+          <li>The sender sheet shows where their mail is, and a decision overrides older rules</li>
+          <li>A pairing another computer refuses leaves your desktop as it was</li>
+          <li>A retried workflow creation from a proposal returns its first answer</li>
+          <li>The first page of a broad search on ohmail Cloud comes back sooner</li>
+          <li>Switching views is quick on large mailboxes</li>
+          <li>Long lists scroll by exactly what you scroll</li>
+          <li>Screen readers hear how long a list is</li>
+          <li>The desktop's first import makes far fewer file-system calls</li>
+          <li>The desktop's first import plans its database statements once</li>
+          <li>The desktop engine's check for mail deleted on the server reads the mailbox once</li>
+          <li>Pressing a year in History opens that year</li>
+          <li>Opening a message marks it read everywhere, even if you close the tab right after</li>
+          <li>Escape in the address suggestions closes the suggestions, not the message</li>
+          <li>Search's empty state reads as separate sentences</li>
+          <li>The phone stays signed in through a Wi-Fi sign-in page or a blocked network</li>
+          <li>Editing a rule made before the News rename no longer moves it</li>
+          <li>The browser stays signed in when a proxy answers a session renewal</li>
+          <li>The message list is no longer downloaded again on every sync</li>
+          <li>A refused connection is said next to the Connect button</li>
+          <li>An idle account no longer makes the app download its message list again</li>
+          <li>Rules that file into News are one place</li>
+          <li>The phone's History shows each message's folder</li>
+          <li>The phone's About says what the app does</li>
+          <li>No endless indexing sentence on the phone</li>
+          <li>History rows keep their own height on the phone</li>
+          <li>Settings names who files each mailbox</li>
+          <li>A mailbox's message count leaves deleted mail out</li>
+          <li>A self-hosted install no longer calls itself ohmail Cloud</li>
+          <li>A self-hosted server's certificate authority is read from one file</li>
+          <li>Signing in again works on a mailbox that was signed out</li>
+          <li>Signing in again works for mailboxes signed out on an earlier version</li>
+          <li>Forward is always offered</li>
+          <li>The phone answers under the option you pressed</li>
+          <li>Messages with many images open without a wait</li>
+          <li>An account is erased only when the entitlements program confirms it</li>
+          <li>Account reminders wait for the entitlements program's answer</li>
+          <li>Server alerts repeat less and leave closed accounts out</li>
+          <li>Your own mail stays out of the Screener</li>
+          <li>Settings shows Folders only where your server keeps the setting</li>
+          <li>The sent-mail review asks nothing when there is nobody to ask about</li>
+          <li>The Screener says where older mail from undecided senders is</li>
+          <li>Dismissing the held-mail offer reaches every device</li>
+          <li>A resurface set for a later date shows that date</li>
+          <li>An open phone paired to ohmail Cloud keeps receiving mail</li>
+          <li>The Screener shows a held message's full text on the desktop app too</li>
+          <li>Screening a sender into the Ohbox moves every message the list shows, and says what stays</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.25.0" date="2026-09-25">
       <description>
         <ul>
@@ -142,36 +199,6 @@
           <li>Someone you wrote to is never treated as spam</li>
           <li>An Undo stays on screen for its whole window</li>
           <li>The sign-in card opens at once when ohmail Cloud signs the desktop out</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.23.0" date="2026-09-23">
-      <description>
-        <ul>
-          <li>Pressing send or retry after a lost answer replays the answer instead of doing the thing twice</li>
-          <li>Every sentence the app says about what you get is either true or gone</li>
-          <li>The model you have is the model the settings show</li>
-          <li>A Microsoft sign-in that has started takes the form with it</li>
-          <li>Screening a sender out unsubscribes on the standalone app</li>
-          <li>Discarding a draft happens where you pressed it, and a send we could not confirm says so plainly</li>
-          <li>Composer: a space typed after a link no longer joins it, typing before a link never joins it, a web address before a full stop or comma is linked without the punctuation, inline code ends on a space and at a line break, arrow keys never type a space, and the toolbar lights exactly the marks the next letter carries.</li>
-          <li>Setup is about one mailbox at a time</li>
-          <li>No account is erased while the metering program states no start instant</li>
-          <li>An install no longer stands itself down against its own renewed claim when two renewals land in the same instant or the clock steps back</li>
-          <li>On Android 12 and older, the phone no longer says notifications are off while it organizes</li>
-          <li>Search finds a word inside another word, and always says whether your whole mailbox was searched</li>
-          <li>A message you act on leaves the list at once and stays gone</li>
-          <li>A self-hosted server answers a busy sign-in in five seconds</li>
-          <li>Moving a message yourself teaches the rule that filed it, and being copied on a thread nobody answered no longer counts as knowing somebody</li>
-          <li>Older messages you load behave like any other, and a press that moves many now reaches a mailbox another install organizes</li>
-          <li>The mailbox row says what is true now: a stop you changed your mind about from another window stops reading Stopping, and the import card says what not answering costs</li>
-          <li>A wrong setting is refused, and saved settings import back</li>
-          <li>A Screener row says which of your addresses a stranger wrote to, and Power Through works through the mail the screen shows</li>
-          <li>Sending is quicker, and a message scheduled for a date that does not exist is refused instead of sent on another day</li>
-          <li>A busy server is retried, not shown as a dead end</li>
-          <li>The desktop stays signed in to ohmail Cloud</li>
-          <li>Sign in on a new computer by confirming in your browser</li>
-          <li>Staying signed in on the web no longer depends on a busy server</li>
         </ul>
       </description>
     </release>

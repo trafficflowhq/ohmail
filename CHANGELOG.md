@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.25.1] — 2026-09-26
+
 ### A desktop left open for days keeps syncing
 <!-- changes: fix-025-paired-desktop-open-past-a-day.md -->
 
@@ -405,11 +412,6 @@ one subject of theirs, say — it says how many are in the Ohbox and how many st
 Remove that rule when the rule is about that address alone; a rule for everyone at their domain is
 named instead. Mail that did not move gets Move them, which moves all of it. Web, desktop and phone
 share the change.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
 
 ## [0.25.0] — 2026-09-25
 
@@ -8853,7 +8855,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.1...HEAD
+[0.25.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.1
 [0.25.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.0
 [0.24.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.24.0
 [0.23.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.23.2
