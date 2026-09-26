@@ -17,6 +17,7 @@ import { bridgeTx, bridgeDb, type Db, type ServiceContext } from "./context.js";
 import { foldersEnabled, userFolderById } from "./folders.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { instantRefusal, readInstant } from "./instant.js";
+import { zonedMonth, zonedMonthOf, type ZonedMonth } from "./reader-clock.js";
 import {
   materializeMessage, materializeMessages, materializeMessagesInOrder,
 } from "./dto/materialize.js";
@@ -707,12 +708,18 @@ export class MessageService {
   }
 
   /**
-   * THE HISTORY RAIL — ONE grouped read of the History index: every month's count and its newest
-   * message (the jump: `at` on `view=all`), the undated tail, and the total. Months in UTC.
+   * THE HISTORY RAIL — one grouped read of the History index: every month's count and its newest
+   * message (the jump: `at` on `view=all`), the undated tail, and the total. Months are the
+   * READER'S (`zone`, UTC when unstated): the grouping runs in UTC, then each zoned month a UTC
+   * month's rows can fall in (one either side) is counted over its own instant window, so both
+   * stores bucket by the same window arithmetic and the counts sum to the UTC ones.
    */
   // `undated`: messages with no date, the end of the timeline after every month.
-  async timeline(ctx: ServiceContext): Promise<{ total: number; months: TimelineMonth[]; undated: number }> {
+  async timeline(
+    ctx: ServiceContext, opts: { zone?: string } = {},
+  ): Promise<{ total: number; months: TimelineMonth[]; undated: number }> {
     const d = dialect(ctx.db);
+    const zone = opts.zone ?? "UTC";
     // scoped-by: the statement pins m.account_id = ctx.accountId
     // The newest row of each month by ONE probe of the History index per month (a month's rows
     // at its newest instant, highest id first) — a second pass over the account doubled the read.
@@ -734,8 +741,50 @@ export class MessageService {
       const date = instantText(r[1]);
       months.push({ month: date.slice(0, 7), count: Number(r[0] ?? 0), first: { date, id: String(r[2]) } });
     }
+    if (zone !== "UTC" && months.length > 0) months.splice(0, months.length, ...await this.zonedMonths(ctx, months, zone));
     months.sort((a, b) => (a.month < b.month ? 1 : a.month > b.month ? -1 : 0));
     return { total: months.reduce((n, m) => n + m.count, 0) + undated, months, undated };
+  }
+
+  /**
+   * The UTC months' rows, re-counted by the reader's calendar. A row's zoned month is its UTC month
+   * or one either side, so those windows cover every dated row once; each is a count and a newest
+   * row over the History index, and an empty one is dropped.
+   */
+  private async zonedMonths(ctx: ServiceContext, utc: readonly TimelineMonth[], zone: string): Promise<TimelineMonth[]> {
+    const d = dialect(ctx.db);
+    const windows = new Map<string, ZonedMonth>();
+    for (const m of utc) {
+      const [y, mo] = [Number(m.month.slice(0, 4)), Number(m.month.slice(5, 7))];
+      for (const k of [-1, 0, 1]) {
+        const at = new Date(Date.UTC(y, mo - 1 + k, 1));
+        const w = zonedMonth(at.getUTCFullYear(), at.getUTCMonth() + 1, zone);
+        windows.set(w.month, w);
+      }
+    }
+    const values = sql.join([...windows.values()].map((w) => sql`(${d.ts(w.start)}, ${d.ts(w.end)})`), sql`, `);
+    // scoped-by: every read pins ownedMessages(ctx.accountId)
+    const rows = await d.exec(ctx.db, sql`
+      with v(lo, hi) as (values ${values})
+      select g.c, g.d,
+        (select n.id from messages n
+          where ${ownedMessages(ctx.accountId, "n")} and n.date = g.d
+          order by n.id desc limit 1) as id
+      from (
+        select
+          (select ${d.castInt(sql`count(*)`)} from messages m
+            where ${ownedMessages(ctx.accountId, "m")} and m.date >= v.lo and m.date < v.hi) as c,
+          (select max(m.date) from messages m
+            where ${ownedMessages(ctx.accountId, "m")} and m.date >= v.lo and m.date < v.hi) as d
+        from v
+      ) g
+      where g.c > 0`);
+    return rows.map((r) => {
+      const date = instantText(r[1]);
+      const [y, mo] = zonedMonthOf(new Date(date), zone);
+      const month = `${String(y).padStart(4, "0")}-${String(mo).padStart(2, "0")}`;
+      return { month, count: Number(r[0] ?? 0), first: { date, id: String(r[2]) } };
+    });
   }
 
   /**

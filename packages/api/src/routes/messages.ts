@@ -2,7 +2,7 @@
 // so an edge from here into the hosted half would ship it.
 import { clientIdempotencyKey } from "@trafficflow/db";
 import {
-  ServiceError, type MarkSeenBody, type MessagePatchBody, type MoveBody,
+  ServiceError, parseReaderZone, type MarkSeenBody, type MessagePatchBody, type MoveBody,
 } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
@@ -56,8 +56,11 @@ export const messageRoutes: Route[] = [
     pattern: "/messages/timeline",
     relay: true,
     cost: "read",
-    handler: async (req, deps) =>
-      jsonResponse(await message(deps).timeline(serviceContext(deps, req))),
+    // `?zone=` is the reader's IANA zone, so a month is the one the rows' dates are read in.
+    handler: async (req, deps) => {
+      const zone = parseReaderZone(new URL(req.url).searchParams.get("zone"));
+      return jsonResponse(await message(deps).timeline(serviceContext(deps, req), zone ? { zone } : {}));
+    },
   },
   {
     // The batch body read, two modes over one route: `?after=<cursor>&limit=` — the keyset text

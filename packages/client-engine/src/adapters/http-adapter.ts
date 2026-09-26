@@ -78,6 +78,11 @@ export interface HttpAdapterOptions {
    * through it. Production leaves it unset and the wrapper uses `setTimeout`.
    */
   readWaitFor?: (ms: number) => Promise<void>;
+  /**
+   * The reader's IANA zone, asked at each History rail read so its months are the ones the rows
+   * are dated in. Defaults to the platform's zone, the one every stamp renders in.
+   */
+  readerZone?: () => string | null;
   /** Extra headers on every request (e.g. Authorization for bearer mode). */
   headers?: () => Record<string, string>;
   /**
@@ -110,6 +115,15 @@ export interface HttpAdapterOptions {
    * (`engine-config.ts`).
    */
   mayAsk?: () => boolean;
+}
+
+/** The zone this runtime names for itself, or `null` where it cannot name one. */
+function platformZone(): string | null {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
 }
 
 function defaultGetCookie(name: string): string | null {
@@ -297,6 +311,7 @@ export class HttpAdapter implements EngineAdapter {
    */
   private readonly readImpl: FetchLike;
   private readonly getCookie: (name: string) => string | null;
+  private readonly readerZone: () => string | null;
   private readonly csrfCookieName: string;
   private readonly extraHeaders: () => Record<string, string>;
   /** See {@link HttpAdapterOptions.stageAttachments}. `false` unless a host asked for it. */
@@ -383,6 +398,7 @@ export class HttpAdapter implements EngineAdapter {
     this.readImpl = retryingRead(this.fetchImpl, {
       ...(opts.readWaitFor ? { waitFor: opts.readWaitFor } : {}),
     });
+    this.readerZone = opts.readerZone ?? platformZone;
     this.getCookie = opts.getCookie ?? defaultGetCookie;
     this.csrfCookieName = opts.csrfCookieName ?? "tf_csrf";
     this.extraHeaders = opts.headers ?? (() => ({}));
@@ -909,7 +925,8 @@ export class HttpAdapter implements EngineAdapter {
    * through `rejectionOf`; a body that is not a timeline reads as "no timeline here".
    */
   async timeline(): Promise<StoreTimeline | null> {
-    const res = await this.request("GET", "/messages/timeline");
+    const zone = this.readerZone();
+    const res = await this.request("GET", `/messages/timeline${zone ? `?zone=${encodeURIComponent(zone)}` : ""}`);
     if (!res.ok) throw await this.rejectionOf(res);
     return readTimelineWire(await res.json());
   }

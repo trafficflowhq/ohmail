@@ -12,6 +12,10 @@
 export const SERVICES_VERSION = "0.0.0";
 
 export { ServiceError, IdempotencyRaceLost } from "./errors.js";
+// The reader's zone and locale as a client states them — History's months, a forward's date.
+export {
+  parseReaderZone, parseReaderLocale, forwardedDate, READER_ZONE_MAX_CHARS, READER_LOCALE_MAX_CHARS,
+} from "./reader-clock.js";
 export type { ServiceContext, Db } from "./context.js";
 // The fenced transaction door — see `context.ts`. On the mail leaf because the API's own
 // account-owned writers (the Junk window's rescue) reach it without the AI half.
