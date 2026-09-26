@@ -22,6 +22,7 @@ import {
   useScreenerSuggestions,
   type SenderSuggestion,
 } from "../../webapp/app/shell/screener-suggest";
+import type { SuggestStanding } from "../../webapp/app/shell/no-suggestion";
 import { cloudSuggestWire } from "./cloud-suggest.js";
 
 export interface CloudSuggestProps {
@@ -33,9 +34,14 @@ export interface CloudSuggestProps {
   unanswered: number;
   /** Put answers into the one overlay the rows read their chips from. */
   absorb: (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => void;
+  /**
+   * Put this control's refusal into the standing the rows read. Its machinery is its own copy, so a
+   * 402 here otherwise reached this control alone and the rows went on saying a suggestion is coming.
+   */
+  absorbStanding: (standing: SuggestStanding | null) => void;
 }
 
-export function CloudSuggest({ senders, resuggestable, unanswered, absorb }: CloudSuggestProps) {
+export function CloudSuggest({ senders, resuggestable, unanswered, absorb, absorbStanding }: CloudSuggestProps) {
   const toast = useToast();
   const suggestions = useScreenerSuggestions({
     /* Mounted only inside the Screener, so being here IS being active. The flag exists for the
@@ -44,6 +50,7 @@ export function CloudSuggest({ senders, resuggestable, unanswered, absorb }: Clo
     toast,
     wire: cloudSuggestWire,
     publish: absorb,
+    publishStanding: absorbStanding,
   });
   return <SuggestControl control={suggestions.forSenders(senders, resuggestable, unanswered)} />;
 }

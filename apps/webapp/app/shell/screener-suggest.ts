@@ -233,9 +233,15 @@ export interface ScreenerSuggestions {
    * The spend refusal a run last reported, or `null`. Read by the ROWS: a sender no run has
    * reached says "no suggestion yet", and "yet" is false on an account that may not spend — the
    * refusal arrived as a one-off toast under the batch that found it and every waiting row went on
-   * promising an answer. `null` until a run has stopped, and `null` again once one has not.
+   * promising an answer. `null` until a run has stopped or been refused, and `null` again once one
+   * has not.
    */
   standing: SuggestStanding | null;
+  /**
+   * Put a standing into {@link standing} from somewhere that is not this hook — {@link absorb}'s twin,
+   * for a host control that buys through its own copy of this machinery (the desktop's hosted door).
+   */
+  absorbStanding: (standing: SuggestStanding | null) => void;
   /**
    * Put answers into the overlay from somewhere that is not this hook.
    * There is exactly one overlay on screen — `useScreenerState` joins it
@@ -490,6 +496,12 @@ export function useScreenerSuggestions(opts: {
    * that seam speak one vocabulary.
    */
   publish?: (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => void;
+  /**
+   * WHERE THE STANDING LANDS WHEN THE ROWS ON SCREEN ARE SOMEBODY ELSE'S — {@link publish}'s twin for
+   * {@link ScreenerSuggestions.standing}. A control handed into the shell refused by the server must
+   * tell the shell's rows, or they go on promising a suggestion the next run cannot buy.
+   */
+  publishStanding?: (standing: SuggestStanding | null) => void;
 }): ScreenerSuggestions {
   const t = useTranslations("screener");
   const { active, toast } = opts;
@@ -525,10 +537,24 @@ export function useScreenerSuggestions(opts: {
   /**
    * WHY EVERY UNANSWERED ROW HAS NO ANSWER — see {@link ScreenerSuggestions.standing}. A run that
    * stops on the spend gate is reporting a condition, not an event: it will stop at the same place
-   * next time. Set when a run stops and cleared when one finishes without stopping, which is the
-   * only evidence this client gets that the condition has lifted.
+   * next time. Set when a run stops or is refused — answered or thrown — and cleared when one
+   * finishes without stopping, which is the only evidence this client gets that the condition has
+   * lifted (an access read also lifts the two refusals it describes).
    */
   const [standing, setStanding] = useState<SuggestStanding | null>(null);
+  /** The standing as last written, for the access read below, which must not close over state. */
+  const standingNow = useRef<SuggestStanding | null>(null);
+  /** The ONE writer: this hook's rows, and the host's when the rows are somebody else's. */
+  const writeStanding = useCallback((next: SuggestStanding | null) => {
+    standingNow.current = next;
+    setStanding(next);
+    link.current.publishStanding?.(next);
+  }, []);
+  /** See {@link ScreenerSuggestions.absorbStanding}: written here, never published back. */
+  const absorbStanding = useCallback((next: SuggestStanding | null) => {
+    standingNow.current = next;
+    setStanding(next);
+  }, []);
   /** See {@link ScreenerSuggestions.outstandingDecisions} — read off the one page fetch below. */
   const [outstanding, setOutstanding] = useState<readonly PendingDecision[]>([]);
   /**
@@ -660,8 +686,8 @@ export function useScreenerSuggestions(opts: {
    * and make the cold-mirror retrigger below work by accident rather than by design. The effects
    * read `link.current`; the dependency list stays the four signals it claims to be.
    */
-  const link = useRef({ wire, publish: opts.publish });
-  link.current = { wire, publish: opts.publish };
+  const link = useRef({ wire, publish: opts.publish, publishStanding: opts.publishStanding });
+  link.current = { wire, publish: opts.publish, publishStanding: opts.publishStanding };
   /**
    * THE SENTENCE FOR A REFUSAL, IN THE READER'S LANGUAGE WHERE THERE IS ONE.
    *
@@ -707,6 +733,8 @@ export function useScreenerSuggestions(opts: {
         if (!alive || available !== true) return;
         setNotice(null);
         setRefused(false);
+        // The rows' reason comes down with the line, for the two refusals an access read speaks to.
+        if (standingNow.current === "ai_disabled" || standingNow.current === "ai_unavailable") writeStanding(null);
         // RE-ARMED. The automatic path disarms itself on a refusal so it cannot flood a wall;
         // the wall is what just came down, so leaving it disarmed would trade a stale sentence
         // for a silently dead setting.
@@ -721,7 +749,7 @@ export function useScreenerSuggestions(opts: {
       alive = false;
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [refused]);
+  }, [refused, writeStanding]);
 
   const merge = useCallback(
     (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => {
@@ -885,6 +913,7 @@ export function useScreenerSuggestions(opts: {
           ...toSkips(res.skipped),
           ...toStopped(set, res),
         ]);
+        writeStanding(standingOfStop(res.stopped));
         // SAID OUT LOUD, every time, even though nobody pressed anything. This is the "visible
         // after the fact" half of the opt-in: money moved, so the same sentence the manual
         // purchase shows is shown here. A spend the user only discovers on their next invoice is
@@ -898,6 +927,10 @@ export function useScreenerSuggestions(opts: {
         // not, and disarming on the second one stopped the pass for a browser that had only
         // lost its owner marker.
         if (disarmsAutoSuggest(err)) io.current.autoDisarmed = true;
+        // THE ROWS HEAR IT TOO. A refusal that THROWS never reaches the answered branch above, so
+        // without this every waiting row said "a suggestion is coming" under a 402 toast.
+        const stood = standingOfRefusal(err);
+        if (stood !== null) writeStanding(stood);
         const why = say.current(err, notify.current.t("suggest.failed"));
         // ARMED FOR THE CLEAR: this line is a claim about the account, and an access read that
         // contradicts it must take it down (see the effect below).
@@ -917,7 +950,7 @@ export function useScreenerSuggestions(opts: {
     // has hydration settled, and is there anything in the queue yet. `toast`/`t` are read through
     // `notify` precisely so they cannot smuggle a fifth — see that ref's comment for the
     // measurement that made this necessary rather than tidy.
-  }, [active, autoSuggest, hydrateSettled, queueReady, merge]);
+  }, [active, autoSuggest, hydrateSettled, queueReady, merge, writeStanding]);
 
   /**
    * Deliberately NOT memoised. It is called during render and closes over every piece of the
@@ -1043,6 +1076,8 @@ export function useScreenerSuggestions(opts: {
             // taxonomy here is how a user gets told the wrong reason.
             setNotice(whyFor(err, t("suggest.failed")));
             if (clearedByAccess(err)) setRefused(true);
+            const stood = standingOfRefusal(err);
+            if (stood !== null) writeStanding(stood);
             return;
           }
           if (io.current.run !== run) return;
@@ -1183,6 +1218,9 @@ export function useScreenerSuggestions(opts: {
               // same event, with the moving one winning the reader's attention.
               setProgress(null);
               const why = whyFor(err, t("suggest.failed"));
+              // The rows it never reached wait on the same refusal — see {@link standingOfRefusal}.
+              const stood = standingOfRefusal(err);
+              if (stood !== null) writeStanding(stood);
               // A HALTED RUN STILL SPENT. Announced before the toast, so the allowance line and
               // the summary describe the same account at the same moment.
               if (charged > 0) announceSpend();
@@ -1232,7 +1270,7 @@ export function useScreenerSuggestions(opts: {
           // The run reached its end: either it stopped on the gate (and every row it never asked
           // about is waiting on the same refusal) or it did not, which is this client's only
           // evidence that an earlier refusal has lifted.
-          setStanding(stopped ?? null);
+          writeStanding(standingOfStop(stopped));
           setPhase("closed");
           setNotice(null);
           setRefused(false);
@@ -1299,6 +1337,8 @@ export function useScreenerSuggestions(opts: {
           // The server's own sentence — no classifier connected, AI switched off, no credits.
           // A second taxonomy here is how a user with an empty balance is told the model is down.
           setOptIn({ phase: "ready", quote: null, notice: whyFor(err, t("suggest.failed")) });
+          const stood = standingOfRefusal(err);
+          if (stood !== null) writeStanding(stood);
         }
       })();
     };
@@ -1321,6 +1361,7 @@ export function useScreenerSuggestions(opts: {
   // `merge` is the whole of `absorb`, exposed rather than reimplemented — see the interface.
   return {
     suggestions, absorb: merge, forSenders, autoOptIn, outstandingDecisions: outstanding, standing,
+    absorbStanding,
   };
 }
 
@@ -1535,6 +1576,31 @@ export function clientRefusalKey(err: unknown): string | null {
  */
 export function disarmsAutoSuggest(err: unknown): boolean {
   return !(err instanceof ApiError) || err.wire.coded;
+}
+
+/**
+ * THE STANDING A THROWN REFUSAL LEAVES — see {@link SuggestStanding}. Only a refusal a SERVER stated
+ * speaks for the account (the rule {@link disarmsAutoSuggest} keeps), and only one carrying a status:
+ * a bridge that never answered says nothing about it. The envelope's code picks the reason; every
+ * other refusal the route has (a mailbox organized elsewhere, a verification wall) is `refused`.
+ */
+export function standingOfRefusal(err: unknown): SuggestStanding | null {
+  if (!disarmsAutoSuggest(err)) return null;
+  if (typeof (err as { status?: unknown } | null | undefined)?.status !== "number") return null;
+  switch (aiRefusalKey(err)) {
+    case "insufficientCredits": return "no_budget";
+    case "aiDisabled": return "ai_disabled";
+    case "aiUnavailable": return "ai_unavailable";
+    default: return "refused";
+  }
+}
+
+/** The standing an ANSWERED run leaves: the gate's stop, or none — the quote's own stop was funded. */
+export function standingOfStop(
+  stopped: "out_of_credits" | "over_quote" | "spend_unavailable" | undefined,
+): SuggestStanding | null {
+  if (stopped === "out_of_credits") return "no_budget";
+  return stopped === "spend_unavailable" ? "spend_unavailable" : null;
 }
 
 /**

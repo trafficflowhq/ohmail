@@ -89,6 +89,7 @@ import { useJunkWindow, type JunkWire } from "./junk-window";
 import { useOlderBody, type OlderBodyWire } from "./older-body";
 import { syncMayRead } from "./sync-scheduler";
 import { useScreenerSuggestions, type SenderSuggestion, type SuggestWire } from "./screener-suggest";
+import type { SuggestStanding } from "./no-suggestion";
 import { AutoSuggestRow } from "./AutoSuggestRow";
 import { ScreeningSection } from "./ScreeningSection";
 import { DormancyRow } from "./DormancyRow";
@@ -734,6 +735,8 @@ export function AppShell({
     /** Waiting senders with no real suggestion (holds included) — the resting sentence's gate. */
     unanswered: number;
     absorb: (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => void;
+    /** Where the host control's refusals land, so the rows say why and never "coming". */
+    absorbStanding: (standing: SuggestStanding | null) => void;
   }) => ReactNode;
   /**
    * The away responder's two calls, when the host has its own wire. A transport and not a section: the responder must
@@ -995,6 +998,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     /** Waiting senders with no real suggestion (holds included) — the resting sentence's gate. */
     unanswered: number;
     absorb: (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => void;
+    absorbStanding: (standing: SuggestStanding | null) => void;
   }) => ReactNode;
   awayTransport?: AwayTransport;
   awayIsLocal?: boolean;
@@ -2637,6 +2641,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                         resuggestable: screener.suggestedSenders,
                         unanswered: screener.waitingCount - screener.suggestedCount,
                         absorb: suggestions.absorb,
+                        absorbStanding: suggestions.absorbStanding,
                       })
                 }
                 /* WHY THE ROWS WITH NO ADVICE HAVE NONE. One fact, read once, rendered on every

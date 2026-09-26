@@ -1331,10 +1331,10 @@ export function DesktopGate() {
             }
           : suggestDoor === "cloud"
             ? {
-                screenerSuggest: ({ senders, resuggestable, unanswered, absorb }) => (
+                screenerSuggest: ({ senders, resuggestable, unanswered, absorb, absorbStanding }) => (
                   <CloudSuggest
                     senders={senders} resuggestable={resuggestable}
-                    unanswered={unanswered} absorb={absorb}
+                    unanswered={unanswered} absorb={absorb} absorbStanding={absorbStanding}
                   />
                 ),
               }

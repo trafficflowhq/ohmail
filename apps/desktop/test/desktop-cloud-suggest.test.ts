@@ -10,6 +10,7 @@ import { CloudSuggest } from "../src/CloudSuggest.js";
 import { suggestDoorFor } from "../src/doors.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
 import type { SenderSuggestion } from "../../webapp/app/shell/screener-suggest";
+import type { SuggestStanding } from "../../webapp/app/shell/no-suggestion";
 
 /**
  * BUYING SUGGESTIONS FOR A HOSTED ACCOUNT, FROM THE APP.
@@ -82,7 +83,7 @@ interface Asked {
  * senders and a dry run quotes what it was asked about — which is what makes "the set that was
  * priced is the set that was bought" checkable rather than assumed.
  */
-function engineAnswering(): { asked: Asked[] } {
+function engineAnswering(refuseBuy?: { status: number; code: string }): { asked: Asked[] } {
   const asked: Asked[] = [];
   host.__TAURI_INTERNALS__ = {
     invoke: async (_command, payload) => {
@@ -104,6 +105,9 @@ function engineAnswering(): { asked: Asked[] } {
       }
       const senders = ((body?.senders as string[] | undefined) ?? []);
       const dryRun = body?.dryRun === true;
+      if (refuseBuy && !dryRun) {
+        return encode(refuseBuy.status, JSON.stringify({ error: { code: refuseBuy.code, message: "refused" } }));
+      }
       return encode(200, JSON.stringify({
         dryRun,
         requested: senders.length,
@@ -128,9 +132,11 @@ describe("the hosted door's suggest control", () => {
   let hostEl: HTMLDivElement;
   let root: Root;
   let absorbed: Array<{ address: string; suggestion: SenderSuggestion }>;
+  let stood: Array<SuggestStanding | null>;
 
   const mount = async (senders = SENDERS, resuggestable: string[] = []) => {
     absorbed = [];
+    stood = [];
     hostEl = document.createElement("div");
     document.body.append(hostEl);
     root = createRoot(hostEl);
@@ -150,6 +156,7 @@ describe("the hosted door's suggest control", () => {
                 resuggestable,
                 unanswered: 0,
                 absorb: (rows) => { absorbed.push(...rows); },
+                absorbStanding: (s) => { stood.push(s); },
               }),
             ),
           ),
@@ -268,6 +275,27 @@ describe("the hosted door's suggest control", () => {
 
     expect(absorbed.map((r) => r.address)).toEqual(SENDERS.slice(0, 3));
     expect(absorbed[0]?.suggestion.dest).toBe("ohbox");
+  });
+
+  /**
+   * A REFUSAL HERE REACHES THE SHELL'S ROWS. This control buys through its own copy of the shared
+   * machinery, so its 402 used to stay inside it while the rows (the shell's) went on saying a
+   * suggestion is coming. Mutation watched red: `publishStanding` dropped from `CloudSuggest`.
+   */
+  it("hands a refused purchase's standing to the rows the shell draws", async () => {
+    engineAnswering({ status: 402, code: "insufficient_credits" });
+    await mount(SENDERS.slice(0, 3));
+    await click("Suggest…");
+    await confirm();
+    expect(stood).toContain("no_budget");
+  });
+
+  it("…and a purchase that went through says nothing is refusing", async () => {
+    engineAnswering();
+    await mount(SENDERS.slice(0, 3));
+    await click("Suggest…");
+    await confirm();
+    expect(stood.at(-1)).toBeNull();
   });
 
   /**

@@ -68,7 +68,7 @@ import { readerHolder, type ReaderHolding, type ScreenerRole } from "../shell/ma
 import type { HeldBodyStall, ScreenerState, SpamRow } from "../shell/screener-state";
 import type { SuggestBatchControl } from "../shell/screener-suggest";
 import {
-  NO_SUGGESTION_KEY, noSuggestionReason, type SuggestStanding,
+  noSuggestionKey, noSuggestionReason, type SuggestStanding,
 } from "../shell/no-suggestion";
 import type { RemoteImagesChrome } from "../shell/remote-images";
 import { MessageBody } from "../components/MessageBody";
@@ -2488,10 +2488,11 @@ function WaitingPreview({
              of them: a sender no run has reached on an account that has to press. `coming` is the
              opted-in account's honest version of the same moment — a suggestion is being bought
              without a press and will appear here. Both are false for `no_ai` mail, which no model
-             sees automatically, and false on an account whose spend is refused. `data-why` is the
-             state a test reads, so the assertion is not on a sentence's wording. */
+             sees automatically, and false on an account whose spend is refused — whose sentence names
+             the refusal's reason. `data-why` is the state a test reads, so the assertion is not on a
+             sentence's wording. */
           <div className="scn-why scn-why-none" data-why={noSuggestionReason(sender, standing, autoSuggest)}>
-            <span>{t(NO_SUGGESTION_KEY[noSuggestionReason(sender, standing, autoSuggest)])}</span>
+            <span>{t(noSuggestionKey(noSuggestionReason(sender, standing, autoSuggest), standing))}</span>
           </div>
         )}
         {sender.held.length > 1 ? (

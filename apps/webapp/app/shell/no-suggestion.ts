@@ -36,8 +36,15 @@ export type NoSuggestionReason =
    */
   | "no_auto_ai";
 
-/** The stop a run reported, remembered until a later run contradicts it. */
-export type SuggestStanding = "out_of_credits" | "over_quote" | "spend_unavailable";
+/**
+ * WHY THE SUGGEST ROUTE REFUSED THIS ACCOUNT, remembered until a later run contradicts it. Every
+ * refusal writes it — a run the gate STOPPED (an answer) and a request REFUSED OUTRIGHT (a 402,
+ * 409 or 503, thrown) alike — because both leave the account in the same place: the next run is
+ * refused too, so no row may say a suggestion is coming. `refused` is any other refusal a server
+ * stated. The quote's own stop (`over_quote`) is not here: it is the number a person pressed.
+ */
+export type SuggestStanding =
+  | "no_budget" | "spend_unavailable" | "ai_disabled" | "ai_unavailable" | "refused";
 
 /** The catalogue key each reason renders, under the `screener` namespace. */
 export const NO_SUGGESTION_KEY: Record<NoSuggestionReason, string> = {
@@ -46,6 +53,20 @@ export const NO_SUGGESTION_KEY: Record<NoSuggestionReason, string> = {
   unavailable: "noSuggestionUnavailable",
   no_auto_ai: "noSuggestionNoAutoAi",
 };
+
+/** The `unavailable` sentence per standing — each names the reason, never only the fact. */
+export const UNAVAILABLE_KEY: Record<SuggestStanding, string> = {
+  no_budget: "noSuggestionNoBudget",
+  spend_unavailable: "noSuggestionUnavailable",
+  ai_disabled: "noSuggestionAiOff",
+  ai_unavailable: "noSuggestionAiDown",
+  refused: "noSuggestionRefused",
+};
+
+/** The key a row with no advice renders: {@link noSuggestionReason}, with the standing's reason. */
+export function noSuggestionKey(reason: NoSuggestionReason, standing: SuggestStanding | null): string {
+  return reason === "unavailable" && standing !== null ? UNAVAILABLE_KEY[standing] : NO_SUGGESTION_KEY[reason];
+}
 
 /**
  * Which of the four this row is. Read only where the row carries no `ai` at all — a `noAnswer`
