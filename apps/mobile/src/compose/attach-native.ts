@@ -10,11 +10,14 @@
 import { Buffer } from "buffer";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
+import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import { File } from "expo-file-system";
 import {
   base64SizeBytes,
+  shrinkBox,
   type AttachPicker,
   type AttachPickOutcome,
+  type ImageShrink,
   type PhoneComposeAttachment,
 } from "./attach";
 
@@ -37,14 +40,40 @@ function toAttachment(
   base64: string,
   name: string | null | undefined,
   mime: string | null | undefined,
+  uri: string,
 ): PhoneComposeAttachment {
   return {
     filename: typeof name === "string" && name !== "" ? name : FALLBACK_NAME,
     contentType: typeof mime === "string" && mime !== "" ? mime : FALLBACK_TYPE,
     contentBase64: base64,
     sizeBytes: base64SizeBytes(base64),
+    uri,
   };
 }
+
+/**
+ * THE SHRINK, over expo-image-manipulator — `attach.ts#shrinkPicked` decides whether to use it.
+ * Rendered once to read the picture's own dimensions (after its orientation), fitted by the
+ * web's rule (`shrinkBox`), re-encoded in the picture's own format. Any failure is `null`: the picked
+ * bytes attach as they were.
+ */
+export const nativeImageShrink: ImageShrink = async (uri, type, rule) => {
+  try {
+    const source = await ImageManipulator.manipulate(uri).renderAsync();
+    const box = shrinkBox(source.width, source.height, rule);
+    const context = ImageManipulator.manipulate(source);
+    if (box.width !== source.width || box.height !== source.height) context.resize(box);
+    const fitted = await context.renderAsync();
+    const saved = await fitted.saveAsync({
+      base64: true,
+      format: type === "image/png" ? SaveFormat.PNG : SaveFormat.JPEG,
+      compress: rule.quality,
+    });
+    return typeof saved.base64 === "string" && saved.base64.length > 0 ? saved.base64 : null;
+  } catch {
+    return null;
+  }
+};
 
 export function nativeAttachPicker(): AttachPicker {
   return {
@@ -69,7 +98,7 @@ export function nativeAttachPicker(): AttachPicker {
           unreadable += 1;
           continue;
         }
-        files.push(toAttachment(base64, asset.name, asset.mimeType));
+        files.push(toAttachment(base64, asset.name, asset.mimeType, asset.uri));
       }
       return { kind: "picked", files, unreadable };
     },
@@ -100,7 +129,7 @@ export function nativeAttachPicker(): AttachPicker {
           unreadable += 1;
           continue;
         }
-        files.push(toAttachment(base64, asset.fileName, asset.mimeType));
+        files.push(toAttachment(base64, asset.fileName, asset.mimeType, asset.uri));
       }
       return { kind: "picked", files, unreadable };
     },

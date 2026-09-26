@@ -1152,6 +1152,13 @@ const TABLE = {
   settings: "Settings",
   theme: "Appearance",
   themeNote: "Auto follows the system. Kept on this phone.",
+  pictureQuality: "Picture quality",
+  pictureQualityNote:
+    "JPEG and PNG pictures are made smaller on this phone before they are attached. Lower quality means smaller files. A picture that would not get smaller is attached as it was, and Original never re-encodes. Kept on this phone.",
+  pictureQualityLow: "Low",
+  pictureQualityMedium: "Medium",
+  pictureQualityHigh: "High",
+  pictureQualityOriginal: "Original",
   /* The three segments of the appearance control. They were literals in `app/settings.tsx` — the
      only words on that screen that were not already deck strings — and a control whose options are
      English on a German phone is the most visible untranslated thing an app can have. "Auto" is

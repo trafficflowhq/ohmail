@@ -759,6 +759,13 @@ export const DE: Deck = {
   settings: "Einstellungen",
   theme: "Erscheinungsbild",
   themeNote: "Automatisch folgt dem System. Bleibt auf diesem Telefon.",
+  pictureQuality: "Bildqualität",
+  pictureQualityNote:
+    "JPEG- und PNG-Bilder werden auf diesem Telefon verkleinert, bevor sie angehängt werden. Niedrigere Qualität bedeutet kleinere Dateien. Ein Bild, das dadurch nicht kleiner würde, wird unverändert angehängt, und „Original“ wird nie neu codiert. Bleibt auf diesem Telefon.",
+  pictureQualityLow: "Niedrig",
+  pictureQualityMedium: "Mittel",
+  pictureQualityHigh: "Hoch",
+  pictureQualityOriginal: "Original",
   themeAuto: "Automatisch",
   themeLight: "Hell",
   themeDark: "Dunkel",

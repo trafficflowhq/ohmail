@@ -688,6 +688,18 @@ export {
   type ComposeAttachCapBinding,
 } from "./attach-cap.js";
 
+/* The one picture-quality table the web and the phone composer shrink by. See its header. */
+export {
+  DEFAULT_IMAGE_QUALITY_LEVEL,
+  IMAGE_QUALITY_LEVELS,
+  IMAGE_QUALITY_RULES,
+  encodableImageType,
+  fitWithin,
+  isImageQualityLevel,
+  type ImageQualityLevel,
+  type ImageQualityRule,
+} from "./image-quality.js";
+
 /* The provider presets every connect surface reads. A leaf that imports nothing — see its header
    for why the phone is the reason it lives here. */
 export {

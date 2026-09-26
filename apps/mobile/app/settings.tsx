@@ -60,6 +60,17 @@ import { type AppLocale } from "../src/i18n/locale";
 import { DetailBar } from "../src/ui/chrome";
 import { Gated } from "../src/ui/Gated";
 import { Segmented } from "../src/ui/Segmented";
+import { IMAGE_QUALITY_LEVELS, type ImageQualityLevel } from "../src/compose/attach";
+
+/** The dial's four names, read at render so they follow the app's language. */
+function pictureQualityLabel(level: ImageQualityLevel): string {
+  switch (level) {
+    case "low": return Copy.pictureQualityLow;
+    case "medium": return Copy.pictureQualityMedium;
+    case "high": return Copy.pictureQualityHigh;
+    case "original": return Copy.pictureQualityOriginal;
+  }
+}
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 
 /** Gated like the tabs: the About block states a live session's facts, so it needs one. */
@@ -139,7 +150,7 @@ function SettingsBody() {
      under the finger rather than on the next navigation. */
   useLocale();
   const w = useWorld();
-  const { themePref, setTheme, facePin, setFacePin } = usePrefs();
+  const { themePref, setTheme, facePin, setFacePin, pictureQuality, setPictureQuality } = usePrefs();
   const wake = useWake();
   /*
    * The build's own name, read once. `expoConfig` is the config `expo prebuild` embedded in this
@@ -192,6 +203,20 @@ function SettingsBody() {
             />
             <Txt variant="caption" tone="ink3" style={{ marginTop: 10 }}>
               {Copy.themeNote}
+            </Txt>
+          </View>
+
+          {/* PICTURE QUALITY — the web's dial, the same four levels and the same table: how much a
+              picked picture is shrunk before it is attached. Kept on this phone. */}
+          <Section style={{ paddingTop: 16 }}>{Copy.pictureQuality}</Section>
+          <View style={{ paddingHorizontal: 16 }}>
+            <Segmented<ImageQualityLevel>
+              value={pictureQuality}
+              onChange={setPictureQuality}
+              segments={IMAGE_QUALITY_LEVELS.map((level) => ({ value: level, label: pictureQualityLabel(level) }))}
+            />
+            <Txt variant="caption" tone="ink3" style={{ marginTop: 10 }}>
+              {Copy.pictureQualityNote}
             </Txt>
           </View>
 

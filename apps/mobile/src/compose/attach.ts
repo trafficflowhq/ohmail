@@ -7,12 +7,70 @@
  * filed as a gap row. The expo pickers live in `attach-native.ts`, the twin the suite never
  * imports; this module imports no react-native and no expo.
  */
-import { composeAttachCap, type ComposeAttachment } from "@ohmail/client-engine";
+import {
+  IMAGE_QUALITY_RULES, composeAttachCap, encodableImageType, fitWithin,
+  type ComposeAttachment, type ImageQualityLevel, type ImageQualityRule,
+} from "@ohmail/client-engine";
 import type { PhoneMailbox } from "../net/mailboxes";
+
+/* The level vocabulary, for the setting and the sheet — this module is the phone's door to it. */
+export {
+  DEFAULT_IMAGE_QUALITY_LEVEL, IMAGE_QUALITY_LEVELS, isImageQualityLevel, type ImageQualityLevel,
+} from "@ohmail/client-engine";
 
 /** One picked file — the mutation's `ComposeAttachment` plus the size the admit rule weighs. */
 export interface PhoneComposeAttachment extends ComposeAttachment {
   sizeBytes: number;
+  /** Where the picker left the file — what a picture is shrunk from. Never sent. */
+  uri?: string;
+}
+
+/**
+ * RE-ENCODE ONE PICTURE — fitted inside `rule.maxEdge`, JPEG at `rule.quality`, a PNG in its own
+ * format — and answer its base64, or `null` where it could not. The native twin implements it
+ * over expo-image-manipulator; the node suite hands in a fake.
+ */
+export type ImageShrink = (
+  uri: string, type: "image/jpeg" | "image/png", rule: ImageQualityRule,
+) => Promise<string | null>;
+
+/** The box a picture is fitted to — the web's `fitWithin`, for the native twin's use. */
+export function shrinkBox(width: number, height: number, rule: ImageQualityRule): { width: number; height: number } {
+  return fitWithin(width, height, rule.maxEdge);
+}
+
+/**
+ * SHRINK PICKED PICTURES BEFORE THE CAP — the web's `compressImage` rule on this phone, the same
+ * level table (`@ohmail/client-engine`). Only JPEG and PNG; `original` and every other type pass
+ * untouched; a re-encode that is not SMALLER is dropped and the picked bytes attach (a bigger,
+ * worse file is worse than not running). Never throws: a picture that cannot be shrunk attaches
+ * as it was, and the cap decides.
+ */
+export async function shrinkPicked(
+  files: readonly PhoneComposeAttachment[],
+  level: ImageQualityLevel,
+  shrink: ImageShrink,
+): Promise<PhoneComposeAttachment[]> {
+  const rule = IMAGE_QUALITY_RULES[level];
+  const out: PhoneComposeAttachment[] = [];
+  for (const file of files) {
+    const type = encodableImageType(file.contentType);
+    if (rule === null || type === null || !file.uri) {
+      out.push(file);
+      continue;
+    }
+    let smaller: string | null = null;
+    try {
+      smaller = await shrink(file.uri, type, rule);
+    } catch {
+      smaller = null;
+    }
+    const bytes = smaller === null ? 0 : base64SizeBytes(smaller);
+    out.push(smaller !== null && bytes > 0 && bytes < file.sizeBytes
+      ? { ...file, contentType: type, contentBase64: smaller, sizeBytes: bytes }
+      : file);
+  }
+  return out;
 }
 
 /**

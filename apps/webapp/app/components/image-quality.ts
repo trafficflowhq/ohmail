@@ -33,54 +33,28 @@
 
 import { durableSet } from "../shell/durable";
 
-/**
- * The four levels, ASCENDING BY QUALITY, with `original` last.
- *
- * One order, and both surfaces render it as it stands — the Settings segment and the compose row.
- * The old pair of levels needed two orders (Settings ascended, compose reversed to lead with the
- * strongest squeeze) because the axis was effort and the default sat at the far end. On a quality
- * axis the default is in the middle and `original` is the terminal case, so ascending reads
- * correctly in both places and neither surface reverses anything.
+/*
+ * THE LEVEL TABLE LIVES IN `@ohmail/client-engine` (`image-quality.ts` there) — the phone composer
+ * shrinks by the same numbers, so a picture attaches the same at the same level on both. Re-exported
+ * under the names every caller here already used; the storage and the canvas below stay this file's.
  */
-export const IMAGE_QUALITY_LEVELS = ["low", "medium", "high", "original"] as const;
-
-export type ImageQualityLevel = (typeof IMAGE_QUALITY_LEVELS)[number];
-
-/**
- * Medium by default — a decision, not an omission. Mail is not a photo library: the common
- * attachment is a phone photo sent so somebody can look at it, and a default of `original` pays
- * full size for nothing. The dial used to default to the hardest squeeze (1600px at 0.72), chosen
- * when every hosted send had to fit 3 MB of request body; staged uploads removed that reason — the
- * ceiling now is the sending server's announced `SIZE`, typically 25–50 MB — so 2048px at 0.82 is
- * the honest middle: indistinguishable in a mail reader, a fraction of the bytes, leaving the two
- * ends of the dial for the people who mean them. A guard pins this value specifically, because the
- * default being `medium` is the product decision, not an artefact of array position.
- */
-export const DEFAULT_IMAGE_QUALITY_LEVEL: ImageQualityLevel = "medium";
-
-export interface ImageQualityRule {
-  /** The longest side the output may have, in pixels. A smaller picture is never enlarged. */
-  readonly maxEdge: number;
-  /** JPEG encoder quality, 0–1. Ignored by the PNG encoder, which is lossless. */
-  readonly quality: number;
-}
-
-/**
- * The one table. Every number this feature applies is here and nowhere else — no second copy in the
- * component, the settings row or the tests, which assert against these values. The edges are chosen
- * against what the picture is FOR: 1600px is larger than any mail reader's column and sharp
- * full-screen on a laptop; 2048 covers a 4K viewer; 3200 keeps enough for a modest crop or print.
- * The qualities are the usual JPEG knee — artefacts start below about 0.6, and above about 0.9 the
- * file grows fast for nothing. The numbers are unchanged from the levels they replace; only which
- * NAME points at which row moved, by exactly one reversal — see the header.
- */
-export const IMAGE_QUALITY_RULES: Readonly<Record<ImageQualityLevel, ImageQualityRule | null>> = {
-  low: { maxEdge: 1600, quality: 0.72 },
-  medium: { maxEdge: 2048, quality: 0.82 },
-  high: { maxEdge: 3200, quality: 0.92 },
-  /** Ship the file exactly as it was picked. No decode, no canvas, no metadata stripped. */
-  original: null,
-};
+export {
+  DEFAULT_IMAGE_QUALITY_LEVEL,
+  IMAGE_QUALITY_LEVELS,
+  IMAGE_QUALITY_RULES,
+  fitWithin,
+  isImageQualityLevel,
+  type ImageQualityLevel,
+  type ImageQualityRule,
+} from "@ohmail/client-engine";
+import {
+  DEFAULT_IMAGE_QUALITY_LEVEL,
+  IMAGE_QUALITY_RULES,
+  encodableImageType,
+  fitWithin,
+  isImageQualityLevel,
+  type ImageQualityLevel,
+} from "@ohmail/client-engine";
 
 /**
  * Where the level lives — this browser, per account. `localStorage` like the theme (per-machine, worth neither a
@@ -121,10 +95,6 @@ export function legacyImageShrinkKeyFor(accountId: string | null): string {
   return accountId
     ? `${LEGACY_IMAGE_SHRINK_STORAGE_KEY}:${accountId}`
     : LEGACY_IMAGE_SHRINK_STORAGE_KEY;
-}
-
-export function isImageQualityLevel(value: unknown): value is ImageQualityLevel {
-  return typeof value === "string" && (IMAGE_QUALITY_LEVELS as readonly string[]).includes(value);
 }
 
 /**
@@ -194,36 +164,6 @@ interface BitmapLike {
   readonly width: number;
   readonly height: number;
   close?: () => void;
-}
-
-/**
- * The MIME types this file will re-encode, normalised to what a canvas actually accepts.
- *
- * `image/jpg` and `image/pjpeg` are real values from real pickers and neither is a canvas type: a
- * canvas handed an unknown type silently encodes PNG instead, which would turn a JPEG into a
- * PNG — a format change, in the file whose first rule is that formats are kept. Normalising is not
- * a conversion; it is the same format under the name the spec gave it.
- */
-function encodableType(mime: string | undefined): "image/jpeg" | "image/png" | null {
-  const m = (mime ?? "").toLowerCase().split(";")[0]!.trim();
-  if (m === "image/jpeg" || m === "image/jpg" || m === "image/pjpeg") return "image/jpeg";
-  if (m === "image/png") return "image/png";
-  return null;
-}
-
-/** The output box: the source scaled to fit `maxEdge`, never enlarged, never below 1px. */
-export function fitWithin(
-  width: number,
-  height: number,
-  maxEdge: number,
-): { width: number; height: number } {
-  const longest = Math.max(width, height);
-  if (longest <= maxEdge) return { width, height };
-  const scale = maxEdge / longest;
-  return {
-    width: Math.max(1, Math.round(width * scale)),
-    height: Math.max(1, Math.round(height * scale)),
-  };
 }
 
 /**
@@ -330,7 +270,7 @@ export async function compressImage(file: Blob, level: ImageQualityLevel): Promi
   const rule = IMAGE_QUALITY_RULES[level];
   if (rule === null) return original;
 
-  const type = encodableType(file.type);
+  const type = encodableImageType(file.type);
   if (type === null || originalBytes === 0) return original;
 
   const bitmap = await decode(file);

@@ -74,6 +74,7 @@ import { Icon, type IconName } from "./Icon";
 import { sendLaterOffered } from "./standalone-form";
 import {
   admitPicked,
+  shrinkPicked,
   phoneAttachCap,
   phoneSendNeedsContent,
   toComposeAttachments,
@@ -81,7 +82,8 @@ import {
   type PhoneComposeAttachment,
 } from "../compose/attach";
 /* The expo pickers — a `*-native.ts` twin the suite never imports; every rule is in attach.ts. */
-import { nativeAttachPicker } from "../compose/attach-native";
+import { nativeAttachPicker, nativeImageShrink } from "../compose/attach-native";
+import { usePrefs } from "../state/store";
 import { afterWithdraw, cancelAct } from "./send-cancel";
 import { keepAct, worthKeeping } from "./compose-keep";
 import { Segmented } from "./Segmented";
@@ -1066,6 +1068,7 @@ export function ComposeSheet({
      asked yet", which states nothing rather than a guessed address. */
   const fromAddress = w.mailboxes.rows.find((r) => r.id === mailboxId)?.address ?? null;
   const attachCap = phoneAttachCap(w.mailboxes.rows, mailboxId ?? "");
+  const { pictureQuality } = usePrefs();
   const pick = async (which: "files" | "photos") => {
     if (phase !== "idle") return;
     const picker = nativeAttachPicker();
@@ -1077,7 +1080,10 @@ export function ComposeSheet({
       setAttachNotes([{ kind: "unavailable" }]);
       return;
     }
-    const admit = admitPicked(attachments, outcome.files, attachCap);
+    /* SHRUNK BEFORE THE CAP, as the web does — a photo that only fits once shrunk must attach.
+       The level is read at the pick, so a change in Settings applies to the next one. */
+    const picked = await shrinkPicked(outcome.files, pictureQuality, nativeImageShrink);
+    const admit = admitPicked(attachments, picked, attachCap);
     const notes: AttachNote[] = [];
     if (admit.overCap > 0) notes.push({ kind: "overCap" });
     if (admit.duplicates.length > 0) notes.push({ kind: "duplicates", filenames: admit.duplicates.join(", ") });

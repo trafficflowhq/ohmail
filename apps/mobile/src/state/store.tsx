@@ -13,6 +13,8 @@ import type { FaceName } from "../theme/face";
 import type { ThemePref } from "./model";
 import type { SecureKV } from "./servers";
 import { appearanceStore, DEFAULT_APPEARANCE, type StoredAppearance } from "./appearance-store";
+import { DEFAULT_IMAGE_QUALITY_LEVEL, type ImageQualityLevel } from "../compose/attach";
+import { pictureQualityStore } from "./picture-quality-store";
 
 export interface Prefs {
   themePref: ThemePref;
@@ -25,6 +27,9 @@ export interface Prefs {
   facePin: FaceName | null;
   /** Pin this device's face, or pass `null` to hand it back to the account. Instant, local. */
   setFacePin: (face: FaceName | null) => void;
+  /** How much a picked picture is shrunk before it is attached — the web's dial, kept here. */
+  pictureQuality: ImageQualityLevel;
+  setPictureQuality: (level: ImageQualityLevel) => void;
 }
 
 const PrefsContext = createContext<Prefs | null>(null);
@@ -40,11 +45,15 @@ export function PrefsProvider({ kv, children }: { kv?: SecureKV; children: React
   /* Built once per mount, like the locale provider's sequencer, so a caller passing a fresh
      keystore binding each render does not rebuild it. */
   const store = useMemo(() => appearanceStore(kv, setState), []);
+  const [pictureQuality, setPictureQualityState] = useState<ImageQualityLevel>(DEFAULT_IMAGE_QUALITY_LEVEL);
+  const pictures = useMemo(() => pictureQualityStore(kv, setPictureQualityState), []);
 
   useEffect(() => {
     void store.boot();
-    return () => { store.dispose(); };
-  }, [store]);
+    void pictures.boot();
+    return () => { store.dispose(); pictures.dispose(); };
+  }, [store, pictures]);
+  const setPictureQuality = useCallback((level: ImageQualityLevel) => pictures.set(level), [pictures]);
 
   const setTheme = useCallback((pref: ThemePref) => store.setTheme(pref), [store]);
   /* Stable identity: the face scope machine in the world layer closes over this to drop the pin
@@ -52,8 +61,11 @@ export function PrefsProvider({ kv, children }: { kv?: SecureKV; children: React
   const setFacePin = useCallback((face: FaceName | null) => store.setFacePin(face), [store]);
 
   const value = useMemo<Prefs>(
-    () => ({ themePref: state.themePref, setTheme, facePin: state.facePin, setFacePin }),
-    [state, setTheme, setFacePin],
+    () => ({
+      themePref: state.themePref, setTheme, facePin: state.facePin, setFacePin,
+      pictureQuality, setPictureQuality,
+    }),
+    [state, setTheme, setFacePin, pictureQuality, setPictureQuality],
   );
   return <PrefsContext.Provider value={value}>{children}</PrefsContext.Provider>;
 }
