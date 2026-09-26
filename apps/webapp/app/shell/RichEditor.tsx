@@ -10,6 +10,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { NodeSelection, TextSelection, type EditorState, type Transaction } from "@tiptap/pm/state";
 import { AutolinkPunctuation, CodeMark, LinkMark, MarkBoundaries, nextMarks } from "./rich-editor-marks";
 import type { ResolvedPos } from "@tiptap/pm/model";
+import type { EditorView } from "@tiptap/pm/view";
 import { LinkPopover } from "./LinkPopover";
 import {
   EMPTY_RICH, escapeAsParagraphs, isRichEmpty, richToHtml, type RichValue,
@@ -58,6 +59,19 @@ const EnterAsHardBreak = Extension.create({
     };
   },
 });
+
+/**
+ * ESCAPE IS THE EDITOR'S ONLY WHEN ONE OF ITS BINDINGS TAKES IT. ProseMirror prevents every
+ * Escape, and the keymap leaves a prevented key alone, so the bindings that close the reply and
+ * Compose never heard one pressed in the body. The editor's own bindings are asked as ProseMirror
+ * asks them and one that takes the key prevents it; otherwise ProseMirror's blanket capture is
+ * skipped and the key reaches the shell. An Escape ending a composition stays ProseMirror's.
+ */
+function escapeUnlessTaken(view: EditorView, e: KeyboardEvent): boolean {
+  if (e.key !== "Escape" || e.isComposing || view.composing) return false;
+  if (view.someProp("handleKeyDown", (f) => f(view, e))) e.preventDefault();
+  return true;
+}
 
 /** The marks and nodes this editor offers, and the ones it explicitly refuses. */
 const EXTENSIONS = [
@@ -229,7 +243,7 @@ export function RichEditor({
          a binding takes, so the keymap, which leaves a handled key alone, never heard Send.
          Answering `true` here skips ProseMirror's handling without claiming the key. */
       handleDOMEvents: {
-        keydown: (_view, e) => e.key === "Enter" && (e.metaKey || e.ctrlKey),
+        keydown: (view, e) => (e.key === "Enter" && (e.metaKey || e.ctrlKey)) || escapeUnlessTaken(view, e),
       },
       attributes: {
         /**
