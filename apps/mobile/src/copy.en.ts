@@ -1770,6 +1770,8 @@ const TABLE = {
      states it AND this press carried different words; either alone is an ordinary send. */
   replyEarlierWent: "This reply had already been sent. Your newer text was not sent as a second copy.",
   replyQueued: "Not sent yet. ohmail is still trying.",
+  /* A send pressed with no network waits in the outbox and goes once it is back (`send-waits.ts`). */
+  replyQueuedOffline: "Not sent yet. This phone has no network; the message goes when it is back.",
   replyUnverified: "We couldn't confirm this send. Check your Sent folder before sending it again.",
   replyAlreadySent: "Too late to cancel. This message has already been sent.",
   replyFailed: "Sending didn't work. Try again.",

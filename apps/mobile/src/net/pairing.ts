@@ -26,6 +26,7 @@ import type { ReopenOutcome, StandaloneEngine } from "../engine/standalone-door"
 import { ServerProfileStore, type ServerProfile } from "../state/servers";
 import { BearerManagerRN, type FetchLike, type RefreshVault } from "./bearer";
 import { withAccessLock } from "./access-lock";
+import { networkNow } from "./network-door";
 import {
   canPin, isNotTls, isPinFailure, pin as installPin, unpin, unreachableClause,
 } from "./host-pinning";
@@ -1376,6 +1377,8 @@ async function buildLocalSession(env: PairingEnv, profile: ServerProfile): Promi
     origin: LOCAL_ENGINE_ORIGIN,
     accountId: profile.accountId,
     localEngine: door,
+    // A send pressed with no network waits in the outbox for it (`engine/send-waits.ts`).
+    network: networkNow,
   });
   if (boot.kind === "refused") return { kind: "refused", reason: boot.reason };
   return {

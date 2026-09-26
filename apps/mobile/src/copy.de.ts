@@ -1163,6 +1163,7 @@ export const DE: Deck = {
   replySent: "Antwort gesendet.",
   replyEarlierWent: "Diese Antwort wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
   replyQueued: "Noch nicht gesendet. ohmail versucht es weiter.",
+  replyQueuedOffline: "Noch nicht gesendet. Dieses Telefon hat kein Netz; die Nachricht geht raus, sobald es wieder da ist.",
   replyUnverified: "Wir konnten diesen Versand nicht bestätigen. Schau in deinen Gesendet-Ordner, bevor du nochmal sendest.",
   replyAlreadySent: "Zu spät zum Abbrechen. Diese Nachricht wurde bereits gesendet.",
   replyFailed: "Senden hat nicht geklappt. Versuch es nochmal.",

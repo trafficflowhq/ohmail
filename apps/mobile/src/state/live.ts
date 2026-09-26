@@ -116,7 +116,7 @@ import {
   type RoutingReplay, type ScreenCommitAnswer,
 } from "./held-routing";
 import type { ScreeningAnswer } from "../net/consent";
-import type { NetworkState } from "../net/network-door";
+import { networkNow, type NetworkState } from "../net/network-door";
 import type { ServerWaitingSender } from "../net/screener";
 import {
   destDone,
@@ -3594,7 +3594,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     else if (outcome === "sent" || sayRefusals) {
       toast(
         outcome === "sent" ? (earlierWent ? earlierWentToast : sentToast)
-          : outcome === "queued" ? refuse("replyQueued")
+          : outcome === "queued" ? refuse(networkNow() === "offline" ? "replyQueuedOffline" : "replyQueued")
             : outcome === "unverified" ? refuse("replyUnverified")
               : failedSendCopy(settled) === "replyNotSecured" ? refuse("replyNotSecured")
                 : failedSendCopy(settled) === "replyLoginRefused" ? refuse("replyLoginRefused")
@@ -3623,6 +3623,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // the server's half of the question, asked when the answer comes back.
     if (standing !== undefined && sendTextDiffers(standing.mutation, m)) {
       noteResumedOverOtherText(engine, standing.key);
+    }
+    /* WITH NO NETWORK, THE SAME WORDS PRESSED AGAIN ARE THE SEND THAT WAITS. A second row under
+       the key would be replayed on the return after the first had gone, and each replay writes a
+       draft of its own (`send-waits.ts`). Different words keep the resume below. */
+    if (standing !== undefined && networkNow() === "offline" && !sendTextDiffers(standing.mutation, m)) {
+      return Promise.resolve({ id: standing.id, key: standing.key, status: "queued", seq: null });
     }
     return engine.mutate(m, standing === undefined ? {} : { key: standing.key });
   };

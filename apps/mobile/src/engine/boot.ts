@@ -26,6 +26,8 @@ import {
 import { Copy } from "../copy";
 import { faultDetail, refuse, type Refusal } from "../refusal";
 import { StoreFault } from "../state/servers";
+import type { NetworkState } from "../net/network-door";
+import { sendWaitsForNetwork } from "./send-waits";
 
 /** What the platform must provide — expo modules in the app, node modules in tests. */
 export interface MobileEngineDeps {
@@ -119,6 +121,12 @@ export interface ConnectConfig {
    * not decided which one it is talking to.
    */
   localEngine?: LocalEngineDoor;
+  /**
+   * The phone's network, from the network door — read on the standalone arm only. While it says
+   * `offline` a send's send step waits in the outbox instead of reaching the engine
+   * (`send-waits.ts`). Absent, every send goes to the engine as before.
+   */
+  network?: () => NetworkState;
 }
 
 /**
@@ -160,6 +168,25 @@ export function localEngineTransport(door: LocalEngineDoor): {
         headers: { ...Object.fromEntries(new Headers(given.headers).entries()), ...headers() },
       }));
     },
+  };
+}
+
+/**
+ * THE SEND STEP WAITS FOR THE NETWORK — the standalone adapter's transport, and nothing else's.
+ * While the network door reads `offline` a `POST /drafts/:id/send` fails here as a network failure
+ * does, before the engine: the outbox keeps it under its key, the adapter keeps the draft it just
+ * wrote bound to that key, and the flush after the return sends that draft (`send-waits.ts`).
+ */
+function heldWhileOffline(
+  fetch: (url: string, init?: unknown) => Promise<Response>,
+  network: (() => NetworkState) | undefined,
+): (url: string, init?: unknown) => Promise<Response> {
+  if (network === undefined) return fetch;
+  return (url, init) => {
+    const method = (init as RequestInit | undefined)?.method ?? "GET";
+    return sendWaitsForNetwork(method, new URL(url).pathname, network())
+      ? Promise.reject(new TypeError("Network request failed: this phone has no network"))
+      : fetch(url, init);
   };
 }
 
@@ -503,7 +530,7 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
     ? localTransport.headers
     : config.auth?.headers ?? (() => ({ authorization: `Bearer ${token}` }));
   const fetchImpl = localTransport !== null
-    ? localTransport.fetch
+    ? heldWhileOffline(localTransport.fetch, config.network)
     : config.auth?.fetch ??
       deps.fetch ??
       (globalThis.fetch.bind(globalThis) as NonNullable<MobileEngineDeps["fetch"]>);

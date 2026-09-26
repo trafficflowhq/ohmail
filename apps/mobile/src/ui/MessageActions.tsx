@@ -72,6 +72,8 @@ import {
 } from "./reader-verbs";
 import { Icon, type IconName } from "./Icon";
 import { scheduledNotHereSentence, sendLaterOffered } from "./standalone-form";
+import { useNetworkNow } from "../net/network-door";
+import { queuedCaptionKey } from "../engine/send-waits";
 import {
   admitPicked,
   shrinkPicked,
@@ -1009,6 +1011,8 @@ export function ComposeSheet({
   const [phase, setPhase] = useState<"idle" | "sending" | "queued" | "unverified">("idle");
   /** The queued send's Idempotency-Key — what the settle effect follows through the ledger. */
   const [queuedKey, setQueuedKey] = useState<string | null>(null);
+  /** The phone's network, so a send waiting for it says so in place (`send-waits.ts`). */
+  const network = useNetworkNow();
   /**
    * TRUE once a Cancel was answered "too late": the request had left and this device cannot
    * un-send it. The sentence stands in place and the next press dismisses — see `closeComposer`.
@@ -1554,7 +1558,7 @@ export function ComposeSheet({
           ) : null}
           {phase === "queued" || phase === "unverified" ? (
             <Txt variant="caption" tone="ink3">
-              {phase === "queued" ? Copy.replyQueued : Copy.replyUnverified}
+              {phase === "queued" ? Copy[queuedCaptionKey(network)] : Copy.replyUnverified}
             </Txt>
           ) : null}
           {phase === "unverified" && againNote ? (
