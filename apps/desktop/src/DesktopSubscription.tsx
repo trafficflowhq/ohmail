@@ -102,7 +102,7 @@ export function useDesktopManageOffer(accountDoor: boolean): ManageOffer {
  * which is granted no command) does what it did before: nothing, rather than taking the app's
  * own window to a page it cannot come back from.
  */
-function leaveFor(url: string): void {
+export function leaveForAccountPage(url: string): void {
   const a = document.createElement("a");
   a.href = url;
   a.target = "_blank";
@@ -136,7 +136,7 @@ export function DesktopSubscription({ onNowhere }: { onNowhere: () => void }) {
       }
       const body = (await res.json()) as { url?: unknown };
       // A URL is a non-empty STRING or it is nothing, and nothing is the 404 by another route.
-      if (typeof body.url === "string" && body.url.length > 0) { leaveFor(body.url); return; }
+      if (typeof body.url === "string" && body.url.length > 0) { leaveForAccountPage(body.url); return; }
       if (alive.current) onNowhere();
     } catch {
       // On a MOUNT this was nothing a person could act on and was swallowed; on a PRESS it is
@@ -155,7 +155,7 @@ export function DesktopSubscription({ onNowhere }: { onNowhere: () => void }) {
         control={
           /* A BUTTON, not the anchor this row used to be: there is no address until the press
              has been answered, and an anchor with nowhere to point is the control this pane
-             exists to avoid. `leaveFor` makes the anchor once there is somewhere to go. */
+             exists to avoid. `leaveForAccountPage` makes the anchor once there is somewhere to go. */
           <button type="button" className="btn" disabled={busy} onClick={() => { void press(); }}>
             {t("subscriptionManage")}
           </button>

@@ -9,22 +9,12 @@ import en from "../../webapp/messages/en.json";
 import de from "../../webapp/messages/de.json";
 
 /**
- * ═══ THE WINDOW'S LOCK, IN ITS TWO DISTRIBUTIONS ════════════════════════════════════════════
- *
- * The paired window renders its own lock (`DesktopAccessLock`) out of the shared `accessLock`
- * catalogue, so a date can never differ between this screen and the browser tab's. Two things
- * are asserted that nothing else can see:
- *
- *  1. THE DIRECT-DOWNLOAD FACE has one button, and it opens the service's own page in the
- *     browser. There is still no billing logic in this app — an anchor is the whole of it.
- *  2. THE STORE FACE has none. A copy distributed through an app store may not link out to a
- *     page where a subscription is bought (App Review 3.1.1), so the button goes and a sentence
- *     saying where to go instead takes its place. Every other sentence stays, and so does the
- *     sign-out: a lock with no way out is a trap, which is the thing this screen may never be.
- *
- * The distribution is a BUILD-TIME literal the bundler folds in, so each face is driven by
- * setting that literal and re-importing the module graph — never by a runtime switch, which is
- * the mechanism `src/distribution.ts` exists to refuse.
+ * ═══ THE WINDOW'S LOCK, IN ITS TWO DISTRIBUTIONS ═══ out of the shared `accessLock` catalogue, so
+ * a date never differs from the browser tab's. The DIRECT-DOWNLOAD face has one button, whose press
+ * mints the service's page and hands it to the browser — no billing logic here, one route and one
+ * anchor. The STORE face has none (App Review 3.1.1): a sentence says where to go instead, and every
+ * other sentence and the sign-out stay. The distribution is a BUILD-TIME literal, so each face is
+ * driven by setting it and re-importing the module graph, never by a runtime switch.
  */
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -84,6 +74,35 @@ async function paint(
 const text = (): string => host.textContent ?? "";
 const links = (): HTMLAnchorElement[] => [...host.querySelectorAll("a")];
 const buttons = (): HTMLButtonElement[] => [...host.querySelectorAll("button")];
+const primary = (): HTMLButtonElement | undefined => buttons().find((b) => b.classList.contains("primary"));
+
+/** The window's bridge, answering the mint; every request it carried is recorded. */
+type Carried = { method: string; url: string; body: string };
+function fakeBridge(mint: () => { status: number; body: string }): Carried[] {
+  const carried: Carried[] = [];
+  const encode = (status: number, body: string): Uint8Array => {
+    const meta = new TextEncoder().encode(JSON.stringify({ status, statusText: "OK", h: [] }));
+    const payload = new TextEncoder().encode(body);
+    const out = new Uint8Array(4 + meta.byteLength + payload.byteLength);
+    new DataView(out.buffer).setUint32(0, meta.byteLength, false);
+    out.set(meta, 4);
+    out.set(payload, 4 + meta.byteLength);
+    return out;
+  };
+  (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {
+    transformCallback: () => 1,
+    invoke: async (command: string, payload?: { method?: string; url?: string; body?: number[] }) => {
+      if (command !== "engine_request") return null;
+      carried.push({
+        method: String(payload?.method), url: String(payload?.url),
+        body: new TextDecoder().decode(new Uint8Array(payload?.body ?? [])),
+      });
+      const m = mint();
+      return encode(m.status, m.body);
+    },
+  };
+  return carried;
+}
 
 const CLOSED = {
   reason: "payment_required" as const,
@@ -106,17 +125,47 @@ describe("the distribution decides the button, and nothing else", () => {
     expect(linksOutToBilling("mas")).toBe(false);
   });
 
-  it("DIRECT: one button, and it is the service's own page in the browser", async () => {
-    await paint("direct", CLOSED);
-    const out = links();
-    expect(out).toHaveLength(1);
-    expect(out[0]!.getAttribute("href")).toBe(MANAGE_URL);
-    expect(out[0]!.textContent).toBe(LOCK.openAccount);
-    // `_blank` with `noopener`: the window's interceptor hands it to the browser the person is
-    // already signed in to, which is the whole of this app's billing behaviour.
-    expect(out[0]!.getAttribute("target")).toBe("_blank");
-    expect(out[0]!.getAttribute("rel")).toContain("noopener");
-    expect(text()).not.toContain(LOCK.openInBrowser);
+  it("DIRECT: one button, and its press mints the page and hands THAT to the browser", async () => {
+    const FRESH = "https://plane.ohmail.app/manage?token=FRESH";
+    const carried = fakeBridge(() => ({ status: 200, body: JSON.stringify({ url: FRESH }) }));
+    const opened: Array<{ href: string; target: string; rel: string }> = [];
+    const realClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function click(this: HTMLAnchorElement) {
+      opened.push({ href: this.href, target: this.target, rel: this.rel });
+    };
+    try {
+      await paint("direct", CLOSED);
+      expect(links()).toHaveLength(0);
+      expect(host.innerHTML).not.toContain(MANAGE_URL);
+      expect(primary()?.textContent).toBe(LOCK.openAccount);
+      await act(async () => { primary()!.click(); });
+      for (let i = 0; i < 10; i += 1) await act(async () => { await Promise.resolve(); });
+      expect(carried).toEqual([{ method: "POST", url: "/account/manage-link", body: JSON.stringify({ lang: "en" }) }]);
+      // `_blank` with `noopener`: the window's interceptor hands it to the browser the person is
+      // already signed in to, which is the whole of this app's billing behaviour.
+      expect(opened).toEqual([{ href: FRESH, target: "_blank", rel: "noopener noreferrer" }]);
+      expect(text()).not.toContain(LOCK.openInBrowser);
+    } finally {
+      HTMLAnchorElement.prototype.click = realClick;
+      delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    }
+  });
+
+  it("DIRECT: a refused mint says so, and an unconfirmed address is told by name", async () => {
+    let answer = { status: 503, body: JSON.stringify({ error: { code: "db_busy" } }) };
+    fakeBridge(() => answer);
+    try {
+      await paint("direct", CLOSED);
+      await act(async () => { primary()!.click(); });
+      for (let i = 0; i < 10; i += 1) await act(async () => { await Promise.resolve(); });
+      expect(host.querySelector("[role=alert]")?.textContent).toBe(LOCK.mintFailed);
+      answer = { status: 403, body: JSON.stringify({ error: { code: "email_unverified" } }) };
+      await act(async () => { primary()!.click(); });
+      for (let i = 0; i < 10; i += 1) await act(async () => { await Promise.resolve(); });
+      expect(host.querySelector("[role=alert]")?.textContent).toBe(LOCK.mintUnverified);
+    } finally {
+      delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    }
   });
 
   it("STORE: no link at all, and a sentence saying where to go instead", async () => {
@@ -192,13 +241,13 @@ describe("the window says what the browser tab says", () => {
     expect(host.querySelector("h1")?.textContent).toBe(LOCK.title);
     expect(text()).toContain(LOCK.kept);
     // …and the old label, because there is no lifecycle to call it anything else.
-    expect(links()[0]!.textContent).toBe(LOCK.manage);
+    expect(primary()?.textContent).toBe(LOCK.manage);
   });
 
   it("is the catalogue's screen in German too — nothing here is written in English by hand", async () => {
     await paint("direct", CLOSED, "de");
     expect(text()).toContain(LOCK_DE.mailboxUntouched);
-    expect(links()[0]!.textContent).toBe(LOCK_DE.openAccount);
+    expect(primary()?.textContent).toBe(LOCK_DE.openAccount);
     expect(text()).not.toContain("accessLock.");
   });
 });

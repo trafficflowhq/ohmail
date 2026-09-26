@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { Button } from "@ohmail/ui";
 // The ONE correct way out — revokes server-side and wipes the local mirror. The sign-out guard
 // asserts every `auth.logout` call in this app goes through it, so never call logout directly.
@@ -9,15 +9,17 @@ import { signOut } from "../../sign-out";
 import { readOwner } from "../../shell/owner-cookie";
 import { dayStamp } from "../../shell/format";
 import { saveBlob } from "../../shell/attachments";
-import { account, type AccessRefusedFacts, type AccountLifecycle } from "../../api-client";
+import { ApiError, account, type AccessRefusedFacts, type AccountLifecycle } from "../../api-client";
 import { AccountSection } from "./AccountSection";
+import { leaveForManagePage } from "./SubscriptionSection";
 
 /**
  * The wall — what an account the service has refused sees instead of its mail. Three things it
  * must do: say WHAT HAPPENED AND WHEN; say that the MAILBOX IS UNTOUCHED, because a screen that
  * only says "no" reads as data loss; and leave every door open, because a lock with no way out is
  * a trap. It deletes nothing and wipes nothing on its own, and its facts come from the 402 the
- * gate answered rather than from a read of its own.
+ * gate answered rather than from a read of its own. The way back MINTS AT THE PRESS: a link held
+ * from the 402 lives ten minutes and once, so `manageUrl` only decides whether the button exists.
  */
 
 /** What the headline says, and the date it carries. `null` = the undated sentence. */
@@ -55,6 +57,29 @@ export function AccessLock({ facts }: { facts: AccessRefusedFacts }) {
   const [exportFailed, setExportFailed] = useState(false);
   /** The erasure ceremony, in place. It is the Settings pane's own, not a second door. */
   const [deleting, setDeleting] = useState(false);
+  const lang = useLocale() === "de" ? "de" : "en";
+  const [minting, setMinting] = useState(false);
+  /** Why the last press did not leave: an unconfirmed address is its own sentence. */
+  const [mintRefusal, setMintRefusal] = useState<"failed" | "unverified" | null>(null);
+
+  const doMint = useCallback(async () => {
+    if (minting) return;
+    setMintRefusal(null);
+    setMinting(true);
+    try {
+      const url = (await account.manageLink({ lang }))?.url;
+      if (typeof url === "string" && url.length > 0) {
+        leaveForManagePage(url);
+        return;
+      }
+      setMintRefusal("failed");
+    } catch (err) {
+      const unverified = err instanceof ApiError && err.status === 403 && err.code === "email_unverified";
+      setMintRefusal(unverified ? "unverified" : "failed");
+    } finally {
+      setMinting(false);
+    }
+  }, [lang, minting]);
 
   const doSignOut = useCallback(async () => {
     setSigningOut(true);
@@ -159,24 +184,34 @@ export function AccessLock({ facts }: { facts: AccessRefusedFacts }) {
                   what it does underneath, because two of the three cannot be undone by pressing
                   again. */}
               <div className="wall-actions">
-                {/* Rendered ONLY when the service supplied a URL. A button that goes nowhere is
-                    worse than no button: it is the one control on this screen a person will
-                    press. */}
+                {/* Rendered ONLY where the service operates a page: `manageUrl` is that fact and
+                    nothing more. The address itself is minted by the press. */}
                 {facts.manageUrl
                   ? (
-                    <a
-                      className="btn primary wall-act"
-                      href={facts.manageUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      {/* "Subscribe" is the verb for a closure the customer can undo by paying.
-                          A staff hold is not one — the account may be fully paid — so it gets the
-                          neutral door the desktop window already uses. */}
-                      {lifecycle === undefined
-                        ? t("manage")
-                        : held ? t("openAccount") : t("subscribe")}
-                    </a>
+                    <>
+                      <Button
+                        variant="primary"
+                        className="wall-act"
+                        data-run={minting ? "working" : undefined}
+                        aria-busy={minting || undefined}
+                        onClick={() => { void doMint(); }}
+                      >
+                        {/* "Subscribe" is the verb for a closure the customer can undo by paying.
+                            A staff hold is not one — the account may be fully paid — so it gets
+                            the neutral door the desktop window already uses. */}
+                        {lifecycle === undefined
+                          ? t("manage")
+                          : held ? t("openAccount") : t("subscribe")}
+                      </Button>
+                      {mintRefusal !== null
+                        ? (
+                          <p className="wall-warn" role="alert">
+                            {t(mintRefusal === "unverified" ? "mintUnverified" : "mintFailed")}
+                          </p>
+                        )
+                        : null}
+                      {lifecycle !== undefined && !held ? <p className="wall-hint">{t("subscribeHint")}</p> : null}
+                    </>
                   )
                   : null}
                 {/* The export door, only where this server serves one. It downloads the rules,

@@ -2507,9 +2507,11 @@ export const account = {
    * app never inspects.
    */
   exportSettings: () => api<unknown>("/account/export"),
-  manageLink: async (): Promise<{ url: string } | null> => {
+  manageLink: async (opts?: { lang?: "de" | "en" }): Promise<{ url: string } | null> => {
     try {
-      return await api<{ url: string }>("/account/manage-link", { method: "POST", body: {} });
+      // `lang` is the page's language on the far side; absent, that page reads the browser's.
+      const body = opts?.lang === "de" || opts?.lang === "en" ? { lang: opts.lang } : {};
+      return await api<{ url: string }>("/account/manage-link", { method: "POST", body });
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) return null;
       throw err;
