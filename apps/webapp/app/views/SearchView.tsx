@@ -294,7 +294,12 @@ export function SearchView({
     exact: (result?.items ?? []).map((h) => h.message.id),
     similar: (result?.similar ?? []).map((h) => h.message.id),
   };
+  /* Enter and the two "search again" controls settle the question themselves: they ask at once.
+     Only typing waits the debounce (Enter restarted it, 251 ms before any request). */
+  const askedTick = useRef(retryTick);
   useEffect(() => {
+    const asked = askedTick.current !== retryTick;
+    askedTick.current = retryTick;
     // A single character is not a question: the local arm ignores it, and so does the store.
     if (trimmed.length < 2) {
       walker.clear();
@@ -303,7 +308,7 @@ export function SearchView({
     walker.start(
       { query: trimmed, sort, ...(storeFilters ? { filters: storeFilters } : {}) },
       (tier) => (tier === "similar" ? deviceOrder.current.similar : deviceOrder.current.exact),
-      ARCHIVE_DEBOUNCE_MS,
+      asked ? 0 : ARCHIVE_DEBOUNCE_MS,
     );
     return () => walker.stop();
     // `sort` and the pressed facet are NEW QUESTIONS for the store, not re-presentations.
