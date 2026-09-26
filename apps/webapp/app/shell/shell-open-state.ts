@@ -476,7 +476,18 @@ export function useShellOpenState({
    * view-local presentation state, never a second writer of read-state: nothing else may
    * read it.
    */
-  const [ohboxArmedRead, setOhboxArmedRead] = useState<string | null>(null);
+  const [ohboxArmedRead, setArmedReadState] = useState<string | null>(null);
+  /**
+   * …AND THE ENGINE HOLDS THE SAME ROW IN "NEW" (`holdOpenRow`), which is what keeps its place:
+   * the view reports the arm synchronously, before it saves the read, so the row's place and the
+   * read's paint reach the list in one snapshot; a state update alone arrived a render late. The
+   * view's departures release it the same way.
+   */
+  const setOhboxArmedRead = useStableCallback((id: string | null) => {
+    if (id === null) engine.releaseOpenRow();
+    else engine.holdOpenRow(id);
+    setArmedReadState(id);
+  });
   /**
    * The sheet's message, with read state as the list behind it draws it —
    * the same pair `OhboxView.effUnread` applies, shared through

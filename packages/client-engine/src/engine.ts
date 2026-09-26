@@ -25,7 +25,7 @@ import {
   type AddressResult,
   type LocalSearchResult,
 } from "./search.js";
-import { isOwnSent, oneSourceReader, rulesList, sendingMailboxId, senderKey, winningStates } from "./selectors.js";
+import { isOwnSent, ohboxView, oneSourceReader, rulesList, sendingMailboxId, senderKey, winningStates } from "./selectors.js";
 import { outrankCoveringDomains } from "./address-rank.js";
 import { consentIndex, decidedDestination } from "./consent-cutline.js";
 import { flattenResponse } from "./apply.js";
@@ -2054,6 +2054,8 @@ export class OhmailEngine {
 
   private readonly overlays = new Map<string, MutationEffect[]>();
   private overlayRev = 0;
+  /** The row being read, held in "New for you" until it is left — {@link holdOpenRow}. */
+  private openRow: string | null = null;
   /**
    * THE OPTIMISTIC SENT COPIES, keyed by their overlay id — the confirm-time half of `mail_send`.
    *
@@ -4331,6 +4333,49 @@ export class OhmailEngine {
     return this.verbView;
   }
 
+  /**
+   * THE ROW BEING READ KEEPS ITS PLACE (owner ruling 2026-09-18: a read never moves a row). A
+   * surface names the message it opens out of "New for you" here BEFORE it saves the read, and
+   * `ohboxView(read(), openRowHeld())` keeps it in New at its arrival slot until the reader moves
+   * on. Held only if it stands in New now: a read row, or a resurfaced one, holds nothing and ends
+   * the previous hold. It moves the overlay revision, so the read's paint and the hold reach every
+   * subscriber in one snapshot — a React state beside the paint lost that race to the notify.
+   */
+  holdOpenRow(id: string): boolean {
+    if (id === this.openRow) return true;
+    const next = ohboxView(this.read()).newForYou.some((m) => m.id === id) ? id : null;
+    if (next !== this.openRow) this.setOpenRow(next);
+    return next !== null;
+  }
+
+  /** The reader left `id` (any row when omitted): the row takes its arrival slot in Earlier. */
+  releaseOpenRow(id?: string): void {
+    if (this.openRow === null || (id !== undefined && id !== this.openRow)) return;
+    this.setOpenRow(null);
+  }
+
+  /** The row {@link holdOpenRow} holds, or `null`. */
+  openRowHeld(): string | null {
+    return this.openRow;
+  }
+
+  private setOpenRow(id: string | null): void {
+    this.openRow = id;
+    this.overlayRev++;
+    this.notify();
+  }
+
+  /**
+   * An act that takes the held row out of New — a pin, a pile, a move, a delete — ends the hold:
+   * explicit acts alone move a row, and this one did, so a later release (Done on the pin) files
+   * it in Earlier rather than back in New. An act that leaves it in New (its read, a tag) keeps it.
+   */
+  private endHoldActedAway(effects: readonly MutationEffect[]): void {
+    const held = this.openRow;
+    if (held === null || !effects.some((e) => e.id === held)) return;
+    if (!ohboxView(this.read(), held).newForYou.some((m) => m.id === held)) this.openRow = null;
+  }
+
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -5524,6 +5569,7 @@ export class OhmailEngine {
     this.retireShadowsUnder(effects);
     this.overlays.set(id, effects);
     this.overlayRev++;
+    this.endHoldActedAway(effects);
     this.notify();
 
     /**

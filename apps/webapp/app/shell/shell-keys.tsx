@@ -952,9 +952,12 @@ export function useShellKeys({
    * the consumer is outside React: it puts a badge on a window, and doing that while rendering is
    * a side effect in the middle of one.
    */
+  /* UNREAD, not the group's length: the row being read stands in New until it is left
+     (`ohboxView`'s `openHeld`), and it is read — the count follows the read, the place does not. */
+  const ohboxUnread = ohbox.newForYou.filter((m) => m.unread).length;
   useEffect(() => {
-    onUnread?.(ohbox.newForYou.length);
-  }, [onUnread, ohbox.newForYou.length]);
+    onUnread?.(ohboxUnread);
+  }, [onUnread, ohboxUnread]);
 
   /* ── the rail ── */
   const railGroups: RailGroup[] = useMemo(
@@ -964,10 +967,10 @@ export function useShellKeys({
           {
             id: "ohbox",
             label: t("rail.ohbox"),
-            count: ohbox.newForYou.length,
+            count: ohboxUnread,
             hot: true,
             title: t("rail.ohboxTitle", {
-              unread: ohbox.newForYou.length,
+              unread: ohboxUnread,
               total: ohboxCount,
             }),
           },
@@ -1170,7 +1173,7 @@ export function useShellKeys({
       },
     ],
     [
-      t, ohbox.newForYou.length, ohboxCount, readsNew, receiptsNew, screener.waitingCount, piles,
+      t, ohboxUnread, ohboxCount, readsNew, receiptsNew, screener.waitingCount, piles,
       tagGroups, tags, createTagAlone, consent.foldersEnabled, consent.known, folders,
       folderUnread, folderVerbs, folderMailboxes, demo, syncStatus.bootstrapping, route.view,
       route.folderId, facts,

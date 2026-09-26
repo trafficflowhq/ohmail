@@ -506,6 +506,7 @@ const NO_ACTIONS: WorldActions = {
   markSeenThrough: () => undefined,
   leaveFeed: () => undefined,
   openMessage: () => undefined,
+  leaveMessage: () => undefined,
   loadInlineImages: () => undefined,
   /* The empty world holds no bytes; the tile renders the honest refusal. */
   openAttachmentBytes: async () => ({ state: "unavailable" as const }),
@@ -1291,6 +1292,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           markSeenThrough: (place, ids) => void acts.sweepFeed(place, ids),
           leaveFeed: (place) => void acts.leaveFeed(place),
           openMessage: (id) => void acts.openMessage(id),
+          leaveMessage: (id) => acts.leaveMessage(id),
           loadInlineImages: (id, contentIds) => acts.loadInlineImages(id, contentIds),
           openAttachmentBytes: (id, attachmentId) => acts.openAttachmentBytes(id, attachmentId),
           releaseAttachments: (id) => acts.releaseAttachments(id),
@@ -1450,7 +1452,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     const pres = routingReader(world.reader, heldPlaces);
     /* …and the same reader the verbs that ask about the Ohbox read — see `presentedNow`. */
     presentedNow.current = pres;
-    const ohbox = liveOhbox(pres, v);
+    const ohbox = liveOhbox(pres, v, engine.openRowHeld());
     const reads = liveReads(pres, v);
     const receipts = liveReceipts(pres, v);
     /* THE PAIRED DOOR'S QUEUE IS THE SERVER'S SET — see `liveScreener`. `null` here is the

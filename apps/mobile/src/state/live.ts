@@ -1053,9 +1053,12 @@ export interface WorldOhbox {
   total: number;
 }
 
-/** The Ohbox — `ohboxView` over the projection, reshaped and nothing more. */
-export function liveOhbox(pres: EntityReader, v: WorldView): WorldOhbox {
-  const box = ohboxView(pres);
+/**
+ * The Ohbox — `ohboxView` over the projection, reshaped and nothing more. `openHeld` is the row the
+ * reader is on (`OhmailEngine.holdOpenRow`, held by `openMessage`): it stays in New until it is left.
+ */
+export function liveOhbox(pres: EntityReader, v: WorldView, openHeld: string | null = null): WorldOhbox {
+  const box = ohboxView(pres, openHeld);
   const map = (list: EngineMessage[]) => list.map((m) => toMail(pres, m, v));
   const fresh = map(box.newForYou);
   const seen = map(box.previouslySeen);
@@ -1080,7 +1083,8 @@ export function liveOhbox(pres: EntityReader, v: WorldView): WorldOhbox {
      message). Mark-all-read flips exactly these ids, and `unread` is this list's length, so
      the number a person presses on and the ids the press dispatches cannot disagree. */
   const unreadIds = [
-    ...box.newForYou.map((m) => m.id),
+    // The held open row stands in New and is read: the count follows the read, not the place.
+    ...box.newForYou.filter((m) => m.unread).map((m) => m.id),
     ...rows.flatMap((r) => r.members.filter((m) => m.unread).map((m) => m.id)),
   ];
   return {
@@ -2376,6 +2380,8 @@ export type {
 export interface LiveWorldActions {
   /** Opening a message marks it read and asks for its full text + conversation + files. */
   openMessage(id: string): Promise<boolean>;
+  /** The reader left this message: its row, held in New while it was read, takes its place in Earlier. */
+  leaveMessage(id: string): void;
   /**
    * Ask the engine for the embedded images the OPEN message's document references — the
    * renderer's own pass supplies the ids, the engine spends bounded connection fetches and
@@ -2891,6 +2897,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const members = threadOf(engine.read(), id);
     if (members.length > 0) void engine.hydrateThread(members.map((t) => t.id)).catch(() => undefined);
     holdLists(id, withFiles([id, ...members.map((t) => t.id)]));
+    // THE ROW KEEPS ITS PLACE WHILE IT IS READ, held BEFORE the read is saved so both reach the
+    // list in one snapshot; a read row holds nothing. `leaveMessage` lets it go.
+    engine.holdOpenRow(id);
     if (!m.unread) return true;
     // A RESURFACED PIN IS NOT SPENT BY OPENING — but the READ LANDS (owner ruling 2026-08-26:
     // reading a resurfaced message sticks like anywhere else). This used to skip pinned rows
@@ -2903,6 +2912,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       await dispatch({ kind: "mark_seen", messageIds: [id], unread: false, via: "glance" }),
       null, refuse("liveSaveFailed"),
     );
+  };
+
+  const leaveMessage = (id: string): void => {
+    engine.releaseOpenRow(id);
   };
 
   const releaseAttachments = (messageId: string): void => {
@@ -4296,7 +4309,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     async discardAbandoned(id) {
       await engine.discardAbandoned(id);
     },
-    openMessage, hydrateMessage, forwardFetch, hydrateHeld, holdFiles, releaseFiles, loadInlineImages, openAttachmentBytes,
+    openMessage, leaveMessage, hydrateMessage, forwardFetch, hydrateHeld, holdFiles, releaseFiles, loadInlineImages,
+    openAttachmentBytes,
     releaseAttachments,
     sweepFeed, leaveFeed, decide, release, setPile,
     pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, markAllSeen, move,
@@ -4318,6 +4332,8 @@ export interface WorldActions {
   leaveFeed(place: "reads" | "receipts"): void;
   /** Opening a message marks it read and hydrates its text, thread and files. */
   openMessage(id: string): void;
+  /** The reader left the message — see {@link LiveWorldActions.leaveMessage}. */
+  leaveMessage(id: string): void;
   /** The renderer's ask for the embedded images the open document references. */
   loadInlineImages(messageId: string, contentIds: string[]): void;
   /** One attachment's bytes for the share sheet — awaited; the tile renders each refusal. */
@@ -4436,6 +4452,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     markSeenThrough: (place, ids) => current().markSeenThrough(place, ids),
     leaveFeed: (place) => current().leaveFeed(place),
     openMessage: (id) => current().openMessage(id),
+    leaveMessage: (id) => current().leaveMessage(id),
     loadInlineImages: (id, contentIds) => current().loadInlineImages(id, contentIds),
     releaseAttachments: (id) => current().releaseAttachments(id),
     openAttachmentBytes: (id, attachmentId) => current().openAttachmentBytes(id, attachmentId),

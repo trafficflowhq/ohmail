@@ -69,6 +69,12 @@ export function MessageReader({
       if (id) releaseAttachments(id);
     };
   }, [id, openMessage, releaseAttachments, worldKey]);
+  /* …AND ITS ROW'S PLACE: the open row stands in New while this reader shows it (`openMessage`
+     holds it), and leaving files it in Earlier at its arrival slot — a read never moves a row. */
+  const leaveMessage = w.actions.leaveMessage;
+  useEffect(() => () => {
+    if (id) leaveMessage(id);
+  }, [id, leaveMessage]);
 
   /* A VERDICT'S HUSK MOVED OUT OF JUNK: the mirror sheds it on the move's own changes, and the
      reader asks again then, once per husk seen; past the engine's bound it says the text could

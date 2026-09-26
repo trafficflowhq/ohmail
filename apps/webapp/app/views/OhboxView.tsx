@@ -864,14 +864,15 @@ export function OhboxView({
    * shell's `mark_seen`, so the row, the pane, the count and every other device agree from the arm. It was a
    * debt spent on departure, and a reload lost it: the outbox is durable-first (IndexedDB, then the wire), and a
    * write first made inside `pagehide` reaches neither before the page is gone. What still waits for departure is
-   * the row's PLACE — the slide to "Earlier" skips this id, so nothing re-sorts under the reader. At most one.
+   * the row's PLACE — `onReadArmed` has the engine hold it in New (`holdOpenRow`), so nothing re-sorts under the
+   * reader. At most one.
    */
   const heldRead = useRef<string | null>(null);
 
   /**
    * The renderable twin of {@link heldRead}: the row loses its dot and the verb says "Mark unread" at the arm,
-   * the same moment the write goes out, and the slide holds the row in its slot until it is left. One writer
-   * for the pair, {@link hold}; a refused write releases both, so a read the account refused never looks done.
+   * the same moment the write goes out, while the engine's hold keeps the row in its slot until it is left. One
+   * writer for the pair, {@link hold}; a refused write releases both, so a read the account refused never looks done.
    */
   const [armedRead, setArmedRead] = useState<string | null>(null);
   const onReadArmedRef = useRef(onReadArmed);
@@ -1127,11 +1128,12 @@ export function OhboxView({
    * `slideOut` is idempotent on an id already in flight.
    */
   useEffect(() => {
-    // The held New row keeps its slot while it is read (see `heldRead`); leaving re-runs this. A
-    // pinned row is not held: a glance never re-files it, and a deliberate Done files it at once.
+    // The row being read never reaches `earlierIds` while it is read: the SELECTOR keeps it in New
+    // (`ohboxView`'s `openHeld`, held by the engine from the arm) until it is left. A skip keyed on
+    // this view's own `armedRead` lost to the read's paint, which renders first.
     for (const id of resurfacedOrder.current) if (earlierIds.has(id)) slideOut(id);
-    for (const id of newOrder.current) if (earlierIds.has(id) && id !== armedRead) slideOut(id);
-  }, [earlierIds, slideOut, armedRead]);
+    for (const id of newOrder.current) if (earlierIds.has(id)) slideOut(id);
+  }, [earlierIds, slideOut]);
 
   /** Nothing may fire into an unmounted view — the whole map, once, on the way out. */
   useEffect(() => {

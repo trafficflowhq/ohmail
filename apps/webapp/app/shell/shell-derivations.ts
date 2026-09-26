@@ -376,7 +376,10 @@ export function useShellDerivations({
    * changed". Every rebuild is retained as long as the render scope that
    * made it, so every callback here reads through a ref
    * (`stable-callback.ts` is the account of that mechanism). */
-  const ohbox = useMemo(() => ohboxView(presented), [presented, derived]);
+  /* The row being read stays in "New" until it is left — the engine holds it (`holdOpenRow`) and
+     moves the overlay revision when it does, so `derived` re-runs this on the hold as well. */
+  const openHeld = engine.openRowHeld();
+  const ohbox = useMemo(() => ohboxView(presented, openHeld), [presented, derived, openHeld]);
   /* One row per resurfaced conversation, and the badge for what arrived since the pin went up —
      the same derivation the phone reads. `ohbox.resurfaced` stays per message and is what
      `held()` inside the selector holds out; this is the shape the list renders. */

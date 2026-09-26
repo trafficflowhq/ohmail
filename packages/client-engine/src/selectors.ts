@@ -585,26 +585,26 @@ export function parkedMessageIds(reader: EntityReader): Set<string> {
   return parked;
 }
 
-const ohboxCache = new WeakMap<EntityReader, { v: number; view: OhboxView }>();
+const ohboxCache = new WeakMap<EntityReader, { v: number; openHeld: string | null; view: OhboxView }>();
 
 /**
- * A mail is in exactly one pile — these three groups plus the three bottom
- * piles are the six. Every group holds out {@link parkedMessageIds}, so
- * filed mail is absent from all of them: putting a message away takes it
- * out of the Ohbox, "Earlier" included; the pile it went to is the only
- * place it is. Scope: this is the only surface that holds parked rows out —
- * Reads and Receipts are streams and still list a parked issue;
- * `openTargetFor` depends on that asymmetry and `search-locate.test.ts`
- * pins it.
+ * A mail is in exactly one pile — these three groups plus the three bottom piles are the six.
+ * Every group holds out {@link parkedMessageIds}, so filed mail is absent from all of them:
+ * putting a message away takes it out of the Ohbox, "Earlier" included; the pile it went to is
+ * the only place it is. Scope: this is the only surface that holds parked rows out — Reads and
+ * Receipts are streams and still list a parked issue; `openTargetFor` depends on that asymmetry
+ * and `search-locate.test.ts` pins it. `openHeld` is the row being read
+ * ({@link OhmailEngine.holdOpenRow}): it stays in "New for you" at its arrival slot until the
+ * reader moves on — a read never moves a row.
  */
-export function ohboxView(reader: EntityReader): OhboxView {
+export function ohboxView(reader: EntityReader, openHeld: string | null = null): OhboxView {
   // Memoized on the reader's version like its siblings (`resurfacedThreads`, `screenerSegments`,
   // `threadSizeIndex`): every uncached call re-filters the whole mirror — measured 2.0 ms at
   // 10 k rows on an UNCHANGED version — and AppShell's `useMemo` shields only the shell, so any
   // second caller paid it per render. Same version ⇒ the identical object.
   const v = reader.version();
   const hit = ohboxCache.get(reader);
-  if (hit && hit.v === v) return hit.view;
+  if (hit && hit.v === v && hit.openHeld === openHeld) return hit.view;
   // The shared date-desc order (`messagesByDateDesc`): a filter of it is newest-first by
   // construction, so the groups below carry no sorts of their own any more.
   const all = messagesByDateDesc(reader);
@@ -658,13 +658,16 @@ export function ohboxView(reader: EntityReader): OhboxView {
   for (const row of resurfacedThreads(reader)) for (const m of row.members) inRow.add(m.id);
   const held = (m: EngineMessage): boolean =>
     !pinned.has(m.id) && !inRow.has(m.id) && !parked.has(m.id);
+  // The open row files as unread until it is left; only that one row — mail read anywhere else
+  // moves at once, and `held` above still takes a filed, parked or pinned row out.
+  const fresh = (m: EngineMessage): boolean => m.unread || m.id === openHeld;
 
   const view: OhboxView = {
     resurfaced: resurfaced.filter((m) => !parked.has(m.id)),
     // Unread mail is ordered by ARRIVAL, unchanged: nothing has been read, so there is no reading
     // order to use and the question the group answers is what came in. Resurfaced rows are held
     // out — they sit pinned above, never doubled here.
-    newForYou: inbox.filter((m) => m.unread && held(m)),
+    newForYou: inbox.filter((m) => fresh(m) && held(m)),
     // "Earlier" is read INBOX mail joined by the account's own sent mail, in ARRIVAL order
     // like every other group — ONE chronology, a sent row at its send instant (its `sortAt`)
     // among the received rows. Owner ruling 2026-09-18, reversing 2026-08-08's "reading order":
@@ -676,13 +679,13 @@ export function ohboxView(reader: EntityReader): OhboxView {
     // has no open message; a real row beats a `local: true` one.
     previouslySeen: collapseTwins(
       [
-        ...inbox.filter((m) => !m.unread && held(m)),
+        ...inbox.filter((m) => !fresh(m) && held(m)),
         ...sent.filter(held),
       ],
       "",
     ).sort(byDateDesc),
   };
-  ohboxCache.set(reader, { v, view });
+  ohboxCache.set(reader, { v, openHeld, view });
   return view;
 }
 
