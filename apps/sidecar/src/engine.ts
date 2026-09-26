@@ -1132,14 +1132,6 @@ export const LOCAL_CONNECTION_DEAD_AFTER_CYCLES = 8;
 export const DEFAULT_HEARTBEAT_TIMEOUT_MS = 30_000;
 
 /**
- * HOW LONG A HAND-BACK WAITS FOR THE CYCLE IN FLIGHT before it ends it. A phone leaving the screen
- * has a few seconds before the platform freezes it; a hand-back queued behind a long drain ran at
- * the thaw, on a socket the server had long dropped, and the claim blocked the other install for
- * the whole staleness window.
- */
-export const HAND_BACK_QUEUE_WAIT_MS = 1_500;
-
-/**
  * The heartbeat window for this launch. A value that is not a positive number refuses the boot
  * rather than falling back to the default: a zero or unreadable window would report every mailbox
  * unreachable on every poll, which is indistinguishable from the mail server being down. The
@@ -6844,56 +6836,34 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * only decides whether the caller may report the mailbox handed back — `null` means it may not.
          */
         async handBack() {
-          if (stopped) return 0;
-          /* THE DOORS CLOSE FIRST, outside the queue: no poll starts a cycle while this waits. */
-          handedBack = true;
-          if (timer) { clearTimeout(timer); timer = null; }
-          /* A CYCLE IN FLIGHT IS ENDED, NOT WAITED OUT — see {@link HAND_BACK_QUEUE_WAIT_MS}. The
-             same teardown the detach uses; the cycle's command rejects and the queue moves on. */
-          let preempted = false;
-          if (queued > 0 && !(await settledWithin(tail, HAND_BACK_QUEUE_WAIT_MS))) {
-            preempted = true;
-            const held = adapter;
-            try {
-              if (held.forceClose !== undefined) held.forceClose();
-              else void Promise.resolve(held.close()).catch(() => undefined);
-            } catch { /* the socket is going away regardless */ }
-            log("organizer_hand_back_preempted", { mailboxId: mb.id, pollIntervalMs: HAND_BACK_QUEUE_WAIT_MS });
-          }
           return serialize(async () => {
             if (stopped) return 0;
-            /* ON A LIVE CONNECTION: the runtime's own while it is up, else a one-shot dial closed
-               after the release — a hand-back that ran after a freeze met a socket long dropped. */
-            const dead = preempted || connectionDeadSince !== null;
-            let conn: MailboxAdapter | null = adapter;
-            if (dead) {
-              conn = config.adapterFactory
+            const ask = (conn: MailboxAdapter) => releaseOwnClaim(
+              conn, installId, mb.id, { current: leaseNonce, pending: leasePendingNonce }, log,
+              "this install was asked to hand the mailbox back and the claim could not be "
+                + "removed; it ages out of ohmail/_meta on its own and another install takes the "
+                + "mailbox then",
+            );
+            /* ON A LIVE CONNECTION. A hand-back queued behind a drain the platform froze runs at the
+               thaw, on a socket the server has long dropped: a known-dead or unanswering runtime
+               socket gets one fresh dial of its own, closed after the release. */
+            let releasedAnswer = connectionDeadSince === null ? await ask(adapter) : null;
+            if (releasedAnswer === null) {
+              const fresh = config.adapterFactory
                 ? config.adapterFactory(imapConfig, ONE_SHOT_DIAL)
                 : new ImapAdapter(imapConfig, ONE_SHOT_DIAL);
               try {
                 if (signedOutSinceDial()) throw new SignedOutError();
-                await conn.connect();
+                await fresh.connect();
+                releasedAnswer = await ask(fresh);
               } catch (err) {
                 log("organizer_claim_release_failed", {
                   err, mailboxId: mb.id,
                   reason: "the hand-back could not open a connection to remove the claim; it ages "
                     + "out of ohmail/_meta on its own and another install takes the mailbox then",
                 });
-                void Promise.resolve(conn.close()).catch(() => undefined);
-                conn = null;
-              }
-            }
-            let releasedAnswer: number | "sibling" | null = null;
-            if (conn !== null) {
-              try {
-                releasedAnswer = await releaseOwnClaim(
-                  conn, installId, mb.id, { current: leaseNonce, pending: leasePendingNonce }, log,
-                  "this install was asked to hand the mailbox back and the claim could not be "
-                    + "removed; it ages out of ohmail/_meta on its own and another install takes the "
-                    + "mailbox then",
-                );
               } finally {
-                if (conn !== adapter) void Promise.resolve(conn.close()).catch(() => undefined);
+                void Promise.resolve(fresh.close()).catch(() => undefined);
               }
             }
             /* A sibling refusal at a hand-back is a COMPLETE answer that none of this runtime's
