@@ -1,16 +1,16 @@
 /**
  * `GET|POST /local/window/outbox` — the window engine's queued changes, kept on THIS machine.
  *
- * The window's engine holds no mirror on disk, so before this door a change made while the
- * server was out of reach lived in the window's memory only and died with it. The rows are the
- * engine's own outbox records and nothing else: two types, taken whole, never read here. One
- * file in the data directory, replaced by stage-flush-rename on every write, so a reader finds
- * the previous or the next complete set and never a torn one; an empty set removes the file.
- * Every request names the mailbox its window serves, and only this engine's is admitted.
+ * The window's engine holds no mirror on disk, so before this door a change made while the server
+ * was out of reach lived in the window's memory only. The rows are the engine's own outbox records
+ * and nothing else: two types, taken whole, never read here. One file in the data directory,
+ * replaced by stage-flush-rename on every write, so a reader finds the previous or the next
+ * complete set and never a torn one; an empty set removes the file, and the removal is flushed as a
+ * write is. Every request names the mailbox its window serves, and only this engine's is admitted.
  */
-import { readFile, rename, unlink } from "node:fs/promises";
+import { readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
-import { writeAtomicFileSynced } from "./fs-atomic.js";
+import { removeFileSynced, writeAtomicFileSynced } from "./fs-atomic.js";
 import type { Diagnostic } from "./log.js";
 
 export const WINDOW_OUTBOX_ROUTE = "/local/window/outbox";
@@ -125,7 +125,7 @@ export function createWindowOutbox(deps: WindowOutboxDeps): WindowOutbox {
 
   const persist = async (next: Map<string, Held>): Promise<void> => {
     if (next.size === 0) {
-      await unlink(file()).catch((err: NodeJS.ErrnoException) => { if (err.code !== "ENOENT") throw err; });
+      await removeFileSynced(file());
       return;
     }
     await write(file(), JSON.stringify({ v: 1, rows: [...next.values()].map((h) => h.row) }));

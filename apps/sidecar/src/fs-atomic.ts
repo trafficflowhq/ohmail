@@ -69,6 +69,16 @@ export async function writeAtomicFileSynced(path: string, contents: string, mode
 }
 
 /**
+ * Remove a file so the removal survives a power cut: the unlink is an entry in the directory too,
+ * and until the directory is flushed the previous file comes back. An absent file is already
+ * removed, and the directory is flushed either way, since an earlier removal may not be yet.
+ */
+export async function removeFileSynced(path: string): Promise<void> {
+  await unlink(path).catch((err: NodeJS.ErrnoException) => { if (err.code !== "ENOENT") throw err; });
+  await syncDirectory(dirname(path));
+}
+
+/**
  * Flush a directory's entries. Windows cannot open a directory for a flush, so there the file's
  * own flush stands alone. A filesystem with no directory flush (EINVAL, ENOTSUP) has nothing more
  * to give; any other refusal fails the write, so the caller is not told a change is kept.

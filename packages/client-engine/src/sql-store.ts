@@ -86,6 +86,14 @@ const CREATE_TABLES: SqlStatement[] = [
   { sql: "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)" },
 ];
 
+/**
+ * Every commit on the disk when the batch resolves. In SQLite's default journal mode a commit is
+ * the journal's unlink, and only EXTRA flushes the directory after it: without that, a power cut
+ * just after a commit brings the journal back and the next open rolls the commit away, so a queued
+ * change the app was told is kept is lost, or an emptied outbox offers its sent changes again.
+ */
+const DURABLE_COMMITS = "PRAGMA synchronous = EXTRA";
+
 const UPSERT_ENTITY =
   "INSERT INTO entities (key, record) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET record = excluded.record";
 const UPSERT_META =
@@ -159,6 +167,8 @@ export class SqlMirrorStore extends BaseMirrorStore {
       this.opening = (async () => {
         const db = await this.opener(this.dbName);
         try {
+          // Per connection, and outside a transaction: the setting does not persist in the file.
+          await db.all(DURABLE_COMMITS, []);
           await db.batch(CREATE_TABLES);
           await this.bindOwner(db);
         } catch (err) {
