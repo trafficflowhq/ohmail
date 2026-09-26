@@ -1730,8 +1730,14 @@ export interface UnscreenedGroupDTO {
 
 export const OUTBOX_TYPE = "outbox_entry";
 export const OUTBOX_ABANDONED_TYPE = "outbox_abandoned";
+/**
+ * A routing window's journal, kept in the mirror by a surface with no `localStorage` (the phone):
+ * one row per journal key, `{ value }` the jar's string. A press not yet sent derives from
+ * nothing a re-bootstrap returns, so it rides the wipe with the outbox.
+ */
+export const ROUTING_JOURNAL_TYPE = "routing_journal";
 
-/** The rows {@link OUTBOX_TYPE} and {@link OUTBOX_ABANDONED_TYPE} name, as a membership test. */
+/** The rows the wipe carries — the outbox's two collections and the routing journal. */
 export function isCarriedLocalType(type: string): boolean {
-  return type === OUTBOX_TYPE || type === OUTBOX_ABANDONED_TYPE;
+  return type === OUTBOX_TYPE || type === OUTBOX_ABANDONED_TYPE || type === ROUTING_JOURNAL_TYPE;
 }

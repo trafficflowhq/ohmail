@@ -13,6 +13,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -57,6 +58,7 @@ import {
   liveActions,
   planHeldRouting,
   presentedOptions,
+  routingReplaySay,
   liveFolder,
   liveFolders,
   liveFolderUnread,
@@ -1073,29 +1075,36 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * THE ROUTING WINDOW'S SESSION. A Move press moves the mail now and HOLDS the sender's rule for
    * the undo window; the plan is RE-READ from the mirror when the window closes, never replayed
    * from the record (`held-routing.ts`). One window per engine: a session ending commits what is
-   * open, because leaving is not asking for it back.
+   * open, because leaving is not asking for it back. A LAYOUT effect: the presses a killed session
+   * left commit here, before the first paint shows their mail where it was.
    */
-  useEffect(() => {
-    if (!engine) return undefined;
+  const journal = session?.store ?? null;
+  useLayoutEffect(() => {
+    if (!engine || !journal) return undefined;
     openRoutingSession({
       windowMs: UNDO_MS,
+      journal,
       plan: (intent) => planHeldRouting(engine.read(), intent, (changed) => noteScreenChanged(intent.id, changed)),
       dispatch: async (mutations, intent) => {
         const answers = await Promise.all(
           mutations.map((mu) => engine.mutate(mu).catch(() => null)),
         );
+        const refused = answers.some((r) => r === null || r?.status === "rolled_back");
         // A sheet press reads its list back itself, and says the refusal with it.
-        if (answerScreenPress(intent.id, mutations, answers)) return;
+        if (answerScreenPress(intent.id, mutations, answers)) return !refused;
         /* A RULE THE SERVER REFUSED IS SAID. The press's own sentence was raised seconds ago and
            claimed the mail moved, which is still true — what is not is the rule, and a refusal
            nobody is told is the shape this window exists to remove. */
-        if (answers.some((r) => r === null || r?.status === "rolled_back")) {
+        if (refused) {
           showToast(refuse("liveSaveFailed"));
+          return false;
         }
+        return true;
       },
+      onReplayed: (replay) => { for (const say of routingReplaySay(replay)) showToast(say); },
     });
     return () => { closeRoutingSession(); };
-  }, [engine, showToast]);
+  }, [engine, journal, showToast]);
 
   const locale = useLocale();
   const acts = useMemo(

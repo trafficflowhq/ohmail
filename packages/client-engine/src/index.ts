@@ -447,12 +447,13 @@ export {
 } from "./routing-intents.js";
 export {
   createRoutingWindow,
-  memoryRoutingDoor,
   type RoutingOpen,
   type RoutingWindow,
   type RoutingWindowDeps,
   type TabWindows,
 } from "./routing-window.js";
+// Where a surface with no `localStorage` keeps that window's journal: a client-local mirror row.
+export { ROUTING_JOURNAL_TYPE } from "./types.js";
 // The held press's presentation — a row shown where it was filed while its rule waits.
 export { presentAt } from "./present-at.js";
 

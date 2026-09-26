@@ -109,7 +109,7 @@ import { destLabel, DESTINATIONS as SCREEN_DESTS } from "./model";
 import { ACCESS_REFUSED_CODE } from "../net/access-lock";
 import { folderLeafOf, folderUnreadCounts } from "./folders";
 /* Move/Junk: the mail now, the sender's routing after the window. See the module. */
-import { holdRouting, holdScreenRouting, undoRouting, type ScreenCommitAnswer } from "./held-routing";
+import { holdRouting, holdScreenRouting, undoRouting, type RoutingReplay, type ScreenCommitAnswer } from "./held-routing";
 import type { ScreeningAnswer } from "../net/consent";
 import type { ServerWaitingSender } from "../net/screener";
 import {
@@ -1872,6 +1872,24 @@ export function planHeldRouting(
   return out.writes;
 }
 
+/**
+ * WHAT A LAUNCH SAYS about the presses a killed session left: the moves it finished, in one
+ * sentence naming the place when there was one, and the ones past the horizon it did not make.
+ * Nothing for a launch that found none.
+ */
+export function routingReplaySay(r: RoutingReplay): Refusal[] {
+  const out: Refusal[] = [];
+  const count = r.moved.reduce((n, i) => n + i.messageIds.length, 0);
+  const places = [...new Set(r.moved.map((i) => i.dest))];
+  if (count > 0) {
+    out.push(places.length === 1
+      ? refuse("routingReplayedTo", count, moveTargetLabel(places[0]!))
+      : refuse("routingReplayed", count));
+  }
+  if (r.expired.length > 0) out.push(refuse("routingReplayExpired", r.expired.length));
+  return out;
+}
+
 
 /** `PATCH /messages` id cap per request — the webapp's own batch size. */
 const MARK_SEEN_MAX = 200;
@@ -3258,7 +3276,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       toast(refuse("toastMoved", moveTargetLabel(dest)), undoable(inv));
       return true;
     }
-    const opened = holdRouting({
+    const opened = await holdRouting({
       v: 1,
       id: deps.uuid ? deps.uuid() : `${messageId}:${now().getTime()}`,
       seedId: messageId,
@@ -3270,9 +3288,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       at: now().getTime(),
     });
     if (!opened.held) {
-      /* NO SESSION TO HOLD IT — the rules go now, and the sentence does not offer an undo it
-         cannot honour. `held-delete.ts`'s own degradation. */
-      await Promise.all(rules.map((w) => engine.mutate(w).catch(() => null)));
+      /* NO SESSION OR NO RECORD TO HOLD IT BY — the rules go now unless the window already sent
+         them, and the sentence does not offer an undo it cannot honour. */
+      if (!opened.sent) await Promise.all(rules.map((w) => engine.mutate(w).catch(() => null)));
       toast(refuse("toastMoved", moveTargetLabel(dest)));
       return true;
     }
@@ -3862,7 +3880,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       return true;
     };
 
-    const opened = holdScreenRouting(intent, (a) => { void Promise.allSettled(settled).then(() => readBack(a)); });
+    const opened = await holdScreenRouting(intent, (a) => { void Promise.allSettled(settled).then(() => readBack(a)); });
+    // Already sent by the window (its record refused after a flush): the follow-up reads it back.
+    if (opened.sent) return true;
     if (!opened.held) {
       const writes = planScreenCommit(raw, intent).writes;
       const answers = await Promise.all(writes.map((w) => engine.mutate(w).catch((): MutationResult | null => null)));

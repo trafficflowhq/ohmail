@@ -1055,6 +1055,17 @@ export const DE: Deck = {
   toastUndone: "Rückgängig gemacht.",
   deleteUndone: "Nicht gelöscht — die Nachricht ist noch an ihrem Platz.",
   toastRoutingUndone: "Die Post ist wieder da, wo sie war, und es wurde keine Regel angelegt.",
+  /* Siehe `copy.en.ts`. Der Doppelpunkt vor dem Ort nimmt keinen Fall — `toastMoved`s Regel. */
+  routingReplayedTo: (n: number, place: string) =>
+    n === 1
+      ? `Beim Schließen von ohmail wartete noch 1 Nachricht — verschoben: ${place}.`
+      : `Beim Schließen von ohmail warteten noch ${n} Nachrichten — verschoben: ${place}.`,
+  routingReplayed: (n: number) =>
+    n === 1
+      ? "Beim Schließen von ohmail wartete noch 1 Nachricht — jetzt verschoben."
+      : `Beim Schließen von ohmail warteten noch ${n} Nachrichten — jetzt verschoben.`,
+  routingReplayExpired: (n: number) =>
+    `${n === 1 ? "1 Regel wurde" : `${n} Regeln wurden`} nie angelegt — seit der Anfrage ist zu viel Zeit vergangen. Verschiebe die Post noch einmal, wenn du die Regel weiterhin willst.`,
   toastRead: "Als gelesen markiert.",
   toastUnread: "Als ungelesen markiert.",
   /* ALLES ALS GELESEN — der `markAll`-Namespace des Web-Katalogs. */

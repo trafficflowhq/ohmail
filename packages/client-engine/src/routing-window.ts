@@ -102,24 +102,6 @@ export interface RoutingWindow {
   }>;
 }
 
-/**
- * A jar that keeps nothing past this session — the phone's, and the honest name for it.
- *
- * React Native has no `localStorage`, and the real door answers "lost" for every write, so every
- * phone press would commit at once and no routing press would ever be undoable. This keeps the
- * record for as long as the process lives, which is exactly what `held-delete.ts` already ships:
- * leaving the app commits, and a hard kill inside the window loses the PRESS, not the mail.
- * Named rather than inlined so the posture is greppable and a gap row can point at it.
- */
-export function memoryRoutingDoor(): StorageDoor {
-  const jar = new Map<string, string>();
-  return {
-    get: (k) => jar.get(k) ?? null,
-    set: (k, v) => { jar.set(k, v); return "stored"; },
-    remove: (k) => { jar.delete(k); return "stored"; },
-  };
-}
-
 export function createRoutingWindow(deps: RoutingWindowDeps): RoutingWindow {
   const arm = deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
   const disarm = deps.clearTimer ?? ((h) => clearTimeout(h));
@@ -225,8 +207,10 @@ export function createRoutingWindow(deps: RoutingWindowDeps): RoutingWindow {
 
     async replay(nowMs) {
       /* ASK BEFORE ACTING. A claim broadcast after the fact cannot reach a tab that was not yet
-         open, so the question comes first and the answer is waited for. */
-      await deps.windows?.ask();
+         open, so the question comes first and the answer is waited for. With no coordinator
+         there is nobody to ask and no await: the commit starts inside this call, before the
+         caller's next paint, so a surface replaying at launch never shows the old place first. */
+      if (deps.windows) await deps.windows.ask();
       const { live, expired } = takeRoutingIntents(deps.door, deps.key, nowMs);
       const committed: AnyRoutingIntent[] = [];
       const resumed: AnyRoutingIntent[] = [];

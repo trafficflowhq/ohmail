@@ -1577,6 +1577,20 @@ const TABLE = {
    * "Undone." is the true one (`state/live.ts#move`).
    */
   toastRoutingUndone: "The mail is back where it was, and no rule was made.",
+  /**
+   * A LAUNCH FINISHING A KILLED SESSION'S MOVES. The press was on disk before its Undo was
+   * offered, so the next launch makes it and says so; past a day it is not made, and said.
+   */
+  routingReplayedTo: (n: number, place: string) =>
+    n === 1
+      ? `Moved 1 message to ${place} that was waiting when ohmail closed.`
+      : `Moved ${n} messages to ${place} that were waiting when ohmail closed.`,
+  routingReplayed: (n: number) =>
+    n === 1
+      ? "Moved 1 message that was waiting when ohmail closed."
+      : `Moved ${n} messages that were waiting when ohmail closed.`,
+  routingReplayExpired: (n: number) =>
+    `${n === 1 ? "1 filing rule was" : `${n} filing rules were`} never made — too much time passed since you asked. File that mail again if you still want the rule.`,
   /** The deliberate read/unread, spoken so the pill has a sentence to ride (silent before the undo work). */
   toastRead: "Marked as read.",
   toastUnread: "Marked as unread.",
