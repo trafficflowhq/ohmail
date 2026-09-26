@@ -12,10 +12,16 @@ const nextTurn = (): Promise<void> =>
  * them — one round trip for the pair through a pooler. The settings must be transaction-local.
  */
 export async function afterSettings<T>(db: unknown, d: Dialect, setup: SQL, reads: () => Promise<T>): Promise<T> {
+  return (await afterSettingsRead(db, d, setup, reads)).out;
+}
+
+/** {@link afterSettings}, and the settings statement's own rows, read once the reads have answered. */
+export async function afterSettingsRead<T>(
+  db: unknown, d: Dialect, setup: SQL, reads: () => Promise<T>,
+): Promise<{ out: T; settings: unknown[][] }> {
   const settings = d.exec(db, setup);
   settings.catch(() => { /* a failed setting fails the transaction; rethrown below otherwise */ });
   await nextTurn();
   const out = await reads();
-  await settings;
-  return out;
+  return { out, settings: await settings };
 }

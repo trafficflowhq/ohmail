@@ -8,8 +8,8 @@ import { materializeMessages, materializePage, type MaterializeSource } from "./
 import { clampLimit } from "./pagination.js";
 import { ServiceError } from "./errors.js";
 import { storeProbe } from "./store-probe.js";
-import { afterSettings } from "./settings-first.js";
-import { storeStillImporting } from "./search-coverage.js";
+import { afterSettings, afterSettingsRead } from "./settings-first.js";
+import { importOpen, storeStillImporting, truthy } from "./search-coverage.js";
 import { instantRefusal, readInstant } from "./instant.js";
 import type { MessageDTO } from "./dto/types.js";
 
@@ -173,9 +173,12 @@ export interface SearchResult {
   bounded: boolean;
   /** Present on a summary while this account's search documents are still being built. */
   indexed?: { done: number; total: number };
-  /** Present on every part while the store has not taken in the whole mailbox ({@link storeStillImporting}). */
+  /** Present on every part while the store has not taken in the whole mailbox ({@link importOpen}). */
   importing?: true;
 }
+
+/** A part's reading of {@link SearchResult.importing}, taken in the part's own session. */
+interface Coverage { importing?: true }
 
 /** One tier's page rows as their DTOs, the cursor after them, and whether an arm was cut. */
 interface TierRows {
@@ -192,6 +195,7 @@ interface SearchPage {
   /** The fused candidates' count — the whole match set when no arm was cut. */
   candidates: number;
   cut: boolean;
+  importing?: true;
 }
 
 /** The counts over the whole match set. */
@@ -200,6 +204,7 @@ interface SearchSummary {
   facets: Facets;
   tier: SearchTier;
   indexed?: { done: number; total: number };
+  importing?: true;
 }
 
 /** The counts over the fused candidates: the whole match set exactly when no arm was cut. */
@@ -585,7 +590,7 @@ export class SearchService {
     // ONE session for the page: its settings and the marker, the tier's rows joined into their
     // DTOs, and the typo tier in the same transaction when the exact tier is empty — on Postgres
     // in the same statement ({@link firstRelevancePage}).
-    const { tier, got } = await this.session(ctx, d, async (db, built) => {
+    const { tier, got, importing } = await this.session(ctx, d, async (db, built) => {
       if (cursor === null && sort === "relevance" && d.name === "pg") {
         return this.firstRelevancePage(ctx, db, d, q, where, limit, built);
       }
@@ -600,7 +605,7 @@ export class SearchService {
     const items = got.items;
     const nextCursor = got.next === null ? null : encodeCursor({ ...got.next, t: tier } as SearchCursor);
     const bounded = sort === "relevance" && nextCursor === null && got.cut;
-    return { items, tier, nextCursor, bounded, candidates: got.candidates, cut: got.cut };
+    return { items, tier, nextCursor, bounded, candidates: got.candidates, cut: got.cut, ...(importing ? { importing } : {}) };
   }
 
   /**
@@ -770,7 +775,7 @@ export class SearchService {
     const limit = SearchService.pageOf(opts.limit);
     const d = dialect(ctx.db);
     const where = this.whereSql(d, ctx.accountId, opts.filters ?? {});
-    const { tier, got, indexed } = await this.session(ctx, d, async (db, built) => {
+    const { tier, got, indexed, importing } = await this.session(ctx, d, async (db, built) => {
       const ofTier = async (t: SearchTier) => {
         const arms = this.arms(ctx, d, q, t, built);
         const { k, named, all, sizes } = this.fusedArms(d, where, arms, t, limit);
@@ -788,7 +793,10 @@ export class SearchService {
     });
     // The planner's estimate reads statistics, outside the session and only for a cut arm.
     const estimate = got.estimateOf === null ? null : await got.estimateOf();
-    return { total: got.total, facets: got.facets, tier, exact: !got.cut, estimate, ...(indexed ? { indexed } : {}) };
+    return {
+      total: got.total, facets: got.facets, tier, exact: !got.cut, estimate,
+      ...(indexed ? { indexed } : {}), ...(importing ? { importing } : {}),
+    };
   }
 
   /** This account's search documents while something is still building them, else nothing. */
@@ -810,34 +818,34 @@ export class SearchService {
     const t0 = performance.now();
     const parts: SearchParts = opts.parts ?? "both";
     const ms = (): number => Math.round(performance.now() - t0);
-    // Read beside the answer, never inside its statements: a store mid-import says so on every part.
-    const coverage = storeStillImporting(ctx).then((open) => (open ? { importing: true as const } : {}));
+    // Each part reads the store's coverage in its own session statement; the latest part's stands.
+    const cov = (p: Coverage) => (p.importing ? { importing: true as const } : {});
     if (parts === "summary") {
-      const [s, cov] = await Promise.all([this.summary(ctx, opts), coverage]);
+      const s = await this.summary(ctx, opts);
       return {
         items: [], facets: s.facets, total: s.total, tier: s.tier, totalExact: true,
-        nextCursor: null, bounded: false, ...(s.indexed ? { indexed: s.indexed } : {}), ...cov, ms: ms(),
+        nextCursor: null, bounded: false, ...(s.indexed ? { indexed: s.indexed } : {}), ...cov(s), ms: ms(),
       };
     }
     if (parts === "estimate") {
-      const [e, cov] = await Promise.all([this.estimate(ctx, opts), coverage]);
+      const e = await this.estimate(ctx, opts);
       return {
         items: [], facets: e.facets, total: e.total, tier: e.tier, totalExact: e.exact,
         ...(e.estimate !== null ? { totalEstimate: e.estimate } : {}),
-        nextCursor: null, bounded: false, ...(e.indexed ? { indexed: e.indexed } : {}), ...cov, ms: ms(),
+        nextCursor: null, bounded: false, ...(e.indexed ? { indexed: e.indexed } : {}), ...cov(e), ms: ms(),
       };
     }
-    const [page, cov] = await Promise.all([this.page(ctx, opts), coverage]);
+    const page = await this.page(ctx, opts);
     if (parts === "page") {
       return {
         items: page.items, facets: null, total: page.candidates, tier: page.tier, totalExact: !page.cut,
-        nextCursor: page.nextCursor, bounded: page.bounded, ...cov, ms: ms(),
+        nextCursor: page.nextCursor, bounded: page.bounded, ...cov(page), ms: ms(),
       };
     }
     const s = await this.summary(ctx, opts);
     return {
       items: page.items, facets: s.facets, total: s.total, tier: page.tier, totalExact: true,
-      nextCursor: page.nextCursor, bounded: page.bounded, ...(s.indexed ? { indexed: s.indexed } : {}), ...cov, ms: ms(),
+      nextCursor: page.nextCursor, bounded: page.bounded, ...(s.indexed ? { indexed: s.indexed } : {}), ...cov(s), ms: ms(),
     };
   }
 
@@ -905,33 +913,45 @@ export class SearchService {
 
   /**
    * ONE TRANSACTION FOR A SEARCH ANSWER, shaped for its reads: the typo threshold (read only by
-   * the typo tier's operator) and the word indexes kept over a table scan, and the account's
-   * backfill marker — all in ONE statement, so an answer costs begin, this, its reads and commit.
-   * A store with no session (the device) reads the marker on its own handle, no round trip away.
+   * the typo tier's operator) and the word indexes kept over a table scan, the account's backfill
+   * marker and whether its store is still importing — all in ONE statement, so an answer costs
+   * begin, this, its reads and commit. A store with no session (the device) reads the marker and
+   * the import on its own handle, no round trip away.
    */
-  private async session<T>(ctx: ServiceContext, d: Dialect, fn: (db: unknown, store: StoreFacts) => Promise<T>): Promise<T> {
+  private async session<T extends object>(
+    ctx: ServiceContext, d: Dialect, fn: (db: unknown, store: StoreFacts) => Promise<T>,
+  ): Promise<T & Coverage> {
+    const covered = (out: T, open: boolean): T & Coverage => (open ? { ...out, importing: true as const } : out);
     // Before the transaction: the probe runs on the handle, and memoized, once per handle.
     const trigram = await hasTrgm(ctx.db);
     const setup = d.search.searchSession({ typoThreshold: FUZZY_THRESHOLD, preferIndexes: true });
-    if (setup === null) return fn(ctx.db, { built: await searchIndexBuilt(ctx.db as never, ctx.accountId), trigram });
+    if (setup === null) {
+      const [built, open] = await Promise.all([searchIndexBuilt(ctx.db as never, ctx.accountId), storeStillImporting(ctx)]);
+      return covered(await fn(ctx.db, { built, trigram }), open);
+    }
     const handle = ctx.db as unknown as object;
     const known = markerWritten.get(handle) ?? new Set<string>();
     markerWritten.set(handle, known);
     const tx = ctx.db as unknown as { transaction: <R>(f: (t: unknown) => Promise<R>) => Promise<R> };
     if (known.has(ctx.accountId)) {
-      return tx.transaction((t) => afterSettings(t, d, setup, () => fn(t, { built: true, trigram })));
+      // The warm settings carry no parameter, so the import rides them with the account inlined.
+      const warm = sql`select ${importOpen(ctx.accountId, { inline: true })} as importing, s.* from (${setup}) s`;
+      return tx.transaction(async (t) => {
+        const { out, settings } = await afterSettingsRead(t, d, warm, () => fn(t, { built: true, trigram }));
+        return covered(out, truthy(settings[0]?.[0]));
+      });
     }
     // Scoped by the caller's account like every read below: a marker is one account's fact.
     const marker = sql`exists (select 1 from ${accountSettings}
       where ${accountSettings.accountId} = ${ctx.accountId} and ${accountSettings.searchIndexBuiltAt} is not null)`;
     return tx.transaction(async (t) => {
-      const [row] = await d.exec(t, sql`select ${marker} as built, s.* from (${setup}) s`);
-      const built = row?.[0] === true || row?.[0] === 1;
+      const [row] = await d.exec(t, sql`select ${marker} as built, ${importOpen(ctx.accountId)} as importing, s.* from (${setup}) s`);
+      const built = truthy(row?.[0]);
       if (built) {
         if (known.size >= MARKER_MEMO_MAX) known.clear();
         known.add(ctx.accountId);
       }
-      return fn(t, { built, trigram });
+      return covered(await fn(t, { built, trigram }), truthy(row?.[1]));
     });
   }
 
