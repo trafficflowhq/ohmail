@@ -199,6 +199,17 @@ export async function deleteAccount(
     // scoped-by: an advisory lock keyed by this account's own id — no row is read or written
     await tx.execute(sql`select pg_advisory_xact_lock(${ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS}, hashtext(${accountId}))`);
 
+    // ── THE MAILBOX ROWS, FOR UPDATE, before any delete. Every ingest commit takes its mailbox row
+    // first (the lease fence, the liveness read, or a new message's own key to it), so this orders
+    // them all behind the erasure: one in flight commits first and is swept below, a later one waits
+    // and is refused by the parent it no longer has. Without it a first sync committed a message and
+    // its body between the body and message deletes (23503 on the body's key), or held the counter
+    // row this transaction deletes (40P01). After the thread-structure lock, as the mailbox sweep.
+    await tx.select({ id: mailboxes.id }).from(mailboxes)
+      .where(eq(mailboxes.accountId, accountId))
+      .orderBy(asc(mailboxes.id))
+      .for("update");
+
     // ── 0. THE THREAD-FIRST FENCE. Every live writer of a thread takes thread rows before
     // message or draft rows (ingest's mergeThreadMessage, both merge paths, the drafts
     // service's reply-target lock). Erasure's DELETE order is forced the other way by the
