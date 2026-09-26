@@ -34,6 +34,7 @@ import {
   readsPartition,
   receiptsByDay,
   rulesList,
+  storedRuleDestination,
   scheduledSendsList,
   draftsList,
   draftBodyKnown,
@@ -109,7 +110,10 @@ import { destLabel, DESTINATIONS as SCREEN_DESTS } from "./model";
 import { ACCESS_REFUSED_CODE } from "../net/access-lock";
 import { folderLeafOf, folderUnreadCounts } from "./folders";
 /* Move/Junk: the mail now, the sender's routing after the window. See the module. */
-import { holdRouting, holdScreenRouting, undoRouting, type RoutingReplay, type ScreenCommitAnswer } from "./held-routing";
+import {
+  holdRouting, holdScreenRouting, restartRouting, takeRoutingReversal, undoRouting,
+  type RoutingReplay, type ScreenCommitAnswer,
+} from "./held-routing";
 import type { ScreeningAnswer } from "../net/consent";
 import type { NetworkState } from "../net/network-door";
 import type { ServerWaitingSender } from "../net/screener";
@@ -1852,7 +1856,36 @@ export function planPhoneRouting(
 ): EngineMutation[] {
   const folder = FOLDER_OF_VIEW[intent.dest];
   if (!folder || intent.from === undefined) return [];
-  return releaseRules(reader, intent.address, intent.from as Folder, folder).mutations;
+  return withoutBacklog(releaseRules(reader, intent.address, intent.from as Folder, folder).mutations);
+}
+
+/**
+ * A MOVE'S RULES LEAVE THE BACKLOG WHERE IT IS — the web's Move (`planMoveToPlace`: sender scope,
+ * no retro). The press is about the letter it was made on and the sender's future mail; a PATCH
+ * without the flag re-arms the server's pass over everything the rule claims.
+ */
+function withoutBacklog(writes: readonly EngineMutation[]): EngineMutation[] {
+  return writes.map((w) => (w.kind === "rule_update" || w.kind === "rule_create" ? { ...w, applyRetro: false } : w));
+}
+
+/**
+ * THE WAY BACK FROM A COMMITTED MOVE'S RULES, read before they leave: each retargeted rule PATCHed
+ * back to where it filed and at the priority it had, each created rule deleted once the mirror
+ * holds it — none of them re-arming a backlog pass, so the way back moves no mail either.
+ */
+export function routingReversal(read: () => EntityReader, writes: readonly EngineMutation[]): () => EngineMutation[] {
+  const prior = new Map(rulesList(read()).map((r) => [r.id, r] as const));
+  const back: EngineMutation[] = writes.flatMap((w): EngineMutation[] => {
+    const r = w.kind === "rule_update" ? prior.get(w.ruleId) : undefined;
+    return r ? [{ kind: "rule_update", ruleId: r.id, destination: storedRuleDestination(r), priority: r.priority, applyRetro: false }] : [];
+  });
+  const made = writes.filter((w) => w.kind === "rule_create");
+  return () => [...back, ...made.flatMap((c): EngineMutation[] => {
+    const row = rulesList(read()).find((r) => !prior.has(r.id) && r.kind === c.ruleKind && r.match === c.match
+      && canonicalDestination(r.destination) === canonicalDestination(c.destination)
+      && (r.subjectContains ?? "").trim() === "" && (r.bodyContains ?? "").trim() === "");
+    return row ? [{ kind: "rule_delete", ruleId: row.id }] : [];
+  })];
 }
 
 /** The sheet step's answer over the rules that disagree, and the forecast it was asked over. */
@@ -2229,6 +2262,8 @@ export const paintFirst = (): Promise<void> => new Promise((resolve) => setTimeo
 export interface ToastOpts {
   undo?: () => void;
   holdMs?: number;
+  /** The pill is on screen and its hold has started — where a held window starts counting too. */
+  shown?: () => void;
 }
 
 /**
@@ -3315,7 +3350,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       toast(refuse("liveReleaseRuleStands", m.from.address, routing.domain));
       return false;
     }
-    const writes: EngineMutation[] = routing ? [...routing.mutations] : [];
+    const writes: EngineMutation[] = routing ? withoutBacklog(routing.mutations) : [];
     if (m.folder !== folder) writes.push({ kind: "move", messageId, folder });
     // Nothing to dispatch means the mail is already in the place it was asked for, rules and all.
     // Said rather than swallowed: a press that returns in silence is the defect this arm had.
@@ -3356,9 +3391,16 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       toast(refuse("toastMoved", moveTargetLabel(dest)), undoable(inv));
       return true;
     }
+    /* A PRESS THAT DECIDES THE SENDER SAYS SO, in the web's words (`screeningToast`): the letter
+       moved and their future mail follows, or — the letter already filed there — the rule alone. */
+    const who = m.from.name?.trim() || m.from.address;
+    const decides = mail.length > 0
+      ? refuse("toastRuledMoved", moveTargetLabel(dest), mail.length, who)
+      : refuse("toastRuledFuture", moveTargetLabel(dest), who);
+    const pressId = deps.uuid ? deps.uuid() : `${messageId}:${now().getTime()}`;
     const opened = await holdRouting({
       v: 1,
-      id: deps.uuid ? deps.uuid() : `${messageId}:${now().getTime()}`,
+      id: pressId,
       seedId: messageId,
       address: m.from.address,
       scope: "sender",
@@ -3371,19 +3413,25 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       /* NO SESSION OR NO RECORD TO HOLD IT BY — the rules go now unless the window already sent
          them, and the sentence does not offer an undo it cannot honour. */
       if (!opened.sent) await Promise.all(rules.map((w) => engine.mutate(w).catch(() => null)));
-      toast(refuse("toastMoved", moveTargetLabel(dest)));
+      toast(decides);
       return true;
     }
     const subject = routingSubject({ scope: "sender", address: m.from.address });
-    toast(refuse("toastMoved", moveTargetLabel(dest)), {
+    toast(decides, {
       holdMs: UNDO_MS,
+      /* ONE CLOCK: the pill's hold starts at its first layout, and so does the window's. */
+      shown: () => { restartRouting(subject); },
       undo: () => {
-        /* BOTH HALVES, ONE PRESS: the rule is cancelled before it is sent and the mail is put
-           back through the engine's own inverse. `undoRouting` answers whether it TOOK, so a
-           late press cannot say no rule was made over a rule that was. */
+        /* BOTH HALVES, ONE DECISION, made synchronously: a window still holding the press cancels
+           the rule before it is sent; a press already committed (a flush on leaving) is taken
+           back by its rules' inverse, sent once the commit has answered. `cancelled` also picks
+           the sentence, so a late press cannot say no rule was made over a rule that was. */
         const cancelled = undoRouting(subject);
-        void Promise.all(inv.map((mu) => watched(engine.mutate(mu)))).then((vs) => {
-          saidAll(vs, refuse(cancelled ? "toastRoutingUndone" : "toastUndone"), refuse("liveSaveFailed"));
+        const ruleBack = cancelled ? null : takeRoutingReversal(pressId);
+        void Promise.all(inv.map((mu) => watched(engine.mutate(mu)))).then(async (vs) => {
+          const back = ruleBack ? await ruleBack : [];
+          const rs = await Promise.all(back.map((mu) => watched(engine.mutate(mu))));
+          saidAll([...vs, ...rs], refuse(cancelled ? "toastRoutingUndone" : "toastUndone"), refuse("liveSaveFailed"));
         });
       },
     });
@@ -4011,6 +4059,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const subjectKey = routingSubject({ scope: "sender", address: p.m.from.address });
     toast(pressSentence(forecast, resolution, shown, place, p.target, p.applyRetro), {
       holdMs: UNDO_MS,
+      shown: () => { restartRouting(subjectKey); },
       undo: () => {
         const cancelled = undoRouting(subjectKey);
         void Promise.all(inv.map((mu) => watched(engine.mutate(mu)))).then((vs) => {

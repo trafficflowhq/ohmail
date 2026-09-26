@@ -85,6 +85,12 @@ export interface RoutingWindow {
   open: (intent: AnyRoutingIntent) => RoutingOpen;
   /** Take the press on this subject back. `true` ONLY when a window was open. */
   undo: (subject: string) => boolean;
+  /**
+   * THE OFFER'S CLOCK. Re-arm this subject's close at the full window from now — the moment its
+   * Undo reaches the screen — so the offer a person can press and the window end together. `false`
+   * where nothing is open: the press has already been sent.
+   */
+  restart: (subject: string) => boolean;
   /** Commit every open window now, without waiting. Unmount, `pagehide`, sign-out. */
   flush: () => void;
   /** The intents a window is open over. */
@@ -192,6 +198,14 @@ export function createRoutingWindow(deps: RoutingWindowDeps): RoutingWindow {
       disarmRoutingIntent(deps.door, deps.key, entry.intent.id);
       deps.windows?.release([entry.intent.id]);
       publish();
+      return true;
+    },
+
+    restart(subject) {
+      const entry = open.get(subject);
+      if (!entry) return false;
+      disarm(entry.timer);
+      entry.timer = arm(() => close(subject), deps.windowMs);
       return true;
     },
 

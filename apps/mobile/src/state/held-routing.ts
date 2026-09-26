@@ -55,6 +55,11 @@ export interface RoutingSessionDeps {
   journal: RoutingJournal;
   /** Called once per launch that found presses to finish or to report. */
   onReplayed?: (replay: RoutingReplay) => void;
+  /**
+   * THE WAY BACK FROM A COMMIT, read BEFORE its writes leave: what an Undo pressed after the
+   * window sent the rules dispatches, built once the commit has answered. `null`: none offered.
+   */
+  reverse?: (mutations: readonly EngineMutation[], intent: AnyRoutingIntent) => (() => readonly EngineMutation[]) | null;
   now?: () => number;
 }
 
@@ -92,6 +97,9 @@ function journalDoor(journal: RoutingJournal): JournalDoor {
 
 let live: RoutingWindow | null = null;
 let liveDoor: JournalDoor | null = null;
+/** Committed presses' ways back, by press id — the last few, since only a standing pill asks. */
+const reversals = new Map<string, () => Promise<readonly EngineMutation[]>>();
+const REVERSALS_KEPT = 16;
 const listeners = new Set<() => void>();
 /** The snapshot the projection subscribes to — a NEW map per change, the store's contract. */
 let snapshot: ReadonlyMap<string, Folder> = new Map();
@@ -135,8 +143,13 @@ export function openRoutingSession(deps: RoutingSessionDeps): void {
     windowMs: deps.windowMs,
     plan: deps.plan,
     dispatch: (mutations, intent) => {
+      const back = deps.reverse?.(mutations, intent) ?? null;
       const landed = deps.dispatch(mutations, intent).then((ok) => ok !== false, () => false);
       launched?.set(intent.id, landed);
+      if (back) {
+        reversals.set(intent.id, () => landed.then((ok) => (ok ? back() : [])));
+        for (const id of reversals.keys()) { if (reversals.size <= REVERSALS_KEPT) break; reversals.delete(id); }
+      }
       return landed.then(() => undefined);
     },
     onPending: publish,
@@ -162,6 +175,7 @@ export function closeRoutingSession(): void {
   live.flush();
   live = null;
   liveDoor = null;
+  reversals.clear();
   publish([]);
 }
 
@@ -232,6 +246,22 @@ export function answerScreenPress(pressId: string, mutations: readonly EngineMut
 /** Take the press on this subject back. `false` where no window was open — nothing held is not an undo. */
 export function undoRouting(subject: string): boolean {
   return live ? live.undo(subject) : false;
+}
+
+/** The press's Undo is on screen: its window counts from here (`RoutingWindow.restart`). */
+export function restartRouting(subject: string): boolean {
+  return live ? live.restart(subject) : false;
+}
+
+/**
+ * The way back from a press the window has already COMMITTED — the rules' inverse, answered once
+ * the commit has, so it can never pass the write it undoes. Taken once; `null` for a press whose
+ * commit this session did not send.
+ */
+export function takeRoutingReversal(pressId: string): Promise<readonly EngineMutation[]> | null {
+  const back = reversals.get(pressId);
+  reversals.delete(pressId);
+  return back ? back() : null;
 }
 
 /** Commit every open window now — backgrounding, and the session teardown. Leaving is not undo. */

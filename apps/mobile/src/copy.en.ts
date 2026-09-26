@@ -1627,8 +1627,8 @@ const TABLE = {
   /**
    * MOVE'S OWN SETTLEMENT, because Move takes back two things. The mail is reversed on the wire
    * and the sender's RULE was never sent — a window, like the delete's — so the sentence names
-   * both. Only where the cancel actually took: past the window the rule stands and the plain
-   * "Undone." is the true one (`state/live.ts#move`).
+   * both. Only where the cancel actually took: past the window the rule was made and its inverse
+   * takes it back, so the plain "Undone." is the true one (`state/live.ts#move`).
    */
   toastRoutingUndone: "The mail is back where it was, and no rule was made.",
   /**
@@ -1717,6 +1717,15 @@ const TABLE = {
   /* SEND + DONE’s one sentence: the send happened AND the source was filed. */
   toastSentAndDone: "Sent · marked done",
   toastMoved: (place: string) => `Moved to ${place}.`,
+  /**
+   * A MOVE THAT ALSO DECIDES THE SENDER — the web's `screening.toastRuledMoved` and
+   * `toastRuledFuture`, word for word: the letter moved and their future mail follows it, or the
+   * letter was already filed there and only the rule changed. `toastMoved` stays the one-off's.
+   */
+  toastRuledMoved: (place: string, n: number, sender: string) =>
+    `${place} — ${n === 1 ? `1 message from ${sender} moved` : `${n} messages from ${sender} moved`}. Future mail from them files there too. The rest of their mail here stays where it is.`,
+  toastRuledFuture: (place: string, sender: string) =>
+    `${place} — future mail from ${sender} files there too. Mail already here stays where it is.`,
   /**
    * Said when a Move press has nothing to do — the mail is already in that place and no rule
    * sends it anywhere else. The press used to return in silence, which is how "Move → Ohbox did

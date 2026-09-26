@@ -15,6 +15,8 @@ export interface ToastEntry {
   say: RefusalArg;
   undo?: () => void;
   holdMs?: number;
+  /** Told once, when the pill's hold starts — a held window counts from the same moment. */
+  shown?: () => void;
 }
 
 /** The two slots as the provider holds them. */

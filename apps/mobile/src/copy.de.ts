@@ -1080,6 +1080,11 @@ export const DE: Deck = {
    * and has since been retired with its caller, so this is the only home of the sentence.
    */
   toastMoved: (place: string) => `Verschoben: ${place}.`,
+  /* Die Worte des Web-Katalogs (`screening.toastRuledMoved` / `toastRuledFuture`), siehe `copy.en.ts`. */
+  toastRuledMoved: (place: string, n: number, sender: string) =>
+    `${place} — ${n === 1 ? `1 Nachricht von ${sender} verschoben` : `${n} Nachrichten von ${sender} verschoben`}. Künftige Post von ihm geht auch dorthin. Ihre übrige Post hier bleibt, wo sie ist.`,
+  toastRuledFuture: (place: string, sender: string) =>
+    `${place} — künftige Post von ${sender} geht auch dorthin. Post, die schon hier ist, bleibt, wo sie ist.`,
   toastMoveAlready: (place: string) => `Schon in ${place}.`,
   /** Siehe `copy.en.ts`: 202 heisst vorgemerkt, nicht erledigt — verschoben wurde nichts. */
   toastMoveQueued: (place: string, holder: string) =>

@@ -60,6 +60,7 @@ import {
   planHeldRouting,
   presentedOptions,
   routingReplaySay,
+  routingReversal,
   liveFolder,
   liveFolders,
   liveFolderUnread,
@@ -1124,6 +1125,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         }
         return true;
       },
+      /* A MOVE'S WAY BACK once its window has sent the rules; a sheet press's rules can carry the
+         backlog pass the person asked for, which no inverse takes back. */
+      reverse: (mutations, intent) => (intent.v === 2 ? null : routingReversal(() => engine.read(), mutations)),
       onReplayed: (replay) => { for (const say of routingReplaySay(replay)) showToast(say); },
     });
     return () => { closeRoutingSession(); };

@@ -378,6 +378,9 @@ function ToastPill({ entry, newest, dismiss, onScreen, lift, onHeight, onPressin
     /* BY ID: a displaced sentence's timer must not take the one that replaced it off the
        screen (`state/toast-one.ts#afterDismiss`). */
     hold.current = { id: toastId, timer: setTimeout(() => dismiss(toastId), holdMs) };
+    /* AND A HELD WINDOW STARTS COUNTING NOW, armed after the hold so the offer leaves first: the
+       Undo a person can press and the commit it cancels are one clock (`held-routing.ts`). */
+    entry.shown?.();
   };
 
   useEffect(() => {
