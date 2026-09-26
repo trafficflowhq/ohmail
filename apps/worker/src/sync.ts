@@ -1419,16 +1419,12 @@ async function syncCycleWithin(
   }
 
   // AFTER the commit loop, deliberately. The adapter holds a truncated folder's cursor at its
-  // previous value, so this writes the ADVANCED cursor only for folders that genuinely
-  // drained; advancing mid-loop would put `highestModseq` past mail this process has not
-  // committed yet, and a crash there loses it permanently. The per-message `commitChange`
-  // transactions above are the incremental checkpoint — `buildCursor` rebuilds the known-set
-  // from them, so a restart resumes rather than restarting the mailbox.
-  //
-  // A folder in `deferred` is skipped entirely: it holds a change that failed and was not
-  // declared consumed, and a cursor written across that is an acknowledgement of work still owed.
-  //
-  // ONLY THE FOLDERS WHOSE CURSOR MOVED, in ONE fenced group: an idle cycle writes no cursor row.
+  // previous value, so this writes the ADVANCED cursor only for folders that genuinely drained;
+  // advancing mid-loop would put `highestModseq` past mail not committed yet, and a crash there
+  // loses it. The per-message `commitChange` transactions are the checkpoint `buildCursor`
+  // rebuilds the known-set from. A folder in `deferred` is skipped: it holds a change that failed
+  // and was not declared consumed. Only the folders whose cursor MOVED are written, in one fenced
+  // group, so an idle cycle writes no cursor row.
   const cursorWrites: Array<{ folder: string; cursor: PersistedFolderCursor }> = [];
   for (const [folder, fc] of Object.entries(batch.newCursor.folders)) {
     if (deferred.has(folder)) continue;
