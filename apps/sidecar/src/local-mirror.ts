@@ -4,18 +4,20 @@
  * separate (deleting mail rows would delete the wrong copy); on the standalone door the local
  * database is BOTH server and mirror, so a removal that leaves the mail removed nothing a person can
  * see. Measured without it: the credential went, the mail stayed, and re-connecting the address
- * inserted a SECOND row (a tombstone is correctly not reused) after which the feed served both rows'
- * copies of every message. The order here is the FK graph's (children first, nothing cascades), kept
- * topological by `local-mirror-census.test.ts`. Deliberately left: `threads`/`tags`, `mailbox_credentials`, `account_settings`, and the tombstoned row.
+ * inserted a SECOND row, after which the feed served both rows' copies of every message. Children
+ * first (nothing cascades); `local-mirror-census.test.ts` derives the tables from the schema. Left:
+ * the tombstone and the account's own rows; a thread goes once no other mailbox is in it.
  */
 
-import { and, eq, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
+import { and, eq, exists, inArray, isNotNull, ne, notExists, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   approvals, attachments, awayReplies, awayResponderSent,
-  drafts, flagState, folderOps, folderState, junkRescues, mailboxFolders, messageBodies, messageSearch,
-  messageFailures, messageInstances, messageStates, messageTags, messages, outboundSends,
-  recordMailboxRemoved, routingDecisions, trackerEvents, unsubscribeExamined, unsubscribeRecords,
+  drafts, flagState, folderOps, folderState, junkRescues, mailboxCredentials, mailboxFolders,
+  mailboxProfileMirror, messageBodies, messageSearch, messageFailures, messageInstances, messageStates,
+  messageTags, messages, organizerRequests, outboundSendFingerprints, outboundSends,
+  recordMailboxRemoved, routingDecisions, threadNotes, threads, trackerEvents, unsubscribeExamined,
+  unsubscribeRecords,
   type LedgerTx, type Tx,
 } from "@trafficflow/db";
 
@@ -30,6 +32,7 @@ import type { LocalDb } from "./db.js";
  * graph rather than against a copy of itself.
  */
 export const WIPED_TABLES: readonly string[] = [
+  "outbound_send_fingerprints",
   "outbound_sends",
   "drafts",
   "message_tags",
@@ -51,8 +54,16 @@ export const WIPED_TABLES: readonly string[] = [
   "folder_ops",
   "junk_rescues",
   "mailbox_folders",
+  "mailbox_profile_mirror",
+  "organizer_requests",
+  "mailbox_credentials",
+  "thread_notes",
+  "threads",
   "messages",
 ];
+
+/** How many exclusive threads one statement names — bounded, like every id list here. */
+const THREAD_PAGE = 500;
 
 /**
  * Delete everything this install mirrored for one mailbox, and SAY SO in the change log so the
@@ -102,6 +113,13 @@ export async function deleteMailboxRows(db: Tx, mailboxId: string): Promise<void
     .where(eq(drafts.mailboxId, mailboxId));
 
   // ── DRAFTS FIRST, AND WHAT THEY POINT AT ──────────────────────────────────────────────────
+  /* A send whose draft is already gone is reached only through this mailbox's content claim;
+     the claims go with it (they cascade from the send, and are deleted by key for a store that
+     does not enforce the cascade). */
+  await db.delete(outboundSends).where(inArray(outboundSends.id,
+    db.select({ id: outboundSendFingerprints.sendId }).from(outboundSendFingerprints)
+      .where(eq(outboundSendFingerprints.mailboxId, mailboxId))));
+  await db.delete(outboundSendFingerprints).where(eq(outboundSendFingerprints.mailboxId, mailboxId));
   await db.delete(outboundSends).where(inArray(outboundSends.draftId, ownDrafts));
   await db.delete(drafts).where(eq(drafts.mailboxId, mailboxId));
   /* A draft in ANOTHER mailbox replying to a message in THIS one. Nullable, so the reply loses its
@@ -152,7 +170,39 @@ export async function deleteMailboxRows(db: Tx, mailboxId: string): Promise<void
      they hang off no message row — Junk never enters the mirror. */
   await db.delete(junkRescues).where(eq(junkRescues.mailboxId, mailboxId));
   await db.delete(mailboxFolders).where(eq(mailboxFolders.mailboxId, mailboxId));
+  /* The reader's cached profile and its queued requests carry correspondents' addresses and the
+     person's own rules; the credential is already gone on the standalone door (one writer), and
+     this is its second reader on the Cloud door, for rows left from a standalone era. */
+  await db.delete(mailboxProfileMirror).where(eq(mailboxProfileMirror.mailboxId, mailboxId));
+  await db.delete(organizerRequests).where(eq(organizerRequests.mailboxId, mailboxId));
+  await db.delete(mailboxCredentials).where(eq(mailboxCredentials.mailboxId, mailboxId));
+  await deleteExclusiveThreads(db, mailboxId);
   await db.delete(messages).where(eq(messages.mailboxId, mailboxId));
+}
+
+/**
+ * The threads only this mailbox's messages are in — a thread carries the subject and the
+ * participants, its notes what the person wrote. The hosted sweep's rule
+ * (`mailbox-erasure.ts#eraseExclusiveThreads`): a thread another mailbox is in stays, and a
+ * sibling's draft keeps its text and loses the thread. Paged; unhooking this mailbox's messages
+ * takes a thread out of the next page, and the delete ends it.
+ */
+async function deleteExclusiveThreads(db: Tx, mailboxId: string): Promise<void> {
+  const inThread = (mine: boolean) => db.select({ one: sql`1` }).from(messages).where(and(
+    eq(messages.threadId, threads.id),
+    mine ? eq(messages.mailboxId, mailboxId) : ne(messages.mailboxId, mailboxId),
+  ));
+  for (;;) {
+    const page = (await db.select({ id: threads.id }).from(threads)
+      .where(and(exists(inThread(true)), notExists(inThread(false))))
+      .limit(THREAD_PAGE)).map((r) => r.id);
+    if (page.length === 0) return;
+    await db.delete(threadNotes).where(inArray(threadNotes.threadId, page));
+    await db.update(drafts).set({ threadId: null }).where(inArray(drafts.threadId, page));
+    await db.update(messages).set({ threadId: null })
+      .where(and(eq(messages.mailboxId, mailboxId), inArray(messages.threadId, page)));
+    await db.delete(threads).where(inArray(threads.id, page));
+  }
 }
 
 /**
