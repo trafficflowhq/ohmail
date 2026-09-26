@@ -107,7 +107,18 @@ export const CLOUD_SYNC_TYPES = [
  * `satisfies` above catches the reverse. The `as const` is load-bearing — a widened annotation
  * makes the assertion vacuous.
  */
-type CloudSyncTypeMissing = Exclude<EntityType, (typeof CLOUD_SYNC_TYPES)[number]>;
+/**
+ * THE ONE TYPE THIS MIRROR DOES NOT ASK FOR, named rather than forgotten. `mailbox_profile` is a
+ * projection of the organizer's document the HOSTED store caches for a mailbox it only reads;
+ * this store holds no copy of that document to apply it to, and the local feed materializes the
+ * type from a `mailbox_profile_mirror` row only a local reader cycle writes. Gap row
+ * HOSTED-DESKTOP-CLOUD-READER-ARRANGEMENT.
+ */
+export const CLOUD_UNMIRRORED_TYPES = ["mailbox_profile"] as const satisfies readonly EntityType[];
+
+type CloudSyncTypeMissing = Exclude<
+  EntityType, (typeof CLOUD_SYNC_TYPES)[number] | (typeof CLOUD_UNMIRRORED_TYPES)[number]
+>;
 type CloudSyncTypesAreComplete = [CloudSyncTypeMissing] extends [never] ? true
   : { "EntityType missing from CLOUD_SYNC_TYPES — the desktop would never be sent it": CloudSyncTypeMissing };
 // eslint-disable-next-line @typescript-eslint/no-unused-vars

@@ -103,7 +103,14 @@ export type EntityType =
    * `materializeScreenerSuggestion` (`packages/services/src/dto/materialize.ts`), which is
    * provenance-scoped: a pipeline decision's id materializes null under this type.
    */
-  | "screener_suggestion";
+  | "screener_suggestion"
+  /**
+   * THE ORGANIZER'S ARRANGEMENT OF A MAILBOX THIS INSTALL ONLY READS — a projection of the cached
+   * document (`mailbox_profile_mirror`), never a second rule store. The entity id is the MAILBOX
+   * id and the op is always `"update"`; it materializes only while `organizer_role` is not
+   * `organizer`, so a promotion drains it as a tombstone. Rung by {@link recordMailboxProfileChange}.
+   */
+  | "mailbox_profile";
 
 export type ChangeOp = "create" | "update" | "move" | "delete";
 
@@ -385,6 +392,20 @@ export async function recordMailboxRemoved(
 ): Promise<bigint> {
   return recordChange(tx, {
     accountId, entityType: "mailbox", entityId: mailboxId, op: "delete", meta: null,
+  });
+}
+
+/**
+ * THE ONE DOOR FOR A MAILBOX WHOSE PRESENTED ARRANGEMENT MOVED — the mirrored document was
+ * written or discarded, or the role that decides whether it is served flipped. Inside the write's
+ * own transaction ({@link LedgerTx}): a row without its change leaves every other surface showing
+ * the old arrangement until its next full boot.
+ */
+export async function recordMailboxProfileChange(
+  tx: LedgerTx, accountId: string, mailboxId: string,
+): Promise<bigint> {
+  return recordChange(tx, {
+    accountId, entityType: "mailbox_profile", entityId: mailboxId, op: "update", meta: null,
   });
 }
 

@@ -6,7 +6,7 @@ import {
 } from "@trafficflow/core/mail";
 import { reasonDetail, suggestionAdvice } from "../screener-advice.js";
 import {
-  accountSettings, autoReplyByUsWhere, awayReplies, mailboxes,
+  accountSettings, autoReplyByUsWhere, awayReplies, mailboxes, mailboxProfileMirror, isOrganizerKind,
   invitationWithoutEventWhere, itipReplyHeaderWhere,
   messages, folderState, messageStates, threads, routingDecisions, approvals, rules, drafts,
   tags, messageTags,
@@ -17,7 +17,7 @@ import { dialect } from "@trafficflow/db/dialect";
 import { draftContentRevision } from "../draft-revision.js";
 import type { Db } from "../context.js";
 import type {
-  FolderDTO, SettingsDTO,
+  FolderDTO, SettingsDTO, MailboxProfileDTO,
   Folder, MessageDTO, MessageStateDTO, ThreadDTO, RoutingDecisionDTO, ApprovalDTO, RuleDTO,
   DraftDTO, DraftStatus, ScreenerSuggestionDTO, SensitivityFlags, TriageState, TagDTO,
 } from "./types.js";
@@ -939,6 +939,102 @@ export async function materializeSettings(db: Db, accountId: string, id: string)
   };
 }
 
+/** One mirrored document row with the holder columns beside it, as {@link mailboxProfileRows} reads it. */
+export interface MailboxProfileRow {
+  mailboxId: string;
+  doc: unknown;
+  readAt: Date;
+  kind: string | null;
+  name: string | null;
+  since: Date | null;
+}
+
+const RULE_KINDS: ReadonlySet<string> = new Set(["sender", "domain", "header"]);
+
+/** One document rule as a `RuleDTO`, or `null` for an entry that does not say what a rule says. */
+function profileRuleToDTO(mailboxId: string, at: number, e: unknown, asOf: string): RuleDTO | null {
+  if (e === null || typeof e !== "object") return null;
+  const r = e as Record<string, unknown>;
+  if (typeof r.kind !== "string" || !RULE_KINDS.has(r.kind)) return null;
+  if (typeof r.match !== "string" || typeof r.destination !== "string") return null;
+  const term = (v: unknown): string | null => (typeof v === "string" && v.trim() !== "" ? v : null);
+  return {
+    // The document is written in canonical order, so the index names the same rule on every read.
+    id: `profile:${mailboxId}:${at}`,
+    kind: r.kind as RuleDTO["kind"],
+    match: r.match,
+    destination: r.destination as Folder,
+    priority: typeof r.priority === "number" && Number.isFinite(r.priority) ? r.priority : 0,
+    provenance: (typeof r.provenance === "string" ? r.provenance : "manual") as RuleDTO["provenance"],
+    enabled: r.enabled === true,
+    subjectContains: term(r.subjectContains),
+    bodyContains: term(r.bodyContains),
+    stats: { hits: 0, lastHitAt: null, demotions: 0 },
+    createdAt: asOf,
+    updatedAt: asOf,
+    retro: { requestedAt: null, doneAt: null },
+  };
+}
+
+/**
+ * The `mailbox_profile` entity from its row, or `null` when the cached document carries no rule
+ * list — which the client reads as "no document": that mailbox is then judged by the local rules.
+ */
+export function mailboxProfileRowToDTO(r: MailboxProfileRow): MailboxProfileDTO | null {
+  const doc = r.doc;
+  if (doc === null || typeof doc !== "object") return null;
+  const list = (doc as { rules?: unknown }).rules;
+  if (!Array.isArray(list)) return null;
+  const asOf = r.readAt.toISOString();
+  const rules: RuleDTO[] = [];
+  list.forEach((e, at) => {
+    const rule = profileRuleToDTO(r.mailboxId, at, e, asOf);
+    if (rule !== null) rules.push(rule);
+  });
+  return {
+    mailboxId: r.mailboxId,
+    rules,
+    asOf,
+    from: { kind: isOrganizerKind(r.kind) ? r.kind : null, name: r.name ?? null, since: iso(r.since) },
+    updatedAt: asOf,
+  };
+}
+
+/**
+ * THE MIRRORED DOCUMENTS IN FORCE ON THIS ACCOUNT — one row per mailbox this install READS. Never
+ * for an organizer (its local rows are the configuration, `readMailboxProfile`'s rule) and never
+ * for a tombstone. The account is in the predicate on BOTH tables: the mirror is keyed by mailbox
+ * alone, so a join on the id would admit whatever row carried that uuid.
+ */
+export async function mailboxProfileRows(
+  db: Db, accountId: string, mailboxId?: string,
+): Promise<MailboxProfileRow[]> {
+  return db.select({
+    mailboxId: mailboxProfileMirror.mailboxId,
+    doc: mailboxProfileMirror.doc,
+    readAt: mailboxProfileMirror.readAt,
+    kind: mailboxes.organizedByKind,
+    name: mailboxes.organizedByName,
+    since: mailboxes.organizedSince,
+  })
+    .from(mailboxProfileMirror)
+    .innerJoin(mailboxes, and(
+      eq(mailboxes.id, mailboxProfileMirror.mailboxId),
+      eq(mailboxes.accountId, accountId),
+    ))
+    .where(and(
+      eq(mailboxProfileMirror.accountId, accountId),
+      sql`${mailboxes.organizerRole} <> 'organizer'`,
+      sql`${mailboxes.status} <> 'disabled'`,
+      ...(mailboxId === undefined ? [] : [eq(mailboxProfileMirror.mailboxId, mailboxId)]),
+    ));
+}
+
+async function materializeMailboxProfile(db: Db, accountId: string, id: string): Promise<MailboxProfileDTO | null> {
+  const [row] = await mailboxProfileRows(db, accountId, id);
+  return row ? mailboxProfileRowToDTO(row) : null;
+}
+
 export function materialize(db: Db, accountId: string, type: EntityType, id: string): Promise<unknown | null> {
   switch (type) {
     case "message": return materializeMessage(db, accountId, id);
@@ -952,6 +1048,7 @@ export function materialize(db: Db, accountId: string, type: EntityType, id: str
     case "rule": return materializeRule(db, accountId, id);
     case "draft": return materializeDraft(db, accountId, id);
     case "settings": return materializeSettings(db, accountId, id);
+    case "mailbox_profile": return materializeMailboxProfile(db, accountId, id);
     default: return Promise.resolve(null);
   }
 }

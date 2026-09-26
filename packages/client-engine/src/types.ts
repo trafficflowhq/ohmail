@@ -95,9 +95,17 @@ export const SYNC_ENTITY_TYPES = [
    * suggestion is ABOUT a sender, bought from one message — and renders the newest `boughtAt`.
    */
   "screener_suggestion",
+  /**
+   * The organizer's arrangement of a mailbox this install only reads ({@link MailboxProfileEntity}),
+   * keyed by the mailbox. A tombstone means the local rules decide that mailbox again.
+   */
+  "mailbox_profile",
 ] as const;
 
 export type SyncEntityType = (typeof SYNC_ENTITY_TYPES)[number];
+
+/** The `mailbox_profile` entity's own name — the partition, the bounds table and the tests agree on it. */
+export const MAILBOX_PROFILE_TYPE = "mailbox_profile";
 
 /**
  * The `"mailbox"` row's own name, because three places have to agree on it — the store's cascade,
@@ -137,6 +145,19 @@ void _syncTypesAreKnown;
  * rationale gate, the sender check), so a client cannot misderive it, and there is no `rationale`
  * field on this wire by design.
  */
+/**
+ * THE ORGANIZER'S ARRANGEMENT OF A MAILBOX THIS INSTALL ONLY READS — the server's
+ * `MailboxProfileDTO`. `rules` is the cached document's rule list: the partition judges this
+ * mailbox's mail by them instead of the local rule entities, and nothing writes or routes by them.
+ */
+export interface MailboxProfileEntity {
+  mailboxId: string;
+  rules: RuleDTO[];
+  asOf: string;
+  from: { kind: string | null; name: string | null; since: string | null };
+  updatedAt: string;
+}
+
 export interface ScreenerSuggestionEntity {
   id: string;
   /** The message the advice was bought about; the mirror cascades on it. */

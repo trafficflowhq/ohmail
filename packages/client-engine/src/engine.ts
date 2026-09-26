@@ -4936,7 +4936,11 @@ export class OhmailEngine {
     }
   }
 
-  /** Does a decision in the mirror name one of these senders — held mail, as far as a client can tell. */
+  /**
+   * Does a decision in the mirror name one of these senders — held mail, as far as a client can
+   * tell. THE LOCAL RULES ONLY, deliberately: the held-release offer is served for mailboxes this
+   * install organizes (`held-release-service.ts`), and their decisions are the local rule entities.
+   */
   private heldArrivalDecided(senders: ReadonlySet<string>): boolean {
     const index = consentIndex(rulesList(this.read()));
     for (const address of senders) if (decidedDestination(index, address) !== null) return true;

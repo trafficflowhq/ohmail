@@ -2,6 +2,7 @@ import {
   counterpartyEvidence, type CounterpartyEvidence, type CounterpartyMessage,
 } from "@trafficflow/core/sender-headers";
 import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/folder-name";
+import { canonicalDestination } from "@trafficflow/core/destinations";
 import {
   bodyTermOf, bodyTermSatisfied, compareRules, effectForDestination, subjectTermOf, subjectTermSatisfied,
   type OrderedRule,
@@ -9,7 +10,7 @@ import {
 import type { EntityReader } from "./store.js";
 import { ownAddressKeys } from "./own-address.js";
 import { isOwnSent, isResurfaced, messagesByDateDesc, rulesList, senderKey } from "./selectors.js";
-import type { EngineMessage, Folder, RuleDTO } from "./types.js";
+import { MAILBOX_PROFILE_TYPE, type EngineMessage, type Folder, type MailboxProfileEntity, type RuleDTO } from "./types.js";
 
 /* Consent, the cutline, and History. Two rules decide where a message is
    PRESENTED: (1) consent comes from the user's own actions — sitting in the
@@ -70,6 +71,12 @@ export interface ConsentIndex {
   /** Every rule naming the key, for the readers that rank the ones applying to one message. */
   readonly allBySender: ReadonlyMap<string, readonly RuleDTO[]>;
   readonly allByDomain: ReadonlyMap<string, readonly RuleDTO[]>;
+  /**
+   * The index of each mailbox this install only READS, from its `mailbox_profile` entity. A
+   * reader's local rule entities are not what the organizer decided, so its mail is judged by the
+   * organizer's document; a mailbox absent here is judged by the four maps above.
+   */
+  readonly byMailbox: ReadonlyMap<string, ConsentIndex>;
 }
 
 export interface ConsentCounts {
@@ -175,7 +182,11 @@ export function outranks(a: RuleDTO, b: RuleDTO): boolean {
  * about the WHOLE sender (mail 0050/0052): terms narrow placement ({@link placedDestination}, per
  * message), never admission. Never add a term check here.
  */
-export function consentIndex(rules: readonly RuleDTO[]): ConsentIndex {
+export function consentIndex(
+  rules: readonly RuleDTO[], profiles: readonly MailboxProfileEntity[] = [],
+): ConsentIndex {
+  const byMailbox = new Map<string, ConsentIndex>();
+  for (const p of profiles) byMailbox.set(p.mailboxId, consentIndex(p.rules));
   const bySender = new Map<string, RuleDTO>();
   const byDomain = new Map<string, RuleDTO>();
   const allBySender = new Map<string, RuleDTO[]>();
@@ -194,11 +205,33 @@ export function consentIndex(rules: readonly RuleDTO[]): ConsentIndex {
     if (list === undefined) all.set(key, [r]);
     else list.push(r);
   }
-  return { bySender, byDomain, allBySender, allByDomain };
+  return { bySender, byDomain, allBySender, allByDomain, byMailbox };
 }
 
-/** The rules naming this address and the rules naming its domain. */
-function rulesNaming(index: ConsentIndex, address: string): readonly (readonly RuleDTO[])[] {
+/**
+ * The organizer's arrangement of every mailbox this install only reads, off the mirror. An entity
+ * that does not carry a rule list is no document, and its mailbox falls back to the local rules;
+ * destinations are read at their current spelling, as {@link rulesList} reads the local ones.
+ */
+export function mailboxProfiles(reader: EntityReader): MailboxProfileEntity[] {
+  const out: MailboxProfileEntity[] = [];
+  for (const p of reader.list<MailboxProfileEntity>(MAILBOX_PROFILE_TYPE)) {
+    if (typeof p?.mailboxId !== "string" || !Array.isArray(p.rules)) continue;
+    out.push({ ...p, rules: p.rules.map((r) => ({ ...r, destination: canonicalDestination(r.destination) as Folder })) });
+  }
+  return out;
+}
+
+/** The index a message of `mailboxId` is judged by — its organizer's, where this install reads it. */
+function scoped(index: ConsentIndex, mailboxId: string | undefined): ConsentIndex {
+  return mailboxId === undefined ? index : index.byMailbox.get(mailboxId) ?? index;
+}
+
+/** The rules naming this address and the rules naming its domain, in `mailboxId`'s index. */
+function rulesNaming(
+  whole: ConsentIndex, address: string, mailboxId?: string,
+): readonly (readonly RuleDTO[])[] {
+  const index = scoped(whole, mailboxId);
   const addr = senderKey(address);
   const domain = domainOfAddress(addr);
   return [index.allBySender.get(addr) ?? [], (domain === null ? undefined : index.allByDomain.get(domain)) ?? []];
@@ -223,7 +256,10 @@ export function ruleTerms(r: RuleDTO): { subject: string | null; body: string | 
  * with only narrowed rules, core `standingRule`'s reading over all of them. At equal priority the
  * address rule wins, the more specific claim; a higher-priority domain rule wins over it.
  */
-export function decidedDestination(index: ConsentIndex, address: string): Folder | null {
+export function decidedDestination(
+  whole: ConsentIndex, address: string, mailboxId?: string,
+): Folder | null {
+  const index = scoped(whole, mailboxId);
   let bare: RuleDTO | undefined;
   for (const list of rulesNaming(index, address)) {
     for (const r of list) if (isBare(r) && (bare === undefined || outranks(r, bare))) bare = r;
@@ -246,7 +282,7 @@ export function decidedDestination(index: ConsentIndex, address: string): Folder
  */
 export function placedRule(index: ConsentIndex, m: EngineMessage): RuleDTO | null {
   let winner: RuleDTO | null = null;
-  for (const list of rulesNaming(index, m.from.address)) {
+  for (const list of rulesNaming(index, m.from.address, m.mailboxId)) {
     for (const r of list) {
       if (!subjectTermSatisfied(r, m.subject ?? "") || !bodyTermSatisfied(r, null)) continue;
       if (winner === null || outranks(r, winner)) winner = r;
@@ -262,7 +298,7 @@ export function placedRule(index: ConsentIndex, m: EngineMessage): RuleDTO | nul
 function placedDestination(index: ConsentIndex, m: EngineMessage): Folder | null {
   const winner = placedRule(index, m);
   if (winner !== null) return winner.destination;
-  const standing = decidedDestination(index, m.from.address);
+  const standing = decidedDestination(index, m.from.address, m.mailboxId);
   return standing !== null && effectForDestination(standing) === "deny" ? standing : null;
 }
 
@@ -353,7 +389,7 @@ export function senderActivity(
  */
 export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}): ConsentPartition {
   const messages = reader.list<EngineMessage>("message");
-  const index = consentIndex(rulesList(reader));
+  const index = consentIndex(rulesList(reader), mailboxProfiles(reader));
   const own = ownAddressKeys(reader, opts);
   /* The user's own folders, when "Use folders" is on (FOLDERS-SPEC.md
    * §16.5). Two gates, both must say yes: the caller's
@@ -444,7 +480,7 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
         placeOf.set(m.id, m.folder);
         const key = senderKey(m.from.address);
         if (!own.has(key) && !m.unread && !isResurfaced(m)) {
-          const decided = decidedDestination(index, m.from.address);
+          const decided = decidedDestination(index, m.from.address, m.mailboxId);
           const ms = messageMs(m);
           if (!rulesOnly && decided === null && ms !== null && ms < cutoff) historyIds.add(m.id);
         }
@@ -465,7 +501,7 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
        people who have not been screened) and never a Screener decision. Held at the gate it
        presents in the INBOX — nothing moves on the server; elsewhere it keeps its place. */
     if (own.has(key)) { placeOf.set(m.id, m.folder === "ohmail/Screener" ? "INBOX" : m.folder); continue; }
-    const decided = decidedDestination(index, m.from.address);
+    const decided = decidedDestination(index, m.from.address, m.mailboxId);
     const consented = decided !== null && CONSENTING_DESTINATIONS.has(decided);
     if (consented) consentedSenders.add(key);
 

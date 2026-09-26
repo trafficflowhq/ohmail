@@ -3,7 +3,7 @@ import {
 } from "@trafficflow/core/destinations";
 import { consentIndex, placedRule, ruleTerms } from "./consent-cutline.js";
 import type { EntityReader } from "./store.js";
-import type { EngineMessage, Folder, RuleDTO } from "./types.js";
+import type { EngineMessage, Folder, MailboxProfileEntity, RuleDTO } from "./types.js";
 
 /** Why a pressed row is not shown at the pressed place after the press. */
 export type PressStayCause =
@@ -45,11 +45,13 @@ export function pressOutcome(input: {
   presented: EntityReader;
   subject: readonly EngineMessage[];
   rules: readonly RuleDTO[];
+  /** The mirror's `mailbox_profile` entities (`mailboxProfiles`): a read mailbox is placed by these. */
+  profiles: readonly MailboxProfileEntity[];
   wanted: Folder;
   retro: boolean;
 }): PressOutcome {
   const place = canonicalDestination(input.wanted);
-  const index = consentIndex(input.rules);
+  const index = consentIndex(input.rules, input.profiles);
   const groups = new Map<string, PressStay>();
   let at = 0;
   for (const m of input.subject) {

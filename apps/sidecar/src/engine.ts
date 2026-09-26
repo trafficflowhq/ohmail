@@ -45,6 +45,8 @@ import {
   // produce anything the window could see? Nothing else on this door writes to the window's
   // mirror, so an unmoved `max` IS "nothing happened" — see `changeLogMark`.
   seqBounds,
+  // The arrangement's doorbell: every role flip below rings it inside its own transaction.
+  recordMailboxProfileChange, type LedgerTx,
 } from "@trafficflow/db";
 import {
   attachmentsService, awayResponderService, contactsService, draftingService, draftsService,
@@ -4273,7 +4275,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              * `=` (SQL equality on two NULLs is NULL). Both columns, because the door that
              * accepts a press on a release-pending row also cancels the request in the same
              * transaction; the next pass's gate appends a fresh claim under the surviving stamp. */
-            const [recorded] = await db.update(mailboxes)
+            const [recorded] = await db.transaction(async (tx) => {
+              const rows = await tx.update(mailboxes)
               .set({
                 organizerRole: "reader",
                 // Nobody won this mailbox. Leaving the holder columns populated would put
@@ -4309,6 +4312,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 sql`${mailboxes.releaseRequestedAt} is not distinct from ${dialect(db).tsOrNull(releaseRequested)}`,
               ))
               .returning({ id: mailboxes.id });
+              if (rows.length > 0) await recordMailboxProfileChange(tx as unknown as LedgerTx, world.accountId, mb.id);
+              return rows;
+            });
             if (recorded === undefined) {
               /* THE PRESS WON. Nothing is recorded and nothing is undone — the next poll re-reads
                  the row, finds the request gone and the stamp standing, and promotes. `organizing`
@@ -4570,7 +4576,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             // way. The write's read-back decides whether this launch organizes at all: finding
             // the tombstone, it organizes nothing and the appended claim ages out.
             try {
-              const [after] = await db.update(mailboxes)
+              const [after] = await db.transaction(async (tx) => {
+                const rows = await tx.update(mailboxes)
                 .set({
                   status: sql`case when ${mailboxes.disabledReason} is not null then 'connected' else ${mailboxes.status} end`,
                   disabledReason: null,
@@ -4620,6 +4627,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 })
                 .where(eq(mailboxes.id, mb.id))
                 .returning({ status: mailboxes.status });
+                // The local rules are this mailbox's configuration now: the entity drains as a tombstone.
+                if (rows.length > 0) await recordMailboxProfileChange(tx as unknown as LedgerTx, world.accountId, mb.id);
+                return rows;
+              });
               takeoverAuthorized = false;
               if (!after || after.status === "disabled") {
                 log("organizer_takeover_row_removed", {
@@ -4803,6 +4814,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               organizerEventAt: now(),
             })
             .where(eq(mailboxes.id, mb.id));
+            // A reader now: a surface presents this mailbox by the organizer's cached document.
+            await recordMailboxProfileChange(tx as unknown as LedgerTx, world.accountId, mb.id);
             return exported;
           });
           /* THE LATCH, AFTER THE COMMIT. A reader keeps polling, so without it the next cycle

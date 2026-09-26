@@ -1,8 +1,9 @@
 import { and, desc, eq } from "drizzle-orm";
 import {
   PROFILE_FOUND_AUDIT_ACTION, auditLog, latestProfileFoundMarker, profileImportResolutionExists,
-  mailboxProfileMirror,
-  type Tx, auditAction, fencedAccountWrite,} from "@trafficflow/db";
+  mailboxProfileMirror, recordMailboxProfileChange,
+  type LedgerTx, type Tx, auditAction, fencedAccountWrite,} from "@trafficflow/db";
+import { dialect } from "@trafficflow/db/dialect";
 /* NAMED AT A LEAF, NEVER AT THE PACKAGE ROOT — this module is bundled into the desktop engine.
    `@trafficflow/core`'s index carries `export *` lines that convey the whole AI runtime
    (classification, the model client, drafting, the three workflow modules) and the hosted
@@ -1387,12 +1388,24 @@ export async function applyProfileRead(
     /* THE DISCARD, AND IT IS A DELETE RATHER THAN A NULLED ROW. A missing row is how this table
        spells "we have no document"; a row of nulls would be indistinguishable from a document that
        says nothing, and `readMailboxProfile` distinguishes exactly those two. */
-    const gone = await deps.db.delete(mailboxProfileMirror)
-      .where(and(
-        eq(mailboxProfileMirror.mailboxId, deps.mailboxId),
-        eq(mailboxProfileMirror.accountId, deps.accountId),
-      ))
-      .returning({ mailboxId: mailboxProfileMirror.mailboxId });
+    /* The discard and its change row commit together: a reading surface still holding the
+       arrangement this row carried learns from the delta that it is gone. */
+    const gone = await fencedAccountWrite(
+      deps.db as unknown as Tx,
+      { accountId: deps.accountId, mailboxId: deps.mailboxId },
+      async (tx) => {
+        const rows = await tx.delete(mailboxProfileMirror)
+          .where(and(
+            eq(mailboxProfileMirror.mailboxId, deps.mailboxId),
+            eq(mailboxProfileMirror.accountId, deps.accountId),
+          ))
+          .returning({ mailboxId: mailboxProfileMirror.mailboxId });
+        if (rows.length > 0) {
+          await recordMailboxProfileChange(tx as unknown as LedgerTx, deps.accountId, deps.mailboxId);
+        }
+        return rows;
+      },
+    );
     if (gone.length > 0) {
       deps.log("profile_mirror_discarded", {
         mailboxId: deps.mailboxId, accountId: deps.accountId,
@@ -1429,23 +1442,33 @@ export async function applyProfileRead(
      away-reply content — the rows `mailbox-erasure.ts` sweeps by name — and the fetch above began
      before the erasure did. An UPSERT, so it creates: without the fence the swept cache comes
      straight back, and `mailbox_profile_mirror` has no key to anything the sweep deletes. */
+  const epoch = typeof generation === "bigint" ? generation : BigInt(generation);
   await fencedAccountWrite(
     deps.db as unknown as Tx,
     { accountId: deps.accountId, mailboxId: deps.mailboxId },
-    async (tx) => tx.insert(mailboxProfileMirror)
-      .values({
-        mailboxId: deps.mailboxId, accountId: deps.accountId,
-        uidvalidity: typeof generation === "bigint" ? generation : BigInt(generation),
-        uid, doc: read.doc, readAt: deps.now,
-      })
-      .onConflictDoUpdate({
-        target: mailboxProfileMirror.mailboxId,
-        set: {
-          accountId: deps.accountId,
-          uidvalidity: typeof generation === "bigint" ? generation : BigInt(generation),
-          uid, doc: read.doc, readAt: deps.now,
-        },
-      }),
+    async (tx) => {
+      /* THE CHANGE ROW RIDES A NEW DOCUMENT, not every cadence's re-stamp. A document is one
+         immutable message, so the same (uidvalidity, uid) is the same bytes; locked FOR UPDATE so
+         a concurrent pass writing a different document waits and then compares against it. */
+      const [held] = await dialect(tx).forUpdate(tx.select({
+        uidvalidity: mailboxProfileMirror.uidvalidity, uid: mailboxProfileMirror.uid,
+      }).from(mailboxProfileMirror).where(and(
+        eq(mailboxProfileMirror.mailboxId, deps.mailboxId),
+        eq(mailboxProfileMirror.accountId, deps.accountId),
+      )));
+      await tx.insert(mailboxProfileMirror)
+        .values({
+          mailboxId: deps.mailboxId, accountId: deps.accountId,
+          uidvalidity: epoch, uid, doc: read.doc, readAt: deps.now,
+        })
+        .onConflictDoUpdate({
+          target: mailboxProfileMirror.mailboxId,
+          set: { accountId: deps.accountId, uidvalidity: epoch, uid, doc: read.doc, readAt: deps.now },
+        });
+      const same = held !== undefined && held.uid === uid
+        && held.uidvalidity !== null && BigInt(held.uidvalidity) === epoch;
+      if (!same) await recordMailboxProfileChange(tx as unknown as LedgerTx, deps.accountId, deps.mailboxId);
+    },
   );
   deps.log("profile_mirror_written", {
     mailboxId: deps.mailboxId, accountId: deps.accountId,

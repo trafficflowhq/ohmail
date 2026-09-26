@@ -4,6 +4,7 @@ import {
   presentationReader,
   pressOutcome,
   rulesList,
+  mailboxProfiles,
   senderKey,
   stayVerdict,
   type EngineMutation,
@@ -48,7 +49,8 @@ export function screeningReadBack(
   if (!s) return null;
   const presented = presentationReader(reader, consentPartition(reader, shellConsentOptions(o.consent, o.now, o.ownAddresses)));
   const out = pressOutcome({
-    presented, subject: s.scopes[scope].messages, rules: rulesList(reader), wanted: FOLDER_OF_VIEW[dest], retro: o.retro,
+    presented, subject: s.scopes[scope].messages, rules: rulesList(reader), profiles: mailboxProfiles(reader),
+    wanted: FOLDER_OF_VIEW[dest], retro: o.retro,
   });
   return { verdict: stayVerdict(out, reader), at: out.at };
 }

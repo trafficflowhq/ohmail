@@ -444,6 +444,20 @@ export interface ScreenerSuggestionDTO {
   updatedAt: ISODateTime;
 }
 
+/**
+ * THE ORGANIZER'S ARRANGEMENT OF A MAILBOX THIS INSTALL ONLY READS — the `mailbox_profile`
+ * entity, keyed by the mailbox. `rules` is the cached document's rule list projected 1:1, ids
+ * `profile:<mailboxId>:<index>` over the canonical order; a client PRESENTS that mailbox's mail by
+ * these and nothing routes by them. `asOf` is when this install read the document.
+ */
+export interface MailboxProfileDTO {
+  mailboxId: string;
+  rules: RuleDTO[];
+  asOf: ISODateTime;
+  from: { kind: string | null; name: string | null; since: ISODateTime | null };
+  updatedAt: ISODateTime;
+}
+
 export interface ApprovalDTO {
   id: string;
   kind: "routing" | "draft_send" | "workflow_action";

@@ -1,7 +1,8 @@
 import { canonicalDestination, isOrganizedFolder, retroPassWouldMove } from "@trafficflow/core/destinations";
 import { outrankCoveringDomains } from "./address-rank.js";
 import {
-  consentIndex, consentPartition, domainOfAddress, outranks, placedRule, ruleTerms, type ConsentOptions,
+  consentIndex, consentPartition, domainOfAddress, mailboxProfiles, outranks, placedRule, ruleTerms,
+  type ConsentOptions,
 } from "./consent-cutline.js";
 import { mutationEffects, type MutationEffect } from "./mutations.js";
 import type { ScreenIntent } from "./routing-intents.js";
@@ -180,7 +181,8 @@ function simulate(input: PressInput, writes: readonly EngineMutation[]): Simulat
     reader = readerWithEffects(reader, mutationEffects(reader, lifted, ctx));
   }
   const ruled = reader;
-  const index = consentIndex(rulesList(ruled));
+  // The partition's own index, per mailbox: the router's place on a read mailbox is the organizer's.
+  const index = consentIndex(rulesList(ruled), mailboxProfiles(ruled));
   const reach = input.applyRetro || (!input.makeRule && !input.decide);
   const moves: Array<Extract<EngineMutation, { kind: "move" }>> = [];
   const moved: MutationEffect[] = [];
@@ -208,7 +210,7 @@ function conflictsOf(
   input: PressInput, after: EntityReader, placeOf: ReadonlyMap<string, Folder | null>,
 ): ConflictGroup[] {
   const place = canonicalDestination(input.wanted);
-  const index = consentIndex(rulesList(after));
+  const index = consentIndex(rulesList(after), mailboxProfiles(after));
   const groups = new Map<string, ConflictGroup>();
   for (const m of input.subject) {
     if (!isOrganizedFolder(m.physicalFolder ?? m.folder)) continue;
@@ -309,8 +311,15 @@ export function rulesInPlay(input: {
   scope: "sender" | "domain";
   match: string;
 }): RulesInPlay {
-  const rules = rulesList(input.reader).filter((r) => r.enabled);
-  const index = consentIndex(rules);
+  const local = rulesList(input.reader).filter((r) => r.enabled);
+  // A read mailbox's rows are placed by its organizer's rules, and those are the ones named here.
+  const reading = new Set(input.subject.map((m) => m.mailboxId));
+  const profiles = mailboxProfiles(input.reader);
+  const index = consentIndex(local, profiles);
+  const rules = [
+    ...local,
+    ...profiles.filter((p) => reading.has(p.mailboxId)).flatMap((p) => p.rules.filter((r) => r.enabled)),
+  ];
   const counts = new Map<string, number>();
   const insideSenders = new Set<string>();
   let insideCount = 0;

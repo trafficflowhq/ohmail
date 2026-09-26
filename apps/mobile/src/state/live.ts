@@ -102,7 +102,7 @@ import { blobToBase64 } from "../mail/blob-base64";
 import { logAttachmentRefusal } from "../engine/engine-log";
 import { refuse, type Refusal, type RefusalArg } from "../refusal";
 import {
-  planScreenCommit, pressForecast, pressOutcome, ruleFingerprint, rulesInPlay, stayVerdict,
+  mailboxProfiles, planScreenCommit, pressForecast, pressOutcome, ruleFingerprint, rulesInPlay, stayVerdict,
   type AnyRoutingIntent, type ConsentOptions, type PressForecast, type PressResolution, type RulesInPlay,
   type ScreenIntent,
 } from "@ohmail/client-engine";
@@ -446,7 +446,9 @@ function pressReadBack(
   wanted: Folder, place: string, retro: boolean,
 ): Refusal | null {
   const subject = reader.list<EngineMessage>("message").filter(ofSubject);
-  const v = stayVerdict(pressOutcome({ presented, subject, rules: rulesList(reader), wanted, retro }), reader);
+  const v = stayVerdict(pressOutcome({
+    presented, subject, rules: rulesList(reader), profiles: mailboxProfiles(reader), wanted, retro,
+  }), reader);
   switch (v.key) {
     case "none": return null;
     case "kept": return v.rule.kind === "domain"
@@ -1823,6 +1825,7 @@ export function releaseRules(reader: EntityReader, address: string, from: Folder
   const domain = wide[0]!.match.trim().toLowerCase();
   const match = senderKey(address);
   const mine: RuleDTO = { ...wide[0]!, id: "", kind: "sender", match, destination: wanted, priority: 0, provenance: "manual" };
+  // THE LOCAL RULES, by construction: the order asked of two rules this press would itself write.
   if (decidedDestination(consentIndex([...wide, mine]), match) !== wanted) {
     return { kind: "stands", mutations: [], domain };
   }
@@ -3948,7 +3951,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       if (stay) { toast(stay); return true; }
       const at = pressOutcome({
         presented: lists, subject: engine.read().list<EngineMessage>("message").filter(p.ofSubject),
-        rules: rulesList(engine.read()), wanted: p.wanted, retro: false,
+        rules: rulesList(engine.read()), profiles: mailboxProfiles(engine.read()), wanted: p.wanted, retro: false,
       }).at;
       // "All" only when no backlog pass is still applying the rule; an unknown pass never reads done.
       toast(p.applyRetro && !retroFinished(engine.read(), a.mutations, a.answers)

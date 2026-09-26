@@ -38,6 +38,9 @@ const VALID_TYPE_LIST = ([
   // Cloud mirror and the phone both name their types, so a member missing here would starve
   // exactly the two surfaces the entity exists to reach.
   "screener_suggestion",
+  // The organizer's arrangement of a mailbox this install only reads (`change-log.ts`). The
+  // phone names its types, so a member missing here would leave its reader Screener unsplit.
+  "mailbox_profile",
 ] as const) satisfies readonly EntityType[];
 const VALID_TYPES = new Set<EntityType>(VALID_TYPE_LIST);
 

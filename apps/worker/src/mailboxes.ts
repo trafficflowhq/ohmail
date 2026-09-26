@@ -4,7 +4,7 @@ import {
   mailboxes, mailboxCredentials, isOrganizerRole, organizerDisplayName, capabilitiesColumn, type Tx,
   organizerKindColumn, closedSetValue, fenceErased, MailboxErasedError,
   type OrganizerRole, type OrganizerKind, type OrganizerState,
-  rules,
+  rules, recordMailboxProfileChange, type LedgerTx,
 } from "@trafficflow/db";
 import { makeDb } from "@trafficflow/db/cloud";
 import { workerHeartbeats } from "@trafficflow/db/cloud";
@@ -761,9 +761,9 @@ function lifecycleWhere(mailboxId: string, fence?: LeaderFence): SQL {
  * absorbs the lock wait and asserts nothing, then the fenced `UPDATE` takes a FRESH snapshot at its
  * own start (after the wait) and cannot block, because we already hold the only row it names. Unfenced callers are unchanged — one statement, no transaction, nothing to be raced out of.
  */
-async function applyFenced(
+async function applyFenced<R extends { id: string } = { id: string }>(
   db: WorkerDb, mailboxId: string, fence: LeaderFence | undefined,
-  write: (db: WorkerDb) => Promise<Array<{ id: string }>>,
+  write: (db: WorkerDb) => Promise<R[]>,
   /**
    * A CONSEQUENCE OF THE WRITE, IN THE SAME TRANSACTION — run only if the write landed.
    *
@@ -773,7 +773,7 @@ async function applyFenced(
    * statements outside one would leave a role flipped with its consequence missing whenever the
    * process dies between them, and that is a state nothing would ever repair.
    */
-  also?: (db: WorkerDb) => Promise<void>,
+  also?: (db: WorkerDb, landed: R[]) => Promise<void>,
 ): Promise<boolean> {
   if (!fence && !also) return (await write(db)).length > 0;
   return db.transaction(async (tx) => {
@@ -787,9 +787,9 @@ async function applyFenced(
     // The same cast the services layer uses between a `Db` and a `Tx`: the transaction exposes
     // the query surface these writers use, and typing every one of them against both would say
     // nothing the callers do not already state.
-    const landed = (await write(tx as unknown as WorkerDb)).length > 0;
-    if (landed && also) await also(tx as unknown as WorkerDb);
-    return landed;
+    const rows = await write(tx as unknown as WorkerDb);
+    if (rows.length > 0 && also) await also(tx as unknown as WorkerDb, rows);
+    return rows.length > 0;
   });
 }
 
@@ -1143,7 +1143,21 @@ export async function markMailboxStoodDown(
     // whole of "show this again", and clearing the acknowledgement would lose the record of an older
     // dismissal for no gain.
     organizerEventAt: opts.now ?? new Date(),
-  }).where(lifecycleWhere(mailboxId, opts.fence)).returning({ id: mailboxes.id }), opts.also);
+  }).where(lifecycleWhere(mailboxId, opts.fence)).returning({ id: mailboxes.id, accountId: mailboxes.accountId }),
+  // The handover, then the arrangement's doorbell: a reader serves the organizer's document for
+  // this mailbox from here on, and a surface learns it from the delta, not at its next boot.
+  async (w, landed) => {
+    await opts.also?.(w);
+    await ringMailboxProfile(w, landed, mailboxId);
+  });
+}
+
+/** The `mailbox_profile` change for a role flip that landed, inside the flip's own transaction. */
+async function ringMailboxProfile(
+  w: WorkerDb, landed: ReadonlyArray<{ accountId: string }>, mailboxId: string,
+): Promise<void> {
+  const accountId = landed[0]?.accountId;
+  if (accountId !== undefined) await recordMailboxProfileChange(w as unknown as LedgerTx, accountId, mailboxId);
 }
 
 /**
@@ -1214,7 +1228,9 @@ export async function markMailboxReleased(
     opts.cause === "account_parked"
       ? eq(mailboxes.organizerRole, "organizer")
       : isNotNull(mailboxes.releaseRequestedAt),
-  )).returning({ id: mailboxes.id }));
+  )).returning({ id: mailboxes.id, accountId: mailboxes.accountId }),
+  // A reader again: the cached document, where there is one, is what a surface presents.
+  (w, landed) => ringMailboxProfile(w, landed, mailboxId));
 }
 
 /* Declining to serve is neither failing nor standing down (mail 0029). A third state, needing its
@@ -1362,7 +1378,7 @@ export async function clearOrganizerStandDown(
       organizerEventAt: opts.now ?? new Date(),
     })
     .where(lifecycleWhere(mailboxId, opts.fence))
-    .returning({ id: mailboxes.id }),
+    .returning({ id: mailboxes.id, accountId: mailboxes.accountId }),
   // ── AND THE CONSEQUENCE THE ROLE FLIP HAS FOR WORK ALREADY OWED ────────────────────────
   //
   // Becoming the organizer widens what every owed "apply to existing mail" walk may look at, and
@@ -1370,7 +1386,12 @@ export async function clearOrganizerStandDown(
   // {@link clearOwedRetroFences} for what a stale one costs. In the SAME transaction, because a
   // role flipped without it is precisely the state that loses mail, and it must not be reachable
   // by a crash between two statements.
-  (w) => clearOwedRetroFences(w, mailboxId));
+  // And the arrangement's doorbell: the local rules are this mailbox's configuration now, so the
+  // entity a reading surface holds for it must drain as a tombstone.
+  async (w, landed) => {
+    await clearOwedRetroFences(w, mailboxId);
+    await ringMailboxProfile(w, landed, mailboxId);
+  });
 }
 
 /**

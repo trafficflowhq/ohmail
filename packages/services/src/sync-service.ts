@@ -64,6 +64,7 @@ import {
   materializeRules, materializeSettings,
   materializeTags, materializeThreads,
   ruleRowToDTO, tagRowToDTO, type MessageChildChange,
+  mailboxProfileRowToDTO, mailboxProfileRows,
 } from "./dto/materialize.js";
 import { foldersEnabled, listUserFolders, userFoldersByIds, type UserFolderRow } from "./folders.js";
 import { DRAFT_ROW_MAX_BYTES, PageByteBudget, weighChange } from "./sync-page-byte-budget.js";
@@ -769,6 +770,14 @@ export class SyncService {
       //    change's id, which is what the delta's `change_log.entity_id` holds.
       const ruleRows = await db.select().from(rules).where(eq(rules.accountId, accountId));
       for (const r of ruleRows) emit("rule", r.id, ruleRowToDTO(r), r.updatedAt.toISOString());
+
+      // AND THE ARRANGEMENT THEY STAND IN FOR on every mailbox this install only reads: the
+      // organizer's rules out of the cached document, one entity per mailbox, beside the local
+      // rows a client judges every other mailbox by.
+      for (const row of await mailboxProfileRows(db, accountId)) {
+        const profile = mailboxProfileRowToDTO(row);
+        if (profile !== null) emit("mailbox_profile", profile.mailboxId, profile, profile.updatedAt);
+      }
 
       // AN APPROVAL WITH NO MESSAGE has no page to ride with, so it stays here — under the page
       // limit, which is the whole point. `kind` admits later message-less kinds (`draft_send`,

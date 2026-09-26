@@ -649,6 +649,7 @@ export function releaseRules(reader: EntityReader, address: string, from: Folder
   const domain = wide[0]!.match.trim().toLowerCase();
   const match = senderKey(address);
   const mine: RuleDTO = { ...wide[0]!, id: "", kind: "sender", match, destination: wanted, priority: 0, provenance: "manual" };
+  // THE LOCAL RULES, by construction: the order asked of two rules this press would itself write.
   if (decidedDestination(consentIndex([...wide, mine]), match) !== wanted) {
     return { kind: "stands", mutations: [], domain };
   }
