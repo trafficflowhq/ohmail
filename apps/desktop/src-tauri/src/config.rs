@@ -18,7 +18,9 @@
 //! directory a switch leaves behind is FROZEN, never deleted.** The mail is on the user's server
 //! or in the hosted account, this machine's copy is a convenience, and a door switch that silently
 //! destroyed the old one would make going back expensive for no reason. Nothing here removes a
-//! directory; a pairing's set-aside copy is retired once accepted through the candidate slot.
+//! directory; a pairing's set-aside copy is retired once accepted through the candidate slot. The
+//! one directory that goes with its door is a DELETED hosted account's: it is nobody's copy now
+//! (see [`discard_erased_cloud`]).
 //!
 //! ── THE ONE COMPOSITION THAT IS SAFETY-CRITICAL ────────────────────────────────────────────
 //!
@@ -1396,7 +1398,8 @@ pub const CLOUD_SESSION_SEAL: &str = "cloud-tokens.seal";
 /// a broken install — has nothing in memory to clear and no way to be asked. A sealed session left
 /// behind by a sign-out is a live credential to somebody's mail.
 ///
-/// ONE FILE. Not the mirror, not the cursor: a door switch freezes the directory it leaves.
+/// ONE FILE. Not the mirror, not the cursor: a door switch freezes the directory it leaves, a
+/// deleted account's apart.
 /// Absent is not an error — a sign-out on a door that was never signed in is a no-op, and running
 /// this twice must not fail the second time.
 pub fn remove_sealed_session(root: &Path, mode: Mode) -> Result<(), String> {
@@ -1551,4 +1554,57 @@ fn discard_dir(root: &Path, dir: &Path, clear: ClearSlot) -> Result<(), String> 
     fs::rename(dir, candidate_data_dir(root))
         .map_err(|err| format!("{} could not be moved off ({err})", dir.display()))?;
     clear()
+}
+
+// ── A DELETED HOSTED ACCOUNT'S COPY GOES WITH THE DOOR THAT LEAVES IT ──────────────────────────
+//
+// The hosted engine hears the account was deleted, removes its mail and stages the database's
+// removal for its own next launch — which a switch to this computer's own door never gives it. So
+// the shell reads the engine's record and discards the directory itself, with the engine stopped.
+
+/// The hosted engine's record of whose mirror its directory holds — `cloud-engine.ts`'s
+/// `MIRROR_OWNER_FILE`, spelled twice because this process links no JavaScript; a test reads both.
+pub const MIRROR_OWNER_FILE: &str = "mirror-owner";
+
+/// Was the hosted account in the hosted door's directory DELETED? The record's `erased` flag, and
+/// only the exact boolean: a deletion follows from it, so a torn or one-line record or a near-miss
+/// is the ordinary state, as the engine's own decoder reads it.
+pub fn cloud_account_erased(root: &Path) -> bool {
+    let Ok(raw) = fs::read_to_string(data_dir(root, Mode::Cloud).join(MIRROR_OWNER_FILE)) else {
+        return false;
+    };
+    serde_json::from_str::<serde_json::Value>(raw.trim())
+        .is_ok_and(|record| record.get("erased") == Some(&serde_json::Value::Bool(true)))
+}
+
+/// Discard the hosted door's directory when its account was deleted; `Ok(true)` when it went. The
+/// engine that held it must be stopped. An operator authority an older build read from there
+/// stays where it is (it names a server, not an account), and then the record moves last, so a
+/// discard cut short is found again by the next launch.
+pub fn discard_erased_cloud(root: &Path, clear: ClearSlot) -> Result<bool, String> {
+    if !cloud_account_erased(root) {
+        return Ok(false);
+    }
+    let dir = data_dir(root, Mode::Cloud);
+    if !dir.join(OPERATOR_CA_FILE).is_file() {
+        discard_dir(root, &dir, clear)?;
+        return Ok(true);
+    }
+    let unread = |err: std::io::Error| format!("{} could not be read ({err})", dir.display());
+    let mut names: Vec<OsString> = fs::read_dir(&dir)
+        .map_err(unread)?
+        .filter_map(|entry| entry.ok().map(|entry| entry.file_name()))
+        .filter(|name| name.to_str() != Some(OPERATOR_CA_FILE))
+        .collect();
+    names.sort_by_key(|name| name.to_str() == Some(MIRROR_OWNER_FILE));
+    clear()?;
+    let slot = candidate_data_dir(root);
+    fs::create_dir_all(&slot)
+        .map_err(|err| format!("{} could not be made ({err})", slot.display()))?;
+    for name in names {
+        fs::rename(dir.join(&name), slot.join(&name))
+            .map_err(|err| format!("{} could not be moved off ({err})", dir.join(&name).display()))?;
+    }
+    clear()?;
+    Ok(true)
 }

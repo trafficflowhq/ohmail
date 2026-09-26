@@ -4674,3 +4674,226 @@ fn a_record_that_cannot_be_read_moves_nothing() {
     assert_eq!(bytes_under(&root), before, "a refused switch moved something");
     let _ = fs::remove_dir_all(&root);
 }
+
+// ── LEAVING A DELETED HOSTED ACCOUNT'S DOOR TAKES ITS COPY WITH IT ─────────────────────────────
+//
+// The hosted engine removes a deleted account's mail at once and stages its database's removal
+// for its own next launch; a switch to this computer's own door means that launch never comes.
+// The record it wrote says so, and leaving that door discards the directory. A door merely signed
+// out keeps its frozen copy, and nothing outside the directory moves.
+
+/// What the hosted engine writes when its account was deleted — `encodeMirrorRecord(address, base,
+/// null, true, true)`, byte for byte; the sidecar's suite reads these three lines out of this file.
+const ERASED_MIRROR_RECORD: &str = r#"{"address":"me@ohmail.test","base":"https://cloud.test","account":null,"discardPending":true,"erased":true}"#;
+/// …and after the launch that removed the database: the fact stays, the staged discard is spent.
+const ERASED_MIRROR_RECORD_AFTER_ITS_LAUNCH: &str = r#"{"address":"me@ohmail.test","base":"https://cloud.test","account":null,"erased":true}"#;
+/// A signed-out door's record, which carries neither flag.
+const SIGNED_OUT_MIRROR_RECORD: &str = r#"{"address":"me@ohmail.test","base":"https://cloud.test","account":null}"#;
+
+/// A hosted door whose directory holds `record` and a store, beside what no discard may touch: a
+/// local-mode directory from before, the install's key file and the operator's authority.
+fn hosted_root_with(name: &str, record: &str) -> PathBuf {
+    let root = candidate_root(name);
+    let door = crate::config::Config::Cloud(crate::config::CloudDoor {
+        cloud_url: "https://cloud.test".to_string(),
+        address: Some("me@ohmail.test".to_string()),
+        flavor: None,
+        host_pin: None,
+        identity_pending: false,
+    });
+    crate::config::write(&root.join(crate::config::CONFIG_FILE_NAME), &door).expect("write door");
+    fs::create_dir_all(root.join("engine-cloud/pgdata")).expect("the hosted store");
+    fs::write(root.join("engine-cloud/pgdata/PG_VERSION"), b"17 the hosted store").unwrap();
+    fs::write(root.join("engine-cloud").join(crate::config::MIRROR_OWNER_FILE), record).unwrap();
+    fs::create_dir_all(root.join("engine-local/pgdata")).expect("a local store from before");
+    fs::write(root.join("engine-local/pgdata/PG_VERSION"), b"17 the local store").unwrap();
+    fs::write(root.join(KEYSTORE_FILE), "0".repeat(64)).unwrap();
+    fs::write(root.join(crate::config::OPERATOR_CA_FILE), b"-----BEGIN CERTIFICATE-----\nroot\n").unwrap();
+    fs::write(root.join(crate::config::OPERATOR_CA_RECORD_FILE), br#"{"origin":"https://cloud.test","sha256":"00"}"#).unwrap();
+    root
+}
+
+/// This computer's own door, as the window sends it.
+fn own_door() -> serde_json::Value {
+    serde_json::json!({
+        "mode": "local", "address": "reader@example.test",
+        "imap": { "host": "imap.example.test", "user": "reader", "port": 993, "secure": true },
+    })
+}
+
+/// Every file outside the hosted door's directory and `config.json`, sorted — what a discard keeps.
+fn outside_the_hosted_dir(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut out: Vec<_> = bytes_under(root)
+        .into_iter()
+        .filter(|(p, _)| !p.starts_with(root.join("engine-cloud")) && *p != root.join(crate::config::CONFIG_FILE_NAME))
+        .collect();
+    out.sort();
+    out
+}
+
+fn is_own_door(root: &Path) -> bool {
+    matches!(door_of(root), Some(crate::config::Config::Local(_)))
+}
+
+#[test]
+fn leaving_a_deleted_account_s_door_for_this_computer_s_own_removes_its_copy() {
+    with_key_in_env();
+    for (at, record) in [("staged", ERASED_MIRROR_RECORD), ("relaunched", ERASED_MIRROR_RECORD_AFTER_ITS_LAUNCH)] {
+        let root = hosted_root_with(&format!("erased-switch-{at}"), record);
+        let kept = outside_the_hosted_dir(&root);
+        let shell = Shell::rooted_for_tests(&root);
+        shell.switch_door(&own_door(), false).expect("the switch to this computer's own door");
+        assert!(is_own_door(&root), "{at}: the switch did not write this computer's own door");
+        assert!(
+            !root.join("engine-cloud").exists(),
+            "{at}: the deleted account's copy stayed on this computer: {:?}",
+            under(&root, "engine-cloud").into_iter().map(|(p, _)| p).collect::<Vec<_>>(),
+        );
+        assert_eq!(outside_the_hosted_dir(&root), kept, "{at}: the discard touched something beside the copy");
+        assert!(!crate::config::candidate_data_dir(&root).exists(), "{at}: the slot kept the copy");
+        shell.stop();
+        let _ = fs::remove_dir_all(&root);
+    }
+}
+
+#[test]
+fn control_a_signed_out_door_left_for_this_computer_s_own_stays_frozen() {
+    with_key_in_env();
+    let root = hosted_root_with("erased-switch-control", SIGNED_OUT_MIRROR_RECORD);
+    let frozen = under(&root, "engine-cloud");
+    let kept = outside_the_hosted_dir(&root);
+    let shell = Shell::rooted_for_tests(&root);
+    shell.switch_door(&own_door(), false).expect("the switch to this computer's own door");
+    assert!(is_own_door(&root));
+    assert_eq!(under(&root, "engine-cloud"), frozen, "a signed-out door's frozen copy moved");
+    assert_eq!(outside_the_hosted_dir(&root), kept);
+    shell.stop();
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn signing_out_of_a_deleted_account_s_door_removes_its_copy_and_a_live_one_s_stays() {
+    with_key_in_env();
+    for (record, erased) in [(ERASED_MIRROR_RECORD_AFTER_ITS_LAUNCH, true), (SIGNED_OUT_MIRROR_RECORD, false)] {
+        let root = hosted_root_with(&format!("erased-logout-{erased}"), record);
+        let frozen = under(&root, "engine-cloud");
+        let kept = outside_the_hosted_dir(&root);
+        let shell = Shell::rooted_for_tests(&root);
+        shell.logout_of(door_of(&root)).expect("the sign-out");
+        assert!(door_of(&root).is_none(), "erased={erased}: the door outlived the sign-out");
+        if erased {
+            assert!(!root.join("engine-cloud").exists(), "the deleted account's copy outlived the sign-out");
+        } else {
+            assert_eq!(under(&root, "engine-cloud"), frozen, "a sign-out moved a live account's copy");
+        }
+        assert_eq!(outside_the_hosted_dir(&root), kept, "erased={erased}: the sign-out touched something beside the copy");
+        let _ = fs::remove_dir_all(&root);
+    }
+}
+
+#[test]
+fn a_launch_finishes_a_discard_cut_short_and_keeps_the_copy_its_door_still_opens() {
+    with_key_in_env();
+    // This computer's own door, the deleted account's directory still there: a kill after the stop.
+    let root = hosted_root_with("erased-launch-own", ERASED_MIRROR_RECORD);
+    crate::config::write(
+        &root.join(crate::config::CONFIG_FILE_NAME),
+        &crate::config::parse(&own_door()).expect("the own door"),
+    )
+    .expect("write door");
+    let kept = outside_the_hosted_dir(&root);
+    recover_door_switch(&paths_of(&root));
+    assert!(!root.join("engine-cloud").exists(), "the next launch left the deleted account's copy");
+    assert_eq!(outside_the_hosted_dir(&root), kept);
+    let _ = fs::remove_dir_all(&root);
+
+    // The hosted door itself: its engine removes the store and says the account was deleted.
+    let root = hosted_root_with("erased-launch-hosted", ERASED_MIRROR_RECORD);
+    let before = bytes_under(&root);
+    recover_door_switch(&paths_of(&root));
+    assert_eq!(bytes_under(&root), before, "the launch took the directory the hosted door still opens");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_operator_authority_an_older_build_read_from_the_copy_stays_where_it_is() {
+    with_key_in_env();
+    let root = hosted_root_with("erased-switch-old-ca", ERASED_MIRROR_RECORD);
+    let old = root.join("engine-cloud").join(crate::config::OPERATOR_CA_FILE);
+    fs::write(&old, b"-----BEGIN CERTIFICATE-----\nthe old folder\n").unwrap();
+    let kept = outside_the_hosted_dir(&root);
+    let shell = Shell::rooted_for_tests(&root);
+    shell.switch_door(&own_door(), false).expect("the switch to this computer's own door");
+    assert_eq!(
+        under(&root, "engine-cloud"),
+        vec![(old.clone(), b"-----BEGIN CERTIFICATE-----\nthe old folder\n".to_vec())],
+        "the directory kept more than the operator's authority, or lost it",
+    );
+    assert_eq!(outside_the_hosted_dir(&root), kept);
+    shell.stop();
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn only_the_exact_erased_flag_takes_a_copy_with_its_door() {
+    // A deletion follows from the flag, so every near-miss is the ordinary, frozen state.
+    with_key_in_env();
+    let records = [
+        r#"{"address":"me@ohmail.test","base":"https://cloud.test","account":null,"erased":"true"}"#,
+        r#"{"address":"me@ohmail.test","base":"https://cloud.test","account":null,"erased":1}"#,
+        r#"{"address":"me@ohmail.test","base":"https://cloud.test","account":null,"discardPending":true}"#,
+        r#"{"address":"me@ohmail.test","base":"https://cloud.test","erased":true"#,
+        "me@ohmail.test",
+        "",
+    ];
+    for (i, record) in records.iter().enumerate() {
+        let root = hosted_root_with(&format!("erased-near-miss-{i}"), record);
+        let frozen = under(&root, "engine-cloud");
+        let shell = Shell::rooted_for_tests(&root);
+        shell.switch_door(&own_door(), false).expect("the switch to this computer's own door");
+        assert_eq!(under(&root, "engine-cloud"), frozen, "{record:?} took the copy with its door");
+        shell.stop();
+        let _ = fs::remove_dir_all(&root);
+    }
+}
+
+#[test]
+fn a_pairing_left_unanswered_from_the_deleted_account_s_door_then_this_computer_s_own_removes_the_copy() {
+    // The switch settles the pairing first, which puts the deleted account's directory back.
+    with_key_in_env();
+    let root = hosted_root_with("erased-switch-pending", ERASED_MIRROR_RECORD);
+    let kept = outside_the_hosted_dir(&root);
+    let shell = Shell::rooted_for_tests(&root);
+    shell.switch_door(&pairing_door(PAIRED_ORIGIN), true).expect("a provisional pairing");
+    assert!(root.join("engine-cloud.replaced").exists(), "the deleted account's directory was not set aside");
+    pairing_wrote(&root);
+    shell.switch_door(&own_door(), false).expect("the switch to this computer's own door");
+    assert!(is_own_door(&root));
+    assert!(!root.join(crate::config::SWITCH_FILE_NAME).exists(), "the pairing's record stayed");
+    assert!(!root.join("engine-cloud").exists(), "the deleted account's copy came back and stayed");
+    assert!(!root.join("engine-cloud.replaced").exists(), "the set-aside copy stayed");
+    assert_eq!(outside_the_hosted_dir(&root), kept);
+    shell.stop();
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn control_a_switch_to_a_hosted_door_leaves_the_deleted_account_s_directory_to_its_engine() {
+    // That engine removes the database itself and says the account was deleted until a session.
+    with_key_in_env();
+    let root = hosted_root_with("erased-switch-hosted", ERASED_MIRROR_RECORD);
+    let before = bytes_under(&root);
+    let shell = Shell::rooted_for_tests(&root);
+    shell
+        .switch_door(&serde_json::json!({
+            "mode": "cloud", "cloudUrl": "https://cloud.test", "address": "me@ohmail.test",
+        }), false)
+        .expect("the same hosted door, configured again");
+    let mut after = bytes_under(&root);
+    let mut before = before;
+    after.sort();
+    before.sort();
+    assert_eq!(after, before, "a switch to a hosted door took the deleted account's directory from its engine");
+    shell.stop();
+    let _ = fs::remove_dir_all(&root);
+}

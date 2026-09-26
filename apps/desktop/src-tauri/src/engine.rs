@@ -1977,6 +1977,7 @@ impl Shell {
                     Ok(()) => {
                         log_configured(&config, provisional);
                         self.pending_door.store(false, Ordering::SeqCst);
+                        leave_erased_copy(&root, &config);
                         self.planned(Some(&config))
                     }
                     Err(reason) => {
@@ -1998,7 +1999,10 @@ impl Shell {
         // Through `planned`, so an armed host door survives a reconfigure of the SAME door and
         // is correctly absent when the door is not the local one.
         self.pending_door.store(config.is_identity_pending(), Ordering::SeqCst);
-        self.replace(self.planned(Some(&config)));
+        self.replace_with(|| {
+            leave_erased_copy(&root, &config);
+            self.planned(Some(&config))
+        });
         Ok(self.status())
     }
 
@@ -2051,7 +2055,8 @@ impl Shell {
     ///
     ///  · **The mirror.** Either door's mirror is a copy — of the user's own server, or of a hosted
     ///    account — and a door switch freezes the directory it leaves rather than deleting it.
-    ///    Signing out to look at the other door and back should not cost a full re-sync.
+    ///    Signing out to look at the other door and back should not cost a full re-sync. A DELETED
+    ///    hosted account's copy is the exception: nobody can go back to it, so it goes.
     ///  · **The keystore item.** The per-install key is per INSTALL, not per account: it is what
     ///    the NEXT account's credential will be sealed under, and deleting it would make every
     ///    frozen mirror's stored credential permanently unreadable rather than merely unused.
@@ -2223,7 +2228,14 @@ impl Shell {
         if let Some(path) = self.paths.config_path() {
             config::remove(&path)?;
         }
-        log_line(format_args!("signed out; the mirror and this install's key are left as they are"));
+        // A DELETED hosted account's copy goes with its door; any other door's mirror is left.
+        let discarded = matches!(&config, Some(Config::Cloud(_)))
+            && self.paths.app_data.as_deref().is_some_and(discard_erased_copy);
+        if discarded {
+            log_line(format_args!("signed out; this install's key is left as it is"));
+        } else {
+            log_line(format_args!("signed out; the mirror and this install's key are left as they are"));
+        }
 
         // NOT a re-plan. After a sign-out the honest state is "nothing is configured", and
         // re-planning would start an engine again from whatever the environment happens to say —
@@ -2292,13 +2304,45 @@ fn door_fields(object: &mut serde_json::Map<String, serde_json::Value>, config: 
 
 /// Empty the candidate slot — the one directory this module removes, named by `config.rs`'s
 /// constant. A refused candidate is undone by it, and so is whatever a door switch moved there to
-/// discard: a pairing's own directory when it is undone, and the copy it set aside once accepted.
+/// discard: a pairing's own directory when it is undone, the copy it set aside once accepted, and
+/// a deleted hosted account's copy.
 fn clear_candidate_slot(root: &Path) -> Result<(), String> {
     let dir = config::candidate_data_dir(root);
     match fs::remove_dir_all(&dir) {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(format!("the candidate's directory could not be removed ({err})")),
+    }
+}
+
+/// A switch to this computer's own door, with the engine stopped, leaves the hosted door's
+/// directory behind: when that account was deleted, its copy goes (see [`discard_erased_copy`]).
+fn leave_erased_copy(root: &Path, next: &Config) {
+    if next.mode() == Mode::Local {
+        discard_erased_copy(root);
+    }
+}
+
+/// Discard a deleted hosted account's directory, which no door of this install opens any more; the
+/// engine must be stopped. True when it went. A failure is logged and the next launch asks again.
+fn discard_erased_copy(root: &Path) -> bool {
+    match config::discard_erased_cloud(root, &|| clear_candidate_slot(root)) {
+        Ok(discarded) => {
+            if discarded {
+                log_line(format_args!(
+                    "the hosted account this computer mirrored was deleted, so its copy was removed \
+                     from this computer"
+                ));
+            }
+            discarded
+        }
+        Err(reason) => {
+            log_line(format_args!(
+                "the deleted hosted account's copy could not be removed yet ({reason}); the next \
+                 launch removes it"
+            ));
+            false
+        }
     }
 }
 
@@ -2349,6 +2393,7 @@ fn log_configured(config: &Config, provisional: bool) {
 /// AT LAUNCH, BEFORE ANYTHING READS THE DOOR: a switch the last run never settled is undone (the
 /// app was killed mid-pairing, and a pairing nobody answered did not happen), and an accepted
 /// switch's unfinished retire is finished. Host mode's launch decision reads the door after this.
+/// Then a deleted hosted account's copy that no door opens is removed — a discard cut short.
 pub fn recover_door_switch(paths: &ShellPaths) {
     let (Some(root), Some(path)) = (paths.app_data.as_deref(), paths.config_path()) else { return };
     let clear = || clear_candidate_slot(root);
@@ -2369,6 +2414,10 @@ pub fn recover_door_switch(paths: &ShellPaths) {
             }
         }
         Err(reason) => log_line(format_args!("{reason}; nothing was moved")),
+    }
+    // The hosted door's own engine says its account was deleted, so its directory stays for it.
+    if !config::switch_path(root).exists() && !matches!(paths.config().map(|c| c.mode()), Some(Mode::Cloud)) {
+        discard_erased_copy(root);
     }
 }
 

@@ -1577,13 +1577,14 @@ describe("the Rust side", () => {
       "fs::OpenOptionsExt", // the Unix trait that lets that create be 0600 from its first byte
       "fs::File", // the parent directory, opened only to fsync the rename
       "fs::rename", // the publish step, never a torn file — and a pairing's directory, moved whole
+      "fs::read_dir", // a deleted account's directory, listed so an operator authority stays in it
     ]);
     const used = [...config.matchAll(/\bfs::(\w+)/g)].map((m) => `fs::${m[1]}`);
     expect(used.length).toBeGreaterThan(0);
     for (const call of used) {
       expect(allowed, `config.rs reaches the filesystem through ${call}`).toContain(call);
     }
-    // The mirror is frozen on a door switch, never deleted — no recursive removal exists to do it.
+    // No recursive removal exists here; a deleted account's copy leaves through the slot too.
     expect(config).not.toMatch(/remove_dir/);
     // A pairing's switch adds no call: its record is written and removed like the settings file,
     // and what it discards is MOVED into the candidate slot, which `engine.rs` empties.

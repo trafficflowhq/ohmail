@@ -1279,3 +1279,15 @@ fn the_operator_ca_file_is_spelled_the_same_way_in_the_engine() {
         "the engine does not declare {needle:?} — the shell composes a path to a file nothing names"
     );
 }
+
+#[test]
+fn the_mirror_owner_record_is_spelled_the_same_way_in_the_engine() {
+    // The shell discards a deleted account's copy on what this file says; a record under another
+    // name is a discard that never runs. Change either spelling alone and this fails.
+    let engine = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../sidecar/src/cloud-engine.ts");
+    let source = fs::read_to_string(&engine)
+        .unwrap_or_else(|e| panic!("could not read {}: {e}", engine.display()));
+    let needle = format!("export const MIRROR_OWNER_FILE = \"{MIRROR_OWNER_FILE}\";");
+    assert!(source.contains(&needle), "the engine does not declare {needle:?}");
+}
