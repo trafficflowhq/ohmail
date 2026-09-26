@@ -2809,6 +2809,7 @@ export class AuthService extends SessionLifecycle {
         });
         sent = r.status !== "failed";
       } catch {
+        // A throwing mailer is a failed send: the claim is given back below and the next run retries.
         sent = false;
       }
       if (sent) { out.sent++; continue; }

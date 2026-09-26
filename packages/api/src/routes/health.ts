@@ -1544,6 +1544,7 @@ export const healthRoutes: Route[] = [
         try {
           transport = { ...(await injected.dbTls(probe.kind !== "unreachable")) };
         } catch {
+          // A reading that faults is published as no reading: `/health` must never darken on it.
           transport = {};
         }
       }
