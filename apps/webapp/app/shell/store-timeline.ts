@@ -33,6 +33,8 @@ export interface StoreTimelineView {
   retry: () => void;
   /** A rail press: the page at that month's own anchor, asked at once. */
   jump: (start: number) => void;
+  /** Rows the store placed above the first one, counted up — what the view holds its reader by. */
+  shifted: number;
 }
 
 export function useStoreTimeline(
@@ -66,6 +68,7 @@ export function useStoreTimeline(
     want: (start: number, end: number) => walker.want(start, end),
     retry: () => walker.start(),
     jump: (start: number) => walker.jump(start),
+    shifted: walker.shifted(),
     // `rev` and `version` are the signals: the walker moved, or the mirror did.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [walker, rev, version, mirrorRows, raw, renewing]);

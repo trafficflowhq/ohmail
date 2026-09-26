@@ -106,7 +106,7 @@ export function HistoryView({
     },
   }), [store, held]);
   const scrollerRef = useRef<HTMLDivElement>(null);
-  const win = useListWindow({ scrollerRef, count: tl.length });
+  const win = useListWindow({ scrollerRef, count: tl.length, inserted: tl.shifted });
 
   /* The pages the window nears — asked after every move and every landed page. */
   const { want } = tl;
@@ -122,6 +122,15 @@ export function HistoryView({
    * and the column must not follow the cache. Absent a pick, the first slot's row.
    */
   const [picked, setPicked] = useState<{ row: EngineMessage; at: number } | null>(null);
+  /* MAIL ARRIVED ABOVE: the cursor's slot moves down with its row, and a column showing slot 0
+     keeps its message rather than following slot 0 to the new one. */
+  const [shiftSeen, setShiftSeen] = useState(tl.shifted);
+  const lastShown = useRef<EngineMessage | null>(null);
+  if (tl.shifted !== shiftSeen) {
+    const was = picked ?? (lastShown.current ? { row: lastShown.current, at: 0 } : null);
+    setShiftSeen(tl.shifted);
+    setPicked(was ? { row: was.row, at: was.at + tl.shifted - shiftSeen } : null);
+  }
   const first = tl.rowAt(0);
   const shown = picked
     ? (engine.storePageRow(picked.row) ?? picked.row)
@@ -131,6 +140,9 @@ export function HistoryView({
   useEffect(() => {
     if (shown) hydrateBody(shown.id);
   }, [shown?.id, hydrateBody]);
+  useLayoutEffect(() => {
+    lastShown.current = shown;
+  });
 
   const openRow = (m: EngineMessage, at: number) => {
     setPicked({ row: m, at });

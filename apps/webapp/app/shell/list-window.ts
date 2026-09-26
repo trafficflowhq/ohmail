@@ -121,6 +121,12 @@ export interface UseListWindowOptions {
   /** First-frame row height, before one has been measured. */
   estimate?: number;
   overscan?: number;
+  /**
+   * Rows placed ABOVE every index so far, counted up — History's arrivals. A move of `d` moves
+   * every measured index down by `d` with its row, and holds the row under the top edge while
+   * the top edge is inside the rows; above them, the chrome is read and the new rows show on top.
+   */
+  inserted?: number;
 }
 
 /**
@@ -134,6 +140,7 @@ export function useListWindow({
   count,
   estimate = ESTIMATED_ROW_PX,
   overscan = OVERSCAN_ROWS,
+  inserted = 0,
 }: UseListWindowOptions): ListWindow {
   const [scrollTop, setScrollTop] = useState(0);
   const [viewport, setViewport] = useState(0);
@@ -163,6 +170,8 @@ export function useListWindow({
   const [samples, setSamples] = useState(0);
   /** Did the first layout pass find `data-index` items? `null` until a pass has drawn some. */
   const [stamped, setStamped] = useState<boolean | null>(null);
+  /** `inserted` as the last layout pass applied it. */
+  const insertedAt = useRef(inserted);
 
   const sample = useCallback(() => {
     const el = scrollerRef.current;
@@ -263,6 +272,28 @@ export function useListWindow({
   useLayoutEffect(() => {
     const el = scrollerRef.current;
     if (!el) return;
+    /* ROWS ARRIVED ABOVE EVERY INDEX. Heights and frozen prices move down with their rows, the
+       new rows are frozen at the mean, and `scrollTop` moves by exactly that price while the top
+       edge is inside the rows. The re-render this asks for is laid out before paint. */
+    const d = inserted - insertedAt.current;
+    insertedAt.current = inserted;
+    if (d > 0) {
+      const down = (m: Map<number, number>) => new Map([...m].map(([i, h]): [number, number] => [i + d, h]));
+      heights.current = down(heights.current);
+      frozen.current = down(frozen.current);
+      for (let i = 0; i < d; i += 1) frozen.current.set(i, mean);
+      frozenUpTo.current += d;
+      const a = anchor.current;
+      if (a?.inRows) {
+        el.scrollTop += d * mean;
+        anchor.current = { ...a, index: a.index + d, offset: a.offset + d * mean, count };
+      } else {
+        anchor.current = null;
+      }
+      setScrollTop(el.scrollTop);
+      setSamples((n) => n + 1);
+      return;
+    }
     let moved = false;
     let found = false;
     for (const node of el.querySelectorAll<HTMLElement>("[data-index]")) {

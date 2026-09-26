@@ -56,6 +56,8 @@ export class PagedWalk<A> {
   private epoch = 0;
   private heldKey = "";
   private heldRows: { start: number; items: readonly EngineMessage[] }[] = [];
+  /** Rows placed above every position so far — an answer asked before a move lands that much lower. */
+  private moved = 0;
   /** The slot past the last row, once a page answered that it was the last. */
   end: number | null = null;
   /** The furthest slot any page has reached. */
@@ -126,36 +128,63 @@ export class PagedWalk<A> {
   /** Ask the page that starts at `start`, from `anchor`; a `transient` step only learns positions. */
   fetch(start: number, anchor: A | null, dir: "down" | "up", transient = false): void {
     const epoch = this.epoch;
+    const moved = this.moved;
     this.inFlight[dir] = true;
     void this.source.ask(anchor, { at: start, transient }).then((out) => {
       if (epoch !== this.epoch) return;
       this.inFlight[dir] = false;
-      const key = JSON.stringify([start, anchor]);
-      if (out.state !== "ready") {
-        this.failedAt.set(key, this.hooks.clock());
-        this.hooks.failed?.(start, out.state === "failed" ? out.errorClass ?? null : null);
-        this.hooks.changed();
-        return;
-      }
-      this.failedAt.delete(key);
-      const skip = !transient && this.source.dedupe ? this.skipFor(start, out.items) : this.skips.get(start) ?? 0;
-      const len = Math.max(0, out.items.length - skip);
-      const next = out.next ?? (this.source.anchorOf && out.items.length > 0
-        ? this.source.anchorOf(out.items[out.items.length - 1]!) : null);
-      if (len > 0 && next !== null) this.anchors.set(start + len, next);
-      this.reached = Math.max(this.reached, start + len);
-      if (out.next === null && !this.source.anchorOf) this.end = start + len;
-      if (!transient) {
-        this.skips.set(start, skip);
-        // Positions whose page the engine has since evicted go with this one's arrival.
-        this.runs = [
-          ...this.runs.filter((r) => r.start !== start && this.source.peek(r.anchor) !== undefined),
-          { start, anchor },
-        ];
-      }
-      this.hooks.landed?.(start, transient, out);
-      this.hooks.changed();
+      // Rows arrived above while this was in the air: it lands lower by as many. (Page one's own
+      // null anchor is asked by `start` alone, before a visit can move.)
+      this.land(start + this.moved - moved, anchor, transient, out);
     });
+  }
+
+  /** A page's answer, at slot `start`: its run, the anchor after it, and how far the walk reached. */
+  private land(start: number, anchor: A | null, transient: boolean, out: PageAnswer<A>): void {
+    const key = JSON.stringify([start, anchor]);
+    if (out.state !== "ready") {
+      this.failedAt.set(key, this.hooks.clock());
+      this.hooks.failed?.(start, out.state === "failed" ? out.errorClass ?? null : null);
+      this.hooks.changed();
+      return;
+    }
+    this.failedAt.delete(key);
+    const skip = !transient && this.source.dedupe ? this.skipFor(start, out.items) : this.skips.get(start) ?? 0;
+    const len = Math.max(0, out.items.length - skip);
+    const next = out.next ?? (this.source.anchorOf && out.items.length > 0
+      ? this.source.anchorOf(out.items[out.items.length - 1]!) : null);
+    if (len > 0 && next !== null) this.anchors.set(start + len, next);
+    this.reached = Math.max(this.reached, start + len);
+    if (out.next === null && !this.source.anchorOf) this.end = start + len;
+    if (!transient) {
+      this.skips.set(start, skip);
+      // Positions whose page the engine has since evicted go with this one's arrival.
+      this.runs = [
+        ...this.runs.filter((r) => r.start !== start && this.source.peek(r.anchor) !== undefined),
+        { start, anchor },
+      ];
+    }
+    this.hooks.landed?.(start, transient, out);
+    this.hooks.changed();
+  }
+
+  /**
+   * `k` ROWS ARRIVED ABOVE THE FIRST: every held position moves down by `k`, and a fresh page one
+   * is placed at slot 0 in the same step, so no read sees the new rows at the old slots. `null`
+   * where page one is not held (the reader is deep): it is asked from slot 0 when the window nears.
+   */
+  place(k: number, pageOne: Extract<PageAnswer<A>, { state: "ready" }> | null): void {
+    const down = <V>(m: Map<number, V>): [number, V][] => [...m].filter(([s]) => s > 0).map(([s, v]) => [s + k, v]);
+    this.moved += k;
+    this.runs = this.runs.filter((r) => r.start > 0).map((r) => ({ start: r.start + k, anchor: r.anchor }));
+    this.anchors = new Map<number, A | null>([[0, null], ...down(this.anchors)]);
+    this.skips = new Map(down(this.skips));
+    this.failedAt.clear();
+    if (this.end !== null) this.end += k;
+    this.reached += k;
+    this.heldKey = "";
+    if (pageOne !== null) this.land(0, null, false, pageOne);
+    else this.hooks.changed();
   }
 
   /** How many of a landing page's first rows another held page already shows. */
@@ -224,6 +253,16 @@ export class PagedWalk<A> {
 
 const keysetOf = (m: EngineMessage): StoreKeyset => ({ date: m.date ?? null, id: m.id });
 
+/** Does `m` sort before position `k` in the store's order — `date desc nulls last, id desc`. */
+function newerThan(m: EngineMessage, k: StoreKeyset): boolean {
+  const d = m.date ?? null;
+  if (d === null || k.date === null) return d === k.date ? m.id > k.id : d !== null;
+  const a = Date.parse(d);
+  const b = Date.parse(k.date);
+  const cmp = Number.isFinite(a) && Number.isFinite(b) ? a - b : d < k.date ? -1 : d > k.date ? 1 : 0;
+  return cmp !== 0 ? cmp > 0 : m.id > k.id;
+}
+
 /** A render subscription: bumped on every change a render can see. */
 class Signal {
   private rev = 0;
@@ -252,6 +291,14 @@ export class StoreTimelineWalker {
   private ceiling: ReturnType<typeof setTimeout> | null = null;
   private readonly signal = new Signal();
   private readonly walk: PagedWalk<StoreKeyset>;
+  /** Rows placed above the first one since this walker began — {@link shifted}. */
+  private shift = 0;
+  /** Slot 0's position when page one was read: where the rows an arrival brings are counted from. */
+  private topKey: StoreKeyset | null = null;
+  private arrivalsSeen = 0;
+  private refreshing = false;
+  private refreshOwed = false;
+  private unsubscribe: (() => void) | null = null;
 
   constructor(private readonly engine: OhmailEngine, clock: () => number = Date.now) {
     this.walk = new PagedWalk<StoreKeyset>(engine, {
@@ -273,8 +320,11 @@ export class StoreTimelineWalker {
         }
         return best;
       },
-      landed: (start, transient) => {
-        if (!transient && start === 0) this.pageOne = true;
+      landed: (start, transient, answer) => {
+        if (transient || start !== 0 || this.pageOne) return;
+        this.pageOne = true;
+        this.topKey = answer.items[0] ? keysetOf(answer.items[0]) : null;
+        this.refresh();
       },
       failed: (start, errorClass) => {
         if (start !== 0) return;
@@ -298,9 +348,14 @@ export class StoreTimelineWalker {
     this.cause = null;
     this.timedOut = false;
     this.pageOne = false;
+    this.topKey = null;
+    this.refreshing = false;
+    this.refreshOwed = false;
     this.walk.reset();
     this.signal.bump();
     if (!this.engine.storePagesAvailable()) return;
+    this.arrivalsSeen = this.engine.storeArrivals();
+    this.unsubscribe = this.engine.subscribe(this.onEngine);
     this.engine.resetStorePages("all");
     void this.engine.timeline().then((out) => {
       if (epoch !== this.epoch) return;
@@ -312,6 +367,7 @@ export class StoreTimelineWalker {
         if (this.cause === null && out.state === "failed") this.cause = out.errorClass;
       }
       this.signal.bump();
+      this.refresh();
     });
     this.walk.fetch(0, null, "down");
     this.ceiling = setTimeout(() => {
@@ -327,6 +383,78 @@ export class StoreTimelineWalker {
     this.walk.stop();
     if (this.ceiling !== null) clearTimeout(this.ceiling);
     this.ceiling = null;
+    this.unsubscribe?.();
+    this.unsubscribe = null;
+  }
+
+  /** An applied page brought mail the mirror had no record of: the open visit's top is owed. */
+  private readonly onEngine = (): void => {
+    const n = this.engine.storeArrivals();
+    if (n === this.arrivalsSeen) return;
+    this.arrivalsSeen = n;
+    this.refreshOwed = true;
+    this.refresh();
+  };
+
+  /**
+   * MAIL REACHED THE STORE WHILE THE VISIT IS OPEN: the timeline and an uncached page one, asked
+   * together once the visit is ready — one in flight and one owed at most. A refresh that fails
+   * keeps the list on screen; the next arrival asks again.
+   */
+  private refresh(): void {
+    if (!this.refreshOwed || this.refreshing || this.state() !== "ready") return;
+    this.refreshOwed = false;
+    this.refreshing = true;
+    const epoch = this.epoch;
+    void Promise.all([this.engine.timeline(), this.engine.pageStore("all", { fresh: true, at: 0 })]).then(([tl, page]) => {
+      if (epoch !== this.epoch) return;
+      this.refreshing = false;
+      if (tl.state === "ready" && page.state === "ready") this.placeTop(tl.timeline, page);
+      this.refresh();
+    });
+  }
+
+  /**
+   * THE NEW PAGE ONE, ABOVE WHAT WAS READ. The rows below it move by `s`: where the old page one
+   * is held, the last row both pages hold says by how much (a row deleted or added inside it is
+   * counted), else the rows newer than the old top. The store's months are taken when they agree
+   * with the walk; a change below that the walk has not read keeps the visit's frame, as a
+   * deletion does, until the next visit.
+   */
+  private placeTop(timeline: StoreTimeline, page: { items: EngineMessage[]; nextCursor: string | null }): void {
+    const old = this.engine.peekStorePage("all");
+    const items = page.items;
+    let s = 0;
+    if (old !== undefined) {
+      const slot = new Map(old.map((m, i) => [m.id, i]));
+      let i = items.length - 1;
+      while (i >= 0 && !slot.has(items[i]!.id)) i -= 1;
+      s = i >= 0 ? i - slot.get(items[i]!.id)! : items.length;
+    } else {
+      const top = this.topKey;
+      while (s < items.length && (top === null || newerThan(items[s]!, top))) s += 1;
+    }
+    const was = this.length(0);
+    const segs = timelineSegments(timeline);
+    const now = segs.reduce((n, x) => n + x.count, 0);
+    if (s > 0 && s === items.length) s = Math.max(s, now - was);
+    if (now === was + s || this.segs.length === 0) {
+      this.timeline = timeline;
+      this.segs = segs;
+    } else {
+      this.timeline = { ...this.timeline!, total: this.timeline!.total + s };
+      this.segs = this.segs.map((x, k) => (k === 0 ? { ...x, count: Math.max(0, x.count + s) } : { ...x, start: x.start + s }));
+    }
+    this.topKey = items[0] ? keysetOf(items[0]) : null;
+    this.shift += s;
+    // Held only where page one is: a put beside the reader's deep pages would evict them.
+    if (old !== undefined) this.engine.holdStorePage("all", {}, page, 0);
+    this.walk.place(s, old !== undefined ? { state: "ready", items, next: null } : null);
+  }
+
+  /** Rows placed above the list's first row since this walker began — what a view holds its reader by. */
+  shifted(): number {
+    return this.shift;
   }
 
   state(): StoreTimelineState {

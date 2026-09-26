@@ -63,6 +63,24 @@ export class SlotHeights {
     return this.heightOf(i) !== drawnBefore || this.common !== commonBefore;
   }
 
+  /**
+   * `d` rows arrived above every slot: each laid-out height moves down with its row, and the new
+   * rows are drawn at the common height until they lay out. The tally is the same rows', unchanged.
+   */
+  shift(d: number): void {
+    if (!Number.isInteger(d) || d <= 0) return;
+    const moved = [...this.measured];
+    let need = 1;
+    this.measured.clear();
+    for (const [i, h] of moved) {
+      this.measured.set(i + d, h);
+      need = Math.max(need, i + d + 1);
+    }
+    this.sums = new Float64Array(64);
+    this.counts = new Float64Array(64);
+    this.grow(need);
+  }
+
   /** Keep the tally, and the common height as the one the most rows laid out at (the first seen on a tie). */
   private count(h: number, by: number): void {
     if (h === 0) return;

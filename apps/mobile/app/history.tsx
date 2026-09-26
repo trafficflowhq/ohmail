@@ -6,7 +6,7 @@
  * mirror's rows painting first until page one replaces them in place. Nothing has moved: every row
  * states its server folder.
  */
-import { useCallback, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 
 import { Copy } from "../src/copy";
@@ -58,6 +58,25 @@ function HistoryBody() {
   const onRowHeight = useCallback((i: number, height: number) => {
     if (heights.record(i, height)) redraw();
   }, [heights]);
+  /** The scroll offset last read, in scroll-content coordinates. */
+  const scrollY = useRef(0);
+  /* MAIL ARRIVED ABOVE (the walker's `shifted`): the ledger moves with its rows in the render that
+     first shows them, and while the reader is inside the rows the offset moves by the new rows'
+     height, so the row being read stays where it stands; at the top the new rows show above it. */
+  const shiftSeen = useRef(h.shifted);
+  const owedScroll = useRef(0);
+  if (h.shifted !== shiftSeen.current) {
+    const d = h.shifted - shiftSeen.current;
+    shiftSeen.current = h.shifted;
+    heights.shift(d);
+    if (d > 0 && scrollY.current > top.current) owedScroll.current += heights.offsetOf(d);
+  }
+  useLayoutEffect(() => {
+    if (owedScroll.current === 0) return;
+    scrollY.current += owedScroll.current;
+    owedScroll.current = 0;
+    scrollTo.current?.(scrollY.current);
+  });
   /* The slots, as positions only: rows are read per slot from the walker's cache at render. */
   const slots = useMemo(() => Array.from({ length: h.length }, (_, i) => i), [h.length]);
   /* The list is told the ledger, so a year jump below the rows laid out so far reaches its row. */
@@ -70,6 +89,7 @@ function HistoryBody() {
 
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, layoutMeasurement } = e.nativeEvent;
+    scrollY.current = contentOffset.y;
     const y = Math.max(0, contentOffset.y - top.current);
     const first = heights.indexAt(y, h.length);
     h.want(Math.max(0, first - 8), heights.indexAt(y + layoutMeasurement.height, h.length) + 10);

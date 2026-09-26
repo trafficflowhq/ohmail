@@ -48,6 +48,8 @@ export interface StorePageOpts {
   limit?: number;
   /** A step of a walk toward a far slot: answered, never cached — it would evict what is on screen. */
   transient?: boolean;
+  /** Asked of the store even when the page is held, and answered uncached: the caller places it. */
+  fresh?: boolean;
   /** The slot the page starts at in the caller's list — what "farthest" is measured in. */
   at?: number;
 }

@@ -40,6 +40,8 @@ export interface PhoneHistory {
   want(start: number, end: number): void;
   jump(start: number): void;
   retry(): void;
+  /** Rows the store placed above the first one, counted up — what the screen holds its reader by. */
+  shifted: number;
 }
 
 export function useStoreHistory(): PhoneHistory {
@@ -87,6 +89,7 @@ export function useStoreHistory(): PhoneHistory {
       want: (a, b) => walker?.want(a, b),
       jump: (start) => walker?.jump(start),
       retry: () => walker?.start(),
+      shifted: walker ? walker.shifted() : 0,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walker, rev, mirror, w, state]);

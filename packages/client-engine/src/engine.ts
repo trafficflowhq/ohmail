@@ -30,7 +30,7 @@ import { flattenResponse } from "./apply.js";
 import { CASCADE_TYPES } from "./mirror-bounds.js";
 import {
   HISTORY_PAGE_CACHE_ROWS, HISTORY_PAGE_ROWS, StorePageCache, storePageKey, storeSearchList, storeSearchPageKey,
-  type StorePageOpts, type StorePageOutcome, type StoreSearchKey, type StoreTimelineFn, type StoreTimelineOutcome,
+  type StorePage, type StorePageOpts, type StorePageOutcome, type StoreSearchKey, type StoreTimelineFn, type StoreTimelineOutcome,
 } from "./store-pages.js";
 import { classifyWindowSyncFailure, type WindowSyncFailure } from "./window-sync-failure.js";
 import type { WindowSearchPhases } from "./search-phases.js";
@@ -2379,6 +2379,8 @@ export class OhmailEngine {
   /** In-flight store pages by key, and the one in-flight timeline read. */
   private readonly storePageCalls = new Map<string, Promise<StorePageOutcome>>();
   private timelineCall: Promise<StoreTimelineOutcome> | null = null;
+  /** Moves with every applied page that brings a message this mirror had no record of — {@link storeArrivals}. */
+  private storeArrivalsRev = 0;
 
   /**
    * Attachment metadata + byte state by message id.
@@ -3756,7 +3758,19 @@ export class OhmailEngine {
     this.settleOrganizerRequests(changes);
     this.noteMessagesRemoved(changes);
     this.noteGateArrivals(changes);
+    this.noteStoreArrivals(changes);
     this.storePages.adopt(changes);
+  }
+
+  /**
+   * DID THIS PAGE BRING MAIL THE MIRROR HAS NO RECORD OF — read before the apply, like the count.
+   * A new message, or one a coalesced page carries as its latest update; a row the mirror holds
+   * is a page cache adoption, never an arrival. An open History re-asks its first page on it.
+   */
+  private noteStoreArrivals(changes: SyncChange[]): void {
+    if (changes.some((ch) => ch.type === "message" && ch.op !== "delete" && this.store.record("message", ch.id) === undefined)) {
+      this.storeArrivalsRev += 1;
+    }
   }
 
   /**
@@ -7600,9 +7614,9 @@ export class OhmailEngine {
     if (fn === null) return { state: "unavailable" };
     const limit = Math.max(1, Math.min(HISTORY_PAGE_ROWS, opts.limit ?? HISTORY_PAGE_ROWS));
     const key = storePageKey(view, opts, limit);
-    const held = this.storePages.get(key);
+    const held = opts.fresh ? undefined : this.storePages.get(key);
     if (held !== undefined) return { state: "ready", items: held.items, nextCursor: held.nextCursor };
-    const flightKey = opts.transient ? `${key}~` : key;
+    const flightKey = opts.fresh ? `${key}!` : opts.transient ? `${key}~` : key;
     const inFlight = this.storePageCalls.get(flightKey);
     if (inFlight) return inFlight;
     const call = Promise.resolve()
@@ -7614,7 +7628,7 @@ export class OhmailEngine {
       .then((wire): StorePageOutcome => {
         if (wire === null) return { state: "unavailable" };
         const page = { items: Array.isArray(wire.items) ? wire.items : [], nextCursor: wire.nextCursor };
-        if (!opts.transient) this.storePages.put(key, page, opts.at, "all");
+        if (!opts.transient && !opts.fresh) this.storePages.put(key, page, opts.at, "all");
         return { state: "ready", ...page };
       })
       .catch((err: unknown): StorePageOutcome => ({ state: "failed", errorClass: errorClassOf(err) }))
@@ -7674,6 +7688,20 @@ export class OhmailEngine {
   /** Moves with every page put, evicted, cleared or updated by a delta — a walker's memo key. */
   storePagesRevision(): number {
     return this.storePages.revision();
+  }
+
+  /**
+   * HOLD A FRESH PAGE where the page it was asked as is cached — History's refresh places page one
+   * only once the positions below it have moved, so no render reads the new rows at the old slots.
+   */
+  holdStorePage(view: "all", opts: StorePageOpts, page: StorePage, at: number): void {
+    const limit = Math.max(1, Math.min(HISTORY_PAGE_ROWS, opts.limit ?? HISTORY_PAGE_ROWS));
+    this.storePages.put(storePageKey(view, opts, limit), page, at, "all");
+  }
+
+  /** Moves when an applied page brought mail the mirror had no record of — an open History's cue. */
+  storeArrivals(): number {
+    return this.storeArrivalsRev;
   }
 
   /** Drop the cached pages — a History visit starts from the store's present; `list` narrows it. */
