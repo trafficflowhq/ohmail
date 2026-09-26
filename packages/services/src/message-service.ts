@@ -5,7 +5,7 @@ import {
   mailboxes, mailboxFolders, messages, folderState, messageBodies, messageStates, claimIdempotencyKey,
   recordChange, recordChanges, recordRouteOverride, recordRuleDelta, routeOverrideActionId,
   senderPatternFromAddress,
-  upsertDesiredSeen, upsertDesiredSeenMany, ringFilingDoorbell, type LedgerTx, type OrganizedBy, type Tx,
+  upsertDesiredSeen, upsertDesiredSeenMany, ringFilingDoorbell, type ChangeInput, type LedgerTx, type OrganizedBy, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import type { Destination, NativeLocator } from "@trafficflow/core/mail";
@@ -1127,8 +1127,8 @@ export class MessageService {
       await upsertDesiredSeenMany(
         tx, ids.map((id) => ({ id, observedSeen: observedById.get(id) ?? false })), !unread, at,
       );
-      const seqs = await recordChanges(tx, ids.map((id) => ({
-        accountId: ctx.accountId, entityType: "message" as const, entityId: id, op: "update" as const, meta: null,
+      const seqs = await recordChanges(tx, ids.map((id): ChangeInput => ({
+        accountId: ctx.accountId, entityType: "message", entityId: id, op: "update", meta: null,
       })));
       last = seqs[seqs.length - 1] ?? null;
 
@@ -1499,8 +1499,8 @@ export class MessageService {
         eq(messageStates.state, "resurfaced"),
       ))
       .returning({ id: messageStates.id });
-    const seqs = await recordChanges(tx, cleared.map((r) => ({
-      accountId: ctx.accountId, entityType: "message_state" as const, entityId: r.id, op: "update" as const, meta: null,
+    const seqs = await recordChanges(tx, cleared.map((r): ChangeInput => ({
+      accountId: ctx.accountId, entityType: "message_state", entityId: r.id, op: "update", meta: null,
     })));
     return seqs[seqs.length - 1] ?? null;
   }

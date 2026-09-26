@@ -455,14 +455,14 @@ export async function buildCursor(
 }
 
 /**
- * Would writing `next` change the stored row? The three watermarks compared as the numbers the row
- * holds, and `serverExists` only when this pass observed one (absent leaves the stored count alone).
- * No stored row is a write.
+ * Would writing `next` change the stored row? The epoch through `epoch.ts` (an unnamed one is never
+ * equal, so it is always written), the two watermarks as the numbers the row holds, and
+ * `serverExists` only when this pass observed one. No stored row is a write.
  */
 function sameStoredCursor(stored: PersistedFolderCursor | undefined, next: PersistedFolderCursor): boolean {
   if (stored === undefined) return false;
   const n = (v: string | number): string => { try { return BigInt(v).toString(); } catch { return String(v); } };
-  return n(stored.uidValidity) === n(next.uidValidity) && n(stored.uidNext) === n(next.uidNext)
+  return sameEpoch(epochOf(stored.uidValidity), epochOf(next.uidValidity)) && n(stored.uidNext) === n(next.uidNext)
     && n(stored.highestModseq) === n(next.highestModseq)
     && (next.serverExists === undefined || next.serverExists === stored.serverExists);
 }
