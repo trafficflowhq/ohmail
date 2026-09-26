@@ -18,11 +18,11 @@
  */
 import * as socketModule from "net";
 
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNotNull } from "drizzle-orm";
 import { drizzle as drizzleSqliteProxy } from "drizzle-orm/sqlite-proxy";
-/* The two tables a relaunch reads to find out where this mailbox lives. The barrel, like
-   `engine.ts` — the device twin is substituted at the module the barrel itself reaches. */
-import { mailboxCredentials, mailboxes, organizerDisplayName } from "@trafficflow/db";
+/* The tables a relaunch reads to find out where this mailbox lives and whether mail is here. The
+   barrel, like `engine.ts` — the device twin is substituted at the module the barrel itself reaches. */
+import { mailboxCredentials, mailboxes, messages, organizerDisplayName } from "@trafficflow/db";
 import {
   INGEST_FOLD_WAL_BYTES, brandDialect, deliverLocalNotifyAtCommit,
   dialect, type LogMark,
@@ -675,6 +675,10 @@ async function composePhoneEngine(
     await store.close().catch(() => undefined);
     return { kind: "no-credential" };
   }
+  /* A RELAUNCH OVER MAIL THIS STORE ALREADY HOLDS OPENS AT ONCE, read before the launch can write.
+     The app paints what the store holds while the launch dials behind it — the offline start's state.
+     An empty store still waits (nothing to paint), and so does every configured start. */
+  const opensAtOnce = imap === null && await storeHoldsMail(store.db);
   const sidecar = await createSidecar({
     dataDir: deps.dataDir ?? "",
     /**
@@ -721,8 +725,8 @@ async function composePhoneEngine(
    * `start()` member (a door that must remember to call something is the built-tested-unreachable
    * shape this closes). And a launch the server answered NO is not handed back as an engine: this
    * was `void sidecar.start().catch(...)` whose catch was UNREACHABLE (`start()` settles with
-   * `allSettled`). So the launch is awaited and bounded, and exactly two outcomes refuse — the
-   * sign-in and the encrypted way in; an OUTAGE is not a refusal, and on a refusal the engine STOPS.
+   * `allSettled`). So the launch is awaited and bounded (unless {@link opensAtOnce}), and two outcomes
+   * refuse — the sign-in and the encrypted way in (the engine STOPS); an OUTAGE is not a refusal.
    */
   /* MERGED THE WAY `imapFlowOptions` MERGES IT — `timeouts` on a config is PARTIAL, and a caller
      that overrode only `socketMs` would otherwise leave the two halves of this bound undefined. */
@@ -733,7 +737,7 @@ async function composePhoneEngine(
     // is classified by the same two predicates rather than swallowed here.
     (err: unknown) => [{ mailboxId: "", err }],
   );
-  const bounded = await Promise.race([
+  const bounded = opensAtOnce ? null : await Promise.race([
     launched,
     new Promise<null>((resolve) => {
       const t = setTimeout(() => resolve(null), timeouts.connectionMs + timeouts.greetingMs);
@@ -1406,6 +1410,13 @@ async function composePhoneEngine(
     log,
     stop: () => sidecar.stop(),
   } };
+}
+
+/** Has this store taken this mailbox's mail in before — a message row, or a pass that finished. */
+async function storeHoldsMail(db: LocalDb): Promise<boolean> {
+  if ((await db.select({ id: messages.id }).from(messages).limit(1)).length > 0) return true;
+  return (await db.select({ id: mailboxes.id }).from(mailboxes).where(isNotNull(mailboxes.lastSyncAt)).limit(1))
+    .length > 0;
 }
 
 /**
