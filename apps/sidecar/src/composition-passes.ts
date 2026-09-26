@@ -78,8 +78,12 @@ export function runsStorePass(kind: OrganizerKind, pass: StorePass): boolean {
 /** The search a composition that fills no index answers with: complete, and stating no index progress. */
 const SEARCH_WITHOUT_BACKFILL = new SearchService({ indexFills: false });
 
+/** The desktop's own store: its backfill runs, and each arm of a search is read within a bound. */
+const SEARCH_OWN_STORE = new SearchService({ indexFills: true, localStore: true });
+
 /** WHICH SEARCH THIS COMPOSITION ANSWERS WITH — the one that states index progress only where the pass runs. */
 export function searchFor(kind: OrganizerKind): SearchService {
+  if (kind === "local") return SEARCH_OWN_STORE;
   return runsStorePass(kind, "search-index-backfill") ? searchService : SEARCH_WITHOUT_BACKFILL;
 }
 

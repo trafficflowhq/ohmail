@@ -53,6 +53,13 @@ const SEARCH_RANK_WINDOW_FACTOR = 40;
  * fallback for a part too rare to fill it.
  */
 const SEARCH_PART_WALK_FACTOR = 6;
+/**
+ * On the desktop's own store an arm reads its matches off its index only while it has at most this
+ * many cuts' worth (counted off the search document alone); past that it walks the newest
+ * {@link SEARCH_PART_WALK_FACTOR} cuts of mail. Each match read that way costs a lookup of its
+ * message, and in-process PGlite plans a few thousand as a scan of the whole mailbox (0.1-0.6 s).
+ */
+const LOCAL_ARM_READ_FACTOR = 4;
 /** How many senders the sender facet returns. */
 const SENDER_FACET_LIMIT = 10;
 
@@ -322,7 +329,11 @@ function hasTrgm(db: Db): Promise<boolean> {
 interface StoreFacts { readonly built: boolean; readonly trigram: boolean }
 
 /** One branch of an arm: an index-served predicate and the rank the arm orders by. */
-interface Branch { readonly pred: SQL; readonly rank: SQL }
+interface Branch {
+  readonly pred: SQL; readonly rank: SQL;
+  /** The predicate without its account: what a bounded read asks the index for by itself. */
+  readonly raw?: SQL;
+}
 /**
  * An arm: its branches (one per index), cut at its top-K after they are merged. `ranked`: ordered
  * by its rank within the newest candidates; otherwise newest first, read off the History index.
@@ -331,6 +342,8 @@ interface Arm {
   readonly name: string; readonly ranked: boolean; readonly branches: readonly Branch[];
   /** A recency arm whose selectivity the planner cannot see: see {@link SEARCH_PART_WALK_FACTOR}. */
   readonly bounded?: boolean;
+  /** Read by {@link SearchService.localRead} for this account: the desktop's own store, documents built. */
+  readonly local?: { readonly account: string };
 }
 
 /** A relevance cursor: the last row's fused score, date and id, and the tier it belongs to. */
@@ -393,9 +406,10 @@ export class SearchService {
   /**
    * `indexFills: false` for a store no backfill fills (the phone, `composition-passes.ts`): its rows
    * without a document are searched the older way, complete, and nothing writes one, so an answer
-   * there states no index progress rather than a percentage that never moves.
+   * there states no index progress rather than a percentage that never moves. `localStore` for the
+   * desktop's own store, whose exact-tier arms are each read within a bound ({@link localRead}).
    */
-  constructor(private readonly opts: { readonly indexFills: boolean } = { indexFills: true }) {}
+  constructor(private readonly opts: { readonly indexFills: boolean; readonly localStore?: boolean } = { indexFills: true }) {}
 
   /**
    * The FROM every arm shares. The joins are 1:1 (each is unique per message), so no fan-out; a
@@ -445,7 +459,7 @@ export class SearchService {
     // store whose word index is over the rows keeps every row, document or not.
     const documents = d.search.document({ subject: "", people: "", attachments: "", body: "" }) !== null;
     const own = (b: SearchArm): Branch =>
-      documents ? { pred: sql`(s.account_id = ${ctx.accountId} and ${b.pred})`, rank: b.rank } : b;
+      documents ? { pred: sql`(s.account_id = ${ctx.accountId} and ${b.pred})`, rank: b.rank, raw: b.pred } : b;
     if (tier === "similar") {
       const fuzz = d.search.fuzzy(q, "mail", { trigram, threshold: FUZZY_THRESHOLD });
       return [{ name: "similar", ranked: true, branches: [own(fuzz), ...(legacy?.fuzzy ?? []).map(bare)] }];
@@ -479,7 +493,9 @@ export class SearchService {
         branches: [own(d.search.substring(q, { trigram })), ...(legacy?.substring ?? []).map(bare)],
       });
     }
-    return out;
+    // Every branch is then the document's own (`own`), so the bounded read can ask it by itself.
+    const local = this.opts.localStore === true && d.name === "pg" && documents && legacy === null;
+    return local ? out.map((a) => ({ ...a, local: { account: ctx.accountId }, bounded: false })) : out;
   }
 
   /**
@@ -487,19 +503,68 @@ export class SearchService {
    * ranked arm (then ordered by rank), at K otherwise — so no branch reads more than its cut off
    * an index; the branches are merged and the arm numbered by its own order.
    */
-  private armSql(where: SQL, arm: Arm, k: number, window: number): SQL {
+  private armSql(where: SQL, arm: Arm, k: number, window: number, walk?: SQL): SQL {
     const cut = arm.ranked ? window : k;
     const branch = (b: Branch): SQL => sql`(select m.id as id, m.date as date, ${arm.ranked ? b.rank : sql`0`} as rank
       ${this.from} where ${where} and ${b.pred}
       order by m.date desc nulls last, m.id desc limit ${cut})`;
-    const merged = arm.bounded ? this.boundedRead(where, arm.branches, k)
+    const merged = arm.local && walk ? this.localRead(where, arm, k, cut, walk)
+      : arm.bounded ? this.boundedRead(where, arm.branches, k)
       : arm.branches.length === 1 ? branch(arm.branches[0]!)
       : sql`(select id, date, max(rank) as rank from (${sql.join(arm.branches.map(branch), sql` union all `)}) u group by id, date)`;
     // `SQL_RANK_ORDER`'s key sequence (a recency arm's rank is the constant its branches wrote).
     const rank = sql`m.rank`;
-    return sql`select m.id, row_number() over (order by ${rank} desc, m.date desc nulls last, m.id desc) as r
-               from (select m.id, m.date, m.rank from ${merged} m
+    const x = arm.local ? sql`, m.x` : sql``;
+    return sql`select m.id, row_number() over (order by ${rank} desc, m.date desc nulls last, m.id desc) as r${x}
+               from (select m.id, m.date, m.rank${x} from ${merged} m
                      order by ${rank} desc, m.date desc nulls last, m.id desc limit ${k}) m`;
+  }
+
+  /**
+   * AN ARM OF THE DESKTOP'S OWN STORE, within a bound whatever its match count: counted off the
+   * search document alone up to {@link LOCAL_ARM_READ_FACTOR} cuts; at most that many are read off
+   * the index and dated one lookup each (`offset 0` keeps each a lookup: no join, so no scan of the
+   * mailbox), else it takes its rows of the tier's one walk ({@link sharedWalk}). A walk that holds
+   * fewer than K sets `x`, so the arm reads as cut: its older matches are counted by the summary and
+   * walked by the date orders. A walk that holds none reads the index after all.
+   */
+  private localRead(where: SQL, arm: Arm, k: number, cut: number, walk: SQL): SQL {
+    const cap = LOCAL_ARM_READ_FACTOR * k;
+    const account = arm.local!.account;
+    const raw = sql.join(arm.branches.map((b) => sql`(${b.raw ?? b.pred})`), sql` or `);
+    const rank = arm.ranked ? arm.branches[0]!.rank : sql`0`;
+    // The document's own predicate by itself (`offset 0`), so its index serves it: with the account
+    // beside it the planner reads the account's documents and filters each one's vector.
+    const docs = sql`select s.message_id as id, s.account_id as account, ${rank} as rank from message_search s
+      where ${raw} offset 0`;
+    const dated = sql`select m.date as date from messages m left join folder_state fs on fs.message_id = m.id
+      where m.id = d.id and ${where} offset 0`;
+    const indexed = sql`select d.id as id, t.date as date, d.rank as rank from (${docs}) d cross join lateral (${dated}) t
+      where d.account = ${account} order by (t.date is null), t.date desc, d.id desc limit ${cut}`;
+    // A walk that holds none of an arm's matches is no answer (the page would read as the closest
+    // words): that arm is read off its index whatever its count.
+    return sql`(with lc as (select count(*) as n from (select 1 from (${docs}) d where d.account = ${account} limit ${cap + 1}) c),
+      lw as (select id, date, rank from (${walk}) r where (select n from lc) > ${cap}),
+      li as (select id, date, rank from (${indexed}) r where (select n from lc) <= ${cap} or not exists (select 1 from lw))
+      select id, date, rank, 0 as x from li
+      union all
+      select id, date, rank, case when (select count(*) from lw) < ${k} then 1 else 0 end as x from lw)`;
+  }
+
+  /**
+   * ONE WALK FOR EVERY LOCAL ARM OF A TIER: the newest {@link SEARCH_PART_WALK_FACTOR} cuts of mail
+   * under the filters, each asked every arm's predicate (and the ranked arm's rank) in one look at
+   * its document. Read only by an arm past its index read, so a narrow search never starts it.
+   */
+  private sharedWalk(where: SQL, arms: readonly Arm[], k: number): SQL {
+    const cols = arms.flatMap((a, i) => a.local ? [
+      sql`(${sql.join(a.branches.map((b) => sql`(${b.raw ?? b.pred})`), sql` or `)}) as ${sql.raw("f" + String(i))}`,
+      sql`${a.ranked ? a.branches[0]!.rank : sql`0`} as ${sql.raw("r" + String(i))}`,
+    ] : []);
+    const newest = sql`select m.id as id, m.date as date from messages m left join folder_state fs on fs.message_id = m.id
+      where ${where} order by m.date desc nulls last, m.id desc limit ${SEARCH_PART_WALK_FACTOR * k}`;
+    return sql`select w.id as id, w.date as date, h.* from (${newest}) w
+      cross join lateral (select ${sql.join(cols, sql`, `)} from message_search s where s.message_id = w.id offset 0) h`;
   }
 
   /**
@@ -544,16 +609,27 @@ export class SearchService {
   ): { k: number; named: SQL; all: SQL; sizes: SQL[]; sizeNames: string[] } {
     const k = SEARCH_ARM_FACTOR * limit;
     const window = tier === "similar" ? k : SEARCH_RANK_WINDOW_FACTOR * limit;
-    const armSqls = arms.map((a) => this.armSql(where, a, k, window));
     const pre = opts.prefix ?? "";
+    const walkName = sql.raw(pre + "lwalk");
+    const walking = arms.some((x) => x.local);
+    // A local arm's rows of the one shared walk ({@link sharedWalk}), newest first, at its cut.
+    const walkOf = (i: number): SQL => sql`select id, date, ${sql.raw("r" + String(i))} as rank from ${walkName}
+      where ${sql.raw("f" + String(i))} order by date desc nulls last, id desc limit ${arms[i]!.ranked ? window : k}`;
+    const armSqls = arms.map((x, i) => this.armSql(where, x, k, window, x.local ? walkOf(i) : undefined));
     const a = (i: number): SQL => sql.raw(pre + "a" + String(i));
     const sizeNames = armSqls.map((_, i) => pre + "n" + String(i));
     // A gated arm is counted only when its gate holds, so a count never starts the arm either.
-    const size = (i: number): SQL => (opts.gate === undefined ? sql`(select count(*) from ${a(i)})`
-      : sql`(case when ${opts.gate} then (select count(*) from ${a(i)}) else 0 end)`);
+    // A local arm whose walk fell short counts as cut ({@link localRead}'s `x`).
+    const held = (i: number): SQL => (arms[i]!.local ? sql`(select count(*) + ${k} * coalesce(max(x), 0) from ${a(i)})`
+      : sql`(select count(*) from ${a(i)})`);
+    const size = (i: number): SQL => (opts.gate === undefined ? held(i)
+      : sql`(case when ${opts.gate} then ${held(i)} else 0 end)`);
     return {
       k,
-      named: sql.join(armSqls.map((x, i) => sql`${a(i)} as (${x})`), sql`, `),
+      named: sql.join([
+        ...(walking ? [sql`${walkName} as (${this.sharedWalk(where, arms, k)})`] : []),
+        ...armSqls.map((x, i) => sql`${a(i)} as (${x})`),
+      ], sql`, `),
       all: sql.join(armSqls.map((_, i) => sql`select id, r from ${a(i)}`), sql` union all `),
       sizes: armSqls.map((_, i) => sql`${d.castInt(size(i))} as ${sql.raw(sizeNames[i]!)}`),
       sizeNames,
