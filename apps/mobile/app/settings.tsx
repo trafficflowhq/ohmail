@@ -36,7 +36,8 @@ import { backupExclusion, subscribeBackupExclusion } from "../src/engine/backup-
 import { phoneEngineStart } from "../src/engine/engine-artifact";
 import {
   onOrganizerState, organizeRefusal, organizerHandedBack, organizerInstruction,
-  organizerHandBackLateSaid, organizerNotificationsOffSaid, organizerRestrictedSaid, organizerStateVersion,
+  organizerHandBackLateSaid, organizerNotificationsOffSaid, organizerRestrictedSaid, organizerSettingsLeft,
+  organizerStateVersion,
   pressOrganizeHere, standaloneHere,
 } from "../src/engine/organizer-session";
 import { openNotificationSettings } from "../src/engine/notification-permission-native";
@@ -53,6 +54,7 @@ import {
   mayStartHere,
   mayStopHere,
   pressSaidLine,
+  settingsLeftLine,
   type PressSaid,
 } from "../src/ui/standalone-form";
 import { useLocale, useLocaleControls } from "../src/i18n/LocaleProvider";
@@ -72,6 +74,7 @@ function pictureQualityLabel(level: ImageQualityLevel): string {
   }
 }
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
+import { SavedSettingsPanel } from "../src/ui/ProfileImportCard";
 
 /** Gated like the tabs: the About block states a live session's facts, so it needs one. */
 export default function SettingsScreen() {
@@ -187,6 +190,9 @@ function SettingsBody() {
 
         {/* this phone — first, because it is the only block that says what this phone IS */}
         <ThisPhonePanel />
+
+        {/* a "Not now" whose settings document still stands in the mailbox: Import, or Save */}
+        <SavedSettingsPanel />
 
         {/* appearance */}
         <Panel style={{ paddingBottom: 16, marginBottom: 14 }}>
@@ -599,6 +605,12 @@ function ThisPhonePanel() {
                 {pressSaidLine(said, claim) === null || row.key !== HERE_CARD ? null : (
                   <Txt variant="note" tone="ink2" accessibilityRole="alert">
                     {pressSaidLine(said, claim)}
+                  </Txt>
+                )}
+                {/* WHAT THE STOP LEFT OFF THE MAILBOX: this phone's decisions are on it only. */}
+                {settingsLeftLine(organizerSettingsLeft(), claim) === null || row.key !== HERE_CARD ? null : (
+                  <Txt variant="note" tone="ink2" accessibilityRole="alert">
+                    {settingsLeftLine(organizerSettingsLeft(), claim)}
                   </Txt>
                 )}
                 {mayStopHere(claim) ? (

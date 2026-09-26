@@ -548,6 +548,15 @@ export type PressSaid = "startRefused" | "startUnreadable" | "stopRefused" | nul
  * that is not. `unknown` keeps whatever was said — it means the engine has not answered yet, and
  * taking the sentence away there would drop the answer to a press somebody has just made.
  */
+/**
+ * WHAT THE STOP LEFT OFF THE MAILBOX, beside the card — only once the claim is no longer ours, so
+ * the sentence never stands over a phone still organizing (the next start clears the record).
+ */
+export function settingsLeftLine(left: "kept_other" | "not_saved" | null, claim: PhoneClaim): string | null {
+  if (left === null || claim.k === "ours" || claim.k === "unknown") return null;
+  return left === "kept_other" ? Copy.settingsStopLeftOther : Copy.settingsStopLeftUnsaved;
+}
+
 export function pressSaidLine(said: PressSaid, claim: PhoneClaim): string | null {
   if (said === null) return null;
   if (claim.k !== "unknown") {

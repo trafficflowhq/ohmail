@@ -169,7 +169,9 @@ export async function profileImportResolutionExists(
     // TEXT equality on `v`, deliberately: the version is read off a PUBLIC document, so any
     // JavaScript integer can arrive here, and an `::int` cast overflows PostgreSQL's integer at
     // 2^31 — turning a hostile version number into a 500 on every later candidate or dismissal.
-    : sql`${auditLog.payload}->>'fingerprint' is null and ${auditLog.payload}->>'v' = ${String(o.newerV)}`;
+    // CAST TO TEXT on the left: the device store's `->>` answers a JSON number as an INTEGER,
+    // which never equals a TEXT, so a phone's newer-format "Not now" was never read back.
+    : sql`${auditLog.payload}->>'fingerprint' is null and cast(${auditLog.payload}->>'v' as text) = ${String(o.newerV)}`;
   const rows = await db.select({ id: auditLog.id })
     .from(auditLog)
     .where(and(
@@ -224,7 +226,9 @@ export async function recordProfileImportResolution(
     // TEXT equality on `v`, deliberately: the version is read off a PUBLIC document, so any
     // JavaScript integer can arrive here, and an `::int` cast overflows PostgreSQL's integer at
     // 2^31 — turning a hostile version number into a 500 on every later candidate or dismissal.
-    : sql`${auditLog.payload}->>'fingerprint' is null and ${auditLog.payload}->>'v' = ${String(o.newerV)}`;
+    // CAST TO TEXT on the left: the device store's `->>` answers a JSON number as an INTEGER,
+    // which never equals a TEXT, so a phone's newer-format "Not now" was never read back.
+    : sql`${auditLog.payload}->>'fingerprint' is null and cast(${auditLog.payload}->>'v' as text) = ${String(o.newerV)}`;
   const dupes = await db.select({ id: auditLog.id })
     .from(auditLog)
     .where(and(

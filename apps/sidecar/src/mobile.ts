@@ -157,6 +157,11 @@ export interface PhoneEngineDeps {
    * a double" was false, and harmless only for as long as nothing started the engine.
    */
   adapterFactory?: (cfg: ImapConfig, ctx: AdapterDialContext) => MailboxAdapter;
+  /**
+   * TEST SEAM — the settings write's debounce, `SidecarConfig.profileFlushIntervalMs` passed
+   * through. Production passes nothing and keeps the engine's five minutes.
+   */
+  profileFlushIntervalMs?: number;
 }
 
 /**
@@ -687,6 +692,7 @@ async function composePhoneEngine(
     installId: deps.installId,
     organizerKind: deps.organizerKind ?? "mobile",
     ...(deps.now ? { now: deps.now } : {}),
+    ...(deps.profileFlushIntervalMs !== undefined ? { profileFlushIntervalMs: deps.profileFlushIntervalMs } : {}),
     ...(wired ? { log } : {}),
     /* BOTH FACES OF THE ONE CHANNEL, spread on the same condition — see {@link loggerOver}. A
        caller that supplies NEITHER a `log` nor a `logSink` gets neither, which keeps the

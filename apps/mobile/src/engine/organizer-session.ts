@@ -194,6 +194,7 @@ export async function claimHereStandalone(): Promise<ClaimHereOutcome> {
   const held = door;
   if (held === null) return "refused";
   const outcome = await held.claimHere().catch((): ClaimHereOutcome => "refused");
+  if (outcome === "claimed") settingsLeftBehind = null;
   notifyOrganizerState();
   return outcome;
 }
@@ -446,8 +447,29 @@ export async function stopOrganizingStandalone(): Promise<StopOrganizingOutcome>
   const held = door;
   if (held === null) return "refused";
   const stopped = await held.stopOrganizing().catch((): StopOrganizingOutcome => "refused");
+  if (stopped === "released") settingsLeftBehind = leftBehindOf(held);
   notifyOrganizerState();
   return stopped;
+}
+
+/**
+ * WHAT THE PERSON'S STOP LEFT OFF THE MAILBOX — the engine's reading on the release's own record:
+ * `kept_other` (another ohmail's settings document stands, and this phone may not replace it) or
+ * `not_saved` (the write failed). `null` where the mailbox has this phone's settings, or nothing
+ * was stopped this launch. Cleared by the next start.
+ */
+let settingsLeftBehind: "kept_other" | "not_saved" | null = null;
+export const organizerSettingsLeft = (): "kept_other" | "not_saved" | null => settingsLeftBehind;
+
+function leftBehindOf(held: StandaloneEngine): "kept_other" | "not_saved" | null {
+  try {
+    for (const state of Object.values(held.runtimes().organizer)) {
+      if (state.settingsLeft === "kept_other" || state.settingsLeft === "not_saved") return state.settingsLeft;
+    }
+  } catch {
+    /* The engine could not answer; the stop itself stands. */
+  }
+  return null;
 }
 
 /**
@@ -927,6 +949,7 @@ export function forgetOrganizerSessionForTests(): void {
   notificationsOff = false;
   handBackLate = false;
   organizeRefused = null;
+  settingsLeftBehind = null;
   consentArmed = false;
   lastSeen = "";
   watchers.clear();

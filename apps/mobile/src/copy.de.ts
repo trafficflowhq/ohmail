@@ -163,6 +163,10 @@ export const DE: Deck = {
   settingsStopHereFailed:
     "Dieses Telefon konnte dieses Postfach nicht zurückgeben und organisiert es weiter. Versuche "
     + "es in einem Moment noch einmal.",
+  settingsStopLeftOther:
+    "Die Einstellungen dieses Telefons sind auf diesem Telefon geblieben: Das Postfach behält die Einstellungen, die ein anderes ohmail dort gespeichert hat.",
+  settingsStopLeftUnsaved:
+    "Die Einstellungen dieses Telefons konnten nicht im Postfach gespeichert werden und sind nur auf diesem Telefon.",
   /* Ein Blick, der nicht angekommen ist — eigener Satz, nicht der darüber: hier ist auf diesem
      Telefon nichts schiefgegangen, das Postfach konnte nur nicht gefragt werden. */
   settingsStartHereUnreadable:
@@ -1562,4 +1566,48 @@ export const DE: Deck = {
   renderErrorSurfaceReader: "Die Nachricht",
   renderErrorSurfaceComposer: "Das Schreibfenster",
   renderErrorSurfaceScreen: "Dieser Bildschirm",
+
+  pfiTitle: "Wir haben deine ohmail-Einstellungen in diesem Postfach gefunden",
+  pfiLede: (address: string) =>
+    `${address} trägt Einstellungen, die ein früheres ohmail dort gespeichert hat. Sie reisen mit dem Postfach — in dieses importieren?`,
+  pfiHolds: (details: string) => `Sie enthalten ${details}.`,
+  pfiScreenerPart: (n: number) => (n === 1 ? "1 Screener-Entscheidung" : `${n} Screener-Entscheidungen`),
+  pfiRulesPart: (n: number) => (n === 1 ? "1 Regel" : `${n} Regeln`),
+  pfiNotifyPart: (n: number) => (n === 1 ? "1 Benachrichtigungswahl" : `${n} Benachrichtigungswahlen`),
+  pfiTagsPart: (n: number) => (n === 1 ? "1 Tag" : `${n} Tags`),
+  pfiAwayPart: "deine Abwesenheitsantwort",
+  pfiListPair: (first: string, second: string) => `${first} und ${second}`,
+  pfiListMany: (head: string, last: string) => `${head} und ${last}`,
+  pfiSavedByLocal: (when: string) => `Gespeichert ${when} von ohmail auf einem anderen Computer.`,
+  pfiSavedByCloud: (when: string) => `Gespeichert ${when} von ohmail Cloud.`,
+  pfiSavedByPhone: (when: string) => `Gespeichert ${when} von ohmail auf einem Telefon.`,
+  pfiSavedBy: (when: string) => `Gespeichert ${when}.`,
+  pfiWillDo:
+    "Der Import fügt sie den Einstellungen dieses Kontos hinzu. Deine Mail wird nicht angefasst, und am Postfach selbst ändert sich nichts. Bis du dich entscheidest, bleiben die Einstellungen aus diesem ohmail hier und wandern nicht mit dem Postfach.",
+  pfiHeldRouting:
+    "Bis du antwortest, bleibt Mail von Absendern, die diese Einstellungen durchlassen, dort, wo sie angekommen ist; andere neue Absender werden wie gewohnt gescreent.",
+  pfiImport: "Einstellungen importieren",
+  pfiImporting: "Importiere …",
+  pfiLater: "Nicht jetzt",
+  pfiDoneTitle: "Deine Einstellungen sind zurück.",
+  pfiDoneDetails: (details: string) => `Importiert: ${details}.`,
+  pfiDoneSkipped: (n: number) =>
+    (n === 1 ? "1 Regel konnte nicht importiert werden." : `${n} Regeln konnten nicht importiert werden.`),
+  pfiDoneAction: "Fertig",
+  pfiErrorTitle: "Das hat nicht geklappt.",
+  pfiErrorGeneric: "Etwas ist schiefgelaufen.",
+  pfiErrorRetry: "Versuch es noch mal.",
+  pfiNewerTitle: "Einstellungen aus einem neueren ohmail",
+  pfiNewerBody: (address: string) =>
+    `${address} trägt Einstellungen aus einer neueren ohmail-Version, die dieses ohmail nicht lesen kann — aktualisiere ohmail, um sie zu importieren.`,
+  pfiSavedTitle: (address: string) => `In ${address} gespeicherte Einstellungen`,
+  pfiSavedBody:
+    "Du hast sie nicht importiert. Sie bleiben im Postfach, und die Einstellungen aus diesem ohmail wandern nicht mit dem Postfach, bis du dich entscheidest.",
+  pfiReplace: "Einstellungen dieses ohmail im Postfach speichern",
+  pfiReplacing: "Speichere …",
+  pfiReplaceNote: (details: string) =>
+    `Das Speichern ersetzt ${details} im Postfach innerhalb weniger Minuten durch die Einstellungen dieses ohmail. Solange dieses ohmail keine eigenen hat, behält das Postfach sie.`,
+  pfiReplaceNoteBare:
+    "Das Speichern ersetzt die Einstellungen im Postfach innerhalb weniger Minuten durch die dieses ohmail. Solange dieses ohmail keine eigenen hat, behält das Postfach sie.",
+  pfiReplacedTitle: "Die Einstellungen dieses ohmail gehen innerhalb weniger Minuten ins Postfach.",
 };

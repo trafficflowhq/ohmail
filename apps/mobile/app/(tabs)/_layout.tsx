@@ -11,6 +11,7 @@ import { router, Tabs } from "expo-router";
 import { Platform } from "react-native";
 import { useWorld } from "../../src/state/world";
 import { Gated } from "../../src/ui/Gated";
+import { ProfileImportCard } from "../../src/ui/ProfileImportCard";
 import { type IconName } from "../../src/ui/Icon";
 import { GlassDock, type DockItem } from "../../src/ui/glass";
 import { usePosture } from "../../src/ui/posture";
@@ -58,6 +59,9 @@ export default function TabsLayout() {
   useLocale();
   return (
     <Gated>
+      {/* Another ohmail's settings in the mailbox: the organizer files no stranger and writes no
+          decision until this is answered, so it stands above the lists. */}
+      <ProfileImportCard />
       <Tabs
         screenOptions={{ headerShown: false, sceneStyle: { backgroundColor: "transparent" } }}
         tabBar={(props) => <GlassNav {...props} />}

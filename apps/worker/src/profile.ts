@@ -15,6 +15,8 @@ import { dialect } from "@trafficflow/db/dialect";
    nothing to the engine's closure. `lease.ts` carries the same warning for the same reason. */
 import { describeError } from "@trafficflow/core/mail";
 import { epochOf, sameEpoch, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
+/* The one post-pass fact — see `flushBeforeLeaving`. `lease.ts` imports nothing from here. */
+import { leaseStoodDown, type OrganizerWriteAuthority } from "./lease.js";
 import { serializeOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
 import {
   PROFILE_VERSION, ProfileUnavailableError, isEmptyProfilePayload, makeProfileDoc, profileFingerprint,
@@ -123,6 +125,14 @@ export interface OrganizerProfileSyncDeps {
   now?: () => Date;
   log?: (event: string, detail: Record<string, unknown>) => void;
 }
+
+/**
+ * WHAT A HAND-BACK LEFT IN THE MAILBOX — see {@link OrganizerProfileSync.flushBeforeLeaving}.
+ * `saved`: the mailbox's document says what this install's settings say (or there were none).
+ * `kept_other`: another install's document stands and this one may not overwrite it.
+ * `not_saved`: the write was attempted and failed; the settings are on this install only.
+ */
+export type SettingsLeft = "saved" | "kept_other" | "not_saved";
 
 /**
  * ONE MAILBOX'S PROFILE STATE for the life of one attachment — created beside the runtime like the
@@ -1009,6 +1019,43 @@ export class OrganizerProfileSync {
          normally with a failure recorded a few frames down. Comparing the count is what stops a
          recovery being announced in the same drain that reported the fault. */
       if (this.failuresNoted === failuresAtEntry) this.noteTickSucceeded(log);
+    }
+  }
+
+  /**
+   * THE LAST WRITE BEFORE THIS INSTALL LETS THE MAILBOX GO — the tick with its debounce spent,
+   * so a decision made since the last write reaches the mailbox before the claim leaves. At most
+   * two ticks (an answer's release, then the write), and no I/O when the store already says what
+   * the last write said. `kept_other`: a found, declined or newer document stands, which this
+   * install may not overwrite. Each tick first asks whether the pass's permit stood down, the
+   * drain's own publish rule: a mailbox that changed hands is not written. Never throws.
+   */
+  async flushBeforeLeaving(authority: OrganizerWriteAuthority, pinned?: MailboxAdapter): Promise<SettingsLeft> {
+    const { deps } = this;
+    const adapter = pinned ?? deps.adapter;
+    if (!hasProfileIo(adapter)) return "saved";
+    const held = (): boolean => this.holdFingerprint !== null || this.holdNewerV !== null || this.blockedByNewer;
+    const settled = async (): Promise<boolean> => {
+      const payload = await serializeOrganizerProfile(deps.db, deps.accountId, deps.mailboxId);
+      if (this.lastWrittenFingerprint === null && isEmptyProfilePayload(payload)) return true;
+      return !held() && profileFingerprint(payload) === this.lastWrittenFingerprint;
+    };
+    try {
+      for (let tick = 0; tick < 2; tick += 1) {
+        if (this.seeded && await settled()) return "saved";
+        const wasHeld = this.seeded && held();
+        const failures = this.failuresNoted;
+        if (leaseStoodDown(authority)) return "not_saved";
+        this.lastAttemptAt = 0;
+        await this.onOrganize(adapter);
+        if (this.failuresNoted !== failures) return "not_saved";
+        /* A hold that one tick did not release has no answer on record: nothing more to write. */
+        if (wasHeld && held()) break;
+      }
+      if (await settled()) return "saved";
+      return held() ? "kept_other" : "not_saved";
+    } catch {
+      return "not_saved";
     }
   }
 

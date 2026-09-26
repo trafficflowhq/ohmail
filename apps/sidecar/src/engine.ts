@@ -4178,6 +4178,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * growing, the mail readable and the send path open — the whole difference from removal.
          */
         if (releaseRequested !== null) {
+          /* THE SETTINGS GO FIRST, while the claim from the last organizing pass is still ours: a
+             decision made since the debounced write would otherwise stay on this install only. */
+          const settingsLeft = organizer.organizing && organizer.claimed
+            ? await profileSync.flushBeforeLeaving(leasePermit, adapter) : undefined;
           const released = await releaseOwnClaim(
             adapter, installId, mb.id, { current: leaseNonce, pending: leasePendingNonce }, log,
             "the claim ages out of the mailbox on its own; until it does, another "
@@ -4396,6 +4400,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             releaseRequestedAt: releaseStamp,
             /* THE CLAIM IS GONE — confirmed out of the folder, or lapsed past believability. */
             claimed: false,
+            ...(settingsLeft === undefined ? {} : { settingsLeft }),
           };
           /* NOT `priorStandDown`. That memory answers "somebody else holds this", and it is what
              `standDownMemory` derives from the row — which now reports a released mailbox as no
@@ -6881,12 +6886,20 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         async handBack() {
           return serialize(async () => {
             if (stopped) return 0;
-            const ask = (conn: MailboxAdapter) => releaseOwnClaim(
-              conn, installId, mb.id, { current: leaseNonce, pending: leasePendingNonce }, log,
-              "this install was asked to hand the mailbox back and the claim could not be "
-                + "removed; it ages out of ohmail/_meta on its own and another install takes the "
-                + "mailbox then",
-            );
+            /* The release arm's rule: the settings first, while the claim is still ours — on the
+               connection the release itself goes out on, so a dead runtime socket costs neither. */
+            let settingsLeft = undefined as Awaited<ReturnType<typeof profileSync.flushBeforeLeaving>> | undefined;
+            const ask = async (conn: MailboxAdapter) => {
+              if (organizer.organizing && organizer.claimed) {
+                settingsLeft = await profileSync.flushBeforeLeaving(leasePermit, conn);
+              }
+              return releaseOwnClaim(
+                conn, installId, mb.id, { current: leaseNonce, pending: leasePendingNonce }, log,
+                "this install was asked to hand the mailbox back and the claim could not be "
+                  + "removed; it ages out of ohmail/_meta on its own and another install takes the "
+                  + "mailbox then",
+              );
+            };
             /* ON A LIVE CONNECTION. A hand-back queued behind a drain the platform froze runs at the
                thaw, on a socket the server has long dropped: a known-dead or unanswering runtime
                socket gets one fresh dial of its own, closed after the release. */
@@ -6939,7 +6952,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               /* THE CLAIM WENT BACK, and this is the field that says so. The ROW is deliberately
                  untouched — the next resume takes the mailbox again with no press — so it is the
                  only fact separating a phone that gave the mailbox back from one that holds it. */
-              claimed: false };
+              claimed: false,
+              ...(settingsLeft === undefined ? {} : { settingsLeft }) };
             /* THE TIMER GOES WITH THE CLAIM, and the flag closes the doors the timer is not.
                Releasing alone left the poll armed: it fired, the gate read a row that still says
                organizer, and the mailbox was claimed again — by an install that was about to be

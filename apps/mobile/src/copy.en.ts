@@ -285,6 +285,11 @@ const TABLE = {
   settingsStopHereFailed:
     "This phone could not hand that mailbox back, so it is still organizing it. Try again in a "
     + "moment.",
+  /* WHAT A STOP LEFT OFF THE MAILBOX — `settingsLeftLine`. The stop itself went through. */
+  settingsStopLeftOther:
+    "This phone's settings stayed on this phone: the mailbox keeps the settings another ohmail saved there.",
+  settingsStopLeftUnsaved:
+    "This phone's settings could not be saved to the mailbox, so they are on this phone only.",
   /**
    * A LOOK THAT DID NOT LAND, and its own sentence rather than the one above.
    *
@@ -2374,6 +2379,54 @@ const TABLE = {
   renderErrorSurfaceReader: "The message",
   renderErrorSurfaceComposer: "The composer",
   renderErrorSurfaceScreen: "This screen",
+
+  /* SETTINGS ANOTHER OHMAIL SAVED IN THE MAILBOX — `ui/profile-import-card.ts`. The web card's
+     `profileImport` sentences, word for word where they exist (`test/profile-import-card.test.ts`). */
+  pfiTitle: "We found your ohmail settings on this mailbox",
+  pfiLede: (address: string) =>
+    `${address} carries settings a previous ohmail saved there. They travel with the mailbox — import them into this one?`,
+  pfiHolds: (details: string) => `They hold ${details}.`,
+  pfiScreenerPart: (n: number) => (n === 1 ? "1 screener decision" : `${n} screener decisions`),
+  pfiRulesPart: (n: number) => (n === 1 ? "1 rule" : `${n} rules`),
+  pfiNotifyPart: (n: number) => (n === 1 ? "1 notification choice" : `${n} notification choices`),
+  pfiTagsPart: (n: number) => (n === 1 ? "1 tag" : `${n} tags`),
+  pfiAwayPart: "your away reply",
+  /* The list the counts are said in: "a and b", and "a, b, and c" (`head` is "a, b"). */
+  pfiListPair: (first: string, second: string) => `${first} and ${second}`,
+  pfiListMany: (head: string, last: string) => `${head}, and ${last}`,
+  pfiSavedByLocal: (when: string) => `Saved ${when} by ohmail on another computer.`,
+  pfiSavedByCloud: (when: string) => `Saved ${when} by ohmail Cloud.`,
+  pfiSavedByPhone: (when: string) => `Saved ${when} by ohmail on a phone.`,
+  pfiSavedBy: (when: string) => `Saved ${when}.`,
+  pfiWillDo:
+    "Importing adds them to this account's settings. Your mail is not touched, and nothing changes in the mailbox itself. Until you choose, the settings you make in this ohmail stay here and do not travel with the mailbox.",
+  /* What the organizer files while the card is unanswered. Drawn once the gate follows it. */
+  pfiHeldRouting:
+    "Until you answer, mail from senders these settings let through stays where it arrived; other new senders are screened as usual.",
+  pfiImport: "Import settings",
+  pfiImporting: "Importing…",
+  pfiLater: "Not now",
+  pfiDoneTitle: "Your settings are back.",
+  pfiDoneDetails: (details: string) => `Imported: ${details}.`,
+  pfiDoneSkipped: (n: number) => (n === 1 ? "1 rule couldn't be imported." : `${n} rules couldn't be imported.`),
+  pfiDoneAction: "Done",
+  pfiErrorTitle: "That didn't work.",
+  pfiErrorGeneric: "Something went wrong.",
+  pfiErrorRetry: "Try again.",
+  /* A DOCUMENT THIS BUILD CANNOT READ: one sentence, no import, and "Not now" releases the gate. */
+  pfiNewerTitle: "Settings from a newer ohmail",
+  pfiNewerBody: (address: string) =>
+    `${address} carries settings saved by a newer version of ohmail, which this ohmail cannot read — update ohmail to import them.`,
+  pfiSavedTitle: (address: string) => `Settings saved on ${address}`,
+  pfiSavedBody:
+    "You chose Not now, so they stay in the mailbox, and the settings you make in this ohmail do not travel with it until you choose.",
+  pfiReplace: "Save this ohmail's settings to the mailbox",
+  pfiReplacing: "Saving…",
+  pfiReplaceNote: (details: string) =>
+    `Saving replaces ${details} in the mailbox with this ohmail's own settings within a few minutes. While this ohmail has none of its own, the mailbox keeps them.`,
+  pfiReplaceNoteBare:
+    "Saving replaces the settings in the mailbox with this ohmail's own within a few minutes. While this ohmail has none of its own, the mailbox keeps them.",
+  pfiReplacedTitle: "This ohmail's settings go to the mailbox within a few minutes.",
 };
 
 /**

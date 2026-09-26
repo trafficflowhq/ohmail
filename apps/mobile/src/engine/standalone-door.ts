@@ -139,6 +139,11 @@ export interface StandaloneEngine {
        * to the lease, false once the claim leaves or where it was never ours.
        */
       claimed: boolean;
+      /**
+       * WHAT LETTING THE MAILBOX GO LEFT IN ITS SETTINGS DOCUMENT — on the stop's own record only.
+       * `kept_other`: another ohmail's document stands; `not_saved`: the write failed.
+       */
+      settingsLeft?: "saved" | "kept_other" | "not_saved";
     }>;
     /**
      * CAN THIS INSTALL REACH THE MAIL SERVER RIGHT NOW — the engine's own connection facts, which

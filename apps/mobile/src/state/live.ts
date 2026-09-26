@@ -31,6 +31,7 @@ import {
   presentationReader,
   presentsUnread,
   pressOverTwins,
+  retroPassWouldMove,
   readsPartition,
   receiptsByDay,
   rulesList,
@@ -1765,6 +1766,13 @@ const newestFirst = (a: EngineMessage, b: EngineMessage): number =>
   (b.date ?? "").localeCompare(a.date ?? "");
 
 /**
+ * ONE PRESS, SEVERAL WRITES, ONE VERDICT: a refusal outranks a wait, a wait outranks success, so
+ * the sentence never claims more than the least of them.
+ */
+const oneVerdict = (vs: readonly PressVerdict[]): PressVerdict =>
+  vs.find((v) => v.kind === "refused") ?? vs.find((v) => v.kind === "queued") ?? vs[0] ?? { kind: "applied" };
+
+/**
  * Does this rule match this sender, by the same test `core/src/rules.ts#matches` applies —
  * mirrored from `apps/webapp/app/shell/sender-audit.ts#ruleMatchesSender` (the reference).
  * Exact equality on the lower-cased address or its domain; never a suffix test; `header`
@@ -3051,6 +3059,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     let queuedWith: { name: string | null } | null = null;
     let landed: Promise<PressVerdict>;
     const decideRoute = physicalFolderOf(rep) === FOLDER_OF_VIEW.screener;
+    let undo: ToastOpts | undefined;
     if (decideRoute) {
       landed = engine.mutate({
         kind: "screener_decide",
@@ -3067,21 +3076,27 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         () => PRESS_THREW,
       );
     } else {
-      // PAST THE GATE (mirrored from the webapp's shape): this sender's mail is only
-      // PRESENTED at the gate — a decide would 404 on both ends. A rule with `applyRetro`
-      // re-presents the whole bag the moment it lands, and the retro pass makes the filing
-      // physical — the hosted worker's, or on a standalone phone this engine's own drain; no move
-      // is composed here because nothing is physically at the gate.
+      /* PAST THE GATE — the web's ladder (`screener-state.ts` → `planScreeningChange`) and this
+         file's own sender sheet: the twins decide through `pressOverTwins`, and the mail that is
+         here moves with capped `move`s. A rule alone moved nothing the gate had adopted while an
+         import question was open — the retro pass never touches those rows. The
+         moves are what the wire can take back, so they carry the Undo. */
       const match = scope === "domain" ? domainOf(row.address).toLowerCase() : row.address.trim().toLowerCase();
-      landed = watched(
-        engine.mutate({
-          kind: "rule_create",
-          ruleKind: scope,
-          match,
-          destination: FOLDER_OF_VIEW[dest as ScreenDest],
-          applyRetro: true,
-        }),
-      );
+      const wanted = FOLDER_OF_VIEW[dest as ScreenDest];
+      const ofSubject = (x: EngineMessage): boolean => (scope === "domain"
+        ? domainOf(x.from.address.trim().toLowerCase()).toLowerCase() === match
+        : x.from.address.trim().toLowerCase() === match);
+      const moves: EngineMutation[] = raw.list<EngineMessage>("message")
+        .filter((x) => ofSubject(x) && retroPassWouldMove(x, wanted))
+        .sort(newestFirst)
+        .slice(0, 50)
+        .map((x) => ({ kind: "move", messageId: x.id, folder: wanted }));
+      undo = undoable(moves.flatMap((mu) => inverseMutations(engine.verbRead(), mu)));
+      const { writes } = pressOverTwins(rulesList(raw), scope, match, wanted, true);
+      landed = Promise.all([
+        ...writes.map((w) => watched(engine.mutate(w))),
+        ...moves.map((mu) => dispatch(mu)),
+      ]).then(oneVerdict);
     }
     // "&read" stays a separate batch, exactly as the wire has it: `POST /screener/:id`
     // carries no read field, so the seen half is the same `PATCH /messages` everyone uses.
@@ -3128,6 +3143,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       v,
       decidedUnsubscribes(decideRoute, decision) ? refuse("liveAlsoUnsubscribing", decidedSaid) : decidedSaid,
       refuse("liveDecideFailed", row.address),
+      undo,
     );
   };
 

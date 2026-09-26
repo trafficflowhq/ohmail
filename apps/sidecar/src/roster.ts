@@ -12,7 +12,7 @@
 import type { ImapConfig, MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import type { LeasePeekAnswer } from "@trafficflow/core/adapters/organizer-lease";
 import type { SyncDeps } from "@trafficflow/worker/sync";
-import type { OrganizerProfileSync } from "@trafficflow/worker/profile";
+import type { OrganizerProfileSync, SettingsLeft } from "@trafficflow/worker/profile";
 import type { MailboxDisabledReason } from "@trafficflow/db";
 /* The name only — see {@link FirstSyncState}'s own header for why it is declared over there. */
 import type { FirstSyncState } from "./first-sync.js";
@@ -197,6 +197,12 @@ export interface OrganizerState {
    * organizer — set where the gate becomes entitled to the lease and cleared when the claim leaves.
    */
   claimed: boolean;
+  /**
+   * WHAT LETTING THE MAILBOX GO LEFT IN ITS SETTINGS DOCUMENT — on the record a person's stop or a
+   * hand-back wrote, and absent on every other. `kept_other` and `not_saved` are the two a surface
+   * owes a sentence: this install's decisions are on this install only.
+   */
+  settingsLeft?: SettingsLeft;
 }
 
 /**
