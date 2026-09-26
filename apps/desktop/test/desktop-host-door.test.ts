@@ -16,6 +16,7 @@ import {
   hostLabelOf,
   hostLinkProblem,
   hostViaOf,
+  imagesFromComputer,
   isDesktopHost,
   pairedHostOf,
   pairedViaOf,
@@ -177,6 +178,16 @@ describe("the door rules, over the seam", () => {
        that snaps back. */
     expect(consentDoorFor(PAIRED, "live")).toBe("standalone");
     expect(consentDoorFor(PAIRED, "out")).toBeNull();
+  });
+
+  /* WHO FETCHES A PICTURE. The local engine and a paired host both run `GET /img` on a machine the
+     reader owns, so the Settings copy may not promise the hosted proxy there; the Cloud door relays. */
+  it("the pictures are this computer's on the local and paired doors, the proxy's on Cloud", () => {
+    expect(imagesFromComputer(LOCAL)).toBe(true);
+    expect(imagesFromComputer(PAIRED)).toBe(true);
+    expect(imagesFromComputer(MANAGED)).toBe(false);
+    expect(imagesFromComputer(NO_FLAVOR)).toBe(false);
+    expect(imagesFromComputer(null)).toBe(false);
   });
 
   it("the profile-import card takes the cloud shape — the question belongs to the mailbox", () => {

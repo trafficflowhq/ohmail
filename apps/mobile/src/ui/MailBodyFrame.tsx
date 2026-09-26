@@ -16,7 +16,7 @@ import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { useWorld, type WorldMail } from "../state/world";
 import { buildPhoneMailDocument, frameHeightEstimate } from "../mail/mail-document";
-import { fetchRemoteImages } from "../mail/remote-images";
+import { fetchRemoteImages, imagesSeenBy } from "../mail/remote-images";
 import { frameNavDecision } from "../mail/frame-nav";
 import { sanitizeMailHtmlPhone } from "../mail/sanitize";
 import { blockedNotice } from "../mail/notice";
@@ -30,6 +30,7 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
   const [asked, setAsked] = useState<string | null>(null);
   const [remote, setRemote] = useState<{ id: string; map: ReadonlyMap<string, string> } | null>(null);
   const [linkAsk, setLinkAsk] = useState<string | null>(null);
+  const [refusedFor, setRefusedFor] = useState<string | null>(null);
 
   const html = m.html ?? "";
   const imagesWanted = m.loadedRemoteContent === true || asked === m.id;
@@ -48,16 +49,26 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [m.id, cidsKey, loadInlineImages]);
 
-  // The consented remote fetch — app-side, minted to `data:`; the document never gains network.
+  // The consented remote fetch — through the door's proxy, or this phone on the standalone door;
+  // minted to `data:`, so the document never gains network. A press the server would not record
+  // hands the button back with a sentence.
   const pictureUrls = useMemo(
     () => sanitized.blocked.filter((b) => !b.pixel).map((b) => b.url),
     [sanitized.blocked],
   );
+  const route = w.images;
   useEffect(() => {
     if (!imagesWanted || resolvedRemote !== undefined || pictureUrls.length === 0) return;
     let alive = true;
-    void fetchRemoteImages(pictureUrls).then((map) => {
-      if (alive) setRemote({ id: m.id, map });
+    const consented = m.loadedRemoteContent === true;
+    void fetchRemoteImages(route, m.id, pictureUrls, { consented }).then((got) => {
+      if (!alive) return;
+      if (got.consentRefused) {
+        setAsked(null);
+        setRefusedFor(m.id);
+        return;
+      }
+      setRemote({ id: m.id, map: got.minted });
     });
     return () => {
       alive = false;
@@ -79,7 +90,10 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
     );
   }
 
-  const notice = blockedNotice(sanitized.blocked, sanitized.sheets, imagesWanted);
+  const said = blockedNotice(sanitized.blocked, sanitized.sheets, imagesWanted, imagesSeenBy(route));
+  const notice = refusedFor === m.id && !imagesWanted
+    ? [Copy.mailImagesRefused, said].filter((x) => x !== null).join(" ")
+    : said;
   const canLoad = !imagesWanted && pictureUrls.length > 0;
   const doc = buildPhoneMailDocument(sanitized.html, {
     bg: t.c.canvas,
@@ -101,7 +115,15 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
           ) : null}
           <View style={{ flex: 1 }} />
           {canLoad ? (
-            <Txt variant="caption" tone="accent" onPress={() => setAsked(m.id)} accessibilityRole="button">
+            <Txt
+              variant="caption"
+              tone="accent"
+              onPress={() => {
+                setRefusedFor(null);
+                setAsked(m.id);
+              }}
+              accessibilityRole="button"
+            >
               {Copy.mailShowImages}
             </Txt>
           ) : null}

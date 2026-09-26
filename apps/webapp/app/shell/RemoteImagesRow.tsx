@@ -22,11 +22,14 @@ import { SettingsRow, Switch } from "@ohmail/ui";
 export function RemoteImagesRow({
   blocked,
   setBlockRemoteImages,
+  fromComputer,
 }: {
   /** The STORED opt-out, as the server last answered it. `true` ⇒ the per-message flow. */
   blocked: boolean;
   /** `useConsentState().setBlockRemoteImages`. Resolves to what the database holds. */
   setBlockRemoteImages: (blocked: boolean) => Promise<boolean>;
+  /** The reader's own computer fetches the pictures, so no proxy hides its address. */
+  fromComputer: boolean;
 }) {
   const t = useTranslations("settings");
   const [pending, setPending] = useState(false);
@@ -60,7 +63,7 @@ export function RemoteImagesRow({
     <>
       <SettingsRow
         label={t("images.title")}
-        description={blocked ? t("images.off") : t("images.on")}
+        description={blocked ? t("images.off") : t(fromComputer ? "images.onComputer" : "images.on")}
         control={
           <Switch
             checked={!blocked}
@@ -70,7 +73,7 @@ export function RemoteImagesRow({
           />
         }
       />
-      <p className="set-note-inline">{t("images.microcopy")}</p>
+      <p className="set-note-inline">{t(fromComputer ? "images.microcopyComputer" : "images.microcopy")}</p>
       {failed ? <span className="scn-sg-note">{t("images.failed")}</span> : null}
     </>
   );

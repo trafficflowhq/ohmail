@@ -398,6 +398,15 @@ export function consentDoorFor(
 }
 
 /**
+ * DOES A COMPUTER OF THE READER'S OWN FETCH THIS WINDOW'S PICTURES — the local engine, or the
+ * paired host's. Both serve `GET /img` from that machine, so a sender sees its network address
+ * and the Settings copy says so; the Cloud door relays `/img` to the hosted proxy.
+ */
+export function imagesFromComputer(status: EngineStatus | null): boolean {
+  return status?.mode === "local" || isDesktopHost(status);
+}
+
+/**
  * WHETHER THIS INSTALL MAY OFFER HOST MODE — the Devices pane's door rule, a pure function
  * for `gateFor`'s reason. STANDALONE ONLY, and the boundary is the product: host mode
  * publishes the mail engine on THIS computer, and on the standalone door that engine holds

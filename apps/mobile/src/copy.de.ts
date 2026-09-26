@@ -941,6 +941,11 @@ export const DE: Deck = {
     "Ein externes Stylesheet wurde blockiert; diese Nachricht kann darum schlicht aussehen.",
   mailSheetBlockedMany: (n: number) =>
     `${n} externe Stylesheets wurden blockiert; diese Nachricht kann darum schlicht aussehen.`,
+  mailImagesFromPhone:
+    "Bilder werden von diesem Telefon geladen; jeder Absender sieht darum seine Netzwerkadresse.",
+  mailImagesFromComputer:
+    "Bilder werden über deinen Computer geladen; jeder Absender sieht darum dessen Netzwerkadresse.",
+  mailImagesRefused: "Die Bilder konnten nicht geladen werden. Versuch es noch einmal.",
   mailShowImages: "Bilder anzeigen",
   mailShowAsText: "Als Text anzeigen",
   mailShowOriginal: "Original anzeigen",

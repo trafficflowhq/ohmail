@@ -523,6 +523,7 @@ export function AppShell({
   profileImportTransport,
   consentTransport,
   imageWire,
+  imagesFromComputer,
   olderBodyWire,
   junkWire,
   trashWire,
@@ -791,6 +792,8 @@ export function AppShell({
    * the proxy directly and is left exactly as it shipped.
    */
   imageWire?: (messageId: string, url: string) => Promise<string | null>;
+  /** A computer of the reader's own fetches the pictures (the desktop's local or host door). */
+  imagesFromComputer?: boolean;
   /**
    * THE REACH-PAST BODY WIRE, when the host has its own — the desktop on its HOSTED door. The
    * shared shell's default is the browser's Cloud client (decided inside `older-body.ts`, which
@@ -898,6 +901,7 @@ export function AppShell({
             profileImportTransport={profileImportTransport}
             consentTransport={consentTransport}
             imageWire={imageWire}
+            imagesFromComputer={imagesFromComputer}
             olderBodyWire={olderBodyWire}
             junkWire={junkWire}
             trashWire={trashWire}
@@ -954,7 +958,7 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
   );
 }
 
-function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, sessionRefused, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, accountNotice, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, olderBodyWire, junkWire, trashWire, suggestWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
+function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, sessionRefused, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, accountNotice, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, imagesFromComputer, olderBodyWire, junkWire, trashWire, suggestWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
   /** The pull settle watch's read — the same probe `MailStateHost` above provides the strip. */
   mailboxFacts?: MailboxProbe;
   /** See `AppShell`'s prop of this name — absent withholds the organizer notice. */
@@ -999,6 +1003,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * the proxy directly and is left exactly as it shipped.
    */
   imageWire?: (messageId: string, url: string) => Promise<string | null>;
+  /** See the outer prop of the same name. */
+  imagesFromComputer?: boolean;
   /** The reach-past body wire — see the outer prop of the same name. */
   olderBodyWire?: OlderBodyWire;
   /** The Junk window's wire — see the outer prop of the same name. */
@@ -3169,6 +3175,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                     <RemoteImagesRow
                       blocked={consent.blockRemoteImages}
                       setBlockRemoteImages={consent.setBlockRemoteImages}
+                      fromComputer={imagesFromComputer === true}
                     />
                     {/* THE PIXEL SWITCH, under the same gate for the same reasons: it governs the
                         proxy's treatment of a beacon, and a window with no proxy has nothing for
@@ -3178,6 +3185,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                     <TrackingPixelsRow
                       blocked={consent.blockTrackingPixels}
                       setBlockTrackingPixels={consent.setBlockTrackingPixels}
+                      fromComputer={imagesFromComputer === true}
                     />
                   </>
                 )}

@@ -55,7 +55,7 @@ import { DesktopSubscription, useDesktopManageOffer } from "./DesktopSubscriptio
 import { DesktopAccessLock } from "./DesktopAccessLock.js";
 import { DesktopWebSection } from "./DesktopWebSection.js";
 import {
-  accountDoorFor, awayDoorFor, consentDoorFor, firstRunDoorFor, flavorOf, gateFor,
+  accountDoorFor, awayDoorFor, consentDoorFor, firstRunDoorFor, flavorOf, gateFor, imagesFromComputer,
   hostDoorFor, isDesktopHost, mailMount, pairedHostOf, pairedViaOf, profileImportDoorFor, readShell,
   suggestDoorFor, type HostedSession, type Shell,
 } from "./doors.js";
@@ -1374,6 +1374,7 @@ export function DesktopGate() {
            ends run the same `proxyImage` with the same gate. This hands in the pipe; the policy
            is the door's and the rendering is the shared shell's. */
         imageWire={localImageWire}
+        imagesFromComputer={imagesFromComputer(status)}
         {...(accountDoor ? { suggestWire: cloudSuggestWire } : {})}
         /* THE REACH-PAST BODY WIRE — BOTH doors, `consentTransport`'s transport-not-a-control
            rule: the door, its states and its sentences are the shared shell's

@@ -45,6 +45,7 @@ import { PHONE_CLAIM_NAME, organizesHere } from "../engine/standalone-door";
    kept in React, and a second copy is a second writer. */
 import { standaloneHereFor } from "../engine/organizer-session";
 import { readFolderSummary } from "../net/folder-ops";
+import { imageRouteOf, type ImageRoute } from "../mail/remote-images";
 import * as Crypto from "expo-crypto";
 import type { FaceName } from "../theme/face";
 import { faceScope } from "./face-scope";
@@ -215,6 +216,12 @@ export interface World {
    * is running on it, so it keeps none (`sendLaterOffered`, and the engine's own 409).
    */
   standalone: boolean;
+  /**
+   * Where a consented picture is fetched from — the paired server's image proxy, or this phone
+   * on the standalone door (`mail/remote-images.ts`). Derived from the session, like the field
+   * above; `none` while nothing is live.
+   */
+  images: ImageRoute;
   /**
    * The mailbox facts — `GET /mailboxes` over the paired server (`src/net/mailboxes.ts`), on
    * the folders flag's cadence (boot + after every completed drain). `known` separates "the
@@ -564,6 +571,7 @@ function emptyWorld(actions: WorldActions): World {
     worldKey: "none",
     account: { name: "", email: "" },
     standalone: false,
+    images: { via: "none" },
     // Nothing has been asked on the empty world, so `known` is false and the banner is withheld
     // — the same honest-unknown the boot facts keep between a teardown and the redirect.
     mailboxes: { known: false, ownAddresses: [], organizer: null, rows: [], sendingId: null },
@@ -1419,6 +1427,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         : { name: session.profile.origin.replace(/^https?:\/\//, ""), email: mailboxes?.[0]?.address ?? "" },
       // THE DOOR, derived once by the layer that composes the session. See the field.
       standalone: session.standalone,
+      images: imageRouteOf(session),
       mailboxes: {
         // `known` is the SUCCESSFUL-read gate, not "the list is non-empty": an account whose
         // mailbox was removed answers `[]`, and that is an answer. The banner is drawn behind

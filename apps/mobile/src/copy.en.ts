@@ -1490,6 +1490,12 @@ const TABLE = {
   mailSheetBlockedOne: "A remote stylesheet was blocked, so this message may look plain.",
   mailSheetBlockedMany: (n: number) =>
     `${n} remote stylesheets were blocked, so this message may look plain.`,
+  /** Said before the press where no server fetches the pictures (`mail/remote-images.ts`). */
+  mailImagesFromPhone: "Images load from this phone, so each sender sees its network address.",
+  mailImagesFromComputer:
+    "Images load through your computer, so each sender sees its network address.",
+  /** The server did not record the press; nothing was fetched. */
+  mailImagesRefused: "Couldn't load the images. Try again.",
   mailShowImages: "Show images",
   mailShowAsText: "Show as text",
   mailShowOriginal: "Show original",

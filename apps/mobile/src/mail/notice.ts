@@ -11,6 +11,8 @@ export function blockedNotice(
   blocked: readonly PhoneBlockedAsset[],
   sheets: readonly string[],
   imagesShown: boolean,
+  /** Whose address the image hosts would see (`imagesSeenBy`); said before the press, never after. */
+  seenBy: "phone" | "computer" | null,
 ): string | null {
   const imgs = blocked.filter((b) => b.via === "img" || b.via === "css" || b.via === "attr");
   const pixels = imgs.filter((b) => b.pixel);
@@ -37,7 +39,11 @@ export function blockedNotice(
   const lead = imgs.length === 1 ? Copy.mailImagesBlockedOne : Copy.mailImagesBlockedMany(imgs.length);
   const pixelSaid =
     pixels.length === 0 ? null : pixels.length === 1 ? Copy.mailPixelOne : Copy.mailPixelMany(pixels.length);
+  const seenSaid =
+    imgs.length === pixels.length || seenBy === null
+      ? null
+      : seenBy === "phone" ? Copy.mailImagesFromPhone : Copy.mailImagesFromComputer;
   // The sheet sentence stays LAST — the web's rule: the first number in the bar is the images'.
-  return [lead, pixelSaid, sheetSaid].filter((s) => s !== null).join(" ");
+  return [lead, pixelSaid, seenSaid, sheetSaid].filter((s) => s !== null).join(" ");
 }
 

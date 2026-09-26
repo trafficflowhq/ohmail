@@ -27,11 +27,14 @@ import { SettingsRow, Switch } from "@ohmail/ui";
 export function TrackingPixelsRow({
   blocked,
   setBlockTrackingPixels,
+  fromComputer,
 }: {
   /** Pixels refused, as the server last answered it. `true` ⇒ the product default. */
   blocked: boolean;
   /** `useConsentState().setBlockTrackingPixels`. Resolves to what the database holds. */
   setBlockTrackingPixels: (blocked: boolean) => Promise<boolean>;
+  /** The reader's own computer fetches the pictures, so no proxy hides its address. */
+  fromComputer: boolean;
 }) {
   const t = useTranslations("settings");
   const [pending, setPending] = useState(false);
@@ -64,7 +67,7 @@ export function TrackingPixelsRow({
     <>
       <SettingsRow
         label={t("pixels.title")}
-        description={blocked ? t("pixels.on") : t("pixels.off")}
+        description={blocked ? t("pixels.on") : t(fromComputer ? "pixels.offComputer" : "pixels.off")}
         control={
           <Switch
             checked={blocked}
