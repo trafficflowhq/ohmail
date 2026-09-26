@@ -47,12 +47,13 @@ export async function recordErasedBearers(tx: Tx, accountId: string, now: Date):
 }
 
 /**
- * Does this token HASH belong to an account whose erasure committed? Reads the stamp itself
- * (`accounts.erased_at`), the fact the wall's pass and `DELETE /account` both write, so a row
- * outliving a restored account could not answer for it. One primary-key lookup.
+ * The account this token HASH belonged to, when that account's erasure committed; else `null`.
+ * Reads the stamp itself (`accounts.erased_at`), the fact the wall's pass and `DELETE /account`
+ * both write, so a row outliving a restored account could not answer for it. The id is the one
+ * every answer to that token already carried, so it tells the holder nothing new. One lookup.
  */
-export async function isErasedBearer(tx: Tx, tokenHash: string, now: Date): Promise<boolean> {
-  const rows = await tx.select({ one: sql<number>`1` })
+export async function erasedBearerAccount(tx: Tx, tokenHash: string, now: Date): Promise<string | null> {
+  const rows = await tx.select({ accountId: erasedBearers.accountId })
     .from(erasedBearers)
     .innerJoin(accounts, eq(accounts.id, erasedBearers.accountId))
     .where(and(
@@ -61,7 +62,7 @@ export async function isErasedBearer(tx: Tx, tokenHash: string, now: Date): Prom
       isNotNull(accounts.erasedAt),
     ))
     .limit(1);
-  return rows.length > 0;
+  return rows[0]?.accountId ?? null;
 }
 
 /** Delete every row past its expiry — the worker's hourly maintenance. */

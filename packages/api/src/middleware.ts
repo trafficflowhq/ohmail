@@ -461,16 +461,23 @@ export function declaresErasedAnswer(req: Request): boolean {
   return raw !== null && raw.split(",").some((w) => w.trim() === "account_erased");
 }
 
-export async function erasedAccountBearer(req: Request, deps: ApiDeps, token: string): Promise<boolean> {
-  if (!declaresErasedAnswer(req)) return false;
+/**
+ * The erased account this declared token belonged to, or `null`. A hit is recorded on
+ * `deps.erasedAccount`, which is how the 410 comes to name the account (`nameTheAccount`, the one
+ * site that sets the header): a client wipes only the copy the server named.
+ */
+export async function erasedAccountBearer(req: Request, deps: ApiDeps, token: string): Promise<string | null> {
+  if (!declaresErasedAnswer(req)) return null;
   const auth = deps.services?.auth;
-  if (!auth) return false;
+  if (!auth) return null;
   try {
-    return await auth.bearerOfErasedAccount(deps.db, token, deps.now());
+    const account = await auth.bearerOfErasedAccount(deps.db, token, deps.now());
+    if (account) deps.erasedAccount = account;
+    return account;
   } catch {
     // A fault here leaves the answer it always had: 401. The raw pipeline has no envelope to
     // catch a throw, and a refused token is no reason to answer 500.
-    return false;
+    return null;
   }
 }
 

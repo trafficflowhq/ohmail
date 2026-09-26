@@ -1213,13 +1213,13 @@ export class SessionLifecycle {
   }
 
   /**
-   * Did this token belong to an account whose erasure committed? Asked by the session door only
-   * for a token that resolved to NOTHING, and only when the client declared it understands the
-   * answer. The record is cloud-half (cloud 0043) and a local store erases no accounts, so the
-   * base answers false; `AuthService` overrides it with the real read.
+   * The account this token belonged to, when that account's erasure committed; else `null`.
+   * Asked by the session door only for a token that resolved to NOTHING, and only when the client
+   * declared it understands the answer. The record is cloud-half (cloud 0043) and a local store
+   * erases no accounts, so the base answers null; `AuthService` overrides it with the real read.
    */
-  async bearerOfErasedAccount(_db: Db, _token: string, _now: Date): Promise<boolean> {
-    return false;
+  async bearerOfErasedAccount(_db: Db, _token: string, _now: Date): Promise<string | null> {
+    return null;
   }
 }
 

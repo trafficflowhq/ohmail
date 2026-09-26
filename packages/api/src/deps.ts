@@ -719,6 +719,12 @@ export interface ApiDeps {
    * header is then omitted. Never read on any other route.
    */
   credentialAccount?: string | null;
+  /**
+   * The ERASED account a declared token belonged to — set by `erasedAccountBearer` when it answers
+   * `410 account_erased`, read by `createApp.handle` to name that answer. Absent on every other
+   * answer. Outranks the session and the credential: on a 410 neither resolved.
+   */
+  erasedAccount?: string | null;
   /** Typed service bag; populated as services land. */
   services?: ApiServices;
   /** SSE timings for `GET /events`; falls back to {@link DEFAULT_SSE}. */

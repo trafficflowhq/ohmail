@@ -316,7 +316,7 @@ export {
  * The tokens of an erased account, kept by hash (cloud 0043): written by `deleteAccount`, read by
  * the hosted session door, pruned by the worker. See `erased-bearers.ts`.
  */
-export { recordErasedBearers, isErasedBearer, pruneErasedBearers } from "./erased-bearers.js";
+export { recordErasedBearers, erasedBearerAccount, pruneErasedBearers } from "./erased-bearers.js";
 export { pruneAuthThrottle, AUTH_THROTTLE_RETENTION_MS, KNOWN_CLIENT_RETENTION_MS } from "./auth-throttle-prune.js";
 // The server-side transport: `node:tls` and a raw `pg_stat_ssl` read, so never on the root entry
 // the desktop engine and the phone bundle load (`dialect-census.test.ts`).

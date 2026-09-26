@@ -179,9 +179,11 @@ function nameTheAccount(res: Response, deps: ApiDeps, route: Route | null): Resp
   // ON A CREDENTIAL ROUTE THE AMBIENT SESSION IS NOT THE SUBJECT, and it is not consulted at all.
   // A refused sign-in made while holding somebody's session would otherwise be labelled with that
   // session's account — a response that established nothing, named as if it had.
-  const subject = route?.options?.credentialSubject
+  // An erased account's 410 names the account of the token presented: nothing resolved, so
+  // neither the session nor the credential can (`erasedAccountBearer`).
+  const subject = deps.erasedAccount ?? (route?.options?.credentialSubject
     ? deps.credentialAccount
-    : deps.session?.accountId;
+    : deps.session?.accountId);
   const account = ownerCookieValue(subject);
   if (!account) return res;
   /* Through {@link withHeader}, for its reason: this was the site that emptied every
