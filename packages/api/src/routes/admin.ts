@@ -195,7 +195,7 @@ async function overview(ctx: StaffContext): Promise<OverviewSnapshot> {
 function accountQueryOf(req: Request): AccountQuery {
   const params = new URL(req.url).searchParams;
   const filter = params.get("filter");
-  const allowed = ["all", "attention", "suspended", "past_due", "no_subscription"] as const;
+  const allowed = ["all", "attention"] as const;
   return {
     // Bounded before it reaches a `LIKE`-free in-process fold, so a megabyte of query string
     // cannot become a megabyte of `normalize("NFD")`.

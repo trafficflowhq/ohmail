@@ -49,9 +49,9 @@ type StaffRun = (
 /**
  * The wrapper: unarmed ⇒ 404, shared secret ⇒ 401, live staff session ⇒ 401, JSON body, `no-store`.
  *
- * A THIRD copy of this shape now exists in `admin-actions.ts` (`staffWriteRoute`,
- * `staffMailboxWriteRoute`) and here, and that is worth naming rather than leaving to be noticed:
- * the three differ only in which id they validate, and merging them is owed. It is not done in this
+ * A SECOND copy of this shape exists in `admin-actions.ts` (`staffMailboxWriteRoute`), and that
+ * is worth naming rather than leaving to be noticed: the two differ only in which id they
+ * validate, and merging them is owed. It is not done in this
  * change because the merge touches the two routes the staff-write mutation guards are written against, and a
  * refactor that moves those checks in the same diff as a new auth surface is a refactor whose
  * guards nobody watched fail.

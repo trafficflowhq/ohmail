@@ -18,10 +18,11 @@
 --          LATERAL aclexplode(c.relacl) a
 --    WHERE n.nspname IN ('public','admin') AND a.grantee = 0;
 --
---   -- 2. §12b — anything in schema `admin` other than this script's own two views
+--   -- 2. §12b — anything in schema `admin` other than this script's own views (`credit_ledger`
+--   --    is its retired one, which §3 drops)
 --   SELECT n.nspname, c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
 --    WHERE n.nspname = 'admin'
---      AND NOT (c.relkind = 'v' AND c.relname = 'audit_log');
+--      AND NOT (c.relkind = 'v' AND c.relname IN ('audit_log', 'credit_ledger'));
 --
 --   -- 3. §13 — a SECURITY DEFINER routine anybody can execute (EXECUTE to PUBLIC is the
 --   --    Postgres DEFAULT, so "nobody granted it" is not an answer)
@@ -435,6 +436,10 @@ CREATE VIEW admin.audit_log WITH (security_barrier) AS
     FROM public.audit_log
    WHERE action LIKE 'admin.%';
 GRANT SELECT ON admin.audit_log TO ohmail_admin;
+
+-- An earlier version of this script also created `admin.credit_ledger` (§9b). It is retired,
+-- and §12b refuses a rerun while it stands: this file's own object, dropped by exact name.
+DROP VIEW IF EXISTS admin.credit_ledger;
 
 -- `admin` FIRST, so an unqualified `audit_log` — which is what drizzle emits for
 -- `pgTable("audit_log", …)` — resolves to the view for this role and to the table for every
