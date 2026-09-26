@@ -18,12 +18,12 @@ export type SignalProvider = "vercel";
 
 /** One window's traffic for one project, as counted. */
 /**
- * WHY a bucket is a sample. Seven values, closed; the panel's sentence table is keyed on this
+ * WHY a bucket is a sample. Eight values, closed; the panel's sentence table is keyed on this
  * exact set, so a cause with no sentence fails a test rather than rendering an empty line.
  * `truncated` began meaning only `page_budget` and grew the others, so every other sample read as
- * page-budget exhaustion. THE SET IS ALSO CLOSED IN THE DATABASE — cloud 0030 CHECK-constrains
- * `sample_cause` to exactly these words, and a test reads that migration and compares it to this
- * array. Add a cause here without there and the poll throws at the write, losing the window.
+ * page-budget exhaustion. THE SET IS ALSO CLOSED IN THE DATABASE — the newest cloud migration that
+ * defines the `sample_cause` CHECK (0044) constrains it to exactly these words, and a test reads it
+ * and compares it to this array. Add a cause here without there and the poll throws at the write.
  */
 export const SAMPLE_CAUSES = [
   /** The walk stopped after its maximum number of pages. */
@@ -40,6 +40,8 @@ export const SAMPLE_CAUSES = [
   "stalled_cursor",
   /** More rows exist but they share the window's first instant, so there is nowhere to page to. */
   "boundary_unread",
+  /** A later page was refused, failed in transport or could not be parsed, after one was counted. */
+  "upstream_refused",
 ] as const;
 
 export type SampleCause = (typeof SAMPLE_CAUSES)[number];
@@ -53,7 +55,7 @@ export interface PlatformSignalRow {
   errors5xx: number;
   /** A sample: both counts are lower bounds over the newest slice of the window. */
   truncated: boolean;
-  /** WHICH of the six causes made it one, or null when it is not a sample. */
+  /** WHICH cause made it one, or null when it is not a sample. */
   sampleCause: SampleCause | null;
 }
 
@@ -129,13 +131,12 @@ export const DEFAULT_SIGNAL_PROJECTS: readonly string[] = ["ohmail-api"];
 /**
  * How many pages one project's window may cost before the walk stops and marks itself truncated.
  *
- * Twenty pages at the endpoint's fifty-row page size is a thousand requests in a five-minute
- * window — comfortably above this deployment's traffic and far below anything that could exhaust a
- * cron invocation's budget. The number is a BOUND rather than a fit: if traffic ever grows past
- * it, the rows say `truncated` and the rule keeps working on a sample, which is why the bound is
- * allowed to be wrong without becoming a defect.
+ * TWELVE, because twenty did not fit the wall clock: at the busy hours the invocation's p90 was
+ * 39.4 s against the 40 s wall, so four runs in ten failed rather than sampling. Twelve pages at
+ * the endpoint's fifty-row page size is six hundred requests, the newest slice of the window; past
+ * it the row says `page_budget` and the rule judges the window's rate on that sample.
  */
-export const SIGNAL_PAGE_BUDGET = 20;
+export const SIGNAL_PAGE_BUDGET = 12;
 
 /**
  * THE WALL-CLOCK BUDGET FOR ONE POLL — separate from the page budget, which bounds laps but not
@@ -410,13 +411,19 @@ export function makePlatformSignalPort(
             if (completed > 0 && (name === "TimeoutError" || name === "AbortError")) {
               return partial("deadline");
             }
+            if (completed > 0) return partial("upstream_refused");
             // The NAME only, never the message: a fetch error's message carries the URL, and this
             // string reaches a log line and an operator's screen.
             return { failed: `transport:${name}` };
           }
-          if (!res.ok) return { failed: `http_${res.status}` };
+          // A LATER PAGE REFUSED KEEPS THE PAGES COUNTED BEFORE IT, the timeout's rule: a 429 on
+          // page two used to throw page one away and the window wrote no row. Nothing counted is
+          // still a failure — an unread window is never a zero.
+          if (!res.ok) return completed > 0 ? partial("upstream_refused") : { failed: `http_${res.status}` };
           let body: unknown;
-          try { body = await res.json(); } catch { return { failed: "unparseable" }; }
+          try { body = await res.json(); } catch {
+            return completed > 0 ? partial("upstream_refused") : { failed: "unparseable" };
+          }
 
           const data = body as { rows?: unknown; hasMoreRows?: unknown };
           // A MISSING `rows` IS NOT AN EMPTY `rows`, and this is the trap `vercel-errors.mjs`

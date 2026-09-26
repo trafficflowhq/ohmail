@@ -203,15 +203,14 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
 
 /**
  * The CLOUD constraints probed by DEFINITION — see {@link CheckDefinitionMarker} for the shape
- * and for why a name-only probe cannot see them.
- *
- * EMPTY today, and kept rather than deleted: every entry it held probed a constraint on a
- * metering table, and those tables are not this server's. The CLASS is what is worth keeping —
- * a migration that REPLACES a CHECK under its existing name is invisible to every name-only
- * probe, so the next one that does needs this list rather than a new mechanism.
+ * and for why a name-only probe cannot see them: a migration that REPLACES a CHECK under its
+ * existing name is invisible to every name-only probe.
  */
 export const CLOUD_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker> = [
-
+  /* Cloud 0044_platform_signals_upstream_refused — `upstream_refused` joins the sample causes.
+     Against a 0043 database the poll's partial row is refused by the old CHECK and the window
+     writes nothing, the silence 0044 exists to remove. */
+  ["platform_signals_sample_cause_check", "upstream_refused"],
 ] as const;
 
 /**
@@ -315,7 +314,7 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * FOREIGN-KEY-only migration is probed by its KEY marker, which is what 0038 added the class for.
  * The tag asserts reconciliation against the newest entry.
  */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0043_erased_bearers";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0044_platform_signals_upstream_refused";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =
