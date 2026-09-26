@@ -83,7 +83,7 @@ import {
 // The News pile's resolver (0.22): the adapter is the one place canonical names meet the live
 // tree, so `toServerPath` routes both spellings onto the folder the mailbox actually has.
 import { NEWS_FOLDER, LEGACY_NEWS_FOLDER, canonicalDestination, pileFolder } from "../types.js";
-import { SentCopyAppendFailed } from "../send.js";
+import { SendNotSubmitted, SentCopyAppendFailed, submissionNeverOffered } from "../send.js";
 // The SSRF gate's other half. `pinned-fetch.ts` owns it because a pin and a gate are one
 // mechanism (its header says so); this file is the mail-leg consumer — see `ImapConfig.pin`.
 import { pinnedLookup } from "../net/pinned-lookup.js";
@@ -3954,7 +3954,14 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       (mail as MailWithOAuth).auth = { type: "OAuth2", user: this.config.auth.user, accessToken };
     }
 
-    await this.transporter.sendMail(mail);
+    try {
+      await this.transporter.sendMail(mail);
+    } catch (err) {
+      // A session that never got past securing or login offered nothing: a definite non-delivery.
+      const step = submissionNeverOffered(err);
+      if (step !== null) throw new SendNotSubmitted(step, err);
+      throw err;
+    }
     // FROM HERE THE MESSAGE HAS LEFT. A fault in building or appending the Sent copy is not a
     // fault of the delivery, so it is raised as `SentCopyAppendFailed` carrying the delivered
     // id — the send service finalizes `sent` and names the missing copy, never `unverified`.

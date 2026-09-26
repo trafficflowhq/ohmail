@@ -6,7 +6,7 @@ import {
 } from "@trafficflow/db";
 import {
   createLogger, isMessageGone, mintMessageId, normalizeMessageId, recordSentMessage,
-  SentCopyAppendFailed,
+  SendNotSubmitted, SentCopyAppendFailed,
   type AppendedSent, type EmailAddress, type Logger, type NativeLocator, type OutboundMessage,
   type OpenSendAdapter, type RepoPort, type RoutingPort, type SendAdapter, type StorageCap,
 } from "@trafficflow/core/mail";
@@ -598,6 +598,16 @@ export const SEND_TIMEOUT_SENTENCE =
   "This was not sent — your mail server did not answer in time. Send it again.";
 
 /**
+ * The two sentences for a session that never offered the message (`SendNotSubmitted`): the step
+ * is named because the reader can act on it, and neither says "check your Sent folder" — the
+ * message provably did not leave.
+ */
+export const SEND_NOT_SECURED_SENTENCE =
+  "This was not sent — the connection to your mail server could not be secured, so nothing left.";
+export const SEND_LOGIN_REFUSED_SENTENCE =
+  "This was not sent — your mail server refused the sign-in, so nothing left.";
+
+/**
  * The outcome the route maps: `sent` → 200 (+ X-Sync-Seq); `unverified` → 200, ambiguous,
  * surfaced; `failed` → 409, a definitively-undelivered prior attempt under this key; `in_flight`
  * → 409, a concurrent attempt mid-flight; `queued` → 202 — THIS request reserved the send and
@@ -918,6 +928,16 @@ export class SendService {
               });
               const seq = await this.finalizeSent(ctx, sendId, err.providerMessageId, draftId, mailboxId);
               return { status: "sent", providerMessageId: err.providerMessageId, draftId, seq };
+            }
+            if (err instanceof SendNotSubmitted) {
+              // NEVER OFFERED: the session died securing the connection or logging in, so the
+              // message provably did not leave. Failed with the step named, never `unverified`.
+              phases.submitMs = Date.now() - tSubmit;
+              const secure = err.step === "secure";
+              const sentence = secure ? SEND_NOT_SECURED_SENTENCE : SEND_LOGIN_REFUSED_SENTENCE;
+              await this.finalizeFailed(ctx, sendId, draftId, sentence);
+              this.logPhases(deps, ctx, draftId, "failed", phases, started);
+              throw new ServiceError(secure ? "send_not_secured" : "send_login_refused", 502, sentence, undefined, false);
             }
             // SMTP threw → the delivery is AMBIGUOUS (it may have reached the server
             // before the failure). VERIFY by Sent rather than assume either way; NEVER
