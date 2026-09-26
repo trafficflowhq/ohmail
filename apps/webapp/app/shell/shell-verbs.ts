@@ -15,13 +15,20 @@ import type { useTranslations } from "next-intl";
 import {
   FOLDER_OF_VIEW,
   UNDO_CLASS,
+  consentPartition,
   inverseMutations,
+  pressForecast,
+  ruleFingerprint,
+  rulesInPlay,
   type EngineMessage,
   type EngineMutation,
   type EntityReader,
   type Folder,
   type OhmailEngine,
   type OhmailView,
+  type PressForecast,
+  type RuleDTO,
+  type RulesInPlay,
   type StayVerdict,
   type TagDTO,
 } from "@ohmail/client-engine";
@@ -33,22 +40,31 @@ import { dayStamp, PLACE_LABEL, placeLabel, resurfaceLabel, tomorrowAt } from ".
 import { displayAddress, displayDomain } from "./idn";
 import { readerMoveRefusal } from "./mail-state";
 import type { BulkAction, MessageAction } from "./MessagePane";
-import type { ShellConsentFacts } from "./consent-options";
-import { moveInBatches, screeningVerdict, verdictAction, verdictKeyOf } from "./press-verdict";
+import { shellConsentOptions, type ShellConsentFacts } from "./consent-options";
+import {
+  moveInBatches, retroOf, screeningReadBack, screeningVerdict, verdictAction, verdictKeyOf, writtenRuleIds,
+} from "./press-verdict";
+import type { PressWatch } from "./press-watch";
 import { attributeMessages } from "./sender-audit";
 import { senderHitOf } from "./sender-hit";
 import {
   RETRO_DEFAULT_ON,
   dispatchScreeningChange,
   planScreeningChange,
+  resolutionExtras,
+  ruleMatchOf,
+  screeningPath,
   screeningToast,
   senderScreening,
   splitRoutingPlan,
+  withResolution,
   worstStatus,
   type ScreeningDest,
   type ScreeningPlan,
+  type ScreeningPress,
   type ScreeningScope,
   type ScreeningToastKey,
+  type SenderScreening,
 } from "./sender-screening";
 import type { ShellCompose } from "./shell-compose";
 import type { ShellDispatch } from "./shell-dispatch";
@@ -100,6 +116,8 @@ export interface ShellVerbsInput {
   rosterRef: ShellDispatch["rosterRef"];
   /** The routing undo window — held, undone and asked for its subject; never redefined here. */
   routing: ShellDispatch["routing"];
+  /** A press told once when the backlog pass it waited on has finished. */
+  pressWatch: PressWatch;
   deleting: ShellDispatch["deleting"];
   restoring: ShellDispatch["restoring"];
   markSeen: ShellOpenState["markSeen"];
@@ -129,7 +147,7 @@ export type ShellVerbs = ReturnType<typeof useShellVerbs>;
 export function useShellVerbs({
   engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses,
   fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, mailboxesOf, refusalCopy,
-  rosterRef, routing, deleting, restoring,
+  rosterRef, routing, pressWatch, deleting, restoring,
   markSeen, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
   setSubjectRule,
   toggleReply, openForward, openReply, draftReply, replyAll, replyTo,
@@ -166,11 +184,15 @@ export function useShellVerbs({
     // dispatch must resolve the SAME one — a plan computed from the message id alone would
     // preview one person's mail and move the sender's.
     address?: string,
+    // The step's answer over the rules that disagree, and the forecast it was asked over.
+    press?: ScreeningPress,
   ) => {
     setSenderMenu(null);
     const sender = senderScreening(engine.verbRead(), messageId, address);
     if (!sender) return;
-    const plan = planScreeningChange(sender, dest, scope, makeRule, applyRetro);
+    const base = planScreeningChange(sender, dest, scope, makeRule, applyRetro);
+    const path = screeningPath(sender, scope, makeRule);
+    const plan = path === "window" ? base : withResolution(base, resolutionExtras(press));
     const place = PLACE_LABEL[dest] ?? dest;
     // The SUBJECT of the sentence follows the scope, or a domain decision would report
     // itself as being about the one address the user happened to click.
@@ -188,6 +210,10 @@ export function useShellVerbs({
         toast(t(`screening.${key}`, { sender: who, place, count: plan.moved }));
         return;
       }
+      sayVerdict(v);
+    };
+    /* THE SENTENCE A VERDICT EARNS, with the one press it may offer (`press-verdict.ts`). */
+    const sayVerdict = (v: Exclude<StayVerdict, { key: "none" }>) => {
       const wanted = FOLDER_OF_VIEW[dest];
       const text = t(`screening.${verdictKeyOf(v)}`, {
         sender: who, place, count: v.count,
@@ -227,12 +253,185 @@ export function useShellVerbs({
       }
       toast(text);
     };
+    // Nothing to write and nothing to move: said as before, with no window for nothing.
+    if (path === "window" && !demo && (plan.mutations.length > 0 || resolutionExtras(press).length > 0)) {
+      holdScreenPress({ messageId, sender, dest, scope, makeRule, applyRetro, address, press, plan, who, place, sayVerdict });
+      return;
+    }
     if (plan.mutations.length === 0) { say("toastAlready"); return; }
     /* THROUGH `fileAndRefresh`, LIKE EVERY OTHER FILING DISPATCH. This one has not been since it
        shipped: the mail moved and the filing strip's count stayed stale until its next poll, up to
        thirty seconds later. Both Move arms already go through it. */
     void dispatchScreeningChange(plan, (m) => fileAndRefresh(engine.mutate(m))).then(say);
   });
+
+  /**
+   * THE FORECAST FOR THE SHEET — the press as the list would show it afterwards, over the mirror
+   * the press dispatches against and the options the lists are drawn with. `null` on the demo,
+   * whose lists are not partitioned.
+   */
+  const screeningForecast = useStableCallback((
+    messageId: string, address: string | undefined, dest: ScreeningDest, scope: ScreeningScope,
+    makeRule: boolean, applyRetro: boolean,
+  ): PressForecast | null => {
+    if (demo) return null;
+    const read = engine.verbRead();
+    const sender = senderScreening(read, messageId, address);
+    if (!sender) return null;
+    const plan = planScreeningChange(sender, dest, scope, makeRule, applyRetro);
+    const decide = plan.mutations.find((m) => m.kind === "screener_decide");
+    return pressForecast({
+      reader: read, options: shellConsentOptions(consent, nowAt(), ownAddresses),
+      subject: sender.scopes[scope].messages, scope, match: ruleMatchOf(sender, scope),
+      wanted: FOLDER_OF_VIEW[dest], makeRule, applyRetro, now: nowAt(),
+      ...(decide?.kind === "screener_decide" ? { decide } : {}),
+    });
+  });
+
+  /** "Their rules" for the sheet, placed and counted as the list shows the subject's rows. */
+  const screeningRules = useStableCallback((
+    messageId: string, address: string | undefined, scope: ScreeningScope,
+  ): RulesInPlay | null => {
+    if (demo) return null;
+    const read = engine.verbRead();
+    const sender = senderScreening(read, messageId, address);
+    if (!sender) return null;
+    return rulesInPlay({
+      reader: read, placeOf: consentPartition(read, shellConsentOptions(consent, nowAt(), ownAddresses)).placeOf,
+      subject: sender.scopes[scope].messages, scope, match: ruleMatchOf(sender, scope),
+    });
+  });
+
+  /**
+   * AN ADDRESS PRESS PAST THE GATE, HELD IN THE ROUTING WINDOW. The mail the list will show at the
+   * place moves now; the rules — the ladder and the step's answer — are a v2 intent sent when the
+   * window closes, re-planned then and removing a shown rule only while it is as shown. The press
+   * says what it does, with Undo; the commit says what the list shows once the answers are in.
+   */
+  const holdScreenPress = (p: {
+    messageId: string; sender: SenderScreening; dest: ScreeningDest; scope: ScreeningScope;
+    makeRule: boolean; applyRetro: boolean; address: string | undefined; press: ScreeningPress | undefined;
+    plan: ScreeningPlan; who: string; place: string;
+    sayVerdict: (v: Exclude<StayVerdict, { key: "none" }>) => void;
+  }): void => {
+    const resolution = p.press?.resolution ?? "keep";
+    const forecast = p.press?.forecast
+      ?? screeningForecast(p.messageId, p.address, p.dest, p.scope, p.makeRule, p.applyRetro);
+    const landing = new Set(forecast ? forecast[resolution].landing : []);
+    const { mail } = splitRoutingPlan(p.plan);
+    // Only the rows the list will show at the place move: under "keep" a kept row stays put.
+    const moves = mail.filter((m) => m.kind === "move" && (forecast === null || landing.has(m.messageId)));
+    const pre = engine.verbRead();
+    const inverses = moves.flatMap((mu) => inverseMutations(pre, mu));
+    const settled = moves.map((mu) => fileAndRefresh(engine.mutate(mu)));
+    const shown = p.press?.shown ?? [];
+    const termOf = (r: RuleDTO) => (r.subjectContains ?? r.bodyContains ?? "").trim();
+    const sentence = pressSentence(p, forecast, resolution, shown);
+    const opened = routing.holdScreen({
+      id: crypto.randomUUID(), seedId: p.messageId, address: p.sender.address, dest: p.dest,
+      messageIds: [...landing], note: { sender: p.who, place: p.place, count: moves.length },
+      makeRule: p.makeRule, applyRetro: p.applyRetro, resolution,
+      shown: shown.map((r) => ({ id: r.id, fp: ruleFingerprint(r) })), moves: settled,
+      after: (o) => {
+        if (o.worst === "rolled_back") {
+          toast(t("screening.toastRuleFailed", { sender: p.who, place: p.place, count: moves.length }));
+          return;
+        }
+        if (o.worst === "awaiting_organizer") {
+          // Another install carries it out: no count and no "goes there" until it has.
+          const name = o.results.find((r) => r.queuedWith?.name)?.queuedWith?.name ?? null;
+          toast(name
+            ? t("screening.verdictQueued", { name, sender: p.who, place: p.place })
+            : t("screening.toastRuleOrganizer", { sender: p.who, place: p.place }));
+          return;
+        }
+        if (o.worst === "queued") {
+          toast(t("screening.toastRuleQueued", { sender: p.who, place: p.place, count: moves.length }));
+          return;
+        }
+        for (const id of o.changed) {
+          const r = shown.find((x) => x.id === id);
+          if (r && termOf(r) !== "") toast(t("screening.verdictChanged", { term: termOf(r) }));
+        }
+        readBack(p, writtenRuleIds(o.mutations, o.results));
+      },
+    });
+    if (!opened.held) { toast(`${sentence} ${t("session.noUndoHere")}`); return; }
+    toastWithUndo(sentence, inverses, {
+      cancel: () => routing.undo(routing.subjectOf(p.sender.address)),
+      undone: t("screening.toastRoutingUndoneRules"),
+    });
+  };
+
+  /** The press's own sentence: what it does, before anything is answered — no count. */
+  const pressSentence = (
+    p: { applyRetro: boolean; plan: ScreeningPlan; who: string; place: string },
+    forecast: PressForecast | null, resolution: "remove" | "keep", shown: readonly RuleDTO[],
+  ): string => {
+    if (!p.applyRetro || forecast === null) {
+      return t(`screening.${screeningToast(p.plan, null)}`, { sender: p.who, place: p.place, count: p.plan.moved });
+    }
+    const terms = forecast.groups.filter((g) => g.cause === "term-subject" || g.cause === "term-body").map((g) => g.rule);
+    const named = terms.filter((r) => shown.some((x) => x.id === r.id));
+    const term = (r: RuleDTO | undefined) => (r?.subjectContains ?? r?.bodyContains ?? "").trim();
+    if (named.length > 0 && resolution === "remove") {
+      return t("screening.toastPressRemoved", { place: p.place, sender: p.who, rules: named.length, term: term(named[0]) });
+    }
+    if (terms.length === 1 && resolution === "keep") {
+      return t("screening.toastPressKeptOne", {
+        place: p.place, sender: p.who, term: term(terms[0]), keptPlace: placeLabel(terms[0]!.destination),
+      });
+    }
+    if (terms.length > 1 && resolution === "keep") {
+      return t("screening.toastPressKeptMany", { place: p.place, sender: p.who, rules: terms.length });
+    }
+    if (forecast.exception) {
+      return t("screening.toastPressException", {
+        place: p.place, sender: p.who, domain: displayDomain(forecast.exception.rule.match),
+        domainPlace: placeLabel(forecast.exception.rule.destination),
+      });
+    }
+    return t("screening.toastPressRuled", { place: p.place, sender: p.who });
+  };
+
+  /**
+   * AFTER THE COMMIT: the subject's rows read from the list once the answers are in. Every row at the
+   * place is "all" only when no backlog pass is still applying the rule — an unknown pass (an older
+   * server) never reads as finished — and a pass still running is waited on once, while open.
+   */
+  const readBack = (
+    p: { messageId: string; address: string | undefined; dest: ScreeningDest; scope: ScreeningScope;
+      applyRetro: boolean; makeRule: boolean; who: string; place: string;
+      sayVerdict: (v: Exclude<StayVerdict, { key: "none" }>) => void },
+    ruleIds: string[] | null,
+  ): void => {
+    const read = engine.verbRead();
+    const back = screeningReadBack(read, p.messageId, p.address, p.dest, p.scope, {
+      consent, now: nowAt(), ownAddresses, retro: p.applyRetro,
+    });
+    // The seed message left the mirror: there is no subject left to read, and nothing is claimed.
+    if (back === null) return;
+    const { verdict, at } = back;
+    const retro = !(p.applyRetro && p.makeRule) ? "done" : ruleIds === null ? "unknown" : retroOf(read, ruleIds);
+    if (verdict.key !== "none") { p.sayVerdict(verdict); }
+    else if (retro === "done") toast(t("screening.verdictAll", { count: at, sender: p.who, place: p.place }));
+    else toast(t("screening.verdictApplying", { count: at, place: p.place }));
+    // Only a press that said the rule is still being applied is told when it has been.
+    const saidApplying = verdict.key === "none" || verdict.key === "applying";
+    if (retro !== "applying" || ruleIds === null || !saidApplying) return;
+    pressWatch.watch({
+      ruleIds,
+      done: (state) => {
+        if (state !== "done") return;
+        const after = screeningReadBack(engine.verbRead(), p.messageId, p.address, p.dest, p.scope, {
+          consent, now: nowAt(), ownAddresses, retro: false,
+        });
+        if (after === null) return;
+        if (after.verdict.key === "none") toast(t("screening.verdictAll", { count: after.at, sender: p.who, place: p.place }));
+        else if (after.verdict.key === "still" || after.verdict.key === "stillLegacy") p.sayVerdict(after.verdict);
+      },
+    });
+  };
 
   /**
    * MOVE, TO A PLACE THE ROUTER OWNS — and all five of the Move strip's destinations are.
@@ -1301,6 +1500,8 @@ export function useShellVerbs({
     openTagPicker,
     retargetRule,
     revokeRule,
+    screeningForecast,
+    screeningRules,
     tagAdmin,
     toggleTag,
   };

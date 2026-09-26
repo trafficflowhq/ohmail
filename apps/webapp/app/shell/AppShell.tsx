@@ -184,7 +184,7 @@ import { MailStateProvider, useMailState, type FreshnessProbe, type MailboxProbe
    what changed about who organizes these mailboxes that nobody has acknowledged? Settings →
    Mailboxes renders its own state line from the same `readerStandDown` underneath. */
 import {
-  organizerNotices, readerMoveRefusal, rosterStateOf, screenerMode,
+  organizerNotices, otherOrganizerOf, readerMoveRefusal, rosterStateOf, screenerMode,
 } from "./mail-state";
 /* Every press that changes mail leaves through here. See the module. */
 import { useShellDispatch } from "./shell-dispatch";
@@ -1078,7 +1078,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * ids are what that projection subtracts.
    */
   const {
-    fileAndRefresh, rosterRef, deleting, restoring, refusalCopy, routing,
+    fileAndRefresh, rosterRef, deleting, restoring, refusalCopy, routing, pressWatch,
     toastWithUndo, mutateAndReport, mutateSetAndReport, mailboxesOf, runArmedUndo,
   } = useShellDispatch({ engine, reader, toast, t, demo, refreshFacts });
 
@@ -1581,7 +1581,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     focused, fr, frDone, frValues, jump, markAllRead, markSeen, mirrorHolds, verbHolds, ohboxGone, openMessage,
     picker, pickerIds, previewFor, railOpen, readerFor, readerGone, readerMessage, readsCur,
     readsMarkSeen, receiptsCur, receiptsMarkSeen, ribbonGone, scnSel, screenerFull, searchFrom,
-    searchQuery, selectedOhbox, senderAudit, senderMenu, setBarPanel, setChipState, setCloseCard,
+    searchQuery, selectedOhbox, senderAudit, senderMenu, senderMenuBack, setBarPanel, setChipState, setCloseCard,
     setFr, setFrDone, setFrPending, setFrValues, setJump, setOhboxArmedRead, setOhboxSel, setPicker,
     setPickerIds, setPreviewFor, setRailOpen, setReaderFor, setReaderOffMirror, setReadsCur,
     setReceiptsCur, setRibbonGone, setScnSel, setScreenerFull, setSearchQuery, setSenderAudit,
@@ -1794,11 +1794,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     bulkToggleTag, bulkVerbs, canDeleteMessage, canReplyAllTo, changeScreening, confirmSubjectRule,
     createTag, createTagAlone, dropTag, lastActed, onMessageAction, onStageClickCapture,
     onStreamAction, openSenderAudit, openSenderMenu, openSubjectRule, openTagPicker, retargetRule,
-    revokeRule, tagAdmin, toggleTag,
+    revokeRule, screeningForecast, screeningRules, tagAdmin, toggleTag,
   } = useShellVerbs({
     engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses,
     fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, mailboxesOf, refusalCopy,
-    rosterRef, routing, deleting, restoring,
+    rosterRef, routing, pressWatch, deleting, restoring,
     markSeen, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
     setSubjectRule,
     toggleReply, openForward, openReply, draftReply, replyAll, replyTo,
@@ -1829,7 +1829,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     ohbox, openFolder, ownAddresses, partition, piles, receipts, scheduled, tagGroups, tags,
     trashPage,
     barPanel, focused, fr, frValues, mirrorHolds, picker, railOpen, readerFor, readerMessage,
-    selectedOhbox, senderAudit, senderMenu, setBarPanel, setFr, setFrPending, setPicker, setRailOpen,
+    selectedOhbox, senderAudit, senderMenu, senderMenuBack, setBarPanel, setFr, setFrPending, setPicker, setRailOpen,
     setReaderFor, setScreenerFull, setSenderAudit, setSenderMenu, setShortcutsOpen, setSubjectRule,
     shortcutsOpen, startFR, subjectRule,
     mailSend, openForward, sendReply, toggleReply,
@@ -3475,7 +3475,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           // The address override travels on EVERY dispatch off this sheet, or the sheet would
           // show the chip's person and rule on the message's sender — the cc-chip guard names
           // this exact seam.
-          onChoose={(dest, scope, makeRule, applyRetro) => changeScreening(senderMenu!.messageId, dest, scope, makeRule, applyRetro, senderMenu!.address)}
+          onChoose={(dest, scope, makeRule, applyRetro, press) => changeScreening(senderMenu!.messageId, dest, scope, makeRule, applyRetro, senderMenu!.address, press)}
+          forecastFor={(dest, scope, makeRule, applyRetro) => screeningForecast(senderMenu!.messageId, senderMenu!.address, dest, scope, makeRule, applyRetro)}
+          rulesFor={(scope) => screeningRules(senderMenu!.messageId, senderMenu!.address, scope)}
+          organizer={otherOrganizerOf(facts, new Set(senderMenuFor.messages.map((m) => m.mailboxId)))}
+          backRef={senderMenuBack}
           autoUnsubscribe={autoUnsubscribeDiscloses}
           onOpenDetail={(scope) => openSenderAudit(senderMenu!.messageId, scope, senderMenu!.address)}
           // The subject sheet resolves the message's SENDER (`subjectRuleContext`), so under an

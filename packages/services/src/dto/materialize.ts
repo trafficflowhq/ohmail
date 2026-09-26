@@ -90,6 +90,7 @@ export function ruleRowToDTO(r: typeof rules.$inferSelect): RuleDTO {
     stats: { hits: r.hits, lastHitAt: iso(r.lastHitAt), demotions: r.demotions },
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
+    retro: { requestedAt: iso(r.retroRequestedAt), doneAt: iso(r.retroDoneAt) },
   };
 }
 

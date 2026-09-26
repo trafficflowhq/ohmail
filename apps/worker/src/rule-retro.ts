@@ -1,7 +1,8 @@
 import { and, asc, eq, gt, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 import {
   approvals, auditAction, auditLog, drafts, folderState, mailboxes, messageBodies,
-  messageStates, messages, recordChange, rules as rulesTbl, weAnsweredThisSenderWhere, type Tx,
+  messageStates, messages, recordChange, recordRuleDelta, rules as rulesTbl, weAnsweredThisSenderWhere,
+  type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import {
   DEFAULT_OHBOX_POLICY, ORGANIZED_FOLDERS, authVerdictFromHeaders, canonicalDestination, evaluateRules,
@@ -475,20 +476,7 @@ export async function ruleRetroPass(
      * SERIALIZATION, and a fragment is where that becomes reachable. The `null` cursor arm needs no
      * cast: Postgres takes its type from the other arm (`retro_cursor`, uuid).
      */
-    const [decided] = await db.update(rulesTbl)
-      .set({
-        retroDoneAt: sql`case
-          when ${outside} then ${rulesTbl.retroDoneAt}
-          when ${rulesTbl.retroCursor} is distinct from ${walkedTo === null ? sql`null` : sql`${walkedTo}::uuid`}
-            then ${rulesTbl.retroDoneAt}
-          else ${now.toISOString()}::timestamptz end`,
-        retroCursor: sql`case when ${outside} then null else ${rulesTbl.retroCursor} end`,
-      })
-      .where(and(eq(rulesTbl.id, row.id), isNull(rulesTbl.retroDoneAt)))
-      // The POST-update row, which is the decision itself rather than a re-read of it: a second
-      // `select` would be a second snapshot, and this whole block exists because two snapshots of
-      // one question can disagree.
-      .returning({ doneAt: rulesTbl.retroDoneAt, cursor: rulesTbl.retroCursor });
+    const decided = await stampRetroDone(db, row.accountId, { ruleId: row.id, outside, walkedTo, now });
 
     if (decided?.doneAt != null) {
       // Counted from the stamp the database actually wrote, not from reaching this line: a rule
@@ -514,6 +502,33 @@ export async function ruleRetroPass(
     });
   }
   return result;
+}
+
+/**
+ * THE FINISHED STAMP, one statement deciding it (the block above says why), and the rule delta
+ * announcing it in the SAME transaction — the stamp is on `RuleDTO`, so a client learns the pass
+ * finished only from a change row. The UPDATE takes the rule row before `recordRuleDelta` takes
+ * `account_sync_state`, the page transaction's order. `WHERE retro_done_at IS NULL` is the answer
+ * when two drivers finish at once: one writes the stamp and its delta, the other writes nothing.
+ */
+async function stampRetroDone(
+  db: Tx, accountId: string, a: { ruleId: string; outside: SQL; walkedTo: string | null; now: Date },
+): Promise<{ doneAt: Date | null; cursor: string | null } | undefined> {
+  return db.transaction(async (tx) => {
+    const [decided] = await tx.update(rulesTbl)
+      .set({
+        retroDoneAt: sql`case
+          when ${a.outside} then ${rulesTbl.retroDoneAt}
+          when ${rulesTbl.retroCursor} is distinct from ${a.walkedTo === null ? sql`null` : sql`${a.walkedTo}::uuid`}
+            then ${rulesTbl.retroDoneAt}
+          else ${a.now.toISOString()}::timestamptz end`,
+        retroCursor: sql`case when ${a.outside} then null else ${rulesTbl.retroCursor} end`,
+      })
+      .where(and(eq(rulesTbl.id, a.ruleId), isNull(rulesTbl.retroDoneAt)))
+      .returning({ doneAt: rulesTbl.retroDoneAt, cursor: rulesTbl.retroCursor });
+    if (decided?.doneAt != null) await recordRuleDelta(tx as unknown as LedgerTx, accountId, [a.ruleId], "update");
+    return decided;
+  });
 }
 
 /**

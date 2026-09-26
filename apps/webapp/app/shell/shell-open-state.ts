@@ -301,6 +301,8 @@ export function useShellOpenState({
   const [previewFor, setPreviewFor] = useState<{ messageId: string; attachmentId: string } | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [senderMenu, setSenderMenu] = useState<SenderMenuState | null>(null);
+  /** The sheet's own step back — its resolve step or its confirm — asked before Escape closes it. */
+  const senderMenuBack = useRef<(() => boolean) | null>(null);
 
   const [senderAudit, setSenderAudit] = useState<SenderAuditState | null>(null);
   /* The subject-rule sheet — the finer sibling of the sender popover, opened from a message's
@@ -1147,6 +1149,7 @@ export function useShellOpenState({
     selectedOhbox,
     senderAudit,
     senderMenu,
+    senderMenuBack,
     setBarPanel,
     setChipState,
     setCloseCard,

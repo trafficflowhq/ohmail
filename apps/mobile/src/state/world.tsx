@@ -54,7 +54,8 @@ import {
   connectionSay, firstSyncSay,
   flushQueued,
   liveActions,
-  planPhoneRouting,
+  planHeldRouting,
+  presentedOptions,
   liveFolder,
   liveFolders,
   liveFolderUnread,
@@ -91,6 +92,7 @@ import {
   /* THROUGH `live.ts`, not from the engine package: `privacy.test.ts#ENGINE_IMPORTERS` is a
      short allow-list and this file is not on it — the type leaves by the door the phone
      already has (the re-export beside `AbandonedMutation`). */
+  type ConsentOptions,
   type EntityReader,
   type MutationResult,
   type WorldActions,
@@ -125,8 +127,10 @@ import {
 } from "./held-delete";
 /* The routing window — Move's rule half, held for the same UNDO_MS the delete's press is. */
 import {
+  answerScreenPress,
   closeRoutingSession,
   flushRouting,
+  noteScreenChanged,
   openRoutingSession,
   routingPlaces,
   routingReader,
@@ -529,6 +533,8 @@ const NO_ACTIONS: WorldActions = {
   tagToggle: () => undefined,
   tagCreate: () => undefined,
   screenSender: () => undefined,
+  screeningForecast: () => null,
+  screeningRules: () => null,
   folderCreate: () => undefined,
   folderRename: () => undefined,
   folderDelete: () => undefined,
@@ -811,6 +817,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * ON SCREEN and not about the raw mirror's folders.
    */
   const presentedNow = useRef<EntityReader | null>(null);
+  /** The options that projection was partitioned with, for a screening press's forecast. */
+  const presentedOptionsNow = useRef<ConsentOptions | null>(null);
   /** `conn.syncNow` behind a ref so the machine below keeps one identity across renders. */
   const syncNowRef = useRef(conn.syncNow);
   syncNowRef.current = conn.syncNow;
@@ -1063,11 +1071,13 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     if (!engine) return undefined;
     openRoutingSession({
       windowMs: UNDO_MS,
-      plan: (intent) => planPhoneRouting(engine.read(), intent),
-      dispatch: async (mutations) => {
+      plan: (intent) => planHeldRouting(engine.read(), intent, (changed) => noteScreenChanged(intent.id, changed)),
+      dispatch: async (mutations, intent) => {
         const answers = await Promise.all(
           mutations.map((mu) => engine.mutate(mu).catch(() => null)),
         );
+        // A sheet press reads its list back itself, and says the refusal with it.
+        if (answerScreenPress(intent.id, mutations, answers)) return;
         /* A RULE THE SERVER REFUSED IS SAID. The press's own sentence was raised seconds ago and
            claimed the mail moved, which is still true — what is not is the rule, and a refusal
            nobody is told is the shape this window exists to remove. */
@@ -1104,6 +1114,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         /* A GETTER for the same reason, and the fallback is the raw mirror for the one render
            before the world memo below has run — see `LiveDeps.presented`. */
         presented: () => presentedNow.current ?? engine.read(),
+        presentedOptions: () => presentedOptionsNow.current ?? presentedOptions(new Date()),
         /* THE CACHED QUEUE, RECONCILED AT THE DECIDE. `setScreenerServer` is `useState`'s own
            setter and identity-stable, and the update is FUNCTIONAL — this facade is built once
            per session by design, so a captured value would reconcile against the queue as it
@@ -1285,7 +1296,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           sendOutcome: (key) => outcomeOf(key),
           tagToggle: (id, tag, assigned) => void acts.tagToggle(id, tag, assigned),
           tagCreate: (id, name) => void acts.tagCreate(id, name),
-          screenSender: (id, dest, scope, applyRetro) => void acts.screenSender(id, dest, scope, applyRetro),
+          screenSender: (id, dest, scope, applyRetro, press) => void acts.screenSender(id, dest, scope, applyRetro, press),
+          screeningForecast: (id, dest, scope, applyRetro) => acts.screeningForecast(id, dest, scope, applyRetro),
+          screeningRules: (id, scope) => acts.screeningRules(id, scope),
           folderCreate: (mailboxId, name) => void acts.folderCreate(mailboxId, name),
           folderRename: (id, name) => void acts.folderRename(id, name),
           folderDelete: (id) => void acts.folderDelete(id),
@@ -1369,6 +1382,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
        piles group over, `world.history` is the mail the cutline retired. Two calls would be one
        rule read at two clocks — a sender in both lists, or in neither. */
     const world = presentedWorld(base, v.now, foldersOn, posture, addressesNow.current);
+    presentedOptionsNow.current = presentedOptions(v.now, foldersOn, posture, addressesNow.current);
     /* AND A HELD ROUTING PRESS SHOWS ITS MAIL WHERE IT WAS FILED, over the PROJECTION and never
        under it: a row's place comes from its sender's rule, so the overlay has to sit above the
        reader that applies rules or the rule that has not been sent yet would win. Unwrapped when

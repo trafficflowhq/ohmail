@@ -21,6 +21,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FOLDER_OF_VIEW,
   createRoutingWindow,
+  planScreenCommit,
   routingIntentsKey,
   routingSubject,
   type EngineMutation,
@@ -30,6 +31,7 @@ import {
   type RoutingIntent,
   type RoutingOpen,
   type ScreenDest,
+  type ScreenIntent,
   type TabWindows,
 } from "@ohmail/client-engine";
 import { createIntentWindows, intentWindowsChannel } from "./intent-windows";
@@ -93,9 +95,35 @@ export interface RoutingPressInput {
   note: RoutingNote;
 }
 
+/** What a sender-sheet press's commit answered, handed to the press that made it. */
+export interface ScreenCommitOutcome {
+  /** The worst answer among the rule writes, `null` when there were none. */
+  worst: MutationStatus | null;
+  results: readonly RoutingSendResult[];
+  mutations: readonly EngineMutation[];
+  /** Rules the step showed that changed or went inside the window — left as they are. */
+  changed: readonly string[];
+}
+
+export type RoutingSendResult = { status: MutationStatus; entityId?: string; queuedWith?: { name: string | null } };
+
+/** A sender-sheet press: the v2 intent's answers, and the press's own in-memory follow-up. */
+export interface ScreenPressInput extends RoutingPressInput {
+  makeRule: boolean;
+  applyRetro: boolean;
+  resolution: "remove" | "keep";
+  shown: { id: string; fp: string }[];
+  /** The mail half already dispatched; the commit's reading waits for every one to settle. */
+  moves: readonly Promise<unknown>[];
+  /** Said once the rules are answered and the moves settled. Absent for a replayed press. */
+  after?: (outcome: ScreenCommitOutcome) => void;
+}
+
 export interface RoutingUndo {
   /** Hold one press. Answers whether an Undo may be offered over it. */
   hold: (press: RoutingPressInput) => RoutingOpen;
+  /** Hold one sender-sheet press as a v2 intent in the screen jar. */
+  holdScreen: (press: ScreenPressInput) => RoutingOpen;
   /** The subject a press is about — what {@link RoutingUndo.undo} takes. */
   subjectOf: (address: string) => string;
   /** Take the press on this subject back: the intent is dropped, nothing was sent. */
@@ -108,7 +136,7 @@ export interface RoutingUndoDeps {
   /** The mirror, read at the COMMIT — never a reader captured when the press was made. */
   read: () => EntityReader;
   /** The surface's filing dispatch. One mutation, one answer. */
-  send: (m: EngineMutation) => Promise<{ status: MutationStatus }>;
+  send: (m: EngineMutation) => Promise<RoutingSendResult>;
   toast: (sentence: string) => void;
   copy: RoutingUndoCopy;
   /**
@@ -148,6 +176,8 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
    * "the ladder had nothing to write".
    */
   const built = useRef(new Map<string, ScreeningPlan | null>());
+  /** A sender-sheet press's commit plan and its in-memory half, by press id. */
+  const screens = useRef(new Map<string, { changed: string[]; press?: ScreenPressInput }>());
 
   /**
    * ONE COORDINATOR, ON ITS OWN CHANNEL. The journal is per ORIGIN, so a second tab's launch
@@ -172,6 +202,13 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
     ...(latest.current.now ? { now: () => latest.current.now!() } : {}),
 
     plan: (i) => {
+      /* A SENDER-SHEET PRESS RE-PLANS THROUGH THE ONE COMMIT PLANNER, its answers riding the
+         intent: the ladder, and a shown rule removed only while it is as shown. */
+      if (i.v === 2) {
+        const out = planScreenCommit(latest.current.read(), i);
+        screens.current.set(i.id, { ...screens.current.get(i.id), changed: out.changed });
+        return out.writes;
+      }
       /* SENDER SCOPE AND NO RETRO — `planMoveToPlace`'s own arguments, because this IS that
          press, asked again of the mirror as it now is. */
       const sender = senderScreening(latest.current.read(), i.seedId, i.address);
@@ -182,6 +219,20 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
     },
 
     dispatch: async (mutations, i) => {
+      if (i.v === 2) {
+        const held = screens.current.get(i.id);
+        screens.current.delete(i.id);
+        notes.current.delete(i.id);
+        await Promise.allSettled(held?.press?.moves ?? []);
+        const results = await Promise.all(mutations.map((m) => latest.current.send(m)));
+        const outcome: ScreenCommitOutcome = {
+          worst: worstStatus(results), results, mutations, changed: held?.changed ?? [],
+        };
+        if (held?.press?.after) { held.press.after(outcome); return; }
+        // A replayed press has nobody to read its answer back to; a refusal is still said.
+        if (outcome.worst === "rolled_back") latest.current.toast(latest.current.copy.gone);
+        return;
+      }
       const plan = built.current.get(i.id);
       const note = notes.current.get(i.id);
       built.current.delete(i.id);
@@ -243,6 +294,26 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
   return {
     places,
     subjectOf: useCallback((address: string) => routingSubject({ scope: "sender", address }), []),
+    holdScreen: useCallback((press: ScreenPressInput): RoutingOpen => {
+      const intent: ScreenIntent = {
+        v: 2,
+        verb: "screen",
+        id: press.id,
+        seedId: press.seedId,
+        address: press.address,
+        scope: "sender",
+        dest: press.dest,
+        messageIds: [...press.messageIds],
+        makeRule: press.makeRule,
+        applyRetro: press.applyRetro,
+        resolution: press.resolution,
+        shown: press.shown.slice(0, 20),
+        at: (latest.current.now ?? Date.now)(),
+      };
+      screens.current.set(press.id, { changed: [], press });
+      const out = window_.open(intent);
+      return out;
+    }, [window_]),
     hold: useCallback((press: RoutingPressInput): RoutingOpen => {
       const intent: RoutingIntent = {
         v: 1,

@@ -1,5 +1,6 @@
 import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { replySubject } from "@trafficflow/core/reply-subject";
+import { outrankCoveringDomains } from "./address-rank.js";
 import { domainOfAddress } from "./consent-cutline.js";
 import { twinsElsewhere } from "./rule-twins.js";
 import { rulesList, senderKey } from "./selectors.js";
@@ -255,6 +256,7 @@ function promotedRule(
   scope: "sender" | "domain",
   destination: Folder,
   ctx: EffectContext,
+  priority = 0,
 ): RuleDTO {
   const iso = ctx.now().toISOString();
   return {
@@ -262,7 +264,7 @@ function promotedRule(
     kind: scope,
     match: scope === "domain" ? from.address.split("@")[1] ?? from.address : from.address,
     destination,
-    priority: 0,
+    priority,
     provenance: "promoted",
     enabled: true,
     stats: { hits: 0, lastHitAt: null, demotions: 0 },
@@ -316,7 +318,15 @@ function derivedScreenerEffects(
     }));
 
   const scope = m.scope ?? "sender";
-  const rule = promotedRule(rep.from, scope, destination, ctx);
+  // The decide lifts an address rule over its domain's (`screener-apply.ts#liftOverDomain`), and
+  // stamps the backlog when past mail is asked for; the overlay writes what the server will.
+  const lifted = scope === "sender"
+    ? outrankCoveringDomains(rulesList(reader), { kind: "rule_create", ruleKind: "sender", match: key, destination })
+    : null;
+  const rule = {
+    ...promotedRule(rep.from, scope, destination, ctx, lifted?.kind === "rule_create" ? lifted.priority ?? 0 : 0),
+    retro: { requestedAt: m.applyRetro === false ? null : iso, doneAt: null },
+  };
   effects.push({ type: "rule", id: rule.id, entity: rule });
   // The server retargets the subject's twins in the decide's own transaction
   // (`applyScreenerDecision`), so the overlay does too: a deny twin left standing here went on
@@ -928,6 +938,9 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         entity: {
           ...rule, destination: m.destination, updatedAt: iso,
           ...(m.priority === undefined ? {} : { priority: m.priority }),
+          // The server re-arms the backlog on a retarget unless told not to, and on an explicit
+          // yes; the finished stamp is its own to write, never this overlay's.
+          ...(rearmsRetro(rule, m) ? { retro: { requestedAt: iso, doneAt: null } } : {}),
         } satisfies RuleDTO,
       }];
     }
@@ -982,8 +995,16 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         stats: { hits: 0, lastHitAt: null, demotions: 0 },
         createdAt: iso,
         updatedAt: iso,
+        retro: { requestedAt: m.applyRetro === false ? null : iso, doneAt: null },
       };
       return [{ type: "rule", id: rule.id, entity: rule }];
     }
   }
+}
+
+/** `RulesService.update`'s re-arm: an explicit yes, or a moved destination unless told no. */
+function rearmsRetro(rule: RuleDTO, m: Extract<EngineMutation, { kind: "rule_update" }>): boolean {
+  if (m.applyRetro === true) return true;
+  if (m.applyRetro === false) return false;
+  return canonicalDestination(m.destination) !== canonicalDestination(rule.destination);
 }

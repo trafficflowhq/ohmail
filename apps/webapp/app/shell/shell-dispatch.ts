@@ -30,6 +30,7 @@ import { readerMoveRefusal, type RosterState } from "./mail-state";
 import { restoreDispatch, UNDO_MS, useDeleteIntentReplay, useDeleteUndo } from "./delete-undo";
 /* Move/File/Junk → the mail now, the sender's routing after the window. See the module. */
 import { useRoutingUndo } from "./routing-undo";
+import { usePressWatch, type PressWatch } from "./press-watch";
 import { placeLabel } from "./format";
 import { useStableCallback } from "./stable-callback";
 
@@ -57,6 +58,8 @@ export interface ShellDispatch {
   restoring: ReturnType<typeof useDeleteUndo>;
   refusalCopy: { named: (name: string) => string; unknown: () => string };
   routing: ReturnType<typeof useRoutingUndo>;
+  /** A sender-sheet press waiting on its backlog pass, told once when it finishes. */
+  pressWatch: PressWatch;
   refusalSentence: (err: MutationRejectedError | undefined) => string;
   dispatchPress: (mutation: EngineMutation) => Promise<PressVerdict>;
   queuedSentence: (holder: string | null) => string;
@@ -240,6 +243,7 @@ export function useShellDispatch({
         )
       : undefined,
   });
+  const pressWatch = usePressWatch(reader);
   const refusalCopy = useMemo(
     () => ({
       named: (name: string) => t("screener.readerMoveRefused", { name }),
@@ -452,6 +456,7 @@ export function useShellDispatch({
     restoring,
     refusalCopy,
     routing,
+    pressWatch,
     refusalSentence,
     dispatchPress,
     queuedSentence,

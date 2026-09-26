@@ -1658,6 +1658,8 @@ export class HttpAdapter implements EngineAdapter {
         return {
           changes: seq === null ? [] : [{ type: "rule", op: "create", id: dto.id, seq, updatedAt: dto.updatedAt, entity: dto }],
           seq,
+          // The server's row id: a surface waiting on this rule's backlog pass names it by this.
+          ...(typeof dto?.id === "string" ? { entityId: dto.id } : {}),
         };
       }
 

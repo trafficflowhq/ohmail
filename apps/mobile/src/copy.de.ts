@@ -1352,6 +1352,56 @@ export const DE: Deck = {
   screeningNoteRetro: (target: string) =>
     `Wird zur Regel — künftige Post von ${target} wird automatisch dorthin einsortiert. Bis zu 50 Nachrichten werden sofort verschoben; für den Rest wendet ohmail die Regel auf die Post an, die es schon für dich einsortiert hat. Nachrichten, die du beantwortet, selbst einsortiert oder geparkt hast, bleiben unberührt.`,
   screeningRetroToggle: "Auch die Post verschieben, die schon im Postfach liegt",
+  /* ── THE SHEET'S RESOLVE STEP — the web sheet's words, one function per key ── */
+  screeningRulesHead: "Ihre Regeln",
+  screeningRuleAll: "Ihre ganze Post",
+  screeningRuleSubject: (term: string) => `Betreff enthält »${term}«`,
+  screeningRuleBody: (term: string) => `Text enthält »${term}«`,
+  screeningRuleEveryone: (domain: string) => `Alle bei ${domain}`,
+  screeningRuleOnlyThis: "Nur diese Adresse",
+  screeningRuleLine: (condition: string, place: string) => `${condition} → ${place}`,
+  screeningRuleUncounted: "hier nicht gezählt",
+  screeningRuleInside: (senders: number) =>
+    senders === 1 ? "1 Absender hier hat eine eigene Regel" : `${senders} Absender hier haben eigene Regeln`,
+  screeningCount: (n: number) => (n === 1 ? "1 Nachricht" : `${n} Nachrichten`),
+  screeningResolveTitle: (place: string, rules: number) =>
+    `${place} — ${rules === 1 ? "eine deiner Regeln sagt etwas anderes" : `${rules} deiner Regeln sagen etwas anderes`}`,
+  screeningResolveAllNote: (rules: number) => (rules === 1 ? "Entfernt diese Regel" : `Entfernt diese ${rules} Regeln`),
+  screeningResolveKeepTitle: "Aufteilung behalten",
+  screeningResolveKeepNote: (count: number, rules: number) =>
+    `${count === 1 ? "1 Nachricht bleibt" : `${count} Nachrichten bleiben`}, wo ${rules === 1 ? "deine Regel sie einsortiert" : "deine Regeln sie einsortieren"}`,
+  screeningResolveKeepNoteUncounted: "Was deine Regel erfasst, bleibt, wo sie es einsortiert.",
+  screeningResolveDomainTitle: (place: string, domain: string, domainPlace: string) =>
+    `${place} — deine Regel für alle bei ${domain} sortiert sie in ${domainPlace}`,
+  screeningResolveExceptNote: (domain: string, domainPlace: string) => `Alle anderen bei ${domain} bleiben in ${domainPlace}`,
+  screeningResolveWholeNote: (senders: number) => `Ändert diese Regel · ${senders === 1 ? "für 1 Absender" : `für alle ${senders} Absender`}`,
+  screeningResolveInsideTitle: (place: string, senders: number) =>
+    `${place} — ${senders === 1 ? "1 Absender hier hat eine eigene Regel" : `${senders} Absender hier haben eigene Regeln`}`,
+  screeningResolveInsideKeepTitle: "Eigene Regeln behalten",
+  screeningResolveInsideAllNote: (rules: number) => (rules === 1 ? "Ändert diese Regel mit" : `Ändert diese ${rules} Regeln mit`),
+  screeningResolveGo: (place: string) => `Einsortieren: ${place}`,
+  screeningResolveChoiceAria: "Was mit den Regeln passiert, die etwas anderes sagen",
+  screeningResolveCancel: "Abbrechen",
+  screeningRuleInsideCount: (senders: number, count: number) =>
+    `${senders === 1 ? "1 Absender hier hat eine eigene Regel" : `${senders} Absender hier haben eigene Regeln`} · ${count}`,
+  screeningNoteWithCount: (note: string, n: number) => `${note} · ${n === 1 ? "1 Nachricht" : `${n} Nachrichten`}`,
+  screeningPressRuled: (place: string, sender: string) => `${place} — Post von ${sender} geht dorthin, künftige auch.`,
+  screeningPressRemoved: (place: string, sender: string, rules: number, term: string) =>
+    `${place} — Post von ${sender} geht dorthin, künftige auch. ${rules === 1 ? `Deine Regel »${term}« wird entfernt.` : `${rules} deiner Regeln werden entfernt.`}`,
+  screeningPressKeptOne: (place: string, sender: string, term: string, keptPlace: string) =>
+    `${place} — Post von ${sender} geht dorthin, außer »${term}«, das bleibt in ${keptPlace}.`,
+  screeningPressKeptMany: (place: string, sender: string, rules: number) =>
+    `${place} — Post von ${sender} geht dorthin, außer dem, was ${rules === 1 ? "deine Regel woanders hält" : `${rules} deiner Regeln woanders halten`}.`,
+  screeningPressException: (place: string, sender: string, domain: string, domainPlace: string) =>
+    `${place} — Post von ${sender} geht dorthin, künftige auch. Alle anderen bei ${domain} bleiben in ${domainPlace}.`,
+  screeningRoutingUndoneRules: "Die Post ist wieder da, wo sie war, und deine Regeln sind unverändert.",
+  screeningVerdictAll: (count: number, sender: string, place: string) =>
+    count === 1 ? `Die 1 Nachricht von ${sender} liegt in ${place}.` : `Alle ${count} von ${sender} liegen in ${place}.`,
+  screeningVerdictQueued: (name: string, sender: string, place: string) =>
+    `Für ${name} vorgemerkt — beim nächsten Durchlauf: Post von ${sender} → ${place}, und die Regel wird angelegt.`,
+  screeningVerdictQueuedUnnamed: (sender: string, place: string) =>
+    `Für den Organizer vorgemerkt — beim nächsten Durchlauf: Post von ${sender} → ${place}, und die Regel wird angelegt.`,
+  screeningVerdictChanged: (term: string) => `Deine Regel »${term}« wurde inzwischen geändert und bleibt deshalb, wie sie ist.`,
 
   connectionSignInRefused: "Der Mailserver hat die Anmeldung abgelehnt.",
   signInAgain: "Erneut anmelden",

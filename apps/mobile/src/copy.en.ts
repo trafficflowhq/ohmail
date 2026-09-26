@@ -2112,6 +2112,57 @@ const TABLE = {
   screeningNoteRetro: (target: string) =>
     `Becomes a rule — future mail from ${target} files there automatically. Up to 50 messages move now; for the rest, ohmail applies the rule to the mail it has already filed for you. Messages you have replied to, filed yourself or set aside are left alone.`,
   screeningRetroToggle: "Also move the mail already in your mailbox",
+  /* ── THE SHEET'S RESOLVE STEP — the web sheet's words, one function per key ── */
+  screeningRulesHead: "Their rules",
+  screeningRuleAll: "All their mail",
+  screeningRuleSubject: (term: string) => `Subject contains »${term}«`,
+  screeningRuleBody: (term: string) => `Text contains »${term}«`,
+  screeningRuleEveryone: (domain: string) => `Everyone at ${domain}`,
+  screeningRuleOnlyThis: "Only this address",
+  screeningRuleLine: (condition: string, place: string) => `${condition} → ${place}`,
+  screeningRuleUncounted: "not counted here",
+  screeningRuleInside: (senders: number) =>
+    senders === 1 ? "1 sender here has their own rule" : `${senders} senders here have their own rules`,
+  screeningCount: (n: number) => (n === 1 ? "1 message" : `${n} messages`),
+  screeningResolveTitle: (place: string, rules: number) =>
+    `${place} — ${rules === 1 ? "one of your rules says otherwise" : `${rules} of your rules say otherwise`}`,
+  screeningResolveAllNote: (rules: number) => (rules === 1 ? "Removes that rule" : `Removes those ${rules} rules`),
+  screeningResolveKeepTitle: "Keep the split",
+  screeningResolveKeepNote: (count: number, rules: number) =>
+    `${count === 1 ? "1 message stays" : `${count} messages stay`} where ${rules === 1 ? "your rule files" : "your rules file"} ${count === 1 ? "it" : "them"}`,
+  screeningResolveKeepNoteUncounted: "Mail your rule names stays where it files it.",
+  screeningResolveDomainTitle: (place: string, domain: string, domainPlace: string) =>
+    `${place} — your rule for everyone at ${domain} files them in ${domainPlace}`,
+  screeningResolveExceptNote: (domain: string, domainPlace: string) => `Everyone else at ${domain} stays in ${domainPlace}`,
+  screeningResolveWholeNote: (senders: number) => `Changes that rule · ${senders === 1 ? "1 sender" : `${senders} senders`}`,
+  screeningResolveInsideTitle: (place: string, senders: number) =>
+    `${place} — ${senders === 1 ? "1 sender here has their own rule" : `${senders} senders here have their own rules`}`,
+  screeningResolveInsideKeepTitle: "Keep their own rules",
+  screeningResolveInsideAllNote: (rules: number) => (rules === 1 ? "Changes that rule too" : `Changes those ${rules} rules too`),
+  screeningResolveGo: (place: string) => `File to ${place}`,
+  screeningResolveChoiceAria: "What happens to the rules that disagree",
+  screeningResolveCancel: "Cancel",
+  screeningRuleInsideCount: (senders: number, count: number) =>
+    `${senders === 1 ? "1 sender here has their own rule" : `${senders} senders here have their own rules`} · ${count}`,
+  screeningNoteWithCount: (note: string, n: number) => `${note} · ${n === 1 ? "1 message" : `${n} messages`}`,
+  screeningPressRuled: (place: string, sender: string) =>
+    `${place} — mail from ${sender} goes there, and so does future mail.`,
+  screeningPressRemoved: (place: string, sender: string, rules: number, term: string) =>
+    `${place} — mail from ${sender} goes there, and so does future mail. ${rules === 1 ? `Your rule »${term}« is removed.` : `${rules} of your rules are removed.`}`,
+  screeningPressKeptOne: (place: string, sender: string, term: string, keptPlace: string) =>
+    `${place} — mail from ${sender} goes there, except »${term}«, which stays in ${keptPlace}.`,
+  screeningPressKeptMany: (place: string, sender: string, rules: number) =>
+    `${place} — mail from ${sender} goes there, except what ${rules === 1 ? "your rule keeps" : `${rules} of your rules keep`} elsewhere.`,
+  screeningPressException: (place: string, sender: string, domain: string, domainPlace: string) =>
+    `${place} — mail from ${sender} goes there, and so does future mail. Everyone else at ${domain} stays in ${domainPlace}.`,
+  screeningRoutingUndoneRules: "The mail is back where it was, and your rules are as they were.",
+  screeningVerdictAll: (count: number, sender: string, place: string) =>
+    count === 1 ? `The 1 message from ${sender} is in ${place}.` : `All ${count} from ${sender} are in ${place}.`,
+  screeningVerdictQueued: (name: string, sender: string, place: string) =>
+    `Queued for ${name} — mail from ${sender} goes to ${place} on its next pass, and the rule is made then.`,
+  screeningVerdictQueuedUnnamed: (sender: string, place: string) =>
+    `Queued for the organizer — mail from ${sender} goes to ${place} on its next pass, and the rule is made then.`,
+  screeningVerdictChanged: (term: string) => `Your rule »${term}« was changed in the meantime, so it stays as it is.`,
 
   /* ── A PASSWORD CHANGED AT THE PROVIDER ────────────────────────────────────────────────────
      The refusal was silent here while nothing could be done about it. Now something can be, so

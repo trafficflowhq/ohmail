@@ -233,8 +233,10 @@ export async function screenerAutoActPass(
           // left the gate. One decision, one meaning, whoever carried it.
           applyRetro: true,
           // A pass never rewrites the person's own rules: a rule written after the page was read
-          // keeps deciding, as the selection's decided-sender filter would have had it.
+          // keeps deciding, as the selection's decided-sender filter would have had it. Nor does it
+          // lift over their domain rule — that lift is a person's answer about one address.
           retargetTwins: false,
+          liftOverDomain: false,
         });
       });
       if (applied === null) {

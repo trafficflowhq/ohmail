@@ -8,6 +8,12 @@ import { recordLearningSignal } from "./learning-signal.js";
 import { upsertDesiredSeen } from "./flag-intent.js";
 
 /**
+ * `@trafficflow/core/rule-order#RULE_PRIORITY_MAX`, copied: this package does not import core.
+ * `rules-priority-bound.test.ts` (services) pins the two equal; the drain reads it here.
+ */
+export const RULE_PRIORITY_MAX = 1000;
+
+/**
  * `recordChange` wants `LedgerTx` (`PgTransaction`, narrower than `Tx`/`PgDatabase`) because it is
  * only ever safe to call inside an open transaction. Every caller of this module already is one —
  * `applyScreenerDecision` runs inside the caller's own `db.transaction(...)` — so the cast is the
@@ -293,6 +299,28 @@ export interface ApplyScreenerDecisionInput {
    * rule. A caller that is not a press (the auto-act pass) passes `false` and leaves their rules.
    */
   retargetTwins?: boolean;
+  /**
+   * Write an address decision's promoted rule at the priority its domain's rules filing elsewhere
+   * hold ({@link addressPriorityOver}), so the person's answer about this address outranks them.
+   * Defaults `true`, as a press; the auto-act pass passes `false` and never overrules a domain rule.
+   */
+  liftOverDomain?: boolean;
+}
+
+/**
+ * `@trafficflow/core/rule-order#addressPriorityOver`, pinned here for the header's reason (this
+ * package does not import core); `screener-apply-lift.test.ts` holds the two equal. The lowest
+ * priority at or above `held` meeting every domain rule filing elsewhere; `null` past the bound.
+ */
+export function addressPriorityOver(
+  domainRules: readonly { priority: number; destination: string }[], destination: string, held: number,
+): number | null {
+  const finite = (p: number) => (Number.isFinite(p) ? p : 0);
+  let need = finite(held);
+  for (const r of domainRules) {
+    if (r.destination !== destination) need = Math.max(need, finite(r.priority));
+  }
+  return need > RULE_PRIORITY_MAX ? null : need;
 }
 
 /** A mailbox whose held bag this decision could NOT touch — the caller decides what to do about it. */
@@ -332,7 +360,7 @@ export async function applyScreenerDecision(
 ): Promise<ApplyScreenerDecisionResult> {
   const {
     accountId, scope, address, appliedFolder, decision, triggeringActionId, now,
-    stampBaseline = true, applyRetro = true, retargetTwins = true,
+    stampBaseline = true, applyRetro = true, retargetTwins = true, liftOverDomain = true,
   } = input;
   const domain = domainOf(address);
 
@@ -358,6 +386,17 @@ export async function applyScreenerDecision(
     });
   }
 
+  // Read inside the decide's own transaction, so the priority answers the rules this write sees.
+  const priority = scope === "sender" && liftOverDomain && domain !== ""
+    ? addressPriorityOver(
+        (await tx.select({ priority: rulesTbl.priority, destination: rulesTbl.destination }).from(rulesTbl)
+          .where(and(
+            eq(rulesTbl.accountId, accountId), eq(rulesTbl.enabled, true), eq(rulesTbl.kind, "domain"),
+            sql`lower(${rulesTbl.match}) = ${domain}`,
+          ))).map((r) => ({ priority: r.priority, destination: canonicalNewsSpelling(r.destination) })),
+        canonicalNewsSpelling(appliedFolder), 0,
+      ) ?? 0
+    : 0;
   const [rule] = await tx.insert(rulesTbl).values({
     accountId,
     kind: scope === "domain" ? "domain" : "sender",
@@ -365,6 +404,7 @@ export async function applyScreenerDecision(
     destination: appliedFolder,
     provenance: "promoted",
     enabled: true,
+    priority,
     // The backlog this decision does NOT reach: the held bag is re-routed below, and everything of
     // this sender's that was filed before the gate held them is `rule-retro.ts`'s, on the press the
     // surface just carried. NULL when declined — "nobody asked" is a different fact from "asked

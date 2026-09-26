@@ -23,6 +23,8 @@ import {
   type EntityReader,
   type Folder,
   type MutationStatus,
+  type PressForecast,
+  type PressResolution,
   type RuleDTO,
 } from "@ohmail/client-engine";
 import type { DecisionDestination } from "@ohmail/ui";
@@ -92,6 +94,8 @@ export interface ScreeningSubject {
   messages: EngineMessage[];
   /** Where the lists show that mail ({@link senderScreening}'s `placeOf`), or null when spread. */
   current: ScreeningPlace | null;
+  /** Each place the lists show that mail in, with how many — most first. */
+  places: Array<{ place: ScreeningPlace; count: number }>;
   /** Still waiting: the ONLY state `POST /screener/:id` will resolve. */
   waiting: boolean;
   /** The representative message id that endpoint takes (the newest held one). */
@@ -233,11 +237,16 @@ function subjectOf(messages: EngineMessage[], placeOf?: ReadonlyMap<string, Fold
     const place = placeOf?.has(m.id) ? placeOf.get(m.id)! : m.folder;
     return place === null ? "history" : DEST_OF_FOLDER.get(canonicalDestination(place) as Folder);
   };
-  const places = new Set(messages.map(shown).filter(Boolean));
+  const counts = new Map<ScreeningPlace, number>();
+  for (const m of messages) {
+    const p = shown(m);
+    if (p) counts.set(p, (counts.get(p) ?? 0) + 1);
+  }
   const held = messages.filter((m) => m.folder === FOLDER_OF_VIEW.screener);
   return {
     messages,
-    current: places.size === 1 ? ([...places][0] as ScreeningPlace) : null,
+    current: counts.size === 1 ? [...counts.keys()][0]! : null,
+    places: [...counts].map(([place, count]) => ({ place, count })).sort((a, b) => b.count - a.count),
     waiting: held.length > 0,
     // The newest HELD message, because `POST /screener/:id` resolves `:id` against held mail
     // only. Under domain scope that may belong to a different address than the one clicked —
@@ -434,6 +443,43 @@ export function planScreeningChange(
     retro,
     unsubscribes: promoted && DECISION_OF_DEST[dest] === "no",
   };
+}
+
+/** The answer the sheet's step gave, and the forecast it was given over. */
+export interface ScreeningPress {
+  resolution: PressResolution;
+  /** The rules the step named, as the person saw them. */
+  shown: readonly RuleDTO[];
+  forecast: PressForecast;
+}
+
+/**
+ * WHICH DOOR A SHEET PRESS GOES THROUGH. A subject waiting at the gate is decided (no window: the
+ * Screener's own pending state hides it); an address past the gate that makes a rule is held in
+ * the routing window, with Undo; a domain press and a move-only press go at once.
+ */
+export type ScreeningPath = "decide" | "window" | "immediate";
+
+export function screeningPath(s: SenderScreening, scope: ScreeningScope, makeRule: boolean): ScreeningPath {
+  const subject = s.scopes[scope];
+  if (subject.waiting && subject.representativeId != null) return "decide";
+  return scope === "sender" && makeRule ? "window" : "immediate";
+}
+
+/** The writes the answer "the press wins" adds to the ladder, as the forecast named them. */
+export function resolutionExtras(press: ScreeningPress | undefined): EngineMutation[] {
+  if (!press || press.resolution !== "remove") return [];
+  return press.forecast.remove.writes.filter((w) => !press.forecast.keep.writes.includes(w));
+}
+
+/** The plan with those writes in it: before a decide, after the ladder, awaited as rule writes. */
+export function withResolution(plan: ScreeningPlan, extras: readonly EngineMutation[]): ScreeningPlan {
+  if (extras.length === 0) return plan;
+  const promoted = plan.ruleState === "promoted";
+  const mutations = promoted
+    ? [...extras, ...plan.mutations]
+    : [...plan.ruleMutations, ...extras, ...plan.mutations.filter((m) => !plan.ruleMutations.includes(m))];
+  return { ...plan, mutations, ruleMutations: [...(promoted ? [] : plan.ruleMutations), ...extras] };
 }
 
 /**

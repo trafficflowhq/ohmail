@@ -5,7 +5,7 @@ import {
   disarmRoutingIntent,
   routingSubject,
   takeRoutingIntents,
-  type RoutingIntent,
+  type AnyRoutingIntent,
 } from "./routing-intents.js";
 
 /**
@@ -67,13 +67,13 @@ export interface RoutingWindowDeps {
    * answer — the rule is already standing, or the sender has moved past this press — and the
    * caller says so rather than dispatching nothing in silence.
    */
-  plan: (intent: RoutingIntent) => readonly EngineMutation[];
+  plan: (intent: AnyRoutingIntent) => readonly EngineMutation[];
   /** What the routing half is committed THROUGH. The surface's own filing dispatch. */
-  dispatch: (mutations: readonly EngineMutation[], intent: RoutingIntent) => Promise<void>;
+  dispatch: (mutations: readonly EngineMutation[], intent: AnyRoutingIntent) => Promise<void>;
   /** The cross-tab coordinator, where there is more than one window. */
   windows?: TabWindows | undefined;
   /** Called whenever the open set changes, with the intents still held. */
-  onPending?: (open: readonly RoutingIntent[]) => void;
+  onPending?: (open: readonly AnyRoutingIntent[]) => void;
   /** Epoch ms. Injected so the TTL and the resume are testable without a fake clock. */
   now?: () => number;
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
@@ -82,23 +82,23 @@ export interface RoutingWindowDeps {
 
 export interface RoutingWindow {
   /** One press. Opens a window, or commits at once when the jar refused the record. */
-  open: (intent: RoutingIntent) => RoutingOpen;
+  open: (intent: AnyRoutingIntent) => RoutingOpen;
   /** Take the press on this subject back. `true` ONLY when a window was open. */
   undo: (subject: string) => boolean;
   /** Commit every open window now, without waiting. Unmount, `pagehide`, sign-out. */
   flush: () => void;
   /** The intents a window is open over. */
-  pending: () => readonly RoutingIntent[];
+  pending: () => readonly AnyRoutingIntent[];
   /**
    * BOOT. Commits what elapsed while the app was closed, RESUMES what did not with the time it
    * has left, hands back what died of age so the caller can say so, and SKIPS what another tab
    * is holding or has already resolved. Once per mount.
    */
   replay: (nowMs: number) => Promise<{
-    committed: RoutingIntent[];
-    resumed: RoutingIntent[];
-    expired: RoutingIntent[];
-    elsewhere: RoutingIntent[];
+    committed: AnyRoutingIntent[];
+    resumed: AnyRoutingIntent[];
+    expired: AnyRoutingIntent[];
+    elsewhere: AnyRoutingIntent[];
   }>;
 }
 
@@ -126,7 +126,7 @@ export function createRoutingWindow(deps: RoutingWindowDeps): RoutingWindow {
   const clock = deps.now ?? (() => Date.now());
 
   /** One entry per OPEN press, by subject. */
-  const open = new Map<string, { intent: RoutingIntent; timer: ReturnType<typeof setTimeout> }>();
+  const open = new Map<string, { intent: AnyRoutingIntent; timer: ReturnType<typeof setTimeout> }>();
 
   const publish = (): void => { deps.onPending?.([...open.values()].map((e) => e.intent)); };
 
@@ -137,7 +137,7 @@ export function createRoutingWindow(deps: RoutingWindowDeps): RoutingWindow {
    * leaves: the engine persists a verb to its outbox ahead of the wire, so between here and that
    * write this journal is the only durable copy of the press.
    */
-  const send = (intent: RoutingIntent): void => {
+  const send = (intent: AnyRoutingIntent): void => {
     const done = (): void => {
       disarmRoutingIntent(deps.door, deps.key, intent.id);
       /* AND NO OTHER TAB MAY REPLAY IT — resolved means resolved, whichever tab boots next. */
@@ -163,7 +163,7 @@ export function createRoutingWindow(deps: RoutingWindowDeps): RoutingWindow {
     send(entry.intent);
   };
 
-  const hold = (intent: RoutingIntent, ms: number): void => {
+  const hold = (intent: AnyRoutingIntent, ms: number): void => {
     const timer = arm(() => close(routingSubject(intent)), ms);
     open.set(routingSubject(intent), { intent, timer });
     deps.windows?.claim([{ id: intent.id, at: intent.at }]);
@@ -228,9 +228,9 @@ export function createRoutingWindow(deps: RoutingWindowDeps): RoutingWindow {
          open, so the question comes first and the answer is waited for. */
       await deps.windows?.ask();
       const { live, expired } = takeRoutingIntents(deps.door, deps.key, nowMs);
-      const committed: RoutingIntent[] = [];
-      const resumed: RoutingIntent[] = [];
-      const foreign: RoutingIntent[] = [];
+      const committed: AnyRoutingIntent[] = [];
+      const resumed: AnyRoutingIntent[] = [];
+      const foreign: AnyRoutingIntent[] = [];
       const heldElsewhere = deps.windows?.elsewhere(nowMs, deps.windowMs) ?? new Set<string>();
       const settledElsewhere = deps.windows?.resolved() ?? new Set<string>();
       for (const intent of live) {

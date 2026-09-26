@@ -663,6 +663,12 @@ export interface RuleDTO {
   stats: { hits: number; lastHitAt: ISODateTime | null; demotions: number };
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
+  /**
+   * THE BACKLOG PASS: when past mail was asked for, and when the organizer's pass finished it.
+   * ABSENT IS UNKNOWN — an older server or sidecar does not send it — and never reads as done:
+   * a surface then never says every message arrived when past mail was asked for.
+   */
+  retro?: { requestedAt: ISODateTime | null; doneAt: ISODateTime | null };
 }
 
 export interface EngineDraft {

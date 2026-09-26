@@ -879,6 +879,12 @@ export interface RuleDTO {
   stats: { hits: number; lastHitAt: ISODateTime | null; demotions: number };
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
+  /**
+   * The backlog pass: when past mail was asked for (`null` = nobody asked) and when the
+   * organizer's pass finished it (`null` = not yet). No count and no cursor: the count is taken
+   * from the filed folder and the cursor is the walk's own bookkeeping.
+   */
+  retro: { requestedAt: ISODateTime | null; doneAt: ISODateTime | null };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

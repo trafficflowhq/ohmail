@@ -6,13 +6,10 @@ import {
 import { recordChange, recordRuleDelta, type LedgerTx, type Tx } from "./change-log.js";
 import { dialect } from "./dialect/index.js";
 import { insertOrganizerRequest, TERMINAL_REQUEST_STATES } from "./organizer-requests.js";
-import { NEWS_FOLDER, canonicalNewsSpelling } from "./screener-apply.js";
+import { NEWS_FOLDER, RULE_PRIORITY_MAX, canonicalNewsSpelling } from "./screener-apply.js";
 
-/**
- * `@trafficflow/core/rule-order#RULE_PRIORITY_MAX`, copied: this package does not import core.
- * `test/rule-priority-one-bound.test.ts` pins the two equal.
- */
-export const RULE_PRIORITY_MAX = 1000;
+/** The one bound, pinned beside the decide's lift in `screener-apply.ts` and re-exported here. */
+export { RULE_PRIORITY_MAX };
 
 /**
  * `recordChange` wants `LedgerTx` (`PgTransaction`, narrower than `Tx`/`PgDatabase`) because it is

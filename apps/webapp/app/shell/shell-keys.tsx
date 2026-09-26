@@ -181,6 +181,7 @@ export interface ShellKeysInput {
   selectedOhbox: ShellOpenState["selectedOhbox"];
   senderAudit: ShellOpenState["senderAudit"];
   senderMenu: ShellOpenState["senderMenu"];
+  senderMenuBack: ShellOpenState["senderMenuBack"];
   setBarPanel: ShellOpenState["setBarPanel"];
   setFr: Dispatch<SetStateAction<{ step: number; items: TriagePileEntry[] } | null>>;
   setFrPending: ShellOpenState["setFrPending"];
@@ -223,7 +224,7 @@ export function useShellKeys({
   ohbox, openFolder, ownAddresses, partition, piles, receipts, scheduled, tagGroups, tags,
   trashPage,
   barPanel, focused, fr, frValues, picker, railOpen, readerFor, readerMessage,
-  selectedOhbox, senderAudit, senderMenu, setBarPanel, setFr, setFrPending, setPicker, setRailOpen,
+  selectedOhbox, senderAudit, senderMenu, senderMenuBack, setBarPanel, setFr, setFrPending, setPicker, setRailOpen,
   setReaderFor, setScreenerFull, setSenderAudit, setSenderMenu, setShortcutsOpen, setSubjectRule,
   shortcutsOpen, startFR, subjectRule,
   mailSend, openForward, sendReply, toggleReply,
@@ -262,7 +263,9 @@ export function useShellKeys({
     // on screen. (It closes the popover on open, so in practice they are never both set — the
     // ordering is here so that stays a property of this list rather than of one callback.)
     [subjectRule != null, () => setSubjectRule(null)],
-    [senderMenu != null, () => setSenderMenu(null)],
+    // The sheet steps back first — from its resolve step or its confirm to the list — and only
+    // an Escape on the list closes it.
+    [senderMenu != null, () => { if (senderMenuBack.current?.() !== true) setSenderMenu(null); }],
     [picker != null, () => setPicker(null)],
     [fr != null, () => setFr(null)],
     // The 390px navigation drawer. It sits over the deck and intercepts every press until it

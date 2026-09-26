@@ -2083,3 +2083,20 @@ function climb(input: MailStateInputs): MailState {
 export function stripSpeaks(key: MailStateKey): boolean {
   return key !== "quiet";
 }
+
+/**
+ * WHO ORGANIZES THE MAILBOXES A SHEET'S SUBJECT LIVES IN, when it is another install: its name, or
+ * `null` when it has none on the wire. `undefined` when this install organizes them (or nothing is
+ * recorded), which is when a rule made from the sheet is made now.
+ */
+export function otherOrganizerOf(
+  facts: readonly OrganizerRow[] | null | undefined, mailboxIds: ReadonlySet<string>,
+): { name: string | null } | undefined {
+  for (const m of facts ?? []) {
+    if (m.id === undefined || !mailboxIds.has(m.id) || m.organizerRole !== "reader") continue;
+    if (!m.organizedBy || !(m.organizedBy.kind || m.organizedBy.name)) continue;
+    const name = m.organizedBy.name?.trim();
+    return { name: name ? name : null };
+  }
+  return undefined;
+}

@@ -210,6 +210,14 @@ function isBare(r: RuleDTO): boolean {
 }
 
 /**
+ * A rule's two terms as the order reads them (case-folded, trimmed, `null` when absent) — the
+ * reader the press modules use, so none of them imports the order itself (`press-forecast.ts`).
+ */
+export function ruleTerms(r: RuleDTO): { subject: string | null; body: string | null } {
+  return { subject: subjectTermOf(r), body: bodyTermOf(r) };
+}
+
+/**
  * The ONE destination a decision names for this sender, or `null` when no decision exists. With a
  * bare rule, the winner among the bare rules (the router files every message no term claims there);
  * with only narrowed rules, core `standingRule`'s reading over all of them. At equal priority the

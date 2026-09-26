@@ -1,8 +1,7 @@
 import {
   LEGACY_NEWS_FOLDER, canonicalDestination, isOrganizedFolder, retroPassWouldMove,
 } from "@trafficflow/core/destinations";
-import { subjectTermOf } from "@trafficflow/core/rule-order";
-import { consentIndex, placedRule } from "./consent-cutline.js";
+import { consentIndex, placedRule, ruleTerms } from "./consent-cutline.js";
 import type { EntityReader } from "./store.js";
 import type { EngineMessage, Folder, RuleDTO } from "./types.js";
 
@@ -71,7 +70,7 @@ export function pressOutcome(input: {
 }
 
 function causeOf(r: RuleDTO): PressStayCause {
-  if (subjectTermOf(r) !== null) return "subject";
+  if (ruleTerms(r).subject !== null) return "subject";
   return r.kind === "domain" ? "domain" : "address";
 }
 
@@ -95,7 +94,7 @@ export function stayVerdict(out: PressOutcome, reader: EntityReader): StayVerdic
   const of = (c: PressStayCause) => out.away.filter((g) => g.cause === c);
   const ruled = [...of("subject"), ...of("domain"), ...of("address")];
   const only = ruled.length === 1 ? ruled[0]! : null;
-  if (only?.rule && subjectTermOf(only.rule) !== null) {
+  if (only?.rule && ruleTerms(only.rule).subject !== null) {
     return {
       key: "kept", count: out.at, kept: only.messageIds.length, keptPlace: only.rule.destination,
       term: only.rule.subjectContains!.trim(), rule: only.rule,

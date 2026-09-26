@@ -100,12 +100,16 @@ import { Copy } from "../copy";
 import { blobToBase64 } from "../mail/blob-base64";
 import { logAttachmentRefusal } from "../engine/engine-log";
 import { refuse, type Refusal, type RefusalArg } from "../refusal";
-import { pressOutcome, stayVerdict } from "@ohmail/client-engine";
+import {
+  planScreenCommit, pressForecast, pressOutcome, ruleFingerprint, rulesInPlay, stayVerdict,
+  type AnyRoutingIntent, type ConsentOptions, type PressForecast, type PressResolution, type RulesInPlay,
+  type ScreenIntent,
+} from "@ohmail/client-engine";
 import { destLabel, DESTINATIONS as SCREEN_DESTS } from "./model";
 import { ACCESS_REFUSED_CODE } from "../net/access-lock";
 import { folderLeafOf, folderUnreadCounts } from "./folders";
 /* Move/Junk: the mail now, the sender's routing after the window. See the module. */
-import { holdRouting, undoRouting } from "./held-routing";
+import { holdRouting, holdScreenRouting, undoRouting, type ScreenCommitAnswer } from "./held-routing";
 import type { ScreeningAnswer } from "../net/consent";
 import type { ServerWaitingSender } from "../net/screener";
 import {
@@ -269,7 +273,24 @@ export function presentedWorld(
   screening: ScreeningPosture = SCREENING_UNSUPPLIED,
   ownAddresses?: readonly string[],
 ): PresentedWorld {
-  const partition = consentPartition(reader, {
+  const partition = consentPartition(reader, presentedOptions(now, foldersEnabled, screening, ownAddresses));
+  return {
+    reader: presentationReader(reader, partition),
+    history: partition.history,
+    cutlinePending: screening.state === "unanswered",
+  };
+}
+
+/**
+ * THE OPTIONS THE PHONE'S LISTS ARE PARTITIONED WITH — one builder, read by {@link presentedWorld}
+ * and by a screening press's forecast, so the step and the list cannot place one row two ways.
+ */
+export function presentedOptions(
+  now: Date, foldersEnabled = false,
+  screening: ScreeningPosture = SCREENING_UNSUPPLIED,
+  ownAddresses?: readonly string[],
+): ConsentOptions {
+  return {
     now,
     foldersEnabled,
     ...(screening.state === "answered"
@@ -285,11 +306,6 @@ export function presentedWorld(
        client's sync vocabulary carries none — so an empty set, which is what let the reader
        appear in their own queue. Passed whenever the mailbox read has landed. */
     ...(ownAddresses === undefined ? {} : { ownAddresses }),
-  });
-  return {
-    reader: presentationReader(reader, partition),
-    history: partition.history,
-    cutlinePending: screening.state === "unanswered",
   };
 }
 
@@ -442,8 +458,27 @@ function pressReadBack(
   }
 }
 
+/**
+ * Whether the backlog pass is finished for the rules a commit wrote — a create's server id, an
+ * update's own. A rule with no stamp (an older server) or a create whose id is not known is NOT
+ * finished: the phone never says every message arrived over a pass it cannot see.
+ */
+function retroFinished(
+  reader: EntityReader, mutations: readonly EngineMutation[], answers: readonly (MutationResult | null)[],
+): boolean {
+  for (let i = 0; i < mutations.length; i++) {
+    const m = mutations[i]!;
+    const id = m.kind === "rule_update" ? m.ruleId : m.kind === "rule_create" ? answers[i]?.entityId : null;
+    if (m.kind !== "rule_update" && m.kind !== "rule_create") continue;
+    if (!id) return false;
+    const r = reader.get<RuleDTO>("rule", id);
+    if (!r?.retro || (r.retro.requestedAt !== null && r.retro.doneAt === null)) return false;
+  }
+  return true;
+}
+
 /** A pile's name for a folder in either News spelling; a folder of the user's own by its leaf. */
-function folderName(folder: string): string {
+export function folderName(folder: string): string {
   const view = VIEW_OF_FOLDER[folder as Folder];
   return (SCREEN_DESTS as readonly string[]).includes(view) ? destLabel(view as Destination) : folderLeafOf(folder);
 }
@@ -1816,6 +1851,27 @@ export function planPhoneRouting(
   return releaseRules(reader, intent.address, intent.from as Folder, folder).mutations;
 }
 
+/** The sheet step's answer over the rules that disagree, and the forecast it was asked over. */
+export interface PhoneScreenPress {
+  resolution: PressResolution;
+  shown: readonly RuleDTO[];
+  forecast: PressForecast;
+}
+
+/**
+ * WHAT A HELD PRESS COMMITS — a sheet press through the one commit planner, its answers riding
+ * the v2 intent; a Move through the phone's own ladder. A v2 row read as a Move would find no
+ * `from` and write nothing, the sheet's press lost with its rule.
+ */
+export function planHeldRouting(
+  reader: EntityReader, intent: AnyRoutingIntent, onChanged?: (changed: readonly string[]) => void,
+): EngineMutation[] {
+  if (intent.v !== 2) return planPhoneRouting(reader, intent);
+  const out = planScreenCommit(reader, intent);
+  onChanged?.(out.changed);
+  return out.writes;
+}
+
 
 /** `PATCH /messages` id cap per request — the webapp's own batch size. */
 const MARK_SEEN_MAX = 200;
@@ -2181,6 +2237,8 @@ export interface LiveDeps {
    * world always supplies it.
    */
   presented?: () => EntityReader;
+  /** The options those lists are partitioned with ({@link presentedOptions}), for a press's forecast. */
+  presentedOptions?: () => ConsentOptions;
   /**
    * A DECIDE THE SERVER CONFIRMED, HANDED BACK TO WHOEVER HOLDS THE CACHED QUEUE — the paired
    * door's waiting shelf is that cache, and without this it kept the decided sender until the
@@ -2203,6 +2261,10 @@ export interface LiveDeps {
 /* …and the reader type, for the same reason: the world holds the projection the lists are
    drawn from and hands it back through {@link LiveDeps.presented}, so it has to name it. */
 export type { AbandonedMutation, EntityReader, MutationResult } from "@ohmail/client-engine";
+/* The sheet's step reads the press's forecast and the rules in play by this door too. */
+export type {
+  ConflictGroup, ConsentOptions, PressForecast, RuleDTO as WorldRule, RuleLine, RulesInPlay,
+} from "@ohmail/client-engine";
 
 export interface LiveWorldActions {
   /** Opening a message marks it read and asks for its full text + conversation + files. */
@@ -2410,7 +2472,11 @@ export interface LiveWorldActions {
    * SCREENING from the open message: where THIS SENDER's mail goes — the webapp sender sheet's
    * rule ladder (`sender-screening.ts#planScreeningChange`), in the phone's idiom.
    */
-  screenSender(messageId: string, dest: Destination, scope: Scope, applyRetro?: boolean): Promise<boolean>;
+  screenSender(messageId: string, dest: Destination, scope: Scope, applyRetro?: boolean, press?: PhoneScreenPress): Promise<boolean>;
+  /** The press before it is made — where the lists would show the sender's mail afterwards. */
+  screeningForecast(messageId: string, dest: Destination, scope: Scope, applyRetro: boolean): PressForecast | null;
+  /** "Their rules": every rule deciding the sender's mail today, as the lists place it. */
+  screeningRules(messageId: string, scope: Scope): RulesInPlay | null;
 
   /* The folder verbs (FOLDERS-SPEC.md stage 2) — the webapp `useFolderVerbs` arms.
    * User-commanded real IMAP operations in the user's own mailbox, on the same engine
@@ -3698,8 +3764,145 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * see {@link movePastMail}; the rule is awaited and reported, the moves roll their own rows
    * back. Raw mirror reads.
    */
+  /** The press's forecast over the raw mirror and the lists' own options (`presentedOptions`). */
+  const forecastOf = (
+    raw: EntityReader, subject: readonly EngineMessage[], scope: Scope, match: string, wanted: Folder,
+    applyRetro: boolean, decide?: Extract<EngineMutation, { kind: "screener_decide" }>,
+  ): PressForecast => pressForecast({
+    reader: raw, options: deps.presentedOptions?.() ?? presentedOptions(now(), false, SCREENING_UNSUPPLIED, deps.ownAddresses?.()),
+    subject, scope, match, wanted, makeRule: true, applyRetro, now: now(), ...(decide ? { decide } : {}),
+  });
+
+  /** The subject a press is about, read as `screenSender` reads it. */
+  const subjectFor = (messageId: string, scope: Scope) => {
+    const m = messageOf(messageId);
+    if (!m) return null;
+    const address = m.from.address.trim().toLowerCase();
+    const domain = domainOf(address).toLowerCase();
+    if (scope === "domain" && (domain === "" || !address.includes("@"))) return null;
+    const match = scope === "domain" ? domain : address;
+    const ofSubject = (x: EngineMessage): boolean =>
+      scope === "domain"
+        ? domainOf(x.from.address.trim().toLowerCase()).toLowerCase() === match
+        : x.from.address.trim().toLowerCase() === match;
+    return { m, match, ofSubject, subject: engine.read().list<EngineMessage>("message").filter(ofSubject) };
+  };
+
+  const screeningForecast = (messageId: string, dest: Destination, scope: Scope, applyRetro: boolean): PressForecast | null => {
+    const at = subjectFor(messageId, scope);
+    if (!at) return null;
+    const wanted = FOLDER_OF_VIEW[dest as ScreenDest];
+    const waiting = at.subject.filter((x) => physicalFolderOf(x) === FOLDER_OF_VIEW.screener).sort(newestFirst)[0];
+    const decision: "yes" | "no" = dest === "screened" || dest === "spam" ? "no" : "yes";
+    return forecastOf(engine.read(), at.subject, scope, at.match, wanted, applyRetro, waiting
+      ? { kind: "screener_decide", senderId: waiting.id, decision, dest: dest as ScreenDest, scope, applyRetro }
+      : undefined);
+  };
+
+  const screeningRules = (messageId: string, scope: Scope): RulesInPlay | null => {
+    const at = subjectFor(messageId, scope);
+    if (!at) return null;
+    const raw = engine.read();
+    const options = deps.presentedOptions?.() ?? presentedOptions(now(), false, SCREENING_UNSUPPLIED, deps.ownAddresses?.());
+    return rulesInPlay({ reader: raw, placeOf: consentPartition(raw, options).placeOf, subject: at.subject, scope, match: at.match });
+  };
+
+  /**
+   * THE WINDOW PRESS (the web's `holdScreenPress`): the press says what it does, with Undo; the
+   * commit re-plans through `planScreenCommit` and the list is read back once the rules are answered
+   * and the moves settled. No session to hold it: the rules go now and the same reading follows.
+   */
+  const screenThroughWindow = async (p: {
+    m: EngineMessage; dest: Destination; wanted: Folder; target: string; match: string;
+    ofSubject: (x: EngineMessage) => boolean; subject: readonly EngineMessage[];
+    applyRetro: boolean; press: PhoneScreenPress | undefined;
+  }): Promise<boolean> => {
+    const raw = engine.read();
+    const resolution = p.press?.resolution ?? "keep";
+    const forecast = p.press?.forecast ?? forecastOf(raw, p.subject, "sender", p.match, p.wanted, p.applyRetro);
+    const landing = new Set(forecast[resolution].landing);
+    const shown = p.press?.shown ?? [];
+    const intent: ScreenIntent = {
+      v: 2, verb: "screen", id: deps.uuid ? deps.uuid() : `${p.m.id}:${now().getTime()}`, seedId: p.m.id,
+      address: p.m.from.address, scope: "sender", dest: p.dest as ScreenDest, messageIds: [...landing],
+      makeRule: true, applyRetro: p.applyRetro, resolution,
+      shown: shown.slice(0, 20).map((r) => ({ id: r.id, fp: ruleFingerprint(r) })), at: now().getTime(),
+    };
+    // Only the rows the list will show at the place move: under "keep" a kept row stays put.
+    const moves: EngineMutation[] = p.applyRetro
+      ? [...p.subject].filter((x) => landing.has(x.id) && retroPassWouldMove(x, p.wanted)).sort(newestFirst).slice(0, 50)
+        .map((x) => ({ kind: "move", messageId: x.id, folder: p.wanted }))
+      : [];
+    const inv = moves.flatMap((mu) => inverseMutations(engine.verbRead(), mu));
+    const settled = moves.map((mu) => engine.mutate(mu).catch(() => null));
+    const place = destDone(p.dest);
+    const termOf = (r: RuleDTO) => (r.subjectContains ?? r.bodyContains ?? "").trim();
+
+    const readBack = (a: ScreenCommitAnswer): boolean => {
+      for (const id of a.changed) {
+        const r = shown.find((x) => x.id === id);
+        if (r && termOf(r) !== "") toast(refuse("screeningVerdictChanged", termOf(r)));
+      }
+      const verdicts = a.answers.map((x) => (x ? pressVerdict(x) : PRESS_THREW));
+      const back = tallyVerdicts(verdicts);
+      if (back.refused > 0 || back.queued > 0) {
+        return saidAll(verdicts, refuse("liveDecided", place, p.target), refuse("liveDecideFailed", p.m.from.address));
+      }
+      const lists = deps.presented?.() ?? presentedOf(engine.read(), now(), false, SCREENING_UNSUPPLIED, deps.ownAddresses?.());
+      const stay = pressReadBack(engine.read(), lists, p.ofSubject, p.wanted, place, p.applyRetro);
+      if (stay) { toast(stay); return true; }
+      const at = pressOutcome({
+        presented: lists, subject: engine.read().list<EngineMessage>("message").filter(p.ofSubject),
+        rules: rulesList(engine.read()), wanted: p.wanted, retro: false,
+      }).at;
+      // "All" only when no backlog pass is still applying the rule; an unknown pass never reads done.
+      toast(p.applyRetro && !retroFinished(engine.read(), a.mutations, a.answers)
+        ? refuse("liveVerdictApplying", at, place)
+        : refuse("screeningVerdictAll", at, p.target, place));
+      return true;
+    };
+
+    const opened = holdScreenRouting(intent, (a) => { void Promise.allSettled(settled).then(() => readBack(a)); });
+    if (!opened.held) {
+      const writes = planScreenCommit(raw, intent).writes;
+      const answers = await Promise.all(writes.map((w) => engine.mutate(w).catch((): MutationResult | null => null)));
+      await Promise.allSettled(settled);
+      return readBack({ mutations: writes, answers, changed: [] });
+    }
+    const subjectKey = routingSubject({ scope: "sender", address: p.m.from.address });
+    toast(pressSentence(forecast, resolution, shown, place, p.target, p.applyRetro), {
+      holdMs: UNDO_MS,
+      undo: () => {
+        const cancelled = undoRouting(subjectKey);
+        void Promise.all(inv.map((mu) => watched(engine.mutate(mu)))).then((vs) => {
+          saidAll(vs, refuse(cancelled ? "screeningRoutingUndoneRules" : "toastUndone"), refuse("liveSaveFailed"));
+        });
+      },
+    });
+    return true;
+  };
+
+  /** The press's own sentence on the phone — the web's `pressSentence`, in the phone's copy. */
+  const pressSentence = (
+    f: PressForecast, resolution: PressResolution, shown: readonly RuleDTO[], place: string, target: string, applyRetro: boolean,
+  ): Refusal => {
+    if (!applyRetro) return refuse("liveDecided", place, target);
+    const term = (r: RuleDTO | undefined) => (r?.subjectContains ?? r?.bodyContains ?? "").trim();
+    const terms = f.groups.filter((g) => g.cause === "term-subject" || g.cause === "term-body").map((g) => g.rule);
+    const named = terms.filter((r) => shown.some((x) => x.id === r.id));
+    if (named.length > 0 && resolution === "remove") return refuse("screeningPressRemoved", place, target, named.length, term(named[0]));
+    if (terms.length === 1 && resolution === "keep") {
+      return refuse("screeningPressKeptOne", place, target, term(terms[0]), folderName(terms[0]!.destination));
+    }
+    if (terms.length > 1 && resolution === "keep") return refuse("screeningPressKeptMany", place, target, terms.length);
+    if (f.exception) {
+      return refuse("screeningPressException", place, target, f.exception.rule.match, folderName(f.exception.rule.destination));
+    }
+    return refuse("screeningPressRuled", place, target);
+  };
+
   const screenSender = async (
-    messageId: string, dest: Destination, scope: Scope, applyRetro = true,
+    messageId: string, dest: Destination, scope: Scope, applyRetro = true, press?: PhoneScreenPress,
   ): Promise<boolean> => {
     const raw = engine.read();
     const m = messageOf(messageId);
@@ -3743,16 +3946,28 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       .sort(newestFirst)[0];
     const decision: "yes" | "no" = dest === "screened" || dest === "spam" ? "no" : "yes";
 
+    /* AN ADDRESS PRESS PAST THE GATE IS HELD, like a Move (`held-routing.ts`): the mail the list
+       will show at the place moves now, the rules are a v2 intent committed when the window
+       closes, and the list is read back once they are answered. */
+    if (!waiting && scope === "sender") {
+      return screenThroughWindow({ m, dest, wanted, target, ofSubject, subject, applyRetro, press, match });
+    }
+    const removals = press && press.resolution === "remove"
+      ? press.forecast.remove.writes.filter((w) => !press.forecast.keep.writes.includes(w))
+      : [];
+
     let ruled: Promise<PressVerdict[]>;
     if (waiting) {
-      ruled = watched(
+      // The step's removals go ahead of the decide, each answered with it.
+      const removed = removals.map((w) => watched(engine.mutate(w)));
+      ruled = Promise.all([...removed, watched(
         engine.mutate({
           kind: "screener_decide", senderId: waiting.id, decision, dest: dest as ScreenDest, scope,
           // The past-mail answer rides the decision, because the rule it promotes is the only rule
           // this press writes — the webapp's ruling, on the same wire.
           applyRetro,
         }),
-      ).then((v) => [v]);
+      )]);
       // The decide relocates the HELD rows and promotes the rule — it does not touch the
       // subject's mail that already left the gate. Those rows are the past-mail half (the
       // webapp's `planScreeningChange` shape: moves cover what the decide does not), so they
@@ -3763,7 +3978,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
          at the destination re-armed when the past-mail answer is yes (off, a habit-click writes
          nothing), and one rule written when there is none. */
       const { writes } = pressOverTwins(rulesList(raw), scope, match, wanted, applyRetro);
-      ruled = Promise.all(writes.map((w) => watched(engine.mutate(w))));
+      ruled = Promise.all([...writes, ...removals].map((w) => watched(engine.mutate(w))));
       // The optimistic half: what the reader can see moves now; the server's pass does the rest.
       movePastMail((x) => retroPassWouldMove(x, wanted));
     }
@@ -3829,6 +4044,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, markAllSeen, move,
     deleteMessage, trashList, trashRestore,
     sendReply, sendForward, sendNew, sendAndDoneOffered, withdrawSend, cancelSchedule, tagToggle, tagCreate, screenSender,
+    screeningForecast, screeningRules,
     draftDiscard, draftResolve, draftSendAgain,
     folderCreate, folderRename, folderDelete, folderDismiss,
   };
@@ -3933,7 +4149,9 @@ export interface WorldActions {
   sendOutcome(key: string): "pending" | "confirmed" | "rolled_back" | "unverified" | "unknown";
   tagToggle(messageId: string, tag: WorldTag, assigned: boolean): void;
   tagCreate(messageId: string, name: string): void;
-  screenSender(messageId: string, dest: Destination, scope: Scope, applyRetro?: boolean): void;
+  screenSender(messageId: string, dest: Destination, scope: Scope, applyRetro?: boolean, press?: PhoneScreenPress): void;
+  screeningForecast(messageId: string, dest: Destination, scope: Scope, applyRetro: boolean): PressForecast | null;
+  screeningRules(messageId: string, scope: Scope): RulesInPlay | null;
   /* The folder verbs — see {@link LiveWorldActions} for each arm's contract. */
   folderCreate(mailboxId: string, name: string): void;
   folderRename(folderId: string, name: string): void;
@@ -3993,7 +4211,9 @@ export function stableActions(current: () => WorldActions): WorldActions {
     sendOutcome: (key) => current().sendOutcome(key),
     tagToggle: (id, tag, assigned) => void current().tagToggle(id, tag, assigned),
     tagCreate: (id, name) => void current().tagCreate(id, name),
-    screenSender: (id, dest, scope, applyRetro) => void current().screenSender(id, dest, scope, applyRetro),
+    screenSender: (id, dest, scope, applyRetro, press) => void current().screenSender(id, dest, scope, applyRetro, press),
+    screeningForecast: (id, dest, scope, applyRetro) => current().screeningForecast(id, dest, scope, applyRetro),
+    screeningRules: (id, scope) => current().screeningRules(id, scope),
     folderCreate: (mailboxId, name) => void current().folderCreate(mailboxId, name),
     folderRename: (id, name) => void current().folderRename(id, name),
     folderDelete: (id) => void current().folderDelete(id),

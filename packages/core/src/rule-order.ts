@@ -67,6 +67,23 @@ function finitePriority(p: number): number {
 }
 
 /**
+ * THE PRIORITY AN ADDRESS RULE IS WRITTEN AT so no rule on its domain filing elsewhere outranks it:
+ * the lowest value at or above `held` that meets every such rule's priority (at equal priority the
+ * address wins by kind). `null` when that value would pass {@link RULE_PRIORITY_MAX}: every door
+ * refuses it, so the lift declines and the domain rule keeps deciding. Destinations are compared as
+ * given — the caller hands them in one spelling. Asked by the engine's write and by the decide.
+ */
+export function addressPriorityOver(
+  domainRules: readonly { priority: number; destination: string }[], destination: string, held: number,
+): number | null {
+  let need = finitePriority(held);
+  for (const r of domainRules) {
+    if (r.destination !== destination) need = Math.max(need, finitePriority(r.priority));
+  }
+  return need > RULE_PRIORITY_MAX ? null : need;
+}
+
+/**
  * The whitespace a term is trimmed of — the six characters the SQL CHECK and `ORDER BY` can
  * express (`[^ \t\n\r\f\v]`), deliberately not what `trim()` strips: a term of one U+00A0 would
  * rank specific in SQL and read absent here. Verified against Postgres in `rules-subject.pg`.

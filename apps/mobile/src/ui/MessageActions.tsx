@@ -49,6 +49,10 @@ import {
   type SignatureState,
   type WorldMail,
   type WorldTag,
+  folderName,
+  type ConflictGroup,
+  type PressForecast,
+  type WorldRule,
 } from "../state/live";
 import { useWorld } from "../state/world";
 import { BAR, PILL, compactFit } from "./action-bar-layout";
@@ -738,11 +742,38 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
    * promise the person could neither read nor decline.
    */
   const [applyRetro, setApplyRetro] = useState(true);
+  /** The resolve step over the rules that disagree, in place of the destinations; `null` is the list. */
+  const [step, setStep] = useState<PhoneStep | null>(null);
   const domain = domainOf(m.from.address);
   const hasDomain = m.from.address.includes("@") && domain !== "";
   const target = scope === "domain" ? `@${domain}` : m.from.address;
+  const inPlay = w.actions.screeningRules(m.id, scope);
+  const press = (dest: Destination) => {
+    const f = w.actions.screeningForecast(m.id, dest, scope, applyRetro);
+    const cls = f ? phoneStepClass(f, scope) : null;
+    if (f && cls) { setStep({ dest, forecast: f, cls, choice: cls === "domain" && !f.exception ? 1 : 0 }); return; }
+    onClose();
+    w.actions.screenSender(m.id, dest, scope, applyRetro);
+  };
   return (
-    <Sheet open onClose={onClose} label={Copy.actionScreening}>
+    /* The system back gesture in the step goes back to the list; on the list it closes the sheet. */
+    <Sheet open onClose={() => (step ? setStep(null) : onClose())} label={Copy.actionScreening}>
+      {step ? (
+        <PhoneResolveStep
+          step={step}
+          domain={domain}
+          onChoice={(choice) => setStep({ ...step, choice })}
+          onCommit={() => {
+            const tile = phoneTiles(step.cls, step.forecast)[step.choice]!;
+            onClose();
+            w.actions.screenSender(m.id, step.dest, tile.scope ?? scope, applyRetro, {
+              resolution: tile.resolution, shown: step.forecast.groups.map((g) => g.rule), forecast: step.forecast,
+            });
+          }}
+          onCancel={() => setStep(null)}
+        />
+      ) : (
+        <>
       <Txt variant="sectionLabel" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 8 }}>
         {Copy.screeningFor(m.from.name)}
       </Txt>
@@ -757,6 +788,17 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
             value={scope}
             onChange={setScope}
           />
+        </View>
+      ) : null}
+      {inPlay?.worthShowing ? (
+        <View style={{ paddingHorizontal: 14, paddingBottom: 8 }}>
+          <Txt variant="caption" tone="ink3">{Copy.screeningRulesHead}</Txt>
+          {inPlay.lines.slice(0, 3).map((line) => (
+            <PhoneRuleLine key={line.rules[0]!.id} rule={line.rules[0]!} count={line.count} domain={domain} />
+          ))}
+          {inPlay.inside ? (
+            <Txt variant="caption" tone="ink2">{Copy.screeningRuleInsideCount(inPlay.inside.senders, inPlay.inside.count)}</Txt>
+          ) : null}
         </View>
       ) : null}
       {/* THE PAST-MAIL OPTION, ABOVE THE DESTINATIONS, because it changes what pressing one of
@@ -784,13 +826,142 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
         <SheetRow
           key={dest}
           label={`→ ${destLabel(dest)}`}
-          onPress={() => { onClose(); w.actions.screenSender(m.id, dest, scope, applyRetro); }}
+          onPress={() => press(dest)}
         />
       ))}
       <Txt variant="caption" tone="ink3" style={{ paddingHorizontal: 14, paddingTop: 8 }}>
         {applyRetro ? Copy.screeningNoteRetro(target) : Copy.screeningNote(target)}
       </Txt>
+        </>
+      )}
     </Sheet>
+  );
+}
+
+/** The phone's step: which question, over which forecast, and the tile chosen. */
+interface PhoneStep {
+  dest: Destination;
+  forecast: PressForecast;
+  cls: "term" | "domain" | "inside";
+  choice: 0 | 1;
+}
+
+const isTermGroup = (g: ConflictGroup) => g.cause === "term-subject" || g.cause === "term-body";
+
+/** The web sheet's `stepClass`, read the same way. */
+function phoneStepClass(f: PressForecast, scope: Scope): PhoneStep["cls"] | null {
+  if (scope === "sender" && f.groups.some(isTermGroup)) return "term";
+  if (scope === "sender" && (f.exception !== null || f.groups.some((g) => g.cause === "domain-outranks"))) return "domain";
+  if (scope === "domain" && f.groups.some((g) => g.cause === "own-rule-inside")) return "inside";
+  return null;
+}
+
+/** Each tile's answer and words, the web sheet's `tilesOf` and its titles. */
+function phoneTiles(cls: PhoneStep["cls"], f: PressForecast): Array<{
+  resolution: "remove" | "keep"; scope?: Scope; title: (place: string, domain: string) => string; note: string | null; count: number;
+}> {
+  const terms = f.groups.filter(isTermGroup);
+  const inside = f.groups.filter((g) => g.cause === "own-rule-inside");
+  const listed = cls === "term" ? terms : inside;
+  const kept = listed.reduce((n, g) => n + (g.rows?.length ?? 0), 0);
+  const counted = listed.every((g) => g.rows !== null);
+  const outranking = f.exception?.rule ?? f.groups.find((g) => g.cause === "domain-outranks")?.rule ?? null;
+  const keep = {
+    resolution: "keep" as const, title: () => Copy.screeningResolveKeepTitle, count: f.keep.landing.length,
+    note: counted ? Copy.screeningResolveKeepNote(kept, listed.length || 1) : Copy.screeningResolveKeepNoteUncounted,
+  };
+  const wide = (place: string, domain: string) => Copy.screeningRuleLine(Copy.screeningRuleEveryone(domain), place);
+  if (cls === "term") {
+    return [{
+      resolution: "remove", title: (place) => Copy.screeningRuleLine(Copy.screeningRuleAll, place),
+      note: Copy.screeningResolveAllNote(terms.length), count: f.remove.landing.length,
+    }, keep];
+  }
+  if (cls === "inside") {
+    return [
+      { resolution: "keep", title: () => Copy.screeningResolveInsideKeepTitle, note: null, count: f.keep.landing.length },
+      { resolution: "remove", title: wide, note: Copy.screeningResolveInsideAllNote(inside.length), count: f.remove.landing.length },
+    ];
+  }
+  const everyone = { resolution: "keep" as const, scope: "domain" as const, title: wide, note: null, count: f.keep.places.size };
+  return f.exception
+    ? [{
+        resolution: "keep", title: (place) => Copy.screeningRuleLine(Copy.screeningRuleOnlyThis, place),
+        note: Copy.screeningResolveExceptNote(outranking?.match ?? "", folderName(outranking?.destination ?? "")),
+        count: f.keep.landing.length,
+      }, everyone]
+    : [everyone, keep];
+}
+
+/** One rule line: what it claims → where it files, and the rows it places (or "not counted here"). */
+function PhoneRuleLine({ rule, count, domain, inside = false }: {
+  rule: WorldRule; count: number | null; domain: string;
+  /** At domain scope an address rule is somebody's own, named by its address. */
+  inside?: boolean;
+}) {
+  const subjectTerm = (rule.subjectContains ?? "").trim();
+  const bodyTerm = (rule.bodyContains ?? "").trim();
+  const condition = rule.kind === "domain" ? Copy.screeningRuleEveryone(rule.match || domain)
+    : inside ? rule.match
+    : subjectTerm ? Copy.screeningRuleSubject(subjectTerm)
+      : bodyTerm ? Copy.screeningRuleBody(bodyTerm) : Copy.screeningRuleAll;
+  return (
+    <View style={{ flexDirection: "row", gap: 10, paddingTop: 2 }}>
+      <Txt variant="caption" tone="ink2" style={{ flex: 1 }}>
+        {Copy.screeningRuleLine(condition, folderName(rule.destination))}
+      </Txt>
+      <Txt variant="caption" tone="ink3">{count === null ? Copy.screeningRuleUncounted : String(count)}</Txt>
+    </View>
+  );
+}
+
+/** THE STEP, in the same sheet: the rules that disagree, two radio rows, the press and Cancel. */
+function PhoneResolveStep({ step, domain, onChoice, onCommit, onCancel }: {
+  step: PhoneStep; domain: string; onChoice: (c: 0 | 1) => void; onCommit: () => void; onCancel: () => void;
+}) {
+  const t = useTheme();
+  const f = step.forecast;
+  const place = destLabel(step.dest);
+  const terms = f.groups.filter(isTermGroup);
+  const inside = f.groups.filter((g) => g.cause === "own-rule-inside");
+  const outranking = f.exception?.rule ?? f.groups.find((g) => g.cause === "domain-outranks")?.rule ?? null;
+  const title = step.cls === "term"
+    ? Copy.screeningResolveTitle(place, terms.length)
+    : step.cls === "inside"
+      ? Copy.screeningResolveInsideTitle(place, new Set(inside.map((g) => g.rule.match.trim().toLowerCase())).size)
+      : Copy.screeningResolveDomainTitle(place, outranking?.match ?? domain, folderName(outranking?.destination ?? ""));
+  const lines = step.cls === "domain" ? (outranking ? [{ rule: outranking, count: null as number | null }] : [])
+    : (step.cls === "term" ? terms : inside).slice(0, 3).map((g) => ({ rule: g.rule, count: g.rows?.length ?? null }));
+  return (
+    <View style={{ paddingHorizontal: 14, gap: 8 }}>
+      <Txt variant="button">{title}</Txt>
+      {lines.map((l) => <PhoneRuleLine key={l.rule.id} rule={l.rule} count={l.count} domain={domain} inside={step.cls === "inside"} />)}
+      <View accessibilityRole="radiogroup" accessibilityLabel={Copy.screeningResolveChoiceAria} style={{ gap: 6, paddingTop: 4 }}>
+        {phoneTiles(step.cls, f).map((tile, i) => (
+          <Tap
+            key={i}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: step.choice === i }}
+            accessibilityLabel={tile.title(place, domain)}
+            onPress={() => onChoice(i as 0 | 1)}
+            style={({ pressed }) => ({
+              flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, paddingHorizontal: 2,
+              backgroundColor: pressed ? t.c.tint : "transparent",
+            })}
+          >
+            <View style={{ flex: 1 }}>
+              <Txt variant="button">{tile.title(place, domain)}</Txt>
+              <Txt variant="caption" tone="ink3">
+                {tile.note ? Copy.screeningNoteWithCount(tile.note, tile.count) : Copy.screeningCount(tile.count)}
+              </Txt>
+            </View>
+            {step.choice === i ? <Icon name="check" size={14} color={t.c.accentInk} /> : null}
+          </Tap>
+        ))}
+      </View>
+      <Button label={Copy.screeningResolveGo(place)} variant="solid" onPress={onCommit} />
+      <Button label={Copy.screeningResolveCancel} variant="quiet" onPress={onCancel} />
+    </View>
   );
 }
 

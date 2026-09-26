@@ -63,6 +63,52 @@
   line-height: 1.5;
   color: var(--ink2);
 }
+/* ── "Their rules": every rule deciding this subject's mail, the count on the right ── */
+.sm-rules {
+  padding: 0 18px 10px;
+  font-size:calc(11.5px + var(--type-up));
+  line-height: 1.5;
+  color: var(--ink2);
+}
+.sm-rules-head {
+  font-size:calc(11px + var(--type-up));
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink3);
+  padding-bottom: 2px;
+}
+.sm-rule-line {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.sm-rule-line .cond {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.sm-rule-line .n {
+  flex: none;
+  color: var(--ink3);
+  font-feature-settings: "tnum";
+  font-variant-numeric: tabular-nums;
+}
+.sm-rule-line .twins {
+  color: var(--ink3);
+}
+.sm-rules-more {
+  color: var(--ink3);
+}
+.sm-rules.in-step {
+  padding: 6px 0 0;
+}
+/* ── another install organizes this mailbox: a rule from here is made on its next pass ── */
+.sm-org {
+  margin: 0 18px 8px;
+  font-size:calc(11.5px + var(--type-up));
+  line-height: 1.5;
+  color: var(--ink2);
+}
 /* ── a section's label — the settings subhead, at the panel's size; it is also the rule ── */
 .sm-sec {
   padding: 10px 18px 0;
@@ -411,6 +457,72 @@ input.sm-edit-input {
   font-size:calc(11.5px + var(--type-up));
   line-height: 1.5;
   color: var(--ink2);
+}
+/* ── the resolve step's two answers: the scope tiles, stacked, the chosen one in the accent ── */
+.sm-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+.sm-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: stretch;
+  width: 100%;
+  padding: 8px 11px;
+  border-radius: calc(var(--r-ctl) * 10 / 8);
+  font-size:calc(12px + var(--type-up));
+  font-weight: 550;
+  color: var(--ink2);
+  text-align: left;
+  background: var(--panel);
+}
+.sm-choice .head {
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.sm-choice .head b {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.sm-choice .n {
+  flex: none;
+  font-size:calc(11px + var(--type-up));
+  color: var(--ink3);
+  font-feature-settings: "tnum";
+  font-variant-numeric: tabular-nums;
+}
+.sm-choice small {
+  font-size:calc(11.5px + var(--type-up));
+  line-height: 1.4;
+  color: var(--ink3);
+}
+.sm-choice:hover {
+  color: var(--ink);
+}
+.sm-choice.on {
+  color: var(--accent-ink);
+  font-weight: 650;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.sm-choice.on small,
+.sm-choice.on .n {
+  color: var(--accent-ink);
+}
+/* Focus follows the choice in a radiogroup, so the chosen tile's ring is its focus ring. */
+.sm-choice:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.sm-choice.on:focus-visible {
+  outline: none;
+}
+.sm-resolve .sm-resolve-unsub {
+  margin-top: 10px;
 }
 .sm-confirm-row {
   display: flex;

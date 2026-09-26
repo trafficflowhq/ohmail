@@ -17,16 +17,18 @@ import {
   type EngineMutation,
   type EntityReader,
   type Folder,
-  type RoutingIntent,
+  type AnyRoutingIntent,
+  type MutationResult,
   type RoutingOpen,
+  type ScreenIntent,
   type RoutingWindow,
 } from "@ohmail/client-engine";
 
 /** What one session's window needs to plan and to send. Supplied when the session opens. */
 export interface RoutingSessionDeps {
   /** The ROUTING half, re-read from the mirror at the commit — never replayed from the record. */
-  plan: (intent: RoutingIntent) => readonly EngineMutation[];
-  dispatch: (mutations: readonly EngineMutation[], intent: RoutingIntent) => Promise<void>;
+  plan: (intent: AnyRoutingIntent) => readonly EngineMutation[];
+  dispatch: (mutations: readonly EngineMutation[], intent: AnyRoutingIntent) => Promise<void>;
   windowMs: number;
 }
 
@@ -35,7 +37,7 @@ const listeners = new Set<() => void>();
 /** The snapshot the projection subscribes to — a NEW map per change, the store's contract. */
 let snapshot: ReadonlyMap<string, Folder> = new Map();
 
-function publish(open: readonly RoutingIntent[]): void {
+function publish(open: readonly AnyRoutingIntent[]): void {
   const next = new Map<string, Folder>();
   for (const i of open) {
     const folder = FOLDER_OF_VIEW[i.dest];
@@ -83,8 +85,45 @@ export function closeRoutingSession(): void {
 }
 
 /** Hold one press. `held: false` where there is no session — nothing to undo, and said. */
-export function holdRouting(intent: RoutingIntent): RoutingOpen {
+export function holdRouting(intent: AnyRoutingIntent): RoutingOpen {
   return live ? live.open(intent) : { held: false, superseded: false };
+}
+
+/** What a sheet press's commit answered: the writes, their answers, and the shown rules that changed. */
+export interface ScreenCommitAnswer {
+  mutations: readonly EngineMutation[];
+  answers: readonly (MutationResult | null)[];
+  changed: readonly string[];
+}
+
+/** The press's own follow-up, by press id — in memory, like the window: a kill loses the sentence. */
+const afters = new Map<string, { after: (a: ScreenCommitAnswer) => void; changed: string[] }>();
+
+/**
+ * Hold one SHEET press, with what to say once its commit is answered. A press the window cannot
+ * hold (no session) is handed back `held: false` and its follow-up is dropped with it.
+ */
+export function holdScreenRouting(intent: ScreenIntent, after: (a: ScreenCommitAnswer) => void): RoutingOpen {
+  if (!live) return { held: false, superseded: false };
+  afters.set(intent.id, { after, changed: [] });
+  const out = live.open(intent);
+  if (!out.held) afters.delete(intent.id);
+  return out;
+}
+
+/** The commit planner's shown rules that changed inside the window, noted for the follow-up. */
+export function noteScreenChanged(pressId: string, changed: readonly string[]): void {
+  const held = afters.get(pressId);
+  if (held) held.changed = [...changed];
+}
+
+/** Hand a committed sheet press its answer — `false` for a press with nobody left to tell. */
+export function answerScreenPress(pressId: string, mutations: readonly EngineMutation[], answers: readonly (MutationResult | null)[]): boolean {
+  const held = afters.get(pressId);
+  afters.delete(pressId);
+  if (!held) return false;
+  held.after({ mutations, answers, changed: held.changed });
+  return true;
 }
 
 /** Take the press on this subject back. `false` where no window was open — nothing held is not an undo. */
