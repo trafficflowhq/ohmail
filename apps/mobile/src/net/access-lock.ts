@@ -162,8 +162,8 @@ function tell(): void {
  *
  * A LATER 200 CLEARS NOTHING (the browser shell's rule): a refused account's own reads still
  * answer, and a cached page answering 200 behind the wall would flicker the app back for somebody
- * whose account is closed. Here signing in again clears it ({@link clearAccessLock}); the browser
- * shell also lifts on the service's own fresh `access: "open"` answer, and nothing else.
+ * whose account is closed. Signing in again clears it ({@link clearAccessLock}), and so does the
+ * service's own fresh `access: "open"` answer ({@link liftAccessLock}); nothing else does.
  *
  * The NEWEST facts win while it stands: a later closure's date replaces the first one heard.
  */
