@@ -2657,11 +2657,16 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   const floorAt = new Date(now.getTime() - flapFloorMs);
   const reopenedAfterFloor = sql`(${alertState.resolvedAt} is not null
     and ${alertState.resolvedAt} <= ${floorAt.toISOString()}::timestamptz)`;
-  for (const alert of firing) {
-    const demoted = sql`(${alertState.cls} = 'incident' and ${alertClass(alert)} = 'signal')`;
+  // ONE STATEMENT FOR EVERY FIRING ALERT. The conflict arm reads each row's own values through
+  // `excluded`, so it is the per-alert statement it always was, sent once. A key observed twice in one
+  // pass keeps its LAST observation, as two statements in a row did.
+  const observed = [...new Map(firing.map((a) => [a.key, a])).values()];
+  const incoming = (c: string) => sql.raw(`excluded.${c}`);
+  const demoted = sql`(${alertState.cls} = 'incident' and ${incoming("cls")} = 'signal')`;
+  if (observed.length > 0) {
     await db
       .insert(alertState)
-      .values({
+      .values(observed.map((alert) => ({
         alertKey: alert.key,
         kind: alert.kind,
         severity: alert.severity,
@@ -2683,7 +2688,7 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
         // as the detail's first sentence.
         title: alert.title,
         count: alert.count,
-      })
+      })))
       .onConflictDoUpdate({
         target: alertState.alertKey,
         // `opened_at` is NOT in the update set: it is when the fault STARTED, and an
@@ -2700,14 +2705,14 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
           // genuinely newer than the mark — the same key, wrong again, and open again.
           resolvedAt: null,
           lastSeenAt: now,
-          severity: alert.severity,
-          detail: alert.detail,
-          kind: alert.kind,
-          cls: alertClass(alert),
-          affectedAccounts: alert.affectedAccounts ?? null,
-          fixHref: alert.fixHref ?? null,
-          title: alert.title,
-          count: alert.count,
+          severity: incoming("severity"),
+          detail: incoming("detail"),
+          kind: incoming("kind"),
+          cls: incoming("cls"),
+          affectedAccounts: incoming("affected_accounts"),
+          fixHref: incoming("fix_href"),
+          title: incoming("title"),
+          count: incoming("count"),
           // A demotion ENDS the occurrence: stamp, signature and count go, so a later promotion
           // is a first observation the claim pages at once — kept, a key that paged, dropped to a
           // signal and came back compared equal and the second outage paged nobody for a day.
@@ -2732,7 +2737,7 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
           // which is the outcome it should have: it is confirming a page for a condition that
           // has since stopped being one.
           claimedUntil: sql`case when ${alertState.resolvedAt} is not null
-              or (${alertState.cls} = 'incident' and ${alertClass(alert)} = 'signal')
+              or (${alertState.cls} = 'incident' and ${incoming("cls")} = 'signal')
             then null else ${alertState.claimedUntil} end`,
         },
         // The observation fence: a stale pass may not overwrite a newer one. Two drivers overlap,
