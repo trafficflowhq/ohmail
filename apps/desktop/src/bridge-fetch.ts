@@ -24,6 +24,8 @@ import {
 } from "@ohmail/client-engine";
 import { DESKTOP_WINDOW } from "../../webapp/app/shell/store-windows.js";
 import { WindowOutboxStore } from "./window-outbox-store.js";
+import { STALE_REFUSAL_MS, storeVerdict } from "../../webapp/app/shell/wall-lift.js";
+import { storageOwner } from "../../webapp/app/shell/storage-owner.js";
 
 /**
  * The shape `HttpAdapterOptions.fetch` is satisfied by.
@@ -130,6 +132,30 @@ export interface AccessRefusedFacts {
 
 type AccessRefusedSink = (facts: AccessRefusedFacts) => void;
 let accessRefusedSink: AccessRefusedSink | null = null;
+/** When this window last heard the account `open` — the browser tab's stale-402 window. */
+let openAt: number | null = null;
+
+/**
+ * An answer of the account's own read, seen on its way to the caller: stored for the next first
+ * paint, and an open one opens the window in which a stale 402 is not believed.
+ */
+function noticeAccessAnswer(status: number, body: Uint8Array): void {
+  if (status !== 200) return;
+  let answer: { metered?: unknown; access?: unknown } | null;
+  try {
+    answer = JSON.parse(new TextDecoder().decode(body)) as { metered?: unknown; access?: unknown } | null;
+  } catch {
+    return;
+  }
+  if (answer === null || answer.metered !== true) return;
+  if (answer.access === "open") {
+    openAt = Date.now();
+    storeVerdict(storageOwner(), "open");
+  } else if (answer.access === "refused") {
+    openAt = null;
+    storeVerdict(storageOwner(), "closed");
+  }
+}
 
 /**
  * THE ACCESS REFUSAL, RAISED ONCE FOR THE WHOLE WINDOW — the browser tab's rule, on this door.
@@ -161,6 +187,8 @@ function noticeAccessRefusal(status: number, body: Uint8Array): void {
     return; /* Not JSON. A 402 this client cannot read is not one it may act on. */
   }
   if (env?.code !== ACCESS_REFUSED_CODE) return;
+  if (openAt !== null && Date.now() - openAt < STALE_REFUSAL_MS) return;
+  storeVerdict(storageOwner(), "closed");
   const d = (env.details ?? {}) as { reason?: unknown; manageUrl?: unknown; lifecycle?: unknown };
   const url = typeof d.manageUrl === "string" && d.manageUrl.length > 0 ? d.manageUrl : undefined;
   const lifecycle = lifecycleOf(d.lifecycle);
@@ -283,7 +311,7 @@ interface Meta {
 }
 
 /** Take the shell's answer apart: the length-prefixed metadata, then the body. */
-function toResponse(bytes: Uint8Array): Response {
+function toResponse(bytes: Uint8Array, url: string): Response {
   if (bytes.byteLength < 4) {
     throw new Error("ohmail Desktop: the shell's answer was too short to be one.");
   }
@@ -316,6 +344,7 @@ function toResponse(bytes: Uint8Array): Response {
      from the bytes before they become a body: a `Response` body may be consumed once, and the
      caller owns that read. */
   noticeAccessRefusal(status, payload);
+  if (url === ACCOUNT_ACCESS_PATH) noticeAccessAnswer(status, payload);
 
   const body = payload as unknown as BodyInit;
   return new Response(NULL_BODY_STATUSES.has(status) ? null : body, {
@@ -388,7 +417,7 @@ export const bridgeFetch: BridgeFetch = async (url, init) => {
   }
   try {
     const bytes = await Promise.race(racers);
-    return toResponse(asBytes(bytes));
+    return toResponse(asBytes(bytes), url);
   } finally {
     clearTimeout(expire);
   }

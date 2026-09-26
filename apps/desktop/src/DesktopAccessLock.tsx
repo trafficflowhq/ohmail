@@ -1,22 +1,23 @@
 /**
  * THE LOCK SCREEN IN THE WINDOW — what an account the service has refused sees instead of its mail.
  *
- * The browser tab's `AccessLock.tsx`, mirrored the way `DesktopSubscription` mirrors the
- * Subscription pane: the same `accessLock` sentences, this window's own chrome and door. A mirror
- * and NOT an import — that file signs out through `app/sign-out.ts`, which this build aliases to
- * the refusing api-client stub, so the one control on the screen would throw. Two doors stay open
- * because a lock with no way out is a trap: signing out (this may be a shared machine) and the way
- * back, where the service supplied one. It deletes and wipes nothing itself. The way back MINTS AT
- * THE PRESS through the door's own route; the 402's `manageUrl` only says a page exists.
+ * The browser tab's `AccessLock.tsx`, mirrored and not imported (that file signs out through
+ * `app/sign-out.ts`, aliased here to the refusing api-client stub): the same `accessLock` sentences,
+ * this window's chrome and door. Two doors stay open, because a lock with no way out is a trap:
+ * signing out, and the way back, which MINTS AT THE PRESS — the 402's `manageUrl` only says a page
+ * exists. It lifts on the account's fresh `access: "open"` read (`useWallLift`) and on nothing
+ * else, and deletes and wipes nothing itself.
  */
 
 import { useCallback, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { Button } from "@ohmail/ui";
+import { Button, Spinner } from "@ohmail/ui";
 
 import {
-  bridgeFetch, engineLogout, type AccessRefusedFacts, type AccountLifecycle, type EngineStatus,
+  ACCOUNT_ACCESS_PATH, bridgeFetch, engineLogout,
+  type AccessRefusedFacts, type AccountLifecycle, type EngineStatus,
 } from "./bridge-fetch.js";
+import { useWallLift } from "../../webapp/app/shell/wall-lift.js";
 import { linksOutToBilling } from "./distribution.js";
 import { MANAGE_LINK_PATH, leaveForAccountPage } from "./DesktopSubscription.js";
 import { dayStamp } from "../../webapp/app/shell/format.js";
@@ -43,10 +44,21 @@ function headlineOf(
   return plain;
 }
 
+/** One fresh read of the account through the door: `true` only for its own `access: "open"`. */
+async function accountOpens(): Promise<boolean> {
+  const res = await bridgeFetch(ACCOUNT_ACCESS_PATH);
+  if (!res.ok) return false;
+  const body = (await res.json().catch(() => null)) as { metered?: unknown; access?: unknown } | null;
+  return body?.metered === true && body.access === "open";
+}
+
 export function DesktopAccessLock(
-  { facts, onSignedOut }: { facts: AccessRefusedFacts; onSignedOut: (status: EngineStatus) => void },
+  { facts, onSignedOut, onLifted }: {
+    facts: AccessRefusedFacts; onSignedOut: (status: EngineStatus) => void; onLifted?: () => void;
+  },
 ) {
   const t = useTranslations("accessLock");
+  const { check, armPoll, checkAgain } = useWallLift({ lifts: accountOpens, onLifted, owner: null });
   const [signingOut, setSigningOut] = useState(false);
   const lang = useLocale() === "de" ? "de" : "en";
   const [minting, setMinting] = useState(false);
@@ -65,6 +77,7 @@ export function DesktopAccessLock(
       const body = (await res.json().catch(() => null)) as
         { url?: unknown; error?: { code?: unknown } } | null;
       if (res.ok && typeof body?.url === "string" && body.url.length > 0) {
+        armPoll();
         leaveForAccountPage(body.url);
         return;
       }
@@ -74,7 +87,7 @@ export function DesktopAccessLock(
     } finally {
       setMinting(false);
     }
-  }, [lang, minting]);
+  }, [armPoll, lang, minting]);
 
   const doSignOut = useCallback(async () => {
     if (signingOut) return;
@@ -131,14 +144,24 @@ export function DesktopAccessLock(
           )
           : <p>{t("kept")}</p>}
         {facts.manageUrl && !mayLinkOut ? <p>{t("openInBrowser")}</p> : null}
+        {check === "checking"
+          ? (
+            <div className="wall-check" role="status" aria-busy="true">
+              <Spinner className="mbx-spin" />
+              <span>{t("checking")}</span>
+            </div>
+          )
+          : null}
+        {check === "pending" ? <p className="wall-note" role="status">{t("pending")}</p> : null}
         {mintRefusal !== null
           ? <p className="wall-warn" role="alert">{t(mintRefusal === "unverified" ? "mintUnverified" : "mintFailed")}</p>
           : null}
         <div className="gate-actions">
+          {check === "pending" ? <Button onClick={checkAgain}>{t("checkAgain")}</Button> : null}
           {/* Rendered ONLY where the service operates a page — this app holds no plan, no balance
               and no page of its own. The minted address leaves by an anchor click, so the window's
               link interceptor hands it to the browser where the person is already signed in. */}
-          {facts.manageUrl && mayLinkOut
+          {facts.manageUrl && mayLinkOut && check !== "checking"
             ? (
               <Button
                 variant="primary"

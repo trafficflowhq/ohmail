@@ -215,6 +215,9 @@ afterEach(async () => {
 
 describe("the mount", () => {
   it("NOTHING IS MINTED BY THE MOUNT — the offer is a read, and the address is not asked for", async () => {
+    /* A mailbox this window has already found open: the first-paint gate asks nothing, so the one
+       read left is the offer's. A first launch reads twice — the gate's and the offer's — below. */
+    localStorage.setItem("ohmail.access.mbx-1", "open");
     await open(CLOUD_SERVING);
 
     expect(
@@ -226,6 +229,14 @@ describe("the mount", () => {
       "the offer was read more than once for one door",
     ).toBe(1);
     expect(nav(), "the pane is offered from the access answer").toContain(SETTINGS.billing);
+    localStorage.removeItem("ohmail.access.mbx-1");
+  });
+
+  it("a FIRST launch on a mailbox asks the account once for its first paint, and once for the offer", async () => {
+    localStorage.clear();
+    await open(CLOUD_SERVING);
+    expect(enginePaths.filter((p) => p === ACCOUNT_ACCESS_PATH).length).toBe(2);
+    expect(enginePaths.filter((p) => p === MANAGE_LINK_PATH)).toEqual([]);
   });
 
   it("a host that runs no such program offers nothing, and is never asked for an address", async () => {

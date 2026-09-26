@@ -76,7 +76,9 @@ async function lockAnchors(distribution: string): Promise<string[]> {
       children: h(DesktopAccessLock, { facts, onSignedOut: () => {} }),
     }));
   });
-  return [...(host as HTMLDivElement).querySelectorAll("a")].map((a) => a.getAttribute("href") ?? "");
+  // The way back is a BUTTON that mints its address at the press; no anchor carries the 402's.
+  expect([...(host as HTMLDivElement).querySelectorAll("a")]).toEqual([]);
+  return [...(host as HTMLDivElement).querySelectorAll("button.primary")].map((b) => b.textContent ?? "");
 }
 
 describe("the distribution decides two surfaces, and nothing else does", () => {
@@ -90,7 +92,7 @@ describe("the distribution decides two surfaces, and nothing else does", () => {
   });
 
   it("the lock keeps its way back on the download build and drops it on the store build", async () => {
-    expect(await lockAnchors("direct")).toEqual(["https://example.invalid/billing"]);
+    expect(await lockAnchors("direct")).toEqual([messages.accessLock.manage]);
     expect(await lockAnchors("mas")).toEqual([]);
   });
 

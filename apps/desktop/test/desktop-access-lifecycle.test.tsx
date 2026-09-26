@@ -276,3 +276,104 @@ describe("the wire the window narrows", () => {
     expect(web.lifecycleOf({ state: "paused" })).toBeUndefined();
   });
 });
+
+/**
+ * THE WINDOW LIFTS ON THE ACCOUNT'S FRESH WORD, AND PAINTS NO MAIL BEFORE IT, on the Cloud door.
+ * The lock reads `/account/access` through the bridge on window focus and comes down on
+ * `access: "open"` alone; the first paint of a mailbox with no stored `open` waits for the read.
+ */
+describe("the window's lift and first paint", () => {
+  const OPEN = { metered: true, access: "open", canAddMailbox: true, mailboxes: 5, aiEnabled: true };
+  const REFUSED = { metered: true, access: "refused", canAddMailbox: false, mailboxes: 0, aiEnabled: false };
+  let accessBody: unknown = REFUSED;
+  let accessReads = 0;
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 12; i += 1) await act(async () => { await Promise.resolve(); });
+  };
+  beforeEach(() => {
+    accessBody = REFUSED;
+    accessReads = 0;
+    localStorage.clear();
+    sessionStorage.clear();
+    const encode = (status: number, body: string): Uint8Array => {
+      const meta = new TextEncoder().encode(JSON.stringify({ status, statusText: "OK", h: [] }));
+      const payload = new TextEncoder().encode(body);
+      const out = new Uint8Array(4 + meta.byteLength + payload.byteLength);
+      new DataView(out.buffer).setUint32(0, meta.byteLength, false);
+      out.set(meta, 4);
+      out.set(payload, 4 + meta.byteLength);
+      return out;
+    };
+    (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {
+      transformCallback: () => 1,
+      invoke: async (command: string, payload?: { url?: string }) => {
+        if (command !== "engine_request") return null;
+        if (payload?.url === "/account/access") { accessReads += 1; return encode(200, JSON.stringify(accessBody)); }
+        return encode(200, "{}");
+      },
+    };
+  });
+  afterEach(() => {
+    delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  });
+
+  async function lock(onLifted: () => void): Promise<void> {
+    vi.resetModules();
+    (globalThis as { __OHMAIL_DISTRIBUTION__?: string }).__OHMAIL_DISTRIBUTION__ = "direct";
+    const { DesktopAccessLock } = await import("../src/DesktopAccessLock.js");
+    await act(async () => {
+      root.render(h(NextIntlClientProvider, {
+        locale: "en", messages: en,
+        children: h(ThemeProvider, {
+          children: h(DesktopAccessLock, { facts: CLOSED as never, onSignedOut: () => {}, onLifted }),
+        }),
+      }));
+    });
+  }
+
+  it("a focus read answering open lifts the lock; refused and an older API's silence do not", async () => {
+    let lifted = 0;
+    await lock(() => { lifted += 1; });
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    await settle();
+    expect(accessReads).toBe(1);
+    expect(lifted).toBe(0);
+    accessBody = { metered: true, canAddMailbox: true, mailboxes: 5 };
+    await new Promise((r) => setTimeout(r, 1_600));
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    await settle();
+    expect(lifted).toBe(0);
+    accessBody = OPEN;
+    await new Promise((r) => setTimeout(r, 1_600));
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    await settle();
+    expect(accessReads).toBe(3);
+    expect(lifted).toBe(1);
+  });
+
+  it("the first paint waits for a mailbox with no stored open, and a refused answer is the lock's facts", async () => {
+    const { useDesktopFirstPaint } = await import("../src/desktop-first-paint.js");
+    const seen: string[] = [];
+    let refusedWith: unknown = null;
+    function Probe({ k }: { k: string | null }): React.ReactElement {
+      seen.push(useDesktopFirstPaint(k, (f) => { refusedWith = f; }));
+      return h("i", null, "x");
+    }
+    await act(async () => { root.render(h(Probe, { k: "mbx_1" })); });
+    expect(seen[0]).toBe("asking");
+    await settle();
+    expect(seen[seen.length - 1]).toBe("open");
+    expect(refusedWith).toMatchObject({ reason: "payment_required" });
+    // A stored `open` paints at once and asks nothing.
+    localStorage.setItem("ohmail.access.mbx_2", "open");
+    seen.length = 0;
+    const before = accessReads;
+    await act(async () => { root.render(h(Probe, { k: "mbx_2" })); });
+    expect(seen[0]).toBe("open");
+    expect(accessReads).toBe(before);
+    // No hosted account behind the mailbox: nothing to ask.
+    seen.length = 0;
+    await act(async () => { root.render(h(Probe, { k: null })); });
+    expect(seen[0]).toBe("open");
+  });
+});

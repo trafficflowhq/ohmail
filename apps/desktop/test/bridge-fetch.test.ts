@@ -408,3 +408,50 @@ describe("a Search's timings go to the engine's own log, through the bridge", ()
     expect(JSON.parse(body)).toEqual(record);
   });
 });
+
+/**
+ * A STALE 402 AFTER AN OPEN VERDICT IS NOT BELIEVED — the browser tab's rule, on this door. The
+ * account's own read answering `access: "open"` opens a window as long as the service's verdict
+ * cache; a 402 from an instance still holding the old refusal inside it raises no lock, and one
+ * after it does. Both answers are stored for the next first paint under the window's owner.
+ */
+describe("the access notice after an open verdict", () => {
+  it("disbelieves a 402 for a minute after an open answer, and believes one after", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-26T08:00:00.000Z"));
+    // This file runs without a DOM; the window's storage is a plain map here.
+    const jar = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => jar.get(k) ?? null,
+      setItem: (k: string, v: string) => { jar.set(k, String(v)); },
+      removeItem: (k: string) => { jar.delete(k); },
+      key: (i: number) => [...jar.keys()][i] ?? null,
+      get length() { return jar.size; },
+      clear: () => { jar.clear(); },
+    });
+    try {
+      const { onAccessRefused, ACCOUNT_ACCESS_PATH } = await import("../src/bridge-fetch.js");
+      const { setStorageOwner } = await import("../../webapp/app/shell/storage-owner.js");
+      setStorageOwner("mbx_stale");
+      const seen: unknown[] = [];
+      const stop = onAccessRefused((f) => seen.push(f));
+      const refusal = JSON.stringify({ error: { code: "subscription_required", details: { reason: "payment_required" } } });
+      shellAnswering(({ payload }) => (payload?.url === ACCOUNT_ACCESS_PATH
+        ? encode(200, JSON.stringify({ metered: true, access: "open" }))
+        : encode(402, refusal)));
+      await bridgeFetch(ACCOUNT_ACCESS_PATH);
+      expect(localStorage.getItem("ohmail.access.mbx_stale")).toBe("open");
+      await bridgeFetch("/mailboxes");
+      expect(seen, "a stale 402 raised the lock inside the window").toEqual([]);
+      vi.setSystemTime(new Date("2026-09-26T08:01:01.000Z"));
+      await bridgeFetch("/mailboxes");
+      expect(seen).toHaveLength(1);
+      expect(localStorage.getItem("ohmail.access.mbx_stale")).toBe("closed");
+      stop();
+      setStorageOwner(null);
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+});

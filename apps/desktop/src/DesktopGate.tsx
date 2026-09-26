@@ -22,7 +22,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OhmailEngine } from "@ohmail/client-engine";
-import { Button, useOptionalToast } from "@ohmail/ui";
+import { Button, Spinner, useOptionalToast } from "@ohmail/ui";
 
 import { AppShell } from "../../webapp/app/shell/AppShell";
 import { setStorageOwner } from "../../webapp/app/shell/storage-owner";
@@ -53,6 +53,8 @@ import { DesktopAiAccount } from "./DesktopAiAccount.js";
 import { linksOutToBilling } from "./distribution.js";
 import { DesktopSubscription, useDesktopManageOffer } from "./DesktopSubscription.js";
 import { DesktopAccessLock } from "./DesktopAccessLock.js";
+import { useDesktopFirstPaint } from "./desktop-first-paint.js";
+import { reviveStandingDown } from "../../webapp/app/shell/sync-scheduler";
 import { DesktopWebSection } from "./DesktopWebSection.js";
 import {
   accountDoorFor, awayDoorFor, consentDoorFor, firstRunDoorFor, flavorOf, gateFor, imagesFromComputer,
@@ -477,9 +479,9 @@ export function DesktopGate() {
    * Any hosted door may answer `402 subscription_required`, so this was met one failed write at
    * a time, each pane saying its own thing about somebody's account. The bridge raises it once
    * and the whole surface swaps for the lock screen below — mail beside a refusal is the state
-   * that prevents. It never unsets itself: a refusal is a fact about the account, and a later
-   * request that happens to succeed is not evidence it was lifted. Behind `accountDoor`, because
-   * a standalone install has no hosted account and nothing that could refuse one.
+   * that prevents. A later request that happens to succeed is not evidence it was lifted; the lock
+   * comes down on the account's own fresh `access: "open"` read (`DesktopAccessLock`'s lift) and on
+   * nothing else. Behind `accountDoor`, because a standalone install has nothing that could refuse.
    */
   const [accessRefused, setAccessRefused] = useState<AccessRefusedFacts | null>(null);
   useEffect(() => {
@@ -732,6 +734,12 @@ export function DesktopGate() {
    * before the parent's — a module write during render is the ordering the shell needs.
    */
   setStorageOwner(mount.kind === "engine" ? mount.key : null);
+  /* The wall before mail on the Cloud door: asked only where a hosted account stands behind the
+     mailbox, under the same storage owner the bridge keeps the verdict for. */
+  const firstPaint = useDesktopFirstPaint(
+    accountDoor && mount.kind === "engine" ? mount.key : null,
+    (facts) => setAccessRefused((held) => held ?? facts),
+  );
   // One window, one composer, across restarts — see `setComposerScope`.
   setComposerScope("window");
   if (mount.kind === "engine" && live?.key !== mount.key) {
@@ -749,7 +757,13 @@ export function DesktopGate() {
      answer to this: a person whose account is refused should not be reading mail behind it, nor
      be handed a door chooser. It takes nothing away — only the sign-out button wipes. */
   if (accessRefused) {
-    return <DesktopAccessLock facts={accessRefused} onSignedOut={onStatus} />;
+    return (
+      <DesktopAccessLock
+        facts={accessRefused}
+        onSignedOut={onStatus}
+        onLifted={() => { setAccessRefused(null); reviveStandingDown(); }}
+      />
+    );
   }
 
   if (shell === null) {
@@ -1114,6 +1128,19 @@ export function DesktopGate() {
       <div className="gate gate-boot">
         <BootSkeleton active rail />
         <BootStatus phase={status?.bootPhase} applied={status?.bootApplied} pending={status?.bootPending} />
+      </div>
+    );
+  }
+
+  /* The Cloud door's account has not been read on this mailbox yet: the wordmark, and nothing
+     that could be somebody's mail, until the answer or its bound. */
+  if (firstPaint === "asking") {
+    return (
+      <div className="gate" aria-busy="true">
+        <div className="gate-card">
+          <span className="wordmark"><b>ohmail</b><em>.</em></span>
+          <Spinner className="mbx-spin" />
+        </div>
       </div>
     );
   }

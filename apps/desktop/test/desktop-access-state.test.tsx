@@ -190,8 +190,9 @@ async function open(status: EngineStatus, locale: "en" | "de" = "en"): Promise<v
 
 const text = (): string => mountPoint?.textContent ?? "";
 const lockCard = (): HTMLElement | null => mountPoint?.querySelector(".gate .gate-card") ?? null;
-const manageDoor = (): HTMLAnchorElement | null =>
-  (mountPoint?.querySelector(".gate-actions a[href]") as HTMLAnchorElement | null) ?? null;
+/** The way back: a BUTTON that mints the page's address when pressed (the 402's is never used). */
+const manageDoor = (): HTMLButtonElement | null =>
+  (mountPoint?.querySelector(".gate-actions button.primary") as HTMLButtonElement | null) ?? null;
 
 function byText(selector: string, wanted: string): HTMLElement | null {
   return [...(mountPoint?.querySelectorAll<HTMLElement>(selector) ?? [])]
@@ -242,8 +243,10 @@ describe("the window's refused-account screen", () => {
 
     const door = manageDoor();
     expect(door, "the service supplied an address and the screen offered no way to it").not.toBeNull();
-    expect(door!.getAttribute("href")).toBe(MANAGE_URL);
     expect(door!.textContent?.trim()).toBe(LOCK.manage);
+    // The 402's own address is ten minutes old and good once: it is not rendered, it only says a
+    // page exists. The press mints a fresh one (`desktop-access-lifecycle.test.tsx` drives it).
+    expect(mountPoint!.innerHTML).not.toContain(MANAGE_URL);
   });
 
   it("offers no way back when the service supplied none — a door to nowhere is worse than none", async () => {
