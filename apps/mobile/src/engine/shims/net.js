@@ -28,6 +28,11 @@ function setSocketLog(log) {
   if (typeof log === "function") socketLog = log;
 }
 
+/** The same sink for the TLS shim, so both transports write through one logger. */
+function socketLogLine(event, fields) {
+  socketLog(event, fields);
+}
+
 /**
  * One native socket, as a Duplex.
  *
@@ -208,6 +213,7 @@ module.exports = {
   Socket: NativeSocketBridge,
   NativeSocketBridge,
   setSocketLog,
+  socketLogLine,
   isIP,
   isIPv4,
   isIPv6,

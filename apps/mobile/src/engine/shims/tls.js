@@ -15,7 +15,7 @@ const TcpSocket = require("react-native-tcp-socket");
    refused in `NativeSocketBridge._write` (see `net.js`), so this transport inherits the refusal
    rather than repeating it — a second copy here is how the two halves come to disagree. The
    seam test drives BOTH entry points for exactly that reason. */
-const { NativeSocketBridge } = require("./net.js");
+const { NativeSocketBridge, socketLogLine } = require("./net.js");
 
 /**
  * SNI IS A NAME OR IT IS ABSENT — never `false`.
@@ -75,6 +75,7 @@ function connect(options, listener) {
        caller passing a raw platform socket also works, which is why this reads either shape rather
        than asserting one. */
     const underlying = existing instanceof NativeSocketBridge ? existing.native : existing;
+    detachPlainSide(existing, underlying);
     const { socket: _dropped, ...tlsOptions } = options;
     native = new TcpSocket.TLSSocket(underlying, withNameOrNoSni(tlsOptions));
   } else {
@@ -89,9 +90,64 @@ function connect(options, listener) {
      connection opening, and only this one means the bytes after it are protected. */
   native.on("secureConnect", () => { bridge.emit("secureConnect"); });
   if (typeof listener === "function") bridge.once("secureConnect", listener);
-  if (existing) confirmUpgrade(native, bridge);
+  if (existing) superviseUpgrade(native, bridge);
   return bridge;
 }
+
+/**
+ * AFTER STARTTLS THE PLAIN SOCKET HEARS NOTHING, as on node.
+ *
+ * The platform keeps ONE receiver per connection and hands every decrypted byte to both of its
+ * JavaScript sockets, the plain one included. imapflow unpipes the plain bridge and never reads it
+ * again, so it filled to its high-water mark and paused that shared receiver: an upgraded mailbox
+ * stalled after 16 KiB with the connection open. Measured on a device over IMAP 143. A pause the
+ * plain side already took is lifted, or the session would start paused.
+ */
+function detachPlainSide(existing, underlying) {
+  if (underlying && typeof underlying.removeAllListeners === "function") underlying.removeAllListeners("data");
+  if (existing instanceof NativeSocketBridge && existing._paused) {
+    existing._paused = false;
+    try { underlying.resume(); } catch { /* gone; its close follows */ }
+  }
+}
+
+/**
+ * THE UPGRADE ENDS ONE WAY, WITHIN A BOUND, AND SAYS WHICH. Every error before the handshake is
+ * confirmed carries `tlsFailed` (imapflow's own flag), so a send can tell "never secured, nothing
+ * offered" from an unknown fate; a handshake still open at the bound is refused by name rather than
+ * left to the caller's idle timer. One line per upgrade records how it ended.
+ */
+function superviseUpgrade(native, bridge, deadlineMs = UPGRADE_DEADLINE_MS) {
+  const started = Date.now();
+  let settled = false;
+  let timer = null;
+  const settle = (outcome) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    socketLogLine("tls_upgrade_settled", { outcome, connectMs: Date.now() - started });
+  };
+  const emit = bridge.emit.bind(bridge);
+  bridge.emit = (event, ...args) => {
+    if (event === "secureConnect") settle("secured");
+    else if (event === "error" && !settled) {
+      const err = args[0] instanceof Error ? args[0] : new Error(String(args[0]));
+      err.tlsFailed = true;
+      args[0] = err;
+      settle("refused");
+    } else if (event === "close") settle("closed");
+    return emit(event, ...args);
+  };
+  timer = setTimeout(() => {
+    if (settled) return;
+    bridge.emit("error", new Error(`the TLS upgrade did not finish within ${deadlineMs} ms`));
+    bridge.destroy();
+  }, deadlineMs);
+  confirmUpgrade(native, bridge);
+}
+
+/** How long a STARTTLS handshake may take: imapflow's own upgrade bound, applied to SMTP too. */
+const UPGRADE_DEADLINE_MS = 10_000;
 
 /**
  * THE UPGRADE'S HANDSHAKE HAS NO EVENT OF ITS OWN.
@@ -139,6 +195,8 @@ function unsupported(name) {
 
 module.exports = {
   connect,
+  superviseUpgrade,
+  detachPlainSide,
   /* Exported for the guards that drive them with the shapes the platform produces. */
   withNameOrNoSni,
   confirmUpgrade,
