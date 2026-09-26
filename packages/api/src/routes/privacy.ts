@@ -44,7 +44,9 @@ function baseType(contentType: string): string {
  * message frame governs only the subresource load). `Content-Disposition: inline` with no
  * filename — a subresource; the sender does not get to name a file on the reader's disk.
  * `Cache-Control: private` keeps a shared cache from holding one account's image under a url
- * another account could ask for.
+ * another account could ask for; a day's lifetime lets a re-opened message take its images from
+ * the reader's own cache instead of a function run and a fetch each. Refusals are
+ * `errorResponse`'s and carry no lifetime.
  */
 function imageResponse(contentType: string, body: Uint8Array): Response {
   const type = baseType(contentType);
@@ -62,7 +64,7 @@ function imageResponse(contentType: string, body: Uint8Array): Response {
       "X-Content-Type-Options": "nosniff",
       "Content-Security-Policy": "default-src 'none'; sandbox",
       "Content-Disposition": "inline",
-      "Cache-Control": "private, max-age=300",
+      "Cache-Control": "private, max-age=86400",
       "Referrer-Policy": "no-referrer",
     },
   });
