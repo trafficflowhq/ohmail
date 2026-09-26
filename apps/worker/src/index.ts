@@ -5312,6 +5312,9 @@ export async function startWorkerWithLock(
           // It also names this host in `schema_behind`'s key, so "the worker is ahead of the
           // database" and "the API is ahead of the database" stay two findings with two fixes.
           driver: "worker",
+          // An API arm exists only where this worker drives the API host's internal routes (the
+          // secret is shared); there, an API driver that has never run is dark, not a choice.
+          apiArmExpected: Boolean(config.apiCron),
         });
         for (const alert of firingToLog(alertFiringLogged, result.firing)) {
           log.warn("alert_firing", {
@@ -5320,6 +5323,7 @@ export async function startWorkerWithLock(
           });
         }
         for (const key of result.resolved) log.info("alert_resolved", { alertKey: key });
+        for (const key of result.closedUnconfirmed) log.info("alert_closed_unconfirmed", { alertKey: key });
         // `api_faults`' seven-day retention, on the cadence of the arm that reads the table.
         // AFTER the pass, never before: the rules read a ten-minute window, so a prune ahead of
         // them could only ever delete rows they were about to ignore — and if it throws, the

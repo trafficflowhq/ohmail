@@ -285,6 +285,11 @@ export const alertState = pgTable("alert_state", {
   kind: text("kind").notNull(),
   severity: text("severity").notNull().default("critical"),
   openedAt: timestamp("opened_at", { withTimezone: true }).defaultNow().notNull(),
+  /**
+   * The LAST CONFIRMATION: when an evaluation last saw this condition firing. Written by the
+   * observation upsert alone (`alert-state-writers.test.ts` holds that), read by every close
+   * decision and published by the console as `lastConfirmedAt`.
+   */
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),
   notifiedAt: timestamp("notified_at", { withTimezone: true }),
   notifyCount: integer("notify_count").notNull().default(0),

@@ -113,6 +113,12 @@ export interface AlertSummary {
   count: number;
   openedAt: string;
   notifiedAt: string | null;
+  /**
+   * When an evaluation last CONFIRMED this condition (`alert_state.last_seen_at`): now for a rule
+   * this read evaluated, the row's stamp for one it could not — a sampled window, another arm's
+   * rule — so an unmeasured alert shows its age instead of reading as healthy.
+   */
+  lastConfirmedAt: string;
   /** Whether this row was delivered to a sink. See {@link AdminAlertClass}. */
   cls: AdminAlertClass;
   /**

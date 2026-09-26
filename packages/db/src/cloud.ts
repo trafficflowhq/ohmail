@@ -102,13 +102,13 @@ export {
 export {
   evaluateAlerts, runAlertPass, deliver, webhookAlertSink, nodePostJson, renderAlertText,
   writeHeartbeat, refreshHeartbeat, clearHeartbeat, humanAge,
-  listStuckSends, listOpenAlerts, listOpenAlertStamps,
+  listStuckSends, listOpenAlerts,
   selectOpenAlerts,
   newDeliveryStreak, newSinkStreak, redactEndpoint, classifyTransportError, sinkHealthOf,
   alertSignature, firingToLog, alertClass, incidentsOf, signalsOf,
   alertDriverStatuses, platformSignalWindow, CLOUD_JOURNAL_HEAD_WHEN,
   DEFAULT_ALERT_THRESHOLDS, DEFAULT_ALERT_REPEAT_MS, DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS,
-  SCOPED_ALERT_KINDS,
+  SCOPED_ALERT_KINDS, ALERT_KIND_ARMS, alertKindArms, DRIVER_NEVER_RAN, evaluateAlertsWithScope,
   isSchemaBehind,
   alertSchemaReadable,
   SIGNAL_BUCKET_MS,
@@ -121,6 +121,7 @@ export {
   type AlertSinkOutcome, type SinkOutcome, type DeliveryReport, type SinkStreak,
   type SinkDegradation, type AlertSinkHealth,
   type AlertClass, type AlertDriver, type AlertDriverStatus, type PlatformSignalWindow,
+  type AlertKindArms, type EvaluationScope, type NeverRanFacts,
 } from "./alerts.js";
 
 export {

@@ -315,6 +315,14 @@ export interface AlertThresholds {
    */
   alertDriverDarkMs: number;
   /**
+   * How long an arm that is EXPECTED and has NEVER recorded a pass may stay silent before the
+   * other arm reports it dark. Counted from the worker leader's boot (`worker_heartbeats.started_at`,
+   * the one boot the database holds): the API host's deploy instant is stored nowhere, and a boot
+   * older than this with no pass row is an arm that is not running. Thirty minutes, the dark
+   * threshold, because "never ran" is that same fault with no last pass to date it from.
+   */
+  alertDriverNeverRanMs: number;
+  /**
    * Distinct accounts with a reuse revocation inside {@link reuseRevokedWindowMs} before the
    * per-account signals escalate to a `credential_replay_wide` incident. Three: one account is a
    * client bug or one stolen token, and three separate accounts in a day is a pattern that is
@@ -365,6 +373,7 @@ export const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
   imapRefusalThreshold: 5,
   aiCircuitOpenMs: 10 * 60 * 1000,
   alertDriverDarkMs: 30 * 60 * 1000,
+  alertDriverNeverRanMs: 30 * 60 * 1000,
   reuseWideAccounts: 3,
   refreshReplayedWindowMs: 60 * 60 * 1000,
   refreshReplayedThreshold: 5,
@@ -560,6 +569,13 @@ export interface EvaluateOptions {
    * which is the truth on an unmetered install.
    */
   accountsAtCap?: () => Promise<readonly AtCapAccount[]>;
+  /**
+   * Whether this deployment runs an API alert arm. The worker states it from its `apiCron` config:
+   * that pair's secret must match the API host's, so it exists only beside an API host with armed
+   * internal routes. Absent ⇒ a single-arm deployment, where an API arm that never ran is a choice
+   * and not a fault. The worker arm needs no such flag: every deployment that leads a shard has one.
+   */
+  apiArmExpected?: boolean;
 }
 
 /**
@@ -572,14 +588,13 @@ export interface EvaluateOptions {
 export type AlertDriver = "worker" | "api";
 
 /**
- * The kinds only one arm of the alerting evaluates — the only kinds a pass may not resolve merely
- * because they are absent from its own firing set. Two shapes, one property: `worker_down`,
+ * The kinds keyed by the EVALUATOR'S identity — shard, driver or role. Which open rows a pass may
+ * resolve is decided per kind by {@link ALERT_KIND_ARMS}; this set is the identity-scoped part of
+ * that answer, kept because the console and the cross-driver tests name it. `worker_down`,
  * `worker_degraded` and `ai_provider_down` are keyed by shard and evaluated only for the shards a
  * pass was given (the worker passes none — all three are statements about the worker);
  * `schema_behind` and `alert_driver_dark` are keyed by driver — each arm evaluates its own
- * journal and the other arm's pulse. Every other kind is a fact both arms read from the same
- * database, so absence genuinely means the condition cleared. A new rule either arm can decline
- * MUST be added here; the cross-driver test makes that a failure rather than a silent flap.
+ * journal and the other arm's pulse. A new identity-scoped rule is added here AND given its arms.
  */
 export const SCOPED_ALERT_KINDS: ReadonlySet<string> = new Set<AlertKind>([
   "worker_down", "worker_degraded", "ai_provider_down", "schema_behind", "alert_driver_dark",
@@ -591,6 +606,104 @@ export const SCOPED_ALERT_KINDS: ReadonlySet<string> = new Set<AlertKind>([
   // every pass. Same flap as the four above, arriving through a grant rather than a signature.
   "imap_admission_refused",
 ]);
+
+/**
+ * WHAT ONE EVALUATION LOOKED AT — the input every kind's resolve arm reads. An open row a pass did
+ * not look at is not a row that cleared: "I could not look" is never spelled "it cleared".
+ */
+export interface EvaluationScope {
+  driver: AlertDriver | undefined;
+  shards: readonly number[];
+  /** `<provider>:<project>` of every 5xx window this evaluation judged whole. */
+  measuredWindows: ReadonlySet<string>;
+  /** Kinds this evaluation did not read: a refused read (42501), or an input nobody stated. */
+  unread: ReadonlySet<AlertKind>;
+}
+
+/**
+ * Per kind, the two ways an open row closes, both BY AN EVALUATION and never by a human.
+ *
+ * RESOLVE (`evaluated`): the pass looked at this key and it did not fire, so it cleared, and the
+ * resolution is announced. FALSE-OPEN (`unconfirmedAfterMs`): no evaluation has confirmed the row
+ * for this long, so it is closed unannounced. Confirmed means `last_seen_at`, written by the
+ * observation upsert alone. `alert-kind-arms.test.ts` refuses a kind without both arms.
+ */
+export interface AlertKindArms {
+  evaluated(key: string, scope: EvaluationScope): boolean;
+  unconfirmedAfterMs(t: AlertThresholds): number;
+}
+
+/** No evaluation for the dark threshold is an arm that is not running, whichever kind it owes. */
+const UNCONFIRMED_AFTER = (t: AlertThresholds): number => t.alertDriverDarkMs;
+const readHere = (kind: AlertKind): AlertKindArms => ({
+  evaluated: (_key, s) => !s.unread.has(kind),
+  unconfirmedAfterMs: UNCONFIRMED_AFTER,
+});
+const perShard = (kind: AlertKind): AlertKindArms => ({
+  evaluated: (key, s) => !s.unread.has(kind) && s.shards.some((n) => key === `${kind}:${n}`),
+  unconfirmedAfterMs: UNCONFIRMED_AFTER,
+});
+const otherDriver = (d: AlertDriver): AlertDriver => (d === "worker" ? "api" : "worker");
+
+export const ALERT_KIND_ARMS: { readonly [K in AlertKind]: AlertKindArms } = {
+  worker_down: perShard("worker_down"),
+  worker_degraded: perShard("worker_degraded"),
+  ai_provider_down: perShard("ai_provider_down"),
+  sends_stuck: readHere("sends_stuck"),
+  sync_lag: readHere("sync_lag"),
+  // Unread when the host stated no at-cap reader: a pass without one cannot clear another's row.
+  storage_at_cap: readHere("storage_at_cap"),
+  device_sync_stale: readHere("device_sync_stale"),
+  session_sync_stale: readHere("session_sync_stale"),
+  session_reuse_revoked: readHere("session_reuse_revoked"),
+  credential_replay_wide: readHere("credential_replay_wide"),
+  session_refresh_replayed: readHere("session_refresh_replayed"),
+  api_fault_rate: readHere("api_fault_rate"),
+  pooler_refusals: readHere("pooler_refusals"),
+  // A sampled window is NOT MEASURED: the row stays open until measured or unconfirmed.
+  api_5xx_rate: {
+    evaluated: (key, s) => s.measuredWindows.has(key.slice("api_5xx_rate:".length)),
+    unconfirmedAfterMs: UNCONFIRMED_AFTER,
+  },
+  schema_behind: {
+    evaluated: (key, s) => s.driver !== undefined && key === `schema_behind:${s.driver}`,
+    unconfirmedAfterMs: UNCONFIRMED_AFTER,
+  },
+  alert_driver_dark: {
+    evaluated: (key, s) => s.driver !== undefined && key === `alert_driver_dark:${otherDriver(s.driver)}`,
+    unconfirmedAfterMs: UNCONFIRMED_AFTER,
+  },
+  // Only the worker's handle holds `auth_throttle`; a hardened API arm reads nothing here.
+  imap_admission_refused: {
+    evaluated: (_key, s) => s.driver === "worker" && !s.unread.has("imap_admission_refused"),
+    unconfirmedAfterMs: UNCONFIRMED_AFTER,
+  },
+};
+
+/** A row whose kind this build does not know: nothing here can clear it, so only the clock can. */
+const UNKNOWN_KIND_ARMS: AlertKindArms = { evaluated: () => false, unconfirmedAfterMs: UNCONFIRMED_AFTER };
+
+export function alertKindArms(kind: string): AlertKindArms {
+  return Object.prototype.hasOwnProperty.call(ALERT_KIND_ARMS, kind)
+    ? ALERT_KIND_ARMS[kind as AlertKind]
+    : UNKNOWN_KIND_ARMS;
+}
+
+/**
+ * Per driver, the instant its NEVER having recorded a pass starts counting toward dark, or null
+ * when this deployment does not run it. Read by the OTHER driver. `alert-kind-arms.test.ts`
+ * refuses a driver without an entry: an arm that never ran is the worst case, not a quiet one.
+ */
+export interface NeverRanFacts {
+  /** The earliest boot among live shard leaders, or null when no leader is beating. */
+  leaderBootedAt: Date | null;
+  apiArmExpected: boolean;
+}
+export const DRIVER_NEVER_RAN: { readonly [D in AlertDriver]: (f: NeverRanFacts) => Date | null } = {
+  // Every deployment that leads a shard runs the worker arm; no leader is worker_down's case.
+  worker: (f) => f.leaderBootedAt,
+  api: (f) => (f.apiArmExpected ? f.leaderBootedAt : null),
+};
 
 function secondsBetween(now: Date, then: Date | null): number | null {
   if (!then) return null;
@@ -697,10 +810,27 @@ export function isSchemaBehind(alerts: readonly Alert[]): boolean {
 }
 
 export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promise<Alert[]> {
+  return (await evaluateAlertsWithScope(db, opts)).alerts;
+}
+
+/** Every kind unread: what a pass that stopped at the schema preflight looked at. */
+function nothingRead(opts: EvaluateOptions): EvaluationScope {
+  return {
+    driver: opts.driver, shards: [], measuredWindows: new Set(),
+    unread: new Set(Object.keys(ALERT_KIND_ARMS) as AlertKind[]),
+  };
+}
+
+/** {@link evaluateAlerts} plus what it looked at — the scope every kind's resolve arm reads. */
+export async function evaluateAlertsWithScope(
+  db: Tx, opts: EvaluateOptions = {},
+): Promise<{ alerts: Alert[]; scope: EvaluationScope }> {
   const now = opts.now ?? new Date();
   const t: AlertThresholds = { ...DEFAULT_ALERT_THRESHOLDS, ...opts.thresholds };
   const shards = opts.shards ?? [0];
   const alerts: Alert[] = [];
+  const unread = new Set<AlertKind>();
+  const measuredWindows = new Set<string>();
 
   // ── PREFLIGHT, BEFORE ANY READ THAT THIS BUNDLE'S MIGRATION MADE POSSIBLE ─────────────
   //
@@ -708,7 +838,7 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   // does not exist yet, and the pass dies without saying why. Answer that one question first,
   // out of `information_schema`, and return it ALONE — there is nothing else worth reading.
   const behind = await schemaBehindAlert(db, opts);
-  if (behind) return [behind];
+  if (behind) return { alerts: [behind], scope: nothingRead(opts) };
 
   /** Rules 4 and 5's parked set, from the host's reader. One place, so the two rules cannot
    *  disagree about what "on duty" means; `known` is false when no reader was stated or it threw. */
@@ -1043,6 +1173,7 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   // behaving as specified — mail still arrives and organizes, the user has been told — but a
   // human should know who is bumping the ceiling before the support mail arrives.
   const atCap = opts.accountsAtCap ? await opts.accountsAtCap() : [];
+  if (!opts.accountsAtCap) unread.add("storage_at_cap");
   const { parked: capParked } = await parkedOf(atCap.map((r) => r.accountId));
   const atCapOnDuty = atCap.filter((r) => !capParked.has(r.accountId));
   if (atCapOnDuty.length > 0) {
@@ -1199,6 +1330,7 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
     // 42501 insufficient_privilege: a handle the provisioner's grants have not reached yet.
     // Everything else stays fatal — a swallowed real fault is a silenced pager.
     if (code !== "42501") throw err;
+    unread.add("device_sync_stale");
   }
 
   // 8b. A deviceless session that stopped converging — the browser-door install. The population
@@ -1260,6 +1392,7 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   } catch (err) {
     const code = (err as { code?: string })?.code ?? (err as { cause?: { code?: string } })?.cause?.code;
     if (code !== "42501") throw err;
+    unread.add("session_sync_stale");
   }
 
   // 9. Refresh-token reuse revoked a family — an attack or a broken client, never routine.
@@ -1354,6 +1487,7 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   } catch (err) {
     const code = (err as { code?: string })?.code ?? (err as { cause?: { code?: string } })?.cause?.code;
     if (code !== "42501") throw err;
+    unread.add("session_reuse_revoked"); unread.add("credential_replay_wide");
   }
 
   // 9c. A CLIENT THAT CANNOT ADOPT ITS OWN ROTATIONS. `refresh_replayed` is written every time a
@@ -1410,6 +1544,7 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   } catch (err) {
     const code = (err as { code?: string })?.code ?? (err as { cause?: { code?: string } })?.cause?.code;
     if (code !== "42501") throw err;
+    unread.add("session_refresh_replayed");
   }
 
   // 10. The model provider has been unreachable long enough that mail is degraded. Read from
@@ -1463,6 +1598,7 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   const expectedBuckets = Math.round(t.api5xxWindowMs / SIGNAL_BUCKET_MS);
   for (const w of signalWindow) {
     if (w.completeBuckets < expectedBuckets) continue;
+    measuredWindows.add(`${w.provider}:${w.project}`);
     if (w.requests <= 0) continue;
     const rate = w.errors5xx / w.requests;
     if (w.errors5xx < t.api5xxMinErrors || rate < t.api5xxMinRate) continue;
@@ -1609,6 +1745,7 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   } catch (err) {
     const code = (err as { code?: string })?.code ?? (err as { cause?: { code?: string } })?.cause?.code;
     if (code !== "42501") throw err;
+    unread.add("imap_admission_refused");
   }
 
   // 15. The OTHER alert driver has stopped running — evaluated by the other driver, and that is
@@ -1616,11 +1753,9 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   // one level up); a pass checking its own row would ask a running process whether it is running.
   // The driver names itself in `opts.driver` and this rule looks at the other row, always. A
   // two-element table rather than a boolean because the set of drivers is closed
-  // (`alert_pass_runs`'s CHECK). A driver that has never recorded a pass is silent here: a
-  // deployment running only one arm must not be paged forever about an arm it deliberately does
-  // not have — the cost, stated: the first pass of a newly-armed second driver starts the watch,
-  // so an arm configured and never once run is invisible here and visible on the board instead
-  // ("never" renders as "never").
+  // (`alert_pass_runs`'s CHECK). A driver that has NEVER recorded a pass is dark too, once the
+  // grace from the worker leader's boot has passed and the deployment is expected to run it
+  // ({@link DRIVER_NEVER_RAN}): production ran for weeks with no API pass and nothing said so.
   if (opts.driver) {
     const other: AlertDriver = opts.driver === "worker" ? "api" : "worker";
     const [row] = await db
@@ -1673,10 +1808,40 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
           fixHref: "/reliability",
         });
       }
+    } else {
+      const live = beats.filter((b) => b.leader
+        && (secondsBetween(now, b.beatAt) ?? Infinity) * 1000 <= t.leaderStaleMs);
+      const boots = live.map((b) => new Date(b.startedAt as unknown as string).getTime());
+      const leaderBootedAt = boots.length > 0 ? new Date(Math.min(...boots)) : null;
+      const since = DRIVER_NEVER_RAN[other]({ leaderBootedAt, apiArmExpected: opts.apiArmExpected === true });
+      const upSeconds = secondsBetween(now, since);
+      if (upSeconds !== null && upSeconds * 1000 > t.alertDriverNeverRanMs) {
+        alerts.push({
+          key: `alert_driver_dark:${other}`,
+          kind: "alert_driver_dark",
+          severity: "critical",
+          title: `The ${other} alert driver has never run`,
+          detail:
+            `The ${other} alert driver has never recorded a pass, and the worker leader has been ` +
+            `up ${humanAge(upSeconds)} (grace ${humanAge(Math.round(t.alertDriverNeverRanMs / 1000))}). ` +
+            `Reported by the ${opts.driver} driver. ` +
+            (other === "api"
+              ? "The API driver is the ONLY observer of worker_down: until it runs, a dead sync " +
+                "worker pages nobody. Check the scheduler that calls /internal/alerts/run and its secret."
+              : "The worker is leading and its alert pass has never completed. Check the worker's " +
+                "alert_pass_failed log lines."),
+          count: 1,
+          oldestSeconds: upSeconds,
+          cls: "incident",
+          affectedAccounts: null,
+          fixHref: "/reliability",
+          signature: "never",
+        });
+      }
     }
   }
 
-  return alerts;
+  return { alerts, scope: { driver: opts.driver, shards, measuredWindows, unread } };
 }
 
 /**
@@ -2272,6 +2437,8 @@ export interface AlertPassResult {
   notified: Alert[];
   /** Alert keys that were firing and are not any more. */
   resolved: string[];
+  /** Open rows no evaluation confirmed for their kind's horizon, closed with no notice owed. */
+  closedUnconfirmed: string[];
   delivered: string[];
   failedSinks: string[];
   /** `"<sink>: <reason>"` for each refusal that stated one. Empty when nothing refused. */
@@ -2462,15 +2629,6 @@ export function selectOpenAlerts<T extends Record<string, AnyPgColumn>>(
 }
 
 /**
- * The stamps the console pairs with a freshly evaluated alert — open rows only.
- *
- * Exported as its own reader rather than letting `packages/services` select the table itself:
- * one accessor is only one accessor if nothing else can reach the rows, and a second package
- * writing its own `.from(alertState)` is exactly how the `resolved_at IS NULL` predicate would
- * be forgotten in a file the census does not watch.
- */
-
-/**
  * There is no prune, and that is the fix. The tombstone is what the observation write's INSERT
  * branch fences against: without the row, an older pass finds an empty table, inserts, and
  * re-opens a resolved incident. Two attempts to bound the tombstones both put that back — a
@@ -2481,21 +2639,6 @@ export function selectOpenAlerts<T extends Record<string, AnyPgColumn>>(
  * no prune, the blind role's DELETE has no remaining user (see `staff-grants.ts`).
  */
 
-
-export async function listOpenAlertStamps(db: Tx): Promise<Array<{
-  alertKey: string; openedAt: Date; notifiedAt: Date | null;
-}>> {
-  const rows = await selectOpenAlerts(db, {
-    alertKey: alertState.alertKey,
-    openedAt: alertState.openedAt,
-    notifiedAt: alertState.notifiedAt,
-  });
-  return rows.map((r) => ({
-    alertKey: r.alertKey as string,
-    openedAt: new Date(r.openedAt as unknown as string),
-    notifiedAt: r.notifiedAt === null ? null : new Date(r.notifiedAt as unknown as string),
-  }));
-}
 
 function notWrittenByANewerPass(at: Date) {
   const iso = at.toISOString();
@@ -2564,9 +2707,9 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   const repeatMs = opts.repeatMs ?? DEFAULT_ALERT_REPEAT_MS;
   const renotifyUnchangedMs = opts.renotifyUnchangedMs ?? DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS;
   const claimTtlMs = opts.claimTtlMs ?? DEFAULT_CLAIM_TTL_MS;
-  const shards = opts.shards ?? [0];
   const sinks = opts.sinks ?? [];
-  const firing = await evaluateAlerts(db, opts);
+  const t: AlertThresholds = { ...DEFAULT_ALERT_THRESHOLDS, ...opts.thresholds };
+  const { alerts: firing, scope } = await evaluateAlertsWithScope(db, opts);
 
   // The database is older than this bundle: deliver, do not persist. `alert_state` is one of the
   // tables the older schema lacks columns for — the preflight's marker IS a column this function
@@ -2605,6 +2748,7 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       // must never be spelled as "it cleared", which is the same rule the scoped-kind exemption
       // above enforces for a rule an arm declines to evaluate.
       resolved: [],
+      closedUnconfirmed: [],
       resolutionsTold: [],
       delivered,
       failedSinks: failed,
@@ -2635,6 +2779,7 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
     notifiedAt: alertState.notifiedAt,
     notifiedSignature: alertState.notifiedSignature,
     notifyCount: alertState.notifyCount,
+    lastSeenAt: alertState.lastSeenAt,
   });
   const byKey = new Map(existing.map((r) => [r.alertKey, r]));
 
@@ -2836,80 +2981,55 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   }
   const toNotify = claimed;
 
-  // Resolve what is no longer firing — MARK, not delete: an INSERT cannot be fenced against a row
+  // Resolve what is no longer true — MARK, not delete: an INSERT cannot be fenced against a row
   // that is not there, so an older pass paused before its observation write recreated and paged
-  // an incident a newer pass had just resolved. `selectOpenAlerts` applies `resolved_at IS NULL`.
-  // A pass may only resolve what it actually evaluated: some rules are evaluated by only one arm,
-  // and for those "not in my firing set" is not "no longer true" — resolving anyway deletes the
-  // row the other arm just opened — a permanent flap, re-paged with `notified_at` NULL each
-  // round. The exemption first tested one kind name; four more scoped rules joined and all four
-  // flapped. The set is keyed by what this pass actually evaluated, so a new scoped rule either
-  // appears here or fails the cross-driver test. Residue: a scoped row nothing evaluates any more
-  // is deleted by hand — the safe direction.
-  const evaluatedScopedKeys = new Set<string>();
-  for (const s of shards) {
-    evaluatedScopedKeys.add(`worker_down:${s}`);
-    evaluatedScopedKeys.add(`worker_degraded:${s}`);
-    evaluatedScopedKeys.add(`ai_provider_down:${s}`);
+  // an incident a newer pass had just resolved. Each open row closes by its kind's arms
+  // ({@link ALERT_KIND_ARMS}): CLEARED when this pass evaluated the key and it did not fire, or
+  // UNCONFIRMED when no evaluation has confirmed it for the kind's horizon — a row the other arm
+  // opened and nothing evaluates any more closes by the clock, never by hand. An unconfirmed close
+  // owes no resolution notice (`notify_count` 0): nobody saw the condition clear.
+  const closes: Array<{ key: string; how: "cleared" | "unconfirmed"; before: Date }> = [];
+  for (const r of existing) {
+    if (firingKeys.has(r.alertKey)) continue;
+    const arms = alertKindArms(r.kind);
+    const before = new Date(now.getTime() - arms.unconfirmedAfterMs(t));
+    if (arms.evaluated(r.alertKey, scope)) closes.push({ key: r.alertKey, how: "cleared", before });
+    else if (new Date(r.lastSeenAt as unknown as string).getTime() <= before.getTime()) {
+      closes.push({ key: r.alertKey, how: "unconfirmed", before });
+    }
   }
-  if (opts.driver) {
-    evaluatedScopedKeys.add(`schema_behind:${opts.driver}`);
-    evaluatedScopedKeys.add(`alert_driver_dark:${opts.driver === "worker" ? "api" : "worker"}`);
-  }
-  // Only the WORKER arm runs on a handle that holds `auth_throttle`, so only the worker may
-  // resolve the refusal incident. The API arm cannot read the counter in a hardened deployment
-  // and must therefore not claim the condition has cleared. In a deployment where the API CAN
-  // read it, the rule fires, the key is in `firingKeys`, and this exemption never applies —
-  // so the narrower rule costs nothing there.
-  if (opts.driver === "worker") evaluatedScopedKeys.add("imap_admission_refused");
-  // ── WHAT THIS PASS *INTENDS* TO RESOLVE, WHICH IS NOT YET WHAT IT DID ────────────────
-  //
-  // The list below is computed before the writes and used to be returned as `resolved`. Every
-  // one of those writes is fenced, so an older pass whose update matches zero rows — because a
-  // newer pass has since seen the condition again — still reported the key as resolved. Both
-  // callers log `alert_resolved` from that array, so the log said a condition had cleared while
-  // the row was open and may have just paged a human about it.
-  //
-  // The fence was doing its job silently and the report was speaking for it. `resolved` is now
-  // built from the rows the database actually marked.
-  const candidates = existing
-    .filter((r) => !firingKeys.has(r.alertKey))
-    .filter((r) => !SCOPED_ALERT_KINDS.has(r.kind) || evaluatedScopedKeys.has(r.alertKey))
-    .map((r) => r.alertKey);
+  // `resolved` and `closedUnconfirmed` are built from the rows the database actually marked:
+  // every write is fenced, and a pass may only report what happened, never what it asked for.
   const resolved: string[] = [];
-  for (const key of candidates) {
-    // ── RESOLUTION MARKS; IT DOES NOT DELETE ─────────────────────────────────────────
-    //
-    // Deleting made `alert_state` a live list of what is wrong, which is what the console wants
-    // and what makes "did this page already?" one lookup. It also left the observation write's
-    // INSERT branch with nothing to fence against: an older pass paused before its write arrived
-    // at an empty table and recreated — and paged — the incident this pass had just resolved.
-    //
-    // The row survives its own resolution so the fence has something to stand on. Readers ask
-    // through `selectOpenAlerts`, a genuinely new firing clears the stamp on the fenced conflict
-    // path, and the lease is dropped here because a resolved condition has no delivery pending.
+  const closedUnconfirmed: string[] = [];
+  for (const { key, how, before } of closes) {
+    // A tombstone keeps the key, the stamps and the notification record, and blanks every column
+    // that can carry an id (`fix_href = "/accounts/<uuid>"`): the erasure ruling rested on rows
+    // leaving when their condition stopped. The fence needs the key, `last_seen_at` and
+    // `resolved_at`; a re-open inside the flap floor continues the occurrence from the rest.
     await db.update(alertState)
       .set({
         resolvedAt: now,
         claimedUntil: null,
-        // A tombstone keeps the key and the stamps, and nothing else. The erasure ruling for this
-        // table rested on rows being deleted the moment their condition stopped firing — what
-        // made a per-account rule's `fix_href = "/accounts/<uuid>"` self-clearing. Marking
-        // instead of deleting made that premise false: the uuid would sit on a tombstone
-        // indefinitely on a quiet deployment. So the mark blanks every column that can carry one:
-        // the fence needs the key, `last_seen_at` and `resolved_at`; the notification record
-        // stays for two readers: a re-open inside the flap floor continues the occurrence with
-        // it, and the resolution notice reads `notify_count`. A re-open overwrites the rest.
         fixHref: null,
         detail: null,
         title: null,
         affectedAccounts: null,
+        ...(how === "unconfirmed" ? { notifyCount: 0 } : {}),
       })
-      .where(and(eq(alertState.alertKey, key), notWrittenByANewerPass(now)))
-      // RETURNING is the whole point: it is the difference between "I asked" and "it happened",
-      // and this pass may only report the second.
+      .where(and(
+        eq(alertState.alertKey, key),
+        notWrittenByANewerPass(now),
+        // An unconfirmed close re-asks the confirmation under the write: a pass that confirmed the
+        // row since this one read it has made it confirmed, and the close must match nothing.
+        ...(how === "unconfirmed"
+          ? [sql`${alertState.lastSeenAt} <= ${before.toISOString()}::timestamptz`]
+          : []),
+      ))
       .returning({ alertKey: alertState.alertKey })
-      .then((rows) => { if (rows.length > 0) resolved.push(key); });
+      .then((rows) => {
+        if (rows.length > 0) (how === "cleared" ? resolved : closedUnconfirmed).push(key);
+      });
   }
 
   const resolutionsTold = await tellResolutions(db, sinks, {
@@ -2934,7 +3054,7 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
     // Nothing was ATTEMPTED, so the streak is neither advanced nor cleared. A quiet hour is
     // not evidence that the pager works — that was the whole shape of the bug this reports.
     return {
-      now: now.toISOString(), firing, notified: [], resolved, resolutionsTold,
+      now: now.toISOString(), firing, notified: [], resolved, closedUnconfirmed, resolutionsTold,
       delivered: [], failedSinks: [], sinkErrors: [], undeliverable: false,
       sinkFailureStreak: streak?.consecutiveFailures ?? 0, escalate: null,
       sinkOutcomes: [], sinkDegraded: [],
@@ -3012,6 +3132,7 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
     firing,
     notified: toNotify,
     resolved,
+    closedUnconfirmed,
     resolutionsTold,
     delivered,
     failedSinks: failed,

@@ -386,6 +386,7 @@ async function alertPass(
       });
     }
     for (const key of result.resolved) log.info("alert_resolved", { alertKey: key });
+    for (const key of result.closedUnconfirmed) log.info("alert_closed_unconfirmed", { alertKey: key });
     if (result.notified.length > 0) {
       log.warn("alert_notified", {
         alertKeys: result.notified.map((a) => a.key),

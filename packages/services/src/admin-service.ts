@@ -5,13 +5,12 @@ import {
   invites,
   waitlist,
   workerHeartbeats,
-  evaluateAlerts,
+  evaluateAlertsWithScope,
+  alertKindArms,
   alertClass,
   listOpenAlerts,
-  SCOPED_ALERT_KINDS,
   alertDriverStatuses,
   platformSignalWindow,
-  listOpenAlertStamps,
   SIGNAL_BUCKET_MS,
   listStuckSends,
   DEFAULT_ALERT_THRESHOLDS,
@@ -689,12 +688,11 @@ export async function adminPlatformSignals(
 }
 
 export async function adminAlerts(db: AdminDb, now: Date): Promise<AlertSummary[]> {
-  const firing = await evaluateAlerts(db, { now });
+  const { alerts: firing, scope } = await evaluateAlertsWithScope(db, { now });
   // THROUGH THE DB PACKAGE'S OWN READER, never a select of the table from here: resolution marks
-  // rather than deletes now, so a read without `resolved_at IS NULL` renders fixed history as
-  // live incidents. One accessor is only one accessor if nothing else can reach the rows.
-  const stateRows = await listOpenAlertStamps(db as never);
-  const state = new Map(stateRows.map((r) => [r.alertKey, r]));
+  // rather than deletes, so a read without `resolved_at IS NULL` renders fixed history as live.
+  const open = await listOpenAlerts(db);
+  const state = new Map(open.map((r) => [r.alertKey, r]));
 
   const evaluated = firing.map((alert) => {
     const row = state.get(alert.key);
@@ -710,61 +708,42 @@ export async function adminAlerts(db: AdminDb, now: Date): Promise<AlertSummary[
       // far as anyone can tell now, and nobody has been told.
       openedAt: iso(row?.openedAt ?? null) ?? now.toISOString(),
       notifiedAt: iso(row?.notifiedAt ?? null),
-      // READ FROM THE FIRING ALERT, not from the `alert_state` row, and the two can legitimately
-      // differ for one pass: a promoting rule computes its class from a population that has just
-      // moved, and the row still carries what the LAST pass wrote until this one's observation
-      // lands. The console must render what is true now — which is what the evaluator just
-      // computed — for the same reason this whole function evaluates rather than reading: the
-      // surface an operator looks at and the condition that pages them must not drift apart.
+      // This read evaluated the rule and it fired: confirmed now.
+      lastConfirmedAt: now.toISOString(),
+      // READ FROM THE FIRING ALERT: a promoting rule's class moves with its population, and the
+      // row carries the last pass's until this one's observation lands.
       cls: alertClass(alert),
       affectedAccounts: alert.affectedAccounts ?? null,
       fixHref: alert.fixHref ?? null,
     } satisfies AlertSummary;
   });
 
-  // The rows this read structurally cannot evaluate. The console is not an alert DRIVER — a read
-  // that named itself an arm would report a running scheduler dark — so rules gated on a driver
-  // name (`schema_behind`, `alert_driver_dark`) or on `shards` are never in the evaluated set;
-  // they are READ from `alert_state`: what the drivers wrote is the only evidence this read can
-  // have. But "scoped kind" is not "could not evaluate": `evaluateAlerts` defaults to shard 0, so
-  // this read DOES evaluate `worker_down:0`, `worker_degraded:0` and `ai_provider_down:0`, and
-  // their absence from `firing` after recovery is the correct answer — merging them back put a
-  // cleared critical on the board. What this read truly cannot answer: driver-keyed rules, the
-  // role-scoped one (its counter lives in a table the content-blind handle is not granted), and
-  // shard-keyed rows outside the shard set used here.
-  const READ_SHARDS = [0];
-  const evaluatedHere = new Set<string>();
-  for (const shard of READ_SHARDS) {
-    evaluatedHere.add(`worker_down:${shard}`);
-    evaluatedHere.add(`worker_degraded:${shard}`);
-    evaluatedHere.add(`ai_provider_down:${shard}`);
-  }
-  const scoped = (await listOpenAlerts(db))
-    .filter((r) => SCOPED_ALERT_KINDS.has(r.kind)
-      && !evaluatedHere.has(r.alertKey)
-      && !firing.some((a) => a.key === r.alertKey))
+  // The open rows this read did NOT evaluate, by each kind's resolve arm — the predicate a pass
+  // resolves with, so the board and the pager agree on what "cleared" means. The console is not
+  // a driver (driver- and role-keyed rules), holds no at-cap reader, and may read a 5xx window as
+  // sampled: for those the persisted row is the only evidence, shown with its last confirmation,
+  // so "not measured" never renders as healthy. A shard-0 row this read evaluated and found clear
+  // is not restored.
+  const fired = new Set(firing.map((a) => a.key));
+  const unevaluated = open
+    .filter((r) => !fired.has(r.alertKey) && !alertKindArms(r.kind).evaluated(r.alertKey, scope))
     .map((r) => ({
       key: r.alertKey,
       kind: r.kind as AlertSummary["kind"],
       severity: r.severity === "critical" ? "bad" : "warn",
-      // Projected, never reconstructed. The count was once a hardcoded 1 and the title the
-      // detail's first sentence — so a refusal burst of forty connections rendered as "1" under a
-      // heading that was an opening clause, on the ONLY path for the driver-keyed rules and the
-      // role-scoped one. `alert_state` now persists what the rule said, so both are read; a null
-      // means the row predates those columns (a driver mid-deploy) and the fallback SAYS so
-      // rather than fabricating a sentence — the whole difference between projecting and
-      // guessing.
+      // Projected, never reconstructed; a null is a row older than those columns, and says so.
       title: r.title ?? `${r.kind} — recorded by the other alert driver`,
       detail: r.detail ?? "Recorded by the other alert driver; this read cannot evaluate it.",
       count: r.count ?? 0,
       openedAt: r.openedAt.toISOString(),
       notifiedAt: r.notifiedAt ? r.notifiedAt.toISOString() : null,
+      lastConfirmedAt: r.lastSeenAt.toISOString(),
       cls: r.cls,
       affectedAccounts: r.affectedAccounts,
       fixHref: r.fixHref,
     } satisfies AlertSummary));
 
-  return [...evaluated, ...scoped];
+  return [...evaluated, ...unevaluated];
 }
 
 export async function adminWorker(db: AdminDb, now: Date): Promise<WorkerSnapshot> {
