@@ -202,7 +202,7 @@ describe("with a German catalogue set, the standalone window answers German", ()
     // The brand is not a key and stays the brand.
     expect(stateValue("default")).toBe("ohmail");
     expect(mailboxRowWhy(null)).toBe("Das Postfach, das diese ohmail-Installation organisiert.");
-    expect(mailboxRowWhy({ name: "ohmail Cloud" }))
+    expect(mailboxRowWhy({ name: "ohmail Cloud", nobody: false }))
       .toBe("Das Postfach, das diese ohmail-Installation liest. Organisiert wird es von ohmail Cloud.");
     expect(desktopPaneLabel()).toBe("Desktop");
   });

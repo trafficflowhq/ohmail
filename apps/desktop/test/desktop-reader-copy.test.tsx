@@ -82,7 +82,7 @@ describe("mailboxRowWhy — 'organizes' or 'reads', and never the wrong one", ()
   });
 
   it("a reader says it READS, and names who organizes", () => {
-    const said = mailboxRowWhy({ name: "ohmail Cloud" });
+    const said = mailboxRowWhy({ name: "ohmail Cloud", nobody: false });
     expect(said).toContain("reads");
     expect(said).toContain("ohmail Cloud");
     expect(said, "the released sentence claimed work this install never did")
@@ -90,7 +90,7 @@ describe("mailboxRowWhy — 'organizes' or 'reads', and never the wrong one", ()
   });
 
   it("a holder with no NAME says so without inventing one", () => {
-    const said = mailboxRowWhy({ name: null });
+    const said = mailboxRowWhy({ name: null, nobody: false });
     expect(said).toContain("reads");
     expect(said, "a placeholder reached the pane").not.toContain("{name}");
     expect(said, "a null name was rendered as a machine called null").not.toContain("null");
