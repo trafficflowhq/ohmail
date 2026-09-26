@@ -20,7 +20,7 @@ import {
   sayReadingAtConnect,
   takeConsentPress, sayOrganizerRestricted, standaloneHere, standaloneLaunchGeneration,
 } from "../engine/organizer-session";
-import { engineLogSink } from "../engine/engine-log";
+import { engineLogSink, logNetwork } from "../engine/engine-log";
 import { accessLock, clearAccessLock, onAccessLock } from "./access-lock";
 import { decidedState, type DecidedState } from "./decided";
 import { deathRefusal, noteSessionDeath } from "./session-death";
@@ -38,7 +38,7 @@ import type { ServerProfile } from "../state/servers";
 import type { FetchLike } from "./bearer";
 import { SyncRunner, drainLine } from "./drain";
 import { keepDraining, type AppLifecycle } from "./drain-cadence";
-import { installNetworkReader, networkDoor } from "./network-door";
+import { installNetworkReader, networkDoor, networkNow, onNetworkChange } from "./network-door";
 import { nativeNetworkReader } from "./network-native";
 import { organizeHere, readMailboxes } from "./mailboxes";
 import {
@@ -203,8 +203,11 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       // at all, and its absence is a refusal rather than an unpinned connection. `useMemo`'s
       // factory runs during the provider's first render, before any child can call a verb.
       installPinning(nativeHostPinning());
-      // THE NETWORK DOOR'S ONE READER, before any surface asks it (`network-door.ts`).
+      // THE NETWORK DOOR'S ONE READER, before any surface asks it (`network-door.ts`), and a
+      // line per reading so a device run can see the platform speak.
       installNetworkReader(nativeNetworkReader());
+      logNetwork(networkNow());
+      onNetworkChange(logNetwork);
       return {
         profiles: nativeServerProfiles(),
         engineDeps: nativeEngineDeps(),

@@ -135,6 +135,15 @@ export function logAttachmentRefusal(reason: AttachmentRefusal): void {
 }
 
 /**
+ * ONE LINE PER READING OF THE PHONE'S NETWORK, as the platform gave it to the door
+ * (`net/network-door.ts`) — what a device run reads to tell a reader that never spoke from a
+ * surface that ignored it. Three closed words, nothing to redact.
+ */
+export function logNetwork(state: "online" | "offline" | "unknown"): void {
+  engineLogSink()(JSON.stringify({ service: "app", event: "network", state }));
+}
+
+/**
  * ONE LINE PER MIRROR OPEN, SAYING WHETHER THE COPIED MAIL IS OUTSIDE THIS DEVICE'S BACKUP.
  *
  * Both fields, because one of them cannot answer alone: `backup_excluded` is the measurement and
