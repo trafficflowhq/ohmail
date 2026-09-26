@@ -674,9 +674,11 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
   });
 
   it("is NOT offered on a TOMBSTONE — the handler refuses that row and so does the pane", async () => {
+    /* On this door a removed mailbox draws no block at all (its mail left with it),
+       so there is no row to offer a claim from. */
     FACTS = [REMOVED];
     const el = await render(null);
-    expect(el.textContent).toContain("Disconnected");
+    expect(el.textContent, "the removed mailbox's block is still drawn").not.toContain(REMOVED.address);
     expect(organizeButton(el),
       "offering a claim on a removal resurrects a mailbox somebody took off this machine, and " +
         "`organizeHere` declines it anyway")

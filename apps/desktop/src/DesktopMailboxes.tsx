@@ -28,8 +28,8 @@ import {
 } from "@ohmail/ui";
 
 import {
-  desktopFiler, deviceHoldings, filerSentence, holdingsSpeak, readerStandDown, showInboundQuiet,
-  type MailboxFacts,
+  desktopFiler, deviceHoldings, filerSentence, holdingsSpeak, isRemovedMailbox, readerStandDown,
+  showInboundQuiet, type MailboxFacts,
 } from "../../webapp/app/shell/mail-state";
 import { addressKey } from "../../webapp/app/shell/address-key";
 import { agoStamp, dayStamp } from "../../webapp/app/shell/format";
@@ -1128,12 +1128,10 @@ export function DesktopMailboxes(
    * STAND-DOWN COUNTS: filtering on `status !== "disabled"` alone excluded the pre-role
    * stand-down shape (`disabled` WITH a reason), which `claimable` includes — removing the
    * one live mailbox announced "the only mailbox on this computer" with the other visibly a
-   * row away, then signed the door out. The test is "is this row a TOMBSTONE".
+   * row away, then signed the door out. The test is "is this row a TOMBSTONE" (`isRemovedMailbox`).
    */
-  const isTombstone = (r: MailboxFacts): boolean =>
-    r.status === "disabled" && r.legacyStandDown !== true;
   const isLastLive = (m: MailboxFacts): boolean => {
-    const live = (facts ?? []).filter((r) => !isTombstone(r));
+    const live = (facts ?? []).filter((r) => !isRemovedMailbox(r));
     return live.length === 1 && live[0]!.id === m.id;
   };
 
@@ -1956,10 +1954,14 @@ export function DesktopMailboxes(
     );
   };
 
+  /* A REMOVED mailbox's tombstone is still listed, and on this door its mail left with it: its
+     block would be an address with no control and nothing behind it. The Cloud door lists the
+     account's own disconnected mailboxes, whose copy stays on the server. */
+  const listed = cloud ? facts : facts.filter((m) => !isRemovedMailbox(m));
   return (
     <SettingsSection>
       <h2 className="acct-h">{heading}</h2>
-      {facts.length === 0 ? (
+      {listed.length === 0 ? (
         <p className="set-note-inline">{cloud ? t("desktopNoneCloud") : t("desktopNoneLocal")}</p>
       ) : null}
       {/* ── ADD MAILBOX — ABOVE THE LIST, because it is about the list, not a row. The route
@@ -2003,7 +2005,7 @@ export function DesktopMailboxes(
           rules with sibling combinators (`.set-row + .set-row`), which cannot see past the sending
           note and the organizer block that stand between one mailbox's row and the next; the
           browser's pane wraps its rows in `.mbx-entry` for the same reason. */}
-      {foldByAddress(facts).map(({ shown, superseded }) => (
+      {foldByAddress(listed).map(({ shown, superseded }) => (
         <div className="mbx-card" key={shown.id}>
           <SettingsRow
             label={shown.address}

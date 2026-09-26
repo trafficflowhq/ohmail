@@ -27,6 +27,7 @@ import {
   type ProfileImportAppliedWire, type ProfileImportCandidateWire, type ProfileImportCountsWire,
 } from "../api-client";
 import { displayAddress } from "./idn";
+import { isRemovedMailbox } from "./mail-state";
 /* The one place any surface asks whether a phone holds the mailbox — see `reader-holder.ts`. */
 import { PHONE_HOLDER_WHY_KEY, holderSentence, phoneHolder } from "./reader-holder";
 
@@ -152,7 +153,7 @@ function asOffer(dto: unknown): OfferCandidate | null {
 
 export function useProfileImport(
   active: boolean,
-  mailboxes: ReadonlyArray<{ id: string; address: string }> | null,
+  mailboxes: ReadonlyArray<{ id: string; address: string; status?: string; legacyStandDown?: boolean }> | null,
   transport?: ProfileImportTransport,
   /** The beat, injectable so a test does not wait five minutes for the second look. */
   recheckMs: number = PROFILE_IMPORT_RECHECK_MS,
@@ -165,8 +166,11 @@ export function useProfileImport(
      the mailbox SET, the beat — and nothing re-fires it spuriously. */
   const held = useRef(transport);
   held.current = transport;
-  const list = useRef(mailboxes);
-  list.current = mailboxes;
+  /* A REMOVED mailbox's tombstone is still listed, and an offer for it is a question nobody can
+     answer — it leaves the scope with the removal (`isRemovedMailbox`). */
+  const scope = mailboxes === null ? null : mailboxes.filter((m) => !isRemovedMailbox(m));
+  const list = useRef(scope);
+  list.current = scope;
   const lastChecked = useRef(new Map<string, number>());
   const inFlight = useRef(new Set<string>());
   const mounted = useRef(true);
@@ -174,7 +178,7 @@ export function useProfileImport(
   const phaseRef = useRef(phase);
   phaseRef.current = phase;
 
-  const idsKey = (mailboxes ?? []).map((m) => m.id).sort().join(",");
+  const idsKey = (scope ?? []).map((m) => m.id).sort().join(",");
 
   useEffect(() => {
     /* `active` FIRST — the away notice's load-bearing order: an inactive shell must not so much

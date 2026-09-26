@@ -89,6 +89,17 @@ export function standDownToken(wire: string | null): StandDownReason | null {
  */
 export type ReaderStandDown = StandDownReason | "released";
 
+/**
+ * A REMOVED MAILBOX — the tombstone a removal leaves, which `GET /mailboxes` still lists as a
+ * `disabled` row (the hosted door keeps its copy; the desktop's local door wipes it). Nothing a
+ * person can act on stays on screen for it: its settings card and its Settings block go. A
+ * stand-down an OLDER engine reports the same way, with a reason ({@link MailboxFacts.legacyStandDown}),
+ * is not a removal. The one spelling; `DesktopMailboxes.tsx` and `ProfileImportCard.tsx` read it.
+ */
+export function isRemovedMailbox(m: { status?: string; legacyStandDown?: boolean }): boolean {
+  return m.status === "disabled" && m.legacyStandDown !== true;
+}
+
 export function readerStandDown(m: {
   status?: string;
   disabledReason?: string | null;

@@ -1366,6 +1366,33 @@ describe("the desktop mailbox pane on the standalone door", () => {
     expect(buttonExactly(el, "Remove")).toBeNull();
   });
 
+  /* After a removal `GET /mailboxes` still lists the tombstone, and the pane drew it
+     as an address with "Last checked" and no control. On this door its mail left with it.
+     Mutation: fold `facts` instead of the filtered list and the first case reds. */
+  const GONE: MailboxFacts = {
+    ...MAILBOX, id: "mbx-gone", address: "gone@example.test", status: "disabled", disabledReason: null,
+  };
+
+  it("a REMOVED mailbox leaves the pane — its tombstone is listed, its block is not drawn", async () => {
+    FACTS = [MAILBOX, GONE];
+    const el = await render("local");
+    expect(addressRows(el).map((r) => r.querySelector(".lab b")?.textContent),
+      "the removed mailbox's block is still on screen").toEqual([MAILBOX.address]);
+    expect(el.textContent ?? "").not.toContain(GONE.address);
+  });
+
+  it("…the Cloud door still lists the account's disconnected mailbox, whose copy stays", async () => {
+    FACTS = [MAILBOX, GONE];
+    const el = await render("cloud");
+    expect(el.textContent ?? "").toContain(GONE.address);
+  });
+
+  it("…and a stand-down an older engine reports as `disabled` keeps its row on this door", async () => {
+    FACTS = [{ ...GONE, disabledReason: "organized_elsewhere:local", legacyStandDown: true }];
+    const el = await render("local");
+    expect(el.textContent ?? "").toContain(GONE.address);
+  });
+
   it("an install that has not chosen a door yet is treated as standalone, not hosted", async () => {
     // `door` is `status?.mode ?? null`. Only the string "cloud" earns the hand-off; anything else
     // — null, an unset mode, a mode a newer engine invented — must not put a link to a hosted
