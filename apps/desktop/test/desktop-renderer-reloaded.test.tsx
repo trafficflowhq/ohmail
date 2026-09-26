@@ -4,6 +4,7 @@
  * address (`renderer_recovery.rs`'s `RELOADED_MARK`, `reload_uri`); the page takes the mark
  * before its first render, puts the address back with the view it showed, and says one sentence.
  */
+/* @reads: apps/desktop/src-tauri/src/renderer_recovery.rs */
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { readFileSync } from "node:fs";
