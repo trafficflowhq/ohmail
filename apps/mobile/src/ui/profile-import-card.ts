@@ -18,6 +18,40 @@ export interface MailboxQuestion {
   question: ProfileImportQuestion;
 }
 
+/** How soon a mailbox is asked again without a ring: an open answer rarely changes, a `none` can at any drain. */
+export const ASK_AGAIN_OPEN_MS = 5 * 60 * 1000;
+export const ASK_AGAIN_NONE_MS = 60 * 1000;
+
+/**
+ * WHICH MAILBOXES THIS PASS ASKS. A rung doorbell (`World.mailboxes.settingsBell` moved: an
+ * organizer found or lapsed a settings document) asks every one at once; otherwise each waits
+ * out its own throttle. The web's hook keeps the same rule.
+ */
+export function mailboxesToAsk(
+  ids: readonly string[], asked: ReadonlyMap<string, number>,
+  answers: Readonly<Record<string, ProfileImportQuestion>>, now: number, rang: boolean,
+): string[] {
+  return ids.filter((id) => {
+    const last = asked.get(id);
+    if (rang || last === undefined) return true;
+    const prior = answers[id];
+    return now - last >= (prior === undefined || prior.state === "none" ? ASK_AGAIN_NONE_MS : ASK_AGAIN_OPEN_MS);
+  });
+}
+
+/**
+ * ONE TICKET PER ASK, PER MAILBOX: only the newest ask's answer lands, and a press outranks every
+ * ask that left before it — so a ring racing a slower ask, or a Not now racing a ring, cannot
+ * bring an older answer back over a newer one.
+ */
+export function askTickets(): {
+  begin: (id: string) => number; supersede: (id: string) => void; current: (id: string, ticket: number) => boolean;
+} {
+  const n = new Map<string, number>();
+  const next = (id: string): number => { const t = (n.get(id) ?? 0) + 1; n.set(id, t); return t; };
+  return { begin: next, supersede: (id) => { next(id); }, current: (id, ticket) => n.get(id) === ticket };
+}
+
 /** The question on the card: the first open one, in the order the mailboxes came. */
 export function cardQuestion(rows: readonly MailboxQuestion[]): MailboxQuestion | null {
   return rows.find((r) => r.question.state === "found" || r.question.state === "newer") ?? null;

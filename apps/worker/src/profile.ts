@@ -2,7 +2,7 @@ import { and, desc, eq } from "drizzle-orm";
 import {
   PROFILE_FOUND_AUDIT_ACTION, auditLog, latestProfileFoundMarker, profileImportResolutionExists,
   profileImportWriteReleased,
-  mailboxProfileMirror, recordMailboxProfileChange,
+  mailboxProfileMirror, recordChanges, recordMailboxProfileChange,
   type LedgerTx, type Tx, auditAction, fencedAccountWrite,} from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 /* NAMED AT A LEAF, NEVER AT THE PACKAGE ROOT — this module is bundled into the desktop engine.
@@ -1267,23 +1267,32 @@ export class OrganizerProfileSync {
         if (fact.state !== "lapsed") this.markerPending = null;
         return;
       }
-      await deps.db.insert(auditLog).values({
-        accountId: deps.accountId,
-        action: auditAction(PROFILE_FOUND_AUDIT_ACTION),
-        payload: fact.state === "found"
-          ? {
-            mailboxId: deps.mailboxId, state: fact.state, fingerprint, heldForImport,
-            updatedAt: fact.doc.updatedAt, producer: fact.doc.producer,
-            counts: {
-              screener: fact.doc.screener.length,
-              rules: fact.doc.rules.length,
-              notifyRules: fact.doc.notifyRules.length,
-              tagNames: fact.doc.tagNames.length,
-              awayResponder: fact.doc.awayResponder === null ? 0 : 1,
-            },
-          }
-          : { mailboxId: deps.mailboxId, state: fact.state, fingerprint, heldForImport, v },
-        inverse: null,
+      /* THE MARKER RINGS THE SETTINGS DOORBELL, in its own transaction: the card is asked for at
+         the find, not at a client's next poll. The row re-materializes the account's unchanged
+         settings, so no consent stamp moves; what moves is the mirror record's seq, which every
+         card keys its re-ask on. Fenced like every account write the sweep must outrun. */
+      await fencedAccountWrite(deps.db, { accountId: deps.accountId, mailboxId: deps.mailboxId }, async (tx) => {
+        await tx.insert(auditLog).values({
+          accountId: deps.accountId,
+          action: auditAction(PROFILE_FOUND_AUDIT_ACTION),
+          payload: fact.state === "found"
+            ? {
+              mailboxId: deps.mailboxId, state: fact.state, fingerprint, heldForImport,
+              updatedAt: fact.doc.updatedAt, producer: fact.doc.producer,
+              counts: {
+                screener: fact.doc.screener.length,
+                rules: fact.doc.rules.length,
+                notifyRules: fact.doc.notifyRules.length,
+                tagNames: fact.doc.tagNames.length,
+                awayResponder: fact.doc.awayResponder === null ? 0 : 1,
+              },
+            }
+            : { mailboxId: deps.mailboxId, state: fact.state, fingerprint, heldForImport, v },
+          inverse: null,
+        });
+        await recordChanges(tx as LedgerTx, [
+          { accountId: deps.accountId, entityType: "settings", entityId: deps.accountId, op: "update" },
+        ]);
       });
       // A marker that LANDED supersedes any older fact still owed from a failed write (review
       // round 9): retrying the stale one later would file it AFTER this row and make it the

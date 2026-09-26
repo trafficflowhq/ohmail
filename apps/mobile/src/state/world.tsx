@@ -259,6 +259,12 @@ export interface World {
      * it from, and `null` is what the composer refuses on rather than guessing an account.
      */
     sendingId: string | null;
+    /**
+     * THE SETTINGS DOORBELL — the mirror's `settings` record seq, null before one lands. An
+     * organizer's find or lapse of a settings document rings it (`profile.ts#writeMarker`), so
+     * the found-settings card re-asks on the drain that carries it, not behind its throttle.
+     */
+    settingsBell: number | null;
   };
   ohbox: {
     resurfaced: WorldMail[];
@@ -593,7 +599,7 @@ function emptyWorld(actions: WorldActions): World {
     images: { via: "none" },
     // Nothing has been asked on the empty world, so `known` is false and the banner is withheld
     // — the same honest-unknown the boot facts keep between a teardown and the redirect.
-    mailboxes: { known: false, ownAddresses: [], organizer: null, rows: [], sendingId: null },
+    mailboxes: { known: false, ownAddresses: [], organizer: null, rows: [], sendingId: null, settingsBell: null },
     ohbox: { resurfaced: [], fresh: [], seen: [], unreadIds: [], unread: 0, total: 0, meta: "" },
     doorbell: { initials: [], count: 0 },
     reads: { items: [], waterlineAboveId: null, unreadIds: [], waterLabel: Copy.waterline, newCount: 0, meta: "" },
@@ -1505,6 +1511,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         /* The engine's mirror, not this read: a phone that has never reached `/mailboxes`
            can still send from the mailbox its mirrored mail arrived in. */
         sendingId: sendingMailboxId(base),
+        settingsBell: engine.read().entries("settings")[0]?.seq ?? null,
       },
       ohbox: { ...ohbox, meta: Copy.metaUnreadOf(ohbox.unread, ohbox.total) },
       doorbell: {

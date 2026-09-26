@@ -17,17 +17,14 @@ import type { ConnectedSession } from "../net/pairing";
 import { useWorld } from "../state/world";
 import { Button, Panel, Txt, useTopPad } from "./base";
 import {
-  cardQuestion, countsSaid, failureSaid, savedBySaid, savedRows,
+  askTickets, cardQuestion, countsSaid, failureSaid, mailboxesToAsk, savedBySaid, savedRows,
   type CardPhase, type MailboxQuestion,
 } from "./profile-import-card";
 
-/** How soon a mailbox is asked again: an open answer rarely changes, a `none` can at any drain. */
-const ASK_AGAIN_OPEN_MS = 5 * 60 * 1000;
-const ASK_AGAIN_NONE_MS = 60 * 1000;
-
 /**
  * Every mailbox's answer, asked on the session's own door when the mailbox read refreshes (after
- * each drain), throttled per mailbox. `set` lets a press record its own answer at once.
+ * each drain), throttled per mailbox, and at once when the settings doorbell rings (an
+ * organizer's find). `set` lets a press record its own answer at once.
  */
 export function useProfileQuestions(): {
   session: ConnectedSession | null;
@@ -39,6 +36,9 @@ export function useProfileQuestions(): {
   const session = conn.state.k === "live" ? conn.state.session : null;
   const [answers, setAnswers] = useState<Record<string, ProfileImportQuestion>>({});
   const asked = useRef(new Map<string, number>());
+  const [tickets] = useState(askTickets);
+  const bell = w.mailboxes.settingsBell;
+  const rung = useRef(bell);
   const known = useRef(answers);
   known.current = answers;
   const mounted = useRef(true);
@@ -46,23 +46,24 @@ export function useProfileQuestions(): {
 
   useEffect(() => {
     if (session === null) return;
+    const rang = rung.current !== bell;
+    rung.current = bell;
     const now = Date.now();
-    for (const row of w.mailboxes.rows) {
-      const last = asked.current.get(row.id);
-      const prior = known.current[row.id];
-      const gap = prior === undefined || prior.state === "none" ? ASK_AGAIN_NONE_MS : ASK_AGAIN_OPEN_MS;
-      if (last !== undefined && now - last < gap) continue;
-      asked.current.set(row.id, now);
-      void readProfileImport(session, row.id).then((q) => {
-        if (mounted.current && q !== null) setAnswers((prev) => ({ ...prev, [row.id]: q }));
+    const ids = w.mailboxes.rows.map((r) => r.id);
+    for (const id of mailboxesToAsk(ids, asked.current, known.current, now, rang)) {
+      asked.current.set(id, now);
+      const ticket = tickets.begin(id);
+      void readProfileImport(session, id).then((q) => {
+        if (mounted.current && q !== null && tickets.current(id, ticket)) setAnswers((prev) => ({ ...prev, [id]: q }));
       });
     }
-  }, [session, w.mailboxes.rows]);
+  }, [session, w.mailboxes.rows, bell, tickets]);
 
   const set = useCallback((mailboxId: string, question: ProfileImportQuestion) => {
     asked.current.set(mailboxId, Date.now());
+    tickets.supersede(mailboxId);
     setAnswers((prev) => ({ ...prev, [mailboxId]: question }));
-  }, []);
+  }, [tickets]);
 
   const rows = w.mailboxes.rows
     .filter((r) => answers[r.id] !== undefined)

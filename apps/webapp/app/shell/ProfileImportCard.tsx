@@ -6,7 +6,8 @@
  * organized it before; the organizer that finds one NEVER applies it — it records the fact and
  * waits, and this card is where the person answers: counts in plain words, two honest buttons,
  * never a wall of JSON. {@link useProfileImport} asks once per mailbox at mount, again when a
- * mailbox APPEARS, then on a slow visible-tab beat ({@link PROFILE_IMPORT_RECHECK_MS}). A failed
+ * mailbox APPEARS, at once when the sync doorbell rings ({@link settingsDoorbell}), and on a slow
+ * visible-tab beat ({@link PROFILE_IMPORT_RECHECK_MS}) for a server that rings nothing. A failed
  * check stays silent: no card is the resting surface, and the claim may only come from the server.
  */
 
@@ -33,6 +34,18 @@ import { PHONE_HOLDER_WHY_KEY, holderSentence, phoneHolder } from "./reader-hold
 
 /** How often an unanswered mailbox is re-asked, at most. The connect case rides the first beat. */
 export const PROFILE_IMPORT_RECHECK_MS = 5 * 60 * 1000;
+
+/**
+ * THE DOORBELL A FIND RINGS — the mirror's `settings` record's seq, or null before one lands. An
+ * organizer that finds or lapses a settings document appends a `settings` change row with its
+ * marker (`apps/worker/src/profile.ts#writeMarker`); the row re-materializes unchanged settings, so
+ * the consent stamp stays put and only this seq moves. The card is asked for on the drain that
+ * carries it, never at the beat.
+ */
+export function settingsDoorbell(reader: { entries(type: string): ReadonlyArray<{ seq: number }> }): number | null {
+  const [row] = reader.entries("settings");
+  return row ? row.seq : null;
+}
 
 /**
  * The two shapes worth a card.
@@ -157,13 +170,17 @@ export function useProfileImport(
   transport?: ProfileImportTransport,
   /** The beat, injectable so a test does not wait five minutes for the second look. */
   recheckMs: number = PROFILE_IMPORT_RECHECK_MS,
+  /** {@link settingsDoorbell}: a move re-asks every mailbox now, whatever the beat says. */
+  doorbell: number | null = null,
 ): ProfileImportState {
   const [offers, setOffers] = useState<ProfileImportOffer[]>([]);
   const [phase, setPhase] = useState<ProfileImportPhase>({ kind: "offer" });
   const [beat, setBeat] = useState(0);
+  /* A ring that met an ask in flight is OWED: the ask may predate the find, so it runs again. */
+  const [nudge, setNudge] = useState(0);
 
-  /* Refs, so the check effect's deps stay the three things that mean "ask again" — activation,
-     the mailbox SET, the beat — and nothing re-fires it spuriously. */
+  /* Refs, so the check effect's deps stay the things that mean "ask again" — activation, the
+     mailbox SET, the beat, the doorbell — and nothing re-fires it spuriously. */
   const held = useRef(transport);
   held.current = transport;
   /* A REMOVED mailbox's tombstone is still listed, and an offer for it is a question nobody can
@@ -173,6 +190,10 @@ export function useProfileImport(
   list.current = scope;
   const lastChecked = useRef(new Map<string, number>());
   const inFlight = useRef(new Set<string>());
+  const rung = useRef(doorbell);
+  const owed = useRef(new Set<string>());
+  /* Bumped when this tab answers a mailbox: an ask that left before the answer applies nothing. */
+  const answered = useRef(new Map<string, number>());
   const mounted = useRef(true);
   useEffect(() => () => { mounted.current = false; }, []);
   const phaseRef = useRef(phase);
@@ -210,17 +231,26 @@ export function useProfileImport(
     }
     const via = held.current ?? (apiConfigured() ? HOSTED : null);
     if (!via) return;
+    const rang = rung.current !== doorbell;
+    rung.current = doorbell;
     const now = Date.now();
     for (const m of list.current ?? []) {
       const last = lastChecked.current.get(m.id);
-      if (inFlight.current.has(m.id)) continue;
-      if (last !== undefined && now - last < recheckMs) continue;
+      if (inFlight.current.has(m.id)) {
+        if (rang) owed.current.add(m.id);
+        continue;
+      }
+      const wasOwed = owed.current.delete(m.id);
+      if (!rang && !wasOwed && last !== undefined && now - last < recheckMs) continue;
       inFlight.current.add(m.id);
       lastChecked.current.set(m.id, now);
+      const epoch = answered.current.get(m.id) ?? 0;
       void (async () => {
         try {
           const dto = await via.candidate(m.id);
           if (!mounted.current) return;
+          // Answered here while this ask flew: its answer predates the person's, so it is stale.
+          if ((answered.current.get(m.id) ?? 0) !== epoch) return;
           const candidate = asOffer(dto); // unrecognised answers — including `none` — are no offer
           if (candidate === null) {
             // An authoritative non-offer RETIRES a standing card for this mailbox: another
@@ -243,10 +273,11 @@ export function useProfileImport(
           // built on a guess — the claim "your settings are waiting" is the server's to make.
         } finally {
           inFlight.current.delete(m.id);
+          if (mounted.current && owed.current.has(m.id)) setNudge((n) => n + 1);
         }
       })();
     }
-  }, [active, idsKey, beat, recheckMs]);
+  }, [active, idsKey, beat, recheckMs, doorbell, nudge]);
 
   // The slow beat. Visibility-gated like every other poll: nobody looking, nothing asked.
   useEffect(() => {
@@ -263,6 +294,7 @@ export function useProfileImport(
   /** Retire the current offer — answered, or acknowledged. The next queued one takes the card. */
   const retire = useCallback((mailboxId: string) => {
     lastChecked.current.set(mailboxId, Date.now());
+    answered.current.set(mailboxId, (answered.current.get(mailboxId) ?? 0) + 1);
     setOffers((prev) => prev.filter((o) => o.mailboxId !== mailboxId));
     setPhase({ kind: "offer" });
   }, []);

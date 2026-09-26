@@ -108,7 +108,7 @@ import { AwayNotice, useAwayNotice } from "./AwayNotice";
 import { OhmarchyOffer, useOhmarchyOffer } from "./OhmarchyOffer";
 import type { ApplyFaceAllDevices } from "./FaceRow";
 import {
-  ProfileImportCard, SavedProfileSection, useProfileImport, type ProfileImportTransport,
+  ProfileImportCard, SavedProfileSection, settingsDoorbell, useProfileImport, type ProfileImportTransport,
 } from "./ProfileImportCard";
 import {
   COMPOSE_SEND_KEY, heldRowUnverified, inlineForwardKey, promoteOrphanedReplyLane,
@@ -1582,7 +1582,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * with a refusing stub asks nothing unless its host wired a transport,
    * which the desktop does on both doors ({@link profileImportTransport}).
    */
-  const profileImportOffer = useProfileImport(!demo, facts, profileImportTransport);
+  /* The doorbell an organizer's find rings — the card is asked for on the drain that carries it. */
+  const profileDoorbell = useMemo(
+    () => settingsDoorbell(engine.read()),
+    // `derived` is the subscription; the reader object is stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [engine, derived],
+  );
+  const profileImportOffer = useProfileImport(!demo, facts, profileImportTransport, undefined, profileDoorbell);
 
   /* The modifier's cap on this keyboard — the three hand-written caps below read it. */
   const modCap = useModGlyph();

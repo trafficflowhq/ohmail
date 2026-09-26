@@ -248,6 +248,52 @@ describe("the restore card over the bridge", () => {
   });
 });
 
+describe("the find is asked for on the drain that carries it, over the bridge", () => {
+  /**
+   * Measured on 0.25.1: this window showed the card 8 min 25 s after the engine found the
+   * document. The engine's marker now rings the settings doorbell (`profile.ts#writeMarker`), the
+   * shell hands its seq to the shared hook (`settingsDoorbell`), and a move re-asks the engine at
+   * once. The beat here is an hour, so only the ring can bring the card.
+   */
+  it("a rung doorbell asks the engine again at once and the card appears", async () => {
+    candidate = { state: "none" };
+    function BellProbe({ bell }: { bell: number | null }): React.ReactElement | null {
+      const state = useProfileImport(true, [MB], profileImportOverBridge, 60 * 60 * 1000, bell);
+      if (!state.offer) return h("div", { className: "no-card" });
+      return h(ProfileImportCard as never, {
+        offer: state.offer, phase: state.phase,
+        onImport: state.importNow, onNotNow: state.notNow, onAcknowledge: state.acknowledge,
+      } as never);
+    }
+    hostEl = document.createElement("div");
+    document.body.append(hostEl);
+    root = createRoot(hostEl);
+    const render = async (bell: number | null): Promise<void> => {
+      await act(async () => {
+        root.render(h(NextIntlClientProvider, {
+          locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-18T12:00:00.000Z"),
+          children: h(BellProbe, { bell }),
+        }));
+      });
+      await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    };
+    const gets = () => asked.filter((a) => a.method === "GET" && a.url === profileImportPath(MB.id)).length;
+    await render(3);
+    expect(gets()).toBe(1);
+    expect(card()).toBeNull();
+    candidate = {
+      state: "found", fingerprint: FINGERPRINT, updatedAt: "2026-08-10T09:00:00.000Z",
+      producer: { kind: "cloud", version: "1" },
+      counts: { screener: 1, rules: 2, notifyRules: 0, tags: 1, awayResponder: false },
+    };
+    await render(3);
+    expect(gets(), "an unmoved doorbell asked the engine again").toBe(1);
+    await render(4);
+    expect(gets(), "the ring did not reach the engine").toBe(2);
+    expect(card(), "the ring's answer did not reach the card").not.toBeNull();
+  });
+});
+
 describe("the Settings row for a declined document, over the bridge", () => {
   /** The REAL row over the REAL bridge transport, as `AppShell` renders it in the Mailboxes pane. */
   async function mountRow(): Promise<void> {
@@ -363,7 +409,7 @@ describe("the wiring, pinned by source", () => {
   });
 
   it("the shared shell threads the host wire into the one import state", () => {
-    expect(shell).toMatch(/const profileImportOffer = useProfileImport\(!demo, facts, profileImportTransport\);/);
+    expect(shell).toMatch(/const profileImportOffer = useProfileImport\(!demo, facts, profileImportTransport, undefined, profileDoorbell\);/);
   });
 
   it("the shared files name none of the transport — no bridge, no Tauri, no engine", () => {
