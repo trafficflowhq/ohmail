@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fstatSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync, writeSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { uptime as osUptime } from "node:os";
 import { execFileSync } from "node:child_process";
@@ -367,12 +367,40 @@ export class DataDirLockedError extends Error {
 export const LOCK_FILE = "sidecar.lock";
 
 /**
+ * The store on this computer could not be opened. The one class the window reads as "this copy
+ * is the problem", where setting it aside and reading the mailbox again is the way out. Keeps the
+ * cause's `code` (42P01 and the like) so the start's log line still names it.
+ */
+export class LocalStoreOpenError extends Error {
+  readonly code: string | undefined;
+  constructor(cause: unknown) {
+    super(`the local mail store could not be opened: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+    this.name = "LocalStoreOpenError";
+    const code = (cause as { code?: unknown } | null)?.code;
+    this.code = typeof code === "string" ? code : undefined;
+  }
+}
+
+/**
  * WHICH RUN OF THIS STORE A CLIENT'S CURSOR BELONGS TO — `<dataDir>/store-generation.json`.
  *
  * A file and not a row, because it has to be readable BEFORE the database is and has to survive
  * the very transactions it is about. See {@link readStoreGeneration} for the whole argument.
  */
 export const STORE_GENERATION_FILE = "store-generation.json";
+
+/**
+ * A STORE STILL BEING MADE — `<dataDir>/store-unfinished`, written before a new store's `initdb`
+ * and removed once its first migration pass commits. PGlite reads a directory as made from
+ * `PG_VERSION`, which `initdb` writes first, so a kill inside it left a catalog every later start
+ * resumed and failed on (42P01, or a WASM abort), for good. Present while unfinished rather than
+ * written when done, so a store made before it existed reads as made; {@link storeHoldsNothing}
+ * judges those.
+ */
+export const STORE_UNFINISHED_FILE = "store-unfinished";
+
+/** Where a store is moved rather than deleted: `<dataDir>/set-aside-<UTC stamp>/pgdata`. */
+export const SET_ASIDE_PREFIX = "set-aside-";
 
 /**
  * HOW OLD AN EMPTY LOCK FILE HAS TO BE before it is read as a crash rather than as a launch.
@@ -761,6 +789,98 @@ function writeStoreGeneration(dataDir: string, generation: number, open: boolean
   } finally {
     closeSync(fd);
   }
+}
+
+/** Make a directory's entries durable. Windows cannot open a directory for this; it is skipped there. */
+function fsyncDir(dir: string): void {
+  let fd: number | undefined;
+  try {
+    fd = openSync(dir, "r");
+    fsyncSync(fd);
+  } catch {
+    /* EISDIR/EPERM on Windows: its rename is durable without it. */
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+function markStoreUnfinished(dataDir: string): void {
+  const fd = openSync(join(dataDir, STORE_UNFINISHED_FILE), "w");
+  try {
+    writeSync(fd, `${new Date().toISOString()}\n`);
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  fsyncDir(dataDir);
+}
+
+function markStoreFinished(dataDir: string): void {
+  rmSync(join(dataDir, STORE_UNFINISHED_FILE), { force: true });
+  fsyncDir(dataDir);
+}
+
+/**
+ * THE COMPLETION CHECK: did the last start that made this store stop before finishing it? The
+ * marker says so, and so does a `pgdata` holding files but no `PG_VERSION` — `initdb` refuses a
+ * directory holding anything, and a kill before it wrote the version left one.
+ */
+export function storeUnfinished(dataDir: string): boolean {
+  if (existsSync(join(dataDir, STORE_UNFINISHED_FILE))) return true;
+  const pgDataDir = join(dataDir, PGDATA_SUBDIR);
+  return existsSync(pgDataDir) && !existsSync(join(pgDataDir, "PG_VERSION"))
+    && readdirSync(pgDataDir).length > 0;
+}
+
+/**
+ * Does a store without the marker hold anything of the person's? Every table and every ledger
+ * row commit in the first migration pass, so a store with neither never finished its first start
+ * and setting it aside loses nothing. `false` whenever the catalog cannot answer: a store that
+ * might hold mail is never moved without the person asking.
+ */
+async function storeHoldsNothing(client: PGlite): Promise<boolean> {
+  const ledger = `${MAIL_JOURNAL.migrationsSchema}.__drizzle_migrations`;
+  try {
+    const r = await client.query<{ tables: number; ledger: boolean }>(
+      `SELECT (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p'))::int AS tables,
+              to_regclass($1) IS NOT NULL AS ledger`,
+      [ledger],
+    );
+    const row = r.rows[0];
+    if (row === undefined || row.tables > 0) return false;
+    if (!row.ledger) return true;
+    const n = await client.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${ledger}`);
+    return n.rows[0]?.n === 0;
+  } catch {
+    return false;
+  }
+}
+
+/** A UTC stamp a file name can carry on every platform: `20260926T101323Z`. */
+function setAsideStamp(): string {
+  return new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+}
+
+/**
+ * Move `pgdata` into `<dataDir>/set-aside-<stamp>/`, kept and never read again by this build. A
+ * missing `pgdata` is nothing to move. Throws when the move fails, so the start fails by name
+ * rather than building a second store over the first.
+ */
+function setStoreAside(dataDir: string, kind: "unfinished" | "holds-nothing", log?: Diagnostic): void {
+  const pgDataDir = join(dataDir, PGDATA_SUBDIR);
+  if (!existsSync(pgDataDir)) return;
+  const stamp = setAsideStamp();
+  let target = join(dataDir, `${SET_ASIDE_PREFIX}${stamp}`);
+  for (let n = 2; existsSync(target); n += 1) target = join(dataDir, `${SET_ASIDE_PREFIX}${stamp}-${n}`);
+  mkdirSync(target);
+  renameSync(pgDataDir, join(target, PGDATA_SUBDIR));
+  fsyncDir(dataDir);
+  log?.("store_set_aside", {
+    kind,
+    reason: "a local store a start never finished making was set aside (kept, not deleted) and "
+      + "a new one is made; it held nothing, so the mailbox fills it again",
+  });
 }
 
 /**
@@ -1266,26 +1386,39 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
   const pgDataDir = join(dataDir, PGDATA_SUBDIR);
   let client: PGlite;
   try {
+    /* A store the last start never finished is set aside BEFORE anything opens it: PGlite would
+       resume its half catalog. See {@link STORE_UNFINISHED_FILE}. */
+    if (storeUnfinished(dataDir)) setStoreAside(dataDir, "unfinished", log);
+    let fresh = !existsSync(join(pgDataDir, "PG_VERSION"));
+    if (fresh) markStoreUnfinished(dataDir);
     // BEFORE `new PGlite`, because the whole point is to name the wait while it is happening —
     // and read from the directory rather than from PGlite, which says nothing until it is done.
     opts.onPhase?.(openPhaseFor(dataDir));
     const tOpen = Date.now();
     /* PGlite's NodeFS with the protocol transport kept in memory (`pglite-transport.ts`); the log,
-       the relations and the durability properties below are the disk exactly as before. */
-    client = new PGlite({
-      dataDir: pgDataDir,
-      fs: new LocalStoreFs(pgDataDir),
-      ...(opts.withoutSearchExtensions ? {} : { extensions: LOCAL_STORE_EXTENSIONS }),
-    });
-    // AWAITED HERE ON PURPOSE, AND IT CHANGES NOTHING EXCEPT WHERE THE COST IS ATTRIBUTED.
-    //
-    // `new PGlite()` returns before the database is usable — the WASM instantiation, the data
-    // directory mount and Postgres' own startup are deferred behind `waitReady`, which the FIRST
-    // statement then awaits implicitly. Without this line every millisecond of that lands inside
-    // `adoptBaseline`, whose own work is one metadata read, and the phase breakdown below would
-    // name the wrong phase. The total is identical either way: the same promise is awaited, once,
-    // a few microseconds earlier.
-    await client.waitReady;
+       the relations and the durability properties below are the disk exactly as before.
+       AWAITED HERE ON PURPOSE: `new PGlite()` returns before the WASM, the mount and Postgres'
+       startup are done, and without the wait all of it would be attributed to `adoptBaseline`. */
+    const startPglite = async (): Promise<PGlite> => {
+      const pg = new PGlite({
+        dataDir: pgDataDir,
+        fs: new LocalStoreFs(pgDataDir),
+        ...(opts.withoutSearchExtensions ? {} : { extensions: LOCAL_STORE_EXTENSIONS }),
+      });
+      await pg.waitReady;
+      return pg;
+    };
+    client = await startPglite();
+    /* A STORE MADE BEFORE THE MARKER, which a kill inside `initdb` could leave half made with no
+       marker to say so. One holding nothing is made again; one holding anything is left alone. */
+    if (!fresh && await storeHoldsNothing(client)) {
+      await client.close();
+      setStoreAside(dataDir, "holds-nothing", log);
+      markStoreUnfinished(dataDir);
+      fresh = true;
+      opts.onPhase?.("creating_store");
+      client = await startPglite();
+    }
     /* BEFORE ANY WRITE, because this is the property every other durability claim in this file
        rests on and a wrong one is invisible to every test. See {@link WAL_SYNC_METHOD}. */
     await assertWalSyncMethod(client);
@@ -1325,6 +1458,9 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     // population too, and the journal README names the local engine as a first-class consumer.
     // A no-op everywhere else (`REISSUED_ORIGINALS`, packages/db/src/baseline.ts).
     await adoptReissuedOriginals(db, MAIL_JOURNAL);
+    /* LAST OF WHAT A FIRST START MAKES: the schema has committed, and everything after this is
+       redone by every open. Nothing of the person's is in the store before this line. */
+    if (fresh) markStoreFinished(dataDir);
     const migrateMs = Date.now() - tMigrate;
     // AFTER the migrator (the table must exist on a first launch) and BEFORE serving: a rewrite
     // holds an exclusive lock, and the one place that lock collides with nothing is here, where
@@ -1425,6 +1561,6 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     };
   } catch (err) {
     unlock();
-    throw err;
+    throw new LocalStoreOpenError(err);
   }
 }

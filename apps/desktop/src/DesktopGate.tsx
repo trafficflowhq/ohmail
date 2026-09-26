@@ -35,7 +35,7 @@ import {
   unknownSpeaks, type HostConnection,
 } from "../../webapp/app/shell/host-connection";
 import { BootStatus } from "./BootStatus.js";
-import { bridgeAvailable, bridgeFetch, engineSwitchRestore, engineUnlockRetry } from "./bridge-fetch.js";
+import { bridgeAvailable, bridgeFetch, engineStartOver, engineSwitchRestore, engineUnlockRetry } from "./bridge-fetch.js";
 import {
   cloudNoticeDue, sessionOf, sessionReaders, signInCauseOf, waitForSessionMove, type CloudSessionWire,
 } from "./cloud-session.js";
@@ -789,6 +789,9 @@ export function DesktopGate() {
        press that helps is removing the leftover lock — the shell refuses that unless the engine
        has already given up, so the press can never take a live engine's lock — and the refresh
        after it paints whatever the restart then says. */
+    if (gate.failureClass === "LocalStoreOpenError") {
+      return <StartOverNotice onSettled={() => void refresh()} />;
+    }
     if (gate.failureClass !== undefined) {
       const locked = gate.failureClass === "DataDirLockedError";
       return (
@@ -1604,4 +1607,29 @@ function runMenuCommand(command: MenuCommand): void {
 function typeKey(init: KeyboardEventInit): void {
   if (typeof document === "undefined") return;
   document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+}
+
+/**
+ * A STORE THE ENGINE CANNOT OPEN — `LocalStoreOpenError` in the sidecar. Quitting reruns the same
+ * open, so the card offers the one press that changes something: the shell sets the store aside
+ * and starts the engine. A refused press says so rather than leaving the card as it was.
+ */
+function StartOverNotice({ onSettled }: { onSettled: () => void }) {
+  const [refused, setRefused] = useState(false);
+  const [pressing, setPressing] = useState(false);
+  const press = (): void => {
+    if (pressing) return;
+    setPressing(true);
+    void engineStartOver()
+      .then(() => setRefused(false), () => setRefused(true))
+      .finally(() => {
+        setPressing(false);
+        onSettled();
+      });
+  };
+  return (
+    <GateNotice reason={DOOR_COPY.gateStoreUnopenable} actionLabel={DOOR_COPY.gateStartOver} onAction={press}>
+      {refused ? <p role="alert">{DOOR_COPY.gateStartOverRefused}</p> : null}
+    </GateNotice>
+  );
 }

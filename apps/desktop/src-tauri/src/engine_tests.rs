@@ -4152,6 +4152,119 @@ fn the_unlock_press_removes_the_stale_lock_and_starts_the_engine_again() {
     let _ = fs::remove_dir_all(&root);
 }
 
+// ── THE FAILURE CARD'S "START OVER ON THIS COMPUTER" ─────────────────────────────────────────
+//
+// For a store the engine could not open. The store moves aside, kept, and the next start makes a
+// new one; over a running engine that would pull a live database out from under it, so the first
+// case keeps the press refused until the shell has given up.
+
+#[test]
+fn the_start_over_press_refuses_while_the_engine_has_not_given_up() {
+    let calm = Shell::around(Engine::inert(EngineState::Stopped));
+    let said = calm
+        .start_over()
+        .expect_err("an engine the shell has not given up on must refuse the press");
+    assert!(said.contains("has not given up"), "the refusal names the wrong thing: {said}");
+}
+
+#[test]
+fn the_store_moves_aside_with_its_cursor_and_nothing_is_overwritten() {
+    let dir = candidate_root("store-aside");
+    fs::create_dir_all(dir.join(STORE_DIR_NAME)).expect("store");
+    fs::write(dir.join(STORE_DIR_NAME).join("PG_VERSION"), "17\n").expect("store file");
+    fs::write(dir.join("cloud-cursor.json"), "{}").expect("cursor");
+    fs::write(dir.join("store-generation.json"), "{\"generation\":3,\"open\":true}").expect("generation");
+
+    let first = set_store_aside(&dir, "20260926T101740Z").expect("move").expect("a store was there");
+    assert_eq!(first, dir.join("set-aside-20260926T101740Z"));
+    assert!(first.join(STORE_DIR_NAME).join("PG_VERSION").exists(), "the store was not kept");
+    assert!(first.join("cloud-cursor.json").exists(), "the cursor stayed beside the next store");
+    assert!(!dir.join(STORE_DIR_NAME).exists() && !dir.join("cloud-cursor.json").exists());
+    // The generation stays, so the next start mints a new one and an old cursor is refused.
+    assert!(dir.join("store-generation.json").exists(), "the store generation left with the store");
+
+    // A second press in the same second takes a name of its own rather than merging into the first.
+    fs::create_dir_all(dir.join(STORE_DIR_NAME)).expect("second store");
+    let second = set_store_aside(&dir, "20260926T101740Z").expect("move").expect("a store was there");
+    assert_eq!(second, dir.join("set-aside-20260926T101740Z-2"));
+    assert!(first.join(STORE_DIR_NAME).join("PG_VERSION").exists(), "the first set-aside was touched");
+
+    // Nothing there is nothing to move, and not an error.
+    assert_eq!(set_store_aside(&dir, "20260926T101741Z").expect("no store"), None);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_set_aside_stamp_spells_the_instant_in_utc() {
+    let at = |secs: u64| std::time::UNIX_EPOCH + Duration::from_secs(secs);
+    assert_eq!(utc_stamp(at(0)), "19700101T000000Z");
+    assert_eq!(utc_stamp(at(951_782_400)), "20000229T000000Z");
+    assert_eq!(utc_stamp(at(1_709_251_199)), "20240229T235959Z");
+    assert_eq!(utc_stamp(at(1_790_412_159)), "20260926T084239Z");
+    assert_eq!(utc_stamp(at(4_102_444_800)), "21000101T000000Z");
+}
+
+#[cfg(unix)]
+#[test]
+fn the_start_over_press_sets_the_store_aside_and_starts_the_engine_again() {
+    use std::os::unix::fs::PermissionsExt;
+    with_key_in_env();
+    let root = candidate_root("start-over");
+    let door = Config::Local(crate::config::LocalDoor {
+        imap_host: "mail.example.org".to_string(),
+        imap_user: "someone".to_string(),
+        imap_port: 993,
+        imap_secure: true,
+        smtp: None,
+        address: None,
+    });
+    crate::config::write(&root.join(crate::config::CONFIG_FILE_NAME), &door).expect("write door");
+    let res = root.join("resources");
+    fs::create_dir_all(res.join("engine").join("bin")).expect("engine dir");
+    fs::write(engine_path_in(&res), "").expect("engine bundle");
+    fs::create_dir_all(res.join(RUNTIME_RESOURCE_DIR)).expect("runtime dir");
+    let node = vendored_node_in(&res);
+    fs::write(&node, "#!/bin/sh\nexit 0\n").expect("fake runtime");
+    fs::set_permissions(&node, fs::Permissions::from_mode(0o755)).expect("exec bit");
+
+    let shell = Shell {
+        paths: ShellPaths { app_data: Some(root.clone()), resources: Some(res), downloads: None },
+        engine: Mutex::new(Arc::new(Engine::inert(EngineState::Failed {
+            reason: "four starts in a row could not open the store".to_string(),
+            last: None,
+        }))),
+        host_plan: Mutex::new(None),
+        door: Mutex::new(()),
+        leaving: Mutex::new(Leaving::NotStarted),
+        pending_door: AtomicBool::new(false),
+    };
+    // The store sits where the PLAN says the data directory is, read the way the press reads it.
+    let planned = shell.planned(None);
+    let Plan::Spawn(launch) = &planned else {
+        panic!("the fixture composes an inert plan: {planned:?}");
+    };
+    let dir = plan_data_dir(launch).expect("the plan names no data directory");
+    fs::create_dir_all(dir.join(STORE_DIR_NAME)).expect("store");
+    fs::write(dir.join(STORE_DIR_NAME).join("PG_VERSION"), "17\n").expect("store file");
+
+    let answered = shell.start_over().expect("the press must act once the shell has given up");
+    assert!(!dir.join(STORE_DIR_NAME).exists(), "the store is still in place after the press");
+    let kept: Vec<_> = fs::read_dir(&dir)
+        .expect("data dir")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with(SET_ASIDE_PREFIX))
+        .collect();
+    assert_eq!(kept.len(), 1, "the store was not kept under one set-aside directory");
+    assert!(kept[0].path().join(STORE_DIR_NAME).join("PG_VERSION").exists());
+    assert_ne!(
+        answered.get("state").and_then(|s| s.as_str()),
+        Some("failed"),
+        "the press moved the store but never re-entered start"
+    );
+    shell.stop();
+    let _ = fs::remove_dir_all(&root);
+}
+
 // ── Signing out acts on the door the press was made on ─────────────────────────────────────────
 //
 // `logout` read the door ONCE and acted on that snapshot for its whole length — the clear, the

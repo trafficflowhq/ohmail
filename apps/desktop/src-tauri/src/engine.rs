@@ -1615,14 +1615,9 @@ impl Shell {
         let Plan::Spawn(launch) = &plan else {
             return Err("this install has no engine to start; nothing was removed".to_string());
         };
-        let dir = launch
-            .env
-            .iter()
-            .find(|(k, _)| k.as_os_str() == std::ffi::OsStr::new(DATA_DIR_VAR))
-            .map(|(_, v)| PathBuf::from(v.clone()))
-            .ok_or_else(|| {
-                "the engine's plan names no data directory; nothing was removed".to_string()
-            })?;
+        let dir = plan_data_dir(launch).ok_or_else(|| {
+            "the engine's plan names no data directory; nothing was removed".to_string()
+        })?;
         // The sidecar's own lock file name — `LOCK_FILE` in `apps/sidecar/src/db.ts`; a desktop
         // test holds the two literals together.
         let lock = dir.join("sidecar.lock");
@@ -1635,6 +1630,33 @@ impl Shell {
                 ));
             }
         }
+        self.pending_door.store(false, Ordering::SeqCst);
+        self.replace(plan);
+        Ok(self.status())
+    }
+
+    /// The failure card's "Start over on this computer" press, for a store the engine could not
+    /// open: move the store aside and start the engine again, which makes a new one and reads the
+    /// mail again from its source. See [`set_store_aside`] for what moves and where.
+    ///
+    /// Refused unless the shell has GIVEN UP on the engine, as [`Shell::unlock_retry`] is: over a
+    /// running engine this would move a live database out from under it. The directory comes from
+    /// the shell's own plan; the window names none.
+    pub fn start_over(&self) -> Result<serde_json::Value, String> {
+        if !matches!(self.engine().state(), EngineState::Failed { .. }) {
+            return Err("the engine has not given up, so its store was not moved".to_string());
+        }
+        let plan = self.planned(None);
+        let Plan::Spawn(launch) = &plan else {
+            return Err("this install has no engine to start; nothing was moved".to_string());
+        };
+        let dir = plan_data_dir(launch).ok_or_else(|| {
+            "the engine's plan names no data directory; nothing was moved".to_string()
+        })?;
+        set_store_aside(&dir, &utc_stamp(std::time::SystemTime::now())).map_err(|err| {
+            log_line(format_args!("start over: the store could not be moved aside ({err})"));
+            format!("the store could not be moved aside ({err}); the engine was not restarted")
+        })?;
         self.pending_door.store(false, Ordering::SeqCst);
         self.replace(plan);
         Ok(self.status())
@@ -4389,6 +4411,78 @@ fn engine_unlock_retry(shell: tauri::State<'_, Arc<Shell>>) -> Result<serde_json
     shell.unlock_retry()
 }
 
+/// Move a store the engine could not open aside, and start the engine again.
+///
+/// Pressed, never aimed, like [`engine_unlock_retry`]: no path, no argument, refused unless the
+/// engine has already failed for good. [`Shell::start_over`] carries the reasoning.
+#[cfg(feature = "local-engine")]
+#[tauri::command(async)]
+fn engine_start_over(shell: tauri::State<'_, Arc<Shell>>) -> Result<serde_json::Value, String> {
+    shell.start_over()
+}
+
+/// The data directory an engine plan hands its child, or `None` when it names none.
+fn plan_data_dir(launch: &Launch) -> Option<PathBuf> {
+    launch
+        .env
+        .iter()
+        .find(|(k, _)| k.as_os_str() == std::ffi::OsStr::new(DATA_DIR_VAR))
+        .map(|(_, v)| PathBuf::from(v.clone()))
+}
+
+/// The sidecar's names for its store and for where a store is moved rather than deleted —
+/// `PGDATA_SUBDIR` and `SET_ASIDE_PREFIX` in `apps/sidecar/src/db.ts`; a desktop test holds the
+/// literals together.
+pub(crate) const STORE_DIR_NAME: &str = "pgdata";
+pub(crate) const SET_ASIDE_PREFIX: &str = "set-aside-";
+
+/// What leaves WITH the store: the cloud mirror's cursor names a point in that store, and a new
+/// store resuming from it would never be filled.
+const STORE_COMPANIONS: &[&str] = &["cloud-cursor.json"];
+
+/// Move `<dir>/pgdata` and its cursor into `<dir>/set-aside-<stamp>/`, kept and never deleted.
+/// The cursor goes first: a failure between the two leaves the old store without its cursor,
+/// which reads everything again, and never an old cursor beside a new store. `Ok(None)` when
+/// there is no store to move.
+pub(crate) fn set_store_aside(dir: &Path, stamp: &str) -> io::Result<Option<PathBuf>> {
+    let store = dir.join(STORE_DIR_NAME);
+    if !store.exists() {
+        return Ok(None);
+    }
+    let mut target = dir.join(format!("{SET_ASIDE_PREFIX}{stamp}"));
+    let mut n = 2;
+    while target.exists() {
+        target = dir.join(format!("{SET_ASIDE_PREFIX}{stamp}-{n}"));
+        n += 1;
+    }
+    fs::create_dir(&target)?;
+    for name in STORE_COMPANIONS {
+        let from = dir.join(name);
+        if from.exists() {
+            fs::rename(&from, target.join(name))?;
+        }
+    }
+    fs::rename(&store, target.join(STORE_DIR_NAME))?;
+    Ok(Some(target))
+}
+
+/// `20260926T101740Z`: the sidecar's spelling of an instant, safe in a file name everywhere.
+pub(crate) fn utc_stamp(at: std::time::SystemTime) -> String {
+    let secs = at.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let (days, rem) = ((secs / 86_400) as i64, secs % 86_400);
+    // Days since 1970-01-01 to a civil date (Howard Hinnant's `civil_from_days`).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}{m:02}{d:02}T{:02}{:02}{:02}Z", rem / 3_600, rem % 3_600 / 60, rem % 60)
+}
+
 /// One request, down the pipe and back.
 ///
 /// `async` is load-bearing rather than decoration: Tauri runs a synchronous command on the main
@@ -5788,7 +5882,7 @@ const LOCAL_ENGINE_CAPABILITY: &str = r#"{
   "identifier": "local-engine",
   "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for (a pairing's choice provisionally, then kept or undone by one of two commands that name nothing — the shell's own record says which door was replaced), sign out of it, press the failure card's one recovery (the shell removes the engine's own data-directory lock — a path the shell resolves and the window never names — and starts the engine again, refused outright unless the shell has already given up on the engine), ask the engine whether the computer at a pasted pairing link's address is the one that link came from (the window hands over the ORIGIN and the PIN the link carried and no token; on an install that has no door the shell starts an engine for that CANDIDATE in a directory of its own, asks it, and removes that directory afterwards, configuring nothing), post one notification, set the icon's badge, report its own startup and interaction timings as numbers the shell turns into a log line, open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), hand the shell ONE http/https address a person clicked in a message for that same browser to open, hand it the BYTES of one attachment and a display name so the shell can write that file under its own directory and open it in this computer's usual viewer, or save that same file into this computer's Downloads folder (the shell picks the folder and composes every part of the name; a name already taken is numbered, never overwritten), and listen for the shell's own events — including the handoff code an ohmail:// activation carried. It may also drive HOST MODE, entirely through this shell's own commands: read its state, probe the user's own tailnet (tailscale status), arm or disarm publishing the engine's loopback door to that tailnet (tailscale serve — never funnel, pinned by test), read and set this install's start-at-login registration, and open Tailscale's download page — one more constant address the shell owns, the window still naming no URL. It may also CLAIM a mailto: activation the shell is holding (take-once, so a link seeds one compose form and never two), and ask about the OS's DEFAULT MAIL APP through two commands that name nothing: a read of the current handler's state, and a request that takes each platform's own sanctioned path — macOS's consent dialog, the Windows Settings page (one more constant address), xdg-settings on Linux — never a registry write. It may read the app's UPDATE state, press the same button the menu item is, and ask for the check the app makes at launch — a read of the installed version and of what the last check found, a press that checks or restarts into an already-verified payload, and a scheduled check that is silent unless it finds something (a press is a person asking and is answered out loud, which is right for a button and wrong once a day for ever); it may not name a feed, see a payload or install anything, and the request, the signature check and the version guard stay in the shell. It may ask for the DESKTOP'S OWN THEME through one read-only command: on an Omarchy system the shell answers the active theme's raw material (the theme's colors.toml, the system's font and gap facts — paths the SHELL names, never the window), and everywhere else it answers nothing. It may REPORT that its first frame is composed, with that frame's background colour as one #rrggbb string the shell parses strictly: the shell paints the still-hidden window that colour, keeps it for the next launch in one file it names itself, and shows the window. Nothing else: no filesystem path the window may name, no arbitrary shell command, no network, and no other Tauri core API.",
   "windows": ["main"],
-  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-switch-commit", "allow-engine-switch-restore", "allow-engine-logout", "allow-engine-unlock-retry", "allow-host-candidate-probe", "allow-notify", "allow-set-badge", "allow-ui-vitals", "allow-open-link", "allow-open-external", "allow-open-attachment", "allow-save-attachment", "allow-host-state", "allow-tailscale-status", "allow-tailscale-serve-arm", "allow-tailscale-serve-disarm", "allow-autostart-get", "allow-autostart-set", "allow-open-tailscale-download", "allow-mailto-claim", "allow-default-mail-status", "allow-default-mail-request", "allow-omarchy-theme", "allow-update-state", "allow-update-press", "allow-update-poll", "allow-window-ready", "core:event:allow-listen"]
+  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-switch-commit", "allow-engine-switch-restore", "allow-engine-logout", "allow-engine-unlock-retry", "allow-engine-start-over", "allow-host-candidate-probe", "allow-notify", "allow-set-badge", "allow-ui-vitals", "allow-open-link", "allow-open-external", "allow-open-attachment", "allow-save-attachment", "allow-host-state", "allow-tailscale-status", "allow-tailscale-serve-arm", "allow-tailscale-serve-disarm", "allow-autostart-get", "allow-autostart-set", "allow-open-tailscale-download", "allow-mailto-claim", "allow-default-mail-status", "allow-default-mail-request", "allow-omarchy-theme", "allow-update-state", "allow-update-press", "allow-update-poll", "allow-window-ready", "core:event:allow-listen"]
 }"#;
 
 /// The commands `build.rs` declared to the ACL manifest, baked in at compile time.
@@ -5913,8 +6007,9 @@ pub fn attach<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
             engine_switch_commit,
             engine_switch_restore,
             engine_logout,
-            // The failure card's one recovery press — see the command for who may ask and why.
+            // The failure card's recovery presses — see each command for who may ask and why.
             engine_unlock_retry,
+            engine_start_over,
             // The paired door's first step, on an install with no engine to ask — see the command.
             host_candidate_probe,
             notify,

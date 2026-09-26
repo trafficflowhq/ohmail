@@ -48,6 +48,7 @@ const LOGOUT_COMMAND = "engine_logout";
 const SWITCH_COMMIT_COMMAND = "engine_switch_commit";
 const SWITCH_RESTORE_COMMAND = "engine_switch_restore";
 const UNLOCK_COMMAND = "engine_unlock_retry";
+const START_OVER_COMMAND = "engine_start_over";
 
 const NO_SHELL =
   "ohmail Desktop: this window is not running inside the ohmail shell, so there is no local engine " +
@@ -701,6 +702,15 @@ export async function engineSwitchRestore(): Promise<EngineStatus> {
  */
 export async function engineUnlockRetry(): Promise<EngineStatus> {
   return (await shell().invoke(UNLOCK_COMMAND)) as EngineStatus;
+}
+
+/**
+ * The failure card's press for a store the engine could not open: the shell moves the store
+ * aside (kept) and starts the engine, which makes a new one. Pressed, never aimed — the shell
+ * resolves the directory and refuses unless it has already given up on the engine.
+ */
+export async function engineStartOver(): Promise<EngineStatus> {
+  return (await shell().invoke(START_OVER_COMMAND)) as EngineStatus;
 }
 
 /**

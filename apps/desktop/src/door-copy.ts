@@ -654,6 +654,15 @@ const EN = {
   gateEngineReported: (name: string) =>
     `The mail engine could not start (${name}). Quit ohmail and open it again; if it keeps `
     + "happening, ohmail's log file has the details.",
+  /* ── A LOCAL STORE THE ENGINE CANNOT OPEN ────────────────────────────────────────────────
+     Quitting and reopening runs the same open again, so this card does not suggest it. The one
+     press that helps sets the store aside (kept) and makes a new one from the mailbox. */
+  gateStoreUnopenable:
+    "The copy of your mail on this computer could not be opened. Start over sets it aside and "
+    + "makes a new one from your mail; you may be asked for your mailbox password again.",
+  gateStartOver: "Start over on this computer",
+  gateStartOverRefused:
+    "The copy could not be set aside, so nothing was changed. ohmail's log file has the details.",
   gateSessionGone:
     "You were signed out of your hosted account, so this install stopped receiving new mail. "
     + "What was already here is kept; sign in again to reconnect.",

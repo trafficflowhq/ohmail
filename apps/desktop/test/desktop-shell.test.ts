@@ -868,6 +868,9 @@ describe("the Rust side", () => {
       // plan — and it refuses outright unless the shell has already given up on the engine, so a
       // press can never unlink a live engine's lock.
       "engine_unlock_retry",
+      // Its sibling for a store the engine could not open: the store moves aside (kept) and the
+      // engine starts again. Pressed, never aimed, and refused until the shell has given up.
+      "engine_start_over",
       // The paired door's first step on an install that has no engine to ask: the shell starts one
       // for the CANDIDATE door, in a directory of its own, asks it the same `/cloud/probe` a
       // running engine would answer, and removes that directory. It takes the origin and the pin
