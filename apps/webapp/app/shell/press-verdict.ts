@@ -71,7 +71,9 @@ export function screeningShown(
   const presented = o.consent === null
     ? reader
     : presentationReader(reader, consentPartition(reader, shellConsentOptions(o.consent, o.now, o.ownAddresses)));
-  return pressOutcome({ presented, subject, rules: rulesList(reader), wanted: FOLDER_OF_VIEW[dest], retro: false }).shown;
+  return pressOutcome({
+    presented, subject, rules: rulesList(reader), profiles: mailboxProfiles(reader), wanted: FOLDER_OF_VIEW[dest], retro: false,
+  }).shown;
 }
 
 /**
