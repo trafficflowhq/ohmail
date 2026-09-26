@@ -606,6 +606,13 @@ export interface MailboxFacts {
   /** Null unless `status === 'error'`. A stable key; the wording lives in `messages/*.json`. */
   errorCode: string | null;
   /**
+   * WHEN THIS INSTALL LAST FOUND THE MAIL SERVER UNREACHABLE, from the outage's first observation —
+   * the local door's own socket, overlaid on `GET /mailboxes`; absent on every other door and
+   * while the server answers. A fact rather than an error, so it rides at any age: the strip and
+   * a Pull press say "can't reach the mail server" from it.
+   */
+  unreachableSince?: string | null;
+  /**
    * WHY a `disabled` mailbox is disabled, when the ORGANIZER LEASE decided it (mail 0027).
    *
    * The raw wire token, colon and all — {@link standDownToken} is what turns it into copy. Null
@@ -1289,6 +1296,8 @@ export interface MailState {
   reason: SyncBlockReason | StandDownReason | null;
   /** `mailboxError` only — the `errorCode` key whose sentence lives in `mailboxes.err_*`. */
   errorCode: string | null;
+  /** `mailboxError` only — the mailbox's server cannot be reached from here right now. */
+  unreachable?: boolean;
   /**
    * `stale` only — the instant the mirror on screen was last known current, verbatim from the
    * freshness input (the engine's own completion stamp, or the desktop mirror's). It is the
@@ -1942,14 +1951,19 @@ function climb(input: MailStateInputs): MailState {
   //
   // Above the progress states because a mailbox in `error` is quarantined and earning a
   // backoff: whatever the mirror is doing, THIS mailbox is contributing nothing to it.
-  const failed = live.find((m) => m.status === "error");
+  // A server this install cannot reach is the same arm from its first observation, said as the
+  // Settings pane says it; a mailbox in error for another reason is named first.
+  const failed = live.find((m) => m.status === "error" && typeof m.unreachableSince !== "string")
+    ?? live.find((m) => m.status === "error" || typeof m.unreachableSince === "string");
   if (failed) {
+    const unreachable = typeof failed.unreachableSince === "string";
     return {
       ...QUIET,
       key: "mailboxError",
       count: mirrored,
-      errorCode: failed.errorCode ?? "unknown",
+      errorCode: failed.errorCode ?? (unreachable ? "connect" : "unknown"),
       address: failed.address,
+      ...(unreachable ? { unreachable } : {}),
     };
   }
 

@@ -19,6 +19,8 @@ interface MailboxWire {
   displayName?: string | null;
   status: string;
   errorCode?: string | null;
+  /** The local door's outage clock (`MailboxFacts.unreachableSince`); absent while it answers. */
+  unreachableSince?: string | null;
   disabledReason?: string | null;
   syncBlockedReason?: string | null;
   syncBlockedSince?: string | null;
@@ -148,6 +150,7 @@ export async function readMailboxFactsVia(
     ...("displayName" in m ? { displayName: m.displayName } : {}),
     status: m.status,
     errorCode: m.errorCode ?? null,
+    ...(typeof m.unreachableSince === "string" ? { unreachableSince: m.unreachableSince } : {}),
     disabledReason: m.disabledReason ?? null,
     syncBlockedReason: m.syncBlockedReason ?? null,
     syncBlockedSince: m.syncBlockedSince ?? null,

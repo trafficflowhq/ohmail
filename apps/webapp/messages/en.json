@@ -2976,6 +2976,8 @@
     "pullAria": "Pull new mail — check the mail server now",
     "pullQuiet": "Checked — nothing new.",
     "pullSlow": "Still checking. New mail arrives on its own.",
+    "unreachable": "Can't reach the mail server.",
+    "pullUnreachable": "Can't reach the mail server, so nothing new could be checked.",
     "unsavedCount": "{count, plural, one {# change could not be saved} other {# changes could not be saved}}",
     "unsavedShow": "Show them",
     "unsavedHide": "Hide",

@@ -2976,6 +2976,8 @@
     "pullAria": "Neue Mails abrufen — den Mailserver jetzt prüfen",
     "pullQuiet": "Geprüft — nichts Neues.",
     "pullSlow": "Wird noch geprüft. Neue Mails kommen von selbst an.",
+    "unreachable": "Der Mailserver ist nicht erreichbar.",
+    "pullUnreachable": "Der Mailserver ist nicht erreichbar, darum ließ sich nichts Neues prüfen.",
     "unsavedCount": "{count, plural, one {# \u00c4nderung konnte nicht gespeichert werden} other {# \u00c4nderungen konnten nicht gespeichert werden}}",
     "unsavedShow": "Anzeigen",
     "unsavedHide": "Ausblenden",

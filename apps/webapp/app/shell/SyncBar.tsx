@@ -372,7 +372,8 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
     case "mailboxError":
       return {
         tone: "warn", role: "status", warn: true, busy: false,
-        title: tm(`err_${state.errorCode}`),
+        // One sentence for a server this install cannot reach, from the outage's first minute.
+        title: state.unreachable ? t("unreachable") : tm(`err_${state.errorCode}`),
         detail: readable(state.address),
         link: settings,
       };

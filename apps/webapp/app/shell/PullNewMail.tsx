@@ -23,9 +23,9 @@
 
 /**
  * The outcome is said once, and only where the mail cannot say it: new rows need no sentence. The
- * quiet scan speaks ("Checked — nothing new.", pullQuiet) and the capped watch speaks (pullSlow —
- * true whether the worker is slow or down); a refused ring says nothing — the sync strip owns
- * failure sentences. "Nothing new" is judged against the MIRROR — ids before the press versus
+ * quiet scan speaks ("Checked — nothing new.", pullQuiet), the capped watch speaks (pullSlow), and
+ * a rung mailbox whose server cannot be reached ends the watch with pullUnreachable, because no
+ * scan can happen; a refused ring says nothing — the sync strip owns failure sentences. "Nothing new" is judged against the MIRROR — ids before the press versus
  * after a fresh, successful post-scan drain; a new id in ANY pile counts as arrival and silences
  * the toast. One flight, two placements (rail foot, topbar; `app.css` shows one at a time): the
  * HOOK is called once in the shell and both placements share the binding — two hooks would each
@@ -51,6 +51,11 @@ const SETTLE_CAP_MS = 30_000;
 const DRAIN_JUDGE_CAP_MS = 10_000;
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** This install cannot reach the mailbox's server: its own outage clock, or a settled connect error. */
+function serverUnreachable(m: { status: string; errorCode: string | null; unreachableSince?: string | null }): boolean {
+  return typeof m.unreachableSince === "string" || (m.status === "error" && m.errorCode === "connect");
+}
 
 /**
  * Wait on one drain, bounded. `"ok"` is a drain that COMPLETED SUCCESSFULLY within the cap;
@@ -101,6 +106,8 @@ export function usePullNewMail(probe?: MailboxProbe): PullBinding {
         void engine.syncOnce().catch(() => undefined);
         /** Did the watch see every mailbox's own scan, or did the cap end it? */
         let settled = false;
+        /** Did a rung mailbox's server turn out unreachable? Then nothing could be checked. */
+        let unreachable = false;
         const watched = rang !== null && rang.mailboxes.length > 0 && probe !== undefined;
         if (watched) {
           // id → this mailbox's OWN baseline (DB-clock ms). Compared only against `lastSyncAt`,
@@ -111,11 +118,13 @@ export function usePullNewMail(probe?: MailboxProbe): PullBinding {
             await sleep(SETTLE_POLL_MS);
             try {
               const facts = await probe();
-              settled = facts
-                .filter((m) => baselines.has(m.id))
-                .every((m) => m.lastSyncAt !== null
-                  && Date.parse(m.lastSyncAt) >= (baselines.get(m.id) ?? Infinity));
+              const rung = facts.filter((m) => baselines.has(m.id));
+              settled = rung.every((m) => m.lastSyncAt !== null
+                && Date.parse(m.lastSyncAt) >= (baselines.get(m.id) ?? Infinity));
               if (settled) break;
+              // A scan that cannot reach the server will not happen: say so rather than wait.
+              unreachable = rung.some(serverUnreachable);
+              if (unreachable) break;
             } catch {
               // A failed poll is "we cannot see yet" — keep waiting; the cap settles us.
             }
@@ -138,7 +147,9 @@ export function usePullNewMail(probe?: MailboxProbe): PullBinding {
             judged = (await boundedDrain(engine)) === "ok";
           }
         }
-        if (watched && judged && alive.current) {
+        if (watched && unreachable && alive.current) {
+          toast(t("pullUnreachable"));
+        } else if (watched && judged && alive.current) {
           const arrived = engine.read().entries("message").some((e) => !before.has(e.id));
           // New mail is its own feedback; only the outcomes the mail cannot show get a sentence.
           if (!arrived) toast(settled ? t("pullQuiet") : t("pullSlow"));

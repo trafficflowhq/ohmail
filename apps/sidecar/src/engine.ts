@@ -1433,14 +1433,20 @@ async function discloseLocalSyncFailures(
      Absent everywhere else, which is the answer an older engine gives. */
   const unlooked = new Set(states.filter((r) => r.holderLooked === false).map((r) => r.mailboxId));
   const failures = new Map<string, MailboxErrorCode>();
+  /* AND THE OUTAGE'S OWN CLOCK, from its first observation: a fact, not an error, so it rides
+     beside `status` at any age. The list's status line and a Pull press read it; the Settings
+     pane says the same sentence from the reach poll with no bound either. */
+  const outages = new Map<string, string>();
   for (const r of states) {
     if (r.connection.signInRefused) failures.set(r.mailboxId, "auth");
-    else if (r.connection.unreachableSince !== null
-      && at.getTime() - r.connection.unreachableSince.getTime() >= LOCAL_CONNECTION_DEAD_AFTER_MS) {
-      failures.set(r.mailboxId, "connect");
+    else if (r.connection.unreachableSince !== null) {
+      outages.set(r.mailboxId, r.connection.unreachableSince.toISOString());
+      if (at.getTime() - r.connection.unreachableSince.getTime() >= LOCAL_CONNECTION_DEAD_AFTER_MS) {
+        failures.set(r.mailboxId, "connect");
+      }
     }
   }
-  if (failures.size === 0 && unlooked.size === 0) return res;
+  if (failures.size === 0 && outages.size === 0 && unlooked.size === 0) return res;
   let body: unknown;
   try {
     body = await res.clone().json();
@@ -1456,10 +1462,15 @@ async function discloseLocalSyncFailures(
       ? { organizerChecked: false } : {};
     // Only a row that claims health is overlaid: `disabled` (tombstone, stand-down) is a
     // louder, truer fact about the row than this install's socket, and stays untouched.
-    const code = id !== null && m!.status === "connected" ? failures.get(id) : undefined;
-    return code !== undefined
-      ? { ...(row as object), ...checked, status: "error", errorCode: code }
-      : { ...(row as object), ...checked };
+    const healthy = id !== null && m!.status === "connected";
+    const code = healthy ? failures.get(id) : undefined;
+    const since = healthy ? outages.get(id) : undefined;
+    return {
+      ...(row as object),
+      ...checked,
+      ...(code !== undefined ? { status: "error", errorCode: code } : {}),
+      ...(since !== undefined ? { unreachableSince: since } : {}),
+    };
   });
   return new Response(JSON.stringify({ ...(body as object), items: overlaid }), {
     status: res.status, headers: { "content-type": "application/json" },
