@@ -677,12 +677,14 @@ export class MessageService {
     const asked = rows.filter((r) => restoreLookup(r.trashedFrom) !== null);
     const live = new Set<string>();
     if (asked.length > 0) {
+      const trashMailboxIds = [...new Set(asked.map((r) => r.mailboxId))];
+      const trashFolders = [...new Set(asked.map((r) => r.trashedFrom!))];
       const found = await ctx.db.select({ mailboxId: mailboxFolders.mailboxId, folder: mailboxFolders.folder })
         .from(mailboxFolders)
         .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
         .where(and(
-          inArray(mailboxFolders.mailboxId, [...new Set(asked.map((r) => r.mailboxId))]),
-          inArray(mailboxFolders.folder, [...new Set(asked.map((r) => r.trashedFrom!))]),
+          inArray(mailboxFolders.mailboxId, trashMailboxIds),
+          inArray(mailboxFolders.folder, trashFolders),
           eq(mailboxes.accountId, ctx.accountId),
         ));
       for (const f of found) live.add(JSON.stringify([f.mailboxId, f.folder]));
