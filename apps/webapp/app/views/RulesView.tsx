@@ -28,7 +28,7 @@
  * and revoking is two clicks with the second under that sentence — pluralised for bulk, never weakened. A pane of
  * `SettingsView`, its own file so a test imports THIS and a route promotion is one branch.
  */
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button, Icon, ListGroupLabel, SettingsNote, SettingsSection, Switch, TextField, useToast, type ToastOptions } from "@ohmail/ui";
 import { FOLDER_OF_VIEW, pressVerdict, tallyVerdicts } from "@ohmail/client-engine";
@@ -76,6 +76,25 @@ export function changePlaces(rule: RuleDTO): Array<{ folder: Folder; current: bo
  * row carries its `data-index` and is measured, like every other windowed list.
  */
 const RULE_ROW_PX = 64;
+
+/**
+ * AT PHONE WIDTH THE LIST IS THE PAGE — `rules.css`'s phone query, which lifts the list's own
+ * bound there. A bounded scroller below the pills showed one rule at 360 and did not hand the
+ * thumb back to the page, so there the window reads the page's scroll instead.
+ */
+const RULES_PAGE_QUERY = "(max-width: 640px)";
+
+const phoneWidth = (): boolean =>
+  typeof window !== "undefined" && window.matchMedia?.(RULES_PAGE_QUERY).matches === true;
+
+/** The nearest ancestor that scrolls, or `null`: the list's own box then stands in. */
+function pageScrollerOf(from: HTMLElement | null): HTMLElement | null {
+  for (let el = from; el; el = el.parentElement) {
+    const oy = getComputedStyle(el).overflowY;
+    if (oy === "auto" || oy === "scroll" || oy === "overlay") return el;
+  }
+  return null;
+}
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -304,11 +323,28 @@ export function RulesView({ rules, onRevoke, onRetarget, pastMail, posture }: Ru
     [rules, query, activeFacet],
   );
 
+  /* The scroller the window reads: the list's own box, or at phone width the page's. Resolved
+     before the window subscribes, and a width crossing the query re-subscribes it. */
+  const [phone, setPhone] = useState(phoneWidth);
+  useEffect(() => {
+    const mq = typeof window !== "undefined" ? window.matchMedia?.(RULES_PAGE_QUERY) : undefined;
+    if (!mq) return;
+    const on = (): void => setPhone(mq.matches);
+    mq.addEventListener?.("change", on);
+    return () => mq.removeEventListener?.("change", on);
+  }, []);
+  const pageRef = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    pageRef.current = phone
+      ? pageScrollerOf(scrollerRef.current?.parentElement ?? null) ?? scrollerRef.current
+      : null;
+  }, [phone]);
   /* A person's rules, then the act's under their own label: one index space, the label in it. */
   const { yours, ohmail } = useMemo(() => splitByDecider(filtered), [filtered]);
   const labelAt = ohmail.length > 0 ? yours.length : -1;
   const win = useListWindow({
-    scrollerRef, count: yours.length + (ohmail.length > 0 ? ohmail.length + 1 : 0), estimate: RULE_ROW_PX,
+    scrollerRef: phone ? pageRef : scrollerRef,
+    count: yours.length + (ohmail.length > 0 ? ohmail.length + 1 : 0), estimate: RULE_ROW_PX,
   });
   const yoursFrom = Math.min(win.start, yours.length);
   const yoursTo = Math.min(win.end, yours.length);

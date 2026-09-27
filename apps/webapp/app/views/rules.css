@@ -82,6 +82,8 @@
    title on its own full-width line, wrapping anywhere (an address has no spaces), the controls
    under it. */
 @media (max-width:640px){
+  /* the list is the page here: no box of its own to trap the thumb (RulesView reads the page) */
+  .rules-scroll{max-height:none;overflow:visible;overscroll-behavior:auto}
   .rules-item{flex-direction:column;align-items:stretch;gap:6px;height:auto;padding:10px 0}
   .rules-item.editing{padding:10px 6px}
   .rules-item .what{white-space:normal;overflow-wrap:anywhere}
