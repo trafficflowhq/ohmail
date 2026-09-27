@@ -623,6 +623,13 @@ export function submissionRefusalOf(
  * key ring entry is not 64 hex characters. All three refuse BEFORE the store is touched: a
  * composition that is wrong about who it is should not have written anything.
  */
+/**
+ * UIDs per date-lookup command on the phone. Its pass runs on a phone's link, where one packed
+ * command over a burst of new mail outran the pass clock; commands this size leave the pass a
+ * stop between them, which the adapter's share of the pass clock relies on.
+ */
+export const PHONE_DATE_READ_COMMAND_SIZE = 500;
+
 export async function startPhoneEngine(deps: PhoneEngineDeps): Promise<PhoneEngine> {
   const started = await composePhoneEngine(deps, deps.imap);
   /* Unreachable on this arm: the sealed read is the only thing that answers `no-credential`, and
@@ -737,7 +744,10 @@ async function composePhoneEngine(
      * opening. `WORKER_NET_TIMEOUTS` already exists for exactly this shape, passed INSIDE the config
      * object with no engine change. A caller that supplies its own timeouts WINS — a default, not an override.
      */
-    imap: { ...dial, timeouts: dial.timeouts ?? WORKER_NET_TIMEOUTS },
+    imap: {
+      ...dial, timeouts: dial.timeouts ?? WORKER_NET_TIMEOUTS,
+      dateReadCommandSize: dial.dateReadCommandSize ?? PHONE_DATE_READ_COMMAND_SIZE,
+    },
     ...(deps.address !== undefined ? { address: deps.address } : {}),
     machineName: deps.machineName,
     installId: deps.installId,

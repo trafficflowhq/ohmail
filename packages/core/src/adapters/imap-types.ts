@@ -451,6 +451,13 @@ export interface ImapConfig {
    * code.
    */
   timeouts?: Partial<NetTimeouts>;
+  /**
+   * UIDs per date-lookup command, set by the caller for the clock its pass runs under. Absent is
+   * the adapter's default (a few commands for a large first import on a server-class link); the
+   * phone passes a small size so a burst on a slow link is dated in commands its pass can stop
+   * between.
+   */
+  dateReadCommandSize?: number;
 }
 
 /** The four network deadlines shared by the IMAP and SMTP transports. */

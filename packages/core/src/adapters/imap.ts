@@ -2490,7 +2490,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const startedMs = this.now();
     let dated = uids.length - misses.length;
     let commands = 0;
-    for (const chunk of uidSetChunks(misses, ImapAdapter.DATE_FETCH_CHUNK, ImapAdapter.DATE_FETCH_MAX_UIDS)) {
+    const maxUids = this.config.dateReadCommandSize ?? ImapAdapter.DATE_FETCH_MAX_UIDS;
+    for (const chunk of uidSetChunks(misses, ImapAdapter.DATE_FETCH_CHUNK, maxUids)) {
       if (commands > 0 && this.dateLookupSpent()) break;
       if (dated >= want && this.now() - startedMs >= ImapAdapter.DATE_READ_PASS_MS) break;
       commands += 1;
@@ -2526,12 +2527,11 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   }
 
   /**
-   * UIDs per date-lookup command, so the pass clock is asked between commands of bounded size.
-   * The answer's length is the cost: a phone on a slow link dated a whole burst in one packed
-   * command and every pass ran out of its clock. This size keeps a command well inside the
-   * share {@link dateLookupSpent} checks between them; the ranges stay packed on the wire.
+   * UIDs per date-lookup command by default, so the pass clock is asked between commands of
+   * bounded size: about one {@link DATE_READ_PASS_MS} of a server answering a thousand date rows a
+   * second. A caller on a slower link sets its own, {@link ImapConfig.dateReadCommandSize}.
    */
-  private static readonly DATE_FETCH_MAX_UIDS = 500;
+  private static readonly DATE_FETCH_MAX_UIDS = 20_000;
 
   /**
    * What one pass spends dating candidates once a page's worth is dated. A first import dated the
