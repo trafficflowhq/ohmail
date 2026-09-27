@@ -1369,12 +1369,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * come to describe one state differently. Memoised on the polled facts and nothing else; the
    * function is pure and has its own table test.
    */
-  /* The Rules pane's posture: the same roster, plus the standing Organize-here press. The
-     Screener's role carries the refusal it implies, so a press that cannot land says so first. */
+  // The Rules pane's posture from the same roster; the Screener's role carries its refusal, said first.
   const rulesPosture = useMemo(() => rulesPostureOf(facts), [facts]);
-  const screenerRole = useMemo(
-    () => ({ ...screenerMode(facts), pressRefusal: postureRefusal(rulesPosture) }), [facts, rulesPosture],
-  );
+  const screenerRole = useMemo(() => ({ ...screenerMode(facts), pressRefusal: postureRefusal(rulesPosture) }), [facts, rulesPosture]);
   /* …AND THE DELETE KEY READS THE SAME ROSTER, one mailbox at a time. In an EFFECT rather than
      during render (review finding): a render that yields and is discarded must not publish a
      roster to a committed key handler. The initial `null` is the safe value — `readerMoveRefusal`
@@ -1402,7 +1399,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     refreshFacts();
     return answer;
   });
-  /* What a Screener press gained at its place, over the lists' own partition read at the call. */
   const screenerShownAt = useStableCallback((subject: readonly EngineMessage[], dest: ScreeningDest) =>
     screeningShown(engine.read(), subject, dest, { consent: demo ? null : consent, now: nowAt(), ownAddresses }));
   const screener = useScreenerState(
@@ -1688,12 +1684,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
        held key-for-key against the STRIP's own `COPY` table (`locale-shim-parity.test.ts`), and a
        sentence only this file speaks would be a dead entry in it. */
     onSavedToDownloads: (count) => toast(t("ohbox.toastSavedToDownloads", { count })),
-    /* A preview belongs to the pane that shows its message; when the last one lets it go, so does the preview. */
+    // A preview closes with the last pane showing its message; a refused save is said at the press.
     onUnshown: (id) => setPreviewFor((p) => (p?.messageId === id ? null : p)),
-    // The shell would not save: said at the press, never in the shell's own words.
-    onSaveRefused: (why, count) => toast(why === "no-downloads-folder"
-      ? t("ohbox.toastSaveNoDownloads")
-      : t("ohbox.toastSaveRefused", { count })),
+    onSaveRefused: (why, count) =>
+      toast(why === "no-downloads-folder" ? t("ohbox.toastSaveNoDownloads") : t("ohbox.toastSaveRefused", { count })),
   });
 
   /*
