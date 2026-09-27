@@ -845,6 +845,8 @@ jobs:
             local rc
             local out
             local err
+            local line
+            local shape
             try=1
             out="$(mktemp)" || return 1
             err="$(mktemp)" || return 1
@@ -857,7 +859,16 @@ jobs:
                 rm -f "$out" "$err"
                 return 0
               fi
-              if ! grep -Eq 'PROTOCOL_ERROR|stream error|connection reset|(^|[^[:alnum:]_])EOF([^[:alnum:]_]|$)|HTTP 50[234]' "$err"; then
+              # A shell pattern, not `grep -E`: a macOS runner has BSD grep and a Linux one GNU grep,
+              # and one stderr has to read the same on both. Line by line, EOF only as a whole word.
+              shape=""
+              while IFS= read -r line || [ -n "$line" ]; do
+                case " $line " in
+                  *PROTOCOL_ERROR*|*"stream error"*|*"connection reset"*|*"HTTP 502"*|*"HTTP 503"*|*"HTTP 504"*) shape=1 ;;
+                  *[![:alnum:]_]EOF[![:alnum:]_]*) shape=1 ;;
+                esac
+              done < "$err"
+              if [ -z "$shape" ]; then
                 rm -f "$out" "$err"
                 return "$rc"
               fi
@@ -955,6 +966,8 @@ jobs:
             local rc
             local out
             local err
+            local line
+            local shape
             try=1
             out="$(mktemp)" || return 1
             err="$(mktemp)" || return 1
@@ -967,7 +980,16 @@ jobs:
                 rm -f "$out" "$err"
                 return 0
               fi
-              if ! grep -Eq 'PROTOCOL_ERROR|stream error|connection reset|(^|[^[:alnum:]_])EOF([^[:alnum:]_]|$)|HTTP 50[234]' "$err"; then
+              # A shell pattern, not `grep -E`: a macOS runner has BSD grep and a Linux one GNU grep,
+              # and one stderr has to read the same on both. Line by line, EOF only as a whole word.
+              shape=""
+              while IFS= read -r line || [ -n "$line" ]; do
+                case " $line " in
+                  *PROTOCOL_ERROR*|*"stream error"*|*"connection reset"*|*"HTTP 502"*|*"HTTP 503"*|*"HTTP 504"*) shape=1 ;;
+                  *[![:alnum:]_]EOF[![:alnum:]_]*) shape=1 ;;
+                esac
+              done < "$err"
+              if [ -z "$shape" ]; then
                 rm -f "$out" "$err"
                 return "$rc"
               fi

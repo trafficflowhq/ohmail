@@ -28,7 +28,8 @@
     "./reader-refusal": "./src/reader-refusal.ts",
     "./outbound-text": "./src/outbound-text.ts",
     "./model-name": "./src/model-name.ts",
-    "./transport-frame": "./src/transport-frame.ts"
+    "./transport-frame": "./src/transport-frame.ts",
+    "./diagnostics": "./src/diagnostics/index.ts"
   },
   "dependencies": {
     "drizzle-orm": "0.36.4",

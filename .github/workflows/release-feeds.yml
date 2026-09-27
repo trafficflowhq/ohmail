@@ -82,10 +82,19 @@ name: release feeds
 # So the state a release was published in is not read from the trigger. It is
 # read from the release page, by the first job below, which then puts the page
 # in the state it belongs in until its feeds are on it.
+#
+# `released` is subscribed for one reason: a prerelease turned into a release by
+# hand. That run signs and attaches nothing. The last job re-reads the three
+# feeds at /releases/latest/download/ and fences the page again if they are not
+# this release's. This workflow's own promotion runs under GITHUB_TOKEN, which
+# starts no workflow, so it never triggers itself. A page published straight to
+# Latest fires both types; the `released` run then only reads, in the same
+# concurrency group, and a page whose feeds are not on it yet is fenced, which
+# is what the fence does to it anyway.
 
 on:
   release:
-    types: [published]
+    types: [published, released]
   workflow_dispatch:
     inputs:
       tag:
@@ -160,7 +169,7 @@ jobs:
       contents: write
     outputs:
       fence: ${{ steps.fence.outputs.fence }}
-      entered_prerelease: ${{ steps.fence.outputs.entered_prerelease }}
+      tag_shape: ${{ steps.fence.outputs.tag_shape }}
 
     steps:
       # If the flag will not go ON, the run CONTINUES: the page is already
@@ -172,9 +181,27 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
           VERIFY_ONLY: ${{ inputs.verify_only }}
+          RELEASE_ACTION: ${{ github.event.action }}
         run: |
           set -euo pipefail
           REPO="$GITHUB_REPOSITORY"
+          # ── THE TAG STATES THE INTENT, AND NOTHING ELSE DOES ─────────────
+          # `v1.2.3` is a release, granted Latest once its three feeds answer. Anything after the
+          # patch number (`-rc.1`, `-beta`, `-preview`) is a prerelease and is never granted
+          # Latest, whatever a dispatch asks. Not an input, which dies with whoever typed it, and
+          # not the page's state: every page is created a prerelease on purpose.
+          tag_shape() {
+            if [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo release; else echo prerelease; fi
+          }
+          SHAPE="$(tag_shape "$RELEASE_TAG")"
+          echo "tag_shape=$SHAPE" >> "$GITHUB_OUTPUT"
+          echo "$RELEASE_TAG names a $SHAPE"
+          # A page promoted by hand is the refence job's to read. This job touches nothing on it.
+          if [ "${RELEASE_ACTION:-}" = released ]; then
+            echo "fence=hand-promotion" >> "$GITHUB_OUTPUT"
+            echo "$RELEASE_TAG was turned into a release: the refence job reads its feeds; nothing here moves a flag."
+            exit 0
+          fi
           # A verify-only run writes nothing anywhere, and that starts here: the one job with the
           # scope to move a flag is also the first to say it is not going to.
           if [ "${VERIFY_ONLY:-false}" = true ]; then
@@ -209,7 +236,6 @@ jobs:
           }
           PRE="$(printf '%s' "$STATE" | jq -r '.isPrerelease')"
           DRAFT="$(printf '%s' "$STATE" | jq -r '.isDraft')"
-          echo "entered_prerelease=$PRE" >> "$GITHUB_OUTPUT"
           if [ "$DRAFT" = true ]; then
             echo "fence=draft" >> "$GITHUB_OUTPUT"
             echo "$RELEASE_TAG is a draft: it is not Latest, and publishing it is not this job's to do."
@@ -254,8 +280,9 @@ jobs:
     # every phone release teaches people to ignore this workflow's failures,
     # which are the ones that strand updaters. A manual dispatch names its tag
     # on purpose and always runs. The two jobs below carry one `if:` each, for the
-    # verify-only dispatch alone; a skipped `needs:` is what skips them otherwise.
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'v')
+    # verify-only dispatch alone; a skipped `needs:` is what skips them otherwise. A hand
+    # promotion (`released`) runs none of the three: it is read by the refence job alone.
+    if: (github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'v')) && github.event.action != 'released'
     # macOS, because the app's Info.plist is read with PlistBuddy here and
     # Sparkle's sign_update is a macOS binary in the job below.
     runs-on: macos-15
@@ -405,6 +432,8 @@ jobs:
             local rc
             local out
             local err
+            local line
+            local shape
             try=1
             out="$(mktemp)" || return 1
             err="$(mktemp)" || return 1
@@ -417,7 +446,16 @@ jobs:
                 rm -f "$out" "$err"
                 return 0
               fi
-              if ! grep -Eq 'PROTOCOL_ERROR|stream error|connection reset|(^|[^[:alnum:]_])EOF([^[:alnum:]_]|$)|HTTP 50[234]' "$err"; then
+              # A shell pattern, not `grep -E`: a macOS runner has BSD grep and a Linux one GNU grep,
+              # and one stderr has to read the same on both. Line by line, EOF only as a whole word.
+              shape=""
+              while IFS= read -r line || [ -n "$line" ]; do
+                case " $line " in
+                  *PROTOCOL_ERROR*|*"stream error"*|*"connection reset"*|*"HTTP 502"*|*"HTTP 503"*|*"HTTP 504"*) shape=1 ;;
+                  *[![:alnum:]_]EOF[![:alnum:]_]*) shape=1 ;;
+                esac
+              done < "$err"
+              if [ -z "$shape" ]; then
                 rm -f "$out" "$err"
                 return "$rc"
               fi
@@ -1172,6 +1210,8 @@ jobs:
             local rc
             local out
             local err
+            local line
+            local shape
             try=1
             out="$(mktemp)" || return 1
             err="$(mktemp)" || return 1
@@ -1184,7 +1224,16 @@ jobs:
                 rm -f "$out" "$err"
                 return 0
               fi
-              if ! grep -Eq 'PROTOCOL_ERROR|stream error|connection reset|(^|[^[:alnum:]_])EOF([^[:alnum:]_]|$)|HTTP 50[234]' "$err"; then
+              # A shell pattern, not `grep -E`: a macOS runner has BSD grep and a Linux one GNU grep,
+              # and one stderr has to read the same on both. Line by line, EOF only as a whole word.
+              shape=""
+              while IFS= read -r line || [ -n "$line" ]; do
+                case " $line " in
+                  *PROTOCOL_ERROR*|*"stream error"*|*"connection reset"*|*"HTTP 502"*|*"HTTP 503"*|*"HTTP 504"*) shape=1 ;;
+                  *[![:alnum:]_]EOF[![:alnum:]_]*) shape=1 ;;
+                esac
+              done < "$err"
+              if [ -z "$shape" ]; then
                 rm -f "$out" "$err"
                 return "$rc"
               fi
@@ -1528,6 +1577,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          TAG_SHAPE: ${{ needs.fence.outputs.tag_shape }}
           PROMOTE: ${{ github.event_name != 'workflow_dispatch' || inputs.promote }}
           FENCE: ${{ needs.fence.outputs.fence }}
         run: |
@@ -1537,6 +1587,15 @@ jobs:
             echo "promoted=no" >> "$GITHUB_OUTPUT"
             echo "reason=the page is a draft" >> "$GITHUB_OUTPUT"
             echo "the feeds are on $RELEASE_TAG; it is a draft, and publishing it is not this job's to do."
+            exit 0
+          fi
+          # THE TAG FIRST, THEN THE INPUT. `promote` defaults to true on a dispatch, so asking it
+          # first would let a dispatch promote an rc. An empty shape is a fence that did not say,
+          # and is read as a prerelease.
+          if [ "${TAG_SHAPE:-}" != release ]; then
+            echo "promoted=no" >> "$GITHUB_OUTPUT"
+            echo "reason=the tag names a prerelease" >> "$GITHUB_OUTPUT"
+            echo "the feeds are on $RELEASE_TAG; the page stays a prerelease because the tag names one."
             exit 0
           fi
           if [ "$PROMOTE" != true ]; then
@@ -1732,3 +1791,83 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
           FENCE: ${{ needs.fence.outputs.fence }}
           SERVED_VERSION: ${{ steps.served.outputs.served_version }}
+
+  # ── 7 · A RELEASE PROMOTED BY HAND IS READ, AND FENCED AGAIN WITHOUT ITS FEEDS ──
+  # Turning a prerelease into a release in the web interface is the one way past the promotion
+  # step above, and it fires `released`. This job signs and attaches nothing: the three feeds
+  # must answer at /releases/latest/download/ with this tag's own bytes, and a prerelease tag
+  # may not be Latest at all. On a miss the page goes back to a prerelease, so installed clients
+  # keep the previous release's feeds, and the run fails by name. No checkout and no key, like
+  # the fence; its reads are the addresses installed clients read.
+  refence:
+    name: read a release promoted by hand, and fence it again without its feeds
+    needs: fence
+    if: github.event_name == 'release' && github.event.action == 'released'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Read the feeds of a release promoted by hand
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          TAG_SHAPE: ${{ needs.fence.outputs.tag_shape }}
+        run: |
+          set -euo pipefail
+          REPO="$GITHUB_REPOSITORY"
+          LATEST="https://github.com/$REPO/releases/latest/download"
+          OWN="https://github.com/$REPO/releases/download/$RELEASE_TAG"
+          VERSION="${RELEASE_TAG#v}"
+          # One file, ten reads, each with a fresh cache-buster: a cached 404 answers for the page.
+          fetch() {
+            local attempt
+            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+              if curl -fsSL --max-time 30 -o "$2" "$1?cb=$(date +%s)-$RANDOM-$attempt"; then return 0; fi
+              sleep 6
+            done
+            return 1
+          }
+          # What is missing, or nothing. Asked in rounds, because /releases/latest can take a
+          # moment to move after a promotion and the previous release's feed is not a verdict yet.
+          miss() {
+            local f
+            local served
+            rm -rf read-back && mkdir -p read-back/latest read-back/own
+            for f in latest.json appcast-macos.xml SHA256SUMS; do
+              fetch "$OWN/$f" "read-back/own/$f" || { echo "$f is not on the release"; return 0; }
+              fetch "$LATEST/$f" "read-back/latest/$f" || { echo "$f does not answer at /releases/latest/download"; return 0; }
+              cmp -s "read-back/own/$f" "read-back/latest/$f" || { echo "/releases/latest/download/$f is not this release's"; return 0; }
+            done
+            served="$(jq -r '.version // empty' read-back/latest/latest.json 2>/dev/null || true)"
+            [ "$served" = "$VERSION" ] || echo "latest.json announces ${served:-no version}, not $VERSION"
+          }
+          if [ "${TAG_SHAPE:-}" != release ]; then
+            MISS="HAND-PROMOTED-A-PRERELEASE $RELEASE_TAG: the tag names a prerelease, which is never Latest"
+          else
+            MISS=""
+            for round in 1 2 3 4 5; do
+              WHY="$(miss)"
+              [ -z "$WHY" ] && break
+              echo "round $round: $WHY" >&2
+              [ "$round" = 5 ] || sleep 12
+            done
+            [ -z "$WHY" ] || MISS="HAND-PROMOTED-WITHOUT-FEEDS $RELEASE_TAG: $WHY"
+          fi
+          if [ -z "$MISS" ]; then
+            echo "HAND-PROMOTION-VERIFIED $RELEASE_TAG: all three feeds answer at /releases/latest/download with this release's bytes."
+            exit 0
+          fi
+          echo "$MISS" >&2
+          # Back to a prerelease, and read back: an edit that answers 0 and changes nothing would
+          # leave the page Latest while this run said it had fenced it.
+          gh release edit "$RELEASE_TAG" --repo "$REPO" --prerelease || true
+          NOW="$(gh release view "$RELEASE_TAG" --repo "$REPO" --json isPrerelease --jq .isPrerelease 2>/dev/null || true)"
+          if [ "$NOW" = true ]; then
+            echo "$RELEASE_TAG is a prerelease again, so /releases/latest serves the previous release's feeds." >&2
+          else
+            echo "REFENCE-NOT-APPLIED $RELEASE_TAG: the prerelease flag would not go back on." >&2
+          fi
+          echo "Do not promote by hand. Dispatch this workflow against the tag; it grants Latest once the feeds answer." >&2
+          exit 1
