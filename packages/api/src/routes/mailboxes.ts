@@ -97,7 +97,7 @@ function probeInputOf(body: Record<string, unknown>): {
 }
 
 /**
- * One fresh read of the mailbox's saved-settings document, for the confirm-import routes below.
+ * One fresh read of the mailbox's saved-settings document, for the confirm route below.
  * Built here, per request, from the same `openMailboxImap` every other API dial goes through —
  * the same per-mailbox connection cap and tightened client timeouts (`attachments-adapter.ts`
  * says why a second `new ImapAdapter` anywhere would break the cap's arithmetic). The service
@@ -334,19 +334,12 @@ export const mailboxRoutes: Route[] = [
     method: "GET",
     pattern: "/mailboxes/:id/profile-import",
     relay: true,
-    // `connection`, on the organizer peek's argument verbatim: the interesting branch opens an
-    // IMAP socket to the user's provider, and `read` would put a mail-server dial inside the
-    // set an unproven address may reach. The COMMON branch never dials — the service answers
-    // "none" from the durable found-marker alone — which is what makes this route cheap enough
-    // for the shell to ask once per mailbox per tab.
-    cost: "connection",
+    // `read`: the organizer's found-marker and the local store, never a dial — the organizer reads
+    // the mailbox, on its own connection, and the card asks without a mail-server clock.
+    cost: "read",
     handler: async (req, deps, params) => {
-      // Ownership is the service's first act, before any marker read and long before the dial —
-      // the peek's connect-oracle rule, kept in the service so every host that mounts these
-      // routes inherits it rather than re-stating it.
-      const dto = await profileImport(deps).candidate(
-        serviceContext(deps, req), params.id!, { read: profileReader(deps, params.id!) },
-      );
+      // Ownership is the service's first act, before any marker read.
+      const dto = await profileImport(deps).candidate(serviceContext(deps, req), params.id!);
       return jsonResponse(dto);
     },
   },

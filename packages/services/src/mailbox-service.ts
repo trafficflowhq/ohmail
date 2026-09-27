@@ -1726,6 +1726,10 @@ export class MailboxService {
         // Mail 0127 — where a signed-out mailbox lived goes with the credentials: a removed
         // mailbox keeps nothing about how to reach it.
         signedOutMeta: null,
+        // And a press of Import settings handed to the organizer: nothing organizes a tombstone,
+        // and a reconnect must not import what was asked for before the removal.
+        profileImportAskFingerprint: null, profileImportAskAt: null,
+        profileImportAskOutcome: null, profileImportAskReason: null,
       })
         .where(and(eq(mailboxes.id, id), eq(mailboxes.accountId, ctx.accountId)));
       await tx.delete(mailboxCredentials).where(eq(mailboxCredentials.mailboxId, id));

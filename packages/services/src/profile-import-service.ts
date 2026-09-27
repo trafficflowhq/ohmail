@@ -2,15 +2,15 @@ import { and, eq } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole, readOrganizerRole,
-  mailboxes,
+  mailboxCredentials, mailboxes,
   latestProfileFoundMarker, profileImportResolutionExists, profileImportWriteReleased,
   recordProfileImportResolution,
   askStands, profileImportResult, readImportAsk, recordImportAsk, ringFilingDoorbell,
   type ImportAskRefusal, type Tx,
 } from "@trafficflow/db";
 import {
-  PROFILE_LIST_MAX, PROFILE_VERSION, ProfileUnavailableError, profileFingerprint, oversizedProfileList,
-  type OrganizerProfileDoc, type ProfileReadResult,
+  PROFILE_LIST_MAX, PROFILE_VERSION, ProfileUnavailableError, profileFingerprint, profileFingerprintVersion,
+  oversizedProfileList, type ProfileReadResult,
 } from "@trafficflow/core/adapters/organizer-profile";
 import {
   PROFILE_IMPORT_LOCK_CLASS, applyOrganizerProfile, importRefusalFor, serializeOrganizerProfile,
@@ -23,8 +23,8 @@ import { ServiceError } from "./errors.js";
  * THE PROFILE IMPORT — the answer side of the portable organizer profile: a versioned JSON
  * document in `ohmail/_meta`, left by the previous organizer (`organizer-profile.ts` is the
  * format). Never auto-applied — the organizer records a found-marker and the decision comes here:
- * `candidate` (marker first, then a FRESH mailbox read, so the confirm counts are the
- * document's), `apply` (natural-key writes in one transaction, resolution marker alongside),
+ * `candidate` (the organizer's found-marker and the local store, never a dial), `apply`
+ * (the document re-read, natural-key writes in one transaction, resolution marker alongside),
  * `decline` (dismissed durably), `replace` (this install's settings may overwrite it). MERGE:
  * the profile wins for every key it names, unnamed local rows stay; idempotent, no retroactive
  * pass, rules through the product's own validation (failures SKIPPED); NEWER offers nothing.
@@ -34,7 +34,7 @@ import { ServiceError } from "./errors.js";
 export type ProfileReader = () => Promise<ProfileReadResult>;
 
 export type ProfileImportCandidateDTO =
-  /** Nothing to ask about. The resting answer, and the only one the cheap no-dial path gives. */
+  /** Nothing to ask about — the resting answer. */
   | { state: "none" }
   /** A document is waiting on the user's answer. `fingerprint` names its exact content. */
   | {
@@ -62,7 +62,7 @@ export type ProfileImportCandidateDTO =
    * Too large to apply in one transaction. Nothing is offered, as for `newer`: a partial import
    * is a settings restore that silently omits some. It carries the offending list, both numbers
    * and the document's `fingerprint`, so the content-keyed `decline` can be recorded — without it
-   * a client could never stop being asked and every poll would re-dial the mailbox. It does NOT
+   * a client could never stop being asked about it. It does NOT
    * yet get a card: the shared reader (`ProfileImportCard#asOffer`) treats any unrecognised state
    * as no offer — safe but silent; the wire half is done, the surface half is not.
    */
@@ -91,12 +91,6 @@ export type ProfileImportStatusDTO =
   | { state: "refused"; reason: ProfileImportStatusRefusal; message: string };
 
 export { PROFILE_IMPORT_LOCK_CLASS, type ProfileImportApplied, type ProfileImportCounts };
-
-/** The document could not be read from the mailbox — never "there is nothing to import". */
-const profileUnreadable = (): ServiceError => new ServiceError(
-  "profile_unreadable", 502,
-  "The mailbox could not be checked for saved ohmail settings. Try again.",
-);
 
 /** The API door's own clock running out, by code — `imap-budget.ts#imapDoorTimedOut`. */
 const MAILBOX_READ_TIMEOUT = "mailbox_read_timeout";
@@ -162,33 +156,29 @@ function declinedFrom(
   };
 }
 
-/** Counts of a document, in the confirm screen's units. */
-function countsOf(doc: OrganizerProfileDoc): ProfileImportCounts {
-  return {
-    screener: doc.screener.length,
-    rules: doc.rules.length,
-    notifyRules: doc.notifyRules.length,
-    tags: doc.tagNames.length,
-    awayResponder: doc.awayResponder !== null,
-  };
+/** The first list the organizer counted over its ceiling, or null — `oversizedProfileList`'s rule. */
+function oversizedCounts(
+  counts: { screener: number; rules: number; notifyRules: number; tagNames: number },
+): { list: string; count: number; max: number } | null {
+  for (const key of ["screener", "rules", "notifyRules", "tagNames"] as const) {
+    if (counts[key] > PROFILE_LIST_MAX[key]) return { list: key, count: counts[key], max: PROFILE_LIST_MAX[key] };
+  }
+  return null;
 }
 
 export class ProfileImportService {
   /**
    * Is there a document waiting on this mailbox, and what would importing it bring?
    *
-   * The MARKER decides whether the mailbox is dialled at all: no marker, an unheld one (the
-   * incumbent-organizer posture — last-incumbent-wins, nothing to import), or one the user has
-   * already answered, and the answer is `none` (or `declined`, for a "Not now" whose document
-   * still stands) from indexed reads alone. Only an OPEN question costs an IMAP connection, and
-   * it returns the folder's CURRENT document, so changed content is offered under its own
-   * fingerprint and a vanished document is not offered at all.
+   * THE ORGANIZER'S FACT, NEVER A DIAL. The organizer records a found document's fingerprint,
+   * counts and producer when its drain reads `ohmail/_meta`, and lapses the record when the folder
+   * stops asking; this answers from that record and the local store. A removed or credential-less
+   * mailbox has nothing to offer. Apply still re-reads the document before it writes anything.
    */
-  async candidate(
-    ctx: ServiceContext, mailboxId: string, opts: { read: ProfileReader },
-  ): Promise<ProfileImportCandidateDTO> {
-    await this.assertMailbox(ctx, mailboxId);
+  async candidate(ctx: ServiceContext, mailboxId: string): Promise<ProfileImportCandidateDTO> {
+    const status = await this.assertMailbox(ctx, mailboxId);
     const db = asTx(ctx);
+    if (status === "disabled" || !(await this.hasCredential(ctx, mailboxId))) return { state: "none" };
 
     // ONLY AN ORGANIZER IS ASKED. A demoted reader keeps its organizer-era marker, and a
     // `declined` answer there would offer a write press on an install that never writes.
@@ -199,94 +189,40 @@ export class ProfileImportService {
     if (!marker) return { state: "none" };
 
     if (marker.state === "newer") {
-      if (typeof marker.v === "number"
-        && await profileImportResolutionExists(db, { accountId: ctx.accountId, mailboxId, newerV: marker.v })) {
+      if (typeof marker.v !== "number") return { state: "none" };
+      if (await profileImportResolutionExists(db, { accountId: ctx.accountId, mailboxId, newerV: marker.v })) {
         return { state: "none" };
       }
-      // Confirm against the folder: a marker outlives its document (the newer build's copy may
-      // have been superseded or deleted by hand), and "update ohmail to import" must only be
-      // said over a document that is still there.
-      const fresh = await this.readFresh(opts.read);
-      return fresh.state === "newer" ? { state: "newer", v: fresh.v } : { state: "none" };
+      return { state: "newer", v: marker.v };
     }
 
     // `found`: only a HELD document is an open import question. Unheld means the organizer met
     // it as the incumbent and will supersede it — offering an import of content the next
     // write-behind flush is about to replace would be asking about a decision already made.
     if (!marker.heldForImport || marker.fingerprint === null) return { state: "none" };
+    const fingerprint = marker.fingerprint;
     // A press already handed to the organizer: the answer is on its way, so nothing is asked again.
     const asked = await readImportAsk(db, { accountId: ctx.accountId, mailboxId });
     if (askStands(asked, ctx.now())) return { state: "importing", fingerprint: asked.fingerprint };
-    if (await profileImportResolutionExists(db, {
-      accountId: ctx.accountId, mailboxId, fingerprint: marker.fingerprint,
-    })) {
-      // Answered. A decline leaves the document standing and the write held, and Settings says so.
-      if (await profileImportWriteReleased(db, {
-        accountId: ctx.accountId, mailboxId, fingerprint: marker.fingerprint,
-      })) return { state: "none" };
-      return declinedFrom(marker.fingerprint, marker);
-    }
-
-    const fresh = await this.readFresh(opts.read);
-    if (fresh.state === "newer") return { state: "newer", v: fresh.v };
-    if (fresh.state !== "found") return { state: "none" };
-
-    /**
-     * THE SIZE REFUSAL COMES BEFORE THE FINGERPRINT, the fingerprint before the lookup.
-     * `profileFingerprint` copies, locale-sorts and serializes the whole canonical document;
-     * refusing after it would bound the TRANSACTION while the sort and whole-document buffer had
-     * already run — the ceiling applied to the result instead of the read, one layer up. The
-     * cost: a `too_large` answer carries a fingerprint computed for an oversized document — which
-     * it must, because the fingerprint is what makes the answer DISMISSIBLE. Order: refuse on
-     * COUNTS (free), canonicalize once for the id, then ask whether this exact content was
-     * already answered.
-     */
-    const over = oversizedProfileList(fresh.doc);
-    const fingerprint = profileFingerprint(fresh.doc);
-
-    /**
-     * THE RESOLUTION LOOKUP COMES BEFORE THE SIZE ANSWER. `too_large` used to be answered first,
-     * which broke the dismissal it carries a fingerprint for: with a stale marker (A) over a
-     * changed, oversized document (B), `candidate` answered `too_large(B)`, the client recorded
-     * `decline(B)`, and the next poll — which only checks the MARKER's fingerprint — re-dialled
-     * IMAP and answered `too_large(B)` again, forever. Asking about the FRESH fingerprint settles
-     * every state at once: a document already answered about is `none`, whatever the answer was.
-     */
+    // Answered — about this exact content, whatever the answer was. A decline leaves the document
+    // standing and the write held, and Settings says so.
     if (await profileImportResolutionExists(db, { accountId: ctx.accountId, mailboxId, fingerprint })) {
-      return { state: "none" };
+      if (await profileImportWriteReleased(db, { accountId: ctx.accountId, mailboxId, fingerprint })) {
+        return { state: "none" };
+      }
+      return declinedFrom(fingerprint, marker);
     }
 
-    /**
-     * A document `apply` would refuse is not OFFERED — before this the ceiling lived only in
-     * `apply`, so the confirm screen showed counts and a button headed for a 413
-     * (`PROFILE_IMPORT_MAX`). Answered like `newer`: nothing offered. IT CARRIES THE FINGERPRINT,
-     * which makes the state actionable: `decline` is content-keyed, so a client holding it can
-     * record a durable "keep local" and stop being asked. The shared card reads unrecognised
-     * states as NO OFFER, so today this is silent; the fingerprint is what an explaining card
-     * will need.
-     */
-    if (over) {
-      return { state: "too_large", fingerprint, list: over.list, count: over.count, max: over.max };
-    }
-    // (The "already answered for this exact content" check that used to live here has moved ABOVE
-    // the size refusal — see the note there. It is the same question and the same query; only its
-    // position changed, so that a `too_large` answer can be dismissed like any other.)
-    // Already what the local store says ⇒ nothing an import would change, so nothing is asked.
-    // (The organizer releases its own hold by this same comparison — one serializer, one answer.)
+    const offer = declinedFrom(fingerprint, marker);
+    if (offer.state !== "declined") return { state: "none" };
+    // A document `apply` would refuse is not offered; the fingerprint makes `too_large` dismissible.
+    const over = oversizedCounts(marker.counts!);
+    if (over) return { state: "too_large", fingerprint, list: over.list, count: over.count, max: over.max };
+    // Already what the local store says, at the DOCUMENT's canonical version (the fingerprint's
+    // tag): an import would change nothing. The organizer releases its own hold the same way.
     const local = await serializeOrganizerProfile(db, ctx.accountId, mailboxId);
-    // AT THE DOCUMENT'S CANONICAL VERSION, not at this build's. The fingerprint is taken over a
-    // versioned canonical form, so hashing the local store at v2 and a v1 document at v1 answers
-    // "were these written by the same build", not "do they say the same thing" — and this line
-    // decides whether the person is shown an import card for settings they already have.
-    if (profileFingerprint(local, fresh.doc.v) === fingerprint) return { state: "none" };
-
-    return {
-      state: "found",
-      fingerprint,
-      updatedAt: fresh.doc.updatedAt,
-      producer: { kind: fresh.doc.producer.kind, version: fresh.doc.producer.version },
-      counts: countsOf(fresh.doc),
-    };
+    if (profileFingerprint(local, profileFingerprintVersion(fingerprint)) === fingerprint) return { state: "none" };
+    return { ...offer, state: "found" };
   }
 
   /**
@@ -452,20 +388,18 @@ export class ProfileImportService {
   }
 
   /** Ownership first, before any dial: a cross-account mailbox id is indistinguishable from a missing one. */
-  private async assertMailbox(ctx: ServiceContext, mailboxId: string): Promise<void> {
-    const rows = await ctx.db.select({ id: mailboxes.id }).from(mailboxes)
+  private async assertMailbox(ctx: ServiceContext, mailboxId: string): Promise<string> {
+    const rows = await ctx.db.select({ status: mailboxes.status }).from(mailboxes)
       .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId))).limit(1);
     if (rows.length === 0) throw new ServiceError("not_found", 404, "mailbox not found");
+    return rows[0]!.status;
   }
 
-  /** One fresh read, with the IO failure translated: "could not look" is 502, never "none". */
-  private async readFresh(read: ProfileReader): Promise<ProfileReadResult> {
-    try {
-      return await read();
-    } catch (err) {
-      if (err instanceof ProfileUnavailableError) throw profileUnreadable();
-      throw err;
-    }
+  /** Whether this install holds any way into the mailbox. A removal and a sign-out delete them all. */
+  private async hasCredential(ctx: ServiceContext, mailboxId: string): Promise<boolean> {
+    const rows = await ctx.db.select({ id: mailboxCredentials.mailboxId }).from(mailboxCredentials)
+      .where(eq(mailboxCredentials.mailboxId, mailboxId)).limit(1);
+    return rows.length > 0;
   }
 }
 

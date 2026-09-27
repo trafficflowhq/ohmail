@@ -197,15 +197,29 @@ function asOffer(dto: unknown): OfferCandidate | null {
   };
 }
 
+/**
+ * THE MAILBOXES A SETTINGS CHECK ASKS: not a removed one (`isRemovedMailbox`'s rule). A removal
+ * deletes the credentials, and a check on it was the 502 every five minutes for as long as the
+ * window stayed open. A stand-down an older engine reports as `disabled` is still the person's
+ * mailbox and keeps its card.
+ */
+export function askableMailboxes<M extends { id: string; status?: string | null; legacyStandDown?: boolean }>(
+  mailboxes: ReadonlyArray<M> | null,
+): ReadonlyArray<M> | null {
+  return mailboxes === null ? null
+    : mailboxes.filter((m) => !(m.status === "disabled" && m.legacyStandDown !== true));
+}
+
 export function useProfileImport(
   active: boolean,
-  mailboxes: ReadonlyArray<{ id: string; address: string; status?: string; legacyStandDown?: boolean }> | null,
+  listed: ReadonlyArray<{ id: string; address: string; status?: string; legacyStandDown?: boolean }> | null,
   transport?: ProfileImportTransport,
   /** The beat, injectable so a test does not wait five minutes for the second look. */
   recheckMs: number = PROFILE_IMPORT_RECHECK_MS,
   /** {@link settingsDoorbell}: a move re-asks every mailbox now, whatever the beat says. */
   doorbell: number | null = null,
 ): ProfileImportState {
+  const mailboxes = askableMailboxes(listed);
   const [offers, setOffers] = useState<ProfileImportOffer[]>([]);
   const [phase, setPhase] = useState<ProfileImportPhase>({ kind: "offer" });
   const [beat, setBeat] = useState(0);
@@ -579,11 +593,12 @@ interface SavedRow { mailboxId: string; address: string; candidate: DeclinedCand
  * shows nothing, and each row keeps its buttons through a refused press.
  */
 export function SavedProfileSection({
-  mailboxes, transport,
+  mailboxes: listed, transport,
 }: {
-  mailboxes: ReadonlyArray<{ id: string; address: string }> | null;
+  mailboxes: ReadonlyArray<{ id: string; address: string; status?: string | null }> | null;
   transport?: ProfileImportTransport;
 }) {
+  const mailboxes = askableMailboxes(listed);
   const t = useTranslations("profileImport");
   const locale = useLocale();
   const format = useFormatter();

@@ -17,7 +17,7 @@ import type { ConnectedSession } from "../net/pairing";
 import { useWorld } from "../state/world";
 import { Button, Panel, Txt, useTopPad } from "./base";
 import {
-  IMPORT_STATUS_BEAT_MS, askTickets, cardQuestion, countsSaid, failureSaid, importingSaid, mailboxesToAsk,
+  IMPORT_STATUS_BEAT_MS, askTickets, askableRows, cardQuestion, countsSaid, failureSaid, importingSaid, mailboxesToAsk,
   savedBySaid, savedRows, type CardPhase, type MailboxQuestion,
 } from "./profile-import-card";
 
@@ -50,7 +50,7 @@ export function useProfileQuestions(): {
     const rang = rung.current !== bell;
     rung.current = bell;
     const now = Date.now();
-    const ids = w.mailboxes.rows.map((r) => r.id);
+    const ids = askableRows(w.mailboxes.rows).map((r) => r.id);
     for (const id of mailboxesToAsk(ids, asked.current, known.current, now, rang)) {
       asked.current.set(id, now);
       const ticket = tickets.begin(id);
@@ -66,7 +66,7 @@ export function useProfileQuestions(): {
     setAnswers((prev) => ({ ...prev, [mailboxId]: question }));
   }, [tickets]);
 
-  const rows = w.mailboxes.rows
+  const rows = askableRows(w.mailboxes.rows)
     .filter((r) => answers[r.id] !== undefined)
     .map((r) => ({ mailboxId: r.id, address: r.displayName ?? r.address, question: answers[r.id]! }));
   return { session, rows, set, bell };

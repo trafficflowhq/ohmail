@@ -23,6 +23,14 @@ export const ASK_AGAIN_OPEN_MS = 5 * 60 * 1000;
 export const ASK_AGAIN_NONE_MS = 60 * 1000;
 
 /**
+ * A REMOVED MAILBOX HAS NO SETTINGS CHECK: `disabled` is a removal (its credentials are gone) or a
+ * stand-down, and nothing on this door could import into either. The web's `askableMailboxes`.
+ */
+export function askableRows<R extends { status: string | null }>(rows: readonly R[]): R[] {
+  return rows.filter((r) => r.status !== "disabled");
+}
+
+/**
  * WHICH MAILBOXES THIS PASS ASKS. A rung doorbell (`World.mailboxes.settingsBell` moved: an
  * organizer found or lapsed a settings document) asks every one at once; otherwise each waits
  * out its own throttle. The web's hook keeps the same rule.
