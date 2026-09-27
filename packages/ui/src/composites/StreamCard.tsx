@@ -294,8 +294,9 @@ export function StreamCard({
     // `short` alone used to gate this, so a pill made reachable by `pending` would have been
     // a button that did nothing when clicked. A card WITH a `bodySlot` always has more to
     // show than its clamped preview (the rest of the rendered html), so it opens even when the
-    // preview is short — `isShort` is already false for it.
-    if (isShort && !pending) return;
+    // preview is short — `isShort` is already false for it. A short card a click OPENED still
+    // closes through it: that press is the stream's controlled close (Back out of a reading).
+    if (isShort && !pending && !open) return;
     const next = !open;
     if (clip) {
       if (showViewer) {
