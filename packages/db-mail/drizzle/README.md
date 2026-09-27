@@ -25,8 +25,8 @@ half of the schema. A missing snapshot is loud; a wrong one is silent.
 The migrator replays a journal's whole pending set in ONE transaction (`drizzle-orm`'s
 postgres-js migrator wraps the loop; `packages/db/src/concurrent-index.ts` records the same
 fact from the index side), so a lock a journal statement takes is held to the end of the
-pass. Two rules follow for every table that grows with mail or traffic — the growth tables
-named by this repository's migration-lock-cost test, which enforces both rules over
+pass. Three rules follow for every table that grows with mail or traffic — the growth tables
+named by this repository's migration-lock-cost test, which enforces all three over
 every entry past its watermark, in this journal and the cloud one:
 
 - **A FK or CHECK on a growth table is added `NOT VALID`**, and its `VALIDATE CONSTRAINT`
@@ -45,6 +45,13 @@ every entry past its watermark, in this journal and the cloud one:
   command's autocommit session, under the migration's own advisory lock. A `UNIQUE` or
   `PRIMARY KEY` constraint added by `ALTER TABLE` is the same index build by another
   spelling and follows the same rule.
+
+- **A column TYPE change on a growth table is refused unless it is measured.** Postgres
+  rewrites the table and rebuilds every index on it under `ACCESS EXCLUSIVE`, held to the end
+  of the pass, so ingest waits for all of it. The test admits such a migration by file name
+  only, with its reason. One is admitted: `0129_uid_bigint`, which widens the four UID
+  columns so a UID above 2^31 can be stored; its rewrite was timed on a populated database
+  before it shipped.
 
 pg only: SQLite has no `NOT VALID`, and `drizzle-sqlite/` rebuilds small local databases
 where this cost class does not exist. The sqlite twin is out of the rule's scope and the

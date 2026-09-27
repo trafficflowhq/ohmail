@@ -1,8 +1,8 @@
 import {
   MAIL_SCHEMA_MARKERS, SCHEMA_INDEX_MARKERS, SCHEMA_CHECK_MARKERS,
-  MAIL_CHECK_DEFINITION_MARKERS, SCHEMA_FK_MARKERS,
+  MAIL_CHECK_DEFINITION_MARKERS, SCHEMA_FK_MARKERS, MAIL_COLUMN_TYPE_MARKERS,
   MAIL_SCHEMA_MARKER_JOURNAL_TAG, type SchemaMarker, type CheckDefinitionMarker,
-  type FunctionDefinitionMarker, type ForeignKeyMarker,
+  type FunctionDefinitionMarker, type ForeignKeyMarker, type IndexMarker,
 } from "./health.js";
 import { registerSchemaCensus } from "./health-census.js";
 
@@ -223,17 +223,19 @@ export const CLOUD_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker
  * is green, and the only symptom is a scan where there should be a seek — or a uniqueness
  * nothing enforces.
  */
-export const CLOUD_INDEX_MARKERS: ReadonlyArray<string> = [
-  "auth_events_reuse_account_at_idx",
+export const CLOUD_INDEX_MARKERS: ReadonlyArray<IndexMarker> = [
+  ["auth_events_reuse_account_at_idx", "ON public.auth_events USING btree (account_id, at)"],
   // Cloud 0034 — the key the passkey-ceremony prune walks. Its absence is the silent shape this
   // class names: the consume read still answers, every suite is green, and the table grows for
   // anyone who can open a ceremony while the prune scans instead of seeking.
-  "webauthn_challenges_expires_idx",
+  ["webauthn_challenges_expires_idx", "ON public.webauthn_challenges USING btree (expires_at)"],
   // Cloud 0035 — the two keys `consumeChallenge` itself reads by, one per selector arm. Same
   // silent shape and one step sharper: absent, every passkey verification scans every open
   // ceremony on the deployment, and how many that is, is chosen by whoever opened them.
-  "webauthn_challenges_open_login_idx",
-  "webauthn_challenges_open_user_idx",
+  ["webauthn_challenges_open_login_idx",
+    "ON public.webauthn_challenges USING btree (login_token_id, type, created_at)"],
+  ["webauthn_challenges_open_user_idx",
+    "ON public.webauthn_challenges USING btree (user_id, type, created_at)"],
 ] as const;
 
 /**
@@ -285,8 +287,8 @@ export const CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker> = [
 ];
 
 /**
- * Columns + indexes (both halves) + checks + check DEFINITIONS (both halves) + function BODIES.
- * What a hosted `/health` measures against.
+ * Columns + indexes (both halves) + checks + check DEFINITIONS (both halves) + function BODIES +
+ * column TYPES (mail). What a hosted `/health` measures against.
  *
  * The check-DEFINITION term is BOTH halves since mail 0100 — a hosted database ran the mail
  * journal too, so a hosted probe that measured only the Cloud definitions would certify it
@@ -295,7 +297,8 @@ export const CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker> = [
 export const EXPECTED_MARKERS =
   SCHEMA_MARKERS.length + SCHEMA_INDEX_MARKERS.length + CLOUD_INDEX_MARKERS.length +
   SCHEMA_CHECK_MARKERS.length + CHECK_DEFINITION_MARKERS.length +
-  CLOUD_FUNCTION_MARKERS.length + SCHEMA_FK_MARKERS.length + CLOUD_FK_MARKERS.length;
+  CLOUD_FUNCTION_MARKERS.length + SCHEMA_FK_MARKERS.length + CLOUD_FK_MARKERS.length +
+  MAIL_COLUMN_TYPE_MARKERS.length;
 
 /** Alias that names the role rather than the shape, for the composition root. */
 export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;

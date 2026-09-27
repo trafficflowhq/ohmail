@@ -812,30 +812,31 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
  * rows for one address — `create` performs no pre-check, so its 409 is entirely contingent on the
  * index raising 23505; absent it, the worker rosters two IMAP runtimes for one physical mailbox.
  * Counted into the same `found`/`expected` totals as the column markers: the `/health` body may
- * not gain a key.
+ * not gain a key. Probed by DEFINITION (see {@link IndexMarker}), never by name alone.
  */
-export const SCHEMA_INDEX_MARKERS: ReadonlyArray<string> = [
-  "mailboxes_active_address_uq",   // mail 0021_mailbox_address_unique
+export const SCHEMA_INDEX_MARKERS: ReadonlyArray<IndexMarker> = [
+  // mail 0021_mailbox_address_unique
+  ["mailboxes_active_address_uq", "ON public.mailboxes USING btree (account_id, lower(address))"],
   // mail 0034_rule_retro. Listed for the same property as the one above and not for symmetry:
   // its absence is SILENT. Nothing raises, no query is wrong, and every test stays green — the
   // retro pass simply computes each page by a sequential scan of the account's messages, once
   // per page, once per worker cycle, per owed rule, until the cycle stops finishing. There was
   // no index on `messages.from_address` of any kind before this migration.
-  "messages_account_from_addr_idx",
+  ["messages_account_from_addr_idx", "ON public.messages USING btree (account_id, lower(from_address), id)"],
   // mail 0043_ohbox_tidy. Listed for the same property as the two above: its absence is SILENT. The
   // Ohbox backlog re-route pass excludes any message the user has dragged back into the Ohbox with a
   // `NOT EXISTS (move-to-INBOX change row)`, and `change_log`'s only index is its PK `(account_id,
   // seq)`. Without this partial index that `NOT EXISTS` is a full scan of the account's whole change
   // log per candidate, per page, per cycle — no query is wrong, every test stays green, and the only
   // symptom is a worker cycle that stops finishing, which is exactly what this list exists for.
-  "change_log_move_to_inbox_idx",
+  ["change_log_move_to_inbox_idx", "ON public.change_log USING btree (account_id, entity_id)"],
   // mail 0071_withheld_provenance_index. Listed for the same property as the three above: its
   // absence is SILENT. The worker's `junk_filed` convergence pass (`junk-restore.ts`) walks
   // `message_bodies` by `withheld_reason` once per cycle per mailbox to find the few husks whose
   // message is alive in a watched folder again; without this partial index that read tests the
   // marker on every body of the mailbox, per cycle — no query is wrong, every test stays green,
   // and the only symptom is a worker cycle that stops finishing on a large mailbox.
-  "message_bodies_withheld_idx",
+  ["message_bodies_withheld_idx", "ON public.message_bodies USING btree (withheld_reason, message_id)"],
   // mail 0080_sessions_access_token_hash_idx. Listed for the same property as the four above,
   // and it is the sharpest instance of it yet: `resolveSession` is the FIRST thing every
   // authenticated request does, its predicate is `access_token_hash = $1`, and without this
@@ -843,7 +844,8 @@ export const SCHEMA_INDEX_MARKERS: ReadonlyArray<string> = [
   // revoked, never reaped) and whose row count any caller with one account's credentials can
   // raise at request rate. Absent, nothing raises and every test stays green; the only symptom
   // is every user's every request paying for every session the deployment has ever minted.
-  "sessions_access_token_hash_idx",
+  // 0080 is `CREATE INDEX IF NOT EXISTS`, a no-op over any index of that name — hence the needle.
+  ["sessions_access_token_hash_idx", "ON public.sessions USING btree (access_token_hash)"],
   // mail 0118_account_isolation. The one entry here whose absence is NOT silent, listed for the
   // OPPOSITE reason to the five above: these fourteen unique indexes exist to be REFERENCED by the
   // composite account keys the same migration adds, so a database without them carries no
@@ -851,12 +853,12 @@ export const SCHEMA_INDEX_MARKERS: ReadonlyArray<string> = [
   // migration's probe; the keys themselves are the subject of the sixth class below
   // (`SCHEMA_FK_MARKERS`), which the CLOUD half of the same change — foreign keys and nothing
   // else — is what forced into existence.
-  "messages_id_account_uq",
+  ["messages_id_account_uq", "ON public.messages USING btree (id, account_id)"],
   // mail 0125_message_search. The SILENT kind, like the first five: without the two word indexes
   // every search is a sequential scan of the account's documents — nothing raises, every test
   // stays green, and the first page stops answering in milliseconds.
-  "message_search_head_tsv_idx",
-  "message_search_text_tsv_idx",
+  ["message_search_head_tsv_idx", "ON public.message_search USING gin (head_tsv)"],
+  ["message_search_text_tsv_idx", "ON public.message_search USING gin (text_tsv)"],
 ];
 
 /**
@@ -1011,6 +1013,21 @@ export const SCHEMA_CHECK_MARKERS: ReadonlyArray<string> = [
 export type CheckDefinitionMarker = readonly [conname: string, definitionSubstring: string];
 
 /**
+ * An INDEX probed by its definition: `[indexname, definitionSubstring]` against
+ * `pg_indexes.indexdef`. `CREATE INDEX IF NOT EXISTS` is a no-op over ANY index of that name, so
+ * a name probe certified a same-named index over another table or other columns. The needle is
+ * the table and the key as Postgres renders them.
+ */
+export type IndexMarker = readonly [indexname: string, definitionSubstring: string];
+
+/**
+ * A column probed by its TYPE: `[table, column, udt_name]` against `information_schema.columns`.
+ * A `(table, column)` pair cannot tell `integer` from `bigint`, so a migration whose whole content
+ * is a type change was invisible to every other class. Mail 0129 is why this class exists.
+ */
+export type ColumnTypeMarker = readonly [table: string, column: string, udtName: string];
+
+/**
  * A FUNCTION marker probed by its body — the fifth marker class, the last catalog the other four
  * cannot reach: `[proname, bodySubstring]` against `pg_proc.prosrc`. A trigger-function
  * replacement is the constraint-replacement defect one catalog over, and worse: `CREATE OR
@@ -1090,9 +1107,24 @@ export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker>
   ["mailboxes_disabled_reason_closed", "organized_elsewhere:mobile"],
 ];
 
+/**
+ * The MAIL columns probed by TYPE — see {@link ColumnTypeMarker}. Always probed, like the index and
+ * CHECK lists: every entry names a mail table, so a local engine's store is incomplete without it.
+ */
+export const MAIL_COLUMN_TYPE_MARKERS: ReadonlyArray<ColumnTypeMarker> = [
+  /* mail 0129_uid_bigint — the four IMAP locator columns, `integer` → `bigint`. A UID is unsigned
+     32-bit and a server may issue one above 2^31; against an 0128 database the ingest, the failure
+     ledger, "Not junk" and the settings cache all answer 22003 for it. The column exists on both
+     databases, so only its type tells them apart. */
+  ["message_instances", "uid", "int8"],
+  ["message_failures", "uid", "int8"],
+  ["junk_rescues", "uid", "int8"],
+  ["mailbox_profile_mirror", "uid", "int8"],
+];
+
 export const MAIL_EXPECTED_MARKERS =
   MAIL_SCHEMA_MARKERS.length + SCHEMA_INDEX_MARKERS.length + SCHEMA_CHECK_MARKERS.length +
-  MAIL_CHECK_DEFINITION_MARKERS.length + SCHEMA_FK_MARKERS.length;
+  MAIL_CHECK_DEFINITION_MARKERS.length + SCHEMA_FK_MARKERS.length + MAIL_COLUMN_TYPE_MARKERS.length;
 
 /**
  * The newest entry of the MAIL journal, which {@link MAIL_SCHEMA_MARKERS} is reconciled to; a
@@ -1102,12 +1134,12 @@ export const MAIL_EXPECTED_MARKERS =
  * definition markers; a DATA-ONLY migration is unprobeable, gets no marker, and must not move the
  * tag — advancing `through` while probing nothing the migration added is a worse lie than a stale
  * tag, and shipped once (recorded in `SCHEMA_INDEX_MARKERS`' docblock). Add a marker: move this
- * sentence with the tag. Add a data-only migration: leave both.
+ * sentence with the tag; a data-only migration leaves both; a type change is a type marker.
  */
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0130_mailbox_sync_soft_states";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0129_uid_bigint";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
@@ -1177,7 +1209,7 @@ export async function probeDatabase(
    * this module ships in the desktop engine, so the names must arrive as a parameter rather
    * than live here. Defaults to none — a mail-tier database is complete without them.
    */
-  extraIndexMarkers: ReadonlyArray<string> = [],
+  extraIndexMarkers: ReadonlyArray<IndexMarker> = [],
   /**
    * Trigger/helper FUNCTIONS whose BODY is probed — see {@link FunctionDefinitionMarker}.
    * Defaults to none, on the same rule as the two parameters above: every entry so far names a
@@ -1251,10 +1283,11 @@ export async function probeDatabase(
   const fkMarkers = [...SCHEMA_FK_MARKERS, ...extraForeignKeyMarkers];
   const expected =
     columnMarkers.length + indexMarkers.length + SCHEMA_CHECK_MARKERS.length +
-    checkDefinitionMarkers.length + functionDefinitionMarkers.length + fkMarkers.length;
+    checkDefinitionMarkers.length + functionDefinitionMarkers.length + fkMarkers.length +
+    MAIL_COLUMN_TYPE_MARKERS.length;
   try {
     /* A DECLARED POSTGRES-ONLY ARM, and the declaration is the honest form of what this already
-       was. The whole statement asks four Postgres CATALOGS in six subselects —
+       was. The whole statement asks four Postgres CATALOGS in seven subselects —
        `information_schema.columns`, `pg_indexes`, `pg_constraint`, `pg_proc` — whether this deployment's schema and its
        extension are what the code expects. There is no second spelling of that question: the
        device store's catalog is `sqlite_master` and `pragma table_info`, which is a different
@@ -1271,15 +1304,25 @@ export async function probeDatabase(
                        columnMarkers.map(([t, c]) => sql`(${t}, ${c})`),
                        sql`, `,
                      )})) as schema_markers,
+                 -- The TYPE half: the same view, asked for udt_name too, because a pair cannot
+                 -- tell int4 from int8 (mail 0129). Mail tables only, so always asked.
+                 (select count(*) from information_schema.columns
+                   where table_schema = 'public'
+                     and (table_name, column_name, udt_name) in (${sql.join(
+                       MAIL_COLUMN_TYPE_MARKERS.map(([t, c, u]) => sql`(${t}, ${c}, ${u})`),
+                       sql`, `,
+                     )})) as type_markers,
                  -- The index half: pg_indexes, because information_schema has no view of
                  -- indexes at all. Scoped to public, like the column probe above. The list is
                  -- the shared mail markers plus whatever the host registered (see the
-                 -- extraIndexMarkers parameter).
+                 -- extraIndexMarkers parameter). By DEFINITION: the name alone certified a
+                 -- same-named index over other columns.
                  (select count(*) from pg_indexes
                    where schemaname = 'public'
-                     and indexname in (${sql.join(
-                       indexMarkers.map((n) => sql`${n}`),
-                       sql`, `,
+                     and (${sql.join(
+                       indexMarkers.map(([name, needle]) =>
+                         pgOnly(sql`(indexname = ${name} and position(${needle} in indexdef) > 0)`)),
+                       sql` or `,
                      )})) as index_markers,
                  -- The CHECK half: a third catalog again, because neither view above can see a
                  -- constraint. contype = 'c' excludes FK/unique/PK constraints, whose names
@@ -1350,14 +1393,16 @@ export async function probeDatabase(
     const dbLatencyMs = Date.now() - started;
     const row = rowsOf<{
       one: number; pg_trgm: boolean; schema_markers: number | string; index_markers: number | string;
+      type_markers: number | string;
       check_markers: number | string; check_def_markers: number | string;
       function_def_markers: number | string; fk_markers: number | string;
     }>(result)[0];
     if (!row || Number(row.one) !== 1) return { kind: "empty", dbLatencyMs };
-    // One total across all six probes — see `SCHEMA_INDEX_MARKERS` for why they are not six.
+    // One total across all seven probes — see `SCHEMA_INDEX_MARKERS` for why they are not seven.
     const markersFound =
       Number(row.schema_markers) + Number(row.index_markers) + Number(row.check_markers) +
-      Number(row.check_def_markers) + Number(row.function_def_markers) + Number(row.fk_markers);
+      Number(row.check_def_markers) + Number(row.function_def_markers) + Number(row.fk_markers) +
+      Number(row.type_markers);
     return {
       kind: "probed",
       dbLatencyMs,

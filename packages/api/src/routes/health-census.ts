@@ -1,5 +1,5 @@
 import type {
-  SchemaMarker, CheckDefinitionMarker, FunctionDefinitionMarker, ForeignKeyMarker,
+  SchemaMarker, CheckDefinitionMarker, FunctionDefinitionMarker, ForeignKeyMarker, IndexMarker,
 } from "./health.js";
 
 /**
@@ -25,7 +25,7 @@ export interface SchemaCensus {
    * engine while these entries name Cloud tables. Cloud `0013` (the trial-once partial unique
    * index) is why this field exists.
    */
-  indexMarkers: ReadonlyArray<string>;
+  indexMarkers: ReadonlyArray<IndexMarker>;
   /**
    * Trigger FUNCTIONS probed by BODY — the shape a migration takes when `CREATE OR REPLACE
    * FUNCTION` is its ENTIRE content, which every name-keyed catalog and the constraint-definition
