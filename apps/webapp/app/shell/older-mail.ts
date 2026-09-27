@@ -157,6 +157,13 @@ export function useOlderMail(
    * to remember and re-asking the server is the only answer right in both directions.
    */
   scopeEpoch: number = 0,
+  /**
+   * WHICH OF THESE FETCHED ROWS THIS LIST PRESENTS — asked of the rows the mirror does not hold
+   * (verdict `show`), in one batch, by the client's own partition. The server's page is a folder
+   * listing, and the list is a presentation: a first-time sender's letter the Screener holds is in
+   * the Ohbox's folder and not in the Ohbox. Absent ⇒ every `show` row belongs.
+   */
+  belongs?: (fetched: readonly EngineMessage[]) => ReadonlySet<string>,
 ): OlderMail {
   const coverage = engine.storeCoverage();
   const available = engine.listOlderAvailable() && coverage.state !== "whole";
@@ -175,6 +182,8 @@ export function useOlderMail(
   /** `suppress` behind a stable identity, so the memo's deps stay honest — consent-state's `link`. */
   const suppressRef = useRef<((id: string) => "show" | "hide" | "ban" | "hold") | undefined>(suppress);
   suppressRef.current = suppress;
+  const belongsRef = useRef(belongs);
+  belongsRef.current = belongs;
   /** The scope this hook's page state belongs to — see the SYNCHRONOUS reset below. */
   const scope = `${view}|${folderId ?? ""}|${scopeEpoch}`;
 
@@ -259,8 +268,11 @@ export function useOlderMail(
     /* ONE PRESS BRINGS SOMETHING NEW. A page whose every row the list already shows (the store
        re-serving what this device holds) is walked past, up to {@link OLDER_HOPS} pages; the
        rows are kept either way, for the latch's reasons. */
-    const shows = (m: EngineMessage): boolean =>
-      (suppressRef.current?.(m.id) ?? "show") === "show" && !p.banned.has(m.id);
+    const shown = (items: readonly EngineMessage[]): boolean => {
+      const open = items.filter((m) => (suppressRef.current?.(m.id) ?? "show") === "show" && !p.banned.has(m.id));
+      const belong = open.length > 0 ? belongsRef.current?.(open) : undefined;
+      return open.some((m) => belong === undefined || belong.has(m.id));
+    };
     const ask = (cursor: string | null, hop: number, got: EngineMessage[]): Promise<ListOlderOutcome> => engine
       .listOlder(view, {
         ...(cursor ? { cursor } : {}),
@@ -271,7 +283,7 @@ export function useOlderMail(
         if (outcome.state !== "ready") return got.length === 0 ? outcome : { state: "ready", items: got, nextCursor: cursor };
         const items = [...got, ...outcome.items];
         const stale = paging.current !== p || committed.current.scope !== p.scope;
-        if (!stale && outcome.nextCursor !== null && hop + 1 < OLDER_HOPS && !outcome.items.some(shows)) {
+        if (!stale && outcome.nextCursor !== null && hop + 1 < OLDER_HOPS && !shown(outcome.items)) {
           return ask(outcome.nextCursor, hop + 1, items);
         }
         return { state: "ready", items, nextCursor: outcome.nextCursor };
@@ -356,7 +368,7 @@ export function useOlderMail(
     // post-commit effect above. A paging object from another scope contributes nothing.
     const p = paging.current;
     const latched = p !== null && p.scope === scope && p.engine === engine ? p.banned : undefined;
-    return page.items
+    const open = page.items
       // The per-render verdicts — see `suppress`: anything but "show" stays out of the tail
       // right now ("hide" because the surface renders it, "ban" because the mirror says it
       // left, "hold" because the scope is unreadable), and "show" still defers to the latch.
@@ -364,7 +376,11 @@ export function useOlderMail(
         const verdict = suppressRef.current?.(item.id) ?? "show";
         if (verdict !== "show") return false;
         return !(latched?.has(item.id) ?? false);
-      })
+      });
+    // And the list's own partition, over what is left: never latched, asked again every render.
+    const belong = open.length > 0 ? belongsRef.current?.(open) : undefined;
+    return open
+      .filter((item) => belong === undefined || belong.has(item.id))
       .map((item) => reader.get<EngineMessage>("message", item.id) ?? item);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, page.items, version, scope]);

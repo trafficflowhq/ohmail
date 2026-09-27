@@ -19,6 +19,7 @@ import {
   parkedMessageIds,
   presentAt,
   presentationReader,
+  readerWithEffects,
   receiptsByDay,
   resurfacedThreads,
   rulesList,
@@ -383,8 +384,8 @@ export function useShellDerivations({
   /**
    * THE OHBOX'S REACH PAST THE WINDOW, answered by the store. Page one starts at the store's edge
    * for this mirror (`storeCoverage().below`), and a fetched row the mirror holds never lists in
-   * Older: shown above ⇒ `hide`, held and placed elsewhere ⇒ `ban`. Only mail this device does
-   * not hold is `show`. The folder tail's verdicts, over the Ohbox surface.
+   * Older: shown above ⇒ `hide`, held and placed elsewhere, or deleted here ⇒ `ban`. Only mail
+   * this device does not hold is `show`. The folder tail's verdicts, over the Ohbox surface.
    */
   const ohboxShownIds = useMemo(
     () => new Set(ohboxSurfaceMessages(resurfacedRows, ohbox, []).map((m) => m.id)),
@@ -397,9 +398,30 @@ export function useShellDerivations({
     () => (edgeId === null ? undefined : { date: edgeDate, id: edgeId }),
     [edgeDate, edgeId],
   );
+  /**
+   * …AND A ROW THE MIRROR DOES NOT HOLD IS ASKED THE OHBOX'S OWN QUESTION: the partition and the
+   * Ohbox selector, over the mirror with the fetched rows added, the pipeline `ohbox` below is
+   * built by. The server's page is the INBOX folder; a first-time sender's letter the Screener
+   * holds is in that folder and not in the Ohbox, and a dormant stranger's is History's.
+   */
+  const ohboxBelongs = useStableCallback((fetched: readonly EngineMessage[]): ReadonlySet<string> => {
+    if (demo) return new Set(fetched.map((m) => m.id));
+    const withFetched = readerWithEffects(reader, fetched.map((m) => ({ type: "message", id: m.id, entity: m })));
+    const view = ohboxView(presentationReader(
+      withFetched, consentPartition(withFetched, shellConsentOptions(consent, now, ownAddresses)),
+    ));
+    const asked = new Set(fetched.map((m) => m.id));
+    const out = new Set<string>();
+    for (const m of [...view.resurfaced, ...view.newForYou, ...view.previouslySeen]) {
+      if (asked.has(m.id)) out.add(m.id);
+    }
+    return out;
+  });
   const older = useOlderMail(
     engine, "ohbox", derived, undefined, ohboxOlderBoundary,
-    (id) => (ohboxShownIds.has(id) ? "hide" : reader.get<EngineMessage>("message", id) ? "ban" : "show"),
+    (id) => (ohboxShownIds.has(id) ? "hide"
+      : reader.get<EngineMessage>("message", id) || engine.messageIsGone(id) ? "ban" : "show"),
+    0, ohboxBelongs,
   );
   const partition = useMemo(() => feedPartition(presented, "reads"), [presented, derived]);
   /**
