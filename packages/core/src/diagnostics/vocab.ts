@@ -17,7 +17,7 @@ export const DIAGNOSTIC_DISABLED_REASONS = [
 
 export const DIAGNOSTIC_BLOCK_REASONS = [
   "lease_unreadable", "awaiting_credentials", "at_capacity", "read_limited", "clock_off",
-  "account_closed",
+  "account_closed", "provider_unavailable",
 ] as const;
 
 /** The client mirror's types — `@ohmail/client-engine`'s `MIRROR_ENTITY_TYPES`, held equal there. */
@@ -25,7 +25,7 @@ export const DIAGNOSTIC_ENTITY_TYPES = [
   "message", "thread", "routing_decision", "approval", "draft", "rule", "message_state",
   "folder", "tag", "mailbox", "screener_suggestion", "mailbox_profile",
   "screener_sender", "triage_item", "view_meta", "message_body", "held_release_group",
-  "unscreened_sender_group", "outbox_entry", "outbox_abandoned", "store_page",
+  "unscreened_sender_group", "screener_waiting", "outbox_entry", "outbox_abandoned", "store_page",
 ] as const;
 
 export const DIAGNOSTIC_OS = ["linux", "macos", "windows", "ios", "android"] as const;
