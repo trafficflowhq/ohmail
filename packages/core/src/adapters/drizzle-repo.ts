@@ -23,7 +23,7 @@ import { foldMessageIdDomain } from "../identity.js";
 // THE ONE DOOR for a UIDVALIDITY comparison — `epoch.ts`. A bare `===` between two generations
 // reads two unknowns as agreement, which is the fail-open this module must not re-invent; the
 // census over three source roots refuses one.
-import { epochOf, sameEpoch } from "../epoch.js";
+import { epochOf, epochOfRef, sameEpoch } from "../epoch.js";
 
 /**
  * How many ledger rows one delivery report may name. A report quotes at most
@@ -481,6 +481,12 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * in watched space, so a delete filing is not done (`junk-filing.ts#completeFiling`).
    */
   forgetInstanceAt(mailboxId: string, locator: NativeLocator): Promise<NativeLocator | null>;
+  /**
+   * Is `locator` the ONLY instance recorded for this message? The reconciler asks it when a move
+   * finds its source absent: with no other copy on record, the message has no server instance and
+   * the filing is closed. Optional: a repo that cannot answer keeps the filing for ingest.
+   */
+  onlyInstanceAt?(messageId: string, locator: NativeLocator): Promise<boolean>;
   /**
    * The mailbox's discovered native `\Junk`/`\Trash` paths (mail 0065) — what the reconciler
    * reads to know where a spam verdict physically files. OPTIONAL on {@link scanSentRecipients}'
@@ -1192,6 +1198,16 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     await this.db.update(messages).set({ nativeLocator: promoted })
       .where(eq(messages.id, orphaned.messageId));
     return promoted;
+  }
+
+  /** See {@link WorkerRepo.onlyInstanceAt}. One read of at most two rows. */
+  async onlyInstanceAt(messageId: string, locator: NativeLocator): Promise<boolean> {
+    const rows = await this.db.select({
+      folder: messageInstances.folder, uidvalidity: messageInstances.uidvalidity, uid: messageInstances.uid,
+    }).from(messageInstances).where(eq(messageInstances.messageId, messageId)).limit(2);
+    const only = rows.length === 1 ? rows[0]! : null;
+    return only !== null && only.folder === locator.folder && only.uid === parseUid(locator.ref)
+      && sameEpoch(epochOf(only.uidvalidity), epochOfRef(locator.ref));
   }
 
   /** Mail 0065 — the two discovery columns, read as one pair. See the interface doc. */

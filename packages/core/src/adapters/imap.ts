@@ -701,7 +701,12 @@ export class MessageGoneError extends Error {
    * matching, which on this seam reads exactly like "a gone locator never happens".
    */
   readonly code = MESSAGE_GONE_CODE;
-  constructor(public locator: NativeLocator) {
+  /**
+   * `absent`: the server answered for this locator's own epoch and holds no such UID. False is the
+   * other reading, an epoch that moved on (the message may be there under a new UID). Only an
+   * absence lets the reconciler close a filing whose only copy it names.
+   */
+  constructor(public locator: NativeLocator, readonly absent: boolean = false) {
     super(`message not at source locator ${locator.folder}#${locator.ref}`);
     this.name = "MessageGoneError";
   }
@@ -3570,7 +3575,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           { uid: true, envelope: true, ...(caps.uidplus ? {} : { source: true }) },
           { uid: true },
         );
-        if (!one) throw new MessageGoneError(locator);
+        if (!one) throw new MessageGoneError(locator, true);
         messageId = one.envelope?.messageId ?? null;
         sourceFingerprint = await ImapAdapter.fingerprintOf(one.source as Buffer | undefined);
       } finally {

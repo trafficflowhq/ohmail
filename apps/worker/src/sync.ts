@@ -2110,12 +2110,12 @@ async function fileChunk(
         const newLoc = result.moved.get(ref);
         // NOT NAMED IN `moved` ⇒ the member was gone from the source, the batch's form of
         // `MessageGoneError` — and the response is the per-message path's, exactly: leave the row
-        // pending for `changesSince` to adopt, unless the disappearance is already on durable
-        // record, in which case there is nothing left to adopt and the filing is voided. See
-        // {@link voidGoneFiling} for why those are the only two readings. Cross-checking
+        // pending for `changesSince` to adopt, unless the disappearance is on record or the member
+        // was the message's only copy, in which case there is nothing left to adopt and the
+        // filing is voided. See {@link voidGoneFiling}. Cross-checking
         // `result.gone` as well would be a second reading of one fact, with a branch no test can
         // redden.
-        if (!newLoc) { await voidGoneFiling(r, accountId, p, special); continue; }
+        if (!newLoc) { await voidGoneFiling(r, accountId, p, special, true); continue; }
         // Mail 0065: ONE completion writer for every path that lands a move — the ordinary
         // converge, the junk filing's satisfied/parked/husked shape, and the delete's park.
         // Written ONLY here, after `moveMany` reported the batch whole: the claim follows the
@@ -2182,8 +2182,16 @@ async function recordAudits(
  */
 async function voidGoneFiling(
   repo: WorkerRepo, accountId: string, p: PendingFolderState, special: SpecialFolderMap,
+  absentAtSource: boolean,
 ): Promise<void> {
-  if (!(await repo.primaryInstanceVanished(p.messageId))) return;
+  /* THE MOVE'S OWN READING CLOSES IT TOO. Waiting for ingest was unbounded wherever ingest cannot
+     see the delete (0.25.2's Sent scan): the row stayed due with no attempt and no audit. When the
+     server answered for the locator's epoch and holds no such UID, and that locator is the only
+     copy on record, the message has no server instance. The instance row stays for ingest. */
+  const vanished = await repo.primaryInstanceVanished(p.messageId);
+  const absentOnly = !vanished && absentAtSource && p.nativeLocator !== null
+    && typeof repo.onlyInstanceAt === "function" && await repo.onlyInstanceAt(p.messageId, p.nativeLocator);
+  if (!vanished && !absentOnly) return;
   /* A RESTORE OUT OF TRASH IS VOIDED AGAINST THE OBSERVATION, NEVER `observed := desired`.
    * A mail server empties its own Trash on its own schedule, so between the delete's move and the
    * restore's the copy can be gone — and completing the restore would say the message is back in
@@ -2239,7 +2247,10 @@ async function voidGoneFiling(
   }
   await repo.recordAudit(
     accountId, "reconcile.move.voided",
-    { messageId: p.messageId, from: p.nativeLocator, to: p.desiredFolder },
+    {
+      messageId: p.messageId, from: p.nativeLocator, to: p.desiredFolder, outcome: "gone",
+      evidence: vanished ? "delete_observed" : "absent_at_move",
+    },
     null,
   );
 }
@@ -2279,7 +2290,7 @@ async function fileOne(
       // Already moved (crash between IMAP move and DB update) → leave pending; the next
       // changesSince adopts it. Expunged outright → nothing will ever adopt it; see
       // voidGoneFiling for how the two are told apart.
-      await fencedLiveGroup(deps, (r) => voidGoneFiling(r, accountId, p, special));
+      await fencedLiveGroup(deps, (r) => voidGoneFiling(r, accountId, p, special, err.absent));
       return false;
     }
     if (isTransportFailure(err)) {
