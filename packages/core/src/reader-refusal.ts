@@ -15,11 +15,33 @@ export interface HolderLeaseFacts {
   state?: string | null;
 }
 
+/** Is a holder recorded at all: a kind, or a name that is not blank. */
+function holderNamed(f: HolderLeaseFacts | null | undefined): boolean {
+  const by = f?.by;
+  return Boolean(by && (by.kind || (by.name && by.name.trim() !== "")));
+}
+
 /** Is somebody still organizing the mailbox: a named holder whose lease has not lapsed. */
 export function holderIsLive(f: HolderLeaseFacts | null | undefined): boolean {
-  const by = f?.by;
-  const named = Boolean(by && (by.kind || (by.name && by.name.trim() !== "")));
-  return named && f?.state !== "stopped";
+  return holderNamed(f) && f?.state !== "stopped";
+}
+
+/**
+ * Did a named holder stop: recorded, and not live. Nobody named is "nobody", never a stop — the
+ * sentence for a stop names the machine that stopped, and there is none to name.
+ */
+export function holderStopped(f: HolderLeaseFacts | null | undefined): boolean {
+  return holderNamed(f) && !holderIsLive(f);
+}
+
+/**
+ * Has the door read the lease for this row. `false` only on a reader row the door says it has not
+ * looked at, where a NULL state is "not looked", not "nobody"; absent is a door that cannot say.
+ */
+export function holderAnswered(
+  m: { organizerRole?: "organizer" | "reader" | null; organizerChecked?: boolean } | null | undefined,
+): boolean {
+  return m?.organizerRole !== "reader" || m.organizerChecked !== false;
 }
 
 /** One mailbox that refused: the reason its refusal carries. */

@@ -4576,3 +4576,43 @@ describe("a door-derived error and the row's own reach read", () => {
     expect(text).toContain("storage");
   });
 });
+
+/* ORGANIZER-BANNER-CLAIMS-FILING-MID-OUTAGE: the organizer chip said this computer files the
+   mailbox, in the present tense, beside a state cell saying the server cannot be reached. The chip
+   reads the same reach row; a standing stop keeps precedence. To watch it fail: drop the outage
+   arm from the chip's text in `organizerBlock`. */
+describe("the organizer chip and a mail server this computer cannot reach", () => {
+  const copy = (messages as unknown as { mailboxes: Record<string, string> }).mailboxes;
+  const ORGANIZER: MailboxFacts = {
+    ...MAILBOX, organizerRole: "organizer", organizeConsentedAt: "2026-08-01T09:00:00.000Z",
+  };
+  const reachOf = (over: Record<string, unknown>) => (): Response => new Response(JSON.stringify({
+    items: [{ mailboxId: "mbx-1", reachable: true, unreachableSince: null, ...over }],
+  }), { status: 200, headers: { "content-type": "application/json" } });
+  const DEAD = { reachable: false, unreachableSince: new Date(Date.now() - 20 * 60_000).toISOString() };
+  const chip = (el: HTMLElement): string => el.querySelector(".mbx-org")?.textContent ?? "";
+
+  it("an unreachable organizer row says what it does when the connection returns", async () => {
+    FACTS = [ORGANIZER];
+    bridgeReply = reachOf(DEAD);
+    const said = chip(await render("local"));
+    expect(said).toContain(copy.stateOrganizingHereUnreachable!);
+    expect(said, "the chip said mail is moving over a dead socket").not.toContain(copy.stateOrganizingHere!);
+  });
+
+  it("CONTROL: a reachable organizer row still says this computer files it", async () => {
+    FACTS = [ORGANIZER];
+    bridgeReply = reachOf({});
+    const said = chip(await render("local"));
+    expect(said).toContain(copy.stateOrganizingHere!);
+    expect(said).not.toContain(copy.stateOrganizingHereUnreachable!);
+  });
+
+  it("a standing stop keeps precedence over the outage", async () => {
+    FACTS = [{ ...ORGANIZER, releaseRequestedAt: "2026-09-07T09:00:00.000Z" }];
+    bridgeReply = reachOf(DEAD);
+    const said = chip(await render("local"));
+    expect(said).toContain(copy.stopOrganizingPending!);
+    expect(said).not.toContain(copy.stateOrganizingHereUnreachable!);
+  });
+});

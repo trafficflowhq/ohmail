@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import {
@@ -10,8 +11,10 @@ import {
   closeRemovedMailboxAppointments,
   filingDue, filingDeferred, filingStuck, ourOutstandingFiling, isFilingRefusalClass,
   ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS,
+  OrganizedElsewhereError,
   type AccessVerdict, type LedgerTx, type MailboxErrorCode, type Tx, type OrganizerIntent,
 } from "@trafficflow/db";
+import { holderIsLive } from "@trafficflow/core/reader-refusal";
 import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { accountMailboxesProbe, refuseOverAccountMailboxes } from "./read-bounds.js";
@@ -2210,6 +2213,23 @@ export class MailboxService {
         return { outcome: "already_organizing" as const };
       }
 
+      /* A JOIN YIELDS TO A HOLDER THE ROW SHOWS RENEWING, and is told so before anything is
+         written — the local door's 409 and its rule (`liveForeignHolder`: `held`, not ours), so
+         setup asks the claim question instead of authorizing a press the fence then spends. The
+         refusal names the holder with an opaque reference, never its install id. A NULL state is
+         not a reading and is admitted as a join; a takeover by name is never refused here. */
+      if (input.intent === "join" && current.organizerRole === "reader" && current.organizerState === "held") {
+        const by = {
+          kind: isOrganizerKind(current.organizedByKind) ? current.organizedByKind : null,
+          name: current.organizedByName ?? null,
+          since: current.organizedSince ? current.organizedSince.toISOString() : null,
+        };
+        const ours = this.deps.installId !== undefined && current.organizedByInstallId === this.deps.installId;
+        if (!ours && holderIsLive({ by, state: current.organizerState })) {
+          throw new OrganizedElsewhereError(id, { ...by, ref: holderRef(id, current.organizedByInstallId) });
+        }
+      }
+
       // THE ALLOWANCE GATE, BEFORE THE WRITE, for the reason `update` states at its own re-enable:
       // becoming the organizer of a mailbox IS a connection, whichever door it comes through.
       // Omitting it here would make this the cheapest way past a plan limit — and cheaper than the
@@ -2888,6 +2908,12 @@ export class MailboxService {
         }
         : null,
       organizerState: isOrganizerState(m.organizerState) ? m.organizerState : null,
+      /* HAS THIS DOOR LOOKED AT WHO HOLDS IT. A reader's NULL state is also "not looked" until the
+         worker's attach has peeked, and the attach peeks before its first cycle stamps
+         `lastSyncAt`, so either fact answers. Setup withholds Agree while this is false; the local
+         door overlays its own runtime's answer (`discloseLocalSyncFailures`). */
+      organizerChecked: (isOrganizerRole(m.organizerRole) && m.organizerRole !== "reader")
+        || isOrganizerState(m.organizerState) || m.lastSyncAt !== null,
       /* THE SAME COMPARISON THE RELEASE MAKES, sent as its answer so the two cannot drift. The
          client used to re-derive this from the holder's kind and got `cloud` for another Cloud
          deployment's claim — the defect this column closes, reproduced one tier up. */
@@ -2982,6 +3008,17 @@ export class MailboxService {
       createdAt: m.createdAt.toISOString(),
     };
   }
+}
+
+/**
+ * AN OPAQUE REFERENCE TO ONE MAILBOX'S HOLDER: the same holder on the same mailbox always reads the
+ * same, another mailbox never does, and the install id (kept off the wire, `dto/types.ts`) is not
+ * in it. `null` for a claim that recorded no install id.
+ */
+function holderRef(mailboxId: string, installId: string | null): string | null {
+  if (installId === null || installId === "") return null;
+  return createHash("sha256").update(JSON.stringify(["holder", mailboxId, installId]), "utf8")
+    .digest("hex").slice(0, 16);
 }
 
 /** Construct a write-capable MailboxService with an injected KeyProvider. */

@@ -156,8 +156,15 @@ export function useCloudFirstRun(demo: boolean, pairNode?: ReactNode): FirstRunH
        organizes — the stamp is refused and the window IS written — and `disconnected` is a
        mailbox that was removed, which stores nothing at all. The stage advances on the first two
        and must not on the third. See {@link FirstRunOrganizeOutcome}. */
-    const r = await mailboxApi.organize(id, body);
-    return r.outcome === "disconnected" ? "gone" : "stored";
+    /* A JOIN OVER A LIVE HOLDER IS REFUSED `409 organized_elsewhere` with nothing written: the
+       flow re-reads and asks the claim question (`FirstRunOrganizeOutcome` "held"). */
+    try {
+      const r = await mailboxApi.organize(id, body);
+      return r.outcome === "disconnected" ? "gone" : "stored";
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409 && err.code === "organized_elsewhere") return "held";
+      throw err;
+    }
   }, []);
 
   const complete = useCallback(async () => {

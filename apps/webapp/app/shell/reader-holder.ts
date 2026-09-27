@@ -6,6 +6,14 @@
  * holds the mailbox at all.
  */
 
+/* The lease's liveness, stop and "has the door looked" are the reader refusal's ONE decider;
+   this file asks it and never restates it. */
+import {
+  holderIsLive, holderStopped as leaseStopped,
+} from "@trafficflow/core/reader-refusal";
+
+export { holderAnswered } from "@trafficflow/core/reader-refusal";
+
 /**
  * `organizedBy` present/absent is the discriminator, not the name: the wire emits the object only when at least one
  * holder column was written (`mailbox-service.ts`), so its PRESENCE is exactly "something recorded a holder", and the
@@ -71,27 +79,17 @@ export function holderVerdict(
 }
 
 /**
- * HAS THE HOLDER STOPPED CHECKING IN — the lease's own answer, read and never re-derived: `stopped` is
- * `peekLease`'s verdict against the staleness bound, carried on the row as `organizerState`. The
- * wire carries no heartbeat, so a surface cannot judge freshness itself. `null` and absent are
- * "not looked", which is not a stop. Every surface showing the claim question asks this one
- * function (`first-run-stale-holder.test.tsx`'s census).
+ * HAS THE HOLDER STOPPED CHECKING IN — the decider's answer for one row, never re-derived: a
+ * named holder whose lease is `stopped` (`peekLease`'s verdict, carried as `organizerState`).
+ * `null` and absent are "not looked", which is not a stop, and nobody named is not a stop either.
+ * Every surface showing the claim question asks this one function (`first-run-stale-holder.test.tsx`).
  */
 export function holderStopped(
-  mailbox: { organizerState?: "held" | "stopped" | null } | null | undefined,
+  mailbox: {
+    organizedBy?: ReaderHolderColumns | null; organizerState?: "held" | "stopped" | null;
+  } | null | undefined,
 ): boolean {
-  return mailbox?.organizerState === "stopped";
-}
-
-/**
- * HAS THE DOOR READ THE LEASE FOR THIS ROW. A reader row the local engine has not peeked for
- * says `organizerChecked: false`, and its NULL `organizerState` then means "not looked", not
- * "nobody". Absent answers yes, which is every organizer row and every door that cannot say.
- */
-export function holderAnswered(
-  mailbox: { organizerRole?: "organizer" | "reader"; organizerChecked?: boolean } | null | undefined,
-): boolean {
-  return mailbox?.organizerRole !== "reader" || mailbox.organizerChecked !== false;
+  return leaseStopped({ by: mailbox?.organizedBy, state: mailbox?.organizerState });
 }
 
 /** Where a takeover this run asked for stands — see {@link takeoverState}. */
@@ -153,7 +151,7 @@ export function phoneHolder(
   if (!organizedBy || organizedBy.kind !== "mobile") return null;
   const name = organizedBy.name;
   return {
-    state: stopped ? "stopped" : "organizing",
+    state: holderIsLive({ by: organizedBy, state: stopped ? "stopped" : null }) ? "organizing" : "stopped",
     named: name !== null && name !== undefined && name.trim() !== "",
   };
 }
@@ -208,7 +206,7 @@ export interface HolderWho {
    * sentence per state, and each surface still decides what it calls a machine nobody named.
    */
   name?: string | null;
-  /** Whether the claim has stopped renewing. The two states want opposite sentences. */
+  /** The decider's {@link holderStopped} for this holder. The two states want opposite sentences. */
   stopped?: boolean;
   /** WHETHER there is a date — the raw column, never a formatted one. See {@link HolderWho.shown}. */
   since?: string | null;
@@ -311,9 +309,10 @@ export function filingElsewhereKey(who: HolderWho, verb: HolderVerb, managed = t
   const name = who.name;
   const named = name !== null && name !== undefined && name.trim() !== "";
   const how = (key: string): string => (verb === "none" ? key : `${key}How`);
+  /* A HOLDER THAT STOPPED FILES NOTHING, whatever its kind — the stop arm is first, so no
+     sentence below can say a stopped Cloud or unnamed install files this mailbox. */
+  if (who.stopped === true) return how(named ? "filingElsewhereStopped" : "filingElsewhereStoppedUnknown");
   if (who.kind === "cloud") return how(managed ? "filingElsewhereCloud" : "filingElsewhereServer");
-  if (who.kind === "local" && named) {
-    return how(who.stopped === true ? "filingElsewhereLocalStopped" : "filingElsewhereLocal");
-  }
+  if (who.kind === "local" && named) return how("filingElsewhereLocal");
   return how("filingElsewhereUnknown");
 }

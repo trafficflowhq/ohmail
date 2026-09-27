@@ -28,7 +28,7 @@
    alternative to a second copy of a rule that must never diverge — see `address-key.ts`. */
 import { addressKey } from "./address-key";
 import {
-  holderIsLive, rosterRefusalReason, type RequestRefusalReason,
+  holderIsLive, holderStopped, rosterRefusalReason, type RequestRefusalReason,
 } from "@trafficflow/core/reader-refusal";
 
 export const SYNC_BLOCK_REASONS = [
@@ -597,7 +597,7 @@ function noticeKind(m: OrganizerRow): OrganizerNoticeKind | null {
      host that does not send the column has not demoted anybody. */
   if (m.organizerRole !== "reader") return "here";
   const holder = Boolean(m.organizedBy && (m.organizedBy.kind || m.organizedBy.name));
-  if (holder) return m.organizerState === "stopped" ? "stopped" : "elsewhere";
+  if (holder) return holderIsLive({ by: m.organizedBy, state: m.organizerState }) ? "elsewhere" : "stopped";
   /* NO HOLDER, AND NOBODY EVER AGREED — an ordinary freshly connected mailbox, whose next screen
      is the agreement rather than a notice about a handover that never happened. `=== null` and
      not `== null`, so an absent stamp (a build that cannot tell) says nothing. */
@@ -1684,11 +1684,9 @@ function filingReportOf(live: MailboxFacts[], now: number): FilingReport | null 
       who: {
         kind: elsewhere.organizedBy?.kind ?? null,
         name: elsewhere.organizedBy?.name?.trim() ? elsewhere.organizedBy.name : null,
-        // `stopped` is the holder no longer renewing its claim — a different situation from a
-        // holder that is renewing and simply has not run its own pass yet, and the two get
-        // different sentences. ABSENT reads as NOT stopped, the safe direction: telling somebody
-        // their other machine is off when it is on is the more alarming error.
-        stopped: elsewhere.organizerState === "stopped",
+        // The decider's stop: a holder no longer renewing gets a different sentence from one that
+        // has not run its own pass yet. ABSENT reads as NOT stopped — the less alarming error.
+        stopped: holderStopped({ by: elsewhere.organizedBy, state: elsewhere.organizerState }),
         mailboxId: elsewhere.id,
         since: elsewhere.organizedBy?.since ?? null,
       },

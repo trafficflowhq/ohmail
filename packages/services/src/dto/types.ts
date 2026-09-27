@@ -548,6 +548,12 @@ export interface MailboxDTO {
    */
   organizerState: "held" | "stopped" | null;
   /**
+   * HAS THIS DOOR LOOKED AT WHO HOLDS THE MAILBOX. `false` only on a reader row nothing has peeked
+   * for, where a NULL {@link organizerState} is "not looked" rather than "nobody"; setup withholds
+   * Agree while it stands. Optional: a door older than the field sends nothing, which reads as yes.
+   */
+  organizerChecked?: boolean;
+  /**
    * Is the claim on this mailbox this install's OWN — answered by the server, not inferred. A
    * client asking it from `organizedBy.kind` gets `cloud`, which is what a SECOND Cloud
    * deployment is too; their ids differ by design, so the category cannot answer an identity

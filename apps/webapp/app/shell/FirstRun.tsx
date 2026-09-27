@@ -479,6 +479,10 @@ export function FirstRun({
   const [takeoverAsk, setTakeoverAsk] = useState<{ mailboxId: string; floor: string | null } | null>(null);
   /** The guided decision's sender, once pressed in this run — the summary says where it stands. */
   const [decidedName, setDecidedName] = useState<string | null>(null);
+  /** That press, kept while the takeover it was made under is asked, to be asked again if refused. */
+  const decidedUnder = useRef<{ mailboxId: string | null; again: () => void } | null>(null);
+  /** The sender whose decision went to the holder that kept the mailbox, once it did. */
+  const [reasked, setReasked] = useState<string | null>(null);
   /** The mailbox whose first look outlasted {@link HOLDER_CHECK_MS}; Agree is offered for it. */
   const [checkExpiredFor, setCheckExpiredFor] = useState<string | null>(null);
   /** Agree met the door's second-factor check: the prompt is open for this mailbox. */
@@ -548,6 +552,18 @@ export function FirstRun({
       ? { floor: takeoverAsk.floor ?? wireFacts.mailbox?.organizeConsentedAt ?? null }
       : null,
   );
+  /* A REFUSED TAKEOVER LEAVES THE DECISION WITH THE HOLDER THAT KEPT THE MAILBOX
+     (TAKEOVER-REFUSED-KEEPS-A-LOCAL-RULE). Pressed while the takeover stood, it became a rule on
+     this install, which files nothing; the same press goes to the Screener's door again, once, and
+     with no takeover standing the door asks the holder. */
+  useEffect(() => {
+    if (takeover !== "refused") return;
+    const pressed = decidedUnder.current;
+    if (pressed === null || pressed.mailboxId !== mailboxId) return;
+    decidedUnder.current = null;
+    pressed.again();
+    setReasked(decidedName);
+  }, [takeover, mailboxId, decidedName]);
   const path = useMemo(() => onboardingPath(facts, add === true), [facts, add]);
 
   /**
@@ -1605,6 +1621,9 @@ export function FirstRun({
                 onDecide={(dest, opts) => {
                   decide.onDecide(dest, { markRead: opts.markRead, scope });
                   setDecidedName(decide.name);
+                  decidedUnder.current = takeover === "asked"
+                    ? { mailboxId, again: () => decide.onDecide(dest, { markRead: opts.markRead, scope }) }
+                    : null;
                   // FORWARD, NOT RE-DERIVED. The queue may still hold senders — it usually does
                   // — and the derivation would answer "decide" again. The guided step is one
                   // decision by construction; the rest of the queue is the Screener's.
@@ -1639,6 +1658,10 @@ export function FirstRun({
               <SettingsVerdict state="bad" headline={t("doneTakeoverRefused", {
                 name: holderName(facts) ?? tm("readerHolderUnknown"),
               })} />
+            ) : null}
+            {takeover === "refused" && reasked !== null ? (
+              <SettingsRow label={t("doneTakeoverReasked", { name: reasked })}
+                description={t("doneTakeoverReaskedWhy")} />
             ) : null}
             <div className="ob-done">
               {/* THE TAKEOVER UNDER WAY, from the row (`takeoverState`): not the reader's "moves

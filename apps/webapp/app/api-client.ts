@@ -1012,6 +1012,11 @@ export interface MailboxDTO {
    */
   organizerState?: "held" | "stopped" | null;
   /**
+   * `false` while this door has not looked at who holds a reader row — its NULL `organizerState` is
+   * then "not looked", not "nobody". Absent is a host older than the field, which reads as yes.
+   */
+  organizerChecked?: boolean;
+  /**
    * Is the claim on this mailbox this install's own — the SERVER's comparison, not a client's.
    *
    * `organizedBy.kind` cannot answer it: `cloud` is what a second Cloud deployment is too, and

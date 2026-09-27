@@ -1473,13 +1473,12 @@ const CONNECTION_ERROR_CODES = new Set([
 
 /**
  * THE LOCAL DOOR'S SYNC-FAILURE DISCLOSURE, derived at read time like the cloud door's
- * store-stuck overlay. The local store never writes `mailboxes.error_code` (the worker is its
- * only writer), so a mailbox whose sync had stopped served `connected` rows and the only sentence
- * anywhere was the strip's blanket "Sync failed. Retrying.", which cannot name a mailbox.
- * Overlaid, never written, so the existing writer pair clears it: a served cycle ends the outage
- * (`noteCycleServed`), a replaced password ends a refused sign-in. `auth` is settled the moment
- * the server refuses; an outage only once it has stood {@link LOCAL_CONNECTION_DEAD_AFTER_MS} —
- * a blip never paints. A missing password is NOT overlaid: `err_auth` blames the server.
+ * store-stuck overlay and never written, so the existing writer pair clears it: a served cycle
+ * ends the outage, a replaced password ends a refused sign-in. `auth` settles at once; an outage
+ * only after {@link LOCAL_CONNECTION_DEAD_AFTER_MS}; a missing password is not overlaid (`err_auth`
+ * blames the server). A consented organizer whose lease read fails is `lease_unreadable` from the
+ * runtime's first failure, below the connection's facts. A reader row's `organizerChecked` is the
+ * runtime's: looked, and the last look answered.
  */
 async function discloseLocalSyncFailures(
   res: Response,
@@ -1488,18 +1487,25 @@ async function discloseLocalSyncFailures(
     connection: { unreachableSince: Date | null; signInRefused: boolean };
     /** Absent on a caller that cannot say, which overlays nothing. */
     holderLooked?: boolean;
+    /** Absent on a caller that cannot say, which overlays no block. */
+    organizer?: { unreadableSince: string | null };
   }[],
   at: Date,
 ): Promise<Response> {
-  /* A READER ROW THIS PROCESS HAS NOT PEEKED FOR YET says `organizerChecked: false`: its NULL
-     `organizer_state` is "not looked", not "nobody", and setup waits on it before offering Agree.
-     Absent everywhere else, which is the answer an older engine gives. */
-  const unlooked = new Set(states.filter((r) => r.holderLooked === false).map((r) => r.mailboxId));
+  /* A NULL `organizer_state` on a reader is "not looked" until a look ANSWERED: a look that
+     threw is not a reading, and saying "nobody" over it is the false state. */
+  const looked = new Map<string, boolean>();
+  for (const r of states) {
+    if (r.holderLooked !== undefined) {
+      looked.set(r.mailboxId, r.holderLooked && (r.organizer?.unreadableSince ?? null) === null);
+    }
+  }
   const failures = new Map<string, MailboxErrorCode>();
   /* AND THE OUTAGE'S OWN CLOCK, from its first observation: a fact, not an error, so it rides
      beside `status` at any age. The list's status line and a Pull press read it; the Settings
      pane says the same sentence from the reach poll with no bound either. */
   const outages = new Map<string, string>();
+  const unreadable = new Map<string, string>();
   for (const r of states) {
     if (r.connection.signInRefused) failures.set(r.mailboxId, "auth");
     else if (r.connection.unreachableSince !== null) {
@@ -1507,9 +1513,11 @@ async function discloseLocalSyncFailures(
       if (at.getTime() - r.connection.unreachableSince.getTime() >= LOCAL_CONNECTION_DEAD_AFTER_MS) {
         failures.set(r.mailboxId, "connect");
       }
+    } else if (r.organizer?.unreadableSince) {
+      unreadable.set(r.mailboxId, r.organizer.unreadableSince);
     }
   }
-  if (failures.size === 0 && outages.size === 0 && unlooked.size === 0) return res;
+  if (failures.size === 0 && outages.size === 0 && looked.size === 0 && unreadable.size === 0) return res;
   let body: unknown;
   try {
     body = await res.clone().json();
@@ -1519,20 +1527,30 @@ async function discloseLocalSyncFailures(
   const items = (body as { items?: unknown } | null)?.items;
   if (!Array.isArray(items)) return res;
   const overlaid = items.map((row) => {
-    const m = row as { id?: unknown; status?: unknown; organizerRole?: unknown } | null;
+    const m = row as {
+      id?: unknown; status?: unknown; organizerRole?: unknown; organizeConsentedAt?: unknown;
+      syncBlockedSince?: unknown;
+    } | null;
     const id = m && typeof m.id === "string" ? m.id : null;
-    const checked = id !== null && m!.organizerRole === "reader" && unlooked.has(id)
-      ? { organizerChecked: false } : {};
+    const checked = id !== null && m!.organizerRole === "reader" && looked.has(id)
+      ? { organizerChecked: looked.get(id)! } : {};
     // Only a row that claims health is overlaid: `disabled` (tombstone, stand-down) is a
     // louder, truer fact about the row than this install's socket, and stays untouched.
     const healthy = id !== null && m!.status === "connected";
     const code = healthy ? failures.get(id) : undefined;
     const since = healthy ? outages.get(id) : undefined;
+    /* "Not syncing" is true of an ORGANIZER that cannot read its lease and false of a reader,
+       which keeps mirroring; a block the row already carries is the store's and stands. */
+    const organizes = m?.organizerRole !== "reader" && typeof m?.organizeConsentedAt === "string";
+    const blockedSince = healthy && organizes && (m!.syncBlockedSince ?? null) === null
+      ? unreadable.get(id) : undefined;
     return {
       ...(row as object),
       ...checked,
       ...(code !== undefined ? { status: "error", errorCode: code } : {}),
       ...(since !== undefined ? { unreachableSince: since } : {}),
+      ...(blockedSince !== undefined
+        ? { syncBlockedReason: "lease_unreadable", syncBlockedSince: blockedSince } : {}),
     };
   });
   return new Response(JSON.stringify({ ...(body as object), items: overlaid }), {

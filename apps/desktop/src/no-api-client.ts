@@ -205,6 +205,7 @@ export interface MailboxDTO {
     organizerRole?: "organizer" | "reader";
     organizedBy?: { kind: string | null; name: string | null; since: string | null } | null;
     organizerState?: "held" | "stopped" | null;
+    organizerChecked?: boolean;
     organizeConsentedAt?: string | null;
     organizerEventAt?: string | null;
     organizerEventSeenAt?: string | null;

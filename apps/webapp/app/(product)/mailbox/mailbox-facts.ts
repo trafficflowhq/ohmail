@@ -52,6 +52,8 @@ export function toMailboxFacts(m: MailboxDTO): MailboxFacts {
        mailbox, one press from authorizing a takeover nobody was offered. */
     ...("organizedBy" in m ? { organizedBy: m.organizedBy } : {}),
     organizerState: m.organizerState ?? null,
+    // SPREAD: absent is a host that cannot say, which setup reads as looked (`holderAnswered`).
+    ...("organizerChecked" in m ? { organizerChecked: m.organizerChecked } : {}),
     // FORWARDED UNTOUCHED, and the missing `?? null` is the point — the rule
     // `initialImportCompletedAt` below states, applied to a control rather than to a strip.
     // `null` is "nobody has agreed to this mailbox" and makes the claim offer eligible; ABSENT

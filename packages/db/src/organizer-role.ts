@@ -211,6 +211,11 @@ export interface OrganizedBy {
   kind: OrganizerKind | null;
   name: string | null;
   since: string | null;
+  /**
+   * An opaque reference to this holder on this mailbox, on the refusal of a join over a live
+   * holder only: equal for one holder, never its install id. Absent everywhere else.
+   */
+  ref?: string | null;
 }
 
 /**

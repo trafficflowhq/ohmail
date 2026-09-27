@@ -32,7 +32,7 @@ import {
   showInboundQuiet, type MailboxFacts,
 } from "../../webapp/app/shell/mail-state";
 import { addressKey } from "../../webapp/app/shell/address-key";
-import { holderIsLive } from "@trafficflow/core/reader-refusal";
+import { holderIsLive, holderStopped } from "@trafficflow/core/reader-refusal";
 import { agoStamp, dayStamp } from "../../webapp/app/shell/format";
 import { activeFormatLocale, activeFormatZone } from "../../webapp/app/shell/locale";
 import { useEngineOrNull } from "../../webapp/app/shell/engine";
@@ -1322,7 +1322,7 @@ export function DesktopMailboxes(
     readerHolder(m.organizedBy) === "nobody" ? null : {
       kind: m.organizedBy?.kind ?? "unknown",
       name: m.organizedBy?.name ?? null,
-      stopped: m.organizerState === "stopped",
+      stopped: holderStopped({ by: m.organizedBy, state: m.organizerState }),
       since: m.organizedBy?.since ?? null,
     };
 
@@ -1601,11 +1601,14 @@ export function DesktopMailboxes(
       && !m.releaseRequestedAt;
     const stopState: "queued" | "pending" | undefined =
       stopQueued ? "queued" : role === "organizer" && m.releaseRequestedAt ? "pending" : undefined;
+    /* THE CONNECTION'S OWN ANSWER for this row — `stateOf`'s outage arm, read from the same row. */
+    const reached = reach.rows[m.id];
+    const offline = reached !== undefined && reached.answered && !reached.reachable;
     /* IS THE HOLDER A PHONE, asked once for this row. `mobile` is the third `OrganizerKind` and
        this pane had arms for two, so a phone took `readerSinceUnknown` — "Since <date>. This
        computer reads the mailbox" — which names no holder and promises a schedule a phone does
        not keep. `phoneHolderKey` picks between its two sentences; this file writes neither. */
-    const phone = phoneHolder(m.organizedBy, m.organizerState === "stopped");
+    const phone = phoneHolder(m.organizedBy, holderStopped({ by: m.organizedBy, state: m.organizerState }));
     /* THE CHIP'S LABEL, computed once: it is the chip's caption AND the text of the live node
        beside the chip (below), and the two must never disagree. */
     const chipLabel =
@@ -1641,30 +1644,20 @@ export function DesktopMailboxes(
           placement="chip"
           caption={chipLabel}
           text={
+            /* THE ORGANIZER'S SENTENCE, NEWEST WORD FIRST: this window's own stop press
+               (`stopQueued`), then the row's standing stop — pending, or refused by a live
+               same-id copy (`releaseRefusal`, mail 0121, naming the holder through `lapse`) — and
+               only then what this computer does. While it cannot reach the mail server it says
+               what happens when the server answers, never that mail is moving now: the same
+               reach row the state cell reads (`stateOf`). */
             role === "organizer"
-              /* ── A STANDING STOP REQUEST IS ON THE ROW, NOT ONLY IN A LOG (0.14.1) ─────────
-                 The request is honoured by the engine's own next pass, and on a server that keeps
-                 refusing the confirmation that pass retries per poll — measured live: a whole
-                 session of retries with this row reading "files this mailbox" throughout, so the
-                 press showed no trace anywhere. While the request stands the row is still an
-                 ORGANIZER and deliberately files nothing, so the ordinary sentence is false in
-                 both halves; the pending one names the actual state. Before the row carries the
-                 stamp, this window's own press is the newest word — see `stopQueued`. */
               ? (stopQueued
                 ? t("stopOrganizingQueued")
                 : m.releaseRequestedAt
-                  /* ── WHY the stop stands, when the wire can say (mail 0121) ─────────
-                     A refused release against a live same-id sibling — a restored image or
-                     clone — used to wear the ordinary pending sentence for ever, a false
-                     "in progress" at exactly the moment a person is fighting a clone. The
-                     DTO's `releaseRefusal` is the discriminator and this sentence is the
-                     doc's own (§4): it names the holder — another copy of whatever files
-                     the mailbox (`lapse`) — and what ends the wait. Absent (an older engine),
-                     pending stands. */
                   ? (m.releaseRefusal === "sibling_lapse"
                     ? t(lapse.key, lapse.params)
                     : t("stopOrganizingPending"))
-                  : t("stateOrganizingHere"))
+                  : offline ? t("stateOrganizingHereUnreachable") : t("stateOrganizingHere"))
               : role === "released"
                 /* THE ONE SENTENCE THAT DATES SOMETHING THE PERSON HERE DID. A mailbox whose
                    holder simply vanished and one this install released look identical from every
@@ -1714,7 +1707,7 @@ export function DesktopMailboxes(
                          arm, where a fallback spelling would describe a phone as a computer. */
                       name: holderOf(m),
                       claimNamed: Boolean(m.organizedBy?.name?.trim()),
-                      stopped: m.organizerState === "stopped",
+                      stopped: holderStopped({ by: m.organizedBy, state: m.organizerState }),
                       /* RAW for the question, FORMATTED for the sentence — `day(null)` is an em
                          dash, and asking on it makes the undated arm unreachable. */
                       since: m.organizedBy?.since ?? null,
