@@ -295,9 +295,40 @@ export function scheduleStoreLanes<C extends object>(client: C, scheduler: Store
       configurable: true,
       writable: true,
       value: function scheduled(this: C, ...args: unknown[]): Promise<unknown> {
-        return scheduler.run(currentStoreLane(), () => original.apply(this, args));
+        const lane = currentStoreLane();
+        const call = name === "transaction" && lane === "ingest" && typeof args[0] === "function"
+          ? [turningTransaction(args[0] as (tx: object) => Promise<unknown>), ...args.slice(1)]
+          : args;
+        return scheduler.run(lane, () => original.apply(this, call));
       },
     });
   }
   return client;
+}
+
+/** The statement methods of a transaction handle, which reach the connection without `client`. */
+const TRANSACTION_STATEMENTS = new Set<PropertyKey>(["query", "exec", "sql"]);
+
+/**
+ * THE DRAIN'S TRANSACTION HANDS THE LOOP BACK EVERY {@link TURN_EVERY} STATEMENTS. Its statements go
+ * through the transaction's own handle, never through the scheduler, and PGlite answers them in
+ * microtasks — so a long one held every timer, socket and request of the process until it
+ * committed. The turn is taken INSIDE the callback: the transaction stays one, its mutex is held
+ * across the turn, and a read still waits for the commit — what it no longer waits for is the loop.
+ */
+function turningTransaction(cb: (tx: object) => Promise<unknown>): (tx: object) => Promise<unknown> {
+  return (tx) => {
+    let issued = 0;
+    return cb(new Proxy(tx, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver) as unknown;
+        if (!TRANSACTION_STATEMENTS.has(prop) || typeof value !== "function") return value;
+        return async (...a: unknown[]): Promise<unknown> => {
+          issued += 1;
+          if (issued % TURN_EVERY === 0) await new Promise<void>((r) => setImmediate(r));
+          return (value as (...b: unknown[]) => Promise<unknown>).apply(target, a);
+        };
+      },
+    }));
+  };
 }
