@@ -1802,15 +1802,26 @@ function heldRemoteProps(
   };
 }
 
+/** The letter's own https link a refused unsubscribe carries, or `null` — never another scheme. */
+function httpsLinkOf(err: unknown): string | null {
+  const url = (err as { details?: { siteUrl?: unknown } } | null)?.details?.siteUrl;
+  if (typeof url !== "string") return null;
+  try {
+    return new URL(url).protocol === "https:" ? url : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * THE UNSUBSCRIBE CONTROL FOR ONE HELD MESSAGE (C). Rendered only in the screened-out and spam previews — the two
  * piles whose held mail sits in a reject folder the server will act on — and only once the body has hydrated to
  * `full`, because the posture is derived from the sender's headers and "we have not asked yet" (`no_header` on a
  * snippet) must not read as "there is no way out".
  * · `one_click`     — one explicit press IS the consent (the remote-images precedent: a control that names the act
- *   needs no second dialog). The POST is server-side and SSRF-gated, the URL never leaves the server, and
- *   `unsubscribe_records` makes it at-most-once, so a repeat press is safe. The returned result is rendered verbatim;
- *   a refusal arrives as a throw carrying the server's own sentence.
+ *   needs no second dialog). The POST is server-side and SSRF-gated, and `unsubscribe_records` makes it at-most-once,
+ *   so a repeat press is safe. A refusal arrives as a throw and is read by its code; only a list's refusal hands back
+ *   the letter's https link, for the person to open themselves.
  */
 
 /**
@@ -1830,7 +1841,8 @@ export function HeldUnsubscribe({
 }) {
   const t = useTranslations("screener");
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<string | null>(null);
+  // `again`: whether the press stays — only where pressing again can go through.
+  const [result, setResult] = useState<{ text: string; link: string | null; again: boolean } | null>(null);
 
   if (state === "no_header") return null;
 
@@ -1856,27 +1868,34 @@ export function HeldUnsubscribe({
 
   // one_click
   const run = async () => {
-    if (busy || result) return;
+    if (busy || (result && !result.again)) return;
     setBusy(true);
+    setResult(null);
     try {
       const res = await onUnsubscribe();
       // THE SENTENCE FOLLOWS THE OUTCOME, NOT THE RECORD. `already_recorded` is the only refusal
       // that means a request settled as sent; `previous_attempt_unsettled` is a claim that never
       // did, and saying "Already unsubscribed" over it told a person the thing was done while the
       // mail kept arriving.
-      setResult(
+      const text =
         res && res.refusal === "already_recorded"
           ? t("unsubAlready")
           : res && res.refusal === "previous_attempt_unsettled"
             ? t("unsubUnfinished")
             : res && res.posted
               ? t("unsubSent")
-              : t("unsubDone"),
-      );
+              : t("unsubDone");
+      setResult({ text, link: null, again: false });
     } catch (err) {
-      // The server's own sentence — never a re-derived one (the same discipline `remoteImages`
-      // keeps). A refused unsubscribe is a real, actionable fact only the server can phrase.
-      setResult(messageOf(err));
+      // BY CODE, NOT THE SERVER'S ENGLISH. A list that refused is said with the
+      // letter's https link and no press: its answer does not change. A list that failed, and a
+      // press that failed on its way, keep the press, because pressing again can go through.
+      const code = (err as { code?: unknown } | null)?.code;
+      if (code === "unsubscribe_list_refused") {
+        setResult({ text: t("unsubListRefused"), link: httpsLinkOf(err), again: false });
+      } else {
+        setResult({ text: code === "unsubscribe_list_failed" ? t("unsubListFailed") : messageOf(err), link: null, again: true });
+      }
     } finally {
       setBusy(false);
     }
@@ -1887,13 +1906,19 @@ export function HeldUnsubscribe({
       <Chip icon="door">{t("unsubOffered")}</Chip>
       {result ? (
         <span className="hm-unsub-result" role="status">
-          {result}
+          {result.text}
         </span>
-      ) : (
+      ) : null}
+      {result?.link ? (
+        <a className="hm-unsub-link" href={result.link} target="_blank" rel="noreferrer">
+          {t("unsubExternal")}
+        </a>
+      ) : null}
+      {!result || result.again ? (
         <Button variant="ghost" disabled={busy} onClick={run}>
           {busy ? t("unsubSending") : t("unsubscribe")}
         </Button>
-      )}
+      ) : null}
     </p>
   );
 }

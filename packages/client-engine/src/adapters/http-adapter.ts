@@ -537,7 +537,8 @@ export class HttpAdapter implements EngineAdapter {
       retryable: shape.retryable,
       retryAfterMs: retryAfterMsOf(res),
       // The refusal's facts, as the send path forwards them: `organized_elsewhere` carries
-      // `{ by, reason }`, and without them no surface can say why a reader's press was refused.
+      // `{ by, reason }` and a list's refused unsubscribe the letter's own link
+      // (`unsubscribe_list_refused`); without them no surface can say why a press was refused.
       ...(wire.error?.details !== undefined ? { details: wire.error.details } : {}),
     });
   }

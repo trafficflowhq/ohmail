@@ -1957,9 +1957,9 @@ export const unsubscribeRecords = sqliteTable("unsubscribe_records", {
   listKey: text("list_key").notNull(),
   /** 'claimed' | 'sent' | 'refused' | 'failed' — closed by a CHECK in the migration. */
   state: text("state").notNull(),
-  /** Which refusal, when `state='refused'`. Null otherwise. */
+  /** Which refusal, when `state='refused'`: `list_refused` (the list said no) or `ssrf_gate`. Null otherwise. */
   refusal: text("refusal"),
-  /** The sender's HTTP status when `state='sent'`, including a non-2xx. Null otherwise. */
+  /** The list's HTTP status whenever it answered: a 2xx on `sent`, its refusal or failure otherwise. */
   httpStatus: integer("http_status"),
   /** The message that supplied the URL — evidence for why this list was left. */
   messageId: text("message_id").notNull().references(() => messages.id),

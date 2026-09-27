@@ -7,7 +7,7 @@ import {
   type DrainCursor, type Tx,
 } from "@trafficflow/db";
 import {
-  authVerdictFromHeaders, oneClickUnsubscribeUri, unsubscribeHeaderState,
+  authVerdictFromHeaders, httpsUnsubscribeUri, oneClickUnsubscribeUri, unsubscribeHeaderState,
   UNSUB_DRAIN_CLOSE_RESERVE_MS, UNSUB_DRAIN_RUN_BUDGET_MS,
   type AuthVerdict, type Destination, type UnsubscribeHeaderState,
 } from "@trafficflow/core/mail";
@@ -143,20 +143,27 @@ export type UnsubscribeRefusal =
   /** An `https:` URI exists but the sender did not advertise RFC 8058 one-click. */
   | "not_one_click"
   /**
-   * This mailbox has already asked to leave this list AND THE REQUEST SETTLED AS SENT. NOT a
+   * This mailbox has already asked to leave this list AND THE LIST ACCEPTED IT (a 2xx). NOT a
    * failure — it is the record table doing its whole job, and the honest answer is "nothing more
    * to send". It is the only refusal a surface may render as a completed unsubscribe.
    */
   | "already_recorded"
   /**
-   * A record for this list exists and its send did NOT settle as done — claimed and stranded, or
-   * failed on the wire, or refused by our own address gate. A CLAIM IS NOT AN OUTCOME: this used
-   * to answer {@link UnsubscribeRefusal} `"already_recorded"`, so a person whose unsubscribe was
+   * A record for this list exists and its send did NOT settle as done — claimed and stranded,
+   * failed on the wire, or refused by our own address gate or by the list. A CLAIM IS NOT AN
+   * OUTCOME: this used to answer `"already_recorded"`, so a person whose unsubscribe was
    * claimed and never sent was told it had been done while the mail kept arriving. A person's
    * press re-attempts a stranded or failed one; the automatic pass never does, because it cannot
    * tell an unattended retry from a second send.
    */
   | "previous_attempt_unsettled"
+  /**
+   * The list answered and did not accept: a redirect or a 4xx but 408/429 (`oneClickSettleOf`).
+   * A person's press says so with the letter's own https link; the list is never asked again.
+   */
+  | "list_refused"
+  /** The list could not take it: a 5xx, 408, 429, a timeout or no connection. A person may ask again. */
+  | "list_failed"
   /**
    * The mailbox this message belongs to is disconnected. Nothing is sent in the name of a mailbox
    * its owner stopped — removal leaves the mirrored mail and the organizer role behind, so the
@@ -189,6 +196,7 @@ export interface UnsubscribeResult {
  */
 export interface UnsubscribeSweep {
   considered: number;
+  /** Requests a list accepted (a 2xx). A list's refusal or failure after the request is `failed`. */
   posted: number;
   skipped: number;
   failed: number;
@@ -298,6 +306,37 @@ export const UNSUB_CLAIM_STRANDED_MS = 2 * 60 * 1000;
  * {@link ONE_CLICK_TIMEOUT_MS}.
  */
 export const UNSUB_ITEM_MIN_MS = 2_000;
+
+/**
+ * WHAT A LIST'S ANSWER SETTLES AS. Done only on a 2xx (RFC 8058). A redirect (never followed) or a
+ * 4xx is the list's own answer: `refused`, and one request per list stands, because asking again
+ * gets the same answer and tells the list that something reads this address. A 5xx, 408 or 429
+ * says nothing about what the list decided: `failed`, which a person's press may retry.
+ */
+export function oneClickSettleOf(status: number): "sent" | "refused" | "failed" {
+  if (status >= 200 && status < 300) return "sent";
+  if (status >= 500 || status === 408 || status === 429) return "failed";
+  return "refused";
+}
+
+/** The `refusal` a record carries when the LIST refused, apart from our own gate's `ssrf_gate`. */
+export const LIST_REFUSED = "list_refused";
+
+/**
+ * A stored record's outcome by the same rule. A row settled `sent` before the rule existed kept
+ * the list's status, so a `sent` over a 405 is read as the refusal it was and never as done.
+ */
+function recordOutcome(
+  held: { state: string; refusal: string | null; httpStatus: number | null },
+): "sent" | "refused" | "failed" | "claimed" | "gate_refused" {
+  if (held.state === "sent") return held.httpStatus === null ? "sent" : oneClickSettleOf(held.httpStatus);
+  if (held.state === "refused") return held.refusal === LIST_REFUSED ? "refused" : "gate_refused";
+  return held.state === "failed" ? "failed" : "claimed";
+}
+
+const LIST_ANSWERS: ReadonlySet<string> = new Set([
+  "unsubscribe_list_refused", "unsubscribe_list_failed",
+]);
 
 /**
  * ONE BUDGET, ENTERED ONCE AND THREADED THROUGH EVERY SEGMENT — the candidate reads, each
@@ -553,6 +592,22 @@ export class UnsubscribeService {
         messageId, header, authVerdict,
       } satisfies Omit<UnsubscribeResult, "posted" | "status" | "refusal">);
     };
+    // THE LIST'S ANSWER, BY NAME. A 409 and not a 5xx: a stranger's server being down is not a
+    // fault of this API. Only a refusal carries the letter's https link, for the person to open.
+    const answered = (
+      refusal: "list_refused" | "list_failed", status: number | null, cause?: unknown,
+    ): ServiceError => {
+      const refused = refusal === "list_refused";
+      const sentence = refused
+        ? "the list did not accept the unsubscribe request, and ohmail does not ask a list twice"
+        : "the list could not take the unsubscribe request right now; try again";
+      const e = new ServiceError(`unsubscribe_${refusal}`, 409, sentence, {
+        messageId, header, authVerdict, status,
+        ...(refused ? { siteUrl: httpsUnsubscribeUri(row.headers) } : {}),
+      }, !refused);
+      if (cause !== undefined) e.cause = cause;
+      return e;
+    };
 
     if (row.desiredFolder === null || !ACTIONABLE_FOLDERS.has(row.desiredFolder)) {
       refuse("not_actionable", 409,
@@ -634,22 +689,26 @@ export class UnsubscribeService {
     // A CLAIM IS NOT AN OUTCOME. The row is written BEFORE the request, so its mere EXISTENCE says
     // only that somebody got as far as trying; reading it as "done" told a person their
     // unsubscribe had been sent when a DNS failure had stopped it, while the mail kept arriving.
-    // Only a settled `sent` is done. A stranded or failed one is retryable BY A PERSON — their
-    // press is an explicit act — and never by the automatic pass, which cannot tell an unattended
-    // retry from a second send. A gate refusal stays consumed: a URL our own gate rejected is not
-    // evidence that a different URL for the same list would be safe.
+    // Only a `sent` the list accepted is done. A stranded or failed one is retryable BY A PERSON —
+    // their press is an explicit act — and never by the automatic pass, which cannot tell an
+    // unattended retry from a second send. A refusal stays consumed: the list's own answer does not
+    // change on asking again, and a URL our own gate rejected is not evidence that a different URL
+    // for the same list would be safe.
     if (!held.fresh) {
-      if (held.state === "sent") {
+      const was = recordOutcome(held);
+      if (was === "sent") {
         return {
           messageId, posted: false, status: null, refusal: "already_recorded", header, authVerdict,
         };
       }
+      // The list said no: the person is told so again, and the list is not asked again.
+      if (was === "refused" && mode === "manual") throw answered("list_refused", held.httpStatus);
       // A `claimed` row younger than {@link UNSUB_CLAIM_STRANDED_MS} is an attempt IN FLIGHT, not
       // a stranded one, and re-attempting it is the duplicate send the unique index exists to
       // stop — eight concurrent presses would each find the winner's fresh claim and send.
-      const inFlight = held.state === "claimed"
+      const inFlight = was === "claimed"
         && ctx.now().getTime() - held.updatedAt.getTime() < UNSUB_CLAIM_STRANDED_MS;
-      if (mode === "automatic" || held.state === "refused" || inFlight) {
+      if (mode === "automatic" || was === "refused" || was === "gate_refused" || inFlight) {
         return {
           messageId, posted: false, status: null,
           refusal: "previous_attempt_unsettled", header, authVerdict,
@@ -686,13 +745,18 @@ export class UnsubscribeService {
       // start at 44.9 s and hold the invocation for eight more.
       ({ status } = await this.deps.post.post(url!, pin, budget?.postingLeftMs()));
     } catch (err) {
-      // The transport itself raised — DNS, TLS, a timeout. Recorded as `failed` and NOT retried:
-      // we cannot tell whether the sender received it, and at-most-once resolves that ambiguity
-      // toward not sending again.
+      // The transport itself raised — DNS, TLS, a timeout. Recorded as `failed`: we cannot tell
+      // whether the sender received it, so the automatic pass never sends again; a person may.
       await this.settle(ctx, claim, { state: "failed", refusal: null });
-      throw err;
+      throw answered("list_failed", null, err);
     }
-    await this.settle(ctx, claim, { state: "sent", refusal: null, httpStatus: status });
+    // THE LIST'S ANSWER DECIDES THE STATE: only a 2xx is `sent`. Every status is kept on the row.
+    const settled = oneClickSettleOf(status);
+    await this.settle(ctx, claim, {
+      state: settled, refusal: settled === "refused" ? LIST_REFUSED : null, httpStatus: status,
+    });
+    if (settled === "refused") throw answered("list_refused", status);
+    if (settled === "failed") throw answered("list_failed", status);
     return { messageId, posted: true, status, refusal: null, header, authVerdict };
   }
 
@@ -765,7 +829,13 @@ export class UnsubscribeService {
         // publishes no one-click route at all. Anything else is a genuine fault and is counted
         // separately so a drain that is silently failing every request cannot look like a drain
         // that is correctly finding nothing to do.
-        if (err instanceof ServiceError) sweep.skipped += 1;
+        // A list's answer after the request left is counted as failed, never as a skip: a list
+        // refusing every request is a drain whose requests are dying. Logged without its details,
+        // which carry the list's link.
+        if (err instanceof ServiceError && LIST_ANSWERS.has(err.code)) {
+          sweep.failed += 1;
+          console.error(`[unsubscribe] message ${id}: ${err.code}`, err.cause ?? "");
+        } else if (err instanceof ServiceError) sweep.skipped += 1;
         else {
           sweep.failed += 1;
           console.error(`[unsubscribe] message ${id}:`, err);
@@ -1174,7 +1244,9 @@ export class UnsubscribeService {
    */
   private async claim(
     ctx: ServiceContext, row: MessageRow, messageId: string,
-  ): Promise<{ id: string; fresh: boolean; state: string; updatedAt: Date }> {
+  ): Promise<{
+    id: string; fresh: boolean; state: string; refusal: string | null; httpStatus: number | null; updatedAt: Date;
+  }> {
     const listKey = unsubscribeListKey(row.headers, row.fromAddress);
     const claimed = await asTx(ctx).insert(unsubscribeRecords).values({
       accountId: ctx.accountId,
@@ -1190,7 +1262,9 @@ export class UnsubscribeService {
       })
       .returning({ id: unsubscribeRecords.id });
     const won = claimed[0];
-    if (won !== undefined) return { id: won.id, fresh: true, state: "claimed", updatedAt: ctx.now() };
+    if (won !== undefined) {
+      return { id: won.id, fresh: true, state: "claimed", refusal: null, httpStatus: null, updatedAt: ctx.now() };
+    }
 
     // THE CONFLICT CARRIES ITS OWN STATE. Answering only "somebody else has it" is what let a
     // claim be read as an outcome; the caller decides on the STATE, and the row it names is the
@@ -1198,6 +1272,9 @@ export class UnsubscribeService {
     const [existing] = await asTx(ctx).select({
       id: unsubscribeRecords.id,
       state: unsubscribeRecords.state,
+      // What the list answered, when it did: a `sent` over a 405 is a refusal (`recordOutcome`).
+      refusal: unsubscribeRecords.refusal,
+      httpStatus: unsubscribeRecords.httpStatus,
       // The AGE is half the answer: it is what tells an attempt in flight from a stranded one.
       updatedAt: unsubscribeRecords.updatedAt,
     })
@@ -1215,6 +1292,7 @@ export class UnsubscribeService {
     }
     return {
       id: existing.id, fresh: false, state: existing.state,
+      refusal: existing.refusal ?? null, httpStatus: existing.httpStatus ?? null,
       updatedAt: existing.updatedAt instanceof Date ? existing.updatedAt : new Date(existing.updatedAt),
     };
   }

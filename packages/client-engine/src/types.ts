@@ -452,12 +452,19 @@ export type UnsubscribeRefusal =
    * claim that was stranded or failed means nothing was sent. A surface may not render this one
    * as a completed unsubscribe.
    */
-  | "previous_attempt_unsettled";
+  | "previous_attempt_unsettled"
+  /**
+   * THROWN, never on a 2xx: `unsubscribe_list_refused` (the list answered and did not accept; its
+   * `details.siteUrl` is the letter's https link, and the list is not asked again) and
+   * `unsubscribe_list_failed` (retryable: the list could not take it, and a press may ask again).
+   */
+  | "list_refused"
+  | "list_failed";
 
 /**
  * What `POST /messages/:id/unsubscribe` answered on a 2xx. A refusal (409) is NOT this — it is a
  * throw carrying the server's sentence, exactly as `fetchBody`'s 402 is. So the only outcomes
- * here are a genuine send (`posted: true`, `refusal: null`) and "this list was already left"
+ * here are a send the list accepted (`posted: true`, a 2xx `status`) and "this list was already left"
  * (`posted: false`, `refusal: "already_recorded"`), which is not a failure. Fields beyond these
  * are read leniently and unknown ones ignored (§8).
  */
