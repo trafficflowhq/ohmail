@@ -712,10 +712,59 @@ export abstract class BaseMirrorStore implements MirrorStore {
     return out;
   }
 
+  /**
+   * A CONVERSATION WHOSE LAST LETTER LEFT LEAVES WITH IT. The server keeps a thread row when its
+   * only message is expunged, so the mirror kept its subject and participants with nothing to
+   * render. Read BEFORE the page applies (the delete erases `threadId`): the thread of each
+   * message a delete names. After it, a thread leaves when every id it names is a TOMBSTONE here,
+   * a confirmed deletion; an id with no record is an eviction or outside the window, and keeps it.
+   */
+  private threadsOfDeletes(changes: SyncChange[]): Set<string> | null {
+    let out: Set<string> | null = null;
+    for (const ch of changes) {
+      if (ch.type !== "message" || ch.op !== "delete") continue;
+      const held = this.records.get(recordKey("message", ch.id))?.entity as { threadId?: unknown } | null | undefined;
+      if (typeof held?.threadId === "string") (out ??= new Set()).add(held.threadId);
+    }
+    return out;
+  }
+
+  /**
+   * See {@link threadsOfDeletes}. A thread this page wrote is asked too, so the order the two
+   * facts arrive in does not decide; the tombstone takes the highest seq among the thread and
+   * the letters it names, which is what a replay or a shuffled stream converges on.
+   */
+  private cascadeEmptiedThreads(deleted: Set<string> | null, applied: MirrorRecord[]): MirrorRecord[] {
+    let candidates = deleted;
+    for (const r of applied) if (r.type === "thread" && r.entity !== null) (candidates ??= new Set()).add(r.id);
+    if (candidates === null) return [];
+    const out: MirrorRecord[] = [];
+    for (const id of candidates) {
+      const key = recordKey("thread", id);
+      const rec = this.records.get(key);
+      const named = (rec?.entity as { messageIds?: unknown } | null | undefined)?.messageIds;
+      if (!rec || !Array.isArray(named) || named.length === 0) continue;
+      let seq = rec.seq;
+      const allGone = named.every((m) => {
+        const gone = typeof m === "string" ? this.records.get(recordKey("message", m)) : undefined;
+        if (gone === undefined || gone.entity !== null) return false;
+        seq = Math.max(seq, gone.seq);
+        return true;
+      });
+      if (!allGone) continue;
+      const next: MirrorRecord = { type: "thread", id, seq, entity: null };
+      this.records.set(key, next);
+      out.push(next);
+    }
+    return out;
+  }
+
   async applyChanges(changes: SyncChange[]): Promise<void> {
+    const threads = this.threadsOfDeletes(changes);
     const applied = applyToRecords(this.records, changes);
     const dirty = [
       ...applied, ...this.cascadeLocalDeletes(changes, applied), ...this.cascadeMailboxRemoval(applied),
+      ...this.cascadeEmptiedThreads(threads, applied),
     ];
     this.highSeq = Math.max(this.highSeq, maxSeqOf(changes));
     if (dirty.length > 0) {
@@ -792,9 +841,11 @@ export abstract class BaseMirrorStore implements MirrorStore {
   async applyResponse(resp: SyncResponse): Promise<void> {
     const changes = flattenResponse(resp);
     // The body cascade rides in this page's dirty set — see `cascadeLocalDeletes`.
+    const threads = this.threadsOfDeletes(changes);
     const applied = applyToRecords(this.records, changes);
     const dirty = [
       ...applied, ...this.cascadeLocalDeletes(changes, applied), ...this.cascadeMailboxRemoval(applied),
+      ...this.cascadeEmptiedThreads(threads, applied),
     ];
     this.highSeq = Math.max(this.highSeq, maxSeqOf(changes));
     this.cursor = resp.cursor;
