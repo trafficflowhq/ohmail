@@ -2,8 +2,8 @@ import { parseMessageIds } from "./threading.js";
 import type { AuthVerdict } from "./sender-headers.js";
 import type { NormalizedMessage, Destination } from "./types.js";
 import {
-  bodyTermSatisfied, compareRules, effectForDestination as effectOfDestination, subjectTermSatisfied,
-  type RuleEffect,
+  bodyTermSatisfied, compareRules, effectForDestination as effectOfDestination, ruleMatchKey,
+  subjectTermSatisfied, type RuleEffect,
 } from "./rule-order.js";
 
 export type RuleKind = "sender" | "domain" | "header";
@@ -314,8 +314,8 @@ function bodySatisfies(r: Rule, msg: NormalizedMessage): boolean {
  */
 function namesAuthor(r: Rule, author: string | null): boolean {
   if (author === null) return false;
-  if (r.kind === "sender") return r.match.toLowerCase() === author;
-  if (r.kind === "domain") return r.match.toLowerCase() === domainOf(author);
+  if (r.kind === "sender") return ruleMatchKey(r.match) === author;
+  if (r.kind === "domain") return ruleMatchKey(r.match) === domainOf(author);
   return false;
 }
 

@@ -1,7 +1,7 @@
 import { and, asc, eq, gt, sql } from "drizzle-orm";
 import {
-  approvals, auditAction, auditLog, autoReplyByUsWhere, drafts, folderState, mailboxes,
-  messageBodies, messageStates, messages, recordChange,
+  approvals, auditAction, auditLog, drafts, folderState, mailboxes,
+  messageBodies, messageStates, messages, recordChange, weAnsweredThisSenderWhere,
   type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -187,8 +187,8 @@ async function unscreenedWalk(
  * ONE page of the Ohbox this screen may offer — oldest id first, so the walk is monotone in
  * `messages.id`. CANDIDATES: `desired_folder = 'INBOX'` (also the idempotency) in a live mailbox
  * this install ORGANIZES, so a reader's walk is empty by construction. EXCLUSIONS, the four
- * `ohbox-tidy.ts` applies: no non-`none` triage row, no reply draft, no DECIDED approval, no reply
- * of the person's own in the thread. READ is NOT one — reading is not deciding, which is the whole
+ * `ohbox-tidy.ts` applies: no non-`none` triage row, no reply draft, no DECIDED approval, and the
+ * person never answered this sender. READ is NOT one — reading is not deciding, which is the whole
  * of the row this closes. `last_set_by` is NOT constrained either: a blanket default, an older
  * install and the person's own client years ago are all this backlog, and what protects them is
  * the PRESS rather than a placement stamp.
@@ -226,27 +226,20 @@ async function selectCandidates(
        where a.message_id = ${messages.id} and a.status <> 'pending'
     )`,
   ];
-  /* 4 — the user replied from their own mail client, and a MACHINE'S reply is not that: the away
-     responder answering on their behalf is not them dealing with the message (`ohbox-tidy.ts`
-     carries the same narrowing and the same reason). Guarded on a non-empty list — `in ()` is a
-     syntax error — and on a non-NULL thread. `not from myself` rides the same clause: a message
-     the account sent is excluded by its own address being in this list on the message row below. */
+  /* 4 — THE USER ANSWERED THIS SENDER: `weAnsweredThisSenderWhere`, the predicate `ohbox-tidy`,
+     `rule-retro` and `screener-auto` ask. Thread MEMBERSHIP was the old spelling here, so a reply
+     of ours to somebody else on the thread kept a stranger in the Ohbox; the away responder is
+     not the person either. `not from myself` is the account's own mail, excluded by address.
+     Guarded on a non-empty list: `in ()` is a syntax error. */
   if (opts.ownAddresses.length > 0) {
     const own = sql`(${sql.join(opts.ownAddresses.map((a) => sql`${a}`), sql`, `)})`;
     filters.push(sql`lower(${messages.fromAddress}) not in ${own}`);
-    filters.push(sql`not exists (
-      select 1 from ${messages} sent
-       where sent.account_id = ${messages.accountId}
-         and sent.thread_id = ${messages.threadId}
-         and ${messages.threadId} is not null
-         and lower(sent.from_address) in ${own}
-         and not ${autoReplyByUsWhere(d, {
-           accountId: sql`sent.account_id`,
-           id: sql`sent.id`,
-           fromAddress: sql`sent.from_address`,
-           messageIdHeader: sql`sent.message_id_header`,
-         })}
-    )`);
+    filters.push(sql`not ${weAnsweredThisSenderWhere(d, {
+      accountId: sql`${messages.accountId}`,
+      threadId: sql`${messages.threadId}`,
+      fromAddress: sql`${messages.fromAddress}`,
+      ownAddresses: opts.ownAddresses,
+    })}`);
   }
   if (opts.afterId) filters.push(gt(messages.id, d.castUuid(sql`${opts.afterId}`)));
 

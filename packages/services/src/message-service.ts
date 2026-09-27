@@ -121,10 +121,19 @@ const NOT_NEW_FOR_YOU: readonly TriageState[] = ["reply_later", "set_aside", "bu
  * else; a second spelling is the defect (`test/new-for-you-one-predicate.test.ts` refuses one).
  */
 export function newForYouFilters(db: Db, accountId: string): SQL[] {
+  return imboxSplitFilters(db, accountId, "new_for_you");
+}
+
+/**
+ * Either half of the Imbox split — "New for you" and "Earlier" hold out the SAME four states, so
+ * the read half is this predicate with the other unread value, never the generic view filter
+ * (which listed parked and resurfaced mail the Ohbox shows elsewhere).
+ */
+function imboxSplitFilters(db: Db, accountId: string, view: "new_for_you" | "previously_seen"): SQL[] {
   return [
     eq(messages.accountId, accountId),
-    desiredFolderMatches(VIEW_FOLDER.new_for_you),
-    eq(messages.unread, VIEW_UNREAD.new_for_you!),
+    desiredFolderMatches(VIEW_FOLDER[view]),
+    eq(messages.unread, VIEW_UNREAD[view]!),
     // A tombstoned row keeps its `folder_state` (the reaper stamps `deleted_at` and touches
     // nothing else) — see `list`'s own note for the three answers that cost.
     isNull(messages.deletedAt),
@@ -557,10 +566,11 @@ export class MessageService {
     const desiredFolder = VIEW_FOLDER[view];
     const unread = VIEW_UNREAD[view];
 
-    /* `new_for_you` IS {@link newForYouFilters} and nothing else — the screen's own predicate,
-       which `TriageService.powerThrough` imports so an act over this group cannot be about a
-       different set of mail than the group shows. Every other view keeps the three below. */
-    const filters = view === "new_for_you" ? newForYouFilters(ctx.db, ctx.accountId) : [
+    /* The two Imbox halves ARE {@link imboxSplitFilters} — the screen's own predicate, which
+       `TriageService.powerThrough` imports so an act over the group cannot be about different
+       mail than the group shows. Every other view keeps the three below. */
+    const split = view === "new_for_you" || view === "previously_seen";
+    const filters = split ? imboxSplitFilters(ctx.db, ctx.accountId, view) : [
       eq(messages.accountId, ctx.accountId),
       desiredFolderMatches(desiredFolder),
       // Mail 0065: a tombstoned row keeps its folder_state (the reaper stamps `deleted_at` and
@@ -569,7 +579,7 @@ export class MessageService {
       // snapshot excluded it — three answers to one question.
       isNull(messages.deletedAt),
     ];
-    if (view !== "new_for_you" && unread !== undefined) filters.push(eq(messages.unread, unread));
+    if (!split && unread !== undefined) filters.push(eq(messages.unread, unread));
     if (opts.cursor) {
       // Keyset for `date desc nulls last, id desc`: strictly "older" rows than the cursor tuple,
       // including the undated tail, which sorts after every dated row.

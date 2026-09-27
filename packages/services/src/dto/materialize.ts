@@ -1,7 +1,7 @@
 import { and, asc, eq, getTableColumns, inArray, isNotNull, isNull, sql, type SQL, type Table } from "drizzle-orm";
 import { foldersEnabled, userFolderById, type UserFolderRow } from "../folders.js";
 import {
-  capSuggestion, draftBodyOverCeiling, resolveOhboxPolicy, senderCheckAll,
+  asAuthVerdict, capSuggestion, draftBodyOverCeiling, resolveOhboxPolicy, senderCheckAll,
   type CheckedSuggestion, type EmailAddress,
 } from "@trafficflow/core/mail";
 import { reasonDetail, suggestionAdvice } from "../screener-advice.js";
@@ -312,6 +312,8 @@ export function messageRowToDTO(
     labels: labels ? [...labels] : [],
     remoteContent: "none",
     updatedAt: m.updatedAt.toISOString(),
+    // On the row, so every projection carries it; a word from the other vocabulary reads `null`.
+    authVerdict: asAuthVerdict(m.authVerdict),
     // Spread-in rather than a plain `autoReplyByUs:` so an un-asked caller yields a DTO with the
     // key ABSENT, not present-and-undefined. The two are the same in TypeScript and different
     // over JSON, and "this server does not know" must look exactly like "this server predates

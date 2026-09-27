@@ -1,11 +1,10 @@
 import {
   counterpartyEvidence, type CounterpartyEvidence, type CounterpartyMessage,
 } from "@trafficflow/core/sender-headers";
-import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/folder-name";
-import { canonicalDestination } from "@trafficflow/core/destinations";
+import { ORGANIZED_FOLDERS, canonicalDestination, isConsentingDestination } from "@trafficflow/core/destinations";
 import {
-  bodyTermOf, bodyTermSatisfied, compareRules, effectForDestination, subjectTermOf, subjectTermSatisfied,
-  type OrderedRule,
+  bodyTermOf, bodyTermSatisfied, compareRules, effectForDestination, ruleMatchKey, subjectTermOf,
+  subjectTermSatisfied, type OrderedRule,
 } from "@trafficflow/core/rule-order";
 import type { EntityReader } from "./store.js";
 import { ownAddressKeys } from "./own-address.js";
@@ -35,12 +34,8 @@ import {
  */
 export const DEFAULT_DORMANCY_DAYS = 60;
 
-/** Every folder the product presents. Anything else — a Sent folder, a user's own tree — is not a place. */
-const KNOWN_FOLDERS: ReadonlySet<string> = new Set<string>([
-  "INBOX", "ohmail/Screener", "ohmail/News", "ohmail/Receipts", "ohmail/Screened", "ohmail/Quarantine",
-  // Rows and rules written before the 0.22 folder rename still spell the News pile the old way.
-  LEGACY_NEWS_FOLDER,
-]);
+/** Every folder the product presents, both News spellings. A Sent folder or a user's own tree is not a place. */
+const KNOWN_FOLDERS: ReadonlySet<string> = new Set<string>(ORGANIZED_FOLDERS);
 
 /**
  * The two folders a message can sit in without any decision standing behind it.
@@ -50,19 +45,6 @@ const KNOWN_FOLDERS: ReadonlySet<string> = new Set<string>([
  * definition.
  */
 const UNDECIDED_RESIDENCES: ReadonlySet<string> = new Set<Folder>(["INBOX", "ohmail/Screener"]);
-
-/**
- * Destinations that mean "yes, I hear from this person".
- *
- * Reads and Receipts are consent too — quieter placement, but the sender got through. Screened
- * and Quarantine are the opposite, so a rule pointing at them is a decision that is not
- * consent, and the thread rule below must not treat it as one.
- */
-const CONSENTING_DESTINATIONS: ReadonlySet<string> = new Set<string>([
-  "INBOX", "ohmail/News", "ohmail/Receipts",
-  // The pre-0.22 spelling: a rule filed to the News pile was consent then and stays consent.
-  LEGACY_NEWS_FOLDER,
-]);
 
 export type SenderActivity = "active" | "dormant";
 
@@ -206,7 +188,8 @@ export function consentIndex(
     if (r.destination === "ohmail/Screener") continue;
     const target = r.kind === "sender" ? bySender : r.kind === "domain" ? byDomain : null;
     if (!target) continue;
-    const key = r.match.trim().toLowerCase();
+    // The router's and the queue SQL's key (`ruleMatchKey`), so all three name one principal.
+    const key = ruleMatchKey(r.match);
     if (!key) continue;
     const held = target.get(key);
     if (held === undefined || outranks(r, held)) target.set(key, r);
@@ -547,7 +530,9 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
        presents in the INBOX — nothing moves on the server; elsewhere it keeps its place. */
     if (own.has(key)) { placeOf.set(m.id, m.folder === "ohmail/Screener" ? "INBOX" : m.folder); continue; }
     const decided = decidedDestination(index, m.from.address, m.mailboxId);
-    const consented = decided !== null && CONSENTING_DESTINATIONS.has(decided);
+    /* "Yes, I hear from this person" is core's one list (`isConsentingDestination`), which the
+       server's queue SQL is pinned to: Screened and Quarantine are decisions that are not consent. */
+    const consented = decided !== null && isConsentingDestination(decided);
     if (consented) consentedSenders.add(key);
 
     /**
@@ -613,7 +598,7 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
     // The thread anchor is the newest message from a CONSENTED sender, wherever it presents.
     const place = placeOf.get(m.id);
     if (m.threadId && place !== null && place !== undefined && consentedSenders.has(key)
-        && CONSENTING_DESTINATIONS.has(place)) {
+        && isConsentingDestination(place)) {
       const held = consentedByThread.get(m.threadId);
       if (!held || byDateDesc(m, held) < 0) consentedByThread.set(m.threadId, m);
     }
@@ -649,11 +634,9 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
       list.push({
         ownAuthored: isOwnSent(m),
         from: m.from?.address,
-        // NOBODY ASKED, and that is the honest value rather than a convenience: the wire
-        // `MessageDTO` carries no `authVerdict`, so a mirror row has no verdict to state. Gap row
-        // COUNTERPARTY-VERDICT-NOT-ON-THE-WIRE. `null` is the permissive member, so this reads
-        // exactly as it did before — and cannot be mistaken for "the provider said it was fine".
-        authVerdict: null,
+        // The wire's `MessageDTO.authVerdict`; absent (a server older than the field) is `null`,
+        // "nobody asked" — the permissive member, never "the provider said it was fine".
+        authVerdict: m.authVerdict ?? null,
         recipients: [...(m.to ?? []), ...(m.cc ?? [])].map((w) => w?.address),
       });
     }

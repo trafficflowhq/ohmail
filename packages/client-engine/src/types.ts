@@ -401,6 +401,12 @@ export interface EngineMessage extends EngineMessageExtras {
    * subject, which this side already holds. Absent means "not known".
    */
   itipReplyHeader?: boolean;
+  /**
+   * What this message's own provider said about its claimed author — `messages.auth_verdict`
+   * in routing's four words. Only `"fail"` changes anything: a forged `From` is a claim, never
+   * a correspondent (`@trafficflow/core/sender-headers`). Absent reads as `null`, "nobody asked".
+   */
+  authVerdict?: "unauthenticated" | "unavailable" | "pass" | "fail" | null;
 }
 
 /**

@@ -1515,6 +1515,10 @@ async function applyUpsert(
            install was unstamped and "Earlier" there had no reading order at all. In the
            conflict set: a stamp Cloud cleared (mark-unread) clears here too. */
         lastReadAt: asDate(m.lastReadAt ?? null),
+        /* THE PROVIDER'S VERDICT ON THE CLAIMED AUTHOR travels too, so the local door re-emits the
+           hosted answer and a forged `From` stays a claim here. Absent on the wire is NULL, "nobody
+           asked" — the permissive reading an older server's rows always had. In the conflict set. */
+        authVerdict: m.authVerdict ?? null,
         snippet: m.snippet ?? "",
         toAddresses: m.to ?? [],
         ccAddresses: m.cc ?? [],

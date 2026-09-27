@@ -1,4 +1,4 @@
-import type { Destination, EmailAddress, SenderReasonCode, UnsubscribeHeaderState, WorkflowStep, WorkflowTrigger, WorkflowPattern } from "@trafficflow/core/mail";
+import type { AuthVerdict, Destination, EmailAddress, SenderReasonCode, UnsubscribeHeaderState, WorkflowStep, WorkflowTrigger, WorkflowPattern } from "@trafficflow/core/mail";
 import type { EntityType, ChangeOp } from "@trafficflow/db";
 
 export type { EntityType, ChangeOp };
@@ -198,6 +198,13 @@ export interface MessageDTO {
    * the header is not mirrored. Absent means "not known"; consumers test `=== true`.
    */
   itipReplyHeader?: boolean;
+  /**
+   * What this message's own provider said about its claimed author — `messages.auth_verdict`
+   * narrowed to routing's four words (`asAuthVerdict`); `null` is "nobody asked". Only `"fail"`
+   * changes a client's reading: a forged `From` is a claim, never a correspondent. Projected on
+   * every message; a client reads absent (an older server) as `null`.
+   */
+  authVerdict?: AuthVerdict | null;
 }
 
 /**

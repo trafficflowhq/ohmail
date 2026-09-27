@@ -108,6 +108,29 @@ export function isOrganizedFolder(folder: string): boolean {
   return ORGANIZED_FOLDERS.includes(folder);
 }
 
+/** The gate: mail held here has no decision behind it, and a rule to it says "keep asking me". */
+export const GATE_FOLDER: Destination = "ohmail/Screener";
+
+/**
+ * THE ONE ANSWER TO "HAS THIS ACCOUNT DECIDED ABOUT THIS SENDER", as destinations: every organized
+ * folder but the gate, deny included (ruling 2026-09-16). CONSENTING is the decided half that lets
+ * the sender through. The client cutline and the server read these; `@trafficflow/db` cannot import
+ * core, so its SQL copies are pinned here by `test/screener-one-destination-list.test.ts`.
+ */
+export const DECIDED_DESTINATIONS: readonly string[] = ORGANIZED_FOLDERS.filter((f) => f !== GATE_FOLDER);
+export const CONSENTING_DESTINATIONS: readonly string[] = DECIDED_DESTINATIONS
+  .filter((f) => f !== "ohmail/Screened" && f !== "ohmail/Quarantine");
+
+/** Is a rule or placement at `destination` a decision about its sender? A stray string is not. */
+export function isDecidedDestination(destination: string | null | undefined): boolean {
+  return destination != null && DECIDED_DESTINATIONS.includes(destination);
+}
+
+/** …and one that lets the sender through. */
+export function isConsentingDestination(destination: string | null | undefined): boolean {
+  return destination != null && CONSENTING_DESTINATIONS.includes(destination);
+}
+
 /** One message, as much of it as the question below reads — the wire's own fields. */
 export interface RetroCandidateRow {
   /** Where the mailbox has it FILED: the wire's `folder`, which is `folder_state.desired_folder`. */

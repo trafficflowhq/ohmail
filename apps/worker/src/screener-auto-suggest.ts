@@ -1,8 +1,8 @@
-import { and, asc, desc, eq, isNull, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   accountSettings, folderState, messages,
-  resolveCutline, senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, type ResolvedCutline,
+  resolveCutline, senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type ResolvedCutline,
   screenerAttemptKey, storeScreenerSuggestion,
   screenerSuggestedSenderExists, hasScreenerSuggestionForSender,
   decisionCanBeApplied, readRequestEligibility,
@@ -14,9 +14,6 @@ import {
   askScreeningQuestion, capSuggestion, senderCheckAll, senderFacts, silentLogger,
   type ClassifierPort, type Logger, type SenderSignals,
 } from "@trafficflow/core/mail";
-
-/** The sort floor for a message with no date — the same instant `to_timestamp(0)` named. */
-const EPOCH = new Date(0);
 
 /* SCREENER AUTO-SUGGEST — buy the model's advice about INCOMING held senders while the account's opt-in
  * is on. Its own file, not `screener-auto.ts` (whose invariant is that it neither calls the model nor
@@ -507,9 +504,8 @@ async function selectCandidates(
   db: Tx, opts: { accountId: string; watermark: Date; limit: number; cutline?: ResolvedCutline },
 ): Promise<Candidate[]> {
   const d = dialect(db);
-  // THE EPOCH THROUGH THE SEAM: `to_timestamp(0)` is the server's name for it and the device
-    // store has no such function — there the instant IS the number, which is what `d.ts` knows.
-    const sortKey = d.truncMs(sql`coalesce(${messages.date}, ${d.ts(EPOCH)})`) as SQL<Date>;
+  // The queue's own sort key (`heldSortKey`), so the pass buys advice about the row on screen.
+  const sortKey = heldSortKey(d, { date: sql`${messages.date}`, arrivedAt: sql`${messages.createdAt}` });
   const sender = sql`lower(${messages.fromAddress})`;
 
   /* ONE HELD MESSAGE PER SENDER, AS A WINDOW — the same row `distinct on (k) … order by k, o`

@@ -39,6 +39,19 @@ export function effectForDestination(destination: string): RuleEffect {
   }
 }
 
+/**
+ * A sender/domain rule's `match` as every reader compares it: the queue SQL's `trim(lower(match))`,
+ * which strips SPACES only on both stores. `rules.match` has no trim constraint, so a padded row
+ * exists; the router, the client cutline and the SQL must name one principal for it.
+ */
+export function ruleMatchKey(match: string): string {
+  let a = 0;
+  let b = match.length;
+  while (a < b && match.charCodeAt(a) === 32) a++;
+  while (b > a && match.charCodeAt(b - 1) === 32) b--;
+  return match.slice(a, b).toLowerCase();
+}
+
 /** Among rules of one kind, deny outranks allow: the user's "no" never loses a tie. */
 const EFFECT_RANK: Readonly<Record<string, number>> = { deny: 0, allow: 1 };
 /** Specificity: one mailbox, then a set of them, then a statement about a message. */

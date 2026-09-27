@@ -1,4 +1,4 @@
-import type { Destination } from "./types.js";
+import { DESTINATIONS, isDecidedDestination, type Destination } from "./types.js";
 import type { ClassifierInput, ClassifierPort, ClassifierResult } from "./classifier-port.js";
 import { redactForModel, screenOutboundText, type OutboundScreen } from "./sensitive.js";
 
@@ -79,13 +79,7 @@ export const TAXONOMY_PREFIX = [
  * travel in the USER turn, never this prefix: the prefix is cached across accounts, so one
  * account's sentence would be served to another's request.
  */
-export const SCREEN_DESTINATIONS: Destination[] = [
-  "INBOX",
-  "ohmail/News",
-  "ohmail/Receipts",
-  "ohmail/Screened",
-  "ohmail/Quarantine",
-];
+export const SCREEN_DESTINATIONS: Destination[] = DESTINATIONS.filter(isDecidedDestination);
 
 /**
  * The screening instruction — cacheable, account-independent; each outcome's criteria are written

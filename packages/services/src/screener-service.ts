@@ -13,7 +13,7 @@ import {
   UNPRICED,
   // 0.14.1, 0.14.1 — the request path. See `screener-apply.ts` and `organizer-role.ts` in
   // `@trafficflow/db` for why the transactional core and the eligibility read live there.
-  resolveCutline, senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, type ResolvedCutline,
+  resolveCutline, senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type ResolvedCutline,
   heldRowById, applyScreenerDecision, AccountErasedError, readAccountErasedAt, domainOf,
   readRequestEligibility, decisionCanBeApplied,
   listOutstandingForAccount,
@@ -35,7 +35,7 @@ import type {
 } from "@trafficflow/core/mail";
 import {
   applyReconcileAction, askScreeningQuestion, canonicalDestination, capSuggestion, createLogger,
-  effectForDestination,
+  DESTINATIONS, effectForDestination, isDecidedDestination,
   resolveOhboxPolicy, senderCheckAll, senderFacts,
 } from "@trafficflow/core/mail";
 /* The verdict derivation moved to its own leaf when `materializeScreenerSuggestion` became its
@@ -66,9 +66,6 @@ import type { Folder, Page, ScreenerItem } from "./dto/types.js";
  */
 type GateRefusal = { refusal: AiRefusalClass; verdict: string; reason?: AiRefusalReason };
 
-/** The sort floor for a message with no date — the same instant `to_timestamp(0)` named. */
-const EPOCH = new Date(0);
-
 /**
  * Where a best-effort filing doorbell reports a throw. Module scope and not injected: it is a
  * single warn line on a path whose failure costs one rotation, and nothing reads it back.
@@ -90,9 +87,7 @@ const NO_FOLDER: Destination = "ohmail/Screened";
  * `effectForDestination("ohmail/Screener")` is `"deny"`, so the agreement check alone would wave
  * it through on any `no`.
  */
-const DECIDABLE_FOLDERS: ReadonlySet<string> = new Set<Destination>([
-  YES_FOLDER, "ohmail/News", "ohmail/Receipts", NO_FOLDER, "ohmail/Quarantine",
-]);
+const DECIDABLE_FOLDERS: ReadonlySet<string> = new Set<Destination>(DESTINATIONS.filter(isDecidedDestination));
 
 /**
  * What the READ half is allowed to hold. No `classifier`, no `credits` — the absences ARE the
@@ -769,6 +764,8 @@ interface ScreenerRow {
    * STORE. Not surfaced to any list; the DTO does not carry it.
    */
   unread: boolean;
+  /** The instant the queue sorted this row by (`heldSortKey`) — what the page's cursor carries. */
+  sortAt: Date;
 }
 
 /**
@@ -798,9 +795,10 @@ function toScreenerRow(r: {
   messageId: string; threadId: string | null; fromAddress: string; subject: string;
   snippet: string; date: Date | null; nativeLocator: unknown; observedFolder: string;
   updatedAt: Date; unread: boolean; mailboxId: string;
-  fromName?: string | null; authVerdict?: string | null;
+  fromName?: string | null; authVerdict?: string | null; sortKey: Date;
 }): ScreenerRow {
   return {
+    sortAt: r.sortKey,
     mailboxId: r.mailboxId,
     messageId: r.messageId,
     threadId: r.threadId ?? null,
@@ -820,17 +818,14 @@ function toScreenerRow(r: {
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
 /**
- * The `(date, messageId)` keyset for the Screener's `date desc, messageId desc` order — same
- * shape and encoding as `MessageService`'s. The tuple, not the id alone: senders share dates (an
- * ESP sends a batch in one second), so a date-only cursor would skip every sender after the first
- * at that instant; `?? 0` maps undated mail to the epoch, where the sort puts it too. The
- * encodings match; the two lists do NOT page identically over UNDATED mail, in this file's
- * favour: `MessageService.list` orders by bare `desc(date)` (NULLS FIRST) and drops undated rows
- * after page one; here the sort key is `coalesce(date, epoch)` in BOTH the ORDER BY and the
- * keyset, so undated mail sorts last and pages like everything else.
+ * The `(sortAt, messageId)` keyset for the Screener's `sort key desc, messageId desc` order — the
+ * encoding `MessageService` uses. The tuple, not the id alone: senders share instants (an ESP
+ * sends a batch in one second), so an instant-only cursor would skip every sender after the first.
+ * `sortAt` is the key the page sorted by, read back from the query, so an undated message pages
+ * at its arrival exactly where the ORDER BY put it.
  */
-function encodeScreenerCursor(r: { date: Date | null; messageId: string }): string {
-  return encodeListCursor(`${r.date ? r.date.getTime() : 0}:${r.messageId}`);
+function encodeScreenerCursor(r: { sortAt: Date; messageId: string }): string {
+  return encodeListCursor(`${r.sortAt.getTime()}:${r.messageId}`);
 }
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /**
@@ -1511,9 +1506,9 @@ export class ScreenerReadService {
   // erases it to `{ [x: string]: any }`.
   protected heldSenderReps(ctx: ServiceContext, extra?: SQL) {
     const d = dialect(ctx.db);
-    // THE EPOCH THROUGH THE SEAM: `to_timestamp(0)` is the server's name for it and the device
-    // store has no such function — there the instant IS the number, which is what `d.ts` knows.
-    const sortKey = d.truncMs(sql`coalesce(${messages.date}, ${d.ts(EPOCH)})`) as SQL<Date>;
+    // The one sort key (`@trafficflow/db#heldSortKey`): the header, else the mailbox's arrival —
+    // the two worker passes choose the same representative by it.
+    const sortKey = heldSortKey(d, { date: sql`${messages.date}`, arrivedAt: sql`${messages.createdAt}` });
     const sender = sql`lower(${messages.fromAddress})`;
     const filters: SQL[] = [
       eq(messages.accountId, ctx.accountId),
@@ -1527,7 +1522,8 @@ export class ScreenerReadService {
     // scoped-by: `filters` above leads with eq(messages.accountId, ctx.accountId)
     const reps = ctx.db.select({
       ...HELD_COLUMNS,
-      sortKey: sortKey.as("sort_key"),
+      // Decoded by the column's own reader, so the cursor carries the key the page sorted by.
+      sortKey: sortKey.mapWith(messages.date).as("sort_key"),
       rank: sql<number>`row_number() over (
         partition by ${sender} order by ${sortKey} desc, ${messages.id} desc
       )`.as("rank"),
@@ -1545,8 +1541,8 @@ export class ScreenerReadService {
    * chosen, and a sender with an older held message below the cursor is LISTED TWICE. A keyset,
    * not `OFFSET`: the held set mutates under the reader, and a skip is a first-contact sender
    * never asked about. The sort key is TRUNCATED TO MILLISECONDS — the cursor round-trips through
-   * `getTime()`; ties break on `id`. `coalesce(…, epoch)`, not `DESC NULLS LAST`: NULLs sort
-   * FIRST under `DESC`, and omitting `Date:` must not take the top of the consent queue.
+   * `getTime()`; ties break on `id`. The key is the header ELSE the arrival (`heldSortKey`): an
+   * omitted `Date:` neither takes the top of the queue (a bare `DESC`) nor sinks to 1970.
    */
   protected async heldSenderPage(
     ctx: ServiceContext,
@@ -2520,7 +2516,8 @@ function toItem(r: ScreenerRow, aiSuggestion: ScreenerItem["aiSuggestion"]): Scr
     sender: { name: r.fromName, address: r.fromAddress },
     subject: r.subject,
     snippet: r.snippet,
-    receivedAt: (r.date ?? r.updatedAt).toISOString(),
+    // The instant the row sorted by: an undated message says when it arrived, never its write time.
+    receivedAt: (r.date ?? r.sortAt).toISOString(),
     aiSuggestion,
     updatedAt: r.updatedAt.toISOString(),
   };

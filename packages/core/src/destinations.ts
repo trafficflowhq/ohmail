@@ -10,6 +10,8 @@
  */
 export {
   DESTINATIONS, ORGANIZED_FOLDERS, isOrganizedFolder, retroPassWouldMove,
+  // The Screener's decided/consenting classification — the client cutline reads it from here.
+  GATE_FOLDER, DECIDED_DESTINATIONS, CONSENTING_DESTINATIONS, isDecidedDestination, isConsentingDestination,
   // The News pile's resolver family (0.22) — same leaf, same reason: mirrors and views classify
   // folder strings that predate the rename and cannot load the barrel.
   NEWS_FOLDER, LEGACY_NEWS_FOLDER, canonicalDestination, isNewsFolder, pileFolder,

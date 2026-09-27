@@ -53,6 +53,16 @@ export function cutlineInstant(c: { date: SQL; arrivedAt: SQL }): SQL {
   return sql`coalesce(${c.date}, ${c.arrivedAt})`;
 }
 
+/**
+ * THE INSTANT THE SCREENER QUEUE ORDERS A HELD MESSAGE BY — {@link cutlineInstant}, to the
+ * millisecond a cursor carries. The page, the two worker passes and the correspondent read pick a
+ * sender's representative by it, so all four name one message; an undated message sorts at its
+ * arrival rather than at 1970, where a sender the cutline admits sank to the bottom of the queue.
+ */
+export function heldSortKey(d: Dialect, c: { date: SQL; arrivedAt: SQL }): SQL<Date> {
+  return d.truncMs(cutlineInstant(c)) as SQL<Date>;
+}
+
 export interface CutlineFacts {
   /** `account_settings.screening_baseline_at`, or null for an account that never decided. */
   baselineAt?: Date | null;

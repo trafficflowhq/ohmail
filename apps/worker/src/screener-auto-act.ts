@@ -1,9 +1,9 @@
-import { and, asc, eq, isNull, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import {
   accountSettings, folderState, messages,
   applyScreenerDecision,
-  screenerSuggestionsBySender, resolveCutline, senderIsActiveSql, senderIsDecidedSql,
+  screenerSuggestionsBySender, resolveCutline, senderIsActiveSql, senderIsDecidedSql, heldSortKey,
   decisionCanBeApplied, readRequestEligibility,
   DECIDABLE_FOLDERS, SCREENER_FOLDER,
   type ResolvedCutline, type Tx,
@@ -308,7 +308,8 @@ async function selectWaitingSenders(
 ): Promise<WaitingSender[]> {
   const d = dialect(db);
   const sender = sql`lower(${messages.fromAddress})`;
-  const sortKey = d.truncMs(sql`coalesce(${messages.date}, ${d.ts(new Date(0))})`) as SQL<Date>;
+  // The queue's own sort key (`heldSortKey`): the act walks the order the surface shows.
+  const sortKey = heldSortKey(d, { date: sql`${messages.date}`, arrivedAt: sql`${messages.createdAt}` });
 
   const reps = db.select({
     messageId: messages.id,

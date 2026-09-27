@@ -13,7 +13,7 @@ import {
  * imports the db cloud barrel — so one barrel import here pulls the hosted schema (billing,
  * credits, staff grants) into the LOCAL ENGINE bundle this module is part of. The mail subpath
  * is the same surface minus `ai/*`; every name below lives outside it. */
-import { LEGACY_NEWS_FOLDER, normalizeMime } from "@trafficflow/core/mail";
+import { CONSENTING_DESTINATIONS, normalizeMime } from "@trafficflow/core/mail";
 import {
   ServiceError, requireImapUint32, withAccountTx, type ServiceContext,
 } from "@trafficflow/services/mail";
@@ -390,9 +390,8 @@ export async function junkBody(
 const SPAM_RULE_DESTINATION = "ohmail/Quarantine";
 /** Where a minted allow files — the Screener yes-decision's default (`YES_FOLDER`). */
 const ALLOW_RULE_DESTINATION = "INBOX";
-/** Every allow-side destination — an enabled sender rule at any of these already admits them.
- *  Both News spellings: a rule stored before the 0.22 rename points at `ohmail/Reads`. */
-const ALLOW_SIDE = ["INBOX", "ohmail/News", LEGACY_NEWS_FOLDER, "ohmail/Receipts"] as const;
+/** Every allow-side destination — core's one list, both News spellings for rules stored before 0.22. */
+const ALLOW_SIDE = CONSENTING_DESTINATIONS;
 
 export interface AllowSenderOutcome {
   /** Rule ids this press DISABLED — the sender's own spam-promoting rules. */

@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, or, sql, type SQL } from "drizzle-orm";
 import {
-  accountSettings, autoReplyByUsWhere, folderState, mailboxFolders, mailboxes, messageBodies,
+  accountSettings, autoReplyByUsWhere, folderState, heldSortKey, mailboxFolders, mailboxes, messageBodies,
   messageInstances, messages, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -202,7 +202,7 @@ async function heldReferences(
     inReplyTo: sql<unknown>`${d.jsonGet(messageBodies.headers, "in-reply-to")}`.as("co_in_reply_to"),
     references: sql<unknown>`${d.jsonGet(messageBodies.headers, "references")}`.as("co_references"),
     rank: sql<number>`row_number() over (
-      partition by ${sender} order by coalesce(${messages.date}, ${d.ts(new Date(0))}) desc, ${messages.id} desc
+      partition by ${sender} order by ${heldSortKey(d, { date: sql`${messages.date}`, arrivedAt: sql`${messages.createdAt}` })} desc, ${messages.id} desc
     )`.as("rank"),
   }).from(messages)
     .innerJoin(folderState, eq(folderState.messageId, messages.id))
