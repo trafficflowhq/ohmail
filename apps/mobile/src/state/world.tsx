@@ -1014,8 +1014,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // And the queue, for the mailboxes' reason exactly: account A's waiting senders are not
     // account B's, and a stale set would name senders whose mail this mirror does not hold.
     setScreenerServer(null);
-    setRelayed(null);
     setLeavingWaiting([]);
+    setRelayed(null);
     /* And the FACE, for the same reason and one more: an account's appearance choice is that
        account's state, so the next session starts with none and the device's own pin (which
        outranks it either way) is deliberately left alone — it belongs to the phone, not to
