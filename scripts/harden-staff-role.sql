@@ -531,11 +531,14 @@ GRANT SELECT (id, account_id, email, display_name, email_verified_at, created_at
 -- rather than by oversight: `admin-service.ts` does not project them, so granting them would
 -- widen what staff can read past what the console displays. Add them in the diff that adds the
 -- projection, not before.
+--
+-- `sync_progress_at` (mail 0129) is a timestamp the `sync_lag` rule reads, and that rule runs on
+-- this role; the migration grants it too, so the alert does not wait for a re-run of this file.
 REVOKE ALL ON public.mailboxes FROM ohmail_admin;
 GRANT SELECT (
   id, account_id, provider, address, created_at, display_name, status, last_sync_at,
   auth_kind, error_code, error_detail, failed_at, retry_count, kickstart_at,
-  sync_blocked_reason, sync_blocked_since
+  sync_blocked_reason, sync_blocked_since, sync_progress_at
 ) ON public.mailboxes TO ohmail_admin;
 
 -- `mailbox_credentials` — PRESENCE ONLY. `(mailbox_id, transport)` IS the primary key, which is

@@ -698,6 +698,22 @@ export function classifyMailboxError(err: unknown, phase: MailboxErrorPhase): Ma
 }
 
 /**
+ * Did the mail server itself say "not now"? A throttle (`ETHROTTLE`, or a finite `throttleReset`
+ * hint) or an RFC 5530 `UNAVAILABLE`/`LIMIT` response code — each arrives only after the server
+ * received and parsed our command, so none is a statement about the mailbox or its credentials
+ * (mail 0129). CLOSED: a connection that merely closed, an errno or an unknown atom is not a
+ * refusal, because it cannot be told from an outage. Read before {@link classifyMailboxError},
+ * whose `connect` answer for the same evidence is what used to put `status='error'` on the row.
+ */
+export function isProviderRefusal(err: unknown): boolean {
+  const e = err as (ErrorShape & { throttleReset?: unknown }) | null;
+  if (e === null || typeof e !== "object") return false;
+  if (codeOf(err) === "ETHROTTLE") return true;
+  if (typeof e.throttleReset === "number" && Number.isFinite(e.throttleReset) && e.throttleReset > 0) return true;
+  return SERVER_UNAVAILABLE_RESPONSE_CODES.has(responseCodeOf(err));
+}
+
+/**
  * The ONLY value that may be written to `mailboxes.error_detail`. NEVER `err.message`, `err.stack`,
  * or server free-text. This column is read by the account's own user AND the admin console, so what
  * goes in it is an account-isolation question before a usability one: a throw out of `runSyncCycle`
@@ -1279,23 +1295,61 @@ export async function markMailboxSyncBlocked(
  * A ceiling we set ended the cycle — the soft block, with its backoff, and nothing else.
  * `markMailboxFailed` was wrong here rather than imprecise: an `ImapBoundExceeded` means the mailbox
  * authenticated, answered, and sent more than one pass takes, and `status='error'` tells its owner it
- * failed. So this writes the mail-0029 pair (the honest "our own infrastructure is not serving this
- * right now") and leaves `status`, `error_code`, `error_detail`, `failed_at` and `retry_count` as they
- * were. Not `markMailboxSyncBlocked` with a third column: that function's three callers have no
- * next-attempt instant to record, this one does (mail 0039 makes it survive a restart). `retry_count`
- * is NOT incremented — it counts FAILURES and `markMailboxConnected` resets it; a cap hit is not one, and inflating it would lengthen the ladder for a mailbox whose only problem is its size.
+ * failed. So this writes the mail-0029 pair and leaves `status`, `error_code`, `error_detail`,
+ * `failed_at` and `retry_count` as they were (mail 0039 makes the next-attempt instant survive a
+ * restart). `retry_count` is NOT incremented: it counts FAILURES, and a cap hit is not one.
+ * On a mailbox no cycle has completed yet it also stamps `sync_progress_at` (mail 0129): the
+ * mailbox was read, which is what the `sync_lag` alert needs to call a first import alive.
  */
 export async function markMailboxReadLimited(
   db: WorkerDb, mailboxId: string,
   opts: { fence?: LeaderFence; now?: Date; retryAfter?: Date | null } = {},
 ): Promise<boolean> {
+  return markMailboxSoftBlocked(db, mailboxId, "read_limited", opts);
+}
+
+/**
+ * The mail server declined to serve this cycle for now (mail 0129) — a throttle, or RFC 5530
+ * `UNAVAILABLE`/`LIMIT`. The same soft block and backoff as {@link markMailboxReadLimited}, and no
+ * progress stamp: the server answered and read nothing out.
+ */
+export async function markMailboxProviderUnavailable(
+  db: WorkerDb, mailboxId: string,
+  opts: { fence?: LeaderFence; now?: Date; retryAfter?: Date | null } = {},
+): Promise<boolean> {
+  return markMailboxSoftBlocked(db, mailboxId, "provider_unavailable", opts);
+}
+
+/**
+ * A cycle read this never-completed mailbox and ended on one of our ceilings (mail 0129): stamp
+ * `sync_progress_at` and nothing else, so the `sync_lag` rule reads the first import as alive.
+ * The cycle's failure arm calls it on every such end, because one bounded cycle is not yet a
+ * quarantine and would otherwise stamp nothing. Guarded on `last_sync_at IS NULL` in the statement;
+ * `false` when there was nothing to stamp or the fence refused.
+ */
+export async function stampSyncProgress(
+  db: WorkerDb, mailboxId: string, opts: { fence?: LeaderFence; now?: Date } = {},
+): Promise<boolean> {
   const now = opts.now ?? new Date();
+  return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes)
+    .set({ syncProgressAt: sql`${now.toISOString()}::timestamptz` })
+    .where(and(lifecycleWhere(mailboxId, opts.fence), isNull(mailboxes.lastSyncAt)))
+    .returning({ id: mailboxes.id }));
+}
+
+async function markMailboxSoftBlocked(
+  db: WorkerDb, mailboxId: string, reason: "read_limited" | "provider_unavailable",
+  opts: { fence?: LeaderFence; now?: Date; retryAfter?: Date | null },
+): Promise<boolean> {
+  const now = opts.now ?? new Date();
+  const at = sql`${now.toISOString()}::timestamptz`;
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes).set({
-    syncBlockedReason: "read_limited",
-    // `coalesce`, exactly as `markMailboxSyncBlocked` does it and for the same reason: the caller
-    // repeats this while the block lasts, and the column holds the START of the block. The
-    // `.toISOString()` cast is the idiom that module records as having bitten twice.
-    syncBlockedSince: sql`coalesce(${mailboxes.syncBlockedSince}, ${now.toISOString()}::timestamptz)`,
+    syncBlockedReason: reason,
+    // `coalesce`: the caller repeats this while the block lasts, and the column holds its START.
+    syncBlockedSince: sql`coalesce(${mailboxes.syncBlockedSince}, ${at})`,
+    ...(reason === "read_limited"
+      ? { syncProgressAt: sql`case when ${mailboxes.lastSyncAt} is null then ${at} else ${mailboxes.syncProgressAt} end` }
+      : {}),
     // `undefined` leaves the column alone; only an explicit `null` clears — `markMailboxFailed`'s
     // rule, so a caller cannot release a mailbox by omission.
     ...(opts.retryAfter !== undefined ? { retryAfter: opts.retryAfter } : {}),

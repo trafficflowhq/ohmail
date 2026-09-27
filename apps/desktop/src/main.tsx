@@ -24,7 +24,8 @@ import "../../webapp/app/app.css";
 // stamped by this file's boot block below) re-arranges the same shell in this window too.
 import "../../webapp/app/zero-layout.css";
 
-import { bridgeAvailable, connectLocalEngine } from "./bridge-fetch.js";
+import { bridgeAvailable, bridgeFetch, connectLocalEngine, engineStatus } from "./bridge-fetch.js";
+import { startNetworkReturnRelay } from "./network-return.js";
 import { omarchySchemeSource, startOmarchyFeed } from "./omarchy.js";
 import { startUpdateCadence } from "./update-cadence.js";
 import { DesktopGate } from "./DesktopGate.js";
@@ -129,6 +130,16 @@ void startOmarchyFeed();
    presses and can install nothing; `update-cadence.ts` carries the whole reasoning. The teardown
    it hands back is dropped deliberately: this window's life IS the cadence's life. */
 startUpdateCadence();
+
+/* THE NETWORK'S RETURN, TO THE LOCAL ENGINE — a capability of the WINDOW, like the arms above.
+   The engine's re-dial ladder otherwise holds a dead connection for up to five minutes after the
+   network is back; `network-return.ts` carries the reasoning. Asked per event, because the door
+   can change while the window stays open, and outside the app there is no bridge to ask. */
+startNetworkReturnRelay({
+  target: window,
+  isLocalDoor: async () => bridgeAvailable() && (await engineStatus()).mode === "local",
+  post: (path, init) => bridgeFetch(path, init),
+});
 
 /* THE PRE-PAINT STAMP IS NOT HERE ANY MORE. This file is loaded as a MODULE script, and module
    scripts are DEFERRED — the theme, face and cached-palette stamps ran after the document had

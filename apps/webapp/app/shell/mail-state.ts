@@ -38,6 +38,7 @@ export const SYNC_BLOCK_REASONS = [
   "read_limited",
   "clock_off",
   "account_closed",
+  "provider_unavailable",
 ] as const;
 export type SyncBlockReason = (typeof SYNC_BLOCK_REASONS)[number];
 

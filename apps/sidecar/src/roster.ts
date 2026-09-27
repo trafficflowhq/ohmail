@@ -360,6 +360,14 @@ export interface LocalMailboxRuntime {
    */
   redial(): Promise<void>;
   /**
+   * The operating system says the network is back: drop the automatic re-dial wait and re-dial
+   * now. A dead connection otherwise waits out its ladder (up to five minutes) after the network
+   * returned. Honoured once per first ladder step, so a flapping link cannot defeat the ladder,
+   * and never over a refused sign-in or certificate. Returns whether a dial was asked for; like
+   * {@link redial} it never drains.
+   */
+  networkReturned(): boolean;
+  /**
    * Give the claim back and stay the organizer of record — the phone's leave-the-app hand-back.
    * Neither existing act: `detach()` gives the claim back and then closes the login and the timer
    * (this mailbox stops being served at all — right for a shutdown, wrong for a pocketed phone),

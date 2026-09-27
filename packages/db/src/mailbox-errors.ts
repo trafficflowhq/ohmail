@@ -70,7 +70,7 @@ export function isMailboxDisabledReason(v: unknown): v is MailboxDisabledReason 
 
 /**
  * Every value `mailboxes.sync_blocked_reason` may hold — CLOSED for a third reason: these are the
- * ways OUR OWN infrastructure declines to serve a mailbox we know is expected. Each member is a
+ * ways a mailbox we know is expected is declined while nothing about it is broken. Each member is a
  * branch in the worker's own sync loop; a new one appears only with a new refusal branch, so the
  * migration lands with it, and it gets a CHECK. NO `no_organizer` member: the worker is the only
  * writer, and a column only the worker writes cannot say "no worker" — nobody would clear it, so
@@ -116,6 +116,14 @@ export const MAILBOX_SYNC_BLOCK_REASONS = [
    * composes no entitlements program, so no account of its ever parks.
    */
   "account_closed",
+  /**
+   * The mail server answered and declined to serve this cycle for now: a throttle with a
+   * suggested wait (imapflow's `ETHROTTLE`), or RFC 5530 `UNAVAILABLE`/`LIMIT` (mail 0129). Not a
+   * broken mailbox, so `status` and the error columns stay as they were and the retry waits the
+   * server's own hint where it gave one. A connection that merely closed is not this member: it
+   * cannot be told from an outage, and stays the `connect` error.
+   */
+  "provider_unavailable",
 ] as const;
 
 export type MailboxSyncBlockReason = (typeof MAILBOX_SYNC_BLOCK_REASONS)[number];

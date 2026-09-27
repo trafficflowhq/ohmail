@@ -116,11 +116,12 @@ import { makeSmtpSizeDial, recordSmtpMaxSize } from "./smtp-size.js";
 import type { Tx, OrganizerRole, OrganizerState } from "@trafficflow/db";
 import {
   loadEnabledMailboxes, loadRosterMailboxes, loadMailboxCreds, loadMailboxById, bootstrapEnvCreds, BootstrapRefusedError,
-  markMailboxFailed, markMailboxReadLimited, markMailboxConnected, markMailboxStoodDown,
+  markMailboxFailed, markMailboxReadLimited, markMailboxProviderUnavailable, markMailboxConnected,
+  markMailboxStoodDown, stampSyncProgress,
   clearOrganizerStandDown,
   markMailboxReleased, refreshOrganizerHolder,
   markMailboxSyncBlocked, clearMailboxSyncBlock,
-  classifyMailboxError, mailboxErrorDetail,
+  classifyMailboxError, isProviderRefusal, mailboxErrorDetail,
   stampMailboxSyncNow, stampInitialImportComplete, makeSyncWriteFence, type LeaderFence,
   accountsOf, organizedMailboxIdsOf, accountInShard, shardFilter,
   type EnabledMailbox, type MailboxDisabledReason, type MailboxErrorPhase,
@@ -965,8 +966,8 @@ export async function startWorkerWithLock(
      *
      * At closure scope for `capDropped`'s reason: the entry has to outlive the cycle that wrote
      * it, or the grace could never elapse. It is dropped by the cycle that next completes, which
-     * is what makes `reconcileSyncBlocks` clear the row on the next healthy pass — the same
-     * mechanism the other three arms use, and the reason this needed no clearing code of its own.
+     * is what makes `reconcileSyncBlocks` clear the row on the next healthy pass, the other arms'
+     * mechanism. It holds `provider_unavailable` too (mail 0129), cleared by the same evidence.
      */
     const readLimited = new Map<string, SyncBlock>();
     /**
@@ -2048,13 +2049,21 @@ export async function startWorkerWithLock(
        * on the CLASS, not a bound code, so a ceiling added later is covered without being enumerated.
        */
       const bounded = isImapBoundExceeded(reason);
-      if (bounded) noteBlock(readLimited, mailboxId, "read_limited");
+      /* …and the second soft arm (mail 0129): the SERVER said "not now" — a throttle, or
+         `UNAVAILABLE`/`LIMIT`. Same row shape as a ceiling of ours, a different reason, and the
+         wait above already honours its hint. Asked only when the ceiling did not answer. */
+      const soft = bounded ? "read_limited" as const
+        : isProviderRefusal(reason) ? "provider_unavailable" as const : null;
+      if (soft) noteBlock(readLimited, mailboxId, soft);
       try {
         // Mail migration 0039: the same statement now also records WHEN. That is what makes this backoff
         // survive a restart and — the point of the column — releasable by an operator, because
         // until now the only exits from quarantine were the ladder expiring and a redeploy.
-        const written = bounded
-          ? await markMailboxReadLimited(db, mailboxId, { fence, retryAfter: new Date(retryAt) })
+        const softOpts = { fence, retryAfter: new Date(retryAt) };
+        const written = soft === "read_limited"
+          ? await markMailboxReadLimited(db, mailboxId, softOpts)
+          : soft === "provider_unavailable"
+          ? await markMailboxProviderUnavailable(db, mailboxId, softOpts)
           : await markMailboxFailed(
             db, mailboxId, { code, detail: mailboxErrorDetail(reason) },
             { fence, retryAfter: new Date(retryAt) },
@@ -2089,7 +2098,7 @@ export async function startWorkerWithLock(
       // backoff is real either way, and four suites read this line's `attempts`/`retryInMs`.
       log.error("mailbox_quarantined", {
         mailboxId, accountId, attempts, retryInMs: wait, err: reason,
-        ...(bounded ? { syncBlockedReason: "read_limited" } : { errorCode: code }),
+        ...(soft ? { syncBlockedReason: soft } : { errorCode: code }),
       });
     }
 
@@ -4010,6 +4019,23 @@ export async function startWorkerWithLock(
             mailboxId: rt.mailboxId, accountId: rt.accountId,
             consecutiveFailures: rt.failures, maxSyncFailures, err,
           });
+          /* A first import that ended on one of OUR ceilings still read the mailbox: stamp the
+             progress the `sync_lag` rule reads while no cycle has completed. Measured on a 25k
+             fixture: the first cycle ran six minutes and ended here, one failure the quarantine
+             arm below never sees. The catch must not rethrow, as the first-success stamp's. */
+          if (rt.lastSuccessAt === null && isImapBoundExceeded(err)) {
+            try {
+              await asDatabaseFault("cycle.stampSyncProgress",
+                () => stampSyncProgress(db, rt.mailboxId, { fence }));
+            } catch (stampErr) {
+              noteIfSharedDatabaseFault(stampErr, rt);
+              log.warn("mailbox_progress_stamp_failed", {
+                mailboxId: rt.mailboxId, accountId: rt.accountId, err: stampErr,
+                reason: "a first import ended on a read ceiling and its progress could not be " +
+                  "written; the lag alert measures from the last stamp it has",
+              });
+            }
+          }
           if (rt.failures >= maxSyncFailures) toQuarantine.push({ rt, err });
         }
       }

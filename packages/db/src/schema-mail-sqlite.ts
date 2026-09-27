@@ -428,6 +428,8 @@ export const mailboxes = sqliteTable("mailboxes", {
   profileImportAskAt: integer("profile_import_ask_at", { mode: "timestamp_ms" }),
   profileImportAskOutcome: text("profile_import_ask_outcome"),
   profileImportAskReason: text("profile_import_ask_reason"),
+  /** Mail 0129 — when a cycle last read a never-completed mailbox; see the pg twin. LAST for 0111's reason. */
+  syncProgressAt: integer("sync_progress_at", { mode: "timestamp_ms" }),
 }, (t) => ({
   ixIdAccount: uniqueIndex("mailboxes_id_account_uq").on(t.id, t.accountId),
   // ONE ACTIVE MAILBOX PER ADDRESS (mail 0021). PARTIAL, because `delete` is a soft delete to

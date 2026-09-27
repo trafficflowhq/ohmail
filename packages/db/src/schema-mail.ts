@@ -439,6 +439,14 @@ export const mailboxes = pgTable("mailboxes", {
   profileImportAskAt: timestamp("profile_import_ask_at", { withTimezone: true }),
   profileImportAskOutcome: text("profile_import_ask_outcome"),
   profileImportAskReason: text("profile_import_ask_reason"),
+  /**
+   * WHEN A CYCLE LAST READ THIS MAILBOX BEFORE ANY CYCLE COMPLETED (mail 0129). Written with a
+   * `read_limited` block while `last_sync_at` is still NULL: the mailbox answered and was read up
+   * to one of our ceilings. Read by the `sync_lag` alert alone, after `last_sync_at` and before
+   * `created_at`, so a first import that hits a ceiling is alive rather than lagging. Every other
+   * reader keeps `last_sync_at`, which still means a completed cycle.
+   */
+  syncProgressAt: timestamp("sync_progress_at", { withTimezone: true }),
 }, (t) => ({
   ixIdAccount: uniqueIndex("mailboxes_id_account_uq").on(t.id, t.accountId),
   // ONE ACTIVE MAILBOX PER ADDRESS (mail 0021). PARTIAL, because `delete` is a soft delete to
@@ -464,7 +472,7 @@ export const mailboxes = pgTable("mailboxes", {
   // honest; the constraint is created by the migration.
   ckSyncBlockedReason: check(
     "mailboxes_sync_blocked_reason_closed",
-    sql`${t.syncBlockedReason} is null or ${t.syncBlockedReason} in ('lease_unreadable', 'awaiting_credentials', 'at_capacity', 'read_limited', 'clock_off', 'account_closed')`,
+    sql`${t.syncBlockedReason} is null or ${t.syncBlockedReason} in ('lease_unreadable', 'awaiting_credentials', 'at_capacity', 'read_limited', 'clock_off', 'account_closed', 'provider_unavailable')`,
   ),
   // THE THIRD AND FOURTH CLOSED SETS . `organizerRole` has no `is null` arm because
   // the column is NOT NULL — the set really is two members, and spelling a third state that

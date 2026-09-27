@@ -787,6 +787,10 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // the status read and every organizer tick read the row's ask columns, so an API or a worker
   // ahead of the migration 42703s all three. Deploy order migration → API → worker.
   ["mailboxes", "profile_import_ask_fingerprint"],
+  // mail 0129_mailbox_sync_soft_states — when a cycle last read a never-completed mailbox. The
+  // `sync_lag` rule reads it on every alert pass and the worker writes it, so a host ahead of the
+  // migration fails the pass on 42703. Deploy order migration → API → worker.
+  ["mailboxes", "sync_progress_at"],
 ] as const;
 
 /**
@@ -1069,13 +1073,12 @@ export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker>
      on a settings pane somebody is using. A database carrying `ohmail/News` carries every
      earlier member too. */
   ["away_responders_piles_closed", "ohmail/News"],
-  /* Mail 0124_sync_blocked_reason_account_closed — `account_closed`, the wall's park (the needle
-     MOVED from 0105's `clock_off`, which moved from 0102's `read_limited`: one constraint, one
-     definition, and the newest member
-     is strictly the stronger probe — a database carrying it carries every earlier one). Against a
-     0123 database the roster's `account_closed` write is refused by the old CHECK, so a parked
-     mailbox reads as an ordinary connected one — the silence mail 0029 exists to remove. */
-  ["mailboxes_sync_blocked_reason_closed", "account_closed"],
+  /* Mail 0129_mailbox_sync_soft_states — `provider_unavailable` (the needle MOVED from 0124's
+     `account_closed`, which moved from 0105's `clock_off` and 0102's `read_limited`: one
+     constraint, one definition, and a database carrying the newest member carries every earlier
+     one). Against a 0128 database the worker's write for a throttled mailbox is refused by the old
+     CHECK, and the row keeps whatever it said before. */
+  ["mailboxes_sync_blocked_reason_closed", "provider_unavailable"],
   /* Mail 0103 — `mobile` joins the organizer kinds. TWO entries, because the kind reaches this
      table twice and the migration replaces BOTH constraints under their existing names, so a
      name-presence probe cannot tell an 0102 database from an 0103 one. What a missing entry costs
@@ -1104,7 +1107,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0128_profile_import_ask";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0129_mailbox_sync_soft_states";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud

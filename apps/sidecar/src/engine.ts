@@ -47,6 +47,8 @@ import {
   seqBounds,
   // The arrangement's doorbell: every role flip below rings it inside its own transaction.
   recordMailboxProfileChange, type LedgerTx,
+  // What a server says when it declines a LOGIN for now — the worker's classifier reads the same two.
+  SERVER_UNAVAILABLE_CODES, SERVER_UNAVAILABLE_RESPONSE_CODES,
 } from "@trafficflow/db";
 import {
   attachmentsService, awayResponderService, contactsService, draftingService, draftsService,
@@ -1343,17 +1345,37 @@ export function certificateRefused(err: unknown): boolean {
 /**
  * Did the server reject our credentials — one bit, deliberately narrower than the worker's.
  * `classifyMailboxError` is the real taxonomy and this is not a second copy: it answers one question
- * where that answers six, and it is not imported for a structural reason — that module imports `makeDb`
- * from `@trafficflow/db/cloud`, and the worker's export map exists precisely to keep the hosted
- * Postgres pool out of the desktop. What is shared is the SIGNAL, so the two cannot disagree on the one
- * case both judge: imapflow's `authenticationFailed` flag and the OAuth client's `OAUTH_INVALID_GRANT`.
- * Everything else — timeout, TLS failure, refused socket, a server that is down — is NOT this, which
+ * where that answers six, and importing it would bring `@trafficflow/db/cloud`'s hosted Postgres pool
+ * into the desktop. What is shared is the SIGNAL, so the two cannot disagree on the one case both
+ * judge: imapflow's `authenticationFailed` flag and the OAuth client's `OAUTH_INVALID_GRANT`, each
+ * read only after the server's own "not now" (see {@link providerDeclinedForNow}). Everything else —
+ * timeout, TLS failure, refused socket, a server that is down or throttling — is NOT this, which
  * keeps a provider blip from telling somebody their password is wrong.
  */
 export function credentialsRefused(err: unknown): boolean {
+  /* The server's own "not now" comes first, as in the worker's classifier: imapflow stamps the
+     flag on EVERY failed LOGIN, so a throttle or a connection cap carries it too, and reading the
+     flag first stopped the re-dial for good on a server that only asked us to wait. */
+  if (providerDeclinedForNow(err)) return false;
   for (let e: unknown = err, hops = 0; e !== null && e !== undefined && hops < 8; hops++) {
     if ((e as { authenticationFailed?: unknown }).authenticationFailed === true) return true;
     if ((e as { code?: unknown }).code === "OAUTH_INVALID_GRANT") return true;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+/**
+ * Did the server decline this for now rather than refuse it — a throttle (`ETHROTTLE`, or a
+ * positive `throttleReset` hint), RFC 5530 `UNAVAILABLE`/`LIMIT`, or imapflow's own no-connection
+ * codes? The same closed evidence `classifyMailboxError` reads above the flag; literals only.
+ */
+function providerDeclinedForNow(err: unknown): boolean {
+  for (let e: unknown = err, hops = 0; e !== null && e !== undefined && hops < 8; hops++) {
+    const f = e as { code?: unknown; serverResponseCode?: unknown; throttleReset?: unknown };
+    if (typeof f.code === "string" && SERVER_UNAVAILABLE_CODES.has(f.code)) return true;
+    if (typeof f.serverResponseCode === "string" && SERVER_UNAVAILABLE_RESPONSE_CODES.has(f.serverResponseCode)) return true;
+    if (typeof f.throttleReset === "number" && Number.isFinite(f.throttleReset) && f.throttleReset > 0) return true;
     e = (e as { cause?: unknown }).cause;
   }
   return false;
@@ -3109,6 +3131,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * would give a press the long wait back or let it reset the ladder.
        */
       let forcedNotBefore = 0;
+      /** The floor under {@link LocalMailboxRuntime.networkReturned}, its own for the press's reason. */
+      let networkNotBefore = 0;
 
       /**
        * Which connection this mailbox is on — a counter, bumped by every dial. The identity a
@@ -6654,6 +6678,18 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         },
         serialize,
         syncUntilQuiet,
+        networkReturned: (): boolean => {
+          /* Only a connection known dead is waiting on the ladder, and a refused sign-in or
+             certificate waits for a person, not for the network. */
+          if (stopped || connectionDeadSince === null || signInRefused || certificateRefusedNow) {
+            return false;
+          }
+          if (Date.now() < networkNotBefore) return false;
+          networkNotBefore = Date.now() + reconnect.ladderMs[0]!;
+          redialNotBefore = 0;
+          void redialIfDead().catch(() => { /* the dial logs its own failure */ });
+          return true;
+        },
         /* The foreground wake — see `LocalMailboxRuntime.redial`. The SAME function the poll runs,
            handed a second caller rather than reimplemented: a wake that dialled by its own route
            would be a second dial path, and the one thing both must do identically is take the
@@ -7592,11 +7628,18 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * it, and a phone's view of its host is the pairing layer's answer. */
         const localConnectionsMatch = req.method === "GET"
           && url.pathname === "/local/mailboxes/connections";
+        /* `POST /local/mailboxes/connections/retry` — the shell heard the operating system say the
+         * network is back. Every dead connection drops its automatic wait and re-dials now; a
+         * live one, a refused sign-in and a refused certificate are left alone. Answers 202 with
+         * how many dials it asked for. On `handle` ALONE, like the GET beside it. */
+        const localRetryMatch = req.method === "POST"
+          && url.pathname === "/local/mailboxes/connections/retry";
         /* `DELETE /local/stored-login` — signing out of this install, NAMED because one line
            below treats it apart from its neighbours: it is the only door here that opens on an
            expired launch bearer, since it is the way OUT of the state that expiry creates. */
         const localSignOutMatch = req.method === "DELETE" && url.pathname === "/local/stored-login";
         const localAction = localConnectionsMatch
+          || localRetryMatch
           || localSignOutMatch
           || (req.method === "POST" && url.pathname === "/local/organizer/takeover")
           || localRemoveMatch !== null
@@ -7617,6 +7660,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 ? "/local/mailboxes"
                 : localConnectionsMatch
                   ? "/local/mailboxes/connections"
+                  : localRetryMatch
+                  ? "/local/mailboxes/connections/retry"
                   : url.pathname === "/local/stored-login"
                     ? "/local/stored-login"
                     : "/local/organizer/takeover";
@@ -7786,6 +7831,18 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 { status: refused ? 400 : 500, headers: { "content-type": "application/json" } },
               );
             }
+          }
+          if (localRetryMatch) {
+            const all = runtimes.all();
+            const redialled = all.filter((r) => r.networkReturned()).length;
+            log("local_network_returned", {
+              mailboxes: all.length, count: redialled,
+              reason: "the shell reported that the network is back; `count` dead connections "
+                + "dropped their re-dial wait and dialled now, and every other mailbox was left as it was",
+            });
+            return new Response(JSON.stringify({ redialled }), {
+              status: 202, headers: { "content-type": "application/json" },
+            });
           }
           if (localConnectionsMatch) {
             /* Instants as ISO strings, `null` while reachable — the shape every other lifecycle

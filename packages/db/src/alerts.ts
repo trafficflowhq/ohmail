@@ -1009,6 +1009,10 @@ export async function evaluateAlertsWithScope(
   // only once it has aged through one further full period with no scan advancing it.
   const lagBefore = new Date(now.getTime() - (t.syncLagMs + t.syncLagSustainMs));
   const criticalBefore = new Date(now.getTime() - t.syncLagCriticalMs);
+  // The mailbox's last sign of life: a completed cycle, else a cycle that read it and ended on
+  // one of our ceilings before any completed (`sync_progress_at`, mail 0129), else its creation.
+  // A first import that keeps reading is alive; one that stops reading pages as before.
+  const lastAlive = sql`coalesce(${mailboxes.lastSyncAt}, ${mailboxes.syncProgressAt}, ${mailboxes.createdAt})`;
   const laggingByAccount = await db
     .select({
       accountId: mailboxes.accountId,
@@ -1016,11 +1020,11 @@ export async function evaluateAlertsWithScope(
       // The CRITICAL-tier members of the same population — counted per mailbox, not derived
       // from the group's oldest, so the copy can say how many owners are genuinely cut off
       // instead of ascribing the worst mailbox's state to all of them.
-      criticalCount: sql<number>`count(*) filter (where coalesce(${mailboxes.lastSyncAt}, ${mailboxes.createdAt}) < ${criticalBefore.toISOString()}::timestamptz)::int`,
-      oldest: sql<Date | null>`min(coalesce(${mailboxes.lastSyncAt}, ${mailboxes.createdAt}))`,
+      criticalCount: sql<number>`count(*) filter (where ${lastAlive} < ${criticalBefore.toISOString()}::timestamptz)::int`,
+      oldest: sql<Date | null>`min(${lastAlive})`,
       // The warning tier's own oldest — the members NOT past the critical cut — so each row
       // below reports the age of its own population rather than borrowing the other's.
-      oldestWarning: sql<Date | null>`min(coalesce(${mailboxes.lastSyncAt}, ${mailboxes.createdAt})) filter (where coalesce(${mailboxes.lastSyncAt}, ${mailboxes.createdAt}) >= ${criticalBefore.toISOString()}::timestamptz)`,
+      oldestWarning: sql<Date | null>`min(${lastAlive}) filter (where ${lastAlive} >= ${criticalBefore.toISOString()}::timestamptz)`,
     })
     .from(mailboxes)
     .where(and(
@@ -1033,7 +1037,7 @@ export async function evaluateAlertsWithScope(
       // binds a `Date` happily, so the unit suite was green while every production pass
       // died — which the worker e2e caught only because the pass now LOGS its own
       // failure instead of swallowing it.
-      sql`coalesce(${mailboxes.lastSyncAt}, ${mailboxes.createdAt}) < ${lagBefore.toISOString()}::timestamptz`,
+      sql`${lastAlive} < ${lagBefore.toISOString()}::timestamptz`,
     ))
     .groupBy(mailboxes.accountId);
 
