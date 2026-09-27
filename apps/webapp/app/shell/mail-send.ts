@@ -1068,9 +1068,10 @@ export function useMailSend(
    * `onSettled` is confirmation-only: a queued or unverified send may never have left.
    *
    * Returning `true` means the CALLER has spoken for this send, so the lane raises no sentence
-   * of its own — one send, one toast. Only the confirmation's answer is read.
+   * of its own — one send, one toast. Only the confirmation's answer is read. `phase` names the
+   * ending, a send replayed from the last session's outbox included.
    */
-  onOutcome?: (key: string, m: MailSend, accepted: boolean) => boolean,
+  onOutcome?: (key: string, m: MailSend, accepted: boolean, phase?: SendPhase) => boolean,
 ): MailSendApi {
   const t = useTranslations();
   const [states, setStates] = useState<Record<string, SendState>>({});
@@ -1393,7 +1394,7 @@ export function useMailSend(
         /* AND THE LANES THAT WILL NEVER CONFIRM SAY SO. A failed, duplicate or unverified send
            is the end of this press; an arm still waiting on it would wait for ever. `queued` is
            not terminal — the flush confirms it later and `settle` answers then. */
-        if (next.phase !== "queued") outcomeRef.current?.(key, m, false);
+        if (next.phase !== "queued") outcomeRef.current?.(key, m, false, next.phase);
         setPhase(key, next);
       }
 
@@ -1651,6 +1652,10 @@ export function useMailSend(
              the composer comes back editable saying nothing, which is a message the person
              pressed Send on and no account of what happened to it. */
           if (speaksForScreen) setPhase(record.lane, phaseFor(res));
+          // And the lane's owner hears it as the live path's owner does: this send is over, not sent.
+          outcomeRef.current?.(
+            record.lane, { kind: "mail_send" } as unknown as MailSend, false, phaseFor(res).phase,
+          );
         }
       }
     };

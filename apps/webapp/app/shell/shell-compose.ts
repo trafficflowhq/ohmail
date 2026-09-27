@@ -40,6 +40,8 @@ import {
   EMPTY_COMPOSE,
   readComposeDraft,
   readComposeRow,
+  takeRecoveredComposer,
+  whenComposerReady,
   writeComposeDraft,
   writeComposeRow,
   writeComposeSession,
@@ -82,6 +84,7 @@ import {
   writeReplyDraft,
   writeReplyMeta,
   type LanePromotionPlan,
+  type SendPhase,
   type SendState,
 } from "./mail-send";
 import type { MailboxFacts } from "./mail-state";
@@ -310,10 +313,17 @@ export function useShellCompose({
    * Cleared by the next edit and by every exit that succeeds.
    */
   const [composeCloseRefusal, setComposeCloseRefusal] = useState<string | null>(null);
-  useEffect(() => {
+  /** `autosave.restored`, late-bound like {@link settleComposeRef} below. */
+  const restoredRef = useRef<() => void>(() => {});
+  useEffect(() => whenComposerReady(() => {
     const saved = readComposeDraft();
-    if (saved.to || saved.subject || saved.body) setCompose(saved);
-  }, []);
+    if (saved.to || saved.subject || saved.body) {
+      // The account may not hold it (a tab closed inside the pause, or died): written at this open.
+      restoredRef.current();
+      setCompose(saved);
+    }
+    if (takeRecoveredComposer()) toast(t("compose.recoveredFromClosedTab"));
+  }), []);
   /**
    * THE INLINE REPLY.
    *
@@ -510,6 +520,17 @@ export function useShellCompose({
         });
       }
     }
+  });
+
+  /**
+   * A LANE ITS SEND HELD OFF, HANDED BACK once that send failed for good: the promotion skipped it
+   * while the send was out, and with the parent gone nothing else reaches its words. A delivered
+   * send clears the lane first, and an unverified one keeps its hold, so neither is promoted.
+   */
+  const handBackLane = useStableCallback((lane: string) => {
+    if (lane === COMPOSE_SEND_KEY) return;
+    const parentId = lane.startsWith("fwd:") ? lane.slice("fwd:".length) : lane;
+    if (engine.messageIsGone(parentId)) promoteLanesOf([parentId]);
   });
 
   /** Every lane this window holds is judged at most once per mount — see the effect below. */
@@ -786,7 +807,10 @@ export function useShellCompose({
    * phone. Answering `true` tells the lane the shell has spoken for this send, so the ordinary
    * "Reply sent." is not raised and replaced — one press, one sentence.
    */
-  const onSendOutcome = useStableCallback((key: string, _m: MailSendMutation, accepted: boolean): boolean => {
+  const onSendOutcome = useStableCallback((
+    key: string, _m: MailSendMutation, accepted: boolean, phase?: SendPhase,
+  ): boolean => {
+    if (!accepted && phase === "failed") handBackLane(key);
     const plan = sendDoneArm.current.get(key);
     if (plan === undefined) return false;
     sendDoneArm.current.delete(key);
@@ -1059,6 +1083,7 @@ export function useShellCompose({
     },
   });
   settleComposeRef.current = autosave.settleCompose;
+  restoredRef.current = autosave.restored;
   releaseDraftIdRef.current = autosave.draftId;
   releaseBindingRef.current = autosave.release;
   /**
@@ -1688,6 +1713,11 @@ export function useShellCompose({
         flushed = await autosave.flush();
       } finally {
         closing.current = false;
+      }
+      // A body past the ceiling is a message the account cannot hold: its note says how to shorten it.
+      if (flushed.kind === "tooLong") {
+        setComposeCloseRefusal(t("compose.closeNotSaved"));
+        return;
       }
       if (flushed.kind === "failed") {
         setComposeCloseRefusal(

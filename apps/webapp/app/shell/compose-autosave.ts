@@ -18,11 +18,22 @@ import type { ComposeFields } from "./compose";
 import { COMPOSE_SEND_KEY, writeReplyMeta } from "./mail-send";
 import { holdOf, releaseSendLockForRow } from "./send-lock";
 import {
-  clearComposeDraft, composeSessionId, parseRecipients, readComposeRow, writeComposeRow,
+  clearComposeDraft, composeSessionId, parseRecipients, readComposeRow, whenComposerReady,
+  writeComposeRow,
 } from "./compose";
 
 /** How long the form must be still before it is written to the account. */
 export const AUTOSAVE_DELAY_MS = 2_000;
+
+/** An effect body run once the composer is settled; its cleanup ends the wait and the body. */
+function afterComposerReady(body: () => (() => void) | void): () => void {
+  let stop: (() => void) | void;
+  const off = whenComposerReady(() => { stop = body(); });
+  return () => {
+    off();
+    if (typeof stop === "function") stop();
+  };
+}
 
 /**
  * Is there anything here worth a row? The same fields {@link writeComposeDraft} tests, for the
@@ -143,15 +154,16 @@ export type ComposeFate =
   | { kind: "restoredBy409"; rowId: string };
 
 /**
- * WHAT A FLUSH DID — {@link ComposeAutosave.flush}'s answer, and the only one a close may not
- * leave on. `nothing` covers empty, unchanged, and every refusal the composer is ALREADY stating
- * for as long as it stands (the body ceiling, no mailbox to send from, a parked message): none of
- * them is silent, so the close goes on. `saved` is the account holding it, or the outbox holding
- * it and on its way. `failed` is the write that was tried and did not land.
+ * WHAT A FLUSH DID — {@link ComposeAutosave.flush}'s answer. `nothing` covers empty, unchanged,
+ * and the refusals the composer states for as long as they stand (no mailbox to send from, a
+ * parked message), so the close goes on. `saved` is the account holding it, or the outbox holding
+ * it and on its way. `failed` is the write that was tried and did not land, and `tooLong` a body
+ * past the ceiling the account refuses: a close stays on either, with the text and a sentence.
  */
 export type ComposeFlush =
   | { kind: "nothing" }
   | { kind: "saved" }
+  | { kind: "tooLong" }
   | { kind: "failed"; reason: string | null };
 
 export interface ComposeAutosave {
@@ -191,9 +203,15 @@ export interface ComposeAutosave {
   /**
    * WRITE WHAT IS PENDING, NOW — the debounce's own save, run early because the composer is
    * closing. It IS that save ({@link useComposeAutosave} has one write), so every refusal applies
-   * unchanged; a close awaits the answer and stays put on `failed`.
+   * unchanged; a close awaits the answer and stays put on `failed` and `tooLong`.
    */
   flush: () => Promise<ComposeFlush>;
+  /**
+   * The form was just restored from this browser's unit, which the account may not hold — a tab
+   * closed inside the pause, or one that died. Written once at this open, wherever it landed, with
+   * every refusal of the ordinary save; a door that replaces the form ends it.
+   */
+  restored: () => void;
   /**
    * A compose send confirmed — release the row if the send used it, DELETE it if the send made its
    * own. `sentDraftId` is the settled mutation's `draftId`: naming this hook's row, the row became
@@ -280,9 +298,13 @@ export function useComposeAutosave(opts: {
    * into since is a different message, and that one is still worth saving.
    */
   const abandonedAt = useRef<string | null>(null);
+  /** A restored form the account may not hold yet — see {@link ComposeAutosave.restored}. */
+  const openWrite = useRef(false);
+  const restored = useCallback(() => { openWrite.current = true; }, []);
 
   const adopt = useCallback((id: string, f: ComposeFields) => {
     epoch.current += 1;
+    openWrite.current = false;
     setDraftId(id);
     // DURABLY, because this hook's state does not survive a reload and the scratch buffer holding
     // the same message's text does — see `composeRowKey`.
@@ -304,6 +326,7 @@ export function useComposeAutosave(opts: {
 
   const release = useCallback(() => {
     epoch.current += 1;
+    openWrite.current = false;
     /* THE CLOSE'S FLUSH MAY NOT RESURRECT THIS — see `abandonedAt`. Recorded here rather than at
        the doors: `discard` releases before it deletes, and every door that lets a message go
        passes through this one function. */
@@ -339,7 +362,9 @@ export function useComposeAutosave(opts: {
      about one file over. The ref is assigned on every render, so the effect calls the current one. */
   const settleComposeRef = useRef<(fate: ComposeFate) => void>(() => {});
   const adopted = useRef(false);
-  useEffect(() => {
+  /* Not before this page knows which composer it is: a duplicated tab would adopt the original's
+     row, and a dead tab's unit is taken by the same wait. */
+  useEffect(() => afterComposerReady(() => {
     if (adopted.current) return;
     const held = readComposeRow();
     if (held === null) {
@@ -424,7 +449,7 @@ export function useComposeAutosave(opts: {
       off = null;
       adoptOff.current = null;
     };
-  }, [engine]);
+  }), [engine]);
 
   const discard = useCallback(async () => {
     const id = draftId;
@@ -554,7 +579,7 @@ export function useComposeAutosave(opts: {
        not the other is a rule a person cannot learn. Nothing is taken away from the author — the
        text stays in the form and in the scratch buffer, `saved` is not advanced, and the first
        edit back under the ceiling saves it all. `draftNoteKey` renders this one. */
-    if (draftOverCeiling(f.body, f.html)) return { kind: "nothing" };
+    if (draftOverCeiling(f.body, f.html)) return { kind: "tooLong" };
     // A create with no mailbox would be a 400 the user cannot act on, and the From line is
     // already saying there is nowhere to send from. Nothing is written until there is.
     if (row === null && !mailbox) return { kind: "nothing" };
@@ -627,6 +652,7 @@ export function useComposeAutosave(opts: {
           return;
         }
         if (result.status !== "confirmed") {
+          openWrite.current = false;
           outcome = { kind: "saved" };
           return;
         }
@@ -658,6 +684,7 @@ export function useComposeAutosave(opts: {
         }
         saved.current = signature;
         if (mailbox) savedMailbox.current = mailbox;
+        openWrite.current = false;
         outcome = { kind: "saved" };
       } catch (err) {
         /* The text is still in the form and still in the local buffer, and `saved` is not
@@ -676,7 +703,7 @@ export function useComposeAutosave(opts: {
   }, [engine]);
 
   useEffect(() => {
-    if (!active) return;
+    if (!active && !openWrite.current) return;
     if (!worthSaving(fields)) return;
     const signature = signatureOf(fields);
     const mailboxMoved =
@@ -722,5 +749,5 @@ export function useComposeAutosave(opts: {
   settledRef.current = settled;
   settleComposeRef.current = settleCompose;
 
-  return { draftId, adopt, release, discard, flush, settled, settleCompose };
+  return { draftId, adopt, release, discard, flush, restored, settled, settleCompose };
 }

@@ -612,10 +612,13 @@ function supersedeKey(m: EngineMutation): string | null {
   }
 }
 
+/** Why a create past {@link pastCreateDedupe}'s horizon is never sent again — the retry's and the boot's. */
+const OUTBOX_EXPIRED_MESSAGE = "This change is too old to send safely — it would be created twice.";
+
 /**
  * IS THIS AN UNKEYED CREATE TOO OLD TO REPLAY? — one predicate, so the boot replay and the manual Try again cannot
  * come to disagree about it. Past the server's idempotency window a replay is not a replay: the key has been
- * forgotten, so the request mints a SECOND row — a second draft, a second rule. The boot path has always dropped such
+ * forgotten, so the request mints a SECOND row — a second draft, a second rule. The boot path never replays such
  * verbs; the retry button had no check at all, and the record a person presses there is by construction an old one,
  * since it spent a whole ceiling getting into that list. The membership test mirrors `restoreOutbox`'s exactly rather
  * than widening it: a create that carries a key of its own is safe at any age, and only these two arrive without one.
@@ -2956,18 +2959,17 @@ export class OhmailEngine {
        */
       if (this.overlays.has(e.id) || this.queue.some((q) => q.id === e.id)) continue;
       /**
-       * AN UNKEYED CREATE PAST THE SERVER'S DEDUPE HORIZON IS DROPPED, NOT REPLAYED. The server's idempotency records
-       * live 24 h (`idempotency_keys.expires_at`); within that window every replay is exact. Past it, the state verbs
-       * still converge on their own (absolute values, unique names, permanent send reservations) and keep replaying
-       * at any age — but a `rule_create` has no uniqueness constraint and a compose's first `draft_save` mints a
-       * fresh row, so replaying one after a day-plus-dead app mints a duplicate the user long since stopped
-       * expecting. Dropping is the honest direction for exactly these two: a duplicate appears silently and wrongly;
-       * an absent day-old unsaved intent is what the user already believes happened.
+       * AN UNKEYED CREATE PAST THE SERVER'S DEDUPE HORIZON IS NOT REPLAYED. The server's idempotency records live
+       * 24 h (`idempotency_keys.expires_at`); within that window every replay is exact. Past it, the state verbs still
+       * converge on their own (absolute values, unique names, permanent send reservations) and keep replaying at any
+       * age — but a `rule_create` has no uniqueness constraint and a compose's first `draft_save` mints a fresh row,
+       * so replaying one after a day-plus-dead app mints a duplicate. Nor is it deleted in silence: it may hold the
+       * only copy of what somebody wrote, so it moves to the abandoned list saying why, and the person discards it.
        */
       // The same predicate `retryAbandoned` applies — see {@link pastCreateDedupe}. It was two
       // copies of one rule for as long as there was only one caller.
       if (pastCreateDedupe(e, this.now().getTime())) {
-        void this.dropOutbox(e.id);
+        void this.expireAtRestore(e);
         continue;
       }
       try {
@@ -5928,6 +5930,24 @@ export class OhmailEngine {
    * `prune` is also the only primitive that evicts `unflushed` (`store.ts`), which a bare `transact` would leave to
    * the next carry-forward.
    */
+  /**
+   * A DAY-OLD UNKEYED CREATE IS KEPT, NOT DELETED: into the abandoned list, with Try again refused
+   * by the same record and sentence the retry gives it, so the person sees it and decides. One
+   * transaction, like `abandon`; a refused write leaves the row queued on disk for the next boot.
+   */
+  private async expireAtRestore(e: PersistedOutboxEntry): Promise<void> {
+    const record: PersistedOutboxEntry = {
+      ...e,
+      lastError: { message: OUTBOX_EXPIRED_MESSAGE, code: "outbox_expired", status: null },
+      retryRefused: "outbox_expired",
+    };
+    try {
+      await this.store.commitLocal(
+        [{ type: OUTBOX_ABANDONED_TYPE, id: e.id, entity: record }], [{ type: OUTBOX_TYPE, id: e.id }]);
+      this.notify();
+    } catch { /* still queued on disk: the next boot asks again, and never replays it */ }
+  }
+
   private async dropOutbox(id: string): Promise<void> {
     try {
       // THROUGH THE STORE'S OWN WRITE LANE, like every other durable outbox write. `prune` is
@@ -6206,9 +6226,7 @@ export class OhmailEngine {
     if (e.superseded === true) {
       return refuse(e, "outbox_superseded", "A newer change to the same thing has since been saved.");
     }
-    if (pastCreateDedupe(e, this.now().getTime())) {
-      return refuse(e, "outbox_expired", "This change is too old to send safely — it would be created twice.");
-    }
+    if (pastCreateDedupe(e, this.now().getTime())) return refuse(e, "outbox_expired", OUTBOX_EXPIRED_MESSAGE);
 
     const p: PendingMutation = {
       id: e.id, key: e.key, mutation: e.mutation, at: e.at, n: e.n,

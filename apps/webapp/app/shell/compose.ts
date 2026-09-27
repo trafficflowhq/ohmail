@@ -8,7 +8,7 @@
  */
 import type { ComposeAttachment, EmailAddress, EngineMutation } from "@ohmail/client-engine";
 import type { SignatureState } from "./signature";
-import { durableRemove, durableSessionSet, durableSet } from "./durable";
+import { durableRemove, durableSessionRemove, durableSessionSet, durableSet } from "./durable";
 import { isDemoOwned, storageOwner } from "./storage-owner";
 
 /** The compose form, verbatim as typed. `to` is TEXT; `plan()` is what turns it into addresses. */
@@ -151,6 +151,7 @@ export function setComposerScope(scope: string | null): void {
 
 export function composerId(): string {
   if (hostComposer !== null) return hostComposer;
+  if (reminted !== null) return reminted;
   try {
     const held = window.sessionStorage.getItem(COMPOSER_KEY);
     if (held !== null && held.length > 0) return held;
@@ -185,14 +186,25 @@ function moveUnit(from: readonly string[], to: readonly string[]): void {
   }
 }
 
+/** Does this unit hold a message — its text or its row? A session alone names none: a page mints one to render. */
+function holdsMessage(unit: readonly string[]): boolean {
+  return window.localStorage.getItem(unit[0]!) !== null || window.localStorage.getItem(unit[2]!) !== null;
+}
+
 function adoptHandoff(owner: string | null): void {
   const o = owner ?? "local";
+  // Not while this page may still turn out to be a duplicate: the slot would land in the original's keys.
+  const locks = claimSettled ? null : composerLocks();
+  if (locks !== null) {
+    void claimComposer(locks);
+    return;
+  }
   if (adoptedOwners.has(o)) return;
   adoptedOwners.add(o);
   armHandoff();
   try {
     const own = unitPrefixes().map((p) => `${p}${o}.${composerId()}`);
-    if (own.some((k) => window.localStorage.getItem(k) !== null)) return;
+    if (holdsMessage(own)) return;
     const slot = unitPrefixes().map((p) => `${p}${o}`);
     if (slot.some((k) => window.localStorage.getItem(k) !== null)) moveUnit(slot, own);
   } catch { /* a refused jar holds nothing to adopt */ }
@@ -216,7 +228,164 @@ export function handOffComposer(): void {
 function armHandoff(): void {
   if (handoffArmed || typeof window === "undefined") return;
   handoffArmed = true;
-  window.addEventListener("pagehide", (e) => { if (!(e as PageTransitionEvent).persisted) handOffComposer(); });
+  window.addEventListener("pagehide", (e) => {
+    if ((e as PageTransitionEvent).persisted) return;
+    handOffComposer();
+    // A reload keeps this tab's sessionStorage, so the next page knows this lock is about to go.
+    durableSessionSet(COMPOSER_LEFT_KEY, composerId(), "compose.composer");
+  });
+}
+
+/**
+ * THIS PAGE'S HOLD ON ITS COMPOSER — a Web Lock named for the id, held for the page's life and let
+ * go by the browser when the page goes, a crash included. "Duplicate tab" copies `sessionStorage`,
+ * so a copy starts under a live page's id: that lock is taken, and the copy mints its own. A unit
+ * whose composer nobody holds belongs to a tab that died without `pagehide`; a composer holding no
+ * message adopts it. Only a unit written under a lock (`locked` in the buffer) is taken, because a
+ * tab of an older bundle holds none and may still be open. No lock manager: nothing is asked.
+ */
+interface ComposerLocks {
+  request(
+    name: string, opts: { ifAvailable?: boolean; signal?: AbortSignal }, cb: (lock: unknown) => unknown,
+  ): Promise<unknown>;
+  query(): Promise<{ held?: ReadonlyArray<{ name?: string }>; pending?: ReadonlyArray<{ name?: string }> }>;
+}
+let reminted: string | null = null;
+let composerLocked = false;
+let claim: Promise<void> | null = null;
+let claimSettled = false;
+const recoveries = new Map<string, Promise<boolean>>();
+const unannounced = new Set<string>();
+const composerLockName = (id: string): string => `${COMPOSER_KEY}.${id}`;
+/** The id a page of this tab let go of at `pagehide`; a duplicate's copied storage never has it. */
+const COMPOSER_LEFT_KEY = `${COMPOSER_KEY}:left`;
+/** How long a reload waits for its previous page's lock before it takes an id of its own. */
+const LEFT_LOCK_WAIT_MS = 2_000;
+/** A lock manager that has not answered by then is read as none: the composer is never held up. */
+const LOCK_ANSWER_MS = 3_000;
+
+function composerLocks(): ComposerLocks | null {
+  if (hostComposer !== null || typeof navigator === "undefined") return null;
+  try {
+    const l = (navigator as { locks?: Partial<ComposerLocks> }).locks;
+    return typeof l?.request === "function" && typeof l.query === "function" ? l as ComposerLocks : null;
+  } catch { return null; }
+}
+
+/** Take the id's lock at once, or (`waitMs`) wait that long for a leaving page to let it go. */
+function holdComposer(locks: ComposerLocks, id: string, waitMs = 0): Promise<"held" | "taken" | "unknown"> {
+  return new Promise((resolve) => {
+    let done = false;
+    const abort = waitMs > 0 ? new AbortController() : null;
+    const settle = (v: "held" | "taken" | "unknown"): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(v);
+    };
+    const timer = setTimeout(() => {
+      abort?.abort();
+      settle(abort === null ? "unknown" : "taken");
+    }, abort === null ? LOCK_ANSWER_MS : waitMs);
+    try {
+      locks.request(composerLockName(id), abort === null ? { ifAvailable: true } : { signal: abort.signal }, (lock) => {
+        // A grant arriving after the answer was given is let go at once: this page took another id.
+        if (done || lock === null) {
+          settle("taken");
+          return undefined;
+        }
+        settle("held");
+        return new Promise<never>(() => {});
+      }).catch((err: unknown) => {
+        settle((err as { name?: unknown } | null)?.name === "AbortError" ? "taken" : "unknown");
+      });
+    } catch { settle("unknown"); }
+  });
+}
+
+function claimComposer(locks: ComposerLocks): Promise<void> {
+  claim ??= (async () => {
+    try {
+      const id = composerId();
+      let left: string | null = null;
+      try { left = window.sessionStorage.getItem(COMPOSER_LEFT_KEY); } catch { /* no jar, no reload */ }
+      let got = await holdComposer(locks, id, left === id ? LEFT_LOCK_WAIT_MS : 0);
+      if (got === "taken") {
+        // A live page holds this id: this page is its duplicate, and takes its own.
+        reminted = crypto.randomUUID();
+        durableSessionSet(COMPOSER_KEY, reminted, "compose.composer");
+        got = await holdComposer(locks, reminted);
+      }
+      if (left !== null) durableSessionRemove(COMPOSER_LEFT_KEY, "compose.composer");
+      composerLocked = got === "held";
+    } finally {
+      claimSettled = true;
+    }
+  })();
+  return claim;
+}
+
+const writtenUnderLock = (raw: string | null): boolean => {
+  try { return (JSON.parse(raw ?? "null") as { locked?: unknown } | null)?.locked === true; }
+  catch { return false; }
+};
+
+/** ONE dead tab's unit for this owner, into this composer — serialized across tabs by a lock. */
+function recoverOrphan(locks: ComposerLocks, owner: string): Promise<boolean> {
+  let late = false;
+  const run = async (): Promise<boolean> => {
+    try {
+      const q = await locks.query();
+      // Past the bound the restore has already run, and a unit moved now would be written over.
+      if (late) return false;
+      const live = new Set([...(q.held ?? []), ...(q.pending ?? [])].map((l) => l.name ?? ""));
+      const mine = composerId();
+      const own = unitPrefixes().map((p) => `${p}${owner}.${mine}`);
+      if (holdsMessage(own)) return false;
+      const base = `${COMPOSE_DRAFT_PREFIX}${owner}.`;
+      for (const k of Object.keys(window.localStorage)) {
+        const id = k.startsWith(base) ? k.slice(base.length) : "";
+        if (!/^[A-Za-z0-9_-]{1,64}$/.test(id) || id === mine || live.has(composerLockName(id))) continue;
+        if (!writtenUnderLock(window.localStorage.getItem(k))) continue;
+        moveUnit(unitPrefixes().map((p) => `${p}${owner}.${id}`), own);
+        return true;
+      }
+    } catch { /* a refused jar or manager: nothing is recovered */ }
+    return false;
+  };
+  const asked = (locks.request(`${COMPOSER_KEY}:recover`, {}, run) as Promise<boolean>).catch(() => false);
+  const bound = new Promise<boolean>((r) => { setTimeout(() => { late = true; r(false); }, LOCK_ANSWER_MS); });
+  return Promise.race([asked, bound]);
+}
+
+/**
+ * Run `ready` once this page knows which composer it is. At once where nothing is asked, so a
+ * window the host names and a browser without Web Locks read their unit exactly as before; every
+ * read of the unit at mount waits here — the restore, and the autosave's adoption of its row.
+ */
+export function whenComposerReady(ready: () => void, owner: string | null = storageOwner()): () => void {
+  const locks = composerLocks();
+  if (locks === null) {
+    ready();
+    return () => {};
+  }
+  const o = owner ?? "local";
+  let r = recoveries.get(o);
+  if (r === undefined) {
+    r = claimComposer(locks).then(() => recoverOrphan(locks, o)).then((got) => {
+      if (got) unannounced.add(o);
+      return got;
+    });
+    recoveries.set(o, r);
+  }
+  let live = true;
+  void r.then(() => { if (live) ready(); });
+  return () => { live = false; };
+}
+
+/** Did this composer take a dead tab's message? `true` once, for the one sentence that says so. */
+export function takeRecoveredComposer(owner: string | null = storageOwner()): boolean {
+  return unannounced.delete(owner ?? "local");
 }
 
 /** A fresh page, for a test: nothing adopted yet. The tab's id is the test's own sessionStorage. */
@@ -224,6 +393,12 @@ export function resetComposerForTest(): void {
   adoptedOwners.clear();
   composerInMemory = null;
   hostComposer = null;
+  reminted = null;
+  composerLocked = false;
+  claim = null;
+  claimSettled = false;
+  recoveries.clear();
+  unannounced.clear();
 }
 
 /** The un-owned key this browser may still hold. Removed on clear, never read. */
@@ -311,7 +486,9 @@ export function writeComposeDraft(f: ComposeFields): void {
   // a photo's worth of base64 would blow a storage quota, and a restored buffer must not claim a
   // paperclip pointing at bytes it no longer holds. Everything textual is persisted as before.
   const { attachments: _drop, ...persisted } = f;
-  durableSet(composeDraftKey(), JSON.stringify(persisted), "compose.draft");
+  // `locked`: written while this page holds its composer, so a crash leaves a unit it may adopt.
+  const stored = composerLocked ? { ...persisted, locked: true } : persisted;
+  durableSet(composeDraftKey(), JSON.stringify(stored), "compose.draft");
 }
 
 /**

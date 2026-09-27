@@ -1222,6 +1222,7 @@
     "cancelAlreadySent": "Schon gesendet. Zu spät zum Abbrechen.",
     "closeNotSaved": "Dieser Entwurf konnte nicht gespeichert werden und bleibt hier offen.",
     "closeNotSavedReason": "Dieser Entwurf konnte nicht gespeichert werden: {reason}. Er bleibt hier offen.",
+    "recoveredFromClosedTab": "Eine Nachricht aus einem unerwartet geschlossenen Tab ist wieder da, unter Schreiben.",
     "keyLeave": "Schreiben verlassen",
     "keyCloseConfirm": "Weiterschreiben",
     "keySend": "Nachricht senden",
