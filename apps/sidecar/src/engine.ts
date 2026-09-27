@@ -115,6 +115,8 @@ import { HOST_SEND_MAX_TOTAL_BYTES, resolveHostConfig, type HostState } from "./
 import { resolveLanBind, serveLanFallback, type LanState } from "./host-lan.js";
 import { ensureLanIdentity, type LanIdentity } from "./host-lan-tls.js";
 import { localLanRoutes } from "./lan-routes.js";
+/* The pairing check both engines serve; the phone's artifact takes `phone/cloud-probe.ts`. */
+import { answerCloudProbe, CLOUD_PROBE_ROUTE } from "./cloud-probe.js";
 // ── THE ONE PIPELINE ────────────────────────────────────────────────────────────────────────
 // `runSyncCycle` is imported, never reimplemented. There is ONE pipeline implementation and both
 // the desktop engine and the hosted service run it: two engines diverge, and divergence here means
@@ -7618,6 +7620,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * `countFolders: true`; it writes NOTHING. The authority is the per-launch bearer, on
          * `handle` ALONE — a probe opens a socket to a host in its body. */
         const localProbeMatch = req.method === "POST" && url.pathname === "/local/mailboxes/probe";
+        /* `POST /cloud/probe` — the pairing check, asked of the RUNNING engine by a desktop that has
+         * a door, never of a second engine started beside it. The cloud engine's handler, mounted
+         * here too (`cloud-probe.ts`): it dials the origin in the body and configures nothing. This
+         * engine has no cloud base, so the no-origin arm refuses. On `handle` ALONE. */
+        const localCloudProbeMatch = req.method === "POST" && url.pathname === CLOUD_PROBE_ROUTE;
         /* `GET /local/mailboxes/connections` — can this machine reach them right now. A third route
          * ahead of the shared table: it reports the liveness of sockets THIS PROCESS holds, which
          * the hosted service (mailboxes attached by a worker on a shard) has nothing to report, so
@@ -7646,6 +7653,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           || localOrganizeMatch !== null
           || localSealMatch !== null
           || localProbeMatch
+          || localCloudProbeMatch
           || localAddMatch;
         /* WHICH DOOR, as a pattern rather than a path — the shape `packages/api`'s own
            middleware logs (`route: route.pattern`). Two of these share a pattern and differ by
@@ -7656,7 +7664,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             ? "/local/mailboxes/:id"
             : localProbeMatch
               ? "/local/mailboxes/probe"
-              : localAddMatch
+              : localCloudProbeMatch
+                ? CLOUD_PROBE_ROUTE
+                : localAddMatch
                 ? "/local/mailboxes"
                 : localConnectionsMatch
                   ? "/local/mailboxes/connections"
@@ -7893,6 +7903,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             return new Response(JSON.stringify({ items }), {
               status: 200, headers: { "content-type": "application/json" },
             });
+          }
+          if (localCloudProbeMatch) {
+            return answerCloudProbe(req, { dataDir: config.dataDir, log, configured: null });
           }
           if (localProbeMatch) {
             /* THE PROBE, AND ONLY THE PROBE. `probeConnection` dials and answers; it takes no

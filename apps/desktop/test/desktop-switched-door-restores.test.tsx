@@ -85,7 +85,7 @@ type Answer = keyof typeof ANSWERS | "never";
  * The Rust shell's rules over a fake engine. A configure writes the door and restarts the engine;
  * `provisional: true` over a door keeps that door as the REPLACED one until `engine_switch_commit`
  * drops it or `engine_switch_restore` puts it back; a sign-out is refused while one is kept.
- * `probeOnLocal: false` is the real local engine, which serves no `/cloud/probe` (measured: 404).
+ * `probeOnLocal: false` is a local engine from before it served `/cloud/probe` (it answered 404).
  */
 function fakeShell(opts: {
   door: Door; answer: Answer; redeemMs?: number; pairStartMs?: number; probeOnLocal?: boolean;
@@ -380,8 +380,16 @@ describe("only an accepted pairing retires the door it replaced", () => {
 });
 
 describe("what the local engine answers the pairing's first step", () => {
-  it("the real local engine serves no probe, so Check the link says so and nothing is switched", async () => {
-    /* Measured on the engine itself: POST /cloud/probe on the local door answers 404 not_found. */
+  it("the local engine answers the check, so Pair is offered and nothing is switched yet", async () => {
+    /* The engine half is driven over the real local engine in the engine's own suite. */
+    const shell = fakeShell({ door: LOCAL_DOOR, answer: "paired" });
+    const offered = await openPairingFromSettings();
+    expect(offered).toBe(true);
+    expect(shell.log.filter((l) => l.startsWith("configure"))).toEqual([]);
+    expect(shell.door()).toEqual(LOCAL_DOOR);
+  });
+
+  it("an engine that predates the route answers 404, and still nothing is switched", async () => {
     const shell = fakeShell({ door: LOCAL_DOOR, answer: "paired", probeOnLocal: false });
     const offered = await openPairingFromSettings();
     console.info(`LOCAL PROBE offered Pair ${offered}; card ${el!.querySelector(".join-error")?.textContent ?? "-"} || ${shell.log.join(", ")}`);

@@ -144,6 +144,9 @@ const SIDECAR_SUBSTITUTES = {
   "./host-static.js": path.join(PHONE, "host-static.ts"),
   "./host-pair-routes.js": path.join(PHONE, "host-pair-routes.ts"),
   "./lan-routes.js": path.join(PHONE, "lan-routes.ts"),
+  /* The pairing check dials another computer over a pinned TLS handshake (`node:tls`); the phone
+     pairs through its own flow, so its engine refuses the route and carries none of that code. */
+  "./cloud-probe.js": path.join(PHONE, "cloud-probe.ts"),
 };
 
 /**
