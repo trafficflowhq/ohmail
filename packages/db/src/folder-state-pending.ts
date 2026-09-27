@@ -8,7 +8,7 @@
  * 'external'` (the user tidying in their own client). So ONE module owns every predicate and each
  * site composes the ones it means. The join is the caller's.
  */
-import { and, eq, isNull, lte, not, or, sql, type SQL } from "drizzle-orm";
+import { and, eq, gte, isNull, lte, not, or, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 
 import { folderState } from "./schema-mail.js";
@@ -71,6 +71,24 @@ export function filingDue(now: Date): SQL {
  */
 export function filingDeferred(now: Date): SQL {
   return and(ourOutstandingFiling(), deferredUntilLater(folderState.nextAttemptAt, now))!;
+}
+
+/**
+ * When an outstanding filing is STUCK: waited five minutes, or refused twice. The strip's rule,
+ * owned here so its count and its clock cover the stuck rows alone; an aggregate over every
+ * outstanding row counted a seconds-old move under the oldest one's age. Five minutes outlasts
+ * a rotation; two refusals span the ladder's first two rungs. The shell re-declares both for an
+ * older server, and `test/filing-stuck-rule-parity.test.ts` pins them equal.
+ */
+export const FILING_STUCK_MS = 300_000;
+export const FILING_STUCK_ATTEMPTS = 2;
+
+/** An outstanding filing of ours that is stuck by {@link FILING_STUCK_MS} or its refusals. */
+export function filingStuck(now: Date): SQL {
+  return and(ourOutstandingFiling(), or(
+    gte(folderState.attempts, FILING_STUCK_ATTEMPTS),
+    lte(folderState.updatedAt, new Date(now.getTime() - FILING_STUCK_MS)),
+  ))!;
 }
 
 /**

@@ -3031,6 +3031,7 @@
     "filingReason_read_only": "der Ordner nimmt es nicht an",
     "filingReason_over_quota": "das Postfach ist voll",
     "filingReason_unknown": "dein Mailserver nennt keinen Grund",
+    "filingReason_none": "keine Ablehnung verzeichnet",
     "pull": "Neue Mails abrufen",
     "pulling": "Mailserver wird geprüft…",
     "pullAria": "Neue Mails abrufen — den Mailserver jetzt prüfen",

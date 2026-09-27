@@ -116,6 +116,10 @@ interface MailboxWire {
     nextAttemptAt: string | null;
     attempts: number;
     lastRefusalClass: string | null;
+    /** The stuck rows alone — absent from an older engine, whose strip keeps the old count. */
+    stuck?: number;
+    stuckSince?: string | null;
+    stuckRefusalClass?: string | null;
     asOf: string;
     lastCycleAt: string | null;
   };

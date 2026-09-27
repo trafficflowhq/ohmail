@@ -454,7 +454,9 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean, m
         return {
           tone: "warn", role: "status", warn: true, busy: false,
           title: t("filingStuck", { count: f.count, minutes: f.waitedMinutes ?? 0 }),
-          detail: t("filingStuckWhy", { reason: t(`filingReason_${f.reason ?? "unknown"}`) }),
+          // No recorded refusal is its own state: a stuck row nothing refused (a host that did
+          // not answer writes nothing) must not read as the server refusing to say why.
+          detail: t("filingStuckWhy", { reason: t(`filingReason_${f.reason ?? "none"}`) }),
           link: settings,
         };
       }

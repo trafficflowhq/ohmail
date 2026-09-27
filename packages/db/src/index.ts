@@ -33,7 +33,8 @@ export { invitationWithoutEventWhere, itipReplyHeaderWhere } from "./calendar-fa
 // here so the two can only disagree in the ways that module names out loud; see its header for
 // why they are composed rather than shared as one query. Reaches `schema-mail.js` alone.
 export {
-  dueNow, deferredUntilLater, ourOutstandingFiling, filingDue, filingDeferred,
+  dueNow, deferredUntilLater, ourOutstandingFiling, filingDue, filingDeferred, filingStuck,
+  FILING_STUCK_MS, FILING_STUCK_ATTEMPTS,
   FILING_REFUSAL_CLASSES, isFilingRefusalClass, type FilingRefusalClass,
 } from "./folder-state-pending.js";
 

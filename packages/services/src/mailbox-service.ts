@@ -8,7 +8,7 @@ import {
   hasCapability, CAPABILITY_REQUESTS,
   standDownMemory,
   closeRemovedMailboxAppointments,
-  filingDue, filingDeferred, ourOutstandingFiling, isFilingRefusalClass,
+  filingDue, filingDeferred, filingStuck, ourOutstandingFiling, isFilingRefusalClass,
   ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS,
   type AccessVerdict, type LedgerTx, type MailboxErrorCode, type Tx, type OrganizerIntent,
 } from "@trafficflow/db";
@@ -2749,6 +2749,20 @@ export class MailboxService {
         ))
         .orderBy(desc(folderState.attempts), desc(folderState.nextAttemptAt))
         .limit(1)})`,
+      // THE STUCK ROWS ALONE (`filingStuck`): how many, the oldest, and the class the worst of
+      // them carries. The stuck sentence reads these, so a seconds-old move is not counted under
+      // an old one's clock and a row nothing refused is not handed another row's reason.
+      stuck: d.castInt(sql`count(*) filter (where ${filingStuck(now)})`).mapWith(Number) as unknown as SQL<number>,
+      stuckSince: sql<Date | null>`
+        min(${folderState.updatedAt}) filter (where ${filingStuck(now)})`
+        .mapWith(folderState.updatedAt) as unknown as SQL<Date | null>,
+      stuckRefusalClass: sql<string | null>`(${ctx.db
+        .select({ c: folderState.lastErrorClass })
+        .from(folderState)
+        .innerJoin(messages, eq(messages.id, folderState.messageId))
+        .where(and(eq(messages.mailboxId, m.id), filingStuck(now), isNotNull(folderState.lastErrorClass)))
+        .orderBy(desc(folderState.attempts), desc(folderState.nextAttemptAt))
+        .limit(1)})`,
     })
       .from(folderState)
       .innerJoin(messages, eq(messages.id, folderState.messageId))
@@ -2823,6 +2837,11 @@ export class MailboxService {
         attempts: pending?.attempts ?? 0,
         lastRefusalClass: isFilingRefusalClass(pending?.lastRefusalClass)
           ? pending!.lastRefusalClass!
+          : null,
+        stuck: pending?.stuck ?? 0,
+        stuckSince: pending?.stuckSince?.toISOString() ?? null,
+        stuckRefusalClass: isFilingRefusalClass(pending?.stuckRefusalClass)
+          ? pending!.stuckRefusalClass!
           : null,
         // THE READ'S OWN INSTANT, so a client can say when it last looked instead of running a
         // clock over a figure it has not re-fetched. `MailStateProvider` polls this route every

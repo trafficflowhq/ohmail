@@ -1508,6 +1508,14 @@ export interface FilingFacts {
   attempts: number;
   /** Why the worst-off outstanding filing was refused, or null. A CLOSED set on the wire. */
   lastRefusalClass: string | null;
+  /**
+   * The STUCK rows alone, by the server's rule (`@trafficflow/db#filingStuck`): how many, the
+   * oldest, and the class the worst of them carries. ABSENT from an older server, where the arm
+   * keeps the aggregate rule below; present, the stuck sentence is about these rows only.
+   */
+  stuck?: number;
+  stuckSince?: string | null;
+  stuckRefusalClass?: string | null;
   /** When this was read. The strip states it rather than running a clock over a stale figure. */
   asOf: string;
   /** When the organizer's last pass finished, or null where there is no heartbeat to read. */
@@ -1692,7 +1700,19 @@ function filingReportOf(live: MailboxFacts[], now: number): FilingReport | null 
    * host is unreachable, and keying stuck on refusals alone would leave exactly that case saying
    * "filing" indefinitely. See {@link FILING_STUCK_MS} for why the wait must exceed the rotation
    * estimate. */
-  if (attempts >= FILING_STUCK_ATTEMPTS
+  /* Where the server names the stuck rows, the sentence is about them alone: their count, the
+   * oldest of them, their recorded class. The aggregate rule counted a seconds-old move under
+   * the oldest row's age and handed a never-refused row another row's reason. */
+  if (rows.every((m) => typeof m.filing.stuck === "number")) {
+    const stuck = rows.reduce((n, m) => n + (m.filing.stuck ?? 0), 0);
+    if (stuck > 0) {
+      return {
+        ...base, arm: "stuck", count: stuck,
+        waitedMinutes: minutesSince(earliest(rows.map((m) => m.filing.stuckSince ?? null)), now),
+        reason: filingReason(rows.map((m) => m.filing.stuckRefusalClass ?? null).find((c) => c !== null) ?? null),
+      };
+    }
+  } else if (attempts >= FILING_STUCK_ATTEMPTS
       || (waitedMinutes !== null && waitedMinutes * 60_000 >= FILING_STUCK_MS)) {
     return { ...base, arm: "stuck" };
   }

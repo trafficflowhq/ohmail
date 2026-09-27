@@ -1113,6 +1113,10 @@ export interface MailboxDTO {
     nextAttemptAt: string | null;
     attempts: number;
     lastRefusalClass: string | null;
+    /** The stuck rows alone — absent from an older server, whose client keeps the old count. */
+    stuck?: number;
+    stuckSince?: string | null;
+    stuckRefusalClass?: string | null;
     asOf: string;
     lastCycleAt: string | null;
   };

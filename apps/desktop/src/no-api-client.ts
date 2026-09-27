@@ -224,6 +224,9 @@ export interface MailboxDTO {
         nextAttemptAt: string | null;
         attempts: number;
         lastRefusalClass: string | null;
+        stuck?: number;
+        stuckSince?: string | null;
+        stuckRefusalClass?: string | null;
         asOf: string;
         lastCycleAt: string | null;
     };

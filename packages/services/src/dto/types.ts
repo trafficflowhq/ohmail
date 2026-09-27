@@ -754,6 +754,15 @@ export interface MailboxDTO {
      */
     lastRefusalClass: string | null;
     /**
+     * The STUCK filings alone (`filingStuck`: waited five minutes, or refused twice) — how many,
+     * the oldest of them (ISO-8601 UTC, or null), and the class the worst of them carries (the
+     * closed set above, or null when none of them was refused). The stuck sentence reads these,
+     * so its count, clock and reason are about the same rows.
+     */
+    stuck: number;
+    stuckSince: string | null;
+    stuckRefusalClass: string | null;
+    /**
      * WHEN THIS READ HAPPENED, ISO-8601 UTC.
      *
      * The strip runs a clock (nothing in the mirror moves when the worker drains this backlog, so

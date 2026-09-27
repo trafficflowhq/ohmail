@@ -3031,6 +3031,7 @@
     "filingReason_read_only": "the folder will not take it",
     "filingReason_over_quota": "the mailbox is full",
     "filingReason_unknown": "your mail server would not say why",
+    "filingReason_none": "no refusal is recorded",
     "pull": "Pull new mail",
     "pulling": "Checking your mail server…",
     "pullAria": "Pull new mail — check the mail server now",
