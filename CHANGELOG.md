@@ -410,6 +410,456 @@ decision the server refuses names the reason.
   phone keeps; Let in and Screen out on such a sender now reach the server instead of saying the
   decision could not be saved.
 
+### Your own mail leaves the Screener after a change of device
+<!-- changes: fix-025-own-mail-never-at-the-phone-gate.md -->
+
+- Mail from your own addresses that ohmail had filed into the Screener folder on another device or
+  computer now moves back to your Inbox once this one organizes the mailbox.
+
+### Signing out clears the browser's cache
+<!-- changes: fix-025-sign-out-leaves-no-images.md -->
+
+Signing out, deleting your account, or being signed out from another device now also clears this
+site's pictures and files from the browser's cache, in browsers that support it.
+
+### z undoes a Screener decision
+<!-- changes: fix-025-z-undoes-the-screener-decision.md -->
+
+Pressing z while a toast offers Undo takes back that act, as the Undo button does: a Screener
+decision, a pile, a delete or a restore is not sent, and a Move keeps no rule.
+
+### The found-settings card appears as soon as ohmail finds the settings
+<!-- changes: fix-025-the-settings-card-shows-at-the-find.md -->
+
+- "We found your ohmail settings on this mailbox" now appears on the web, the desktop and the
+  phone within one sync of ohmail finding the document, instead of up to ten minutes later.
+
+### A press made as the web session renews is carried out
+<!-- changes: fix-025-a-press-survives-the-renewal.md -->
+
+A press made in the moment the web session's short access expired — Done, Park or any other mail
+verb — was refused and never sent again once the session renewed, so the message stayed where it
+was. It is now sent once more after the renewal, and applied once; if the renewal fails, the press
+says it did not go through. Mail sync resumes at once after such a renewal instead of a minute
+later.
+
+### Search says what it covered while the first sync runs
+<!-- changes: fix-025-search-during-the-first-sync-says-so.md -->
+
+While a mailbox's first sync is still bringing mail in, a search result reads "Searched the mail
+synced so far" and adds that the rest of the mail has not synced yet, and the closest-words note
+says nothing synced so far matched exactly. Once the first sync has finished, the line reads
+"Searched your whole mailbox" as before.
+
+### Deleting your account clears this browser
+<!-- changes: fix-025-erase-wipes-this-browser.md -->
+
+Deleting your account now removes the copy of the mailbox this browser kept and shows the receipt,
+and it no longer fails while the account's first sync is still storing mail.
+
+### Move from the command palette
+<!-- changes: fix-025-news-and-trash-keys-do-what-the-sheet-says.md -->
+
+The command palette lists Move to another place wherever m moves a message. In Trash and the
+Screener the shortcut list no longer asks you to select a message for keys that cannot work there.
+
+### Tags on the phone
+<!-- changes: fix-025-the-phone-shows-its-tags.md -->
+
+The phone shows a message's tags on its row and in the open message, and More lists your tags,
+each opening the mail that carries it.
+
+### Search on the desktop answers a common word in milliseconds
+<!-- changes: fix-025-desktop-search-within-the-budget.md -->
+
+On a desktop that keeps its mailbox in its own store, the first page of results for a word found in
+thousands of messages now comes back in tens of milliseconds, where it took a quarter to over half a
+second on a large mailbox.
+
+### A picture with a size in its address is shown
+<!-- changes: fix-025-a-sized-picture-is-not-a-tracker.md -->
+
+A picture whose address ends in a size, such as `?w=120`, was labelled "Tracker blocked" and could
+not be loaded. An image now counts as a tracking pixel only when it declares itself 1×1 or 0×0,
+when its address has a tracking path such as `/open`, or when its query names the recipient. The
+web app, the desktop app, the phone and the image proxy decide it the same way.
+
+### A phone's server settings are checked, and can be changed after connecting
+<!-- changes: fix-025-phone-server-settings-are-checked-and-editable.md -->
+
+- On a phone connected straight to its mail server, a port outside 1-65535 is refused at its field,
+  and a port field selects its value when tapped, so typing replaces it.
+- Connecting now also tries the outgoing server's sign-in, so a setting that cannot send is named at
+  Connect instead of at the first message.
+- Settings → Server settings changes the incoming and outgoing server, port, encryption and password
+  in place. A change is tried before it is kept; a refused one keeps the working settings.
+
+### A Screener decision writes the waiting mail it moves in sets
+<!-- changes: fix-025-a-domain-decision-writes-in-batches.md -->
+
+A Screener decision moved the sender's waiting mail one message at a time, about eleven database
+statements for each message, inside one transaction that holds the account's other changes until it
+ends. It now writes fifty messages at a time, so screening in or out a domain with a large backlog
+finishes in a few statements for every fifty messages. On the web, the self-hosted server, the
+desktop app and the phone.
+
+### A machine that stopped organizing is not called out of date
+<!-- changes: fix-025-a-stopped-organizer-is-not-called-outdated.md -->
+
+On an install that only reads a mailbox, a refused rule change, move or Screener decision told you
+to update ohmail on the machine that had organized it, even when that machine had stopped; it now
+says nothing organizes the mailbox, and the advice to update is kept for a machine still organizing
+it on an older version. Settings → Mailboxes on the web no longer says a machine that stopped holds
+the mailbox, and Take over no longer promises that machine will stop.
+
+### A change already sent is not offered again after a power cut
+<!-- changes: fix-025-the-emptied-outbox-stays-empty.md -->
+
+Once every change waiting on the desktop has been sent, a power cut right after no longer brings
+them back to be offered again. On the phone, a change the app has kept is on the disk before it
+counts as kept.
+
+### A burst of new mail no longer stops the phone's sync
+<!-- changes: fix-025-phone-survives-an-arrival-burst.md -->
+
+- When thousands of messages arrive at once, a phone connected straight to its mail server brings
+  them in page by page instead of failing the same sync over and over with no new mail.
+
+### A machine that stopped organizing is not named as the organizer
+<!-- changes: fix-025-every-reader-sentence-knows-the-holder-stopped.md -->
+
+On an install that only reads a mailbox, the Screener's refusals and its Screened out and Spam
+notes, the refusal of Delete, Later and Park, the sender sheet, the connect form, the desktop's
+Settings and About rows, its Screener settings and its Mailboxes pane, and a paired phone's card
+and More banner no longer name a machine that stopped organizing the mailbox as the one that
+organizes it; they say nothing organizes it and point to Settings → Mailboxes.
+
+### The phone says when a message could not be sent
+<!-- changes: fix-025-phone-offline-send-says-so-and-keeps-one-copy.md -->
+
+When the phone cannot reach your mail server, pressing Send now says in the composer that the
+message was not sent and that it is kept in Drafts. Pressing Send again, or Cancel, keeps that one
+draft instead of adding another copy of the message. While the connection is down the composer
+shows the same connection line as the top of the screen.
+
+### The read repair pass writes its letters in sets
+<!-- changes: fix-025-bulk-read-writes-in-batches.md -->
+
+The repair pass that marks old screened-out mail read wrote each letter alone, about six database
+statements for each letter, inside one transaction that holds the account's other changes until it
+ends. It now writes fifty at a time, a few statements for every fifty. Marking letters read clears
+their resurface pins in one write. On the web, the self-hosted server, the desktop app and the
+phone.
+
+### A letter sent on Gmail is one message in Sent Mail
+<!-- changes: fix-025-gmail-keeps-one-sent-copy.md -->
+
+Gmail saves every sent message itself, and ohmail used to add a second copy beside it. ohmail now
+uses the copy Gmail saved. Letters sent before this release keep their second copy.
+
+### Search on a self-hosted server answers a common word in its budget
+<!-- changes: fix-025-search-says-what-it-covered-and-stays-fast.md -->
+
+On a self-hosted server, the first page for a word found in many messages comes back in tens of
+milliseconds again. During a mailbox's first sync, the address view counts "the mail synced so far"
+rather than the whole mailbox. Enter in the search field asks at once instead of waiting out the
+typing delay, and "about N matched" never names more messages than the mailbox holds.
+
+### A deleted account leaves no copy on your other devices
+<!-- changes: fix-025-an-erased-account-leaves-no-copy-anywhere.md -->
+
+When an account is deleted — from another browser, or by its scheduled erasure — every browser,
+desktop and phone that held it now removes its copy of the mail at its next contact with the
+server and says the account was deleted. The mailbox on your mail server is untouched, and another
+account's copy on the same device is kept.
+
+### Self-hosted upgrades: the log says what migrated, and page loads wait through the swap
+<!-- changes: fix-025-a-self-host-upgrade-says-what-it-did.md -->
+
+After an upgrade, the api's boot lines name the migrations that start applied, the count the release
+expects and each setup step, where before they showed only the total. While `docker compose up -d`
+replaces the api or web container, page loads and other reads wait up to 10 seconds for it instead
+of failing with 502; a form sent in that moment still gets a 502 at once and is never sent twice.
+
+### Escape closes the reply editor again
+<!-- changes: fix-025-escape-closes-the-reply-again.md -->
+
+- Escape in the reply editor or in the body of a new message closes it again, as it did before
+  0.25.1: an empty reply closes, and a written one closes and keeps its text. Escape in the address
+  suggestions still closes only the suggestions.
+
+### A screen that failed to load can be tried again
+<!-- changes: fix-025-escape-closes-the-reply-again.md -->
+
+- When Settings, a new message or the message editor fails to load, it says so and offers Try
+  again, and opening it again tries again, instead of showing the same error until a reload.
+
+### One press changes the language, and the 60-day default stays choosable
+<!-- changes: fix-025-the-language-and-quiet-window-take-at-once.md -->
+
+Choosing a language in Settings now switches the app at once and holds after a reload, in the
+browser and on the desktop. The Screener's "When a sender goes quiet" setting always offers the
+60-day default, marked as the default, after you have picked another number.
+
+### Send says when your mail server could not be reached
+<!-- changes: fix-025-a-send-outage-is-not-a-server-error.md -->
+
+When your mail server cannot be reached while sending, the send stops at once, says the message
+was not sent because your mail server could not be reached, and keeps the draft. It used to fail
+with a server error after trying twice.
+
+### On a phone, the last Screener decision returns to the list
+<!-- changes: fix-025-last-decision-phone.md -->
+
+Deciding the last waiting sender from the full-screen preview on a phone left a blank page that only
+the system Back could leave. The preview now closes and the list shows that nobody is waiting. Undo
+puts the sender back in the list.
+
+### Importing saved settings finishes on a slow mail provider
+<!-- changes: fix-025-import-settings-finishes-on-a-slow-provider.md -->
+
+- On a slow mail provider, Import settings failed after 20 seconds and said "Try again." twice.
+  It now finishes in the background: the card says it is importing, then shows what was
+  imported, or why nothing was.
+
+### Plain-text line breaks survive in every panel of a conversation
+<!-- changes: fix-025-lines-in-threads-and-suggest-tells-the-truth.md -->
+
+A plain-text letter's own line breaks — a signature, an address, a list — now show in every letter
+of a conversation, not only the one you opened, and in the Trash reader.
+
+### The Screener says why no suggestion is coming
+<!-- changes: fix-025-lines-in-threads-and-suggest-tells-the-truth.md -->
+
+When a suggestion request is refused, the waiting senders say suggestions are not available and
+why: no AI budget left, AI switched off, AI not answering, or the request refused. They no longer
+say a suggestion is coming. A run that stopped at the number you confirmed no longer says
+suggestions are unavailable.
+
+### A one-click unsubscribe the list refused no longer reads as done
+<!-- changes: fix-025-a-refused-unsubscribe-says-so.md -->
+
+- ohmail counts a one-click unsubscribe as done only when the list accepts it, for the Unsubscribe
+  button and for the unsubscribe a screen-out sends. When the list refuses, the Screened-out preview
+  says so and links to the sender's own unsubscribe page, and ohmail does not ask that list again.
+  When the list cannot take the request, the preview says so and Unsubscribe can be pressed again.
+  Before, both were recorded as sent and read "Already unsubscribed from this list."
+
+### Saved settings travel on every mail server
+<!-- changes: fix-025-settings-travel-on-every-provider.md -->
+
+On servers such as Infomaniak a new computer or phone now finds the settings saved in the mailbox,
+offers them for import and uses the newest copy. A large ohmail folder there is no longer read as
+organized by nobody, and old acknowledgements in it are cleared again.
+
+### The phone hands the mailbox back as it leaves the screen
+<!-- changes: fix-025-the-phone-hands-back-when-it-leaves.md -->
+
+When the phone does not organize in the background (notifications off, or battery saver on),
+leaving the app during a sync now stops that sync at its next step and gives the mailbox back then,
+so your other computer can take it. If Android freezes the app before that step, the mailbox goes
+back when you return and the phone says it was late. Coming back shows "Handed back" until the
+phone has taken the mailbox again. The Ohbox now says when the phone handed the mailbox back,
+stopped organizing it, or another install organizes it, with "Start organizing here" where
+Settings offers it.
+
+### Sending says what your mail server refused
+<!-- changes: fix-025-the-persons-server-refusing-is-not-our-fault.md -->
+
+When your mail server refuses the sign-in, will not secure the connection, or cannot be reached
+while sending, the send stops at once, says which it was, and keeps the draft. It used to fail
+without saying why, or ask you to check your Sent folder for a message that never left.
+
+### Keyboard focus follows what opens and closes
+<!-- changes: fix-025-keyboard-focus.md -->
+
+- The shortcut sheet and the screening sheet take focus when they open. Closing a sheet, the tag
+  picker, the move bar or a new message, by Escape, by sending or by discarding, puts focus back on
+  the message it was opened from, or on the next message when that one has left the list. Tab
+  stays inside the shortcut sheet and the discard question, and Escape closes the confirm under a
+  rule in Settings.
+
+### The More menu shows which item has focus
+<!-- changes: fix-025-keyboard-focus.md -->
+
+- The focused item of a message's More menu is ringed in the theme's focus colour, visible in every
+  theme.
+
+### Address fields are named
+<!-- changes: fix-025-keyboard-focus.md -->
+
+- Screen readers announce the To, Cc and Bcc fields by name in a new message and in a reply.
+
+### Alerts close by themselves when nothing confirms them, and a sampled 5xx window no longer clears one
+<!-- changes: maturity-026-m4a-alerts.md -->
+
+An alert that no pass has confirmed for thirty minutes now closes without a "resolved" notice, so an
+alert for a shard or a driver that no longer exists does not stay open until someone removes it. A
+5xx window the platform poller could only sample no longer clears an open 5xx alert. An alert driver
+that has never recorded a pass is reported once the worker has been up for thirty minutes, where the
+deployment runs that driver.
+
+### The Screener and Settings → Rules fit a phone
+<!-- changes: fix-025-screener-rules-phone.md -->
+
+On a touch screen a tap anywhere on a waiting Screener row opens the letter's preview, and the
+sender's screening sheet opens from the sender's name there; a sheet that fills the screen has a
+close button. At phone width the row's subject gets the room, the delivered-to chip names the
+mailbox briefly, and each rule shows its whole address above Change and Revoke. On a touch-only
+screen buttons no longer wear keyboard shortcuts, and the composer's and the palette's key hints
+are gone.
+
+### What you type in the composer survives every way out of it
+<!-- changes: fix-025-typed-text-survives.md -->
+
+A message you were writing is kept when its tab closes before it is saved, and reaches your drafts
+the next time ohmail opens; a tab that crashed gives its message back and says so, and a duplicated
+tab starts its own. The composer stays open over a message too long to save. A reply whose send is
+refused after its message was deleted in another mail app is saved as a draft, and a change that
+waited more than a day to be saved is listed instead of dropped.
+
+### A self-hosted server no longer quotes AI credits or calls another server ohmail Cloud
+<!-- changes: fix-025-public-copy-true.md -->
+
+On a self-hosted server, in the desktop app on its own and on a paired computer, the draft offer,
+the Screener's suggestion quote, the auto-suggest confirmation and its done line state no credits,
+because nothing is charged there. A server that holds a mailbox is called another ohmail server,
+and the desktop app names a self-hosted door your ohmail server in Settings → Desktop, About, the
+sync line and the Screener's offline notes.
+
+### The self-hosted compose file pulls the release it came with
+<!-- changes: fix-025-public-copy-true.md -->
+
+`deploy/selfhost/docker-compose.yml` defaults the three ohmail images to its own release instead of
+`latest`, so a pull never mixes two releases. Set `OHMAIL_IMAGE_TAG` to pick another; updating is
+`git pull`, then `docker compose pull && docker compose up -d`.
+
+### The umbrelOS draft says it is out of date
+<!-- changes: fix-025-public-copy-true.md -->
+
+The umbrelOS package pins the 0.11.0 images and is not in any store. Its README and manifest now
+say it needs a repin to the current release before a submission.
+
+### A letter you sent to yourself and deleted elsewhere leaves the Ohbox
+<!-- changes: fix-025-deleted-while-closed.md -->
+
+A letter you sent to your own address and then deleted in another mail app now leaves the Ohbox,
+its conversation and Search at the next sync, on every device. Before, ohmail kept the copy it had
+seen in Sent.
+
+### A move for a letter the server no longer holds
+<!-- changes: fix-025-gone-letter-move-voided.md -->
+
+A move or Delete pressed on a message another mail app had already removed now closes at the next
+sync, where it used to stay "not filed" for ever. The not-filed warning counts only the messages
+that have waited, under their own time, and no longer says the mail server refused a message nothing
+refused. A conversation whose last message was deleted leaves every device.
+
+### A server's "not now" is shown as a wait, and the desktop app re-dials when the network returns
+<!-- changes: fix-025-sync-state.md -->
+
+When a mail server throttles ohmail, or answers that it is temporarily unavailable or at its
+connection limit, a mailbox organized on a server, Cloud or self-hosted, now says it is waiting
+instead of showing an error. On the desktop and phone apps the same answer at sign-in no longer
+stops the mailbox as if its password had been rejected. The desktop app re-dials a lost connection
+as soon as the computer's network comes back, instead of waiting up to five minutes. A first import
+that runs into one of ohmail's read limits no longer sends a sync-lag alert while the mailbox is
+still being read.
+
+### The Screener and the Ohbox agree about who you have decided on
+<!-- changes: fix-025-screener-one-predicate.md -->
+
+Somebody who joined a conversation you answered someone else in is now offered for screening in
+the Ohbox. A rule saved with spaces around the address applies to new mail. Earlier no longer lists
+mail you set aside, scheduled or brought back. The Screener places mail with no date by when it
+arrived. A sender whose own provider reports the From address as forged is no longer suggested as
+someone who writes to you.
+
+### Load older mail appears only where there is older mail, and lists only what this device does not hold
+<!-- changes: fix-025-windowed-client.md -->
+
+"Load older mail" at the end of the Ohbox is offered only when the server holds mail this device
+does not. The press starts below what the device holds and lists only mail the Ohbox itself would
+show: nothing already listed above, nothing the Screener is holding for a first-time sender. Rows it
+fetches can be dragged to the rail, and a selection holding them moves, deletes, tags and screens
+them like any other row. A link to a message the device no longer keeps opens it. While a reopened
+tab is still catching up, the rail shows no counts, and setup's summary says its counts are this
+device's when the device does not hold the whole mailbox.
+
+### A letter to yourself shows in the Ohbox
+<!-- changes: fix-025-self-sent-ohbox.md -->
+
+A letter you send to yourself is in INBOX and in Sent. ohmail sometimes kept only the Sent copy, so
+the letter never arrived as new in the Ohbox and counted as read. The INBOX copy now always shows,
+with its own read state, and letters already affected are corrected on the next sync.
+
+### The found-settings card appears on a slow mail provider
+<!-- changes: fix-025-settings-card-no-door-clock.md -->
+
+- The card offering settings saved in a mailbox now appears on a mail provider too slow to answer
+  within one request. It reads what the mailbox's organizer found, without reading the mailbox
+  again.
+- A mailbox removed from ohmail is no longer checked for saved settings.
+
+### Checking a pairing link works from every door and refuses a used link first
+<!-- changes: fix-025-pairing-undo.md -->
+
+From a desktop that reads its own mail server, Settings → Switch → Another computer stopped at
+Check the link with "not found". The check now works on either door. It also asks the other
+computer whether the link is still good, so a link that was already used, has expired or was taken
+back is refused at Check the link, before anything on this desktop is set up. The link itself is
+still sent only once, when the pairing finishes. A computer running an older version of ohmail
+cannot answer that question, and there such a link is still refused when the pairing finishes.
+
+### Every answer from Check the link reads in your language
+<!-- changes: fix-025-pairing-undo.md -->
+
+A computer that did not answer in time, a certificate for another name or one this desktop does not
+trust, a name the network does not know, and ohmail not yet set up on the other computer each have a
+sentence in English and German. They showed in English on a German desktop.
+
+### A pairing that does not finish turns hosting back on
+<!-- changes: fix-025-pairing-undo.md -->
+
+A desktop that serves your other devices stops doing so while a pairing is set up. When the other
+computer refused, the pairing ran out of time or ohmail was closed mid-pairing, hosting stayed off,
+start at login was removed and the tailnet route was withdrawn. All three now come back with the
+desktop's connection.
+
+### A pairing that does not finish leaves the other computer's Devices list
+<!-- changes: fix-025-pairing-undo.md -->
+
+When a pairing had already reached the other computer and was then undone, this desktop stayed on
+that computer's Devices list. The desktop now signs the pairing out there before it goes back, when
+that computer answers within a few seconds.
+
+### Signing out closes every tab
+<!-- changes: fix-025-sign-out-every-tab.md -->
+
+Signing out or deleting your account in one tab now closes the mailbox in the browser's other
+tabs at once. A tab that missed it checks with the server when you next look at it.
+
+### Signing in ends the session the browser held before
+<!-- changes: fix-025-session-jar.md -->
+
+Signing in on a browser that still held another session ends that session in the same step: a
+renewal of it that reaches the server afterwards is refused, and one still waiting for its answer
+is dropped by the browser, so neither switches the browser back to the previous account. On the
+desktop, a second sign-in pressed while one is still finishing waits for it instead of running
+beside it. A browser left with only its resume marker stops passing through the resume screen on
+every visit, and a desktop whose ohmail Cloud account was deleted is told so even after a lost
+renewal answer. The account settings say their "this window is for another account" refusals in
+your language, and stepping back while a password is being checked stays back.
+
+### The no-AI Screening switch no longer files on a suggestion
+<!-- changes: fix-025-no-ai-switch.md -->
+
+Settings → Screening's "File obvious bulk out of my Screener for me" says deterministic rules only,
+no AI, and it also filed a waiting sender whose stored suggestion was confident, into any pile,
+Spam included. It now files plain newsletters and receipts only; a suggestion waits for your Apply.
+Senders it already filed keep their rule in your rules list, where you can undo it. The desktop app
+called the same switch "Act on suggestions for me"; it now carries the web's name and words.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
