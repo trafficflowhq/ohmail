@@ -886,7 +886,8 @@ export function useShellCompose({
    * list of names to keep in step with the reads above.
    */
   /* The one door both presses take: `andDone` is Send + Done's release, `null` a plain Send. */
-  const sendReplyWith = useStableCallback((messageId: string, andDone: SendAndDonePlan | null) => {
+  const sendReply = useStableCallback((messageId: string, andDone: SendAndDonePlan | null = null) => {
+    const withDone = <T extends object>(o: T): T => (andDone !== null ? { ...o, andDone } : o);
     if (messageId !== replyTo) return;
     // A forward of a row the mirror does not hold reads the row its open resolved (`openForward`).
     const fwdGate = replyMode === "forward" && forwardGate?.id === messageId ? forwardGate : null;
@@ -947,7 +948,7 @@ export function useShellCompose({
           plan: forwardEnvelopePlan(replyEnvelope, fromOptions.map((o) => o.address)),
           confirmed: fwdGate?.confirmed === true && parent.sensitivity?.no_forward === true,
         }), sigText, sigHtml),
-        { surface: "inline", ...(andDone !== null ? { andDone } : {}) },
+        withDone({ surface: "inline" as const }),
       );
       return;
     }
@@ -997,9 +998,8 @@ export function useShellCompose({
       // `In-Reply-To`/`References` from the parent row whatever the subject says.
       ...(replySubjectEdit !== null ? { subject: replySubjectEdit } : {}),
       ...replyEnvelopeOnWire(plan),
-    }, sigText, sigHtml), { heldRow: heldReplyRow(messageId), ...(andDone !== null ? { andDone } : {}) });
+    }, sigText, sigHtml), withDone({ heldRow: heldReplyRow(messageId) }));
   });
-  const sendReply = useStableCallback((messageId: string) => sendReplyWith(messageId, null));
 
   /**
    * SEND + DONE, PRESSED — the SAME send through the same door, carrying its release. There is one
@@ -1008,7 +1008,7 @@ export function useShellCompose({
    * engine's rule declines is an ordinary Send — the button is not offered there.
    */
   const pressSendAndDone = useStableCallback((messageId: string) => {
-    sendReplyWith(messageId, sendAndDonePlanFor(presented, messageId));
+    sendReply(messageId, sendAndDonePlanFor(presented, messageId));
   });
 
   /**
