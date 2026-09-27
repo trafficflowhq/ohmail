@@ -681,8 +681,10 @@ export async function materializeThread(db: Db, accountId: string, id: string): 
     .where(and(eq(threads.id, id), eq(threads.accountId, accountId))).limit(1);
   if (!t) return null;
 
+  // Live letters only, as the list renders them: a tombstoned row keeps its `thread_id`, and the
+  // client counts a conversation by this list's length.
   const msgs = await db.select().from(messages)
-    .where(and(eq(messages.accountId, accountId), eq(messages.threadId, id)))
+    .where(and(eq(messages.accountId, accountId), eq(messages.threadId, id), isNull(messages.deletedAt)))
     .orderBy(asc(messages.date));
 
   const [fs] = msgs[0]
@@ -715,8 +717,9 @@ export async function materializeThreads(
   if (tRows.length === 0) return out;
 
   const owned = tRows.map((t) => t.id);
+  // Live letters only — the per-id reader's predicate, so the two cannot disagree.
   const mRows = await db.select().from(messages)
-    .where(and(eq(messages.accountId, accountId), inArray(messages.threadId, owned)))
+    .where(and(eq(messages.accountId, accountId), inArray(messages.threadId, owned), isNull(messages.deletedAt)))
     .orderBy(asc(messages.date));
 
   const msgsBy = new Map<string, (typeof messages.$inferSelect)[]>();

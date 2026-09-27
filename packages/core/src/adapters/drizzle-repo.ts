@@ -1395,11 +1395,12 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   async tombstoneInstanceless(accountId: string, mailboxId: string, limit: number): Promise<number> {
     const candidates = await instancelessCandidates(this.db, accountId, mailboxId);
     const victims: string[] = [];
+    const threadsOf = new Set<string>();
     for (let at = 0; at < candidates.length && victims.length < limit; at += REAPER_CHECK_CHUNK) {
       const chunk = candidates.slice(at, at + REAPER_CHECK_CHUNK);
       // Padded with its own last id, so the statement's text (and its plan) is one for every chunk.
       while (chunk.length < REAPER_CHECK_CHUNK) chunk.push(chunk[chunk.length - 1]!);
-      const rows = await this.db.select({ id: messages.id }).from(messages)
+      const rows = await this.db.select({ id: messages.id, threadId: messages.threadId }).from(messages)
         .where(and(
           inArray(messages.id, chunk),
           eq(messages.mailboxId, mailboxId),
@@ -1417,13 +1418,25 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         ))
         .orderBy(asc(messages.id))
         .limit(limit - victims.length);
-      for (const r of rows) victims.push(r.id);
+      for (const r of rows) {
+        victims.push(r.id);
+        if (r.threadId !== null) threadsOf.add(r.threadId);
+      }
     }
     for (const id of victims) {
       await this.db.update(messages).set({ deletedAt: new Date(), updatedAt: new Date() })
         .where(eq(messages.id, id));
       await this.huskBody(accountId, id, "expunged");
       await this.recordChange({ accountId, entityType: "message", entityId: id, op: "delete", meta: null });
+    }
+    // A conversation that keeps a live letter is served again, so a client already holding it
+    // counts the letters left rather than the list it had. One emptied of letters is not: every
+    // letter it names already reached the client as deleted.
+    for (const threadId of threadsOf) {
+      const [live] = await this.db.select({ id: messages.id }).from(messages)
+        .where(and(eq(messages.threadId, threadId), eq(messages.accountId, accountId), isNull(messages.deletedAt)))
+        .limit(1);
+      if (live) await this.recordChange({ accountId, entityType: "thread", entityId: threadId, op: "update", meta: null });
     }
     return victims.length;
   }
