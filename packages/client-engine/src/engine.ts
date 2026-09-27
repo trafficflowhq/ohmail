@@ -3828,12 +3828,19 @@ export class OhmailEngine {
     });
   }
 
+  /**
+   * A PRUNE PER PAGE HERE TOO, once the drafts are in: every page carries the next drafts until
+   * none are left, and a draft pins the message it answers — which may have landed pages earlier.
+   * Before, the walk landed everything the door served and pruned once at the settle, so a door
+   * serving past the window put its whole reach in the mirror at the peak.
+   */
   /** True when the last page committed the cursor; false when the route is absent or latched off. */
   private async runSnapshot(): Promise<boolean> {
     const snapshot = this.snapshotFn;
     if (!snapshot || this.snapshotUnavailable) return false;
     let cursor: string | undefined;
     let applied = false;
+    let draftsIn = false;
     for (;;) {
       let page: SyncSnapshotPage;
       try {
@@ -3867,6 +3874,10 @@ export class OhmailEngine {
         this.noteApplied(page.changes);
         await this.store.applyChanges(page.changes); // rows only — the cursor stays "0"
         await this.persistReceived();
+        draftsIn ||= !page.changes.some((c) => c.type === "draft");
+        // Every snapshot row carries `asOfSeq`, so no row is graced: a message's children ride
+        // its own page, and the drafts gate above covers the one pin that does not.
+        if (draftsIn) await this.pruneToPolicy(page.asOfSeq);
       }
       applied = true;
       this.notify();
