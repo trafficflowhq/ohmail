@@ -216,7 +216,8 @@ export function workspaceSourceAliases(repo = REPO) {
  *     reaches the server twin, and it does so silently;
  *  4. the desktop's own modules are matched by their exact relative specifier AND by the importer
  *     being inside `apps/sidecar/src` — a bare specifier check would rewrite `./db.js` written
- *     anywhere in the graph, and several packages have a file of that name.
+ *     anywhere in the graph, and several packages have a file of that name;
+ *  5. a package in `aliases.ONE_COPY` is resolved from its anchor's directory, whoever imports it.
  */
 function substitutions(extraBare = {}) {
   const bare = aliases.bareSpecifiers();
@@ -227,6 +228,7 @@ function substitutions(extraBare = {}) {
   }
   const external = new Set(aliases.EXTERNAL);
   const sidecarSrc = join(REPO, "apps", "sidecar", "src");
+  const oneCopy = new Set(aliases.ONE_COPY.packages);
   /** Every substitution the build actually performed, for the report and for the census. */
   const applied = [];
 
@@ -260,6 +262,8 @@ function substitutions(extraBare = {}) {
    * `pluginData.viaTable` and is passed straight through on the way back in.
    */
   let resolveViaEsbuild = null;
+  /* The anchor's entry file, resolved once; its directory is where a one-copy package is looked up. */
+  let anchorEntry = null;
 
   /* The plugin object is handed to esbuild, which REFUSES an unknown key on it — so the record of
      what was substituted travels beside the plugin rather than on it. Measured: an `applied` member
@@ -280,6 +284,25 @@ function substitutions(extraBare = {}) {
               "cannot stand in for it, because the engine uses this module rather than merely " +
               "importing it.",
           );
+        }
+        return r.path;
+      };
+      const resolveFromAnchor = async (specifier, kind) => {
+        if (anchorEntry === null) {
+          const a = await build.resolve(aliases.ONE_COPY.anchor, {
+            resolveDir: aliases.ONE_COPY.from, kind: "import-statement", pluginData: { viaTable: true },
+          });
+          if (a.errors.length > 0 || !a.path) {
+            throw new Error(`the phone engine resolves ${[...oneCopy].join(", ")} as "${aliases.ONE_COPY.anchor}" ` +
+              `does, and "${aliases.ONE_COPY.anchor}" does not resolve from ${relative(REPO, aliases.ONE_COPY.from)}.`);
+          }
+          anchorEntry = a.path;
+        }
+        const r = await build.resolve(specifier, {
+          resolveDir: dirname(anchorEntry), kind, pluginData: { viaTable: true },
+        });
+        if (r.errors.length > 0 || !r.path) {
+          throw new Error(`"${specifier}" does not resolve from "${aliases.ONE_COPY.anchor}", whose copy the phone carries.`);
         }
         return r.path;
       };
@@ -320,6 +343,13 @@ function substitutions(extraBare = {}) {
           const target = aliases.SIDECAR_SUBSTITUTES[args.path];
           applied.push([args.path, target]);
           return { path: target };
+        }
+        // 5 — one copy of a MIME library two parsers pin at different versions.
+        const pkg = args.path.startsWith("@") ? args.path.split("/").slice(0, 2).join("/") : args.path.split("/")[0];
+        if (oneCopy.has(pkg)) {
+          const resolved = await resolveFromAnchor(args.path, args.kind);
+          applied.push([args.path, resolved]);
+          return { path: resolved };
         }
         return null;   // everything else resolves normally
       });

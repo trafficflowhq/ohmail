@@ -117,6 +117,19 @@ const PACKAGE_ALIASES = {
 };
 
 /**
+ * ONE COPY of the MIME libraries both mail parsers pin exactly. When `imapflow` and `mailparser`
+ * pin different versions the bundle carries both — two charset tables of ~390 KB each. Every
+ * importer resolves these as the ANCHOR does, whose pins are the newer ones, in a pnpm or an npm
+ * layout alike. The phone app's `no-node-builtins.test.ts` refuses a second copy, and a carried
+ * version below any importer's pin.
+ */
+const ONE_COPY = {
+  anchor: "mailparser",
+  from: path.join(REPO, "packages", "core"),
+  packages: ["libmime", "@zone-eu/mailsplit", "encoding-japanese"],
+};
+
+/**
  * THE DESKTOP'S OWN MODULES, by the specifier written INSIDE `apps/sidecar/src`.
  *
  * Keyed by the literal relative specifier because that is what a resolver sees, and anchored
@@ -209,11 +222,11 @@ function bareSpecifiers() {
 
 export {
   MOBILE, REPO, SHIMS, PHONE,
-  NODE_MODULES, PACKAGE_ALIASES, SIDECAR_SUBSTITUTES, API_SUBSTITUTES, SCHEMA_TWIN,
+  NODE_MODULES, PACKAGE_ALIASES, ONE_COPY, SIDECAR_SUBSTITUTES, API_SUBSTITUTES, SCHEMA_TWIN,
   EXTERNAL, INJECT, bareSpecifiers,
 };
 export default {
   MOBILE, REPO, SHIMS, PHONE,
-  NODE_MODULES, PACKAGE_ALIASES, SIDECAR_SUBSTITUTES, API_SUBSTITUTES, SCHEMA_TWIN,
+  NODE_MODULES, PACKAGE_ALIASES, ONE_COPY, SIDECAR_SUBSTITUTES, API_SUBSTITUTES, SCHEMA_TWIN,
   EXTERNAL, INJECT, bareSpecifiers,
 };
