@@ -1007,9 +1007,10 @@ function ReplyRecipients({
     return (
       <>
         <div className="c-field">
-          <label htmlFor={`${base}-${r}`}>{t(r)}</label>
+          <label id={`${base}-${r}-label`} htmlFor={`${base}-${r}`}>{t(r)}</label>
           <RecipientField
             id={`${base}-${r}`}
+            labelledBy={`${base}-${r}-label`}
             value={envelope[r]}
             onChange={(next) => onEnvelope({ ...envelope, [r]: next })}
             book={book}

@@ -668,12 +668,13 @@ export function ComposeView({
             ) : null}
 
             <div className="c-field">
-              <label htmlFor="compose-to">{t("to")}</label>
+              <label id="compose-to-label" htmlFor="compose-to">{t("to")}</label>
               {/* The addresses this mailbox already knows, matched as you type. `book` is a
                   pure selector over the local mirror — no request per keystroke, and nothing
                   about what is being typed leaves the tab. See `RecipientField`. */}
               <RecipientField
                 id="compose-to"
+                labelledBy="compose-to-label"
                 value={fields.to}
                 onChange={(next) => onFields({ ...fields, to: next })}
                 book={book}
@@ -719,9 +720,10 @@ export function ComposeView({
             {ccBccShown ? (
               <>
                 <div className="c-field">
-                  <label htmlFor="compose-cc">{t("cc")}</label>
+                  <label id="compose-cc-label" htmlFor="compose-cc">{t("cc")}</label>
                   <RecipientField
                     id="compose-cc"
+                    labelledBy="compose-cc-label"
                     value={fields.cc}
                     onChange={(next) => onFields({ ...fields, cc: next })}
                     book={book}
@@ -744,9 +746,10 @@ export function ComposeView({
                 <div className="c-field">
                   {/* Bcc says out loud what "blind" means, because a recipient who assumes a Cc is
                       a privacy incident. Delivered on the envelope, never a header — see `compose.ts`. */}
-                  <label htmlFor="compose-bcc">{t("bcc")}</label>
+                  <label id="compose-bcc-label" htmlFor="compose-bcc">{t("bcc")}</label>
                   <RecipientField
                     id="compose-bcc"
+                    labelledBy="compose-bcc-label"
                     value={fields.bcc}
                     onChange={(next) => onFields({ ...fields, bcc: next })}
                     book={book}

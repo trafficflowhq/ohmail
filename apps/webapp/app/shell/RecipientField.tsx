@@ -264,6 +264,7 @@ export function RecipientField({
   placeholder,
   invalid,
   describedBy,
+  labelledBy,
   onFocusChange,
   row,
   onMove,
@@ -278,6 +279,9 @@ export function RecipientField({
   placeholder?: string;
   invalid?: boolean;
   describedBy?: string;
+  /** The visible label's id. The combobox takes its name from it by `aria-labelledby`, which
+   *  every browser reads; a `<label for>` alone left the field unnamed in Chrome. */
+  labelledBy?: string;
   /**
    * Focus, reported up, so the form can hold back the "not an address" line for the entry
    * being TYPED. See `ComposeView` — a half-typed name is not a wrong one.
@@ -610,6 +614,7 @@ export function RecipientField({
           aria-autocomplete="list"
           aria-activedescendant={live ? `${listId}-${cursor}` : undefined}
           aria-invalid={invalid || undefined}
+          aria-labelledby={labelledBy}
           aria-describedby={describedBy}
           onChange={(e) => {
             setOpen(true);
