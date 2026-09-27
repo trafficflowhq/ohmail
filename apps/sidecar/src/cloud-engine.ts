@@ -50,7 +50,7 @@ import {
   MANAGED_CLOUD_BASE,
 } from "./cloud-origin.js";
 import { createHostFetch } from "./host-pin-probe.js";
-import { createAdoptedDoor, DoorFileError } from "./adopted-door.js";
+import { createAdoptedDoor, DoorFileError, serialTail } from "./adopted-door.js";
 import { operatorCaFiles } from "./operator-ca-fetch.js";
 import { answerCloudProbe, CLOUD_PROBE_ROUTE } from "./cloud-probe.js";
 /* Re-exported so the probe's existing importers keep one address for it. */
@@ -1848,12 +1848,22 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       ? startEngineVitals(log, { storeBytes: () => opened.storeBytes() })
       : () => { /* nothing to write to */ };
 
+    /* ONE SIGN-IN AT A TIME, queued at the door (`serialTail`): the password, code and approval
+       sign-ins and the pairing redeem each start from the previous one's outcome, so a second
+       press meets its session or its adopted account instead of running beside it. */
+    const signInTail = serialTail();
+    const SIGN_IN_PATHS: ReadonlySet<string> = new Set(["/cloud/signin", "/cloud/pair-redeem"]);
+    const queued = (req: Request): Promise<Response> =>
+      req.method === "POST" && SIGN_IN_PATHS.has(new URL(req.url).pathname)
+        ? signInTail(() => handle(req))
+        : handle(req);
+
     return {
       db,
       world,
       servedMailboxId: () => served,
       sessionToken: session.token,
-      handle,
+      handle: queued,
       signedIn: () => authed !== null,
       online: () => authed !== null && authed.mirror.online(),
       mirrorDraining: () => authed !== null && authed.mirror.draining(),

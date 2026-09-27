@@ -86,3 +86,18 @@ export function createAdoptedDoor(doorFile: string, cloudUrl: string, address: s
     try { unlinkSync(staged); } catch { /* never created, or already gone */ }
   }
 }
+
+/**
+ * ONE SIGN-IN AT A TIME. The code, password and approval sign-ins and the pairing redeem each end
+ * in the same writes (the account comparison, the door and its record, the seal, the activation),
+ * and two presses on one data directory must not interleave them. Each tail queues behind the last,
+ * whatever that one answered, so the second starts from the first one's outcome.
+ */
+export function serialTail(): <T>(tail: () => Promise<T>) => Promise<T> {
+  let last: Promise<unknown> = Promise.resolve();
+  return <T>(tail: () => Promise<T>): Promise<T> => {
+    const run = last.then(tail, tail);
+    last = run.then(() => undefined, () => undefined);
+    return run;
+  };
+}
