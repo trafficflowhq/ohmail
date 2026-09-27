@@ -1106,9 +1106,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const {
     fileAndRefresh, rosterRef, deleting, restoring, refusalCopy, routing, pressWatch,
-    /* `toast`: every sentence below leaves through the undo door, so any Undo is one `z` takes. */
-    toastWithUndo, mutateAndReport, mutateSetAndReport, runArmedUndo, undoToast: toast,
+    toastWithUndo, mutateAndReport, mutateSetAndReport, runArmedUndo, undoToast,
   } = useShellDispatch({ engine, reader, toast: hostToast, t, demo, refreshFacts });
+  /* Every sentence below leaves through the undo door, so an Undo raised anywhere is one `z` takes. */
+  const toast = undoToast;
 
   const theme = useTheme();
   /* THE SHELL TIMES ITSELF — startup marks, the three interaction percentiles and the frame
@@ -1503,13 +1504,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   }, [firstRun, facts, firstRunMailbox, firstRunQueue, consent.onboardingCompletedAt,
     screener.waitingCount]);
   /**
-   * The one sender the guided decision is about — the head of the real
-   * queue, decided through the real `ScreenerState`, not a fabricated card:
-   * the first decision a person makes in the flow IS a decision — same
-   * mutation, same rule, same move as one taken in the Screener a minute
-   * later; a mock would teach a gesture that does something else. `null`
-   * when the queue is empty, which the derivation reads as "skip this step
-   * silently" — a guided first decision over nothing is a dead end.
+   * The one sender the guided decision is about — the head of the real queue, decided through the real
+   * `ScreenerState`, not a fabricated card: the first decision a person makes in the flow IS a decision
+   * — same mutation, same rule, same move as one taken in the Screener a minute later; a mock would
+   * teach a gesture that does something else. `null` when the queue is empty, which the derivation reads
+   * as "skip this step silently" — a guided first decision over nothing is a dead end.
    */
   const firstRunDecide: FirstRunDecideSubject | null = useMemo(() => {
     const row = firstRunQueue[0];
@@ -1594,9 +1593,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * with a refusing stub asks nothing unless its host wired a transport,
    * which the desktop does on both doors ({@link profileImportTransport}).
    */
-  /* The doorbell an organizer's find rings; `derived` is the subscription, the reader is stable. */
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const profileDoorbell = useMemo(() => settingsDoorbell(engine.read()), [engine, derived]);
+  /* The doorbell an organizer's find rings — the card is asked for on the drain that carries it. */
+  const profileDoorbell = useMemo(
+    () => settingsDoorbell(engine.read()),
+    // `derived` is the subscription; the reader object is stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [engine, derived],
+  );
   const profileImportOffer = useProfileImport(!demo, facts, profileImportTransport, undefined, profileDoorbell);
 
   /* The modifier's cap on this keyboard — the three hand-written caps below read it. */
@@ -1640,13 +1643,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   const waitingLive = screener.waiting.filter((w) => !screener.isExiting(w.id));
 
   /**
-   * Body hydration, wired once. Both reads read `engine.read()` at
-   * invocation time and are keyed on `engine` alone, NOT `version` — a new
-   * identity per mirror delta would re-fire every dependent view effect per
-   * delta. `hydrateBody` is `makeHydrateBody(engine)` so the forward of the
-   * caller's `{ retry }` option is a named, tested unit (an inline closure
-   * once silently dropped it). It swallows nothing: the engine's outcome is
-   * a record the UI renders, so `void` states there is no promise worth
+   * Body hydration, wired once. Both reads read `engine.read()` at invocation time and are keyed on
+   * `engine` alone, NOT `version` — a new identity per mirror delta would re-fire every dependent view
+   * effect per delta. `hydrateBody` is `makeHydrateBody(engine)` so the forward of the caller's `{ retry
+   * }` option is a named, tested unit (an inline closure once silently dropped it). It swallows nothing:
+   * the engine's outcome is a record the UI renders, so `void` states there is no promise worth
    * awaiting, not a discarded error.
    */
   const engineHydrateBody = useMemo(() => makeHydrateBody(engine), [engine]);
@@ -1772,14 +1773,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   }, [selectedOhbox?.id, hydrateBody]);
 
   /**
-   * The reader's own message is hydrated too — the gap that made History
-   * snippet-only. The effect above covers the split-pane selection; a
-   * message opened straight into the reader sheet (History's `onOpen`, and
-   * every width whose reading column is hidden) was never reached by it, so
-   * the pane rendered `bodyOf` over an un-hydrated mirror. Keyed on
-   * `readerFor` as the selection effect is keyed on `selectedOhbox.id`;
-   * `hydrateBody` is single-flight and idempotent, so the overlap when the
-   * reader shows an Ohbox message costs nothing.
+   * The reader's own message is hydrated too — the gap that made History snippet-only. The effect above
+   * covers the split-pane selection; a message opened straight into the reader sheet (History's
+   * `onOpen`, and every width whose reading column is hidden) was never reached by it, so the pane
+   * rendered `bodyOf` over an un-hydrated mirror. Keyed on `readerFor` as the selection effect is keyed
+   * on `selectedOhbox.id`; `hydrateBody` is single-flight and idempotent, so the overlap when the reader
+   * shows an Ohbox message costs nothing.
    */
   useEffect(() => {
     if (readerFor) hydrateBody(readerFor, { urgent: true });
