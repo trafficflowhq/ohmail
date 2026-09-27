@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { uptime as osUptime } from "node:os";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { AsyncLocalStorage } from "node:async_hooks";
 import { PGlite, type Transaction as PgliteTransaction } from "@electric-sql/pglite";
 import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 import { btree_gin } from "@electric-sql/pglite/contrib/btree_gin";
@@ -19,8 +18,8 @@ import {
   type LogBounds, type LogMark,
 } from "@trafficflow/db/dialect";
 import {
-  createStoreScheduler, currentStoreLane, inStoreLane, outsideStoreLanes, scheduleStoreLanes,
-  type StoreLaneCensus,
+  STORE_FLUSH, createStoreScheduler, currentStoreLane, inStoreLane, outsideStoreLanes,
+  scheduleStoreLanes, type StoreLaneCensus,
 } from "./store-lanes.js";
 import { LocalStoreFs } from "./pglite-transport.js";
 import { keepIngestPlans } from "./pglite-plans.js";
@@ -76,8 +75,17 @@ export const CHECKPOINT_SLOW_MS = 250;
 /** One row, written durably by {@link createLogFlush}. Store-local: no journal names it. */
 const LOG_FLUSH_TABLE = "local_store_flush";
 
-/** Marks the store's own flush, so {@link relaxIngestCommits} commits it `on` and counts nothing. */
-const durableFlush = new AsyncLocalStorage<true>();
+/**
+ * The store's own flush transaction, marked so {@link relaxIngestCommits} commits it `on` and counts
+ * nothing. A mark on the callback, not an async context: every AsyncLocalStorage in use is paid for
+ * on every promise the process makes, and this one would be read once a second.
+ */
+const flushTransaction = Object.assign(
+  (tx: PgliteTransaction): Promise<unknown> => tx.query(
+    `INSERT INTO ${LOG_FLUSH_TABLE} (id, flushed_at) VALUES (1, now()) `
+    + "ON CONFLICT (id) DO UPDATE SET flushed_at = excluded.flushed_at"),
+  { [STORE_FLUSH]: true as const },
+);
 
 /**
  * HOW THE LOG IS WRITTEN, AND THE ONE PROPERTY THIS STORE'S DURABILITY RESTS ON.
@@ -126,7 +134,7 @@ function relaxIngestCommits(client: PGlite, noteRelaxed: () => void): PGlite {
     value: function relaxed<T>(cb: (tx: PgliteTransaction) => Promise<T>): Promise<T | undefined> {
       return inner(async (tx) => {
         if (currentStoreLane() === "ingest") {
-          const setting = durableFlush.getStore() === true ? "on" : INGEST_SYNCHRONOUS_COMMIT;
+          const setting = STORE_FLUSH in cb ? "on" : INGEST_SYNCHRONOUS_COMMIT;
           await tx.exec(`set local synchronous_commit = ${setting}`);
           if (setting === INGEST_SYNCHRONOUS_COMMIT) noteRelaxed();
         }
@@ -164,10 +172,7 @@ function createLogFlush(
     timer = outsideStoreLanes(() => setTimeout(fire, everyMs));
     timer.unref?.();
   };
-  const write = (): Promise<unknown> => inStoreLane("ingest", () => durableFlush.run(true, () =>
-    client.transaction((tx) => tx.query(
-      `INSERT INTO ${LOG_FLUSH_TABLE} (id, flushed_at) VALUES (1, now()) `
-      + "ON CONFLICT (id) DO UPDATE SET flushed_at = excluded.flushed_at"))));
+  const write = (): Promise<unknown> => inStoreLane("ingest", () => client.transaction(flushTransaction));
   const fire = (): void => {
     timer = null;
     if (stopped) return;

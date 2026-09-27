@@ -306,6 +306,9 @@ export function scheduleStoreLanes<C extends object>(client: C, scheduler: Store
   return client;
 }
 
+/** Marks a transaction callback as the store's own log flush; the wrapper below keeps the mark. */
+export const STORE_FLUSH = Symbol("store-flush");
+
 /** The statement methods of a transaction handle, which reach the connection without `client`. */
 const TRANSACTION_STATEMENTS = new Set<PropertyKey>(["query", "exec", "sql"]);
 
@@ -317,7 +320,7 @@ const TRANSACTION_STATEMENTS = new Set<PropertyKey>(["query", "exec", "sql"]);
  * across the turn, and a read still waits for the commit — what it no longer waits for is the loop.
  */
 function turningTransaction(cb: (tx: object) => Promise<unknown>): (tx: object) => Promise<unknown> {
-  return (tx) => {
+  const turning = (tx: object): Promise<unknown> => {
     let issued = 0;
     return cb(new Proxy(tx, {
       get(target, prop, receiver) {
@@ -331,4 +334,5 @@ function turningTransaction(cb: (tx: object) => Promise<unknown>): (tx: object) 
       },
     }));
   };
+  return STORE_FLUSH in cb ? Object.assign(turning, { [STORE_FLUSH]: true }) : turning;
 }
