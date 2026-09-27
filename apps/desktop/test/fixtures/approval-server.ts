@@ -33,7 +33,10 @@ export function hostedMailbox(id: string, address: string): MailboxDTO {
     lastSyncAt: at, errorCode: null, errorDetail: null, failedAt: null, retryCount: 0,
     syncBlockedReason: null, syncBlockedSince: null, disabledReason: null, initialImportCompletedAt: at,
     pendingMoves: 0,
-    filing: { due: 0, deferred: 0, oldestPendingAt: null, nextAttemptAt: null, attempts: 0, lastRefusalClass: null, asOf: at, lastCycleAt: null },
+    filing: {
+      due: 0, deferred: 0, oldestPendingAt: null, nextAttemptAt: null, attempts: 0, lastRefusalClass: null,
+      stuck: 0, stuckSince: null, stuckRefusalClass: null, asOf: at, lastCycleAt: null,
+    },
     organizerRole: "organizer", organizedBy: null, organizerState: null, organizedByThisInstall: true,
     organizeConsentedAt: null, organizerEventAt: null, organizerEventSeenAt: null, organizerAcceptsRequests: false,
     organizerReleasedAt: null, releaseRequestedAt: null, releaseRefusal: null, takeoverAuthorizedAt: null,
