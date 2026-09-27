@@ -202,6 +202,14 @@ export {
   type Tx, type LedgerTx, type EntityType, type ChangeOp, type ChangeInput, type SeqBounds,
   type MailboxMustBeLive,
 } from "./change-log.js";
+
+/* Retention's MAIL half (mail 0122), in both stores' dialects: the local engine runs it on its own
+   store. The hosted rest (`auth_events`, the account rotation) stays on `@trafficflow/db/cloud`. */
+export {
+  changeLogHorizon, pruneChangeLogForAccount, pruneAuditLog,
+  CHANGE_LOG_RETENTION_GRACE_MS, CHANGE_LOG_HOLDBACK_LIVE_MS, AUDIT_LOG_RETENTION_MS,
+  RETENTION_DELETE_BATCH, type ChangeLogPruneResult,
+} from "./change-log-retention.js";
 export {
   claimIdempotencyKey, readIdempotencyKey, pruneIdempotencyKeys, eraseIdempotentResponses,
   settleIdempotencyKey, releasePendingIdempotencyKey,

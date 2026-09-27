@@ -241,6 +241,8 @@ import { createAttentionClock } from "./attention.js";
 import type { PowerVerdict } from "./host-power.js";
 import { startSearchIndexBackfill } from "./search-backfill.js";
 import { createStatisticsUpkeep } from "./store-statistics.js";
+import { localRetentionDue, runLocalRetention } from "./local-retention.js";
+import { loopTurn } from "./loop-hold.js";
 import { SEARCH_INDEX_ROUTE, createSearchIndexDoor } from "./search-index-door.js";
 import { createFirstSyncReporter, createFirstSyncTracker } from "./first-sync.js";
 import type { Diagnostic } from "./log.js";
@@ -5720,8 +5722,21 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            without taking mail still folds: the tail's condition below compares the change-log
            mark across the WHOLE drain, so a cycle that only applied queued commands is caught
            there, on a read that drain already pays. */
-        if (cycles > 0 && census.observed > 0 && (await opened.foldIfLogGrew()).folded) checkpoints += 1;
-        if (cycles > 0 && census.observed > 0) await statisticsUpkeep.noteIngested(census.observed);
+        /* THE UPKEEP RUNS ONE STEP AT A TIME, IN THE STORE'S LANE. Outside it the scheduler is off and
+           PGlite answers in microtasks, so the steps ran back to back without a turn — 128 to 282 ms of
+           the thread at a first import's end, and a search due inside waited it out. Each step takes a
+           turn first, and inside the lane the scheduler shares the connection between its statements. */
+        const upkeep = async <T>(step: () => Promise<T>): Promise<T> => {
+          await loopTurn();
+          return inStoreLane("ingest", step);
+        };
+        if (cycles > 0 && census.observed > 0 && (await upkeep(() => opened.foldIfLogGrew())).folded) checkpoints += 1;
+        if (cycles > 0 && census.observed > 0) await upkeep(() => statisticsUpkeep.noteIngested(census.observed));
+        /* RETENTION, the hosted horizon on this store: hourly, one batch, never while mail comes in.
+           Asked before the lane, which would itself read as mail coming in. See `local-retention.ts`. */
+        if (cycles > 0 && localRetentionDue(db)) {
+          await upkeep(() => runLocalRetention(db as unknown as Tx, world.accountId, now(), log));
+        }
         /* ONE LINE PER DRAIN, WRITTEN AT THE DRAIN'S END — a settled mailbox emits it every poll
            interval, so it stays quiet; a slow or spinning drain is the line that shows it.
            `slowestMs` above the poll interval is the signal to chase. It reports the WHOLE drain,
@@ -5770,7 +5785,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              been reading past for months. Before the checkpoint below for `suggestNew`'s reason: the
              rows it writes belong in the same fold. */
           tail.phase("name-repair");
-          await onceForTheAccount(backfillStoredNames);
+          await upkeep(() => onceForTheAccount(backfillStoredNames));
           /* REJOIN THE CONVERSATIONS A FORWARD SPLIT, the same pass the hosted worker runs
              (`@trafficflow/worker/thread-join-heal`) for the reason every pass above is the
              worker's: on this door the store under the user's home IS the authority, no worker
@@ -5843,7 +5858,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              stamp. See `sync-stamp.ts`. */
           tail.phase("stamp");
           if (cycles > 0) {
-            const stamps = await stampSynced(db, mb.id, now(), inboundDrained);
+            const stamps = await upkeep(() => stampSynced(db, mb.id, now(), inboundDrained));
             /* HOW LONG THE FIRST IMPORT TOOK, from the stamps that just decided it — the number
                nobody could read off a log before. The count is a thunk so a settled mailbox's pass
                pays nothing for it; see `first-sync.ts`. */
@@ -5864,7 +5879,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           const markAtEnd = await changeLogMark();
           const tailWrote = markAtStart === null || markAtEnd === null || markAtEnd !== markAtStart;
           if (cycles > 0 && (census.observed > 0 || tailWrote)) {
-            await opened.checkpoint();
+            await upkeep(() => opened.checkpoint());
             checkpoints += 1;
           }
           // What the memo above is held against next time — see the note at `markAtStart`.
