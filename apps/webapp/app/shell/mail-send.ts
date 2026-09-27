@@ -36,7 +36,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { OUTBOX_TYPE } from "@ohmail/client-engine";
 import type {
-  EmailAddress, EngineMessage, EntityReader, MutationResult, OhmailEngine,
+  EmailAddress, EngineMessage, EntityReader, MutationResult, OhmailEngine, SendAndDonePlan,
 } from "@ohmail/client-engine";
 import type { ToastFn } from "@ohmail/ui";
 import {
@@ -168,7 +168,7 @@ export interface MailSendApi {
    * an inline reply's row is the adapter's and its editor is a scratch buffer, so this door asked
    * about `null` and got `free` while the row a previous press left sat unconfirmed.
    */
-  send: (m: MailSend, opts?: { surface?: "inline"; heldRow?: string | null }) => void;
+  send: (m: MailSend, opts?: { surface?: "inline"; heldRow?: string | null; andDone?: SendAndDonePlan }) => void;
   /**
    * CANCEL CANCELS — withdraw this lane's QUEUED send, if it has one. A queued send is an intent
    * on the engine's outbox: nothing is on the wire, and the reconnect flush or a later boot
@@ -180,6 +180,15 @@ export interface MailSendApi {
    * only the server knows what it did with it.
    */
   withdraw: (lane: string) => Promise<CancelSaid>;
+}
+
+/**
+ * WHAT AN ENDING CARRIES BESIDE ITS PHASE — see `onOutcome`. `left` on a refusal that names its
+ * row; `andDone` on a confirmation pressed with Send + Done, read off the send's own outbox row.
+ */
+export interface OutcomeDetail {
+  left?: RefusedRow;
+  andDone?: SendAndDonePlan;
 }
 
 /** The row a send refused for good was sent from, handed to the surface that may take it. */
@@ -1094,11 +1103,12 @@ export function useMailSend(
    * of its own — one send, one toast. Only the confirmation's answer is read. `phase` names the
    * ending, a send replayed from the last session's outbox included.
    *
-   * `left` is the row a refused send was sent from, when its refusal names one and the composer
-   * is still holding that message — see `ComposeFate.refusedWithRow`. Absent on every other ending.
+   * `detail.left` is the row a refused send was sent from, when its refusal names one and the
+   * composer still holds that message — see `ComposeFate.refusedWithRow`. `detail.andDone` is the
+   * Send + Done release, on a confirmation — a replayed one included. See {@link OutcomeDetail}.
    */
   onOutcome?: (
-    key: string, m: MailSend, accepted: boolean, phase?: SendPhase, left?: RefusedRow,
+    key: string, m: MailSend, accepted: boolean, phase?: SendPhase, detail?: OutcomeDetail,
   ) => boolean,
 ): MailSendApi {
   const t = useTranslations();
@@ -1194,7 +1204,7 @@ export function useMailSend(
    * closes if it is still the one on screen.
    */
   const settle = useCallback(
-    (key: string, m: MailSend) => {
+    (key: string, m: MailSend, andDone?: SendAndDonePlan) => {
       /* THE IDENTITY THE PRESS RECORDED — see {@link sentFor}. The fallback is the mutation's own
          row and no session, which is the most this can know about a settlement no press on this
          mount produced; an unnameable one admits, which is the rule everywhere else here. */
@@ -1265,7 +1275,7 @@ export function useMailSend(
       /* SEND + DONE TAKES THE SENTENCE. The confirmation is the moment the second action was
          waiting for, and the caller answers whether it has spoken for this send — one press,
          one toast, rather than "Reply sent." replaced a beat later by "Sent · marked done". */
-      if (outcomeRef.current?.(key, m, true) === true) return;
+      if (outcomeRef.current?.(key, m, true, undefined, andDone ? { andDone } : undefined) === true) return;
       toast(
         key === COMPOSE_SEND_KEY
           ? (m.sendAt
@@ -1417,7 +1427,7 @@ export function useMailSend(
       // A confirmation is the only outcome that does anything beyond the phase, and `settle`
       // is where all of it lives — so a confirmation from a flush minutes later clears the
       // draft and discharges the debt exactly as the first press would have.
-      if (res.status === "confirmed") settle(key, m);
+      if (res.status === "confirmed") settle(key, m, res.andDone);
       else {
         /* AND THE LANES THAT WILL NEVER CONFIRM SAY SO. A failed, duplicate or unverified send
            is the end of this press; an arm still waiting on it would wait for ever. `queued` is
@@ -1425,7 +1435,8 @@ export function useMailSend(
         if (next.phase !== "queued") {
           const held = sentFor.current.get(key) ?? { draftId: m.draftId ?? null, session: null };
           const about = key !== COMPOSE_SEND_KEY || composeStillHolds(held, owner.current);
-          outcomeRef.current?.(key, m, false, next.phase, refusedRowOf(res, about));
+          const left = refusedRowOf(res, about);
+          outcomeRef.current?.(key, m, false, next.phase, left ? { left } : undefined);
         }
         setPhase(key, next);
       }
@@ -1587,6 +1598,13 @@ export function useMailSend(
           && record.session !== composeSessionId(owner.current)
         );
         if (res.status === "confirmed") {
+          /* THE RELEASE IT WAS PRESSED WITH, from the send's own row: the source is filed whichever
+             surface is on screen, because the release is about the source, not the composer. */
+          if (res.andDone) {
+            outcomeRef.current?.(
+              record.lane, { kind: "mail_send" } as unknown as MailSend, true, undefined, { andDone: res.andDone },
+            );
+          }
           /**
            * THE SEND COMPLETED WHILE NOBODY WAS LISTENING. The surface bound to that message is told, with the row
            * the send was delivered from, so it can end the way a live confirmation ends it. AND THE RECORD IS LEFT
@@ -1688,7 +1706,7 @@ export function useMailSend(
           outcomeRef.current?.(
             record.lane, { kind: "mail_send" } as unknown as MailSend, false, phaseFor(res).phase,
             // The replay's own row, for the surface this answer speaks to and no other.
-            speaksForScreen ? refusedRowOf(res, true) : undefined,
+            speaksForScreen && refusedRowOf(res, true) ? { left: refusedRowOf(res, true)! } : undefined,
           );
         }
       }
@@ -1931,7 +1949,7 @@ export function useMailSend(
       // above are synchronous and stay that way: they are what make a second press impossible,
       // and a yield in front of either would open the window they exist to close.
       void afterPaint()
-        .then(() => engine.mutate(m, { key: sendKey }))
+        .then(() => engine.mutate(m, { key: sendKey, ...(opts?.andDone ? { andDone: opts.andDone } : {}) }))
         .then((res) => {
           absorb(key, m, res);
           if (res.status === "queued") arm();

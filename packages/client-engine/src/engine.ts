@@ -38,6 +38,7 @@ import {
 } from "./store-pages.js";
 import { classifyWindowSyncFailure, type WindowSyncFailure } from "./window-sync-failure.js";
 import type { WindowSearchPhases } from "./search-phases.js";
+import type { SendAndDonePlan } from "./send-and-done.js";
 import { countNotify } from "./client-vitals.js";
 import { ObjectUrlLedger } from "./object-urls.js";
 import { bytesBlob, retypedBlob } from "./bytes-blob.js";
@@ -177,6 +178,12 @@ export interface MutationResult {
   queuedWith?: { name: string | null };
   /** The server's `organizer_requests.id` for a queued mutation, where the door named one. */
   requestId?: string;
+  /**
+   * THE SEND + DONE RELEASE this send was pressed with — on its CONFIRMED result only, from the
+   * send's own outbox row. A later boot's replay hands it back too, so the source is filed by
+   * whichever surface collects the confirmation, not only the one that pressed.
+   */
+  andDone?: SendAndDonePlan;
 }
 
 /**
@@ -290,6 +297,8 @@ interface PendingMutation {
    * it is carried on the verb and persisted with it, and handed back on every later attempt.
    */
   createAttempted?: boolean;
+  /** The Send + Done release — see {@link MutationResult.andDone}. Persisted with the row. */
+  andDone?: SendAndDonePlan;
   /** Server-answered failures so far. See {@link OUTBOX_MAX_SERVER_FAILURES} for what counts. */
   attempts?: number;
   /** Epoch ms before which no drive may dispatch this verb. */
@@ -424,6 +433,11 @@ interface PersistedOutboxEntry {
    * place, so an older record without it reads as not withdrawn, which is what it was.
    */
   withdrawn?: boolean;
+  /**
+   * THE SEND + DONE RELEASE, kept with the send it was pressed with — see
+   * {@link MutationResult.andDone}. Added in place: absent reads as a plain Send.
+   */
+  andDone?: SendAndDonePlan;
 }
 
 /**
@@ -503,7 +517,16 @@ function outboxEntryOf(p: PendingMutation): PersistedOutboxEntry {
     ...(p.waitIsServerNamed !== undefined ? { waitIsServerNamed: p.waitIsServerNamed } : {}),
     ...(p.lastError !== undefined ? { lastError: p.lastError } : {}),
     ...(p.createAttempted === true ? { createAttempted: true } : {}),
+    ...(p.andDone !== undefined ? { andDone: p.andDone } : {}),
   };
+}
+
+/** A persisted release read back defensively: a malformed one is a plain Send, never a guess. */
+function isAndDonePlan(v: unknown): v is SendAndDonePlan {
+  if (typeof v !== "object" || v === null) return false;
+  const r = v as Record<string, unknown>;
+  return typeof r.section === "string" && Array.isArray(r.messageIds)
+    && Array.isArray(r.mutations) && Array.isArray(r.undo);
 }
 
 /**
@@ -3028,6 +3051,7 @@ export class OhmailEngine {
         // THE WHOLE POINT OF PERSISTING IT: this replay runs through a FRESH adapter, whose own
         // memory of the unreadable create is gone. Without this the replay re-POSTs the create.
         ...(e.createAttempted === true ? { createAttempted: true } : {}),
+        ...(e.mutation.kind === "mail_send" && isAndDonePlan(e.andDone) ? { andDone: e.andDone } : {}),
         /**
          * A `v: 2` RECORD WITH A WAIT AND NO FLAG IS READ AS SERVER-NAMED. `waitIsServerNamed` was added to the `v:
          * 2` shape in place, so records written before it can carry a `nextAt` that came from a `Retry-After` and no
@@ -5594,7 +5618,7 @@ export class OhmailEngine {
    * Not restricted to `mail_send` in the signature — the rule is "the caller owns this verb's identity" — but a key
    * must be durable at the caller before it is handed over, or this is just a slower `uuid()`.
    */
-  async mutate(m: EngineMutation, opts: { key?: string } = {}): Promise<MutationResult> {
+  async mutate(m: EngineMutation, opts: { key?: string; andDone?: SendAndDonePlan } = {}): Promise<MutationResult> {
     const result = await this.mutateOnce(m, opts);
     // A decision the server took changes who is waiting; the page is re-read on this one road.
     if (result.status !== "rolled_back" && QUEUE_VERBS.has(m.kind) && this.screenerWait.armed) {
@@ -5603,7 +5627,7 @@ export class OhmailEngine {
     return result;
   }
 
-  private async mutateOnce(m: EngineMutation, opts: { key?: string }): Promise<MutationResult> {
+  private async mutateOnce(m: EngineMutation, opts: { key?: string; andDone?: SendAndDonePlan }): Promise<MutationResult> {
     const enriched = this.enrich(m);
     const id = this.uuid();
     const key = opts.key ?? this.uuid();
@@ -5661,6 +5685,8 @@ export class OhmailEngine {
       id, key, mutation: enriched, at: this.now().getTime(), n: this.outboxSeq++,
       ...(superseded.retired.length > 0 ? { retire: superseded.retired } : {}),
       ...(superseded.createAttempted ? { createAttempted: true } : {}),
+      // With the send's durable row, never in a surface's memory: the arm outlives the surface.
+      ...(opts.andDone !== undefined && enriched.kind === "mail_send" ? { andDone: opts.andDone } : {}),
     };
     // ONE TRANSACTION: the newer row in, the rows it supersedes out, and every abandoned record it
     // marks stale. See `supersedeQueued` for why the removal may not be a separate best-effort
@@ -6954,6 +6980,7 @@ export class OhmailEngine {
         // Rides the confirmed result for `pendingWith`'s reason: the server answered, and this
         // is the only thing that can say the answer was about an earlier press.
         ...(outcome.firstSend ? { firstSend: outcome.firstSend } : {}),
+        ...(p.andDone !== undefined ? { andDone: p.andDone } : {}),
       };
     } catch (err) {
       const rejection = err instanceof MutationRejectedError

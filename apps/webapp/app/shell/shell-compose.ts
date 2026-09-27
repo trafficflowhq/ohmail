@@ -86,7 +86,7 @@ import {
   writeReplyDraft,
   writeReplyMeta,
   type LanePromotionPlan,
-  type RefusedRow,
+  type OutcomeDetail,
   type SendPhase,
   type SendState,
 } from "./mail-send";
@@ -799,42 +799,30 @@ export function useShellCompose({
     });
     setFr({ ...fr, step: fr.step + 1 });
   });
-  /**
-   * SEND + DONE — THE ARMED LANES.
-   *
-   * A press of the second action records the release it earned, keyed by the send lane it
-   * pressed on; the send machine answers that lane when the engine confirms the message or when
-   * the send reaches a terminal outcome that is not a delivery, and the entry is spent either
-   * way. The PLAN is read at the press and not at the answer, which is the whole point of
-   * holding it: it names the section the source is in NOW, and the send itself releases a pin
-   * as it settles — an inverse read afterwards would put the row back where the send left it.
+  /*
+   * SEND + DONE: the release a press earned rides the SEND ITSELF, on its outbox row, and comes
+   * back on its confirmation (`OutcomeDetail.andDone`) — a later boot's replay included. It was a
+   * map in this surface's memory, so a send confirmed after a reload filed nothing. The plan is
+   * read at the press: it names the section the source is in NOW, before the send moves a pin.
    */
-  const sendDoneArm = useRef(new Map<string, SendAndDonePlan>());
 
   /**
-   * The lane a reply or a forward of this message sends on — the same derivation
-   * `MessagePane` hands the editor and `sendKeyOf` builds the key from.
-   */
-  const replyLaneOf = useStableCallback((messageId: string): string =>
-    replyMode === "forward" ? inlineForwardKey(messageId) : messageId);
-
-  /**
-   * THE SEND MACHINE'S ANSWER FOR AN ARMED LANE. `accepted` is the engine's confirmation and
-   * nothing weaker; the intent is what refuses to dispatch anything without it, here as on the
-   * phone. Answering `true` tells the lane the shell has spoken for this send, so the ordinary
-   * "Reply sent." is not raised and replaced — one press, one sentence.
+   * THE SEND MACHINE'S ANSWER, and for Send + Done the release it carries. `accepted` is the
+   * engine's confirmation and nothing weaker; the intent is what refuses to dispatch anything
+   * without it, here as on the phone. Answering `true` tells the lane the shell has spoken for
+   * this send, so the ordinary "Reply sent." is not raised and replaced — one press, one sentence.
    */
   const onSendOutcome = useStableCallback((
-    key: string, _m: MailSendMutation, accepted: boolean, phase?: SendPhase, left?: RefusedRow,
+    key: string, _m: MailSendMutation, accepted: boolean, phase?: SendPhase, detail?: OutcomeDetail,
   ): boolean => {
     if (!accepted && phase === "failed") handBackLane(key);
     // A compose send refused for good names its row, and the composer takes it — one draft, not two.
+    const left = detail?.left;
     if (!accepted && left !== undefined && key === COMPOSE_SEND_KEY) {
       settleComposeRef.current({ kind: "refusedWithRow", ...left });
     }
-    const plan = sendDoneArm.current.get(key);
+    const plan = detail?.andDone;
     if (plan === undefined) return false;
-    sendDoneArm.current.delete(key);
     void sendAndDone({
       plan,
       // The acceptance, read where the send machine knows it. A refused send reaches this
@@ -897,12 +885,9 @@ export function useShellCompose({
    * rebuilt every render and reached through a ref, so there is no capture to go stale and no
    * list of names to keep in step with the reads above.
    */
-  const sendReply = useStableCallback((messageId: string) => {
+  /* The one door both presses take: `andDone` is Send + Done's release, `null` a plain Send. */
+  const sendReplyWith = useStableCallback((messageId: string, andDone: SendAndDonePlan | null) => {
     if (messageId !== replyTo) return;
-    /* A PLAIN SEND DISARMS THE LANE. Send + Done arms it again immediately after calling this
-       (see `pressSendAndDone`); a press that is refused at the door leaves an entry no answer
-       will ever spend, and the next plain Send on the same lane must not inherit it. */
-    sendDoneArm.current.delete(replyLaneOf(messageId));
     // A forward of a row the mirror does not hold reads the row its open resolved (`openForward`).
     const fwdGate = replyMode === "forward" && forwardGate?.id === messageId ? forwardGate : null;
     const parent = reader.get<EngineMessage>("message", messageId)
@@ -962,7 +947,7 @@ export function useShellCompose({
           plan: forwardEnvelopePlan(replyEnvelope, fromOptions.map((o) => o.address)),
           confirmed: fwdGate?.confirmed === true && parent.sensitivity?.no_forward === true,
         }), sigText, sigHtml),
-        { surface: "inline" },
+        { surface: "inline", ...(andDone !== null ? { andDone } : {}) },
       );
       return;
     }
@@ -1012,23 +997,18 @@ export function useShellCompose({
       // `In-Reply-To`/`References` from the parent row whatever the subject says.
       ...(replySubjectEdit !== null ? { subject: replySubjectEdit } : {}),
       ...replyEnvelopeOnWire(plan),
-    }, sigText, sigHtml), { heldRow: heldReplyRow(messageId) });
+    }, sigText, sigHtml), { heldRow: heldReplyRow(messageId), ...(andDone !== null ? { andDone } : {}) });
   });
+  const sendReply = useStableCallback((messageId: string) => sendReplyWith(messageId, null));
 
   /**
-   * SEND + DONE, PRESSED — the SAME send, and the release armed behind it.
-   *
-   * `sendReply` is called unchanged and unwrapped: there is one path to SMTP, and the lock, the
-   * empty-body guard and the whole failure surface belong to it. The plan is read BEFORE the
-   * press (the pre-press mirror is what Undo restores) and armed AFTER it, because `sendReply`
-   * disarms the lane on its way in. A source the engine's rule declines is an ordinary Send —
-   * the button is not offered there, and a keyboard press falls through to the same place.
+   * SEND + DONE, PRESSED — the SAME send through the same door, carrying its release. There is one
+   * path to SMTP, and the lock, the empty-body guard and the whole failure surface belong to it.
+   * The plan is read BEFORE the press (the pre-press mirror is what Undo restores). A source the
+   * engine's rule declines is an ordinary Send — the button is not offered there.
    */
   const pressSendAndDone = useStableCallback((messageId: string) => {
-    const plan = sendAndDonePlanFor(presented, messageId);
-    const lane = replyLaneOf(messageId);
-    sendReply(messageId);
-    if (plan !== null) sendDoneArm.current.set(lane, plan);
+    sendReplyWith(messageId, sendAndDonePlanFor(presented, messageId));
   });
 
   /**
