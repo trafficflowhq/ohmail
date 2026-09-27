@@ -1,19 +1,19 @@
 /**
- * THE THREE AI REFUSALS, SAID IN THE READER'S LANGUAGE.
+ * THE AI REFUSALS, SAID IN THE READER'S LANGUAGE.
  *
  * The server's `message` is English written for a log and was being rendered verbatim — a German
  * account read an English sentence about its own standing. The `code` is the actionable fact, so
- * it selects the sentence and the catalogue holds it. Only three, because every other refusal
- * keeps the server's own words: "this deployment has no AI classifier connected" is a fact about
- * a host, and re-deriving a taxonomy for it is how somebody with an empty balance is told the
- * model is down.
+ * it selects the sentence and the catalogue holds it. One code per fact: no model connected has
+ * its own sentence, apart from an empty balance and a model that is down, so none of the three
+ * people is told another's remedy. Every other refusal keeps the server's own words.
  */
 
 /** `error.code` → the key under the `aiRefusal` namespace. The whole mapping, as data. */
-const BY_CODE: Readonly<Record<string, "insufficientCredits" | "aiDisabled" | "aiUnavailable">> = {
+const BY_CODE: Readonly<Record<string, "insufficientCredits" | "aiDisabled" | "aiUnavailable" | "noModel">> = {
   insufficient_credits: "insufficientCredits",
   ai_disabled: "aiDisabled",
   ai_unavailable: "aiUnavailable",
+  suggest_unconfigured: "noModel",
 };
 
 /**
@@ -23,7 +23,7 @@ const BY_CODE: Readonly<Record<string, "insufficientCredits" | "aiDisabled" | "a
  * It reads `code` off the value rather than narrowing to one error class, because the two
  * transports throw two classes for the same wire — `ApiError` in the browser, `SuggestRefused`
  * over the desktop bridge — and both carry the code verbatim out of the same envelope. Anything
- * without a string `code`, or with one that is not among the three, is `null`.
+ * without a string `code`, or with one that is not mapped above, is `null`.
  */
 export function aiRefusalKey(err: unknown): string | null {
   const code = (err as { code?: unknown } | null | undefined)?.code;

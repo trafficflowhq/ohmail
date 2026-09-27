@@ -378,7 +378,8 @@ services:
     restart: unless-stopped
     ports:
       # The mail UI, loopback only: read verification mail on the box at http://127.0.0.1:8025.
-      - "127.0.0.1:8025:8025"
+      # A second stack on this box gives it another port with OHMAIL_MAIL_UI_PORT in its own .env.
+      - "127.0.0.1:${OHMAIL_MAIL_UI_PORT:-8025}:8025"
 
 volumes:
   db_data:

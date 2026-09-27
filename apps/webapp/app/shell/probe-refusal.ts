@@ -52,6 +52,10 @@ export interface ProbeTlsInfo {
   certHost?: string;
   expectedHost?: string;
   suggestedHost?: string;
+  /** `tls_unavailable`: `offered` on a private network (the consent line may render), `not_private` otherwise. */
+  plaintext?: "offered" | "not_private";
+  /** A certificate refusal on the operator's own network: how this server trusts a private authority. */
+  trustVariable?: string;
 }
 
 export function probeTlsOf(err: unknown): ProbeTlsInfo | null {
@@ -68,7 +72,18 @@ export function probeTlsOf(err: unknown): ProbeTlsInfo | null {
     certHost: str(record.certHost),
     expectedHost: str(record.expectedHost),
     suggestedHost: str(record.suggestedHost),
+    ...(record.plaintext === "offered" || record.plaintext === "not_private" ? { plaintext: record.plaintext } : {}),
+    ...(str(record.trustVariable) ? { trustVariable: str(record.trustVariable) } : {}),
   };
+}
+
+/**
+ * THE PLAINTEXT OFFER a refusal makes: the transport whose consent line may render, or `null`.
+ * Only a `tls_unavailable` the server marked `offered` — a host on a private network — opens one.
+ */
+export function plaintextOfferOf(err: unknown): "imap" | "smtp" | null {
+  const tls = probeTlsOf(err);
+  return tls?.kind === "tls_unavailable" && tls.plaintext === "offered" ? tls.transport : null;
 }
 
 /**

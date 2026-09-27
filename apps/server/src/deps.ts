@@ -240,7 +240,12 @@ export function buildServerServices(cfg: ServerConfig, db: Db): ApiServices {
     // desktop's allow-any for a LAN mail server. See config.ts for the argument.
     probeHostGuard: cfg.probeAllowPrivate
       ? ALLOW_ANY_PROBE_HOST
-      : makeProbeHostGuard(nodeHostResolver),
+      : makeProbeHostGuard(nodeHostResolver, { privateSwitch: "TF_PROBE_ALLOW_PRIVATE" }),
+    // Asked only where the guard cleared nothing (the switch above set): is a no-TLS mail server
+    // on this network? Plaintext is offered for such a server only, per protocol.
+    probeScopeResolver: nodeHostResolver,
+    // What the operator of THIS server can change, named in a certificate refusal on its own network.
+    probeOperatorTrust: "NODE_EXTRA_CA_CERTS",
     // The adapter's own body cap expressed in raw attachment bytes — config.ts derives the pair.
     sendSurfaceMaxTotalBytes: SELF_HOST_SEND_MAX_TOTAL_BYTES,
     // UNMETERED STORAGE, on SELF_HOST_MAILBOX_ALLOWANCE's exact argument above: the operator

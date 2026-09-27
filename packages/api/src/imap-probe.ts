@@ -6,7 +6,7 @@ import {
   type ImapConfig, type SmtpLoginProof,
 } from "@trafficflow/core/adapters/imap";
 import {
-  ServiceError, assertPublicHost, type HostResolver,
+  ServiceError, assertPublicHost, privateNetworkPin, type HostResolver,
   type ProbeTlsDetail, type ProbeTlsFailureKind, type ProvenEndpoint,
   type SmtpProbe, type SmtpProbeInput,
 } from "@trafficflow/services/mail";
@@ -100,7 +100,11 @@ export const ALLOW_ANY_PROBE_HOST: ProbeHostGuard = {
  * and refuse an explicit port that is not a {@link MAIL_PROBE_PORTS} port. The resolver is
  * REQUIRED — see the section header for why there is no `node:dns` default.
  */
-export function makeProbeHostGuard(resolver: HostResolver): ProbeHostGuard {
+export function makeProbeHostGuard(
+  resolver: HostResolver,
+  /** The switch THIS deployment's operator sets to permit private targets, named in the refusal. */
+  opts: { privateSwitch?: string } = {},
+): ProbeHostGuard {
   return {
     async check(
       host: string, port: number | undefined, transport: "imap" | "smtp",
@@ -120,7 +124,13 @@ export function makeProbeHostGuard(resolver: HostResolver): ProbeHostGuard {
       // Throws on a private/unresolvable/unparseable host — the port must never be opened to one.
       // The RETURN is the cleared address set, and returning it is the half that makes this a
       // whole guard rather than a check the socket is free to ignore. See {@link ProbeHostGuard}.
-      return await assertPublicHost(host, resolver);
+      try {
+        return await assertPublicHost(host, resolver);
+      } catch (err) {
+        // The switch rides on the refusal so `probe-host-refusal.ts` can name it; nothing else moves.
+        if (!opts.privateSwitch || !(err instanceof ServiceError)) throw err;
+        throw new ServiceError(err.code, err.httpStatus, err.message, { privateSwitch: opts.privateSwitch }, err.retryable);
+      }
     },
   };
 }
@@ -479,6 +489,45 @@ async function nodeResolveCname(host: string): Promise<string | null> {
   }
 }
 
+/**
+ * WHERE A SERVER WITH NO TLS IS, for the one decision that turns on it: plaintext is offered only
+ * for a host on a private network or this machine. A non-empty guard answer is the ENFORCING
+ * policy's cleared set, public by construction, so it answers with no DNS; otherwise the
+ * deployment's `probeScopeResolver` is asked, and a deployment without one offers nothing.
+ */
+type PlaintextScope = { kind: "private"; pin: readonly string[] } | { kind: "not_private" } | { kind: "unknown" };
+
+async function plaintextScopeFor(
+  deps: ApiDeps, host: string, cleared: readonly string[] | null,
+): Promise<PlaintextScope> {
+  if (cleared !== null && cleared.length > 0) return { kind: "not_private" };
+  const resolver = deps.services?.probeScopeResolver;
+  if (!resolver) return { kind: "unknown" };
+  const pin = await privateNetworkPin(host, resolver).catch(() => null);
+  return pin ? { kind: "private", pin: pin.slice(0, MAX_PINNED_PROBE_ADDRESSES) } : { kind: "not_private" };
+}
+
+/**
+ * A certificate this process cannot verify, on a mail server on the operator's own network: the
+ * operator can make THIS server trust its authority, and a deployment that says how
+ * (`probeOperatorTrust`) has that named in the refusal. Everywhere else the detail is unchanged.
+ */
+async function withTrustHint(
+  deps: ApiDeps, host: string, cleared: readonly string[] | null, tls: ProbeTlsDetail,
+): Promise<ProbeTlsDetail> {
+  const variable = deps.services?.probeOperatorTrust;
+  if (!variable || (tls.kind !== "self_signed" && tls.kind !== "untrusted")) return tls;
+  const scope = await plaintextScopeFor(deps, host, cleared);
+  return scope.kind === "private" ? { ...tls, trustVariable: variable } : tls;
+}
+
+/** The `tls_unavailable` refusal, carrying whether plaintext may be offered for this host. */
+function noTlsRefusal(scope: PlaintextScope, canConsent: boolean): ImapProbeVerdict {
+  const plaintext = scope.kind === "private" ? (canConsent ? { plaintext: "offered" as const } : {})
+    : scope.kind === "not_private" ? { plaintext: "not_private" as const } : {};
+  return { verdict: "refuse", code: "tls", tls: { kind: "tls_unavailable", ...plaintext } };
+}
+
 /** The refusal when OUR OWN budget, not the mail server, is the reason nothing was tried. */
 const busy = (): ServiceError => new ServiceError(
   "mailbox_busy", 429,
@@ -599,7 +648,8 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
     // rung below dials THAT, so the name is never resolved a second time: not between the check
     // and the first dial, and not between rung 993 and rung 143. A DNS answer that changes after
     // this line cannot move any connection this probe opens.
-    const pin = pinFrom(await checked(hostGuard, input.imap.host, input.imap.port, "imap"));
+    const cleared = await checked(hostGuard, input.imap.host, input.imap.port, "imap");
+    const pin = pinFrom(cleared);
 
     const key = probeAdmissionKey(input.accountId, input.address);
 
@@ -632,7 +682,7 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
      * double, whose close resolves by construction.
      */
     const dialOnce = async (
-      attempt: ProbeAttempt, allowInsecure: boolean,
+      attempt: ProbeAttempt, allowInsecure: boolean, dialPin: readonly string[] | undefined = pin,
     ): Promise<{ ok: true; folders?: number } | { ok: false; err: unknown; timedOut: boolean }> => {
       const adapter = makeAdapter({
         // The NAME, still — SNI and certificate validation must see what the user typed. Only
@@ -641,7 +691,7 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
         port: attempt.port,
         secure: attempt.secure,
         ...(allowInsecure ? { allowInsecure: true } : {}),
-        ...(pin ? { pin } : {}),
+        ...(dialPin ? { pin: dialPin } : {}),
         auth,
         timeouts: PROBE_TIMEOUTS,
       });
@@ -736,18 +786,20 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
        * The consent gate — plaintext, never automatic, never on a server that has TLS. Dialled
        * only when all of the following held in this call, never on the client's word: the caller
        * carried the explicit consent flag and a password (an OAuth mailbox is refused this path
-       * by type); a rung reached an IMAP greeting and the server named no STARTTLS; and no rung
-       * presented a certificate, valid or not — a server whose TLS exists but fails validation
-       * keeps its precise refusal, because offering plaintext there converts a certificate
-       * problem into a downgrade path.
+       * by type); a rung reached an IMAP greeting and the server named no STARTTLS; no rung
+       * presented a certificate, valid or not (a certificate problem is not a downgrade path);
+       * and the host resolves to a private network or this machine, whose addresses the dial is
+       * pinned to. A public host is refused with the reason named.
        */
+      const scope = starttlsAbsent && !certDetail
+        ? await plaintextScopeFor(deps, input.imap.host, cleared) : null;
       if (
-        starttlsAbsent && !certDetail
+        scope?.kind === "private"
         && input.imap.allowInsecure === true && input.imap.pass !== undefined
         && budgetLeft() >= 250
       ) {
         const port = input.imap.port ?? 143;
-        const r = await dialOnce({ port, secure: false }, true);
+        const r = await dialOnce({ port, secure: false }, true, scope.pin);
         if (r.ok) {
           return { verdict: "ok", proven: { host: input.imap.host, port, secure: false, insecure: true } };
         }
@@ -769,10 +821,11 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
           : null;
         return {
           verdict: "refuse", code: "tls",
-          tls: suggested ? { ...certDetail, suggestedHost: suggested } : certDetail,
+          tls: await withTrustHint(deps, input.imap.host, cleared,
+            suggested ? { ...certDetail, suggestedHost: suggested } : certDetail),
         };
       }
-      if (starttlsAbsent) return { verdict: "refuse", code: "tls", tls: { kind: "tls_unavailable" } };
+      if (starttlsAbsent) return noTlsRefusal(scope ?? { kind: "unknown" }, input.imap.pass !== undefined);
       // A deadline is OUR clock expiring, not a code the server sent — classified here rather
       // than fed to `verdictFor`, which would answer `unknown` and blame itself for a provider
       // that went quiet. The user-facing outcome is `err_timeout`'s and it is accurate.
@@ -798,8 +851,8 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
 
 /**
  * The SMTP probe — the other transport, same discipline: try it before storing it, say which
- * thing failed, never log a body or a throw; same ladder idea; one deliberate asymmetry — no
- * consent arm, so a no-TLS submission host refuses with the `tls_unavailable` sentence and stops.
+ * thing failed, never log a body or a throw; same ladder idea, and the same consent arm as the
+ * IMAP walk, earned for THIS submission server on its own (an IMAP consent licenses nothing here).
  * The classifier reads sentences where the IMAP one reads codes, and that is nodemailer's doing:
  * `smtp-connection` wraps every TLS-layer failure in a fresh Error, so the OpenSSL code and the
  * `cert` object are gone and only the message text survives. Pinned to nodemailer@6.10.1; the
@@ -858,6 +911,9 @@ export function smtpTlsDetailOf(err: unknown, expectedHost: string): ProbeTlsDet
   return null;
 }
 
+/** TLS spoken to a plaintext listener (a 465 rung on a no-TLS server): no certificate was ever shown. */
+const smtpNotTlsListener = (err: unknown): boolean => /wrong version number/i.test(smtpMessageOf(err));
+
 /**
  * The submission ladder. 465 (implicit TLS) before 587 (STARTTLS) when no port is named —
  * RFC 8314 §3.3's preference — and mode negotiation on a named port, exactly as
@@ -915,6 +971,8 @@ export interface SmtpProbeOptions {
        * — see {@link ProbeHostGuard}. Optional so every existing double keeps compiling and keeps
        * meaning what it meant; a double that ignores it simply asserts less than the real dial. */
       pin?: readonly string[];
+      /** Set on the consent dial only, with `pin` the private addresses the host resolved to. */
+      allowInsecure?: boolean;
     },
   ) => Promise<SmtpLoginProof | void>;
   resolveCname?: (host: string) => Promise<string | null>;
@@ -934,7 +992,8 @@ export function makeSmtpProbe(deps: ApiDeps, opts: SmtpProbeOptions = {}): SmtpP
     // SSRF/port gate, same as the IMAP probe — refused hosts and non-mail ports never reach a dial,
     // and the permit is the pin every rung of the submission ladder dials. The submission host is
     // its own name and gets its own check, so its pin is separate from the IMAP leg's.
-    const pin = pinFrom(await checked(hostGuard, input.smtp.host, input.smtp.port, "smtp"));
+    const cleared = await checked(hostGuard, input.smtp.host, input.smtp.port, "smtp");
+    const pin = pinFrom(cleared);
 
     const key = smtpProbeAdmissionKey(input.accountId, input.address);
     if (!await imapAdmission(deps).acquire(deps.db, { mailboxId: key, max, now: deps.now() })) throw busy();
@@ -979,6 +1038,9 @@ export function makeSmtpProbe(deps: ApiDeps, opts: SmtpProbeOptions = {}): SmtpP
         }
         if (failure.err instanceof ProbeDeadlineExceeded) { sawTimeout = true; continue; }
 
+        // A 465 rung speaking plaintext is evidence about the PORT: it neither blocks the consent
+        // gate nor beats the generic fallback, as on the IMAP walk.
+        if (smtpNotTlsListener(failure.err)) { fallback = fallback ?? { verdict: "refuse", code: "connect" }; continue; }
         const tls = smtpTlsDetailOf(failure.err, input.smtp.host);
         if (tls) {
           if (tls.kind === "tls_unavailable") { starttlsAbsent = true; continue; }
@@ -994,18 +1056,51 @@ export function makeSmtpProbe(deps: ApiDeps, opts: SmtpProbeOptions = {}): SmtpP
         fallback = fallback ?? v;
       }
 
+      /* THE CONSENT GATE, the IMAP walk's rule verbatim: no STARTTLS on any rung, no certificate
+         shown, the explicit flag in this call, and a host on a private network or this machine,
+         pinned. Proven with `insecure`, which becomes the smtp row's own `meta.insecureConsent`. */
+      const scope = starttlsAbsent && !certDetail
+        ? await plaintextScopeFor(deps, input.smtp.host, cleared) : null;
+      if (scope?.kind === "private" && input.smtp.allowInsecure === true && budgetLeft() >= 250) {
+        const port = input.smtp.port ?? 587;
+        try {
+          const proof = await withDeadline(dial({
+            host: input.smtp.host, port, secure: false,
+            auth: { user: input.smtp.user, pass: input.smtp.pass },
+            pin: scope.pin, allowInsecure: true,
+          }), Math.max(1, budgetLeft()));
+          return {
+            verdict: "ok",
+            proven: {
+              host: input.smtp.host, port, secure: false, insecure: true,
+              maxMessageBytes: proof?.maxMessageBytes ?? null,
+            },
+          };
+        } catch (err) {
+          if (err instanceof ProbeDeadlineExceeded) return { verdict: "refuse", code: "timeout" };
+          const tls = smtpTlsDetailOf(err, input.smtp.host);
+          if (tls) return { verdict: "refuse", code: "tls", tls };
+          const v = smtpVerdictFor(err);
+          if (v.verdict === "store_unverified") {
+            return { ...v, proven: { host: input.smtp.host, port, secure: false, insecure: true } };
+          }
+          return v;
+        }
+      }
+
       // Same ranking as the IMAP walk: a certificate examined beats "no TLS", beats the clock,
-      // beats "nothing answered". And NO consent gate — see the section header.
+      // beats "nothing answered".
       if (certDetail) {
         const suggested = certDetail.kind === "hostname_mismatch"
           ? await suggestedHostFor(input.smtp.host, smtpCertNamesOf(certErr), resolveCname)
           : null;
         return {
           verdict: "refuse", code: "tls",
-          tls: suggested ? { ...certDetail, suggestedHost: suggested } : certDetail,
+          tls: await withTrustHint(deps, input.smtp.host, cleared,
+            suggested ? { ...certDetail, suggestedHost: suggested } : certDetail),
         };
       }
-      if (starttlsAbsent) return { verdict: "refuse", code: "tls", tls: { kind: "tls_unavailable" } };
+      if (starttlsAbsent) return noTlsRefusal(scope ?? { kind: "unknown" }, true);
       if (sawTimeout) return { verdict: "refuse", code: "timeout" };
       return fallback ?? { verdict: "refuse", code: "connect" };
     } finally {

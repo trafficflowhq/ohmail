@@ -71,7 +71,20 @@ export function probeHostRefusal(err: unknown, transport: ProbeLeg): unknown {
   const { name, example } = LEG[transport];
   const hit = CLASSES.find((c) => err.message.endsWith(c.why));
   const say = hit ? hit.say(name, example) : GENERIC(name);
-  return new ServiceError(err.code, err.httpStatus, say, err.details, err.retryable);
+  return new ServiceError(err.code, err.httpStatus, say + switchHint(err, hit?.why), err.details, err.retryable);
+}
+
+/** The two classes a mail server on the operator's own network lands in. */
+const PRIVATE_CLASSES: ReadonlySet<string> = new Set(["host resolves to a non-public address", "host is not public"]);
+
+/**
+ * The switch that permits such a target on THIS deployment, when its guard names one (the
+ * self-host server's `TF_PROBE_ALLOW_PRIVATE`). Cloud's guard names none and says nothing more.
+ */
+function switchHint(err: ServiceError, why: string | undefined): string {
+  const name = (err.details as { privateSwitch?: unknown } | undefined)?.privateSwitch;
+  if (typeof name !== "string" || why === undefined || !PRIVATE_CLASSES.has(why)) return "";
+  return ` Whoever runs this ohmail server can allow mail servers on its own network: ${name}=1 on the api and the organizer.`;
 }
 
 /**

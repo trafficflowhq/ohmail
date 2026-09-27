@@ -389,7 +389,7 @@ export function smtpTransportOptions(config: ImapConfig): SMTPTransport.Options 
   const pin = dialPin(smtp.pin);
   return {
     host: pin ? pin[0]! : smtp.host, port: smtp.port,
-    ...smtpTlsFloor(smtp.host, smtp.secure).options,
+    ...smtpTlsFloor(smtp.host, smtp.secure, smtp.allowInsecure === true).options,
     auth: smtp.auth,
     connectionTimeout: t.connectionMs, greetingTimeout: t.greetingMs, socketTimeout: t.socketMs,
   };
@@ -448,6 +448,8 @@ export type SmtpSizeDial = (smtp: {
   port: number;
   secure: boolean;
   auth: SmtpSizeDialAuth;
+  /** The stored SMTP plaintext consent, so the ceiling is read the way a send would dial. */
+  allowInsecure?: boolean;
 }) => Promise<SmtpLoginProof>;
 
 export type SmtpSizeOutcome =
@@ -526,6 +528,8 @@ export interface SmtpSizeCreds {
   secure: boolean;
   /** The assembled auth — `{ user, pass }` for a password row, a token callback for oauth2. */
   auth: unknown;
+  /** The `smtp` row's own `meta.insecureConsent`, as the send path reads it. */
+  allowInsecure?: boolean;
 }
 
 /** The static password auth, or `null` for anything else (an oauth token callback included). */
@@ -611,7 +615,10 @@ export async function learnSmtpMaxSize(input: {
       }
       dialAuth = { user: oauth!.user, accessToken };
     }
-    const proof = await dial({ host: smtp.host, port: smtp.port, secure: smtp.secure, auth: dialAuth });
+    const proof = await dial({
+      host: smtp.host, port: smtp.port, secure: smtp.secure, auth: dialAuth,
+      ...(smtp.allowInsecure === true ? { allowInsecure: true } : {}),
+    });
     const bytes = proof.maxMessageBytes;
     // The same admissibility test the column's readers apply, restated rather than trusted: this
     // is the last point at which a `0` or a `NaN` could become a stored ceiling.
@@ -652,6 +659,8 @@ export async function verifySmtpLogin(
      * sets it (its host came from a request body and has just been through the SSRF gate); every
      * stored-credential caller leaves it undefined and dials by name exactly as before. */
     pin?: readonly string[];
+    /** The probe's consent dial only — see {@link smtpTlsFloor}. */
+    allowInsecure?: boolean;
   },
   timeouts?: Partial<NetTimeouts>,
 ): Promise<SmtpLoginProof> {
@@ -673,6 +682,7 @@ export async function verifySmtpLogin(
       // The pin travels on the SUBMISSION block, because that is the block `smtpTransportOptions`
       // dials from. The top-level fields above are the IMAP half and it reads none of them.
       ...(smtp.pin ? { pin: smtp.pin } : {}),
+      ...(smtp.allowInsecure === true ? { allowInsecure: true } : {}),
     },
     ...(timeouts ? { timeouts } : {}),
   });

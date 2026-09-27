@@ -42,9 +42,10 @@ export interface TransportCreds {
   secure: boolean;
   /**
    * `meta.insecureConsent` — the connect flow proved this server offers no TLS and the user
-   * opted in to plaintext. Threaded to `ImapConfig.allowInsecure`, where it turns the mandatory
-   * STARTTLS into an opportunistic one; dropped anywhere on this path, a mailbox the probe
-   * admitted strands on its first sync with a STARTTLS refusal.
+   * opted in to plaintext, per transport. Threaded to `ImapConfig.allowInsecure` (IMAP) or
+   * `ImapConfig.smtp.allowInsecure` (SMTP), where it turns the mandatory STARTTLS into an
+   * opportunistic one; dropped anywhere on this path, a consented mailbox strands on its first
+   * sync or send with a STARTTLS refusal.
    */
   allowInsecure?: boolean;
   auth: ImapAuth;
@@ -437,8 +438,8 @@ async function toTransport(
     port: meta.port ?? PORT_DEFAULT[transport],
     secure: meta.secure ?? SECURE_DEFAULT[transport],
     // `=== true` so a row whose marker was rewritten to `false` (a re-probe that found TLS)
-    // reads exactly like a row that never had one.
-    ...(transport === "imap" && meta.insecureConsent === true ? { allowInsecure: true } : {}),
+    // reads exactly like a row that never had one. Each transport's row carries its OWN consent.
+    ...(meta.insecureConsent === true ? { allowInsecure: true } : {}),
     // The SHARED builder is the only reader of `meta.authType` — an oauth2 row here becomes a
     // callback, never a password, and an unhandled authType THROWS rather than leaking the secret.
     auth: buildImapAuth(meta, secret, makeFetcher),

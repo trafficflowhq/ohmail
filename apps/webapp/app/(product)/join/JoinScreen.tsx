@@ -33,7 +33,8 @@ import {
 import { hostsFor, providerById, type ProviderPreset } from "../../shell/providers";
 import { displayAddress } from "../../shell/idn";
 import { ProviderPicker } from "../../shell/ProviderPicker";
-import { noPortProbeSentence } from "../../shell/probe-refusal";
+import { noPortProbeSentence, plaintextOfferOf } from "../../shell/probe-refusal";
+import { splitHostPort } from "../host-port";
 import { useRefusalAtThePress } from "../../shell/refusal-at-the-press";
 import { SELF_HOST_BUILD } from "../../hello";
 import { JOIN_INVITE_KEY, signupPosture } from "../../invite-posture";
@@ -152,6 +153,17 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
   const [mbPass, setMbPass] = useState("");
   const [imapHost, setImapHost] = useState("");
   const [smtpHost, setSmtpHost] = useState("");
+  /**
+   * THE PLAINTEXT CONSENT, per protocol. A line renders only after the server refused that
+   * protocol as `tls_unavailable` on a host on a private network (`plaintextOfferOf`), and both
+   * the line and the tick go when a host or the provider changes: a consent is about one server.
+   */
+  const [offer, setOffer] = useState<{ imap: boolean; smtp: boolean }>({ imap: false, smtp: false });
+  const [plain, setPlain] = useState<{ imap: boolean; smtp: boolean }>({ imap: false, smtp: false });
+  const retireConsent = (): void => {
+    setOffer({ imap: false, smtp: false });
+    setPlain({ imap: false, smtp: false });
+  };
   const [connected, setConnected] = useState<MailboxDTO | null>(null);
 
 
@@ -556,6 +568,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
     // attempt either, so the previous choice goes in too. `providers.ts` carries both reasons.
     setImapHost((cur) => hostsFor(p, { imapHost: cur, smtpHost: "" }, provider).imapHost);
     setSmtpHost((cur) => hostsFor(p, { imapHost: "", smtpHost: cur }, provider).smtpHost);
+    retireConsent();
   };
 
   const submitMailbox = (e: React.FormEvent) => {
@@ -572,18 +585,19 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
         provider: chosen.id,
         address,
         imap: {
-          host: imapHost.trim(),
-          // A manual provider sends no port/TLS mode — the server's probe walks the standard
-          // ladder (993 implicit TLS, then 143 STARTTLS) and stores what it proved. This screen
-          // shows the server's own refusal sentence, except one that names a port (see the
-          // `sentenceOf` below); the richer one-press flows live in Settings.
-          ...(chosen.manual ? {} : { port: chosen.imap.port, secure: chosen.imap.secure }),
+          // A manual provider sends no TLS mode, and a port only when one follows the name — the
+          // server's probe walks the standard ladder (993 implicit TLS, then 143 STARTTLS) and
+          // stores what it proved. This screen shows the server's own refusal sentence, except
+          // one that names a port (see the `sentenceOf` below).
+          ...(chosen.manual ? splitHostPort(imapHost) : { host: imapHost.trim(), port: chosen.imap.port, secure: chosen.imap.secure }),
           user: (mbUser.trim() || address), pass: mbPass,
+          // Each consent only after the server refused THAT protocol on a private host.
+          ...(offer.imap && plain.imap ? { allowInsecure: true } : {}),
         },
         smtp: {
-          host: smtpHost.trim(),
-          ...(chosen.manual ? {} : { port: chosen.smtp.port, secure: chosen.smtp.secure }),
+          ...(chosen.manual ? splitHostPort(smtpHost) : { host: smtpHost.trim(), port: chosen.smtp.port, secure: chosen.smtp.secure }),
           user: (mbUser.trim() || address), pass: mbPass,
+          ...(offer.smtp && plain.smtp ? { allowInsecure: true } : {}),
         },
       });
       // The password leaves this component's memory the moment the server has it. It is
@@ -592,6 +606,9 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
       setConnected(dto);
       setStep("done");
     }, (err) => {
+      // A refusal on a private host with no TLS opens that protocol's consent line.
+      const opens = plaintextOfferOf(err);
+      if (opens) setOffer((o) => ({ ...o, [opens]: true }));
       // This form has no port field, so a refusal that would tell the person to check one says
       // what the form holds instead: the server name on the generic entry, nothing behind a preset.
       const said = noPortProbeSentence(err, chosen.manual === true);
@@ -866,12 +883,12 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
                   <label className="join-label" htmlFor="join-imap">{t("imapHost")}</label>
                   <input
                     id="join-imap" className="join-input" autoComplete="off"
-                    value={imapHost} onChange={(e) => setImapHost(e.target.value)} required
+                    value={imapHost} onChange={(e) => { setImapHost(e.target.value); retireConsent(); }} required
                   />
                   <label className="join-label" htmlFor="join-smtp">{t("smtpHost")}</label>
                   <input
                     id="join-smtp" className="join-input" autoComplete="off"
-                    value={smtpHost} onChange={(e) => setSmtpHost(e.target.value)} required
+                    value={smtpHost} onChange={(e) => { setSmtpHost(e.target.value); retireConsent(); }} required
                   />
                 </>
               )}
@@ -889,6 +906,21 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
                 value={mbPass} onChange={(e) => setMbPass(e.target.value)} required
               />
               <p className="join-hint">{t("appPasswordHint")}</p>
+
+              {offer.imap || offer.smtp ? (
+                <>
+                  {(["imap", "smtp"] as const).filter((k) => offer[k]).map((k) => (
+                    <label key={k} className="join-label" htmlFor={`join-insecure-${k}`}>
+                      <input
+                        id={`join-insecure-${k}`} type="checkbox" checked={plain[k]}
+                        onChange={(e) => setPlain((v) => ({ ...v, [k]: e.target.checked }))}
+                      />{" "}
+                      {tm(k === "imap" ? "insecureConsentLabel" : "insecureConsentLabelSmtp")}
+                    </label>
+                  ))}
+                  <p className="join-note">{tm("insecureConsentWarning")}</p>
+                </>
+              ) : null}
 
               {mailboxRefusal}
               <div className="join-actions">

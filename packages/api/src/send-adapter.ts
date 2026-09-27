@@ -9,7 +9,8 @@ import type { ApiDeps } from "./deps.js";
 
 interface CredMeta extends CredMetaAuth {
   host?: string; port?: number; secure?: boolean;
-  /** Connect-time plaintext consent for a server the probe proved has no TLS. IMAP leg only. */
+  /** Connect-time plaintext consent for a server the probe proved has no TLS, per row: the imap
+   * row's for the IMAP leg, the smtp row's for submission. Never borrowed across rows. */
   insecureConsent?: boolean;
   /** For oauth2: the SMTP coordinates, since an oauth mailbox stores NO separate smtp row. */
   smtp?: { host?: string; port?: number; secure?: boolean };
@@ -74,7 +75,9 @@ export async function makeSendAdapter(
     // token covers both transports, so the host/port/secure come from `meta.smtp` and `ImapAdapter.send`
     // fetches a token per message. For PASSWORD, the dedicated smtp row when present, else the imap
     // host/user + imap secret (shared-credential providers, e.g. GreenMail).
-    let smtpConfig: { host: string; port: number; secure: boolean; auth?: { user: string; pass: string } };
+    let smtpConfig: {
+      host: string; port: number; secure: boolean; auth?: { user: string; pass: string }; allowInsecure?: boolean;
+    };
     if (imapMeta.authType === "oauth2") {
       const s = imapMeta.smtp ?? {};
       smtpConfig = {
@@ -115,6 +118,9 @@ export async function makeSendAdapter(
         secure: smtpMeta.secure ?? false,
         // GreenMail runs with auth disabled; omit auth when there is no user to bind.
         ...(smtpUser ? { auth: { user: smtpUser, pass: smtpPass } } : {}),
+        // The smtp ROW's consent only: the no-row fallback above guessed its server, and a guess
+        // was never probed, so it has nothing to consent to.
+        ...(smtpRow && smtpMeta.insecureConsent === true ? { allowInsecure: true } : {}),
       };
     }
 

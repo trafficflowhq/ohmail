@@ -989,6 +989,8 @@ function localServices(
     // on the user's own machine, so there is no cross-tenant network to protect. Named explicitly,
     // never a default — the hosted deployment wires the enforcing `makeProbeHostGuard` instead.
     probeHostGuard: ALLOW_ANY_PROBE_HOST,
+    // Whether a no-TLS mail server is on the user's own network: plaintext is offered only then.
+    probeScopeResolver: nodeHostResolver,
     /**
      * UNMETERED, SAID OUT LOUD — the ITEM-10 distinction, in the one bag where it matters most.
      *

@@ -13,7 +13,7 @@ import type {
   ContactsService, SnippetsService, NotifyRulesService, AwayResponderService,
   AttachmentsService, KbService, TagsService, FolderOpsService, DraftsService, DraftingService, SendService,
   ScheduleService,
-  WorkflowsService, ProfileImportService,
+  WorkflowsService, ProfileImportService, HostResolver,
 } from "@trafficflow/services/mail";
 /* `OAuthTokenProvider` from the MAIL entry, never the root barrel: this file is compiled by every
  * host, including the shipped local engine, and the root barrel's export surface reaches the model
@@ -160,6 +160,8 @@ export interface ApiServices {
       /** The addresses the deployment's {@link ProbeHostGuard} cleared, when it cleared any. The
        * dial connects to one of these and never re-resolves `host` — see `ImapConfig.pin`. */
       pin?: readonly string[];
+      /** The consent dial's flag — see `imap-probe.ts`'s SMTP consent gate. */
+      allowInsecure?: boolean;
     },
   ) => Promise<SmtpLoginProof | void>;
   /**
@@ -172,6 +174,19 @@ export interface ApiServices {
    * deployment's own dependency wiring MUST set the enforcing one, and does.
    */
   probeHostGuard?: ProbeHostGuard;
+  /**
+   * The resolver the connect probe asks ONE question: is this mail server on a private network or
+   * this machine? Plaintext is offered only when the answer is yes (`privateNetworkPin`). Asked
+   * only where the guard cleared nothing (a LAN-permitting host): a pin the enforcing guard
+   * returned is already a public address. ABSENT means plaintext is never offered.
+   */
+  probeScopeResolver?: HostResolver;
+  /**
+   * How THIS deployment's operator makes the server trust a private certificate authority
+   * (`NODE_EXTRA_CA_CERTS` on the self-host stack), named in a certificate refusal about a mail
+   * server on a private network. Absent everywhere else: the desktop and Cloud have no such lever.
+   */
+  probeOperatorTrust?: string;
   mailbox: MailboxService;
   rules: RulesService;
   message: MessageService;

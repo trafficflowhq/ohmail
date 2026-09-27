@@ -60,8 +60,9 @@ import {
 import { hostsFor, providerById, providerLabel, type ProviderPreset } from "../../shell/providers";
 import { ProviderPicker } from "../../shell/ProviderPicker";
 import {
-  noPortProbeSentence, probeReasonOf, probeTlsOf, type ProbeTlsInfo,
+  noPortProbeSentence, plaintextOfferOf, probeReasonOf, probeTlsOf, type ProbeTlsInfo,
 } from "../../shell/probe-refusal";
+import { splitHostPort } from "../host-port";
 import { AGO_COPY, agoStamp, dayStamp } from "../../shell/format";
 import {
   claimLeftBehind, filerKey, isSyncBlockReason, readerHolderLapsed, readerStandDown, showInboundQuiet,
@@ -112,10 +113,12 @@ interface EditForm {
   smtpPort: string;
   /** The plaintext opt-in — rendered only after the server reported `tls_unavailable`. */
   allowInsecure: boolean;
+  /** The SMTP server's own opt-in, on the same rule. */
+  allowInsecureSmtp: boolean;
 }
 
 const emptyEdit = (): EditForm => ({
-  host: "", port: "", user: "", pass: "", smtpHost: "", smtpPort: "", allowInsecure: false,
+  host: "", port: "", user: "", pass: "", smtpHost: "", smtpPort: "", allowInsecure: false, allowInsecureSmtp: false,
 });
 
 /** A port is optional; if given it has to be one a server could actually listen on. */
@@ -163,6 +166,7 @@ function smtpPatchOf(e: EditForm): UpdateMailboxBody["smtp"] {
   if (port) smtp.port = Number(port);
   const user = e.user.trim();
   if (user) smtp.user = user;
+  if (e.allowInsecureSmtp) smtp.allowInsecure = true;
   return smtp;
 }
 
@@ -177,6 +181,8 @@ interface Typed {
   smtpHost: string;
   /** The plaintext opt-in — rendered only after the server reported `tls_unavailable`. */
   allowInsecure: boolean;
+  /** The SMTP server's own opt-in, on the same rule. */
+  allowInsecureSmtp: boolean;
 }
 
 const emptyTyped = (): Typed => ({
@@ -187,7 +193,12 @@ const emptyTyped = (): Typed => ({
   imapHost: "",
   smtpHost: "",
   allowInsecure: false,
+  allowInsecureSmtp: false,
 });
+
+/** Which consent lines the last refusal opened: one per protocol, each on its own evidence. */
+type PlaintextOffer = { imap: boolean; smtp: boolean };
+const NO_OFFER: PlaintextOffer = { imap: false, smtp: false };
 
 /**
  * What the row is allowed to call this mailbox — and why it is not just `status`. `mailboxes.status` DEFAULTS
@@ -500,7 +511,7 @@ export function MailboxSection() {
    * Never set from anything the user typed — a checkbox that exists before the server has
    * proved TLS absent is an invitation to downgrade a server that merely has a bad certificate.
    */
-  const [insecureOffer, setInsecureOffer] = useState(false);
+  const [insecureOffer, setInsecureOffer] = useState<PlaintextOffer>(NO_OFFER);
   /** A canonical-host suggestion from a hostname-mismatch refusal, and which field it corrects. */
   const [suggestion, setSuggestion] = useState<{ host: string; transport: "imap" | "smtp" } | null>(null);
   /** Re-render clock, so the relative "synced 2 minutes ago" stays true while the pane is open. */
@@ -1428,9 +1439,10 @@ export function MailboxSection() {
     if (!tls || reason !== "tls") return t(`probe_${reason}`);
     const protocol = tls.transport === "smtp" ? "SMTP" : "IMAP";
     if (tls.kind === "tls_unavailable") {
-      // The consent checkbox is an IMAP affordance only — there is no plaintext SMTP flow.
-      if (tls.transport === "imap") setInsecureOffer(true);
-      return t("probe_tls_unavailable", { protocol });
+      // A line for THIS protocol, only where the server said the host is on a private network.
+      if (plaintextOfferOf(err)) setInsecureOffer((o) => ({ ...o, [tls.transport]: true }));
+      const publicHost = tls.plaintext === "not_private";
+      return t(publicHost ? "probe_tls_unavailable_public" : "probe_tls_unavailable", { protocol });
     }
     if (tls.kind === "hostname_mismatch" && tls.certHost && tls.expectedHost) {
       if (tls.suggestedHost) {
@@ -1441,6 +1453,11 @@ export function MailboxSection() {
         });
       }
       return t("probe_tls_hostname", { certHost: tls.certHost, expectedHost: tls.expectedHost, protocol });
+    }
+    // On the operator's own network the server names how it can trust a private authority.
+    if (tls.trustVariable && (tls.kind === "self_signed" || tls.kind === "untrusted")) {
+      const selfSigned = tls.kind === "self_signed";
+      return t(selfSigned ? "probe_tls_self_signed_private" : "probe_tls_untrusted_private", { variable: tls.trustVariable });
     }
     const keys: Record<string, string> = {
       expired: "probe_tls_expired", not_yet_valid: "probe_tls_not_yet_valid",
@@ -1510,20 +1527,20 @@ export function MailboxSection() {
       provider: chosen.id,
       address,
       imap: {
-        host: typed.imapHost.trim(),
-        // A MANUAL provider sends no port/TLS mode: their absence asks the server's probe to
-        // walk the standard ladder (993 implicit TLS, then 143 STARTTLS) and store what it
-        // proved. Presets keep their known pair — nothing to detect there.
-        ...(chosen.manual ? {} : { port: chosen.imap.port, secure: chosen.imap.secure }),
+        // A MANUAL provider sends no TLS mode, and a port only when one was typed after the
+        // name: absence asks the server's probe to walk the standard ladder (993 implicit TLS,
+        // then 143 STARTTLS) and store what it proved. Presets keep their known pair.
+        ...(chosen.manual ? splitHostPort(typed.imapHost) : { host: typed.imapHost.trim(), port: chosen.imap.port, secure: chosen.imap.secure }),
         user: typed.user.trim() || address, pass: typed.pass,
         // Only ever true after the server itself reported `tls_unavailable` (the checkbox
         // renders in no other state), and re-verified server-side before it is honored.
         ...(typed.allowInsecure ? { allowInsecure: true } : {}),
       },
       smtp: {
-        host: typed.smtpHost.trim(),
-        ...(chosen.manual ? {} : { port: chosen.smtp.port, secure: chosen.smtp.secure }),
+        ...(chosen.manual ? splitHostPort(typed.smtpHost) : { host: typed.smtpHost.trim(), port: chosen.smtp.port, secure: chosen.smtp.secure }),
         user: typed.user.trim() || address, pass: typed.pass,
+        // The SMTP server's own consent, on the IMAP line's rule.
+        ...(typed.allowInsecureSmtp ? { allowInsecure: true } : {}),
       },
     }, false);
   };
@@ -1538,7 +1555,7 @@ export function MailboxSection() {
       // The password leaves this component the moment the server has it.
       setTyped(emptyTyped());
       setError(null);
-      setInsecureOffer(false);
+      setInsecureOffer(NO_OFFER);
       setSuggestion(null);
       // AND THE VERDICT GOES WITH THE FORM IT DESCRIBED. Without this a successful connect left
       // the tick standing, so reopening Connect later rendered it over an EMPTY form — a green
@@ -1604,7 +1621,7 @@ export function MailboxSection() {
       // The password leaves this component the moment the server has it.
       setEdited(emptyEdit());
       setError(null);
-      setInsecureOffer(false);
+      setInsecureOffer(NO_OFFER);
       setSuggestion(null);
       // `editing` is what the saving line names, so it goes after the re-read, never before.
       const read = await afterWrite();
@@ -1829,6 +1846,8 @@ export function MailboxSection() {
    * how one of them ends up describing a different number.
    */
   const [probing, setProbing] = useState(false);
+  /** The test met a closed step-up window: the prompt stands in its place, and a verified factor runs the test once. */
+  const [testStepUp, setTestStepUp] = useState(false);
   /**
    * WHICH TEST IS THE NEWEST — the generation guard, and it is not defensive spelling. Clearing the verdict when a
    * field changes is only half the rule. The other half is that a test ALREADY IN FLIGHT resolves later, and its
@@ -1863,6 +1882,7 @@ export function MailboxSection() {
     setProbeOk(null);
     setProbeBad(null);
     setProbing(false);
+    setTestStepUp(false);
     /* THE FAILED WRITE'S SENTENCE BELONGS HERE, not only to a host change. It was retired when the
        HOST moved, which covers "the certificate is for another name" and misses the commoner one:
        an auth refusal, then the person corrects the PASSWORD, and "That mail server refused the
@@ -1888,9 +1908,9 @@ export function MailboxSection() {
    */
   const retireHostEvidence = useCallback(() => {
     clearVerdict();
-    setInsecureOffer(false);
+    setInsecureOffer(NO_OFFER);
     setSuggestion(null);
-    setTyped((v) => (v.allowInsecure ? { ...v, allowInsecure: false } : v));
+    setTyped((v) => (v.allowInsecure || v.allowInsecureSmtp ? { ...v, allowInsecure: false, allowInsecureSmtp: false } : v));
     /* AND THE EDIT FORM'S CONSENT, because the two forms share ONE `insecureOffer` and one
        `suggestion` and only one of them is on screen at a time. The edit arm retired none of this
        until 2026-09-02: server A reports it has no TLS, the person ticks the opt-in, changes the
@@ -1898,7 +1918,7 @@ export function MailboxSection() {
        nobody was asked about, which is the connect arm's own defect on the second surface.
        One function rather than two, so the rule that a consent belongs to the host it was granted
        about has one place to live. */
-    setEdited((v) => (v.allowInsecure ? { ...v, allowInsecure: false } : v));
+    setEdited((v) => (v.allowInsecure || v.allowInsecureSmtp ? { ...v, allowInsecure: false, allowInsecureSmtp: false } : v));
     // The failed write's sentence goes with it, through `clearVerdict` above — which retires it on
     // EVERY field edit, not only on a host change.
   }, [clearVerdict]);
@@ -1921,7 +1941,7 @@ export function MailboxSection() {
     if (microsoftOauth) clearVerdict();
   }, [microsoftOauth, clearVerdict]);
 
-  const runProbe = useCallback(async () => {
+  const runProbe = useCallback(async (afterFactor = false) => {
     if (!typed.provider) return;
     const mine = ++probeSeq.current;
     setProbing(true);
@@ -1943,8 +1963,8 @@ export function MailboxSection() {
       const r = await mailboxApi.probe({
         address,
         imap: {
-          host: (typed.imapHost || chosen.imap.host).trim(),
-          ...(chosen.manual ? {} : { port: chosen.imap.port, secure: chosen.imap.secure }),
+          ...(chosen.manual ? splitHostPort(typed.imapHost || chosen.imap.host)
+            : { host: (typed.imapHost || chosen.imap.host).trim(), port: chosen.imap.port, secure: chosen.imap.secure }),
           user: typed.user.trim() || address,
           pass: typed.pass,
           /* THE PLAINTEXT OPT-IN RIDES THE TEST TOO. The create sends it, and it is the one field
@@ -1958,6 +1978,12 @@ export function MailboxSection() {
       setProbeOk(r);
     } catch (err) {
       if (probeSeq.current !== mine) return;
+      // A closed window asks for the factor in place; a second refusal after one is said, not asked again.
+      if (codeOf(err) === "step_up_required") {
+        if (!afterFactor) { setTestStepUp(true); return; }
+        setProbeBad({ reason: null, message: td("stepUpExpired"), noPort: null });
+        return;
+      }
       setProbeBad({
         reason: probeReasonOf(err), message: messageOf(err),
         // This verdict never rendered TLS kinds, so every certificate refusal takes the generic no-port sentence.
@@ -1968,7 +1994,7 @@ export function MailboxSection() {
       // button enabled while a later one is still running.
       if (probeSeq.current === mine) setProbing(false);
     }
-  }, [typed]);
+  }, [typed, td]);
 
   return (
     <SettingsSection>
@@ -2624,19 +2650,34 @@ export function MailboxSection() {
                       {t("useSuggestedHost", { host: suggestion.host })}
                     </Button>
                   ) : null}
-                  {insecureOffer ? (
+                  {insecureOffer.imap || insecureOffer.smtp ? (
                     <>
-                      <label className="join-label" htmlFor="mb-insecure">
-                        <input
-                          id="mb-insecure" type="checkbox"
-                          checked={typed.allowInsecure}
-                          onChange={(e) => {
-                            setTyped((v) => ({ ...v, allowInsecure: e.target.checked }));
-                            clearVerdict();
-                          }}
-                        />{" "}
-                        {t("insecureConsentLabel")}
-                      </label>
+                      {insecureOffer.imap ? (
+                        <label className="join-label" htmlFor="mb-insecure">
+                          <input
+                            id="mb-insecure" type="checkbox"
+                            checked={typed.allowInsecure}
+                            onChange={(e) => {
+                              setTyped((v) => ({ ...v, allowInsecure: e.target.checked }));
+                              clearVerdict();
+                            }}
+                          />{" "}
+                          {t("insecureConsentLabel")}
+                        </label>
+                      ) : null}
+                      {insecureOffer.smtp ? (
+                        <label className="join-label" htmlFor="mb-insecure-smtp">
+                          <input
+                            id="mb-insecure-smtp" type="checkbox"
+                            checked={typed.allowInsecureSmtp}
+                            onChange={(e) => {
+                              setTyped((v) => ({ ...v, allowInsecureSmtp: e.target.checked }));
+                              clearVerdict();
+                            }}
+                          />{" "}
+                          {t("insecureConsentLabelSmtp")}
+                        </label>
+                      ) : null}
                       <SettingsNote icon="shield">{t("insecureConsentWarning")}</SettingsNote>
                     </>
                   ) : null}
@@ -2675,7 +2716,7 @@ export function MailboxSection() {
               // answer would otherwise navigate or render a code over a pane nobody is on.
               retireOauth();
               setStage("list"); setTyped(emptyTyped()); setMsAppPassword(false); setError(null);
-              setInsecureOffer(false); setSuggestion(null);
+              setInsecureOffer(NO_OFFER); setSuggestion(null);
               // RETIRES, and it has to: cancelling mid-request used to reset the form and leave
               // the request live, so reopening Connect could receive the OLD answer with nothing
               // pressed — a verdict appearing over an empty form.
@@ -2722,6 +2763,15 @@ export function MailboxSection() {
             />
           ) : null}
         </form>
+      ) : null}
+
+      {/* The test's own step-up, outside the form it tests (the prompt holds a form of its own). */}
+      {stage === "form" && testStepUp ? (
+        <StepUpPrompt
+          onVerified={() => { setTestStepUp(false); void runProbe(true); }}
+          onCancel={() => setTestStepUp(false)}
+          onDiscarded={() => setTestStepUp(false)}
+        />
       ) : null}
 
       {stage === "edit" && editing ? (
@@ -2827,16 +2877,28 @@ export function MailboxSection() {
               {t("useSuggestedHost", { host: suggestion.host })}
             </Button>
           ) : null}
-          {insecureOffer ? (
+          {insecureOffer.imap || insecureOffer.smtp ? (
             <>
-              <label className="join-label" htmlFor="mb-edit-insecure">
-                <input
-                  id="mb-edit-insecure" type="checkbox"
-                  checked={edited.allowInsecure}
-                  onChange={(e) => setEdited((v) => ({ ...v, allowInsecure: e.target.checked }))}
-                />{" "}
-                {t("insecureConsentLabel")}
-              </label>
+              {insecureOffer.imap ? (
+                <label className="join-label" htmlFor="mb-edit-insecure">
+                  <input
+                    id="mb-edit-insecure" type="checkbox"
+                    checked={edited.allowInsecure}
+                    onChange={(e) => setEdited((v) => ({ ...v, allowInsecure: e.target.checked }))}
+                  />{" "}
+                  {t("insecureConsentLabel")}
+                </label>
+              ) : null}
+              {insecureOffer.smtp ? (
+                <label className="join-label" htmlFor="mb-edit-insecure-smtp">
+                  <input
+                    id="mb-edit-insecure-smtp" type="checkbox"
+                    checked={edited.allowInsecureSmtp}
+                    onChange={(e) => setEdited((v) => ({ ...v, allowInsecureSmtp: e.target.checked }))}
+                  />{" "}
+                  {t("insecureConsentLabelSmtp")}
+                </label>
+              ) : null}
               <SettingsNote icon="shield">{t("insecureConsentWarning")}</SettingsNote>
             </>
           ) : null}
@@ -2847,7 +2909,7 @@ export function MailboxSection() {
             </Button>
             <Button onClick={() => {
               setStage("list"); setEditing(null); setEdited(emptyEdit()); setError(null);
-              setInsecureOffer(false); setSuggestion(null);
+              setInsecureOffer(NO_OFFER); setSuggestion(null);
             }}>
               {t("cancel")}
             </Button>

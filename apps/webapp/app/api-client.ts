@@ -1590,10 +1590,10 @@ export interface CreateMailboxBody {
    * then 143 STARTTLS, storing whichever it proved. Presets keep sending their known pair.
    * `allowInsecure` is the explicit plaintext consent for a server the probe reported as
    * having no TLS at all — sent only after the user checked the opt-in, and re-verified
-   * server-side before it is honored.
+   * server-side before it is honored. The `smtp` block carries its OWN consent, for its own server.
    */
   imap: { host: string; port?: number; secure?: boolean; user: string; pass: string; allowInsecure?: boolean };
-  smtp?: { host: string; port?: number; secure?: boolean; user?: string; pass?: string };
+  smtp?: { host: string; port?: number; secure?: boolean; user?: string; pass?: string; allowInsecure?: boolean };
 }
 
 /**
@@ -1610,7 +1610,7 @@ export interface UpdateMailboxBody {
   status?: "connected" | "disabled";
   /** `allowInsecure` as on {@link CreateMailboxBody.imap} — consent, re-verified server-side. */
   imap?: { host?: string; port?: number; secure?: boolean; user?: string; pass: string; allowInsecure?: boolean };
-  smtp?: { host?: string; port?: number; secure?: boolean; user?: string; pass: string };
+  smtp?: { host?: string; port?: number; secure?: boolean; user?: string; pass: string; allowInsecure?: boolean };
 }
 
 export const mailboxes = {

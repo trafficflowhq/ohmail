@@ -362,17 +362,23 @@ export function imapTlsFloor(host: string, secure: boolean, allowInsecure = fals
  * instead of the `opportunisticTLS` "continuing unencrypted" branch. AUTH is only reached
  * after `_upgradeConnection` has set `this.secure = true`.
  */
-export function smtpTlsFloor(host: string, secure: boolean): {
+export function smtpTlsFloor(host: string, secure: boolean, allowInsecure = false): {
   options: SmtpTlsFloorOptions; exemptReason: string | null;
 } {
   const exemptReason = loopbackHarnessReason(host);
   if (exemptReason) return { options: { secure }, exemptReason };
   const servername = sniServername(host);
   const sni = servername ? { servername } : {};
-  // NO consent branch here, deliberately. The connect-time probe proves facts about the IMAP
-  // endpoint only, so a consent marker earned there licenses nothing about a different server on
-  // a different port. A consented no-TLS provider whose SMTP also lacks STARTTLS fails at send
-  // time with the tls taxonomy — the bounded, honest direction.
+  /* The consent branch, the SMTP twin of the IMAP one: reachable only with `secure: false` and a
+     consent the SMTP probe earned for THIS submission server (the IMAP marker licenses nothing
+     here). `requireTLS` is dropped, so an advertised STARTTLS is still taken and still validated,
+     and `opportunisticTLS: false` keeps a FAILED upgrade fatal rather than quietly plaintext. */
+  if (!secure && allowInsecure) {
+    return {
+      options: { secure: false, ignoreTLS: false, opportunisticTLS: false, ...sni, tls: TLS_FLOOR },
+      exemptReason: null,
+    };
+  }
   return {
     options: secure
       ? { secure: true, ignoreTLS: false, opportunisticTLS: false, ...sni, tls: TLS_FLOOR }
@@ -436,6 +442,9 @@ export interface ImapConfig {
   pin?: readonly string[];
   smtp?: {
     host: string; port: number; secure: boolean; auth?: { user: string; pass: string };
+    /** The submission server's own plaintext consent — see {@link smtpTlsFloor}. Threaded from
+     * the `smtp` credential row's `meta.insecureConsent`, never from the IMAP row's. */
+    allowInsecure?: boolean;
     /** The submission leg's own pin — see {@link ImapConfig.pin}. Resolved separately because the
      * submission host is a different name from the IMAP host and was cleared by its own check. */
     pin?: readonly string[];

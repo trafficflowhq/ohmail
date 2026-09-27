@@ -353,6 +353,7 @@ export interface CreateMailboxBody {
         secure?: boolean;
         user?: string;
         pass?: string;
+        allowInsecure?: boolean;
     };
 }
 
@@ -373,6 +374,7 @@ export interface UpdateMailboxBody {
         secure?: boolean;
         user?: string;
         pass: string;
+        allowInsecure?: boolean;
     };
 }
 

@@ -861,6 +861,8 @@ export function FirstRun({
     () => (facts.ai === "on" || facts.ai === "on-unconfigured" ? "yes" : "no"),
   );
   const [scope, setScope] = useState<DecisionScope>("sender");
+  /** "Yes" exists only where a model can answer: a self-hosted server offers it when its operator set one. */
+  const aiOffered = host.door !== "selfhost" || host.selfhostAi === true;
 
   /* ── THE ELSEWHERE CHOICE ──────────────────────────────────────────────────────────── */
 
@@ -1476,7 +1478,7 @@ export function FirstRun({
 
         {step === "ai" ? screen(
           () => {
-            const on = ai === "yes";
+            const on = ai === "yes" && aiOffered;
             if (!host.setAiEnabled) { forward(); return; }
             /**
              * The one place a cursor is kept past a write. "Yes" needs no help: it MOVES the posture
@@ -1514,19 +1516,21 @@ export function FirstRun({
                   the standalone asks for a model on the next screen, Cloud spends the plan's
                   credits, self-host runs on the operator's key and asks nothing. */}
               <SettingsChoice
-                name={`${ids}-ai`} ariaLabel={t("aiTitle")} value={ai} onChange={setAi}
+                name={`${ids}-ai`} ariaLabel={t("aiTitle")} value={aiOffered ? ai : "no"} onChange={setAi}
                 disabled={busy}
                 options={[
                   { id: "no" as const, label: t("aiNo"), description: t("aiNoWhy") },
-                  {
+                  ...(aiOffered ? [{
                     id: "yes" as const,
                     label: host.door === "cloud" ? t("aiYesCloud")
                       : host.door === "selfhost" ? t("aiYesSelfhost") : t("aiYes"),
                     description: host.door === "cloud" ? t("aiYesCloudWhy")
                       : host.door === "selfhost" ? t("aiYesSelfhostWhy") : t("aiYesWhy"),
-                  },
+                  }] : []),
                 ]}
               />
+              {/* A self-hosted server with no model: "yes" would switch on something that cannot run. */}
+              {aiOffered ? null : <p className="ob-consent">{t("providerSelfhostOff")}</p>}
               {problem ? <SettingsVerdict state="bad" headline={problem} /> : null}
               {foot({ back: true, primary: next(t("continue")) })}
             </>

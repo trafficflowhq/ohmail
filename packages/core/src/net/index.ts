@@ -8,7 +8,7 @@
  * to `fetch`, precisely the hole the return value exists to close.
  */
 export {
-  SsrfRefusal, isBlockedAddress, nodeHostResolver,
+  SsrfRefusal, isBlockedAddress, isPrivateNetworkAddress, privateNetworkPin, nodeHostResolver,
   assertPublicHttpUrl, assertPublicHost, resolvePinUnchecked,
   assertPublicHttpUrlShape, assertPublicHostShape,
   type HostResolver, type PublicUrlOptions, type UrlShapeOptions,

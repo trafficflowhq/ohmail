@@ -57,8 +57,9 @@ and every container, volume and network is named after it. Two ohmail stacks
 that share that name are one project, so the second `docker compose up` adopts
 and mutates the first one's containers and volumes — a household install
 replaced by a test install, with nothing reported anywhere. Give each stack
-its own directory, its own `.env`, its own `OHMAIL_PROJECT`, and either its
-own `OHMAIL_BIND` address or a different port. Changing `OHMAIL_PROJECT` on a
+its own directory, its own `.env`, its own `OHMAIL_PROJECT`, its own
+`OHMAIL_BIND` address (the front door's ports 80 and 443 are fixed) and its
+own `OHMAIL_MAIL_UI_PORT` for the bundled mail sink. Changing `OHMAIL_PROJECT` on a
 running install orphans that install's volumes, its database included, so
 choose it before first boot.
 

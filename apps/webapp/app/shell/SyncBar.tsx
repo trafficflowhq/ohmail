@@ -285,7 +285,8 @@ interface Speech {
 }
 
 function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean, managed: boolean): Speech {
-  const settings = { href: "#/settings", label: t("settings") };
+  // The label names the Mailboxes pane, so the link opens it rather than the section list's first pane.
+  const settings = { href: "#/settings/mailboxes", label: t("settings") };
   switch (state.key) {
     case "stopped":
       return {

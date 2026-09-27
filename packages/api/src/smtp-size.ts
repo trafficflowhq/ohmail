@@ -35,7 +35,7 @@ export const SMTP_SIZE_DEADLINE_MS = 40_000;
 export const apiSmtpSizeDial: SmtpSizeDial = (smtp) => verifySmtpLogin(smtp, PROBE_TIMEOUTS);
 
 interface CredMeta extends CredMetaAuth {
-  host?: string; port?: number; secure?: boolean;
+  host?: string; port?: number; secure?: boolean; insecureConsent?: boolean;
   smtp?: { host?: string; port?: number; secure?: boolean };
 }
 
@@ -140,6 +140,8 @@ async function smtpCredsFor(deps: ApiDeps, mailboxId: string): Promise<ProbeTarg
     creds: {
       host, port: smtpMeta.port ?? 587, secure: smtpMeta.secure ?? false,
       auth: { user, pass: secret },
+      // The smtp row's own consent, as `send-adapter.ts` reads it; the fallback borrows none.
+      ...(smtpRow && smtpMeta.insecureConsent === true ? { allowInsecure: true } : {}),
     },
     // The row whose SECRET is being presented — the smtp row when there is one, otherwise the
     // imap row the fallback borrows from. That is the row a rotation would touch, and NAMING it

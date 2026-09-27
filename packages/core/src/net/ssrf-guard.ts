@@ -170,6 +170,50 @@ export function isBlockedAddress(ip: string): boolean {
   return true;
 }
 
+/** 10/8, 172.16/12, 192.168/16 and 127/8: the IPv4 ranges a home network or this machine uses. */
+function privateIpv4(b: number[]): boolean {
+  const [a, x] = b as [number, number, number, number];
+  return a === 10 || a === 127 || (a === 172 && x >= 16 && x <= 31) || (a === 192 && x === 168);
+}
+
+/**
+ * True when `ip` is on a private network or is this machine: RFC 1918, loopback, IPv6 unique-local
+ * (fc00::/7) and `::1`, with the v4-mapped form unwrapped. Link-local, CGNAT and every other
+ * reserved range are NOT private here. Unparseable is false: this decides whether a password may
+ * travel unencrypted, so "I cannot tell" must read as "public".
+ */
+export function isPrivateNetworkAddress(ip: string): boolean {
+  const bare = ip.startsWith("[") && ip.endsWith("]") ? ip.slice(1, -1) : ip;
+  const v4 = parseIpv4(bare);
+  if (v4) return privateIpv4(v4);
+  const b = parseIpv6(bare);
+  if (!b) return false;
+  const zeroThrough = (n: number): boolean => b.slice(0, n).every((o) => o === 0);
+  if (zeroThrough(15) && b[15] === 1) return true;                                   // ::1
+  if (zeroThrough(10) && b[10] === 0xff && b[11] === 0xff) return privateIpv4([b[12]!, b[13]!, b[14]!, b[15]!]);
+  return (b[0]! & 0xfe) === 0xfc;                                                    // fc00::/7
+}
+
+/**
+ * The addresses `host` resolves to when EVERY one of them is private (see
+ * {@link isPrivateNetworkAddress}), else `null`. A literal needs no DNS; a name that does not
+ * resolve, or that answers with one public address among private ones, is `null`. The return is
+ * the pin a plaintext dial connects to, so a second lookup cannot move it somewhere public.
+ */
+export async function privateNetworkPin(host: string, resolver: HostResolver): Promise<string[] | null> {
+  const h = host.trim().toLowerCase().replace(/\.$/, "");
+  const bare = h.startsWith("[") && h.endsWith("]") ? h.slice(1, -1) : h;
+  if (parseIpv4(bare) || parseIpv6(bare)) return isPrivateNetworkAddress(bare) ? [bare] : null;
+  let addrs: string[];
+  try {
+    addrs = await resolver.resolve(bare);
+  } catch {
+    return null;
+  }
+  if (addrs.length === 0 || !addrs.every(isPrivateNetworkAddress)) return null;
+  return addrs;
+}
+
 /** A DNS name we are willing to resolve: LDH labels, and a non-numeric last label. */
 const DNS_NAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
 

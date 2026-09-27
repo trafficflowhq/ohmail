@@ -2294,6 +2294,8 @@ export async function startWorkerWithLock(
           smtp: creds.smtp ? {
             host: creds.smtp.host, port: creds.smtp.port, secure: creds.smtp.secure,
             ...(await checkedDial(dialHostGuard, creds.smtp.host, "smtp")),
+            // The submission server's own plaintext consent, from the `smtp` row alone.
+            ...(creds.smtp.allowInsecure ? { allowInsecure: true } : {}),
             // An smtp credential row is always a password (oauth mailboxes carry no smtp row); narrow
             // to the password member so it fits `ImapConfig.smtp.auth`, and omit auth otherwise.
             ...("pass" in creds.smtp.auth ? { auth: creds.smtp.auth } : {}),

@@ -18,7 +18,7 @@ import { ServiceError } from "./errors.js";
  */
 
 export {
-  isBlockedAddress, nodeHostResolver,
+  isBlockedAddress, isPrivateNetworkAddress, privateNetworkPin, nodeHostResolver,
   type HostResolver, type PublicUrlOptions,
 } from "@trafficflow/core/net";
 

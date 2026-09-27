@@ -241,8 +241,9 @@ export interface CreateMailboxBody {
     /** See {@link TransportInput.smtpUnsettled} — why sending is not set up, or `""`. */
     smtpUnsettled?: string;
   };
-  /** `port`/`secure` optional for the same reason as the IMAP block: absence asks the probe's ladder. */
-  smtp?: { host: string; port?: number; secure?: boolean; user?: string; pass?: string };
+  /** `port`/`secure` optional for the same reason as the IMAP block: absence asks the probe's ladder.
+   * `allowInsecure` is the SMTP server's OWN consent claim, re-proved like the IMAP one. */
+  smtp?: { host: string; port?: number; secure?: boolean; user?: string; pass?: string; allowInsecure?: boolean };
 }
 
 export interface UpdateMailboxBody {
@@ -256,7 +257,7 @@ export interface UpdateMailboxBody {
   status?: "connected" | "disabled";
   /** `allowInsecure` as on {@link CreateMailboxBody.imap} — a consent claim, re-proved server-side. */
   imap?: TransportInput & { pass: string; allowInsecure?: boolean };
-  smtp?: TransportInput & { pass: string };
+  smtp?: TransportInput & { pass: string; allowInsecure?: boolean };
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
@@ -302,7 +303,7 @@ export type ProbeTlsFailureKind =
   | "not_yet_valid"
   | "self_signed"
   | "untrusted"           // chain does not reach a public root
-  | "tls_unavailable"     // no TLS on any rung and no STARTTLS — the ONLY kind the consent flow may follow
+  | "tls_unavailable"     // no TLS on any rung and no STARTTLS — the ONLY kind the consent flow may follow (see `plaintext`)
   | "generic";
 
 export interface ProbeTlsDetail {
@@ -317,14 +318,22 @@ export interface ProbeTlsDetail {
    * auto-connected — the user confirms it, and the re-probe verifies strictly against it.
    */
   suggestedHost?: string;
+  /**
+   * `tls_unavailable` only: `offered` when the host is on a private network or this machine and
+   * the caller may consent to plaintext for THIS transport; `not_private` when it is not, which
+   * the refusal names. Absent: nothing is offered (this deployment cannot tell).
+   */
+  plaintext?: "offered" | "not_private";
+  /** `self_signed`/`untrusted` on a private network only: how this server's operator trusts a private authority. */
+  trustVariable?: string;
 }
 
 /**
  * The connection the probe PROVED, which is what must be stored — a probe that succeeds on
  * `993/TLS` while the form said `143` would otherwise strand the worker on a config nobody
  * tried. One shape for both transports. `insecure` is present only when the user consented to
- * plaintext AND the same call re-proved the server offers no TLS (IMAP only); it becomes
- * `meta.insecureConsent` on the credential row.
+ * plaintext AND the same call re-proved the server offers no TLS and sits on a private network;
+ * it becomes `meta.insecureConsent` on THAT transport's credential row.
  */
 export interface ProvenEndpoint {
   host: string; port: number; secure: boolean; insecure?: true;
@@ -376,14 +385,14 @@ export type MailboxProbeVerdict =
 export interface SmtpProbeInput {
   accountId: string;
   address: string;
-  smtp: { host: string; port?: number; secure?: boolean; user: string; pass: string };
+  smtp: { host: string; port?: number; secure?: boolean; user: string; pass: string; allowInsecure?: boolean };
 }
 
 /**
  * Try an SMTP login the way {@link MailboxProbe} tries an IMAP one: the standard ladder when no
  * port is named (465 implicit TLS, then 587 STARTTLS), TLS-mode negotiation on a named port, the
- * full certificate taxonomy — and NO consent arm: plaintext SMTP authentication is not offered
- * at all in this flow. Implemented in `packages/api` beside the IMAP probe.
+ * full certificate taxonomy, and the IMAP probe's consent arm on the same bounds. Implemented in
+ * `packages/api` beside the IMAP probe.
  */
 export type SmtpProbe = (input: SmtpProbeInput) => Promise<MailboxProbeVerdict>;
 
@@ -558,6 +567,11 @@ const PROBE_REFUSAL: Record<MailboxErrorCode, { status: number; message: string;
  * client's own vanity-CNAME UX, and the hosted probe's SSRF host guard means the dialed host is
  * public anyway — but the server's own sentence leaks nothing regardless.
  */
+/** A certificate nobody here can verify: the public remedy, or on the operator's own network both. */
+const certRemedy = (tls: ProbeTlsDetail): string => tls.trustVariable
+  ? `The server is on your own network: whoever runs this ohmail server can make it trust the authority that signed that certificate (${tls.trustVariable} on the api and the organizer), or the mail server can use a certificate from a public authority.`
+  : "Ask whoever runs the server to install a certificate from a public authority.";
+
 const tlsRefusalMessage = (tls: ProbeTlsDetail, transport: ProbeTransport): string => {
   const server = transport === "smtp" ? "That outgoing (SMTP) mail server" : "That mail server";
   const proto = transport === "smtp" ? "SMTP" : "IMAP";
@@ -572,13 +586,17 @@ const tlsRefusalMessage = (tls: ProbeTlsDetail, transport: ProbeTransport): stri
     case "not_yet_valid":
       return `${server}'s certificate is not valid yet, ${stopped}. Check with whoever runs the server.`;
     case "self_signed":
-      return `${server}'s certificate is self-signed, which we cannot verify, ${stopped}. ` +
-        "Ask whoever runs the server to install a certificate from a public authority.";
+      return `${server}'s certificate is self-signed, which we cannot verify, ${stopped}. ` + certRemedy(tls);
     case "untrusted":
-      return `${server}'s certificate is not issued by a trusted authority, ${stopped}. ` +
-        "Ask whoever runs the server to install a certificate from a public authority.";
-    case "tls_unavailable":
-      return `${server} offers no encryption — no TLS and no STARTTLS — ${stopped}.`;
+      return `${server}'s certificate is not issued by a trusted authority, ${stopped}. ` + certRemedy(tls);
+    case "tls_unavailable": {
+      // The protocol is named on both halves: a pair can refuse on either, and the consent is per protocol.
+      const which = transport === "smtp" ? server : "That incoming (IMAP) mail server";
+      const why = tls.plaintext === "not_private"
+        ? " It is not on your own network, and ohmail sends a password unencrypted only to a server that is."
+        : "";
+      return `${which} offers no encryption — no TLS and no STARTTLS — ${stopped}.${why}`;
+    }
     case "generic":
       return transport === "smtp"
         ? `${server}'s certificate was refused, ${stopped}. Check the SMTP host, and whether the port expects TLS.`
@@ -798,17 +816,14 @@ function mergedTransportMeta(
     merged.port = proven.port;
     merged.secure = proven.secure;
     /**
-     * IMAP ONLY, and a STALE consent marker is REWRITTEN rather than deleted: `upsertCredOn`
+     * EACH TRANSPORT'S OWN MARKER, and a STALE one is REWRITTEN rather than deleted: `upsertCredOn`
      * merges meta with jsonb `||` (right side wins PER KEY, absent keys survive), so deleting the
      * key would leave yesterday's consent on a mailbox whose server now proves TLS — a consent
      * that never expires on its own is the exact downgrade this rewrite exists to prevent. A
-     * mailbox that never carried the marker never gains the key, in either value. Plaintext SMTP
-     * authentication is not offered at all, so there is no marker on that side to keep honest.
+     * mailbox that never carried the marker never gains the key, in either value.
      */
-    if (transport === "imap") {
-      if (proven.insecure === true) merged.insecureConsent = true;
-      else if (merged.insecureConsent !== undefined) merged.insecureConsent = false;
-    }
+    if (proven.insecure === true) merged.insecureConsent = true;
+    else if (merged.insecureConsent !== undefined) merged.insecureConsent = false;
   }
   return merged;
 }
@@ -1208,6 +1223,8 @@ export class MailboxService {
           secure: body.smtp.secure,
           user: body.smtp.user ?? body.imap?.user ?? "",
           pass: smtpPass,
+          // A claim for THIS server, honored only as the IMAP one is. See {@link ProvenEndpoint.insecure}.
+          allowInsecure: body.smtp.allowInsecure === true ? true : undefined,
         },
       });
       if (verdict.verdict === "refuse") throw probeRefused(verdict.code, verdict.tls, "smtp");
@@ -1282,13 +1299,16 @@ export class MailboxService {
         // secret/user when the SMTP block omits them (still its own transport row).
         const pass = body.smtp.pass ?? body.imap?.pass;
         if (pass) {
-          await this.upsertCredOn(tx, ctx, kp, row!.id, "smtp", pass, metaOf({
+          const smtpMeta = metaOf({
             host: body.smtp.host,
             // Proven over guessed, as on the IMAP row above.
             port: provenSmtp?.port ?? body.smtp.port,
             secure: provenSmtp?.secure ?? body.smtp.secure,
             user: body.smtp.user ?? body.imap?.user,
-          }), MINTED_HERE);
+          });
+          // The SMTP server's own consent, from its verdict only, as on the IMAP row.
+          if (provenSmtp?.insecure) smtpMeta.insecureConsent = true;
+          await this.upsertCredOn(tx, ctx, kp, row!.id, "smtp", pass, smtpMeta, MINTED_HERE);
         }
       }
       // Per-mailbox onboarding state, in the SAME transaction as the row: a create that fails
@@ -2467,8 +2487,8 @@ export class MailboxService {
   /**
    * The SMTP sibling of {@link probedImapMeta}: merge the patch over the stored `smtp` meta,
    * dial the merged config, and return the merge with the PROVEN port/TLS mode applied. Same
-   * ordering rules (before the transaction, 404 and disabled-refusal first), no consent marker —
-   * plaintext SMTP authentication is not offered at all.
+   * ordering rules (before the transaction, 404 and disabled-refusal first) and the same consent
+   * claim, re-proved for the submission server on its own.
    */
   private async probedSmtpMeta(
     ctx: ServiceContext, id: string, patch: UpdateMailboxBody, smtpProbe: SmtpProbe,
@@ -2496,6 +2516,7 @@ export class MailboxService {
         secure: typeof merged.secure === "boolean" ? merged.secure : undefined,
         user: typeof merged.user === "string" ? merged.user : "",
         pass: patch.smtp!.pass!,
+        allowInsecure: patch.smtp?.allowInsecure === true ? true : undefined,
       },
     });
     if (verdict.verdict === "refuse") throw probeRefused(verdict.code, verdict.tls, "smtp");
