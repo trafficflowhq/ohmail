@@ -15,10 +15,10 @@ import {
   type Destination, type Logger,
 } from "@trafficflow/core/mail";
 
-/* SCREENER AUTO-ACT — "Act on suggestions for me": file the waiting senders whose stored advice is
- * confident, through the door a PRESS uses. It reads advice and never buys it (no model, no spend,
- * no claim), and files through `applyScreenerDecision` — the manual Apply's and the reader drain's
- * one implementation — so the promoted rule the person undoes from the rules list, the held-bag
+/* SCREENER AUTO-ACT — for an account that gave THIS pass its own consent, file the waiting senders
+ * whose stored advice is confident, through the door a PRESS uses. It reads advice and never buys
+ * it (no model, no spend, no claim), and files through `applyScreenerDecision` — the manual Apply's
+ * and the reader drain's one implementation — so the promoted rule the person undoes, the held-bag
  * re-route that empties the Waiting count, the mark-read and the learning signal cannot drift from
  * the press. Its sibling `screener-auto.ts` decides for ITSELF (the strong-bulk floor, News and
  * Receipts only) and reads no suggestion at all, which is why a Spam verdict waited for ever. */
@@ -56,24 +56,34 @@ export interface ScreenerAutoActDeps {
   /** The cycle tail's clock, asked before each sender this pass would file after the first. A kept
    *  sender costs no statement and a filed one leaves the Screener, so a stop loses no progress. */
   until?: () => boolean;
+  /**
+   * The pass's OWN consent, and nothing else arms it. Never `screener_auto_apply_at`: that switch
+   * says "Deterministic rules only — no AI". No surface asks for this consent yet, so every
+   * production caller passes `null`.
+   */
+  consent: ScreenerActConsent | null;
+}
+
+/** A given consent to act on suggestions. Asked again per sender, under the account's row lock. */
+export interface ScreenerActConsent {
+  stillGiven(tx: Tx): Promise<boolean>;
 }
 
 type SettingsRow = typeof accountSettings.$inferSelect;
 
 /**
- * The opt-in and the cutline's three answers — the one PK row this pass starts from. A caller that
- * already read that row for the same drain hands it over, so an account with the setting off
- * costs the drain no extra statement (the local engine's idle-drain ratchet counts it).
+ * The cutline's three answers — the one PK row this pass starts from once it has a consent. A
+ * caller that already read that row for the same drain hands it over, so the pass costs the drain
+ * no extra statement (the local engine's idle-drain ratchet counts it).
  */
 export interface ScreenerAutoActSettings {
-  autoApplyAt: SettingsRow["screenerAutoApplyAt"];
   screeningBaselineAt: SettingsRow["screeningBaselineAt"];
   dormancyDays: SettingsRow["dormancyDays"];
   screeningScope: SettingsRow["screeningScope"];
 }
 
 export interface ScreenerAutoActResult {
-  /** False ⇒ the account has NOT opted in; nothing was read past the one-row probe. */
+  /** False ⇒ no consent was handed in; nothing was read. */
   ran: boolean;
   /** Waiting senders considered. */
   examined: number;
@@ -91,7 +101,7 @@ export interface ScreenerAutoActResult {
   destinations: Record<string, number>;
   /** True ⇒ the page came back full, so more may be waiting; the next cycle takes them. */
   capped: boolean;
-  /** True ⇒ the account switched the setting OFF part-way through; the rest was NOT filed. */
+  /** True ⇒ the consent was withdrawn part-way through; the rest was NOT filed. */
   revoked: boolean;
   /** Senders left waiting because this account wrote to them — counted inside {@link kept}. */
   correspondents: number;
@@ -138,8 +148,8 @@ export function plannedDecision(
 }
 
 /**
- * THE PASS, for ONE account. A no-op for every account that has not opted in; otherwise one page of
- * waiting senders, their stored advice, and a decision per sender through the shared door.
+ * THE PASS, for ONE account. A no-op without {@link ScreenerAutoActDeps.consent}; otherwise one page
+ * of waiting senders, their stored advice, and a decision per sender through the shared door.
  *
  * Store-neutral by construction: every statement goes through the dialect seam, because this runs
  * in the Cloud worker AND in the local engine (`apps/sidecar`), which is where a standalone
@@ -157,25 +167,23 @@ export async function screenerAutoActPass(
   };
   const accountId = deps.accountId;
 
-  // THE OPT-IN PROBE — one PK read, and the whole cost of this pass for every account that has not
-  // turned the setting on. `screener_auto_apply_at IS NOT NULL` IS the opt-in, the same column and
-  // the same reading as `screener-auto.ts` and `getScreeningPreference`. A caller that already read
-  // the row this cycle hands it over and the probe costs nothing.
+  // THE CONSENT, and the whole cost of this pass without one: no statement at all. Checked before
+  // any read, so no column an account set for another reason can stand in for it.
+  const consent = deps.consent;
+  if (!consent) return EMPTY();
+
+  // The cutline's three answers — the suggest pass's own shape. A sender the cutline has retired
+  // is not a question, so acting on advice about them would file mail no surface was asking about.
   const [settings] = deps.settings ? [deps.settings] : await db.select({
-    autoApplyAt: accountSettings.screenerAutoApplyAt,
-    // The cutline's three answers, on the PK read the opt-in probe already makes — the suggest
-    // pass's own shape. A sender the cutline has retired is not a question, so acting on advice
-    // about them would file mail no surface was asking about.
     screeningBaselineAt: accountSettings.screeningBaselineAt,
     dormancyDays: accountSettings.dormancyDays,
     screeningScope: accountSettings.screeningScope,
   }).from(accountSettings).where(eq(accountSettings.accountId, accountId)).limit(1);
-  if (!settings?.autoApplyAt) return EMPTY();
 
   const cutline = resolveCutline({
-    baselineAt: settings.screeningBaselineAt ?? null,
-    dormancyDays: settings.dormancyDays ?? null,
-    scope: settings.screeningScope ?? null,
+    baselineAt: settings?.screeningBaselineAt ?? null,
+    dormancyDays: settings?.dormancyDays ?? null,
+    scope: settings?.screeningScope ?? null,
     now: now(),
   });
   const waiting = await selectWaitingSenders(db, { accountId, limit, cutline });
@@ -218,14 +226,14 @@ export async function screenerAutoActPass(
     try {
       const applied = await db.transaction(async (txRaw) => {
         const tx = carryDialect(db, txRaw as object) as typeof txRaw;
-        // THE REVOKE CHECK, RE-READ AND LOCKED PER SENDER, `screener-auto.ts`'s shape: the probe
-        // above runs once, and an account that switches the setting off mid-page must not have the
-        // rest filed anyway. The lock also serializes a cycle tail against a failover driver.
-        const live = await dialect(tx).forUpdate(
-          tx.select({ autoApplyAt: accountSettings.screenerAutoApplyAt }).from(accountSettings)
+        // THE REVOKE CHECK, PER SENDER UNDER THE ACCOUNT'S ROW LOCK, `screener-auto.ts`'s shape:
+        // a consent withdrawn mid-page leaves the rest waiting. The lock also serializes a cycle
+        // tail against a failover driver.
+        await dialect(tx).forUpdate(
+          tx.select({ accountId: accountSettings.accountId }).from(accountSettings)
             .where(eq(accountSettings.accountId, accountId)).limit(1),
         );
-        if (!live[0]?.autoApplyAt) return null;
+        if (!(await consent.stillGiven(tx as unknown as Tx))) return null;
         return applyScreenerDecision(tx, {
           accountId, scope: "sender", address: plan.address,
           appliedFolder: plan.appliedFolder, decision: plan.decision,
@@ -250,7 +258,7 @@ export async function screenerAutoActPass(
         result.revoked = true;
         log.info("screener_auto_act_revoked", {
           accountId, examined: result.examined, applied: result.filed,
-          reason: "the setting was switched off during this page; the remaining senders were not filed",
+          reason: "the consent was withdrawn during this page; the remaining senders were not filed",
         });
         break;
       }
@@ -299,7 +307,7 @@ interface WaitingSender {
  * THE WAITING SENDERS, one representative each — `screener-auto-suggest.ts#selectCandidates`'s
  * window and ordering, so the act walks the queue the surface shows in the order it shows it.
  * The differences from that pass, each deliberate: NO watermark (advice that already exists is
- * owed an act whenever the setting was turned on) and no advice predicate here — the advice is
+ * owed an act whenever the consent was given) and no advice predicate here — the advice is
  * read per sender through its one read path. The sensitivity exclusion is kept: an automatic act
  * takes the stricter reading of both columns.
  */

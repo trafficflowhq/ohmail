@@ -261,7 +261,9 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     name: "screener_auto_act",
     module: `${W}/screener-auto-act.ts`, entry: "screenerAutoActPass",
     triggers: ["cycle-tail", "sidecar-drain"],
-    cadence: "every cycle tail and every local drain tail, per account with auto-apply on",
+    // Never armed by `screener_auto_apply_at`, the switch that promises "no AI". No surface asks
+    // for the act's own consent yet, so both callers pass none and it files nothing.
+    cadence: "every cycle tail and every local drain tail, per account that gave the act its own consent (none can yet)",
     budget: "SCREENER_ACT_SENDERS_PER_CYCLE senders per account per cycle; one transaction each; a TAIL_SLICE_BUDGET_MS `until` clock in the tail",
     owns: "a waiting sender whose stored suggestion is at or above the bar is filed exactly as the press files them",
     fence: "leader lock; the decision path is `applyScreenerDecision` — the manual Apply's and the drain's one implementation",

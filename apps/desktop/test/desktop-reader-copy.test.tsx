@@ -181,6 +181,7 @@ let root: Root | null = null;
 async function mountScreener(
   facts: MailboxFacts[],
   locale: "en" | "de" = "en",
+  door: "local" | "cloud" = "local",
 ): Promise<HTMLDivElement> {
   FACTS = facts;
   /* Imported inside, so the module graph is built after `vi.mock` is registered — the same
@@ -193,7 +194,7 @@ async function mountScreener(
     root!.render(h(
       NextIntlClientProvider,
       { locale, messages: (locale === "de" ? de : en) as never, timeZone: "UTC" },
-      h(DesktopScreening, { door: "local" }),
+      h(DesktopScreening, { door }),
     ));
   });
   /* One more turn: the pane reads its stored preference in an effect, so the first render is
@@ -256,5 +257,29 @@ describe("Settings → Screener on a reader install", () => {
     expect(text, "the pane still ships its own copy in English")
       .not.toContain(en.desktopScreener.filedHead);
     expect(text).not.toContain(en.desktopScreener.postureLabel);
+  });
+});
+
+describe("Settings → Screener on the hosted door: the auto-apply switch", () => {
+  /* One switch, one sentence. This switch and the web's Settings → Screening switch write the
+     same setting, and that setting arms the deterministic filing only, never a filing on a
+     model's suggestion. So the desktop renders the web switch's own words, and the words it used
+     to carry ("Act on suggestions for me") are gone from both catalogues. */
+  it.each(["en", "de"] as const)("renders the web switch's words and says no AI (%s)", async (locale) => {
+    const cat = locale === "de" ? de : en;
+    const el = await mountScreener([ORGANIZER], locale, "cloud");
+    const text = el.textContent ?? "";
+    expect(text).toContain(cat.settings.screening.autoApplyTitle);
+    expect(text).toContain(cat.settings.screening.autoApplyDescription);
+    expect(cat.settings.screening.autoApplyDescription).toMatch(locale === "de" ? /keine KI/ : /no AI/);
+    expect(el.querySelector(`[aria-label="${cat.settings.screening.autoApplyTitle}"]`)).not.toBeNull();
+    expect(text).not.toMatch(locale === "de" ? /Vorschläge für mich ausführen/ : /Act on suggestions/);
+    expect((cat.desktopScreener as Record<string, string>).autoApplyLabel).toBeUndefined();
+  });
+
+  it("CONTROL: the standalone door draws no auto-apply switch", async () => {
+    const el = await mountScreener([ORGANIZER], "en", "local");
+    expect(el.textContent ?? "").toContain(en.desktopScreener.postureLabel);
+    expect(el.textContent ?? "").not.toContain(en.settings.screening.autoApplyTitle);
   });
 });

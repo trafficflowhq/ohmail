@@ -39,6 +39,8 @@ export function DesktopScreening({
 }) {
   /* See `DesktopScreeningWords` for why the namespace has to be on `vite.config.ts`'s list. */
   const t = useTranslations("desktopScreener");
+  /* The auto-apply switch's words are the web switch's own entry: one switch, one sentence. */
+  const ts = useTranslations("settings");
   const readOnly = readerHolder(screenerMode(useMailboxFacts()));
   const managed = useManagedService();
   const [read, setRead] = useState<ScreeningRead | null>(null);
@@ -139,15 +141,16 @@ export function DesktopScreening({
           away when the engine answers 404, so the two conditions agree without an authority. */}
       {door === "local" ? <DesktopAutoSuggest /> : null}
 
-      {/* AUTO-APPLY, ON THE HOSTED DOOR ONLY. See the header. */}
+      {/* AUTO-APPLY, ON THE HOSTED DOOR ONLY. See the header. It arms the deterministic pass and
+          nothing else — the act on suggestions takes its own consent, which no surface asks for. */}
       {door === "cloud" ? (
         <SettingsRow
-          label={t("autoApplyLabel")}
-          description={t("autoApplyWhy")}
+          label={ts("screening.autoApplyTitle")}
+          description={ts("screening.autoApplyDescription")}
           control={
             <Switch
               checked={pref.screenerAutoApply}
-              ariaLabel={t("autoApplyLabel")}
+              ariaLabel={ts("screening.autoApplyTitle")}
               onChange={(on) => apply({ screenerAutoApply: on })}
             />
           }

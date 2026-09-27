@@ -61,12 +61,10 @@ With AI on — your own Anthropic or OpenAI key, or a local model through
 proposes a door for each waiting sender, with a confidence and a reason, and one
 press accepts. Switch on auto-suggest and the proposal is already waiting as the
 mail arrives. Nothing applies itself unless you ask: a pattern you have
-confirmed often enough graduates and files itself from then on, spam included;
-or switch on "Act on suggestions for me" and a sender whose suggestion is
-confident is filed for you — never someone you have written to — with the rule
-listed for you to undo. Every move is recorded and reversible. A one-time code
-inside a message is stripped before any model sees it, and automatic routing
-leaves that mail alone entirely.
+confirmed often enough graduates and files itself from then on, spam included.
+Every move is recorded and reversible. A one-time code inside a message is
+stripped before any model sees it, and automatic routing leaves that mail alone
+entirely.
 
 Configure nothing and the Screener still holds first contact, rules still file
 mail, and search still works — the suggestion and the draft are not
@@ -504,10 +502,9 @@ never an expunge. (Not yet in the standalone desktop app.)
 message into the mailbox's native Junk folder — where its filter and your other
 clients expect spam — and "Not junk" moves it back out; the sender rule, stored
 with your settings, is the durable memory either way. Delete moves to native
-Trash, never expunges. Beyond those user-commanded acts — and the Spam filing
-"Act on suggestions for me" does once you switch it on, the same move your press
-would make — ohmail never acts in Junk or Trash on its own: no rule, no other
-automatic pass and no AI proposal may name them.
+Trash, never expunges. Beyond those user-commanded acts, ohmail never
+acts in Junk or Trash on its own: no rule, no automatic pass and no AI proposal
+may name them.
 
 **What travels, and what stays.** Not a slogan — the architecture. ohmail's desktop app, the hosted service and
 a server you run never share a database; the only medium they all read is the

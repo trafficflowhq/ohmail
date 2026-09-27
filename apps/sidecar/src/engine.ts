@@ -2233,8 +2233,6 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           baselineAt: accountSettings.screeningBaselineAt,
           dormancyDays: accountSettings.dormancyDays,
           scope: accountSettings.screeningScope,
-          // The auto-act opt-in, on this same row, so the tail's pass asks the store nothing more.
-          autoApplyAt: accountSettings.screenerAutoApplyAt,
         }).from(accountSettings).where(eq(accountSettings.accountId, world.accountId)).limit(1);
         const cutoff = resolveScreeningCutoff(row?.baselineAt, row?.dormancyDays, row?.scope);
         return {
@@ -2245,8 +2243,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // asks for. One state, reached two ways, and `resolveScreeningCutoff` is the single
           // place that decides which.
           ...(cutoff ? { screeningCutoff: cutoff } : {}),
+          // The cutline's row, handed to the act so its pass asks the store nothing more.
           actSettings: {
-            autoApplyAt: row?.autoApplyAt ?? null, screeningBaselineAt: row?.baselineAt ?? null,
+            screeningBaselineAt: row?.baselineAt ?? null,
             dormancyDays: row?.dormancyDays ?? null, screeningScope: row?.scope ?? null,
           },
         };
@@ -2373,16 +2372,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     };
 
     /**
-     * Act on what is stored, for an install that asked us to — "Act on suggestions for me". The
-     * worker's pass again, not a copy: a sender filed here has to mean what a sender filed on the
-     * hosted side means, and the decision itself is `applyScreenerDecision`, the same function this
-     * engine's own Apply button and its request drain reach. It reads advice and buys none, so it
-     * needs no model and no credits gate; it files nothing for an install that has not opted in.
+     * Act on what is stored, on the act's own consent. The worker's pass again, not a copy: a
+     * sender filed here has to mean what a sender filed on the hosted side means, and the decision
+     * itself is `applyScreenerDecision`, the function this engine's Apply button and its request
+     * drain reach. It reads advice and buys none. No surface asks for its consent yet, so `null`:
+     * it files nothing and reads nothing.
      */
     const actOnSuggestions = async (settings?: ScreenerAutoActSettings): Promise<void> => {
       try {
         const { ran, filed, failed, capped } = await screenerAutoActPass(db as unknown as Tx, {
-          accountId: world.accountId, ...(settings ? { settings } : {}),
+          accountId: world.accountId, consent: null, ...(settings ? { settings } : {}),
         });
         if (ran && (filed > 0 || failed > 0)) log("screener_auto_act", { applied: filed, failed, capped });
       } catch (err) {

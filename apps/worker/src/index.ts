@@ -4398,10 +4398,12 @@ export async function startWorkerWithLock(
             // Cleared after ANY non-throwing pass, opted-in or not: a stale mark for an account
             // that opted out would otherwise lead every cycle for ever.
             await clearScreenerSuggestOwed(db as unknown as Tx, accountId, owedReadAt);
-            // AND ACT ON WHAT IS NOW STORED, for an account that asked us to. Here rather than a
-            // cycle later because the advice this serve just bought is the advice the setting
-            // promises to act on; the pass files nothing for an account that has not opted in.
-            const acted = await screenerAutoActPass(db as unknown as Tx, { accountId, log, until: sliceUntil() }, new Date());
+            // AND ACT ON WHAT IS NOW STORED, once the act has its own consent. Here rather than a
+            // cycle later so advice bought this serve is acted on this serve. No surface asks for
+            // that consent yet, so `null` and the pass files nothing — see the cycle tail below.
+            const acted = await screenerAutoActPass(
+              db as unknown as Tx, { accountId, log, until: sliceUntil(), consent: null }, new Date(),
+            );
             if (acted.ran && (acted.filed > 0 || acted.failed > 0)) {
               log.info("screener_auto_act_pass", { accountId, applied: acted.filed, failed: acted.failed });
             }
@@ -4817,15 +4819,17 @@ export async function startWorkerWithLock(
         },
       },
       screener_auto_act: {
-        // ── ACT ON THE STORED SUGGESTIONS, FOR OPTED-IN ACCOUNTS ────────────────────────────
+        // ── ACT ON THE STORED SUGGESTIONS, ON THE ACT'S OWN CONSENT ─────────────────────────
         //
-        // "Act on suggestions for me": the senders whose stored advice is confident are filed through
-        // `applyScreenerDecision`, the door a press uses. Its OWN try/catch and loop for the reason
-        // the blocks above have one. AFTER the suggest pass, so advice bought this cycle is acted on
-        // this cycle. It reads advice and never buys it — no model, no spend, no claim.
+        // The senders whose stored advice is confident are filed through `applyScreenerDecision`,
+        // the door a press uses; AFTER the suggest pass, so advice bought this cycle is acted on this
+        // cycle. `consent: null` because no surface asks for it yet: `screener_auto_apply_at` is the
+        // switch that promises "no AI" and arms the deterministic pass above, never this one.
         run: async (accountId) => {
           try {
-            const acted = await screenerAutoActPass(db as unknown as Tx, { accountId, log, until: sliceUntil() }, new Date());
+            const acted = await screenerAutoActPass(
+              db as unknown as Tx, { accountId, log, until: sliceUntil(), consent: null }, new Date(),
+            );
             if (acted.ran && (acted.filed > 0 || acted.failed > 0)) {
               log.info("screener_auto_act_pass", {
                 accountId, applied: acted.filed, failed: acted.failed, capped: acted.capped,
