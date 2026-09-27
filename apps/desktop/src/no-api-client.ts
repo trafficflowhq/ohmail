@@ -470,9 +470,29 @@ export interface ProfileImportAppliedWire {
     seq: number | null;
 }
 
+export interface ProfileImportPendingWire {
+    state: "importing";
+    fingerprint: string;
+    reason?: "slow" | "unreachable";
+}
+
+export type ProfileImportStatusWire = {
+    state: "importing";
+    fingerprint: string;
+} | {
+    state: "imported";
+    imported: ProfileImportCountsWire | null;
+    skippedRules: number;
+} | {
+    state: "refused";
+    reason: string;
+    message: string;
+};
+
 export const profileImport: {
     candidate: (mailboxId: string) => Promise<ProfileImportCandidateWire>;
-    apply: (mailboxId: string, fingerprint: string) => Promise<ProfileImportAppliedWire>;
+    apply: (mailboxId: string, fingerprint: string) => Promise<ProfileImportAppliedWire | ProfileImportPendingWire>;
+    status: (mailboxId: string, fingerprint: string) => Promise<ProfileImportStatusWire>;
     decline: (mailboxId: string, subject: {
         fingerprint?: string;
         v?: number;
