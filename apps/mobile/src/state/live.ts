@@ -31,7 +31,6 @@ import {
   presentationReader,
   presentsUnread,
   pressOverTwins,
-  retroPassWouldMove,
   readsPartition,
   receiptsByDay,
   rulesList,
@@ -3166,7 +3165,6 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     let queuedWith: { name: string | null } | null = null;
     let landed: Promise<PressVerdict>;
     const decideRoute = rep === undefined || physicalFolderOf(rep) === FOLDER_OF_VIEW.screener;
-    let undo: ToastOpts | undefined;
     /** Releases a row the store backs from the shelf's hold once the answer is in. */
     let held: (() => void) | undefined;
     if (decideRoute) {
@@ -3191,26 +3189,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       );
     } else {
       /* PAST THE GATE — the web's ladder (`screener-state.ts` → `planScreeningChange`) and this
-         file's own sender sheet: the twins decide through `pressOverTwins`, and the mail that is
-         here moves with capped `move`s. A rule alone moved nothing the gate had adopted while an
-         import question was open — the retro pass never touches those rows. The
-         moves are what the wire can take back, so they carry the Undo. */
+         file's own sender sheet: the twins decide through `pressOverTwins`, which always leaves a
+         rule in force with the past-mail answer, so the backlog is the server pass's and this
+         press moves none of it (THE-CLIENTS-FIFTY): only the pass sees a reply or a hand filing. */
       const match = scope === "domain" ? domainOf(row.address).toLowerCase() : row.address.trim().toLowerCase();
-      const wanted = FOLDER_OF_VIEW[dest as ScreenDest];
-      const ofSubject = (x: EngineMessage): boolean => (scope === "domain"
-        ? domainOf(x.from.address.trim().toLowerCase()).toLowerCase() === match
-        : x.from.address.trim().toLowerCase() === match);
-      const moves: EngineMutation[] = raw.list<EngineMessage>("message")
-        .filter((x) => ofSubject(x) && retroPassWouldMove(x, wanted))
-        .sort(newestFirst)
-        .slice(0, 50)
-        .map((x) => ({ kind: "move", messageId: x.id, folder: wanted }));
-      undo = undoable(moves.flatMap((mu) => inverseMutations(engine.verbRead(), mu)));
-      const { writes } = pressOverTwins(rulesList(raw), scope, match, wanted, true);
-      landed = Promise.all([
-        ...writes.map((w) => watched(engine.mutate(w))),
-        ...moves.map((mu) => dispatch(mu)),
-      ]).then(oneVerdict);
+      const { writes } = pressOverTwins(rulesList(raw), scope, match, FOLDER_OF_VIEW[dest as ScreenDest], true);
+      landed = Promise.all(writes.map((w) => watched(engine.mutate(w)))).then(oneVerdict);
     }
     // "&read" stays a separate batch, exactly as the wire has it: `POST /screener/:id`
     // carries no read field, so the seen half is the same `PATCH /messages` everyone uses.
@@ -3258,7 +3242,6 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       v,
       decidedUnsubscribes(decideRoute, decision) ? refuse("liveAlsoUnsubscribing", decidedSaid) : decidedSaid,
       refuse("liveDecideFailed", row.address),
-      undo,
     );
   };
 
