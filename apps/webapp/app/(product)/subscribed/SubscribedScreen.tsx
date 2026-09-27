@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { Spinner } from "@ohmail/ui";
 import { apiConfigured } from "../../api-client";
 import { resolveOwnerOutcome } from "../session-outcome";
+import { SELF_HOST_BUILD } from "../../hello";
 
 /**
  * One `GET /auth/session` (through the shared classifier, so a lapsed-but-resumable session is
@@ -16,6 +17,8 @@ export function SubscribedScreen() {
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
 
   useEffect(() => {
+    // A self-hosted server takes no payment, so nobody is sent back here: go to the app.
+    if (SELF_HOST_BUILD) { window.location.replace("/"); return; }
     if (!apiConfigured()) {
       setSignedIn(false);
       return;
