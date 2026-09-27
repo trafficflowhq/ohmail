@@ -4,6 +4,8 @@
 -- dark for it. It now writes that window as a sample under the cause `upstream_refused`, which the
 -- `sample_cause` CHECK must admit. The other seven words are 0030's, unchanged.
 --
+-- NOT VALID, on 0041/0042's precedent: platform_signals is a growth table, and every existing row
+-- already passed 0030's seven-word CHECK, a subset of this eight-word one, so nothing is re-read.
 -- DEPLOY ORDER: migration, then API (a sample written ahead of it is refused by the old CHECK and
 -- the poll answers 502, as it did before). ROLLBACK is 0030's definition, after the API.
 
@@ -13,4 +15,4 @@ ALTER TABLE "platform_signals" DROP CONSTRAINT IF EXISTS "platform_signals_sampl
 ALTER TABLE "platform_signals" ADD CONSTRAINT "platform_signals_sample_cause_check"
   CHECK ("sample_cause" IS NULL OR "sample_cause" IN (
     'page_budget', 'settle_margin', 'missing_provenance', 'unreadable_request_id',
-    'deadline', 'stalled_cursor', 'boundary_unread', 'upstream_refused'));
+    'deadline', 'stalled_cursor', 'boundary_unread', 'upstream_refused')) NOT VALID;
