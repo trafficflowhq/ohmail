@@ -967,7 +967,7 @@ export async function startWorkerWithLock(
      * At closure scope for `capDropped`'s reason: the entry has to outlive the cycle that wrote
      * it, or the grace could never elapse. It is dropped by the cycle that next completes, which
      * is what makes `reconcileSyncBlocks` clear the row on the next healthy pass, the other arms'
-     * mechanism. It holds `provider_unavailable` too (mail 0129), cleared by the same evidence.
+     * mechanism. It holds `provider_unavailable` too (mail 0130), cleared by the same evidence.
      */
     const readLimited = new Map<string, SyncBlock>();
     /**
@@ -2049,7 +2049,7 @@ export async function startWorkerWithLock(
        * on the CLASS, not a bound code, so a ceiling added later is covered without being enumerated.
        */
       const bounded = isImapBoundExceeded(reason);
-      /* …and the second soft arm (mail 0129): the SERVER said "not now" — a throttle, or
+      /* …and the second soft arm (mail 0130): the SERVER said "not now" — a throttle, or
          `UNAVAILABLE`/`LIMIT`. Same row shape as a ceiling of ours, a different reason, and the
          wait above already honours its hint. Asked only when the ceiling did not answer. */
       const soft = bounded ? "read_limited" as const

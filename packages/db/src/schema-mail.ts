@@ -430,7 +430,7 @@ export const mailboxes = pgTable("mailboxes", {
    */
   signedOutMeta: jsonb("signed_out_meta").$type<SignedOutMeta>(),
   /**
-   * A PRESS OF "IMPORT SETTINGS" THE REQUEST COULD NOT FINISH (mail 0128), finished by the
+   * A PRESS OF "IMPORT SETTINGS" THE REQUEST COULD NOT FINISH (mail 0129), finished by the
    * organizer: the document's fingerprint (the ticket), when it was pressed, NULL or
    * 'imported'/'refused', and why a refusal. Written and read only by `profile-import-ask.ts`,
    * which closes both value sets; nulled by the mailbox erasure.
@@ -440,7 +440,7 @@ export const mailboxes = pgTable("mailboxes", {
   profileImportAskOutcome: text("profile_import_ask_outcome"),
   profileImportAskReason: text("profile_import_ask_reason"),
   /**
-   * WHEN A CYCLE LAST READ THIS MAILBOX BEFORE ANY CYCLE COMPLETED (mail 0129). Written with a
+   * WHEN A CYCLE LAST READ THIS MAILBOX BEFORE ANY CYCLE COMPLETED (mail 0130). Written with a
    * `read_limited` block while `last_sync_at` is still NULL: the mailbox answered and was read up
    * to one of our ceilings. Read by the `sync_lag` alert alone, after `last_sync_at` and before
    * `created_at`, so a first import that hits a ceiling is alive rather than lagging. Every other

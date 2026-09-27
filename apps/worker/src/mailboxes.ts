@@ -701,7 +701,7 @@ export function classifyMailboxError(err: unknown, phase: MailboxErrorPhase): Ma
  * Did the mail server itself say "not now"? A throttle (`ETHROTTLE`, or a finite `throttleReset`
  * hint) or an RFC 5530 `UNAVAILABLE`/`LIMIT` response code — each arrives only after the server
  * received and parsed our command, so none is a statement about the mailbox or its credentials
- * (mail 0129). CLOSED: a connection that merely closed, an errno or an unknown atom is not a
+ * (mail 0130). CLOSED: a connection that merely closed, an errno or an unknown atom is not a
  * refusal, because it cannot be told from an outage. Read before {@link classifyMailboxError},
  * whose `connect` answer for the same evidence is what used to put `status='error'` on the row.
  */
@@ -1298,7 +1298,7 @@ export async function markMailboxSyncBlocked(
  * failed. So this writes the mail-0029 pair and leaves `status`, `error_code`, `error_detail`,
  * `failed_at` and `retry_count` as they were (mail 0039 makes the next-attempt instant survive a
  * restart). `retry_count` is NOT incremented: it counts FAILURES, and a cap hit is not one.
- * On a mailbox no cycle has completed yet it also stamps `sync_progress_at` (mail 0129): the
+ * On a mailbox no cycle has completed yet it also stamps `sync_progress_at` (mail 0130): the
  * mailbox was read, which is what the `sync_lag` alert needs to call a first import alive.
  */
 export async function markMailboxReadLimited(
@@ -1309,7 +1309,7 @@ export async function markMailboxReadLimited(
 }
 
 /**
- * The mail server declined to serve this cycle for now (mail 0129) — a throttle, or RFC 5530
+ * The mail server declined to serve this cycle for now (mail 0130) — a throttle, or RFC 5530
  * `UNAVAILABLE`/`LIMIT`. The same soft block and backoff as {@link markMailboxReadLimited}, and no
  * progress stamp: the server answered and read nothing out.
  */
@@ -1321,7 +1321,7 @@ export async function markMailboxProviderUnavailable(
 }
 
 /**
- * A cycle read this never-completed mailbox and ended on one of our ceilings (mail 0129): stamp
+ * A cycle read this never-completed mailbox and ended on one of our ceilings (mail 0130): stamp
  * `sync_progress_at` and nothing else, so the `sync_lag` rule reads the first import as alive.
  * The cycle's failure arm calls it on every such end, because one bounded cycle is not yet a
  * quarantine and would otherwise stamp nothing. Guarded on `last_sync_at IS NULL` in the statement;

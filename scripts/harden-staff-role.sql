@@ -532,7 +532,7 @@ GRANT SELECT (id, account_id, email, display_name, email_verified_at, created_at
 -- widen what staff can read past what the console displays. Add them in the diff that adds the
 -- projection, not before.
 --
--- `sync_progress_at` (mail 0129) is a timestamp the `sync_lag` rule reads, and that rule runs on
+-- `sync_progress_at` (mail 0130) is a timestamp the `sync_lag` rule reads, and that rule runs on
 -- this role; the migration grants it too, so the alert does not wait for a re-run of this file.
 REVOKE ALL ON public.mailboxes FROM ohmail_admin;
 GRANT SELECT (

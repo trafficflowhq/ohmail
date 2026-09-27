@@ -3,7 +3,7 @@ import { mailboxes } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
 
 /**
- * A PRESS OF "IMPORT SETTINGS" THE REQUEST COULD NOT FINISH (mail 0128) — handed to the mailbox's
+ * A PRESS OF "IMPORT SETTINGS" THE REQUEST COULD NOT FINISH (mail 0129) — handed to the mailbox's
  * organizer, which reads the document on its own connection and answers here. Four columns on
  * the mailbox row, one per mailbox: the last press wins. The fingerprint is the ticket, the
  * consent to that exact content. The ONLY reader and writer of the columns, so both value sets

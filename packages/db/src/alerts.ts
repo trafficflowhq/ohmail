@@ -1010,7 +1010,7 @@ export async function evaluateAlertsWithScope(
   const lagBefore = new Date(now.getTime() - (t.syncLagMs + t.syncLagSustainMs));
   const criticalBefore = new Date(now.getTime() - t.syncLagCriticalMs);
   // The mailbox's last sign of life: a completed cycle, else a cycle that read it and ended on
-  // one of our ceilings before any completed (`sync_progress_at`, mail 0129), else its creation.
+  // one of our ceilings before any completed (`sync_progress_at`, mail 0130), else its creation.
   // A first import that keeps reading is alive; one that stops reading pages as before.
   const lastAlive = sql`coalesce(${mailboxes.lastSyncAt}, ${mailboxes.syncProgressAt}, ${mailboxes.createdAt})`;
   const laggingByAccount = await db

@@ -82,7 +82,7 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
     "id", "account_id", "provider", "address", "created_at", "display_name", "status",
     "last_sync_at", "auth_kind", "error_code", "error_detail", "failed_at", "retry_count",
     "kickstart_at", "sync_blocked_reason", "sync_blocked_since",
-    // Mail 0129: the `sync_lag` rule reads it, and that rule runs on this role.
+    // Mail 0130: the `sync_lag` rule reads it, and that rule runs on this role.
     "sync_progress_at",
   ],
   // PRESENCE ONLY: the composite primary key, and nothing that makes a mailbox connectable.

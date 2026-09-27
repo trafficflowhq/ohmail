@@ -314,7 +314,13 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     ]
   },
   {
-    "name": "0128_profile_import_ask.sql",
+    "name": "0128_rule_person_decided.sql",
+    "statements": [
+      "ALTER TABLE \"rules\" ADD COLUMN \"person_decided_at\" integer;"
+    ]
+  },
+  {
+    "name": "0129_profile_import_ask.sql",
     "statements": [
       "ALTER TABLE \"mailboxes\" ADD COLUMN \"profile_import_ask_fingerprint\" text;",
       "ALTER TABLE \"mailboxes\" ADD COLUMN \"profile_import_ask_at\" integer;",
@@ -323,13 +329,7 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     ]
   },
   {
-    "name": "0128_rule_person_decided.sql",
-    "statements": [
-      "ALTER TABLE \"rules\" ADD COLUMN \"person_decided_at\" integer;"
-    ]
-  },
-  {
-    "name": "0129_mailbox_sync_soft_states.sql",
+    "name": "0130_mailbox_sync_soft_states.sql",
     "statements": [
       "ALTER TABLE \"mailboxes\" ADD COLUMN \"sync_progress_at\" integer;"
     ]

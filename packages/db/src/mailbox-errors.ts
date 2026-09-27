@@ -118,7 +118,7 @@ export const MAILBOX_SYNC_BLOCK_REASONS = [
   "account_closed",
   /**
    * The mail server answered and declined to serve this cycle for now: a throttle with a
-   * suggested wait (imapflow's `ETHROTTLE`), or RFC 5530 `UNAVAILABLE`/`LIMIT` (mail 0129). Not a
+   * suggested wait (imapflow's `ETHROTTLE`), or RFC 5530 `UNAVAILABLE`/`LIMIT` (mail 0130). Not a
    * broken mailbox, so `status` and the error columns stay as they were and the retry waits the
    * server's own hint where it gave one. A connection that merely closed is not this member: it
    * cannot be told from an outage, and stays the `connect` error.
