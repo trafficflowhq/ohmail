@@ -83,6 +83,15 @@ export const WRAPPED_SECRET_SITES: readonly WrappedSecretSite[] = [
     key: ["id"], keyIsSecret: false,
   },
   {
+    // A REPLACEMENT in progress (cloud 0045), on the staff pending pair's reason: a rotation that
+    // skipped it could retire a KEK while somebody is moving their authenticator, and the new one
+    // would then never confirm.
+    site: "totp_secrets.pending_secret_enc",
+    table: totpSecrets,
+    ciphertext: "pendingSecretEnc", keyVersion: "pendingKeyVersion",
+    key: ["id"], keyIsSecret: false,
+  },
+  {
     // Nullable pair — "Null iff the secret is null" per the schema. A half-null row is an
     // anomaly this pass reports rather than repairs; see `mismatched` on the census.
     site: "staff_users.totp_secret_enc",

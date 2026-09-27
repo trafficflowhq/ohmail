@@ -112,6 +112,12 @@ export interface AuthConfig {
   desktopApprovalTtlMs: number;
   stepUpWindowMs: number;      // 5 min
   /**
+   * How long a replacement authenticator stays confirmable (cloud 0045's pending trio). Required:
+   * an absent value would make every pending read as stale. `AuthService` refuses anything but a
+   * positive finite number at construction.
+   */
+  totpPendingTtlMs: number;
+  /**
    * Hard ceiling on a rolling COOKIE session, measured from `sessions.created_at` —
    * or `null` for NO ceiling, which is what a genuinely rolling window means and what
    * ohmail.app runs. See `config.ts` for why the cookie surface gives its ceiling up.

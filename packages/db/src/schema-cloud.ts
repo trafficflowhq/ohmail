@@ -73,6 +73,12 @@ export const totpSecrets = pgTable("totp_secrets", {
   keyVersion: integer("key_version").notNull(),    // KeyProvider KEK version
   activated: boolean("activated").notNull().default(false),
   lastConsumedStep: bigint("last_consumed_step", { mode: "bigint" }),   // TOTP single-use per timestep
+  /** Cloud 0045 — a REPLACEMENT in progress on an activated row. The three are sealed together by a CHECK. */
+  pendingSecretEnc: text("pending_secret_enc"),
+  /** KEK version for `pending_secret_enc`. Null iff the pending secret is null. */
+  pendingKeyVersion: integer("pending_key_version"),
+  /** When the replacement began — an activation after `totpPendingTtlMs` is refused. */
+  pendingStartedAt: timestamp("pending_started_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({ uqUser: unique().on(t.userId) }));

@@ -462,6 +462,11 @@ function desktopClaimKind(raw: unknown): DeviceKind {
   return raw as DeviceKind;
 }
 
+/** No enrollment, a stale or superseded replacement: one sentence, so the three are one oracle. */
+const noTotpEnrollment = (): ServiceError => new ServiceError(
+  "unprocessable", 422, "no TOTP enrollment in progress",
+);
+
 /**
  * The approval's refusals, one sentence each, keyed as the page and the desktop word them. A row
  * bound to ANOTHER account is `approvalNotFound` whatever its state, so no answer tells a second
@@ -604,6 +609,12 @@ export class AuthService extends SessionLifecycle {
     // manifests on a user's device. `makeAuthConfig` validates too; this covers a
     // hand-built config literal.
     assertOriginConfig(deps.config);
+    // An absent or non-finite TTL makes `now - started <= ttl` false for every pending, so every
+    // replacement would be refused as stale while looking healthy. A boot failure instead.
+    const ttl: unknown = deps.config.totpPendingTtlMs;
+    if (typeof ttl !== "number" || !Number.isFinite(ttl) || ttl <= 0) {
+      throw new Error(`AuthConfig.totpPendingTtlMs must be a positive finite number of milliseconds (got ${String(ttl)})`);
+    }
     // Warm the decoy hash off the constructor (never awaited) so the unknown-email
     // path is never the one that pays for it. See {@link decoyHashFor}.
     void decoyHashFor(deps.passwordHasher);
@@ -1578,17 +1589,34 @@ export class AuthService extends SessionLifecycle {
    * Begin a TOTP enrollment. Returns the shared secret and the `otpauth://` provisioning URI
    * — and NOT a QR image; see the note at the foot of `totp.ts` for what used to be here and
    * why a server-rendered one was both a lie and the wrong layer.
+   *
+   * Over an ACTIVATED row this is a replacement (cloud 0045): it writes the pending trio and never
+   * the live pair, so the authenticator in use keeps working until {@link totpActivate} promotes
+   * the new one. A second press overwrites the trio. The row is locked so the two cannot interleave.
    */
   async totpEnroll(ctx: ServiceContext): Promise<{ secret: string; otpauthUrl: string }> {
     const userId = this.requireUser(ctx);
     await this.requireEnrollmentOrStepUp(ctx);
-    const db = asTx(ctx);
-    const user = await this.loadUser(db, userId);
+    const user = await this.loadUser(asTx(ctx), userId);
     const secret = newTotpSecret();
     const { ciphertext, keyVersion } = await this.deps.keyProvider.encrypt(secret);
 
-    await db.delete(totpSecrets).where(and(eq(totpSecrets.userId, userId), eq(totpSecrets.activated, false)));
-    await db.insert(totpSecrets).values({ userId, secretEnc: ciphertext, keyVersion, activated: false });
+    await this.inTransaction(ctx, async (tctx) => {
+      const db = asTx(tctx);
+      const row = (await db.select({ activated: totpSecrets.activated }).from(totpSecrets)
+        .where(eq(totpSecrets.userId, userId)).limit(1).for("update"))[0];
+      if (row?.activated) {
+        await db.update(totpSecrets)
+          .set({
+            pendingSecretEnc: ciphertext, pendingKeyVersion: keyVersion,
+            pendingStartedAt: tctx.now(), updatedAt: tctx.now(),
+          })
+          .where(eq(totpSecrets.userId, userId));
+        return;
+      }
+      await db.delete(totpSecrets).where(and(eq(totpSecrets.userId, userId), eq(totpSecrets.activated, false)));
+      await db.insert(totpSecrets).values({ userId, secretEnc: ciphertext, keyVersion, activated: false });
+    });
 
     const otpauthUrl = totpUri({ issuer: this.cfg.totpIssuer, label: user.email, secret });
     return { secret, otpauthUrl };
@@ -1608,7 +1636,8 @@ export class AuthService extends SessionLifecycle {
       const db = asTx(tctx);
       const row = (await db.select().from(totpSecrets)
         .where(eq(totpSecrets.userId, userId)).limit(1).for("update"))[0];
-      if (!row) throw new ServiceError("unprocessable", 422, "no TOTP enrollment in progress");
+      if (!row) throw noTotpEnrollment();
+      if (row.activated) return this.promotePendingTotp(tctx, row, b.code);
       const secret = await this.deps.keyProvider.decrypt(row.secretEnc, row.keyVersion);
       const v = verifyTotp({ secret, token: b.code, now: tctx.now(), window: this.cfg.totpWindow, afterStep: numOrNull(row.lastConsumedStep) });
       if (!v.valid) throw new ServiceError("unprocessable", 422, "invalid TOTP code");
@@ -1619,6 +1648,40 @@ export class AuthService extends SessionLifecycle {
       const session = await this.exchangeEnrollmentSession(tctx, userId, "totp", o.client);
       return { twofaEnrolled, ...(session ? { session } : {}) };
     });
+  }
+
+  /**
+   * Promote a replacement onto an activated row, under the caller's `FOR UPDATE`. A FULL, fresh
+   * session only. The code is verified against the PENDING secret alone, so a code from the
+   * authenticator in use never answers ok here; the step guard is the row's, because a step is
+   * time and not secret. The write re-states the ciphertext it verified, so a pending superseded
+   * in between promotes nothing. Stale, absent and superseded answer the same sentence.
+   */
+  private async promotePendingTotp(
+    tctx: ServiceContext, row: typeof totpSecrets.$inferSelect, code: string,
+  ): Promise<{ twofaEnrolled: TwofaEnrolled }> {
+    await this.requireStepUp(tctx);
+    const db = asTx(tctx);
+    const pending = row.pendingSecretEnc;
+    const pendingVersion = row.pendingKeyVersion;
+    const startedAt = row.pendingStartedAt;
+    if (pending === null || pendingVersion === null || startedAt === null
+      || tctx.now().getTime() - startedAt.getTime() > this.cfg.totpPendingTtlMs) {
+      throw noTotpEnrollment();
+    }
+    const secret = await this.deps.keyProvider.decrypt(pending, pendingVersion);
+    const v = verifyTotp({ secret, token: code, now: tctx.now(), window: this.cfg.totpWindow, afterStep: numOrNull(row.lastConsumedStep) });
+    if (!v.valid) throw new ServiceError("unprocessable", 422, "invalid TOTP code");
+    const promoted = await db.update(totpSecrets)
+      .set({
+        secretEnc: pending, keyVersion: pendingVersion,
+        pendingSecretEnc: null, pendingKeyVersion: null, pendingStartedAt: null,
+        lastConsumedStep: BigInt(v.timeStep!), updatedAt: tctx.now(),
+      })
+      .where(and(eq(totpSecrets.userId, row.userId), eq(totpSecrets.pendingSecretEnc, pending)))
+      .returning({ id: totpSecrets.id });
+    if (promoted.length === 0) throw noTotpEnrollment();
+    return { twofaEnrolled: await this.twofaEnrolled(db, row.userId) };
   }
 
   /**

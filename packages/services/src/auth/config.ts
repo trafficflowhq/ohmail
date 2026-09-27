@@ -98,6 +98,9 @@ export const DEFAULT_AUTH_CONFIG: Omit<AuthConfig, "rpID" | "rpName" | "origin">
   // one button, well inside the ten-minute bound, and nothing is shown that could be copied.
   desktopApprovalTtlMs: 5 * MIN,
   stepUpWindowMs: 5 * MIN,          // step-up window
+  // FIFTEEN MINUTES to confirm a replacement authenticator: long enough to scan a code and type six
+  // digits, the staff console's pending window. A pending older than this is refused, never promoted.
+  totpPendingTtlMs: 15 * MIN,
   maxFailures: 5,
   lockoutMs: 15 * MIN,
   failureWindowMs: 15 * MIN,
