@@ -78,6 +78,14 @@ export function inStoreLane<T>(lane: StoreLane, fn: () => Promise<T>): Promise<T
   });
 }
 
+/**
+ * Run `fn` with no lane and no admission in its context — for arming a timer from inside a
+ * statement (the store's log flush) that must not inherit either when it fires.
+ */
+export function outsideStoreLanes<T>(fn: () => T): T {
+  return lanes.exit(() => holding.exit(fn));
+}
+
 /** Whether mail is being taken in right now — the condition the scheduler engages on. */
 export function ingestIsRunning(): boolean {
   return drainsRunning > 0;

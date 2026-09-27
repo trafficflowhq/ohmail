@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { uptime as osUptime } from "node:os";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { PGlite, type Transaction as PgliteTransaction } from "@electric-sql/pglite";
 import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 import { btree_gin } from "@electric-sql/pglite/contrib/btree_gin";
@@ -17,7 +18,10 @@ import {
   INGEST_FOLD_WAL_BYTES, brandDialect, dialect,
   type LogBounds, type LogMark,
 } from "@trafficflow/db/dialect";
-import { createStoreScheduler, currentStoreLane, scheduleStoreLanes, type StoreLaneCensus } from "./store-lanes.js";
+import {
+  createStoreScheduler, currentStoreLane, inStoreLane, outsideStoreLanes, scheduleStoreLanes,
+  type StoreLaneCensus,
+} from "./store-lanes.js";
 import { LocalStoreFs } from "./pglite-transport.js";
 import { keepIngestPlans } from "./pglite-plans.js";
 import type { Diagnostic } from "./log.js";
@@ -56,16 +60,24 @@ export const LOCAL_STORE_EXTENSIONS = { pg_trgm, btree_gin } as const;
 const INGEST_SYNCHRONOUS_COMMIT = "off";
 
 /**
- * …AND ONE TRANSACTION IN EVERY THIS MANY STILL WAITS, BECAUSE SOMETHING HAS TO DRAIN THE LOG.
+ * …AND THE STORE WRITES THE LOG OUT ITSELF, ON A CLOCK — the walwriter PGlite does not have.
  *
- * With no walwriter and no checkpointer, a durable commit is the only thing that writes the log
- * out in bulk. Relax every transaction a drain opens and it makes none, so each eviction flushes
- * the log itself — one 8 KiB page a write where two fit, which is what an import is bound by.
- * Measured on one corpus: 8 439 bytes a write and 32.98 transactions a second without, 17 806 and
- * 56.90 with. It NARROWS what a kill takes, to this many transactions rather than everything in
- * `wal_buffers` — sixteen over the forty-four that reads the same census, for that reason.
+ * This long after a relaxed commit, one durable commit of the store's own ({@link createLogFlush})
+ * flushes every record before it. So a kill loses at most this much of the ingest's work, and the
+ * log is written in bulk rather than a page per eviction, whatever the writer's transactions look
+ * like. It replaced a count of the ingest's own transactions, which lost its bound the moment a
+ * writer stopped opening them.
  */
-export const INGEST_DURABLE_COMMIT_EVERY = 16;
+export const INGEST_LOG_FLUSH_MS = 1_000;
+
+/** A checkpoint at least this slow is logged whatever it reclaimed: a reader waited that long. */
+export const CHECKPOINT_SLOW_MS = 250;
+
+/** One row, written durably by {@link createLogFlush}. Store-local: no journal names it. */
+const LOG_FLUSH_TABLE = "local_store_flush";
+
+/** Marks the store's own flush, so {@link relaxIngestCommits} commits it `on` and counts nothing. */
+const durableFlush = new AsyncLocalStorage<true>();
 
 /**
  * HOW THE LOG IS WRITTEN, AND THE ONE PROPERTY THIS STORE'S DURABILITY RESTS ON.
@@ -100,32 +112,118 @@ async function assertWalSyncMethod(client: PGlite): Promise<void> {
 
 /**
  * Put {@link INGEST_SYNCHRONOUS_COMMIT} inside the ingest's transactions, in place on the client
- * this module constructed — so drizzle, the compaction pass and the checkpointer all reach the same
- * object, and one in {@link INGEST_DURABLE_COMMIT_EVERY} keeps the default so the log is drained.
- * `SET LOCAL` reverts at the commit, so the setting can never outlive the transaction that
- * asked for it, and the lane is read INSIDE the transaction because that is where the drain's async
- * context is live (`store-lanes.ts`). Unnamed work is interactive and keeps Postgres' default,
- * which covers the migrator, the compaction and every window read without depending on where in
- * this file the call sits.
+ * this module constructed, and tell `noteRelaxed` each time — the log flush arms on it. The store's
+ * own flush runs in the same lane and commits `on`. `SET LOCAL` reverts at the commit, and the lane
+ * is read INSIDE the transaction because that is where the drain's async context is live
+ * (`store-lanes.ts`). Unnamed work is interactive and keeps Postgres' default. Returns the client
+ * it patched, for {@link assertOneStoreClient}.
  */
-function relaxIngestCommits(client: PGlite): void {
+function relaxIngestCommits(client: PGlite, noteRelaxed: () => void): PGlite {
   const inner = client.transaction.bind(client);
-  /* Counted per STORE, not per drain: the cadence is about the log this one client writes. */
-  let sinceDurable = 0;
   Object.defineProperty(client, "transaction", {
     configurable: true,
     writable: true,
     value: function relaxed<T>(cb: (tx: PgliteTransaction) => Promise<T>): Promise<T | undefined> {
       return inner(async (tx) => {
         if (currentStoreLane() === "ingest") {
-          sinceDurable += 1;
-          if (sinceDurable >= INGEST_DURABLE_COMMIT_EVERY) sinceDurable = 0;
-          else await tx.exec(`set local synchronous_commit = ${INGEST_SYNCHRONOUS_COMMIT}`);
+          const setting = durableFlush.getStore() === true ? "on" : INGEST_SYNCHRONOUS_COMMIT;
+          await tx.exec(`set local synchronous_commit = ${setting}`);
+          if (setting === INGEST_SYNCHRONOUS_COMMIT) noteRelaxed();
         }
         return cb(tx);
       });
     },
   });
+  return client;
+}
+
+/** What {@link createLogFlush} installed, and on which client. */
+interface LogFlush {
+  client: PGlite;
+  noteRelaxed(): void;
+  /** Durable flushes written since the open — read by tests and the rig, never by a decision. */
+  flushes(): number;
+  stop(): void;
+}
+
+/**
+ * THE TIMED FLUSH. The first relaxed commit after a flush arms ONE deadline `everyMs` out, never
+ * re-armed by later commits; at it, one row is written durably in the ingest's lane, whose commit
+ * flushes every record before it. Nothing relaxed, nothing armed: an idle store writes nothing.
+ * The timer is armed outside every lane, so it can never inherit an admission it fires inside.
+ */
+function createLogFlush(
+  client: PGlite, everyMs: number, log: Diagnostic | undefined, stillOpen: () => boolean,
+): LogFlush {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let owed = false;
+  let stopped = false;
+  let written = 0;
+  const arm = (): void => {
+    if (stopped || timer !== null) return;
+    timer = outsideStoreLanes(() => setTimeout(fire, everyMs));
+    timer.unref?.();
+  };
+  const write = (): Promise<unknown> => inStoreLane("ingest", () => durableFlush.run(true, () =>
+    client.transaction((tx) => tx.query(
+      `INSERT INTO ${LOG_FLUSH_TABLE} (id, flushed_at) VALUES (1, now()) `
+      + "ON CONFLICT (id) DO UPDATE SET flushed_at = excluded.flushed_at"))));
+  const fire = (): void => {
+    timer = null;
+    if (stopped) return;
+    owed = false;
+    void write().then(() => { written += 1; }, (err: unknown) => {
+      if (!stillOpen()) return;
+      owed = true;
+      log?.("local_db_flush_failed", {
+        err,
+        reason: "the store's timed log flush failed; the next relaxed commit arms it again",
+      });
+    }).finally(() => { if (owed) arm(); });
+  };
+  return {
+    client,
+    noteRelaxed: () => { owed = true; arm(); },
+    flushes: () => written,
+    stop: () => {
+      stopped = true;
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+    },
+  };
+}
+
+/** Raised when the relaxed commits, the scheduler and the log flush were put on different clients. */
+export class StoreClientSplitError extends Error {
+  constructor(readonly installers: readonly string[]) {
+    super(`the local store's ${installers.join(" and ")} ${installers.length === 1 ? "was" : "were"} `
+      + "installed on a different client from the one it opened: a relaxed commit there has no "
+      + "flush behind it and no scheduler in front of it");
+    this.name = "StoreClientSplitError";
+  }
+}
+
+/** THE ONE CLIENT, BY IDENTITY: each installer returns what it patched, and all must be `client`. */
+export function assertOneStoreClient(client: object, installed: Readonly<Record<string, object>>): void {
+  const other = Object.entries(installed).filter(([, o]) => o !== client).map(([name]) => name);
+  if (other.length > 0) throw new StoreClientSplitError(other);
+}
+
+/** Raised for a store interval that is not a positive number of milliseconds, naming the option. */
+export class StoreIntervalError extends Error {
+  constructor(readonly option: string, readonly value: unknown) {
+    super(`${option} must be a positive number of milliseconds, not ${String(value)}: `
+      + "0 or less would run the store's own upkeep in a tight loop");
+    this.name = "StoreIntervalError";
+  }
+}
+
+function positiveInterval(option: string, value: number | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new StoreIntervalError(option, value);
+  }
+  return value;
 }
 
 /**
@@ -304,8 +402,12 @@ export const SLOW_MIGRATION_MS = 1_000;
 /** Everything optional about opening the local database. */
 export interface OpenLocalDbOptions {
   log?: Diagnostic;
-  /** How often to checkpoint while open. Production takes {@link CHECKPOINT_INTERVAL_MS}. */
+  /** How often to checkpoint while open. Production takes {@link CHECKPOINT_INTERVAL_MS}; 0 is refused. */
   checkpointIntervalMs?: number;
+  /** The log flush's deadline. Production takes {@link INGEST_LOG_FLUSH_MS}; 0 is refused. */
+  logFlushIntervalMs?: number;
+  /** The {@link CHECKPOINT_SLOW_MS} floor, injectable so a test can drive both sides of it. */
+  slowCheckpointFloorMs?: number;
   /**
    * The {@link INGEST_FOLD_WAL_BYTES} window, injectable so a test can cross it in seconds rather
    * than by writing sixty-four megabytes of log.
@@ -902,11 +1004,30 @@ async function walGrownSince(client: PGlite, since: string): Promise<{ grew: num
   return { grew: Number(rows[0]!.grew), at: rows[0]!.at };
 }
 
+/**
+ * The checkpoint's line: written when it reclaimed a segment, and whenever it took
+ * {@link CHECKPOINT_SLOW_MS} or more whatever it reclaimed — a fold that runs for seconds while
+ * somebody reads their mail is a pause, and it grows with the store.
+ */
+function noteCheckpoint(
+  log: Diagnostic | undefined, kind: "periodic" | "asked" | "fold", dropped: number, totalMs: number,
+  slowMs: number,
+): void {
+  if (dropped <= 0 && totalMs < slowMs) return;
+  log?.("local_db_checkpointed", {
+    kind, dropped, totalMs,
+    reason: "a checkpoint that reclaimed log or held the store past the floor; nothing else takes "
+      + "one while this process is running",
+  });
+}
+
 async function checkpointWal(
   client: PGlite,
   pgDataDir: string,
   log: Diagnostic | undefined,
   stillOpen: () => boolean,
+  kind: "periodic" | "asked",
+  slowMs: number,
 ): Promise<number> {
   const began = Date.now();
   const before = walSegments(pgDataDir);
@@ -925,16 +1046,9 @@ async function checkpointWal(
     return 0;
   }
   const dropped = before - walSegments(pgDataDir);
-  // Only when it reclaimed something. A settled install checkpoints an almost empty log every few
-  // minutes, and a line saying so each time is noise around the one occasion it is not.
-  if (dropped > 0) {
-    log?.("local_db_checkpointed", {
-      dropped,
-      totalMs: Date.now() - began,
-      reason: "write-ahead log segments reclaimed; nothing else takes a checkpoint while this " +
-        "process is running",
-    });
-  }
+  // Not every one: a settled install checkpoints an almost empty log every few minutes, and a line
+  // saying so each time is noise around the occasions it is not. See {@link noteCheckpoint}.
+  noteCheckpoint(log, kind, dropped, Date.now() - began, slowMs);
   return dropped;
 }
 
@@ -1370,6 +1484,10 @@ export function lockDataDir(dataDir: string, log?: Diagnostic): () => void {
  */
 export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}): Promise<OpenLocalDb> {
   const log = opts.log;
+  /* Refused before the lock is taken: a 0 here was a tight loop, not a setting. */
+  const every = positiveInterval("checkpointIntervalMs", opts.checkpointIntervalMs, CHECKPOINT_INTERVAL_MS);
+  const flushEvery = positiveInterval("logFlushIntervalMs", opts.logFlushIntervalMs, INGEST_LOG_FLUSH_MS);
+  const slowCheckpointMs = opts.slowCheckpointFloorMs ?? CHECKPOINT_SLOW_MS;
   mkdirSync(dataDir, { recursive: true });
   const unlock = lockDataDir(dataDir, log);
   try {
@@ -1437,8 +1555,13 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     /* BEFORE the scheduler, so an admission still wraps a whole transaction rather than sitting
        inside one. See {@link relaxIngestCommits}: the migrator below runs outside every lane and
        therefore keeps the default, which is what a schema change and its journal row need. */
-    relaxIngestCommits(client);
-    scheduleStoreLanes(client, lanes);
+    let closed = false;
+    const flush = createLogFlush(client, flushEvery, log, () => !closed);
+    const relaxed = relaxIngestCommits(client, flush.noteRelaxed);
+    const scheduled = scheduleStoreLanes(client, lanes);
+    assertOneStoreClient(client, {
+      "relaxed commits": relaxed, scheduler: scheduled, "log flush": flush.client,
+    });
     const pgliteOpenMs = Date.now() - tOpen;
     const db = brandDialect(drizzle(client, { schema: mailSchema }), "pg");
     // ONE JOURNAL, and the loop is gone with the second one: a `for` over a one-element list is
@@ -1474,7 +1597,9 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     if (!opts.withoutSearchExtensions) await setUpLocalSearch(db, log);
     await analyzeSearchIfStale(client);
     const searchSetupMs = Date.now() - tSearch;
-    let closed = false;
+    /* The flush's one row, beside the journal rather than in it (see {@link LOG_FLUSH_TABLE}). */
+    await client.exec(`CREATE TABLE IF NOT EXISTS ${LOG_FLUSH_TABLE} `
+      + "(id smallint PRIMARY KEY CHECK (id = 1), flushed_at timestamptz NOT NULL)");
     /**
      * The insert pointer as the last fold left it, or `null` for "unknown" — which is what an
      * unreadable pointer leaves behind, and {@link foldIfLogGrew} FOLDS on it rather than skipping.
@@ -1482,15 +1607,24 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
      * measured from the last fold of any kind and not from the last gated one.
      */
     let logMark: LogMark = { folded: null };
-    const checkpoint = async (): Promise<number> => {
+    /* ONE CHECKPOINT AT A TIME: the periodic tick, the drain's and the fold's queue on one chain,
+       so none lands inside another and each fold's gate reads the mark the one before it left. */
+    let checkpointing: Promise<unknown> = Promise.resolve();
+    const oneAtATime = <T>(fn: () => Promise<T>): Promise<T> => {
+      const run = checkpointing.then(fn);
+      checkpointing = run.catch(() => undefined);
+      return run;
+    };
+    const takeCheckpoint = async (kind: "periodic" | "asked"): Promise<number> => {
       if (closed) return 0;
-      const dropped = await checkpointWal(client, pgDataDir, log, () => !closed);
+      const dropped = await checkpointWal(client, pgDataDir, log, () => !closed, kind, slowCheckpointMs);
       // Every checkpoint resets the window, the periodic one included, so the next gate measures
       // from the last fold of ANY kind rather than from the last gated one.
       const at = closed ? null : await walGrownSince(client, "0/0").then((r) => r.at).catch(() => null);
       logMark = { folded: at };
       return dropped;
     };
+    const checkpoint = (): Promise<number> => oneAtATime(() => takeCheckpoint("asked"));
     const bounds: LogBounds = {
       foldBytes: opts.ingestFoldWalBytes ?? INGEST_FOLD_WAL_BYTES,
     };
@@ -1501,15 +1635,18 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
      * count stays here, where the data directory is. An unreadable mark folds rather than
      * skipping, which is the safe side of a question about what a crash would replay.
      */
-    const foldIfLogGrew = async (): Promise<StoreFold> => {
+    const foldIfLogGrew = (): Promise<StoreFold> => oneAtATime(async (): Promise<StoreFold> => {
       if (closed) return { folded: false, grewBytes: 0, dropped: 0 };
       const before = walSegments(pgDataDir);
+      const began = Date.now();
       const out = await dialect(db).foldLog(db, bounds, logMark)
         .catch(() => ({ folded: false as const, grewBytes: null, mark: { folded: null } }));
       logMark = out.mark;
       if (!out.folded) return { folded: false, grewBytes: out.grewBytes, dropped: 0 };
-      return { folded: true, grewBytes: out.grewBytes, dropped: before - walSegments(pgDataDir) };
-    };
+      const dropped = before - walSegments(pgDataDir);
+      noteCheckpoint(log, "fold", dropped, Date.now() - began, slowCheckpointMs);
+      return { folded: true, grewBytes: out.grewBytes, dropped };
+    });
     /* WHERE THE WINDOW STARTS — the pointer as the open leaves it, so the first drain's gate
        measures the mail that drain took and not the migrator and compaction behind it. */
     const opened = await walGrownSince(client, "0/0").then((r) => r.at).catch(() => null);
@@ -1518,12 +1655,11 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     /* The checkpointer this database does not otherwise have. `unref` so it can never be the reason
        a process stays alive, and a fresh timer per tick rather than `setInterval` so a slow
        checkpoint cannot have a second one queued behind it. */
-    const every = opts.checkpointIntervalMs ?? CHECKPOINT_INTERVAL_MS;
     let tick: ReturnType<typeof setTimeout> | null = null;
     const schedule = (): void => {
       if (closed) return;
       tick = setTimeout(() => {
-        void checkpoint().finally(schedule);
+        void oneAtATime(() => takeCheckpoint("periodic")).finally(schedule);
       }, every);
       tick.unref?.();
     };
@@ -1546,6 +1682,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
         closed = true;
         if (tick) clearTimeout(tick);
         tick = null;
+        flush.stop();
         try {
           // Postgres takes its own shutdown checkpoint here, which is why there is not one of ours.
           await client.close();
