@@ -1,4 +1,4 @@
-import { and, eq, gt, isNotNull, isNull, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull, isNull, lte, sql } from "drizzle-orm";
 import { accounts, refreshTokens, sessions } from "./schema-mail.js";
 import { erasedBearers } from "./schema-cloud.js";
 import type { Tx } from "./change-log.js";
@@ -14,8 +14,9 @@ import type { Tx } from "./change-log.js";
 /**
  * Copy the account's LIVE access and refresh token hashes, each with its own expiry, BEFORE the
  * erasure deletes them — call it inside that transaction. `ON CONFLICT DO NOTHING` keeps a
- * retried erasure idempotent. Revoked, consumed or expired tokens authenticate nothing today and
- * are left out.
+ * retried erasure idempotent. Each live family's NEWEST consumed token is kept too: a client whose
+ * rotation answer was lost still holds it and retries with it. Older consumed, revoked and
+ * expired tokens authenticate nothing and are left out, so the record never grows with history.
  */
 export async function recordErasedBearers(tx: Tx, accountId: string, now: Date): Promise<number> {
   const at = sql`${now.toISOString()}::timestamptz`;
@@ -43,7 +44,18 @@ export async function recordErasedBearers(tx: Tx, accountId: string, now: Date):
     )))
     .onConflictDoNothing()
     .returning({ tokenHash: erasedBearers.tokenHash });
-  return access.length + refresh.length;
+  const spent = await tx.insert(erasedBearers)
+    .select(tx.selectDistinctOn([refreshTokens.familyId], {
+      tokenHash: refreshTokens.tokenHash,
+      accountId: refreshTokens.accountId,
+      expiresAt: refreshTokens.expiresAt,
+    }).from(refreshTokens).where(and(
+      eq(refreshTokens.accountId, accountId), isNull(refreshTokens.revokedAt),
+      isNotNull(refreshTokens.consumedAt), gt(refreshTokens.expiresAt, at),
+    )).orderBy(refreshTokens.familyId, desc(refreshTokens.consumedAt)))
+    .onConflictDoNothing()
+    .returning({ tokenHash: erasedBearers.tokenHash });
+  return access.length + refresh.length + spent.length;
 }
 
 /**
