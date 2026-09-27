@@ -22,6 +22,9 @@ export const BUILD_LABEL: string = buildLabelOf(
   typeof __OHMAIL_BUILD_SHA__ === "string" ? __OHMAIL_BUILD_SHA__ : "",
 );
 
+/** The version alone, or "dev" where the build was not stamped. The diagnostic file reads it. */
+export const BUILD_VERSION: string = typeof __OHMAIL_VERSION__ === "string" ? __OHMAIL_VERSION__ : "dev";
+
 /** The full commit, or "" where the build was not stamped. */
 export const BUILD_SHA: string =
   typeof __OHMAIL_BUILD_SHA__ === "string" && /^[0-9a-f]{40}$/.test(__OHMAIL_BUILD_SHA__)

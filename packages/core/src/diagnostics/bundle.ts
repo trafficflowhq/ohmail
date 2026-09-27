@@ -83,20 +83,19 @@ export interface DiagnosticBundle {
 /**
  * A mailbox row as either surface holds one. Wide on purpose: the desktop's `MailboxFacts` and
  * the phone's `PhoneMailbox` both pass, address and folder names included, and only the fields
- * named below are read.
+ * named below are read — each through a closed set, so their types are `unknown` here.
  */
 export interface DiagnosticMailboxInput {
-  id: string;
-  status?: string | null;
-  errorCode?: string | null;
-  disabledReason?: string | null;
-  syncBlockedReason?: string | null;
-  organizerRole?: string | null;
-  organizerState?: string | null;
-  organizerChecked?: boolean;
-  releaseRefusal?: string | null;
-  lastSyncAt?: string | null;
-  readonly [other: string]: unknown;
+  readonly id: string;
+  readonly status?: unknown;
+  readonly errorCode?: unknown;
+  readonly disabledReason?: unknown;
+  readonly syncBlockedReason?: unknown;
+  readonly organizerRole?: unknown;
+  readonly organizerState?: unknown;
+  readonly organizerChecked?: unknown;
+  readonly releaseRefusal?: unknown;
+  readonly lastSyncAt?: unknown;
 }
 
 export interface DiagnosticInstallRecord { id: string; mintedAt: string }
@@ -164,7 +163,8 @@ function leaseOutcome(m: DiagnosticMailboxInput): DiagnosticLeaseOutcome {
   if (m.syncBlockedReason === "clock_off") return "clock_off";
   if (m.releaseRefusal === "sibling_lapse") return "sibling_lapse";
   if (m.organizerChecked === false) return "unchecked";
-  if (m.organizerState === "held" || m.organizerState === "stopped") return m.organizerState;
+  if (m.organizerState === "held") return "held";
+  if (m.organizerState === "stopped") return "stopped";
   return "none";
 }
 
@@ -232,7 +232,7 @@ export function buildDiagnosticBundle(input: DiagnosticInput): DiagnosticBundle 
   ];
   for (const m of (input.mailboxes ?? []).slice(0, DIAGNOSTIC_MAILBOXES_MAX)) {
     const blockReason = memberOr(DIAGNOSTIC_BLOCK_REASONS, m.syncBlockedReason);
-    const role = m.organizerRole === "organizer" || m.organizerRole === "reader" ? m.organizerRole : "unknown";
+    const role: DiagnosticRole = m.organizerRole === "organizer" ? "organizer" : m.organizerRole === "reader" ? "reader" : "unknown";
     sections.push({
       k: "mailbox",
       hash: hash("mailbox", String(m.id)),

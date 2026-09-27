@@ -888,6 +888,11 @@ describe("the Rust side", () => {
       // a number or nothing from each, and composes the line itself, so a subject or an address
       // is not something this path can carry.
       "ui_vitals",
+      // Settings → About's diagnostic file. A read of the platform's names and the log's newest
+      // lines (no argument), and a save that takes TEXT and writes it beside the log only if it
+      // is the builder's own JSON, under a name the shell picks. It sends nothing anywhere.
+      "diagnostic_facts",
+      "diagnostic_save",
       // The one place the window may reach the web, and it may not name it: the command takes a
       // KEY and the shell's own table decides which ohmail.app page that is. A URL argument would
       // mean anything that got a string into the page could open an arbitrary address in the
@@ -1438,6 +1443,12 @@ describe("the Rust side", () => {
       "fs::read_dir", // the sweep, over that directory and nothing else
       "fs::remove_file", // …a swept file
       "fs::remove_dir_all", // …or the holder it sat in
+      /* ── THE DIAGNOSTIC FILE'S ONE WRITE, AND THE CONSUMER IT WAS ADDED FOR ─────────────────
+       * Settings → About writes one file a person sends by hand, beside `engine.log`. One write
+       * to a sibling and one rename onto the constant name, in the LOG's own directory; and the
+       * log's tail is read back for the window's builder through one `File::open`. Each is
+       * counted and its path pinned below, so neither can be pointed anywhere else. */
+      "fs::write", // the diagnostic file's sibling, renamed into place
     ]);
     const used = [...engine.matchAll(/\bfs::(\w+)/g)].map((m) => `fs::${m[1]}`);
     // The harness bites only if it found something to classify.
@@ -1462,6 +1473,18 @@ describe("the Rust side", () => {
     // `File::open` or a directory listing is a new capability and fails here as it always did.
     expect(engine.match(/fs::read_to_string/g)).toHaveLength(1);
     expect(engine).not.toMatch(/fs::File::open/);
+    /* THE LOG'S TAIL IS THE ONE OTHER READ, and only of the log: one `File::open`, inside the tail
+       reader, whose one caller hands it the path the log was opened at. */
+    expect(engine.match(/\bFile::open\(/g)).toHaveLength(1);
+    expect(engine).toMatch(/fn tail_lines\(path: &Path, max_bytes: u64\) -> Vec<String> \{[\s\S]{0,120}?File::open\(path\)/);
+    expect(engine.match(/diagnostic_tail\(&path, DIAGNOSTIC_TAIL_LINES, DIAGNOSTIC_TAIL_BYTES\)/g)).toHaveLength(1);
+    expect(engine).toMatch(/let lines = open_log_path\(\)\s*\.map\(\|path\| diagnostic_tail\(/);
+    /* …and the diagnostic file's one write, beside the log under the constant name. */
+    expect(engine.match(/fs::write\(/g)).toHaveLength(1);
+    expect(engine).toMatch(/fs::write\(&partial, text\.as_bytes\(\)\)/);
+    expect(engine).toMatch(/let partial = dir\.join\(format!\("\{DIAGNOSTIC_FILE_NAME\}\.partial"\)\);/);
+    expect(engine).toMatch(/let dir = open_log_path\(\)\s*\.and_then\(\|path\| path\.parent\(\)\.map\(Path::to_path_buf\)\)/);
+    expect(engine.match(/fs::rename\(/g)).toHaveLength(2);
 
     /* ── THE DIRECTORY LISTING AND THE TWO REMOVALS ARE COUNTED, NOT BANNED ────────────────
      * `read_dir` used to be forbidden outright on this line, beside `File::open`. It is here now

@@ -455,6 +455,17 @@ const EN = {
     "Privacy and the list of companies we rely on: ohmail.app/privacy and "
     + "ohmail.app/subprocessors. Source: github.com/trafficflowhq/ohmail.",
   aboutLinksLocal: "Privacy: ohmail.app/privacy. Source: github.com/trafficflowhq/ohmail.",
+  /* ── THE DIAGNOSTIC FILE: written beside the log, sent by nobody but the person ─────────── */
+  diagnosticLabel: "Diagnostic file",
+  diagnosticWhy:
+    "Writes one file about how this install is running: versions, counts, error codes and "
+    + "recent log events, never addresses, subjects or folder names. Nothing is sent.",
+  diagnosticAction: "Write file",
+  diagnosticWriting: "Writing…",
+  diagnosticWritten: (path: string) =>
+    `Written to ${path}. Nothing was sent. Attach it to a message to us yourself if you want us `
+    + "to look.",
+  diagnosticFailed: "The file could not be written. Nothing was sent.",
 
   /* ── WHAT THIS INSTALL DOES WITH THE MAILBOX IT NAMES — see `install-role.ts` ────────────── */
   mailboxWhyOrganizes: "The mailbox this copy of ohmail organizes.",
@@ -789,6 +800,7 @@ const EN = {
  */
 export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   doorLocalName: ["machine"],
+  diagnosticWritten: ["path"],
   doorHostSay: ["machine"],
   hostReached: ["host"],
   hostReachedTs: ["machine"],

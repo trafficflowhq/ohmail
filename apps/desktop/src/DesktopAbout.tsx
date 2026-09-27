@@ -9,9 +9,11 @@
  * shell's status, the licence and addresses. Nothing is fetched, because nothing needs to be.
  */
 
-import { SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } from "@ohmail/ui";
+import { useState } from "react";
+import { Button, SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } from "@ohmail/ui";
+import { MIRROR_ENTITY_TYPES } from "@ohmail/client-engine";
 
-import type { EngineStatus } from "./bridge-fetch.js";
+import { bridgeAvailable, type EngineStatus } from "./bridge-fetch.js";
 import { BUILD_LABEL } from "./build-id.js";
 import { DOOR_COPY, machineWord } from "./door-copy.js";
 import { isDesktopHost, isManagedDoor, pairedHostOf } from "./doors.js";
@@ -25,6 +27,47 @@ import { DesktopUpdate } from "./DesktopUpdate.js";
 import { useMailboxFacts } from "../../webapp/app/shell/MailStateProvider";
 import { readerHolder, screenerMode } from "../../webapp/app/shell/mail-state";
 import { mailboxRowWhy } from "./install-role.js";
+import { useEngineOrNull } from "../../webapp/app/shell/engine";
+import { writeDesktopDiagnostics } from "./local-diagnostics.js";
+
+/**
+ * THE DIAGNOSTIC FILE'S ROW — one press writes one file beside the log and the row then says
+ * where it is and that nothing was sent. Drawn only inside the shell: a window with no shell has
+ * no log to write beside. The press never retries on its own; a refusal says so and the button
+ * stays.
+ */
+export function DiagnosticFileRow() {
+  const facts = useMailboxFacts();
+  const engine = useEngineOrNull();
+  const [said, setSaid] = useState<{ k: "rest" } | { k: "busy" } | { k: "written"; path: string } | { k: "failed" }>({ k: "rest" });
+  if (!bridgeAvailable()) return null;
+  const press = async (): Promise<void> => {
+    if (said.k === "busy") return;
+    setSaid({ k: "busy" });
+    try {
+      const reader = engine?.read();
+      const counts = Object.fromEntries(MIRROR_ENTITY_TYPES.map((t) => [t, reader ? reader.list(t).length : 0]));
+      setSaid({ k: "written", path: await writeDesktopDiagnostics({ counts, mailboxes: facts ?? [] }) });
+    } catch {
+      setSaid({ k: "failed" });
+    }
+  };
+  return (
+    <SettingsRow
+      label={DOOR_COPY.diagnosticLabel}
+      description={
+        said.k === "written"
+          ? DOOR_COPY.diagnosticWritten(said.path)
+          : said.k === "failed" ? DOOR_COPY.diagnosticFailed : DOOR_COPY.diagnosticWhy
+      }
+      control={
+        <Button onClick={() => void press()} disabled={said.k === "busy"}>
+          {said.k === "busy" ? DOOR_COPY.diagnosticWriting : DOOR_COPY.diagnosticAction}
+        </Button>
+      }
+    />
+  );
+}
 
 export function DesktopAbout({ status }: { status: EngineStatus }) {
   const readOnly = readerHolder(screenerMode(useMailboxFacts()));
@@ -100,6 +143,8 @@ export function DesktopAbout({ status }: { status: EngineStatus }) {
             : status.mode ? (door[status.mode] ?? status.mode) : DOOR_COPY.doorNotChosen
         }
       />
+
+      <DiagnosticFileRow />
 
       {/* THE CLAIM THE WHOLE PRODUCT RESTS ON, said where somebody looks for it. It is true on
           both doors and it is the reason leaving is cheap: the copy on this machine can be

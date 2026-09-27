@@ -53,6 +53,11 @@ const WINDOW_COMMANDS: &[&str] = &[
     // object of NUMBERS and `vitals.rs` composes the line from a fixed vocabulary, so no text the
     // page holds can leave through it.
     "ui_vitals",
+    // Settings → About's diagnostic file: the log's newest lines for the window's builder (no
+    // argument), and the save of what it built beside that log (the shell names the file and
+    // refuses any text that is not the builder's JSON). Nothing is sent anywhere.
+    "diagnostic_facts",
+    "diagnostic_save",
     // The one place this window may reach the WEB, and it may not name it: the command
     // takes a key and `engine.rs`'s table decides which of a handful of ohmail.app pages
     // that means.

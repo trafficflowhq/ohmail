@@ -5009,3 +5009,55 @@ fn control_a_switch_to_a_hosted_door_leaves_the_deleted_account_s_directory_to_i
     shell.stop();
     let _ = fs::remove_dir_all(&root);
 }
+
+// ── The diagnostic file's two shell halves ───────────────────────────────────────────────────
+
+fn diagnostic_dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir()
+        .join(format!("ohmail-diagnostic-{}-{name}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::SeqCst)));
+    fs::create_dir_all(&dir).expect("temp dir");
+    dir
+}
+
+/// The tail is the newest lines, oldest first, reaching into `.old` when the current file is short,
+/// and a read that starts inside a line drops the piece. Make [`diagnostic_tail`] skip `.old` and
+/// the first assertion goes red; keep the cut piece and the second does.
+#[test]
+fn the_diagnostic_tail_is_the_newest_lines_across_a_rotation() {
+    let dir = diagnostic_dir("tail");
+    let log = dir.join(LOG_FILE_NAME);
+    fs::write(dir.join(format!("{LOG_FILE_NAME}.old")), "old-1\nold-2\nold-3\n").expect("write old");
+    fs::write(&log, "new-1\nnew-2\n").expect("write log");
+    assert_eq!(diagnostic_tail(&log, 4, 1024), ["old-2", "old-3", "new-1", "new-2"]);
+    assert_eq!(diagnostic_tail(&log, 2, 1024), ["new-1", "new-2"], "a full current file needs no .old");
+
+    fs::write(&log, "aaaaaaaaaa\nbbbb\ncccc\n").expect("rewrite log");
+    fs::remove_file(dir.join(format!("{LOG_FILE_NAME}.old"))).expect("drop old");
+    assert_eq!(tail_lines(&log, 10), ["bbbb", "cccc"], "a window that starts on a line keeps it");
+    assert_eq!(tail_lines(&log, 8), ["cccc"], "the cut piece of a line is not a line");
+    assert_eq!(tail_lines(&log, 1024), ["aaaaaaaaaa", "bbbb", "cccc"], "a short file is read whole");
+    assert!(diagnostic_tail(&dir.join("absent.log"), 5, 1024).is_empty(), "a missing log is no lines");
+}
+
+/// The save writes only the builder's own JSON, under the one name, replacing the last file.
+/// Drop the `kind` check and the first refusal goes red; the positive control is the write.
+#[test]
+fn the_diagnostic_save_writes_the_builders_file_and_nothing_else() {
+    let dir = diagnostic_dir("save");
+    let good = r#"{"kind":"ohmail-diagnostics","v":1,"writtenAt":"2026-09-27T00:00:00.000Z","sections":[]}"#;
+    let path = write_diagnostic_file(&dir, good).expect("the builder's file was refused");
+    assert_eq!(path, dir.join(DIAGNOSTIC_FILE_NAME));
+    assert_eq!(fs::read_to_string(&path).expect("read back"), good);
+    assert!(!dir.join(format!("{DIAGNOSTIC_FILE_NAME}.partial")).exists(), "the partial file was left behind");
+
+    let second = good.replace("\"v\":1", "\"v\":1,\"sections2\":[]");
+    write_diagnostic_file(&dir, &second).expect("a second press was refused");
+    assert_eq!(fs::read_to_string(&path).expect("read back"), second, "the second press did not replace the first");
+
+    for refused in [r#"{"kind":"something-else"}"#, "not json", "[1,2]", r#"{"v":1}"#] {
+        assert!(write_diagnostic_file(&dir, refused).is_err(), "{refused} was written");
+    }
+    let huge = format!(r#"{{"kind":"ohmail-diagnostics","pad":"{}"}}"#, "x".repeat(DIAGNOSTIC_FILE_MAX_BYTES));
+    assert!(write_diagnostic_file(&dir, &huge).is_err(), "a file over the cap was written");
+    assert_eq!(fs::read_to_string(&path).expect("read back"), second, "a refusal touched the last good file");
+}
