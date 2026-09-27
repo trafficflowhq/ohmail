@@ -19,6 +19,8 @@
  * reading the cookie is all this file does.
  */
 
+import { cookieFromJar } from "./cookie-jar";
+
 /** The cookie the API sets beside the session. Kept identical to the API's own constant. */
 export const OWNER_COOKIE = "tf_owner";
 
@@ -104,14 +106,7 @@ export function readOwner(jar?: string): string | null {
 /** The cookie's raw value, or `null` when it is not in the jar. Shared by both readers. */
 function rawOwnerCookie(jar?: string): string | null {
   const raw = jar ?? (typeof document === "undefined" ? "" : document.cookie);
-  if (!raw) return null;
-  for (const part of raw.split(";")) {
-    const eq = part.indexOf("=");
-    if (eq < 0) continue;
-    if (part.slice(0, eq).trim() !== OWNER_COOKIE) continue;
-    return part.slice(eq + 1).trim();
-  }
-  return null;
+  return raw ? cookieFromJar(raw, OWNER_COOKIE) : null;
 }
 
 /**

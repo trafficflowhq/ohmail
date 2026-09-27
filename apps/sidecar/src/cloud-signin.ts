@@ -128,25 +128,35 @@ export function newDesktopLinkPair(): DesktopLinkPair {
  * The token pair a `Set-Cookie` set carries, or null when the response set no session cookies.
  *
  * Exported because it is the half of the wire most likely to drift: a change to the cookie names or
- * to their contents breaks sign-in and nothing else would notice, so it is asserted directly.
+ * to their contents breaks sign-in and nothing else would notice, so it is asserted directly. Both
+ * spellings are read, the `__Host-` one winning, so this build keeps signing in once the hosted side
+ * writes the prefixed names; an empty value (a clear of the old name) is never a token.
  */
 export function tokensFromSetCookie(cookies: readonly string[]): CloudTokens | null {
   let accessToken: string | null = null;
   let refreshToken: string | null = null;
+  let accessPrefixed = false;
+  let refreshPrefixed = false;
   let issued: Pick<CloudTokens, "expiresIn"> = {};
   for (const cookie of cookies) {
     const [pair = "", ...attrs] = cookie.split(";");
     const eq = pair.indexOf("=");
     if (eq < 0) continue;
-    const name = pair.slice(0, eq).trim();
+    const raw = pair.slice(0, eq).trim();
+    const prefixed = raw.startsWith("__Host-");
+    const name = prefixed ? raw.slice("__Host-".length) : raw;
     const value = pair.slice(eq + 1).trim();
     if (value === "") continue;
-    if (name === "tf_session") {
+    if (name === "tf_session" && (prefixed || !accessPrefixed)) {
       accessToken = value;
+      accessPrefixed = prefixed;
       // The access cookie lives exactly as long as the access token: its Max-Age IS the window.
       const maxAge = attrs.map((a) => a.trim()).find((a) => /^max-age=/i.test(a))?.slice("max-age=".length);
       issued = windowOf({ expiresIn: maxAge !== undefined && /^\d+$/.test(maxAge) ? Number(maxAge) : undefined });
-    } else if (name === "tf_refresh") refreshToken = value;
+    } else if (name === "tf_refresh" && (prefixed || !refreshPrefixed)) {
+      refreshToken = value;
+      refreshPrefixed = prefixed;
+    }
   }
   return accessToken && refreshToken ? { accessToken, refreshToken, ...issued } : null;
 }

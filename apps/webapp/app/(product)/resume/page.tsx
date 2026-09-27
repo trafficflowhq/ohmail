@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { cookieFromStore } from "../../shell/cookie-jar";
 import { OWNER_COOKIE } from "../../shell/owner-cookie";
 import { ResumeScreen } from "./ResumeScreen";
 
@@ -21,6 +22,6 @@ export default function Page() {
    * the screen compares it against the jar at the moment the request leaves. `tf_owner` is a marker
    * and authorises nothing, so reading it here costs nothing and reveals nothing.
    */
-  const owner = cookies().get(OWNER_COOKIE)?.value ?? null;
+  const owner = cookieFromStore(cookies(), OWNER_COOKIE);
   return <ResumeScreen initialOwner={owner} />;
 }

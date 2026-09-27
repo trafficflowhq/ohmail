@@ -3,6 +3,7 @@ import { resolveApiOrigin, resolveInternalApiOrigin } from "./app/api-origin";
 import { canonicalRedirect } from "./app/canonical-host";
 import { API_BASE, HANDLER_PATHS, REFRESH_PATH } from "./routes.mjs";
 import { newNonce, nonceCsp } from "./app/security-headers";
+import { cookieFromStore } from "./app/shell/cookie-jar";
 import {
   APP_ROUTE, DOOR_ROUTE, RESUME_COOKIE, RESUME_ROUTE, SESSION_COOKIE, resolveSurface,
 } from "./app/session-gate";
@@ -251,7 +252,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     return NextResponse.next();
   }
 
-  const token = request.cookies.get(SESSION_COOKIE)?.value ?? null;
+  const token = cookieFromStore(request.cookies, SESSION_COOKIE);
 
   // THE FIRST-RUN DOOR, self-host builds only (SELF_HOST_BUILD is compiled; this branch does
   // not exist in the managed middleware). "After `docker compose up`, the operator hits the
@@ -261,7 +262,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   // cannot explain, and the ordinary gate below sorts it out. The probe is one same-network
   // hop; on failure the landing stands, and once the first account exists `needsSetup` is
   // false forever and this costs exactly that one probe per anonymous visit.
-  if (SELF_HOST_BUILD && API_ORIGIN !== null && token === null && !request.cookies.has(RESUME_COOKIE)) {
+  if (SELF_HOST_BUILD && API_ORIGIN !== null && token === null && cookieFromStore(request.cookies, RESUME_COOKIE) === null) {
     if (await serverNeedsSetup(API_ORIGIN)) {
       const setup = request.nextUrl.clone();
       setup.pathname = "/setup";
@@ -279,7 +280,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
 
   // Presence only, and never sent to the gate as a credential — see `RESUME_COOKIE`. It is
   // NOT subject to the burst cap: it costs no fetch on the branch it selects.
-  const marker = request.cookies.has(RESUME_COOKIE);
+  const marker = cookieFromStore(request.cookies, RESUME_COOKIE) !== null;
 
   const surface = await resolveSurface({
     sessionToken: token,

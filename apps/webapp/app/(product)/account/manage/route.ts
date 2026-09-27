@@ -1,5 +1,6 @@
 import { resolveApiOrigin, resolveInternalApiOrigin } from "../../../api-origin";
 import { SESSION_COOKIE } from "../../../session-gate";
+import { cookieFromJar } from "../../../shell/cookie-jar";
 import { localeFromCookieHeader } from "../../../shell/locale";
 import { LOGIN_FOR_MANAGE, manageHandoff } from "../../../manage-handoff";
 
@@ -23,11 +24,7 @@ function prefetch(request: Request): boolean {
 }
 
 function sessionToken(request: Request): string | null {
-  for (const part of (request.headers.get("cookie") ?? "").split(";")) {
-    const eq = part.indexOf("=");
-    if (eq > 0 && part.slice(0, eq).trim() === SESSION_COOKIE) return part.slice(eq + 1).trim();
-  }
-  return null;
+  return cookieFromJar(request.headers.get("cookie") ?? "", SESSION_COOKIE);
 }
 
 export async function GET(request: Request): Promise<Response> {

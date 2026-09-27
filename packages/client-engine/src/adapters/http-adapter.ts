@@ -129,12 +129,16 @@ function platformZone(): string | null {
 function defaultGetCookie(name: string): string | null {
   const doc = (globalThis as { document?: { cookie?: string } }).document;
   if (!doc?.cookie) return null;
+  // The `__Host-` spelling wins when both are present: only this host can have set it.
+  let bare: string | null = null;
   for (const part of doc.cookie.split(";")) {
     const eq = part.indexOf("=");
     if (eq < 0) continue;
-    if (part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
+    const key = part.slice(0, eq).trim();
+    if (key === `__Host-${name}`) return part.slice(eq + 1).trim();
+    if (key === name && bare === null) bare = part.slice(eq + 1).trim();
   }
-  return null;
+  return bare;
 }
 
 interface WireError {

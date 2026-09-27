@@ -8,6 +8,8 @@
  * both import it, and `api-client.ts` re-exports it so its public surface is unchanged.
  */
 
+import { cookieFromJar } from "./shell/cookie-jar";
+
 /**
  * Read the double-submit CSRF token.
  *
@@ -18,10 +20,6 @@
  */
 export function csrfToken(): string | null {
   if (typeof document === "undefined") return null;
-  for (const part of document.cookie.split(";")) {
-    const eq = part.indexOf("=");
-    if (eq < 0) continue;
-    if (part.slice(0, eq).trim() === "tf_csrf") return decodeURIComponent(part.slice(eq + 1).trim());
-  }
-  return null;
+  const raw = cookieFromJar(document.cookie, "tf_csrf");
+  return raw === null ? null : decodeURIComponent(raw);
 }
