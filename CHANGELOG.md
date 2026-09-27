@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.25.3] — 2026-09-27
+
 ### The desktop app recovers when its window stops
 <!-- changes: fix-025-desktop-recovers.md -->
 
@@ -859,11 +866,6 @@ no AI, and it also filed a waiting sender whose stored suggestion was confident,
 Spam included. It now files plain newsletters and receipts only; a suggestion waits for your Apply.
 Senders it already filed keep their rule in your rules list, where you can undo it. The desktop app
 called the same switch "Act on suggestions for me"; it now carries the web's name and words.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
 
 ## [0.25.2] — 2026-09-26
 
@@ -9859,7 +9861,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.2...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.3...HEAD
+[0.25.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.3
 [0.25.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.2
 [0.25.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.1
 [0.25.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.0
