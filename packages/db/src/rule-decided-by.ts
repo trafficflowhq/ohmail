@@ -1,7 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { learningSignals } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
-import { canonicalNewsSpelling } from "./screener-apply.js";
+import { canonicalNewsSpelling, ruleMatchKey } from "./screener-apply.js";
 
 /** The prefix the act on suggestions stamps on every decision it makes. One spelling, three readers. */
 export const SCREENER_ACT_TRIGGER_PREFIX = "screener:auto:";
@@ -34,7 +34,7 @@ export async function rulesTheActWrote(
   const out = new Set<string>();
   if (candidates.length === 0) return out;
 
-  const senderOf = (match: string): string => match.trim().toLowerCase();
+  const senderOf = (match: string): string => ruleMatchKey(match);
   const senders = [...new Set(candidates.map((r) => senderOf(r.match)))];
   const sender = sql<string>`lower(${learningSignals.senderAddress})`;
   const act = `${SCREENER_ACT_TRIGGER_PREFIX}%`;

@@ -14,6 +14,19 @@ import { upsertDesiredSeenMany } from "./flag-intent.js";
 export const RULE_PRIORITY_MAX = 1000;
 
 /**
+ * `@trafficflow/core/rule-order#ruleMatchKey`, copied for the same reason: a rule's `match` as the
+ * queue SQL's `trim(lower(match))` compares it, SPACES only. `rule-match-key-twin.test.ts` holds
+ * the two equal; `test/rule-match-key-census.test.ts` admits this one copy by name.
+ */
+export function ruleMatchKey(match: string): string {
+  let a = 0;
+  let b = match.length;
+  while (a < b && match.charCodeAt(a) === 32) a++;
+  while (b > a && match.charCodeAt(b - 1) === 32) b--;
+  return match.slice(a, b).toLowerCase();
+}
+
+/**
  * How many messages one set of a per-message write carries — a decision's held mail, the bulk
  * mark-read route's ids, a read-retro page: `@trafficflow/core`'s `FILING_BATCH_MAX`, copied for
  * the same reason; `screener-decide-statements.test.ts` (services) pins the two equal. Their
@@ -320,7 +333,7 @@ async function rerouteHeldBag(
 export async function rerouteOwnHeldBag(
   tx: Tx, input: { accountId: string; kind: "sender" | "domain"; match: string; appliedFolder: string; now: Date },
 ): Promise<{ rerouted: number; lastSeq: bigint | null }> {
-  const key = input.match.trim().toLowerCase();
+  const key = ruleMatchKey(input.match);
   const claims = input.kind === "domain" ? domainIs(tx, key) : senderIs(key);
   const held = await heldRows(tx, input.accountId, and(claims, eq(folderState.lastSetBy, "us")));
   const moved = await rerouteHeldBag(tx, input.accountId, held, input.appliedFolder, input.now);
