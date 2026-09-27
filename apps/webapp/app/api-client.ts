@@ -22,6 +22,17 @@ import { forgetOpenVerdict, markOpenVerdict, refusalIsStale } from "./shell/acce
 import {
   ACCOUNT_ERASED, ERASED_DECLARATION, clearAccountErased, erasedCapture, hearAccountErased,
 } from "./shell/account-erased";
+import { activeTranslator } from "./shell/locale";
+
+/**
+ * A SENTENCE THIS CLIENT WRITES ITSELF, in the reader's language: the `session` catalogue's
+ * words through the register the host sets, else the English literal (a bare test, a catalogue
+ * not set yet). Only this file's own words go through here; a server's sentence is shown as the
+ * server wrote it. Each literal is its catalogue key's English.
+ */
+function said(key: string, english: string): string {
+  return activeTranslator("session")?.(key) || english;
+}
 
 /** The `/api` prefix the same-origin rewrite serves, or `null` on a build with no API armed. */
 export const API_BASE: string | null = process.env.NEXT_PUBLIC_API_BASE ?? null;
@@ -358,7 +369,10 @@ function responseNotOurs(): ApiError {
      * and on a surface that has none it never comes at all. A sentence promising a check that is
      * not running is the same kind of claim as a comment describing code that is not there.
      */
-    "That answer was not for this account, so it was discarded. This window is no longer confirmed for it.",
+    said(
+      "refusedNotOurs",
+      "That answer was not for this account, so it was discarded. This window is no longer confirmed for it.",
+    ),
     undefined,
     { coded: false },
   );
@@ -446,7 +460,7 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
    * `markSessionDead` armed, plus the revival every surface already subscribes to.
    */
   if (!sessionMayAsk() && !healablePath(path, opts.ceremony === true)) {
-    throw new ApiError(401, SESSION_ENDED_REFUSAL_CODE, "This browser's session has ended.");
+    throw new ApiError(401, SESSION_ENDED_REFUSAL_CODE, said("refusedSessionEnded", "This browser's session has ended."));
   }
   /** Refuse with the sentence this state has earned — see {@link ownerRefusal}. */
   const mustHold = (): void => {
@@ -710,7 +724,7 @@ async function attempt<T>(
   seen?: { account?: string | null },
 ): Promise<T> {
   if (!API_BASE) {
-    throw new ApiError(0, "api_unconfigured", "This build is not connected to an ohmail server.");
+    throw new ApiError(0, "api_unconfigured", said("refusedUnconfigured", "This build is not connected to an ohmail server."));
   }
   const method = opts.method ?? "GET";
   // Every ask declares it understands `410 account_erased` — see `shell/account-erased.ts`.
@@ -731,7 +745,9 @@ async function attempt<T>(
       cache: "no-store",
     });
   } catch {
-    throw new ApiError(0, OFFLINE_CODE, "We could not reach ohmail. Check your connection and try again.");
+    throw new ApiError(
+      0, OFFLINE_CODE, said("refusedOffline", "We could not reach ohmail. Check your connection and try again."),
+    );
   }
 
   // BEFORE the 204 shortcut: `/auth/logout` and the refresh's cookie branch both answer
@@ -764,7 +780,7 @@ async function attempt<T>(
       // The fallback is deliberately vague: reaching it means the server answered something
       // this client does not understand, and inventing a specific explanation would be worse
       // than admitting we do not have one.
-      env?.message ?? "Something went wrong. Please try again.",
+      env?.message ?? said("somethingWrong", "Something went wrong. Please try again."),
       env?.details,
       // `coded` is computed from the ENVELOPE, not from the fallback above — which is the
       // whole point: `code` is `"internal"` either way, and this is the field that says
@@ -3166,7 +3182,7 @@ export async function createPasskey(options: PublicKeyCredentialCreationOptionsJ
       attestation: options.attestation as AttestationConveyancePreference | undefined,
     },
   }) as PublicKeyCredential | null;
-  if (!cred) throw new ApiError(0, "passkey_cancelled", "The passkey was not created.");
+  if (!cred) throw new ApiError(0, "passkey_cancelled", said("passkeyNotCreated", "The passkey was not created."));
   const response = cred.response as AuthenticatorAttestationResponse;
   return {
     id: cred.id,
@@ -3194,7 +3210,7 @@ export async function assertPasskey(options: PublicKeyCredentialRequestOptionsJS
       userVerification: options.userVerification as UserVerificationRequirement | undefined,
     },
   }) as PublicKeyCredential | null;
-  if (!cred) throw new ApiError(0, "passkey_cancelled", "The passkey prompt was dismissed.");
+  if (!cred) throw new ApiError(0, "passkey_cancelled", said("passkeyDismissed", "The passkey prompt was dismissed."));
   const response = cred.response as AuthenticatorAssertionResponse;
   return {
     id: cred.id,
@@ -3236,14 +3252,14 @@ export function messageOf(err: unknown): string {
    * the claim was false as well as unhelpful. Matched by CODE rather than by class, because importing the class here
    * would make `api-client` depend on `session-refresh`, which depends on it.
    */
-  if (isSessionBusy(err)) return (err as Error).message;
+  if (isSessionBusy(err)) return said("sessionBusy", (err as Error).message);
   if (err instanceof DOMException && (err.name === "NotAllowedError" || err.name === "AbortError")) {
-    return "The passkey prompt was dismissed. You can try again, or use an authenticator app instead.";
+    return said("passkeyDismissedHint", "The passkey prompt was dismissed. You can try again, or use an authenticator app instead.");
   }
   if (err instanceof DOMException && err.name === "InvalidStateError") {
-    return "This device already has a passkey for this account. Sign in with it instead.";
+    return said("passkeyExists", "This device already has a passkey for this account. Sign in with it instead.");
   }
-  return "Something went wrong. Please try again.";
+  return said("somethingWrong", "Something went wrong. Please try again.");
 }
 
 /** The machine code, for the few places the UI branches rather than just displays. */

@@ -482,7 +482,7 @@ export const DE: Deck = {
 
   ohbox: "Ohbox",
   groupNew: "Neu",
-  groupSeen: "Älter",
+  groupSeen: "Gesehen",
   metaUnreadOf: (unread: number, total: number) => `${unread} ungelesen von ${total}`,
   metaNew: (n: number) => `${n} neu`,
   metaWaiting: (n: number) =>
@@ -515,15 +515,12 @@ export const DE: Deck = {
   ohboxEmptyNothingReadable:
     "Aus diesem Postfach konnte noch nichts gelesen werden. Deine Post liegt weiter auf deinem Server.",
   /*
-   * The verb lives on this side in German, and it has to. The doorbell is drawn as two pieces —
-   * the count, then a quieter tail — and `chrome.tsx` renders them from two separate keys, so
-   * the tail cannot see the number. English gets away with it ("waiting" does not inflect);
-   * German produced "357 neue Absender wartet" on screen. So the verb moves into the half that
-   * has the count, and the tail becomes a phrase with no verb to disagree — the web client's
-   * own choice inside one ICU message (`ohbox.doorbell`). `test/copy-parity.test.ts` holds it.
+   * Two pieces, the count and a quieter tail, as in English. The tail takes the count too, so
+   * the verb agrees ("1 neuer Absender wartet", "3 neue Absender warten"); a tail naming the
+   * Screener would repeat the link beside it.
    */
-  doorbell: (n: number) => `${n} ${n === 1 ? "neuer Absender wartet" : "neue Absender warten"}`,
-  doorbellRest: "im Screener",
+  doorbell: (n: number) => `${n} ${n === 1 ? "neuer Absender" : "neue Absender"}`,
+  doorbellRest: (n: number) => (n === 1 ? "wartet" : "warten"),
   doorbellGo: "Screener",
   doorbellAria: (n: number, go: string): string =>
     (n === 1 ? `1 neuer Absender wartet. ${go}` : `${n} neue Absender warten. ${go}`),
@@ -592,7 +589,7 @@ export const DE: Deck = {
   screenedEmptyHint: "Absender, zu denen du Nein sagst, warten hier — zurückgehalten, nie gelöscht.",
   spamEmptyTitle: "Kein Spam zurückgehalten.",
   spamEmptyHint:
-    "Vermuteter Spam wartet hier auf deinen Blick — von sich aus löscht ohmail ihn nie. Post, die du als Spam bestätigst, wandert in den eigenen Junk-Ordner deines Mailservers, oder bleibt hier zurückgehalten, wenn dein Postfach keinen hat.",
+    "Vermuteter Spam wartet hier auf deinen Blick — von sich aus löscht ohmail ihn nie. Post, die du als Spam bestätigst, wandert in den eigenen Spam-Ordner deines Mailservers, oder bleibt hier zurückgehalten, wenn dein Postfach keinen hat.",
 
   /* ---------------------------------------------------------------- triage */
 
@@ -654,7 +651,7 @@ export const DE: Deck = {
   junkNote: (folder: string) =>
     `Der eigene ${folder}-Ordner deines Mailservers steht nicht in dieser Liste — ohmail spiegelt ihn nicht.`,
   junkNoteUnnamed:
-    "Der eigene Junk-Ordner deines Mailservers steht nicht in dieser Liste — ohmail spiegelt ihn nicht.",
+    "Der eigene Spam-Ordner deines Mailservers steht nicht in dieser Liste — ohmail spiegelt ihn nicht.",
   folderFilter: "Ordner filtern",
   folderNoMatch: "Kein Ordner passt.",
   folderShowAll: (n: number) => `Alle ${n} anzeigen…`,
@@ -806,8 +803,8 @@ export const DE: Deck = {
   languageGerman: "Deutsch",
   languageFailed: "Das ließ sich nicht speichern — versuch es nochmal.",
 
-  face: "Look",
-  faceHint: "ohmarchy — ein Tiling-Look, tastaturzentriert, inspiriert von Omarchy.",
+  face: "Stil",
+  faceHint: "ohmarchy — ein Kachel-Stil, tastaturzentriert, inspiriert von Omarchy.",
   facePaper: "paper",
   faceOhmarchy: "ohmarchy",
   faceScopeAll: "Gilt auf allen deinen Geräten.",
@@ -1006,7 +1003,7 @@ export const DE: Deck = {
   liveBodyWithheld:
     "Nicht gespeichert — dein Speicherplatz war voll, als sie ankam. Das hier ist die Vorschau; die Nachricht selbst liegt sicher in deinem Postfach auf deinem Mailserver.",
   liveBodyWithheldJunk:
-    "Hier nicht gespeichert — dein Spam-Urteil hat diese Nachricht in den Junk-Ordner deines eigenen Mailservers einsortiert. Dort lebt sie weiter; das hier ist die Vorschau.",
+    "Hier nicht gespeichert — dein Spam-Urteil hat diese Nachricht in den Spam-Ordner deines eigenen Mailservers einsortiert. Dort lebt sie weiter; das hier ist die Vorschau.",
   liveBodyWithheldExpunged:
     "Keine gespeicherte Kopie mehr — jede Kopie dieser Nachricht ist aus den Ordnern verschwunden, die ohmail auf deinem Mailserver liest: dort gelöscht oder von einem anderen Mailprogramm verschoben. Diese Vorschau ist, was bleibt.",
   liveBodyWithheldTooLarge:
@@ -1063,13 +1060,14 @@ export const DE: Deck = {
   actionSetAside: "Parken",
   actionResurface: "Wieder auftauchen",
   actionTag: "Tag",
-  actionScreening: "Screening",
+  actionScreening: "Einordnen",
   actionMove: "Verschieben",
   actionMarkRead: "Als gelesen markieren",
   actionMarkUnread: "Als ungelesen markieren",
   actionDone: "Erledigt",
   actionMore: "Mehr",
   tabMore: "Mehr",
+  standaloneName: "ohmail auf diesem Telefon",
 
   actionDelete: "Löschen",
   deleteAsk: "Diese Nachricht löschen?",
@@ -1113,7 +1111,7 @@ export const DE: Deck = {
   toastResurface: (when: string) => `Taucht ${when} wieder auf`,
   toastResurfaceCleared: "Taucht nicht wieder auf",
   toastResurfaceNow: "Wieder ganz oben",
-  toastResurfaceDone: "Erledigt — unter „Älter“ abgelegt",
+  toastResurfaceDone: "Erledigt — unter „Gesehen“ abgelegt",
   toastSentAndDone: "Gesendet · erledigt",
   /*
    * CASE-NEUTRAL, and this one diverges from the web client's German ON PURPOSE.

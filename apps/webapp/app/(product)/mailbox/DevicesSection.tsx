@@ -54,6 +54,12 @@ import { StepUpPrompt } from "./StepUpPrompt";
  * live mint verb beside it; every verb here is a cookie-authenticated credential mutation, exactly what a fixtures
  * world must not reach. The flag is the same authoritative `demo` the shell masks its other panes by.
  */
+/** The label the server stores for a desktop that paired unnamed (`APPROVAL_DEVICE_LABELS`, auth-service). */
+const MINTED_LABEL: Readonly<Partial<Record<DeviceDTO["kind"], string>>> = {
+  "macos": "ohmail for Mac", "desktop-macos": "ohmail for Mac",
+  "desktop-linux": "ohmail for Linux", "desktop-windows": "ohmail for Windows",
+};
+
 export function useDevicePairing(demo: boolean): boolean {
   const [pairing, setPairing] = useState(false);
   useEffect(() => {
@@ -283,6 +289,10 @@ export function DevicesSection() {
       default: return t("kindOther");
     }
   };
+  /* A desktop that paired without a name carries the server's English default for its kind; that
+     label is ohmail's words, not the person's, so it is said in the reader's language. */
+  const nameOf = (d: DeviceDTO): string =>
+    MINTED_LABEL[d.kind] === d.label ? t("mintedName", { kind: kindWord(d.kind) }) : d.label || kindWord(d.kind);
 
   // Current pinned first; NAMED devices individually; the plain-browser remainder collapses
   // into `groupedWeb` where the server mounts the bulk verb, and renders row-by-row where it
@@ -448,7 +458,7 @@ export function DevicesSection() {
             removing === d.id ? (
               <SettingsRow
                 key={d.id}
-                label={t("removeAsk", { name: d.label || kindWord(d.kind) })}
+                label={t("removeAsk", { name: nameOf(d) })}
                 description={t("removeWhat")}
                 control={
                   <span className="set-tag-acts">
@@ -469,7 +479,7 @@ export function DevicesSection() {
             ) : (
               <SettingsRow
                 key={d.id}
-                label={d.label || kindWord(d.kind)}
+                label={nameOf(d)}
                 description={
                   d.current
                     ? t("thisDevice")

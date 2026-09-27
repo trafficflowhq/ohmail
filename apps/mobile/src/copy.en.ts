@@ -823,7 +823,8 @@ const TABLE = {
   ohboxEmptyNothingReadable:
     "Nothing could be read from this mailbox yet. Your mail is still on your server.",
   doorbell: (n: number) => `${n} new sender${n === 1 ? "" : "s"}`,
-  doorbellRest: "waiting",
+  /* The quieter half beside the count. A function of the count because German inflects the verb. */
+  doorbellRest: (_n: number) => "waiting",
   doorbellGo: "Screener",
   /**
    * THE DOORBELL, SPOKEN — one key, because the markup was joining three.
@@ -1651,6 +1652,8 @@ const TABLE = {
   actionMore: "More",
   /** The fifth tab. Its own key rather than {@link actionMore}'s: a destination, not a verb. */
   tabMore: "More",
+  /** What a standalone phone calls itself on its own screens. The claim keeps its constant. */
+  standaloneName: "ohmail on a phone",
   /*
    * DELETE — the product rule verbatim (packages/core/src/adapters/imap-types.ts, mail 0065):
    * delete files the message to the provider's own \Trash and NEVER expunges. The webapp's

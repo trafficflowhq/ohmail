@@ -13,7 +13,7 @@ import { sayArg, sayRefusal, type Refusal } from "../src/refusal";
 import { View } from "react-native";
 import { router } from "expo-router";
 import { Copy } from "../src/copy";
-import { PHONE_CLAIM_NAME, organizesHere } from "../src/engine/standalone-door";
+import { organizesHere } from "../src/engine/standalone-door";
 import { useConnection } from "../src/net/connection";
 import { isPairEnded } from "../src/net/session-death";
 import { gateFor } from "../src/state/gate";
@@ -207,7 +207,7 @@ function LiveFacts() {
     <>
       {/* THE SAME RULE AS THE ROW BELOW: on this door the origin is a name nothing dials. */}
       <Txt variant="settingsLabel">
-        {organizesHere(s.session.profile) ? PHONE_CLAIM_NAME : s.session.profile.origin}
+        {organizesHere(s.session.profile) ? Copy.standaloneName : s.session.profile.origin}
       </Txt>
       <Txt variant="caption" tone="ink3" tabular>
         {conn.syncing ? Copy.connectSyncing : Copy.connectMirrored(total, s.session.store.getCursor())}
@@ -271,7 +271,7 @@ function ProfileRow({ profile, active, onForgetFailed }: {
           else void conn.switchTo(profile.id);
         }}
         accessibilityRole="button"
-        accessibilityLabel={Copy.ariaLabelDetail(here ? PHONE_CLAIM_NAME : profile.origin, profile.flavor)}
+        accessibilityLabel={Copy.ariaLabelDetail(here ? Copy.standaloneName : profile.origin, profile.flavor)}
         style={{ paddingHorizontal: 12, paddingVertical: 10, gap: 2 }}
       >
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
@@ -279,7 +279,7 @@ function ProfileRow({ profile, active, onForgetFailed }: {
             <View style={{ width: 7, height: 7, borderRadius: t.radius.dot, backgroundColor: t.c.accent }} />
           ) : null}
           <Txt variant="navLabel" numberOfLines={1} style={{ flexShrink: 1 }}>
-            {here ? PHONE_CLAIM_NAME : profile.origin}
+            {here ? Copy.standaloneName : profile.origin}
           </Txt>
           <View style={{ flex: 1 }} />
           <Txt variant="caption" tone="ink3">{profile.flavor}</Txt>

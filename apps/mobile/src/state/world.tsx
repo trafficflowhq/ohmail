@@ -40,7 +40,7 @@ import { readMailboxes, type PhoneMailbox } from "../net/mailboxes";
 import { junkFolderSaid } from "./folders";
 import { readRelayedDecisions, readScreenerWaiting, type ServerWaitingSender } from "../net/screener";
 import { withSentHere, type RelayedDecision } from "./relay";
-import { PHONE_CLAIM_NAME, organizesHere } from "../engine/standalone-door";
+import { organizesHere } from "../engine/standalone-door";
 /* THE DOOR ANSWERING FOR ITSELF, with no request — `organizer-session.ts` holds the one engine
    this process runs and `standaloneHereFor` is its read, SCOPED to the session being
    rendered — the module's door outlives a switch. The state module reaches into `engine/`
@@ -1526,12 +1526,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
        * with by its host and the mailbox the roster says it serves; the account id is a key, not
        * a name, and the origin's scheme is wire (a URL and a UUID at the top of More and the
        * drawer — measured on the iPhone and the iPad, 2026-09-21). The standalone door has the
-       * same shape in its own words: the phone's claim name and the mailbox the engine serves.
-       * The address comes from the row in both cases, because the profile has never held one;
-       * an unread roster leaves it empty.
+       * same shape in its own words: the phone's own name in the reader's language (a getter, so
+       * a switch reaches it) and the mailbox the engine serves. The address comes from the row in
+       * both cases, because the profile has never held one; an unread roster leaves it empty.
        */
       account: organizesHere(session.profile)
-        ? { name: PHONE_CLAIM_NAME, email: mailboxes?.[0]?.address ?? "" }
+        ? { get name(): string { return Copy.standaloneName; }, email: mailboxes?.[0]?.address ?? "" }
         : { name: session.profile.origin.replace(/^https?:\/\//, ""), email: mailboxes?.[0]?.address ?? "" },
       // THE DOOR, derived once by the layer that composes the session. See the field.
       standalone: session.standalone,

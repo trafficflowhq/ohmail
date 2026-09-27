@@ -245,7 +245,7 @@ export function Doorbell(
         <Txt variant="settingsLabel" tone="ink">
           {Copy.doorbell(count)}
         </Txt>{" "}
-        {Copy.doorbellRest}
+        {Copy.doorbellRest(count)}
       </Txt>
       <View style={{ flex: 1 }} />
       <Txt variant="button" tone="accent">
