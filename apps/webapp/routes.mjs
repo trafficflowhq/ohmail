@@ -151,6 +151,7 @@ export const OWN_ROUTES = Object.freeze(/** @type {OwnRoute[]} */ ([
     // `/account/manage` mints a fresh account-page link and redirects to it (`manage-handoff.ts`).
     path: "/account/manage",
     edge: false,
+    handler: true,
     why: "a route handler whose every answer is a redirect; on a legacy host it has no session"
       + " and sends the person to `/login`, which the edge moves to the canonical host",
   },
