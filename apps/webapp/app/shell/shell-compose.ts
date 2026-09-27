@@ -136,6 +136,11 @@ export async function openDraftDecision(
   io.openWithBody({ ...draft, body: text }, text);
 }
 
+/** A send from the row its lane's refused send left (`replyRows`), or the send as built. */
+function withLaneRow(row: string | null, m: MailSendMutation): MailSendMutation {
+  return row === null ? m : { ...m, draftId: row };
+}
+
 export interface ShellComposeInput {
   engine: OhmailEngine;
   /** The mirror as it is — `engine.read()` from the render, never re-read here. */
@@ -682,7 +687,7 @@ export function useShellCompose({
   const releaseDraftIdRef = useRef<string | null>(null);
   const releaseBindingRef = useRef<() => void>(() => {});
   /** Late-bound for the same reason as {@link settleComposeRef} — see below where it is assigned. */
-  const openMessageRef = useRef<(m: EngineMessage) => void>(() => {});
+  const openMessageRef = useRef<(m: EngineMessage, opts?: { reply?: boolean }) => void>(() => {});
   /**
    * WHICH DRAFT ROW SEEDED WHICH REPLY EDITOR — `message id → draft id`, written by `openDraft`
    * when a reply draft opens in its message's own inline editor. The inline reply has no
@@ -692,6 +697,13 @@ export function useShellCompose({
    * below) or when the row is discarded from the Drafts list (`discardDraft`).
    */
   const replySeedDrafts = useRef(new Map<string, string>());
+  /**
+   * THE ROW A REFUSED REPLY LEFT, per lane (`message id`, or `fwd:<id>`) — the compose lane's
+   * `refusedWithRow`, for an editor with no autosave to adopt it into. The lane's next press sends
+   * THAT row, so one message stays one draft. `seen` is whether the mirror has listed it: a row
+   * taken before the drain is still the row, and one the mirror listed and then lost is gone.
+   */
+  const replyRows = useRef(new Map<string, { row: string; seen: boolean }>());
   /*
    * The compose recovery is gone, and its absence is the fix. `recoverySeed`
    * seeded an `unverified` or stranded `sending` draft's text into a FRESH
@@ -751,6 +763,8 @@ export function useShellCompose({
      * colleague is not being done with it. The scratch note is already cleared by `settle`
      * (the lane doubles as the suffix).
      */
+    // The lane's row was the one sent; nothing is left to send from.
+    replyRows.current.delete(key);
     if (key.startsWith("fwd:")) {
       const forwarded = key.slice(4);
       // Close ONLY the editor this settlement is about: a late forward confirmation must not
@@ -763,7 +777,8 @@ export function useShellCompose({
     // A reply seeded from a draft row settled: the row's message has been delivered (the send
     // wrote its own row), so the seed is a phantom draft now — see `replySeedDrafts`.
     const seeded = replySeedDrafts.current.get(key);
-    if (seeded) {
+    // …never the row this very send went out from.
+    if (seeded && seeded !== m.draftId) {
       replySeedDrafts.current.delete(key);
       void engine.mutate({ kind: "draft_discard", draftId: seeded });
       writeReplyMeta(`draft:${seeded}`, {}); // the phantom row's block state dies with it
@@ -807,6 +822,30 @@ export function useShellCompose({
    */
 
   /**
+   * A LANE TAKES THE ROW ITS REFUSED SEND LEFT, when it holds none. The row the editor was seeded
+   * from is that message's older copy, and it leaves as it does when the reply confirms.
+   */
+  const takeLaneRow = useStableCallback((lane: string, rowId: string) => {
+    if (laneRowOf(lane) !== null) return;
+    replyRows.current.set(lane, { row: rowId, seen: false });
+    const seeded = replySeedDrafts.current.get(lane);
+    if (seeded === undefined || seeded === rowId) return;
+    replySeedDrafts.current.delete(lane);
+    void engine.mutate({ kind: "draft_discard", draftId: seeded });
+    writeReplyMeta(`draft:${seeded}`, {});
+  });
+  /** The lane's row while it is a draft to send from; `null` once it is anything else, or gone. */
+  const laneRowOf = useStableCallback((lane: string): string | null => {
+    const held = replyRows.current.get(lane);
+    if (held === undefined) return null;
+    const d = drafts.find((x) => x.id === held.row);
+    if (d === undefined && !held.seen) return held.row;
+    if (d !== undefined && d.status === "draft") { held.seen = true; return held.row; }
+    replyRows.current.delete(lane);
+    return null;
+  });
+
+  /**
    * THE SEND MACHINE'S ANSWER, and for Send + Done the release it carries. `accepted` is the
    * engine's confirmation and nothing weaker; the intent is what refuses to dispatch anything
    * without it, here as on the phone. Answering `true` tells the lane the shell has spoken for
@@ -821,6 +860,8 @@ export function useShellCompose({
     if (!accepted && left !== undefined && key === COMPOSE_SEND_KEY) {
       settleComposeRef.current({ kind: "refusedWithRow", ...left });
     }
+    // …and so does a reply or forward lane: its next press sends that row instead of making one.
+    if (!accepted && left !== undefined && key !== COMPOSE_SEND_KEY) takeLaneRow(key, left.rowId);
     const plan = detail?.andDone;
     if (plan === undefined) return false;
     void sendAndDone({
@@ -933,11 +974,12 @@ export function useShellCompose({
       if (!parent) return;
       // An unanswered ask sends nothing: the dock shows the ask, not an editor, until confirmed.
       if (fwdGate !== null && !fwdGate.confirmed) return;
+      const fwdRow = laneRowOf(inlineForwardKey(messageId));
       mailSend.send(
         // The signature seals into the forward's note, and the server appends the quoted
         // original AFTER the body it is handed (`send-service.ts`) — so the block the editor
         // showed sits ABOVE the quoted history in what the recipient reads.
-        withSignature(forwardSend(parent, {
+        withSignature(withLaneRow(fwdRow, forwardSend(parent, {
           body: replyBody.text,
           ...(replyBody.html ? { html: replyBody.html } : {}),
           // The resolved sender, or the receiving mailbox — the editor's lock judged the
@@ -947,7 +989,7 @@ export function useShellCompose({
           ...(replyAttachments.length > 0 ? { attachments: replyAttachments } : {}),
           plan: forwardEnvelopePlan(replyEnvelope, fromOptions.map((o) => o.address)),
           confirmed: fwdGate?.confirmed === true && parent.sensitivity?.no_forward === true,
-        }), sigText, sigHtml),
+        })), sigText, sigHtml),
         withDone({ surface: "inline" as const }),
       );
       return;
@@ -967,9 +1009,14 @@ export function useShellCompose({
     // with a known one, and a self-authored message could show Reply all over an envelope the send then resolved to
     // the plain reply. One question, one source.
     const plan = replyEnvelopePlan(parent, ownAddresses, replyAll, replyEnvelope);
+    // A row still held for this message is the hold's to judge, never a row to send from.
+    const heldRow = heldReplyRow(messageId);
+    const laneRow = heldRow === null ? laneRowOf(messageId) : null;
     mailSend.send(withSignature({
       kind: "mail_send",
       inReplyTo: messageId,
+      // THE ROW A REFUSED SEND LEFT, when this lane took one: sent again rather than made again.
+      ...(laneRow !== null ? { draftId: laneRow } : {}),
       // The PLAIN half in `body`, always — it is what `canSend` judges and what the
       // optimistic row shows. The markup, when there is any, goes in `html` and the adapter
       // sends it INSTEAD of `body`, so the recipient's plaintext part is the server's own
@@ -998,7 +1045,7 @@ export function useShellCompose({
       // `In-Reply-To`/`References` from the parent row whatever the subject says.
       ...(replySubjectEdit !== null ? { subject: replySubjectEdit } : {}),
       ...replyEnvelopeOnWire(plan),
-    }, sigText, sigHtml), withDone({ heldRow: heldReplyRow(messageId) }));
+    }, sigText, sigHtml), withDone({ heldRow }));
   });
 
   /**
@@ -1199,13 +1246,16 @@ export function useShellCompose({
            partition and is therefore declared far below this one, so the reference is late-bound
            for the same reason `settleComposeRef` is. */
         setReplyBody({ text: body, html: "" });
-        setReplyTo(parent.id);
+        // A REPLY, whatever the dock last was: a forward left open would send this text as one.
+        setReplyAll(false);
+        setReplyMode("reply");
         /* REMEMBER WHICH ROW SEEDED THIS EDITOR. The inline reply has no autosave, so the send
            will create its own row — and without this note the seeded row would stay in Drafts
            as a copy of a message that has been delivered, reopenable with Send live: the
            double-send bait. `onSendSettled` discards it when a reply to THIS message confirms. */
         replySeedDrafts.current.set(parent.id, d.id);
-        openMessageRef.current(parent);
+        // The editor opens WITH the message, past the route transition that closes overlays.
+        openMessageRef.current(parent, { reply: true });
         return;
       }
       // `formatRecipientChips`, never a bare join: the seeded string must end in a separator
@@ -1586,6 +1636,9 @@ export function useShellCompose({
         // The reply editor may be holding it too — a settle after this delete must not delete twice.
         for (const [msgId, dId] of replySeedDrafts.current) {
           if (dId === draftId) replySeedDrafts.current.delete(msgId);
+        }
+        for (const [lane, held] of replyRows.current) {
+          if (held.row === draftId) replyRows.current.delete(lane);
         }
       });
     },

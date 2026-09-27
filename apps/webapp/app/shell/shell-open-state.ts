@@ -280,6 +280,12 @@ export function useShellOpenState({
    */
   const [readerPending, setReaderPending] = useState<string | null>(null);
   /**
+   * AND A REPLY THAT TRAVELS WITH THE OPEN — a reply draft pressed in Drafts. The same shape as
+   * `readerPending`: the transition closes the inline editor with every other overlay, so an
+   * editor opened before the hash moved was closed by the navigation that carried it.
+   */
+  const [replyPending, setReplyPending] = useState<string | null>(null);
+  /**
    * THE ONE MESSAGE THE READER MAY SHOW WITHOUT A MIRROR ROW BEHIND IT.
    *
    * Written by `openMessage` from the row its caller handed in, and read only when
@@ -608,6 +614,10 @@ export function useShellOpenState({
         setReaderFor(readerPending);
         setReaderPending(null);
       }
+      if (replyPending) {
+        setReplyTo(replyPending);
+        setReplyPending(null);
+      }
     }
     prevRoute.current = route;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -765,7 +775,16 @@ export function useShellOpenState({
     return partition.fresh.some((m) => m.id === id) || partition.seen.some((m) => m.id === id);
   });
 
-  const openMessage = useStableCallback((m: EngineMessage) => {
+  /**
+   * `reply` opens the message's inline editor with it. Where the open navigates, the editor rides
+   * `replyPending` past the transition; where it stays on this view, nothing will clear it.
+   */
+  const openMessage = useStableCallback((m: EngineMessage, opts?: { reply?: boolean }) => {
+    const replyAfter = (moves: boolean): void => {
+      if (!opts?.reply) return;
+      if (moves) setReplyPending(m.id);
+      else setReplyTo(m.id);
+    };
     // `consentView?.placeOf` is what turns "open it where its FOLDER is" into "open it where
     // it is PRESENTED" — the same map SearchView labels the hit's chip from, so the arrival
     // and the chip can no longer disagree. Undefined on demo/desktop, where folder is place.
@@ -795,12 +814,14 @@ export function useShellOpenState({
         // The reader, and via `readerPending` because `go` is about to clear it.
         if (target.reader) setReaderPending(target.id);
         setLocated(target.id);
+        replyAfter(route.view !== "ohbox");
         go("ohbox");
         return;
       case "stream":
         (target.view === "reads" ? setReadsCur : setReceiptsCur)(target.id);
         setJump({ view: target.view, id: target.id });
         setLocated(target.id);
+        replyAfter(route.view !== target.view);
         go(target.view);
         return;
       case "screener":
@@ -810,6 +831,7 @@ export function useShellOpenState({
         // The SENDER row's id, not the message's: that is what this view puts in
         // `data-id`, and the flash has to name the thing on screen.
         setLocated(target.row);
+        replyAfter(route.view !== "screener" || route.screenerSegment !== target.segment);
         goScreener(target.segment);
         return;
       case "folder":
@@ -817,6 +839,7 @@ export function useShellOpenState({
         // route↔open-state mirror then opens the reader over the folder view (the same
         // overlay a tag hit gets), so the message is on screen in the folder that holds it.
         setLocated(target.id);
+        replyAfter(route.view !== "folder");
         window.location.hash = `#/folder/${target.folderId}/m/${target.id}`;
         return;
       default:
@@ -829,6 +852,7 @@ export function useShellOpenState({
         // so this is only ever consulted for a message there is no other copy of.
         setReaderOffMirror(m);
         setReaderFor(target.id);
+        replyAfter(false);
     }
   });
 

@@ -15,9 +15,13 @@ body {
 }
 
 /* ================= shell ================= */
+/* A FRAME, NEVER A SCROLLER. `hidden` still scrolls under `scrollIntoView` and `focus()`, so a
+   row or editor brought into view shifted the whole app up with no way back. `clip` refuses every
+   scroll; `hidden` stays for an engine that does not know `clip`. */
 .app-root {
   height: 100dvh;
   overflow: hidden;
+  overflow: clip;
   display: flex;
   flex-direction: column;
 }
