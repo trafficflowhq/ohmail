@@ -72,6 +72,15 @@ export const INGEST_LOG_FLUSH_MS = 1_000;
 /** A checkpoint at least this slow is logged whatever it reclaimed: a reader waited that long. */
 export const CHECKPOINT_SLOW_MS = 250;
 
+/**
+ * THE GIN PENDING LIST, BOUNDED — in kB, the one session this store has. New index entries of the
+ * search's GIN indexes wait in a pending list, and the insert that overflows it merges the list
+ * inside its own transaction. At Postgres' 4 MB that was one message's commit holding the store for
+ * seconds (a 74k import: 9.2 s, and a list read beside it 893 ms); single-row updates on that store
+ * paid at most 3 211 ms at 4 MB and 42 ms at 256 kB, in 8 % less total time.
+ */
+export const GIN_PENDING_LIST_KB = 256;
+
 /** One row, written durably by {@link createLogFlush}. Store-local: no journal names it. */
 const LOG_FLUSH_TABLE = "local_store_flush";
 
@@ -1598,6 +1607,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     if (!opts.withoutSearchExtensions) await setUpLocalSearch(db, log);
     await analyzeSearchIfStale(client);
     const searchSetupMs = Date.now() - tSearch;
+    await client.exec(`SET gin_pending_list_limit = ${GIN_PENDING_LIST_KB}`);
     /* The flush's one row, beside the journal rather than in it (see {@link LOG_FLUSH_TABLE}). */
     await client.exec(`CREATE TABLE IF NOT EXISTS ${LOG_FLUSH_TABLE} `
       + "(id smallint PRIMARY KEY CHECK (id = 1), flushed_at timestamptz NOT NULL)");
