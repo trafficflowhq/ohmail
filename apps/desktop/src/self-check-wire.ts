@@ -8,7 +8,7 @@ export async function selfCheckVia(
   fetchImpl: (path: string, init?: RequestInit) => Promise<Response>,
   mailboxId: string,
 ): Promise<unknown> {
-  const res = await fetchImpl(`/mailboxes/${encodeURIComponent(mailboxId)}/reconcile`);
+  const res = await fetchImpl(`/mailboxes/${encodeURIComponent(mailboxId)}/self-check`);
   if (!res.ok) throw new Error(`the mail engine answered ${res.status}`);
   return res.json();
 }

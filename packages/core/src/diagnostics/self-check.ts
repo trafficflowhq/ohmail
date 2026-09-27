@@ -1,12 +1,12 @@
 /**
- * THE MAILBOX SELF-CHECK, AS A SURFACE READS IT. The engine's `GET /mailboxes/:id/reconcile`
+ * THE MAILBOX SELF-CHECK, AS A SURFACE READS IT. The engine's `GET /mailboxes/:id/self-check`
  * answers one reading per folder the mirror reads; this narrows that wire into a closed shape and
  * says what the pane's one sentence is made of. The pane keeps folder names (they are the
  * person's own, on their own screen); the diagnostic file keeps only hashes and classes.
  * No import here reaches the network or the store.
  */
 
-/** Copies of the engine's closed sets (`packages/api/src/mailbox-reconcile.ts`); a test holds them equal. */
+/** Copies of the engine's closed sets (`packages/api/src/mailbox-self-check.ts`); a test holds them equal. */
 export const SELF_CHECK_FOLDER_CLASSES = [
   "in_step", "server_more", "mirror_more", "uidvalidity_changed", "unreadable",
 ] as const;
@@ -14,7 +14,7 @@ export const SELF_CHECK_UNREADABLE = [
   "timeout", "budget", "refused", "short_reply", "dropped", "auth", "connect", "tls", "busy",
   "no_login", "unknown",
 ] as const;
-/** Folders one reading may carry — the engine's `RECONCILE_FOLDERS_MAX`. */
+/** Folders one reading may carry — the engine's `MAILBOX_CHECK_FOLDERS_MAX`. */
 export const SELF_CHECK_FOLDERS_MAX = 512;
 /** Folder names one sentence names before it says how many more. */
 export const SELF_CHECK_NAMES_SHOWN = 6;
@@ -80,8 +80,8 @@ export interface SelfCheckDiffer { folder: string; k: "server_more" | "mirror_mo
 /**
  * WHAT THE ONE SENTENCE SAYS. `in_step` and `empty` are whole sentences. `unreached` is every
  * folder unreadable — the server, not a folder, could not be read — with the first folder's class.
- * `differs` lists the differing folders (at most {@link SELF_CHECK_NAMES_SHOWN}, then `moreDiffer`)
- * and, beside them, the folders that could not be read; `differ` may be empty when only those are.
+ * `differs` lists the differing folders (at most {@link SELF_CHECK_NAMES_SHOWN}; `differCount` is all
+ * of them) and the folders that could not be read; `differ` may be empty when only those are.
  */
 export type SelfCheckSaid =
   | { k: "in_step" }

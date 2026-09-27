@@ -66,7 +66,7 @@ export const RELAY_ALLOWLIST: readonly RelaySpec[] = [
   { method: "GET", pattern: "/mailboxes/:id/profile" },
   { method: "GET", pattern: "/mailboxes/:id/profile-import" },
   { method: "GET", pattern: "/mailboxes/:id/profile-import/status" },
-  { method: "GET", pattern: "/mailboxes/:id/reconcile" },
+  { method: "GET", pattern: "/mailboxes/:id/self-check" },
   { method: "GET", pattern: "/mailboxes/oauth/microsoft/availability" },
   { method: "GET", pattern: "/mailboxes/oauth/microsoft/callback" },
   { method: "GET", pattern: "/messages" },

@@ -461,7 +461,7 @@ export function serverChangeRefusal(status: number, error: ServerChangeError | u
 }
 
 /**
- * CHECK THIS MAILBOX — `GET /mailboxes/:id/reconcile` over the session's own transport; on a
+ * CHECK THIS MAILBOX — `GET /mailboxes/:id/self-check` over the session's own transport; on a
  * standalone phone that is the engine in this process, which holds the copy the check compares.
  * The reading is narrowed by the desktop's reader into the sentence's parts; a reading for another
  * mailbox, or none, is `refused`. The raw reading is kept for the session so the diagnostic file
@@ -474,7 +474,7 @@ const lastReadings = new Map<string, unknown>();
 
 export async function checkMailbox(session: ConnectedSession, mailboxId: string): Promise<MailboxCheck> {
   const res = await session.fetch(
-    `${requestBase(session)}/mailboxes/${encodeURIComponent(mailboxId)}/reconcile`, { method: "GET" },
+    `${requestBase(session)}/mailboxes/${encodeURIComponent(mailboxId)}/self-check`, { method: "GET" },
   );
   if (res.status !== 200) return { k: "refused" };
   const wire = (await res.json().catch(() => null)) as unknown;

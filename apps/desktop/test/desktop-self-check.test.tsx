@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 /**
  * SETTINGS → MAILBOXES → CHECK THIS MAILBOX, rendered on the local door. The press goes down the
- * bridge as one GET of `/mailboxes/:id/reconcile`, the engine's reading comes back, and the row
+ * bridge as one GET of `/mailboxes/:id/self-check`, the engine's reading comes back, and the row
  * says one sentence: in step, or which folders differ and by how much, or why nothing could be
  * read. The reading is kept for the session and the diagnostic file carries it without a name.
  */
@@ -101,7 +101,7 @@ describe("Check this mailbox — the desktop's local door", () => {
     expect(node.textContent).not.toContain("old@example.test");
     expect(node.textContent).toContain("Check this mailbox");
     await press(node);
-    expect(asked).toEqual([{ method: "GET", url: "/mailboxes/m1/reconcile" }]);
+    expect(asked).toEqual([{ method: "GET", url: "/mailboxes/m1/self-check" }]);
     expect(node.textContent).toContain("1 folder differs from your mail server: Archive (1 more message on the server).");
   });
 

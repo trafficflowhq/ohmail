@@ -17,41 +17,41 @@ import type { ApiDeps } from "./deps.js";
  */
 
 /** The whole read, dial included — the one budget every API-side dial runs under. */
-export const RECONCILE_BUDGET_MS = IMAP_DOOR_DEADLINE_MS;
+export const MAILBOX_CHECK_BUDGET_MS = IMAP_DOOR_DEADLINE_MS;
 /** One folder's STATUS. A server that stops answering costs this, then the connection. */
-export const RECONCILE_FOLDER_DEADLINE_MS = 5_000;
+export const MAILBOX_CHECK_FOLDER_DEADLINE_MS = 5_000;
 /** Folders asked in one read; the rest read `budget`. Above the passive-folder ceiling. */
-export const RECONCILE_FOLDERS_MAX = 512;
+export const MAILBOX_CHECK_FOLDERS_MAX = 512;
 /** Kept back from every folder's deadline so the read ends inside its own budget. */
 const MARGIN_MS = 250;
 /** A folder is not asked with less room than this; it reads `budget` instead. */
 const FOLDER_MIN_MS = 50;
 
 /** Per folder, closed. The diagnostic leaf holds a copy; a test holds the two equal. */
-export const RECONCILE_FOLDER_CLASSES = [
+export const MAILBOX_CHECK_FOLDER_CLASSES = [
   "in_step", "server_more", "mirror_more", "uidvalidity_changed", "unreadable",
 ] as const;
 /** Why a folder could not be compared, closed. The first six are the folder's, the rest the dial's. */
-export const RECONCILE_UNREADABLE = [
+export const MAILBOX_CHECK_UNREADABLE = [
   "timeout", "budget", "refused", "short_reply", "dropped", "auth", "connect", "tls", "busy",
   "no_login", "unknown",
 ] as const;
 
-export type ReconcileFolderClass = (typeof RECONCILE_FOLDER_CLASSES)[number];
-export type ReconcileUnreadable = (typeof RECONCILE_UNREADABLE)[number];
+type CheckFolderClass = (typeof MAILBOX_CHECK_FOLDER_CLASSES)[number];
+type CheckUnreadable = (typeof MAILBOX_CHECK_UNREADABLE)[number];
 
 /** One folder's reading. `server`/`mirror` are message counts; the difference is theirs. */
-export type FolderReconcile =
+type FolderCheck =
   | { folder: string; k: "in_step" | "server_more" | "mirror_more" | "uidvalidity_changed"; server: number; mirror: number }
-  | { folder: string; k: "unreadable"; error: ReconcileUnreadable };
+  | { folder: string; k: "unreadable"; error: CheckUnreadable };
 
-export interface MailboxReconcile {
+interface MailboxCheck {
   mailboxId: string;
   checkedAt: string;
   elapsedMs: number;
-  /** The worst folder's class, in {@link RECONCILE_FOLDER_CLASSES} order; `empty` with no folder. */
-  verdict: ReconcileFolderClass | "empty";
-  folders: FolderReconcile[];
+  /** The worst folder's class, in {@link MAILBOX_CHECK_FOLDER_CLASSES} order; `empty` with no folder. */
+  verdict: CheckFolderClass | "empty";
+  folders: FolderCheck[];
 }
 
 /** One folder as the store holds it: the epoch its cursor recorded, and instance counts by epoch. */
@@ -69,9 +69,9 @@ type Answer = FolderStatusAnswer | { k: "timeout" };
  * folder the server no longer has compares as zero there. A cold cursor (no epoch yet) is
  * compared by count, which is what it holds.
  */
-export function compareFolder(m: MirrorFolder, a: Answer): FolderReconcile {
+export function compareFolder(m: MirrorFolder, a: Answer): FolderCheck {
   const folder = m.folder;
-  const held = (epoch: string | null): number => (epoch === null ? 0 : m.counts.get(epoch) ?? 0);
+  const held = (epoch: string | null): number => m.counts.get(epoch ?? "") ?? 0;
   switch (a.k) {
     case "status": {
       if (!epochOf(a.uidValidity).known) return { folder, k: "unreadable", error: "short_reply" };
@@ -88,20 +88,20 @@ export function compareFolder(m: MirrorFolder, a: Answer): FolderReconcile {
   }
 }
 
-function byCount(folder: string, server: number, mirror: number): FolderReconcile {
+function byCount(folder: string, server: number, mirror: number): FolderCheck {
   const k = server === mirror ? "in_step" : server > mirror ? "server_more" : "mirror_more";
   return { folder, k, server, mirror };
 }
 
 /** The worst folder's class; `empty` for a mailbox with no folder to compare. */
-export function worstOf(folders: readonly FolderReconcile[]): MailboxReconcile["verdict"] {
+export function worstOf(folders: readonly FolderCheck[]): MailboxCheck["verdict"] {
   let worst = -1;
-  for (const f of folders) worst = Math.max(worst, RECONCILE_FOLDER_CLASSES.indexOf(f.k));
-  return worst < 0 ? "empty" : RECONCILE_FOLDER_CLASSES[worst]!;
+  for (const f of folders) worst = Math.max(worst, MAILBOX_CHECK_FOLDER_CLASSES.indexOf(f.k));
+  return worst < 0 ? "empty" : MAILBOX_CHECK_FOLDER_CLASSES[worst]!;
 }
 
 /** A dial that never produced an adapter, as one closed class. */
-export function dialClass(err: unknown): ReconcileUnreadable {
+export function dialClass(err: unknown): CheckUnreadable {
   if (isImapDoorTimeout(err)) return "timeout";
   const code = (err as { code?: unknown } | null)?.code;
   if (code === "mailbox_busy") return "busy";
@@ -135,7 +135,7 @@ async function mirrorOf(deps: ApiDeps, accountId: string, mailboxId: string): Pr
   return rows
     .map((r) => ({
       folder: r.folder,
-      epoch: r.epoch === null || r.epoch === undefined ? null : String(r.epoch),
+      epoch: r.epoch == null ? null : String(r.epoch),
       counts: byFolder.get(r.folder) ?? new Map<string, number>(),
     }))
     .sort((a, b) => rank(a.folder) - rank(b.folder) || (a.folder < b.folder ? -1 : a.folder > b.folder ? 1 : 0));
@@ -147,24 +147,24 @@ async function mirrorOf(deps: ApiDeps, accountId: string, mailboxId: string): Pr
  * margin, and a folder with no room left reads `budget` rather than being asked. A per-folder
  * miss retires the connection, so the folders after it read `dropped` at once.
  */
-export async function reconcileMailbox(
+export async function selfCheckMailbox(
   deps: ApiDeps, accountId: string, mailboxId: string,
   opts: { budgetMs?: number; folderMs?: number } = {},
-): Promise<MailboxReconcile> {
-  const budgetMs = opts.budgetMs ?? RECONCILE_BUDGET_MS;
-  const folderMs = opts.folderMs ?? RECONCILE_FOLDER_DEADLINE_MS;
+): Promise<MailboxCheck> {
+  const budgetMs = opts.budgetMs ?? MAILBOX_CHECK_BUDGET_MS;
+  const folderMs = opts.folderMs ?? MAILBOX_CHECK_FOLDER_DEADLINE_MS;
   const startedAt = Date.now();
   const left = (): number => budgetMs - (Date.now() - startedAt);
   const checkedAt = (deps.now?.() ?? new Date()).toISOString();
   const held = await mirrorOf(deps, accountId, mailboxId);
   const answers = new Map<string, Answer>();
-  let fallback: ReconcileUnreadable = "budget";
+  let fallback: CheckUnreadable = "budget";
   if (held.length > 0) {
     let dialled = false;
     try {
       await withinDoorBudget(deps, mailboxId, async (adapter) => {
         dialled = true;
-        for (const f of held.slice(0, RECONCILE_FOLDERS_MAX)) {
+        for (const f of held.slice(0, MAILBOX_CHECK_FOLDERS_MAX)) {
           const room = left() - MARGIN_MS;
           if (room < FOLDER_MIN_MS) break;
           try {
@@ -177,10 +177,10 @@ export async function reconcileMailbox(
       }, { budgetMs: Math.max(1, left()) });
     } catch (err) {
       fallback = !dialled ? dialClass(err) : isImapDoorTimeout(err) ? "budget" : "dropped";
-      deps.logger?.warn?.("mailbox_reconcile_read_failed", { mailboxId, err });
+      deps.logger?.warn?.("mailbox_self_check_read_failed", { mailboxId, err });
     }
   }
-  const folders = held.map((f): FolderReconcile => {
+  const folders = held.map((f): FolderCheck => {
     const a = answers.get(f.folder);
     return a === undefined ? { folder: f.folder, k: "unreadable", error: fallback } : compareFolder(f, a);
   });

@@ -1713,7 +1713,7 @@ export const mailboxes = {
    * folder under one bounded budget. Read-only on both sides; the answer is narrowed by the pane
    * (`shell/MailboxSelfCheck.tsx`), so it is typed `unknown` here.
    */
-  selfCheck: (id: string) => api<unknown>(`/mailboxes/${encodeURIComponent(id)}/reconcile`),
+  selfCheck: (id: string) => api<unknown>(`/mailboxes/${encodeURIComponent(id)}/self-check`),
 
   /**
    * Ask Cloud to organize a mailbox it stood down from. It authorizes ONE attempt and does not win anything: the
