@@ -19,6 +19,7 @@ import { ACCESS_VERDICT_PREFIX, HANDOFF_KEY } from "./shell/wall-lift";
 import { SEND_LOCKS_PREFIX } from "./shell/send-lock";
 import { SESSION_MINTED_KEY } from "./session-refresh";
 import { ERASED_KEY } from "./shell/account-erased";
+import { postSignedOut } from "./signed-out-signal";
 
 /**
  * The one correct way to sign out of the web client. `POST /auth/logout` revokes the session and clears
@@ -111,6 +112,12 @@ export async function forgetThisBrowser(
   if (only) { /* the binding is the erased door's wall, not a sign-out's */ }
   else if (opts.serverHeld) blockApiOwner();
   else bindApiOwner(null);
+  /*
+   * EVERY OTHER TAB OF THIS ACCOUNT LEAVES TOO, told once the marker has stopped naming it (a
+   * receiving tab obeys only a jar that no longer does) and before the wipe, so no tab keeps
+   * painting mail the next person at this browser would read. See `signed-out-signal.ts`.
+   */
+  postSignedOut(owner ?? null);
   /*
    * The wake registration goes first, before the id that names it is swept. This browser is the only party that knows
    * which push row is its own (the server's prune is device-scoped and a browser ceremony mints no device row), and

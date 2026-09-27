@@ -33,6 +33,7 @@ import { SubscriptionSection, useManageOffer } from "./SubscriptionSection";
 import { beginOAuthReturn } from "./oauth-return";
 import { useCloudFirstRun } from "./useCloudFirstRun";
 import { useFirstPaintGate } from "./useFirstPaintGate";
+import { useSignedOutElsewhere } from "./useSignedOutElsewhere";
 
 /**
  * The Microsoft consent return, at module scope — before the router, before
@@ -77,6 +78,12 @@ export function CloudShell({ demo }: { demo: boolean }) {
    * is what stops the hydration mismatch `useDemoMode` exists to prevent.
    */
   const resolvedDemo = useResolvedDemoModeFrom(demo);
+  /** Another tab of this browser signed out: the shell goes in the same task and the tab leaves. */
+  const { gone: signedOutHere, confirmed: listenFor } = useSignedOutElsewhere(resolvedDemo, resolveOwnerOutcome);
+  const onConfirmed = useCallback((accountId: string) => {
+    bindApiOwner(accountId);
+    listenFor(accountId);
+  }, [listenFor]);
   /**
    * Is this tab still the app this origin serves? A browser client is downloaded once and left
    * running, and nothing tells open tabs about a deployment. The watch asks `/version` occasionally
@@ -208,6 +215,9 @@ export function CloudShell({ demo }: { demo: boolean }) {
     return items.map(toMailboxFacts);
   }, []);
 
+  // After every hook: the tab is leaving, and nothing of the mailbox may paint again.
+  if (signedOutHere) return <div className="gate" aria-busy="true" />;
+
   // Three injected panes, for the reason `resolveOwner` is a prop: the
   // shell is shared with the standalone desktop, which builds without
   // `app/api-client`; `AppShell` withholds all three in demo mode.
@@ -257,7 +267,7 @@ export function CloudShell({ demo }: { demo: boolean }) {
         resolveOwner={resolveOwner}
         /* The classifier answers; THIS commits. See `EngineProvider.onConfirmed` for why the
            binding cannot live inside `resolveOwnerOutcome`. */
-        onConfirmed={bindApiOwner}
+        onConfirmed={onConfirmed}
         /* WITHHELD ON THE DEMO, and this is the shared shell's own rule rather than a new one:
            an absent probe already MEANS "no roster and never will be — the desktop, the demo",
            and the host is the only thing that knows which it is. Handed over unconditionally,
