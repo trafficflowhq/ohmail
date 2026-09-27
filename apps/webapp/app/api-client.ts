@@ -2661,11 +2661,10 @@ export function forgetAccess(): void {
 
 export const account = {
   /**
-   * `DELETE /account` — Art. 17 erasure. `stepUp`-gated, and unlike `POST /mailboxes` there is no window in which a
-   * caller is already fresh: nothing but a completed second factor sets `sessions.last_twofa_at`, and the window is
-   * five minutes. So `AccountSection` runs the sign-in ceremony immediately before calling this, rather than calling
-   * it optimistically and translating the 403. No body: `withRequestGuard` only demands `application/json` of a
-   * request that HAS one, and this call's whole payload is the session it is authenticated by.
+   * `DELETE /account` — Art. 17 erasure. `stepUp`-gated: `AccountSection` calls it on the press, answers a 403
+   * `step_up_required` with the step-up prompt (which re-stamps this session, never a new sign-in) and calls it once
+   * more. No body: `withRequestGuard` only demands `application/json` of a request that HAS one, and this call's
+   * whole payload is the session it is authenticated by.
    */
   /*
    * ON THE CEREMONY LIST, and it was the one real writer the hand-written census missed.

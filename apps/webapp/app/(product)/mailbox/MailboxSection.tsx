@@ -11,14 +11,12 @@
  */
 
 /**
- * So the ceremony runs on submit, in place. The window is not widened — five minutes is the right
- * number for a route that writes an IMAP credential. As in `AccountSection`: nothing refreshes
- * `sessions.last_twofa_at` except completing a login, so a person in their mailbox is essentially
- * never step-up fresh, and "try it and translate the 403" fails for everyone. Password and second
- * factor are asked AFTER the credentials are typed — the clock starts when the slow part is done,
- * so the five minutes are spent on a passkey tap, not a trip to Google. The typed form is held
- * across the ceremony and submitted the instant the factor verifies; a stray `step_up_required`
- * returns to the factor step with the form intact.
+ * So the step-up runs on submit, in place, and the window is not widened: five minutes is the right
+ * number for a route that writes an IMAP credential. Every write is TRIED first; `step_up_required`
+ * parks it with its body and opens {@link StepUpPrompt}, which re-stamps the session this browser
+ * holds, and the verified factor re-runs the parked write once. A fresh window sees no prompt, and
+ * no confirmation signs in again — each sign-in was one more session on the Devices list. A second
+ * `step_up_required` after a verified factor is said, never prompted again.
  */
 
 /**
@@ -41,20 +39,17 @@ import {
    stage lives in the shared shell above every pane, so a person who opens it from here keeps the
    app behind it and lands back in this pane when they leave. */
 import { goFirstRun } from "../../shell/routing";
-import { useCeremonyGeneration } from "../ceremony-generation";
 import {
   apiConfigured,
   account,
-  assertPasskey,
   auth,
   codeOf,
   mailboxes as mailboxApi,
   messageOf,
-  webauthnAvailable,
+  type CreateMailboxBody,
   type MailboxDTO,
   type MailboxErasure,
   type OrganizerPeek,
-  type TwofaChallenge,
   type UpdateMailboxBody,
   boundApiOwner,
 } from "../../api-client";
@@ -79,26 +74,22 @@ import { displayAddress } from "../../shell/idn";
 /* WHICH BUILD THIS IS, at compile time — the same constant `AccountSection` and `LoginScreen`
    read for the same kind of question. It decides one word of copy below and nothing else. */
 import { SELF_HOST_BUILD } from "../../hello";
+import { StepUpPrompt } from "./StepUpPrompt";
+import { gatedRefusal } from "./gated-refusal";
 
 /**
  * `list` → the pane at rest. `form` → typing credentials for a NEW mailbox. `edit` → changing the
- * server settings or app password of one that already exists. Both funnel into the same two
- * ceremony steps (`password` → `factor`), because `POST` and `PATCH` are both step-up-gated and
- * both write a credential — the only thing that differs is which call the verified factor makes.
+ * server settings or app password of one that already exists. `remove` is the CONFIRMATION, not
+ * the removal. Each submits its write directly: `POST`, `PATCH` and `DELETE /mailboxes/:id` are all
+ * step-up gated, so a closed window lands on `stepup` — the prompt, with the write parked — and the
+ * verified factor re-runs it. `saving` is a write in flight.
  */
-/**
-  * `"remove"` is the CONFIRMATION, not the removal: it states the consequences and asks. The
-  * removal itself runs from `"factor"` like every other write that touches a stored credential —
-  * `DELETE /mailboxes/:id` is step-up gated for the mirror image of `create`'s reason, because it
-  * DESTROYS one.
-  */
-type Stage = "list" | "form" | "edit" | "remove" | "password" | "factor" | "saving";
-type Factor = "webauthn" | "totp" | "recovery_code";
+type Stage = "list" | "form" | "edit" | "remove" | "stepup" | "saving";
 
 /**
  * What a take-over press did, for the one caller that has to tell two refusals apart. `step_up`
- * has already PLACED the person — at the password step, with the ask still standing — so landing
- * them anywhere else would throw the ceremony away; `refused` and `settled` both belong on the
+ * is a closed window: the caller parks the ask and opens the prompt, so landing the person
+ * anywhere else would throw the ask away; `refused` and `settled` both belong on the
  * list the row is on. `behind` is a settled press whose re-read has not answered — it stays put.
  */
 type TakeoverVerdict = "settled" | "behind" | "step_up" | "refused";
@@ -397,6 +388,8 @@ export function useLatestWins(alive: { current: boolean }): () => LatestWins {
 
 export function MailboxSection() {
   const t = useTranslations("mailboxes");
+  /* The step-up prompt's namespace, for the one sentence a gated write says when signing in is the remedy. */
+  const td = useTranslations("devices");
   /* Who files a mailbox this pane's server organizes: ohmail Cloud, or the self-hosted server. */
   const filer = webFiler(SELF_HOST_BUILD);
   /**
@@ -450,7 +443,6 @@ export function MailboxSection() {
    * them puts a false sentence on screen: see `refresh`.
    */
   const [listFailed, setListFailed] = useState(false);
-  const [email, setEmail] = useState<string | null>(null);
   /** `null` until the session read answers, and `null` for ever if it never does. */
   const [emailVerified, setEmailVerified] = useState<boolean | null>(null);
   /** The server's own entitlement verdict; `null` while unread or unreadable. */
@@ -463,13 +455,12 @@ export function MailboxSection() {
   const [gateRead, setGateRead] = useState(false);
   const [stage, setStage] = useState<Stage>("list");
   /**
-   * THE MAILBOX A REMOVAL IS ABOUT, held for the whole ceremony.
+   * THE MAILBOX A REMOVAL IS ABOUT, held from the confirmation to the write.
    *
-   * The row it came from can leave the list under a refresh mid-ceremony, so the DTO is captured
-   * rather than looked up again at the end — a removal that resolved its target at confirm time
-   * could act on a different mailbox than the one the confirmation named. Mutually exclusive with
-   * `editing` by construction: both are entered from a resting list, and `finishCeremony` reads
-   * them in a fixed order.
+   * The row it came from can leave the list under a refresh while the confirmation or the prompt
+   * is up, so the DTO is captured rather than looked up again at the end — a removal that resolved
+   * its target at press time could act on a different mailbox than the one the confirmation named.
+   * Mutually exclusive with `editing` by construction: both are entered from a resting list.
    */
   const [removing, setRemoving] = useState<MailboxDTO | null>(null);
   /**
@@ -488,18 +479,21 @@ export function MailboxSection() {
   const [erasingFor, setErasingFor] = useState<{ receipt: MailboxErasure; address: string } | null>(null);
   const [typed, setTyped] = useState<Typed>(emptyTyped);
   /**
-   * The mailbox being edited, or `null` in the connect flow. It is what the ceremony's final step
-   * reads to decide between `PATCH` and `POST`, and it carries the address the edit form shows —
+   * The mailbox being edited, or `null` in the connect flow. It is what the edit's submit reads
+   * to address the `PATCH`, and it carries the address the edit form shows —
    * the stored host/port/user are NOT on the wire (credentials never leave the server), so the
    * form starts empty and an untouched field keeps whatever is stored.
    */
   const [editing, setEditing] = useState<MailboxDTO | null>(null);
   const [edited, setEdited] = useState<EditForm>(emptyEdit);
-  const [password, setPassword] = useState("");
-  const [challenge, setChallenge] = useState<TwofaChallenge | null>(null);
-  const [method, setMethod] = useState<Factor>("webauthn");
-  const [code, setCode] = useState("");
-  const [busy, setBusy] = useState(false);
+  /**
+   * THE WRITE A CLOSED STEP-UP WINDOW REFUSED, parked while {@link StepUpPrompt} runs: `run` is
+   * the same write with the same body, re-run once by the verified factor; `back` is where Cancel
+   * returns, with everything typed still held. `stepUpDiscarded`: a factor landed after Cancel and
+   * the write did not run — said by the pane, because Cancel took the prompt off the screen.
+   */
+  const [parked, setParked] = useState<{ run: () => Promise<void>; back: Stage } | null>(null);
+  const [stepUpDiscarded, setStepUpDiscarded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /**
    * The server said `tls_unavailable`: the ONLY state in which the plaintext opt-in renders.
@@ -509,7 +503,6 @@ export function MailboxSection() {
   const [insecureOffer, setInsecureOffer] = useState(false);
   /** A canonical-host suggestion from a hostname-mismatch refusal, and which field it corrects. */
   const [suggestion, setSuggestion] = useState<{ host: string; transport: "imap" | "smtp" } | null>(null);
-  const [noFactor, setNoFactor] = useState(false);
   /** Re-render clock, so the relative "synced 2 minutes ago" stays true while the pane is open. */
   const [now, setNow] = useState(() => Date.now());
   /** Mailboxes whose resync this pane has queued — a press the server has not been given yet.
@@ -643,14 +636,6 @@ export function MailboxSection() {
   /** The pane can be navigated away from mid-ceremony; nothing may set state after that. */
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
-
-  /**
-   * THE CEREMONY'S GENERATION, the same one the account erase runs on. Back used to leave the
-   * verify in flight, so a response landing after the press still removed, edited, connected or
-   * took over a mailbox — the ceremony was over and the closure did not know. Both factor paths
-   * capture it before their first `await` and `finishCeremony` is the one door that compares.
-   */
-  const ceremony = useCeremonyGeneration();
 
   /**
    * LATEST WINS — a response is applied only if it is NEWER than what is displayed.
@@ -842,14 +827,11 @@ export function MailboxSection() {
   const [pressing, setPressing] = useState<string | null>(null);
 
   /**
-   * THE MAILBOX A TAKE-OVER IS ABOUT, held across the step-up ceremony — the fourth thing a
-   * verified factor can make, beside a create, a patch and a delete.
-   *
-   * `POST /mailboxes/:id/organize` is step-up gated, and nothing refreshes `sessions.last_twofa_at`
-   * except completing a login: this file's own header says a person sitting in their mailbox is
-   * essentially never step-up fresh. So the press almost always answered 403 and this pane printed
-   * the refusal and stopped — on the one row whose only remedy is that press. The gating does not
-   * change and the window is not widened; what changes is where the refusal LEAVES somebody.
+   * THE MAILBOX A TAKE-OVER IS ABOUT while its press is parked behind the prompt and run again —
+   * the fourth write a verified factor re-runs, beside a create, a patch and a delete — and the
+   * word the saving line takes. `POST /mailboxes/:id/organize` is step-up gated, so a press on a
+   * closed window used to print the refusal and stop, on the one row whose only remedy is that
+   * press. The gating does not change and the window is not widened.
    */
   const [takeoverFor, setTakeoverFor] = useState<string | null>(null);
 
@@ -889,7 +871,7 @@ export function MailboxSection() {
     }
   }, [afterWrite, filer, listWins, t]);
 
-  const confirmTakeover = useCallback(async (id: string): Promise<TakeoverVerdict> => {
+  const confirmTakeover = useCallback(async (id: string, afterFactor = false): Promise<TakeoverVerdict> => {
     setError(null);
     setTakingOver((q) => new Set(q).add(id));
     setPressing(id);
@@ -912,25 +894,22 @@ export function MailboxSection() {
     } catch (err) {
       if (!wins.publish()) return "refused";
       setOrganizer(null);
-      setError(messageOf(err));
       // Nothing was asked for, so the way back must stay reachable — see `takingOver`.
       setTakingOver((q) => { const n = new Set(q); n.delete(id); return n; });
-      /* THE REFUSAL THAT IS NOT A DEAD END. The window closed — or, on this route, was never open
-         — so the ceremony runs here, in place, exactly as it does for a create or a patch, and
-         the ask is held in `takeoverFor` until a factor verifies. The verdict is returned rather
-         than inferred by the caller: a second refusal must leave the person at the factor step,
-         and the stage this sets is not readable from the closure that just called us. */
-      if (codeOf(err) === "step_up_required") {
+      /* THE REFUSAL THAT IS NOT A DEAD END. A closed window is answered in place, as for a create
+         or a patch: the verdict tells the caller to park the press behind the prompt, since the
+         stage that sets is not readable from here. After a verified factor it is a sentence. */
+      const why = gatedRefusal(err, afterFactor);
+      if (why === "factor") {
         setTakeoverFor(id);
-        setChallenge(null);
-        setStage("password");
         return "step_up";
       }
+      setError(why === "sign-in" ? td("stepUpExpired") : messageOf(err));
       return "refused";
     } finally {
       if (alive.current) setPressing((p) => (p === id ? null : p));
     }
-  }, [afterWrite, filer, listWins, t]);
+  }, [afterWrite, filer, listWins, t, td]);
 
   /**
    * The server's entitlement verdict, read before anything is typed.
@@ -974,7 +953,6 @@ export function MailboxSection() {
       try {
         const { user, scope } = await auth.session();
         if (!alive.current || scope !== "full") return;
-        setEmail(user.email);
         // For the persisted-ceremony owner check only — see `StoredDevice.accountId`. The ref is
         // written FIRST so an in-flight `startDeviceFlow` can read it the moment it lands, without
         // waiting for the re-render that `setAccountId` schedules.
@@ -1496,58 +1474,69 @@ export function MailboxSection() {
     retireHostEvidence();
   };
 
-  const fail = (err: unknown): void => {
-    // A failed ceremony is over: end it, so a response landing later cannot act on it either.
-    ceremony.end();
+  /**
+   * A WRITE A CLOSED WINDOW REFUSED, parked: the prompt opens, and the verified factor runs `run` —
+   * the same write with the same body — once. `back` is where Cancel returns; nothing typed is lost.
+   */
+  const park = (run: () => Promise<void>, back: Stage): void => {
     if (!alive.current) return;
-    setError(messageOf(err));
-    // The window closed mid-ceremony. Back to the FACTOR step, with the typed credentials
-    // still in state — the one thing this pane exists to stop losing.
-    if (codeOf(err) === "step_up_required") {
-      setStage("password");
-      setChallenge(null);
-    }
-    setBusy(false);
+    setError(null);
+    setStepUpDiscarded(false);
+    setParked({ run, back });
+    setStage("stepup");
   };
 
-  /** The last step, reached only from a verified second factor. */
+  /**
+   * Any other refused write, said. Signing in is the remedy after a verified factor, on a dead
+   * session and on an unfinished enrolment (`gatedRefusal`); the caller has already put the person
+   * back where they typed, and nothing here touches what they typed.
+   */
+  const fail = (err: unknown, afterFactor: boolean): void => {
+    if (!alive.current) return;
+    setError(gatedRefusal(err, afterFactor) === "sign-in" ? td("stepUpExpired") : messageOf(err));
+  };
+
+  /** Connect the typed mailbox. The body is built ONCE, here, so a parked re-run sends this object. */
   const connect = async (): Promise<void> => {
     // The form cannot be submitted without a provider, so this guard is structural —
-    // it exists so the ceremony can never post a mailbox nobody described.
+    // it exists so the pane can never post a mailbox nobody described.
     const chosen = typed.provider;
     if (!chosen) {
       setStage("form");
       return;
     }
+    const address = typed.address.trim();
+    await sendCreate(chosen.manual === true, {
+      provider: chosen.id,
+      address,
+      imap: {
+        host: typed.imapHost.trim(),
+        // A MANUAL provider sends no port/TLS mode: their absence asks the server's probe to
+        // walk the standard ladder (993 implicit TLS, then 143 STARTTLS) and store what it
+        // proved. Presets keep their known pair — nothing to detect there.
+        ...(chosen.manual ? {} : { port: chosen.imap.port, secure: chosen.imap.secure }),
+        user: typed.user.trim() || address, pass: typed.pass,
+        // Only ever true after the server itself reported `tls_unavailable` (the checkbox
+        // renders in no other state), and re-verified server-side before it is honored.
+        ...(typed.allowInsecure ? { allowInsecure: true } : {}),
+      },
+      smtp: {
+        host: typed.smtpHost.trim(),
+        ...(chosen.manual ? {} : { port: chosen.smtp.port, secure: chosen.smtp.secure }),
+        user: typed.user.trim() || address, pass: typed.pass,
+      },
+    }, false);
+  };
+
+  /** `POST /mailboxes`: tried at once; a closed window parks exactly this call behind the prompt. */
+  const sendCreate = async (manual: boolean, body: CreateMailboxBody, afterFactor: boolean): Promise<void> => {
     setStage("saving");
     const wins = listWins();
     try {
-      const address = typed.address.trim();
-      await mailboxApi.create({
-        provider: chosen.id,
-        address,
-        imap: {
-          host: typed.imapHost.trim(),
-          // A MANUAL provider sends no port/TLS mode: their absence asks the server's probe to
-          // walk the standard ladder (993 implicit TLS, then 143 STARTTLS) and store what it
-          // proved. Presets keep their known pair — nothing to detect there.
-          ...(chosen.manual ? {} : { port: chosen.imap.port, secure: chosen.imap.secure }),
-          user: typed.user.trim() || address, pass: typed.pass,
-          // Only ever true after the server itself reported `tls_unavailable` (the checkbox
-          // renders in no other state), and re-verified server-side before it is honored.
-          ...(typed.allowInsecure ? { allowInsecure: true } : {}),
-        },
-        smtp: {
-          host: typed.smtpHost.trim(),
-          ...(chosen.manual ? {} : { port: chosen.smtp.port, secure: chosen.smtp.secure }),
-          user: typed.user.trim() || address, pass: typed.pass,
-        },
-      });
+      await mailboxApi.create(body);
       if (!wins.publish()) return;
       // The password leaves this component the moment the server has it.
       setTyped(emptyTyped());
-      setPassword("");
-      setChallenge(null);
       setError(null);
       setInsecureOffer(false);
       setSuggestion(null);
@@ -1564,32 +1553,27 @@ export function MailboxSection() {
       afterMailboxWrite();
     } catch (err) {
       if (!wins.publish()) return;
-      // A refused probe sends the user back to the FORM, not to the factor step. Everything else `connect()` can fail
-      // with is about the account (a spent step-up, an entitlement, a duplicate); the factor step is a sensible place
-      // to stand for those. A probe refusal is about the four fields that were typed, and the factor step has no way
-      // to change them — its own escape hatch goes back only as far as the password. Leaving somebody there with
-      // "check the IMAP host" is a dead end: the login token is single-use and spent, so the one thing they can do is
-      // the one thing that screen cannot offer. `typed` is untouched, so the form comes back with the host and
-      // password still in it and the correction is a keystroke. The ceremony does have to run again — the token is
-      // spent — and that is the honest cost of having changed the credentials.
+      // Every refusal goes back to the FORM, with `typed` untouched, so a probe's "check the IMAP host"
+      // is corrected in a keystroke; only a closed window parks the write behind the prompt instead.
       const reason = probeReasonOf(err);
       if (reason) {
         setStage("form");
-        setChallenge(null);
-        setPassword("");
         // The connect form has no port field, so its refusal names none (`noPortProbeSentence`).
-        const said = noPortProbeSentence(err, chosen.manual === true);
+        const said = noPortProbeSentence(err, manual);
         setError(said ? t(said.key, { field: said.field }) : probeErrorCopy(err, reason));
-        setBusy(false);
         return;
       }
-      setStage("factor");
-      fail(err);
+      if (gatedRefusal(err, afterFactor) === "factor") {
+        park(() => sendCreate(manual, body, true), "form");
+        return;
+      }
+      setStage("form");
+      fail(err, afterFactor);
     }
   };
 
   /**
-   * The last step of an EDIT, reached only from a verified second factor — the PATCH sibling of {@link connect}. A
+   * The EDIT's write, the PATCH sibling of {@link connect}: tried at once, parked on a closed window. A
    * REFUSED PROBE LEAVES THE EXISTING MAILBOX RUNNING: This is the whole point of the flow and the reason it goes
    * through the probe at all. The server tries the new credentials BEFORE it stores them, so a wrong password (or a
    * mistyped host) is answered `mailbox_probe_failed` and NOTHING is written: the stored credential is left in place,
@@ -1599,23 +1583,26 @@ export function MailboxSection() {
    */
   const saveEdit = async (): Promise<void> => {
     const target = editing;
-    // Structural, like `connect`'s provider guard: the ceremony cannot be entered without a
+    // Structural, like `connect`'s provider guard: the form cannot be submitted without a
     // mailbox to edit, so this only ever fires if the flow was left in an impossible state.
     if (!target) {
       setStage("list");
       return;
     }
+    // The `smtp` block only when an SMTP field was typed — see {@link smtpPatchOf}.
+    const smtp = smtpPatchOf(edited);
+    await sendEdit(target.id, { imap: imapPatchOf(edited), ...(smtp ? { smtp } : {}) }, false);
+  };
+
+  /** `PATCH /mailboxes/:id` with its body built once; a closed window parks exactly this call. */
+  const sendEdit = async (id: string, body: UpdateMailboxBody, afterFactor: boolean): Promise<void> => {
     setStage("saving");
     const wins = listWins();
     try {
-      // The `smtp` block only when an SMTP field was typed — see {@link smtpPatchOf}.
-      const smtp = smtpPatchOf(edited);
-      await mailboxApi.update(target.id, { imap: imapPatchOf(edited), ...(smtp ? { smtp } : {}) });
+      await mailboxApi.update(id, body);
       if (!wins.publish()) return;
       // The password leaves this component the moment the server has it.
       setEdited(emptyEdit());
-      setPassword("");
-      setChallenge(null);
       setError(null);
       setInsecureOffer(false);
       setSuggestion(null);
@@ -1630,23 +1617,22 @@ export function MailboxSection() {
       if (!wins.publish()) return;
       const reason = probeReasonOf(err);
       if (reason) {
-        // Back to the EDIT form, not the factor step: the factor screen cannot change a host or a
-        // password, and the login token is spent, so standing there with "check the IMAP host"
-        // would be a dead end. `edited` is untouched, so the correction is a keystroke.
+        // Back to the EDIT form: `edited` is untouched, so the correction is a keystroke.
         setStage("edit");
-        setChallenge(null);
-        setPassword("");
         setError(probeErrorCopy(err, reason));
-        setBusy(false);
         return;
       }
-      setStage("factor");
-      fail(err);
+      if (gatedRefusal(err, afterFactor) === "factor") {
+        park(() => sendEdit(id, body, true), "edit");
+        return;
+      }
+      setStage("edit");
+      fail(err, afterFactor);
     }
   };
 
   /**
-   * REMOVE THE MAILBOX — reached only from a verified second factor, like every other write here. The server does the
+   * REMOVE THE MAILBOX — tried at once and parked on a closed window, like every other write here. The server does the
    * whole of it in one transaction: the row goes `disabled` with its lease and sync columns cleared, the credential
    * rows are deleted, and the pending scheduled sends are closed with a sentence. Nothing here reaches the IMAP
    * mailbox, which is the claim the confirmation makes. A failure returns to the CONFIRMATION rather than to the
@@ -1659,17 +1645,20 @@ export function MailboxSection() {
       setStage("list");
       return;
     }
+    await sendRemove(target, eraseChosen ? eraseTyped : null, false);
+  };
+
+  /** The DELETE, with the choice and the typed address as they were pressed; a parked re-run sends the same. */
+  const sendRemove = async (target: MailboxDTO, eraseConfirm: string | null, afterFactor: boolean): Promise<void> => {
     setStage("saving");
     const wins = listWins();
     try {
       /* THE ERASE ARM sends the address as TYPED; the server compares it with this row and
          answers the receipt, which is said in one sentence before the list comes back. */
-      const receipt = eraseChosen
-        ? await mailboxApi.erase(target.id, eraseTyped)
+      const receipt = eraseConfirm !== null
+        ? await mailboxApi.erase(target.id, eraseConfirm)
         : (await mailboxApi.remove(target.id), null);
       if (!wins.publish()) return;
-      setPassword("");
-      setChallenge(null);
       setError(null);
       // A finished repeat is said at once; a running erasure when its row leaves the list.
       if (receipt?.erasing) setErasingFor({ receipt, address: target.address });
@@ -1689,12 +1678,14 @@ export function MailboxSection() {
       /* A MISTYPED ADDRESS, refused by the server before it wrote anything: said at the
          confirmation in this pane's words, with the typed value kept for the correction. */
       if (codeOf(err) === "erase_not_confirmed") {
-        ceremony.end();
         setError(t("removeEraseMismatch"));
-        setBusy(false);
         return;
       }
-      fail(err);
+      if (gatedRefusal(err, afterFactor) === "factor") {
+        park(() => sendRemove(target, eraseConfirm, true), "remove");
+        return;
+      }
+      fail(err, afterFactor);
     }
   };
 
@@ -1720,109 +1711,22 @@ export function MailboxSection() {
   }, [items, erasingFor]);
 
   /**
-   * THE TAKE-OVER, RUN FROM A VERIFIED FACTOR — the ceremony's fourth ending. It re-presses the
-   * same authorization the row's button presses; what the ceremony bought is a fresh
-   * `last_twofa_at`, nothing more.
+   * THE TAKE-OVER, RE-RUN FROM A VERIFIED FACTOR — the same authorization the row's button presses;
+   * what the factor bought is a fresh `last_twofa_at` on this session, nothing more.
    */
   const finishTakeover = async (id: string): Promise<void> => {
     setStage("saving");
-    const verdict = await confirmTakeover(id);
+    const verdict = await confirmTakeover(id, true);
     if (!alive.current) return;
-    // A second refusal has put the person back at the password step with the ask still held;
-    // landing them on the list here would discard the ceremony they are halfway through.
-    if (verdict === "step_up") return;
     setTakeoverFor(null);
     // A press whose re-read has not answered stays at this stage; the next read moves it.
     if (verdict !== "behind") setStage("list");
   };
 
-  /**
-   * Which write the verified factor makes. A take-over authorizes, a removal DELETEs, an edit
-   * PATCHes, else it creates. `takeoverFor` is read FIRST and the four are mutually exclusive by
-   * construction — each is entered from a resting list.
-   */
-  const finishCeremony = async (gen: number): Promise<void> => {
-    // THE ONE DOOR. A verify that lands after Back performs nothing and says so — the mailbox
-    // write is reversible, which is why this was a row and not the erase's fix, but "reversible"
-    // is not "asked for": nobody consented to a take-over they backed out of.
-    if (!ceremony.claim(gen)) {
-      setBusy(false);
-      return;
-    }
-    await (takeoverFor ? finishTakeover(takeoverFor)
-      : removing ? removeMailbox() : editing ? saveEdit() : connect());
-  };
-
-  const submitPassword = (e: React.FormEvent): void => {
-    e.preventDefault();
-    if (!email) return;
-    setBusy(true);
-    setError(null);
-    // BEFORE the first await, as the factor steps do: a step back during the login ends this
-    // ceremony, and a login that lands after it must not return the pane to the factor step.
-    const gen = ceremony.begin();
+  /** A take-over press from a row: tried at once, and a closed window parks it behind the prompt. */
+  const pressTakeover = (id: string): void => {
     void (async () => {
-      try {
-        const out = await auth.login({ email, password });
-        if (!ceremony.claim(gen)) { setBusy(false); return; }
-        setPassword("");
-        if (out.status === "enrollment") {
-          setNoFactor(true);
-          setBusy(false);
-          return;
-        }
-        setChallenge(out);
-        setMethod(
-          out.methods.includes("webauthn") && webauthnAvailable() ? "webauthn"
-            : out.methods.includes("totp") ? "totp" : out.methods[0]!,
-        );
-        setStage("factor");
-        setBusy(false);
-      } catch (err) {
-        fail(err);
-      }
-    })();
-  };
-
-  const finishWithPasskey = (): void => {
-    if (!challenge) return;
-    setBusy(true);
-    setError(null);
-    // BEFORE the first await: this closure's identity is the ceremony it started in, never
-    // whichever one is current when its response happens to land.
-    const gen = ceremony.begin();
-    void (async () => {
-      try {
-        const { options } = await auth.webauthnAssertOptions({ loginToken: challenge.loginToken });
-        const credential = await assertPasskey(options);
-        await auth.webauthnAssertVerify({ loginToken: challenge.loginToken, credential });
-        await finishCeremony(gen);
-      } catch (err) {
-        fail(err);
-      }
-    })();
-  };
-
-  const finishWithCode = (e: React.FormEvent): void => {
-    e.preventDefault();
-    if (!challenge) return;
-    setBusy(true);
-    setError(null);
-    // Same capture as the passkey path — a SEPARATE path, so a fix to one of them would be
-    // half-applied by construction.
-    const gen = ceremony.begin();
-    void (async () => {
-      try {
-        if (method === "recovery_code") {
-          await auth.recoveryVerify({ loginToken: challenge.loginToken, code: code.trim() });
-        } else {
-          await auth.totpVerify({ loginToken: challenge.loginToken, code: code.trim() });
-        }
-        setCode("");
-        await finishCeremony(gen);
-      } catch (err) {
-        fail(err);
-      }
+      if ((await confirmTakeover(id)) === "step_up") park(() => finishTakeover(id), "list");
     })();
   };
 
@@ -1867,15 +1771,6 @@ export function MailboxSection() {
   if (!apiConfigured()) {
     return <SettingsSection><p className="acct-lead">{t("unavailable")}</p></SettingsSection>;
   }
-  if (noFactor) {
-    return (
-      <SettingsSection>
-        <h2 className="acct-h">{t("noFactorTitle")}</h2>
-        <p className="acct-lead">{t("noFactorBody")}</p>
-      </SettingsSection>
-    );
-  }
-
   const connected = items ?? [];
   /**
    * "The mirror is growing" is an ACCOUNT-wide fact; a row is about ONE mailbox. With exactly
@@ -2198,7 +2093,7 @@ export function MailboxSection() {
                   <Button
                     className="mbx-btn"
                     disabled={takingOver.has(m.id)}
-                    onClick={() => { void confirmTakeover(m.id); }}
+                    onClick={() => pressTakeover(m.id)}
                   >
                     {t("organizeHere")}
                   </Button>
@@ -2214,7 +2109,7 @@ export function MailboxSection() {
                       now={now}
                       spent={pressing === m.id}
                       onCancel={() => { setOrganizer(null); }}
-                      onConfirm={() => { void confirmTakeover(m.id); }}
+                      onConfirm={() => pressTakeover(m.id)}
                     />
                   ) : (
                     <>
@@ -2477,8 +2372,8 @@ export function MailboxSection() {
                       somebody with database access.
 
                       It opens a CONFIRMATION, never the removal: the press that destroys a
-                      stored credential is two screens away, behind the account's own second
-                      factor, which is the same gate connecting a mailbox passes. */}
+                      stored credential is on the next screen, behind the account's own second
+                      factor whenever its window is closed — the gate connecting a mailbox passes. */}
                   <Button
                     className="mbx-btn"
                     onClick={() => {
@@ -2563,10 +2458,10 @@ export function MailboxSection() {
       ) : null}
 
       {error ? <p className="acct-warn" role="alert">{error}</p> : null}
-      {/* The check came back after Back was pressed and was thrown away. Not an alert — the
-          person got what they asked for — but it must be SAID: the pane they return to looks
+      {/* A factor came back after the prompt's Cancel and its write was thrown away. Not an alert —
+          the person got what they asked for — but it must be SAID: the pane they return to looks
           exactly like one where nothing was ever started. */}
-      {ceremony.discarded ? (
+      {stepUpDiscarded ? (
         <p className="acct-warn" role="status">{t("cancelledNothingChanged")}</p>
       ) : null}
       {/* A settled outcome, not an alert. `role="status"` so it is announced without interrupting. */}
@@ -2655,10 +2550,10 @@ export function MailboxSection() {
             if (!typed.provider) return;
             setError(null);
             // Microsoft, armed door: Continue IS the consent ceremony — a top-level navigation to
-            // Microsoft, not the account-password step. Every other provider (and Microsoft when the
-            // door is shut or the app-password fallback was chosen) goes to the password step.
+            // Microsoft. Every other provider (and Microsoft when the door is shut or the
+            // app-password fallback was chosen) connects now.
             if (microsoftOauth) { startOutlook(); return; }
-            setStage("password");
+            void connect();
           }}
         >
           {/* The shared picker (also the /join mailbox step — one component, so the two
@@ -2844,7 +2739,7 @@ export function MailboxSection() {
               return;
             }
             setError(null);
-            setStage("password");
+            void saveEdit();
           }}
         >
           {/* The heading names the mailbox readably; `editing.address` is what the PATCH carries. */}
@@ -3018,15 +2913,14 @@ export function MailboxSection() {
             }}>
               {t("removeCancel")}
             </Button>
-            {/* It does not remove anything — it enters the step-up. The account asks for a fresh
-                second factor before it will destroy a stored credential, and this button is
-                honest about being the start of that rather than the end of it. */}
+            {/* The press removes. On a closed step-up window the account asks for a fresh second
+                factor first, and the removal runs the moment it verifies. */}
             {/* `primary danger` — the account section's own convention for a destructive
                 confirm (`AccountSection.tsx`), so the two read as one product. */}
             <Button
               variant="primary" className="danger"
               disabled={eraseChosen && eraseTyped.trim() === ""}
-              onClick={() => { setError(null); setStage("password"); }}
+              onClick={() => { setError(null); void removeMailbox(); }}
             >
               {eraseChosen ? t("removeEraseConfirm") : t("removeConfirm")}
             </Button>
@@ -3034,111 +2928,32 @@ export function MailboxSection() {
         </div>
       ) : null}
 
-      {stage === "password" ? (
-        <form className="acct-confirm" onSubmit={submitPassword}>
-          <h3 className="acct-sub">{t("confirmTitle")}</h3>
-          {/* Says WHY, because being asked to re-enter a password one screen after typing a
-              different one is otherwise indistinguishable from a bug. */}
-          <p className="acct-fine">{t("confirmBody")}</p>
-          <label className="join-label" htmlFor="mb-acct-email">{t("accountEmailLabel")}</label>
-          <input id="mb-acct-email" className="join-input" type="email" value={email ?? ""} readOnly />
-          <label className="join-label" htmlFor="mb-acct-pw">{t("accountPasswordLabel")}</label>
-          <input
-            id="mb-acct-pw" className="join-input" type="password" autoComplete="current-password"
-            value={password} onChange={(e) => setPassword(e.target.value)} required
-          />
-          <div className="acct-actions">
-            <Button variant="primary" type="submit" disabled={busy || !email}>
-              {busy ? t("working") : t("continue")}
-            </Button>
-            {/* Back to whichever form we came from — both still hold every typed field. A
-                take-over has no form behind it: the ask was one press on a row, so back is the
-                list that row is on, and the ask is dropped with it rather than left standing
-                against the next factor somebody verifies for something else. */}
-            <Button onClick={() => {
-              // THE BUMP COMES FIRST — it is what makes a request already in flight discard its
-              // result; everything after it is housekeeping. `busy` is released here too, or a
-              // ceremony left mid-request leaves Continue disabled with nothing to re-enable it.
-              ceremony.end();
-              if (takeoverFor) setTakeoverFor(null);
-              setStage(takeoverFor ? "list" : removing ? "remove" : editing ? "edit" : "form");
-              setPassword(""); setError(null); setBusy(false);
-            }}>
-              {t("back")}
-            </Button>
-          </div>
-        </form>
-      ) : null}
-
-      {stage === "factor" ? (
-        <div className="acct-confirm">
-          <h3 className="acct-sub">{t("factorTitle")}</h3>
-          <p className="acct-fine">
-            {/* WHICH write this factor authorises. A removal is not a save, and a screen that
-                said "storing a mailbox password" over a delete would be asking for consent to
-                the wrong act. */}
-            {removing ? t(eraseChosen ? "factorBodyErase" : "factorBodyRemove")
-              : editing ? t("factorBodyEdit") : t("factorBody")}
-          </p>
-
-          {method === "webauthn" ? (
-            <div className="acct-actions">
-              <Button variant="primary" icon="shield" onClick={finishWithPasskey} disabled={busy}>
-                {busy ? t("working") : t("passkey")}
-              </Button>
-            </div>
-          ) : (
-            <form onSubmit={finishWithCode}>
-              <label className="join-label" htmlFor="mb-code">
-                {method === "recovery_code" ? t("recoveryLabel") : t("totpLabel")}
-              </label>
-              <input
-                id="mb-code" className="join-input join-code"
-                inputMode={method === "totp" ? "numeric" : "text"}
-                autoComplete="one-time-code"
-                value={code} onChange={(e) => setCode(e.target.value)}
-              />
-              <div className="acct-actions">
-                <Button variant="primary" type="submit" disabled={busy || code.trim().length === 0}>
-                  {busy ? t("working")
-                    : removing ? t(eraseChosen ? "verifyErase" : "verifyRemove")
-                      : editing ? t("verifySave") : t("verifyConnect")}
-                </Button>
-              </div>
-            </form>
+      {stage === "stepup" && parked ? (
+        /* THE PARKED WRITE'S PROMPT. The typed form, the edit and the removal's choice are held
+           behind it; the verified factor re-runs the write once, and Cancel returns to it. The
+           line above it names WHICH write the factor authorises: a removal is not a save. */
+        <>
+          {takeoverFor ? null : (
+            <p className="acct-fine">
+              {removing ? t(eraseChosen ? "factorBodyErase" : "factorBodyRemove")
+                : editing ? t("factorBodyEdit") : t("factorBody")}
+            </p>
           )}
-
-          <div className="acct-methods">
-            {challenge?.methods.includes("webauthn") && method !== "webauthn" && webauthnAvailable() ? (
-              <button type="button" className="join-alt" onClick={() => { setMethod("webauthn"); setCode(""); }}>
-                {t("usePasskey")}
-              </button>
-            ) : null}
-            {challenge?.methods.includes("totp") && method !== "totp" ? (
-              <button type="button" className="join-alt" onClick={() => { setMethod("totp"); setCode(""); }}>
-                {t("totpToggle")}
-              </button>
-            ) : null}
-            {challenge?.methods.includes("recovery_code") && method !== "recovery_code" ? (
-              <button type="button" className="join-alt" onClick={() => { setMethod("recovery_code"); setCode(""); }}>
-                {t("useRecovery")}
-              </button>
-            ) : null}
-            {/* A login token is single-use, so a retry starts from the password step — but
-                the mailbox form is untouched and is still waiting behind it. */}
-            <button
-              type="button" className="join-alt"
-              onClick={() => {
-                // Same rule as the password step above, and this is the press the row was
-                // filed against: a verify already on the wire must not write a mailbox.
-                ceremony.end();
-                setChallenge(null); setCode(""); setError(null); setBusy(false); setStage("password");
-              }}
-            >
-              {t("back")}
-            </button>
-          </div>
-        </div>
+          <StepUpPrompt
+            onVerified={() => {
+              const run = parked.run;
+              setParked(null);
+              void run();
+            }}
+            onCancel={() => {
+              const back = parked.back;
+              setParked(null);
+              setTakeoverFor(null);
+              setStage(back);
+            }}
+            onDiscarded={() => setStepUpDiscarded(true)}
+          />
+        </>
       ) : null}
 
       {stage === "saving" && !behind ? (

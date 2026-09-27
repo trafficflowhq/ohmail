@@ -11,14 +11,12 @@
  */
 
 /**
- * The step-up is re-asserted here, in place — the loop fix. `POST /auth/desktop-link` is step-up
- * gated (it mints a credential on a rolling four-hundred-day window); the page used to answer the
- * 403 by sending the visitor to `/login`, which treats a live session as "already done" and
- * bounces straight back WITHOUT re-asserting a factor — so the next mint 403'd again, round and
- * round. Nothing refreshes `sessions.last_twofa_at` except completing a factor, so one is completed
- * RIGHT HERE (the `AccountSection`/`MailboxSection` ceremony) and the mint retried the instant it
- * verifies; a plain 401 falls through the same ceremony for free, and a visitor with no factor is
- * pointed at `/join` rather than shown a dead ceremony.
+ * The step-up is re-asserted here, in place. `POST /auth/desktop-link` is step-up gated (it mints a
+ * credential on a rolling four-hundred-day window). The mint is TRIED first; `step_up_required`
+ * opens `StepUpPrompt`, which re-stamps the session this browser holds, and the verified factor
+ * retries the mint once. Nothing here signs in — each sign-in was one more web session on the
+ * account — so a browser with no session, an unfinished enrolment and a second refusal after a
+ * verified factor are each told to sign in and open this page again.
  */
 
 /**
@@ -40,18 +38,11 @@ import { pendApiOwner } from "../../api-client";
 import { readOwner } from "../../shell/owner-cookie";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import { useCeremonyGeneration } from "../ceremony-generation";
 import { Button, Icon } from "@ohmail/ui";
-import {
-  ApiError,
-  apiConfigured,
-  assertPasskey,
-  auth,
-  messageOf,
-  webauthnAvailable,
-  type TwofaChallenge,
-} from "../../api-client";
+import { apiConfigured, auth, messageOf } from "../../api-client";
 import { isBusy, retryBusy } from "../../retry-busy";
+import { StepUpPrompt } from "../mailbox/StepUpPrompt";
+import { gatedRefusal } from "../mailbox/gated-refusal";
 
 /** A live code and the moment it stops being one. */
 interface Minted {
@@ -59,13 +50,8 @@ interface Minted {
   expiresAtMs: number;
 }
 
-/**
- * `idle` is the mint button (or the code, once one exists). The other three are the in-place
- * re-assertion the step-up gate forces: a password step, a factor step, and the dead end an
- * account with no factor at all lands on.
- */
-type Phase = "idle" | "password" | "factor" | "enroll";
-type Factor = "webauthn" | "totp" | "recovery_code";
+/** `idle` is the mint button (or the code, once one exists); `stepup` is the prompt a closed window opens. */
+type Phase = "idle" | "stepup";
 
 /**
  * Where a bound code is handed back to the app. The scheme and the parameter name are a contract
@@ -75,10 +61,8 @@ type Factor = "webauthn" | "totp" | "recovery_code";
 const deepLink = (code: string): string => `ohmail://link?code=${encodeURIComponent(code)}`;
 
 /**
- * TWO DIFFERENT THINGS ARE CALLED A CHALLENGE ON THIS SCREEN, so the PKCE one is bound under
- * another name: `challenge` below is the 2FA challenge the in-place sign-in ceremony carries, and
- * `commitment` is the PKCE digest the app committed to. Same word, unrelated mechanisms — sharing
- * an identifier here would be a bug waiting for whoever edits this next.
+ * The prop is the PKCE digest the app committed to, bound here as `commitment`: `challenge` names
+ * a 2FA challenge everywhere else in this app, and the two mechanisms are unrelated.
  */
 export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: string }) {
   /**
@@ -91,7 +75,7 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
    */
   pendApiOwner(readOwner());
   const t = useTranslations("linkDesktop");
-  /** The sign-in fields and factor controls are the same words `/login` uses; read them once. */
+  /** The sign-in door's label is `/login`'s own title. */
   const tl = useTranslations("login");
 
   const [minted, setMinted] = useState<Minted | null>(null);
@@ -99,13 +83,12 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  /** Where the in-place re-assertion is, when one is running. `idle` means it is not. */
+  /** Whether the step-up prompt is up. `idle` means it is not. */
   const [phase, setPhase] = useState<Phase>("idle");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [code, setCode] = useState("");
-  const [challenge, setChallenge] = useState<TwofaChallenge | null>(null);
-  const [method, setMethod] = useState<Factor>("webauthn");
+  /** Signing in is the remedy: the mint was refused with a dead session or after a verified factor. */
+  const [signIn, setSignIn] = useState(false);
+  /** A factor landed after the prompt's Cancel and was discarded — no code was minted, and it is said. */
+  const [discarded, setDiscarded] = useState(false);
 
   /** The page can be navigated away from mid-flight; nothing may set state after that. */
   const alive = useRef(true);
@@ -139,34 +122,13 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
     return () => clearInterval(id);
   }, [retryAt]);
 
-  /**
-   * THE CEREMONY'S GENERATION, the same one the account erase runs on. Cancelling the
-   * re-assertion cleared the screen and left the verify in flight, so a response landing after
-   * the press still minted a pairing code — a credential nobody had asked for, on a page whose
-   * job is to show one to whoever is looking. `afterFactor` is the one door that compares.
-   */
-  const ceremony = useCeremonyGeneration();
-
-  /**
-   * Begin the in-place re-assertion. Prefill the address from the live session when there is one
-   * (the 403 case: signed in, but the step-up window closed); a 401 has no session and the field
-   * starts empty for the person to type. Either way the ceremony, not a redirect, is what runs.
-   */
-  const beginReauth = async (): Promise<void> => {
-    try {
-      const { user } = await auth.session();
-      if (alive.current && user.email) setEmail(user.email);
-    } catch {
-      /* no session on this browser — the address is typed below */
-    }
-    if (!alive.current) return;
-    setError(null);
-    setPhase("password");
-  };
-
-  const mint = (): void => {
+  /** `afterFactor`: this is the retry a verified factor runs, so a second closed window is a sentence. */
+  const mint = (afterFactor = false): void => {
     setBusy(true);
     setError(null);
+    setSignIn(false);
+    setDiscarded(false);
+    setPhase("idle");
     void (async () => {
       try {
         // The commitment travels with every mint on this page, including the one retried after a
@@ -195,10 +157,11 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
         setPhase("idle");
       } catch (err) {
         if (!alive.current) return;
-        // Both refusals mean "prove who you are on this browser", and both are answered in place
-        // rather than by a trip to `/login` — see this file's header for the loop that trip was.
-        if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
-          await beginReauth();
+        const why = gatedRefusal(err, afterFactor);
+        if (why === "factor") {
+          setPhase("stepup");
+        } else if (why === "sign-in") {
+          setSignIn(true);
         } else if (isBusy(err)) {
           // The server, never the session: the sign-in is fine and the button is still there.
           setError(t("busyGaveUp"));
@@ -226,114 +189,6 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
     return () => clearInterval(id);
   }, [minted]);
 
-  const submitPassword = (e: React.FormEvent): void => {
-    e.preventDefault();
-    setBusy(true);
-    setError(null);
-    // BEFORE the first await, as the factor steps do: a step back during the login ends this
-    // ceremony, and a login that lands after it must not return the pane to the factor step.
-    const gen = ceremony.begin();
-    void (async () => {
-      try {
-        const result = await auth.login({ email: email.trim(), password });
-        if (!alive.current) return;
-        if (!ceremony.claim(gen)) { setBusy(false); return; }
-        setPassword("");
-        if (result.status === "enrollment") {
-          // Registered, but never finished a second factor — so there is no factor to assert and
-          // no way to step up. `/join` resumes setup at the factor step.
-          setPhase("enroll");
-          setBusy(false);
-          return;
-        }
-        setChallenge(result);
-        setMethod(
-          result.methods.includes("webauthn") && webauthnAvailable() ? "webauthn"
-            : result.methods.includes("totp") ? "totp" : result.methods[0]!,
-        );
-        setPhase("factor");
-        setBusy(false);
-      } catch (err) {
-        if (!alive.current) return;
-        setError(messageOf(err));
-        setBusy(false);
-      }
-    })();
-  };
-
-  /** A verified factor lands the session step-up fresh; the mint the visitor came for is retried. */
-  const afterFactor = (gen: number): void => {
-    // THE ONE DOOR. A cancelled re-assertion mints nothing: the code is one-use and revocable,
-    // which is why this was a row, but a credential minted after Cancel is one nobody asked for.
-    if (!ceremony.claim(gen)) {
-      setBusy(false);
-      return;
-    }
-    if (!alive.current) return;
-    setChallenge(null);
-    setCode("");
-    mint();
-  };
-
-  const finishWithPasskey = (): void => {
-    if (!challenge) return;
-    setBusy(true);
-    setError(null);
-    // BEFORE the first await: this closure's identity is the ceremony it started in, never
-    // whichever one is current when its response happens to land.
-    const gen = ceremony.begin();
-    void (async () => {
-      try {
-        const { options } = await auth.webauthnAssertOptions({ loginToken: challenge.loginToken });
-        const credential = await assertPasskey(options);
-        await auth.webauthnAssertVerify({ loginToken: challenge.loginToken, credential });
-        afterFactor(gen);
-      } catch (err) {
-        if (!alive.current) return;
-        setError(messageOf(err));
-        setBusy(false);
-      }
-    })();
-  };
-
-  const finishWithCode = (e: React.FormEvent): void => {
-    e.preventDefault();
-    if (!challenge) return;
-    setBusy(true);
-    setError(null);
-    // Same capture as the passkey path — a SEPARATE path, so a fix to one of them would be
-    // half-applied by construction.
-    const gen = ceremony.begin();
-    void (async () => {
-      try {
-        if (method === "recovery_code") {
-          await auth.recoveryVerify({ loginToken: challenge.loginToken, code: code.trim() });
-        } else {
-          await auth.totpVerify({ loginToken: challenge.loginToken, code: code.trim() });
-        }
-        afterFactor(gen);
-      } catch (err) {
-        if (!alive.current) return;
-        setError(messageOf(err));
-        setBusy(false);
-      }
-    })();
-  };
-
-  /** Abandon the ceremony and return to the code screen. Password never lingers in state. */
-  const cancelReauth = (): void => {
-    // THE BUMP COMES FIRST — it is what makes a verify already in flight discard its result;
-    // everything after it is housekeeping. `busy` goes with it, or a ceremony cancelled
-    // mid-verify leaves the next press disabled with nothing left to re-enable it.
-    ceremony.end();
-    setBusy(false);
-    setPassword("");
-    setCode("");
-    setChallenge(null);
-    setError(null);
-    setPhase("idle");
-  };
-
   if (!apiConfigured()) {
     return (
       <Shell title={t("unavailableTitle")}>
@@ -342,99 +197,15 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
     );
   }
 
-  if (phase === "enroll") {
-    return (
-      <Shell title={t("enrollTitle")}>
-        <p className="sub">{t("enrollBody")}</p>
-        <div className="join-actions">
-          <Link className="btn primary" href="/join">{t("enrollCta")}</Link>
-        </div>
-      </Shell>
-    );
-  }
-
-  if (phase === "password") {
+  if (phase === "stepup") {
     return (
       <Shell title={t("reauthTitle")}>
-        <p className="sub">{t("reauthLead")}</p>
-        {error ? <p className="join-error" role="alert">{error}</p> : null}
-        <form onSubmit={submitPassword}>
-          <label className="join-label" htmlFor="link-email">{tl("emailLabel")}</label>
-          <input
-            id="link-email" className="join-input" type="email" autoComplete="username"
-            value={email} onChange={(e) => setEmail(e.target.value)} required
-          />
-          <label className="join-label" htmlFor="link-pw">{tl("passwordLabel")}</label>
-          <input
-            id="link-pw" className="join-input" type="password" autoComplete="current-password"
-            value={password} onChange={(e) => setPassword(e.target.value)} required
-          />
-          <div className="join-actions">
-            <Button variant="primary" type="submit" disabled={busy}>
-              {busy ? tl("working") : tl("continue")}
-            </Button>
-            <Button variant="ghost" type="button" onClick={cancelReauth}>
-              {t("reauthCancel")}
-            </Button>
-          </div>
-        </form>
-      </Shell>
-    );
-  }
-
-  if (phase === "factor") {
-    return (
-      <Shell title={t("reauthTitle")}>
-        {error ? <p className="join-error" role="alert">{error}</p> : null}
-        {method === "webauthn" ? (
-          <>
-            <Button
-              variant="primary" icon="shield" className="login-passkey"
-              onClick={finishWithPasskey} disabled={busy}
-            >
-              {busy ? tl("working") : tl("passkey")}
-            </Button>
-            <p className="login-passkey-note">{tl("passkeyNote")}</p>
-          </>
-        ) : (
-          <form onSubmit={finishWithCode} className="login-totp">
-            <label className="join-label" htmlFor="link-code">
-              {method === "recovery_code" ? tl("recoveryLabel") : tl("totpLabel")}
-            </label>
-            <input
-              id="link-code" className="join-input join-code"
-              inputMode={method === "totp" ? "numeric" : "text"}
-              autoComplete="one-time-code"
-              value={code} onChange={(e) => setCode(e.target.value)}
-            />
-            <div className="join-actions">
-              <Button variant="primary" type="submit" disabled={busy || code.trim().length === 0}>
-                {busy ? tl("working") : tl("totpVerify")}
-              </Button>
-            </div>
-          </form>
-        )}
-
-        {/* Only the methods this user actually enrolled — offering TOTP to somebody who never set
-            one up is a dead end that reads like a broken sign-in. */}
-        <div className="login-methods">
-          {challenge?.methods.includes("webauthn") && method !== "webauthn" && webauthnAvailable() && (
-            <button type="button" className="join-alt" onClick={() => { setMethod("webauthn"); setCode(""); }}>
-              {tl("usePasskey")}
-            </button>
-          )}
-          {challenge?.methods.includes("totp") && method !== "totp" && (
-            <button type="button" className="join-alt" onClick={() => { setMethod("totp"); setCode(""); }}>
-              {tl("totpToggle")}
-            </button>
-          )}
-          {challenge?.methods.includes("recovery_code") && method !== "recovery_code" && (
-            <button type="button" className="join-alt" onClick={() => { setMethod("recovery_code"); setCode(""); }}>
-              {tl("useRecovery")}
-            </button>
-          )}
-          <button type="button" className="join-alt" onClick={cancelReauth}>{t("reauthCancel")}</button>
-        </div>
+        {/* The mint is parked behind the prompt; the verified factor retries it, commitment and all. */}
+        <StepUpPrompt
+          onVerified={() => mint(true)}
+          onCancel={() => setPhase("idle")}
+          onDiscarded={() => setDiscarded(true)}
+        />
       </Shell>
     );
   }
@@ -450,7 +221,17 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
       {waiting ? <p className="join-hint" role="status">{t("busyRetrying", { seconds: retryIn })}</p> : null}
       {/* The check came back after Cancel and was thrown away. Said, because this screen looks
           identical whether a code was minted a second ago or never at all. */}
-      {ceremony.discarded ? <p className="join-hint" role="status">{t("cancelledNothingMinted")}</p> : null}
+      {discarded ? <p className="join-hint" role="status">{t("cancelledNothingMinted")}</p> : null}
+      {/* A dead session, an unfinished enrolment, or a second refusal after a verified factor:
+          `/login` is the remedy, and the app opens this page again afterwards. */}
+      {signIn ? (
+        <>
+          <p className="join-error" role="alert">{t("signInFirst")}</p>
+          <div className="join-actions">
+            <Link className="btn" href="/login">{tl("title")}</Link>
+          </div>
+        </>
+      ) : null}
 
       {minted ? (
         <>

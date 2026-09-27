@@ -12,14 +12,12 @@
  */
 
 /**
- * The ceremony runs always, not on a 403: the route is `stepUp: true` and nothing refreshes
- * `sessions.last_twofa_at` except completing a login — the verify routes need a single-use
- * `loginToken` only `POST /auth/login` mints, and the window is five minutes — so a person in their
- * mailbox is essentially never step-up fresh. Password and second factor are asked here, up front; not
- * a second step-up pattern but the server's only mechanism, performed in place instead of by bouncing
- * through `/login`. Two guards: the address is read-only (an editable email field would be a
- * delete-somebody-else's-account control), and the account id is re-checked after the factor
- * verifies — if the session that comes back is not this pane's account, nothing is sent.
+ * The erase is TRIED on the press. `DELETE /account` is `stepUp: true`, so a closed five-minute
+ * window answers `step_up_required` before anything is touched; the pane then shows `StepUpPrompt`,
+ * which re-stamps the session this browser holds, and the verified factor runs the erase once. A
+ * fresh window erases on the first press. Nothing here signs in: the erase runs as the session the
+ * pane was opened with, so there is no other account it could reach and no check for one. The
+ * address is typed back before the press, against the session's own.
  */
 
 /**
@@ -27,8 +25,9 @@
  * census reads raw source. Its logout call would 401 (the session row is gone and `resolveSession`
  * inner-joins `users`) and its `try/finally` rethrows past the mirror wipe; the API clears the three
  * cookies on the 200 instead. What is left is the IndexedDB mirror — every message that ever came
- * down `/sync`, still readable on this machine — wiped here for the reason `sign-out.ts` wipes it,
- * with `owner` captured before the call because afterwards there is nobody to ask.
+ * down `/sync`, still readable on this machine — wiped here for THIS account only, by the erased
+ * door's scope (another account's copy in the browser stays), with `owner` captured before the call
+ * because afterwards there is nobody to ask.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -39,24 +38,22 @@ import { SELF_HOST_BUILD } from "../../hello";
 // The ONE correct way out — revokes server-side and wipes the local mirror. The sign-out guard
 // asserts every `auth.logout` call in this app goes through it, so never call logout directly.
 import { forgetThisBrowser, signOut } from "../../sign-out";
-import { useCeremonyGeneration } from "../ceremony-generation";
+import { markAccountErased } from "../../shell/account-erased";
 import {
   account,
   ApiError,
   apiConfigured,
-  assertPasskey,
   auth,
-  codeOf,
   messageOf,
-  webauthnAvailable,
   type ErasureResult,
-  type TwofaChallenge,
 } from "../../api-client";
 import { useRefusalSentence } from "../refusal-sentence";
 import { useManageOffer } from "./SubscriptionSection";
+import { StepUpPrompt } from "./StepUpPrompt";
+import { gatedRefusal } from "./gated-refusal";
 
-type Stage = "facts" | "password" | "factor" | "erasing" | "done";
-type Factor = "webauthn" | "totp" | "recovery_code";
+/** `stepup`: the erase was refused for a closed window and waits on the prompt. */
+type Stage = "facts" | "stepup" | "erasing" | "done";
 
 interface Who {
   accountId: string;
@@ -65,6 +62,8 @@ interface Who {
 
 export function AccountSection() {
   const t = useTranslations("account");
+  /* The step-up prompt's namespace, for the sentence an erase says when signing in is the remedy. */
+  const td = useTranslations("devices");
   const sentence = useRefusalSentence();
 
   const [who, setWho] = useState<Who | null>(null);
@@ -86,13 +85,9 @@ export function AccountSection() {
   const { manageOffered } = useManageOffer(false);
   const [stage, setStage] = useState<Stage>("facts");
   const [typed, setTyped] = useState("");
-  const [password, setPassword] = useState("");
-  const [challenge, setChallenge] = useState<TwofaChallenge | null>(null);
-  const [method, setMethod] = useState<Factor>("webauthn");
-  const [code, setCode] = useState("");
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [noFactor, setNoFactor] = useState(false);
+  /** A factor landed after the prompt's Cancel and was discarded: nothing was erased, and it is said. */
+  const [stepUpDiscarded, setStepUpDiscarded] = useState(false);
   const [result, setResult] = useState<ErasureResult | null>(null);
 
   const [signingOut, setSigningOut] = useState(false);
@@ -108,15 +103,6 @@ export function AccountSection() {
   /** The pane can be navigated away from mid-ceremony; nothing may set state after that. */
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
-
-  /**
-   * THE CEREMONY'S GENERATION — what makes Cancel mean it. The erase used to hang off the verify
-   * promise's resolution rather than off the ceremony's state, so pressing Cancel cleared the
-   * screen while the closure that already held the challenge went on and erased the account. The
-   * mechanism now lives in `useCeremonyGeneration` and this pane is one of its four callers: the
-   * rule and the controls are unchanged, the code is no longer private to this file.
-   */
-  const ceremony = useCeremonyGeneration();
 
   /**
    * Sign out of THIS browser. Not step-up gated, deliberately: it destroys nothing the user cannot
@@ -214,45 +200,28 @@ export function AccountSection() {
     })();
   }, []);
 
-  const fail = (err: unknown): void => {
-    // A failed ceremony is over: end it, so a response landing later cannot act on it either.
-    ceremony.end();
-    setError(sentence(err));
-    // The five-minute window closing mid-ceremony is the one refusal with a specific remedy,
-    // and it is the same branch `JoinScreen` takes: start the confirmation again.
-    if (codeOf(err) === "step_up_required") {
-      setStage("facts");
-      setChallenge(null);
-      setTyped("");
-    }
-    setBusy(false);
-  };
-
-  /** The last step, reached only from a verified second factor. */
-  const erase = useCallback(async (owner: string) => {
+  /**
+   * THE ERASE, TRIED FIRST — `DELETE /account` is step-up gated, so a closed window answers 403
+   * `step_up_required` before anything is touched and the prompt opens; the verified factor calls
+   * this again with `afterFactor`, and a second refusal then is a sentence, never another prompt.
+   * `owner` is the account the pane's session named at mount, captured before the call: afterwards
+   * there is nobody to ask. Only THAT account's copy goes; another account's in this browser stays.
+   */
+  const erase = useCallback(async (owner: string, afterFactor = false) => {
     setStage("erasing");
+    setError(null);
+    setStepUpDiscarded(false);
     try {
       const out = await account.erase();
-      // `owner` was captured before the call on purpose: `GET /auth/session` cannot answer
-      // afterwards, and an un-wiped mirror is a readable copy of the mailbox left on this machine.
-      // Best-effort — a browser that refuses to enumerate its databases must not turn a completed
-      // erasure into an error. The remembered account id goes with it (the `sign-out.ts` pairing): a
-      // name left behind would point the next load at a database that is gone. Defaults to unclean —
-      // only a wipe that returns proves otherwise; initialising to `false` made every exception
-      // during the wipe indistinguishable from a verified clean browser, on the one screen that can
-      // never be reached again: the account is gone, so no session is left to route a retry through.
+      // The account is gone: this tab asks nothing more under it. The binding the wipe below keeps
+      // would otherwise read the cleared marker as a lost name on every later request.
+      markAccountErased(owner);
+      // Defaults to unclean: only a wipe that returns proves otherwise, on the one screen that can
+      // never be reached again. Its answer is read — an IndexedDB delete is BLOCKED while another
+      // tab holds the database open, and a localStorage removal can refuse, both without throwing.
       let unclean = true;
       try {
-        // THE SAME LOCAL CLEANUP SIGN-OUT DOES, not a subset of it. This used to be
-        // `forgetOwner()` plus the mirror wipe, which left every durable localStorage store the
-        // durability slice added — the compose and reply scratch buffers, the Screener intent
-        // journal, the send lanes — sitting on the machine after an IRREVERSIBLE deletion, with
-        // no session left to reach them from. One implementation, two callers.
-        //
-        // And its ANSWER is read: an IndexedDB delete is BLOCKED, not failed, while another tab
-        // holds the database open, and a localStorage removal can refuse. Both resolve without
-        // throwing, and this discarded the one value that said the mail survived.
-        const local = await forgetThisBrowser(owner);
+        const local = await forgetThisBrowser(owner, { only: true });
         unclean = local.remaining.length > 0 || !local.inventoryComplete;
       } catch {
         /* the same race `sign-out.ts` already accepts — and `unclean` stays true */
@@ -265,114 +234,19 @@ export function AccountSection() {
       setStage("done");
     } catch (err) {
       if (!alive.current) return;
-      // THE FACTOR IS SPENT: the verify's login token is single-use, so staying on the factor step
-      // made the retry's code a bare 401. Back to the top. A refusal the SERVER
-      // answered rolled its one transaction back, and is said in our words, never its "internal
-      // error"; a request that never got an answer keeps the client's own sentence, which claims
-      // nothing about whether the erasure landed.
-      ceremony.end();
+      const why = gatedRefusal(err, afterFactor);
+      if (why === "factor") {
+        setStage("stepup");
+        return;
+      }
+      // Back to the top, the typed address kept. A refusal the SERVER answered rolled its one
+      // transaction back and is said in our words, never its "internal error"; a request that
+      // never got an answer keeps the client's own sentence, which claims nothing either way.
       setStage("facts");
-      setChallenge(null);
-      setTyped("");
-      setCode("");
-      setBusy(false);
-      setError(err instanceof ApiError && err.status >= 400 ? t("eraseRefused") : sentence(err));
+      setError(why === "sign-in" ? td("stepUpExpired")
+        : err instanceof ApiError && err.status >= 400 ? t("eraseRefused") : sentence(err));
     }
-  }, [ceremony, t, sentence]);
-
-  /**
-   * Shared tail of all three second factors, and THE ONE DOOR the generation is read at — one
-   * comparison rather than one per caller, so a fourth factor path inherits the gate instead of
-   * the defect. A cancelled ceremony performs nothing and SAYS so: a silent discard leaves a
-   * person who cannot tell whether their account still exists.
-   */
-  const verified = async (accountId: string, gen: number): Promise<void> => {
-    if (!ceremony.claim(gen)) {
-      setBusy(false);
-      return;
-    }
-    if (!who || accountId !== who.accountId) {
-      setError(t("mismatch"));
-      setStage("facts");
-      setBusy(false);
-      return;
-    }
-    await erase(who.accountId);
-  };
-
-  const submitPassword = (e: React.FormEvent): void => {
-    e.preventDefault();
-    if (!who) return;
-    setBusy(true);
-    setError(null);
-    // BEFORE the first await, as the factor steps do: a step back during the login ends this
-    // ceremony, and a login that lands after it must not return the pane to the factor step.
-    const gen = ceremony.begin();
-    void (async () => {
-      try {
-        const out = await auth.login({ email: who.email, password });
-        if (!ceremony.claim(gen)) { setBusy(false); return; }
-        setPassword("");
-        if (out.status === "enrollment") {
-          // Zero enrolled factors. Step-up has no bypass and should not have one, so this
-          // account cannot be erased until it has a second factor — said plainly rather
-          // than presented as a failure.
-          setNoFactor(true);
-          setBusy(false);
-          return;
-        }
-        setChallenge(out);
-        setMethod(
-          out.methods.includes("webauthn") && webauthnAvailable() ? "webauthn"
-            : out.methods.includes("totp") ? "totp" : out.methods[0]!,
-        );
-        setStage("factor");
-        setBusy(false);
-      } catch (err) {
-        fail(err);
-      }
-    })();
-  };
-
-  const finishWithPasskey = (): void => {
-    if (!challenge) return;
-    setBusy(true);
-    setError(null);
-    // BEFORE the first await: this closure's identity is the ceremony it started in, never
-    // whichever one is current when its response happens to land.
-    const gen = ceremony.begin();
-    void (async () => {
-      try {
-        const { options } = await auth.webauthnAssertOptions({ loginToken: challenge.loginToken });
-        const credential = await assertPasskey(options);
-        const s = await auth.webauthnAssertVerify({ loginToken: challenge.loginToken, credential });
-        await verified(s.user.accountId, gen);
-      } catch (err) {
-        fail(err);
-      }
-    })();
-  };
-
-  const finishWithCode = (e: React.FormEvent): void => {
-    e.preventDefault();
-    if (!challenge) return;
-    setBusy(true);
-    setError(null);
-    // Same capture as the passkey path, for the same reason — and it is a SEPARATE path, so a
-    // fix to one of them would be half-applied by construction.
-    const gen = ceremony.begin();
-    void (async () => {
-      try {
-        const s = method === "recovery_code"
-          ? await auth.recoveryVerify({ loginToken: challenge.loginToken, code: code.trim() })
-          : await auth.totpVerify({ loginToken: challenge.loginToken, code: code.trim() });
-        setCode("");
-        await verified(s.user.accountId, gen);
-      } catch (err) {
-        fail(err);
-      }
-    })();
-  };
+  }, [sentence, t, td]);
 
   // ── The states that are not the ceremony ────────────────────────────────────────────
 
@@ -394,15 +268,6 @@ export function AccountSection() {
       <Pane>
         <p className="acct-lead">{t("signedOutBody")}</p>
         <Link className="btn" href="/login">{t("signIn")}</Link>
-      </Pane>
-    );
-  }
-  if (noFactor) {
-    return (
-      <Pane>
-        <h2 className="acct-h">{t("noFactorTitle")}</h2>
-        <p className="acct-lead">{t("noFactorBody")}</p>
-        <Link className="btn" href="/join">{t("noFactorCta")}</Link>
       </Pane>
     );
   }
@@ -491,7 +356,7 @@ export function AccountSection() {
       {/* Not an error — the person got what they asked for. It is here because after a cancel
           the pane is back at the facts, which on their own look exactly like a pane that erased
           nothing because nothing was ever started. */}
-      {ceremony.discarded ? <p className="acct-warn" role="status">{t("cancelledNothingErased")}</p> : null}
+      {stepUpDiscarded ? <p className="acct-warn" role="status">{t("cancelledNothingErased")}</p> : null}
 
       {/* Said once, first, and not repeated: it is the product's central promise and the
           reason erasure can be as blunt as it is. */}
@@ -537,7 +402,13 @@ export function AccountSection() {
       {stage === "facts" ? (
         <form
           className="acct-confirm"
-          onSubmit={(e) => { e.preventDefault(); setError(null); ceremony.clear(); setStage("password"); }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            // The press IS the erase on a fresh window, so the typed address is checked here too,
+            // not only by the button it disables.
+            if (typed.trim().toLowerCase() !== who.email.toLowerCase()) return;
+            void erase(who.accountId);
+          }}
         >
           <label className="join-label" htmlFor="acct-typed">
             {t("typeLabel", { email: who.email })}
@@ -557,101 +428,17 @@ export function AccountSection() {
         </form>
       ) : null}
 
-      {stage === "password" ? (
-        <form className="acct-confirm" onSubmit={submitPassword}>
-          <h3 className="acct-sub">{t("confirmTitle")}</h3>
-          <p className="acct-fine">{t("confirmBody")}</p>
-          {/* READ-ONLY, and see guard 1 in the header: an editable address here would let a
-              password erase somebody else's account. */}
-          <label className="join-label" htmlFor="acct-email">{t("emailLabel")}</label>
-          <input id="acct-email" className="join-input" type="email" value={who.email} readOnly />
-          <label className="join-label" htmlFor="acct-pw">{t("passwordLabel")}</label>
-          <input
-            id="acct-pw" className="join-input" type="password" autoComplete="current-password"
-            value={password} onChange={(e) => setPassword(e.target.value)} required
-          />
-          <div className="acct-actions">
-            <Button variant="primary" type="submit" className="danger" disabled={busy}>
-              {busy ? t("working") : t("continue")}
-            </Button>
-            <Button onClick={() => { ceremony.end(); setStage("facts"); setPassword(""); setError(null); setBusy(false); }}>
-              {t("cancel")}
-            </Button>
-          </div>
-        </form>
-      ) : null}
-
-      {stage === "factor" ? (
+      {stage === "stepup" ? (
         <div className="acct-confirm">
-          <h3 className="acct-sub">{t("factorTitle")}</h3>
-          {/* The destructive act is named at the moment it fires — the next successful
-              factor sends the DELETE, with no further click. */}
+          <h3 className="acct-sub">{t("confirmTitle")}</h3>
+          {/* The destructive act is named at the moment it fires — the verified factor sends the
+              DELETE, with no further click. */}
           <p className="acct-fine">{t("factorBody", { email: who.email })}</p>
-
-          {method === "webauthn" ? (
-            <div className="acct-actions">
-              <Button
-                variant="primary" icon="shield" className="danger"
-                onClick={finishWithPasskey} disabled={busy}
-              >
-                {busy ? t("working") : t("passkey")}
-              </Button>
-            </div>
-          ) : (
-            <form onSubmit={finishWithCode}>
-              <label className="join-label" htmlFor="acct-code">
-                {method === "recovery_code" ? t("recoveryLabel") : t("totpLabel")}
-              </label>
-              <input
-                id="acct-code" className="join-input join-code"
-                inputMode={method === "totp" ? "numeric" : "text"}
-                autoComplete="one-time-code"
-                value={code} onChange={(e) => setCode(e.target.value)}
-              />
-              <div className="acct-actions">
-                <Button
-                  variant="primary" type="submit" className="danger"
-                  disabled={busy || code.trim().length === 0}
-                >
-                  {busy ? t("working") : t("verifyErase")}
-                </Button>
-              </div>
-            </form>
-          )}
-
-          <div className="acct-methods">
-            {challenge?.methods.includes("webauthn") && method !== "webauthn" && webauthnAvailable() ? (
-              <button type="button" className="join-alt" onClick={() => { setMethod("webauthn"); setCode(""); }}>
-                {t("usePasskey")}
-              </button>
-            ) : null}
-            {challenge?.methods.includes("totp") && method !== "totp" ? (
-              <button type="button" className="join-alt" onClick={() => { setMethod("totp"); setCode(""); }}>
-                {t("totpToggle")}
-              </button>
-            ) : null}
-            {challenge?.methods.includes("recovery_code") && method !== "recovery_code" ? (
-              <button type="button" className="join-alt" onClick={() => { setMethod("recovery_code"); setCode(""); }}>
-                {t("useRecovery")}
-              </button>
-            ) : null}
-            {/* A login token is single-use: after an attempted ceremony the safe move is a
-                fresh password step, not a retry against a token that may be spent. */}
-            <button
-              type="button" className="join-alt"
-              onClick={() => {
-                // THE BUMP COMES FIRST — it is what makes a verify already in flight discard its
-                // result; everything after it is housekeeping, and housekeeping alone is what this
-                // used to be. `busy` is released here too, or a ceremony cancelled mid-verify
-                // leaves the next Continue disabled with nothing left to re-enable it.
-                ceremony.end();
-                setChallenge(null); setCode(""); setError(null); setBusy(false);
-                setStage("facts"); setTyped("");
-              }}
-            >
-              {t("cancel")}
-            </button>
-          </div>
+          <StepUpPrompt
+            onVerified={() => { void erase(who.accountId, true); }}
+            onCancel={() => setStage("facts")}
+            onDiscarded={() => setStepUpDiscarded(true)}
+          />
         </div>
       ) : null}
 
