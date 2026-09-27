@@ -894,6 +894,9 @@ export default defineConfig({
       { find: "@trafficflow/core/reader-refusal", replacement: r("../../packages/core/src/reader-refusal.ts") },
       { find: "@trafficflow/core/outbound-text", replacement: r("../../packages/core/src/outbound-text.ts") },
       { find: "@trafficflow/core/model-name", replacement: r("../../packages/core/src/model-name.ts") },
+      /* The diagnostic file's one builder (Settings → About), shared with the phone. Its files
+         import each other and core's logger allowlist, and nothing outside core. */
+      { find: "@trafficflow/core/diagnostics", replacement: r("../../packages/core/src/diagnostics/index.ts") },
     ],
   },
 

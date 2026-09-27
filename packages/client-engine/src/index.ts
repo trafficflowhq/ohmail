@@ -815,3 +815,15 @@ export {
   type RuleLine,
   type RulesInPlay,
 } from "./press-forecast.js";
+// The local diagnostic file — core's one builder, for the phone. See `diagnostics.ts`.
+export {
+  DIAGNOSTIC_FILE_NAME,
+  DIAGNOSTIC_LOG_LINES,
+  buildDiagnosticBundle,
+  diagnosticInstall,
+  renderDiagnosticBundle,
+  type DiagnosticBundle,
+  type DiagnosticInput,
+  type DiagnosticInstallRecord,
+  type DiagnosticMailboxInput,
+} from "./diagnostics.js";
