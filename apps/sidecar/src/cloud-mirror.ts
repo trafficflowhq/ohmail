@@ -189,8 +189,11 @@ export const NEWEST_BODIES_FIRST = 5 * BODIES_IDS_MAX;
  */
 const REFILLABLE_WITHHELD = ["junk_filed", "expunged"] as const;
 
-/** Every marker this mirror stores, whitelisted: a value the wire invents must not become one. */
-const MIRRORED_WITHHELD: readonly WithheldMarker[] = ["storage_cap", ...REFILLABLE_WITHHELD];
+/**
+ * Every marker this mirror stores, whitelisted: a value the wire invents must not become one.
+ * `too_large` stands like `storage_cap`: nothing ever fetches that body.
+ */
+const MIRRORED_WITHHELD: readonly WithheldMarker[] = ["storage_cap", "too_large", ...REFILLABLE_WITHHELD];
 const mirroredWithheld = (w: WithheldMarker | undefined): WithheldMarker | null =>
   w !== undefined && MIRRORED_WITHHELD.includes(w) ? w : null;
 
@@ -3277,7 +3280,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
           // The hosted store's withheld marker, mirrored verbatim (mail 0062 — the local journal
           // has the column too). Without it a withheld body lands here as an empty COMPLETE one
           // and the desktop tells the lie the marker exists to end; with it, the same honest
-          // state renders on every tier. ALL THREE markers, not the cap alone: a `junk_filed`
+          // state renders on every tier. EVERY marker, not the cap alone: a `junk_filed`
           // husk stored as an ordinarily empty row opened blank for ever, because the marker is
           // the only thing that tells {@link applyPage} which row to re-owe once its message
           // changes. The mirror's own counter is untouched — this store copies the hosted one.

@@ -873,7 +873,12 @@ export const DEFAULT_FETCH_RAW_MAX_BYTES = 8 * 1024 * 1024;
  * through — that one takes the EARLIER of the two dates, which is right for sorting and wrong for
  * deciding whether a message is genuinely old.
  */
-interface InternalCreate { folder: string; uidValidity: bigint; uid: number; raw: Buffer; seen: boolean; messageId: string | null; internalDate?: Date; }
+interface InternalCreate {
+  folder: string; uidValidity: bigint; uid: number; raw: Buffer; seen: boolean; messageId: string | null;
+  internalDate?: Date;
+  /** Refused on size: `raw` is the header block alone — see {@link Change.oversizeBytes}. */
+  oversizeBytes?: number;
+}
 interface InternalDelete { folder: string; uidValidity: bigint; uid: number; messageId: string | null; }
 
 /**
@@ -932,6 +937,27 @@ export function statesMailboxNonexistent(err: unknown): boolean {
   return NONEXISTENT_TEXT.test(text);
 }
 
+/**
+ * How much header block a message over the MIME ceiling may bring: the partial fetch's length. A
+ * block that fills it may be cut, so it is refused and the message keeps its `mime_too_large` row
+ * instead of a row with half its headers.
+ */
+export const OVERSIZE_HEAD_MAX_BYTES = 256 * 1024;
+
+/**
+ * The header section as a message with an empty body, or null when it may have been cut. Cut at
+ * the first blank line; a server that omits the blank line (GreenMail does) gets one appended —
+ * below the cap the section arrived whole either way.
+ */
+function wholeHeadBlock(raw: Buffer): Buffer | null {
+  if (raw.length === 0 || raw.length >= OVERSIZE_HEAD_MAX_BYTES) return null;
+  const crlf = raw.indexOf("\r\n\r\n");
+  if (crlf >= 0) return raw.subarray(0, crlf + 4);
+  const lf = raw.indexOf("\n\n");
+  if (lf >= 0) return raw.subarray(0, lf + 2);
+  return Buffer.concat([raw, Buffer.from(raw[raw.length - 1] === 0x0a ? "\r\n" : "\r\n\r\n")]);
+}
+
 /** Pair a vanished message with a re-appeared one sharing the same canonical Message-ID → a single MOVE. */
 export function correlateMoves(creates: InternalCreate[], deletes: InternalDelete[]): {
   moves: Change[]; creates: InternalCreate[]; deletes: InternalDelete[];
@@ -945,7 +971,10 @@ export function correlateMoves(creates: InternalCreate[], deletes: InternalDelet
     const d = c.messageId ? delByMsg.get(c.messageId) : undefined;
     if (d && !used.has(d)) {
       used.add(d);
-      moves.push({ type: "move", locator: { folder: c.folder, ref: makeRef(c.uidValidity, c.uid) }, raw: c.raw, seen: c.seen });
+      moves.push({
+        type: "move", locator: { folder: c.folder, ref: makeRef(c.uidValidity, c.uid) }, raw: c.raw, seen: c.seen,
+        ...(c.oversizeBytes !== undefined ? { oversizeBytes: c.oversizeBytes } : {}),
+      });
     } else {
       pureCreates.push(c);
     }
@@ -2624,7 +2653,16 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       take.push(uid);
       bytes += size;
     }
-    if (take.length === 0) return { fetched, truncated, unanswered: [], oversize, budgetSpent: false };
+    // A message refused on size still arrives as its header block, so it is listed and routed;
+    // only a UID whose block did not come back whole stays the caller's `oversize` obligation.
+    const heads = await this.oversizeHeads(folder, curUidValidity, oversize);
+    fetched.push(...heads);
+    const headed = new Set(heads.map((h) => h.uid));
+    const unheaded = oversize.filter((o) => !headed.has(o.uid));
+    if (take.length === 0) {
+      fetched.sort((a, b) => (dates.get(b.uid) ?? 0) - (dates.get(a.uid) ?? 0) || b.uid - a.uid);
+      return { fetched, truncated, unanswered: [], oversize: unheaded, budgetSpent: false };
+    }
 
     /**
      * The byte budget above trusts a number the server chose — the literal-length arm. Everything
@@ -2759,7 +2797,51 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     }
 
     fetched.sort((a, b) => (dates.get(b.uid) ?? 0) - (dates.get(a.uid) ?? 0) || b.uid - a.uid);
-    return { fetched, truncated, unanswered, oversize, budgetSpent: false };
+    return { fetched, truncated, unanswered, oversize: unheaded, budgetSpent: false };
+  }
+
+  /**
+   * The header block of each message refused on size, in ONE command inside the caller's lock.
+   * The partial fetch caps what an honest server sends; a server sending more past it is retired
+   * like a body overrun. A block that did not arrive whole is left out (see
+   * {@link OVERSIZE_HEAD_MAX_BYTES}). No body is ever named here: BODY.PEEK[HEADER] only.
+   */
+  private async oversizeHeads(
+    folder: string, curUidValidity: bigint, refused: ReadonlyArray<{ uid: number; size: number }>,
+  ): Promise<InternalCreate[]> {
+    if (refused.length === 0) return [];
+    const sizeOf = new Map(refused.map((o) => [o.uid, o.size]));
+    const heads: InternalCreate[] = [];
+    const deadline = this.readDeadline();
+    for await (const m of this.client.fetch(
+      refused.map((o) => o.uid),
+      {
+        uid: true, flags: true, internalDate: true,
+        bodyParts: [{ key: "header", start: 0, maxLength: OVERSIZE_HEAD_MAX_BYTES }],
+      },
+      { uid: true },
+    )) {
+      deadline.check(folder);
+      const arrived = Buffer.isBuffer(m.headers) ? m.headers : Buffer.alloc(0);
+      if (arrived.length > OVERSIZE_HEAD_MAX_BYTES) {
+        const because = new ImapBoundExceeded("body_overrun", OVERSIZE_HEAD_MAX_BYTES, arrived.length, folder);
+        this.retireConnection(because);
+        throw because;
+      }
+      const head = wholeHeadBlock(arrived);
+      const size = sizeOf.get(m.uid);
+      if (head === null || size === undefined) continue;
+      heads.push({
+        folder, uidValidity: curUidValidity, uid: m.uid, raw: head,
+        seen: m.flags?.has("\\Seen") ?? false,
+        messageId: messageIdFromRaw(head),
+        oversizeBytes: size,
+        ...(m.internalDate instanceof Date && Number.isFinite(m.internalDate.getTime())
+          ? { internalDate: m.internalDate }
+          : {}),
+      });
+    }
+    return heads;
   }
 
   /**
@@ -3441,6 +3523,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // we already hold, and `adopt_external` already answers that — it follows their hand and
         // writes `last_set_by = 'external'` itself.
         ...(passiveFolders.has(c.folder) ? { passive: true } : {}),
+        ...(c.oversizeBytes !== undefined ? { oversizeBytes: c.oversizeBytes } : {}),
       })),
       moves: correlated.moves,
       flagChanges,
@@ -3502,11 +3585,13 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       const oversize: number[] = [];
       const take: number[] = [];
       const seen = new Set<number>();
+      const sizes = new Map<number, number>();
       for await (const m of this.client.fetch(
         [...wanted], { uid: true, size: true }, { uid: true },
       )) {
         seen.add(m.uid);
         const size = typeof m.size === "number" ? m.size : 0;
+        sizes.set(m.uid, size);
         if (opts.maxBytes !== undefined && size > opts.maxBytes) oversize.push(m.uid);
         else take.push(m.uid);
       }
@@ -3563,12 +3648,31 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           });
         }
       }
+      // Asked for: a UID over the MIME ceiling comes back as its header block, as in `changesSince`.
+      const overCeiling = oversize.flatMap((uid) => {
+        const size = sizes.get(uid) ?? 0;
+        return size > MAX_RAW_MESSAGE_BYTES ? [{ uid, size }] : [];
+      });
+      const heads = opts.oversizeHeads === true ? await this.oversizeHeads(folder, curUidValidity, overCeiling) : [];
+      for (const h of heads) {
+        creates.push({
+          type: "create",
+          locator: { folder, ref: makeRef(curUidValidity, h.uid) },
+          raw: h.raw,
+          seen: h.seen,
+          oversizeBytes: h.oversizeBytes!,
+          ...(h.internalDate ? { internalDate: h.internalDate } : {}),
+          ...(sent !== null && folder === sent ? { ownAuthored: true } : {}),
+        });
+      }
+      const headed = new Set(heads.map((h) => h.uid));
+      const refused = oversize.filter((u) => !headed.has(u));
       const returned = new Set(creates.map((c) => parseRef(c.locator.ref).uid));
       return {
         uidValidity: String(curUidValidity),
         creates,
-        absent: wanted.filter((u) => !seen.has(u) || (!returned.has(u) && !oversize.includes(u))),
-        oversize,
+        absent: wanted.filter((u) => !seen.has(u) || (!returned.has(u) && !refused.includes(u))),
+        oversize: refused,
       };
     } finally {
       lock.release();

@@ -11,13 +11,15 @@ export function junkLeaving(m: Row): boolean {
 /**
  * THE SENTENCE A WITHHELD BODY GETS ON THE PHONE — per marker, as on the web: the storage cap
  * names the space, the verdict names Junk only while the message is in the spam pile, a husk
- * moved out is loading until `refillExpired`, then the preview is all that could be read.
+ * moved out is loading until `refillExpired`, then the preview is all that could be read; a
+ * message over the download ceiling names the ceiling.
  */
 export function withheldNote(m: Row, refillExpired: boolean): string {
   if (junkLeaving(m)) return refillExpired ? Copy.liveBodyFailed : Copy.liveBodyJunkLoading;
   switch (m.bodyWithheld) {
     case "junk_filed": return Copy.liveBodyWithheldJunk;
     case "expunged": return Copy.liveBodyWithheldExpunged;
+    case "too_large": return Copy.liveBodyWithheldTooLarge;
     default: return Copy.liveBodyWithheld;
   }
 }

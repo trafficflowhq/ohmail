@@ -1407,12 +1407,10 @@ async function syncCycleWithin(
 
   // ── UIDS REFUSED ON SIZE, PRE-FETCH — THE SAME OBLIGATION, WITH THE HONEST CODE ─────────────
   //
-  // `batch.oversize` is the adapter declining to download a body whose RFC822.SIZE already
-  // exceeds the hard MIME ceiling (see `ChangeBatch.oversize` for why the download would have
-  // been pure waste and a memory hazard). The row is exactly the one `normalizeMime`'s
-  // post-download rejection would have produced — `mime_too_large`, deterministic, so
-  // `next_attempt_at` is NULL and its next look is a new build's size probe, never a later hour —
-  // and it MUST land before the cursor writes below, for the unanswered loop's reason: the cursor
+  // `batch.oversize` is a message over the hard MIME ceiling whose header block did not arrive
+  // either (with one, it was a header-only create above, stored as the `too_large` husk). Its row
+  // is the one `normalizeMime`'s rejection would have written — `mime_too_large`, deterministic,
+  // next look a new build's probe — and it MUST land before the cursor writes below: the cursor
   // advances over the UID, and only this row keeps it enumerable (the targeted retry) at all.
   for (const site of batch.oversize ?? []) {
     try {
@@ -1636,8 +1634,10 @@ async function retryFailedMessages(
   for (const [folder, rows] of byFolder) {
     let found: Awaited<ReturnType<NonNullable<MailboxAdapter["fetchByUid"]>>>;
     try {
+      // `oversizeHeads`: a message over the ceiling comes back as its header block and is ingested
+      // as the `too_large` husk below, so every row an older build wrote off heals on this build.
       found = await adapter.fetchByUid(folder, rows.map((r) => r.uid), {
-        maxBytes: MAX_RAW_MESSAGE_BYTES,
+        maxBytes: MAX_RAW_MESSAGE_BYTES, oversizeHeads: true,
       });
     } catch (err) {
       // The folder is unselectable, or the connection died. The rows keep their claim's schedule.
@@ -1686,9 +1686,8 @@ async function retryFailedMessages(
       }
 
       if (found.oversize.includes(row.uid)) {
-        // Refused from `RFC822.SIZE` alone — the body was never pulled. Still failing, and still
-        // deterministic, so the record simply keeps its place and waits for a build with a bigger
-        // ceiling.
+        // Refused from `RFC822.SIZE` and its header block did not come back whole either, so the
+        // record keeps its place and waits for the next build's probe.
         log?.warn("message_retry_still_oversize", {
           mailboxId, accountId, folder, uid: row.uid, attempts: row.attempts,
           escalated: deadLetters.escalated,

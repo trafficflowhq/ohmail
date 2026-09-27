@@ -820,14 +820,12 @@ export interface ChangeBatch {
    */
   unanswered?: ReadonlyArray<{ folder: string; uidValidity: string; uid: number }>;
   /**
-   * UIDs whose RFC822.SIZE already exceeds `MAX_RAW_MESSAGE_BYTES`, so the body was deliberately
-   * never fetched — the caller owes each a durable `mime_too_large` row before writing the
-   * cursor, exactly as for {@link unanswered}. The anti-stall rule in `fetchCapped` admits the
-   * first candidate past the BATCH byte budget, but a message past the MIME ceiling is refused by
-   * `normalizeMime` deterministically AFTER download — admitting it buys a 100+ MiB transfer
-   * whose outcome was already known from the metadata fetch. So the ceiling is enforced pre-fetch
-   * from RFC822.SIZE, writing the same durable row; the targeted retry probes by size once per
-   * build. Optional; absent means nothing refused on size.
+   * UIDs over `MAX_RAW_MESSAGE_BYTES` (by RFC822.SIZE) whose header block did not come back whole
+   * either — the caller owes each a durable `mime_too_large` row before writing the cursor, exactly
+   * as for {@link unanswered}. Such a message normally arrives as a header-only create ({@link
+   * Change.oversizeBytes}) and its body is never fetched: past the MIME ceiling `normalizeMime`
+   * refuses it deterministically AFTER a 100+ MiB transfer, so the ceiling is enforced pre-fetch.
+   * The targeted retry probes these by size once per build. Optional; absent means none.
    */
   oversize?: ReadonlyArray<{ folder: string; uidValidity: string; uid: number; size: number }>;
   /**
@@ -937,6 +935,12 @@ export interface FetchByUidOptions {
    * named UID is fetched.
    */
   maxBytes?: number;
+  /**
+   * A UID over `MAX_RAW_MESSAGE_BYTES` comes back as a header-only create ({@link
+   * Change.oversizeBytes}) instead of on `oversize`, as `changesSince` emits it. Only the retry
+   * that heals written-off messages asks; a UID whose block did not arrive stays on `oversize`.
+   */
+  oversizeHeads?: boolean;
 }
 
 /** Per-call controls for {@link MailboxAdapter.fetchRaw}. */

@@ -1495,6 +1495,8 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     messageId: string, body: MessageBodyInput, storage: BodyStorageContext, search?: MessageSearchInput,
   ): Promise<BodyStorageOutcome> {
     const bytes = bodyBytesOf(body);
+    // A husk the pipeline decided (`too_large`) reserves nothing and evicts nothing: no content.
+    const husk = body.withheld;
     // A DUPLICATE must not evict. The 1:1 conflict below is how this method learns the body
     // already exists — but by then the evicting reserve would have husked up to 64 old bodies
     // to make room for content that is never stored (review finding). One primary-key read
@@ -1502,19 +1504,19 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     // compensation — and the rolling window runs only for a body that will actually land.
     // The probe-to-insert race window readmits the old behaviour at worst (a conflict after a
     // plain reserve), never a wrongful eviction.
-    const dupe = await this.db.select({ id: messageBodies.id })
+    const dupe = husk !== undefined ? [] : await this.db.select({ id: messageBodies.id })
       .from(messageBodies).where(eq(messageBodies.messageId, messageId)).limit(1);
     // `reserveBodyBytesEvicting` (the 2026-08-21 rolling window): at cap it husks the oldest
     // stored bodies to fit THIS one — bounded, same transaction — and only past that bound does
     // it answer `false`, which is the old decline-new shape kept as the pathological ceiling.
-    const reserved = dupe.length > 0
+    const reserved = husk !== undefined ? false : dupe.length > 0
       ? await reserveBodyBytes(this.db, this.d, storage.accountId, bytes, storage.capBytes)
       : await reserveBodyBytesEvicting(this.db, this.d, storage.accountId, bytes, storage.capBytes);
     const bodyInsert = this.db.insert(messageBodies).values({
       messageId,
       text: reserved ? body.text : "",
       html: reserved ? body.html : null,
-      withheldReason: reserved ? null : ("storage_cap" as const),
+      withheldReason: husk ?? (reserved ? null : ("storage_cap" as const)),
       /**
        * `{ ...body.headers }` — the spread is load-bearing; this is the database boundary
        * `mime.ts` names when it says the null-prototype guarantee does not survive a round trip.

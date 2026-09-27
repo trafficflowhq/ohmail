@@ -314,14 +314,14 @@ export interface SettingsDTO {
 /**
  * Why a stored body holds no content, when that is POLICY rather than an empty message — the
  * projection of `message_bodies.withheld_reason`, verbatim, closed set. `"storage_cap"` — the
- * account's managed storage cap (mail 0062): declined at ingest or evicted by the rolling window;
- * the mail is untouched on the user's own server. `"junk_filed"` — the spam verdict filed this
- * message to the provider's native \Junk (mail 0065): the durable artifact is the sender rule,
- * and the bytes live on in the Junk folder, the master. `"expunged"` — every watched copy is gone
- * from the server (mail 0065): the row is tombstoned and the husk exists so the account stops
- * paying for its bytes. Absent for every ordinarily stored body, including a genuinely empty one.
+ * account's managed storage cap (mail 0062) declined or evicted it; the mail is untouched on the
+ * user's own server. `"junk_filed"` — the spam verdict filed it to the provider's native \Junk
+ * (mail 0065); the sender rule is the durable artifact, the bytes live on in Junk. `"expunged"` —
+ * every watched copy is gone (mail 0065); the husk stops the account paying for its bytes.
+ * `"too_large"` — over the download ceiling (mail 0131): only its headers were read, never its
+ * body. Absent for every ordinarily stored body, including a genuinely empty one.
  */
-export type WithheldMarker = "storage_cap" | "junk_filed" | "expunged";
+export type WithheldMarker = "storage_cap" | "junk_filed" | "expunged" | "too_large";
 
 // ── Message body. The 1:1 `message_bodies` row.
 // `text` is the sensitivity-REDACTED body when the message is sensitive (never an

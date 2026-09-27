@@ -66,8 +66,8 @@ function boolParam(v: string | null): boolean | undefined {
 /**
  * Which of these messages this mirror actually holds a body for — the fact the body routes were
  * answering without. A row's PRESENCE is the whole signal, its contents deliberately not consulted:
- * a withheld body (`storage_cap`, `junk_filed`, `expunged`) is a real row carrying its marker, and
- * an ordinarily empty message is a real row too — both settled answers the mirror genuinely holds.
+ * a withheld body (`storage_cap`, `junk_filed`, `expunged`, `too_large`) is a real row carrying its
+ * marker, and an ordinarily empty message is a real row too — both settled answers the mirror holds.
  * What must not be served is the case with NO row, which in a mirror means the copy has not arrived.
  * Scoped through `messages.account_id` for `MessageService.getBody`'s reason: `message_bodies` has no
  * account column, so the join IS the authorization, and this question must not become a way to learn

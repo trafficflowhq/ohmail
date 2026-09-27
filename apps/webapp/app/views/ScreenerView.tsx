@@ -2072,10 +2072,13 @@ export function HeldMail({
    * state offers, and it is what makes the new sentence honest: `hydrateBody` refuses an automatic re-ask, so without
    * the button this state would be a dead end with better wording.
    */
+  /* A message over the download ceiling is answered, not on its way: its sentence, no spinner. */
+  const tooLarge = bodyState === "withheld" && drawn?.withheld === "too_large";
   const waiting =
     bodyState !== undefined
     && bodyState !== "full"
     && bodyState !== "failed"
+    && !tooLarge
     && (bodyState === "loading" || bodyStall == null);
   /* EACH RETRY RE-ARMS THE STALL CLOCK. A Retry pressed on the stall face joins the request still
      in the air, so the record stays `loading` and a clock keyed on the message alone kept saying
@@ -2092,11 +2095,13 @@ export function HeldMail({
   const note =
     bodyState === undefined || bodyState === "full"
       ? null
-      : failed
-        ? t("failed")
-        : waiting
-          ? t("loading")
-          : null;
+      : tooLarge
+        ? t("withheldTooLarge")
+        : failed
+          ? t("failed")
+          : waiting
+            ? t("loading")
+            : null;
   const who = (
     <>
       <b>{from}</b>

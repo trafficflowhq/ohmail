@@ -364,6 +364,12 @@ export interface NewPlan {
    */
   adoption?: "peer";
   /**
+   * The body is stored as this husk instead of its text: `too_large` for a message refused on size
+   * ({@link Change.oversizeBytes}), whose plan was made from its header block. Set in ONE place,
+   * {@link planChange}, whichever arm planned the row; absent stores the parsed body as always.
+   */
+  bodyWithheld?: "too_large";
+  /**
    * THIS MESSAGE IS A DELIVERY REPORT FOR ONE OF THIS ACCOUNT'S OWN AWAY REPLIES — the original
    * ids the report quoted, carried from the plan to the commit so the stamp is written by the
    * one phase allowed to write.
@@ -813,6 +819,12 @@ function headersDigest(normalized: NormalizedMessage): string {
  * the pre-AI baseline (sensitive → INBOX, else rule destination, else leave in place).
  */
 export async function planChange(change: Change, deps: PlanDeps): Promise<ChangePlan> {
+  const plan = await planFromRaw(change, deps);
+  if (change.oversizeBytes !== undefined && plan.new) plan.new.bodyWithheld = "too_large";
+  return plan;
+}
+
+async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> {
   if (!change.raw) {
     throw new Error("planChange requires change.raw (a content-bearing 'create')");
   }
@@ -1475,6 +1487,7 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
       text: p.normalized.textBody,
       html: storedHtml,
       headers: p.normalized.headers,
+      ...(p.bodyWithheld !== undefined ? { withheld: p.bodyWithheld } : {}),
     }, {
       accountId,
       capBytes: deps.storageCap === UNMETERED_STORAGE_CAP ? null : deps.storageCap,

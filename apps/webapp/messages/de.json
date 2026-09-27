@@ -1640,6 +1640,7 @@
     "withheldJunk": "Hier nicht gespeichert — dein Spam-Urteil hat diese Nachricht in den Junk-Ordner deines eigenen Mailservers einsortiert. Dort lebt sie weiter; das hier ist die Vorschau.",
     "withheldJunkLoading": "Diese Nachricht wird von deinem Mailserver geladen…",
     "withheldExpunged": "Keine gespeicherte Kopie mehr — jede Kopie dieser Nachricht ist aus den Ordnern verschwunden, die ohmail auf deinem Mailserver liest: dort gelöscht oder von einem anderen Mailprogramm verschoben. Diese Vorschau ist, was bleibt.",
+    "withheldTooLarge": "Nicht heruntergeladen — diese Nachricht ist größer als 64 MB, mehr lädt ohmail nicht herunter. Text und Dateien werden hier deshalb nicht gezeigt. Öffne sie bei deinem Mailanbieter.",
     "invitationWithoutEvent": "Das ist eine Besprechungseinladung; das Mailsystem des Absenders hat den Termin nicht angehängt."
   },
   "message": {

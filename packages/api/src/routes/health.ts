@@ -1114,6 +1114,10 @@ export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker>
      vocabulary each definition gains and its predecessor cannot contain. */
   ["mailboxes_organized_by_kind_closed", "mobile"],
   ["mailboxes_disabled_reason_closed", "organized_elsewhere:mobile"],
+  /* Mail 0131_withheld_too_large — `too_large` joins the withheld reasons (0065's constraint,
+     replaced under its name). Against a 0130 database every message over the download ceiling is
+     refused at ingest by the old CHECK and stays a failure row: invisible, the state it fixes. */
+  ["message_bodies_withheld_reason", "too_large"],
 ];
 
 /**
@@ -1148,7 +1152,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0133_screener_auto_act";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0131_withheld_too_large";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud

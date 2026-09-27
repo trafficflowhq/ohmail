@@ -47,6 +47,12 @@ export interface Change {
    * early header would win the minimum. INTERNALDATE alone, never a mix.
    */
   internalDate?: Date;
+  /**
+   * This message's RFC822.SIZE is over `MAX_RAW_MESSAGE_BYTES`, so `raw` is its HEADER BLOCK alone
+   * and its body is never fetched. The adapter sets it; the pipeline routes the headers as usual
+   * and stores the body as the `too_large` husk, so the message is listed and says why it is empty.
+   */
+  oversizeBytes?: number;
 }
 
 export interface AdapterPort {
@@ -251,6 +257,8 @@ export interface MessageBodyInput {
   text: string;
   html: string | null;
   headers: Record<string, string[]>;
+  /** Store the husk under this marker instead of the content, and count no bytes for it. */
+  withheld?: "too_large";
 }
 
 /**

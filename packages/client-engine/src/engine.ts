@@ -63,6 +63,7 @@ import {
   MutationRejectedError,
   encodeSeqCursor,
   isProtectedMessage,
+  isWithheldMarker,
   type ComposeAttachment,
   type EngineDraft,
   type EngineMessage,
@@ -94,8 +95,7 @@ import {
  * ANSWERED-ordinary. See `WithheldMarker` for why dropping a real member here would be a
  * permanent lie in the record. One helper for both hydration sites so they cannot disagree.
  */
-const withheldMarkerOf = (w: unknown): WithheldMarker | null =>
-  w === "storage_cap" || w === "junk_filed" || w === "expunged" ? w : null;
+const withheldMarkerOf = (w: unknown): WithheldMarker | null => (isWithheldMarker(w) ? w : null);
 
 
 /**

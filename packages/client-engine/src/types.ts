@@ -541,14 +541,19 @@ export interface MessageBodyWire {
 /**
  * Why a stored body holds no content, when that is policy — the server's closed set, verbatim (`MessageBodyDTO.withheld`):
  *  · `"storage_cap"` — the managed storage cap declined or evicted the copy.
- *  · `"junk_filed"`  — the spam verdict filed to the provider's Junk; the
- *                      durable artifact is the sender rule.
+ *  · `"junk_filed"`  — the spam verdict filed to the provider's Junk; the sender rule stays.
  *  · `"expunged"`    — every watched copy is gone; the row is tombstoned.
+ *  · `"too_large"`   — over the download ceiling: only its headers were read.
  * Every member hydrates as ITSELF into the mirror: narrowing unknown
  * members to `null` would persist "an ordinary, complete, empty body" —
  * answered, never re-asked — the permanent lie the tri-state ended.
  */
-export type WithheldMarker = "storage_cap" | "junk_filed" | "expunged";
+export type WithheldMarker = "storage_cap" | "junk_filed" | "expunged" | "too_large";
+
+/** The closed set as a value, read by every narrowing so a new member reaches all of them. */
+export const WITHHELD_MARKERS: readonly WithheldMarker[] = ["storage_cap", "junk_filed", "expunged", "too_large"];
+export const isWithheldMarker = (w: unknown): w is WithheldMarker =>
+  (WITHHELD_MARKERS as readonly unknown[]).includes(w);
 
 /**
  * One row of the batch body read — `GET /messages/bodies?ids=…`, the
@@ -836,6 +841,8 @@ export interface ScreenerHeldMail {
    * consent decision taken on a truncation is the risk the Screener exists to remove.
    */
   bodyState?: BodyState;
+  /** WHY a `withheld` body is empty — {@link MessageBody.withheld}; absent on every other state. */
+  bodyWithheld?: WithheldMarker;
   /**
    * The stored `text/html` part, or null. Carried so the Screener renders a stranger's mail
    * with the SAME sandboxed renderer the reading pane uses — sanitized, in a frame that cannot

@@ -71,24 +71,25 @@ export function placeLabel(folder: string): string {
 
 /**
  * Which sentence a withheld body gets — the `body.*` catalogue key per marker AND where the
- * message is now. `MessageBody.withheld` is the server's closed set (mail 0065), and each member
- * owes its own sentence: the storage cap names the space, the junk filing names the verdict, the
- * expunge says the copies are gone. The verdict's sentence is true only while the message is IN
- * the spam pile: a `junk_filed` husk anywhere else has been moved out, its text is being refilled
- * from the mail server, and saying the verdict filed it would be false — so it reads "loading"
- * (`withheldJunkLoading`, `isJunkHuskLeaving`), bounded by the engine's JUNK_REFILL_BOUND_MS. One resolver for every
+ * message is now. Each member of the server's closed set owes its own sentence: the storage cap
+ * names the space, the junk filing the verdict, the expunge the gone copies, the size refusal the
+ * ceiling. The verdict's is true only while the message is IN the spam pile: a `junk_filed` husk
+ * moved out is being refilled from the mail server, so it reads "loading" (`withheldJunkLoading`,
+ * `isJunkHuskLeaving`), bounded by the engine's JUNK_REFILL_BOUND_MS. One resolver for every
  * surface; a new member is a type error at this mapping until it gets its own sentence.
  */
 export function withheldCopyKey(
   marker: WithheldMarker | null | undefined,
   folder: string | null | undefined,
-): "withheld" | "withheldJunk" | "withheldJunkLoading" | "withheldExpunged" {
+): "withheld" | "withheldJunk" | "withheldJunkLoading" | "withheldExpunged" | "withheldTooLarge" {
   switch (marker) {
     case "junk_filed":
       return isJunkHuskLeaving({ state: "withheld", withheld: marker }, folder)
         ? "withheldJunkLoading" : "withheldJunk";
     case "expunged":
       return "withheldExpunged";
+    case "too_large":
+      return "withheldTooLarge";
     case "storage_cap":
     case null:
     case undefined:

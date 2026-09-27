@@ -1577,6 +1577,9 @@ const TABLE = {
     "Not stored here — your spam verdict filed this message to the Junk folder on your own mail server. It lives on there; this is the preview.",
   liveBodyWithheldExpunged:
     "No stored copy left — every copy of this message is gone from the folders ohmail reads on your mail server: deleted there, or moved elsewhere by another mail app. This preview is what remains.",
+  /** Over the download ceiling: only its headers were read. The web reader's sentence, word for word. */
+  liveBodyWithheldTooLarge:
+    "Not downloaded — this message is larger than 64 MB, the most ohmail downloads, so its text and files are not shown here. Open it in your mail provider.",
   liveBodyJunkLoading: "Loading this message from your mail server…",
 
   /* ------------------------------------------------- the mail body's frame */

@@ -1106,9 +1106,9 @@ export const messageBodies = pgTable("message_bodies", {
    * cap — almost always an EVICTED husk. The row keeps real `headers` (the organizing passes read
    * them), and the message on the IMAP server is UNTOUCHED. A marker and not "no row": no-row is
    * indistinguishable from "not yet mirrored"; the DTO must say WHY the text is empty; a future
-   * restore is an UPDATE with this as its predicate. Repair passes SKIP non-null rows: withheld
-   * is policy, not damage. Mail 0065 adds `'junk_filed'` (written only after the IMAP move
-   * landed) and `'expunged'`; an already-withheld row keeps its first reason.
+   * restore is an UPDATE with this as its predicate. Repair passes SKIP non-null rows. Mail 0065
+   * adds `'junk_filed'` and `'expunged'`, mail 0131 `'too_large'` (ingested from its header
+   * block); an already-withheld row keeps its first reason.
    */
   withheldReason: text("withheld_reason"),
   // ── Migration 0008: the body-text lexical index lives HERE

@@ -1265,6 +1265,7 @@ function heldOf(
     snippet: m.snippet,
     unread: m.unread,
     bodyState: body.state,
+    ...(body.state === "withheld" && body.withheld ? { bodyWithheld: body.withheld } : {}),
     // Carried so the preview can render the mail the way the reading pane does. `bodyOf`
     // reports `html` only on a hydrated `ready` body, so this is null until `hydrateBody`
     // has run — a consent decision is never rendered against a stale frame under a snippet.

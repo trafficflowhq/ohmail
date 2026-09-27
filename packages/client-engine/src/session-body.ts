@@ -9,7 +9,7 @@
  * and `attempt` remounts a preview per try. Keys include uidValidity.
  */
 
-import type { UnsubscribeHeaderState, WithheldMarker } from "./types.js";
+import { isWithheldMarker, type UnsubscribeHeaderState, type WithheldMarker } from "./types.js";
 
 /** What one key holds mid-session. Absent from the map ⇒ never asked (the caller's "idle"). */
 export type SessionBodyHeld<Outcome> =
@@ -153,10 +153,7 @@ export function narrowOlderBody(wire: {
         ? wire.unsubscribe
         : "no_header",
     unsubscribeUrl: typeof wire.unsubscribeUrl === "string" ? wire.unsubscribeUrl : null,
-    withheld:
-      wire.withheld === "storage_cap" || wire.withheld === "junk_filed" || wire.withheld === "expunged"
-        ? wire.withheld
-        : null,
+    withheld: isWithheldMarker(wire.withheld) ? wire.withheld : null,
   };
 }
 

@@ -196,7 +196,7 @@ function StreamCard({
     open && (m.bodyState === "snippet" || m.bodyState === "loading")
       ? Copy.liveBodyLoading
       : open && m.bodyState === "withheld"
-        ? Copy.liveBodyWithheld
+        ? (m.bodyWithheld === "too_large" ? Copy.liveBodyWithheldTooLarge : Copy.liveBodyWithheld)
         : open && m.bodyState === "failed"
           ? Copy.liveBodyFailed
           : null;

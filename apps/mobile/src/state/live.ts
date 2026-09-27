@@ -1231,7 +1231,7 @@ export function liveReceipts(pres: EntityReader, v: WorldView): WorldReceipts {
  * which of the states it is in (`screenerSegments` carries it; dropping it here made every
  * first-contact decision a decision over one line).
  */
-export type ScreenerHeld = Held & { bodyState?: BodyState };
+export type ScreenerHeld = Held & { bodyState?: BodyState; bodyWithheld?: WithheldMarker };
 
 export interface ScreenerRow {
   /**
@@ -1310,6 +1310,7 @@ function rowOf(dto: ScreenerSenderDTO, scope: Scope | undefined): ScreenerRow {
     // The body's honest state travels with the text — absent means `full`, exactly the
     // DTO's own contract.
     ...(h.bodyState ? { bodyState: h.bodyState } : {}),
+    ...(h.bodyWithheld ? { bodyWithheld: h.bodyWithheld } : {}),
     ...(h.trackerNote ? { trackerNote: h.trackerNote } : {}),
     seen: false,
   }));
