@@ -2,6 +2,7 @@ import {
   MutationRejectedError,
   type EngineAdapter,
   type ListOlderFn,
+  type MessageByIdFn,
   type ListTrashFn,
   type StoreTimeline,
   type MessageBodyWire,
@@ -287,6 +288,8 @@ type GatedAdapter = EngineAdapter & {
   restoreFromTrash?: RestoreFromTrashFn;
   /* History's month rail — structural like the rest; forgetting it leaves History on the mirror. */
   timeline?: () => Promise<StoreTimeline | null>;
+  /* One message by id, for a link to mail the window evicted. */
+  getMessage?: MessageByIdFn;
 };
 
 /**
@@ -855,6 +858,9 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
         /* History's total and months: gated like the pages it places, spread like them. */
         ...(adapter.timeline
           ? { timeline: gatedRead(adapter.timeline.bind(adapter), "the mailbox's timeline") }
+          : {}),
+        ...(adapter.getMessage
+          ? { getMessage: gatedRead(adapter.getMessage.bind(adapter), "one message by id") }
           : {}),
 
         /**

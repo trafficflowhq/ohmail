@@ -913,6 +913,19 @@ interface TimelineCapableAdapter {
   timeline?: StoreTimelineFn;
 }
 
+/** `GET /messages/:id` — one message the store holds, `null` for one it does not. Structural too. */
+export type MessageByIdFn = (messageId: string) => Promise<EngineMessage | null>;
+interface MessageByIdCapableAdapter {
+  getMessage?: MessageByIdFn;
+}
+
+/** {@link OhmailEngine.fetchMessage}'s answer. `missing`: the store holds no such message here. */
+export type FetchMessageOutcome =
+  | { state: "unavailable" }
+  | { state: "ready"; message: EngineMessage }
+  | { state: "missing" }
+  | { state: "failed"; errorClass: string };
+
 /** The batch body read, as {@link OhmailEngine.hydrateThread} calls it. */
 export type FetchBodiesFn = (messageIds: string[]) => Promise<MessageBodyBatchWire[] | null>;
 
@@ -2452,6 +2465,9 @@ export class OhmailEngine {
   private readonly olderPages = new Map<string, Promise<ListOlderOutcome>>();
   /** `GET /messages/timeline`, or `null` when this adapter has none. */
   private readonly timelineFn: StoreTimelineFn | null;
+  /** `GET /messages/:id`, or `null` when this adapter has none — see {@link fetchMessage}. */
+  private readonly messageByIdFn: MessageByIdFn | null;
+  private readonly messageCalls = new Map<string, Promise<FetchMessageOutcome>>();
   /** The store's History and Search pages — the one bound on page rows in memory ({@link HISTORY_PAGE_CACHE_ROWS}). */
   private readonly storePages = new StorePageCache(HISTORY_PAGE_CACHE_ROWS);
   /** In-flight store pages by key, and the one in-flight timeline read. */
@@ -2552,6 +2568,7 @@ export class OhmailEngine {
     // second way for a host to arm a capability the gate did not forward.
     this.listOlderFn = (opts.adapter as ListMessagesCapableAdapter).listMessages?.bind(opts.adapter) ?? null;
     this.timelineFn = (opts.adapter as TimelineCapableAdapter).timeline?.bind(opts.adapter) ?? null;
+    this.messageByIdFn = (opts.adapter as MessageByIdCapableAdapter).getMessage?.bind(opts.adapter) ?? null;
     // The Trash pair, bound by the SAME rule and INDEPENDENTLY of each other and of the list
     // above: an adapter wrapper forwards structural capabilities one at a time, so deriving
     // either from another would make a control call a method that is not there.
@@ -7874,6 +7891,26 @@ export class OhmailEngine {
       : read.wasWhole ? { state: "unread" } : { state: "partial", below: live.below };
     this.coverageMemo = { stamp, read, value };
     return value;
+  }
+
+  /**
+   * ONE MESSAGE BY ID FROM THE STORE, for an id a surface was handed that the mirror no longer
+   * holds — a link to mail the window evicted. RETURNED and never written, for `listOlder`'s
+   * reason: a row with no seq is one no delta could update or remove. Single-flight per id and
+   * never rejects; a tombstoned id is not asked (`messageIsGone` is the mirror's answer).
+   */
+  async fetchMessage(id: string): Promise<FetchMessageOutcome> {
+    const fn = this.messageByIdFn;
+    if (fn === null) return { state: "unavailable" };
+    const inFlight = this.messageCalls.get(id);
+    if (inFlight) return inFlight;
+    const call = Promise.resolve()
+      .then(() => fn(id))
+      .then((m): FetchMessageOutcome => (m === null ? { state: "missing" } : { state: "ready", message: m }))
+      .catch((err: unknown): FetchMessageOutcome => ({ state: "failed", errorClass: errorClassOf(err) }))
+      .finally(() => { this.messageCalls.delete(id); });
+    this.messageCalls.set(id, call);
+    return call;
   }
 
   /** Ask the store's timeline (single-flight with History's) and answer {@link storeCoverage}. */

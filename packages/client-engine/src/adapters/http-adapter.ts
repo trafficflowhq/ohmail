@@ -932,6 +932,18 @@ export class HttpAdapter implements EngineAdapter {
   }
 
   /**
+   * `GET /messages/:id` — one message the store holds. `null` on a 404, which is the route's answer
+   * for an id that is not this account's; any other non-2xx throws through `rejectionOf`.
+   */
+  async getMessage(messageId: string): Promise<EngineMessage | null> {
+    const res = await this.request("GET", `/messages/${encodeURIComponent(messageId)}`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw await this.rejectionOf(res);
+    const wire = (await res.json()) as Partial<EngineMessage> | null;
+    return wire && typeof wire.id === "string" ? (wire as EngineMessage) : null;
+  }
+
+  /**
    * `GET /messages/timeline` — History's total and its months, newest first. A non-2xx throws
    * through `rejectionOf`; a body that is not a timeline reads as "no timeline here".
    */

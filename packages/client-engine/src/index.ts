@@ -619,6 +619,8 @@ export {
   type ListOlderFn,
   type ListOlderOutcome,
   type StoreCoverage,
+  type FetchMessageOutcome,
+  type MessageByIdFn,
   type ListOlderWire,
   // The Trash pair — two more structural capabilities a wrapper forwards by hand, for the same
   // reason and with the same risk. See `ListTrashCapableAdapter` / `RestoreFromTrashCapableAdapter`.

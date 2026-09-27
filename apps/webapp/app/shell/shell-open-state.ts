@@ -861,6 +861,10 @@ export function useShellOpenState({
   // a DIFFERENT view is a route move (the overlay must open there), not a state echo.
   const routeMsgAgreed = useRef<string>("|");
   const lastMirroredView = useRef<Route["view"] | null>(null);
+  /* The store's answer for a routed id the mirror does not hold: `null` while asked, `false` for
+     none. One id at a time, and the bump re-runs the mirror below when it lands. */
+  const routeFetch = useRef<{ id: string; found: EngineMessage | false | null } | null>(null);
+  const [routeFetched, setRouteFetched] = useState(0);
   useEffect(() => {
     // A VIEW CHANGE is the one commit where `readerFor` may be a value already condemned: the
     // transition effect above queues `setReaderFor(null)` in this same commit, and reflecting
@@ -924,6 +928,25 @@ export function useShellOpenState({
         // fixtures land), and erasing a reload's claim against a momentarily-empty mirror is
         // the restore failing to itself.
         if (!m && mailState.settled && reader.list<EngineMessage>("message").length > 0) {
+          /* BUT A ROW THE WINDOW EVICTED IS STILL THE STORE'S: asked by id before the claim is
+             dropped, and opened in the overlay the reader keeps for rows no pile holds. */
+          const asked = routeFetch.current?.id === id ? routeFetch.current : null;
+          if (asked === null && !engine.messageIsGone(id)) {
+            routeFetch.current = { id, found: null };
+            void engine.fetchMessage(id).then((out) => {
+              if (routeFetch.current?.id !== id) return;
+              routeFetch.current = { id, found: out.state === "ready" ? out.message : false };
+              setRouteFetched((n) => n + 1);
+            });
+            return;
+          }
+          if (asked?.found === null) return;
+          if (asked?.found) {
+            setReaderOffMirror(asked.found);
+            setReaderFor(id);
+            routeMsgAgreed.current = agreedKey;
+            return;
+          }
           routeMsgAgreed.current = `${route.view}|`;
           reflectMessage(route, null);
         }
@@ -956,7 +979,7 @@ export function useShellOpenState({
     }
     // `route` is a fresh object per hash: the fields below are the identity that matters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route.messageId, route.view, readerFor, ohboxSel, derived, mailState.settled, pileHolds, reader]);
+  }, [route.messageId, route.view, readerFor, ohboxSel, derived, mailState.settled, pileHolds, reader, routeFetched]);
 
   /**
    * Locate the row, in whichever view it landed. One DOM effect and not four props: a search hit can land in four
