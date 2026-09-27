@@ -130,6 +130,41 @@ address. The formatting is saved now.
   result was erased, and the typed confirmation travels in the request body, not the URL.
 - The closure mail names an erasure date only when the erasure will happen on it.
 
+### Confirming an action no longer signs you in again
+<!-- changes: fix-026-confirm-step-up.md -->
+
+Changing a mailbox, deleting your account or linking the desktop app asks for your second factor,
+not your password, when a fresh confirmation is needed, and no longer adds a web session to
+Devices each time. Deleting your account removes only that account's copy from this browser.
+
+### A phone's incoming server can be changed while it organizes
+<!-- changes: fix-026-phone-claim-restart.md -->
+
+- Settings → Server settings changes the incoming server or login of a mailbox this phone
+  organizes without stopping first: the phone claims the mailbox on the new server before the
+  change is kept. If another install organizes the mailbox there, the change is refused and the
+  sheet says so.
+- On a phone that does not organize in the background, leaving the app while the sync it started
+  on the way back in is running hands the mailbox back at that sync's next step.
+
+### Every screen says who organizes a mailbox from what it has read
+<!-- changes: fix-026-who-organizes.md -->
+
+A desktop that cannot read its own folder on the mail server says so on the mailbox row. Web
+setup offers Agree once the server has looked at who organizes the mailbox, and asks before it
+joins a mailbox another install is organizing. An install that stopped organizing is no longer said
+to file the mailbox, and the desktop does not say mail is being filed while the mail server cannot
+be reached. A Screener decision made during a refused takeover goes to the install that kept the
+mailbox.
+
+### Replacing an authenticator works
+<!-- changes: fix-026-authenticator-replace.md -->
+
+Settings → Security → Replace authenticator answered with an error on an account whose authenticator
+was already set up. It now shows a new key, and the authenticator you have keeps working until a
+code from the new one is confirmed. A replacement not confirmed within 15 minutes has to be started
+again.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
