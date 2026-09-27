@@ -391,13 +391,9 @@ export function useShellDerivations({
     () => new Set(ohboxSurfaceMessages(resurfacedRows, ohbox, []).map((m) => m.id)),
     [resurfacedRows, ohbox],
   );
+  /* The engine's own answer object, stable while its memo holds — never a render-scope memo
+     handed to a hook that keeps a memoized closure (`render-scope-census.test.ts`). */
   const coverage = engine.storeCoverage();
-  const edgeDate = coverage.state === "partial" ? coverage.below.date : null;
-  const edgeId = coverage.state === "partial" ? coverage.below.id : null;
-  const ohboxOlderBoundary = useMemo(
-    () => (edgeId === null ? undefined : { date: edgeDate, id: edgeId }),
-    [edgeDate, edgeId],
-  );
   /**
    * …AND A ROW THE MIRROR DOES NOT HOLD IS ASKED THE OHBOX'S OWN QUESTION: the partition and the
    * Ohbox selector, over the mirror with the fetched rows added, the pipeline `ohbox` below is
@@ -418,7 +414,7 @@ export function useShellDerivations({
     return out;
   });
   const older = useOlderMail(
-    engine, "ohbox", derived, undefined, ohboxOlderBoundary,
+    engine, "ohbox", derived, undefined, coverage.state === "partial" ? coverage.below : undefined,
     (id) => (ohboxShownIds.has(id) ? "hide"
       : reader.get<EngineMessage>("message", id) || engine.messageIsGone(id) ? "ban" : "show"),
     0, ohboxBelongs,

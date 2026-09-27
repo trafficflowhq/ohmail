@@ -7962,11 +7962,13 @@ export class OhmailEngine {
         // `searchServer`'s `null`, and it must not become an empty `ready`: "the server answered
         // and there is nothing older" is a claim, and this is the case where nothing was asked.
         if (wire === null) return { state: "unavailable" };
-        return {
-          state: "ready",
-          items: Array.isArray(wire.items) ? wire.items : [],
-          nextCursor: typeof wire.nextCursor === "string" && wire.nextCursor !== "" ? wire.nextCursor : null,
-        };
+        const items = Array.isArray(wire.items) ? wire.items : [];
+        const nextCursor = typeof wire.nextCursor === "string" && wire.nextCursor !== "" ? wire.nextCursor : null;
+        /* HELD IN THE PAGE CACHE, never the mirror: a verb pressed on one of these rows computes
+           its effects like any other (`verbRead`), and the store's later word on it — a delta
+           the window then prunes again — reaches the row (`storePageRow`). */
+        this.storePages.put(`older:${key}`, { items, nextCursor }, undefined, `older:${view}:${opts.folderId ?? ""}`);
+        return { state: "ready", items, nextCursor };
       })
       .catch((err: unknown): ListOlderOutcome => ({
         state: "failed",

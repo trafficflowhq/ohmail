@@ -524,7 +524,8 @@ export function useShellVerbs({
   ): RoutingPressPlan | null => {
     /* The verb reader — a History or Search row the mirror does not hold is planned like any
        other — and the pressed row itself, which a reading column can hold past its page. */
-    const read = seed ? withRow(setRead(), seed) : setRead();
+    const base = withRows(engine.verbRead(), surfaceById);
+    const read = seed ? withRow(base, seed) : base;
     const sender = senderScreening(read, seedId);
     if (!sender) return null;
     /* SENDER SCOPE AND NO RETRO: the press is about these messages, not a domain, and nobody

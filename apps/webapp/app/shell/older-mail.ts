@@ -4,15 +4,13 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { EngineMessage, ListOlderOutcome, OhmailEngine, OhmailView } from "@ohmail/client-engine";
 
 /**
- * The bottom of a pile, when the device holds only part of the mailbox. The mirror is a window in
- * front of a server holding all of it, so the end of a list is ambiguous — "this is your mail" or
- * "this is what this device kept". This hook lets a list tell them apart: one ask per
- * {@link OlderMail.loadMore} call, never on mount, scroll or re-render — a prefetch would pull the
- * mailbox into a mirror that deliberately does not want it. Whether there is anything to ask for
- * is the STORE's answer (`engine.storeCoverage()`), never the window policy's. The rows are NOT mirror rows:
- * `engine.listOlder` writes nothing (no sync sequence), and they live in this hook's state. The
- * merge prefers the mirror's own row (it carries the overlay and this device's triage; a wire item
- * is a pre-edit snapshot). Keyed to one view: leaving and returning starts from the top.
+ * The bottom of a pile, when the device holds only part of the mailbox: "this is your mail" or
+ * "this is what this device kept". One ask per {@link OlderMail.loadMore} call, never on mount,
+ * scroll or re-render — a prefetch would pull the mailbox into a mirror that does not want it.
+ * Whether there is anything to ask for is the STORE's answer (`engine.storeCoverage()`), never
+ * the window policy's. The rows are NOT mirror rows (no sync sequence): they live in this hook's
+ * state and the engine's page cache, and the mirror's own row wins by id (it carries the overlay
+ * and this device's triage). Keyed to one view: leaving and returning starts from the top.
  */
 
 /** What the surface renders below its own rows. */
@@ -65,8 +63,10 @@ interface Page {
 
 const EMPTY: Page = { items: [], cursor: null, loading: false, error: null, exhausted: false };
 
-/** Pages one press may walk past while every row they bring is one the list already shows. */
+/** Pages one press may walk past while every row they bring is one the list does not list. */
 export const OLDER_HOPS = 8;
+/** Rows a walked-past page asks for — the server's own page ceiling, so a walk spans 1,600 rows. */
+export const OLDER_HOP_LIMIT = 200;
 
 /** One scope's paging position — see the `paging` ref inside {@link useOlderMail}. */
 interface Paging {
@@ -265,9 +265,9 @@ export function useOlderMail(
     p.inFlight = true;
     setPage((prev) => ({ ...prev, loading: true, error: null }));
 
-    /* ONE PRESS BRINGS SOMETHING NEW. A page whose every row the list already shows (the store
-       re-serving what this device holds) is walked past, up to {@link OLDER_HOPS} pages; the
-       rows are kept either way, for the latch's reasons. */
+    /* ONE PRESS BRINGS SOMETHING NEW. A page listing nothing (the store re-serving what this
+       device holds, a held stranger's letters) is walked past, up to {@link OLDER_HOPS} pages of
+       {@link OLDER_HOP_LIMIT}; every fetched row is kept either way, for the latch's reasons. */
     const shown = (items: readonly EngineMessage[]): boolean => {
       const open = items.filter((m) => (suppressRef.current?.(m.id) ?? "show") === "show" && !p.banned.has(m.id));
       const belong = open.length > 0 ? belongsRef.current?.(open) : undefined;
@@ -278,10 +278,12 @@ export function useOlderMail(
         ...(cursor ? { cursor } : {}),
         ...(folderId ? { folderId } : {}),
         ...(!cursor && startBelow ? { startBelow } : {}),
+        ...(hop > 0 ? { limit: OLDER_HOP_LIMIT } : {}),
       })
       .then((outcome): Promise<ListOlderOutcome> | ListOlderOutcome => {
         if (outcome.state !== "ready") return got.length === 0 ? outcome : { state: "ready", items: got, nextCursor: cursor };
-        const items = [...got, ...outcome.items];
+        const have = new Set(got.map((m) => m.id));
+        const items = [...got, ...outcome.items.filter((m) => !have.has(m.id))];
         const stale = paging.current !== p || committed.current.scope !== p.scope;
         if (!stale && outcome.nextCursor !== null && hop + 1 < OLDER_HOPS && !shown(outcome.items)) {
           return ask(outcome.nextCursor, hop + 1, items);
@@ -379,9 +381,12 @@ export function useOlderMail(
       });
     // And the list's own partition, over what is left: never latched, asked again every render.
     const belong = open.length > 0 ? belongsRef.current?.(open) : undefined;
+    // The row as it stands now: the mirror's, else the page cache's (a pressed verb's effect, or
+    // the store's later word after the window pruned it again); a row the mirror records gone drops.
     return open
       .filter((item) => belong === undefined || belong.has(item.id))
-      .map((item) => reader.get<EngineMessage>("message", item.id) ?? item);
+      .map((item) => reader.get<EngineMessage>("message", item.id) ?? engine.storePageRow(item))
+      .filter((m): m is EngineMessage => m !== null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, page.items, version, scope]);
 
