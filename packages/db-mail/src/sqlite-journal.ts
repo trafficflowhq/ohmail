@@ -335,6 +335,14 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     ]
   },
   {
+    "name": "0129_screener_auto_act.sql",
+    "statements": [
+      "ALTER TABLE \"account_settings\" ADD COLUMN \"screener_auto_act_at\" integer;",
+      "ALTER TABLE \"routing_decisions\" ADD COLUMN \"act_refused_at\" integer;",
+      "ALTER TABLE \"routing_decisions\" ADD COLUMN \"act_refusal\" text CONSTRAINT \"routing_decisions_act_refusal_closed\" CHECK (\"act_refusal\" in ('account_erased', 'not_organizer', 'mailbox_removed', 'store_fault'));"
+    ]
+  },
+  {
     "name": "0130_mailbox_sync_soft_states.sql",
     "statements": [
       "ALTER TABLE \"mailboxes\" ADD COLUMN \"sync_progress_at\" integer;"

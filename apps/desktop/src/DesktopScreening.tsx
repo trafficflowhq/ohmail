@@ -139,10 +139,12 @@ export function DesktopScreening({
           the STANDALONE door there is no ledger — a person's own model, a pass at the tail of
           this install's sync: a different control, gated the other way. It renders itself
           away when the engine answers 404, so the two conditions agree without an authority. */}
-      {door === "local" ? <DesktopAutoSuggest /> : null}
+      {door === "local" ? <DesktopAutoSuggest reader={readOnly !== null} /> : null}
 
       {/* AUTO-APPLY, ON THE HOSTED DOOR ONLY. See the header. It arms the deterministic pass and
-          nothing else — the act on suggestions takes its own consent, which no surface asks for. */}
+          nothing else — the act on suggestions takes its own consent, whose switch is
+          the web entry under automatic suggestions on this door and sits under
+          `DesktopAutoSuggest` on the standalone one. */}
       {door === "cloud" ? (
         <SettingsRow
           label={ts("screening.autoApplyTitle")}

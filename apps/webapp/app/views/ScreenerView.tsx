@@ -2526,6 +2526,13 @@ function WaitingPreview({
                 ) : null}
               </span>
             )}
+            {/* The act on suggestions tried this sender and was refused: said once,
+                beside the row's own Accept, which still files it. */}
+            {sender.ai.actRefused ? (
+              <span className="scn-why-act" data-act-refused="true">
+                {t("aiActRefused", { accept: t("rowAccept") })}
+              </span>
+            ) : null}
             </span>
           </div>
         ) : (

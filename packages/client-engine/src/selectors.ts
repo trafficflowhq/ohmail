@@ -1210,8 +1210,17 @@ interface SenderEntry {
    * moved — the suggestion is not in the bag, so `sameBag` alone read the row as unchanged.
    */
   suggestionId: string | null;
+  /**
+   * AND WHICH VERSION of it: a refused act, and its clear, arrive as an `update` on the
+   * SAME entity, so the id alone read the row as unchanged and the sentence never appeared.
+   */
+  suggestionVersion: string | null;
 }
 const senderCache = new WeakMap<EngineMessage, SenderEntry>();
+
+/** The suggestion's version as the row reads it — joined with `JSON.stringify`, never a control byte. */
+const adviceVersion = (s: ScreenerSuggestionEntity | undefined): string | null =>
+  s ? JSON.stringify([s.updatedAt, s.actRefusal ?? null]) : null;
 
 /** The bag as the last derivation saw it — messages by identity, and the body each one read. */
 function sameBag(
@@ -1348,6 +1357,7 @@ function suggestionAi(s: ScreenerSuggestionEntity | undefined): ScreenerSenderDT
     dest,
     confidence: s.confidence,
     rationale: "",
+    ...(typeof s.actRefusal === "string" && s.actRefusal !== "" ? { actRefused: true as const } : {}),
     ...(code
       ? {
         reasonCode: code,
@@ -1600,7 +1610,8 @@ export function screenerSegments(
       const sug = segment === "waiting" ? advice.get(key) : undefined;
       if (kept !== undefined && kept.segment === segment && kept.day === day
           && kept.zone === zone && kept.locale === locale
-          && kept.suggestionId === (sug?.id ?? null) && sameBag(reader, kept, bucket)) {
+          && kept.suggestionId === (sug?.id ?? null) && kept.suggestionVersion === adviceVersion(sug)
+          && sameBag(reader, kept, bucket)) {
         rows.push({ key, rep: kept.rep, dto: kept.dto });
         continue;
       }
@@ -1656,6 +1667,7 @@ export function screenerSegments(
         senderCache.set(anchor, {
           segment, day, zone, locale, rep, dto,
           suggestionId: sug?.id ?? null,
+          suggestionVersion: adviceVersion(sug),
           // The bucket is built in this call and never mutated afterwards, so it is kept rather
           // than copied — one array per sender, the same one the row was derived from.
           bag: bucket,

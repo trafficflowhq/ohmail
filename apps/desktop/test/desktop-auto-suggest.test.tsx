@@ -143,7 +143,8 @@ describe("the automatic-suggestion row on the standalone door", () => {
     expect(text()).toContain("every sender waits for you");
     // WHAT LEAVES THE MACHINE, on screen at the same moment the switch is on.
     expect(text()).toContain("the model you configured");
-    expect(asked.map((a) => `${a.method} ${a.url}`)).toEqual(["GET /local/auto-suggest"]);
+    // `GET /consent` is the act on suggestions' read, the row drawn beneath this one.
+    expect(asked.map((a) => `${a.method} ${a.url}`)).toEqual(["GET /consent", "GET /local/auto-suggest"]);
   });
 
   it("promises nothing while it is off", async () => {
@@ -179,9 +180,9 @@ describe("the automatic-suggestion row on the standalone door", () => {
     await act(async () => { await Promise.resolve(); });
 
     expect(asked.map((a) => `${a.method} ${a.url}`)).toEqual([
-      "GET /local/auto-suggest", "PUT /local/auto-suggest",
+      "GET /consent", "GET /local/auto-suggest", "PUT /local/auto-suggest",
     ]);
-    expect(asked[1]!.body).toBe(JSON.stringify({ on: true }));
+    expect(asked[2]!.body).toBe(JSON.stringify({ on: true }));
     // ARMED, and STILL SAYING SO — the sentence follows the model, not the switch, so nobody is
     // told work is happening because they flipped something.
     expect(theSwitch()?.getAttribute("aria-checked")).toBe("true");

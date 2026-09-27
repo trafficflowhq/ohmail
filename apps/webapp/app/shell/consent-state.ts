@@ -39,7 +39,12 @@ export interface ConsentTransport {
    */
   foldersStorable: boolean;
   state: () => Promise<ConsentStateWire>;
-  setAutoSuggest: (enabled: boolean) => Promise<{ autoSuggestAt: string | null }>;
+  setAutoSuggest: (enabled: boolean) => Promise<{ autoSuggestAt: string | null; autoActAt?: string | null }>;
+  /**
+   * The act on suggestions — OPTIONAL for `setThemeFace`'s reason: a door built before
+   * it keeps compiling, and without it the switch is not drawn.
+   */
+  setAutoAct?: (enabled: boolean) => Promise<{ autoActAt: string | null }>;
   /**
    * THE SCREENING WINDOW AND ITS MODE — one call, because they are one answer (mail 0083).
    *
@@ -141,6 +146,7 @@ const CLOUD_CONSENT: ConsentTransport = {
   foldersStorable: true,
   state: () => consentApi.state(),
   setAutoSuggest: (enabled) => consentApi.setAutoSuggest(enabled),
+  setAutoAct: (enabled) => consentApi.setAutoAct(enabled),
   setDormancyDays: (days, scope) => consentApi.setDormancyDays(days, scope),
   setBlockRemoteImages: (blocked) => consentApi.setBlockRemoteImages(blocked),
   setBlockTrackingPixels: (blocked) => consentApi.setBlockTrackingPixels(blocked),
@@ -190,6 +196,13 @@ export interface ConsentState {
    * derivation of "is it on" is how the two get to disagree.
    */
   autoSuggestAt: string | null;
+  /**
+   * The act on suggestions: on, when, and whether the server carries the axis at all
+   * (an older API omits `autoActAt`, so the switch is not drawn). False and null at rest.
+   */
+  autoAct: boolean;
+  autoActAt: string | null;
+  autoActStorable: boolean;
   /**
    * Does this account keep the per-message "Show images" flow? True = manual, the old
    * behaviour; false = the product default (remote images load through the proxy on open). It
@@ -393,6 +406,9 @@ const RESTING: ConsentState = {
   screeningBaselineAt: null,
   autoSuggest: false,
   autoSuggestAt: null,
+  autoAct: false,
+  autoActAt: null,
+  autoActStorable: false,
   // MANUAL AT REST. See {@link ConsentState.blockRemoteImages}: this is the one field whose safe
   // resting value is the non-default one, because the failure it guards against is loading a
   // sender's content for somebody who asked us not to.
@@ -549,6 +565,11 @@ export function useConsentState(
    * failure the caller has to be able to tell the user about.
    */
   setAutoSuggest: (enabled: boolean) => Promise<boolean>;
+  /**
+   * Flip the act on suggestions; resolves to what the database holds and rethrows a
+   * refusal. Null where the wire cannot write it.
+   */
+  setAutoAct: ((enabled: boolean) => Promise<boolean>) | null;
   /**
    * Move the dormancy dial and keep the local window in step with the stored one. Resolves to
    * the EFFECTIVE window the server counted with, and `state.dormancyDays` is set from that
@@ -714,6 +735,10 @@ export function useConsentState(
           autoSuggest: wire.autoSuggestAt != null,
           // Normalised to null so `undefined` (an API from before mail 0040) cannot reach a view.
           autoSuggestAt: wire.autoSuggestAt ?? null,
+          // Presence decides whether the door has the switch; the value, whether it is on.
+          autoAct: wire.autoActAt != null,
+          autoActAt: wire.autoActAt ?? null,
+          autoActStorable: "autoActAt" in wire,
           // `=== undefined` and NOT `== null`, which is the opposite of the line four above it and
           // is the whole point. `null` means the server read the row and found no opt-out ⇒ images
           // load. `undefined` means this API predates mail 0048 and never looked ⇒ keep the button.
@@ -1003,9 +1028,25 @@ export function useConsentState(
     // BOTH FIELDS FROM THE SAME ECHO. Setting the boolean from the server and the instant from
     // the argument (or leaving it stale) is how a row reads "On since <yesterday>" about a write
     // that was refused — the two must move together or not at all.
-    applyEcho(at, (prev) => ({ ...prev, autoSuggest: on, autoSuggestAt: res.autoSuggestAt ?? null }));
+    // OFF withdraws the act on suggestions too; the echo says so.
+    const actOff = "autoActAt" in res ? { autoAct: false, autoActAt: null } : {};
+    applyEcho(at, (prev) => ({
+      ...prev, autoSuggest: on, autoSuggestAt: res.autoSuggestAt ?? null, ...actOff,
+    }));
     return on;
   }, [applyEcho]);
+
+  const writeAutoAct = useCallback(async (enabled: boolean): Promise<boolean> => {
+    writeEpoch.current += 1;
+    const at = era.current;
+    const res = await link.current.setAutoAct!(enabled);
+    const on = res.autoActAt != null;
+    applyEcho(at, (prev) => ({ ...prev, autoAct: on, autoActAt: res.autoActAt ?? null }));
+    return on;
+  }, [applyEcho]);
+  // Null when the wire cannot write it — the switch is then not drawn.
+  const setAutoAct =
+    typeof (transport ?? CLOUD_CONSENT).setAutoAct === "function" ? writeAutoAct : null;
 
   const setDormancyDays = useCallback(async (
     days: number | null | undefined, scope?: "window" | "all_time",
@@ -1175,6 +1216,7 @@ export function useConsentState(
     setThemeFace,
     setResurfaceTime,
     setAutoSuggest,
+    setAutoAct,
     setDormancyDays,
     setBlockRemoteImages,
     setBlockTrackingPixels,

@@ -20,6 +20,7 @@ export function Segmented<T extends string>({
   onChange,
   style,
   fill = true,
+  disabled = false,
 }: {
   segments: Segment<T>[];
   value: T;
@@ -32,6 +33,8 @@ export function Segmented<T extends string>({
    * "whole domain" long before the screen ran out.
    */
   fill?: boolean;
+  /** Shown but not pressable — every segment dims and says so to a screen reader. */
+  disabled?: boolean;
 }) {
   const t = useTheme();
   return (
@@ -54,7 +57,8 @@ export function Segmented<T extends string>({
           <Tap
             key={seg.value}
             accessibilityRole={a11yRole("tab", Platform.OS === "ios" ? "ios" : "android")}
-            accessibilityState={{ selected: on }}
+            accessibilityState={{ selected: on, disabled: disabled === true }}
+            disabled={disabled === true}
             onPress={() => onChange(seg.value)}
             style={[
               {

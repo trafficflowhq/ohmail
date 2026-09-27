@@ -1,8 +1,10 @@
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import {
-  accountSettings, folderState, messages,
-  applyScreenerDecision,
+  accountSettings, accounts, folderState, messages, routingDecisions,
+  applyScreenerDecision, recordChanges, fencedAccountWrite,
+  AccountErasedError, OrganizedElsewhereError, MailboxErasedError, MailboxNotFoundError,
+  SCREENER_SUGGESTION_PROVENANCE, type LedgerTx, type ScreenerActRefusal,
   screenerSuggestionsBySender, resolveCutline, senderIsActiveSql, senderIsDecidedSql, heldSortKey,
   decisionCanBeApplied, readRequestEligibility,
   DECIDABLE_FOLDERS, SCREENER_FOLDER,
@@ -58,8 +60,8 @@ export interface ScreenerAutoActDeps {
   until?: () => boolean;
   /**
    * The pass's OWN consent, and nothing else arms it. Never `screener_auto_apply_at`: that switch
-   * says "Deterministic rules only — no AI". No surface asks for this consent yet, so every
-   * production caller passes `null`.
+   * says "Deterministic rules only — no AI". Every production caller passes
+   * {@link screenerActConsentFrom}; the callers census holds that.
    */
   consent: ScreenerActConsent | null;
 }
@@ -67,6 +69,28 @@ export interface ScreenerAutoActDeps {
 /** A given consent to act on suggestions. Asked again per sender, under the account's row lock. */
 export interface ScreenerActConsent {
   stillGiven(tx: Tx): Promise<boolean>;
+}
+
+/**
+ * THE ONE CONSENT the act takes: `account_settings.screener_auto_act_at` set AND the
+ * account's AI switch on, one statement. The per-account AI off switch outranks every AI consent,
+ * so either one off stops the next sender.
+ */
+export function screenerActConsentFrom(accountId: string): ScreenerActConsent {
+  return {
+    async stillGiven(tx: Tx): Promise<boolean> {
+      const rows = await tx.select({ accountId: accountSettings.accountId })
+        .from(accountSettings)
+        .innerJoin(accounts, eq(accounts.id, accountSettings.accountId))
+        .where(and(
+          eq(accountSettings.accountId, accountId),
+          isNotNull(accountSettings.screenerAutoActAt),
+          eq(accounts.aiEnabled, true),
+        ))
+        .limit(1);
+      return rows.length > 0;
+    },
+  };
 }
 
 type SettingsRow = typeof accountSettings.$inferSelect;
@@ -80,10 +104,12 @@ export interface ScreenerAutoActSettings {
   screeningBaselineAt: SettingsRow["screeningBaselineAt"];
   dormancyDays: SettingsRow["dormancyDays"];
   screeningScope: SettingsRow["screeningScope"];
+  /** The act's consent column off the same row; NULL ⇒ the pass reads nothing more. */
+  screenerAutoActAt: SettingsRow["screenerAutoActAt"];
 }
 
 export interface ScreenerAutoActResult {
-  /** False ⇒ no consent was handed in; nothing was read. */
+  /** False ⇒ the consent is not given; nothing past it was read. */
   ran: boolean;
   /** Waiting senders considered. */
   examined: number;
@@ -119,6 +145,10 @@ interface ActPlan {
   decision: "yes" | "no";
   /** The message the advice was bought about — the learning signal's dedup key. */
   messageId: string;
+  /** The stored suggestion row — where a refusal is recorded, and cleared. */
+  suggestionId: string;
+  /** Whether that row already carries a refusal, so a filing clears it. */
+  refused: boolean;
 }
 
 /**
@@ -129,7 +159,10 @@ interface ActPlan {
  */
 export function plannedDecision(
   address: string,
-  advice: { messageId: string; destination: string; confidence: number | null } | undefined,
+  advice: {
+    id: string; messageId: string; destination: string; confidence: number | null;
+    actRefusal?: string | null;
+  } | undefined,
   bars: { deny: number; admit: number },
 ): ActPlan | null {
   if (!advice) return null;
@@ -144,6 +177,8 @@ export function plannedDecision(
     appliedFolder: folder as Destination,
     decision: admits ? "yes" : "no",
     messageId: advice.messageId,
+    suggestionId: advice.id,
+    refused: advice.actRefusal != null,
   };
 }
 
@@ -167,10 +202,12 @@ export async function screenerAutoActPass(
   };
   const accountId = deps.accountId;
 
-  // THE CONSENT, and the whole cost of this pass without one: no statement at all. Checked before
-  // any read, so no column an account set for another reason can stand in for it.
+  // THE CONSENT, before any other read, so no column set for another reason stands in for it.
+  // Off in the row a caller handed over costs no statement; otherwise one.
   const consent = deps.consent;
   if (!consent) return EMPTY();
+  if (deps.settings && deps.settings.screenerAutoActAt == null) return EMPTY();
+  if (!(await consent.stillGiven(db))) return EMPTY();
 
   // The cutline's three answers — the suggest pass's own shape. A sender the cutline has retired
   // is not a question, so acting on advice about them would file mail no surface was asking about.
@@ -234,7 +271,7 @@ export async function screenerAutoActPass(
             .where(eq(accountSettings.accountId, accountId)).limit(1),
         );
         if (!(await consent.stillGiven(tx as unknown as Tx))) return null;
-        return applyScreenerDecision(tx, {
+        const applied = await applyScreenerDecision(tx, {
           accountId, scope: "sender", address: plan.address,
           appliedFolder: plan.appliedFolder, decision: plan.decision,
           triggeringActionId: `screener:auto:${plan.messageId}`,
@@ -253,6 +290,8 @@ export async function screenerAutoActPass(
           // NOT A PRESS: a filing this pass makes never licenses an unsubscribe.
           decidedBy: "pass",
         });
+        if (plan.refused) await clearActRefusal(tx as unknown as Tx, accountId, plan.suggestionId, now());
+        return applied;
       });
       if (applied === null) {
         result.revoked = true;
@@ -276,6 +315,7 @@ export async function screenerAutoActPass(
         reason: "this sender was not filed and stays in the Screener carrying the same suggestion, "
           + "so the person's own Apply still files them and the next cycle tries again",
       });
+      await recordActRefusal(db, accountId, plan.suggestionId, actRefusalOf(err), now(), log);
     }
   }
 
@@ -296,6 +336,62 @@ export async function screenerAutoActPass(
     });
   }
   return result;
+}
+
+/** The closed reason a refused act is recorded under; anything unnamed is a store fault. */
+export function actRefusalOf(err: unknown): ScreenerActRefusal {
+  if (err instanceof AccountErasedError) return "account_erased";
+  if (err instanceof OrganizedElsewhereError) return "not_organizer";
+  if (err instanceof MailboxErasedError || err instanceof MailboxNotFoundError) return "mailbox_removed";
+  return "store_fault";
+}
+
+/**
+ * THE REFUSAL, ON THE SUGGESTION ROW THE ACT READ — its own short, fenced transaction, riding the
+ * narrow `screener_suggestion` entity so every surface can say the act failed. A failed write is
+ * logged and never replaces the act's own error; the sender still carries its Apply either way.
+ */
+async function recordActRefusal(
+  db: Tx, accountId: string, suggestionId: string, refusal: ScreenerActRefusal, at: Date, log: Logger,
+): Promise<void> {
+  try {
+    await fencedAccountWrite(db, { accountId }, async (tx) => {
+      const rows = await tx.update(routingDecisions)
+        .set({ actRefusedAt: at, actRefusal: refusal, updatedAt: at })
+        .where(and(
+          eq(routingDecisions.id, suggestionId),
+          eq(routingDecisions.accountId, accountId),
+          eq(routingDecisions.inputProvenance, SCREENER_SUGGESTION_PROVENANCE),
+        ))
+        .returning({ id: routingDecisions.id });
+      if (rows.length === 0) return;
+      await recordChanges(tx as unknown as LedgerTx, [{
+        accountId, entityType: "screener_suggestion" as const, entityId: suggestionId, op: "update" as const,
+      }]);
+    });
+  } catch (err) {
+    log.error("screener_auto_act_refusal_unrecorded", {
+      accountId, err,
+      reason: "the refused act could not be recorded on its suggestion, so the Screener says nothing "
+        + "about it; the sender still carries the suggestion and its Apply",
+    });
+  }
+}
+
+/** A filing clears the refusal a previous attempt left, inside the filing's own transaction. */
+async function clearActRefusal(tx: Tx, accountId: string, suggestionId: string, at: Date): Promise<void> {
+  const rows = await tx.update(routingDecisions)
+    .set({ actRefusedAt: null, actRefusal: null, updatedAt: at })
+    .where(and(
+      eq(routingDecisions.id, suggestionId),
+      eq(routingDecisions.accountId, accountId),
+      isNotNull(routingDecisions.actRefusal),
+    ))
+    .returning({ id: routingDecisions.id });
+  if (rows.length === 0) return;
+  await recordChanges(tx as unknown as LedgerTx, [{
+    accountId, entityType: "screener_suggestion" as const, entityId: suggestionId, op: "update" as const,
+  }]);
 }
 
 interface WaitingSender {

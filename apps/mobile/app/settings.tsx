@@ -73,6 +73,7 @@ import { type AppLocale } from "../src/i18n/locale";
 import { DetailBar } from "../src/ui/chrome";
 import { Gated } from "../src/ui/Gated";
 import { Segmented } from "../src/ui/Segmented";
+import { AutoActPanel, readsOnly } from "../src/ui/AutoActPanel";
 import { IMAGE_QUALITY_LEVELS, type ImageQualityLevel } from "../src/compose/attach";
 
 /** The dial's four names, read at render so they follow the app's language. */
@@ -339,6 +340,17 @@ function SettingsBody() {
             on={w.folders.enabled}
             pending={w.folders.pending}
             setEnabled={w.folders.setEnabled}
+          />
+        ) : null}
+
+        {/* THE ACT ON SUGGESTIONS, drawn only where the consent answer carries it. */}
+        {w.autoAct ? (
+          <AutoActPanel
+            on={w.autoAct.on}
+            suggestOn={w.autoAct.suggestOn}
+            reader={readsOnly(w.mailboxes.known, w.mailboxes.rows)}
+            pending={w.autoAct.pending}
+            set={w.autoAct.set}
           />
         ) : null}
 

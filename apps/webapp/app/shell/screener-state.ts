@@ -442,7 +442,10 @@ export function joinSuggestion(
 ): ScreenerSenderDTO {
   if (!overlay || x.derived !== true) return x;
   const found = overlay.get(senderKey(x.from.address));
-  return found ? { ...x, ai: found } : x;
+  if (!found) return x;
+  // A refused act is the MIRROR's fact (its write and its clear ride the delta); the overlay
+  // carries advice, never that, so it is kept from the row the mirror served.
+  return { ...x, ai: x.ai?.actRefused ? { ...found, actRefused: true } : found };
 }
 
 /**

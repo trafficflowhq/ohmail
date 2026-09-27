@@ -30,6 +30,7 @@ import { activeLocale } from "../i18n/locale";
 import { useConnection } from "../net/connection";
 import {
   readFoldersEnabled,
+  writeAutoAct,
   writeFoldersEnabled,
   writeResurfaceTime,
   writeThemeFace,
@@ -441,6 +442,12 @@ export interface World {
      */
     applyAll(face: FaceName): Promise<boolean>;
   };
+  /**
+   * THE ACT ON SUGGESTIONS, off the same `GET /consent` cadence; `null` until a read
+   * carrying the axis landed this session. `suggestOn` is what it needs; `set` resolves to what
+   * the account stored and rejects on a refusal.
+   */
+  autoAct: { on: boolean; suggestOn: boolean; pending: boolean; set(on: boolean): Promise<boolean> } | null;
   message(id: string): WorldMail | undefined;
   /** One message's files, where a screen shows a row it holds rather than a reading row. */
   filesOf(id: string): WorldAttachment[] | undefined;
@@ -642,6 +649,7 @@ function emptyWorld(actions: WorldActions): World {
     // No account, so no account face, nothing that could have been read, and nothing to write one
     // to. `false` is "not confirmed", which is exactly what nothing-connected means.
     face: { account: null, known: false, pending: false, applyAll: () => Promise.resolve(false) },
+    autoAct: null,
     message: () => undefined,
     filesOf: () => undefined,
     store: {
@@ -840,6 +848,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   /** See {@link World.face.known} — `accountFace: null` is ambiguous until this is true. */
   const [accountFaceKnown, setAccountFaceKnown] = useState(false);
   const [facePending, setFacePending] = useState(false);
+  /* The act on suggestions, as the account's consent read last said it; `null` = no axis yet. */
+  const [autoAct, setAutoAct] = useState<{ on: boolean; suggestOn: boolean } | null>(null);
+  const [autoActPending, setAutoActPending] = useState(false);
   /**
    * THE PIN AS IT STANDS RIGHT NOW, readable at write-completion time (review-caught). The
    * selector is live while the PATCH flies, so the pin may have moved since the press; a closure
@@ -945,6 +956,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       // freshest-successful-read-wins rule: the machine's epoch guards the FLAG against the
       // user's write, and nothing on this phone writes a capability.
       setFoldersStorable(ans.storable);
+      setAutoAct(ans.autoAct === null ? null : { on: ans.autoAct, suggestOn: ans.autoSuggestOn });
     });
     /* THE MAILBOX READ, built beside the folders machine and gated on the SAME identity: a
        superseded session's late answer applies nothing. Its own request rather than a field on
@@ -1034,9 +1046,27 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     setAccountFace(null);
     setAccountFaceKnown(false);
     setFacePending(false);
+    // Account A's act consent says nothing about account B's.
+    setAutoAct(null);
+    setAutoActPending(false);
     drainOwed.current = false; // the debt was the old session's; the new one owes nothing
     if (machine) void machine.refresh();
   }, [machine]);
+  const setAutoActOn = useCallback(
+    async (on: boolean): Promise<boolean> => {
+      const m = machine;
+      if (!m || !session) return false;
+      setAutoActPending(true);
+      try {
+        const res = await writeAutoAct(session, on);
+        if (current.current === m) setAutoAct((prev) => (prev === null ? prev : { ...prev, on: res.on }));
+        return res.on;
+      } finally {
+        if (current.current === m) setAutoActPending(false);
+      }
+    },
+    [machine, session],
+  );
   const applyFaceAllDevices = useCallback(
     async (face: FaceName): Promise<boolean> => {
       const f = faceCurrent.current;
@@ -1437,7 +1467,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
      overlay carries the named rows until it closes (`@ohmail/client-engine#presentAt`). */
   const heldPlaces = useSyncExternalStore(subscribeRoutingPlaces, routingPlaces);
 
-  const projected = useMemo<Omit<World, "boot" | "abandoned" | "face" | "sendOutcome"> | null>(() => {
+  const projected = useMemo<Omit<World, "boot" | "abandoned" | "face" | "autoAct" | "sendOutcome"> | null>(() => {
     if (engine === null || session === null) return null;
     /* THE STANDALONE DOOR HAS NOBODY TO ASK — this app IS the engine there and `GET /consent` is
        a route this session does not dial (the same fact the queue read is skipped for, below).
@@ -1674,11 +1704,13 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         pending: facePending,
         applyAll: applyFaceAllDevices,
       },
+      autoAct: autoAct === null ? null : { ...autoAct, pending: autoActPending, set: setAutoActOn },
       sendOutcome: outcomeOf,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projected, engine, session, actions, zone, conn.syncing, conn.syncError, outcomeSeq,
-    outcomeOf, accountFace, accountFaceKnown, facePending, applyFaceAllDevices]);
+    outcomeOf, accountFace, accountFaceKnown, facePending, applyFaceAllDevices,
+    autoAct, autoActPending, setAutoActOn]);
 
   /**
    * The freshness watcher — the clock's other half, after the memo because its sentinel IS the

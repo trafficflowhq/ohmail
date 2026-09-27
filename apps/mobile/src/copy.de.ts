@@ -731,6 +731,12 @@ export const DE: Deck = {
   foldersMicrocopy:
     "Einschalten zeigt nur, was ohnehin existiert — verschoben wird nichts. Ausschalten blendet die Ordner wieder aus, ohne deine Mail anzurühren.",
   foldersFailed: "Das ließ sich nicht speichern — versuch es nochmal.",
+  autoActTitle: "Sichere Vorschläge für mich umsetzen",
+  autoActDescription:
+    "Ist ein Vorschlag zu einem wartenden Absender zu mindestens 90 % sicher, legt ohmail diesen Absender dort ab, wo der Vorschlag es sagt — in der Ohbox, in News, bei den Belegen, unter Aussortiert oder im Spam — und schreibt die Regel für dich. Jede solche Regel steht unter Einstellungen → Regeln, wo du sie rückgängig machen kannst. Absender, denen du geschrieben hast, und sensible Post werden so nie abgelegt. Standardmäßig aus.",
+  autoActNeedsSuggest: "Braucht automatische Vorschläge",
+  autoActReader: "Stell das auf der Installation ein, die deine Post organisiert.",
+  autoActFailed: "Diese Einstellung wurde nicht gespeichert. Sie ist unverändert.",
   switchOff: "Aus",
   switchOn: "An",
 

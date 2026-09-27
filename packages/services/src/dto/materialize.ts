@@ -10,7 +10,7 @@ import {
   invitationWithoutEventWhere, itipReplyHeaderWhere,
   messages, folderState, messageStates, threads, routingDecisions, approvals, rules, drafts,
   tags, messageTags,
-  SCREENER_SUGGESTION_PROVENANCE,
+  SCREENER_SUGGESTION_PROVENANCE, isScreenerActRefusal,
   type EntityType,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -771,6 +771,8 @@ export async function materializeScreenerSuggestion(
     spam: routingDecisions.spam,
     createdAt: routingDecisions.createdAt,
     updatedAt: routingDecisions.updatedAt,
+    actRefusedAt: routingDecisions.actRefusedAt,
+    actRefusal: routingDecisions.actRefusal,
     fromAddress: messages.fromAddress,
     fromName: messages.fromName,
     subject: messages.subject,
@@ -812,6 +814,9 @@ export async function materializeScreenerSuggestion(
       : {}),
     boughtAt: r.createdAt.toISOString(),
     updatedAt: (r.updatedAt ?? r.createdAt).toISOString(),
+    // The act on suggestions tried to file this sender and was refused. Both or neither.
+    actRefusedAt: r.actRefusedAt && isScreenerActRefusal(r.actRefusal) ? r.actRefusedAt.toISOString() : null,
+    actRefusal: r.actRefusedAt && isScreenerActRefusal(r.actRefusal) ? r.actRefusal : null,
   };
 }
 

@@ -1083,9 +1083,15 @@ export const routingDecisions = sqliteTable("routing_decisions", {
   status: text("status").notNull(),                     // auto_applied|pending_approval|approved|rejected
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+  // A refused act on this stored suggestion, when and why. See the server twin. LAST.
+  actRefusedAt: integer("act_refused_at", { mode: "timestamp_ms" }),
+  actRefusal: text("act_refusal"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("routing_decisions_id_account_uq").on(t.id, t.accountId),
-  ix: index("routing_decisions_account_message_idx").on(t.accountId, t.messageId) }));
+  ix: index("routing_decisions_account_message_idx").on(t.accountId, t.messageId),
+  ckActRefusal: check("routing_decisions_act_refusal_closed",
+    sql`${t.actRefusal} in ('account_erased', 'not_organizer', 'mailbox_removed', 'store_fault')`),
+}));
 
 export const approvals = sqliteTable("approvals", {
   id: text("id").default(UUID_V4).primaryKey(),
@@ -2227,6 +2233,8 @@ export const accountSettings = sqliteTable("account_settings", {
   heldReleaseDismissed: text("held_release_dismissed"),
   /** Mail 0125 — the search backfill's completion marker. See the server twin. */
   searchIndexBuiltAt: integer("search_index_built_at", { mode: "timestamp_ms" }),
+  /** The act on suggestions' own consent. See the server twin. LAST. */
+  screenerAutoActAt: integer("screener_auto_act_at", { mode: "timestamp_ms" }),
 });
 
 /**

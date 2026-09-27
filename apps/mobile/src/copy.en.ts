@@ -1124,6 +1124,13 @@ const TABLE = {
   foldersMicrocopy:
     "Turning this on only shows what already exists — nothing is moved. Turning it off hides the folders again without touching your mail.",
   foldersFailed: "Couldn't save that — try again.",
+  /** Settings → the act on suggestions — the webapp catalogue's `screener.suggest.act*`. */
+  autoActTitle: "Act on confident suggestions for me",
+  autoActDescription:
+    "When a suggestion about a waiting sender is at least 90% sure, ohmail files that sender where the suggestion says — the Ohbox, News, Receipts, Screened or Spam — and writes the rule for you. Each such rule is listed in Settings → Rules, where you can undo it. Senders you have written to, and sensitive mail, are never filed this way. Off by default.",
+  autoActNeedsSuggest: "Needs automatic suggestions",
+  autoActReader: "Set this on the install that organizes your mail.",
+  autoActFailed: "That setting did not save. It is unchanged.",
   /** The Use-folders switch's two positions. English happens to be the same in German. */
   switchOff: "Off",
   switchOn: "On",

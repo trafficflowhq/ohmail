@@ -449,6 +449,12 @@ export interface ScreenerSuggestionDTO {
   /** When the suggestion was bought (the stored row's creation). */
   boughtAt: ISODateTime;
   updatedAt: ISODateTime;
+  /**
+   * When the act on suggestions tried to file this sender and was refused, and why —
+   * both or neither, `null` on every ordinary suggestion. The Screener row says one sentence.
+   */
+  actRefusedAt: ISODateTime | null;
+  actRefusal: "account_erased" | "not_organizer" | "mailbox_removed" | "store_fault" | null;
 }
 
 /**

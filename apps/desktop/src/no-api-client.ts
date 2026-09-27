@@ -549,6 +549,7 @@ export interface ConsentStateWire {
     dormancyDays: number;
     screeningBaselineAt?: string | null;
     autoSuggestAt?: string | null;
+    autoActAt?: string | null;
     blockRemoteImagesAt?: string | null;
     blockAutoUnsubscribeAt?: string | null;
     locale?: string | null;
@@ -656,6 +657,10 @@ export const consent: {
     state: () => Promise<ConsentStateWire>;
     setAutoSuggest: (enabled: boolean) => Promise<{
         autoSuggestAt: string | null;
+        autoActAt?: string | null;
+    }>;
+    setAutoAct: (enabled: boolean) => Promise<{
+        autoActAt: string | null;
     }>;
     setDormancyDays: (days: number | null | undefined, scope?: "window" | "all_time") => Promise<{
         dormancyDays?: number;

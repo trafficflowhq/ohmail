@@ -127,12 +127,16 @@ export function screenerSuggestedSenderExists(
 
 /** One sender's most recent stored verdict, and which of their messages it was bought about. */
 export interface StoredSenderSuggestion {
+  /** The stored row's own id — where the act records a refusal. */
+  id: string;
   /** The message the verdict was generated from — NOT necessarily the sender's current representative. */
   messageId: string;
   destination: string;
   confidence: number | null;
   rationale: string | null;
   spam: boolean;
+  /** Why the act on suggestions could not file this sender, or `null`. */
+  actRefusal: string | null;
 }
 
 /**
@@ -159,11 +163,13 @@ export async function screenerSuggestionsBySender(
   // than to order the result, the detail that makes the two look different when they are not.
   const ranked = db.select({
     sender: sender.as("sender"),
+    id: routingDecisions.id,
     messageId: routingDecisions.messageId,
     destination: routingDecisions.destination,
     confidence: routingDecisions.confidence,
     rationale: routingDecisions.rationale,
     spam: routingDecisions.spam,
+    actRefusal: routingDecisions.actRefusal,
     rank: sql<number>`row_number() over (
       partition by ${sender}
       order by ${routingDecisions.createdAt} desc, ${routingDecisions.id} desc
@@ -184,20 +190,24 @@ export async function screenerSuggestionsBySender(
 
   const rows = await db.select({
     sender: ranked.sender,
+    id: ranked.id,
     messageId: ranked.messageId,
     destination: ranked.destination,
     confidence: ranked.confidence,
     rationale: ranked.rationale,
     spam: ranked.spam,
+    actRefusal: ranked.actRefusal,
   }).from(ranked).where(eq(ranked.rank, 1));
 
   for (const r of rows) {
     out.set(r.sender, {
+      id: r.id,
       messageId: r.messageId,
       destination: r.destination,
       confidence: r.confidence,
       rationale: r.rationale,
       spam: r.spam,
+      actRefusal: r.actRefusal ?? null,
     });
   }
   return out;

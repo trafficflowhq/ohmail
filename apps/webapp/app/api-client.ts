@@ -2133,6 +2133,11 @@ export interface ConsentStateWire {
    */
   autoSuggestAt?: string | null;
   /**
+   * WHEN the act on suggestions was turned on, `null` for off, and `undefined` from an
+   * API before it — a door with no such switch, so the control is not drawn.
+   */
+  autoActAt?: string | null;
+  /**
    * WHEN this account opted OUT of loading remote images automatically, or null for the product
    * default — which is that they load, through the proxy.
    *
@@ -2315,9 +2320,18 @@ export const consent = {
    * response echoes what the DATABASE holds, so the caller updates from that rather than from what it asked for.
    */
   setAutoSuggest: (enabled: boolean) =>
-    api<{ autoSuggestAt: string | null }>("/consent/settings", {
+    api<{ autoSuggestAt: string | null; autoActAt?: string | null }>("/consent/settings", {
       method: "PATCH",
       body: { autoSuggest: enabled },
+    }),
+  /**
+   * TURN THE ACT ON SUGGESTIONS ON OR OFF. ON needs auto-suggest; the route refuses it
+   * 400 `auto_suggest_required` otherwise. The echo is what the database holds.
+   */
+  setAutoAct: (enabled: boolean) =>
+    api<{ autoActAt: string | null }>("/consent/settings", {
+      method: "PATCH",
+      body: { autoAct: enabled },
     }),
   /**
    * SET THE DORMANCY WINDOW — the cutline dial, on the SAME route as {@link consent.setAutoSuggest} with

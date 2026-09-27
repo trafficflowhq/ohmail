@@ -96,7 +96,7 @@ import { apiFaultPrunePass } from "./api-fault-prune.js";
 import { retentionPrunePass } from "./retention-prune.js";
 import { ohboxTidyPass } from "./ohbox-tidy.js";
 import { newScreenerAutoWalk, screenerAutoApplyPass } from "./screener-auto.js";
-import { screenerAutoActPass } from "./screener-auto-act.js";
+import { screenerActConsentFrom, screenerAutoActPass } from "./screener-auto-act.js";
 import {
   CORRESPONDENT_RETRO_EVERY_MS, screenerCorrespondentRetroPass,
 } from "./screener-correspondent-retro.js";
@@ -4395,11 +4395,10 @@ export async function startWorkerWithLock(
             // Cleared after ANY non-throwing pass, opted-in or not: a stale mark for an account
             // that opted out would otherwise lead every cycle for ever.
             await clearScreenerSuggestOwed(db as unknown as Tx, accountId, owedReadAt);
-            // AND ACT ON WHAT IS NOW STORED, once the act has its own consent. Here rather than a
-            // cycle later so advice bought this serve is acted on this serve. No surface asks for
-            // that consent yet, so `null` and the pass files nothing — see the cycle tail below.
+            // AND ACT ON WHAT IS NOW STORED, on the act's own consent. Here rather than a cycle
+            // later so advice bought this serve is acted on this serve.
             const acted = await screenerAutoActPass(
-              db as unknown as Tx, { accountId, log, until: sliceUntil(), consent: null }, new Date(),
+              db as unknown as Tx, { accountId, log, until: sliceUntil(), consent: screenerActConsentFrom(accountId) }, new Date(),
             );
             if (acted.ran && (acted.filed > 0 || acted.failed > 0)) {
               log.info("screener_auto_act_pass", { accountId, applied: acted.filed, failed: acted.failed });
@@ -4820,12 +4819,12 @@ export async function startWorkerWithLock(
         //
         // The senders whose stored advice is confident are filed through `applyScreenerDecision`,
         // the door a press uses; AFTER the suggest pass, so advice bought this cycle is acted on this
-        // cycle. `consent: null` because no surface asks for it yet: `screener_auto_apply_at` is the
-        // switch that promises "no AI" and arms the deterministic pass above, never this one.
+        // cycle. The consent is the act's own, never `screener_auto_apply_at`, the switch that
+        // promises "no AI" and arms the deterministic pass above.
         run: async (accountId) => {
           try {
             const acted = await screenerAutoActPass(
-              db as unknown as Tx, { accountId, log, until: sliceUntil(), consent: null }, new Date(),
+              db as unknown as Tx, { accountId, log, until: sliceUntil(), consent: screenerActConsentFrom(accountId) }, new Date(),
             );
             if (acted.ran && (acted.filed > 0 || acted.failed > 0)) {
               log.info("screener_auto_act_pass", {

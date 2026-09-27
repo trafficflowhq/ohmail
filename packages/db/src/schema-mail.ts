@@ -1182,9 +1182,19 @@ export const routingDecisions = pgTable("routing_decisions", {
   status: text("status").notNull(),                     // auto_applied|pending_approval|approved|rejected
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  /**
+   * On a stored SUGGESTION only: when the act on suggestions tried to file this sender
+   * and was refused, and why (`SCREENER_ACT_REFUSALS`). NULL on every other row. Cleared by the
+   * next successful act; a new buy replaces the row. LAST: `ADD COLUMN` appends.
+   */
+  actRefusedAt: timestamp("act_refused_at", { withTimezone: true }),
+  actRefusal: text("act_refusal"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("routing_decisions_id_account_uq").on(t.id, t.accountId),
-  ix: index("routing_decisions_account_message_idx").on(t.accountId, t.messageId) }));
+  ix: index("routing_decisions_account_message_idx").on(t.accountId, t.messageId),
+  ckActRefusal: check("routing_decisions_act_refusal_closed",
+    sql`${t.actRefusal} in ('account_erased', 'not_organizer', 'mailbox_removed', 'store_fault')`),
+}));
 
 export const approvals = pgTable("approvals", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -2486,6 +2496,13 @@ export const accountSettings = pgTable("account_settings", {
    * the pre-0125 arms. LAST: `ADD COLUMN` appends and the twins are compared in order.
    */
   searchIndexBuiltAt: timestamp("search_index_built_at", { withTimezone: true }),
+  /**
+   * The act on suggestions — when the account let the Screener file a waiting sender whose stored
+   * suggestion is confident, or NULL for off. Its own consent: never
+   * `screener_auto_apply_at`. Needs `auto_suggest_at`; turning that off clears this. Read under
+   * the row lock per sender together with `accounts.ai_enabled`. LAST: `ADD COLUMN` appends.
+   */
+  screenerAutoActAt: timestamp("screener_auto_act_at", { withTimezone: true }),
 });
 
 /**

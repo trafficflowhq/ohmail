@@ -71,7 +71,10 @@ export function consentVia(
     );
   return {
     state: async () => jsonOf<ConsentStateWire>(await fetchImpl(CONSENT_PATH)),
-    setAutoSuggest: (enabled) => patch<{ autoSuggestAt: string | null }>({ autoSuggest: enabled }),
+    setAutoSuggest: (enabled) =>
+      patch<{ autoSuggestAt: string | null; autoActAt?: string | null }>({ autoSuggest: enabled }),
+    // The act on suggestions: the same route on both doors, one axis per PATCH.
+    setAutoAct: (enabled) => patch<{ autoActAt: string | null }>({ autoAct: enabled }),
     /* THE WINDOW AND ITS MODE, one call and one PATCH — the hosted door's shape exactly.
        `consentRoutes` are mounted on `localRoutes`, so this is the same route and the same single
        writer on the window's door and on the paired one; the standalone door is UNGATED (there is

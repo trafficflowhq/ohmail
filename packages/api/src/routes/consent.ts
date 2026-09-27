@@ -1,7 +1,7 @@
 import {
   buildSeedReview, confirmSeed, consentSettings, cutlineCounts, mailboxFoldersOff,
   effectiveMailboxSignatures,
-  resetScreeningState, setAutoSuggest, setBlockAutoUnsubscribe, setBlockRemoteImages,
+  resetScreeningState, setAutoAct, setAutoSuggest, setBlockAutoUnsubscribe, setBlockRemoteImages,
   setBlockTrackingPixels,
   setDormancyDays, setFoldersEnabled, setLocale, setMailboxFoldersEnabled, setMailboxSignature,
   setOnboardingCompleted, setResurfaceTime, setThemeFace,
@@ -79,6 +79,11 @@ interface SeedConfirmBody {
  */
 interface ConsentSettingsBody {
   autoSuggest?: unknown;
+  /**
+   * The act on suggestions' own consent — a boolean. ON needs automatic suggestions:
+   * the service refuses it 400 `auto_suggest_required` while `auto_suggest_at` is NULL.
+   */
+  autoAct?: unknown;
   dormancyDays?: unknown;
   /**
    * `'window'` | `'all_time'` — whether the Screener's cutline exists at all (mail 0083).
@@ -142,7 +147,7 @@ interface ConsentSettingsBody {
 async function applyConsentSettings(
   ctx: ReturnType<typeof serviceContext>, body: ConsentSettingsBody,
 ): Promise<{
-  autoSuggestAt?: string | null; dormancyDays?: number;
+  autoSuggestAt?: string | null; autoActAt?: string | null; dormancyDays?: number;
   screeningScope?: "window" | "all_time"; blockRemoteImagesAt?: string | null;
   loadTrackingPixelsAt?: string | null;
   blockAutoUnsubscribeAt?: string | null; foldersEnabledAt?: string | null;
@@ -153,6 +158,7 @@ async function applyConsentSettings(
   onboardingCompletedAt?: string;
 }> {
   const hasAuto = "autoSuggest" in body;
+  const hasAct = "autoAct" in body;
   const hasDormancy = "dormancyDays" in body;
   const hasScope = "screeningScope" in body;
   const hasImages = "blockRemoteImages" in body;
@@ -166,13 +172,13 @@ async function applyConsentSettings(
   const hasThemeFace = "themeFace" in body;
   const hasResurfaceTime = "resurfaceTime" in body;
   const hasOnboarding = "onboardingCompleted" in body;
-  if (!hasAuto && !hasDormancy && !hasScope && !hasImages && !hasPixels && !hasAutoUnsub
+  if (!hasAuto && !hasAct && !hasDormancy && !hasScope && !hasImages && !hasPixels && !hasAutoUnsub
       && !hasFolders && !hasFolderMailboxes && !hasSignatures && !hasSignaturesHtml
       && !hasLocale && !hasThemeFace && !hasResurfaceTime
       && !hasOnboarding) {
     throw new ServiceError(
       "validation_failed", 400,
-      "at least one of autoSuggest, dormancyDays, screeningScope, blockRemoteImages, " +
+      "at least one of autoSuggest, autoAct, dormancyDays, screeningScope, blockRemoteImages, " +
       "blockTrackingPixels, blockAutoUnsubscribe, foldersEnabled, folderMailboxes, signatures, " +
       "signaturesHtml, " +
       "locale, themeFace, resurfaceTime or onboardingCompleted is required",
@@ -186,6 +192,13 @@ async function applyConsentSettings(
       throw new ServiceError("validation_failed", 400, "autoSuggest must be true or false");
     }
     auto = body.autoSuggest;
+  }
+  let act: boolean | undefined;
+  if (hasAct) {
+    if (typeof body.autoAct !== "boolean") {
+      throw new ServiceError("validation_failed", 400, "autoAct must be true or false");
+    }
+    act = body.autoAct;
   }
   let dormancy: number | null | undefined;
   if (hasDormancy) {
@@ -487,7 +500,7 @@ async function applyConsentSettings(
   }
 
   const out: {
-    autoSuggestAt?: string | null; dormancyDays?: number;
+    autoSuggestAt?: string | null; autoActAt?: string | null; dormancyDays?: number;
   screeningScope?: "window" | "all_time"; blockRemoteImagesAt?: string | null;
     loadTrackingPixelsAt?: string | null;
     blockAutoUnsubscribeAt?: string | null; foldersEnabledAt?: string | null;
@@ -503,7 +516,15 @@ async function applyConsentSettings(
     // hand, which worked and left every other site to remember.
     const txCtx = { ...ctx, db: tx as unknown as typeof ctx.db };
     if (hasAuto) {
-      out.autoSuggestAt = (await setAutoSuggest(txCtx, auto!)).autoSuggestAt;
+      const res = await setAutoSuggest(txCtx, auto!);
+      out.autoSuggestAt = res.autoSuggestAt;
+      // OFF withdrew the act too, so the echo says so.
+      if ("autoActAt" in res) out.autoActAt = res.autoActAt;
+    }
+    // AFTER auto-suggest, so one body can turn both on; a body turning suggest off and act on is
+    // refused whole.
+    if (hasAct) {
+      out.autoActAt = (await setAutoAct(txCtx, act!)).autoActAt;
     }
     /* ── ONE CALL FOR THE PAIR, because they are one answer (mail 0083) ─────────────────
        The window and the mode answer the same question — "how far back does the Screener
@@ -676,6 +697,9 @@ export const consentRoutes: Route[] = [
         // client's rule is the same as the service's — `null`, absent, or a failed fetch all
         // read as OFF, because ON authorises spending.
         autoSuggestAt: settings.autoSuggestAt,
+        // THE ACT ON SUGGESTIONS' own consent, `autoSuggestAt`'s shape: an instant or
+        // `null` for off, and absent from an older server, which every client reads as off.
+        autoActAt: settings.autoActAt,
         // REMOTE IMAGES, as the instant the account OPTED OUT of automatic loading, or `null`
         // for the product default (they load). Not normalised to a boolean, for the same reason
         // `autoSuggestAt` is not — "when did this change" is a real question — and deliberately

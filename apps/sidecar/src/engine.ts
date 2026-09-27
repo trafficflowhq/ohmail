@@ -181,7 +181,9 @@ import { bubbleUpPass } from "@trafficflow/worker/bubble-up";
    re-presented the old mail while the mailbox kept it where it was. */
 import { ruleRetroPass } from "@trafficflow/worker/rule-retro";
 import { screenerAutoSuggestPass } from "@trafficflow/worker/screener-auto-suggest";
-import { screenerAutoActPass, type ScreenerAutoActSettings } from "@trafficflow/worker/screener-auto-act";
+import {
+  screenerActConsentFrom, screenerAutoActPass, type ScreenerAutoActSettings,
+} from "@trafficflow/worker/screener-auto-act";
 import { threadJoinHealPass, type ThreadJoinHealCursor } from "@trafficflow/worker/thread-join-heal";
 import { inboundQuietPass } from "@trafficflow/worker/inbound-quiet";
 // The HISTORICAL-NAME REPAIR, from the same package and for the fourth instance of the same
@@ -2233,6 +2235,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           baselineAt: accountSettings.screeningBaselineAt,
           dormancyDays: accountSettings.dormancyDays,
           scope: accountSettings.screeningScope,
+          autoActAt: accountSettings.screenerAutoActAt,
         }).from(accountSettings).where(eq(accountSettings.accountId, world.accountId)).limit(1);
         const cutoff = resolveScreeningCutoff(row?.baselineAt, row?.dormancyDays, row?.scope);
         return {
@@ -2247,6 +2250,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           actSettings: {
             screeningBaselineAt: row?.baselineAt ?? null,
             dormancyDays: row?.dormancyDays ?? null, screeningScope: row?.scope ?? null,
+            screenerAutoActAt: row?.autoActAt ?? null,
           },
         };
       } catch (err) {
@@ -2375,13 +2379,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * Act on what is stored, on the act's own consent. The worker's pass again, not a copy: a
      * sender filed here has to mean what a sender filed on the hosted side means, and the decision
      * itself is `applyScreenerDecision`, the function this engine's Apply button and its request
-     * drain reach. It reads advice and buys none. No surface asks for its consent yet, so `null`:
-     * it files nothing and reads nothing.
+     * drain reach. It reads advice and buys none. With the consent off in the row the drain already
+     * read, it reads nothing.
      */
     const actOnSuggestions = async (settings?: ScreenerAutoActSettings): Promise<void> => {
       try {
         const { ran, filed, failed, capped } = await screenerAutoActPass(db as unknown as Tx, {
-          accountId: world.accountId, consent: null, ...(settings ? { settings } : {}),
+          accountId: world.accountId, consent: screenerActConsentFrom(world.accountId),
+          ...(settings ? { settings } : {}),
         });
         if (ran && (filed > 0 || failed > 0)) log("screener_auto_act", { applied: filed, failed, capped });
       } catch (err) {

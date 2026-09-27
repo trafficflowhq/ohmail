@@ -79,7 +79,7 @@ export {
 export {
   DEFAULT_RESURFACE_TIME, RESURFACE_TIME_RE,
   SEED_MAX_ADDRESSES, SEED_SCAN_LIMIT, SUPPORTED_LOCALES, SUPPORTED_THEME_FACES,
-  buildSeedReview, confirmSeed, consentSettings, setAutoSuggest, setBlockAutoUnsubscribe,
+  buildSeedReview, confirmSeed, consentSettings, setAutoSuggest, setAutoAct, setBlockAutoUnsubscribe,
   setBlockRemoteImages, setBlockTrackingPixels, setDormancyDays, setFoldersEnabled,
   setLocale, setMailboxFoldersEnabled, setMailboxSignature, setResurfaceTime, setThemeFace,
   setOnboardingCompleted,

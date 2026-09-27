@@ -91,6 +91,7 @@ import { syncMayRead } from "./sync-scheduler";
 import { useScreenerSuggestions, type SenderSuggestion, type SuggestWire } from "./screener-suggest";
 import type { SuggestStanding } from "./no-suggestion";
 import { AutoSuggestRow } from "./AutoSuggestRow";
+import { AutoActRow } from "./AutoActRow";
 import { ScreeningSection } from "./ScreeningSection";
 import { DormancyRow } from "./DormancyRow";
 import {
@@ -3095,12 +3096,24 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                  */
                 autoSuggestSection={
                   demo || !autoOptIn.supported ? undefined : (
-                    <AutoSuggestRow
-                      on={consent.autoSuggest}
-                      since={consent.autoSuggestAt}
-                      control={autoOptIn}
-                      setAutoSuggest={consent.setAutoSuggest}
-                    />
+                    <>
+                      <AutoSuggestRow
+                        on={consent.autoSuggest}
+                        since={consent.autoSuggestAt}
+                        control={autoOptIn}
+                        setAutoSuggest={consent.setAutoSuggest}
+                      />
+                      {/* The act on suggestions, directly under the switch it needs.
+                          Drawn only where the server carries the axis and the wire can write it. */}
+                      {consent.autoActStorable && consent.setAutoAct ? (
+                        <AutoActRow
+                          on={consent.autoAct}
+                          suggestOn={consent.autoSuggest}
+                          reader={screenerRole.mode !== "organizer"}
+                          setAutoAct={consent.setAutoAct}
+                        />
+                      ) : null}
+                    </>
                   )
                 }
                 /* The host's own section wins where there is one. On the desktop this shell's

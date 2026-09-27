@@ -9,6 +9,7 @@ import {
 } from "./organizer-role.js";
 import { JUNK_RESCUE_STATUSES, isJunkRescueStatus } from "./junk-rescue-status.js";
 import { SEARCH_SOURCES, isSearchSource } from "./search-sources.js";
+import { SCREENER_ACT_REFUSALS, isScreenerActRefusal } from "./screener-act-refusal.js";
 
 /**
  * THE CLOSED SETS THE TWO STORES CARRY, AND WHICH OF THEM MAY BE A CHECK ON A DEVICE.
@@ -120,6 +121,15 @@ export const CLOSED_SETS: readonly ClosedSet[] = [
     why: "where a document's body words came from, and a stored body offers exactly two places — "
       + "its text part or its html — or none. A new source would be a new kind of stored body, "
       + "a different design rather than a wider set. NOT NULL, so it has no null arm.",
+  },
+  {
+    constraint: "routing_decisions_act_refusal_closed",
+    table: "routing_decisions", column: "act_refusal", nullable: true,
+    members: SCREENER_ACT_REFUSALS, isMember: isScreenerActRefusal,
+    kind: "immutable",
+    why: "why the act on suggestions could not file a sender; `store_fault` is the catch-all, so a "
+      + "new failure already has a member and the Screener says one sentence for all of them. NULL "
+      + "is every row the act never tried or has since filed.",
   },
 ];
 

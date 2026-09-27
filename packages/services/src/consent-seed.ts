@@ -647,6 +647,8 @@ export async function consentSettings(
   /** mail 0056 — the instant the cutline is measured back from. NULL ⇒ measure from `now`. */
   screeningBaselineAt: string | null;
   autoSuggestAt: string | null;
+  /** When the act on suggestions was turned on, or `null` for off. */
+  autoActAt: string | null;
   blockRemoteImagesAt: string | null;
   /** mail 0072 — the instant this account asked for tracking pixels to load. NULL ⇒ blocked. */
   loadTrackingPixelsAt: string | null;
@@ -698,6 +700,8 @@ export async function consentSettings(
     // NULL is OFF, and so is an absent row. This `?? null` is the whole default: there is no
     // branch anywhere that turns a missing value into ON, because ON authorises spending.
     autoSuggestAt: row?.autoSuggestAt ? row.autoSuggestAt.toISOString() : null,
+    // NULL is OFF, and so is an absent row. Off is the only default: ON files mail.
+    autoActAt: row?.screenerAutoActAt ? row.screenerAutoActAt.toISOString() : null,
     // NULL and an absent row both mean "images load automatically" — the product default, and
     // the opposite direction from every other flag on this row. That is safe HERE because this
     // is a server that read the row and found no opt-out. The unsafe case is a client that could
@@ -806,7 +810,7 @@ export async function recordSettingsChange(tx: LedgerTx, accountId: string): Pro
  */
 export async function setAutoSuggest(
   ctx: ServiceContext, enabled: boolean,
-): Promise<{ autoSuggestAt: string | null }> {
+): Promise<{ autoSuggestAt: string | null; autoActAt?: null }> {
   // `now()` from the context clock, not the database's: every other consent timestamp is
   // written this way, and a settings row whose columns come from two clocks cannot be ordered.
   const at = enabled ? ctx.now() : null;
@@ -819,15 +823,50 @@ export async function setAutoSuggest(
     // order a single chain (accounts → settings → sequence row). `erasure-fence.ts` carries
     // the two-sided argument.
     await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
+    // OFF also withdraws the act on suggestions: it acts on what this switch buys,
+    // and its consent is given under this one. Same statement, so no instant holds one without the other.
+    const act = enabled ? {} : { screenerAutoActAt: null };
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, autoSuggestAt: at, updatedAt: ctx.now() })
       .onConflictDoUpdate({
         target: accountSettings.accountId,
-        set: { autoSuggestAt: at, updatedAt: ctx.now() },
+        set: { autoSuggestAt: at, ...act, updatedAt: ctx.now() },
       });
     await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order above
   });
-  return { autoSuggestAt: at ? at.toISOString() : null };
+  return enabled
+    ? { autoSuggestAt: at!.toISOString() }
+    : { autoSuggestAt: null, autoActAt: null };
+}
+
+/**
+ * Turn the act on suggestions on or off — its OWN consent, never the no-AI switch.
+ * ON lets the Screener file a waiting sender whose stored suggestion is confident and promote the
+ * rule, as a press would. It needs automatic suggestions: ON while `auto_suggest_at` is NULL is
+ * refused 400 `auto_suggest_required`, decided by the UPDATE's own WHERE under the row lock so a
+ * concurrent `setAutoSuggest(false)` cannot leave the act on. Returns the stored instant.
+ */
+export async function setAutoAct(
+  ctx: ServiceContext, enabled: boolean,
+): Promise<{ autoActAt: string | null }> {
+  const at = enabled ? ctx.now() : null;
+  await bridgeTx(ctx.db).transaction(async (tx) => {
+    await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
+    const written = await tx.update(accountSettings)
+      .set({ screenerAutoActAt: at, updatedAt: ctx.now() })
+      .where(enabled
+        ? and(eq(accountSettings.accountId, ctx.accountId), sql`${accountSettings.autoSuggestAt} is not null`)
+        : eq(accountSettings.accountId, ctx.accountId))
+      .returning({ accountId: accountSettings.accountId });
+    if (enabled && written.length === 0) {
+      throw new ServiceError(
+        "auto_suggest_required", 400,
+        "acting on suggestions needs automatic suggestions turned on first",
+      );
+    }
+    await recordSettingsChange(tx, ctx.accountId);
+  });
+  return { autoActAt: at ? at.toISOString() : null };
 }
 
 /**

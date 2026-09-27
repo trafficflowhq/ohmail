@@ -173,6 +173,12 @@ export interface ScreenerSuggestionEntity {
   reasonCount?: number;
   boughtAt: ISODateTime;
   updatedAt: ISODateTime;
+  /**
+   * Why the act on suggestions could not file this sender, or `null`; absent from an
+   * older server. The refusal and its clear both ride the delta, so the mirror is its authority.
+   */
+  actRefusal?: string | null;
+  actRefusedAt?: ISODateTime | null;
 }
 
 // ── /sync wire shapes (contract §3.1) ──────────────────────────────────────
@@ -892,6 +898,8 @@ export interface ScreenerSenderDTO {
     reasonBrand?: string;
     /** How many unrelated senders carried this subject, for `campaign`. */
     reasonCount?: number;
+    /** The act on suggestions tried to file this sender and was refused. */
+    actRefused?: true;
   } | null;
   /**
    * NO-COLLAPSE: every held message, in full, oldest first —

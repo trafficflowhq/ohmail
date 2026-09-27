@@ -23,6 +23,8 @@ import {
   saveAutoSuggest,
   type AutoSuggestState,
 } from "./local-auto-suggest.js";
+import { AutoActRow } from "../../webapp/app/shell/AutoActRow";
+import { consentOverBridgeStandalone } from "./local-consent.js";
 
 /**
  * What the row says under its label, given what the engine answered.
@@ -46,7 +48,10 @@ export function autoSuggestCopyKey(
   return "autoSuggestOn";
 }
 
-export function DesktopAutoSuggest() {
+export function DesktopAutoSuggest({
+  /** This install reads mail another install organizes — the act's switch is then disabled. */
+  reader = false,
+}: { reader?: boolean } = {}) {
   /* See `DesktopScreeningWords` for why the namespace has to be on `vite.config.ts`'s list. */
   const t = useTranslations("desktopScreener");
   /**
@@ -66,6 +71,18 @@ export function DesktopAutoSuggest() {
   const [value, setValue] = useState<AutoSuggestState | null>(null);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
+  /* THE ACT ON SUGGESTIONS, over this door's own consent route. `null` until the read
+     answered with the axis; an engine without it draws no switch. */
+  const [act, setAct] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void consentOverBridgeStandalone.state().then(
+      (wire) => { if (!cancelled && "autoActAt" in wire) setAct(wire.autoActAt != null); },
+      () => { /* No axis read, no switch: nothing here may show a position nobody chose. */ },
+    );
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,7 +105,12 @@ export function DesktopAutoSuggest() {
     setPending(true);
     setFailed(false);
     void saveAutoSuggest(next).then(
-      (landed) => { setValue(landed); setPending(false); },
+      (landed) => {
+        setValue(landed);
+        // Suggestions off withdraws the act in the same write (`setAutoSuggest`).
+        if (!landed.on) setAct((was) => (was === null ? null : false));
+        setPending(false);
+      },
       () => { setFailed(true); setPending(false); },
     );
   };
@@ -116,6 +138,19 @@ export function DesktopAutoSuggest() {
         <SettingsNote>{t("autoSuggestPrivacy")}</SettingsNote>
       ) : null}
       {failed ? <p className="join-error">{t("saveFailed")}</p> : null}
+      {act !== null ? (
+        <AutoActRow
+          on={act}
+          suggestOn={value.on}
+          reader={reader}
+          setAutoAct={async (enabled) => {
+            const res = await consentOverBridgeStandalone.setAutoAct!(enabled);
+            const on = res.autoActAt != null;
+            setAct(on);
+            return on;
+          }}
+        />
+      ) : null}
     </>
   );
 }

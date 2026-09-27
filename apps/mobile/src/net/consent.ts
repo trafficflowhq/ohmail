@@ -86,6 +86,12 @@ export interface FoldersConsent {
    * still sends, so the phone still says so. It decides a sentence, never a send.
    */
   autoUnsubscribe: boolean;
+  /**
+   * THE ACT ON SUGGESTIONS — `autoActAt` set, or `null` where the answer carries no
+   * such axis (an older server), which draws no switch. `autoSuggestOn` is what it needs.
+   */
+  autoAct: boolean | null;
+  autoSuggestOn: boolean;
 }
 
 /** `'HH:MM'`, 24-hour — the server's own shape (`RESURFACE_TIME_RE`), shared by value. */
@@ -151,6 +157,8 @@ export async function readFoldersEnabled(session: ConnectedSession): Promise<Fol
       // fallback is what every build did before the setting existed.
       resurfaceTime: resurfaceTimeOf(body.resurfaceTime),
       autoUnsubscribe: !(typeof body.blockAutoUnsubscribeAt === "string" && body.blockAutoUnsubscribeAt !== ""),
+      autoAct: "autoActAt" in body ? typeof body.autoActAt === "string" && body.autoActAt !== "" : null,
+      autoSuggestOn: typeof body.autoSuggestAt === "string" && body.autoSuggestAt !== "",
     };
   } catch {
     return null;
@@ -180,6 +188,23 @@ export async function writeFoldersEnabled(session: ConnectedSession, enabled: bo
     throw new Error("consent write stored nothing: this server carries no folders setting");
   }
   return { on: typeof body.foldersEnabledAt === "string" && body.foldersEnabledAt !== "" };
+}
+
+/**
+ * TURN THE ACT ON SUGGESTIONS ON OR OFF — one `PATCH /consent/settings {autoAct}`,
+ * one axis. Resolves to what the account stored; rejects on a refusal (400
+ * `auto_suggest_required` while automatic suggestions are off) and on an echo without the axis.
+ */
+export async function writeAutoAct(session: ConnectedSession, enabled: boolean): Promise<{ on: boolean }> {
+  const res = await session.fetch(`${requestBase(session)}/consent/settings`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ autoAct: enabled }),
+  });
+  if (res.status !== 200) throw new Error(`consent write refused (${res.status})`);
+  const body = (await res.json()) as Record<string, unknown>;
+  if (!("autoActAt" in body)) throw new Error("consent write stored nothing: no such setting here");
+  return { on: typeof body.autoActAt === "string" && body.autoActAt !== "" };
 }
 
 /**
