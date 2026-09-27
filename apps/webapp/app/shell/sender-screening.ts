@@ -26,6 +26,7 @@ import {
   type PressForecast,
   type PressResolution,
   type RuleDTO,
+  ruleMatchKey,
 } from "@ohmail/client-engine";
 import type { DecisionDestination } from "@ohmail/ui";
 import { canonicalDestination } from "@trafficflow/core/folder-name";
@@ -644,7 +645,7 @@ export function releaseRules(reader: EntityReader, address: string, from: Folder
   }
   const wide = holding.filter((r) => r.kind !== "sender");
   if (wide.length === 0) return { kind: "none", mutations: [] };
-  const domain = wide[0]!.match.trim().toLowerCase();
+  const domain = ruleMatchKey(wide[0]!.match);
   const match = senderKey(address);
   const mine: RuleDTO = { ...wide[0]!, id: "", kind: "sender", match, destination: wanted, priority: 0, provenance: "manual" };
   // THE LOCAL RULES, by construction: the order asked of two rules this press would itself write.

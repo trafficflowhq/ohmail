@@ -42,6 +42,7 @@ import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { useTranslations } from "next-intl";
 import {
   VIEW_OF_FOLDER, type ConflictGroup, type Folder, type PressForecast, type RuleDTO, type RulesInPlay,
+  ruleMatchKey,
 } from "@ohmail/client-engine";
 import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { Avatar, InfoNote, Kbd } from "@ohmail/ui";
@@ -684,7 +685,7 @@ function ResolveStep({
   const listed = step.cls === "term" ? terms : step.cls === "inside" ? inside : [];
   const keptRows = listed.reduce((n, g) => n + (g.rows?.length ?? 0), 0);
   const counted = listed.every((g) => g.rows !== null);
-  const insideSenders = new Set(inside.map((g) => g.rule.match.trim().toLowerCase())).size;
+  const insideSenders = new Set(inside.map((g) => ruleMatchKey(g.rule.match))).size;
   const all = (condition: string) => t("ruleLine", { condition, place });
   const wide = all(t("scopeDomain", { domain }));
 

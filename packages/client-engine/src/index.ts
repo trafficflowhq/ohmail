@@ -792,6 +792,8 @@ export {
 // A screening press: the address rule it writes outranks its domain's, and after it the pressed
 // rows as the list shows them, with the one sentence they earn.
 export { outrankCoveringDomains } from "./address-rank.js";
+// A rule's `match` as every reader keys it — the router's and the queue SQL's key, spaces only.
+export { ruleMatchKey } from "@trafficflow/core/rule-order";
 export {
   pressGained,
   pressOutcome,

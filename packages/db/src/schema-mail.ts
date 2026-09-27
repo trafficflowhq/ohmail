@@ -447,6 +447,14 @@ export const mailboxes = pgTable("mailboxes", {
    * reader keeps `last_sync_at`, which still means a completed cycle.
    */
   syncProgressAt: timestamp("sync_progress_at", { withTimezone: true }),
+  /**
+   * THE MAILBOX'S OWN SENT FOLDER (mail 0129), beside {@link junkFolder}/{@link trashFolder} and on
+   * their rule: the canonical path the attach resolved (`watchedSentFolder ?? sentFolder`),
+   * re-written on every attach. Correspondent knowledge admits it as Sent beside the Sent-shaped
+   * names, so a server that marks Sent under a name of its own counts. NULL is "the last attach
+   * resolved none", and every row attached before this column until its next attach.
+   */
+  sentFolder: text("sent_folder"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("mailboxes_id_account_uq").on(t.id, t.accountId),
   // ONE ACTIVE MAILBOX PER ADDRESS (mail 0021). PARTIAL, because `delete` is a soft delete to

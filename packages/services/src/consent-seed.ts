@@ -1,5 +1,6 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
+import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import {
   accountSettings, contacts, mailboxes, mailboxProfileMirror, messageBodies, messages,
   recordChanges, recordRuleDelta, rules, PROFILE_SIGNATURE_MAX, TRAVELLING_SIGNATURE_HTML_MAX_BYTES,
@@ -468,7 +469,7 @@ async function decidedSenders(
         eq(rules.enabled, true),
         inArray(sql`lower(${rules.match})`, part),
       ));
-    for (const r of rows) out.add(r.match.trim().toLowerCase());
+    for (const r of rows) out.add(ruleMatchKey(r.match));
   }
   return out;
 }

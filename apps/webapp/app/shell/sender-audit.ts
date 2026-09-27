@@ -20,7 +20,7 @@ import {
   type RuleDTO,
   type ScreenerSenderDTO,
 } from "@ohmail/client-engine";
-import { compareRules, effectForDestination, type OrderedRule } from "@trafficflow/core/rule-order";
+import { compareRules, effectForDestination, ruleMatchKey, type OrderedRule } from "@trafficflow/core/rule-order";
 import { bodyTextOf } from "./subject-rule";
 
 export type MailAttribution =
@@ -49,10 +49,10 @@ export function auditDomainOf(address: string): string {
  */
 export function ruleMatchesSender(rule: RuleDTO, address: string): boolean {
   const addr = address.trim().toLowerCase();
-  if (rule.kind === "sender") return rule.match.trim().toLowerCase() === addr;
+  if (rule.kind === "sender") return ruleMatchKey(rule.match) === addr;
   if (rule.kind === "domain") {
     const d = auditDomainOf(addr);
-    return d !== "" && rule.match.trim().toLowerCase() === d;
+    return d !== "" && ruleMatchKey(rule.match) === d;
   }
   return false;
 }

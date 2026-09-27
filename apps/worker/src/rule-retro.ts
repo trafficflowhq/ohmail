@@ -11,6 +11,7 @@ import {
      the barrel carries the model half into them (the engine census refuses the build). */
 } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import { carryDialect, dialect, type Dialect } from "@trafficflow/db/dialect";
 import { perMailboxAuthservTrust, ruleInputOf, upsertDesired } from "./rule-pass.js";
 
@@ -698,7 +699,7 @@ async function selectCandidates(
  * immediately having moved nothing rather than matching every message.
  */
 function matchPredicate(rule: OwedRule, d: Dialect) {
-  const match = rule.match.trim().toLowerCase();
+  const match = ruleMatchKey(rule.match);
   if (match === "") return sql`false`;
   if (rule.kind === "sender") return sql`lower(${messages.fromAddress}) = ${match}`;
   // The seam's spelling is the server's own expression, so the domain index still serves it.

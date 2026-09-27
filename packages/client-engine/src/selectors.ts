@@ -2,6 +2,7 @@ import { canonicalDestination, isSentFolderPath } from "@trafficflow/core/folder
 import { opensWithForwardPrefix } from "@trafficflow/core/reply-subject";
 import { isAcknowledgementSubject } from "@trafficflow/core/ics";
 import { mayGroupByMessageId } from "@trafficflow/core/sender-headers";
+import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import type { EntityReader } from "./store.js";
 /* The address fold and the own-address predicate, from the leaf that owns both — never
    re-spelled here. A LEAF and not `consent-cutline.ts`: the partition imports this module, so
@@ -1485,7 +1486,7 @@ function heldReleaseClaim(reader: EntityReader): (key: string) => boolean {
   const senders = new Set<string>();
   const domains = new Set<string>();
   for (const g of reader.list<HeldReleaseGroupDTO>(HELD_RELEASE_TYPE)) {
-    const match = g.match.trim().toLowerCase();
+    const match = ruleMatchKey(g.match);
     if (match === "") continue;
     (g.kind === "domain" ? domains : senders).add(match);
   }

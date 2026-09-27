@@ -42,6 +42,7 @@ import {
   type ScreenerSegments,
   type ScreenerSenderDTO,
   type ScreenerWaitingSenderDTO,
+  ruleMatchKey,
 } from "@ohmail/client-engine";
 import { scheduleFirstDerivation } from "./first-paint";
 import type { SuggestionOverlay } from "./screener-suggest";
@@ -1661,7 +1662,7 @@ export function useScreenerState(
       // A DOMAIN rule holding them cannot be deleted for one sender (everyone there would be
       // undecided) and an address rule cannot say "undecided": said, never performed.
       const wide = holding.find((r) => r.kind !== "sender");
-      if (wide) { ruleStands(row.sender, "spam", wide.match.trim().toLowerCase()); return; }
+      if (wide) { ruleStands(row.sender, "spam", ruleMatchKey(wide.match)); return; }
       const deletions: EngineMutation[] = holding.map((r) => ({ kind: "rule_delete", ruleId: r.id }));
       void releaseHeld(
         deletions,

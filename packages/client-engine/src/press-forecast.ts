@@ -1,7 +1,7 @@
 import { canonicalDestination, isOrganizedFolder, retroPassWouldMove } from "@trafficflow/core/destinations";
 import { outrankCoveringDomains } from "./address-rank.js";
 import {
-  consentIndex, consentPartition, domainOfAddress, mailboxProfiles, outranks, placedRule, ruleTerms,
+  consentIndex, consentPartition, domainOfAddress, mailboxProfiles, outranks, placedRule, ruleMatchKey, ruleTerms,
   type ConsentOptions,
 } from "./consent-cutline.js";
 import { mutationEffects, type MutationEffect } from "./mutations.js";
@@ -66,7 +66,7 @@ export function readerWithEffects(base: EntityReader, effects: readonly Mutation
  */
 export function ruleFingerprint(r: RuleDTO): string {
   const t = ruleTerms(r);
-  return JSON.stringify([r.kind, r.match.trim().toLowerCase(), t.subject, t.body, canonicalDestination(r.destination), r.enabled]);
+  return JSON.stringify([r.kind, ruleMatchKey(r.match), t.subject, t.body, canonicalDestination(r.destination), r.enabled]);
 }
 
 /** Why a row the press names would be shown somewhere else, by the rule that keeps it there. */
@@ -230,8 +230,8 @@ function conflictsOf(
     if (!r.enabled || r.kind !== "sender" || ruleTerms(r).body === null) continue;
     if (canonicalDestination(r.destination) === place || groups.has(r.id)) continue;
     const inside = input.scope === "domain"
-      ? domainOfAddress(r.match.trim().toLowerCase()) === input.match
-      : senderKey(r.match) === input.match;
+      ? domainOfAddress(ruleMatchKey(r.match)) === input.match
+      : ruleMatchKey(r.match) === input.match;
     if (!inside) continue;
     groups.set(r.id, {
       cause: input.scope === "domain" ? "own-rule-inside" : "term-body", rule: r, place: r.destination, rows: null,
@@ -275,7 +275,7 @@ function exceptionFor(rules: readonly RuleDTO[], match: string, place: string): 
   const domain = domainOfAddress(match);
   let top: RuleDTO | null = null;
   for (const r of rules) {
-    if (!r.enabled || r.kind !== "domain" || r.match.trim().toLowerCase() !== domain) continue;
+    if (!r.enabled || r.kind !== "domain" || ruleMatchKey(r.match) !== domain) continue;
     if (canonicalDestination(r.destination) === place) continue;
     if (top === null || outranks(r, top)) top = r;
   }
@@ -328,7 +328,7 @@ export function rulesInPlay(input: {
     const shown = input.placeOf.has(m.id) ? input.placeOf.get(m.id)! : m.folder;
     if (by === null || shown === null || canonicalDestination(shown) !== canonicalDestination(by.destination)) continue;
     if (input.scope === "domain" && by.kind === "sender") {
-      insideSenders.add(senderKey(by.match));
+      insideSenders.add(ruleMatchKey(by.match));
       insideCount++;
       continue;
     }
@@ -337,7 +337,7 @@ export function rulesInPlay(input: {
   const named = rules.filter((r) => {
     if (counts.has(r.id)) return true;
     if (r.kind !== "sender" || ruleTerms(r).body === null) return false;
-    return input.scope === "sender" ? senderKey(r.match) === input.match : false;
+    return input.scope === "sender" ? ruleMatchKey(r.match) === input.match : false;
   });
   named.sort((a, b) => (outranks(a, b) ? -1 : outranks(b, a) ? 1 : 0));
   const lines: RuleLine[] = [];
@@ -387,7 +387,7 @@ export function planScreenCommit(
       if (!r || ruleFingerprint(r) !== s.fp) { changed.push(s.id); continue; }
       // Only a term rule about this address is the press's to remove; anything else shown stays.
       const t = ruleTerms(r);
-      if (r.kind !== "sender" || senderKey(r.match) !== match || (t.subject === null && t.body === null)) continue;
+      if (r.kind !== "sender" || ruleMatchKey(r.match) !== match || (t.subject === null && t.body === null)) continue;
       writes.push({ kind: "rule_delete", ruleId: r.id });
     }
   }

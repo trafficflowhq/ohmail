@@ -791,6 +791,10 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // `sync_lag` rule reads it on every alert pass and the worker writes it, so a host ahead of the
   // migration fails the pass on 42703. Deploy order migration → API → worker.
   ["mailboxes", "sync_progress_at"],
+  // mail 0129_mailbox_sent_folder — the mailbox's own Sent folder. The worker's attach writes it
+  // and correspondent knowledge reads it in the Screener's routes and passes, so an API or worker
+  // ahead of the migration 42703s both. Deploy order migration → API → worker.
+  ["mailboxes", "sent_folder"],
 ] as const;
 
 /**
@@ -1139,7 +1143,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0129_uid_bigint";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0129_mailbox_sent_folder";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud

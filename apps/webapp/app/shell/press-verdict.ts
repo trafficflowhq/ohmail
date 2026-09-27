@@ -14,6 +14,7 @@ import {
   type MutationStatus,
   type RuleDTO,
   type StayVerdict,
+  ruleMatchKey,
 } from "@ohmail/client-engine";
 import { shellConsentOptions, type ShellConsentFacts } from "./consent-options";
 import {
@@ -131,7 +132,7 @@ export function verdictAction(
 ): VerdictAction | null {
   if (v.key === "kept") {
     const own = pressed.scope === "sender" && v.rule.kind === "sender"
-      && senderKey(v.rule.match) === senderKey(pressed.address);
+      && ruleMatchKey(v.rule.match) === senderKey(pressed.address);
     return own ? { kind: "remove", ruleId: v.rule.id } : null;
   }
   if (v.key === "still" || v.key === "stillLegacy") return { kind: "move", ids: [...v.ids] };

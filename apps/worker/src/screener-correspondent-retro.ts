@@ -9,6 +9,7 @@ import {
   correspondentsAmong, recipientsOfOwnWriting, type CorrespondentEvidence,
 } from "@trafficflow/core/adapters/drizzle-repo";
 import { silentLogger, type Logger } from "@trafficflow/core/mail";
+import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import { upsertDesired } from "./rule-pass.js";
 
 /* THE SCREENER'S CORRESPONDENT RETRO — what the gate now knows at ingest, applied once to what it
@@ -192,7 +193,7 @@ async function retireAutoActRules(db: Tx, accountId: string, limit: number, now:
   const found = await correspondentsAmong(db, {
     accountId, senders: candidates.map((r) => r.match), references: new Map(),
   });
-  const retire = candidates.filter((r) => found.has(r.match.trim().toLowerCase()));
+  const retire = candidates.filter((r) => found.has(ruleMatchKey(r.match)));
   if (retire.length === 0) return 0;
   return fencedAccountWrite(db, { accountId }, async (tx) => {
     const off = await tx.update(rulesTbl).set({ enabled: false, updatedAt: now })

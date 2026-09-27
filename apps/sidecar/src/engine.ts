@@ -9,7 +9,7 @@ import {
   ImapAdapter, ImapConnectionClosedError, WORKER_NET_TIMEOUTS, WriteDeclinedError, buildImapAuth,
   isImapBoundExceeded, type ImapConfig, type MailboxAdapter, type CredMetaAuth, type NetTimeouts,
 } from "@trafficflow/core/adapters/imap";
-import { makeDrizzleRepo, mailboxProviderAuthservIds, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import { makeDrizzleRepo, mailboxProviderAuthservIds, recordSpecialFolders, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 // The release refusal's OWN class, from the one module that throws it: `releaseOwnClaim` tells a
 // live-sibling refusal (`nonce_unknown` — the pane owes the sibling-lapse sentence) from "could not look".
 import { ClaimReleaseError } from "@trafficflow/core/adapters/organizer-lease";
@@ -6294,16 +6294,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // every attach so a renamed folder heals, best-effort (`imap-types.ts` carries the rule).
           // A READER runs it too: one LIST and a write to this install's own row, and the knowledge
           // makes a promotion take effect on the next poll rather than the next launch.
-          if (typeof conn.findSpecialFolders === "function"
-            && typeof repo.setMailboxSpecialFolders === "function") {
-            try {
-              const found = await conn.findSpecialFolders();
-              await repo.setMailboxSpecialFolders(mb.id, {
-                junkFolder: found.junk, trashFolder: found.trash,
-              });
-            } catch (err) {
-              log("special_folder_discovery_failed", { err });
-            }
+          // Mail 0129: the Sent path the scan watches, beside them — the worker's one write.
+          try {
+            await recordSpecialFolders(conn, repo, mb.id);
+          } catch (err) {
+            log("special_folder_discovery_failed", { err });
           }
           /* ── A FETCH THE SERVER REFUSED IS NOT A FAILED LAUNCH ──────────────────────────
            *

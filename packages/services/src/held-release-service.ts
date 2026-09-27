@@ -157,16 +157,12 @@ function decidedRule(accountId: string) {
 /**
  * DOES THIS RULE CLAIM THIS SENDER — THE PASS'S OWN QUESTION, ASKED THROUGH THE DIALECT.
  *
- * This is `rule-retro.ts#matchPredicate` and `screener-service#heldRowsForDomain` written as a
- * join, and it must stay their twin: the set this COUNTS and the set the pass MOVES are offered to
- * a person as one number, so an expression that merely agrees on ordinary input is not good enough.
- * The domain arm goes through {@link Dialect.domainOf} rather than being spelled here, because this
- * module is LOADED BY THE PHONE BUNDLE — `substring … position` is a construct only the server
- * accepts, and a store that threw on it would answer the release screen with a crash rather than a
- * count (`dialect-census.test.ts` refuses the pg-only spelling by name).
- *
- * `trim(lower(…))` on the stored match is the SQL spelling of the pass's
- * `rule.match.trim().toLowerCase()`, and both stores have both functions.
+ * `rule-retro.ts#matchPredicate` and `screener-service#heldRowsForDomain` as a join, and their
+ * twin: the set this COUNTS and the set the pass MOVES are offered as one number. The domain arm
+ * goes through {@link Dialect.domainOf} because the phone bundle loads this module, and a pg-only
+ * `substring … position` would crash the release screen (`dialect-census.test.ts` refuses it).
+ * `trim(lower(…))` is the SQL spelling of the pass's `ruleMatchKey(rule.match)`, spaces only, and
+ * both stores have both functions.
  */
 const ruleClaimsSender = (d: ReturnType<typeof dialect>) => sql`(
      (${rulesTbl.kind} = 'sender'

@@ -99,6 +99,7 @@ import {
   tagsCrossView,
   type ForwardAsk,
   holderIsLive,
+  ruleMatchKey,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
 import { activeLocale } from "../i18n/locale";
@@ -365,6 +366,7 @@ export type WorldPileState = "reply_later" | "set_aside" | "bubbled_up" | "resur
  */
 /** How long the reader may say "loading" over a husk moved out of Junk — the engine's number. */
 export { JUNK_REFILL_BOUND_MS } from "@ohmail/client-engine";
+export { ruleMatchKey } from "@ohmail/client-engine";
 /** Forward's one predicate and its ask, for the reader — the engine's own, through this seam. */
 export { forwardOffered, type ForwardAsk } from "@ohmail/client-engine";
 
@@ -1863,10 +1865,10 @@ const oneVerdict = (vs: readonly PressVerdict[]): PressVerdict =>
  */
 function ruleMatchesSender(rule: RuleDTO, address: string): boolean {
   const addr = address.trim().toLowerCase();
-  if (rule.kind === "sender") return rule.match.trim().toLowerCase() === addr;
+  if (rule.kind === "sender") return ruleMatchKey(rule.match) === addr;
   if (rule.kind === "domain") {
     const d = domainOf(addr).toLowerCase();
-    return d !== "" && rule.match.trim().toLowerCase() === d;
+    return d !== "" && ruleMatchKey(rule.match) === d;
   }
   return false;
 }
@@ -1907,7 +1909,7 @@ export function releaseRules(reader: EntityReader, address: string, from: Folder
   }
   const wide = holding.filter((r) => r.kind !== "sender");
   if (wide.length === 0) return { kind: "none", mutations: [] };
-  const domain = wide[0]!.match.trim().toLowerCase();
+  const domain = ruleMatchKey(wide[0]!.match);
   const match = senderKey(address);
   const mine: RuleDTO = { ...wide[0]!, id: "", kind: "sender", match, destination: wanted, priority: 0, provenance: "manual" };
   // THE LOCAL RULES, by construction: the order asked of two rules this press would itself write.

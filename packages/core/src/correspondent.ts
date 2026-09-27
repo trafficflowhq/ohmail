@@ -10,8 +10,8 @@ import { SENT_SHAPED_PATHS } from "./types.js";
 /**
  * HAS THIS ACCOUNT WRITTEN TO THEM — the one predicate. A correspondent is never first contact:
  * the Screener holds nobody this account wrote to, and nothing files them as spam on the model's
- * word. Evidence is a copy in the mailbox's own Sent-shaped folder — the server's answer, never
- * the `From` header a stranger writes — addressed to them (`wrote`), or named by their mail's
+ * word. Evidence is a copy in the mailbox's own Sent folder — the server's answer, never the
+ * `From` header a stranger writes — addressed to them (`wrote`), or named by their mail's
  * In-Reply-To/References (`replied`). An automatic reply is not writing. Only writing AFTER the
  * consent point counts — the later of the mailbox's connect and the sent-mail seed's answer:
  * history before it is the seed's question, answered by the person, and stays theirs.
@@ -148,9 +148,11 @@ export async function recipientsOfOwnWriting(db: Tx, accountId: string): Promise
 
 /**
  * THE ACCOUNT'S OWN WRITING, as predicates over `messages ⋈ message_instances ⋈ mailboxes ⟕
- * account_settings`: an instance in a Sent-shaped folder, arrived after the consent point, not
- * an automatic reply. `null` when no mailbox holds a Sent-shaped folder — nothing can count. The
- * folders are read first and spelled exactly, so the instance read is the unique index.
+ * account_settings`: an instance in a Sent folder, arrived after the consent point, not an
+ * automatic reply. A Sent folder is a Sent-shaped path or the one the attach wrote down
+ * (`mailboxes.sent_folder`, mail 0129) — a server's own name for Sent. `null` when no mailbox
+ * holds either. The folders are read first and spelled exactly, so the instance read is the
+ * unique index.
  */
 async function ownWritingScope(db: Tx, accountId: string): Promise<{ ownWriting: SQL[]; arrival: SQL } | null> {
   const d = dialect(db);
@@ -159,7 +161,10 @@ async function ownWritingScope(db: Tx, accountId: string): Promise<{ ownWriting:
     .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
     .where(and(
       eq(mailboxes.accountId, accountId),
-      inArray(sql`lower(${mailboxFolders.folder})`, [...SENT_SHAPED_PATHS]),
+      or(
+        inArray(sql`lower(${mailboxFolders.folder})`, [...SENT_SHAPED_PATHS]),
+        eq(mailboxFolders.folder, mailboxes.sentFolder),
+      ),
     ));
   if (sentFolders.length === 0) return null;
   const inSent = or(...sentFolders.map((f) => and(

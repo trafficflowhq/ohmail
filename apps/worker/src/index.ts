@@ -39,7 +39,7 @@ import {
   providerAuthservIds,
   MicrosoftTokenProvider, type OAuthTokenProvider, type UpdateSecretPort, type FetchLike,
 } from "@trafficflow/core";
-import { makeDrizzleRepo, mailboxProviderAuthservIds } from "@trafficflow/core/adapters/drizzle-repo";
+import { makeDrizzleRepo, mailboxProviderAuthservIds, recordSpecialFolders } from "@trafficflow/core/adapters/drizzle-repo";
 import {
   ImapAdapter, ImapConnectionClosedError, WORKER_NET_TIMEOUTS, WriteDeclinedError, learnSmtpMaxSize,
   isImapBoundExceeded,
@@ -2417,16 +2417,11 @@ export async function startWorkerWithLock(
         // IMAP. Best-effort: a discovery failure leaves the stored answer as it was, and the
         // fallbacks (Quarantine / refusal) are never destructive. See imap-types.ts for the
         // product rule this serves.
-        if (typeof adapter.findSpecialFolders === "function"
-          && typeof repo.setMailboxSpecialFolders === "function") {
-          try {
-            const found = await adapter.findSpecialFolders();
-            await repo.setMailboxSpecialFolders(mb.mailboxId, {
-              junkFolder: found.junk, trashFolder: found.trash,
-            });
-          } catch (err) {
-            log.warn("special_folder_discovery_failed", { mailboxId: mb.mailboxId, err });
-          }
+        // Mail 0129: the Sent path the scan watches is written beside them (`recordSpecialFolders`).
+        try {
+          await recordSpecialFolders(adapter, repo, mb.mailboxId);
+        } catch (err) {
+          log.warn("special_folder_discovery_failed", { mailboxId: mb.mailboxId, err });
         }
         // accountId comes from the MAILBOX ROW, not from config: one process, many accounts.
         // The spend gate is built from that same accountId for exactly that reason.

@@ -290,7 +290,7 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   "mergeThreadMessage", "setMessageThread", "recordRoutingDecision", "enqueueApproval",
   // the mail-0065 wave's writes, none of which touch a projected field (the projection is
   // message_instances + messages.unread/message_id_header + flag_state.observed_seen):
-  //  · setMailboxSpecialFolders — mailboxes.junk_folder/trash_folder, a discovery stamp
+  //  · setMailboxSpecialFolders — mailboxes.junk_folder/trash_folder/sent_folder, a discovery stamp
   //  · huskBody / restoreWithheldBody — message_bodies + the storage counter
   //  · clearDeletedOnAdopt / tombstoneInstanceless — messages.deleted_at (+ husk + change_log);
   //    a tombstoned row is by definition INSTANCELESS, so no instance row can be moved by it

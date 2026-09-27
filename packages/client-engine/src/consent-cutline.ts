@@ -14,6 +14,9 @@ import {
   type Folder, type MailboxProfileEntity, type RuleDTO, type ScreenerWaitingDTO,
 } from "./types.js";
 
+/** The router's key for a rule's `match`, for the press modules, which import no rule order. */
+export { ruleMatchKey };
+
 /* Consent, the cutline, and History. Two rules decide where a message is
    PRESENTED: (1) consent comes from the user's own actions — sitting in the
    INBOX is not consent, a decision's record is a rule; (2) decisions rule

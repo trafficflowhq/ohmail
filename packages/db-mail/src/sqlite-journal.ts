@@ -320,6 +320,12 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     ]
   },
   {
+    "name": "0129_mailbox_sent_folder.sql",
+    "statements": [
+      "ALTER TABLE \"mailboxes\" ADD COLUMN \"sent_folder\" text;"
+    ]
+  },
+  {
     "name": "0129_profile_import_ask.sql",
     "statements": [
       "ALTER TABLE \"mailboxes\" ADD COLUMN \"profile_import_ask_fingerprint\" text;",

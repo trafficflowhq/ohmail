@@ -38,7 +38,7 @@ import { effectForDestination } from "../rules.js";
 import { SENT_SHAPED_CANONICAL } from "./imap-types.js";
 /* The stop's two shapes, imported rather than respelt: `BudgetStop` is what a pass REPORTS (it
    names the folder), `FolderBudgetStop` what one folder's row HOLDS (the row names it). */
-import type { BudgetStop, FolderBudgetStop } from "./imap-types.js";
+import type { BudgetStop, FolderBudgetStop, MailboxAdapter } from "./imap-types.js";
 import { providerAuthservIds } from "../authserv-ids.js";
 import { correspondentsAmong, type CorrespondentEvidence } from "../correspondent.js";
 // The one correspondent predicate, on the leaf the worker passes and the services already import.
@@ -193,6 +193,17 @@ export interface MessageFailureInput {
    * refuse. See `apps/worker/src/dead-letter.ts#nextAttemptAfter`.
    */
   nextAttemptAt: Date | null;
+}
+
+/**
+ * The attach's discovery, as the mailbox row stores it: the provider's own Junk and Trash (mail
+ * 0065) and the Sent path the adapter resolved (mail 0129, `watchedSentFolder ?? sentFolder`).
+ * Every field is required so an attach site cannot write two and leave the third stale.
+ */
+export interface SpecialFolderColumns {
+  junkFolder: string | null;
+  trashFolder: string | null;
+  sentFolder: string | null;
 }
 
 /**
@@ -495,10 +506,11 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    */
   getMailboxSpecialFolders?(mailboxId: string): Promise<{ junkFolder: string | null; trashFolder: string | null }>;
   /**
-   * Persist the connect-time discovery ({@link MailboxAdapter.findSpecialFolders} → these two
-   * columns), re-written on every attach so a renamed folder heals. OPTIONAL, as above.
+   * Persist the connect-time discovery ({@link MailboxAdapter.findSpecialFolders} → Junk and
+   * Trash, the adapter's resolved Sent → `sent_folder`, mail 0129), re-written on every attach so
+   * a renamed folder heals. OPTIONAL, as above.
    */
-  setMailboxSpecialFolders?(mailboxId: string, f: { junkFolder: string | null; trashFolder: string | null }): Promise<void>;
+  setMailboxSpecialFolders?(mailboxId: string, f: SpecialFolderColumns): Promise<void>;
   /**
    * Empty one stored body the way the storage cap does — real headers kept, `text=''`,
    * `html=NULL`, the closed marker, bytes released — for the two 0065 reasons. A row already
@@ -1234,12 +1246,10 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     return { junkFolder: row?.junkFolder ?? null, trashFolder: row?.trashFolder ?? null };
   }
 
-  /** Mail 0065 — persist the connect-time discovery, both columns every time (re-written on attach). */
-  async setMailboxSpecialFolders(
-    mailboxId: string, f: { junkFolder: string | null; trashFolder: string | null },
-  ): Promise<void> {
+  /** Mail 0065/0129 — persist the connect-time discovery, all three columns every time (re-written on attach). */
+  async setMailboxSpecialFolders(mailboxId: string, f: SpecialFolderColumns): Promise<void> {
     await this.db.update(mailboxes)
-      .set({ junkFolder: f.junkFolder, trashFolder: f.trashFolder })
+      .set({ junkFolder: f.junkFolder, trashFolder: f.trashFolder, sentFolder: f.sentFolder })
       .where(eq(mailboxes.id, mailboxId));
   }
 
@@ -3102,6 +3112,30 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
 
 export function makeDrizzleRepo(db: Db): DrizzleRepo {
   return new DrizzleRepo(db);
+}
+
+
+/**
+ * THE ATTACH'S DISCOVERY, WRITTEN DOWN — the one write both attach paths make (the hosted
+ * worker's and the local engine's). Junk and Trash from `findSpecialFolders`; Sent as the scan
+ * watches it, `watchedSentFolder ?? sentFolder` (mail 0129). `false` when the adapter or the repo
+ * cannot say, leaving the row as it stood; an adapter's throw is the caller's to log.
+ */
+export async function recordSpecialFolders(
+  adapter: Pick<MailboxAdapter, "findSpecialFolders" | "capabilities">,
+  repo: Pick<WorkerRepo, "setMailboxSpecialFolders">,
+  mailboxId: string,
+): Promise<boolean> {
+  if (typeof adapter.findSpecialFolders !== "function" || typeof repo.setMailboxSpecialFolders !== "function") {
+    return false;
+  }
+  const found = await adapter.findSpecialFolders();
+  const caps = typeof adapter.capabilities === "function" ? await adapter.capabilities() : null;
+  await repo.setMailboxSpecialFolders(mailboxId, {
+    junkFolder: found.junk, trashFolder: found.trash,
+    sentFolder: caps?.watchedSentFolder ?? caps?.sentFolder ?? null,
+  });
+  return true;
 }
 
 /**

@@ -1,3 +1,4 @@
+import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import { outranks } from "./consent-cutline.js";
 import { storedRuleDestination } from "./selectors.js";
 import type { EngineMutation, Folder, RuleDTO } from "./types.js";
@@ -24,7 +25,7 @@ export function ruleTwins(rules: readonly RuleDTO[], kind: "sender" | "domain", 
     && r.kind === kind
     && (r.subjectContains ?? "").trim() === ""
     && (r.bodyContains ?? "").trim() === ""
-    && r.match.trim().toLowerCase() === match);
+    && ruleMatchKey(r.match) === match);
 }
 
 /**

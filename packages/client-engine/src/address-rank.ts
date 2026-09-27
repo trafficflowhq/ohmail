@@ -1,5 +1,5 @@
 import { canonicalDestination } from "@trafficflow/core/folder-name";
-import { addressPriorityOver } from "@trafficflow/core/rule-order";
+import { addressPriorityOver, ruleMatchKey } from "@trafficflow/core/rule-order";
 import { domainOfAddress } from "./consent-cutline.js";
 import type { EngineMutation, RuleDTO } from "./types.js";
 
@@ -27,10 +27,10 @@ export function outrankCoveringDomains(rules: readonly RuleDTO[], m: EngineMutat
     match = rule.match;
     held = m.priority ?? finite(rule.priority);
   }
-  const domain = domainOfAddress(match.trim().toLowerCase());
+  const domain = domainOfAddress(ruleMatchKey(match));
   if (domain === null || domain === "") return m;
   const covering = rules
-    .filter((r) => r.enabled && r.kind === "domain" && r.match.trim().toLowerCase() === domain)
+    .filter((r) => r.enabled && r.kind === "domain" && ruleMatchKey(r.match) === domain)
     .map((r) => ({ priority: r.priority, destination: canonicalDestination(r.destination) }));
   const need = addressPriorityOver(covering, canonicalDestination(m.destination), held);
   return need === null || need === held ? m : { ...m, priority: need };

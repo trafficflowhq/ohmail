@@ -56,6 +56,7 @@ import {
   type WorldRule,
   connectionSaid,
   type FailedSendCopy,
+  ruleMatchKey,
 } from "../state/live";
 import { useWorld } from "../state/world";
 import { BAR, PILL, compactFit } from "./action-bar-layout";
@@ -938,7 +939,7 @@ function PhoneResolveStep({ step, domain, onChoice, onCommit, onCancel }: {
   const title = step.cls === "term"
     ? Copy.screeningResolveTitle(place, terms.length)
     : step.cls === "inside"
-      ? Copy.screeningResolveInsideTitle(place, new Set(inside.map((g) => g.rule.match.trim().toLowerCase())).size)
+      ? Copy.screeningResolveInsideTitle(place, new Set(inside.map((g) => ruleMatchKey(g.rule.match))).size)
       : Copy.screeningResolveDomainTitle(place, outranking?.match ?? domain, folderName(outranking?.destination ?? ""));
   const lines = step.cls === "domain" ? (outranking ? [{ rule: outranking, count: null as number | null }] : [])
     : (step.cls === "term" ? terms : inside).slice(0, 3).map((g) => ({ rule: g.rule, count: g.rows?.length ?? null }));

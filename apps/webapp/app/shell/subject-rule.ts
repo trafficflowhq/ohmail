@@ -20,6 +20,7 @@ import {
   type EntityReader,
   type MutationStatus,
   type RuleDTO,
+  ruleMatchKey,
 } from "@ohmail/client-engine";
 import type { DecisionDestination } from "@ohmail/ui";
 import { RETRO_DEFAULT_ON, RETRO_VISIBLE_MOVES, type ScreeningDest } from "./sender-screening";
@@ -275,7 +276,7 @@ export function subjectRuleContext(
     existing: rulesList(reader).filter(
       (r) => r.enabled
         && r.kind === "sender"
-        && r.match.trim().toLowerCase() === address
+        && ruleMatchKey(r.match) === address
         && ((r.subjectContains ?? "").trim() !== "" || (r.bodyContains ?? "").trim() !== ""),
     ),
   };
