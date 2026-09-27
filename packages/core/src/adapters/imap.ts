@@ -184,6 +184,16 @@ export interface FolderSearchPage {
 }
 
 /**
+ * ONE FOLDER'S STATUS, as the mailbox self-check reads it ({@link ImapAdapter.folderStatus}).
+ * `absent`: the server refused and its LIST names no such folder. `refused`: any other refusal on
+ * a live connection. `short`: an answer missing MESSAGES or UIDVALIDITY, which compares nothing.
+ * `dropped`: the connection was gone before or during the ask. A missed deadline throws instead.
+ */
+export type FolderStatusAnswer =
+  | { k: "status"; messages: number; uidValidity: string; uidNext: number | null }
+  | { k: "absent" } | { k: "refused" } | { k: "short" } | { k: "dropped" };
+
+/**
  * The slice of imapflow's `StatusObject` the passive skip reads — see
  * {@link ImapAdapter.unchangedPassive}. Named locally so a test fake can supply the four fields
  * without constructing the library's whole response shape.
@@ -1825,6 +1835,38 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     } finally {
       lock.release();
     }
+  }
+
+  /**
+   * ONE STATUS (MESSAGES UIDVALIDITY UIDNEXT) for one canonical folder — the mailbox self-check's
+   * only read. No SELECT, no FETCH, no write. The clock is the caller's `deadlineMs` or the read
+   * ceiling, whichever is sooner; a miss retires the connection (the STATUS may still be filling
+   * it) and throws the breach, so every later ask here answers `dropped` at once, never queued.
+   */
+  async folderStatus(canonical: string, deadlineMs: number): Promise<FolderStatusAnswer> {
+    const usable = (): boolean => (this.client as unknown as { usable?: unknown }).usable === true;
+    if (this.retiredBecause !== null || !usable()) return { k: "dropped" };
+    const clock = ImapDeadline.soonest(
+      ImapDeadline.in(Math.max(1, deadlineMs), "read_deadline", () => this.now()), this.readDeadline(),
+    );
+    let st: Partial<StatusObject> | false | undefined;
+    try {
+      st = await clock.race(
+        this.client.status(this.toServerPath(canonical), { messages: true, uidValidity: true, uidNext: true }),
+        canonical, (because) => this.retireConnection(because),
+      ) as Partial<StatusObject> | false | undefined;
+    } catch (err) {
+      if (err instanceof ImapBoundExceeded) throw err;
+      if ((err as { code?: unknown } | null)?.code === "NotFound") return { k: "absent" };
+      return usable() ? { k: "refused" } : { k: "dropped" };
+    }
+    // imapflow answers `false` for a refused command AND for a socket that died under it.
+    if (!st) return usable() ? { k: "refused" } : { k: "dropped" };
+    const gen = st.uidValidity;
+    if (typeof st.messages !== "number" || !Number.isFinite(st.messages) || st.messages < 0
+      || (typeof gen !== "bigint" && typeof gen !== "number")) return { k: "short" };
+    const next = typeof st.uidNext === "number" && Number.isFinite(st.uidNext) ? st.uidNext : null;
+    return { k: "status", messages: st.messages, uidValidity: String(gen), uidNext: next };
   }
 
   /**

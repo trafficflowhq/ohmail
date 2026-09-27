@@ -12,6 +12,7 @@ import { isImapDoorTimeout, withinDoorBudget } from "../imap-door.js";
 import { serviceContext } from "../context.js";
 import { makeImapProbe, makeSmtpProbe } from "../imap-probe.js";
 import { makeOrganizerPeek } from "../organizer-peek.js";
+import { reconcileMailbox } from "../mailbox-reconcile.js";
 import { jsonResponse } from "../responses.js";
 import type { ApiDeps } from "../deps.js";
 import type { Route } from "../router.js";
@@ -291,6 +292,20 @@ export const mailboxRoutes: Route[] = [
       await mailbox(deps).get(ctx, params.id!);
       const organizer = await makeOrganizerPeek(deps)(params.id!);
       return jsonResponse(organizer);
+    },
+  },
+  {
+    method: "GET",
+    pattern: "/mailboxes/:id/reconcile",
+    relay: true,
+    // `connection`: it dials the user's provider for one STATUS per folder the mirror reads,
+    // under one bounded budget. Ownership first, before the dial, for the organizer peek's reason.
+    // Read-only on the server and the mirror; every outcome, a failed dial too, answers 200.
+    cost: "connection",
+    handler: async (req, deps, params) => {
+      const ctx = serviceContext(deps, req);
+      await mailbox(deps).get(ctx, params.id!);
+      return jsonResponse(await reconcileMailbox(deps, ctx.accountId, params.id!));
     },
   },
   {
