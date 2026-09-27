@@ -2526,10 +2526,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   }
 
   /**
-   * UIDs per date-lookup command, so the pass clock is asked between commands of bounded size:
-   * about one {@link DATE_READ_PASS_MS} of a server answering a thousand date rows a second.
+   * UIDs per date-lookup command, so the pass clock is asked between commands of bounded size.
+   * The answer's length is the cost: a phone on a slow link dated a whole burst in one packed
+   * command and every pass ran out of its clock. This size keeps a command well inside the
+   * share {@link dateLookupSpent} checks between them; the ranges stay packed on the wire.
    */
-  private static readonly DATE_FETCH_MAX_UIDS = 20_000;
+  private static readonly DATE_FETCH_MAX_UIDS = 500;
 
   /**
    * What one pass spends dating candidates once a page's worth is dated. A first import dated the
