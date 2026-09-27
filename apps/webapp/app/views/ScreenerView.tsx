@@ -655,7 +655,7 @@ export function ScreenerView({
    * it has always been per-mailbox, and a row here named the sender and not the address they
    * wrote to.
    */
-  mailboxLabelOf?: (mailboxId: string) => string | null;
+  mailboxLabelOf?: (mailboxId: string, form?: "short") => string | null;
   full: boolean;
   onFull: (full: boolean) => void;
 }) {
@@ -668,11 +668,15 @@ export function ScreenerView({
   /**
    * The delivery badge for one sender row, or nothing. A sender's mailbox rides the row
    * ({@link ScreenerSenderDTO.mailboxId}); the resolver decides whether there is anything to say.
+   * On a phone the badge wears the short label and the full one stays in its title.
    */
   const mailboxBadge = useCallback(
-    (w: ScreenerSenderDTO): { mailbox?: string; mailboxTitle?: string } => {
-      const label = w.mailboxId ? mailboxLabelOf?.(w.mailboxId) ?? null : null;
-      return label ? { mailbox: label, mailboxTitle: tm("deliveredToTitle", { label }) } : {};
+    (w: ScreenerSenderDTO, short = false): { mailbox?: string; mailboxTitle?: string } => {
+      const id = w.mailboxId;
+      const label = id ? mailboxLabelOf?.(id) ?? null : null;
+      if (!id || !label) return {};
+      const face = short ? mailboxLabelOf?.(id, "short") ?? label : label;
+      return { mailbox: face, mailboxTitle: tm("deliveredToTitle", { label }) };
     },
     [mailboxLabelOf, tm],
   );
@@ -1235,7 +1239,7 @@ export function ScreenerView({
           inSet={inSet}
           from={displayAddressee(w.from.name, w.from.address)}
           address={displayAddressUnder(w.from.name, w.from.address)}
-          {...mailboxBadge(w)}
+          {...mailboxBadge(w, narrow)}
           time={newest?.time ?? w.time}
           subject={newest?.subject ?? ""}
           avatarInitial={w.initial}
@@ -1335,7 +1339,7 @@ export function ScreenerView({
              genuinely nameless sender still shows exactly one line. */
           from={displayAddressee(w.from.name, w.from.address)}
           address={displayAddressUnder(w.from.name, w.from.address)}
-          {...mailboxBadge(w)}
+          {...mailboxBadge(w, narrow)}
           time={screenedDate(w)}
           subject={newestHeld(w)?.subject ?? ""}
           avatarInitial={w.initial}
@@ -1368,7 +1372,7 @@ export function ScreenerView({
         inSet={inSet}
         from={displayAddressee(r.sender.from.name, r.sender.from.address)}
         address={displayAddressUnder(r.sender.from.name, r.sender.from.address)}
-        {...mailboxBadge(r.sender)}
+        {...mailboxBadge(r.sender, narrow)}
         time={newestHeld(r.sender)?.time ?? r.sender.time}
         subject={newestHeld(r.sender)?.subject ?? ""}
         avatarInitial={r.sender.initial}
@@ -2001,6 +2005,7 @@ export function HeldMail({
   dull?: boolean;
 }) {
   const t = useTranslations("body");
+  const ts = useTranslations("screening");
   const drawn = useDrawnBody(message ?? null);
   const body = drawn ? drawn.text : carriedBody;
   const html = drawn ? drawn.html : carriedHtml;
@@ -2090,11 +2095,24 @@ export function HeldMail({
         : waiting
           ? t("loading")
           : null;
+  const who = (
+    <>
+      <b>{from}</b>
+      {address ? <span className="addr">{address}</span> : null}
+    </>
+  );
   return (
-    <article className={dull ? "hmail dull" : "hmail"}>
+    /* THE SENDER SHEET'S DOOR FROM THE PREVIEW. On a phone the row is one target and opens this
+       card, so the sheet is reached here, by a press on the sender — handled by the stage's one
+       hit test (`sender-hit.ts`), as on a row. Only over a mirror message, which the sheet can
+       resolve; a fixture or junk card keeps the plain line. */
+    <article className={dull ? "hmail dull" : "hmail"} data-sid={message && messageId ? messageId : undefined}>
       <div className="hm-line">
-        <b>{from}</b>
-        {address ? <span className="addr">{address}</span> : null}
+        {message && messageId ? (
+          <button type="button" className="hm-who" aria-label={ts("openFor", { sender: address || from })}>
+            {who}
+          </button>
+        ) : who}
         {/* Before the time, so the date keeps its corner and the notice leads into it — the stream
             card's order. */}
         {notice ? <BlockNoticeGloss notice={notice} /> : null}

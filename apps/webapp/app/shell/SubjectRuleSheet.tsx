@@ -25,8 +25,9 @@ import { Avatar, InfoNote, TextField } from "@ohmail/ui";
 import { usePileNames } from "./decision-copy";
 import { avatarHue, initialsOf } from "./format";
 import { displayAddress, displayAddressee, displayRuleMatch } from "./idn";
-import { useOverlayClamp } from "./overlay-clamp";
+import { useOverlayFit } from "./overlay-clamp";
 import { useFocusFollows } from "./focus-follows";
+import { SheetClose } from "./SenderMenu";
 import "./sender-sheet.css";
 import { RETRO_DEFAULT_ON, type ScreeningDest } from "./sender-screening";
 import {
@@ -146,17 +147,19 @@ export function SubjectRuleSheet({
    * clipped its bottom 339px off a 1440×900 viewport when opened low, which put its lower
    * destinations out of reach entirely. Same hook, same rule: flip, cap, scroll — never clip.
    */
-  const style = useOverlayClamp(rootRef, state);
+  const { style, full } = useOverlayFit(rootRef, state);
   useFocusFollows(rootRef);
 
   return (
     <div
       ref={rootRef}
-      className="senderm"
+      className={full ? "senderm sm-full" : "senderm"}
       role="dialog"
       aria-label={t("subjectAria", { who })}
       style={style}
     >
+      {/* The sender sheet's way out, for the same reason: see `SenderMenu`. */}
+      <SheetClose full={full} label={t("auditClose")} onClose={onClose} />
       <div className="sm-head">
         <Avatar initials={initialsOf(label)} hue={avatarHue(ctx.address)} size="s" />
         <span className="sm-who">

@@ -51,8 +51,9 @@
   margin:0 -6px;padding:0 6px}
 .rules-list{display:flex;flex-direction:column}
 
-/* one rule — a FIXED-height row (see RULE_ROW_PX): two ellipsised lines on the left, the
-   controls on the right. Fixed height is what lets the window reserve spacer height exactly. */
+/* one rule — a FIXED-height row above phone width (see RULE_ROW_PX): two ellipsised lines on the
+   left, the controls on the right. The window measures every drawn row, so the phone's stacked
+   row below is priced by its measurement. */
 .rules-item{display:flex;align-items:center;gap:12px;height:64px;
   border-bottom:1px solid var(--hair-soft)}
 /* the row whose confirm is open — marked, so the tinted well below is visibly ABOUT this row.
@@ -67,6 +68,16 @@
 .rules-item .acts{display:flex;gap:6px;flex:none}
 .rules-view .rules-item .acts .btn,
 .rules-view .rules-confirm .btn{font-size:calc(11.5px + var(--type-up));padding:5px 12px}
+/* AT PHONE WIDTH THE RULE SAYS WHOSE IT IS. Beside Change and Revoke the title kept about five
+   characters of the address, so rows could not be told apart before a press. The row stacks: the
+   title on its own full-width line, wrapping anywhere (an address has no spaces), the controls
+   under it. */
+@media (max-width:640px){
+  .rules-item{flex-direction:column;align-items:stretch;gap:6px;height:auto;padding:10px 0}
+  .rules-item.editing{padding:10px 6px}
+  .rules-item .what{white-space:normal;overflow-wrap:anywhere}
+  .rules-item .acts{justify-content:flex-start}
+}
 
 .rules-empty{font-size:calc(12.5px + var(--type-up));color:var(--ink3);padding:22px 4px;text-align:center}
 

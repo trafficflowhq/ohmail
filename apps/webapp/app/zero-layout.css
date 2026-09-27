@@ -300,6 +300,15 @@
     display: none;
   }
 }
+/* …and not where there are no keys. The re-show above outranks the touch rule's own strips pair
+   (`touch-keys.css`), so on a coarse tablet this layout hides them itself, later in this file at
+   the same specificity. */
+@media (pointer: coarse) {
+  :root[data-layout="zero"] .view .list-hints,
+  :root[data-layout="zero"] .view .stream-hints {
+    display: none;
+  }
+}
 
 /* ═══ 392–721: one content tile, push navigation. The reader SHEET is the
        one reader (no second one is built); here it is re-housed into the

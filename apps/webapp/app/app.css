@@ -1928,6 +1928,39 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* THE SENDER PRESS (`HeldMail`): the sender and address as the one control that opens the sender
+   sheet, drawn as the line it replaces. It takes the address's room-absorbing basis, so the notice
+   and the time keep their corner; on a coarse pointer an invisible strip makes the hit 44px. */
+.hm-line .hm-who {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1 1 0;
+  min-width: 0;
+  position: relative;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.hm-line .hm-who:hover b {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+@media (pointer: coarse) {
+  .hm-line .hm-who::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 44px;
+    translate: 0 -50%;
+  }
+}
 .hm-line .t {
   margin-left: auto;
   font-size:calc(11px + var(--type-up));
@@ -4311,6 +4344,30 @@ input.set-tag-input {
   .demo-ribbon {
     font-size:calc(11px + var(--type-up));
     padding: 5px 10px;
+  }
+}
+/* THE SCREENER ROW AT PHONE WIDTH. The subject is what a person screens on, so the badge strip
+   takes at most a third of the row and the mailbox chip ellipsizes inside it; the subject gets
+   the rest. With a coarse pointer the row is ONE target: the avatar and the address were the
+   row's middle, and a thumb there opened the full-height sender sheet instead of the letter. They
+   stop being hit targets, so a tap anywhere opens the preview, whose sender press opens the sheet. */
+@media (max-width: 900px) {
+  .view-screener .row .badges {
+    max-width: 33.333%;
+  }
+  .view-screener .row .bdg-tail > .badge {
+    display: block;
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+@media (pointer: coarse) and (max-width: 900px) {
+  .view-screener .row .av,
+  .view-screener .row .addr {
+    pointer-events: none;
   }
 }
 @media (min-width: 901px) {

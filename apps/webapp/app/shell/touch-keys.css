@@ -63,27 +63,23 @@
     display: none;
   }
 
-  /* THE DECISION CAPSULES' KEYCAPS — an AMPLIFICATION of the case above rather than a new
-     one. This bar already carried a keycap on a touch device, the AI capsule's hand-typed
-     `y`, and the rules above did not catch it. A letter on all five capsules and a shifted
-     twin on each ✓ turns that one unpressable cap into ten, on the surface a phone user does
-     the most tapping on.
-     `decision-bar.css`'s container queries already hide them below 490px of bar, which is
-     every phone; this is the tablet, where the bar is wide, the pointer is still coarse and
-     the caps would otherwise show. Specificity by the same rule as the others: the
-     declaration to beat is `.decide .dbtn kbd` (0,2,1), so this is (0,2,2). */
-  .decide .dbtn button kbd {
+  /* A KEYCAP ON A CONTROL. Every button that wears its key — Send's chord in both composers,
+     the rail's Compose and its rows (Search's "/", Command's chord), the Screener's bulk verbs
+     and row menu, the decision capsules, the sender sheet's steps — keeps its label and loses
+     the cap. One rule for the class rather than one per surface, so a control added later is
+     covered without anyone remembering this file. (0,0,2) beats the global `kbd` (0,0,1), the
+     only rule that gives a keycap a visible `display`. */
+  button kbd {
     display: none;
   }
 
-  /* THE RAIL'S COMMAND ROW BECOMES A PLAIN LABELLED ROW — which it very nearly already is.
-     The row renders `{label}<span class="cnt"><kbd>⌘K</kbd></span>`, the same idiom the Search
-     row uses for "/", so dropping the keycap leaves "Command" and an empty `.cnt` holding the
-     count column open. The button, its accessible name and its action are untouched.
-
-     Scoped to `.rail-dock` and not to `.ritem kbd`, because the Search row's "/" is a
-     NAVIGATION key hint that this file has never claimed to hide — one question at a time. */
-  .rail-dock .ritem kbd {
+  /* HINTS THAT ARE ONLY KEYS, hidden whole — the `.reader-hint` shape above: the reply editor's
+     "esc closes the editor", focus reply's "esc" exit, and the palette's per-command chords and
+     its ↑↓ ↵ esc foot. Specificity over `.pal-list li .keys` (0,2,1) and `.pal-foot` (0,1,0). */
+  .reply-hint:has(kbd),
+  .fr-foot .esc:has(kbd),
+  .palette .pal-list li .keys,
+  .palette .pal-foot {
     display: none;
   }
 

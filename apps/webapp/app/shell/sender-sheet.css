@@ -36,6 +36,36 @@
   gap: 11px;
   padding: 15px 18px 10px;
 }
+/* THE FULL-HEIGHT SHEET'S CLOSE — a zero-height sticky bar, so the 44px control rides the top-right
+   corner while the sheet scrolls under it and adds nothing to the height the clamp measures. The
+   head gives up the corner's width so a long name ellipsizes before it. */
+.sm-close-bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 0;
+  display: flex;
+  justify-content: flex-end;
+}
+.sm-close {
+  width: 44px;
+  height: 44px;
+  margin: 4px 4px 0 0;
+  display: grid;
+  place-items: center;
+  flex: none;
+  border-radius: var(--r-pill);
+  background: var(--float);
+  color: var(--ink2);
+  font-size: calc(14px + var(--type-up));
+}
+.sm-close:hover {
+  background: var(--tint);
+  color: var(--ink);
+}
+.senderm.sm-full .sm-head {
+  padding-right: 52px;
+}
 .sm-who {
   display: flex;
   flex-direction: column;

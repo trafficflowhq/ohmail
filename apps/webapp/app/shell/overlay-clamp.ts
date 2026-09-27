@@ -113,8 +113,20 @@ export function useOverlayClamp(
   ref: RefObject<HTMLElement | null>,
   point: OverlayPoint,
 ): CSSProperties {
+  return useOverlayFit(ref, point).style;
+}
+
+/**
+ * {@link useOverlayClamp} plus whether the box FILLS the viewport band — rendered at the full
+ * height the clamp allows, so the page behind it is covered but for the edge strips. A sheet in
+ * that state owes a visible way out (the sender sheet's close control).
+ */
+export function useOverlayFit(
+  ref: RefObject<HTMLElement | null>,
+  point: OverlayPoint,
+): { style: CSSProperties; full: boolean } {
   const { x, y, anchorTop, anchorBottom } = point;
-  const [fit, setFit] = useState<{ left: number; top: number; maxHeight: number } | null>(null);
+  const [fit, setFit] = useState<{ left: number; top: number; maxHeight: number; full: boolean } | null>(null);
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -128,10 +140,12 @@ export function useOverlayClamp(
         window.innerHeight,
       );
       const left = clampOverlayX(x, el.offsetWidth, window.innerWidth);
+      const full = Math.min(el.scrollHeight, maxHeight) >= window.innerHeight - 2 * OVERLAY_EDGE;
       setFit((prev) =>
         prev != null && prev.left === left && prev.top === top && prev.maxHeight === maxHeight
+          && prev.full === full
           ? prev
-          : { left, top, maxHeight },
+          : { left, top, maxHeight, full },
       );
     };
     measure();
@@ -147,12 +161,15 @@ export function useOverlayClamp(
   }, [ref, x, y, anchorTop, anchorBottom]);
 
   return {
-    left: fit?.left ?? x,
-    top: fit?.top ?? y,
-    maxHeight: fit?.maxHeight,
-    overflowY: "auto",
-    // A capped sheet's inner scroll must not chain into the page — on the popover variant a
-    // page scroll DISMISSES, so chaining would close the sheet mid-read at either scroll end.
-    overscrollBehavior: "contain",
+    style: {
+      left: fit?.left ?? x,
+      top: fit?.top ?? y,
+      maxHeight: fit?.maxHeight,
+      overflowY: "auto",
+      // A capped sheet's inner scroll must not chain into the page — on the popover variant a
+      // page scroll DISMISSES, so chaining would close the sheet mid-read at either scroll end.
+      overscrollBehavior: "contain",
+    },
+    full: fit?.full ?? false,
   };
 }

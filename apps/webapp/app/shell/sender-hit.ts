@@ -20,10 +20,11 @@ export interface SenderHit {
   anchor: HTMLElement;
 }
 
-/** Every element that means "this is the sender", in both idioms. */
-const HANDLES = ".row .av, .row .addr, .scast .addr";
-/** The two carriers of a message id, in the order they nest. */
-const CARRIERS = ".row[data-id], .scast[data-sid]";
+/** Every element that means "this is the sender", in both idioms — and the Screener preview's
+ *  sender press (`HeldMail`), a card stamped like a stream card, where a phone's row is one target. */
+const HANDLES = ".row .av, .row .addr, .scast .addr, .hmail .hm-who";
+/** The carriers of a message id, in the order they nest. */
+const CARRIERS = ".row[data-id], .scast[data-sid], .hmail[data-sid]";
 
 export function senderHitOf(target: Element | null): SenderHit | null {
   if (!target?.closest?.(HANDLES)) return null;

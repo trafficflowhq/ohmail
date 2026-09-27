@@ -16,14 +16,15 @@ export interface MailboxLabelFact {
 }
 
 /**
- * The memo key: sorted `[id, label]` pairs as JSON, `ownAddressKey`'s shape and for its reason —
- * a poll that moved a field the label does not depend on must not rebuild the map. JSON, never a
- * join character: it escapes its own delimiters, so no two distinct lists produce one string.
+ * The memo key: sorted `[id, label, address]` triples as JSON, `ownAddressKey`'s shape and for its
+ * reason — a poll that moved a field the label does not depend on must not rebuild the map. The
+ * address rides along because the short form reads it. JSON, never a join character: it escapes
+ * its own delimiters, so no two distinct lists produce one string.
  */
 export function mailboxLabelKey(facts: readonly MailboxLabelFact[] | null): string {
   if (facts === null) return "null";
   return JSON.stringify(
-    facts.map((m) => [m.id, m.displayName?.trim() || m.address] as const).sort(),
+    facts.map((m) => [m.id, m.displayName?.trim() || m.address, m.address] as const).sort(),
   );
 }
 
@@ -32,11 +33,30 @@ export function mailboxLabelKey(facts: readonly MailboxLabelFact[] | null): stri
  * `GET /mailboxes` probe — is the same silence: the honest degradation `ownAddresses: []` already
  * takes, rather than a guess. Above one, the mailbox's own label and the bare address where it has
  * none, which is the fallback the "me" chip already keeps.
+ *
+ * `"short"` is the phone chip's form: the label where the mailbox has one, else the half of the
+ * address that tells this account's mailboxes apart — the local part, the domain when two share a
+ * local part, the address only when both halves collide.
  */
 export function mailboxLabelResolver(
   facts: readonly MailboxLabelFact[] | null,
-): (mailboxId: string) => string | null {
+): (mailboxId: string, form?: "short") => string | null {
   if (facts === null || facts.length <= 1) return () => null;
   const byId = new Map(facts.map((m) => [m.id, m.displayName?.trim() || m.address] as const));
-  return (mailboxId: string) => byId.get(mailboxId) ?? null;
+  const halves = (a: string): [string, string] => {
+    const at = a.lastIndexOf("@");
+    return at < 0 ? [a, ""] : [a.slice(0, at), a.slice(at + 1)];
+  };
+  const seen = (i: 0 | 1, v: string): number =>
+    facts.filter((m) => halves(m.address)[i].toLowerCase() === v.toLowerCase()).length;
+  const shortById = new Map(facts.map((m) => {
+    const named = m.displayName?.trim();
+    if (named) return [m.id, named] as const;
+    const [local, domain] = halves(m.address);
+    if (local && seen(0, local) === 1) return [m.id, local] as const;
+    if (domain && seen(1, domain) === 1) return [m.id, domain] as const;
+    return [m.id, m.address] as const;
+  }));
+  return (mailboxId: string, form?: "short") =>
+    (form === "short" ? shortById : byId).get(mailboxId) ?? null;
 }

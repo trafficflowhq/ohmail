@@ -48,7 +48,7 @@ import { Avatar, InfoNote, Kbd } from "@ohmail/ui";
 import { usePileNames } from "./decision-copy";
 import { avatarHue, initialsOf, placeLabel } from "./format";
 import { displayAddress, displayAddressee, displayDomain } from "./idn";
-import { useOverlayClamp } from "./overlay-clamp";
+import { useOverlayFit } from "./overlay-clamp";
 import { useFocusFollows } from "./focus-follows";
 import { addressHref } from "./address-view";
 import "./sender-sheet.css";
@@ -80,6 +80,19 @@ export interface SenderMenuState {
   /** The anchor's edges, for the viewport clamp — see `overlay-clamp.ts`. */
   anchorTop?: number;
   anchorBottom?: number;
+}
+
+/** The full-height sheet's close (`sender-sheet.css`, `.sm-close-bar`): this sheet's and the
+ *  subject-rule sheet's, which share the shell. Nothing while the sheet has room around it. */
+export function SheetClose({ full, label, onClose }: { full: boolean; label: string; onClose: () => void }) {
+  if (!full) return null;
+  return (
+    <div className="sm-close-bar">
+      <button type="button" className="sm-close" aria-label={label} onClick={onClose}>
+        ✕
+      </button>
+    </div>
+  );
 }
 
 export function SenderMenu({
@@ -265,17 +278,22 @@ export function SenderMenu({
    * against its measured height: below the anchor, flipped above it, or capped with an inner
    * scroll, but never past the viewport's edges. See `overlay-clamp.ts` for the geometry.
    */
-  const style = useOverlayClamp(rootRef, state);
+  const { style, full } = useOverlayFit(rootRef, state);
   useFocusFollows(rootRef);
 
   return (
     <div
       ref={rootRef}
-      className="senderm"
+      className={full ? "senderm sm-full" : "senderm"}
       role="dialog"
       aria-label={t("aria", { sender: who })}
       style={style}
     >
+      {/* A SHEET THAT FILLS THE SCREEN CARRIES ITS OWN WAY OUT. On a phone the outside tap is an
+          18px strip and there is no Escape key, so the full-height sheet gets a 44px close that
+          stays in its corner while the sheet scrolls. A sheet with room around it keeps its
+          face; it is dismissed by the page around it. */}
+      <SheetClose full={full} label={t("auditClose")} onClose={onClose} />
       <div className="sm-head">
         <Avatar initials={initialsOf(label)} hue={avatarHue(sender.address)} size="s" />
         <span className="sm-who">
