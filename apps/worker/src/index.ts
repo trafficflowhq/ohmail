@@ -2099,6 +2099,7 @@ export async function startWorkerWithLock(
       log.error("mailbox_quarantined", {
         mailboxId, accountId, attempts, retryInMs: wait, err: reason,
         ...(soft ? { syncBlockedReason: soft } : { errorCode: code }),
+        ...(bounded ? { ceiling: reason.bound, ceilingLimit: reason.limit } : {}),
       });
     }
 
@@ -4018,6 +4019,7 @@ export async function startWorkerWithLock(
           log.error("sync_cycle_failed", {
             mailboxId: rt.mailboxId, accountId: rt.accountId,
             consecutiveFailures: rt.failures, maxSyncFailures, err,
+            ...(isImapBoundExceeded(err) ? { ceiling: err.bound, ceilingLimit: err.limit } : {}),
           });
           /* A first import that ended on one of OUR ceilings still read the mailbox: stamp the
              progress the `sync_lag` rule reads while no cycle has completed. Measured on a 25k
@@ -5611,6 +5613,7 @@ export async function startWorkerWithLock(
     // connection and racing the same compare-and-clear — one slow read turned into pool pressure at the
     // worst moment. A tick that finds the previous pass running skips; the stamp is there next time.
     let syncKickInFlight = false;
+    const syncKickAskedFor = new Map<string, string>();
     syncKickTimer = setInterval(() => {
       void (async () => {
         if (stopped || syncKickInFlight) return;
@@ -5625,6 +5628,8 @@ export async function startWorkerWithLock(
             // rotation, so the mailbox whose Sent copy the user is watching for waited behind every
             // other mailbox on the shard exactly as an IDLE-woken one did.
             kick: (mailboxId) => { noteWake(mailboxId); kickCycle(); },
+            // A stamped mailbox nobody here serves yet — a new one — asks for its roster pass now.
+            requestRoster, askedFor: syncKickAskedFor,
             log,
           });
         } catch (err) {

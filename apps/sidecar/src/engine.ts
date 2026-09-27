@@ -7,7 +7,7 @@ import {
 } from "@trafficflow/core/mail";
 import {
   ImapAdapter, ImapConnectionClosedError, WORKER_NET_TIMEOUTS, WriteDeclinedError, buildImapAuth,
-  type ImapConfig, type MailboxAdapter, type CredMetaAuth, type NetTimeouts,
+  isImapBoundExceeded, type ImapConfig, type MailboxAdapter, type CredMetaAuth, type NetTimeouts,
 } from "@trafficflow/core/adapters/imap";
 import { makeDrizzleRepo, mailboxProviderAuthservIds, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 // The release refusal's OWN class, from the one module that throws it: `releaseOwnClaim` tells a
@@ -6028,7 +6028,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                   unreadableSince: organizer.unreadableSince ?? new Date().toISOString(),
                 };
               }
-              log("sync_cycle_failed", { err });
+              // Which of our ceilings ended it, as the hosted worker's line says; null otherwise.
+              const ceiling = isImapBoundExceeded(err) ? err : null;
+              log("sync_cycle_failed", {
+                err, ceiling: ceiling?.bound ?? null, ceilingLimit: ceiling?.limit ?? null,
+              });
             })
             .finally(schedule);
         }, delayMs ?? idlePollMs);
@@ -8930,7 +8934,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         const failures: { mailboxId: string; err: unknown }[] = [];
         runs.forEach((r, i) => {
           if (r.status !== "rejected") return;
-          log("mailbox_start_failed", { err: r.reason });
+          // A first drain that ended on one of our ceilings fails the launch: name which.
+          const ceiling = isImapBoundExceeded(r.reason) ? r.reason : null;
+          log("mailbox_start_failed", {
+            err: r.reason, ceiling: ceiling?.bound ?? null, ceilingLimit: ceiling?.limit ?? null,
+          });
           failures.push({ mailboxId: all[i]?.mailboxId ?? "", err: r.reason });
         });
         return { failures };

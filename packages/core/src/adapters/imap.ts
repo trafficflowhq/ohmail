@@ -245,6 +245,37 @@ export function orderCandidates(uids: readonly number[], dates: ReadonlyMap<numb
 }
 
 /**
+ * UIDs as IMAP sequence sets, in the order given: consecutive UIDs collapse to `a:b`, each set
+ * holds at most `maxRuns` ranges and `maxUids` UIDs. A first import's unknown set is the whole
+ * folder: as comma lists 25 000 UIDs were fifty commands, packed they are two.
+ */
+export function uidSetChunks(
+  uids: readonly number[], maxRuns: number, maxUids: number,
+): Array<{ set: string; uids: number[] }> {
+  const out: Array<{ set: string; uids: number[] }> = [];
+  let runs: Array<[number, number]> = [];
+  let members: number[] = [];
+  const flush = (): void => {
+    if (members.length === 0) return;
+    out.push({ set: runs.map(([lo, hi]) => (lo === hi ? `${lo}` : `${lo}:${hi}`)).join(","), uids: members });
+    runs = [];
+    members = [];
+  };
+  for (const u of uids) {
+    const last = runs[runs.length - 1];
+    const extendsLast = last !== undefined && (u === last[0] - 1 || u === last[1] + 1);
+    if (members.length >= maxUids || (!extendsLast && runs.length >= maxRuns)) flush();
+    const run = runs[runs.length - 1];
+    if (run !== undefined && u === run[0] - 1) run[0] = u;
+    else if (run !== undefined && u === run[1] + 1) run[1] = u;
+    else runs.push([u, u]);
+    members.push(u);
+  }
+  flush();
+  return out;
+}
+
+/**
  * The complete `ImapFlow` option set for a config — the whole thing, not just the TLS part. One
  * place where a `secure: false` from the onboarding request body becomes a socket, and it cannot
  * be reached without the TLS floor: {@link imapTlsFloor} is spread in here, not at the call site,
@@ -2394,17 +2425,17 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   /**
    * The arrival date of the candidate UIDs, cached per (folder, epoch). A separate fetch from
    * the RFC822.SIZE one: sizes are needed only for messages past the count cap, dates for the
-   * candidates — widening the size fetch would silently unbound it. Chunked, because
-   * `ImapFlow.fetch` serialises an array with `range.join(',')` (tens of KB, measured). Cached,
-   * because re-asking a shrinking set every pass is O(n²/batch) over a drain. Paid per UNKNOWN
-   * message, so it is bounded per pass too: highest UIDs (the newest arrivals) first, and no new
-   * chunk once the pass has spent {@link ImapAdapter.DATE_LOOKUP_SHARE} of its clock. The rest
-   * wait for later passes: a burst, or a re-dial's empty cache, no longer spends the whole pass.
+   * candidates — widening the size fetch would silently unbound it. Cached, because re-asking a
+   * shrinking set every pass is O(n²/batch) over a drain. Newest UID first and PACKED into ranges
+   * ({@link uidSetChunks}). Two clocks stop it between commands: once `want` candidates are dated,
+   * {@link ImapAdapter.DATE_READ_PASS_MS}; in any case no new command once the pass has spent
+   * {@link ImapAdapter.DATE_LOOKUP_SHARE} of its clock. The rest wait for later passes.
    */
   private async arrivalDatesFor(
     folder: string,
     curUidValidity: bigint,
     uids: readonly number[],
+    want: number,
   ): Promise<Map<number, number>> {
     const epoch = String(curUidValidity);
     let entry = this.dateCache.get(folder);
@@ -2414,17 +2445,22 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     }
 
     const misses = uids.filter((u) => !entry!.dates.has(u)).sort((a, b) => b - a);
-    for (let i = 0; i < misses.length; i += ImapAdapter.DATE_FETCH_CHUNK) {
-      if (i > 0 && this.dateLookupSpent()) break;
-      const chunk = misses.slice(i, i + ImapAdapter.DATE_FETCH_CHUNK);
+    const startedMs = this.now();
+    let dated = uids.length - misses.length;
+    let commands = 0;
+    for (const chunk of uidSetChunks(misses, ImapAdapter.DATE_FETCH_CHUNK, ImapAdapter.DATE_FETCH_MAX_UIDS)) {
+      if (commands > 0 && this.dateLookupSpent()) break;
+      if (dated >= want && this.now() - startedMs >= ImapAdapter.DATE_READ_PASS_MS) break;
+      commands += 1;
       for await (const m of this.client.fetch(
-        chunk, { uid: true, internalDate: true, envelope: true }, { uid: true },
+        chunk.set, { uid: true, internalDate: true, envelope: true }, { uid: true },
       )) {
         entry.dates.set(m.uid, arrivalKey(m.internalDate, m.envelope?.date));
       }
       // A UID the server did not answer for (expunged between enumeration and now) is recorded
       // as 0 rather than left missing, or it would be re-asked on every pass for ever.
-      for (const u of chunk) if (!entry.dates.has(u)) entry.dates.set(u, 0);
+      for (const u of chunk.uids) if (!entry.dates.has(u)) entry.dates.set(u, 0);
+      dated += chunk.uids.length;
     }
 
     // Prune: a UID that is no longer a candidate has been ingested (or has gone away) and its
@@ -2434,7 +2470,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     return entry.dates;
   }
 
-  /** UIDs per date-lookup command. See {@link ImapAdapter.arrivalDatesFor} — ~1.9 KiB on the wire. */
+  /** Ranges per date-lookup command — the command's LENGTH, at most ~6 KiB on the wire. */
   private static readonly DATE_FETCH_CHUNK = 500;
 
   /** The part of a pass's clock the date lookup may spend; the page and the rest keep the other. */
@@ -2446,6 +2482,19 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     if (pass === undefined) return false;
     return IMAP_CYCLE_DEADLINE_MS - pass.remainingMs() >= IMAP_CYCLE_DEADLINE_MS * ImapAdapter.DATE_LOOKUP_SHARE;
   }
+
+  /**
+   * UIDs per date-lookup command, so the pass clock is asked between commands of bounded size:
+   * about one {@link DATE_READ_PASS_MS} of a server answering a thousand date rows a second.
+   */
+  private static readonly DATE_FETCH_MAX_UIDS = 20_000;
+
+  /**
+   * What one pass spends dating candidates once a page's worth is dated. A first import dated the
+   * whole folder before ordering it, so a large folder ran the pass past `cycle_deadline` and the
+   * cycle ended having committed nothing. Past this the pass orders what is dated.
+   */
+  private static readonly DATE_READ_PASS_MS = 20_000;
 
   /**
    * Fetch bodies for at most `budget` worth of UIDs, NEWEST MAIL FIRST, and say what was left.
@@ -2486,7 +2535,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       return { fetched, truncated: true, unanswered: [], oversize: [], budgetSpent: true };
     }
 
-    const dates = await this.arrivalDatesFor(folder, curUidValidity, uids);
+    const dates = await this.arrivalDatesFor(folder, curUidValidity, uids, Math.max(1, budget.messages));
     // Only DATED candidates compete for the page. An undated one waits for a later pass, and the
     // page counts against ALL candidates, so the cursor stays held for it (`truncated`).
     const newestFirst = orderCandidates(uids.filter((u) => dates.has(u)), dates);

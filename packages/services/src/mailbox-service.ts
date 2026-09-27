@@ -912,6 +912,16 @@ export async function decryptCredential(
  * means the statement carries nothing only one store can render — what let this projection stop
  * being Postgres-only.
  */
+/**
+ * The doorbell of a mailbox the worker does not serve yet, spread into the write that makes it one:
+ * a create, an OAuth connect or reconnect, a re-enable. `sync-kick.ts` answers it with a roster pass
+ * instead of the next interval. The DATABASE's clock, as every writer of this column. A census in
+ * this package's tests holds the four call sites.
+ */
+function newMailboxDoorbell(db: unknown): { syncRequestedAt: SQL } {
+  return { syncRequestedAt: dialect(db).now() };
+}
+
 export function wireInstant(at: Date | null): string | null {
   return at === null ? null : at.toISOString();
 }
@@ -1236,6 +1246,7 @@ export class MailboxService {
         // answer to the send path's only question and are both read as "fall back to the strict
         // constant". Never a number this code chose: the column means the SERVER said so.
         smtpMaxSizeBytes: provenSmtp?.maxMessageBytes ?? null,
+        ...newMailboxDoorbell(ctx.db),
       }).returning();
 
       if (body.imap?.pass) {
@@ -1409,6 +1420,7 @@ export class MailboxService {
           ...(input.displayName !== undefined ? { displayName: input.displayName ?? null } : {}),
           errorCode: null, errorDetail: null, failedAt: null, retryCount: 0,
           syncBlockedReason: null, syncBlockedSince: null,
+          ...newMailboxDoorbell(ctx.db),
         }).where(and(eq(mailboxes.id, row.id), eq(mailboxes.accountId, ctx.accountId)));
 
         await this.upsertCredOn(tx, ctx, kp, row.id, "imap", o.refreshToken, meta,
@@ -1445,6 +1457,7 @@ export class MailboxService {
         // connect is a connect: the door differs, the meaning does not.
         organizerRole: "reader",
         organizeConsentedAt: null,
+        ...newMailboxDoorbell(ctx.db),
       }).returning();
       await this.upsertCredOn(tx, ctx, kp, created!.id, "imap", o.refreshToken, meta, MINTED_HERE);
       // Same hook, same transaction, as `create` — an OAuth connect of a NEW address is a
@@ -1565,7 +1578,9 @@ export class MailboxService {
       }
 
       if (Object.keys(set).length > 0) {
-        await tx.update(mailboxes).set(set)
+        const reEnabling = patch.status !== undefined && patch.status !== "disabled"
+          && current.status === "disabled";
+        await tx.update(mailboxes).set({ ...set, ...(reEnabling ? newMailboxDoorbell(ctx.db) : {}) })
           .where(and(eq(mailboxes.id, id), eq(mailboxes.accountId, ctx.accountId)));
       }
 
