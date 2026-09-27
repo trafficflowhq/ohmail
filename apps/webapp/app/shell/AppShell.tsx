@@ -1106,10 +1106,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const {
     fileAndRefresh, rosterRef, deleting, restoring, refusalCopy, routing, pressWatch,
-    toastWithUndo, mutateAndReport, mutateSetAndReport, runArmedUndo, undoToast,
+    /* `toast`: every sentence below leaves through the undo door, so any Undo is one `z` takes. */
+    toastWithUndo, mutateAndReport, mutateSetAndReport, runArmedUndo, undoToast: toast,
   } = useShellDispatch({ engine, reader, toast: hostToast, t, demo, refreshFacts });
-  /* Every sentence below leaves through the undo door, so an Undo raised anywhere is one `z` takes. */
-  const toast = undoToast;
 
   const theme = useTheme();
   /* THE SHELL TIMES ITSELF — startup marks, the three interaction percentiles and the frame
@@ -1184,12 +1183,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     if (pulled > 0 || mailState.settled) markStartup("listUsable");
   }, [pulled, mailState.settled]);
   /**
-   * The account's language, offered to the host — riding the `GET /consent` this shell already
-   * makes; the account column is what makes "my mail is in German" true on a machine that has
-   * never seen this account. `adoptLocale`, never `setLocale`: the latter WRITES the account, and
-   * adopting a value that came FROM it would PATCH it back on every boot of every tab. The host
-   * decides what an adoption may move (`LocaleControls.adoptLocale`): this read can be older than
-   * a press. Null means no preference and the device stands. Absent provider: nothing to adopt into.
+   * The account's language, offered to the host from the `GET /consent` this shell already makes.
+   * `adoptLocale`, never `setLocale`, which WRITES the account and would PATCH it back on every
+   * boot; the host decides what an adoption may move, since this read can be older than a press.
+   * Null: no preference, the device stands. Absent provider: nothing to adopt into.
    */
   const localeControls = useAppLocale();
   const accountLocale = consent.locale;
@@ -1597,13 +1594,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * with a refusing stub asks nothing unless its host wired a transport,
    * which the desktop does on both doors ({@link profileImportTransport}).
    */
-  /* The doorbell an organizer's find rings — the card is asked for on the drain that carries it. */
-  const profileDoorbell = useMemo(
-    () => settingsDoorbell(engine.read()),
-    // `derived` is the subscription; the reader object is stable.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [engine, derived],
-  );
+  /* The doorbell an organizer's find rings; `derived` is the subscription, the reader is stable. */
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const profileDoorbell = useMemo(() => settingsDoorbell(engine.read()), [engine, derived]);
   const profileImportOffer = useProfileImport(!demo, facts, profileImportTransport, undefined, profileDoorbell);
 
   /* The modifier's cap on this keyboard — the three hand-written caps below read it. */
