@@ -2304,7 +2304,7 @@
     "goneWhen": "One database transaction, immediately, and the copy in this browser is wiped too.",
     "keptTitle": "Kept",
     "kept1": "One billing row with a random id and no name, plus the credit ledger, the subscription record and the link to Stripe. Your address on it is overwritten. Financial records carry a retention obligation that Art. 17(3)(b) preserves.",
-    "keptSelfHost": "An account row with a random id and no name, and until they expire, hashes of its sign-in tokens, so an app still signed in is told the account is gone.",
+    "keptSelfHost": "An account row with a random id and no name, and hashes of its sign-in tokens for up to 400 days after they expire, so an app that still holds one is told the account is gone.",
     "keptSub": "Your subscription is cancelled immediately as part of this. The days already paid for are not refunded.",
     "backups": "Backups expire on their own schedule.",
     "backupsLink": "Privacy policy",

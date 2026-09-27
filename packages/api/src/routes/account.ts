@@ -57,7 +57,7 @@ async function reopenedCatchUp(
 
 /** What an erasure leaves on a host with no billing program: the pseudonymous account row and the token hashes. */
 const RETAINED_UNMETERED =
-  "the account row only, with a random id and no name, and hashes of its sign-in tokens until they expire";
+  "the account row only, with a random id and no name, and hashes of its sign-in tokens for up to 400 days after they expire";
 /** What it leaves where there is one: the billing records, and a refund still owed until it is paid. */
 const RETAINED_METERED = "billing records and any refund still owed to you, under a pseudonymous account id";
 

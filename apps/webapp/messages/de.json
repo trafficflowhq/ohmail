@@ -2304,7 +2304,7 @@
     "goneWhen": "Eine Datenbanktransaktion, sofort, und die Kopie in diesem Browser wird ebenfalls gelöscht.",
     "keptTitle": "Bleibt",
     "kept1": "Eine Abrechnungszeile mit einer zufälligen Kennung und ohne Namen, dazu das Guthabenkonto, der Abo-Datensatz und die Verknüpfung zu Stripe. Deine Adresse darin wird überschrieben. Für Finanzunterlagen gilt eine Aufbewahrungspflicht, die Art. 17 Abs. 3 lit. b DSGVO ausdrücklich vorsieht.",
-    "keptSelfHost": "Eine Kontozeile mit einer zufälligen Kennung und ohne Namen, dazu bis zu ihrem Ablauf die Hashwerte ihrer Anmelde-Tokens, damit eine noch angemeldete App erfährt, dass das Konto gelöscht ist.",
+    "keptSelfHost": "Eine Kontozeile mit einer zufälligen Kennung und ohne Namen, dazu bis zu 400 Tage nach ihrem Ablauf die Hashwerte ihrer Anmelde-Tokens, damit eine App, die noch eines davon hat, erfährt, dass das Konto gelöscht ist.",
     "keptSub": "Dein Abo wird dabei sofort gek\u00fcndigt. Bereits bezahlte Tage werden nicht zur\u00fcckerstattet.",
     "backups": "Backups laufen nach ihrem eigenen Zeitplan ab.",
     "backupsLink": "Datenschutzerklärung",

@@ -12,14 +12,23 @@ import type { Tx } from "./change-log.js";
  */
 
 /**
- * Copy the account's LIVE access and refresh token hashes, each with its own expiry, BEFORE the
- * erasure deletes them — call it inside that transaction. `ON CONFLICT DO NOTHING` keeps a
- * retried erasure idempotent. Each live family's NEWEST consumed token is kept too: a client whose
- * rotation answer was lost still holds it and retries with it. Older consumed, revoked and
- * expired tokens authenticate nothing and are left out, so the record never grows with history.
+ * How long past a REFRESH token's own expiry its erased account is still named: one native refresh
+ * window again. A device silent past its window presents an expired token, and without this it
+ * heard a plain refusal and kept its copy of the mail; past this horizon it still does.
+ */
+export const ERASED_REFRESH_KEEP_DAYS = 400;
+
+/**
+ * Copy the account's access and refresh token hashes BEFORE the erasure deletes them — call it
+ * inside that transaction. `ON CONFLICT DO NOTHING` keeps a retried erasure idempotent. An access
+ * hash keeps its token's expiry (the client refreshes past it). A refresh hash is kept
+ * {@link ERASED_REFRESH_KEEP_DAYS} past its token's expiry, for each family's unspent tail, live or
+ * already expired, and for its NEWEST consumed token (a lost rotation answer's retry spends it).
+ * Revoked, older consumed and claim-killed tokens are left out: one or two rows per family.
  */
 export async function recordErasedBearers(tx: Tx, accountId: string, now: Date): Promise<number> {
   const at = sql`${now.toISOString()}::timestamptz`;
+  const keptUntil = sql<Date>`${refreshTokens.expiresAt} + interval '1 day' * ${ERASED_REFRESH_KEEP_DAYS}::int`;
   // INSERT … SELECT, never a materialised list: the rows are the account's own and the erasure
   // deletes the same set next, so the statement's size is the database's problem, not a bind list.
   const access = await tx.insert(erasedBearers)
@@ -37,10 +46,10 @@ export async function recordErasedBearers(tx: Tx, accountId: string, now: Date):
     .select(tx.select({
       tokenHash: refreshTokens.tokenHash,
       accountId: refreshTokens.accountId,
-      expiresAt: refreshTokens.expiresAt,
+      expiresAt: keptUntil.as("expires_at"),
     }).from(refreshTokens).where(and(
       eq(refreshTokens.accountId, accountId), isNull(refreshTokens.revokedAt),
-      isNull(refreshTokens.consumedAt), gt(refreshTokens.expiresAt, at),
+      isNull(refreshTokens.consumedAt), sql`${keptUntil} > ${at}`,
     )))
     .onConflictDoNothing()
     .returning({ tokenHash: erasedBearers.tokenHash });
@@ -48,10 +57,12 @@ export async function recordErasedBearers(tx: Tx, accountId: string, now: Date):
     .select(tx.selectDistinctOn([refreshTokens.familyId], {
       tokenHash: refreshTokens.tokenHash,
       accountId: refreshTokens.accountId,
-      expiresAt: refreshTokens.expiresAt,
+      expiresAt: keptUntil.as("expires_at"),
     }).from(refreshTokens).where(and(
       eq(refreshTokens.accountId, accountId), isNull(refreshTokens.revokedAt),
-      isNotNull(refreshTokens.consumedAt), gt(refreshTokens.expiresAt, at),
+      isNotNull(refreshTokens.consumedAt), sql`${keptUntil} > ${at}`,
+      // A claim-killed row (`expires_at = consumed_at`) was never spendable after the kill.
+      gt(refreshTokens.expiresAt, refreshTokens.consumedAt),
     )).orderBy(refreshTokens.familyId, desc(refreshTokens.consumedAt)))
     .onConflictDoNothing()
     .returning({ tokenHash: erasedBearers.tokenHash });
