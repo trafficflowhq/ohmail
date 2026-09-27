@@ -50,6 +50,7 @@ import {
   type MailSend as MailSendMutation,
 } from "./compose";
 import {
+  discardKeepsRow,
   reopenWouldOverwrite,
   useComposeAutosave,
   type ComposeFate,
@@ -1674,6 +1675,11 @@ export function useShellCompose({
    * above is: the delete is queued through the engine, which owns the retry, and holding the view open until the wire
    * answers would make leaving a message feel like a network operation.
    */
+  /** Whether Discard would keep the composer's row, and why — the question and the press ask it. */
+  const discardKeepsCompose = useStableCallback((): "held" | "unknown" | null => {
+    const row = autosave.draftId ?? readComposeRow();
+    return discardKeepsRow(holdOf(engine, { lane: COMPOSE_SEND_KEY, draftId: row, session: composeSessionId() }), row);
+  });
   const cancelCompose = useStableCallback(() => {
     void (async () => {
       /**
@@ -1690,8 +1696,13 @@ export function useShellCompose({
         toast(t("compose.cancelAlreadySent"));
         return;
       }
+      /* A HELD ROW IS KEPT, AND THE PRESS SAYS SO — `discard` releases it rather than deleting it,
+         and closing in silence after a question that promised a delete left the person thinking it
+         was gone. Asked before the discard, which spends the binding it reads. */
+      const keeps = discardKeepsCompose();
       if (autosave.draftId) writeReplyMeta(`draft:${autosave.draftId}`, {});
       void autosave.discard();
+      if (keeps !== null) toast(t(keeps === "held" ? "compose.discardHeld" : "compose.discardUnknown"));
       setCompose(EMPTY_COMPOSE);
       clearComposeDraft();
       setComposeCloseRefusal(null);
@@ -1845,6 +1856,7 @@ export function useShellCompose({
 
   return {
     cancelCompose,
+    discardKeepsCompose,
     cancelSchedule,
     closeCompose,
     closeReply,

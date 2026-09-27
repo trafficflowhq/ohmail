@@ -16,7 +16,7 @@ import { draftOverCeiling } from "@trafficflow/core/outbound-text";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import type { ComposeFields } from "./compose";
 import { COMPOSE_SEND_KEY, writeReplyMeta } from "./mail-send";
-import { holdOf, releaseSendLockForRow } from "./send-lock";
+import { holdOf, releaseSendLockForRow, type Hold } from "./send-lock";
 import {
   clearComposeDraft, composeSessionId, parseRecipients, readComposeRow, whenComposerReady,
   writeComposeRow,
@@ -128,6 +128,16 @@ function signatureOf(f: ComposeFields): string {
  * Polling cannot recover a result that was never retained, so the seam is reported rather than
  * worked around.
  */
+/**
+ * WHAT THE COMPOSER'S DISCARD WILL DO WITH ITS ROW — `null` deletes it; otherwise the row is kept
+ * for the hold and the answer names why. The same test {@link ComposeAutosave.discard} applies,
+ * read before the press so the question and the press say what the discard does.
+ */
+export function discardKeepsRow(hold: Hold, row: string | null): "held" | "unknown" | null {
+  if (row === null || hold.kind === "free") return null;
+  return hold.kind === "parked" ? "held" : "unknown";
+}
+
 export type ComposeFate =
   /**
    * The mirror shows the bound row `sent`. The server's terminal word, arriving on a mount that

@@ -76,6 +76,7 @@ export function ComposeView({
   onSend,
   onSendLater,
   onCancel,
+  discardKeeps = false,
   onClose,
   closeNote = null,
   heldResolve = null,
@@ -151,6 +152,12 @@ export function ComposeView({
    * whether there is anything worth asking about — see `cancel` below.
    */
   onCancel: () => void;
+  /**
+   * `true` when {@link onCancel} will KEEP the draft row — its send is not confirmed, so the row
+   * is released rather than deleted. The question then says the draft stays instead of promising
+   * a delete.
+   */
+  discardKeeps?: boolean;
   /**
    * LEAVE, KEEPING THE MESSAGE — Escape and the close control, the exits that are not a discard.
    * The shell flushes the pending autosave before it navigates, so what is on screen is on the
@@ -948,7 +955,9 @@ export function ComposeView({
                     message exists in this browser alone, and claiming more teaches people the
                     warning exaggerates. */}
                 <p className="set-note-inline" id="compose-cancel-what">
-                  {plan.mutation.draftId ? t("cancelWhat") : t("cancelWhatLocal")}
+                  {discardKeeps
+                    ? t("cancelWhatHeld")
+                    : plan.mutation.draftId ? t("cancelWhat") : t("cancelWhatLocal")}
                 </p>
                 <div className="gate-actions">
                   <Button
