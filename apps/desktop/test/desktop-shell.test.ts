@@ -1490,7 +1490,10 @@ describe("the Rust side", () => {
     expect(engine).toMatch(/fs::write\(&partial, text\.as_bytes\(\)\)/);
     expect(engine).toMatch(/let partial = dir\.join\(format!\("\{DIAGNOSTIC_FILE_NAME\}\.partial"\)\);/);
     expect(engine).toMatch(/let dir = open_log_path\(\)\s*\.and_then\(\|path\| path\.parent\(\)\.map\(Path::to_path_buf\)\)/);
-    expect(engine.match(/fs::rename\(/g)).toHaveLength(2);
+    // Four renames: the log's rotation, the diagnostic file's publish, and the start over's two
+    // (a stuck store and its cursor set aside, never deleted). A fifth is a new place it moves files.
+    expect(engine.match(/fs::rename\(/g)).toHaveLength(4);
+    expect(engine).toMatch(/fs::rename\(&from, target\.join\(name\)\)\?;\s*\}\s*\}\s*fs::rename\(&store, target\.join\(STORE_DIR_NAME\)\)\?;/);
 
     /* ── THE DIRECTORY LISTING AND THE TWO REMOVALS ARE COUNTED, NOT BANNED ────────────────
      * `read_dir` used to be forbidden outright on this line, beside `File::open`. It is here now
