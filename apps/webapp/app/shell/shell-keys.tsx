@@ -13,6 +13,7 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import type { useTranslations } from "next-intl";
 import {
+  countWhen,
   forwardOffered,
   sendAndDonePlanFor,
   type EngineMessage,
@@ -114,8 +115,8 @@ export interface ShellKeysInput {
   consent: Pick<ConsentState, "foldersEnabled" | "foldersStorable" | "known" | "signaturesKnown">;
   /** Whether the first drain is still running — the folders group renders skeletons under it. */
   syncStatus: { bootstrapping: boolean };
-  /** Has the mail state settled? Each view's switch mark ends on its own rows or on this. */
-  mailState: { settled: boolean };
+  /** Has the mail state settled, and is a catch-up still owed? The switch marks and the rail's counts read both. */
+  mailState: { settled: boolean; owed: boolean };
   /** `GET /mailboxes` as the roster reported it, or `null` for "we cannot see". */
   facts: MailboxFacts[] | null;
   /** Is the seed screen still owed? It TAKES the stage — `effectiveView` says so once. */
@@ -987,6 +988,10 @@ export function useShellKeys({
   }, [onUnread, ohboxUnread]);
 
   /* ── the rail ── */
+  /* THE PANES' OWN GATE AT THE RAIL (`countWhen`): mid-catch-up a mirror count is a number the
+     catch-up is still changing, so the three streams' badges and tooltips say nothing until the
+     views may state theirs. An absent count renders nothing, never a zero. */
+  const mayCount = countWhen({ settled: mailState.settled, count: 0, pending: mailState.owed }, true) === true;
   const railGroups: RailGroup[] = useMemo(
     () => [
       {
@@ -994,26 +999,23 @@ export function useShellKeys({
           {
             id: "ohbox",
             label: t("rail.ohbox"),
-            count: ohboxUnread,
             hot: true,
-            title: t("rail.ohboxTitle", {
-              unread: ohboxUnread,
-              total: ohboxCount,
-            }),
+            ...(mayCount ? {
+              count: ohboxUnread,
+              title: t("rail.ohboxTitle", { unread: ohboxUnread, total: ohboxCount }),
+            } : {}),
           },
           /* The streams count "new since last visit" — the fresh side of each view's own
              waterline — never unread. See the `readsNew` derivation for the whole argument. */
           {
             id: "reads",
             label: t("rail.reads"),
-            count: readsNew,
-            title: t("rail.readsTitle", { count: readsNew }),
+            ...(mayCount ? { count: readsNew, title: t("rail.readsTitle", { count: readsNew }) } : {}),
           },
           {
             id: "receipts",
             label: t("rail.receipts"),
-            count: receiptsNew,
-            title: t("rail.readsTitle", { count: receiptsNew }),
+            ...(mayCount ? { count: receiptsNew, title: t("rail.readsTitle", { count: receiptsNew }) } : {}),
           },
         ],
       },
@@ -1200,7 +1202,7 @@ export function useShellKeys({
       },
     ],
     [
-      t, ohboxUnread, ohboxCount, readsNew, receiptsNew, screener.waitingCount, piles,
+      t, ohboxUnread, ohboxCount, readsNew, receiptsNew, mayCount, screener.waitingCount, piles,
       tagGroups, tags, createTagAlone, consent.foldersEnabled, consent.known, folders,
       folderUnread, folderVerbs, folderMailboxes, demo, syncStatus.bootstrapping, route.view,
       route.folderId, facts,
