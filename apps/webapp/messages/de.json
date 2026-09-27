@@ -3049,6 +3049,8 @@
     "unsavedDiscard": "Verwerfen",
     "unsavedDismiss": "Schlie\u00dfen",
     "unsavedNoReason": "Der Server hat die \u00c4nderung abgelehnt, ohne einen Grund zu nennen.",
+    "unsavedPendingCount": "{count, plural, one {# \u00c4nderung ist noch nicht durch} other {# \u00c4nderungen sind noch nicht durch}}",
+    "unsavedQueuedWhy": "Dieser Browser konnte dein Konto nicht erreichen. Er versucht es weiter.",
     "unsavedSuperseded": "Inzwischen wurde eine neuere \u00c4nderung am selben Objekt gespeichert, daher kann diese nicht wiederholt werden.",
     "unsavedKindOther": "Eine \u00c4nderung an deinem Postfach",
     "unsavedKindMove": "Eine Nachricht einsortieren",

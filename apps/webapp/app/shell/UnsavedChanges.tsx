@@ -1,12 +1,39 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
-import type { AbandonedMutation, MutationResult } from "@ohmail/client-engine";
+import type { AbandonedMutation, EngineMutation, MutationResult, OhmailEngine } from "@ohmail/client-engine";
 
 /** What a retry answers — the engine's own result, carried to the row that asked for it. */
 type RetryOutcome = MutationResult;
 import { useEngine, useAbandoned } from "./engine";
+
+/** A verb still on the outbox, retried on its own — the engine's queue entry, as listed here. */
+export interface QueuedChange {
+  id: string;
+  key: string;
+  mutation: EngineMutation;
+}
+
+const NO_QUEUED: readonly QueuedChange[] = [];
+
+/**
+ * THE QUEUED DISCARDS, from the engine's own queue. A Delete that could not reach the account
+ * waits there and was told once, by a toast; listed here beside the abandoned rows it stays
+ * visible for as long as it waits. One snapshot per distinct set, as `useSyncExternalStore` needs.
+ */
+function useQueuedDiscards(engine: OhmailEngine): readonly QueuedChange[] {
+  const last = useRef<readonly QueuedChange[]>(NO_QUEUED);
+  const subscribe = useCallback((cb: () => void) => engine.subscribe(cb), [engine]);
+  const snapshot = useCallback((): readonly QueuedChange[] => {
+    const next = engine.pendingMutations().filter((p) => p.mutation.kind === "draft_discard");
+    const prev = last.current;
+    if (next.length === prev.length && next.every((p, i) => p.id === prev[i]!.id)) return prev;
+    last.current = next.length === 0 ? NO_QUEUED : next;
+    return last.current;
+  }, [engine]);
+  return useSyncExternalStore(subscribe, snapshot, () => NO_QUEUED);
+}
 import "./unsaved-changes.css";
 
 /**
@@ -22,10 +49,16 @@ import "./unsaved-changes.css";
 export function UnsavedChanges({ variant }: { variant: "shell" | "rail" }) {
   const engine = useEngine();
   const abandoned = useAbandoned();
+  const queued = useQueuedDiscards(engine);
   return (
     <UnsavedChangesList
       variant={variant}
       abandoned={abandoned}
+      queued={queued}
+      // Our backoff yields to the press; `null` is a verb that is no longer waiting.
+      onRetryQueued={(id) => engine.retryQueued(id)}
+      // A withdrawn discard is not sent, now or after a restart: the draft stays.
+      onDiscardQueued={(key) => engine.withdrawQueued(key).then(() => undefined)}
       // THE RESULT IS CONSUMED, not discarded. `.then(() => undefined)` was here, and it made a
       // retried send answering `send_unverified` invisible: no warning, no record (it is deleted
       // before dispatch), and a person free to press send again on mail that may already have left.
@@ -47,11 +80,19 @@ export function UnsavedChangesList({
   abandoned,
   onRetry,
   onDiscard,
+  queued = NO_QUEUED,
+  onRetryQueued,
+  onDiscardQueued,
   variant = "shell",
 }: {
   abandoned: readonly AbandonedMutation[];
   onRetry: (id: string) => Promise<RetryOutcome>;
   onDiscard: (id: string) => Promise<void>;
+  /** Verbs still on the outbox — listed with the same two answers, see {@link useQueuedDiscards}. */
+  queued?: readonly QueuedChange[];
+  onRetryQueued?: (id: string) => Promise<RetryOutcome | null>;
+  /** Withdraws by the verb's Idempotency-Key, the engine's handle for a queued verb. */
+  onDiscardQueued?: (key: string) => Promise<void>;
   /**
    * WHICH ARRANGEMENT this copy belongs to — the same two the sync line has, and for the same
    * reason. Both are mounted at once and CSS decides which is visible, so each needs a class the
@@ -89,6 +130,27 @@ export function UnsavedChangesList({
     }
   }, [onDiscard]);
 
+  /* A queued verb's answers. A refusal leaves the queue and says why, exactly as a retry does. */
+  const retryQueued = useCallback(async (id: string) => {
+    setBusy(id);
+    try {
+      const outcome = await onRetryQueued?.(id);
+      const code = outcome?.status === "rolled_back" ? (outcome.error?.code ?? "refused") : null;
+      setSaid(code === null ? null : { id, code, message: outcome?.error?.message ?? "" });
+    } finally {
+      setBusy(null);
+    }
+  }, [onRetryQueued]);
+
+  const discardQueued = useCallback(async (m: QueuedChange) => {
+    setBusy(m.id);
+    try {
+      await onDiscardQueued?.(m.key);
+    } finally {
+      setBusy(null);
+    }
+  }, [onDiscardQueued]);
+
   /**
    * Nothing to say, nothing on screen — except a result that has not been said yet. Absent-at-zero
    * is right (a strip reading "0 changes could not be saved" lies about the state it describes),
@@ -98,11 +160,12 @@ export function UnsavedChangesList({
    * mail that may already have left. A pending sentence keeps the strip alive on its own; it
    * outlives every row, because the outcome it carries is about work that no longer has one.
    */
-  if (abandoned.length === 0 && said === null) return null;
+  const listed = abandoned.length + queued.length;
+  if (listed === 0 && said === null) return null;
 
   return (
     <div className={`unsaved unsaved-${variant}`} role="status" aria-live="polite">
-      {abandoned.length === 0 && said !== null ? (
+      {listed === 0 && said !== null ? (
         <div className="unsaved-line">
           <span className="unsaved-glyph" aria-hidden="true">!</span>
           <span className="unsaved-why">{said.message || t("unsavedNoReason")}</span>
@@ -111,10 +174,11 @@ export function UnsavedChangesList({
           </button>
         </div>
       ) : null}
-      {abandoned.length === 0 ? null : (
+      {listed === 0 ? null : (
       <div className="unsaved-line">
         <span className="unsaved-glyph" aria-hidden="true">!</span>
-        <b>{t("unsavedCount", { count: abandoned.length })}</b>
+        {abandoned.length > 0 ? <b>{t("unsavedCount", { count: abandoned.length })}</b> : null}
+        {queued.length > 0 ? <b>{t("unsavedPendingCount", { count: queued.length })}</b> : null}
         <button
           type="button"
           className="unsaved-toggle"
@@ -157,6 +221,29 @@ export function UnsavedChangesList({
                   className="unsaved-discard"
                   disabled={busy === m.id}
                   onClick={() => void discard(m.id)}
+                >
+                  {t("unsavedDiscard")}
+                </button>
+              </div>
+            </li>
+          ))}
+          {queued.map((m) => (
+            <li key={m.id} className="unsaved-row">
+              <div className="unsaved-what">
+                <b>{t(KIND_LABELS.get(m.mutation.kind) ?? "unsavedKindOther")}</b>
+                <span className="unsaved-why">
+                  {said?.id === m.id ? (said.message || t("unsavedNoReason")) : t("unsavedQueuedWhy")}
+                </span>
+              </div>
+              <div className="unsaved-acts">
+                <button type="button" disabled={busy === m.id} onClick={() => void retryQueued(m.id)}>
+                  {t("unsavedRetry")}
+                </button>
+                <button
+                  type="button"
+                  className="unsaved-discard"
+                  disabled={busy === m.id}
+                  onClick={() => void discardQueued(m)}
                 >
                   {t("unsavedDiscard")}
                 </button>

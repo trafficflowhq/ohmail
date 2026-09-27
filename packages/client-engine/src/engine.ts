@@ -6986,6 +6986,8 @@ export class OhmailEngine {
         // again — the exact state the durable outbox exists to retire. It also persists the
         // counter and the delay, which is what makes the bound survive a restart.
         await this.putOutbox(p);
+        // The queue moved: a surface that lists queued verbs reads it on this notification.
+        this.notify();
         return {
           id: p.id, key: p.key, status: "queued", seq: null, error: rejection,
           ...(rejection.entityId ? { entityId: rejection.entityId } : {}),
@@ -7305,6 +7307,30 @@ export class OhmailEngine {
     this.overlayRev++;
     this.notify();
     return "withdrawn";
+  }
+
+  /**
+   * TRY AGAIN ON ONE QUEUED VERB — now, under its own key, through the gate like every other road.
+   * Our own backoff yields to the press; a wait the SERVER named does not (`waitIsServerNamed`).
+   * `null` = no longer queued (on the wire, settled or withdrawn), so there is nothing to press.
+   */
+  async retryQueued(id: string): Promise<MutationResult | null> {
+    const p = this.queue.find((q) => q.id === id);
+    if (p === undefined) return null;
+    const queued: MutationResult = { id: p.id, key: p.key, status: "queued", seq: null };
+    if (p.waitIsServerNamed === true && (p.nextAt ?? 0) > this.now().getTime()) return queued;
+    const out = await this.outboxGate(async () => {
+      const at = this.queue.indexOf(p);
+      if (at < 0) return null; // a flush or a drive took it while this waited its turn
+      this.queue.splice(at, 1);
+      const o = await this.dispatchOnLane(p);
+      if (o.held) this.queue.push(p);
+      return o;
+    });
+    if (out === null) return null;
+    if (out.held || out.timedOut || out.result === null) return queued;
+    await this.settleReconcile(out.owed);
+    return out.result;
   }
 
   /**
