@@ -1,4 +1,4 @@
--- REPLACING AN ACTIVE AUTHENTICATOR (cloud 0045). An enrol over an activated `totp_secrets` row
+-- REPLACING AN ACTIVE AUTHENTICATOR (cloud 0046). An enrol over an activated `totp_secrets` row
 -- inserted a second row for the user and `unique(user_id)` refused it (23505), so nobody could move
 -- their second factor to a new phone. The replacement in progress lives on the SAME row: the enrol
 -- writes these three columns and never the live pair, a second enrol overwrites them, and the

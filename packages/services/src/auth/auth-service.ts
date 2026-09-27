@@ -1590,7 +1590,7 @@ export class AuthService extends SessionLifecycle {
    * — and NOT a QR image; see the note at the foot of `totp.ts` for what used to be here and
    * why a server-rendered one was both a lie and the wrong layer.
    *
-   * Over an ACTIVATED row this is a replacement (cloud 0045): it writes the pending trio and never
+   * Over an ACTIVATED row this is a replacement (cloud 0046): it writes the pending trio and never
    * the live pair, so the authenticator in use keeps working until {@link totpActivate} promotes
    * the new one. A second press overwrites the trio. The row is locked so the two cannot interleave.
    */

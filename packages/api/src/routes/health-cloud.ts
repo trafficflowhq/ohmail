@@ -199,7 +199,7 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // cloud 0043_erased_bearers — `expires_at`, the table's LAST column. Without it every erasure
   // 42P01s inside its own transaction and is refused; the deploy gate names it first.
   ["erased_bearers", "expires_at"],
-  // cloud 0045_totp_pending_replacement — `pending_started_at`, the last of its three columns; one
+  // cloud 0046_totp_pending_replacement — `pending_started_at`, the last of its three columns; one
   // migration runs in one transaction, so its presence implies the other two and the CHECK. Absent,
   // every authenticator replacement 42703s at the enrol; the deploy gate names it first.
   ["totp_secrets", "pending_started_at"],
@@ -322,7 +322,7 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * A VALIDATE-only one carries none: cloud 0045_attachment_staging_digest_validate flips only
  * `convalidated`, which no class sees. The tag names the newest PROVABLE entry.
  */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0045_totp_pending_replacement";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0046_totp_pending_replacement";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

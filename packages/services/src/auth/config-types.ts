@@ -112,7 +112,7 @@ export interface AuthConfig {
   desktopApprovalTtlMs: number;
   stepUpWindowMs: number;      // 5 min
   /**
-   * How long a replacement authenticator stays confirmable (cloud 0045's pending trio). Required:
+   * How long a replacement authenticator stays confirmable (cloud 0046's pending trio). Required:
    * an absent value would make every pending read as stale. `AuthService` refuses anything but a
    * positive finite number at construction.
    */

@@ -73,7 +73,7 @@ export const totpSecrets = pgTable("totp_secrets", {
   keyVersion: integer("key_version").notNull(),    // KeyProvider KEK version
   activated: boolean("activated").notNull().default(false),
   lastConsumedStep: bigint("last_consumed_step", { mode: "bigint" }),   // TOTP single-use per timestep
-  /** Cloud 0045 — a REPLACEMENT in progress on an activated row. The three are sealed together by a CHECK. */
+  /** Cloud 0046 — a REPLACEMENT in progress on an activated row. The three are sealed together by a CHECK. */
   pendingSecretEnc: text("pending_secret_enc"),
   /** KEK version for `pending_secret_enc`. Null iff the pending secret is null. */
   pendingKeyVersion: integer("pending_key_version"),
