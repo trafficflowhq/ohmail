@@ -1535,6 +1535,7 @@ const TABLE = {
     `${count === 1 ? "1 is" : `${count} are`} in ${place}. ohmail is applying the rule to the rest of their mail in your mailbox.`,
   liveDecideFailed: (sender: string) =>
     `That decision could not be saved — ${sender} is still waiting.`,
+  liveDecideUndoLate: "Too late to undo — that decision has already been sent.",
   liveReleased: (n: number, dest: string) =>
     `Released ${n} held message${n === 1 ? "" : "s"} to ${dest}. No rule was changed.`,
   liveReleasedRuled: (n: number, dest: string) =>

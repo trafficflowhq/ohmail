@@ -451,7 +451,9 @@ export { inverseMutations, UNDO_CLASS, type UndoClass, type UndoSubject } from "
 // The routing verbs' delayed commit — the half of a screening plan the wire cannot reverse.
 export {
   armRoutingIntent,
+  decideIntentsKey,
   disarmRoutingIntent,
+  isDecideIntent,
   isRoutingIntent,
   isScreenIntent,
   ROUTING_INTENT_IDS_MAX,
@@ -464,6 +466,7 @@ export {
   screenIntentsKey,
   takeRoutingIntents,
   type AnyRoutingIntent,
+  type DecideIntent,
   type RoutingIntent,
   type ScreenIntent,
 } from "./routing-intents.js";

@@ -972,6 +972,7 @@ export const DE: Deck = {
     `${count === 1 ? "1 liegt" : `${count} liegen`} in ${place}. Auf den Rest ihrer Post im Postfach wendet ohmail die Regel gerade an.`,
   liveDecideFailed: (sender: string) =>
     `Diese Entscheidung ließ sich nicht speichern — ${sender} wartet weiter.`,
+  liveDecideUndoLate: "Zu spät — diese Entscheidung ist schon raus.",
   /*
    * ── THE DESTINATION LEADS, BECAUSE GERMAN CANNOT TAKE IT AFTER A PREPOSITION ────────────────
    *

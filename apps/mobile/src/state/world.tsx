@@ -1151,8 +1151,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         return true;
       },
       /* A MOVE'S WAY BACK once its window has sent the rules; a sheet press's rules can carry the
-         backlog pass the person asked for, which no inverse takes back. */
-      reverse: (mutations, intent) => (intent.v === 2 ? null : routingReversal(() => engine.read(), mutations)),
+         backlog pass the person asked for, and a Screener decision has no inverse at all. */
+      reverse: (mutations, intent) => (intent.v === 1 ? routingReversal(() => engine.read(), mutations) : null),
       onReplayed: (replay) => { for (const say of routingReplaySay(replay)) showToast(say); },
     });
     return () => { closeRoutingSession(); };

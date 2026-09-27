@@ -84,6 +84,7 @@ import {
   type ScreenerSenderDTO,
   inverseMutations,
   routingSubject,
+  type DecideIntent,
   type RoutingIntent,
   sendAndDone,
   sendAndDonePlanFor,
@@ -1983,10 +1984,41 @@ export interface PhoneScreenPress {
 export function planHeldRouting(
   reader: EntityReader, intent: AnyRoutingIntent, onChanged?: (changed: readonly string[]) => void,
 ): EngineMutation[] {
+  if (intent.v === 3) return planDecideCommit(reader, intent);
   if (intent.v !== 2) return planPhoneRouting(reader, intent);
   const out = planScreenCommit(reader, intent);
   onChanged?.(out.changed);
   return out.writes;
+}
+
+/** Screen out and Spam are the endpoint's `no`; the three places a sender may write to are `yes`. */
+const decisionOf = (dest: ScreenDest): "yes" | "no" => (dest === "screened" || dest === "spam" ? "no" : "yes");
+
+/**
+ * WHAT A HELD SCREENER DECISION COMMITS, re-read at the close and never replayed from the record:
+ * a representative still held at the gate, or one only the store holds, is decided with
+ * `screener_decide`; one past the gate is ruled through the twins ladder with the past-mail answer
+ * and moves nothing (THE-CLIENTS-FIFTY). A let-in's "&read" batch rides behind it.
+ */
+export function planDecideCommit(reader: EntityReader, intent: DecideIntent): EngineMutation[] {
+  const rep = reader.get<EngineMessage>("message", intent.seedId);
+  const decision = decisionOf(intent.dest);
+  const address = intent.address.trim().toLowerCase();
+  const out: EngineMutation[] = rep === undefined || physicalFolderOf(rep) === FOLDER_OF_VIEW.screener
+    ? [{
+      kind: "screener_decide", senderId: intent.seedId, decision, dest: intent.dest,
+      ...(decision === "yes" ? { read: intent.read } : {}), scope: intent.scope,
+    }]
+    : pressOverTwins(
+      rulesList(reader), intent.scope, intent.scope === "domain" ? domainOf(address).toLowerCase() : address,
+      FOLDER_OF_VIEW[intent.dest], true,
+    ).writes;
+  if (intent.read && decision === "yes") {
+    for (let i = 0; i < intent.messageIds.length; i += MARK_SEEN_MAX) {
+      out.push({ kind: "mark_seen", messageIds: intent.messageIds.slice(i, i + MARK_SEEN_MAX), unread: false });
+    }
+  }
+  return out;
 }
 
 /**
@@ -3143,7 +3175,68 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     );
   };
 
+  /**
+   * A SCREENER DECISION IS HELD, WITH UNDO — the web Screener's delayed commit, on the phone's one
+   * routing window: neither a decide nor a rule has a wire inverse, so the way back is not to send
+   * it yet. The press says what it does, as the web's does, and the row leaves the shelf; the close
+   * sends the decision re-read from the mirror ({@link planDecideCommit}), and its answer speaks
+   * only where it differs — refused, sent to the organizer, or recorded for another install.
+   * Nothing to hold it by (no session, a record that did not land): {@link decideNow}.
+   */
   const decide = async (row: ScreenerRow, dest: Destination, read: boolean, scope: Scope): Promise<boolean> => {
+    const rep = engine.read().get<EngineMessage>("message", row.id);
+    const decision = decisionOf(dest as ScreenDest);
+    const target = scope === "domain" ? `@${domainOf(row.address)}` : row.address;
+    const intent: DecideIntent = {
+      v: 3, verb: "decide", id: deps.uuid ? deps.uuid() : `${row.id}:${now().getTime()}`, seedId: row.id,
+      address: row.address, scope, dest: dest as ScreenDest, read: read && decision === "yes",
+      messageIds: row.held.map((h) => h.id), at: now().getTime(),
+    };
+    const decidedSaid = refuse("liveDecided", destDone(dest), target);
+    const atGate = rep === undefined || physicalFolderOf(rep) === FOLDER_OF_VIEW.screener;
+    const pressSaid = decidedUnsubscribes(atGate, decision) ? refuse("liveAlsoUnsubscribing", decidedSaid) : decidedSaid;
+    let spoke = false;
+    const hold = deps.leaveWaiting?.({ address: row.address, scope });
+    const opened = await holdScreenRouting(intent, (a) => {
+      // The read batch stays unwatched, as it always was: only the decision's own writes answer.
+      const own = a.mutations.flatMap((m, i) => (m.kind === "mark_seen" ? [] : [a.answers[i] ?? null]));
+      const v = oneVerdict(own.map((r) => (r ? pressVerdict(r) : PRESS_THREW)));
+      if (v.kind === "applied") deps.forgetWaiting?.({ address: row.address, scope });
+      hold?.();
+      if (v.kind === "refused") { toast(refuse("liveDecideFailed", row.address)); return; }
+      if (v.kind === "queued" && v.wait === "organizer") {
+        deps.relayedHere?.({ address: row.address, scope });
+        toast(v.holder ? refuse("liveDecideSent", v.holder, target) : refuse("liveDecideSentUnknown", target));
+        return;
+      }
+      const elsewhere = own.find((r) => r?.pendingWith)?.pendingWith ?? null;
+      if (v.kind === "applied" && elsewhere) {
+        toast(elsewhere.name ? refuse("liveDecidedElsewhere", elsewhere.name, target) : refuse("liveDecidedElsewhereUnknown", target));
+        return;
+      }
+      if (!spoke) toast(pressSaid);
+    });
+    // Sent by the window itself (its record refused): the answer above speaks for the press.
+    if (opened.sent) return true;
+    if (!opened.held) { hold?.(); return decideNow(row, dest, read, scope); }
+    spoke = true;
+    const subject = routingSubject(intent);
+    toast(pressSaid, {
+      holdMs: UNDO_MS,
+      /* ONE CLOCK: the pill's hold starts at its first layout, and so does the window's. */
+      shown: () => { restartRouting(subject); },
+      undo: () => {
+        // Nothing held is not an undo: past the close the decision has gone and has no inverse.
+        if (!undoRouting(subject)) { toast(refuse("liveDecideUndoLate")); return; }
+        hold?.();
+        toast(refuse("toastUndone"));
+      },
+    });
+    return true;
+  };
+
+  /** The same decision with no window to hold it: sent now, and the sentence waits for the answer. */
+  const decideNow = async (row: ScreenerRow, dest: Destination, read: boolean, scope: Scope): Promise<boolean> => {
     const raw = engine.read();
     const rep = raw.get<EngineMessage>("message", row.id);
     // Demote-stays-unread: filing to Screen out or Spam never carries a read verb.

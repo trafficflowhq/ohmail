@@ -20,6 +20,7 @@ import {
   type EntityReader,
   type Folder,
   type AnyRoutingIntent,
+  type DecideIntent,
   type MutationResult,
   type RoutingOpen,
   type RoutingWindow,
@@ -215,11 +216,11 @@ export interface ScreenCommitAnswer {
 const afters = new Map<string, { after: (a: ScreenCommitAnswer) => void; changed: string[] }>();
 
 /**
- * Hold one SHEET press, with what to say once its commit is answered — on disk first, as
- * {@link holdRouting}. A press handed back for the caller to send drops its follow-up with it.
+ * Hold one SHEET press or Screener decision, with what to say once its commit is answered — on disk
+ * first, as {@link holdRouting}. A press handed back for the caller to send drops its follow-up.
  */
 export async function holdScreenRouting(
-  intent: ScreenIntent, after: (a: ScreenCommitAnswer) => void,
+  intent: ScreenIntent | DecideIntent, after: (a: ScreenCommitAnswer) => void,
 ): Promise<PhoneRoutingHold> {
   if (!live) return { held: false, superseded: false, sent: false };
   afters.set(intent.id, { after, changed: [] });
