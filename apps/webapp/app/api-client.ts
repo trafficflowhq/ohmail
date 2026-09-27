@@ -1709,6 +1709,13 @@ export const mailboxes = {
   organizer: (id: string) => api<OrganizerPeek>(`/mailboxes/${id}/organizer`),
 
   /**
+   * CHECK THIS MAILBOX: the server's folder counts against this account's copy, one STATUS per
+   * folder under one bounded budget. Read-only on both sides; the answer is narrowed by the pane
+   * (`shell/MailboxSelfCheck.tsx`), so it is typed `unknown` here.
+   */
+  selfCheck: (id: string) => api<unknown>(`/mailboxes/${encodeURIComponent(id)}/reconcile`),
+
+  /**
    * Ask Cloud to organize a mailbox it stood down from. It authorizes ONE attempt and does not win anything: the
    * worker reads the claim on its next pass and decides. If another install is still renewing and outranks us, this
    * side stays a reader and the authorization is spent with it. Step-up-gated — it decides who moves somebody's mail,

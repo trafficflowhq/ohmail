@@ -42,6 +42,8 @@ import {
 import { DoorChooser } from "./DoorChooser.js";
 import { DesktopAbout } from "./DesktopAbout.js";
 import { DesktopMailboxes, readMirrorFreshness } from "./DesktopMailboxes.js";
+import { MailboxSelfCheck } from "../../webapp/app/shell/MailboxSelfCheck";
+import { checkMailboxHere } from "./local-self-check.js";
 import { readMailboxFacts } from "./local-mailbox-facts.js";
 /* The OS-answer reader this window has to bring itself — see the injection below. */
 import { desktopNotificationHost } from "./notify-host.js";
@@ -1232,15 +1234,19 @@ export function DesktopGate() {
            for a mailbox it no longer has, so the pane runs the shell's sign-out afterwards and
            this gate re-reads its routing from the engine state that comes back. */
         {...(engine ? { mailboxSection: (
-          <DesktopMailboxes
-            door={status?.mode ?? null}
-            /* NAMED ONLY WHEN THERE IS A NAME. The pane's paired arm falls back to the hosted
-               wording without it, which is wrong but not broken; a sentence with a hole in it
-               would be both. */
-            host={paired ? hostLabel : null}
-            flavor={flavorOf(status)}
-            onShellStatus={onStatus}
-          />
+          <>
+            <DesktopMailboxes
+              door={status?.mode ?? null}
+              /* NAMED ONLY WHEN THERE IS A NAME. The pane's paired arm falls back to the hosted
+                 wording without it, which is wrong but not broken; a sentence with a hole in it
+                 would be both. */
+              host={paired ? hostLabel : null}
+              flavor={flavorOf(status)}
+              onShellStatus={onStatus}
+            />
+            {/* THE SELF-CHECK, on the local door only: its engine holds the mirror it compares. */}
+            {status?.mode === "local" ? <MailboxSelfCheck check={checkMailboxHere} /> : null}
+          </>
         ) } : {})}
         /* SETTINGS → SCREENER. The shared shell's own section reaches an API client that is not
            in this build, so it drew nothing and the pane was blank. This is the same three

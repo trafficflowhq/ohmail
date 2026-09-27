@@ -29,10 +29,12 @@ export interface DesktopDiagnosticDeps {
   app: () => { uptimeMs: number | null; heapUsedBytes: number | null; heapTotalBytes: number | null };
 }
 
-/** What the pane knows that the shell does not: the mirror's counts and the mailbox rows. */
+/** What the pane knows that the shell does not: the mirror's counts, the mailbox rows, the checks run. */
 export interface DesktopDiagnosticState {
   counts: Readonly<Record<string, number>>;
   mailboxes: readonly DiagnosticMailboxInput[];
+  /** The session's self-check readings by mailbox id; absent or empty when none was run. */
+  selfChecks?: Readonly<Record<string, unknown>>;
 }
 
 function storedInstall(storage: StorageDoor): unknown {
@@ -68,6 +70,7 @@ export async function writeDesktopDiagnostics(
     app: deps.app(),
     store: { counts: state.counts, window: DESKTOP_WINDOW },
     mailboxes: state.mailboxes,
+    ...(state.selfChecks ? { selfChecks: state.selfChecks } : {}),
     log: lines,
   });
   const path = await deps.save(renderDiagnosticBundle(bundle));

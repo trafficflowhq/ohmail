@@ -29,6 +29,7 @@ import { readerHolder, screenerMode } from "../../webapp/app/shell/mail-state";
 import { mailboxRowWhy } from "./install-role.js";
 import { useEngineOrNull } from "../../webapp/app/shell/engine";
 import { writeDesktopDiagnostics } from "./local-diagnostics.js";
+import { selfChecksThisSession } from "./local-self-check.js";
 
 /**
  * THE DIAGNOSTIC FILE'S ROW — one press writes one file beside the log and the row then says
@@ -47,7 +48,8 @@ export function DiagnosticFileRow() {
     try {
       const reader = engine?.read();
       const counts = Object.fromEntries(MIRROR_ENTITY_TYPES.map((t) => [t, reader ? reader.list(t).length : 0]));
-      setSaid({ k: "written", path: await writeDesktopDiagnostics({ counts, mailboxes: facts ?? [] }) });
+      const selfChecks = selfChecksThisSession();
+      setSaid({ k: "written", path: await writeDesktopDiagnostics({ counts, mailboxes: facts ?? [], selfChecks }) });
     } catch {
       setSaid({ k: "failed" });
     }
