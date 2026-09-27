@@ -506,19 +506,15 @@ export function useComposeAutosave(opts: {
   const settleCompose = useCallback((fate: ComposeFate) => {
     if (fate.kind === "refusedWithRow") {
       /* Only a composer holding no row takes it: one that holds another, or has one written down
-         that the mount adoption is still asking about, keeps what it has. `saved` stays `null`, so
-         the next pause writes the text on screen into the row. */
+         that the mount adoption is still asking about, keeps what it has. Taken by `adopt`, which
+         marks the text on screen as the row's (the send wrote it there), so a close right after
+         the refusal writes nothing to a row the mirror may not have drained yet. */
       const written = readComposeRow();
       if (!fate.aboutThisCompose || draftId !== null || (written !== null && written !== fate.rowId)) return;
       adoptOff.current?.();
       adoptOff.current = null;
       adopted.current = true;
-      epoch.current += 1;
-      setDraftId(fate.rowId);
-      writeComposeRow(fate.rowId);
-      saved.current = null;
-      savedMailbox.current = null;
-      abandonedAt.current = null;
+      adopt(fate.rowId, fieldsRef.current);
       return;
     }
     if (fate.kind === "restoredBy409") {
