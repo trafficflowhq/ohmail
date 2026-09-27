@@ -1124,7 +1124,7 @@ jobs:
             libayatana-appindicator3-dev \
             libssl-dev \
             build-essential curl wget file patchelf desktop-file-utils \
-            xdg-utils rpm cpio \
+            xdg-utils rpm cpio fuse3 \
             xvfb x11-utils x11-apps
 
       - name: Toolchain
@@ -1447,7 +1447,8 @@ jobs:
             echo "the .rpm's desktop entry cannot be matched to the window" >&2; exit 1; }
 
           # ── The AppImage carries the same tree ────────────────────────────
-          # Extracted rather than mounted: a runner has no FUSE.
+          # Extracted rather than mounted: this reads the files, and the mounted
+          # run is its own step below.
           rm -rf squashfs-root
           ./"$APPIMAGE" --appimage-extract > /dev/null
           test -f squashfs-root/usr/lib/ohmail/engine/bin/ohmail-engine.mjs
@@ -1783,11 +1784,11 @@ jobs:
           # `set +e` around it on purpose: under `set -e` a red check would exit
           # the step here and the two lines below — the status this step reports
           # — would never run at all.
-          # AN AppImage SELF-MOUNTS THROUGH FUSE, and a runner image without
-          # libfuse2 fails to start it at all — which would be a check that
-          # refuses every correct release. The runtime's own extract-and-run
-          # path needs no FUSE; measured identical here, same window, same
-          # frame verdict.
+          # AN AppImage SELF-MOUNTS THROUGH FUSE, and a runner without it
+          # cannot start the image at all. This check takes the runtime's
+          # extract-and-run path, which needs no FUSE (measured identical here,
+          # same window, same frame verdict), so a FUSE failure is never read
+          # as a render failure. The mounted run is the next step's.
           set +e
           APPIMAGE_EXTRACT_AND_RUN=1 DISPLAY=:99 \
             node scripts/verify-desktop-launch.mjs build/ohmail-linux-x86_64.AppImage \
@@ -1797,9 +1798,60 @@ jobs:
           kill "$XVFB" 2>/dev/null || true
           exit "$RC"
 
+      # ── THE APP SAYS WHAT IT IS, RUN THE WAY A PERSON RUNS IT ────────────
+      # The check above runs the image extracted, and an extracted copy is not an AppImage to the
+      # updater: it decides it IS the image from the mount the runtime made, by the FUSE subtype
+      # libfuse derives from the image's own file name. A runtime that stopped writing it would
+      # make every AppImage one that never updates, and nothing would say so. So the image runs
+      # MOUNTED here, and its own `updater_offer` line must say "installKind":"appimage".
+      - name: The mounted AppImage says it is an AppImage
+        run: |
+          set -euo pipefail
+          APP=build/ohmail-linux-x86_64.AppImage
+          # THE TOOLS FIRST, BY NAME. The runtime mounts through fusermount3 and /dev/fuse; either
+          # missing is named here, never read as an app that did not say what it is.
+          for tool in fusermount3 setsid Xvfb xwininfo; do
+            command -v "$tool" > /dev/null || { echo "INSTALL-KIND-NOT-RUN: $tool is not installed" >&2; exit 1; }
+          done
+          test -c /dev/fuse || { echo "INSTALL-KIND-NOT-RUN: /dev/fuse is not a device on this runner" >&2; exit 1; }
+          rm -rf install-kind && mkdir -p install-kind/home install-kind/run && chmod 700 install-kind/run
+          Xvfb :97 -screen 0 1280x800x24 &
+          XVFB=$!
+          for _ in $(seq 30); do xwininfo -display :97 -root > /dev/null 2>&1 && break; sleep 1; done
+          # A session of its own, so one signal stops the runtime, the app and everything it
+          # started. The extraction variable is unset, so this is the mounted route whatever
+          # the job's environment carries.
+          setsid env -u APPIMAGE_EXTRACT_AND_RUN HOME="$PWD/install-kind/home" \
+            XDG_RUNTIME_DIR="$PWD/install-kind/run" DISPLAY=:97 \
+            "./$APP" > install-kind/app.out 2> install-kind/app.err &
+          APP_PID=$!
+          LINE=""
+          for _ in $(seq 120); do
+            LINE="$(grep -a -m1 '"event":"updater_offer"' install-kind/app.err || true)"
+            [ -n "$LINE" ] && break
+            kill -0 "$APP_PID" 2> /dev/null || break
+            sleep 1
+          done
+          kill -TERM -- "-$APP_PID" 2> /dev/null || true
+          sleep 3
+          kill -KILL -- "-$APP_PID" 2> /dev/null || true
+          kill "$XVFB" 2> /dev/null || true
+          if [ -z "$LINE" ]; then
+            echo "INSTALL-KIND-NOT-READ: the app wrote no updater_offer line in 120 s; its last output:" >&2
+            tail -n 20 install-kind/app.err >&2 || true
+            exit 1
+          fi
+          KIND="$(printf '%s' "$LINE" | sed -n 's/.*"installKind":"\([a-z-]*\)".*/\1/p')"
+          if [ "$KIND" != appimage ]; then
+            echo "INSTALL-KIND-NOT-APPIMAGE ${KIND:-unreadable}: the mounted image does not see itself as an AppImage, so it would never update itself." >&2
+            echo "$LINE" >&2
+            exit 1
+          fi
+          echo "the mounted image reports installKind appimage: $LINE"
+
       # ── WHAT THE APP COSTS, ON A MAILBOX BIG ENOUGH TO SHOW IT ──────────
       #
-      # The check above proves the packaged app opens a window. It says
+      # The launch check proves the packaged app opens a window. It says
       # nothing about what the app COSTS, and a release that starts slowly or
       # holds a gigabyte of a laptop's memory is green all the way through
       # this file and slow on every machine it installs onto. A released build
@@ -2198,7 +2250,7 @@ jobs:
             libayatana-appindicator3-dev \
             libssl-dev \
             build-essential curl wget file patchelf desktop-file-utils \
-            xdg-utils rpm cpio \
+            xdg-utils rpm cpio fuse3 \
             xvfb x11-utils x11-apps
 
       - name: Toolchain
@@ -2847,11 +2899,11 @@ jobs:
           # `set +e` around it on purpose: under `set -e` a red check would exit
           # the step here and the two lines below — the status this step reports
           # — would never run at all.
-          # AN AppImage SELF-MOUNTS THROUGH FUSE, and a runner image without
-          # libfuse2 fails to start it at all — which would be a check that
-          # refuses every correct release. The runtime's own extract-and-run
-          # path needs no FUSE; measured identical here, same window, same
-          # frame verdict.
+          # AN AppImage SELF-MOUNTS THROUGH FUSE, and a runner without it
+          # cannot start the image at all. This check takes the runtime's
+          # extract-and-run path, which needs no FUSE (measured identical here,
+          # same window, same frame verdict), so a FUSE failure is never read
+          # as a render failure. The mounted run is the next step's.
           set +e
           APPIMAGE_EXTRACT_AND_RUN=1 DISPLAY=:99 \
             node scripts/verify-desktop-launch.mjs build/ohmail-linux-aarch64.AppImage \
@@ -2860,6 +2912,57 @@ jobs:
           set -e
           kill "$XVFB" 2>/dev/null || true
           exit "$RC"
+
+      # ── THE APP SAYS WHAT IT IS, RUN THE WAY A PERSON RUNS IT ────────────
+      # The check above runs the image extracted, and an extracted copy is not an AppImage to the
+      # updater: it decides it IS the image from the mount the runtime made, by the FUSE subtype
+      # libfuse derives from the image's own file name. A runtime that stopped writing it would
+      # make every AppImage one that never updates, and nothing would say so. So the image runs
+      # MOUNTED here, and its own `updater_offer` line must say "installKind":"appimage".
+      - name: The mounted AppImage says it is an AppImage
+        run: |
+          set -euo pipefail
+          APP=build/ohmail-linux-aarch64.AppImage
+          # THE TOOLS FIRST, BY NAME. The runtime mounts through fusermount3 and /dev/fuse; either
+          # missing is named here, never read as an app that did not say what it is.
+          for tool in fusermount3 setsid Xvfb xwininfo; do
+            command -v "$tool" > /dev/null || { echo "INSTALL-KIND-NOT-RUN: $tool is not installed" >&2; exit 1; }
+          done
+          test -c /dev/fuse || { echo "INSTALL-KIND-NOT-RUN: /dev/fuse is not a device on this runner" >&2; exit 1; }
+          rm -rf install-kind && mkdir -p install-kind/home install-kind/run && chmod 700 install-kind/run
+          Xvfb :97 -screen 0 1280x800x24 &
+          XVFB=$!
+          for _ in $(seq 30); do xwininfo -display :97 -root > /dev/null 2>&1 && break; sleep 1; done
+          # A session of its own, so one signal stops the runtime, the app and everything it
+          # started. The extraction variable is unset, so this is the mounted route whatever
+          # the job's environment carries.
+          setsid env -u APPIMAGE_EXTRACT_AND_RUN HOME="$PWD/install-kind/home" \
+            XDG_RUNTIME_DIR="$PWD/install-kind/run" DISPLAY=:97 \
+            "./$APP" > install-kind/app.out 2> install-kind/app.err &
+          APP_PID=$!
+          LINE=""
+          for _ in $(seq 120); do
+            LINE="$(grep -a -m1 '"event":"updater_offer"' install-kind/app.err || true)"
+            [ -n "$LINE" ] && break
+            kill -0 "$APP_PID" 2> /dev/null || break
+            sleep 1
+          done
+          kill -TERM -- "-$APP_PID" 2> /dev/null || true
+          sleep 3
+          kill -KILL -- "-$APP_PID" 2> /dev/null || true
+          kill "$XVFB" 2> /dev/null || true
+          if [ -z "$LINE" ]; then
+            echo "INSTALL-KIND-NOT-READ: the app wrote no updater_offer line in 120 s; its last output:" >&2
+            tail -n 20 install-kind/app.err >&2 || true
+            exit 1
+          fi
+          KIND="$(printf '%s' "$LINE" | sed -n 's/.*"installKind":"\([a-z-]*\)".*/\1/p')"
+          if [ "$KIND" != appimage ]; then
+            echo "INSTALL-KIND-NOT-APPIMAGE ${KIND:-unreadable}: the mounted image does not see itself as an AppImage, so it would never update itself." >&2
+            echo "$LINE" >&2
+            exit 1
+          fi
+          echo "the mounted image reports installKind appimage: $LINE"
 
       - name: Keep the launch captures when it fails
         if: failure()
