@@ -185,7 +185,7 @@ export function createWindowOutbox(deps: WindowOutboxDeps): WindowOutbox {
   return {
     discard: () => serial(async () => {
       held = new Map();
-      for (const f of WINDOW_OUTBOX_FILES) await unlink(join(deps.dataDir, f)).catch(() => undefined);
+      for (const f of WINDOW_OUTBOX_FILES) await removeFileSynced(join(deps.dataDir, f)).catch(() => undefined);
     }),
     async handle(req) {
       if (!(await deps.authorized(req))) {
