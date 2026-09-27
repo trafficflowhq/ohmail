@@ -12,7 +12,7 @@ import type {
   // default barrel re-exports the model half beside it — so naming it here would put the
   // classifier and the drafter into the import graph of every artifact that stores a message.
 } from "../mail.js";
-import { canonicalDestination } from "../types.js";
+import { canonicalDestination, SENT_SHAPED_PATHS } from "../types.js";
 import { messageSearchUpsert, reindexMessageSearch, type MessageSearchInput } from "../message-search.js";
 import type { NormalizedMessage } from "../types.js";
 import {
@@ -737,6 +737,23 @@ function dueNow(col: AnyPgColumn): SQL | undefined {
  */
 /** Rows per `recordChanges` INSERT inside the rename swap — see the chunk note at the call. */
 const RENAME_CHANGE_CHUNK = 2000;
+
+/**
+ * An INBOX instance recorded beside a row that still stands on its Sent copy — what the ingest
+ * wrote for a letter to yourself before `dedup.ts`'s `received_copy`. Kept out of the known-set,
+ * so the next pass fetches that copy with its flags and the arm gives it the row. A row whose
+ * desire has left Sent (our move in flight) keeps it known. `coalesce` so a row with no locator
+ * reads as not-Sent rather than NULL, which `not` would turn into an exclusion.
+ */
+function inboxCopyOfSentRow(): SQL {
+  const sent = [...SENT_SHAPED_PATHS];
+  return and(
+    eq(messageInstances.folder, "INBOX"),
+    eq(messageInstances.isPrimary, false),
+    inArray(sql`coalesce(lower(${messages.nativeLocator}->>'folder'), '')`, sent),
+    or(isNull(folderState.desiredFolder), inArray(sql`lower(${folderState.desiredFolder})`, sent)),
+  )!;
+}
 
 /** Candidates the reaper checks per statement — see {@link instancelessCandidates}. */
 const REAPER_CHECK_CHUNK = 64;
@@ -2935,7 +2952,8 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     }).from(messageInstances)
       .innerJoin(messages, eq(messages.id, messageInstances.messageId))
       .leftJoin(flagState, eq(flagState.messageId, messageInstances.messageId))
-      .where(eq(messageInstances.mailboxId, mailboxId));
+      .leftJoin(folderState, eq(folderState.messageId, messageInstances.messageId))
+      .where(and(eq(messageInstances.mailboxId, mailboxId), sql`not (${inboxCopyOfSentRow()})`));
     return rows.map((r) => ({
       folder: r.folder,
       uid: r.uid,

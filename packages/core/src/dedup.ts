@@ -5,6 +5,7 @@
  * server's locator. The rule and its four consumers are `sender-headers.ts`.
  */
 import { permitsAdoption, type Change, type MoveEvidence, type StoredMessage } from "./ports.js";
+import { isSentFolderPath } from "./types.js";
 
 export type DedupOutcome =
   | { kind: "new" }
@@ -12,6 +13,7 @@ export type DedupOutcome =
   | { kind: "own_move"; existing: StoredMessage }
   | { kind: "external_move"; existing: StoredMessage }
   | { kind: "external_copy"; existing: StoredMessage }
+  | { kind: "received_copy"; existing: StoredMessage }
   | { kind: "own_copy"; existing: StoredMessage };
 
 export interface DedupInput {
@@ -51,5 +53,10 @@ export function classifyDedup(input: DedupInput): DedupOutcome {
   if (pendingMoveFolders.has(observedFolder)) return { kind: "own_move", existing };
   // THE CONSENT BOUNDARY. Adoption requires a disappearance; an appearance is a copy.
   if (permitsAdoption(evidence)) return { kind: "external_move", existing };
+  // A letter the account sent itself: its INBOX copy is received mail, so it takes the row from
+  // the Sent copy — placement and `\Seen` — whichever copy the sync met first. The one lift an
+  // appearance may make: out of Sent, into INBOX. By fingerprint the content is the account's own
+  // letter, so nothing a stranger wrote passes the gate this way.
+  if (observedFolder === "INBOX" && isSentFolderPath(knownFolder)) return { kind: "received_copy", existing };
   return { kind: "external_copy", existing };
 }

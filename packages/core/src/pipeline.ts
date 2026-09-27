@@ -464,6 +464,20 @@ export interface ExternalCopyPlan {
 }
 
 /**
+ * The INBOX copy of a letter whose row stands on its Sent copy — {@link classifyDedup}'s
+ * `received_copy`. The commit makes the INBOX instance the row's: primary locator, placement and
+ * `seen` (the INBOX copy's own `\Seen`); the Sent locator stays a recorded instance. `state` is
+ * the folder row as phase 1 read it, the witness the placement write is conditional on.
+ */
+export interface ReceivedCopyPlan {
+  messageId: string;
+  arrivalLocator: NativeLocator;
+  storedLocator: NativeLocator;
+  seen: boolean;
+  state: FolderStateRow;
+}
+
+/**
  * A verified legacy row whose `dedup_key` is to be rewritten in the commit transaction.
  *
  * Step 2 of the dual-key lookup found this row under `mid:`/`body:` and
@@ -485,6 +499,8 @@ export interface ChangePlan {
   ownCopy?: OwnCopyPlan;
   /** Present iff `outcome === "external_copy"`. Records one instance and sets `conflict`. */
   externalCopy?: ExternalCopyPlan;
+  /** Present iff `outcome === "received_copy"`. The INBOX instance takes the row. */
+  receivedCopy?: ReceivedCopyPlan;
   /** Present when the message was reached through the legacy key and verified. */
   upgrade?: DedupKeyUpgrade;
 }
@@ -620,9 +636,10 @@ export interface CommitDeps {
    * ReconcileApplyDeps}'s reason: the plan this commit persists was computed in phase 1, outside
    * this transaction, so every writing arm carries the desire it planned against as a witness —
    * the adoption included, through {@link adoptWithWitness}. An absent method would collapse
-   * "this repo predates the primitive" into "the blind write is fine".
+   * "this repo predates the primitive" into "the blind write is fine". `applyExternalFlag` is the
+   * `received_copy` arm's read-state write, the inbound flag path's own user-wins door.
    */
-  repo: RepoPort & Pick<WorkerRepo, "completeFolderState" | "adoptFolderState">;
+  repo: RepoPort & Pick<WorkerRepo, "completeFolderState" | "adoptFolderState" | "applyExternalFlag">;
   accountId: string;
   mailboxId: string;
   routing?: RoutingPort;
@@ -1178,6 +1195,20 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
       lastSetBy: "us",
     };
 
+  // The INBOX copy of a letter the row holds as its Sent copy — before the reconciler, like the
+  // copy below: the server already holds it where it goes, so nothing is left to move.
+  if (outcome.kind === "received_copy") {
+    return {
+      outcome: "received_copy",
+      receivedCopy: {
+        messageId: existingMsg.id, arrivalLocator: change.locator, storedLocator: existingMsg.nativeLocator,
+        // `?? false` for the new-message reason: unknown degrades to unread, the recoverable side.
+        seen: change.seen ?? false, state,
+      },
+      ...(upgrade ? { upgrade } : {}),
+    };
+  }
+
   // ── A SECOND DELIVERY IS NOT A DECISION. IT NEVER REACHES `reconcile` ──────────────────────
   //
   // `external_copy` returns BEFORE the reconciler, and that is belt and braces on purpose:
@@ -1319,6 +1350,30 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     await repo.recordInstance(c.messageId, c.arrivalLocator);
     await repo.setFolderConflict(c.messageId, c.state);
     return { outcome: "external_copy", messageId: c.messageId, action: { type: "none" } };
+  }
+
+  // The INBOX instance takes the row: repoint AND record, the own-authored arm's pair, so both
+  // copies stay known. Placement is witnessed like an adoption (a press since phase 1 keeps its
+  // desire and the arrival is recorded as observed); `last_set_by` stays what the row carried.
+  // The read state goes through the flag path's door, which keeps a pending `\Seen` of ours.
+  if (plan.outcome === "received_copy") {
+    const c = plan.receivedCopy!;
+    const inbox = c.arrivalLocator.folder;
+    await repo.updateLocator(c.messageId, c.arrivalLocator, c.storedLocator);
+    await repo.recordInstance(c.messageId, c.storedLocator);
+    const placed = { desiredFolder: inbox, observedFolder: inbox, lastSetBy: c.state.lastSetBy };
+    if (!(await repo.adoptFolderState(c.messageId, placed, c.state.desiredFolder))) {
+      await repo.completeFolderState(c.messageId, {
+        expectDesiredFolder: c.state.desiredFolder, observedFolder: inbox,
+        lastSetBy: c.state.lastSetBy, physicalObservation: true,
+      });
+    }
+    await repo.applyExternalFlag(mailboxId, c.arrivalLocator, c.seen);
+    await repo.recordChange({
+      accountId, entityType: "message", entityId: c.messageId, op: "move",
+      meta: { from: c.state.desiredFolder, to: inbox },
+    });
+    return { outcome: "received_copy", messageId: c.messageId, action: { type: "none" } };
   }
 
   if (plan.outcome === "new") {
