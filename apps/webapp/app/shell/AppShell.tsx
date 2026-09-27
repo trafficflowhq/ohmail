@@ -1818,7 +1818,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * route transition closes the editor.
    */
   const {
-    cancelCompose, discardKeepsCompose, cancelSchedule, closeCompose, closeReply, compose, composeCloseRefusal,
+    cancelCompose, discardKeepsCompose, cancelSchedule, closeCompose, closeReply, compose, composeResumed, composeCloseRefusal,
     confirmForward, forwardAsk, composeFrom, discardDraft, draftRepliesHere, draftReply, draftReplyChrome, editScheduled,
     heldReplyRow, discardRefusal, sendAgain, mailSend, onComposeFields, onReplyBody, onReplySig,
     onReplySubject, openDraft, openForward, openMessageRef, openReply, plan, replyAll,
@@ -2944,6 +2944,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 onCancel={cancelCompose}
                 /* Discard keeps a held row, and the question says so before the press. */
                 discardKeeps={discardKeepsCompose() !== null}
+                resumed={composeResumed}
                 /* LEAVING SAVES FIRST — see `closeCompose`. Escape and the close control take
                    this; every other exit takes the autosave hook's own belt. */
                 onClose={closeCompose}

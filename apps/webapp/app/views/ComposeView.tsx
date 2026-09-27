@@ -77,6 +77,7 @@ export function ComposeView({
   onSendLater,
   onCancel,
   discardKeeps = false,
+  resumed = false,
   onClose,
   closeNote = null,
   heldResolve = null,
@@ -158,6 +159,8 @@ export function ComposeView({
    * a delete.
    */
   discardKeeps?: boolean;
+  /** `true` when the plain compose door opened on a message left unfinished — see `composeResumed`. */
+  resumed?: boolean;
   /**
    * LEAVE, KEEPING THE MESSAGE — Escape and the close control, the exits that are not a discard.
    * The shell flushes the pending autosave before it navigates, so what is on screen is on the
@@ -1104,6 +1107,11 @@ export function ComposeView({
                   back to a tab and the message is held. */}
               {held ? (
                 <span className="send-note" role="status">{held.sentence}</span>
+              ) : null}
+              {/* A RESUMED MESSAGE IS SAID AS ONE, so a person who meant a new message knows this is
+                  the old one. A held message's own sentence says more, and this gives way to it. */}
+              {resumed && !held && shown.phase !== "unverified" ? (
+                <span className="send-note" role="status">{t("resumedNote")}</span>
               ) : null}
               {/* THE CLOSE THAT DID NOT HAPPEN, and why — a composer that stayed open after
                   Escape is otherwise a key that looks like it never registered. */}

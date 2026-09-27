@@ -53,6 +53,7 @@ import {
   discardKeepsRow,
   reopenWouldOverwrite,
   useComposeAutosave,
+  worthSaving,
   type ComposeFate,
   type ComposeFlush,
 } from "./compose-autosave";
@@ -315,6 +316,19 @@ export function useShellCompose({
    * Cleared by the next edit and by every exit that succeeds.
    */
   const [composeCloseRefusal, setComposeCloseRefusal] = useState<string | null>(null);
+  /**
+   * THE COMPOSER OPENED ON A MESSAGE LEFT UNFINISHED — `#/compose` resumes it, and says so. Decided
+   * as the view opens: a door that put a message there on purpose (a draft opened, Write, a mail
+   * link) marks `composeSeeded` first. Declared ABOVE the restore below, which sets it on a reload.
+   */
+  const [composeResumed, setComposeResumed] = useState(false);
+  const composeSeeded = useRef(false);
+  const onComposeView = route.view === "compose";
+  useEffect(() => {
+    if (!onComposeView) { setComposeResumed(false); return; }
+    setComposeResumed(!composeSeeded.current && worthSaving(composeRef.current));
+    composeSeeded.current = false;
+  }, [onComposeView]);
   /** `autosave.restored`, late-bound like {@link settleComposeRef} below. */
   const restoredRef = useRef<() => void>(() => {});
   useEffect(() => whenComposerReady(() => {
@@ -323,6 +337,7 @@ export function useShellCompose({
       // The account may not hold it (a tab closed inside the pause, or died): written at this open.
       restoredRef.current();
       setCompose(saved);
+      setComposeResumed(true);
     }
     if (takeRecoveredComposer()) toast(t("compose.recoveredFromClosedTab"));
   }), []);
@@ -1352,6 +1367,7 @@ export function useShellCompose({
            a status this branch would have to decide about. */
         autosave.adopt(d.id, seeded);
       }
+      composeSeeded.current = true;
       go("compose");
     },
   );
@@ -1795,6 +1811,7 @@ export function useShellCompose({
       // An open inline reply would otherwise sit under the compose the route change opens —
       // one editor at a time.
       setReplyTo(null);
+      composeSeeded.current = true;
       go("compose");
     },
   );
@@ -1837,6 +1854,7 @@ export function useShellCompose({
     clearComposeDraft();
     writeComposeDraft(seeded);
     setReplyTo(null);
+    composeSeeded.current = true;
     go("compose");
     onMailtoDraftSeeded?.();
   }, [mailtoDraft, autosave, go, onMailtoDraftSeeded]);
@@ -1861,6 +1879,7 @@ export function useShellCompose({
     closeCompose,
     closeReply,
     compose,
+    composeResumed,
     composeCloseRefusal,
     confirmForward,
     forwardAsk,

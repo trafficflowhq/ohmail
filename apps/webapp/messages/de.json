@@ -1235,6 +1235,7 @@
     "cancelAlreadySent": "Schon gesendet. Zu spät zum Abbrechen.",
     "discardHeld": "Nicht gelöscht: Ihr Versand ist nicht bestätigt, darum bleibt die Nachricht in den Entwürfen.",
     "discardUnknown": "Nicht gelöscht: Dieser Browser kann nicht erkennen, ob ihr Versand noch läuft, darum bleibt die Nachricht in den Entwürfen.",
+    "resumedNote": "Das ist die Nachricht, die du nicht fertig geschrieben hast. Verwirf sie, um eine neue zu beginnen.",
     "closeNotSaved": "Dieser Entwurf konnte nicht gespeichert werden und bleibt hier offen.",
     "closeNotSavedReason": "Dieser Entwurf konnte nicht gespeichert werden: {reason}. Er bleibt hier offen.",
     "recoveredFromClosedTab": "Eine Nachricht aus einem unerwartet geschlossenen Tab ist wieder da, unter Schreiben.",
