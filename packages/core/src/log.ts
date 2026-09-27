@@ -258,10 +258,10 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // own rule: a delay and a ceiling are different quantities.
   "nextPollMs", "ceilingMs",
   // Which of OUR read ceilings ended a cycle, added WITH `sync_cycle_failed` and
-  // `mailbox_quarantined`: `ceiling` is a member of the closed `ImapBoundKind` union this
-  // repository writes, `ceilingLimit` the number it was set to. Without them the line said only
-  // `ImapBoundExceeded`, and a six-minute first import could not say which bound it met.
-  "ceiling", "ceilingLimit",
+  // `mailbox_quarantined`: `ceiling` (admitted once, in the server-side sweep below) is a member
+  // of the closed `ImapBoundKind` union, `ceilingLimit` the number it was set to. Without them the
+  // line said only `ImapBoundExceeded`, and a six-minute first import could not say which bound.
+  "ceilingLimit",
   // The three cron-pass counts, added WITH the call sites: `generated` (proposals stored),
   // `flipped` (bubble-ups resurfaced) and `drained` (workflow runs executed) are return values
   // accumulated by `+=` from a `.length` or a local counter — structurally integers, no content.
