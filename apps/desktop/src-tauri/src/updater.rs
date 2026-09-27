@@ -1311,6 +1311,9 @@ fn install_and_restart<R: Runtime>(app: &AppHandle<R>) {
             // Before the restart, and it survives it: the log flushes per write, so the last
             // line of the old build's log is the one saying why there is a new one.
             log_verdict(Verdict::Installed, None);
+            // The new image starts without the old one's keep-alive, so the old mount goes when
+            // this process does rather than when the new one quits.
+            crate::inherited_fds::withhold_from_the_restart();
             app.restart();
         }
         Err(err) => {

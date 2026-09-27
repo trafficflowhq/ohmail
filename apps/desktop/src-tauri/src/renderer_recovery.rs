@@ -102,6 +102,7 @@ fn offer_relaunch<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         .show(move |relaunch| {
             // Both through the event loop's own exit, so the engine is stopped on the way out.
             if relaunch {
+                crate::inherited_fds::withhold_from_the_restart();
                 answer.request_restart();
             } else {
                 answer.exit(0);

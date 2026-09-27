@@ -567,7 +567,7 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these twenty-nine files and no others", () => {
+  it("is these thirty-one files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
       // HOW MANY ALLOCATOR ARENAS THIS APP'S PROCESSES MAY HAVE. glibc gives a contending
@@ -607,6 +607,12 @@ describe("the Rust side", () => {
       // test in this file.
       "host.rs",
       "host_tests.rs",
+      // WHAT A RESTART HANDS THE NEW COPY. ALWAYS compiled: the update's restart and the renderer's
+      // relaunch both mark the descriptors this launch was handed close-on-exec first, so the new
+      // AppImage does not keep the old one's keep-alive. It reads `/proc/self/fd`, calls `fcntl`
+      // on descriptors it already holds, and opens, writes and spawns nothing; its tests spawn.
+      "inherited_fds.rs",
+      "inherited_fds_tests.rs",
       // THE WINDOW OPENS HIDDEN AND IS SHOWN ON ITS OWN CANVAS. ALWAYS compiled: every build opens
       // the same hidden window, and a build without a way to show it is an invisible app. The
       // engine build shows it on the page's report, the preview on the document's load, and both
@@ -2103,6 +2109,26 @@ describe("the auto-updater", () => {
     expect(updater).toMatch(/std::fs::read_to_string\("\/proc\/self\/mountinfo"\)/);
     expect(updater).toMatch(/std::fs::metadata\(image\)/);
     expect(updater).toMatch(/std::fs::metadata\("\/\.flatpak-info"\)/);
+  });
+
+  /**
+   * THE RESTARTED COPY GETS NONE OF THIS LAUNCH'S DESCRIPTORS. The AppImage runtime hands the app
+   * its keep-alive pipe without close-on-exec, and a restart that spawned the new image with it
+   * kept the replaced image mounted until the new app quit. `inherited_fds_tests.rs` reads a
+   * child's descriptor table; this holds both restarts to the CALL before the spawn.
+   */
+  it("withholds the launch's descriptors before either restart spawns the new copy", () => {
+    const code = (src: string) => src.replace(/^\s*\/\/.*$/gm, "");
+    const withhold = "crate::inherited_fds::withhold_from_the_restart();";
+    const install = code(/fn install_and_restart<R: Runtime>[\s\S]*?\n\}\n/.exec(updater)?.[0] ?? "");
+    expect(install, "install_and_restart was not found").toContain("app.restart();");
+    expect(install.indexOf(withhold)).toBeGreaterThan(-1);
+    expect(install.indexOf(withhold)).toBeLessThan(install.indexOf("app.restart();"));
+    const relaunch =
+      /if relaunch \{[\s\S]*?\}/.exec(code(read("src-tauri/src/renderer_recovery.rs")))?.[0] ?? "";
+    expect(relaunch, "the relaunch branch was not found").toContain("answer.request_restart();");
+    expect(relaunch.indexOf(withhold)).toBeGreaterThan(-1);
+    expect(relaunch.indexOf(withhold)).toBeLessThan(relaunch.indexOf("answer.request_restart();"));
   });
 
   /**

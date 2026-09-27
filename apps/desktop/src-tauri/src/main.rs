@@ -113,6 +113,10 @@ mod launch_window;
 // instead of a dead frame. Always compiled: every build opens the same window.
 mod renderer_recovery;
 
+// What a restart hands the new copy: stdio, and none of the descriptors this launch was handed.
+// Always compiled: both restarts, the update's and the renderer's relaunch, go through it.
+mod inherited_fds;
+
 // How many allocator arenas the engine this shell spawns may have. Applied to that child's
 // command in `engine.rs`, never to this process — `allocator_arenas.rs` has the measurement.
 mod allocator_arenas;
