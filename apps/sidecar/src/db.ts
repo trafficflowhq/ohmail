@@ -149,8 +149,6 @@ function relaxIngestCommits(client: PGlite, noteRelaxed: () => void): PGlite {
 interface LogFlush {
   client: PGlite;
   noteRelaxed(): void;
-  /** Durable flushes written since the open — read by tests and the rig, never by a decision. */
-  flushes(): number;
   stop(): void;
 }
 
@@ -166,7 +164,6 @@ function createLogFlush(
   let timer: ReturnType<typeof setTimeout> | null = null;
   let owed = false;
   let stopped = false;
-  let written = 0;
   const arm = (): void => {
     if (stopped || timer !== null) return;
     timer = outsideStoreLanes(() => setTimeout(fire, everyMs));
@@ -177,19 +174,18 @@ function createLogFlush(
     timer = null;
     if (stopped) return;
     owed = false;
-    void write().then(() => { written += 1; }, (err: unknown) => {
+    void write().catch((err: unknown) => {
       if (!stillOpen()) return;
       owed = true;
       log?.("local_db_flush_failed", {
         err,
-        reason: "the store's timed log flush failed; the next relaxed commit arms it again",
+        reason: "the store's timed log flush failed; it is tried again at the next deadline",
       });
     }).finally(() => { if (owed) arm(); });
   };
   return {
     client,
     noteRelaxed: () => { owed = true; arm(); },
-    flushes: () => written,
     stop: () => {
       stopped = true;
       if (timer !== null) clearTimeout(timer);
@@ -1011,8 +1007,8 @@ async function walGrownSince(client: PGlite, since: string): Promise<{ grew: num
 
 /**
  * The checkpoint's line: written when it reclaimed a segment, and whenever it took
- * {@link CHECKPOINT_SLOW_MS} or more whatever it reclaimed — a fold that runs for seconds while
- * somebody reads their mail is a pause, and it grows with the store.
+ * {@link CHECKPOINT_SLOW_MS} or more whatever it reclaimed — a checkpoint holds the one connection,
+ * so one that runs for seconds while somebody reads their mail is a pause.
  */
 function noteCheckpoint(
   log: Diagnostic | undefined, kind: "periodic" | "asked" | "fold", dropped: number, totalMs: number,
