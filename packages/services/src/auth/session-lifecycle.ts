@@ -508,6 +508,39 @@ export class SessionLifecycle {
     // rather than at seven call sites, one of which would eventually be added without it.
     // `revokeEnrollmentSessions` below is a write, so the check precedes it.
     refuseCrossAccountCredential(ctx, user.accountId);
+    const previous = ctx.supersedes;
+    if (!previous) return this.mintEstablished(ctx, user, o);
+    // THE SUPERSEDE AND THE MINT COMMIT TOGETHER, never as two calls: a new session beside a
+    // previous one that still renews is the state this exists to remove. Cleared on the inner
+    // context so a nested mint cannot run it twice.
+    return this.inTransaction({ ...ctx, supersedes: null }, async (txCtx) => {
+      await this.supersede(asTx(txCtx), previous, txCtx.now());
+      return this.mintEstablished(txCtx, user, o);
+    });
+  }
+
+  /**
+   * A SIGN-IN SUPERSEDES THE JAR'S PREVIOUS SESSION — `logout`'s revocation, keyed on the access
+   * token the browser presented beside the ceremony. An expired access token still names its
+   * session; an enrollment token or an unknown hash revokes nothing. The FAMILY goes, not only the
+   * row the hash found, so a rotation that lands after this read leaves no live successor.
+   */
+  protected async supersede(db: Tx, previousAccessToken: string, now: Date): Promise<void> {
+    const [prev] = await db.select({ familyId: sessions.familyId }).from(sessions)
+      .where(and(
+        eq(sessions.accessTokenHash, hashToken(previousAccessToken)),
+        eq(sessions.scope, "full"),
+        isNull(sessions.revokedAt),
+      ))
+      .limit(1);
+    if (prev) await this.revokeFamily(db, prev.familyId, now);
+  }
+
+  /** `establish`'s writes, after its refusal and inside its supersede when there is one. */
+  private async mintEstablished(
+    ctx: ServiceContext, user: typeof users.$inferSelect,
+    o: Parameters<SessionLifecycle["establish"]>[2],
+  ): Promise<SessionEstablished> {
     const db = asTx(ctx);
     const now = ctx.now();
     // A FULL session exists ⇒ no password-only session for this user may still be

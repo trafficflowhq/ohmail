@@ -111,6 +111,13 @@ export interface ServiceContext {
    */
   origin?: string;
   /**
+   * The access token the request's COOKIE JAR presented beside a sign-in ceremony — set only by the
+   * cookie surface's session mint (`webSession`), never from a body. The mint revokes that session
+   * and its refresh family in its own transaction, so a late answer for the jar's previous session
+   * cannot sign the browser back in. Absent everywhere else.
+   */
+  supersedes?: string | null;
+  /**
    * WHICH RUN OF A LOSSY STORE THIS REQUEST IS BEING ANSWERED FROM — the desktop's local PGlite
    * mints one at every launch that could have lost committed rows (`apps/sidecar/src/db.ts`), and
    * `/sync` stamps it into every cursor and checks it on every read.

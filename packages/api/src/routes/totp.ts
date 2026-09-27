@@ -46,7 +46,7 @@ export const totpRoutes: Route[] = [
       // its platform here so the session gets a device row the staleness alarm can attribute.
       // Whitelist-gated in the service (desktop kinds only; none can reach the native window).
       const body = await readBody<{ loginToken: string; code: string; kind?: unknown }>(req);
-      return webSession(deps, await auth(deps).totpVerify(serviceContext(deps, req), body));
+      return webSession(deps, req, (ctx) => auth(deps).totpVerify(ctx, body));
     },
   },
   {

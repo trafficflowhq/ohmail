@@ -30,7 +30,7 @@ export const recoveryRoutes: Route[] = [
     options: { public: true, credentialSubject: true },
     handler: async (req, deps) => {
       const body = await readBody<{ loginToken: string; code: string }>(req);
-      return webSession(deps, await auth(deps).recoveryVerify(serviceContext(deps, req), body));
+      return webSession(deps, req, (ctx) => auth(deps).recoveryVerify(ctx, body));
     },
   },
 ];

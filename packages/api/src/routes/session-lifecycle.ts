@@ -52,15 +52,12 @@ export const sessionLifecycleRoutes: Route[] = [
     },
   },
   {
-    // Web reads the refresh token from the `tf_refresh` cookie → rotate → set new
-    // cookies (204). Native sends `{ refreshToken }` in the body → 200 { tokens }.
-    //
-    // The cookie branch is reachable ONLY on a cookie surface. This route is
-    // `public`, so `withSession` never runs on it and `deps.allowCookieAuth` had no effect
-    // here at all: on `api.ohmail.app` a `tf_session` cookie was correctly ignored while a
-    // `tf_refresh` cookie still rotated the family and answered with a full set of session
-    // cookies. "Bearer-only" has to mean the host REFUSES cookies, not that browsers happen
-    // not to point at it — so on such a host the body token is the only accepted input.
+    // Web reads the refresh token from the `tf_refresh` cookie → rotate → set new cookies (204).
+    // Native sends `{ refreshToken }` in the body → 200 { tokens }. The cookie branch exists ONLY
+    // on a cookie surface: this route is `public`, so `withSession` never gates it, and a
+    // bearer-only host must REFUSE the cookie rather than rely on browsers not pointing at it.
+    // A sign-in revokes the jar's previous session inside its mint (`webSession`), so a late
+    // rotation of that session is refused here as revoked.
     method: "POST",
     pattern: "/auth/refresh",
     relay: false,  /* resolves a credential from the request body */

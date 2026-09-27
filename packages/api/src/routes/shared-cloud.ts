@@ -1,13 +1,14 @@
-import { ServiceError, generateToken } from "@trafficflow/services/mail";
+import { ServiceError, generateToken, type ServiceContext } from "@trafficflow/services/mail";
 import type {
   AuthService, SessionEstablished, EnrollmentSessionEstablished,
   WaitlistService, ProposalsService,
 } from "@trafficflow/services";
+import { serviceContext } from "../context.js";
 import type { ApiDeps } from "../deps.js";
 import type {} from "../deps-cloud.js";
-import { enrollmentCookies, sessionCookies } from "../cookies.js";
+import { enrollmentCookies, jarCookie, sessionCookies } from "../cookies.js";
 import { csrfTokenFor } from "../csrf.js";
-import { cookieSurface, json } from "./shared.js";
+import { cookieSurface, json, parseCookies } from "./shared.js";
 
 /**
  * The hosted accessors — the bag members only a hosted deployment has: the identity ceremony, the
@@ -62,17 +63,19 @@ export function waitlistSvc(deps: ApiDeps): WaitlistService {
 }
 
 /**
- * Web session response: move the established tokens into the three cookies and
- * STRIP `tokens` from the JSON body (the web session lives in cookies, contract
- * §1.3 / the `SessionEstablished` DTO comment). Any extra fields on `est` (e.g.
- * `recoveryVerify`'s `remainingCodes`) are preserved.
- *
- * On a BEARER-ONLY host the tokens stay in the body and nothing is set: a `Set-Cookie` no
- * browser will ever hold is at best noise, and stripping `tokens` there left the only
- * client that can reach that host — a native one — with a 200 carrying no credential at all.
+ * Web session response: run the ceremony's MINT, move the established tokens into the cookies and
+ * STRIP `tokens` from the JSON body (contract §1.3); extra fields such as `remainingCodes` stay.
+ * On a cookie surface the mint is handed the jar's current `tf_session`, and revokes that session
+ * inside its own transaction (`SessionLifecycle.establish`). On a BEARER-ONLY host no cookie is
+ * read, nothing is revoked, and the tokens stay in the body for the native client there.
  */
-export function webSession<T extends SessionEstablished>(deps: ApiDeps, est: T): Response {
-  if (!cookieSurface(deps)) return json(est, 200);
+export async function webSession<T extends SessionEstablished>(
+  deps: ApiDeps, req: Request, mint: (ctx: ServiceContext) => Promise<T>,
+): Promise<Response> {
+  const ctx = serviceContext(deps, req);
+  if (!cookieSurface(deps)) return json(await mint(ctx), 200);
+  const previous = jarCookie(parseCookies(req.headers.get("cookie")), "tf_session");
+  const est = await mint(previous ? { ...ctx, supersedes: previous } : ctx);
   // DERIVED from the access token, never random — see `csrfTokenFor`. A value unrelated to the
   // session let a cookie-tossed pair satisfy the double-submit check.
   // The account id rides with them, in a cookie that carries no authority — see `OWNER_COOKIE`

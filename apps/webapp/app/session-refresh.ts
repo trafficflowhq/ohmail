@@ -28,6 +28,9 @@ export const REFRESH_ENDPOINT = "/auth/refresh";
 /** The in-flight refresh, or null. Module-scoped: one per tab; the jar is shared wider. */
 let inFlight: Promise<boolean> | null = null;
 
+/** The in-flight refresh's request, so a sign-in that minted past it can drop its late answer. */
+let inFlightRequest: AbortController | null = null;
+
 /**
  * What the last refresh actually learned — three answers, not two. `resumeSession` returns a
  * boolean, and a boolean cannot carry the distinction: "the server says this session is gone" and
@@ -38,7 +41,7 @@ let inFlight: Promise<boolean> | null = null;
  * session. This is the outcome of the LAST refresh, overwritten every time, never sticky — a
  * report, not a decision; the death latch keeps its single writer at `markSessionDead()`.
  */
-export type RefreshOutcome = "minted" | "revoked" | "unavailable";
+export type RefreshOutcome = "minted" | "revoked" | "unavailable" | "superseded";
 
 /** The last refresh's outcome, or `null` when this tab has not attempted one. */
 let lastOutcome: RefreshOutcome | null = null;
@@ -146,7 +149,12 @@ export async function withSessionCookieLock<T>(fn: () => Promise<T>): Promise<T>
     } finally {
       // A ceremony that minted a session is a mint like a refresh's: the renewal counts from it.
       const after = csrfToken();
-      if (after !== null && after !== before) noteSessionMinted();
+      if (after !== null && after !== before) {
+        noteSessionMinted();
+        // A refresh still in flight here carries the PREVIOUS jar; its answer must not land after
+        // this mint. The server has revoked that session in the mint's transaction.
+        inFlightRequest?.abort();
+      }
     }
   };
   try {
@@ -240,14 +248,11 @@ async function withCrossTabLock(fn: () => Promise<boolean>): Promise<boolean> {
 export const SETTLE_DEADLINE_MS = 15_000;
 
 /**
- * Wait for any refresh already in flight, and do not cancel it. A refresh rewrites the whole cookie jar whenever its
- * response lands. The collision: `/login`'s signed-in check can 401 into a refresh carrying the OLD account's cookie;
- * sign in as somebody else mid-flight and the late response restores the previous account or clears the new one.
- * Aborting is the wrong instrument: the refresh is single-flight and SHARED — other callers await this exact promise
- * — and the request may already have reached the server. So the ceremony WAITS: ordering, not cancellation. And it
- * gives up: the fetch and the lock have no deadline on purpose, so a hung holder once left a password submit awaiting
- * for ever. {@link SETTLE_DEADLINE_MS} bounds the WAIT, never the refresh — past it the old race is back for that one
- * submit, the honest trade against a form that never submits at all.
+ * Wait for any refresh already in flight. A refresh rewrites the whole cookie jar when its answer lands, and one
+ * carrying the OLD account's cookie can land after a sign-in as somebody else. The ceremony WAITS first, because the
+ * refresh is shared and its callers await it; the wait gives up at {@link SETTLE_DEADLINE_MS}, never the refresh, so a
+ * hung holder cannot stop a submit. Past it, the mint revokes the jar's previous session on the server and aborts the
+ * request here (outcome `superseded`), so neither half of the late answer can sign the browser back in.
  */
 export async function refreshSettled(): Promise<void> {
   // Read once: `inFlight` is nulled by the callback's own `finally`, so re-reading after the
@@ -300,6 +305,8 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> 
      * the jar as it is when the request LEAVES.
      */
 
+    const request = new AbortController();
+    inFlightRequest = request;
     try {
       // INSIDE the `try`, so the `finally` below clears `inFlight`. Outside it, one refusal
       // left the module's dedupe holding a settled promise for the life of the page and every
@@ -330,7 +337,9 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> 
         },
         cache: "no-store",
         credentials: "same-origin",
+        signal: request.signal,
       });
+      if (request.signal.aborted) return superseded(null);
       // 204 with fresh Set-Cookie is success; a 401 means the family is
       // gone and the server has already cleared the whole jar, so the next navigation is an honest
       // signed-out landing. Both answers are told to the session-truth store, because both are
@@ -374,11 +383,14 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> 
       });
       return false;
     } catch (err) {
+      if (request.signal.aborted) return superseded(err);
       // Offline, aborted, DNS — not resumable right now, and no answer to read a code from.
       recordRefresh({
         outcome: "unavailable", status: 0, code: null, errorClass: classOf(err), retryAfterMs: null,
       });
       return false;
+    } finally {
+      if (inFlightRequest === request) inFlightRequest = null;
     }
   });
   /*
@@ -394,6 +406,14 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> 
   const started = inFlight;
   void started.finally(() => { inFlight = null; });
   return started;
+}
+
+/** A sign-in minted past this refresh: nothing it learned is about the jar that holds now. */
+function superseded(err: unknown): false {
+  recordRefresh({
+    outcome: "superseded", status: 0, code: null, errorClass: err === null ? null : classOf(err), retryAfterMs: null,
+  });
+  return false;
 }
 
 /**

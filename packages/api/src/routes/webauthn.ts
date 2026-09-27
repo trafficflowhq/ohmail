@@ -56,7 +56,7 @@ export const webauthnRoutes: Route[] = [
     options: { public: true, credentialSubject: true },
     handler: async (req, deps) => {
       const body = await readBody<{ loginToken: string; credential: unknown }>(req);
-      return webSession(deps, await auth(deps).webauthnAssertVerify(serviceContext(deps, req), body));
+      return webSession(deps, req, (ctx) => auth(deps).webauthnAssertVerify(ctx, body));
     },
   },
 ];
