@@ -58,6 +58,8 @@ async function reopenedCatchUp(
 /** What an erasure leaves on a host with no billing program: the pseudonymous account row and the token hashes. */
 const RETAINED_UNMETERED =
   "the account row only, with a random id and no name, and hashes of its sign-in tokens until they expire";
+/** What it leaves where there is one: the billing records, and a refund still owed until it is paid. */
+const RETAINED_METERED = "billing records and any refund still owed to you, under a pseudonymous account id";
 
 /**
  * `DELETE /account` — Art. 17 erasure, self-serve; the screen is `AccountSection.tsx`. `stepUp:
@@ -106,7 +108,10 @@ export const accountRoutes: Route[] = [
         }
       }
 
-      const result = await deleteAccount(ctx, { throttleKeys: throttleKeysFor(deps.keyProvider) });
+      // A refund still owed is kept for the drain only where one runs, which is a metered host.
+      const result = await deleteAccount(ctx, {
+        throttleKeys: throttleKeysFor(deps.keyProvider), drainsRefunds: port !== null,
+      });
       return sessionEnded(json(
         {
           erased: true,
@@ -121,10 +126,12 @@ export const accountRoutes: Route[] = [
           // PSEUDONYMISED, not deleted. The operator's count of who was waiting, invited and
           // registered is a fact about the service; the address on the row is not, and it goes.
           redactedTables: result.redacted,
+          // Refunds still owed, kept pseudonymised until they are paid; 0 on an unmetered host.
+          retainedPending: result.retainedPending,
           // Said plainly rather than buried: the operator's own audit trail and the
           // customer's confirmation mail both read from this. A host with no billing program
           // keeps no billing records, so it names what it does keep.
-          retained: port ? "billing records only, under a pseudonymous account id" : RETAINED_UNMETERED,
+          retained: port ? RETAINED_METERED : RETAINED_UNMETERED,
           subscription,
         },
         200,

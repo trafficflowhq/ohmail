@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNotNull, like, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, isNull, like, or, sql } from "drizzle-orm";
 import {
   accountSettings,
   accountStorage,
@@ -117,6 +117,12 @@ export interface DeleteAccountResult {
    * foreign-key graph appear HERE or on a written exemption list.
    */
   redacted: Record<string, number>;
+  /**
+   * Refund obligations still PENDING, kept and pseudonymised rather than deleted: money owed to
+   * the person is a financial record, retained on the `accounts` row's Art. 17(3)(b) basis, and
+   * the refund drain still settles it. Zero on a host that drains nothing.
+   */
+  retainedPending: number;
 }
 
 /** Rows affected across the three drivers — see `rows-affected.ts` for why there is one copy. */
@@ -132,10 +138,12 @@ const n = rowsAffected;
 /**
  * `throttleKeys` is what reaches the sign-in throttle rows keyed by an address hash; both
  * production callers pass it (`account-deletion-callers.test.ts` parses for the call). Without it
- * those rows are left to the prune.
+ * those rows are left to the prune. `drainsRefunds` is true only where a refund drain runs (a host
+ * with an entitlements program): pending refunds are then kept for it. Absent, nothing drains them,
+ * so they are deleted with the rest.
  */
 export async function deleteAccount(
-  ctx: ServiceContext, opts: { throttleKeys?: ThrottleKeys } = {},
+  ctx: ServiceContext, opts: { throttleKeys?: ThrottleKeys; drainsRefunds?: boolean } = {},
 ): Promise<DeleteAccountResult> {
   const accountId = ctx.accountId;
   const db = ctx.db as unknown as { transaction: <T>(fn: (tx: LedgerTx) => Promise<T>) => Promise<T> };
@@ -404,7 +412,8 @@ export async function deleteAccount(
       tx.delete(mailboxOauthDeviceCeremonies).where(eq(mailboxOauthDeviceCeremonies.accountId, accountId)));
     // What an entitlements program holds is erased by THAT program: attempt claims, setup pools,
     // the suspension note and the customer email belong to whoever operates metering, reached
-    // through the port's `releaseAccount`, which this service calls. NOT a delete — the staging
+    // through the port's `releaseAccount`, which both callers make BEFORE this transaction (the
+    // route, `eraseOneDueAccount`); nothing here dials anything. NOT a delete — the staging
     // row is the only key to bytes in the staging bucket, and the sweep removes row and object
     // together, keyed on `expires_at <= now()`; bringing the expiry forward hands both to the
     // next maintenance pass, while deleting the row would strand the attachment for the life of
@@ -414,30 +423,28 @@ export async function deleteAccount(
       .set({ expiresAt: ctx.now() })
       .where(and(eq(attachmentStaging.accountId, accountId), gt(attachmentStaging.expiresAt, ctx.now()))));
 
-    // WHAT WE STILL OWED THIS ACCOUNT (cloud 0036). DELETED, and the deletion is not academic:
-    // `accounts` is the one row erasure KEEPS, so this table's `ON DELETE CASCADE` never fires
-    // here — rows naming an erased account would simply stay, carrying its id and the attempt ids
-    // of its spends, for the life of the deployment.
-    //
-    // What happens to the money is the entitlements program's, and `releaseAccount` — which this
-    // service calls — is the one call that ends this account's standing there. Our row is only a
-    // reminder to dial that program again; once the account is erased there is nothing left here
-    // to dial about, and a reminder that outlives its subject is exactly what Art. 17 forbids.
-    //
-    // WHAT THIS DOES NOT DO, stated because it is a real gap and not an oversight: a debt still
-    // PENDING at erasure is dropped rather than drained first. Draining it means a network call to
-    // the program from inside this transaction, which erasure may not be made to wait on
-    // (Art. 17 is not withheld because a payment processor is unreachable). The drain runs hourly,
-    // so the window is small and bounded; closing it properly is a ruling for the side that holds
-    // the ledger — filed as PENDING-REFUND-IS-DROPPED-AT-ERASURE.
-    await drop("credit_refund_obligations",
-      tx.delete(creditRefundObligations).where(eq(creditRefundObligations.accountId, accountId)));
+    // WHAT WE STILL OWE THIS ACCOUNT (cloud 0036). `accounts` is kept, so the FK cascade never
+    // fires here. A SETTLED row is only a reminder and goes. A PENDING one is money owed to the
+    // person, a financial record kept on the `accounts` row's own basis: PSEUDONYMISED in place
+    // (`meta`, `last_fault`, `claimed_until` cleared; what stays is ids, a closed reason and
+    // counts), and the drain settles it through `release()` like any other. No call from here.
+    // Where nothing drains (`drainsRefunds` absent), a kept row would be inert, so all of it goes.
+    let retainedPending = 0;
+    if (opts.drainsRefunds === true) {
+      await drop("credit_refund_obligations", tx.delete(creditRefundObligations).where(and(
+        eq(creditRefundObligations.accountId, accountId), isNotNull(creditRefundObligations.settledAt))));
+      retainedPending = n(await tx.update(creditRefundObligations)
+        .set({ meta: null, lastFault: null, claimedUntil: null })
+        .where(and(eq(creditRefundObligations.accountId, accountId), isNull(creditRefundObligations.settledAt))));
+    } else {
+      await drop("credit_refund_obligations",
+        tx.delete(creditRefundObligations).where(eq(creditRefundObligations.accountId, accountId)));
+    }
 
     // The wall's notice ledger (cloud 0040). Deleted, never left to the FK CASCADE: the account
-    // row SURVIVES erasure as the pseudonymous billing subject, so the cascade never fires — and
-    // a reminder about a person's lifecycle must not outlive the person (the refund-obligation
-    // rule, one table over). The nightly pass skips erased accounts by `erased_at`, so nothing
-    // re-inserts one.
+    // row SURVIVES erasure as the pseudonymous billing subject, so the cascade never fires. A
+    // notice is a reminder about a person's lifecycle, not a financial record, so nothing keeps
+    // it. The nightly pass skips erased accounts by `erased_at`, so nothing re-inserts one.
     await drop("account_lifecycle_notices",
       tx.delete(accountLifecycleNotices).where(eq(accountLifecycleNotices.accountId, accountId)));
 
@@ -525,6 +532,6 @@ export async function deleteAccount(
     // Not a soft delete: there is nothing personal left to protect. The row is the
     // billing subject the ledger points at, and a uuid is not personal data.
     await tx.update(accounts).set({ name: "" }).where(eq(accounts.id, accountId));
-    return { accountId, deleted, redacted, stagingTicketsExpired, usersErased: userRows.length };
+    return { accountId, deleted, redacted, stagingTicketsExpired, usersErased: userRows.length, retainedPending };
   });
 }

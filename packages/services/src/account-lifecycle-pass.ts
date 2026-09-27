@@ -325,7 +325,11 @@ export async function eraseOneDueAccount(
     return fresh && fresh.state === "closed" ? "reactivated" : "not_due";
   }
   const outcome = await deps.port.releaseAccount(accountId);
-  await deleteAccount({ db, accountId, userId: null, now, requestId: randomUUID() }, { throttleKeys: deps.throttleKeys });
+  // This pass runs only against an entitlements program, so a refund drain runs beside it.
+  await deleteAccount(
+    { db, accountId, userId: null, now, requestId: randomUUID() },
+    { throttleKeys: deps.throttleKeys, drainsRefunds: true },
+  );
   log.info("account_lifecycle_erased", {
     accountId, subscription: outcome,
     reason: "the retention period ended a day ago or more; the account's data is " +

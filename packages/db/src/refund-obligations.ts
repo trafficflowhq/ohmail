@@ -50,18 +50,13 @@ export interface ClaimedRefundObligation {
 export async function recordRefundObligation(
   tx: Tx, o: RefundObligation, now: Date = new Date(),
 ): Promise<void> {
-  // THIS WRITER FENCES ITSELF, and it is the one db-layer primitive that has to.
-  //
-  // Every other one writes inside the CALLER's transaction, so the door that opened it holds the
-  // Art. 17 fence. This one deliberately does not: the debt has to survive the transaction that
-  // FAILED, which is the whole reason it exists — so it inherits nobody's fence and would happily
-  // write a row naming an account the sweep erased a moment earlier. That row would then STAY:
-  // `accounts` is the row erasure KEEPS, so this table's `ON DELETE CASCADE` never fires for it.
-  //
-  // An erased account is owed nothing HERE in any case — `releaseAccount` is what ends its
-  // standing with the entitlements program, and this row is only a reminder to dial that program
-  // about an account that no longer exists. SHARE, the default: it is ordered against the
-  // sweep's exclusive lock and against nothing else.
+  // THIS WRITER FENCES ITSELF, the one db-layer primitive that has to. Every other one writes in
+  // the CALLER's transaction and inherits its Art. 17 fence; this one must survive the transaction
+  // that FAILED, so it would happily write a row naming an account the sweep erased a moment
+  // earlier, and `accounts` is kept, so the cascade never clears it. Nothing NEW is owed after an
+  // erasure, only what was: the erasure keeps the debts pending at that moment (pseudonymised,
+  // `deleteAccount`) and the drain settles them. SHARE, the default: ordered against the sweep's
+  // exclusive lock and against nothing else.
   const erasedAt = await readAccountErasedAt(tx, dialect(tx), o.accountId);
   if (erasedAt !== null && erasedAt !== undefined) return;
   await tx.insert(creditRefundObligations).values({
@@ -113,6 +108,7 @@ export async function claimRefundObligations(
 ): Promise<ClaimedRefundObligation[]> {
   const limit = opts.limit ?? REFUND_OBLIGATION_BATCH;
   const until = new Date(now.getTime() + (opts.leaseMs ?? REFUND_OBLIGATION_LEASE_MS));
+  // No `erased_at` filter, deliberately: a debt an erasure kept is still owed.
   const due = tx.select({ id: creditRefundObligations.id })
     .from(creditRefundObligations)
     .where(and(
