@@ -10,6 +10,7 @@
  */
 
 import { bridgeFetch } from "./bridge-fetch.js";
+import type { TravelledChangeWire } from "../../webapp/app/shell/travelled-change";
 
 /** Where the engine serves it. Root-relative, like every path in this window. */
 const SCREENING_PATH = "/account/screening";
@@ -51,6 +52,10 @@ export interface ScreeningPreference {
   /** The product default — what the editor prefills with, and what `null` resolves to. */
   defaultBar: string;
   screenerAutoApply: boolean;
+  /** The save was sent to the install that organizes; nothing was written on this door. */
+  pending?: true;
+  /** On a reader: where this install's last Screening change went (`travelled-change.tsx`). */
+  change?: TravelledChangeWire;
 }
 
 interface WireError {

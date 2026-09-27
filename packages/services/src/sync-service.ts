@@ -1,9 +1,9 @@
 import { and, asc, desc, eq, exists, gt, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import {
   approvals, changeLog, drafts, messages, messageStates, messageTags, prunedThroughSeq, routingDecisions, seqBounds,
-  rules, tags, type EntityType,
+  rules, tags, rulesTheActWrote, type EntityType,
 } from "@trafficflow/db";
-import type { Db, ServiceContext } from "./context.js";
+import { bridgeTx, type Db, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { clampPageLimit } from "./pagination.js";
 import { isUuid } from "./ids.js";
@@ -800,7 +800,8 @@ export class SyncService {
       //    `message_state` DTO carries `messageId` and not its own, and the client keys on the
       //    change's id, which is what the delta's `change_log.entity_id` holds.
       const ruleRows = await db.select().from(rules).where(eq(rules.accountId, accountId));
-      for (const r of ruleRows) emit("rule", r.id, ruleRowToDTO(r), r.updatedAt.toISOString());
+      const actWrote = await rulesTheActWrote(bridgeTx(db), accountId, ruleRows);
+      for (const r of ruleRows) emit("rule", r.id, ruleRowToDTO(r, actWrote.has(r.id)), r.updatedAt.toISOString());
 
       // AND THE ARRANGEMENT THEY STAND IN FOR on every mailbox this install only reads: the
       // organizer's rules out of the cached document, one entity per mailbox, beside the local

@@ -1,5 +1,5 @@
 import {
-  getScreeningPreference, setScreeningPreference,
+  readScreeningPane, setScreeningPreference,
   DEFAULT_OHBOX_BAR, type ScreeningPreferenceUpdate,
 } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
@@ -24,7 +24,8 @@ export const screeningRoutes: Route[] = [
     relay: true,
     cost: "read",
     handler: async (req, deps) => {
-      const pref = await getScreeningPreference(serviceContext(deps, req));
+      // On a reader, the values its holders last applied and where the last change went.
+      const pref = await readScreeningPane(serviceContext(deps, req));
       // `defaultBar` travels with the read so the client shows the product default as the textarea
       // PLACEHOLDER when `ohboxBar` is null, rather than hardcoding the copy and drifting from it.
       return jsonResponse({ ...pref, defaultBar: DEFAULT_OHBOX_BAR });

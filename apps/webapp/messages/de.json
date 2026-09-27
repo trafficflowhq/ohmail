@@ -764,7 +764,8 @@
       "autoTurnOn": "Einschalten",
       "autoTurnOff": "Ausschalten",
       "actTitle": "Sichere Vorschläge für mich umsetzen",
-      "actDescription": "Ist ein Vorschlag zu einem wartenden Absender zu mindestens 90 % sicher, legt ohmail diesen Absender dort ab, wo der Vorschlag es sagt — in der Ohbox, in News, bei den Belegen, unter Aussortiert oder im Spam — und schreibt die Regel für dich. Jede solche Regel steht unter Einstellungen → Regeln, wo du sie rückgängig machen kannst. Absender, denen du geschrieben hast, und sensible Post werden so nie abgelegt. Standardmäßig aus.",
+      "actDescription": "Ist ein Vorschlag zu einem wartenden Absender zu mindestens 90 % sicher, legt ohmail diesen Absender dort ab, wo der Vorschlag es sagt — in der Ohbox, in News, bei den Belegen, unter Aussortiert oder im Spam — und schreibt die Regel für dich. Jede solche Regel ist als Regel von ohmail markiert, und du kannst sie unter Einstellungen → Regeln rückgängig machen. Absender, denen du geschrieben hast, und sensible Post werden so nie abgelegt. Standardmäßig aus.",
+      "actDescriptionUnmarked": "Ist ein Vorschlag zu einem wartenden Absender zu mindestens 90 % sicher, legt ohmail diesen Absender dort ab, wo der Vorschlag es sagt — in der Ohbox, in News, bei den Belegen, unter Aussortiert oder im Spam — und schreibt die Regel für dich. Jede solche Regel steht unter Einstellungen → Regeln, wo du sie rückgängig machen kannst. Absender, denen du geschrieben hast, und sensible Post werden so nie abgelegt. Standardmäßig aus.",
       "actNeedsSuggest": "Braucht automatische Vorschläge",
       "actReader": "Stell das auf der Installation ein, die deine Post organisiert.",
       "actFailed": "Diese Einstellung wurde nicht gespeichert. Sie ist unverändert.",
@@ -1358,7 +1359,13 @@
       "reset": "Standard verwenden",
       "microcopy": "Das ändert, wie neue Post einsortiert wird. Post, die schon in deiner Ohbox liegt, wird nicht verschoben.",
       "saved": "Gespeichert.",
-      "failed": "Das ließ sich nicht speichern — versuch es nochmal."
+      "failed": "Das ließ sich nicht speichern — versuch es nochmal.",
+      "asked": "Hier nicht gespeichert — der Rechner, der dieses Postfach organisiert, übernimmt es beim nächsten Durchlauf.",
+      "applied": "Übernommen.",
+      "refusedUnreadable": "Nicht übernommen — {name} konnte diese Änderung nicht lesen. Aktualisiere ohmail dort und speichere sie dann noch einmal.",
+      "refusedUnreadableUnknown": "Nicht übernommen — die Installation, die dieses Postfach organisiert, konnte diese Änderung nicht lesen. Aktualisiere ohmail dort und speichere sie dann noch einmal.",
+      "refusedOther": "Nicht übernommen — {name} hat diese Änderung nicht angenommen. Speichere sie noch einmal.",
+      "refusedOtherUnknown": "Nicht übernommen — die Installation, die dieses Postfach organisiert, hat diese Änderung nicht angenommen. Speichere sie noch einmal."
     },
     "images": {
       "title": "Bilder in Nachrichten laden",
@@ -3318,8 +3325,10 @@
       "promoted": "aus einer Screener-Entscheidung",
       "manual": "die hast du selbst gemacht",
       "migrated": "aus Hey übernommen",
-      "seeded-from-sent": "von jemandem, dem du geschrieben hast"
+      "seeded-from-sent": "von jemandem, dem du geschrieben hast",
+      "byOhmail": "aus einem sicheren Vorschlag"
     },
+    "groupByOhmail": "Von ohmail für dich entschieden",
     "meta": "{origin} · {date}",
     "metaPaused": "{origin} · {date} · pausiert, sortiert also nichts",
     "filesInto": "Sortiert in {place}",
@@ -3649,8 +3658,8 @@
   },
   "desktopScreener": {
     "filedHead": "Wie deine Post einsortiert wird",
-    "readerNote": "{name} organisiert dieses Postfach, diese Einstellungen tun hier also noch nichts. Sie werden auf diesem Computer gespeichert und greifen, sobald du das Postfach übernimmst — der Knopf dafür steht unter Einstellungen → Postfächer.",
-    "readerNoteUnknown": "Ein anderer ohmail-Organizer hat dieses Postfach, diese Einstellungen tun hier also noch nichts. Sie werden auf diesem Computer gespeichert und greifen, sobald du das Postfach übernimmst — der Knopf dafür steht unter Einstellungen → Postfächer.",
+    "readerNote": "{name} organisiert dieses Postfach. Eine Änderung an der Einsortierung geht von hier dorthin und greift beim nächsten Durchlauf.",
+    "readerNoteUnknown": "Ein anderer ohmail-Organizer hat dieses Postfach. Eine Änderung an der Einsortierung geht von hier dorthin und greift beim nächsten Durchlauf.",
     "readerNoteNobody": "Nichts organisiert dieses Postfach, diese Einstellungen tun hier also noch nichts. Sie werden auf diesem Computer gespeichert und greifen, sobald du es hier organisierst — der Knopf dafür steht unter Einstellungen → Postfächer.",
     "postureLabel": "Meine Ohbox für das Wichtige freihalten",
     "postureWhy": "Ein: echte Menschen, dazu die Servicepost, auf die du reagierst. Offensichtliche Massenpost — Newsletter, Werbung — geht nach News und Belege. Aus: alles von Absendern, denen du geschrieben hast, erreicht die Ohbox. Das gilt für die NÄCHSTEN Nachrichten; was schon in deiner Ohbox liegt, bleibt liegen.",

@@ -1347,14 +1347,14 @@ export async function setDormancyDays(
      * unfinishable. `planAccountFanOut` carries that state by name.
      */
     const plan = await planAccountFanOut(tx, ctx.accountId, "profile.update");
+    // Only what this request named — absence is load-bearing in the partial. The scope travels
+    // beside the window: left behind, a reader's "all time" wrote a row the organizer never reads
+    // while the window it belongs with was applied there.
     const travelling = {
-      // Only what this request named — absence is load-bearing in the partial. `screeningScope`
-      // is deliberately NOT in the payload: it is not one of ruling 6's four fields, and adding
-      // a member is a ruling rather than a commit. Named here so the omission is a decision
-      // somebody can find rather than a field that was forgotten.
       ...(setsWindow ? { dormancyDays: stored } : {}),
+      ...(scope !== undefined ? { screeningScope: scope } : {}),
     };
-    if (!plan.writeLocally && setsWindow) {
+    if (!plan.writeLocally) {
       travel = await fanOutProfileEdit(tx, ctx, plan, travelling);
       pending = true;
       const [current] = await tx.select({
@@ -1406,7 +1406,7 @@ export async function setDormancyDays(
       });
     effective = row;
     await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order above
-    if (profileTravelled(plan) && setsWindow) {
+    if (profileTravelled(plan)) {
       travel = await fanOutProfileEdit(tx, ctx, plan, travelling);
     }
   });

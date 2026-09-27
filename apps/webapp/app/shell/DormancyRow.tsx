@@ -15,6 +15,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { SegmentedControl, SettingsRow } from "@ohmail/ui";
 import { DEFAULT_DORMANCY_DAYS } from "@ohmail/client-engine";
+import { standingNote, TravelledChangeNote, type TravelledChangeWire } from "./travelled-change";
 
 /**
  * The rungs the dial offers, in days — the onboarding flow's ladder, which is the same question
@@ -37,6 +38,7 @@ const ALL_TIME = "all";
 export function DormancyRow({
   days,
   scope,
+  change = null,
   setDormancyDays,
 }: {
   /** The EFFECTIVE window as the server answered it — always a number. */
@@ -47,6 +49,12 @@ export function DormancyRow({
    * restores what was chosen rather than a default, and that is what "extend later" promises.
    */
   scope: "window" | "all_time";
+  /**
+   * On a reader, where the last change of the dial went (`useConsentState().dormancyChange`): on
+   * its way, or refused with the holder's name. The dial shows this install's own row, which the
+   * holder's apply does not write, so an applied change says nothing here.
+   */
+  change?: TravelledChangeWire | null;
   /**
    * `useConsentState().setDormancyDays` — and it must be THAT one, not `consentApi`, or the open
    * tab keeps partitioning with the stale window. Resolves to the effective window it stored.
@@ -144,6 +152,7 @@ export function DormancyRow({
       </p>
       <p className="set-note-inline">{t("dormancy.microcopyWider")}</p>
       {failed ? <span className="scn-sg-note">{t("dormancy.failed")}</span> : null}
+      {failed ? null : <TravelledChangeNote note={standingNote(change)} />}
     </>
   );
 }

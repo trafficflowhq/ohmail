@@ -9,6 +9,20 @@
  * a read that never landed would narrow the audience and the pile scope on somebody's behalf.
  */
 
+import { Copy } from "../copy";
+
+/** The holder turned this install's last away change down, as the read says (`change`). */
+export interface AwayRefusal {
+  holder: string | null;
+  unreadable: boolean;
+}
+
+/** The sentence for a refusal the read carries — the web's `settings.screening.refused*`. */
+export function awayRefusalLine(r: AwayRefusal | null): string | null {
+  if (r === null) return null;
+  return r.holder !== null ? Copy.awayRefused(r.holder, r.unreadable) : Copy.awayRefusedUnknown(r.unreadable);
+}
+
 /** The single per-account row, as `GET/PUT /away-responder` serve it. */
 export interface AwayRow {
   enabled: boolean;

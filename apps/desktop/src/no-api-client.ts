@@ -527,11 +527,20 @@ export const aiSettings: {
     }>;
 } = absent;
 
+/** `travelled-change.tsx`'s wire shape, restated: this stub imports nothing from the client. */
+type ChangeWire = {
+    state: "asked" | "applied" | "refused";
+    holder: string | null;
+    refusal: "unreadable" | "other" | null;
+};
+
 export interface ScreeningPreferenceWire {
     ohboxPolicy: "people_only" | "people_and_replied" | null;
     ohboxBar: string | null;
     defaultBar: string;
     screenerAutoApply: boolean;
+    pending?: true;
+    change?: ChangeWire;
 }
 
 export const screeningSettings: {
@@ -559,6 +568,8 @@ export interface ConsentStateWire {
         activeUndecidedSenders: number;
         dormantUndecidedSenders: number;
     };
+    dormancyChange?: ChangeWire;
+    signatureChanges?: Record<string, ChangeWire>;
 }
 
 export interface SeedCandidateWire {
@@ -717,6 +728,7 @@ export interface AwayResponderWire {
     /** Folder names. `ohmail/Screener` is storable only beside `audience: "everyone"`. */
     piles: ("INBOX" | "ohmail/News" | "ohmail/Receipts" | "ohmail/Screener")[];
     updatedAt: string | null;
+    change?: ChangeWire;
 }
 
 /**

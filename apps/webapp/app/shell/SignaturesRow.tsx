@@ -41,12 +41,14 @@ import { useTranslations } from "next-intl";
 import { Button } from "@ohmail/ui";
 import { RichEditor } from "./RichEditorLazy";
 import { isRichEmpty, type RichValue } from "./rich-text";
+import { standingNote, TravelledChangeNote, type TravelledChangeWire } from "./travelled-change";
 
 export function SignaturesRow({
   mailboxes,
   signatures,
   signaturesHtml,
   signatureSources,
+  changes = {},
   setMailboxSignature,
 }: {
   /**
@@ -79,6 +81,11 @@ export function SignaturesRow({
    * actually sends with.
    */
   signatureSources: Readonly<Record<string, "organizer" | "local">>;
+  /**
+   * On a mailbox another install organizes, where its last signature change went
+   * (`useConsentState().signatureChanges`): on its way, or refused with the holder's name.
+   */
+  changes?: Readonly<Record<string, TravelledChangeWire>>;
   /** `useConsentState().setMailboxSignature` — one writer, the value every composer reads. */
   setMailboxSignature: (
     mailboxId: string, signature: string | null, signatureHtml?: string | null,
@@ -203,6 +210,7 @@ export function SignaturesRow({
                 />
               </div>
             ) : null}
+            <TravelledChangeNote note={standingNote(changes[mb.id])} />
             {reading ? null : (
             <div className="sig-settings-actions">
               <Button

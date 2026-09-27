@@ -39,6 +39,7 @@ import {
 } from "@trafficflow/core/away-scope";
 import { away as awayApi, type AwayResponderSaveWire, type AwayResponderWire } from "../api-client";
 import { dayEnd, dayStamp, dayValue, tomorrowNine } from "./format";
+import { noteOf, TravelledChangeNote, type TravelledNote } from "./travelled-change";
 import { activeFormatLocale } from "./locale";
 
 /**
@@ -274,8 +275,15 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
    * account another install organizes, the write did not happen here and a request is waiting.
    */
   const [state, setState] = useState<
-    "idle" | "saved" | "asked" | "applied" | "changedElsewhere" | "failed" | "failedWire" | "expired"
+    "idle" | "saved" | "asked" | "applied" | "changedElsewhere" | "failed" | "failedWire" | "expired" | "refused"
   >("idle");
+  /** The holder's refusal of this install's last away change, as the read reports it. */
+  const [refusal, setRefusal] = useState<TravelledNote | null>(null);
+  /** A read's `change`, when it is a refusal — the one answer about a request the row can say. */
+  const refusalOf = (wire: AwayResponderWire): TravelledNote | null => {
+    const note = noteOf(wire.change);
+    return note?.kind === "refused" ? note : null;
+  };
   /**
    * The read came back refused — a state rather than silence because the control has its own pane
    * now. As the last row of the Screener pane a failed load could render nothing; on its own pane,
@@ -358,6 +366,8 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
           enabled: loaded.enabled, audience: loaded.audience, throttle: loaded.throttle,
           piles: loaded.piles ?? [...AWAY_PILES_DEFAULT],
         });
+        const refused = refusalOf(loaded);
+        if (refused) { setRefusal(refused); setState("refused"); }
       } catch {
         // No server, or a refused read. The CONTROLS stay absent rather than offering one whose
         // Save would fail — a responder somebody believes they configured is worse than none — and
@@ -413,6 +423,9 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
           try {
             const now = await wireOf().state();
             if (!alive.current || gen !== saveGen.current) return;
+            /* THE HOLDER TURNED IT AWAY: the row did not move and never will for this request. */
+            const refused = refusalOf(now);
+            if (refused) { setRefusal(refused); setState("refused"); return; }
             if (now.updatedAt !== askedAt) {
               setDraft({
                 enabled: now.enabled, body: now.body,
@@ -716,6 +729,7 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
         {state === "changedElsewhere" ? (
           <span className="set-note-inline" role="status">{t("changedElsewhere")}</span>
         ) : null}
+        {state === "refused" ? <TravelledChangeNote note={refusal} className="set-note-inline" /> : null}
         {state === "failed" ? (
           <span className="set-note-inline" role="alert">{complete ? t("failed") : t("incomplete")}</span>
         ) : null}

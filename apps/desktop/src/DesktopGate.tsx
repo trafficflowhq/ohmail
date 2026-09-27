@@ -1252,6 +1252,9 @@ export function DesktopGate() {
            in this build, so it drew nothing and the pane was blank. This is the same three
            controls over the same three columns, over the pipe. */
         {...(status ? { screeningSection: <DesktopScreening door={status.mode ?? null} /> } : {})}
+        /* THE HOSTED DOOR'S RULES ARE A COPY OF THE ACCOUNT'S, and the copy drops which rules the act
+           wrote, so the act's switch does not promise that group here. */
+        {...(status?.mode === "cloud" ? { actRulesUnmarked: true } : {})}
         /* SETTINGS → NOTIFICATIONS' OS ANSWER. Unconditional and not gated on `status`: this is a
            fact about the WINDOW — it holds no notification permission and cannot acquire one, so
            its shell asks the platform on first use — and that is true before the shell has said

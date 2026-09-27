@@ -2,7 +2,7 @@ import { and, asc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import {
   auditAction, auditLog, contacts, fencedAccountWrite, folderState, learningSignals, messages,
   recordChange, recordRuleDelta, rules as rulesTbl, SCREENER_FOLDER, admitsDestination,
-  type LedgerTx, type Tx,
+  SCREENER_ACT_TRIGGER_PREFIX, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import {
@@ -177,14 +177,14 @@ async function retireAutoActRules(db: Tx, accountId: string, limit: number, now:
          where ls.account_id = ${rulesTbl.accountId}
            and ls.kind = 'screener'
            and lower(ls.sender_address) = lower(${rulesTbl.match})
-           and ls.triggering_action_id like 'screener:auto:%'
+           and ls.triggering_action_id like ${`${SCREENER_ACT_TRIGGER_PREFIX}%`}
       )`,
       sql`not exists (
         select 1 from ${learningSignals} ls
          where ls.account_id = ${rulesTbl.accountId}
            and ls.kind = 'screener'
            and lower(ls.sender_address) = lower(${rulesTbl.match})
-           and ls.triggering_action_id not like 'screener:auto:%'
+           and ls.triggering_action_id not like ${`${SCREENER_ACT_TRIGGER_PREFIX}%`}
       )`,
     ))
     .limit(limit);

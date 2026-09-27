@@ -5,7 +5,7 @@ import {
   setBlockTrackingPixels,
   setDormancyDays, setFoldersEnabled, setLocale, setMailboxFoldersEnabled, setMailboxSignature,
   setOnboardingCompleted, setResurfaceTime, setThemeFace,
-  unmovedReport,
+  unmovedReport, readProfileChange, readMailboxProfileChanges, type ProfileChangeWire,
   DEFAULT_DORMANCY_DAYS, RESURFACE_TIME_RE, SEED_MAX_ADDRESSES, SUPPORTED_LOCALES,
   SUPPORTED_THEME_FACES,
   ServiceError,
@@ -16,6 +16,29 @@ import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { readBody } from "./shared.js";
+
+/** The payload members each pane's change travels in (`profile-request.ts`). */
+const DORMANCY_FIELDS = ["dormancyDays", "screeningScope"] as const;
+const SIGNATURE_FIELDS = ["signature", "signatureHtml"] as const;
+
+/**
+ * WHERE A READER'S LAST DORMANCY AND SIGNATURE CHANGES WENT — beside the values, on the read and
+ * on the write's echo, so the dial and each signature editor say "sent" and a refusal with the
+ * holder's name. Absent where there is nothing to say, which an older client reads as nothing.
+ */
+async function travelledChanges(
+  ctx: ReturnType<typeof serviceContext>, which: { dormancy: boolean; signatures: boolean },
+): Promise<{ dormancyChange?: ProfileChangeWire; signatureChanges?: Record<string, ProfileChangeWire> }> {
+  const db = ctx.db as unknown as Tx;
+  const dormancy = which.dormancy
+    ? (await readProfileChange(db, ctx.accountId, DORMANCY_FIELDS, ctx.now())).change : null;
+  const signatures = which.signatures
+    ? await readMailboxProfileChanges(db, ctx.accountId, SIGNATURE_FIELDS, ctx.now()) : {};
+  return {
+    ...(dormancy === null ? {} : { dormancyChange: dormancy }),
+    ...(Object.keys(signatures).length === 0 ? {} : { signatureChanges: signatures }),
+  };
+}
 
 /** The uuid shape `folderMailboxes` keys must have — `message-service.ts`'s spelling. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -156,6 +179,7 @@ async function applyConsentSettings(
   signatureSources?: Record<string, "organizer" | "local">;
   locale?: string | null; themeFace?: string | null; resurfaceTime?: string | null;
   onboardingCompletedAt?: string;
+  dormancyChange?: ProfileChangeWire; signatureChanges?: Record<string, ProfileChangeWire>;
 }> {
   const hasAuto = "autoSuggest" in body;
   const hasAct = "autoAct" in body;
@@ -509,6 +533,7 @@ async function applyConsentSettings(
   signatureSources?: Record<string, "organizer" | "local">;
     locale?: string | null; themeFace?: string | null; resurfaceTime?: string | null;
     onboardingCompletedAt?: string;
+    dormancyChange?: ProfileChangeWire; signatureChanges?: Record<string, ProfileChangeWire>;
   } = {};
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
     // The transaction arrives BRANDED: `brandDialect` wraps a handle's `transaction` so the
@@ -610,6 +635,10 @@ async function applyConsentSettings(
         (await setOnboardingCompleted(txCtx)).onboardingCompletedAt;
     }
   });
+  // After the commit, so the requests this write queued are the ones read.
+  Object.assign(out, await travelledChanges(ctx, {
+    dormancy: hasDormancy || hasScope, signatures: signatures !== undefined || signaturesHtml !== undefined,
+  }));
   return out;
 }
 
@@ -675,7 +704,9 @@ export const consentRoutes: Route[] = [
          live sign-off is in the organizer's published document; asking for the two maps
          separately would also mean two joins answering about one mailbox at two instants. */
       const effectiveSignatures = await effectiveMailboxSignatures(ctx.db, ctx.accountId);
+      const travelled = await travelledChanges(ctx, { dormancy: true, signatures: true });
       return jsonResponse({
+        ...travelled,
         seedConfirmedAt: settings.seedConfirmedAt,
         screeningResetAt: settings.screeningResetAt,
         // Always a number, never null: the client needs a window to partition with, and

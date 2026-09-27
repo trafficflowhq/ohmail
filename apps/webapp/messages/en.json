@@ -764,7 +764,8 @@
       "autoTurnOn": "Turn on",
       "autoTurnOff": "Turn off",
       "actTitle": "Act on confident suggestions for me",
-      "actDescription": "When a suggestion about a waiting sender is at least 90% sure, ohmail files that sender where the suggestion says — the Ohbox, News, Receipts, Screened or Spam — and writes the rule for you. Each such rule is listed in Settings → Rules, where you can undo it. Senders you have written to, and sensitive mail, are never filed this way. Off by default.",
+      "actDescription": "When a suggestion about a waiting sender is at least 90% sure, ohmail files that sender where the suggestion says — the Ohbox, News, Receipts, Screened or Spam — and writes the rule for you. Each such rule is marked as ohmail's and you can undo it in Settings → Rules. Senders you have written to, and sensitive mail, are never filed this way. Off by default.",
+      "actDescriptionUnmarked": "When a suggestion about a waiting sender is at least 90% sure, ohmail files that sender where the suggestion says — the Ohbox, News, Receipts, Screened or Spam — and writes the rule for you. Each such rule is listed in Settings → Rules, where you can undo it. Senders you have written to, and sensitive mail, are never filed this way. Off by default.",
       "actNeedsSuggest": "Needs automatic suggestions",
       "actReader": "Set this on the install that organizes your mail.",
       "actFailed": "That setting did not save. It is unchanged.",
@@ -1358,7 +1359,13 @@
       "reset": "Use the default",
       "microcopy": "This changes how new mail is filed. It doesn't move mail already in your Ohbox.",
       "saved": "Saved.",
-      "failed": "Couldn't save that — try again."
+      "failed": "Couldn't save that — try again.",
+      "asked": "Not saved here — the machine that organizes this mailbox applies it on its next pass.",
+      "applied": "Applied.",
+      "refusedUnreadable": "Not applied — {name} could not read this change. Update ohmail there, then save it again.",
+      "refusedUnreadableUnknown": "Not applied — the install that organizes this mailbox could not read this change. Update ohmail there, then save it again.",
+      "refusedOther": "Not applied — {name} did not take this change. Save it again.",
+      "refusedOtherUnknown": "Not applied — the install that organizes this mailbox did not take this change. Save it again."
     },
     "images": {
       "title": "Load images in messages",
@@ -3318,8 +3325,10 @@
       "promoted": "from a Screener decision",
       "manual": "you made this one",
       "migrated": "brought over from Hey",
-      "seeded-from-sent": "from someone you've written to"
+      "seeded-from-sent": "from someone you've written to",
+      "byOhmail": "from a confident suggestion"
     },
+    "groupByOhmail": "Decided for you by ohmail",
     "meta": "{origin} · {date}",
     "metaPaused": "{origin} · {date} · paused, so it sorts nothing",
     "filesInto": "Files into {place}",
@@ -3649,8 +3658,8 @@
   },
   "desktopScreener": {
     "filedHead": "How your mail is filed",
-    "readerNote": "{name} organizes this mailbox, so these controls do nothing here yet. They are stored on this computer and take effect if you take the mailbox over — Settings → Mailboxes has the button.",
-    "readerNoteUnknown": "Another ohmail organizer has this mailbox, so these controls do nothing here yet. They are stored on this computer and take effect if you take the mailbox over — Settings → Mailboxes has the button.",
+    "readerNote": "{name} organizes this mailbox. A filing change made here is sent there and applied on its next pass.",
+    "readerNoteUnknown": "Another ohmail organizer has this mailbox. A filing change made here is sent there and applied on its next pass.",
     "readerNoteNobody": "Nothing organizes this mailbox, so these controls do nothing here yet. They are stored on this computer and take effect once you organize it here — Settings → Mailboxes has the button.",
     "postureLabel": "Keep my Ohbox for what matters",
     "postureWhy": "On: real people, plus the service mail you act on. Obvious bulk — newsletters, promotions — goes to News and Receipts. Off: anything from a sender you have written to reaches the Ohbox. It changes how the NEXT messages are filed; mail already in your Ohbox stays where it is.",

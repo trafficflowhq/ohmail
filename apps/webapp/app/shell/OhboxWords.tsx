@@ -46,6 +46,8 @@ export function OhboxWords({
   /**
    * Write it. `null` means "revert to the default". Resolves with the bar the server confirmed
    * (`null` when it reverted); REJECTS to show the failure line — the reason is never invented here.
+   * `{ bar, travelled: true }` is a save sent to the install that organizes: `bar` is still the
+   * stored one and the host's own sentence says where the words went, so this box says nothing.
    */
   onSave,
   /** A sibling control on the same surface is mid-write. Disables this one; not a state of its own. */
@@ -53,7 +55,7 @@ export function OhboxWords({
 }: {
   bar: string | null;
   defaultBar: string;
-  onSave: (next: string | null) => Promise<string | null>;
+  onSave: (next: string | null) => Promise<string | null | { bar: string | null; travelled: true }>;
   busy?: boolean;
 }) {
   const t = useTranslations("settings");
@@ -81,6 +83,15 @@ export function OhboxWords({
   const [draft, setDraft] = useState<string>(bar ?? shownDefault);
   const [pending, setPending] = useState(false);
   const [note, setNote] = useState<"none" | "saved" | "failed">("none");
+
+  /* A NEW STORED BAR FROM THE HOST — the words a holder applied, read after a save that travelled.
+     Taken into the box only while the draft is untouched, the language re-seed's rule below. */
+  const [seenBar, setSeenBar] = useState<string | null>(bar);
+  if (seenBar !== bar) {
+    setSeenBar(bar);
+    if (draft.trim() === (stored ?? shownDefault).trim()) setDraft(bar ?? shownDefault);
+    setStored(bar);
+  }
 
   /* THE LANGUAGE CAN CHANGE UNDER THIS BOX. The settings pane is re-rendered, not remounted, when
      the app's language is switched, so the draft survives the switch — and an untouched prefill
@@ -120,9 +131,11 @@ export function OhboxWords({
     void (async () => {
       try {
         const landed = await onSave(next);
-        setStored(landed);
-        setDraft(landed ?? shownDefault);
-        setNote("saved");
+        const travelled = landed !== null && typeof landed === "object";
+        const kept = travelled ? landed.bar : landed;
+        setStored(kept);
+        setDraft(kept ?? shownDefault);
+        setNote(travelled ? "none" : "saved");
       } catch {
         setNote("failed");
       } finally {

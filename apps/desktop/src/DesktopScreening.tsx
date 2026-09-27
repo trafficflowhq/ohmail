@@ -21,6 +21,7 @@ import { SettingsNote, SettingsRow, SettingsSubhead, Switch } from "@ohmail/ui";
 import { useMailboxFacts } from "../../webapp/app/shell/MailStateProvider";
 import { readerHolder, screenerMode } from "../../webapp/app/shell/mail-state";
 import { useManagedService } from "../../webapp/app/shell/managed-service";
+import { TravelledChangeNote, useTravelledChange } from "../../webapp/app/shell/travelled-change";
 
 import { DesktopAutoSuggest } from "./DesktopAutoSuggest.js";
 import { DesktopScreeningWords } from "./DesktopScreeningWords.js";
@@ -46,12 +47,29 @@ export function DesktopScreening({
   const [read, setRead] = useState<ScreeningRead | null>(null);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
+  /** What the watcher last read, handed to the words below so an applied bar reaches the box. */
+  const [watched, setWatched] = useState<ScreeningPreference | null>(null);
+
+  /* ON A READER A CHANGE IS SENT, NOT SAVED — the shared pane's sentence and its answer. */
+  const change = useTravelledChange<ScreeningPreference>({
+    reread: async () => {
+      const r = await readScreening();
+      if (r.state !== "ready") throw new Error(r.state);
+      return r.pref;
+    },
+    onRead: (pref) => { setRead({ state: "ready", pref }); setWatched(pref); },
+  });
+  const heard = change.heard;
 
   useEffect(() => {
     if (door === null) return;
     let cancelled = false;
     void readScreening().then(
-      (loaded) => { if (!cancelled) setRead(loaded); },
+      (loaded) => {
+        if (cancelled) return;
+        setRead(loaded);
+        if (loaded.state === "ready") heard(loaded.pref, false);
+      },
       () => {
         /* A refusal the engine composed — a hosted door with nobody signed in answers one, and so
            does a route that failed for a reason it has already logged. Left undrawn rather than
@@ -61,7 +79,7 @@ export function DesktopScreening({
       },
     );
     return () => { cancelled = true; };
-  }, [door]);
+  }, [door, heard]);
 
   if (read === null || read.state === "not-served") return null;
 
@@ -90,8 +108,8 @@ export function DesktopScreening({
     setPending(true);
     setFailed(false);
     void saveScreening(patch).then(
-      (landed) => { setRead({ state: "ready", pref: landed }); setPending(false); },
-      () => { setFailed(true); setPending(false); },
+      (landed) => { setRead({ state: "ready", pref: landed }); heard(landed, true); setPending(false); },
+      () => { change.clear(); setFailed(true); setPending(false); },
     );
   };
 
@@ -100,13 +118,10 @@ export function DesktopScreening({
       <SettingsSubhead>{t("filedHead")}</SettingsSubhead>
 
       {/* ── A READER'S PANE SAYS SO, ABOVE THE CONTROLS. Measured on the released 0.13.7:
-          an install reading a mailbox ohmail Cloud holds offered the posture, the
-          automatic-suggestion consent and the dormancy window as though this install
-          screened — all inert, none saying so. The controls STAY, deliberately: the values
-          are stored on this computer and are what the install screens by the moment somebody
-          takes the mailbox over, so removing them would make setting up ahead of a takeover
-          impossible. What was missing is the sentence. `SettingsNote`, not an alarm — nothing
-          is broken. Withheld where this install organizes: an ordinary pane is unchanged. */}
+          the posture and the window were offered as though this install screened, none saying
+          so. A filing change made here is sent to the install that organizes (mail 0094), and
+          the note says that; the change's own answer is the sentence under the switches.
+          `SettingsNote`, not an alarm. Withheld where this install organizes. */}
       {readOnly ? (
         <SettingsNote>
           {readOnly.nobody
@@ -160,6 +175,7 @@ export function DesktopScreening({
       ) : null}
 
       {failed ? <p className="join-error">{t("saveFailed")}</p> : null}
+      <TravelledChangeNote note={change.note} />
 
       {/* THE BAR, still its own component. It carries its own read, its own save and its own
           failure line, and that is worth one extra read of the same row rather than one component
@@ -167,7 +183,7 @@ export function DesktopScreening({
           "Saved." from one is taken as an answer about the other. It is also the only surface in
           this build whose copy is asserted to be absent from the preview artifact, and folding it
           in here would have moved that marker. */}
-      <DesktopScreeningWords door={door} />
+      <DesktopScreeningWords door={door} said={(landed) => heard(landed, true)} latest={watched} />
     </>
   );
 }

@@ -673,10 +673,8 @@ export interface RuleDTO {
   priority: number;
   /**
    * Where this rule came from. `seeded-from-sent` is the onboarding seed: the user had written
-   * to this address, so the rule records consent they had already given by writing.
-   *
-   * `promoted` still conflates a decision the user took in the Screener with one taken for
-   * them, which is a distinction worth splitting the day anything decides on their behalf.
+   * to this address, so the rule records consent they had already given by writing. `promoted`
+   * covers a Screener press and the act on suggestions alike; {@link byOhmail} tells them apart.
    */
   provenance: "manual" | "migrated" | "promoted" | "seeded-from-sent";
   enabled: boolean;
@@ -709,6 +707,11 @@ export interface RuleDTO {
    * a surface then never says every message arrived when past mail was asked for.
    */
   retro?: { requestedAt: ISODateTime | null; doneAt: ISODateTime | null };
+  /**
+   * THE ACT ON SUGGESTIONS WROTE THIS RULE and no person has decided about the sender since.
+   * Absent from an older server, and from a copy that does not carry it; both read as a person's.
+   */
+  byOhmail?: boolean;
 }
 
 export interface EngineDraft {

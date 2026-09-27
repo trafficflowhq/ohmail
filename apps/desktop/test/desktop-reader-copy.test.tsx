@@ -47,10 +47,8 @@ vi.mock("../../webapp/app/shell/MailStateProvider", async () => {
  *
  * ## THE SHAPE OF THE FIX, AND WHAT IS DELIBERATELY NOT DONE
  *
- * The Screener's CONTROLS stay. Their values are stored on this computer and are what the install
- * will screen by the moment somebody takes the mailbox over, so removing them would make setting
- * up ahead of a takeover impossible and would throw away the only record of what this machine
- * believes. What was missing was the sentence, and that is what is added.
+ * The Screener's CONTROLS stay: a filing change made there is sent to the install that organizes
+ * the mailbox (mail 0094). What was missing was the sentence, and that is what is added.
  *
  * The two Mailbox rows and the Remove bullet are different: each was a false STATEMENT rather than
  * an inert control, so each changes its words.

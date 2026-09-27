@@ -7,7 +7,7 @@ import {
   SCREENER_SUGGESTION_PROVENANCE, type LedgerTx, type ScreenerActRefusal,
   screenerSuggestionsBySender, resolveCutline, senderIsActiveSql, senderIsDecidedSql, heldSortKey,
   decisionCanBeApplied, readRequestEligibility,
-  DECIDABLE_FOLDERS, SCREENER_FOLDER,
+  DECIDABLE_FOLDERS, SCREENER_FOLDER, SCREENER_ACT_TRIGGER_PREFIX,
   type ResolvedCutline, type Tx,
 } from "@trafficflow/db";
 import { capabilityForKind } from "@trafficflow/core/adapters/organizer-lease";
@@ -274,7 +274,7 @@ export async function screenerAutoActPass(
         const applied = await applyScreenerDecision(tx, {
           accountId, scope: "sender", address: plan.address,
           appliedFolder: plan.appliedFolder, decision: plan.decision,
-          triggeringActionId: `screener:auto:${plan.messageId}`,
+          triggeringActionId: `${SCREENER_ACT_TRIGGER_PREFIX}${plan.messageId}`,
           now: now(),
           // NOT A PRESS, so it does not move an account-wide cutoff — the drain's reading of
           // `ApplyScreenerDecisionInput.stampBaseline`, for the same reason.

@@ -12,12 +12,13 @@ import { useCallback, useEffect, useState } from "react";
 import { View } from "react-native";
 import { Copy } from "../src/copy";
 import { useLocale } from "../src/i18n/LocaleProvider";
-import { readAway, saveAway } from "../src/net/away";
+import { readAwayAnswer, saveAway } from "../src/net/away";
 import { useConnection } from "../src/net/connection";
 import { calendarDayLabel, dayEndIso, readerZone, setTimeLabel } from "../src/state/live";
 import { useWorld } from "../src/state/world";
 import {
-  awayAudienceWide, awayPileWords, awaySaveBlocked, awaySaveBody, awaySay, type AwayRow,
+  awayAudienceWide, awayPileWords, awayRefusalLine, awaySaveBlocked, awaySaveBody, awaySay,
+  type AwayRefusal, type AwayRow,
 } from "../src/ui/away-form";
 import { Button, Panel, Rule, Screen, Scroller, Section, Txt } from "../src/ui/base";
 import { DetailBar } from "../src/ui/chrome";
@@ -61,6 +62,8 @@ function AwayBody() {
   const [saving, setSaving] = useState(false);
   const [said, setSaid] = useState<Said>(null);
   const [picking, setPicking] = useState(false);
+  /** The holder's refusal of the last away change sent from here, as the read reports it. */
+  const [refused, setRefused] = useState<AwayRefusal | null>(null);
 
   /** Take a server row as the truth on screen — the values shown are always the stored ones. */
   const adopt = useCallback((row: AwayRow) => {
@@ -73,13 +76,14 @@ function AwayBody() {
   useEffect(() => {
     if (session === null) return;
     let live = true;
-    void readAway(session).then((row) => {
+    void readAwayAnswer(session).then((answer) => {
       if (!live) return;
       setAsked(true);
       /* A read that could not be made is NOT "off": it is "we could not ask", and the difference
          decides whether a save is allowed at all. `null` leaves the form unarmed and says so. */
-      if (row === null) { setSaid("unreachable"); return; }
-      adopt(row);
+      if (answer === null) { setSaid("unreachable"); return; }
+      adopt(answer.row);
+      setRefused(answer.refused);
     });
     return () => { live = false; };
   }, [session, adopt]);
@@ -101,6 +105,7 @@ function AwayBody() {
     if (next === null || session === null) { setSaid("unreachable"); return; }
     setSaving(true);
     setSaid(null);
+    setRefused(null);
     const out = await saveAway(session, next);
     setSaving(false);
     if (out.kind === "refused") { setSaid("failed"); return; }
@@ -234,6 +239,8 @@ function AwayBody() {
             </Txt>
           ) : asked && read === null ? (
             <Txt variant="note" tone="ink">{Copy.awayUnreachable}</Txt>
+          ) : refused !== null ? (
+            <Txt variant="note" tone="ink">{awayRefusalLine(refused)}</Txt>
           ) : null}
         </View>
       </Scroller>

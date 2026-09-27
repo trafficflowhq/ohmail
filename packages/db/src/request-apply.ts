@@ -294,6 +294,8 @@ export interface ProfileAwayUpdate {
 export interface ValidatedProfileUpdate {
   awayResponder?: ProfileAwayUpdate;
   signature?: string | null;
+  /** `account_settings.screening_scope` — the dormancy window's other answer, never NULL. */
+  screeningScope?: "window" | "all_time";
   /**
    * THE SIGNATURE'S MARKUP (mail 0098), or ABSENT from an install one release older.
    *
@@ -384,6 +386,14 @@ export function validateProfileUpdatePayload(payload: unknown): ValidatedProfile
     if (typeof html === "string"
       && Buffer.byteLength(html, "utf8") > TRAVELLING_SIGNATURE_HTML_MAX_BYTES) return null;
     out.signatureHtml = html;
+  }
+
+  /* THE SCOPE, the dial's other answer (mail 0083): the column is NOT NULL with a closed pair, so
+     anything else, `null` included, refuses the record rather than being dropped. */
+  if ("screeningScope" in o) {
+    const scope = o.screeningScope;
+    if (scope !== "window" && scope !== "all_time") return null;
+    out.screeningScope = scope;
   }
 
   if ("dormancyDays" in o) {
@@ -539,6 +549,12 @@ export async function applyProfileUpdate(
 
   const settings: Partial<typeof accountSettings.$inferInsert> = {};
   const insert: typeof accountSettings.$inferInsert = { accountId };
+
+  if (payload.screeningScope !== undefined) {
+    settings.screeningScope = payload.screeningScope;
+    insert.screeningScope = payload.screeningScope;
+    wrote.push("screeningScope");
+  }
 
   if (payload.dormancyDays !== undefined) {
     settings.dormancyDays = payload.dormancyDays;

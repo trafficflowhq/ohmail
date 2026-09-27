@@ -10,12 +10,12 @@ import {
   invitationWithoutEventWhere, itipReplyHeaderWhere,
   messages, folderState, messageStates, threads, routingDecisions, approvals, rules, drafts,
   tags, messageTags,
-  SCREENER_SUGGESTION_PROVENANCE, isScreenerActRefusal,
+  SCREENER_SUGGESTION_PROVENANCE, isScreenerActRefusal, rulesTheActWrote,
   type EntityType,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { draftContentRevision } from "../draft-revision.js";
-import type { Db } from "../context.js";
+import { bridgeTx, type Db } from "../context.js";
 import type {
   FolderDTO, SettingsDTO, MailboxProfileDTO,
   Folder, MessageDTO, MessageStateDTO, ThreadDTO, RoutingDecisionDTO, ApprovalDTO, RuleDTO,
@@ -76,7 +76,8 @@ export function approvalRowToDTO(a: typeof approvals.$inferSelect): ApprovalDTO 
   };
 }
 
-export function ruleRowToDTO(r: typeof rules.$inferSelect): RuleDTO {
+/** `byOhmail` comes from {@link rulesTheActWrote} over the same rows; a single row defaults to a person's. */
+export function ruleRowToDTO(r: typeof rules.$inferSelect, byOhmail = false): RuleDTO {
   return {
     id: r.id,
     kind: r.kind as RuleDTO["kind"],
@@ -91,6 +92,7 @@ export function ruleRowToDTO(r: typeof rules.$inferSelect): RuleDTO {
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
     retro: { requestedAt: iso(r.retroRequestedAt), doneAt: iso(r.retroDoneAt) },
+    byOhmail,
   };
 }
 
@@ -618,7 +620,8 @@ export async function materializeRules(
   if (ids.length === 0) return out;
   const rows = await db.select().from(rules)
     .where(and(inArray(rules.id, [...new Set(ids)]), eq(rules.accountId, accountId)));
-  for (const r of rows) out.set(r.id, ruleRowToDTO(r));
+  const act = await rulesTheActWrote(bridgeTx(db), accountId, rows);
+  for (const r of rows) out.set(r.id, ruleRowToDTO(r, act.has(r.id)));
   return out;
 }
 
@@ -829,7 +832,8 @@ export async function materializeApproval(db: Db, accountId: string, id: string)
 export async function materializeRule(db: Db, accountId: string, id: string): Promise<RuleDTO | null> {
   const [r] = await db.select().from(rules)
     .where(and(eq(rules.id, id), eq(rules.accountId, accountId))).limit(1);
-  return r ? ruleRowToDTO(r) : null;
+  if (!r) return null;
+  return ruleRowToDTO(r, (await rulesTheActWrote(bridgeTx(db), accountId, [r])).has(r.id));
 }
 
 /**
@@ -983,6 +987,8 @@ function profileRuleToDTO(mailboxId: string, at: number, e: unknown, asOf: strin
     createdAt: asOf,
     updatedAt: asOf,
     retro: { requestedAt: null, doneAt: null },
+    // The published document carries no mark, so a holder's rule read here reads as a person's.
+    byOhmail: false,
   };
 }
 

@@ -9,6 +9,7 @@ import { planAccountFanOut } from "./reader-request.js";
 import {
   fanOutProfileEdit, profileTravelled, type ProfileTravel,
 } from "./profile-request.js";
+import { readProfileChange, type ProfileChangeWire } from "./profile-change.js";
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
@@ -106,6 +107,27 @@ export interface ScreeningPreference {
 export interface ScreeningPreferenceResult extends ScreeningPreference {
   pending?: true;
   travel?: ProfileTravel;
+  /** Where this install's last Screening change went, on a reader; absent elsewhere. */
+  change?: ProfileChangeWire;
+}
+
+/**
+ * THE PANE'S READ — the stored preference, and on a reader the values the holders last applied
+ * from this install plus where the last change went. A reader's own row is never written by its
+ * edits, so without the applied values an "Applied." would sit over the old switches. The
+ * worker and the Screener read {@link getScreeningPreference}, never this.
+ */
+export async function readScreeningPane(ctx: ServiceContext): Promise<ScreeningPreferenceResult> {
+  const stored = await getScreeningPreference(ctx);
+  const { change, applied } = await readProfileChange(asTx(ctx), ctx.accountId, "screeningPreference", ctx.now());
+  const p = applied.ohboxPolicy;
+  return {
+    ...stored,
+    ...(p === null || p === "people_only" || p === "people_and_replied" ? { ohboxPolicy: p } : {}),
+    ...(applied.ohboxBar === null || typeof applied.ohboxBar === "string" ? { ohboxBar: applied.ohboxBar } : {}),
+    ...(typeof applied.screenerAutoApply === "boolean" ? { screenerAutoApply: applied.screenerAutoApply } : {}),
+    ...(change === null ? {} : { change }),
+  };
 }
 
 export async function getScreeningPreference(ctx: ServiceContext): Promise<ScreeningPreference> {
@@ -261,7 +283,7 @@ export async function setScreeningPreference(
 
   const current = await getScreeningPreference(ctx);
   return {
-    ...current,
+    ...(pending ? await readScreeningPane(ctx) : current),
     ...(pending ? { pending: true as const } : {}),
     ...(travel === undefined ? {} : { travel }),
   };

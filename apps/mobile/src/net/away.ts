@@ -1,7 +1,7 @@
 import type { ConnectedSession } from "./pairing.js";
 /* THE ONE BASE EVERY REQUEST IS COMPOSED OFF — see `request-base.ts`. */
 import { requestBase } from "./request-base";
-import type { AwayRow } from "../ui/away-form";
+import type { AwayRefusal, AwayRow } from "../ui/away-form";
 
 /**
  * The away responder over the paired door — `GET /away-responder` and `PUT /away-responder`, the
@@ -42,15 +42,29 @@ function rowOf(body: Record<string, unknown>): AwayRow {
   };
 }
 
-/** Read the row. `null` is "could not ask", which is never "off" and never a row to save over. */
-export async function readAway(session: ConnectedSession): Promise<AwayRow | null> {
+function refusalOf(body: Record<string, unknown>): AwayRefusal | null {
+  const c = body.change as { state?: unknown; holder?: unknown; refusal?: unknown } | undefined;
+  if (c?.state !== "refused") return null;
+  return { holder: typeof c.holder === "string" ? c.holder : null, unreadable: c.refusal !== "other" };
+}
+
+/** The row and a refusal beside it — kept apart, because the row is what a save sends back. */
+export async function readAwayAnswer(
+  session: ConnectedSession,
+): Promise<{ row: AwayRow; refused: AwayRefusal | null } | null> {
   try {
     const res = await session.fetch(`${requestBase(session)}/away-responder`, { method: "GET" });
     if (res.status !== 200) return null;
-    return rowOf((await res.json()) as Record<string, unknown>);
+    const body = (await res.json()) as Record<string, unknown>;
+    return { row: rowOf(body), refused: refusalOf(body) };
   } catch {
     return null;
   }
+}
+
+/** Read the row. `null` is "could not ask", which is never "off" and never a row to save over. */
+export async function readAway(session: ConnectedSession): Promise<AwayRow | null> {
+  return (await readAwayAnswer(session))?.row ?? null;
 }
 
 /**

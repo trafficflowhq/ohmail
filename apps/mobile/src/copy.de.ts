@@ -733,7 +733,7 @@ export const DE: Deck = {
   foldersFailed: "Das ließ sich nicht speichern — versuch es nochmal.",
   autoActTitle: "Sichere Vorschläge für mich umsetzen",
   autoActDescription:
-    "Ist ein Vorschlag zu einem wartenden Absender zu mindestens 90 % sicher, legt ohmail diesen Absender dort ab, wo der Vorschlag es sagt — in der Ohbox, in News, bei den Belegen, unter Aussortiert oder im Spam — und schreibt die Regel für dich. Jede solche Regel steht unter Einstellungen → Regeln, wo du sie rückgängig machen kannst. Absender, denen du geschrieben hast, und sensible Post werden so nie abgelegt. Standardmäßig aus.",
+    "Ist ein Vorschlag zu einem wartenden Absender zu mindestens 90 % sicher, legt ohmail diesen Absender dort ab, wo der Vorschlag es sagt — in der Ohbox, in News, bei den Belegen, unter Aussortiert oder im Spam — und schreibt die Regel für dich. Jede solche Regel ist als Regel von ohmail markiert, und du kannst sie unter Einstellungen → Regeln rückgängig machen. Absender, denen du geschrieben hast, und sensible Post werden so nie abgelegt. Standardmäßig aus.",
   autoActNeedsSuggest: "Braucht automatische Vorschläge",
   autoActReader: "Stell das auf der Installation ein, die deine Post organisiert.",
   autoActFailed: "Diese Einstellung wurde nicht gespeichert. Sie ist unverändert.",
@@ -1330,6 +1330,10 @@ export const DE: Deck = {
   awaySaving: "Wird gespeichert …",
   awaySaved: "Gespeichert.",
   awayAsked: "Nicht hier gespeichert — die Maschine, die dieses Postfach organisiert, wendet es bei ihrem nächsten Durchlauf an.",
+  awayRefused: (name: string, unreadable: boolean) =>
+    `Nicht übernommen — ${name} ${unreadable ? "konnte diese Änderung nicht lesen. Aktualisiere ohmail dort und speichere sie dann noch einmal." : "hat diese Änderung nicht angenommen. Speichere sie noch einmal."}`,
+  awayRefusedUnknown: (unreadable: boolean) =>
+    `Nicht übernommen — die Installation, die dieses Postfach organisiert, ${unreadable ? "konnte diese Änderung nicht lesen. Aktualisiere ohmail dort und speichere sie dann noch einmal." : "hat diese Änderung nicht angenommen. Speichere sie noch einmal."}`,
   awayFailed: "Das wurde nicht gespeichert. Es hat sich nichts geändert.",
   awayFailedStillOn: "Konnte nicht gespeichert werden — die Antwort ist weiterhin an.",
   awayFailedStillOff: "Konnte nicht gespeichert werden — die Antwort ist weiterhin aus.",

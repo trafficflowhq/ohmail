@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, lt, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lt, or } from "drizzle-orm";
 import { mailboxes, organizerRequests } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
 import { fenceErased } from "./erasure-fence.js";
@@ -211,6 +211,29 @@ export async function listOutstandingForAccount(
     });
   }
   return out;
+}
+
+/** How many of this install's newest `profile.update` rows a settings pane reads. */
+export const PROFILE_REQUESTS_READ_MAX = 200;
+
+/**
+ * THIS INSTALL'S SETTINGS CHANGES THAT NAME ANY OF `fields`, newest first — what a settings pane
+ * reads to say where its last change went. `listOutstandingForAccount` keeps Screener decisions
+ * only, so a refused `profile.update` was recorded here and read by nothing. Bounded to the newest
+ * {@link PROFILE_REQUESTS_READ_MAX} of the account's profile rows; a field is a top-level key of
+ * the payload, filtered here because the two stores hold the payload in different types.
+ */
+export async function listProfileRequestsNaming(
+  tx: Tx, accountId: string, fields: string | readonly string[],
+): Promise<OrganizerRequestRow[]> {
+  const named = typeof fields === "string" ? [fields] : fields;
+  const rows = await tx.select().from(organizerRequests)
+    .where(and(eq(organizerRequests.accountId, accountId), eq(organizerRequests.kind, "profile.update")))
+    .orderBy(desc(organizerRequests.decidedAt), desc(organizerRequests.id))
+    .limit(PROFILE_REQUESTS_READ_MAX);
+  return rows.map(toRow).filter((r) =>
+    r.payload !== null && typeof r.payload === "object" && !Array.isArray(r.payload)
+    && named.some((f) => f in (r.payload as Record<string, unknown>)));
 }
 
 /** `pending` → `sent`: the reader's cycle appended it to the mailbox. */

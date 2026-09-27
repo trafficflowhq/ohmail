@@ -921,6 +921,12 @@ export interface RuleDTO {
    * from the filed folder and the cursor is the walk's own bookkeeping.
    */
   retro: { requestedAt: ISODateTime | null; doneAt: ISODateTime | null };
+  /**
+   * The act on suggestions wrote this rule and no person has decided about the sender since
+   * (`rulesTheActWrote`). `false` for every other rule, and for a holder's rule read from its
+   * published document, which carries no mark.
+   */
+  byOhmail: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

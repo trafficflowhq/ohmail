@@ -22,13 +22,24 @@ import { SettingsNote, SettingsSubhead } from "@ohmail/ui";
 
 import { OhboxWords } from "../../webapp/app/shell/OhboxWords";
 import { useManagedService } from "../../webapp/app/shell/managed-service";
-import { readScreening, saveOhboxBar, type ScreeningRead } from "./local-screening.js";
+import {
+  readScreening, saveOhboxBar, type ScreeningPreference, type ScreeningRead,
+} from "./local-screening.js";
 
 export function DesktopScreeningWords({
   /** Which door this install came in by. `null` while the shell has not answered yet. */
   door,
+  /**
+   * The pane's one sentence about a save that travelled: true when it spoke, so this box says
+   * nothing of its own. Absent where this section stands alone, and every save then says "Saved.".
+   */
+  said,
+  /** A re-read the pane made after a save travelled — the words a holder applied. */
+  latest = null,
 }: {
   door: "local" | "cloud" | null;
+  said?: (landed: ScreeningPreference) => boolean;
+  latest?: ScreeningPreference | null;
 }) {
   /* THE CATALOGUE, and until this slice there was none: every sentence below was an English
      literal, so a German install read this section of its Screener pane in English while the
@@ -56,6 +67,8 @@ export function DesktopScreeningWords({
     })();
     return () => { cancelled = true; };
   }, [door]);
+
+  useEffect(() => { if (latest) setRead({ state: "ready", pref: latest }); }, [latest]);
 
   if (read === null || read.state === "not-served") return null;
 
@@ -92,7 +105,7 @@ export function DesktopScreeningWords({
         onSave={async (next) => {
           const landed = await saveOhboxBar(next);
           setRead({ state: "ready", pref: landed });
-          return landed.ohboxBar;
+          return said?.(landed) ? { bar: landed.ohboxBar, travelled: true } : landed.ohboxBar;
         }}
       />
     </>

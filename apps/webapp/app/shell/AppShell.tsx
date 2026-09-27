@@ -525,6 +525,7 @@ export function AppShell({
   defaultMailSection,
   notificationHost,
   screeningSection,
+  actRulesUnmarked,
   screenerSuggest,
   awayTransport,
   awayIsLocal,
@@ -715,6 +716,12 @@ export function AppShell({
    * is not built. Never both.
    */
   screeningSection?: ReactNode;
+  /**
+   * THIS HOST'S RULES PANE CANNOT TELL THE ACT'S RULES APART: it reads rules through a copy that
+   * does not carry the mark (the desktop's hosted door). The act's switch then says only that its
+   * rules are listed in Settings → Rules, which is what that pane shows.
+   */
+  actRulesUnmarked?: boolean;
   /**
    * The Screener's suggest control, when the host has its own — the desktop's. The control this
    * shell builds asks a server what a set of senders would cost, because a hosted account
@@ -914,6 +921,7 @@ export function AppShell({
             defaultMailSection={defaultMailSection}
             {...(notificationHost ? { notificationHost } : {})}
             screeningSection={screeningSection}
+            actRulesUnmarked={actRulesUnmarked === true}
             screenerSuggest={screenerSuggest}
             awayTransport={awayTransport}
             awayIsLocal={awayIsLocal}
@@ -979,7 +987,7 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
   );
 }
 
-function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, sessionRefused, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, accountNotice, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, imagesFromComputer, olderBodyWire, junkWire, trashWire, suggestWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
+function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, sessionRefused, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, accountNotice, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, actRulesUnmarked, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, imagesFromComputer, olderBodyWire, junkWire, trashWire, suggestWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
   /** The pull settle watch's read — the same probe `MailStateHost` above provides the strip. */
   mailboxFacts?: MailboxProbe;
   /** See `AppShell`'s prop of this name — absent withholds the organizer notice. */
@@ -1005,6 +1013,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   /** See the outer prop of the same name. */
   notificationHost?: NotificationHost;
   screeningSection?: ReactNode;
+  actRulesUnmarked: boolean;
   screenerSuggest?: (ctx: {
     senders: string[];
     resuggestable: string[];
@@ -3110,6 +3119,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                           on={consent.autoAct}
                           suggestOn={consent.autoSuggest}
                           reader={screenerRole.mode !== "organizer"}
+                          rulesMarked={!actRulesUnmarked}
                           setAutoAct={consent.setAutoAct}
                         />
                       ) : null}
@@ -3180,6 +3190,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                       signatures={consent.signatures}
                       signaturesHtml={consent.signaturesHtml}
                       signatureSources={consent.signatureSources}
+                      changes={consent.signatureChanges}
                       setMailboxSignature={consent.setMailboxSignature}
                     />
                   )
@@ -3195,6 +3206,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                    on the demo (`useConsentState(!demo)` never fetches, so `known` stays false). */
                 dormancySection={demo || !consent.known ? undefined : (
                   <DormancyRow days={consent.dormancyDays} scope={consent.screeningScope}
+                    change={consent.dormancyChange}
                     setDormancyDays={consent.setDormancyDays} />
                 )}
                 /**

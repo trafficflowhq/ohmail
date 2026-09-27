@@ -73,6 +73,8 @@ export interface ProfileUpdatePayload {
    */
   signatureHtml?: string | null;
   dormancyDays?: number | null;
+  /** The dial's other answer. Sent whenever the door named it, beside or without the window. */
+  screeningScope?: "window" | "all_time";
   screeningPreference?: {
     ohboxPolicy?: string | null;
     ohboxBar?: string | null;
@@ -84,11 +86,11 @@ export interface ProfileUpdatePayload {
  * COMPOSE THE PAYLOAD, dropping nothing and inventing nothing. A field the caller did not name
  * never appears. An explicit copy rather than a spread, so a door that grows a field cannot
  * silently start sending it: the shape is a contract with the drain that applies these requests,
- * and a new member is a decision, not a drive-by. Two were added that way: `piles` in
- * `ProfileAwayResponderPatch` and `signatureHtml`. The copy is per TOP-LEVEL field:
- * `awayResponder` is assigned whole, so a member added to that interface travels the moment the
- * type admits it — which is why the interface, not this function, is where such an addition is
- * recorded.
+ * and a new member is a decision, not a drive-by. Three were added that way: `piles` in
+ * `ProfileAwayResponderPatch`, `signatureHtml` and `screeningScope`. The copy is per TOP-LEVEL
+ * field: `awayResponder` is assigned whole, so a member added to that interface travels the
+ * moment the type admits it — which is why the interface, not this function, is where such an
+ * addition is recorded.
  */
 export function profileRequestPayload(p: ProfileUpdatePayload): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -96,6 +98,7 @@ export function profileRequestPayload(p: ProfileUpdatePayload): Record<string, u
   if (p.signature !== undefined) out.signature = p.signature;
   if (p.signatureHtml !== undefined) out.signatureHtml = p.signatureHtml;
   if (p.dormancyDays !== undefined) out.dormancyDays = p.dormancyDays;
+  if (p.screeningScope !== undefined) out.screeningScope = p.screeningScope;
   if (p.screeningPreference !== undefined) out.screeningPreference = p.screeningPreference;
   if (Object.keys(out).length === 0) {
     // Unreachable from a door that checked its own input, and a throw rather than an empty record

@@ -107,8 +107,12 @@ export {
 export {
   getScreeningPreference, setScreeningPreference, resolveOhboxPolicy,
   DEFAULT_OHBOX_BAR, OHBOX_BAR_MAX_BYTES, OHBOX_POLICIES,
+  readScreeningPane, type ScreeningPreferenceResult,
   type ScreeningPreference, type ScreeningPreferenceUpdate,
 } from "./screening-preference.js";
+export {
+  readProfileChange, readMailboxProfileChanges, type ProfileChangeWire, type ProfileChangeReading,
+} from "./profile-change.js";
 
 
 export {

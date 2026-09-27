@@ -6,6 +6,8 @@
  * while automatic suggestions are off (the act acts on what that switch buys), and on an install
  * that reads mail another install organizes: the consent is not carried to the organizer, so the
  * sentence sends the person there. Shared by the web shell and the desktop's standalone door.
+ * The description says the rules are marked as ohmail's only where the Rules pane shows that
+ * group (`RuleDTO.byOhmail`); a host whose pane reads a copy without the mark says less.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -16,6 +18,7 @@ export function AutoActRow({
   on,
   suggestOn,
   reader,
+  rulesMarked = true,
   setAutoAct,
 }: {
   /** As the server answered it. */
@@ -24,6 +27,8 @@ export function AutoActRow({
   suggestOn: boolean;
   /** This install reads mail another install organizes. */
   reader: boolean;
+  /** This surface's Rules pane lists the act's rules in their own group. */
+  rulesMarked?: boolean;
   /** Resolves to what the database holds; rethrows a refusal. */
   setAutoAct: (enabled: boolean) => Promise<boolean>;
 }) {
@@ -56,7 +61,7 @@ export function AutoActRow({
     <>
       <SettingsRow
         label={t("suggest.actTitle")}
-        description={t("suggest.actDescription")}
+        description={t(rulesMarked ? "suggest.actDescription" : "suggest.actDescriptionUnmarked")}
         control={
           <Switch
             checked={on}

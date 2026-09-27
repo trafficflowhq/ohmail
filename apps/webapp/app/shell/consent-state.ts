@@ -17,6 +17,7 @@ import { apiConfigured, consent as consentApi, type ConsentStateWire } from "../
 import { readBootCache, writeBootCache } from "./boot-cache";
 import { normalizeLocale, type AppLocale } from "./locale";
 import { readOwner } from "./owner-cookie";
+import type { TravelledChangeWire } from "./travelled-change";
 
 /**
  * The five calls this hook makes, gathered into something a host can hand in — the `AwayTransport`/`SuggestWire`
@@ -54,7 +55,9 @@ export interface ConsentTransport {
    */
   setDormancyDays: (
     days: number | null | undefined, scope?: "window" | "all_time",
-  ) => Promise<{ dormancyDays?: number; screeningScope?: "window" | "all_time" }>;
+  ) => Promise<{
+    dormancyDays?: number; screeningScope?: "window" | "all_time"; dormancyChange?: TravelledChangeWire;
+  }>;
   setBlockRemoteImages: (blocked: boolean) => Promise<{ blockRemoteImagesAt: string | null }>;
   setBlockTrackingPixels: (blocked: boolean) => Promise<{ loadTrackingPixelsAt: string | null }>;
   setBlockAutoUnsubscribe: (blocked: boolean) => Promise<{ blockAutoUnsubscribeAt: string | null }>;
@@ -78,6 +81,7 @@ export interface ConsentTransport {
     signatures: Record<string, string>;
     signaturesHtml?: Record<string, string>;
     signatureSources?: Record<string, "organizer" | "local">;
+    signatureChanges?: Record<string, TravelledChangeWire>;
   }>;
   /**
    * The account-wide appearance face (mail 0082) — OPTIONAL, unlike every method above, because
@@ -154,8 +158,9 @@ const CLOUD_CONSENT: ConsentTransport = {
   setFoldersEnabled: (enabled) => consentApi.setFoldersEnabled(enabled),
   setMailboxFoldersEnabled: (mailboxId, enabled) =>
     consentApi.setMailboxFoldersEnabled(mailboxId, enabled),
-  setMailboxSignature: (mailboxId, signature) =>
-    consentApi.setMailboxSignature(mailboxId, signature),
+  // The markup rides its own argument; dropped, a formatted save was sent as "clear the signature".
+  setMailboxSignature: (mailboxId, signature, signatureHtml) =>
+    consentApi.setMailboxSignature(mailboxId, signature, signatureHtml),
   setThemeFace: (themeFace) =>
     consentApi.setThemeFace(themeFace).then((stored) => ({ themeFace: stored })),
   setResurfaceTime: (resurfaceTime) =>
@@ -294,6 +299,12 @@ export interface ConsentState {
    * Gated by {@link signaturesKnown} with the other two — all three arrive in one response.
    */
   signatureSources: Record<string, "organizer" | "local">;
+  /**
+   * ON A READER, where each mailbox's last signature change went (`signatureChanges` on the read
+   * and the write's echo); absent key = nothing to say. {@link dormancyChange} is the dial's.
+   */
+  signatureChanges: Record<string, TravelledChangeWire>;
+  dormancyChange: TravelledChangeWire | null;
   /**
    * Did {@link signatures} come from the LIVE wire (or a write's echo)? `folderMailboxesKnown`'s
    * rule for the same reason: the boot cache carries no signatures, so a pane gated on `known`
@@ -441,6 +452,8 @@ const RESTING: ConsentState = {
   signaturesHtml: {},
   // NOTHING KNOWN ABOUT WHOSE THEY ARE, which reads as local everywhere — see the field.
   signatureSources: {},
+  signatureChanges: {},
+  dormancyChange: null,
   signaturesKnown: false,
   // NOTHING FROM AN ACCOUNT. Unlike `blockRemoteImages` above, resting null is not a safe
   // *position* — it is the absence of one, and it leaves the language this device remembered in
@@ -782,6 +795,9 @@ export function useConsentState(
           // Absent (an API before this field) reads as local everywhere, which is what the
           // editor did before the organizer's signature could reach a reader at all.
           signatureSources: wire.signatureSources ?? {},
+          // Absent from an organizer and from an older server: nothing travelled, nothing to say.
+          signatureChanges: wire.signatureChanges ?? {},
+          dormancyChange: wire.dormancyChange ?? null,
           signaturesKnown: true,
           // NORMALISED, not trusted. The column's CHECK and `consentSettings` both close the set,
           // so an unsupported string cannot arrive from a current server — and this is the boot
@@ -1076,6 +1092,8 @@ export function useConsentState(
         ...prev,
         ...(res.dormancyDays !== undefined ? { dormancyDays: res.dormancyDays } : {}),
         ...(res.screeningScope !== undefined ? { screeningScope: res.screeningScope } : {}),
+        // A write that stayed here answers without it, and clears what an earlier one said.
+        dormancyChange: res.dormancyChange ?? null,
       };
       effective = next.dormancyDays;
       return next;
@@ -1171,6 +1189,7 @@ export function useConsentState(
         // A local write does not change whose signature is in force: the echo carries the same
         // sources the read did, and an echo without them leaves what was already known.
         signatureSources: res.signatureSources ?? prev.signatureSources,
+        signatureChanges: res.signatureChanges ?? {},
         signaturesKnown: true,
       }));
       return map;

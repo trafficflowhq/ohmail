@@ -93,8 +93,13 @@ export {
   REQUEST_STATES, TERMINAL_REQUEST_STATES, REFUSAL_VISIBLE_FOR_MS, insertOrganizerRequest, insertOrganizerRequestSet, listPendingRequests,
   listSentRequests, listOutstandingForAccount, markRequestsSent, markRequestsApplied,
   markRequestsExpired, markRequestsRefused, listStaleSentRequests, mailboxRowsHeld,
+  listProfileRequestsNaming, PROFILE_REQUESTS_READ_MAX,
   type RequestState, type OrganizerRequestRow, type OutstandingMatch,
 } from "./organizer-requests.js";
+// Which rules the act on suggestions wrote — the Rules pane's own group, from one reading.
+export {
+  SCREENER_ACT_TRIGGER_PREFIX, rulesTheActWrote, type ActRuleFacts,
+} from "./rule-decided-by.js";
 
 /* NO REQUEST-KEY EXPORTS HERE, and the absence replaces a module that used to exist.
  *

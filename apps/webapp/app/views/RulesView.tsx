@@ -30,7 +30,7 @@
  */
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button, Icon, SettingsNote, SettingsSection, Switch, TextField, useToast, type ToastOptions } from "@ohmail/ui";
+import { Button, Icon, ListGroupLabel, SettingsNote, SettingsSection, Switch, TextField, useToast, type ToastOptions } from "@ohmail/ui";
 import { FOLDER_OF_VIEW, pressVerdict, tallyVerdicts } from "@ohmail/client-engine";
 import type { Folder, PressAnswer, RuleDTO } from "@ohmail/client-engine";
 import { canonicalDestination } from "@trafficflow/core/folder-name";
@@ -174,6 +174,18 @@ export function filterRules(
 }
 
 /**
+ * WHO DECIDED EACH RULE, as the list draws it: a person's rules, then the ones the act on
+ * suggestions wrote for them (`RuleDTO.byOhmail`), each group in the caller's order. A rule from
+ * a server that sends no mark is a person's.
+ */
+export function splitByDecider(rules: readonly RuleDTO[]): { yours: RuleDTO[]; ohmail: RuleDTO[] } {
+  const yours: RuleDTO[] = [];
+  const ohmail: RuleDTO[] = [];
+  for (const r of rules) (r.byOhmail === true ? ohmail : yours).push(r);
+  return { yours, ohmail };
+}
+
+/**
  * Which action, if any, is open. One at a time — two open confirms is two questions. A single
  * revoke/retarget carries the rule it targets; the bulk revoke acts over the filtered set and so
  * names no rule.
@@ -292,7 +304,16 @@ export function RulesView({ rules, onRevoke, onRetarget, pastMail, posture }: Ru
     [rules, query, activeFacet],
   );
 
-  const win = useListWindow({ scrollerRef, count: filtered.length, estimate: RULE_ROW_PX });
+  /* A person's rules, then the act's under their own label: one index space, the label in it. */
+  const { yours, ohmail } = useMemo(() => splitByDecider(filtered), [filtered]);
+  const labelAt = ohmail.length > 0 ? yours.length : -1;
+  const win = useListWindow({
+    scrollerRef, count: yours.length + (ohmail.length > 0 ? ohmail.length + 1 : 0), estimate: RULE_ROW_PX,
+  });
+  const yoursFrom = Math.min(win.start, yours.length);
+  const yoursTo = Math.min(win.end, yours.length);
+  const ohmailFrom = Math.max(0, Math.min(win.start - labelAt - 1, ohmail.length));
+  const ohmailTo = Math.max(0, Math.min(win.end - labelAt - 1, ohmail.length));
 
   /**
    * THE TOAST WAITS FOR THE OUTCOME, AND IT LIVES HERE RATHER THAN IN THE SHELL. It fired immediately in the first
@@ -386,6 +407,129 @@ export function RulesView({ rules, onRevoke, onRetarget, pastMail, posture }: Ru
   const showSearch = rules.length >= 2;
   const showFacets = groups.length >= 2;
   const showBulk = filtered.length >= 2;
+
+  /** One rule's row and its confirm. `index` is its slot; `size`/`position` place it in its group. */
+  const ruleRow = (rule: RuleDTO, index: number, size: number, position: number) => {
+    const what = whatOf(rule);
+    const origin = rule.byOhmail === true ? t("origin.byOhmail") : t(`origin.${rule.provenance}`);
+    const meta = rule.enabled
+      ? t("meta", { origin, date: ruleDate(rule.createdAt) })
+      : t("metaPaused", { origin, date: ruleDate(rule.createdAt) });
+    const openHere = open !== null && "ruleId" in open && open.ruleId === rule.id;
+    return (
+      <Fragment key={rule.id}>
+        <div
+          className={openHere ? "rules-item editing" : "rules-item"}
+          data-rule-id={rule.id}
+          data-index={index}
+          role="listitem"
+          aria-setsize={size}
+          aria-posinset={position}
+        >
+          <span className="body">
+            <b className="what">{what}</b>
+            <span className="meta">
+              {meta} · {t("filesInto", { place: placeLabel(rule.destination) })}
+            </span>
+          </span>
+          <span className="acts">
+            <Button
+              variant="ghost"
+              disabled={lockedWhy !== null}
+              aria-describedby={lockedWhy ? "rules-locked-why" : undefined}
+              aria-expanded={openHere && open.mode === "retarget"}
+              onClick={() => {
+                setRetro(RETRO_DEFAULT_ON);
+                setOpen(
+                  open?.mode === "retarget" && open.ruleId === rule.id
+                    ? null
+                    : { mode: "retarget", ruleId: rule.id },
+                );
+              }}
+            >
+              {t("change")}
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={lockedWhy !== null}
+              aria-describedby={lockedWhy ? "rules-locked-why" : undefined}
+              aria-expanded={openHere && open.mode === "revoke"}
+              onClick={() =>
+                setOpen(
+                  open?.mode === "revoke" && open.ruleId === rule.id
+                    ? null
+                    : { mode: "revoke", ruleId: rule.id },
+                )
+              }
+            >
+              {t("revoke")}
+            </Button>
+          </span>
+        </div>
+
+        {openHere && open.mode === "revoke" ? (
+          <div className="rules-confirm" ref={confirmRef}>
+            <b className="what">{what}</b>
+            <span>{t("revokeExplain")}</span>
+            <span className="acts">
+              <Button
+                variant="primary"
+                onClick={() => {
+                  setOpen(null);
+                  setRefusal(null);
+                  void onRevoke(rule.id).then((r) =>
+                    report(r, t("toastRevoked"), t("toastRevokeQueued"), t("toastRevokeFailed")),
+                  );
+                }}
+              >
+                {t("revokeConfirm")}
+              </Button>
+              <Button onClick={() => setOpen(null)}>{t("cancel")}</Button>
+            </span>
+          </div>
+        ) : null}
+
+        {openHere && open.mode === "retarget" ? (() => {
+          const matched = pastMail(rule, null);
+          return (
+            <div className="rules-confirm" ref={confirmRef}>
+              <b className="what">{what}</b>
+              <span>{t(retro ? "retargetExplainRetro" : "retargetExplain")}</span>
+              <span className="rules-retro">
+                <span className="lab">
+                  <b>{t("retroToggle")}</b>
+                  <small>
+                    {matched === null ? t("retroToggleUncounted") : t("retroToggleNote", { count: matched })}
+                  </small>
+                </span>
+                <Switch checked={retro} onChange={setRetro} ariaLabel={t("retroToggle")} />
+              </span>
+              <span className="acts">
+                {/* The sender sheet's places, the current one marked and not pressable:
+                    the row names where the rule files, and the list must too. */}
+                <span className="rules-places">
+                  {changePlaces(rule).map(({ folder, current }) => (
+                    <Button
+                      key={folder}
+                      aria-current={current ? "true" : undefined}
+                      disabled={current}
+                      className={current ? "current" : undefined}
+                      onClick={() => retarget(rule, folder, retro)}
+                    >
+                      {placeName(folder)}
+                    </Button>
+                  ))}
+                </span>
+                <Button variant="ghost" onClick={() => setOpen(null)}>
+                  {t("cancel")}
+                </Button>
+              </span>
+            </div>
+          );
+        })() : null}
+      </Fragment>
+    );
+  };
 
   return (
     <SettingsSection className="rules-view">
@@ -482,7 +626,7 @@ export function RulesView({ rules, onRevoke, onRetarget, pastMail, posture }: Ru
         {filtered.length === 0 ? (
           <p className="rules-empty">{t("noMatch")}</p>
         ) : (
-          <div className="rules-list" role="list" aria-label={tSettings("rules")}>
+          <>
             {/* The rows above and below the window, as reserved height — empty elements rather
                 than a margin, so the scroller's scroll height and scrollbar match every row
                 mounted; `aria-hidden` because this is geometry. The open confirm is the one
@@ -490,132 +634,28 @@ export function RulesView({ rules, onRevoke, onRetarget, pastMail, posture }: Ru
                 is read AT the rule it is about, and Cancel leaves the reader in place. It carries
                 no slot, so the spacers leave its height out: the error is one confirm (~2 rows),
                 inside the 8-row overscan; when the row scrolls out, the confirm unmounts and
-                returns with it — `open` state unaffected. Each row states the filtered list's true
-                size and its place in it, because only the window's rows are mounted. */}
+                returns with it — `open` state unaffected. Each row states its group's true size and
+                its place in it, because only the window's rows are mounted. */}
             <div aria-hidden data-window-top="" style={{ height: win.padTop }} />
-            {filtered.slice(win.start, win.end).map((rule, k) => {
-              const what = whatOf(rule);
-              const origin = t(`origin.${rule.provenance}`);
-              const meta = rule.enabled
-                ? t("meta", { origin, date: ruleDate(rule.createdAt) })
-                : t("metaPaused", { origin, date: ruleDate(rule.createdAt) });
-              const openHere = open !== null && "ruleId" in open && open.ruleId === rule.id;
-              return (
-                <Fragment key={rule.id}>
-                  <div
-                    className={openHere ? "rules-item editing" : "rules-item"}
-                    data-rule-id={rule.id}
-                    data-index={win.start + k}
-                    role="listitem"
-                    aria-setsize={filtered.length}
-                    aria-posinset={win.start + k + 1}
-                  >
-                    <span className="body">
-                      <b className="what">{what}</b>
-                      <span className="meta">
-                        {meta} · {t("filesInto", { place: placeLabel(rule.destination) })}
-                      </span>
-                    </span>
-                    <span className="acts">
-                      <Button
-                        variant="ghost"
-                        disabled={lockedWhy !== null}
-                        aria-describedby={lockedWhy ? "rules-locked-why" : undefined}
-                        aria-expanded={openHere && open.mode === "retarget"}
-                        onClick={() => {
-                          setRetro(RETRO_DEFAULT_ON);
-                          setOpen(
-                            open?.mode === "retarget" && open.ruleId === rule.id
-                              ? null
-                              : { mode: "retarget", ruleId: rule.id },
-                          );
-                        }}
-                      >
-                        {t("change")}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        disabled={lockedWhy !== null}
-                        aria-describedby={lockedWhy ? "rules-locked-why" : undefined}
-                        aria-expanded={openHere && open.mode === "revoke"}
-                        onClick={() =>
-                          setOpen(
-                            open?.mode === "revoke" && open.ruleId === rule.id
-                              ? null
-                              : { mode: "revoke", ruleId: rule.id },
-                          )
-                        }
-                      >
-                        {t("revoke")}
-                      </Button>
-                    </span>
-                  </div>
-
-                  {openHere && open.mode === "revoke" ? (
-                    <div className="rules-confirm" ref={confirmRef}>
-                      <b className="what">{what}</b>
-                      <span>{t("revokeExplain")}</span>
-                      <span className="acts">
-                        <Button
-                          variant="primary"
-                          onClick={() => {
-                            setOpen(null);
-                            setRefusal(null);
-                            void onRevoke(rule.id).then((r) =>
-                              report(r, t("toastRevoked"), t("toastRevokeQueued"), t("toastRevokeFailed")),
-                            );
-                          }}
-                        >
-                          {t("revokeConfirm")}
-                        </Button>
-                        <Button onClick={() => setOpen(null)}>{t("cancel")}</Button>
-                      </span>
-                    </div>
-                  ) : null}
-
-                  {openHere && open.mode === "retarget" ? (() => {
-                    const matched = pastMail(rule, null);
-                    return (
-                      <div className="rules-confirm" ref={confirmRef}>
-                        <b className="what">{what}</b>
-                        <span>{t(retro ? "retargetExplainRetro" : "retargetExplain")}</span>
-                        <span className="rules-retro">
-                          <span className="lab">
-                            <b>{t("retroToggle")}</b>
-                            <small>
-                              {matched === null ? t("retroToggleUncounted") : t("retroToggleNote", { count: matched })}
-                            </small>
-                          </span>
-                          <Switch checked={retro} onChange={setRetro} ariaLabel={t("retroToggle")} />
-                        </span>
-                        <span className="acts">
-                          {/* The sender sheet's places, the current one marked and not pressable:
-                              the row names where the rule files, and the list must too. */}
-                          <span className="rules-places">
-                            {changePlaces(rule).map(({ folder, current }) => (
-                              <Button
-                                key={folder}
-                                aria-current={current ? "true" : undefined}
-                                disabled={current}
-                                className={current ? "current" : undefined}
-                                onClick={() => retarget(rule, folder, retro)}
-                              >
-                                {placeName(folder)}
-                              </Button>
-                            ))}
-                          </span>
-                          <Button variant="ghost" onClick={() => setOpen(null)}>
-                            {t("cancel")}
-                          </Button>
-                        </span>
-                      </div>
-                    );
-                  })() : null}
-                </Fragment>
-              );
-            })}
+            {yoursTo > yoursFrom ? (
+              <div className="rules-list" role="list" aria-label={tSettings("rules")}>
+                {yours.slice(yoursFrom, yoursTo).map((rule, k) =>
+                  ruleRow(rule, yoursFrom + k, yours.length, yoursFrom + k + 1))}
+              </div>
+            ) : null}
+            {/* THE ACT'S RULES, under their own label in the same index space: the label is
+                measured like a row, so the spacers stay true across the two groups. */}
+            {labelAt >= win.start && labelAt < win.end ? (
+              <ListGroupLabel group="by-ohmail" index={labelAt}>{t("groupByOhmail")}</ListGroupLabel>
+            ) : null}
+            {ohmailTo > ohmailFrom ? (
+              <div className="rules-list" role="list" aria-label={t("groupByOhmail")}>
+                {ohmail.slice(ohmailFrom, ohmailTo).map((rule, k) =>
+                  ruleRow(rule, labelAt + 1 + ohmailFrom + k, ohmail.length, ohmailFrom + k + 1))}
+              </div>
+            ) : null}
             {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
-          </div>
+          </>
         )}
       </div>
 

@@ -1127,7 +1127,7 @@ const TABLE = {
   /** Settings → the act on suggestions — the webapp catalogue's `screener.suggest.act*`. */
   autoActTitle: "Act on confident suggestions for me",
   autoActDescription:
-    "When a suggestion about a waiting sender is at least 90% sure, ohmail files that sender where the suggestion says — the Ohbox, News, Receipts, Screened or Spam — and writes the rule for you. Each such rule is listed in Settings → Rules, where you can undo it. Senders you have written to, and sensitive mail, are never filed this way. Off by default.",
+    "When a suggestion about a waiting sender is at least 90% sure, ohmail files that sender where the suggestion says — the Ohbox, News, Receipts, Screened or Spam — and writes the rule for you. Each such rule is marked as ohmail's and you can undo it in Settings → Rules. Senders you have written to, and sensitive mail, are never filed this way. Off by default.",
   autoActNeedsSuggest: "Needs automatic suggestions",
   autoActReader: "Set this on the install that organizes your mail.",
   autoActFailed: "That setting did not save. It is unchanged.",
@@ -2006,6 +2006,11 @@ const TABLE = {
   awaySaving: "Saving…",
   awaySaved: "Saved.",
   awayAsked: "Not saved here — the machine that organizes this mailbox applies it on its next pass.",
+  /** The holder turned the last away change down — the web's `settings.screening.refused*`. */
+  awayRefused: (name: string, unreadable: boolean) =>
+    `Not applied — ${name} ${unreadable ? "could not read this change. Update ohmail there, then save it again." : "did not take this change. Save it again."}`,
+  awayRefusedUnknown: (unreadable: boolean) =>
+    `Not applied — the install that organizes this mailbox ${unreadable ? "could not read this change. Update ohmail there, then save it again." : "did not take this change. Save it again."}`,
   awayFailed: "That did not save. Nothing changed.",
   awayFailedStillOn: "Could not save — the responder is still on.",
   awayFailedStillOff: "Could not save — the responder is still off.",

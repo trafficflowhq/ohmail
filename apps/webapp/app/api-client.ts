@@ -14,6 +14,7 @@ import {
   isRecoverable, mayRefreshFor, resumeSession, retryAfterMsOf, withSessionCookieLock,
 } from "./session-refresh";
 import { registerSessionTransport, sessionMayAsk } from "./shell/session-truth";
+import type { TravelledChangeWire } from "./shell/travelled-change";
 import { readOwner, readOwnerMarker, rememberOwner } from "./shell/owner-cookie";
 import { refusedFactsOf, verdictOf } from "./access-verdict";
 import { storeVerdict } from "./shell/wall-lift";
@@ -2086,6 +2087,10 @@ export interface ScreeningPreferenceWire {
    * reversible. Absent/failed reads resolve to `false`, so the default is off.
    */
   screenerAutoApply: boolean;
+  /** Present when the save was sent to the install that organizes, and nothing was written here. */
+  pending?: true;
+  /** On a reader: where this install's last Screening change went. */
+  change?: TravelledChangeWire;
 }
 
 /**
@@ -2256,6 +2261,10 @@ export interface ConsentStateWire {
     activeUndecidedSenders: number;
     dormantUndecidedSenders: number;
   };
+  /** On a reader: where this install's last dormancy change went. Absent: nothing to say. */
+  dormancyChange?: TravelledChangeWire;
+  /** On a reader: the same, per mailbox this install does not organize, for its signature. */
+  signatureChanges?: Record<string, TravelledChangeWire>;
 }
 
 export interface SeedCandidateWire {
@@ -2350,7 +2359,9 @@ export const consent = {
    * re-partitions the open tab.
    */
   setDormancyDays: (days: number | null | undefined, scope?: "window" | "all_time") =>
-    api<{ dormancyDays?: number; screeningScope?: "window" | "all_time" }>("/consent/settings", {
+    api<{
+      dormancyDays?: number; screeningScope?: "window" | "all_time"; dormancyChange?: TravelledChangeWire;
+    }>("/consent/settings", {
       method: "PATCH",
       body: {
         // FIELD-PRESENT ⇒ ACTED ON, so an unnamed half must not appear on the wire at all: a
@@ -2401,6 +2412,7 @@ export const consent = {
       signatures: Record<string, string>;
       signaturesHtml?: Record<string, string>;
       signatureSources?: Record<string, "organizer" | "local">;
+      signatureChanges?: Record<string, TravelledChangeWire>;
     }>("/consent/settings", {
       method: "PATCH",
       body: signatureHtml !== undefined
@@ -2560,6 +2572,8 @@ export interface AwayResponderWire {
    */
   piles: ("INBOX" | "ohmail/News" | "ohmail/Receipts" | "ohmail/Screener")[];
   updatedAt: string | null;
+  /** On a reader: where this install's last away change went. Absent: nothing to say. */
+  change?: TravelledChangeWire;
 }
 
 /**

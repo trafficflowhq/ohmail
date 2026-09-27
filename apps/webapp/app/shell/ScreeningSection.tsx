@@ -19,6 +19,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { SettingsRow, SettingsSubhead, Switch } from "@ohmail/ui";
 import { OhboxWords } from "./OhboxWords";
+import { TravelledChangeNote, useTravelledChange } from "./travelled-change";
 import { screeningSettings, type ScreeningPreferenceWire } from "../api-client";
 
 export function ScreeningSection() {
@@ -30,19 +31,25 @@ export function ScreeningSection() {
 
   /** Unmounted-after-await guard — the pane is swapped by a nav press, so this really happens. */
   const alive = useRef(true);
+  /* ON A READER A CHANGE IS SENT, NOT SAVED: the sentence says where it went and its answer. */
+  const change = useTravelledChange<ScreeningPreferenceWire>({
+    reread: () => screeningSettings.get(),
+    onRead: (next) => { if (alive.current) setPref(next); },
+  });
+  const heard = change.heard;
   useEffect(() => {
     alive.current = true;
     void (async () => {
       try {
         const loaded = await screeningSettings.get();
-        if (alive.current) setPref(loaded);
+        if (alive.current) { setPref(loaded); heard(loaded, false); }
       } catch {
         // Leave the section unrendered on a read fault rather than showing a broken control.
         if (alive.current) setPref(null);
       }
     })();
     return () => { alive.current = false; };
-  }, []);
+  }, [heard]);
 
   if (!pref) return null;
   const relevanceOn = pref.ohboxPolicy === "people_only";
@@ -61,9 +68,9 @@ export function ScreeningSection() {
         const landed = await screeningSettings.set(next);
         if (!alive.current) return;
         setPref(landed);
-        setSaved(true);
+        setSaved(!heard(landed, true));
       } catch {
-        if (alive.current) setFailed(true);
+        if (alive.current) { change.clear(); setFailed(true); }
       } finally {
         if (alive.current) setPending(false);
       }
@@ -105,6 +112,7 @@ export function ScreeningSection() {
 
       {saved ? <span className="scn-sg-note">{t("screening.saved")}</span> : null}
       {failed ? <span className="scn-sg-note">{t("screening.failed")}</span> : null}
+      <TravelledChangeNote note={change.note} />
 
       <OhboxWords
         bar={pref.ohboxBar}
@@ -112,8 +120,10 @@ export function ScreeningSection() {
         busy={pending}
         onSave={async (next) => {
           const landed = await screeningSettings.set({ ohboxBar: next });
-          if (alive.current) setPref(landed);
-          return landed.ohboxBar;
+          if (!alive.current) return landed.ohboxBar;
+          setPref(landed);
+          setSaved(false);
+          return heard(landed, true) ? { bar: landed.ohboxBar, travelled: true } : landed.ohboxBar;
         }}
       />
     </>

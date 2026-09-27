@@ -50,6 +50,8 @@
 .rules-scroll{max-height:min(58vh,560px);overflow-y:auto;overscroll-behavior:contain;
   margin:0 -6px;padding:0 6px}
 .rules-list{display:flex;flex-direction:column}
+/* the act's group label sits on the rows' own left edge, not the mail list's gutter */
+.rules-view .grouplabel{padding:16px 0 6px}
 
 /* one rule — a FIXED-height row above phone width (see RULE_ROW_PX): two ellipsised lines on the
    left, the controls on the right. The window measures every drawn row, so the phone's stacked
