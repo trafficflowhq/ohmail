@@ -10,6 +10,9 @@
 
 import { sha256Hex } from "./sha256.js";
 import {
+  readSelfCheck, type SelfCheckFolderClass, type SelfCheckUnreadable, type SelfCheckVerdict,
+} from "./self-check.js";
+import {
   crashRecords, labelAdmitted, scrubLogLine, valueFieldAdmitted,
   type DiagnosticCrashRecord, type DiagnosticLogEntry,
 } from "./scrub.js";
@@ -55,6 +58,21 @@ export interface StoreSection {
   otherTypes: number;
   window: DiagnosticWindow | null;
 }
+/** One folder of the self-check: its name as a keyed hash, its class and its two counts. */
+export interface DiagnosticSelfCheckFolder {
+  hash: string;
+  k: SelfCheckFolderClass;
+  server: number | null;
+  mirror: number | null;
+  error: SelfCheckUnreadable | null;
+}
+/** The mailbox's last self-check in this session, or `null` on the section when none was run. */
+export interface DiagnosticSelfCheck {
+  verdict: SelfCheckVerdict;
+  checkedAt: string | null;
+  elapsedMs: number | null;
+  folders: DiagnosticSelfCheckFolder[];
+}
 export interface MailboxSection {
   k: "mailbox";
   hash: string;
@@ -64,6 +82,7 @@ export interface MailboxSection {
   blockReason: DiagnosticBlockReason | null;
   role: DiagnosticRole;
   lease: DiagnosticLeaseOutcome;
+  selfCheck: DiagnosticSelfCheck | null;
 }
 export interface LogSection { k: "log"; lines: DiagnosticLogEntry[]; linesRead: number }
 export interface CrashSection { k: "crash"; records: DiagnosticCrashRecord[] }
@@ -112,6 +131,8 @@ export interface DiagnosticInput {
     window: { mode: string; days?: number; minRows?: number; maxRows?: number } | null;
   } | null;
   mailboxes?: readonly DiagnosticMailboxInput[];
+  /** The self-check readings the surface holds, by mailbox id, as the engine answered them. */
+  selfChecks?: Readonly<Record<string, unknown>>;
   /** Raw `engine.log` lines, oldest first. Crash records are read from all of them. */
   log?: readonly string[];
 }
@@ -166,6 +187,26 @@ function leaseOutcome(m: DiagnosticMailboxInput): DiagnosticLeaseOutcome {
   if (m.organizerState === "held") return "held";
   if (m.organizerState === "stopped") return "stopped";
   return "none";
+}
+
+/** A mailbox's reading, folder names hashed under the mailbox; a reading for another id is none. */
+function selfCheckOf(
+  raw: unknown, mailboxId: string, hash: (domain: string, id: string) => string,
+): DiagnosticSelfCheck | null {
+  const c = readSelfCheck(raw);
+  if (c === null || c.mailboxId !== mailboxId) return null;
+  return {
+    verdict: c.verdict,
+    checkedAt: c.checkedAt,
+    elapsedMs: c.elapsedMs,
+    folders: c.folders.map((f) => ({
+      hash: hash("folder", JSON.stringify([mailboxId, f.folder])),
+      k: f.k,
+      server: f.k === "unreadable" ? null : f.server,
+      mirror: f.k === "unreadable" ? null : f.mirror,
+      error: f.k === "unreadable" ? f.error : null,
+    })),
+  };
 }
 
 function windowOf(w: NonNullable<DiagnosticInput["store"]>["window"]): DiagnosticWindow | null {
@@ -242,6 +283,7 @@ export function buildDiagnosticBundle(input: DiagnosticInput): DiagnosticBundle 
       blockReason,
       role,
       lease: leaseOutcome(m),
+      selfCheck: selfCheckOf(input.selfChecks?.[String(m.id)], String(m.id), hash),
     });
   }
   sections.push({ k: "log", lines: entries.slice(-DIAGNOSTIC_LOG_LINES), linesRead: raw.length });
@@ -270,6 +312,13 @@ function crashOut(r: DiagnosticCrashRecord): DiagnosticCrashRecord {
     : { from: "event", event: r.event, errorClass: r.errorClass, surface: r.surface, frame: r.frame };
 }
 
+function selfCheckOut(c: DiagnosticSelfCheck): DiagnosticSelfCheck {
+  return {
+    verdict: c.verdict, checkedAt: c.checkedAt, elapsedMs: c.elapsedMs,
+    folders: c.folders.map((f) => ({ hash: f.hash, k: f.k, server: f.server, mirror: f.mirror, error: f.error })),
+  };
+}
+
 /** One section, rebuilt from its own declared fields. The `const` annotations are the census. */
 function sectionOut(s: DiagnosticSection): DiagnosticSection {
   switch (s.k) {
@@ -289,6 +338,7 @@ function sectionOut(s: DiagnosticSection): DiagnosticSection {
       const o: MailboxSection = {
         k: s.k, hash: s.hash, sync: s.sync, errorCode: s.errorCode, disabledReason: s.disabledReason,
         blockReason: s.blockReason, role: s.role, lease: s.lease,
+        selfCheck: s.selfCheck === null ? null : selfCheckOut(s.selfCheck),
       };
       return o;
     }

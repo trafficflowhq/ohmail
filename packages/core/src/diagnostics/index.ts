@@ -6,5 +6,6 @@
  */
 export * from "./bundle.js";
 export * from "./scrub.js";
+export * from "./self-check.js";
 export * from "./vocab.js";
 export { sha256Hex } from "./sha256.js";
