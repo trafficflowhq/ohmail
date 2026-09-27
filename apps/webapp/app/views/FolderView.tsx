@@ -26,6 +26,7 @@ import { useZoneNav } from "../shell/zone-nav";
 import { useMessageVerbs } from "../shell/message-verbs";
 import { readColumnHidden } from "../shell/narrow";
 import { useListWindow } from "../shell/list-window";
+import { useColumnPick } from "../shell/column-pick";
 import type { OlderMail } from "../shell/older-mail";
 
 
@@ -41,6 +42,7 @@ export function FolderView({
   onToggleTime,
   now,
   onOpen,
+  onPick,
   hydrateBody,
   onAction,
   onAddTag,
@@ -80,6 +82,8 @@ export function FolderView({
   now: Date;
   /** The reader sheet, in place — the narrow-width tap, where there is no reading column. */
   onOpen: (m: EngineMessage) => void;
+  /** Where the view's own pick is reported — `useColumnPick`. */
+  onPick?: (id: string | null) => void;
   hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
   onAction: (action: MessageAction, message: EngineMessage) => void;
   onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
@@ -245,6 +249,10 @@ export function FolderView({
    */
   const locateIdx = locateId ? ordered.findIndex((m) => m.id === locateId) : -1;
   const locateFound = locateIdx >= 0;
+  useColumnPick({
+    picked: selectedId, shown: shown?.id ?? null, locateId, located: locateFound,
+    select: setSelectedId, onPick,
+  });
   useEffect(() => {
     if (!locateId || !locateFound) return;
     setSelectedId(locateId);

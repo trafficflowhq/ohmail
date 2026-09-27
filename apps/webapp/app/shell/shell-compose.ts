@@ -1010,8 +1010,7 @@ export function useShellCompose({
     // the plain reply. One question, one source.
     const plan = replyEnvelopePlan(parent, ownAddresses, replyAll, replyEnvelope);
     // A row still held for this message is the hold's to judge, never a row to send from.
-    const heldRow = heldReplyRow(messageId);
-    const laneRow = heldRow === null ? laneRowOf(messageId) : null;
+    const laneRow = heldReplyRow(messageId) === null ? laneRowOf(messageId) : null;
     mailSend.send(withSignature({
       kind: "mail_send",
       inReplyTo: messageId,
@@ -1045,7 +1044,7 @@ export function useShellCompose({
       // `In-Reply-To`/`References` from the parent row whatever the subject says.
       ...(replySubjectEdit !== null ? { subject: replySubjectEdit } : {}),
       ...replyEnvelopeOnWire(plan),
-    }, sigText, sigHtml), withDone({ heldRow }));
+    }, sigText, sigHtml), withDone({ heldRow: heldReplyRow(messageId) }));
   });
 
   /**

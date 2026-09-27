@@ -34,7 +34,7 @@ import type { MessageBarPanel } from "./message-chrome";
 import { readColumnHidden } from "./narrow";
 import { dispatchMarkAll, dispatchMarkAllRead } from "./read-all";
 import type { RichValue } from "./rich-text";
-import { go, goScreener, goSettings, reflectMessage, type Route, type ScreenerSegmentId } from "./routing";
+import { canonicalHash, go, goScreener, goSettings, reflectMessage, type Route, type ScreenerSegmentId } from "./routing";
 import type { ScreenerState } from "./screener-state";
 import { createSeenBatcher } from "./seen-batch";
 import { useStableCallback } from "./stable-callback";
@@ -164,6 +164,17 @@ export function openTargetFor(
 }
 
 /**
+ * THE VIEWS THAT READ IN A COLUMN OF THEIR OWN, and the two streams that read in a card. Their
+ * open is the view's own state, so each reports it ({@link ShellOpenState.reportPick}) and the bar
+ * claims it — a reload then reopens the same letter, and Back closes it.
+ */
+const COLUMN_VIEWS: ReadonlySet<Route["view"]> = new Set<Route["view"]>(["history", "triage", "trash", "folder", "tag"]);
+const STREAM_VIEWS: ReadonlySet<Route["view"]> = new Set<Route["view"]>(["reads", "receipts"]);
+
+/** The place a route names, without its open message — what a view's pick is keyed on. */
+const placeOf = (route: Route): string => canonicalHash({ ...route, messageId: null });
+
+/**
  * What the reader shows — the mirror's own row, else the row the opener carried in. `GET
  * /search` answers over the whole archive while the mirror is a window over it, so a hit can
  * name a message with no local row: the mirror answered `undefined`, the reader's `open` prop
@@ -225,6 +236,8 @@ export interface ShellOpenStateInput {
   receipts: EngineMessage[];
   /** The inline reply's id, closed by the route transition with every other overlay. */
   setReplyTo: Dispatch<SetStateAction<string | null>>;
+  /** Does the column view on screen list this message? A routed open it cannot show takes the reader. */
+  columnHolds: (id: string) => boolean;
 }
 
 /** The record the shell composes with. Consumers destructure it: a memo may not depend on it. */
@@ -232,7 +245,7 @@ export type ShellOpenState = ReturnType<typeof useShellOpenState>;
 
 export function useShellOpenState({
   engine, reader, derived, route, t, toast, mutateAndReport, mailState, screener,
-  allOhbox, consentView, folders, parked, partition, piles, presented, receipts, setReplyTo,
+  allOhbox, consentView, folders, parked, partition, piles, presented, receipts, setReplyTo, columnHolds,
 }: ShellOpenStateInput) {
 
   /* ── view state ── */
@@ -294,6 +307,18 @@ export function useShellOpenState({
    * all read the mirror, which is what keeps this from becoming a second, staler mirror of one.
    */
   const [readerOffMirror, setReaderOffMirror] = useState<EngineMessage | null>(null);
+  /**
+   * THE OPEN A COLUMN VIEW OR A STREAM HOLDS ITSELF — the row it shows because somebody picked it,
+   * or the card that carries the bar — keyed on its place, so a pick never speaks for another view.
+   */
+  const [viewPick, setViewPick] = useState<{ place: string; id: string } | null>(null);
+  const reportPick = useStableCallback((id: string | null) => {
+    const place = placeOf(route);
+    setViewPick((cur) => {
+      if (id === null) return cur?.place === place ? null : cur;
+      return cur?.place === place && cur.id === id ? cur : { place, id };
+    });
+  });
   const [railOpen, setRailOpen] = useState(false);
   /**
    * THE QUICK-LOOK PREVIEW — a message id and the attachment on screen, or `null`.
@@ -906,7 +931,10 @@ export function useShellOpenState({
     // it must take the claim out of the bar with it.
     const openOnScreen: string | null =
       (viewChanged ? null : readerFor)
-      ?? (route.view === "ohbox" && !readColumnHidden() ? ohboxSel : null);
+      ?? (route.view === "ohbox" && !readColumnHidden() ? ohboxSel : null)
+      // A column's pick only while its column stands; a stream's card is the reading at any width.
+      ?? (!viewChanged && viewPick?.place === placeOf(route)
+        && (STREAM_VIEWS.has(route.view) || !readColumnHidden()) ? viewPick.id : null);
     // ── the route moved: apply it ─────────────────────────────────────────────────────────
     if (agreedKey !== routeMsgAgreed.current) {
       const id = route.messageId;
@@ -923,6 +951,7 @@ export function useShellOpenState({
           // that card through its own pill. Only that one — a second card the reader expanded
           // themselves is scroll posture this bar never claimed, and it stays open.
           setReaderFor(null);
+          setViewPick(null);
           if (route.view === "ohbox") setOhboxSel(null);
           if (route.view === "reads") setReadsCur(null);
           if (route.view === "receipts") setReceiptsCur(null);
@@ -987,7 +1016,12 @@ export function useShellOpenState({
         (route.view === "reads" ? setReadsCur : setReceiptsCur)(id);
         setJump({ view: route.view, id });
         setReaderFor(null); // same stale-overlay rule as the ohbox arm
+        setViewPick({ place: placeOf(route), id }); // the card the jump opens carries the claim
         setLocated(id);
+      } else if (COLUMN_VIEWS.has(route.view) && !readColumnHidden() && columnHolds(id)) {
+        // A column view that lists the row reads it in its own column, as the Ohbox does.
+        setViewPick({ place: placeOf(route), id });
+        setReaderFor(null);
       } else {
         // Every other message view — and a settled pile that does not hold the row: the overlay.
         setReaderFor(id);
@@ -1003,7 +1037,7 @@ export function useShellOpenState({
     }
     // `route` is a fresh object per hash: the fields below are the identity that matters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route.messageId, route.view, readerFor, ohboxSel, derived, mailState.settled, pileHolds, reader, routeFetched]);
+  }, [route.messageId, route.view, readerFor, ohboxSel, viewPick, derived, mailState.settled, pileHolds, reader, routeFetched]);
 
   /**
    * Locate the row, in whichever view it landed. One DOM effect and not four props: a search hit can land in four
@@ -1186,6 +1220,7 @@ export function useShellOpenState({
     readerMessage,
     readsCur,
     readsMarkSeen,
+    reportPick,
     receiptsCur,
     receiptsMarkSeen,
     ribbonGone,

@@ -18,6 +18,7 @@ import {
 import { InfoNote, ListPane, ListRows, MessageRow, ReadColumn, Spinner } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { useListWindow } from "../shell/list-window";
+import { useColumnPick } from "../shell/column-pick";
 import { useStoreTimeline } from "../shell/store-timeline";
 import { avatarOf, rowStamp, rowAddress, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useZoneNav } from "../shell/zone-nav";
@@ -53,6 +54,8 @@ export function HistoryView({
   onToggleTime,
   now,
   onOpen,
+  locateId,
+  onPick,
   hydrateBody,
   onAction,
   onAddTag,
@@ -77,6 +80,9 @@ export function HistoryView({
   now: Date;
   /** The reader sheet, in place — the narrow-width tap, where there is no reading column. */
   onOpen: (m: EngineMessage) => void;
+  /** The URL's open message on this view, and where the view's own pick is reported — `useColumnPick`. */
+  locateId?: string | null;
+  onPick?: (id: string | null) => void;
   /** Hydrate the reading column's message; off-mirror rows take the body door. */
   hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
   onAction: (action: MessageAction, message: EngineMessage) => void;
@@ -129,7 +135,8 @@ export function HistoryView({
   if (tl.shifted !== shiftSeen) {
     const was = picked ?? (lastShown.current ? { row: lastShown.current, at: 0 } : null);
     setShiftSeen(tl.shifted);
-    setPicked(was ? { row: was.row, at: was.at + tl.shifted - shiftSeen } : null);
+    // A row with no slot yet (a routed one, its page unfetched) has nothing to move.
+    setPicked(was ? { row: was.row, at: was.at < 0 ? was.at : was.at + tl.shifted - shiftSeen } : null);
   }
   const first = tl.rowAt(0);
   const shown = picked
@@ -142,6 +149,33 @@ export function HistoryView({
   }, [shown?.id, hydrateBody]);
   useLayoutEffect(() => {
     lastShown.current = shown;
+  });
+
+  /* The slot a row holds among the pages fetched so far, or -1: a routed row can sit on a page
+     not yet asked for, and the keys walk from its slot once that page lands. */
+  const slotOf = (id: string): number => {
+    for (let i = 0; i < tl.length; i++) {
+      const r = tl.rowAt(i);
+      if (r !== null && r !== "gone" && r.id === id) return i;
+    }
+    return -1;
+  };
+  const selectId = (id: string | null): void => {
+    if (id === null) { setPicked(null); return; }
+    const at = slotOf(id);
+    const r = at >= 0 ? tl.rowAt(at) : engine.read().get<EngineMessage>("message", id) ?? null;
+    if (r !== null && r !== "gone") setPicked({ row: r, at });
+  };
+  useEffect(() => {
+    if (picked === null || picked.at >= 0) return;
+    const at = slotOf(picked.row.id);
+    if (at >= 0) setPicked({ row: picked.row, at });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [picked, tl]);
+  useColumnPick({
+    picked: picked?.row.id ?? null, shown: shown?.id ?? null, locateId,
+    located: locateId != null && engine.read().get<EngineMessage>("message", locateId) != null,
+    select: selectId, onPick,
   });
 
   const openRow = (m: EngineMessage, at: number) => {

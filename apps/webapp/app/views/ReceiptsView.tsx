@@ -60,6 +60,7 @@ export function ReceiptsView({
   onClosed,
   onAction,
   onMarkAllRead,
+  onPick,
 }: {
   /** `ReadsView`'s pair, same reading, same reason. */
   settled: boolean;
@@ -133,6 +134,8 @@ export function ReceiptsView({
   /** Mark every unread receipt read, chunked, via the shell. Optional: this view mounts
    * without a shell in tests, and a "mark all" with nothing behind it must not render. */
   onMarkAllRead?: (ids: string[]) => void;
+  /** The card that carries the bar — `ReadsView`'s, same reading. */
+  onPick?: (id: string | null) => void;
 }) {
   const t = useTranslations("receipts");
   const tr = useTranslations("reads");
@@ -153,7 +156,7 @@ export function ReceiptsView({
    * which is the one gesture that surfaces it. One bar at rest; an earlier holder keeps its bar
    * while it is still on screen (`stream-bar.ts`).
    */
-  const bar = useStreamBar(streamRef);
+  const bar = useStreamBar(streamRef, onPick);
   // A key's strip lands on the card it named (`stream-bar.ts`).
   useKeyPanelOpensCard(".view-receipts", bar.hasBar, (id) => messages.some((m) => m.id === id));
 

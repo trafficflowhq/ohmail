@@ -20,8 +20,18 @@ export interface StreamBar {
   toggled: (id: string, open: boolean) => void;
 }
 
-export function useStreamBar(stream: RefObject<StreamHandle | null>): StreamBar {
+/**
+ * `onHolder` hears the card that carries the bar — the last one opened, the stream's open reading —
+ * which the shell puts in the address (`reportPick`).
+ */
+export function useStreamBar(
+  stream: RefObject<StreamHandle | null>, onHolder?: (id: string | null) => void,
+): StreamBar {
   const [holder, setHolder] = useState<string | null>(null);
+  useEffect(() => {
+    onHolder?.(holder);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [holder]);
   const [lingering, setLingering] = useState<ReadonlySet<string>>(NONE);
   /* The press reads the holder synchronously, and two presses can land inside one commit. */
   const holderRef = useRef<string | null>(null);

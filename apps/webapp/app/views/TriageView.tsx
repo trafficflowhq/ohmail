@@ -31,6 +31,7 @@ import { pressResurfaceKey } from "../shell/message-verbs";
 import { useZoneNav } from "../shell/zone-nav";
 import { readColumnHidden } from "../shell/narrow";
 import { useListWindow } from "../shell/list-window";
+import { useColumnPick } from "../shell/column-pick";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { TRIAGE_PILES, type TriagePileId } from "../shell/routing";
 
@@ -81,6 +82,8 @@ export function TriageView({
   onToggleTime,
   now,
   onOpen,
+  locateId,
+  onPick,
   hydrateBody,
   onAction,
   onAddTag,
@@ -129,6 +132,9 @@ export function TriageView({
   now: Date;
   /** The reader sheet — the narrow-width tap, where there is no reading column. */
   onOpen: (m: EngineMessage) => void;
+  /** The URL's open message on this view, and where the view's own pick is reported — `useColumnPick`. */
+  locateId?: string | null;
+  onPick?: (id: string | null) => void;
   /** Hydrate the reading column's message, the way Tag and History hydrate theirs. */
   hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
   onAction: (action: MessageAction, message: EngineMessage) => void;
@@ -163,6 +169,11 @@ export function TriageView({
 
   /** The cursor is per-pile. Switching horizons must not leave the reader on the last pile's mail. */
   useEffect(() => setSelectedId(null), [pile]);
+  useColumnPick({
+    picked: selectedId, shown: shown?.id ?? null, locateId,
+    located: locateId != null && openable.some((m) => m.id === locateId),
+    select: setSelectedId, onPick,
+  });
 
   useEffect(() => {
     if (shown) hydrateBody(shown.id);

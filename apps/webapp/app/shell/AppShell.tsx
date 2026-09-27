@@ -1621,6 +1621,25 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
      that pane is mounted twice whenever the reader is open — see `message-chrome.tsx`. */
   const [replyTo, setReplyTo] = useState<string | null>(null);
   /**
+   * DOES THE COLUMN VIEW THE ROUTE NAMES LIST THIS MESSAGE — asked before a routed open is read in
+   * that view's own column rather than the reader. The same lists the views render; History lists
+   * every message.
+   */
+  const columnHolds = useStableCallback((id: string): boolean => {
+    switch (route.view) {
+      case "history": return true;
+      case "triage": {
+        const pile = route.triagePile === "aside" ? piles.setAside
+          : route.triagePile === "resurface" ? piles.resurface : piles.replyLater;
+        return pile.some((e) => e.messageId === id);
+      }
+      case "tag": return tagGroups.find((g) => g.tag.id === route.tagId)?.messages.some((m) => m.id === id) ?? false;
+      case "folder": return folderMessages.some((m) => m.id === id);
+      case "trash": return trashPage.items.some((m) => m.id === id);
+      default: return false;
+    }
+  });
+  /**
    * THE OPEN STATE — what is selected, what the reader shows, what the bar claims and what this
    * visit has spent, in `shell-open-state.ts`. Below `replyTo`, whose editor the route transition
    * closes with every other overlay, and above everything that reads a selection — `shell-compose.ts`
@@ -1630,7 +1649,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     absoluteTime, barPanel, chipState, closeCard, commitReadsSeen, commitReceiptsSeen, enterReader,
     focused, fr, frDone, frValues, jump, markAllRead, markSeen, mirrorHolds, verbHolds, ohboxGone, openMessage,
     picker, pickerIds, previewFor, railOpen, readerFor, readerGone, readerMessage, readsCur,
-    readsMarkSeen, receiptsCur, receiptsMarkSeen, ribbonGone, scnSel, screenerFull, searchFrom,
+    readsMarkSeen, reportPick, receiptsCur, receiptsMarkSeen, ribbonGone, scnSel, screenerFull, searchFrom,
     searchQuery, selectedOhbox, senderAudit, senderMenu, senderMenuBack, setBarPanel, setChipState, setCloseCard,
     setFr, setFrDone, setFrPending, setFrValues, setJump, setOhboxArmedRead, setOhboxSel, setPicker,
     setPickerIds, setPreviewFor, setRailOpen, setReaderFor, setReaderOffMirror, setReadsCur,
@@ -1639,7 +1658,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     subjectRule, toggleAbsoluteTime,
   } = useShellOpenState({
     engine, reader, derived, route, t, toast, mutateAndReport, mailState, screener,
-    allOhbox, consentView, folders, parked, partition, piles, presented, receipts, setReplyTo,
+    allOhbox, consentView, folders, parked, partition, piles, presented, receipts, setReplyTo, columnHolds,
   });
 
   /**
@@ -2563,6 +2582,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 onClosed={() => setCloseCard(null)}
                 onAction={onStreamAction}
                 onMarkAllRead={markAllRead}
+                onPick={reportPick}
               />
             ) : null}
 
@@ -2608,6 +2628,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 onClosed={() => setCloseCard(null)}
                 onAction={onStreamAction}
                 onMarkAllRead={markAllRead}
+                onPick={reportPick}
               />
             ) : null}
 
@@ -2733,6 +2754,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                    presents in no pile, so "open it where it lives" would navigate away from the
                    view that was showing it. */
                 onOpen={(m) => setReaderFor(m.id)}
+                /* The URL's open message, and the pick it claims — see `reportPick`. */
+                locateId={route.messageId}
+                onPick={reportPick}
                 hydrateBody={hydrateBody}
                 onAction={onMessageAction}
                 onAddTag={openTagPicker}
@@ -2758,6 +2782,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                  * The body hydrates through the `readerFor`-keyed effect, as History's does.
                  */
                 onOpen={(m) => setReaderFor(m.id)}
+                locateId={route.messageId}
+                onPick={reportPick}
                 hydrateBody={hydrateBody}
                 onAction={onMessageAction}
                 onAddTag={openTagPicker}
@@ -2794,6 +2820,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                    exactly the mail the reach-past just fetched. The mirror's own row still wins
                    whenever it exists — see `readerMessageFor`. */
                 onOpen={(m) => { setReaderOffMirror(m); setReaderFor(m.id); }}
+                onPick={reportPick}
                 hydrateBody={hydrateBody}
                 onAction={onMessageAction}
                 onAddTag={openTagPicker}
@@ -2821,6 +2848,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                    row, and a reader resolving mirror ids alone would stay closed on it (the
                    folder view's reach-past rule; the mirror's own row still wins). */
                 onOpen={(m) => { setReaderOffMirror(m); setReaderFor(m.id); }}
+                locateId={route.messageId}
+                onPick={reportPick}
                 hydrateBody={hydrateBody}
                 onAction={onMessageAction}
                 onAddTag={openTagPicker}
@@ -3008,6 +3037,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 /* The URL's open message (`#/trash/m/<id>`) — a link into one deleted message,
                    which is the reveal target the window has to mount. */
                 locateId={route.messageId}
+                onPick={reportPick}
                 onOpen={(m) => setReaderFor(m.id)}
                 hydrateBody={hydrateBody}
                 onAction={onMessageAction}

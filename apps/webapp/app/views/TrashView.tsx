@@ -32,6 +32,7 @@ import { BodyText } from "../shell/BodyText";
 import { useZoneNav } from "../shell/zone-nav";
 import { readColumnHidden } from "../shell/narrow";
 import { useListWindow } from "../shell/list-window";
+import { useColumnPick } from "../shell/column-pick";
 import { useKeyBindings } from "../shell/keymap";
 import { isModalOpen } from "../shell/modal-gate";
 import type { TrashPage } from "../shell/trash-page";
@@ -78,6 +79,7 @@ export function TrashView({
   now,
   locateId,
   onOpen,
+  onPick,
   hydrateBody,
   onAction,
   onAddTag,
@@ -102,6 +104,8 @@ export function TrashView({
   locateId?: string | null;
   /** The reader sheet, in place — the narrow-width tap, where there is no reading column. */
   onOpen: (m: EngineMessage) => void;
+  /** Where the view's own pick is reported — `useColumnPick`. */
+  onPick?: (id: string | null) => void;
   hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
   onAction: (action: MessageAction, message: EngineMessage) => void;
   onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
@@ -234,6 +238,10 @@ export function TrashView({
      the slice derives from `scrollTop`, so putting the row's offset in view mounts it. */
   const locateIdx = locateId ? rows.findIndex((m) => m.id === locateId) : -1;
   const locateFound = locateIdx >= 0;
+  useColumnPick({
+    picked: liveKey === null ? selectedId : null, shown: shown?.id ?? null, locateId,
+    located: locateFound, select: setSelectedId, onPick,
+  });
   useEffect(() => {
     if (!locateId || !locateFound) return;
     // A link names a MIRRORED message, so it takes the reading column back from a live pick.

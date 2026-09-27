@@ -76,6 +76,7 @@ export function ReadsView({
   onClosed,
   onAction,
   onMarkAllRead,
+  onPick,
 }: {
   /**
    * The pair every list asks before it states anything about the mailbox — `MailState.settled`
@@ -166,6 +167,8 @@ export function ReadsView({
    * shell in tests.
    */
   onMarkAllRead?: (ids: string[]) => void;
+  /** The card that carries the bar — the stream's open reading, which the address names. */
+  onPick?: (id: string | null) => void;
 }) {
   const t = useTranslations("reads");
   const rowBadge = useRowBadgeCopy();
@@ -195,7 +198,7 @@ export function ReadsView({
    * follows expansion, and a click select-AND-expands (see `StreamCard`). One bar at rest; an
    * earlier holder keeps its bar while it is still on screen (`stream-bar.ts`).
    */
-  const bar = useStreamBar(streamRef);
+  const bar = useStreamBar(streamRef, onPick);
 
   const all = useMemo(
     () => [...partition.fresh, ...partition.seen],

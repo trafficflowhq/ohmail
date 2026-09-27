@@ -26,6 +26,7 @@ import { useZoneNav } from "../shell/zone-nav";
 import { useMessageVerbs } from "../shell/message-verbs";
 import { readColumnHidden } from "../shell/narrow";
 import { useListWindow } from "../shell/list-window";
+import { useColumnPick } from "../shell/column-pick";
 
 
 export interface TagAdmin {
@@ -43,6 +44,8 @@ export function TagView({
   onToggleTime,
   now,
   onOpen,
+  locateId,
+  onPick,
   hydrateBody,
   onAction,
   onAddTag,
@@ -81,6 +84,9 @@ export function TagView({
   now: Date;
   /** The reader sheet, in place — the narrow-width tap, where there is no reading column. */
   onOpen: (m: EngineMessage) => void;
+  /** The URL's open message on this view, and where the view's own pick is reported — `useColumnPick`. */
+  locateId?: string | null;
+  onPick?: (id: string | null) => void;
   /** Hydrate the split reading column's message, the way ReadsView hydrates `current`. */
   hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
   onAction: (action: MessageAction, message: EngineMessage) => void;
@@ -110,6 +116,11 @@ export function TagView({
    * re-partition under the fallback, so it cannot re-point at a message nobody chose.
    */
   const shown = messages.find((m) => m.id === selectedId) ?? messages[0] ?? null;
+  useColumnPick({
+    picked: selectedId, shown: shown?.id ?? null, locateId,
+    located: locateId != null && messages.some((m) => m.id === locateId),
+    select: setSelectedId, onPick,
+  });
 
   useEffect(() => {
     if (shown) hydrateBody(shown.id);
