@@ -195,8 +195,16 @@ export function recordInteraction(kind: UiInteraction, ms: number): void {
  * and it records nothing for itself; past the bound it is one timeout ({@link expirePending}).
  */
 let pendingOpen: { id: string; at: number } | null = null;
-/** Messages whose body a pane has on screen, counted — two panes can show one message. */
-const bodiesShown = new Map<string, number>();
+/** Messages whose body a pane has on screen: how many panes, and when the first one showed it. */
+const bodiesShown = new Map<string, { panes: number; since: number | null }>();
+/**
+ * THE LAST PRESS OR KEY, which an open is timed FROM. The pane ends a mirrored body's open in the
+ * commit that shows it, before the bar can begin the mark, so the press is the only start that
+ * comes first. Taken by the first open after it, and only within {@link OPEN_INPUT_WINDOW_MS}.
+ */
+let lastInput: number | null = null;
+/** An open marked this long after the last press is not that press's open. */
+export const OPEN_INPUT_WINDOW_MS = 5_000;
 /** The route key of the view on screen, or `null` while the shell shows a placeholder. */
 let viewShown: string | null = null;
 /**
@@ -228,15 +236,33 @@ function expirePending(now: number): void {
 /**
  * A message was asked for; the mark ends when THAT message's body is on screen ({@link endOpen}).
  *
- * The pane ends in a LAYOUT effect and this runs from the bar's PASSIVE one, so a body already in
- * the mirror is on screen before its open is marked: that open waited for nothing and records
- * nothing, and it still supersedes the open before it.
+ * Timed from the press that asked for it ({@link lastInput}). The pane ends in a LAYOUT effect and
+ * this runs from the bar's PASSIVE one, so a body in the mirror is already on screen here: shown
+ * since the press, the open is recorded at the next paint; shown before it, or with no press to
+ * start from, it waited for nothing and records nothing. Either way it supersedes the one before.
  */
 export function beginOpen(messageId: string): void {
   const at = nowMs();
   if (at === null) return;
   expirePending(at);
-  pendingOpen = bodiesShown.has(messageId) ? null : { id: messageId, at };
+  const press = lastInput !== null && at - lastInput <= OPEN_INPUT_WINDOW_MS ? lastInput : null;
+  lastInput = null;
+  const shown = bodiesShown.get(messageId);
+  if (shown === undefined) {
+    pendingOpen = { id: messageId, at: press ?? at };
+    return;
+  }
+  pendingOpen = null;
+  if (press === null || shown.since === null || shown.since < press) return;
+  afterPaint(() => {
+    const ended = nowMs();
+    if (ended !== null) recordInteraction("open", ended - press);
+  });
+}
+
+/** A press or a key: the start the next open is timed from. */
+export function noteInput(): void {
+  lastInput = nowMs();
 }
 
 /** The reading was closed: an open still waiting is abandoned, and records nothing — not a timeout. */
@@ -253,16 +279,17 @@ export function abandonOpen(): void {
  * commit that put the text in the document; the paint is the other frame a reader waits through.
  */
 export function endOpen(messageId: string): () => void {
-  bodiesShown.set(messageId, (bodiesShown.get(messageId) ?? 0) + 1);
+  const at = nowMs();
+  const was = bodiesShown.get(messageId);
+  bodiesShown.set(messageId, was ? { ...was, panes: was.panes + 1 } : { panes: 1, since: at });
   let held = true;
   const gone = (): void => {
     if (!held) return;
     held = false;
-    const left = (bodiesShown.get(messageId) ?? 1) - 1;
-    if (left > 0) bodiesShown.set(messageId, left);
+    const now = bodiesShown.get(messageId);
+    if (now && now.panes > 1) bodiesShown.set(messageId, { ...now, panes: now.panes - 1 });
     else bodiesShown.delete(messageId);
   };
-  const at = nowMs();
   if (at !== null) expirePending(at);
   const pending = pendingOpen;
   if (pending === null || pending.id !== messageId) return gone;
@@ -443,11 +470,15 @@ function startSampler(): void {
      own; all five are passive — this arms an instrument, it never answers the gesture. */
   if (typeof document !== "undefined" && detachArming === null) {
     const arm = (): void => armUiVitalsSampler();
+    const press = (): void => { noteInput(); armUiVitalsSampler(); };
     const opts = { capture: true, passive: true } as const;
-    const events = ["pointerdown", "keydown", "wheel", "scroll", "visibilitychange"] as const;
+    const events = ["wheel", "scroll", "visibilitychange"] as const;
+    const presses = ["pointerdown", "keydown"] as const;
     for (const e of events) document.addEventListener(e, arm, opts);
+    for (const e of presses) document.addEventListener(e, press, opts);
     detachArming = () => {
       for (const e of events) document.removeEventListener(e, arm, opts);
+      for (const e of presses) document.removeEventListener(e, press, opts);
     };
   }
   // The load IS the first interaction: a cold start is exactly the window whose frames matter.
@@ -635,6 +666,7 @@ export function resetUiVitalsForTest(): void {
   activeUntil = 0;
   pendingOpen = null;
   bodiesShown.clear();
+  lastInput = null;
   viewShown = null;
   timeouts.open = 0;
   timeouts.switch = 0;
