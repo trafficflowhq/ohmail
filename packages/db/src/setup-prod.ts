@@ -485,7 +485,7 @@ export async function setupProdDatabase(
   // makes "idempotent" checkable (a second run must apply nothing to either half).
   // The migrator's own session shape: `ensureWithheldProvenanceIndex` takes the migration lock on
   // it, so losing its backend must refuse the setup rather than carry on without the lock.
-  const preSession = await openMigrationSession(url);
+  const preSession = await openMigrationSession(url, { log });
   const pre = preSession.sql;
   const preDb = drizzle(pre);
   let before: AppliedWhens;
@@ -566,7 +566,7 @@ export async function setupProdDatabase(
   await runMigrations(url, { log: (m) => log(m) });
 
   // Same shape as `pre`: the trigram and hot-path builds take the migration lock on this session.
-  const clientSession = await openMigrationSession(url);
+  const clientSession = await openMigrationSession(url, { log });
   const client = clientSession.sql;
   const db = drizzle(client);
   try {

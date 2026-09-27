@@ -53,6 +53,29 @@ interface MigrationSession {
 }
 
 /**
+ * RESET BEFORE THE CLOSE. Every session opened here lifts these ceilings with a session-level SET
+ * (runMigrations, setupProdDatabase's two provisioning sessions, the concurrent index builds). A
+ * session pooler hands the backend to its next client with the session's settings intact, so a
+ * closed session would leave a pooled backend with no statement, lock or idle ceiling at all. A
+ * live session RESETs all three to the role defaults as the last thing before it ends, and every
+ * caller ends it in a `finally`, so the success path and the throw path hand back the same clean
+ * backend. A lost session has nothing to reset on; a RESET that fails is logged by its error class.
+ */
+const SESSION_CEILINGS = ["statement_timeout", "lock_timeout", "idle_in_transaction_session_timeout"] as const;
+
+async function resetCeilings(raw: Sql, log: ((msg: string) => void) | undefined): Promise<void> {
+  for (const guc of SESSION_CEILINGS) {
+    try {
+      await raw.unsafe(`reset ${guc}`);
+    } catch (err) {
+      const cls = (err as { code?: unknown }).code ?? (err instanceof Error ? err.name : typeof err);
+      log?.(`could not reset ${guc} before closing a migration session (${String(cls)}): ` +
+        "a pooled backend may keep it at 0");
+    }
+  }
+}
+
+/**
  * ONE CONNECTION FOR THE LOCK AND EVERYTHING DONE UNDER IT, NEVER REPLACED. postgres.js reopens
  * a closed connection on the next statement and recycles an idle one after 30-60 min on its own,
  * so a lost backend ran the rest of a setup without the lock and without this session's SETs.
@@ -60,7 +83,10 @@ interface MigrationSession {
  * reaches the driver. A transaction is BEGIN/COMMIT on this connection rather than postgres.js
  * `begin`, whose rollback after a lost backend writes to a closed socket and crashes the process.
  */
-export async function openMigrationSession(url: string): Promise<MigrationSession> {
+export async function openMigrationSession(
+  url: string,
+  opts: { log?: (msg: string) => void } = {},
+): Promise<MigrationSession> {
   let open = false;
   let ending = false;
   let lost: MigrationSessionLostError | null = null;
@@ -115,7 +141,11 @@ export async function openMigrationSession(url: string): Promise<MigrationSessio
     lost: () => lost,
     // A lost connection keeps its dead statement referenced, and a graceful end would wait out
     // the whole timeout for it; there is nothing left to flush, so it is destroyed at once.
-    end: async () => { ending = true; await raw.end({ timeout: lost === null ? 5 : 0 }); },
+    end: async () => {
+      if (lost === null) await resetCeilings(raw, opts.log);
+      ending = true;
+      await raw.end({ timeout: lost === null ? 5 : 0 });
+    },
   };
 }
 
@@ -162,7 +192,7 @@ export async function runMigrations(
   opts: { log?: (msg: string) => void } = {},
 ): Promise<void> {
   const log = opts.log ?? (() => {});
-  const session = await openMigrationSession(url);
+  const session = await openMigrationSession(url, { log });
   const sql = session.sql;
   // postgres.js takes bigint params at runtime; its published types omit bigint, so the cast
   // keeps the 64-bit advisory-lock key EXACT while satisfying the compiler. Same treatment as
