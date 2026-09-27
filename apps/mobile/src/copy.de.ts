@@ -1555,6 +1555,34 @@ export const DE: Deck = {
   serverSettingsRefused: (detail: string) =>
     `Diese Einstellungen wurden nicht behalten: ${detail}. Auf diesem Telefon hat sich nichts geändert.`,
 
+  selfCheckAction: "Dieses Postfach prüfen",
+  selfCheckChecking: "Wird geprüft…",
+  selfCheckInStep: "Stimmt mit deinem Mailserver überein.",
+  selfCheckEmpty: "Noch nichts zu vergleichen: Von diesem Postfach wurde noch kein Ordner gelesen.",
+  selfCheckUnreachedTimeout: "Das Postfach konnte nicht geprüft werden: Dein Mailserver hat nicht rechtzeitig geantwortet.",
+  selfCheckUnreachedAuth: "Das Postfach konnte nicht geprüft werden: Dein Mailserver hat die Anmeldung abgelehnt.",
+  selfCheckUnreachedConnect: "Das Postfach konnte nicht geprüft werden: Dein Mailserver war nicht erreichbar.",
+  selfCheckUnreachedTls:
+    "Das Postfach konnte nicht geprüft werden: Die sichere Verbindung zu deinem Mailserver ist fehlgeschlagen.",
+  selfCheckUnreachedBusy:
+    "Das Postfach konnte nicht geprüft werden: Es sind bereits so viele Verbindungen offen, wie ohmail nutzt. Versuch es gleich nochmal.",
+  selfCheckUnreachedNoLogin: "Das Postfach konnte nicht geprüft werden: Für dieses Postfach ist keine Anmeldung gespeichert.",
+  selfCheckUnreachedOther: "Das Postfach konnte nicht geprüft werden: Dein Mailserver konnte nicht gelesen werden.",
+  selfCheckDiffers: (n: number, list: string) =>
+    `${n} ${n === 1 ? "Ordner weicht" : "Ordner weichen"} von deinem Mailserver ab: ${list}.`,
+  selfCheckDiffersAndUnread: (n: number, list: string, unread: number, unreadList: string) =>
+    `${n} ${n === 1 ? "Ordner weicht" : "Ordner weichen"} von deinem Mailserver ab: ${list}; `
+    + `${unread} ${unread === 1 ? "Ordner konnte" : "Ordner konnten"} nicht gelesen werden: ${unreadList}.`,
+  selfCheckOnlyUnread: (unread: number, unreadList: string) =>
+    `${unread} ${unread === 1 ? "Ordner konnte" : "Ordner konnten"} nicht von deinem Mailserver gelesen werden: ${unreadList}. Die übrigen stimmen überein.`,
+  selfCheckServerMore: (folder: string, n: number) =>
+    `${folder} (${n} ${n === 1 ? "Nachricht" : "Nachrichten"} mehr auf dem Server)`,
+  selfCheckMirrorMore: (folder: string, n: number) =>
+    `${folder} (${n} ${n === 1 ? "Nachricht" : "Nachrichten"} mehr hier)`,
+  selfCheckRenumbered: (folder: string) => `${folder} (vom Server neu nummeriert)`,
+  selfCheckAndMore: (list: string, n: number) => `${list} und ${n} weitere`,
+  selfCheckFailed: "Die Prüfung konnte nicht laufen. Es wurde nichts verändert.",
+
   mailRowThreadAria: (n: number) =>
     `${n} ${n === 1 ? "Nachricht" : "Nachrichten"} in diesem Gespräch`,
   mailRowNewSinceAria: (n: number) =>

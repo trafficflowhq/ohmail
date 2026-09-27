@@ -1,3 +1,4 @@
+import { readSelfCheck, selfCheckSaid, type SelfCheckDiffer, type SelfCheckSaid } from "@ohmail/client-engine";
 import { faultDetail, refuse, sayArg, type Refusal } from "../refusal";
 import type { PhoneServer } from "../engine/standalone-door";
 import type { ConnectedSession } from "./pairing.js";
@@ -457,4 +458,33 @@ export function serverChangeRefusal(status: number, error: ServerChangeError | u
   }
   const said = error?.message;
   return refuse("serverSettingsRefused", typeof said === "string" && said !== "" ? said : String(status));
+}
+
+/**
+ * CHECK THIS MAILBOX — `GET /mailboxes/:id/reconcile` over the session's own transport; on a
+ * standalone phone that is the engine in this process, which holds the copy the check compares.
+ * The reading is narrowed by the desktop's reader into the sentence's parts; a reading for another
+ * mailbox, or none, is `refused`. The raw reading is kept for the session so the diagnostic file
+ * can carry it as hashes and classes. Nothing here runs unless somebody pressed.
+ */
+export type { SelfCheckDiffer, SelfCheckSaid };
+export type MailboxCheck = { k: "said"; said: SelfCheckSaid } | { k: "refused" };
+
+const lastReadings = new Map<string, unknown>();
+
+export async function checkMailbox(session: ConnectedSession, mailboxId: string): Promise<MailboxCheck> {
+  const res = await session.fetch(
+    `${requestBase(session)}/mailboxes/${encodeURIComponent(mailboxId)}/reconcile`, { method: "GET" },
+  );
+  if (res.status !== 200) return { k: "refused" };
+  const wire = (await res.json().catch(() => null)) as unknown;
+  const check = readSelfCheck(wire);
+  if (check === null || check.mailboxId !== mailboxId) return { k: "refused" };
+  lastReadings.set(mailboxId, wire);
+  return { k: "said", said: selfCheckSaid(check) };
+}
+
+/** The readings this session took, by mailbox id — the diagnostic file's input. */
+export function selfChecksThisSession(): Record<string, unknown> {
+  return Object.fromEntries(lastReadings);
 }

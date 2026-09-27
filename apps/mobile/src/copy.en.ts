@@ -2355,6 +2355,35 @@ const TABLE = {
   serverSettingsRefused: (detail: string) =>
     `Those settings were not kept: ${detail}. Nothing on this phone changed.`,
 
+  /* ── CHECK THIS MAILBOX — the self-check's one sentence, `ui/self-check-said.ts`. It states what
+     was counted on the server and here, and promises nothing. */
+  selfCheckAction: "Check this mailbox",
+  selfCheckChecking: "Checking…",
+  selfCheckInStep: "In step with your mail server.",
+  selfCheckEmpty: "Nothing to compare yet: no folder of this mailbox has been read.",
+  selfCheckUnreachedTimeout: "Could not check this mailbox: your mail server did not answer in time.",
+  selfCheckUnreachedAuth: "Could not check this mailbox: your mail server refused the sign-in.",
+  selfCheckUnreachedConnect: "Could not check this mailbox: your mail server could not be reached.",
+  selfCheckUnreachedTls: "Could not check this mailbox: the secure connection to your mail server failed.",
+  selfCheckUnreachedBusy:
+    "Could not check this mailbox: it already has as many connections open as ohmail uses. Try again in a moment.",
+  selfCheckUnreachedNoLogin: "Could not check this mailbox: no sign-in is stored for it.",
+  selfCheckUnreachedOther: "Could not check this mailbox: your mail server could not be read.",
+  selfCheckDiffers: (n: number, list: string) =>
+    `${n} ${n === 1 ? "folder differs" : "folders differ"} from your mail server: ${list}.`,
+  selfCheckDiffersAndUnread: (n: number, list: string, unread: number, unreadList: string) =>
+    `${n} ${n === 1 ? "folder differs" : "folders differ"} from your mail server: ${list}; `
+    + `${unread} ${unread === 1 ? "folder" : "folders"} could not be read: ${unreadList}.`,
+  selfCheckOnlyUnread: (unread: number, unreadList: string) =>
+    `${unread} ${unread === 1 ? "folder" : "folders"} could not be read from your mail server: ${unreadList}. The others are in step.`,
+  selfCheckServerMore: (folder: string, n: number) =>
+    `${folder} (${n} more ${n === 1 ? "message" : "messages"} on the server)`,
+  selfCheckMirrorMore: (folder: string, n: number) =>
+    `${folder} (${n} more ${n === 1 ? "message" : "messages"} here)`,
+  selfCheckRenumbered: (folder: string) => `${folder} (renumbered by the server)`,
+  selfCheckAndMore: (list: string, n: number) => `${list}, and ${n} more`,
+  selfCheckFailed: "The check could not run. Nothing was changed.",
+
   /* THE ROW'S BADGES, SPOKEN — `ui/row-spoken.ts`. A chip's face ("4", "2 new") read out in a
      list is a number and a word with no referent, so each fact has a sentence of its own here;
      the web row's own description makes the same substitution. */

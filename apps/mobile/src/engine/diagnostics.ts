@@ -35,10 +35,12 @@ export interface PhoneDiagnosticDeps {
   write: (text: string) => Promise<string>;
 }
 
-/** What the screen holds: the mirror to count and the rows the paired door answered. */
+/** What the screen holds: the mirror to count, the rows the paired door answered, the checks run. */
 export interface PhoneDiagnosticState {
   reader: EntityReader | null;
   mailboxes: readonly DiagnosticMailboxInput[];
+  /** The session's self-check readings by mailbox id; a reading for a mailbox the roster lacks adds its row. */
+  selfChecks?: Readonly<Record<string, unknown>>;
 }
 
 const hex = (bytes: Uint8Array): string => [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -81,7 +83,11 @@ export async function writePhoneDiagnostics(state: PhoneDiagnosticState, deps: P
     install: record,
     app: appReading(),
     store: { counts, window: MOBILE_WINDOW },
-    mailboxes: state.mailboxes,
+    mailboxes: [
+      ...state.mailboxes,
+      ...Object.keys(state.selfChecks ?? {}).filter((id) => !state.mailboxes.some((m) => m.id === id)).map((id) => ({ id })),
+    ],
+    ...(state.selfChecks ? { selfChecks: state.selfChecks } : {}),
     log: deps.lines(),
   });
   const where = await deps.write(renderDiagnosticBundle(bundle));

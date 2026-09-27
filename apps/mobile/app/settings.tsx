@@ -31,7 +31,7 @@ import { Sheet, SheetRow } from "../src/ui/Sheet";
 import { Nav } from "../src/ui/MoreNav";
 import { Field } from "../src/ui/Field";
 import { useConnection } from "../src/net/connection";
-import { changeServerSettings, resupplyPassword } from "../src/net/mailboxes";
+import { changeServerSettings, checkMailbox, resupplyPassword, selfChecksThisSession } from "../src/net/mailboxes";
 import { backupExclusion, subscribeBackupExclusion } from "../src/engine/backup-exclusion";
 import { phoneEngineStart } from "../src/engine/engine-artifact";
 import {
@@ -89,6 +89,7 @@ import { SavedSettingsPanel } from "../src/ui/ProfileImportCard";
 import { writePhoneDiagnostics } from "../src/engine/diagnostics";
 import { nativePhoneDiagnosticDeps, shareDiagnosticFile } from "../src/engine/diagnostics-native";
 import { diagnosticSaid, type DiagnosticPress } from "../src/ui/diagnostic-said";
+import { selfCheckRowSaid, type SelfCheckPress } from "../src/ui/self-check-said";
 
 /** Gated like the tabs: the About block states a live session's facts, so it needs one. */
 export default function SettingsScreen() {
@@ -411,7 +412,7 @@ function DiagnosticPanel() {
     try {
       const engine = connection.state.k === "live" ? connection.state.session.engine : null;
       const where = await writePhoneDiagnostics(
-        { reader: engine?.read() ?? null, mailboxes: w.mailboxes.rows },
+        { reader: engine?.read() ?? null, mailboxes: w.mailboxes.rows, selfChecks: selfChecksThisSession() },
         nativePhoneDiagnosticDeps(),
       );
       setPress(where === null ? { k: "failed" } : { k: "written", where });
@@ -491,6 +492,8 @@ function ThisPhonePanel() {
   >(null);
   const [serverSending, setServerSending] = useState(false);
   const [serverRevealed, setServerRevealed] = useState(false);
+  /* CHECK THIS MAILBOX — what the last press answered; the door in this process only. */
+  const [checkPress, setCheckPress] = useState<SelfCheckPress>({ k: "rest" });
   /* The live session, for the one request this panel makes — the door in this process on a
      standalone install, which is the only place the verb is offered. */
   const conn = useConnection();
@@ -758,6 +761,34 @@ function ThisPhonePanel() {
                     style={{ alignSelf: "flex-start", marginTop: 4 }}
                   />
                 ) : null}
+                {/* CHECK THIS MAILBOX — one read of the mail server against this phone's copy, and
+                    one sentence back. The door in THIS process only: its engine holds the copy. */}
+                {row.key === HERE_CARD && here !== null ? (() => {
+                  const check = selfCheckRowSaid(checkPress);
+                  return (
+                    <View style={{ gap: 2, marginTop: 4 }}>
+                      <Button
+                        label={check.action}
+                        variant="quiet"
+                        disabled={check.busy}
+                        onPress={() => {
+                          const at = conn.state.k === "live" ? conn.state.session : null;
+                          const id = here.id ?? "";
+                          if (check.busy || at === null || id === "") return;
+                          setCheckPress({ k: "busy" });
+                          void checkMailbox(at, id).then(
+                            (answer) => setCheckPress({ k: "done", check: answer }),
+                            () => setCheckPress({ k: "failed" }),
+                          );
+                        }}
+                        style={{ alignSelf: "flex-start" }}
+                      />
+                      {check.sentence === null ? null : (
+                        <Txt variant="note" tone="ink2" accessibilityRole="alert">{check.sentence}</Txt>
+                      )}
+                    </View>
+                  );
+                })() : null}
                 {/* WHAT THE LAST SEND ANSWERED, beside the verb that made it. */}
                 {resupplySaid === null || row.key !== HERE_CARD ? null : (
                   <Txt variant="note" tone="ink2" accessibilityRole="alert">
