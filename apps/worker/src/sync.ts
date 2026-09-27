@@ -1100,7 +1100,7 @@ async function syncCycleWithin(
   const batch = await adapter.changesSince(cursor);
   if (deps.census !== undefined) {
     deps.census.observed += batch.creates.length + batch.moves.length
-      + batch.flagChanges.length + batch.deletes.length;
+      + batch.flagChanges.length + batch.deletes.length + (batch.resetGone?.length ?? 0);
   }
   // A folder whose STORED cursor this build could not read was scanned from cold — the adapter has
   // no logger and reports the names instead, and a re-bootstrap that nobody records is the
@@ -1244,12 +1244,25 @@ async function syncCycleWithin(
   // were renumbered, not lost, so a delete is only believed when its epoch is the one the server
   // reports NOW (`epochsObserved`, read off the locators minted this pass; neither available ⇒ skip).
   const observedEpochs = epochsObserved(batch);
+  // THE SERVER'S OWN STATEMENTS go per folder in ONE transaction and outside the cap: a folder it
+  // says does not exist, and the prior-epoch deletes a reset's whole re-read proved gone. The
+  // reset's proof is made once, on the pass that sees the reset, so a cap would strand the rest.
+  const goneFolders = new Set(batch.foldersGone ?? []);
+  const proved = new Map<string, { kind: "folder_gone" | "reset_reread"; changes: Change[] }>();
+  const prove = (kind: "folder_gone" | "reset_reread", ch: Change): void => {
+    const f = ch.locator.folder;
+    const group = proved.get(f) ?? { kind, changes: [] };
+    group.changes.push(ch);
+    proved.set(f, group);
+  };
+  for (const ch of batch.resetGone ?? []) prove("reset_reread", ch);
   let deletesCapped = false;
   let deletesRecorded = 0;
   for (const ch of batch.deletes) {
     const site = siteOf(ch);
     const live = observedEpochs.get(site.folder) ?? batch.newCursor.folders[site.folder]?.uidValidity;
     if (live === undefined || !sameEpoch(epochOf(live), epochOf(site.uidValidity))) continue;
+    if (goneFolders.has(site.folder)) { prove("folder_gone", ch); continue; }
     // BOUNDED — see {@link DELETE_EVIDENCE_PER_CYCLE}. The cap is counted over the deletes this
     // cycle BELIEVES, not over everything the adapter reported: a UIDVALIDITY reset's prior-epoch
     // refs are skipped above and must not spend a budget meant for real disappearances.
@@ -1263,6 +1276,17 @@ async function syncCycleWithin(
       reason: "this cycle recorded its budget of disappearances and stopped; the rest are still "
         + "in the known-set, are reported again next cycle, and the cycle re-kicks rather than "
         + "waiting for the poll",
+    });
+  }
+  for (const [folder, { kind, changes }] of proved) {
+    await fencedLiveGroup(deps, async (r) => {
+      for (const ch of changes) await r.forgetInstanceAt(mailboxId, ch.locator);
+    });
+    log?.info("sync_folder_instances_forgotten", {
+      mailboxId, accountId, folderLabel: folderLabel(folder), kind, count: changes.length,
+      reason: kind === "folder_gone"
+        ? "the server stated this remembered folder does not exist, so its letters left with it"
+        : "a UIDVALIDITY reset's whole re-read holds none of these letters, so they are gone",
     });
   }
 

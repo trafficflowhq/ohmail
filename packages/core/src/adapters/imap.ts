@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
-  ImapFlow, type ImapFlowOptions, type ListResponse, type MailboxObject, type StatusObject,
+  ImapFlow, type FetchMessageObject, type ImapFlowOptions, type ListResponse, type MailboxObject,
+  type StatusObject,
 } from "imapflow";
 import nodemailer, { type Transporter } from "nodemailer";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
@@ -82,7 +83,9 @@ import {
 } from "./imap-types.js";
 // The News pile's resolver (0.22): the adapter is the one place canonical names meet the live
 // tree, so `toServerPath` routes both spellings onto the folder the mailbox actually has.
-import { NEWS_FOLDER, LEGACY_NEWS_FOLDER, canonicalDestination, pileFolder } from "../types.js";
+import {
+  NEWS_FOLDER, LEGACY_NEWS_FOLDER, SENT_SHAPED_PATHS, canonicalDestination, pileFolder,
+} from "../types.js";
 import { SendNotSubmitted, SentCopyAppendFailed, submissionNeverOffered } from "../send.js";
 // The SSRF gate's other half. `pinned-fetch.ts` owns it because a pin and a gate are one
 // mechanism (its header says so); this file is the mail-leg consumer — see `ImapConfig.pin`.
@@ -102,7 +105,7 @@ import { MAX_RAW_MESSAGE_BYTES } from "../mime.js";
 // version is that the user picks their own mail server and the worker process is shared, so every
 // count, size and wait this file accepts from that server is a lever on other people's mail.
 import {
-  ImapBoundExceeded, ImapDeadline, boundedCollect, boundListResponse, boundSearchResult,
+  ImapBoundExceeded, ImapDeadline, boundedCollect, boundedFetch, boundListResponse, boundSearchResult,
   boundEnvelopeAddresses, bodyOverrunCeiling, minOf,
   IMAP_ENUM_MAX_UIDS, IMAP_CANDIDATE_BODY_PROBES_MAX,
   IMAP_FLAG_SCAN_MAX_ROWS, IMAP_SAMPLE_MAX_ROWS,
@@ -853,6 +856,41 @@ export function messageIdFromRaw(raw: Buffer): string | null {
   return m ? normalizeMessageId(m[1].trim()) : null;
 }
 
+/**
+ * The NO texts that say the mailbox does not exist, for a server that sends no RFC 5530 code.
+ * Measured: Dovecot answers `NO Mailbox doesn't exist: <name>`, GreenMail `NO STATUS failed. No
+ * such mailbox`. A phrasing outside this set keeps the folder's rows, which is the safe direction.
+ */
+const NONEXISTENT_TEXT =
+  /\b(?:doesn['\u2019]?t exist|does not exist|no such (?:mailbox|folder)|unknown mailbox|(?:mailbox|folder) not found)\b/i;
+
+/** Bytes one UID may answer for its Message-ID header field: a folded field, far above real. */
+const MESSAGE_ID_FIELD_MAX_BYTES = 8 * 1024;
+
+/**
+ * A Message-ID as a PRESENCE key: brackets and space stripped, case folded. A key that matches
+ * too much keeps a row; one that matches too little would take a letter the server still holds,
+ * so presence errs wide.
+ */
+const messageIdKey = (id: string): string => id.trim().replace(/^<|>$/g, "").toLowerCase();
+
+/**
+ * Did a STATUS by name get the server's own statement that the mailbox does not exist? Two
+ * readings, both required: imapflow's `NotFound` (a NO, then a LIST of that exact name that
+ * answered empty), and the NO itself carrying `[NONEXISTENT]`, or no code and a text in
+ * {@link NONEXISTENT_TEXT}. Any other code (`NOPERM`, `UNAVAILABLE`, …) or text is not that.
+ */
+export function statesMailboxNonexistent(err: unknown): boolean {
+  const e = err as { code?: unknown; response?: { responseStatus?: unknown; response?: unknown } } | null;
+  if (e?.code !== "NotFound" || e.response?.responseStatus !== "NO") return false;
+  const parsed = e.response.response as { attributes?: Array<{ type?: unknown; value?: unknown; section?: Array<{ value?: unknown }> }> } | undefined;
+  const attrs = Array.isArray(parsed?.attributes) ? parsed.attributes : [];
+  const code = attrs[0]?.section?.[0]?.value;
+  if (typeof code === "string") return code.trim().toUpperCase() === "NONEXISTENT";
+  const text = attrs.filter((a) => a.type === "TEXT" && typeof a.value === "string").map((a) => a.value).join(" ");
+  return NONEXISTENT_TEXT.test(text);
+}
+
 /** Pair a vanished message with a re-appeared one sharing the same canonical Message-ID → a single MOVE. */
 export function correlateMoves(creates: InternalCreate[], deletes: InternalDelete[]): {
   moves: Change[]; creates: InternalCreate[]; deletes: InternalDelete[];
@@ -963,6 +1001,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   private passiveExcluded = new Map<string, string>();
   /** Customer folders beyond {@link DEFAULT_PASSIVE_FOLDERS_MAX} — reported, never read. */
   private passiveOverflow: string[] = [];
+  /**
+   * Every canonical path the last LIST that ANSWERED named, whatever class it fell in. `null` until
+   * one answered on this connection: a remembered folder is asked by name only when an answered
+   * LIST left it out, never on a failed or absent one (see {@link folderStatedGone}).
+   */
+  private listedPaths: ReadonlySet<string> | null = null;
   /** `changesSince` passes since the folder inventory was LISTed. See `PASSIVE_RELIST_CYCLES`. */
   private passiveCycle = 0;
 
@@ -2044,6 +2088,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       else excluded.set(path, reason);
     }
     admitted.sort();
+    this.listedPaths = new Set([...admitted, ...excluded.keys()]);
     this.passiveFolders = admitted.slice(0, cap);
     this.passiveOverflow = admitted.slice(cap);
     this.passiveExcluded = excluded;
@@ -2640,6 +2685,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     passive: ReadonlySet<string>;
     /** Canonical path → the STATUS the server volunteered this pass. Empty without LIST-STATUS. */
     status: ReadonlyMap<string, FolderStatus>;
+    /** What the last answered LIST named, or `null` when none has answered. */
+    listed: ReadonlySet<string> | null;
   }> {
     const resolved = await this.findSentForScan();
     const watched = new Set<string>(WATCHED_FOLDERS);
@@ -2695,6 +2742,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       sent,
       passive: new Set(passive),
       status: this.passiveStatus,
+      listed: this.listedPaths,
     };
   }
 
@@ -2724,6 +2772,43 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     return String(status.highestModseq) === prev.highestModseq
       && Number(status.uidNext) === prev.uidNext
       && Number(status.messages) === prev.known.length;
+  }
+
+  /**
+   * Does the server itself state this remembered folder does not exist? One STATUS by name; only
+   * an answer {@link statesMailboxNonexistent} reads as that statement is a yes. Found, refused,
+   * or a NO naming another cause keeps the folder's rows. A deadline is a breach and fails the
+   * pass, which keeps them too.
+   */
+  private async folderStatedGone(folder: string): Promise<boolean> {
+    try {
+      await this.bounded(this.client.status(this.toServerPath(folder), { messages: true }), folder);
+      return false;
+    } catch (err) {
+      if (err instanceof ImapBoundExceeded) throw err;
+      return statesMailboxNonexistent(err);
+    }
+  }
+
+  /**
+   * The Message-IDs the OPEN folder holds now, or `null` when the answer is not whole: every UID
+   * the enumeration saw must answer, or a letter reads as gone for want of a row. One header-field
+   * FETCH, under the enumeration's count ceiling, a byte ceiling per UID and the read clock.
+   */
+  private async messageIdsHeld(folder: string, uids: ReadonlySet<number>): Promise<Set<string> | null> {
+    if (uids.size === 0) return new Set();
+    const { items } = await boundedFetch(
+      this.client.fetch("1:*", { uid: true, headers: ["message-id"] }) as AsyncIterable<FetchMessageObject>,
+      {
+        max: IMAP_ENUM_MAX_UIDS, bound: "enumerate_uids", deadline: this.readDeadline(), folder,
+        bytes: { max: uids.size * MESSAGE_ID_FIELD_MAX_BYTES, of: (m) => m.headers?.length ?? 0 },
+        onAbandon: (_notify, because) => this.retireConnection(because),
+        map: (m) => ({ uid: m.uid, id: m.headers ? messageIdFromRaw(m.headers) : null }),
+      },
+    );
+    const answered = new Set(items.map((r) => r.uid));
+    for (const u of uids) if (!answered.has(u)) return null;
+    return new Set(items.flatMap((r) => (r.id === null ? [] : [messageIdKey(r.id)])));
   }
 
   /**
@@ -2767,6 +2852,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     }
     const {
       folders: scanFolders, sent: sentFolder, passive: passiveFolders, status: listStatus,
+      listed: listedPaths,
     } = await this.foldersToScan();
     const sentHistory = this.opts.sentHistoryMessages ?? DEFAULT_SENT_HISTORY_MESSAGES;
     const creates: InternalCreate[] = [];
@@ -2801,6 +2887,10 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       flags: this.opts.maxBatchFlags ?? DEFAULT_SYNC_BATCH_MAX_FLAGS,
     };
     let hasBacklog = false;
+    /** A folder's creates were truncated this pass — see the remembered-folder question below. */
+    let createsOwed = false;
+    /** Reset deletes the whole re-read proved gone — see {@link ChangeBatch.resetGone}. */
+    const provedGone = new Set<InternalDelete>();
 
     // The flag budget is shared, so it needs a SCHEDULE, not a queue. Spending it in
     // `scanFolders` order is FIFO, and FIFO on a shared resource starves the tail — measured: one
@@ -2957,7 +3047,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         creates.push(...fetched);
         budget.messages -= fetched.length;
         for (const f of fetched) budget.bytes -= f.raw.length;
-        if (truncated) hasBacklog = true;
+        if (truncated) { hasBacklog = true; createsOwed = true; }
         // Spent before this folder was asked: nothing was fetched here and nothing further can
         // be, so the pass ends with what it has. Every folder from here keeps its STORED cursor —
         // absent from `newFolders` is "leave the row alone" (`sync.ts` iterates what is present) —
@@ -3115,9 +3205,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // on a mailbox whose only fault is a server that does not answer the field.
         const priorEpoch = prev ? epochOf(prev.uidValidity) : UNKNOWN_EPOCH;
         const priorUidValidity = priorEpoch.known ? BigInt(priorEpoch.value) : curUidValidity;
+        const resetDeletes: InternalDelete[] = [];
         for (const [uid, { messageId }] of knownMap) {
           if (uidValidityChanged) {
-            deletes.push({ folder, uidValidity: priorUidValidity, uid, messageId });
+            const d = { folder, uidValidity: priorUidValidity, uid, messageId };
+            deletes.push(d);
+            resetDeletes.push(d);
             continue;
           }
           // Outside the range this pass enumerated (Sent only — `enumFloorUid` is 0 everywhere
@@ -3127,6 +3220,17 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           if (uid < enumFloorUid) continue;
           if (!currentSet.has(uid)) {
             deletes.push({ folder, uidValidity: priorUidValidity, uid, messageId });
+          }
+        }
+        // A RESET'S DELETE IS SILENCE, UNLESS THE WHOLE FOLDER SAYS OTHERWISE. A remembered
+        // Message-ID held by no UID the folder now has is gone; no UID is compared across the two
+        // epochs. The read is the whole folder even for Sent, whose creates re-read a window.
+        if (resetDeletes.length > 0) {
+          const present = await this.messageIdsHeld(folder, currentSet);
+          if (present !== null) {
+            for (const d of resetDeletes) {
+              if (d.messageId !== null && !present.has(messageIdKey(d.messageId))) provedGone.add(d);
+            }
           }
         }
 
@@ -3188,10 +3292,37 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       }
     }
 
+    // A REMEMBERED FOLDER AN ANSWERED LIST LEFT OUT IS ASKED BY NAME, and its instances go only on
+    // the server's own statement that it does not exist. A folder the rule excludes or the ceiling
+    // passes over is still LISTED, so never asked; Sent-shaped names never are either (a Sent
+    // renamed elsewhere re-reads as a window). Held while creates are owed: a folder renamed
+    // elsewhere must meet its new folder's creates in this pass, or it reads as a delete.
+    const foldersGone: string[] = [];
+    if (listedPaths !== null && stoppedAt === undefined && !createsOwed) {
+      const scanned = new Set(scanFolders);
+      for (const [name, prev] of stored) {
+        if (prev.known.length === 0 || scanned.has(name) || listedPaths.has(name)) continue;
+        if (SENT_SHAPED_PATHS.includes(name.toLowerCase())) continue;
+        const epoch = epochOf(prev.uidValidity);
+        if (!epoch.known || !(await this.folderStatedGone(name))) continue;
+        foldersGone.push(name);
+        for (const k of prev.known) {
+          deletes.push({ folder: name, uidValidity: BigInt(epoch.value), uid: k.uid, messageId: k.messageId });
+        }
+        // Carried, so the cycle's epoch guard believes these deletes at the epoch they name.
+        newFolders[name] = { uidValidity: prev.uidValidity, uidNext: prev.uidNext, highestModseq: prev.highestModseq };
+      }
+    }
+
     // Cleared when the pass reached the end, so a completed first sync stops leading with a
     // folder that owes nothing.
     this.budgetStop = stoppedAt;
     const correlated = correlateMoves(creates, deletes);
+    const asDelete = (d: InternalDelete): Change => ({
+      type: "delete", locator: { folder: d.folder, ref: makeRef(d.uidValidity, d.uid) },
+    });
+    // A proved-gone delete that paired with a create elsewhere is a move and is not in this list.
+    const resetGone = correlated.deletes.filter((d) => provedGone.has(d));
     return {
       // `ownAuthored` is stamped HERE, on pure creates only, and not inside `correlateMoves`.
       // A create the correlator paired with a delete is a MOVE into Sent — the
@@ -3220,13 +3351,15 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       })),
       moves: correlated.moves,
       flagChanges,
-      deletes: correlated.deletes.map((d): Change => ({ type: "delete", locator: { folder: d.folder, ref: makeRef(d.uidValidity, d.uid) } })),
+      deletes: correlated.deletes.filter((d) => !provedGone.has(d)).map(asDelete),
       newCursor: { folders: newFolders },
       hasBacklog,
       ...(stoppedAt ? { budgetStop: stoppedAt } : {}),
       unanswered,
       oversize,
       ...(unreadableCursors.length > 0 ? { rebootstrapped: unreadableCursors } : {}),
+      ...(foldersGone.length > 0 ? { foldersGone } : {}),
+      ...(resetGone.length > 0 ? { resetGone: resetGone.map(asDelete) } : {}),
     };
   }
 

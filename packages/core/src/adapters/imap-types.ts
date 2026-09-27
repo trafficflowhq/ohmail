@@ -823,6 +823,18 @@ export interface ChangeBatch {
    * build. Optional; absent means nothing refused on size.
    */
   oversize?: ReadonlyArray<{ folder: string; uidValidity: string; uid: number; size: number }>;
+  /**
+   * Remembered folders the server itself stated do not exist, asked by name after a LIST left
+   * them out. Their instances are in {@link deletes} at the folder's remembered epoch, and the
+   * caller forgets each folder's in ONE transaction. Absent ⇒ none.
+   */
+  foldersGone?: readonly string[];
+  /**
+   * Deletes at a folder's PRIOR epoch that a UIDVALIDITY reset's whole re-read proved gone: the
+   * Message-ID is in no UID the server now holds there and paired with no create this pass. Not in
+   * {@link deletes}, whose epoch guard skips a prior epoch; forgotten per folder in one transaction.
+   */
+  resetGone?: readonly Change[];
 }
 
 export interface OutboundMessage {
