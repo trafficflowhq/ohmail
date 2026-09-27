@@ -120,11 +120,14 @@ export function noticesDue(lc: AccessLifecycle, now: Date): DueNotice[] {
   // the hold is communicated by the operator. `erasureAt` is null while suspended (the port's own
   // contract), so the erasure notice below and the erasure itself cannot fire for one either.
   if (lc.state === "closed" && closedAt !== null && lc.closedReason !== "suspended") {
-    out.push({ kind: "closed", anchor: closedAt, erasureAt });
-    if (erasureAt !== null) {
-      const ahead = erasureAt.getTime() - now.getTime();
+    // A NOTICE STATES ONLY A DATE THE ERASURE WILL KEEP. The epoch belt refuses a date it cannot
+    // floor, so the same reading gates the mail: no erasure week, and no date in the closure.
+    const stated = erasureAt !== null && erasureClearsEpoch(lc) ? erasureAt : null;
+    out.push({ kind: "closed", anchor: closedAt, erasureAt: stated });
+    if (stated !== null) {
+      const ahead = stated.getTime() - now.getTime();
       if (ahead > 0 && ahead <= ERASURE_REMINDER_AHEAD_MS) {
-        out.push({ kind: "erasure_week", anchor: erasureAt, erasureAt });
+        out.push({ kind: "erasure_week", anchor: stated, erasureAt: stated });
       }
     }
   }
