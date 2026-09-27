@@ -35,7 +35,10 @@
     "openDemo": "Demo öffnen",
     "storageRefused": "Dieser Browser behält deine Entscheidungen über ein Neuladen hinweg nicht — ein privates Fenster oder voller Speicher.",
     "storageRefusedDismiss": "Ausblenden",
-    "noUndoHere": "Kein Rückgängig — dieser Browser kann keins aufbewahren."
+    "noUndoHere": "Kein Rückgängig — dieser Browser kann keins aufbewahren.",
+    "refusedOwnerAbsent": "Dieser Browser weiß nicht mehr, zu welchem Konto dieses Fenster gehört. Lade die Seite neu und versuche es noch einmal.",
+    "refusedOwnerSignedOut": "Auf diesem Browser steht noch eine Abmeldung aus. Melde dich neu an, um dieses Fenster zu nutzen.",
+    "refusedOwnerMismatch": "Dieses Fenster gehört zu einem anderen Konto als dem, das dieser Browser jetzt hält."
   },
   "login": {
     "title": "Anmelden",

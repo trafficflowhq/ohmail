@@ -33,8 +33,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useFormatter, useTranslations } from "next-intl";
 import { Button, SettingsRow, SettingsSection, SettingsSubhead, useToast } from "@ohmail/ui";
 import {
-  ApiError, devices as devicesApi, messageOf, pair, type DeviceDTO, type PairingTokenDTO,
+  ApiError, devices as devicesApi, pair, type DeviceDTO, type PairingTokenDTO,
 } from "../../api-client";
+import { useRefusalSentence } from "../refusal-sentence";
 import { ALLOWED_API_ORIGINS } from "../../api-origin";
 import { SELF_HOST_BUILD, serverHello } from "../../hello";
 import { QrCode } from "../../shell/QrCode";
@@ -77,6 +78,7 @@ type Busy = null | "mint" | "web-group" | `revoke:${string}` | `remove:${string}
 
 export function DevicesSection() {
   const t = useTranslations("devices");
+  const sentence = useRefusalSentence();
   const format = useFormatter();
   const toast = useToast();
   /**
@@ -151,9 +153,9 @@ export function DevicesSection() {
       // belong to the Invites pane on the build that has one.
       setCodes(mints.filter((m) => m.grant === "device-pair" && m.status === "live"));
     } catch (err) {
-      if (alive.current) setError(messageOf(err));
+      if (alive.current) setError(sentence(err));
     }
-  }, []);
+  }, [sentence]);
 
   useEffect(() => {
     void refresh();
@@ -188,7 +190,7 @@ export function DevicesSection() {
             setError(
               err instanceof ApiError && (err.status === 401 || err.status === 403)
                 ? t("stepUpExpired")
-                : messageOf(err),
+                : sentence(err),
             );
           }
         } finally {
@@ -196,7 +198,7 @@ export function DevicesSection() {
         }
       })();
     },
-    [t],
+    [t, sentence],
   );
 
   const mint = () =>

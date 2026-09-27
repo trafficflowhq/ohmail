@@ -25,7 +25,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useFormatter, useTranslations } from "next-intl";
 import { Button, SettingsRow, SettingsSection, SettingsSubhead, useToast } from "@ohmail/ui";
-import { ApiError, messageOf, pair, type PairingTokenDTO } from "../../api-client";
+import { ApiError, pair, type PairingTokenDTO } from "../../api-client";
+import { useRefusalSentence } from "../refusal-sentence";
 import { SELF_HOST_BUILD, serverHello } from "../../hello";
 import { QrCode } from "../../shell/QrCode";
 
@@ -61,6 +62,7 @@ type Busy = null | "mint" | `revoke:${string}`;
 
 export function InvitesSection() {
   const t = useTranslations("invites");
+  const sentence = useRefusalSentence();
   const format = useFormatter();
   const toast = useToast();
 
@@ -94,9 +96,9 @@ export function InvitesSection() {
       // credential class its copy never explains.
       setItems(all.filter((i) => i.grant === "invite" && i.status === "live"));
     } catch (err) {
-      if (alive.current) setError(messageOf(err));
+      if (alive.current) setError(sentence(err));
     }
-  }, []);
+  }, [sentence]);
 
   useEffect(() => {
     void refresh();
@@ -119,14 +121,14 @@ export function InvitesSection() {
           setError(
             err instanceof ApiError && (err.status === 401 || err.status === 403)
               ? t("stepUpExpired")
-              : messageOf(err),
+              : sentence(err),
           );
         } finally {
           if (alive.current) setBusy(null);
         }
       })();
     },
-    [t],
+    [t, sentence],
   );
 
   const mint = () =>

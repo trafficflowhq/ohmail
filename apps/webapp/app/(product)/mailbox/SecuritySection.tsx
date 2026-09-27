@@ -20,7 +20,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button, SettingsRow, SettingsSection } from "@ohmail/ui";
-import { ApiError, apiConfigured, auth, messageOf } from "../../api-client";
+import { ApiError, apiConfigured, auth } from "../../api-client";
+import { useRefusalSentence } from "../refusal-sentence";
 
 type Busy = null | "codes" | "totp-enroll" | "totp-activate" | "totp-remove";
 
@@ -32,6 +33,7 @@ interface Enrolled {
 
 export function SecuritySection() {
   const t = useTranslations("security");
+  const sentence = useRefusalSentence();
 
   const [enrolled, setEnrolled] = useState<Enrolled | null>(null);
   const [loading, setLoading] = useState(true);
@@ -71,7 +73,7 @@ export function SecuritySection() {
        * `enrolled` has nothing honest to render when `enrolled` was never read — it renders the reason and stops,
        * which a read-failure guard now holds it to.
        */
-      if (alive.current) { setReadFailed(true); setError(messageOf(err)); }
+      if (alive.current) { setReadFailed(true); setError(sentence(err)); }
     } finally {
       if (alive.current) setLoading(false);
     }
@@ -100,11 +102,11 @@ export function SecuritySection() {
       if (!alive.current) return;
       setError(err instanceof ApiError && (err.status === 401 || err.status === 403)
         ? t("stepUpExpired")
-        : messageOf(err));
+        : sentence(err));
     } finally {
       if (alive.current) setBusy(null);
     }
-  }, [t]);
+  }, [t, sentence]);
 
   const regenerate = () => run("codes", async () => {
     const { codes: fresh } = await auth.recoveryCodes();

@@ -52,6 +52,7 @@ import {
   type ErasureResult,
   type TwofaChallenge,
 } from "../../api-client";
+import { useRefusalSentence } from "../refusal-sentence";
 import { useManageOffer } from "./SubscriptionSection";
 
 type Stage = "facts" | "password" | "factor" | "erasing" | "done";
@@ -64,6 +65,7 @@ interface Who {
 
 export function AccountSection() {
   const t = useTranslations("account");
+  const sentence = useRefusalSentence();
 
   const [who, setWho] = useState<Who | null>(null);
   const [loading, setLoading] = useState(true);
@@ -215,7 +217,7 @@ export function AccountSection() {
   const fail = (err: unknown): void => {
     // A failed ceremony is over: end it, so a response landing later cannot act on it either.
     ceremony.end();
-    setError(messageOf(err));
+    setError(sentence(err));
     // The five-minute window closing mid-ceremony is the one refusal with a specific remedy,
     // and it is the same branch `JoinScreen` takes: start the confirmation again.
     if (codeOf(err) === "step_up_required") {

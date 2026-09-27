@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { SettingsNote, SettingsRow, SettingsSection, Switch } from "@ohmail/ui";
-import { aiSettings, messageOf } from "../../api-client";
+import { aiSettings } from "../../api-client";
+import { useRefusalSentence } from "../refusal-sentence";
 
 /**
  * Settings → AI — the account's own off switch, and nothing else. `GET/PATCH /account/ai` is the
@@ -17,6 +18,7 @@ import { aiSettings, messageOf } from "../../api-client";
  */
 export function AiSection() {
   const t = useTranslations("settings");
+  const sentence = useRefusalSentence();
   /** `null` = the server has not answered. The switch is drawn and NOT pressable until it has. */
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -47,10 +49,10 @@ export function AiSection() {
       } catch (err) {
         if (!alive.current) return;
         setEnabled(previous);         // …and a refusal puts the switch back where it was
-        setError(messageOf(err));
+        setError(sentence(err));
       }
     })();
-  }, [enabled]);
+  }, [enabled, sentence]);
 
   return (
     <SettingsSection>
