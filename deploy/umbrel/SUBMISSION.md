@@ -1,8 +1,9 @@
 # Submitting ohmail to the official Umbrel app store
 
-The package in [`ohmail/`](./ohmail/) is submission-ready: official-store shape
-(app id `ohmail`, no store prefix), every image pinned `tag@sha256:…` with the
-multi-arch index digest, and a clean run of the store repository's own linter.
+The package in [`ohmail/`](./ohmail/) has the official-store shape (app id `ohmail`,
+no store prefix), every image pinned `tag@sha256:…` with the multi-arch index digest,
+and a clean run of the store repository's own linter — but it is stale: it pins 0.11.0,
+so a repin to the current release comes before anything below.
 Submission is a pull request to
 [`getumbrel/umbrel-apps`](https://github.com/getumbrel/umbrel-apps). This file is the
 exact ceremony.

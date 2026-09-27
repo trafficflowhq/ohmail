@@ -8,9 +8,10 @@ install from a store, read one token, done.
 a draft: it is **not yet in any app store**. The package lives in this
 repository under [`deploy/umbrel/`](../../deploy/umbrel/), the prebuilt
 images it references are published and pinned by digest, and the package
-passes the official app repository's own checks — what remains is the store
-submission itself ([`deploy/umbrel/SUBMISSION.md`](../../deploy/umbrel/SUBMISSION.md))
-and a first run on a real device. This guide describes the install as the
+passed the official app repository's own checks — what remains is a repin to
+the current release (it pins 0.11.0), the store submission itself
+([`deploy/umbrel/SUBMISSION.md`](../../deploy/umbrel/SUBMISSION.md)) and a first
+run on a real device. This guide describes the install as the
 package defines it, and marks every step that is still arriving. When the
 app reaches a store, the whole thing below the "one thing to prepare"
 section should take under ten minutes.

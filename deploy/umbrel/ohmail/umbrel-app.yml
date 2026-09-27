@@ -5,6 +5,9 @@
 # `version` tracks the pinned image tag in docker-compose.yml — the two must move
 # together. `submission` is set to the pull-request URL right after the PR is opened
 # (see ../SUBMISSION.md); until then it points at the source repository.
+#
+# STALE: this draft pins 0.11.0, not the current release, and is not submitted anywhere.
+# Repin it before any submission (see ../README.md).
 manifestVersion: 1.1
 id: ohmail
 category: social

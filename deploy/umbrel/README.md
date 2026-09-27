@@ -6,13 +6,17 @@ The umbrelOS app package for ohmail, in the format the official Umbrel app repos
 works on the package itself. [`SUBMISSION.md`](./SUBMISSION.md) is the checklist for
 getting it into the official app store.
 
-## Status: submission-ready, not yet submitted
+## Status: a stale draft, not submitted anywhere
 
-The app is **not in any app store yet**. What has changed since this package was a
-draft: the three ohmail images are published on GHCR (multi-arch, linux/amd64 +
-linux/arm64), every image in the compose is pinned `tag@sha256:…` with the multi-arch
-index digest, and the package passes the official repository's own linter
-(`npm run lint:apps -- ohmail --check-images`) with no issues.
+The app is **not in any app store yet**, and this draft is **stale**: it pins 0.11.0,
+many releases behind the one this repository ships, and nothing moves it with each
+release yet. Before any submission it needs a repin to the current release — the
+three ohmail images and their digests, and `version:` in the manifest, together.
+
+What was checked at 0.11.0: the three ohmail images are published on GHCR (multi-arch,
+linux/amd64 + linux/arm64), every image in the compose is pinned `tag@sha256:…` with
+the multi-arch index digest, and the package passed the official repository's own
+linter (`npm run lint:apps -- ohmail --check-images`) with no issues.
 
 What has NOT happened: a run on a real umbrelOS device. Everything below the
 "assumptions" heading is designed and statically validated, not observed on hardware.
