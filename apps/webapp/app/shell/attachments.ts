@@ -471,7 +471,7 @@ export function useMessageAttachments(
    * spawning a second one, and `listWorkers` never exceeds the cap for the hook's lifetime.
    */
   const pendingLists = useRef<string[]>([]);
-  /** Held ids waiting for a worker — never replaced by the conversation sweep, which owns the first queue only. */
+  /** Held ids waiting for a worker, taken before the sweep's; the sweep never replaces this queue. */
   const pendingHolds = useRef<string[]>([]);
   const listWorkers = useRef(0);
   /**
@@ -511,14 +511,15 @@ export function useMessageAttachments(
       void (async () => {
         try {
           for (;;) {
-            const id = pendingLists.current.shift();
-            if (id === undefined) {
-              // A held id is asked only while it is still held and nobody else has asked for it.
-              const heldId = pendingHolds.current.shift();
-              if (heldId === undefined) return;
+            // A PANE ON SCREEN FIRST: a held list is asked before any of the conversation sweep's,
+            // so a reader never waits out a long thread. Asked only while still held and unasked.
+            const heldId = pendingHolds.current.shift();
+            if (heldId !== undefined) {
               if (holds.current.has(heldId) && !loaded.current.has(heldId)) await askRef.current(heldId);
               continue;
             }
+            const id = pendingLists.current.shift();
+            if (id === undefined) return;
             /*
              * The release set is joined at DEQUEUE, not at enqueue. An unstarted id holds no
              * engine state to release, and membership is also the replacement run's skip test

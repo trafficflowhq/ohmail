@@ -15,7 +15,10 @@ import { opensInSystemViewer } from "./open-attachment";
 export function MessageFiles({ messageId }: { messageId: string }) {
   const chrome = useMessageChrome();
   const attachments = chrome.attachments;
-  useEffect(() => attachments?.hold(messageId), [attachments, messageId]);
+  /* Keyed on the HOLD, never the chrome: the chrome changes identity while a Download all runs,
+     and a re-run released the list mid-download, so nothing saved. */
+  const hold = attachments?.hold;
+  useEffect(() => hold?.(messageId), [hold, messageId]);
   if (!attachments) return null;
   return (
     <AttachmentStrip

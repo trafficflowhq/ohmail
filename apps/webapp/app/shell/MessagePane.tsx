@@ -1648,9 +1648,10 @@ export function MessagePane({
     [chrome.remoteImages, message.id],
   );
 
+  const needCidImages = chrome.attachments?.needCidImages;
   const onCidImages = useCallback(
-    (contentIds: string[]) => chrome.attachments?.needCidImages(message.id, contentIds),
-    [chrome.attachments, message.id],
+    (contentIds: string[]) => needCidImages?.(message.id, contentIds),
+    [needCidImages, message.id],
   );
 
   const focusedBody = (

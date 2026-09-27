@@ -2993,7 +2993,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
 
   /** A screen's holds, keyed by the ids it shows; a reader's are keyed by the opened id. */
   const filesKeyOf = (ids: readonly string[]): string => JSON.stringify(["files", ...ids]);
-  const holdFiles = (ids: string[]): void => holdLists(filesKeyOf(ids), withFiles(ids));
+  /* One message on screen (an open News card) is asked whatever its flag says, as the opened
+     message is; a bag of several (the sender screen) keeps the flag as its budget. */
+  const holdFiles = (ids: string[]): void => holdLists(filesKeyOf(ids), ids.length === 1 ? ids : withFiles(ids));
   const releaseFiles = (ids: string[]): void => {
     for (const lid of letGo(filesKeyOf(ids))) engine.releaseAttachments(lid);
   };
@@ -3020,8 +3022,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     if (!m) {
       // A row the mirror does not hold (a History or Search hit) lists its files too: the list is
       // the server's, asked by id, and the reader's cleanup releases it as it does any other.
-      const off = offMirrorRowOf(id);
-      holdLists(id, off?.hasAttachments ? [id] : []);
+      holdLists(id, offMirrorRowOf(id) ? [id] : []);
       return false;
     }
     // The full text, the conversation's members, and the file lists — all render-side asks;
@@ -3029,7 +3030,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     hydrateSmart(id);
     const members = threadOf(engine.read(), id);
     if (members.length > 0) void engine.hydrateThread(members.map((t) => t.id)).catch(() => undefined);
-    holdLists(id, withFiles([id, ...members.map((t) => t.id)]));
+    // THE OPENED MESSAGE IS ASKED WHATEVER ITS FLAG SAYS, as the web asks: a PDF the html names
+    // by `cid:` is inline and clears `hasAttachments`. The flag budgets the members only.
+    holdLists(id, [id, ...withFiles(members.map((t) => t.id))]);
     // THE ROW KEEPS ITS PLACE WHILE IT IS READ, held BEFORE the read is saved so both reach the
     // list in one snapshot; a read row holds nothing. `leaveMessage` lets it go.
     engine.holdOpenRow(id);

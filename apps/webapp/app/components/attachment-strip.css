@@ -184,6 +184,11 @@
 /* Mid-fetch the tile is inert and so is this — guarded in the component, not `disabled`. */
 .att-item[data-side] > .att-tile[data-state="loading"] + .att-side { color: var(--ink3); cursor: default; }
 .att-item[data-side] > .att-tile[data-state="loading"] + .att-side:hover { background: transparent; }
+/* Under a coarse pointer the Download control is a 44px target, and the name keeps clear of it. */
+@media (pointer: coarse) {
+  .att-side { right: 4px; width: 44px; height: 44px; }
+  .att-item[data-side] > .att-tile { padding-right: 52px; }
+}
 
 .att-tile {
   display: flex;

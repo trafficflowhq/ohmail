@@ -313,9 +313,10 @@ export function MessageCard({
    * into an older reply is no less blank there. Absent chrome (demo, the desktop shell without
    * the service) hands `MessageBody` neither half, exactly as the focused pane does.
    */
+  const needCidImages = chrome.attachments?.needCidImages;
   const onCidImages = useCallback(
-    (contentIds: string[]) => chrome.attachments?.needCidImages(message.id, contentIds),
-    [chrome.attachments, message.id],
+    (contentIds: string[]) => needCidImages?.(message.id, contentIds),
+    [needCidImages, message.id],
   );
 
   /* The remote twin, on the same reasoning as the block above: a sibling panel draws its html
