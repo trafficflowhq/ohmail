@@ -59,7 +59,7 @@ import { reviveStandingDown } from "../../webapp/app/shell/sync-scheduler";
 import { DesktopWebSection } from "./DesktopWebSection.js";
 import {
   accountDoorFor, awayDoorFor, consentDoorFor, firstRunDoorFor, flavorOf, gateFor, imagesFromComputer,
-  hostDoorFor, isDesktopHost, mailMount, pairedHostOf, pairedViaOf, profileImportDoorFor, readShell,
+  hostDoorFor, isDesktopHost, isManagedDoor, mailMount, pairedHostOf, pairedViaOf, profileImportDoorFor, readShell,
   suggestDoorFor, type HostedSession, type Shell,
 } from "./doors.js";
 import { DesktopDevices } from "./DesktopDevices.js";
@@ -1087,7 +1087,7 @@ export function DesktopGate() {
      The rail line is for a session that is still there; the paired door's own line (the other
      computer not answering) says that there, so the Cloud wording stays off it. */
   const readers = door === "cloud" && hostedAuthKnown
-    ? sessionReaders(hostedAuth.session, hostedAuth.gone, hostedAuth.noticeDue)
+    ? sessionReaders(hostedAuth.session, hostedAuth.gone, hostedAuth.noticeDue, isManagedDoor(status))
     : null;
   const cloudConnection = paired ? undefined : readers?.rail;
   const railConnection = hostConnection ?? cloudConnection;
@@ -1179,6 +1179,9 @@ export function DesktopGate() {
            fixtures adapter — would be a lie about somebody's own mail. The desktop has no demo
            surface at all; the one demo lives on ohmail.app's landing page. */
         demo={false}
+        /* The managed service only behind its own origin; the local, self-hosted and paired
+           doors name no Cloud holder and state no credit price (`managed-service.ts`). */
+        managedService={isManagedDoor(status)}
         {...(engine ? { engine } : {})}
         /* WHAT THE SYNC LINE IS ALLOWED TO SAY. Its ladder begins with "can we see this
            account's mailboxes?" and stays silent when it cannot — which this window used to

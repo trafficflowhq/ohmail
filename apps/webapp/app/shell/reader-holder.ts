@@ -245,7 +245,7 @@ export interface HolderSentence {
  * none there is nothing to open with (the em-dash defect).
  */
 export function holderSentence(
-  input: { who: HolderWho; verb: HolderVerb; voice?: PhoneHolderVoice },
+  input: { who: HolderWho; verb: HolderVerb; voice?: PhoneHolderVoice; managed?: boolean },
 ): HolderSentence {
   const { who, verb } = input;
   const voice = input.voice ?? "full";
@@ -292,7 +292,11 @@ export function holderSentence(
      twice. Both wordings are shipped, both are guarded by their own surface's control, and the
      difference is the fallback — not this table. */
   if (who.kind === "local" && named) return { key: how("readerSinceLocal"), params, verb };
-  if (who.kind === "cloud") return { key: how("readerSinceCloud"), params, verb };
+  /* A SERVER HOLDER IS OHMAIL CLOUD ONLY ON A MANAGED HOST: a self-hosted server writes the same
+     kind (`managed-service.ts`). */
+  if (who.kind === "cloud") {
+    return { key: how(input.managed === false ? "readerSinceServer" : "readerSinceCloud"), params, verb };
+  }
   return { key: how("readerSinceUnknown"), params, verb };
 }
 
@@ -303,11 +307,11 @@ export function holderSentence(
  * the strip is about FILING that is waiting, and it says who will do it. The verb clause is the
  * same bargain — `none` keeps the sentence the rail already had.
  */
-export function filingElsewhereKey(who: HolderWho, verb: HolderVerb): string {
+export function filingElsewhereKey(who: HolderWho, verb: HolderVerb, managed = true): string {
   const name = who.name;
   const named = name !== null && name !== undefined && name.trim() !== "";
   const how = (key: string): string => (verb === "none" ? key : `${key}How`);
-  if (who.kind === "cloud") return how("filingElsewhereCloud");
+  if (who.kind === "cloud") return how(managed ? "filingElsewhereCloud" : "filingElsewhereServer");
   if (who.kind === "local" && named) {
     return how(who.stopped === true ? "filingElsewhereLocalStopped" : "filingElsewhereLocal");
   }

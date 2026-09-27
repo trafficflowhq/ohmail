@@ -35,6 +35,7 @@ import { pullEtaMs, pullRate, pullRemaining, pullSampleStep, type PullSample } f
 import {
   type HolderWho, holderAnswered, holderSentence, holderStopped, holderVerdict, readerHolder, takeoverState,
 } from "./reader-holder";
+import { useManagedService } from "./managed-service";
 import "./first-run.css";
 
 /**
@@ -413,6 +414,7 @@ export function FirstRun({
 }: FirstRunProps) {
   const t = useTranslations("onboarding");
   const tm = useTranslations("mailboxes");
+  const managed = useManagedService();
   const tp = useTranslations("providerPicker");
   /** The connect funnel's namespace, for the one sentence this flow shares with it. */
   const tj = useTranslations("join");
@@ -926,7 +928,7 @@ export function FirstRun({
    * the rail) and withheld here. Kept honest by this file's three existing sentence controls.
    */
   const tmSaid = (who: HolderWho): string => {
-    const said = holderSentence({ who, verb: "none" });
+    const said = holderSentence({ who, verb: "none", managed });
     return tm(said.key, { ...said.params, name: said.params.name ?? tm("readerHolderUnknown") });
   };
   /**

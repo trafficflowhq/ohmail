@@ -34,6 +34,7 @@ import { HeldSendResolve } from "../components/HeldSendResolve";
 import { RichEditor } from "./RichEditorLazy";
 import type { RichValue } from "./rich-text";
 import type { DraftReplyControl, DraftedReply } from "./draft-reply";
+import { useManagedService } from "./managed-service";
 import { SendStatus } from "./SendStatus";
 import { useMailboxFacts } from "./MailStateProvider";
 import {
@@ -897,7 +898,7 @@ export function InlineReply({
  * an answered message — the Reply Run's debt is discharged by a send settling and nothing else
  * (`onSendSettled`), which is why this card can only put text in a box.
  */
-function DraftReplyCard({
+export function DraftReplyCard({
   chrome,
   messageId,
 }: {
@@ -905,6 +906,9 @@ function DraftReplyCard({
   messageId: string;
 }) {
   const t = useTranslations("draftReply");
+  /* THE PRICE IS SAID ONLY WHERE IT IS CHARGED: an unmetered host (`managed-service.ts`) takes no
+     credits, so its offer says what happens and no number. The number is `control.cost`. */
+  const metered = useManagedService();
   const { control, pending, resolve } = chrome;
 
   // The placement question wins when both could render: the purchase is over, and the offer
@@ -930,7 +934,9 @@ function DraftReplyCard({
   return (
     <div className="dr-card" role="group" aria-label={t("offerTitle")}>
       <b className="dr-title">{t("offerTitle")}</b>
-      <p className="dr-body">{t("offerBody")}</p>
+      <p className="dr-body">
+        {metered ? t("offerBody", { cost: control.cost }) : t("offerBodyUnmetered")}
+      </p>
       <div className="dr-btns">
         <Button variant="primary" disabled={running} onClick={control.confirm}>
           {t("confirm")}

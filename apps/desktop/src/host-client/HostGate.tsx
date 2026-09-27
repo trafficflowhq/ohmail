@@ -224,6 +224,8 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
        */
       key={scope ?? "unpaired"}
       demo={false}
+      /* Another computer of the person's own serves this page: no Cloud, no credits. */
+      managedService={false}
       engine={engine}
       /* The sync strip's mailbox facts, over the same bearer socket — the door serves
          `GET /mailboxes` out of the store on the computer hosting this page. */

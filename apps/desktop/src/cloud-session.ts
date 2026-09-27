@@ -58,10 +58,14 @@ export function cloudNoticeDue(session: CloudSessionWire | null, nowMs: number):
   return Number.isFinite(since) && nowMs - since >= CLOUD_NOTICE_GRACE_MS;
 }
 
-/** The rail's line for a session that is not answering, or `undefined` when there is nothing to say. */
-export function cloudSessionNotice(session: CloudSessionWire | null): HostConnection | undefined {
+/**
+ * The rail's line for a session that is not answering, or `undefined` when there is nothing to say.
+ * `managed` names the server: ohmail Cloud only behind its own origin (`isManagedDoor`).
+ */
+export function cloudSessionNotice(session: CloudSessionWire | null, managed = true): HostConnection | undefined {
   if (session?.state === "renewing" || session?.state === "unreachable") {
-    return { state: "unknown", words: { title: DOOR_COPY.cloudUnreachableTitle, detail: DOOR_COPY.cloudUnreachableWhy, link: null } };
+    const title = managed ? DOOR_COPY.cloudUnreachableTitle : DOOR_COPY.serverUnreachableTitle;
+    return { state: "unknown", words: { title, detail: DOOR_COPY.cloudUnreachableWhy, link: null } };
   }
   if (session?.state === "seal_failed" && session.code === "seal_write_failed") {
     return {
@@ -83,11 +87,11 @@ export function cloudSessionNotice(session: CloudSessionWire | null): HostConnec
  * the lead's cause when the dialog is open; `noticeDue` is `cloudNoticeDue`, taken at the probe.
  */
 export function sessionReaders(
-  session: CloudSessionWire | null, expired: boolean, noticeDue: boolean,
+  session: CloudSessionWire | null, expired: boolean, noticeDue: boolean, managed = true,
 ): { card: SignInCause | "closed"; rail: HostConnection | undefined; strip: boolean } {
   return {
     card: expired ? signInCauseOf(session) : "closed",
-    rail: noticeDue ? cloudSessionNotice(session) : undefined,
+    rail: noticeDue ? cloudSessionNotice(session, managed) : undefined,
     strip: !expired && session?.state !== "refused",
   };
 }

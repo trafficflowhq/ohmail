@@ -16,7 +16,7 @@ import { engineLogout, type EngineStatus } from "./bridge-fetch.js";
 import { renewCloudSession } from "./cloud-session.js";
 import type { HostedSession } from "./doors.js";
 import { DOOR_COPY, machineWord } from "./door-copy.js";
-import { isDesktopHost, pairedHostOf, pairedViaOf } from "./doors.js";
+import { isDesktopHost, isManagedDoor, pairedHostOf, pairedViaOf } from "./doors.js";
 import { agoStamp } from "../../webapp/app/shell/format";
 import { DesktopAiSettings } from "./DesktopAiSettings.js";
 import type { LocalAiStatus } from "./local-ai.js";
@@ -270,7 +270,7 @@ export function DesktopSettings({
      when this file was first imported. */
   const doorName: Record<string, string> = {
     local: DOOR_COPY.doorLocalName(machineWord()),
-    cloud: DOOR_COPY.doorCloudName,
+    cloud: isManagedDoor(status) ? DOOR_COPY.doorCloudName : DOOR_COPY.doorServerNamed,
   };
   /* THE OTHER COMPUTER'S NAME, or null. Every paired sentence below interpolates it, and each one
      falls back to the door's older wording rather than rendering a hole — see `credentialLine`. */

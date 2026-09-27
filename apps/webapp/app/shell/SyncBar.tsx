@@ -67,6 +67,7 @@ import { stripSpeaks, type MailState } from "./mail-state";
 import { useBrowserOnline } from "./browser-online";
 /* The one place any surface asks whether a phone holds the mailbox — see `reader-holder.ts`. */
 import { filingElsewhereKey, phoneHolder, phoneHolderKey } from "./reader-holder";
+import { useManagedService } from "./managed-service";
 import { readingAlong } from "./reading-along";
 
 /**
@@ -162,6 +163,7 @@ export function SyncBar({ variant = "shell", hostOffline = false }: {
   const draining = useDrainInFlight();
   // Before the early returns — a hook may not sit behind one.
   const online = useBrowserOnline();
+  const managed = useManagedService();
 
   if (!stripSpeaks(state.key)) return null;
   /* THE ONE ARM THAT YIELDS. Placed before `speech()` rather than inside it so the suppression is
@@ -173,7 +175,7 @@ export function SyncBar({ variant = "shell", hostOffline = false }: {
   // Cloud behind it — the standalone desktop, which folds `NEXT_PUBLIC_API_BASE` away at build
   // time — so it is the seam the `stopped` sentence branches on. See `speech()`'s `stopped` arm.
   const cloud = apiConfigured();
-  const spoken = speech(state, t, tm, cloud);
+  const spoken = speech(state, t, tm, cloud, managed);
   /* THE OFFLINE WORD. Both conditions, each necessary: the state must be a fetch-shaped claim —
      one a dead network makes false — AND the browser must say offline. A failing server is not
      "offline", and an offline browser over settled content has nothing to correct. The mirror IS
@@ -282,7 +284,7 @@ interface Speech {
   link: { href: string; label: string } | null;
 }
 
-function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): Speech {
+function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean, managed: boolean): Speech {
   const settings = { href: "#/settings", label: t("settings") };
   switch (state.key) {
     case "stopped":
@@ -356,7 +358,9 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
         // CLOSED set (mail 0029) and this client re-declares it, so a fourth member is a real
         // possibility during a deploy — and answering it with silence would restore precisely
         // the invisibility that migration exists to end.
-        title: state.reason ? t(`blocked_${state.reason}`) : t("blockedUnknown"),
+        /* A server's claim is ohmail Cloud's only on a managed host (`managed-service.ts`). */
+        title: state.reason === "organized_elsewhere_cloud" && !managed ? t("blockedClaimedByServer")
+          : state.reason ? t(`blocked_${state.reason}`) : t("blockedUnknown"),
         detail: (
           <>
             {readable(state.address)}
@@ -432,7 +436,7 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
           ? tm(phoneHolderKey(phone, "full"), { name: name ?? "" })
           : t(filingElsewhereKey(
             { kind: f.who?.kind ?? null, name: name ?? null, stopped: f.who?.stopped === true },
-            "takeover",
+            "takeover", managed,
           ), { name: name ?? "" });
         return {
           tone: "", role: "status", warn: false, busy: false,

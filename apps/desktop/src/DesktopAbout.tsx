@@ -14,7 +14,7 @@ import { SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } from "@oh
 import type { EngineStatus } from "./bridge-fetch.js";
 import { BUILD_LABEL } from "./build-id.js";
 import { DOOR_COPY, machineWord } from "./door-copy.js";
-import { isDesktopHost, pairedHostOf } from "./doors.js";
+import { isDesktopHost, isManagedDoor, pairedHostOf } from "./doors.js";
 import { selfUpdates } from "./distribution.js";
 import { DesktopUpdate } from "./DesktopUpdate.js";
 
@@ -28,13 +28,15 @@ import { mailboxRowWhy } from "./install-role.js";
 
 export function DesktopAbout({ status }: { status: EngineStatus }) {
   const readOnly = readerHolder(screenerMode(useMailboxFacts()));
+  /* ohmail Cloud only behind its own origin; a self-hosted door names the person's server. */
+  const managed = isManagedDoor(status);
   /* What the two doors are called on screen — the same words the Desktop pane uses. Resolved
      inside the render rather than held as a module constant, because both halves are catalogue
      reads now and a constant would freeze whichever locale happened to be set when this module
      was first imported. */
   const door: Record<string, string> = {
     local: DOOR_COPY.aboutDoorLocalValue,
-    cloud: DOOR_COPY.aboutDoorCloudValue,
+    cloud: managed ? DOOR_COPY.aboutDoorCloudValue : DOOR_COPY.aboutDoorServerValue,
   };
   /* THE OTHER COMPUTER, when this install reads through one. Both the value and its sentence
      change: "An ohmail Cloud account · the organizing happens on our servers" names a service
@@ -87,7 +89,7 @@ export function DesktopAbout({ status }: { status: EngineStatus }) {
                here, which is why it is said where somebody looks for it. */
             ? DOOR_COPY.aboutDoorHostWhy(host, machineWord())
             : status.mode === "cloud"
-              ? DOOR_COPY.aboutDoorCloudWhy
+              ? managed ? DOOR_COPY.aboutDoorCloudWhy : DOOR_COPY.aboutDoorServerWhy
               : status.mode === "local"
                 ? DOOR_COPY.aboutDoorLocalWhy
                 : DOOR_COPY.doorNoneWhy
@@ -115,7 +117,7 @@ export function DesktopAbout({ status }: { status: EngineStatus }) {
             argument the local door already makes: there is no company in a paired install's mail
             path for that list to describe, so pointing at it would offer to explain a policy that
             does not govern the install being read. */}
-        {status.mode === "cloud" && !paired ? DOOR_COPY.aboutLinksCloud : DOOR_COPY.aboutLinksLocal}
+        {status.mode === "cloud" && !paired && managed ? DOOR_COPY.aboutLinksCloud : DOOR_COPY.aboutLinksLocal}
       </SettingsNote>
     </SettingsSection>
   );

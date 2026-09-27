@@ -74,6 +74,8 @@ const EN = {
   doorServerLead: "Self-hosted ohmail Cloud.",
   doorServerSay: "A server you run does the organizing; this app keeps a copy.",
   doorCloudName: "ohmail Cloud",
+  /* A cloud door whose origin is not the managed service's (`isManagedDoor`). */
+  doorServerNamed: "Your ohmail server",
   doorCloudSay: "Our hosted service does the organizing; this app keeps a copy.",
   doorsTravel:
     "Move between these anytime. Your rules and settings live in your own mailbox and travel "
@@ -161,6 +163,7 @@ const EN = {
   /* The rail's line while ohmail Cloud is not answering or the sign-in cannot be saved — a notice
      over the mail, never the dialog: the session is still there and the engine keeps retrying. */
   cloudUnreachableTitle: "ohmail Cloud could not be reached — retrying.",
+  serverUnreachableTitle: "Your ohmail server could not be reached — retrying.",
   cloudUnreachableWhy: "The mail already here keeps reading; new mail arrives once it answers.",
   cloudSealPausedTitle: (machine: string) => `This ${machine} would not save your sign-in.`,
   cloudSealPausedWhy: "New mail waits until it can; you stay signed in.",
@@ -388,8 +391,10 @@ const EN = {
   aboutOpenedThrough: "Opened through",
   aboutDoorLocalValue: "Your own mail server",
   aboutDoorCloudValue: "An ohmail Cloud account",
+  aboutDoorServerValue: "Your ohmail server",
   aboutDoorCloudWhy:
     "A hosted account. The organizing happens on our servers and this app keeps a copy.",
+  aboutDoorServerWhy: "A server you run does the organizing; this app keeps a copy.",
   aboutDoorHostValue: "Another computer of yours",
   /* THE LAST SENTENCE IS INVARIANT #5's CONTROL, and it is pinned here rather than merely
      written: a paired install never dials the hosted service — its engine talks to one origin,

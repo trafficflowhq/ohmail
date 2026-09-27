@@ -198,7 +198,29 @@ export function flavorOf(status: EngineStatus | null): DoorFlavor {
   if (status?.mode === "local") return "local";
   if (status?.mode !== "cloud") return "unknown";
   const wire = status.flavor;
-  return wire != null && CLOUD_FLAVORS.includes(wire) ? wire : "unknown";
+  if (wire != null && CLOUD_FLAVORS.includes(wire)) return wire;
+  /* THE ORIGIN, WHEN THE RECORD NAMES NO FLAVOR — which is every hosted and self-hosted door: only
+     the paired door writes one. The shell's own rule (`config.rs` `is_self_hosted_cloud`): the
+     managed service's host is managed, any other host a server the person runs. No readable origin
+     stays `unknown`. */
+  const door = originHost(status.cloudUrl);
+  if (door === null) return "unknown";
+  return door === originHost(CLOUD_URL) ? "managed" : "selfhost";
+}
+
+function originHost(url: string | null | undefined): string | null {
+  const m = /^https?:\/\/([^/?#\s:]+)/i.exec((url ?? "").trim());
+  return m?.[1] ? m[1].toLowerCase().replace(/\.$/, "") : null;
+}
+
+/**
+ * IS THIS DOOR'S SERVER THE MANAGED SERVICE? — the fact `AppShell`'s `managedService` carries and
+ * every door sentence that names ohmail Cloud asks. A cloud door with no readable origin keeps the
+ * shipped answer; the local, self-hosted and paired doors are not.
+ */
+export function isManagedDoor(status: EngineStatus | null): boolean {
+  const flavor = flavorOf(status);
+  return flavor === "managed" || (flavor === "unknown" && status?.mode === "cloud");
 }
 
 /**

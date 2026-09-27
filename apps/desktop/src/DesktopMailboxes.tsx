@@ -41,6 +41,7 @@ import { goFirstRun } from "../../webapp/app/shell/routing";
 import {
   type HolderWho, holderSentence, phoneHolder, phoneHolderKey, readerHolder,
 } from "../../webapp/app/shell/reader-holder";
+import { useManagedService } from "../../webapp/app/shell/managed-service";
 import {
   clearReadingAlong, readingAlong, setReadingAlong,
 } from "../../webapp/app/shell/reading-along";
@@ -634,6 +635,8 @@ export function DesktopMailboxes(
   },
 ) {
   const t = useTranslations("mailboxes");
+  /* Whether a server holder may be called ohmail Cloud — only on the managed door. */
+  const managed = useManagedService();
   /* The SAME binding the sync line reads, and `refresh` is what its own comment offers this pane:
      "Re-read the mailbox facts now. The Settings pane calls it after a connect or a resync." */
   const { mailboxes: facts, mirrored, state: mailState, freshness, refresh } = useMailState();
@@ -1325,7 +1328,9 @@ export function DesktopMailboxes(
 
   const holderOf = (m: MailboxFacts): string =>
     m.organizedBy?.name?.trim()
-    || (m.organizedBy?.kind === "cloud" ? "ohmail Cloud" : t("readerHolderUnknown"));
+    || (m.organizedBy?.kind === "cloud"
+      ? (managed ? "ohmail Cloud" : t("readerHolderServer"))
+      : t("readerHolderUnknown"));
 
   /**
    * IS THE TAKEOVER PRESS MADE HERE STILL THE NEWEST WORD ON THIS MAILBOX?
@@ -1716,6 +1721,7 @@ export function DesktopMailboxes(
                       shown: day(m.organizedBy?.since ?? null),
                     },
                     verb: "reclaim",
+                    managed,
                   });
                   /* `holderOf` still supplies the NAME, because it is the one place that decides
                      what an unnamed holder is called on this pane (`ohmail Cloud`, or the
@@ -1947,8 +1953,8 @@ export function DesktopMailboxes(
               <>
                 {" "}
                 {t(
-                  holderSentence({ who: whoOf(m)!, verb: "reclaim" }).key,
-                  holderSentence({ who: whoOf(m)!, verb: "reclaim" }).params,
+                  holderSentence({ who: whoOf(m)!, verb: "reclaim", managed }).key,
+                  holderSentence({ who: whoOf(m)!, verb: "reclaim", managed }).params,
                 )}
               </>
             ) : null}

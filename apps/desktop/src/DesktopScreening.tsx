@@ -20,6 +20,7 @@ import { SettingsNote, SettingsRow, SettingsSubhead, Switch } from "@ohmail/ui";
    every sentence here exactly as it was. */
 import { useMailboxFacts } from "../../webapp/app/shell/MailStateProvider";
 import { readerHolder, screenerMode } from "../../webapp/app/shell/mail-state";
+import { useManagedService } from "../../webapp/app/shell/managed-service";
 
 import { DesktopAutoSuggest } from "./DesktopAutoSuggest.js";
 import { DesktopScreeningWords } from "./DesktopScreeningWords.js";
@@ -39,6 +40,7 @@ export function DesktopScreening({
   /* See `DesktopScreeningWords` for why the namespace has to be on `vite.config.ts`'s list. */
   const t = useTranslations("desktopScreener");
   const readOnly = readerHolder(screenerMode(useMailboxFacts()));
+  const managed = useManagedService();
   const [read, setRead] = useState<ScreeningRead | null>(null);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -66,7 +68,7 @@ export function DesktopScreening({
       <>
         <SettingsSubhead>{t("offlineHead")}</SettingsSubhead>
         {/* NAMED, NOT HIDDEN — see the header. */}
-        <SettingsNote>{t("offlineNote")}</SettingsNote>
+        <SettingsNote>{t(managed ? "offlineNote" : "offlineNoteServer")}</SettingsNote>
       </>
     );
   }

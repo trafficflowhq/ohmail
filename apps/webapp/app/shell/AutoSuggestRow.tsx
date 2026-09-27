@@ -28,6 +28,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button, SettingsRow, Switch } from "@ohmail/ui";
 import type { AutoOptInControl } from "./screener-suggest";
+import { useManagedService } from "./managed-service";
 import { ruleDate } from "../views/RulesView";
 
 export function AutoSuggestRow({
@@ -60,6 +61,8 @@ export function AutoSuggestRow({
   setAutoSuggest: (enabled: boolean) => Promise<boolean>;
 }) {
   const t = useTranslations("screener");
+  /* An unmetered host charges nothing, so it states no credit cost (`managed-service.ts`). */
+  const metered = useManagedService();
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
   /** Unmounted-after-await guard. The pane is swapped by a nav press, so this really happens. */
@@ -130,7 +133,7 @@ export function AutoSuggestRow({
           <p className="set-note-inline">
             {t("suggest.autoWhat", { count: control.batchSize })}
           </p>
-          <p className="set-note-inline">{t("suggest.autoCost")}</p>
+          {metered ? <p className="set-note-inline">{t("suggest.autoCost")}</p> : null}
           <p className="set-note-inline">{t("suggest.autoDecides")}</p>
 
           <div className="set-auto-quote">
@@ -139,10 +142,9 @@ export function AutoSuggestRow({
             ) : control.quote ? (
               /* THE SERVER'S FIGURE, for the senders the next batch would actually take. */
               <span className="scn-sg-price">
-                {t("suggest.price", {
-                  senders: control.quote.senders,
-                  credits: control.quote.credits,
-                })}
+                {metered
+                  ? t("suggest.price", { senders: control.quote.senders, credits: control.quote.credits })
+                  : t("suggest.priceUnmetered", { senders: control.quote.senders })}
               </span>
             ) : null}
             {control.notice ? <span className="scn-sg-note">{control.notice}</span> : null}

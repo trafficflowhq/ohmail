@@ -21,6 +21,7 @@ import { useTranslations } from "next-intl";
 import { SettingsNote, SettingsSubhead } from "@ohmail/ui";
 
 import { OhboxWords } from "../../webapp/app/shell/OhboxWords";
+import { useManagedService } from "../../webapp/app/shell/managed-service";
 import { readScreening, saveOhboxBar, type ScreeningRead } from "./local-screening.js";
 
 export function DesktopScreeningWords({
@@ -35,6 +36,7 @@ export function DesktopScreeningWords({
      `vite.config.ts`'s namespace list — the desktop strips any namespace not on it, and a
      namespace the sources read but the list omits throws `MISSING_MESSAGE` on first render. */
   const t = useTranslations("desktopScreener");
+  const managed = useManagedService();
   const [read, setRead] = useState<ScreeningRead | null>(null);
 
   useEffect(() => {
@@ -64,7 +66,7 @@ export function DesktopScreeningWords({
         {/* NAMED, NOT HIDDEN. The words are on the hosted account and this install cannot reach it
             — which is a sentence somebody can act on, where an absent section is one they would
             read as their writing having gone. */}
-        <SettingsNote>{t("wordsOffline")}</SettingsNote>
+        <SettingsNote>{t(managed ? "wordsOffline" : "wordsOfflineServer")}</SettingsNote>
       </>
     );
   }

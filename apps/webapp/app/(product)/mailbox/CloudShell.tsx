@@ -16,6 +16,7 @@ import {
 } from "../../api-client";
 import { readOwner } from "../../shell/owner-cookie";
 import { resolveOwnerOutcome } from "../session-outcome";
+import { SELF_HOST_BUILD } from "../../hello";
 import { AboutSection } from "./AboutSection";
 import { AccessLock } from "./AccessLock";
 import { ErasedWall } from "./ErasedWall";
@@ -250,6 +251,9 @@ export function CloudShell({ demo }: { demo: boolean }) {
     <AccountLocale>
       <AppShell
         demo={demo}
+        /* A self-hosted server is not the managed service: it names no Cloud holder and meters no
+           credits (`managed-service.ts`). */
+        managedService={!SELF_HOST_BUILD}
         resolveOwner={resolveOwner}
         /* The classifier answers; THIS commits. See `EngineProvider.onConfirmed` for why the
            binding cannot live inside `resolveOwnerOutcome`. */

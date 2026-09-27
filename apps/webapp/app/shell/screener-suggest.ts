@@ -25,6 +25,7 @@ import {
 import type { PendingDecision } from "./screener-state";
 import type { SuggestStanding } from "./no-suggestion";
 import { aiRefusalKey, clearedByAccess } from "./ai-refusal-copy";
+import { useManagedService } from "./managed-service";
 
 /**
  * One sender's suggestion, in the vocabulary the rows already speak. All five piles appear
@@ -504,6 +505,7 @@ export function useScreenerSuggestions(opts: {
   publishStanding?: (standing: SuggestStanding | null) => void;
 }): ScreenerSuggestions {
   const t = useTranslations("screener");
+  const metered = useManagedService();
   const { active, toast } = opts;
   const autoSuggest = opts.autoSuggest === true;
   const wire = opts.wire ?? CLOUD_WIRE;
@@ -674,8 +676,8 @@ export function useScreenerSuggestions(opts: {
    * deps, deleting the `setQueueReady` bump left the suite GREEN; with them
    * in a ref, that deletion goes red — the assertion the test claims to make.
    */
-  const notify = useRef({ toast, t });
-  notify.current = { toast, t };
+  const notify = useRef({ toast, t, metered });
+  notify.current = { toast, t, metered };
 
 
   /**
@@ -919,7 +921,7 @@ export function useScreenerSuggestions(opts: {
         // purchase shows is shown here. A spend the user only discovers on their next invoice is
         // the failure mode the setting exists to avoid, not one it is licensed to create. It YIELDS:
         // nobody pressed for it, so it waits behind the "Undone" or outcome the person's act raised.
-        notify.current.toast(summarize(res, notify.current.t), { yields: true });
+        notify.current.toast(summarize(res, notify.current.t, notify.current.metered), { yields: true });
       } catch (err) {
         if (io.current.autoRun !== run) return;
         // DISARM, DO NOT RETRY — for a refusal a SERVER stated. See the latch's own comment and
@@ -1235,6 +1237,7 @@ export function useScreenerSuggestions(opts: {
                     ...(typeof remainingCredits === "number" ? { remainingCredits } : {}),
                   },
                   t,
+                  metered,
                 ));
               } else {
                 // ARMED ONLY WHERE THE REFUSAL IS THE WHOLE LINE. The branch above says
@@ -1288,6 +1291,7 @@ export function useScreenerSuggestions(opts: {
               ...(typeof remainingCredits === "number" ? { remainingCredits } : {}),
             },
             t,
+            metered,
           ));
         })();
       },
@@ -1499,12 +1503,16 @@ function summarize(
     skipped: Array<{ reason: string }>;
   },
   t: (key: string, values?: Record<string, string | number>) => string,
+  /* An unmetered host charges nothing, so the done line counts suggestions and no credits. */
+  metered: boolean,
 ): string {
   // The "N senders held back from the model" clause was here, counting `withheld` skips. Both the
   // reason and its sentence are gone with the AI-OPEN ruling; a run can no longer hold anything
   // back on the strength of what the mail looks like, so there is no count to state.
   const parts = [
-    t("suggest.doneCount", { count: res.suggestions.length, credits: res.charged }),
+    metered
+      ? t("suggest.doneCount", { count: res.suggestions.length, credits: res.charged })
+      : t("suggest.doneCountUnmetered", { count: res.suggestions.length }),
     // ── WHAT IS LEFT, ONLY WHEN THE SERVER SAID SO ────────────────────────────────────────
     //
     // `typeof === "number"` and never `res.remainingCredits ?? …`: the field is absent on an

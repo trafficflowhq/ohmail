@@ -268,6 +268,7 @@ import { reconcileWakeRegistration, updateNotifyWords } from "./notification-set
 import { usePersistedFlag, UI_KEYS } from "./persisted-ui.js";
 import { useSeedOffer } from "./seed-offer";
 import { durableSessionSet } from "./durable";
+import { ManagedServiceContext } from "./managed-service";
 
 /* THE TWO PANES THE FIRST PAINT NEVER SHOWS, split out of the first-load bundle. Lazy VALUE,
    static TYPES: the type imports above cost no bytes, and these factories are the only place
@@ -539,6 +540,7 @@ export function AppShell({
   mailtoDraft,
   onMailtoDraftSeeded,
   onUnread,
+  managedService,
 }: {
   demo: boolean;
   /**
@@ -873,8 +875,14 @@ export function AppShell({
    * outside this tree. Absent in every browser tab.
    */
   onUnread?: (unread: number) => void;
+  /**
+   * Is the server behind this shell the managed service? See `managed-service.ts`. Absent reads
+   * as managed; every other host says false.
+   */
+  managedService?: boolean;
 }) {
   return (
+    <ManagedServiceContext.Provider value={managedService ?? true}>
     <EngineProvider demo={demo} engine={engine} resolveOwner={resolveOwner} onConfirmed={onConfirmed}>
       {/* ONE keydown listener for the whole client. Outside `ShellInner` so
           every view mounted under it can declare bindings into the same table, which is
@@ -925,6 +933,7 @@ export function AppShell({
         </MailStateHost>
       </KeymapProvider>
     </EngineProvider>
+    </ManagedServiceContext.Provider>
   );
 }
 

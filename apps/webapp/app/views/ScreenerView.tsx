@@ -73,6 +73,7 @@ import {
 import type { RemoteImagesChrome } from "../shell/remote-images";
 import { MessageBody } from "../components/MessageBody";
 import { BlockNoticeGloss, type BlockNotice } from "../components/BlockNotice";
+import { useManagedService } from "../shell/managed-service";
 
 
 /**
@@ -280,6 +281,8 @@ function askState(control: SuggestBatchControl): AskWellState {
  */
 export function SuggestControl({ control }: { control: SuggestBatchControl }) {
   const t = useTranslations("screener");
+  /* The quote's credit clause only where credits are charged (`managed-service.ts`). */
+  const metered = useManagedService();
   const again = control.mode === "again";
   if (control.available === 0 && control.resuggestable === 0) return null;
 
@@ -355,10 +358,9 @@ export function SuggestControl({ control }: { control: SuggestBatchControl }) {
             {t("suggest.pricing")}
           </>
         ) : running ? null : control.quote ? (
-          t("suggest.price", {
-            senders: control.quote.senders,
-            credits: control.quote.credits,
-          })
+          metered
+            ? t("suggest.price", { senders: control.quote.senders, credits: control.quote.credits })
+            : t("suggest.priceUnmetered", { senders: control.quote.senders })
         ) : null
       }
       actions={
