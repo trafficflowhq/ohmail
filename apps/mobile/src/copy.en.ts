@@ -1935,6 +1935,9 @@ const TABLE = {
      install that does is the one that can keep the appointment. */
   scheduledReaderHere: (name: string) =>
     `This phone reads your mailbox and ${name} organizes it, so this phone cannot hold a message for a later time. Send now, or schedule it on ${name}.`,
+  /* The same, when that install has stopped organizing: it still keeps the later send, once it runs. */
+  scheduledReaderHereStopped: (name: string) =>
+    `This phone reads your mailbox and ${name} has stopped organizing it, so this phone cannot hold a message for a later time. Send now, or schedule it on ${name} once it runs again.`,
   /*
    * THE AWAY RESPONDER — the one thing this product does that sends mail on its
    * own, and going away is a phone moment. Every sentence is the webapp catalogue's `away.*` word

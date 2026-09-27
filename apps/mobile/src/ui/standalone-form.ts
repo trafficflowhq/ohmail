@@ -355,8 +355,9 @@ export function mayStartHere(claim: PhoneClaim): boolean {
  * so only while ohmail runs, and reading one it organizes nothing — the install that organizes it
  * is the one that can keep a later send. `holder` is the named organizer when this phone reads.
  */
-export function scheduledNotHereSentence(holder: { name: string } | null): string {
-  return holder === null ? Copy.scheduledNotOnThisPhone : Copy.scheduledReaderHere(holder.name);
+export function scheduledNotHereSentence(holder: { name: string; stopped?: boolean } | null): string {
+  if (holder === null) return Copy.scheduledNotOnThisPhone;
+  return holder.stopped ? Copy.scheduledReaderHereStopped(holder.name) : Copy.scheduledReaderHere(holder.name);
 }
 
 /** The connect notice's sentence: the holder named, or the claim that named nobody. */

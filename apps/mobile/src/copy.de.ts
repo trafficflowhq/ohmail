@@ -1268,6 +1268,8 @@ export const DE: Deck = {
     "Dieses Telefon organisiert dein Postfach nur, solange ohmail darauf läuft, und kann eine Nachricht deshalb nicht für einen späteren Zeitpunkt aufbewahren. Sende jetzt, oder plane den Versand auf einem Computer oder in ohmail Cloud.",
   scheduledReaderHere: (name: string) =>
     `Dieses Telefon liest dein Postfach und ${name} organisiert es, deshalb kann dieses Telefon keine Nachricht für einen späteren Zeitpunkt aufbewahren. Sende jetzt, oder plane den Versand auf ${name}.`,
+  scheduledReaderHereStopped: (name: string) =>
+    `Dieses Telefon liest dein Postfach und ${name} organisiert es nicht mehr, deshalb kann dieses Telefon keine Nachricht für einen späteren Zeitpunkt aufbewahren. Sende jetzt, oder plane den Versand auf ${name}, sobald es wieder läuft.`,
 
   awayTitle: "Abwesenheitsantwort",
   awayOn: "An. Antwortet auf neue Mail, aus dem Postfach, in dem sie ankam.",
