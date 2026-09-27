@@ -319,6 +319,17 @@ const EN = {
   hostStartingOver: "Starting over…",
   hostRefuseSpent:
     "That link is spent or expired. Make a new one from Settings → Devices on that computer.",
+  /* THE LINK CHECK'S OWN THREE: the other computer says the link cannot pair, asked by the token's
+     hash before anything here is set up — so each sentence can say nothing was changed. */
+  hostRefuseLinkUsed:
+    "That link has already been used, so nothing was changed here. Make a new one from Settings → "
+    + "Devices on that computer.",
+  hostRefuseLinkExpired:
+    "That link has expired, so nothing was changed here. Make a new one from Settings → Devices on "
+    + "that computer.",
+  hostRefuseLinkRevoked:
+    "That link was taken back on that computer, so nothing was changed here. Make a new one from "
+    + "its Settings → Devices.",
   hostRefuseUnreachable: (host: string) => `Could not reach ${host}.`,
   /* THE OTHER COMPUTER ANSWERED THE REDEEM WITH A REFUSAL OF ITS OWN — not a spent code, not an
      outage. The remedy is the same place the link came from. */

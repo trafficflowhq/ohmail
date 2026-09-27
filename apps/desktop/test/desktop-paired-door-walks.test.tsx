@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -99,6 +100,9 @@ describe("which engine answers step one", () => {
        probe that carried it would spend it on a step nobody has agreed to yet. Asserted over the
        WHOLE payload rather than by naming a field, so a differently-named one is caught too. */
     expect(JSON.stringify(asked)).not.toContain("tok_xyz");
+    /* ITS HASH IS SENT, in the server's own spelling, so the other computer can say the link is
+       spent before anything is configured. Computed here with node's sha256, not the window's. */
+    expect(asked.tokenHash).toBe(createHash("sha256").update("tok_xyz", "utf8").digest("base64url"));
   });
 
   it("an install WITH a door asks its running engine, and starts no candidate", async () => {

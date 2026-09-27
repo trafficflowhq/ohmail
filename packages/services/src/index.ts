@@ -335,10 +335,10 @@ export {
 // like `invites.ts` beside it: `./mail/index.ts` and `./auth` must never re-export it.
 export {
   mintPairingToken, listPairingTokens, revokePairingToken, consumePairingToken,
-  redeemDevicePair, pairingInvalid,
+  redeemDevicePair, pairingInvalid, pairingLinkState,
   PAIRING_TTL_BOUNDS, PAIRING_LABEL_MAX, PAIRING_LIVE_TOKENS_MAX,
   type PairingGrant, type PairingTokenMinted, type PairingTokenListed, type PairingTokenStatus,
-  type PairingConsumed, type PairedDeviceSessionMinter,
+  type PairingConsumed, type PairedDeviceSessionMinter, type PairLinkState,
 } from "./pairing.js";
 export {
   redeemInviteGrant, PAIRING_INVITE_TTL_MS, type InviteGrantRedeemed,

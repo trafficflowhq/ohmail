@@ -1814,6 +1814,7 @@ impl Shell {
         &self,
         origin: &str,
         pin: &str,
+        token_hash: Option<&str>,
         left: Duration,
     ) -> Result<serde_json::Value, String> {
         if self.paths.config().is_some() {
@@ -1835,7 +1836,7 @@ impl Shell {
             identity_pending: false,
         });
 
-        let outcome = self.walk_candidate(&candidate, &dir, left);
+        let outcome = self.walk_candidate(&candidate, &dir, token_hash, left);
 
         // TORN DOWN EITHER WAY, and that is not tidiness. On a refusal the directory is the whole
         // of what the candidate wrote; on an admit the window configures the real door next, whose
@@ -1859,6 +1860,7 @@ impl Shell {
         &self,
         candidate: &Config,
         dir: &Path,
+        token_hash: Option<&str>,
         left: Duration,
     ) -> Result<serde_json::Value, String> {
         let (origin, pin) = match candidate {
@@ -1900,15 +1902,7 @@ impl Shell {
         if started.elapsed() >= left {
             return Err(out_of_time(SEGMENT_PROBE));
         }
-        let body = serde_json::json!({
-            "origin": origin,
-            "flavor": config::DESKTOP_HOST_FLAVOR,
-            /* THE PIN, WHICH IS NOT A SECRET — a hash of a public key, printed on the other
-               machine's screen for somebody to carry across a room. It goes in the body and never
-               into a log line. The TOKEN is not here at all: it is spent once, at the redeem, and
-               a probe that carried it would spend it on a step nobody has agreed to yet. */
-            "hostPin": pin,
-        });
+        let body = candidate_probe_body(&origin, &pin, token_hash);
         let answer = engine.request(EngineRequest {
             method: "POST".to_string(),
             url: "/cloud/probe".to_string(),
@@ -4380,6 +4374,25 @@ fn engine_switch_restore(shell: tauri::State<'_, Arc<Shell>>) -> Result<serde_js
     shell.restore_switch()
 }
 
+/// The candidate's `/cloud/probe` body. The PIN is not a secret — a hash of a public key, printed on
+/// the other machine's screen — and goes in the body, never a log line. The TOKEN is not here: it is
+/// spent once, at the redeem. Its HASH may be, computed by the window, so the other computer can say
+/// the link is already used before anything is set up; a value not shaped like one is dropped.
+pub(crate) fn candidate_probe_body(origin: &str, pin: &str, token_hash: Option<&str>) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "origin": origin,
+        "flavor": config::DESKTOP_HOST_FLAVOR,
+        "hostPin": pin,
+    });
+    let shaped = token_hash.filter(|h| {
+        h.len() == 43 && h.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    });
+    if let (Some(hash), Some(object)) = (shaped, body.as_object_mut()) {
+        object.insert("tokenHash".into(), hash.into());
+    }
+    body
+}
+
 /// Ask the engine about a computer this install might pair with, from an install that has none.
 ///
 /// The window holds the walk's CLOCK — it was started before the link was parsed and it bounds the
@@ -4393,9 +4406,10 @@ fn host_candidate_probe(
     shell: tauri::State<'_, Arc<Shell>>,
     origin: String,
     pin: String,
+    token_hash: Option<String>,
     budget_ms: u64,
 ) -> Result<serde_json::Value, String> {
-    shell.probe_candidate(&origin, &pin, Duration::from_millis(budget_ms))
+    shell.probe_candidate(&origin, &pin, token_hash.as_deref(), Duration::from_millis(budget_ms))
 }
 
 /// Forget the account on this install: clear the sealed credential, stop the engine, forget the

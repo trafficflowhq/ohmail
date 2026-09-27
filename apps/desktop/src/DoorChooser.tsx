@@ -1262,6 +1262,9 @@ export function sentenceForKind(kind: HostLinkRefusal | string, host: string): s
     case "managed": return DOOR_COPY.hostRefuseManaged;
     case "selfhost": return DOOR_COPY.hostRefuseServer(host);
     case "pairing_invalid": return DOOR_COPY.hostRefuseSpent;
+    case "pair_link_spent": return DOOR_COPY.hostRefuseLinkUsed;
+    case "pair_link_expired": return DOOR_COPY.hostRefuseLinkExpired;
+    case "pair_link_revoked": return DOOR_COPY.hostRefuseLinkRevoked;
     case "restart_required": return DOOR_COPY.hostRefuseRestartFirst(host);
     case "pair_account_mismatch": return DOOR_COPY.hostRefuseAccountMismatch(host);
     case "unreachable": return DOOR_COPY.hostRefuseUnreachable(host);

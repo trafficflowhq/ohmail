@@ -284,6 +284,39 @@ export async function consumePairingToken(
   return { ...row, grant: row.grant as PairingGrant };
 }
 
+/** What a device-pair link's hash reads as, without spending it. `unknown` for every miss. */
+export type PairLinkState = "live" | "spent" | "expired" | "revoked" | "unknown";
+
+/** The shape `hashToken` writes: sha256, base64url, no padding. Anything else is refused. */
+const TOKEN_HASH_SHAPE = /^[A-Za-z0-9_-]{43}$/;
+
+/**
+ * THE STATE OF A LINK, READ BY ITS HASH — one SELECT, no write. A client checking a link before
+ * it configures anything sends `sha256(token)`, which cannot be redeemed, so the redeem stays the
+ * only spender. The same conjuncts as the burn's grant and creator, so a row the redeem would
+ * refuse whatever its state reads `unknown`. Consumed wins over revoked wins over expired.
+ */
+export async function pairingLinkState(ctx: ServiceContext, tokenHash: unknown): Promise<PairLinkState> {
+  if (typeof tokenHash !== "string" || !TOKEN_HASH_SHAPE.test(tokenHash)) {
+    throw new ServiceError("validation_failed", 400, "tokenHash must be the link's sha256, base64url");
+  }
+  const [row] = await asTx(ctx).select({
+    expiresAt: pairingTokens.expiresAt,
+    consumedAt: pairingTokens.consumedAt,
+    revokedAt: pairingTokens.revokedAt,
+  }).from(pairingTokens)
+    .where(and(
+      eq(pairingTokens.tokenHash, tokenHash),
+      eq(pairingTokens.grant, "device-pair"),
+      isNotNull(pairingTokens.createdByUserId),
+    ))
+    .limit(1);
+  if (!row) return "unknown";
+  if (row.consumedAt !== null) return "spent";
+  if (row.revokedAt !== null) return "revoked";
+  return row.expiresAt.getTime() <= ctx.now().getTime() ? "expired" : "live";
+}
+
 /**
  * The one thing the device-pair redeem needs from the auth service, as a port: the session
  * mint. `AuthService.establishPairedDevice` is the implementation — the same `establish`

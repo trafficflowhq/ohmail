@@ -573,6 +573,11 @@ export const HOST_REFUSAL_KINDS = [
   "managed",
   "selfhost",
   "pairing_invalid",
+  /* THE LINK CHECK ASKED THE OTHER COMPUTER BY THE TOKEN'S HASH (`cloud-probe.ts`) and it said the
+     link cannot pair: refused before anything here is configured, unlike the redeem's refusal. */
+  "pair_link_spent",
+  "pair_link_expired",
+  "pair_link_revoked",
   /* AN EARLIER START-OVER IS STILL PENDING. Not the success above: nothing was paired, the token
      was not spent, and the app must be reopened before this can be tried again. */
   "restart_required",
@@ -745,6 +750,23 @@ async function refusalOf(res: Response): Promise<HostRefusal | null> {
 }
 
 /**
+ * `sha256(token)` in base64url — the server's own spelling (`hashToken`). The link check sends
+ * this so the other computer can say whether the link is spent, and a hash cannot be redeemed:
+ * the token itself still leaves once, at the redeem. `null` without WebCrypto, which sends no hash
+ * and leaves the redeem to decide, as before.
+ */
+export async function linkTokenHash(token: string): Promise<string | null> {
+  try {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token.trim()));
+    let binary = "";
+    for (const byte of new Uint8Array(digest)) binary += String.fromCharCode(byte);
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  } catch {
+    return null;
+  }
+}
+
+/**
  * STEP ONE: ask the ENGINE what is at the link's origin, and whether its key is the one the
  * link names — null when a computer running ohmail is there. NOTHING IS CONFIGURED HERE, the
  * self-hosted door's finding applied to this one: `enforceMirrorOwner` discards the previous
@@ -774,7 +796,8 @@ export async function proveHostLink(
   } catch (err) {
     return { base: null, refusal: { kind: "unreachable", message: sentence(err), status: null } };
   }
-  if (!hasDoor) return proveThroughCandidate(link, budget);
+  const tokenHash = await linkTokenHash(link.token);
+  if (!hasDoor) return proveThroughCandidate(link, budget, tokenHash);
 
   const expired = walkExpired(budget, "checking that computer");
   if (expired !== null) return { base: null, refusal: expired };
@@ -784,10 +807,12 @@ export async function proveHostLink(
     res = await bridgeFetch("/cloud/probe", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      /* THE TOKEN IS NOT SENT. Proving what is at an address needs the address and the key; the
-         credential is spent once, at the redeem, and a probe that carried it would spend it on a
-         step the person has not agreed to yet. */
-      body: JSON.stringify({ origin: link.origin, flavor: "desktop-host", hostPin: link.pin }),
+      /* THE TOKEN IS NOT SENT, ITS HASH IS. The credential is spent once, at the redeem; the hash
+         lets the other computer say the link is already used before anything here is set up. */
+      body: JSON.stringify({
+        origin: link.origin, flavor: "desktop-host", hostPin: link.pin,
+        ...(tokenHash ? { tokenHash } : {}),
+      }),
     });
   } catch (err) {
     return { base: null, refusal: { kind: "unreachable", message: sentence(err), status: null } };
@@ -826,7 +851,11 @@ export async function proveHostLink(
  * objects in both branches. What the walk has LEFT rides back with it, so the redeem is bounded by
  * this clock rather than a fresh one.
  */
-async function proveThroughCandidate(link: PairLink, budget: WalkBudget): Promise<HostProof> {
+async function proveThroughCandidate(
+  link: PairLink,
+  budget: WalkBudget,
+  tokenHash: string | null,
+): Promise<HostProof> {
   const expired = walkExpired(budget, "starting up");
   if (expired !== null) return { base: null, refusal: expired };
 
@@ -839,6 +868,8 @@ async function proveThroughCandidate(link: PairLink, budget: WalkBudget): Promis
          the candidate's environment. An empty string where the link carried none: the engine's own
          `originNeedsPin` decides whether that is admissible, which keeps one predicate. */
       pin: link.pin ?? "",
+      /* The token's hash, never the token — see {@link linkTokenHash}. */
+      ...(tokenHash ? { tokenHash } : {}),
       budgetMs: walkLeftMs(budget),
     })) as { status?: number; body?: unknown };
   } catch (err) {

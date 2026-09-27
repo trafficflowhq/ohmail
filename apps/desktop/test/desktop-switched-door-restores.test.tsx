@@ -5,6 +5,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { IntlProvider } from "use-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
+import { createHash } from "node:crypto";
+
 import { DesktopGate } from "../src/DesktopGate.js";
 import { DOOR_COPY, machineWord } from "../src/door-copy.js";
 import messages from "../../webapp/messages/en.json";
@@ -89,6 +91,8 @@ type Answer = keyof typeof ANSWERS | "never";
  */
 function fakeShell(opts: {
   door: Door; answer: Answer; redeemMs?: number; pairStartMs?: number; probeOnLocal?: boolean;
+  /** The hash of a link the host has already redeemed: the engine refuses a probe carrying it. */
+  spentHash?: string;
   /** The shell refuses this many restores first (a gesture in flight, a directory held). */
   restoreRefusals?: number;
 }) {
@@ -98,6 +102,8 @@ function fakeShell(opts: {
   let startedAt = -Infinity;
   let paired = false;
   const log: string[] = [];
+  /** Every probe body the window sent. */
+  const probes: Record<string, unknown>[] = [];
   /** Every request that WRITES, with the door it reached: a restored door must be sent none. */
   const writes: string[] = [];
   const isPairing = (d: Door): boolean => d.flavor === "desktop-host";
@@ -167,6 +173,14 @@ function fakeShell(opts: {
           return encode(200, JSON.stringify({ signedIn: door!.mode === "cloud" && (!isPairing(door!) || paired), sessionExpired: false }));
         }
         if (url === "/cloud/probe") {
+          const sent = JSON.parse(new TextDecoder().decode(Uint8Array.from(payload?.body as number[]))) as Record<string, unknown>;
+          probes.push(sent);
+          if (opts.spentHash !== undefined && sent.tokenHash === opts.spentHash) {
+            return encode(409, JSON.stringify({ error: {
+              code: "cloud_probe_failed", message: "That pairing link has already been used.",
+              details: { kind: "pair_link_spent" },
+            } }));
+          }
           if (door!.mode === "local" && opts.probeOnLocal === false) {
             return encode(404, JSON.stringify({ error: { code: "not_found", message: "not found" } }));
           }
@@ -193,6 +207,7 @@ function fakeShell(opts: {
   };
   return {
     log,
+    probes,
     writes,
     door: (): Door | null => door,
     replaced: (): Door | null => replaced,
@@ -376,6 +391,23 @@ describe("only an accepted pairing retires the door it replaced", () => {
     expect(shell.replaced(), "an accepted pairing still keeps the door it replaced").toBeNull();
     expect(shell.log.filter((l) => l.startsWith("restore") && !l.endsWith("(nothing kept)"))).toEqual([]);
     expect(readsNotPaired()).toBe(false);
+  });
+});
+
+describe("a link the other computer has already redeemed", () => {
+  it("is refused at Check the link, before anything here is configured", async () => {
+    const token = LINK.slice(LINK.lastIndexOf(".") + 1);
+    const spentHash = createHash("sha256").update(token, "utf8").digest("base64url");
+    const shell = fakeShell({ door: LOCAL_DOOR, answer: "invalid_pair_code", spentHash });
+    const offered = await openPairingFromSettings();
+    console.info(`SPENT LINK offered Pair ${offered}; log ${shell.log.join(", ") || "-"}`);
+    // The hash went out, and the token did not.
+    expect(shell.probes.map((b) => b.tokenHash)).toEqual([spentHash]);
+    expect(JSON.stringify(shell.probes)).not.toContain(token);
+    expect(offered).toBe(false);
+    expect(el!.querySelector(".join-error")?.textContent ?? "").toContain(DOOR_COPY.hostRefuseLinkUsed);
+    expect(shell.log.filter((l) => l.startsWith("configure") || l.startsWith("redeem"))).toEqual([]);
+    expect(shell.door()).toEqual(LOCAL_DOOR);
   });
 });
 

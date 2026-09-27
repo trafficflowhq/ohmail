@@ -361,6 +361,68 @@ function certificateNames(at: unknown): { presented: string[]; requested: string
   return { presented, requested };
 }
 
+/** The shape of `sha256(token)` in base64url — the only link fact this route may send on. */
+const TOKEN_HASH_SHAPE = /^[A-Za-z0-9_-]{43}$/;
+
+/** A link state that refuses before anything is configured, as the kind the window translates. */
+const SPENT_KINDS: Readonly<Record<string, { kind: string; message: string }>> = {
+  spent: {
+    kind: "pair_link_spent",
+    message: "That pairing link has already been used. Nothing here was changed. Make a new one " +
+      "from Settings → Devices on that computer.",
+  },
+  expired: {
+    kind: "pair_link_expired",
+    message: "That pairing link has expired. Nothing here was changed. Make a new one from " +
+      "Settings → Devices on that computer.",
+  },
+  revoked: {
+    kind: "pair_link_revoked",
+    message: "That pairing link was taken back on that computer. Nothing here was changed. Make " +
+      "a new one from Settings → Devices there.",
+  },
+};
+
+/**
+ * AFTER THE KEY AND THE GREETING PASS, ask the host whether the link is still good — by the
+ * token's HASH, over the same connection, so the probe spends nothing and the redeem stays the
+ * one request carrying the token. `unknown`, a 404 (a host that predates the route) or no answer
+ * proceed as before and the redeem decides; spent, expired and revoked refuse here, first.
+ */
+async function refuseSpentLink(
+  said: Response,
+  tokenHash: string | null,
+  fetchImpl: typeof fetch,
+): Promise<Response> {
+  if (!said.ok || tokenHash === null) return said;
+  const { base, target } = (await said.clone().json()) as { base?: unknown; target?: unknown };
+  if (typeof base !== "string" || base === "") return said;
+  let state: unknown = null;
+  try {
+    const res = await fetchImpl(`${base}/pair/state`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ tokenHash }),
+      signal: AbortSignal.timeout(PROBE_DEADLINE_MS),
+    });
+    if (res.ok) state = ((await res.json()) as { state?: unknown }).state;
+  } catch {
+    /* No answer is the host's old behaviour: the redeem is still the check that decides. */
+  }
+  const refusal = typeof state === "string" && Object.hasOwn(SPENT_KINDS, state) ? SPENT_KINDS[state] : undefined;
+  if (refusal === undefined) return said;
+  return json(
+    {
+      error: {
+        code: "cloud_probe_failed",
+        message: refusal.message,
+        details: { kind: refusal.kind, target: typeof target === "string" ? target : base },
+      },
+    },
+    409,
+  );
+}
+
 /** What an engine hands the route: where it keeps things, and the door it is configured for. */
 export interface CloudProbeDoor {
   dataDir: string;
@@ -387,11 +449,17 @@ export async function answerCloudProbe(req: Request, door: CloudProbeDoor): Prom
   let candidate: unknown = null;
   let wantFlavor: unknown = null;
   let wantPin: unknown = null;
+  let tokenHash: string | null = null;
   try {
-    const parsed = (await req.json()) as { origin?: unknown; flavor?: unknown; hostPin?: unknown };
+    const parsed = (await req.json()) as {
+      origin?: unknown; flavor?: unknown; hostPin?: unknown; tokenHash?: unknown;
+    };
     candidate = parsed.origin ?? null;
     wantFlavor = parsed.flavor ?? null;
     wantPin = parsed.hostPin ?? null;
+    tokenHash = typeof parsed.tokenHash === "string" && TOKEN_HASH_SHAPE.test(parsed.tokenHash)
+      ? parsed.tokenHash
+      : null;
   } catch {
     /* No body, or not JSON: probe what this engine is configured for. */
   }
@@ -512,13 +580,15 @@ export async function answerCloudProbe(req: Request, door: CloudProbeDoor): Prom
       /* AND THE GREETING IS FETCHED OVER THE PINNED CONNECTION, not an ordinary one. Proving
          the key and then asking the question over a connection that did not check it would
          be answering about whatever holds the address now. */
-      const pinned = createHostFetch({
+      const pinned = door.fetchImpl ?? createHostFetch({
         origin, pin, dataDir: door.dataDir, ...(door.log ? { log: door.log } : {}),
       });
-      const said = await probeCloudDoor(origin, door.fetchImpl ?? pinned);
-      return refuseUnlessDesktopHost(said, origin);
+      const said = await refuseUnlessDesktopHost(await probeCloudDoor(origin, pinned), origin);
+      return refuseSpentLink(said, tokenHash, pinned);
     }
-    return refuseUnlessDesktopHost(await probeCloudDoor(origin, door.fetchImpl ?? fetch), origin);
+    const plain = door.fetchImpl ?? fetch;
+    const said = await refuseUnlessDesktopHost(await probeCloudDoor(origin, plain), origin);
+    return refuseSpentLink(said, tokenHash, plain);
   }
 
   /* THE ORIGIN, NOT A BASE — `probeCloudDoor` decides whether the API is at the root or

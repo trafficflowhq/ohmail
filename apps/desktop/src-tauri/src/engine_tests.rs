@@ -2775,7 +2775,7 @@ fn a_candidate_is_refused_outright_on_an_install_that_has_a_door() {
     assert!(before.len() >= 3, "the fixture wrote nothing to compare: {before:?}");
 
     let shell = Shell::rooted_for_tests(&root);
-    let out = shell.probe_candidate("https://192.168.1.24:8443", &"a".repeat(43), Duration::from_secs(30));
+    let out = shell.probe_candidate("https://192.168.1.24:8443", &"a".repeat(43), None, Duration::from_secs(30));
 
     assert_eq!(out.unwrap_err(), CANDIDATE_HAS_A_DOOR);
     assert_eq!(bytes_under(&root), before, "a refused candidate moved something");
@@ -2801,13 +2801,30 @@ fn a_refused_candidate_takes_its_own_directory_with_it() {
     assert!(candidate.exists());
 
     let shell = Shell::rooted_for_tests(&root);
-    let out = shell.probe_candidate("https://192.168.1.24:8443", &"a".repeat(43), Duration::from_secs(30));
+    let out = shell.probe_candidate("https://192.168.1.24:8443", &"a".repeat(43), None, Duration::from_secs(30));
 
     assert!(out.is_err(), "the fixture's shell has no engine, so the walk cannot admit");
     assert!(!candidate.exists(), "the candidate's directory outlived its refusal");
     // …and the walk left no settings file behind either: a candidate is not a door.
     assert!(!root.join(crate::config::CONFIG_FILE_NAME).exists());
     let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_candidate_probe_carries_the_links_hash_and_never_a_token() {
+    // The hash the window computed rides the body verbatim; a value not shaped like sha256 in
+    // base64url is dropped, and absent is the old body exactly — the redeem then decides.
+    let hash = "Ab-_".repeat(10) + "xyz";
+    let body = candidate_probe_body("https://192.168.1.24:8443", "pin", Some(&hash));
+    assert_eq!(body["tokenHash"], serde_json::Value::String(hash.clone()));
+    assert_eq!(body["hostPin"], "pin");
+    let keys: Vec<&String> = body.as_object().unwrap().keys().collect();
+    assert_eq!(keys.len(), 4, "{keys:?}");
+    for bad in [Some("short"), Some(&*format!("{}!", &hash[..42])), None] {
+        let plain = candidate_probe_body("https://192.168.1.24:8443", "pin", bad);
+        assert!(plain.get("tokenHash").is_none(), "{bad:?}");
+        assert_eq!(plain.as_object().unwrap().len(), 3);
+    }
 }
 
 #[test]
@@ -2818,7 +2835,7 @@ fn a_walk_with_nothing_left_refuses_naming_the_segment() {
     with_key_in_env();
     let root = candidate_root("out-of-time");
     let shell = Shell::rooted_for_tests(&root);
-    let out = shell.probe_candidate("https://192.168.1.24:8443", &"a".repeat(43), Duration::ZERO);
+    let out = shell.probe_candidate("https://192.168.1.24:8443", &"a".repeat(43), None, Duration::ZERO);
 
     let err = out.unwrap_err();
     assert!(err.contains(SEGMENT_LAUNCH), "{err}");

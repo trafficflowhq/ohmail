@@ -13,7 +13,7 @@ import { sessionLifecycleRoutes } from "./session-lifecycle.js";
 import { deviceRoutes } from "./devices.js";
 // The anonymous redeem ALONE — never `pairRoutes`, whose mint/list/revoke belong to the
 // standalone server (and, on a desktop, to the window's own door). See `pair.ts`.
-import { pairRedeemRoutes } from "./pair.js";
+import { pairRedeemRoutes, pairStateRoutes } from "./pair.js";
 
 /**
  * The desktop-host route table — what a desktop install serves to its owner's other devices: a
@@ -21,13 +21,15 @@ import { pairRedeemRoutes } from "./pair.js";
  * separate array, not a filter — a filter still imports every route module into the shipped
  * artifact. Absent: the sign-in ceremony, the pairing mint/list/revoke (a remote device must not
  * mint the credential that admits remote devices), everything server-only. Present: `localRoutes`
- * plus the redeem, refresh/logout (`allDevices` step-up-gated), device list/revoke/audit.
- * Obligations: `allowCookieAuth: false` (the zero-Set-Cookie census sweeps the table),
- * `services.auth` with no `inviteRedeem`, `hello.features.pairing: true`.
+ * plus the redeem and its hash-keyed state read, refresh/logout (`allDevices` step-up-gated),
+ * device list/revoke/audit. Obligations: `allowCookieAuth: false` (the zero-Set-Cookie census
+ * sweeps the table), `services.auth` with no `inviteRedeem`, `hello.features.pairing: true`.
  */
 export const desktopHostRoutes: Route[] = [
   ...localRoutes,
   ...sessionLifecycleRoutes,
   ...deviceRoutes,
   ...pairRedeemRoutes,
+  // The link's state by its hash, beside the redeem, so a desktop asks before it configures.
+  ...pairStateRoutes,
 ];

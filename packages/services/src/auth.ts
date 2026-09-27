@@ -17,10 +17,10 @@ export {
 } from "./auth/session-lifecycle.js";
 export {
   mintPairingToken, listPairingTokens, revokePairingToken, consumePairingToken,
-  redeemDevicePair, pairingInvalid,
+  redeemDevicePair, pairingInvalid, pairingLinkState,
   PAIRING_TTL_BOUNDS, PAIRING_LABEL_MAX, PAIRING_LIVE_TOKENS_MAX,
   type PairingGrant, type PairingTokenMinted, type PairingTokenListed, type PairingTokenStatus,
-  type PairingConsumed, type PairedDeviceSessionMinter,
+  type PairingConsumed, type PairedDeviceSessionMinter, type PairLinkState,
 } from "./pairing.js";
 // The leaves the lifecycle is built from, so a consumer of this entry never needs the barrel
 // for them: the crypto primitives, the config constructor, and session resolution — the same

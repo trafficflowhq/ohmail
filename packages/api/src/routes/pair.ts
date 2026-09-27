@@ -6,7 +6,7 @@
  * instead (`inviteRedeem` below), so this module's import graph is shippable from the mail half
  * alone. */
 import {
-  mintPairingToken, listPairingTokens, revokePairingToken,
+  mintPairingToken, listPairingTokens, revokePairingToken, pairingLinkState,
   redeemDevicePair, type PairingGrant, type PairedDeviceKind, type PairedDeviceSessionMinter,
 } from "@trafficflow/services/auth";
 import { ServiceError } from "@trafficflow/services/mail";
@@ -200,9 +200,29 @@ export const pairRedeemRoutes: Route[] = [
 ];
 
 /**
+ * IS THIS LINK STILL GOOD — asked by the HASH of its token, so the asking spends nothing and
+ * carries nothing redeemable; the redeem stays the one request that holds the raw token. One
+ * read, no write, `unknown` for every miss. Mounted wherever the redeem is, so a client can ask
+ * before it configures anything. Its defence is the redeem's: a 256-bit value nobody can guess.
+ */
+export const pairStateRoutes: Route[] = [
+  {
+    method: "POST",
+    pattern: "/pair/state",
+    relay: false,
+    cost: "ceremony",
+    options: { public: true },
+    handler: async (req, deps) => {
+      const b = await readObjectBody<{ tokenHash?: unknown }>(req);
+      return json({ state: await pairingLinkState(serviceContext(deps, req), b.tokenHash) }, 200);
+    },
+  },
+];
+
+/**
  * The whole ceremony — mint, list, revoke AND the redeem — for `routes/self-host.ts` and for
  * the hosted table in `routes/index.ts` (the managed device-pairing mount). The members are the
  * two arrays above, spread, so the self-host mounts, the hosted mounts and the desktop-host
  * redeem are the same objects and cannot drift.
  */
-export const pairRoutes: Route[] = [...pairCeremonyRoutes, ...pairRedeemRoutes];
+export const pairRoutes: Route[] = [...pairCeremonyRoutes, ...pairRedeemRoutes, ...pairStateRoutes];
