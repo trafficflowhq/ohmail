@@ -230,10 +230,14 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
     e.preventDefault();
     setBusy(true);
     setError(null);
+    // BEFORE the first await, as the factor steps do: a step back during the login ends this
+    // ceremony, and a login that lands after it must not return the pane to the factor step.
+    const gen = ceremony.begin();
     void (async () => {
       try {
         const result = await auth.login({ email: email.trim(), password });
         if (!alive.current) return;
+        if (!ceremony.claim(gen)) { setBusy(false); return; }
         setPassword("");
         if (result.status === "enrollment") {
           // Registered, but never finished a second factor — so there is no factor to assert and
@@ -369,7 +373,7 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
             <Button variant="primary" type="submit" disabled={busy}>
               {busy ? tl("working") : tl("continue")}
             </Button>
-            <Button variant="ghost" type="button" onClick={cancelReauth} disabled={busy}>
+            <Button variant="ghost" type="button" onClick={cancelReauth}>
               {t("reauthCancel")}
             </Button>
           </div>

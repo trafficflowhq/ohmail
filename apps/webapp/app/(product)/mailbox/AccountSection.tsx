@@ -305,9 +305,13 @@ export function AccountSection() {
     if (!who) return;
     setBusy(true);
     setError(null);
+    // BEFORE the first await, as the factor steps do: a step back during the login ends this
+    // ceremony, and a login that lands after it must not return the pane to the factor step.
+    const gen = ceremony.begin();
     void (async () => {
       try {
         const out = await auth.login({ email: who.email, password });
+        if (!ceremony.claim(gen)) { setBusy(false); return; }
         setPassword("");
         if (out.status === "enrollment") {
           // Zero enrolled factors. Step-up has no bypass and should not have one, so this
@@ -570,7 +574,7 @@ export function AccountSection() {
             <Button variant="primary" type="submit" className="danger" disabled={busy}>
               {busy ? t("working") : t("continue")}
             </Button>
-            <Button onClick={() => { setStage("facts"); setPassword(""); setError(null); }}>
+            <Button onClick={() => { ceremony.end(); setStage("facts"); setPassword(""); setError(null); setBusy(false); }}>
               {t("cancel")}
             </Button>
           </div>
