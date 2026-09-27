@@ -122,10 +122,10 @@ export const sessionLifecycleRoutes: Route[] = [
           // window this is the only door a browser can hear it at. The jar is cleared as for any
           // refusal; `erasedAccountBearer` names the account on `deps`, and `nameTheAccount` stamps it.
           if (failure === "session_refused" && await erasedAccountBearer(req, deps, cookieRefresh)) {
-            return json(
+            return sessionEnded(json(
               { error: { code: "account_erased", message: "this account has been deleted" } },
               410, clearSessionCookies(),
-            );
+            ));
           }
           const refusal = err as ServiceError;
           return sessionEnded(json(
