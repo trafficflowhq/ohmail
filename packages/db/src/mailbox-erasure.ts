@@ -88,8 +88,9 @@ export async function stampMailboxErasure(
       ))),
     )));
   // THE RESPONSE CACHE, AT THE STAMP: a stored DTO is a second copy of a draft, and a retry
-  // served it for as long as the sweep ran. From this commit a replay answers 410.
-  await eraseIdempotentResponses(tx, accountId, now);
+  // served it for as long as the sweep ran. From this commit a replay of THIS mailbox answers 410;
+  // a response that names only another mailbox keeps replaying.
+  await eraseIdempotentResponses(tx, accountId, now, { mailboxId });
   const [m] = await tx.select({ c: countOf() }).from(messages)
     .where(and(eq(messages.accountId, accountId), eq(messages.mailboxId, mailboxId)));
   const [d] = await tx.select({ c: countOf() }).from(drafts)
@@ -144,8 +145,8 @@ export async function sweepMailboxStep(
   /* ── THE MAILBOX'S OWN STATE, AND THE FINISH ──
    * These tables scale with a mailbox's folders, lists and correspondents, not with its messages.
    * `mailbox_profile_mirror` and `organizer_requests` carry no foreign key, so nothing else ever
-   * removes them; the response cache is a second copy of drafts and is REPLACED, account-wide,
-   * for the reason its primitive states. The `mailbox` receipt comes last so it carries the
+   * removes them; the response cache is a second copy of drafts and is REPLACED, scoped to this
+   * mailbox as its primitive states. The `mailbox` receipt comes last so it carries the
    * erasure's highest seq, and the finish stamp is in the same transaction as it. */
   await drop("outbound_send_fingerprints", tx.delete(outboundSendFingerprints).where(and(
     eq(outboundSendFingerprints.accountId, accountId), eq(outboundSendFingerprints.mailboxId, mailboxId),
@@ -172,7 +173,7 @@ export async function sweepMailboxStep(
   // Idempotent: the removal this rides already deleted the credential rows.
   await drop("mailbox_credentials", tx.delete(mailboxCredentials)
     .where(eq(mailboxCredentials.mailboxId, mailboxId)));
-  deleted["idempotency_keys"] = await eraseIdempotentResponses(tx, accountId, now);
+  deleted["idempotency_keys"] = await eraseIdempotentResponses(tx, accountId, now, { mailboxId });
   const seq = await recordMailboxRemoved(tx, accountId, mailboxId);
   await tx.update(mailboxes).set({ erasureDoneAt: now })
     .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId)));

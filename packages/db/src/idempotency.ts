@@ -1,6 +1,6 @@
-import { and, eq, isNull, lte, or, type SQL } from "drizzle-orm";
+import { and, eq, inArray, isNull, lte, ne, or, type SQL } from "drizzle-orm";
 /* The mail half directly — see the note in `change-log.ts`. `idempotency_keys` is a mail table. */
-import { idempotencyKeys } from "./schema-mail.js";
+import { drafts, idempotencyKeys, mailboxes, messages } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
 import { fenceErased } from "./erasure-fence.js";
 import { dialect } from "./dialect/index.js";
@@ -198,31 +198,72 @@ export async function readIdempotencyKey(
 }
 
 /**
- * BLANK THE CONTENT OF EVERY IDEMPOTENCY ROW THIS ACCOUNT HOLDS, and stamp what was done.
- *
- * `response_json` holds a verbatim copy of what a mutation answered with — for a draft, the body
- * and the recipients — and nothing treated that as message content, so an erasure swept the mail
- * and left a 24-hour copy of it behind a retry. Run inside the erasure's own transaction.
- *
- * WHY THE WHOLE ACCOUNT on a MAILBOX erasure: a stored response carries no mailbox, so there is
- * no narrower question to ask. The cost of the wide answer is bounded — a retry of a surviving
- * mailbox's lost request gets 410 instead of its response, and its mutation still does not run
- * twice, which is the promise the key exists to keep. An already-stamped row is left alone so a
- * retried erasure keeps the first stamp.
+ * BLANK THE CONTENT OF THE IDEMPOTENCY ROWS AN ERASURE REACHES, and stamp what was done.
+ * `response_json` is a verbatim copy of what a mutation answered (a draft's body and recipients),
+ * so an erasure that left it would leave a 24-hour copy behind a retry. Run inside the erasure's
+ * transaction; an already-stamped row keeps its first stamp. Without `mailboxId`, every row of
+ * the account. With it, a stored response is read by what it NAMES: spared only when it names
+ * another live mailbox and nothing of this one (its id, a message, a thread or a draft it holds);
+ * anything unattributable is blanked, as before.
  */
 export const IDEMPOTENT_ERASED_BODY = "erased";
 
+const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+const ID_CHUNK = 500;
+
 export async function eraseIdempotentResponses(
-  tx: Tx, accountId: string, now: Date,
+  tx: Tx, accountId: string, now: Date, scope?: { mailboxId: string },
 ): Promise<number> {
-  const gone = await tx
+  const blank = (only?: SQL) => tx
     .update(idempotencyKeys)
     // A JSON STRING, not `null`. The column is `not null`, and drizzle writes a JS `null` as SQL
     // NULL on both dialects, which the constraint refuses — measured, as a 500 on the erase route.
     // `"erased"` is a value both stores accept and reads as what it is; `erased_at` is the record
     // that decides, and the replay never serves this either way.
     .set({ responseJson: IDEMPOTENT_ERASED_BODY, erasedAt: now })
-    .where(and(eq(idempotencyKeys.accountId, accountId), isNull(idempotencyKeys.erasedAt)))
+    .where(and(eq(idempotencyKeys.accountId, accountId), isNull(idempotencyKeys.erasedAt), only))
     .returning({ key: idempotencyKeys.key });
-  return gone.length;
+  if (!scope) return (await blank()).length;
+
+  const rows = await tx.select({ key: idempotencyKeys.key, json: idempotencyKeys.responseJson })
+    .from(idempotencyKeys)
+    .where(and(eq(idempotencyKeys.accountId, accountId), isNull(idempotencyKeys.erasedAt)));
+  if (rows.length === 0) return 0;
+  const erased = scope.mailboxId.toLowerCase();
+  const others = new Set((await tx.select({ id: mailboxes.id }).from(mailboxes).where(and(
+    eq(mailboxes.accountId, accountId), ne(mailboxes.id, scope.mailboxId), isNull(mailboxes.erasedAt),
+  ))).map((m) => m.id.toLowerCase()));
+  const named = rows.map((r) => ({
+    key: r.key, ids: new Set((JSON.stringify(r.json ?? null).match(UUID) ?? []).map((u) => u.toLowerCase())),
+  }));
+  const candidates = named.filter((r) => !r.ids.has(erased) && [...r.ids].some((u) => others.has(u)));
+  const held = await heldByMailbox(tx, accountId, scope.mailboxId,
+    [...new Set(candidates.flatMap((r) => [...r.ids].filter((u) => !others.has(u))))]);
+  const spared = new Set(candidates.filter((r) => ![...r.ids].some((u) => held.has(u))).map((r) => r.key));
+  const keys = rows.map((r) => r.key).filter((k) => !spared.has(k));
+  let n = 0;
+  for (let i = 0; i < keys.length; i += ID_CHUNK) {
+    n += (await blank(inArray(idempotencyKeys.key, keys.slice(i, i + ID_CHUNK)))).length;
+  }
+  return n;
+}
+
+/** Which of `ids` name a message, its thread, or a draft this mailbox holds — lowercased. */
+async function heldByMailbox(tx: Tx, accountId: string, mailboxId: string, ids: string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (let i = 0; i < ids.length; i += ID_CHUNK) {
+    const chunk = ids.slice(i, i + ID_CHUNK);
+    const inMailbox = (await tx.select({ id: messages.id, threadId: messages.threadId }).from(messages).where(and(
+      eq(messages.accountId, accountId), eq(messages.mailboxId, mailboxId),
+      or(inArray(messages.id, chunk), inArray(messages.threadId, chunk)),
+    )));
+    for (const m of inMailbox) {
+      out.add(m.id.toLowerCase());
+      if (m.threadId) out.add(m.threadId.toLowerCase());
+    }
+    for (const d of await tx.select({ id: drafts.id }).from(drafts).where(and(
+      eq(drafts.accountId, accountId), eq(drafts.mailboxId, mailboxId), inArray(drafts.id, chunk),
+    ))) out.add(d.id.toLowerCase());
+  }
+  return out;
 }
