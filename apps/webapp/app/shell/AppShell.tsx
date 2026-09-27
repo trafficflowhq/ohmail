@@ -1106,7 +1106,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const {
     fileAndRefresh, rosterRef, deleting, restoring, refusalCopy, routing, pressWatch,
-    toastWithUndo, mutateAndReport, mutateSetAndReport, mailboxesOf, runArmedUndo, undoToast,
+    toastWithUndo, mutateAndReport, mutateSetAndReport, runArmedUndo, undoToast,
   } = useShellDispatch({ engine, reader, toast: hostToast, t, demo, refreshFacts });
   /* Every sentence below leaves through the undo door, so an Undo raised anywhere is one `z` takes. */
   const toast = undoToast;
@@ -1842,7 +1842,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     revokeRule, rulePastMailOf, screeningForecast, screeningRules, tagAdmin, toggleTag,
   } = useShellVerbs({
     engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses,
-    fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, mailboxesOf, refusalCopy,
+    fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface: allOhbox, refusalCopy,
     rosterRef, routing, pressWatch, deleting, restoring,
     markSeen, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
     setSubjectRule,

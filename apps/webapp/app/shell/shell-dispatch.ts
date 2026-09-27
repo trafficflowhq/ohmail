@@ -17,7 +17,6 @@ import {
   PRESS_THREW,
   pressVerdict,
   tallyVerdicts,
-  type EngineMessage,
   type EngineMutation,
   type EntityReader,
   type MutationRejectedError,
@@ -78,7 +77,6 @@ export interface ShellDispatch {
     mutations: readonly EngineMutation[],
     say: (applied: number) => string | null,
   ) => Promise<number>;
-  mailboxesOf: (ids: readonly string[]) => string[];
 }
 
 export function useShellDispatch({
@@ -437,19 +435,6 @@ export function useShellDispatch({
     },
   );
 
-  /** Which mailboxes a set of messages lives in — first-seen order, de-duplicated. An
-   *  unresolvable message contributes `""`, which the predicate refuses as an unknown id. */
-  const mailboxesOf = useStableCallback(
-    (ids: readonly string[]): string[] => {
-      const out: string[] = [];
-      for (const id of ids) {
-        const mb = reader.get<EngineMessage>("message", id)?.mailboxId ?? "";
-        if (!out.includes(mb)) out.push(mb);
-      }
-      return out;
-    },
-  );
-
   return {
     fileAndRefresh,
     rosterRef,
@@ -466,6 +451,5 @@ export function useShellDispatch({
     toastWithUndo,
     mutateAndReport,
     mutateSetAndReport,
-    mailboxesOf,
   };
 }

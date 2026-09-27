@@ -76,6 +76,24 @@ import { useStableCallback } from "./stable-callback";
 import { planSubjectRule, subjectRuleContext, subjectRuleToast, type TermField } from "./subject-rule";
 import { placePicker } from "./TagPicker";
 
+/**
+ * `read`, answering a surface's own row for a message id `read` holds nothing for — the rows a
+ * list shows past the mirror (the Ohbox's Older tail). A selection's verbs resolve through this,
+ * as a single row's press resolves through the row it was pressed on.
+ */
+function withRows(read: EntityReader, rows: ReadonlyMap<string, EngineMessage>): EntityReader {
+  if (rows.size === 0) return read;
+  return {
+    get: <T,>(type: string, id: string) => read.get<T>(type, id)
+      ?? (type === "message" ? (rows.get(id) as unknown as T | undefined) : undefined),
+    list: (type) => read.list(type),
+    entries: (type) => read.entries(type),
+    version: () => read.version(),
+    stampOf: (type) => read.stampOf(type),
+    stampExcept: (ignore) => read.stampExcept(ignore),
+  };
+}
+
 /** `read`, answering `row` for its own id where `read` holds nothing — the pressed row as a seed. */
 function withRow(read: EntityReader, row: EngineMessage): EntityReader {
   return {
@@ -114,7 +132,8 @@ export interface ShellVerbsInput {
   toastWithUndo: ShellDispatch["toastWithUndo"];
   mutateAndReport: ShellDispatch["mutateAndReport"];
   mutateSetAndReport: ShellDispatch["mutateSetAndReport"];
-  mailboxesOf: ShellDispatch["mailboxesOf"];
+  /** Every message the Ohbox can show, its Older tail included (`ohbox-surface.ts`). */
+  surface: readonly EngineMessage[];
   refusalCopy: ShellDispatch["refusalCopy"];
   rosterRef: ShellDispatch["rosterRef"];
   /** The routing undo window — held, undone and asked for its subject; never redefined here. */
@@ -149,12 +168,27 @@ export type ShellVerbs = ReturnType<typeof useShellVerbs>;
 
 export function useShellVerbs({
   engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses,
-  fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, mailboxesOf, refusalCopy,
+  fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface, refusalCopy,
   rosterRef, routing, pressWatch, deleting, restoring,
   markSeen, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
   setSubjectRule,
   toggleReply, openForward, openReply, draftReply, replyAll, replyTo,
 }: ShellVerbsInput) {
+  /* THE ROWS A SET IS PRESSED ON. The verb reader holds the mirror and the History and Search
+     pages; the surface adds the rows the Ohbox shows past the mirror, so a selection holding an
+     Older row resolves it, where the verb reader alone answered `undefined` for it. */
+  const surfaceById = useMemo(() => new Map(surface.map((m) => [m.id, m])), [surface]);
+  const setRead = (): EntityReader => withRows(engine.verbRead(), surfaceById);
+  const rowOf = (id: string): EngineMessage | undefined => setRead().get<EngineMessage>("message", id);
+  /** Which mailboxes a set lives in, first-seen; an unresolvable id is `""`, refused as unknown. */
+  const mailboxesOf = (ids: readonly string[]): string[] => {
+    const out: string[] = [];
+    for (const id of ids) {
+      const mb = rowOf(id)?.mailboxId ?? "";
+      if (!out.includes(mb)) out.push(mb);
+    }
+    return out;
+  };
   /* ── shared actions ── */
   const openTagPicker = useStableCallback((messageId: string, anchor: HTMLElement | null) => {
     setPickerIds(null);
@@ -490,7 +524,7 @@ export function useShellVerbs({
   ): RoutingPressPlan | null => {
     /* The verb reader — a History or Search row the mirror does not hold is planned like any
        other — and the pressed row itself, which a reading column can hold past its page. */
-    const read = seed ? withRow(engine.verbRead(), seed) : engine.verbRead();
+    const read = seed ? withRow(setRead(), seed) : setRead();
     const sender = senderScreening(read, seedId);
     if (!sender) return null;
     /* SENDER SCOPE AND NO RETRO: the press is about these messages, not a domain, and nobody
@@ -805,7 +839,7 @@ export function useShellVerbs({
   const bulkToggleTag = useStableCallback((ids: string[], tagId: string, assigned: boolean) => {
     const name = tags.find((x) => x.id === tagId)?.name ?? tagId;
     const targets = ids.filter((id) => {
-      const m = engine.verbRead().get<EngineMessage>("message", id);
+      const m = rowOf(id);
       return m != null && m.labels.includes(tagId) !== assigned;
     });
     if (targets.length === 0) return;
@@ -1224,16 +1258,14 @@ export function useShellVerbs({
            does not repeat it: two spellings of one verdict is the drift that helper exists to
            end. The ASK — the confirm strip for `d` and the menu item, nothing for ⌫/⌦ — has
            already happened in the view; the window is still the only dispatch site. */
-        return deleting.remove(
-          ids.map((id) => ({ id, mailboxId: engine.verbRead().get<EngineMessage>("message", id)?.mailboxId })),
-        );
+        return deleting.remove(ids.map((id) => ({ id, mailboxId: rowOf(id)?.mailboxId })));
       }
       if (action === "read" || action === "unread") {
         // The batch mutation, unchanged: one request, one transaction, one intent — and the
         // sentence now waits for its verdict, like every other press in this file. The inverse
         // is read before the dispatch, so Undo flips back exactly the ids this press flipped.
         const inverses = inverseMutations(
-          engine.verbRead(),
+          setRead(),
           { kind: "mark_seen", messageIds: ids, unread: action === "unread" },
         );
         void markSeen(ids, action === "unread").then((ok) => {
@@ -1257,14 +1289,12 @@ export function useShellVerbs({
          * spends the pins in a single transaction. A refused clear stops the read: half a release
          * is worse than none, and a reader install cannot triage at all.
          */
-        const rows = ids
-          .map((id) => engine.verbRead().get<EngineMessage>("message", id))
-          .filter((m): m is EngineMessage => m != null);
+        const rows = ids.map(rowOf).filter((m): m is EngineMessage => m != null);
         const booked = rows.filter((m) => m.triage?.state === "bubbled_up").map((m) => m.id);
         void (async () => {
           /* The single arm's composition over the set — both halves' inverses off the pre-press
              mirror, so one Undo re-books the booked and re-pins the pinned. */
-          const pre = engine.verbRead();
+          const pre = setRead();
           const inverses = [
             ...inverseMutations(pre, { kind: "mark_seen", messageIds: ids, unread: false }),
             ...booked.flatMap((messageId) =>
@@ -1330,7 +1360,7 @@ export function useShellVerbs({
       const bySender = new Map<string, string[]>();
       const unheld: EngineMutation[] = [];
       for (const id of ids) {
-        const m = engine.verbRead().get<EngineMessage>("message", id);
+        const m = rowOf(id);
         /* A row neither the mirror nor a page holds is still moved, by id: the server answers. */
         if (!m) {
           unheld.push({ kind: "move", messageId: id, folder: FOLDER_OF_VIEW[view]! });
@@ -1415,7 +1445,7 @@ export function useShellVerbs({
     let messages = 0;
     let rules = 0;
     for (const id of ids) {
-      const s = senderScreening(engine.verbRead(), id);
+      const s = senderScreening(setRead(), id);
       if (!s || seen.has(s.key)) continue;
       seen.add(s.key);
       /**
