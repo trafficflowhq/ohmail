@@ -219,6 +219,21 @@ const SERVED = [
  */
 const HYDRATED_TAIL = "The rest of this paragraph exists only in the fetched body.";
 
+/** The served mail as `GET /messages/timeline` answers it: dated as `syncPage` dates it. */
+function servedTimeline(url) {
+  const zone = new URLSearchParams(url.split("?")[1] ?? "").get("zone") ?? "UTC";
+  const monthOf = new Intl.DateTimeFormat("en-CA", { timeZone: zone, year: "numeric", month: "2-digit" });
+  const months = new Map();
+  SERVED.forEach((m, i) => {
+    const date = new Date(Date.now() - (20 + i * 40) * 60_000).toISOString();
+    const month = monthOf.format(new Date(date)).slice(0, 7);
+    const had = months.get(month);
+    if (had) had.count++;
+    else months.set(month, { month, count: 1, first: { date, id: m.id } });
+  });
+  return { total: SERVED.length, months: [...months.values()], undated: 0 };
+}
+
 function syncPage() {
   /* Relative to now rather than a fixed date: the Ohbox groups by recency, and a
      row minted at a hard-coded instant would drift into a different group as the
@@ -622,6 +637,18 @@ function installShellStub(window) {
            boot never makes. Added AFTER the check named it red. */
         if (url.startsWith("/local/window/outbox?") && (payload?.method ?? "GET") === "GET") {
           return Promise.resolve(frame(200, "OK", { rows: [], next: null }));
+        }
+        /* THE SCREENER'S WAITING QUEUE — `GET /screener?limit=…`, read at boot by the engine's store
+           queue and by the suggestion hydrate. This world's one sender has a rule to the Inbox, so
+           nobody waits: the empty page with its count. GET only. Added after the check named it red. */
+        if (url.startsWith("/screener?") && (payload?.method ?? "GET") === "GET") {
+          return Promise.resolve(frame(200, "OK", { items: [], nextCursor: null, total: 0, pendingDecisions: [] }));
+        }
+        /* THE STORE'S TIMELINE — `GET /messages/timeline?zone=…`, read at boot to learn what the store
+           holds beyond the window. The served mail, counted per month in the asked zone, newest first:
+           the mirror holds all of it, so no older mail is offered. Added after the check named it red. */
+        if ((url === "/messages/timeline" || url.startsWith("/messages/timeline?")) && (payload?.method ?? "GET") === "GET") {
+          return Promise.resolve(frame(200, "OK", servedTimeline(url)));
         }
         /* RECORDED, not silently 404'd into a console error the checks would then
            report as a product defect. A surface that starts calling a second route
