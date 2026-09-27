@@ -1925,6 +1925,8 @@ export function MailboxSection() {
   const [probeOk, setProbeOk] = useState<{ host: string; user: string; folders: number | null } | null>(null);
   const [probeBad, setProbeBad] = useState<{
     reason: string | null; message: string; noPort: ReturnType<typeof noPortProbeSentence>;
+    /** A server with no TLS at all: the connect form's own sentence, never "certificate refused". */
+    said?: string;
   } | null>(null);
   /** Enough typed to ask the question at all — the same three fields the endpoint requires. */
   const canProbe = Boolean(typed.provider && typed.address.trim() && typed.pass);
@@ -1984,8 +1986,11 @@ export function MailboxSection() {
         setProbeBad({ reason: null, message: td("stepUpExpired"), noPort: null });
         return;
       }
+      const noTls = probeTlsOf(err)?.kind === "tls_unavailable";
       setProbeBad({
         reason: probeReasonOf(err), message: messageOf(err),
+        // Opens this protocol's consent line where the server offers one, as the connect does.
+        ...(noTls ? { said: probeErrorCopy(err, "tls") } : {}),
         // This verdict never rendered TLS kinds, so every certificate refusal takes the generic no-port sentence.
         noPort: noPortProbeSentence(err, typed.provider?.manual === true, "generic"),
       });
@@ -2755,11 +2760,11 @@ export function MailboxSection() {
           {!microsoftOauth && !probing && probeBad ? (
             <SettingsVerdict
               state="bad"
-              headline={probeBad.noPort
+              headline={probeBad.said ?? (probeBad.noPort
                 ? t(probeBad.noPort.key, { field: probeBad.noPort.field })
                 : probeBad.reason
                   ? t(`probe_${probeBad.reason}` as "probe_auth")
-                  : probeBad.message}
+                  : probeBad.message)}
             />
           ) : null}
         </form>
