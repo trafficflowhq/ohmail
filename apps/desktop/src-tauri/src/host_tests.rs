@@ -1405,3 +1405,69 @@ fn the_shell_transition_stands_down_in_the_same_order_and_leaves_a_disarmed_inst
 
     unseal_and_remove(&dir);
 }
+
+// ── A refused pairing puts host mode back ────────────────────────────────────────────────────
+
+/// A runtime as a provisional switch's stand-down leaves it: disarmed, nothing published.
+fn stood_down_runtime() -> Arc<HostRuntime<tauri::Wry>> {
+    let host = Arc::new(armed_runtime());
+    host.armed.store(false, Ordering::SeqCst);
+    host
+}
+
+fn armed_setting(lan: Option<&str>) -> config::HostSettings {
+    config::HostSettings { enabled: true, port: 3311, lan: lan.map(str::to_string), published: None }
+}
+
+#[test]
+fn a_restored_pairing_re_arms_host_mode_with_the_engine_first_and_the_route_last() {
+    // THE ARMING'S ORDER, again, on the way back from a refused pairing: the engine replaced WITH
+    // its host door, then start-at-login and the tray, and the tailnet route last, under the
+    // arming's own generation.
+    let host = stood_down_runtime();
+    let boot = HostBoot::detect_with(Some(armed_setting(None)), Some(config::Mode::Local), &probe_ok, None);
+    let order = RefCell::new(Vec::<String>::new());
+    let armed = rearm_with(
+        &host,
+        boot,
+        &|| order.borrow_mut().push("app".into()),
+        &|plan| {
+            let port = match plan { Some(HostPlan::Armed(s)) => s.port, other => panic!("not an armed plan: {other:?}") };
+            order.borrow_mut().push(format!("world {port}"));
+        },
+        &|port, generation| {
+            order.borrow_mut().push(format!("publish {port} gen {generation}"));
+            Ok(true)
+        },
+    );
+    assert!(armed && host.armed());
+    let generation = host.generation.load(Ordering::SeqCst);
+    assert_eq!(*order.borrow(), vec!["world 3311".to_string(), "app".into(), format!("publish 3311 gen {generation}")]);
+    let state = host.state_json(None);
+    assert_eq!(state["port"], serde_json::json!(3311));
+    assert_eq!(state["origin"], serde_json::json!("https://mac.tail1234.ts.net"));
+}
+
+#[test]
+fn a_restore_publishes_nothing_without_an_identity_and_arms_nothing_from_an_off_setting() {
+    // LAN-only (the tailnet probe fails, a LAN address is chosen): the engine comes back with its
+    // LAN door and NO route is published; the tailnet's problem is what the pane is told.
+    let host = stood_down_runtime();
+    let no_tailnet = || -> Result<TailnetIdentity, Problem> { Err(Problem::NotRunning) };
+    let boot = HostBoot::detect_with(Some(armed_setting(Some("192.168.1.24"))), Some(config::Mode::Local), &no_tailnet, None);
+    let worlds = Cell::new(0);
+    assert!(rearm_with(&host, boot, &|| {}, &|_| worlds.set(worlds.get() + 1), &|_, _| panic!("published without an identity")));
+    assert_eq!(worlds.get(), 1);
+    assert_eq!(host.state_json(None)["problem"], serde_json::json!("not-running"));
+
+    // A restored setting that does not arm (off, or not the local door) touches nothing at all.
+    let quiet = stood_down_runtime();
+    for (setting, mode) in [
+        (config::HostSettings { enabled: false, ..armed_setting(None) }, Some(config::Mode::Local)),
+        (armed_setting(None), Some(config::Mode::Cloud)),
+    ] {
+        let boot = HostBoot::detect_with(Some(setting), mode, &probe_ok, None);
+        assert!(!rearm_with(&quiet, boot, &|| panic!("app side"), &|_| panic!("world"), &|_, _| panic!("publish")));
+    }
+    assert!(!quiet.armed());
+}

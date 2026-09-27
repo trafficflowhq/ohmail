@@ -1946,6 +1946,18 @@ impl Shell {
         value: &serde_json::Value,
         provisional: bool,
     ) -> Result<serde_json::Value, String> {
+        self.switch_door_with(value, provisional, None)
+    }
+
+    /// [`Shell::switch_door`] carrying host mode as the caller found it before standing it down:
+    /// a provisional switch writes it into the same record as the door, so the restore puts back
+    /// both from one snapshot. Ignored on a plain switch, which keeps nothing to restore.
+    pub fn switch_door_with(
+        &self,
+        value: &serde_json::Value,
+        provisional: bool,
+        host: Option<config::HostSnapshot>,
+    ) -> Result<serde_json::Value, String> {
         // UNDER THE DOOR LOCK, whole: a sign-out re-reads the door under it and acts on what it
         // reads, so a switch landing between those two would be the race back by the other side.
         let _door = self.door.lock().expect("shell door");
@@ -1967,7 +1979,7 @@ impl Shell {
         if pending.is_some() || (provisional && self.paths.config().is_some()) {
             let mut outcome = Ok(());
             self.replace_with(|| {
-                match switch_on_disk(&root, &path, &config, pending.as_ref(), provisional) {
+                match switch_on_disk(&root, &path, &config, pending.as_ref(), provisional, host.as_ref()) {
                     Ok(()) => {
                         log_configured(&config, provisional);
                         self.pending_door.store(false, Ordering::SeqCst);
@@ -2020,10 +2032,18 @@ impl Shell {
     /// the same store through the plan any launch composes, so what it holds of the mailbox's
     /// organizer lease it reads there, never here. No record changes nothing.
     pub fn restore_switch(&self) -> Result<serde_json::Value, String> {
+        self.restore_switch_and_host().map(|(status, _)| status)
+    }
+
+    /// The restore, answering the host-mode snapshot the record held beside the door — `host.json`
+    /// is already back on disk; the caller re-arms from it. `None` when host mode was not kept.
+    pub fn restore_switch_and_host(
+        &self,
+    ) -> Result<(serde_json::Value, Option<config::HostSnapshot>), String> {
         let _door = self.door.lock().expect("shell door");
         let root = self.paths.app_data.clone().unwrap_or_default();
         let (Some(switch), Some(path)) = (config::read_switch(&root)?, self.paths.config_path()) else {
-            return Ok(self.status());
+            return Ok((self.status(), None));
         };
         let mut outcome = Ok(());
         self.replace_with(|| {
@@ -2035,7 +2055,7 @@ impl Shell {
             self.planned(None)
         });
         outcome?;
-        Ok(self.status())
+        Ok((self.status(), switch.host))
     }
 
     /// Forget the account: clear the engine's sealed secrets, stop it, and forget the door.
@@ -2349,15 +2369,19 @@ fn switch_on_disk(
     next: &Config,
     pending: Option<&config::DoorSwitch>,
     provisional: bool,
+    host: Option<&config::HostSnapshot>,
 ) -> Result<(), String> {
     let clear = || clear_candidate_slot(root);
     if let Some(switch) = pending {
-        config::undo_switch(root, path, switch, &clear)?;
+        // The pending switch's DOOR goes back; its host snapshot moves to this one's record, so
+        // the stood-down `host.json` is not re-enabled under a door that has no host listener.
+        config::undo_switch(root, path, &switch.without_host(), &clear)?;
         log_line(format_args!("a pairing that had not been answered was set aside for this switch"));
     }
+    let host = host.or_else(|| pending.and_then(|p| p.host.as_ref()));
     let kept = match provisional.then(|| config::read_door_file(path)).flatten() {
         Some(file) => {
-            let switch = config::record_switch(root, &file, next.mode(), &clear)?;
+            let switch = config::record_switch(root, &file, next.mode(), host, &clear)?;
             if let Err(reason) = config::set_aside(root, &switch) {
                 let _ = config::remove(&config::switch_path(root));
                 return Err(reason);
@@ -4347,15 +4371,22 @@ fn engine_configure<R: tauri::Runtime>(
     config: serde_json::Value,
     provisional: Option<bool>,
 ) -> Result<serde_json::Value, String> {
+    // The exact `true` and nothing truthy: a provisional switch is one a pairing asked for.
+    let provisional = provisional == Some(true);
+    let mut kept = None;
     if config::parse(&config)?.mode() != Mode::Local {
+        // TAKEN BEFORE THE STAND-DOWN, which writes `host.json` off: a provisional switch keeps it
+        // in its record, and a refused pairing restores host mode from it.
+        if provisional {
+            kept = crate::host::snapshot_for_switch(&app, host.inner());
+        }
         crate::host::stand_down_on_shell_transition(
             &app,
             host.inner(),
             "the install is switching to a door with no host listener",
         );
     }
-    // The exact `true` and nothing truthy: a provisional switch is one a pairing asked for.
-    shell.switch_door(&config, provisional == Some(true))
+    shell.switch_door_with(&config, provisional, kept)
 }
 
 /// The other computer accepted the pairing: keep its door, retire the one it replaced. Takes
@@ -4366,12 +4397,24 @@ fn engine_switch_commit(shell: tauri::State<'_, Arc<Shell>>) -> Result<serde_jso
     shell.commit_switch()
 }
 
-/// The pairing did not finish: put back the door it replaced. Takes nothing, and changes nothing
-/// when no switch is provisional. See [`Shell::restore_switch`].
+/// The pairing did not finish: put back the door it replaced, and host mode as the switch found
+/// it — `host.json` from the record, then start-at-login and the tailnet route re-armed from that
+/// file. Takes nothing, and changes nothing when no switch is provisional.
 #[cfg(feature = "local-engine")]
 #[tauri::command(async)]
-fn engine_switch_restore(shell: tauri::State<'_, Arc<Shell>>) -> Result<serde_json::Value, String> {
-    shell.restore_switch()
+fn engine_switch_restore<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    shell: tauri::State<'_, Arc<Shell>>,
+    host: tauri::State<'_, Arc<crate::host::HostRuntime<R>>>,
+) -> Result<serde_json::Value, String> {
+    let (status, kept) = shell.restore_switch_and_host()?;
+    match kept {
+        Some(snapshot) => {
+            crate::host::rearm_after_restore(&app, host.inner(), &snapshot);
+            Ok(shell.status())
+        }
+        None => Ok(status),
+    }
 }
 
 /// The candidate's `/cloud/probe` body. The PIN is not a secret — a hash of a public key, printed on

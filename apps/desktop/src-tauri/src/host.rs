@@ -1753,6 +1753,101 @@ fn stand_down_on_shell_transition_with<R: tauri::Runtime>(
     true
 }
 
+/// HOST MODE AS A PROVISIONAL SWITCH FINDS IT, for its record: `host.json` as it stands and the
+/// start-at-login registration. Taken before the stand-down writes the file off; `None` when host
+/// mode is not armed (the stand-down changes nothing then) or the file cannot be read.
+pub fn snapshot_for_switch<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    host: &Arc<HostRuntime<R>>,
+) -> Option<config::HostSnapshot> {
+    if !host.armed() {
+        return None;
+    }
+    let file = host.settings_path.as_deref().and_then(config::read_host_file);
+    if file.is_none() {
+        engine::log_line(format_args!(
+            "host mode is armed and its setting could not be read; a refused pairing cannot restore it"
+        ));
+    }
+    file.map(|file| config::HostSnapshot { file, autostart: autostart_enabled(app) })
+}
+
+/// The runtime half of a refused pairing's restore: `host.json` is back on disk (the record's
+/// disk half), so host mode is armed from it through the launch's own decision, and
+/// start-at-login is registered again when the snapshot said it was. See [`rearm_with`].
+pub fn rearm_after_restore<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    host: &Arc<HostRuntime<R>>,
+    snapshot: &config::HostSnapshot,
+) {
+    let settings = host.settings_path.as_deref().and_then(config::read_host);
+    let boot = HostBoot::detect_with(
+        settings,
+        host.shell.config_mode(),
+        &|| probe_with(&|args| run_tailscale(args)),
+        packaged_host_client(engine::resource_dir_of(app).as_deref()),
+    );
+    rearm_with(
+        host,
+        boot,
+        &|| {
+            if snapshot.autostart == Some(true) {
+                use tauri_plugin_autostart::ManagerExt;
+                if let Err(err) = app.autolaunch().enable() {
+                    engine::log_line(format_args!(
+                        "host mode: start-at-login could not be registered again ({err})"
+                    ));
+                }
+            }
+            stand_up_tray(app, host);
+        },
+        &|plan| {
+            host.shell.set_host_plan(plan);
+            host.shell.replan();
+        },
+        &|port, generation| host.publish_when_listening(port, generation),
+    );
+}
+
+/// Arm the runtime from a launch-shaped decision, in the arming's order: flags and plan, then the
+/// engine replaced WITH its host door, then the app's half, and the tailnet route LAST, only with
+/// an identity and only once the engine holds the port. A decision that does not arm changes
+/// nothing. Answers whether host mode is armed afterwards.
+fn rearm_with<R: tauri::Runtime>(
+    host: &Arc<HostRuntime<R>>,
+    boot: HostBoot,
+    app_side: &dyn Fn(),
+    world_on: &dyn Fn(Option<HostPlan>),
+    publish: &dyn Fn(u16, u64) -> Result<bool, Problem>,
+) -> bool {
+    if !boot.armed {
+        engine::log_line(format_args!("host mode stays off after the restore: the restored setting does not arm it"));
+        return false;
+    }
+    let generation = host.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    host.published.store(false, Ordering::SeqCst);
+    host.set_notice(None);
+    *host.port.lock().expect("host port") = boot.port;
+    *host.origin.lock().expect("host origin") = boot.spawn.as_ref().and_then(|s| s.origin.clone());
+    *host.lan.lock().expect("host lan") = boot.lan.clone();
+    host.set_problem(boot.problem);
+    host.armed.store(true, Ordering::SeqCst);
+    world_on(boot.plan());
+    app_side();
+    if let Some(spawn) = boot.spawn.filter(|s| s.origin.is_some()) {
+        match publish(spawn.port, generation) {
+            Ok(true) => {
+                host.set_problem(None);
+                engine::log_line(format_args!("host mode is back after a refused pairing, published"));
+            }
+            Ok(false) => { /* a stand-down won the race and already said so */ }
+            Err(problem) => host.set_problem(Some(problem)),
+        }
+    }
+    host.refresh_tray_line();
+    true
+}
+
 /// Disarm host mode. The stand-down takes the listener away itself and the answer is composed
 /// after it, so nothing here can report hosting off while an engine of this install is serving.
 #[tauri::command(async)]

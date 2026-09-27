@@ -4458,6 +4458,101 @@ fn under(root: &Path, dir: &str) -> Vec<(PathBuf, Vec<u8>)> {
     bytes_under(&root.join(dir))
 }
 
+/// A local door that is HOSTING: `host.json` armed, and the snapshot a switch takes of it, with
+/// the file then written the way the stand-down writes it — off, the published port held.
+fn hosting_root(name: &str) -> (PathBuf, crate::config::HostSnapshot) {
+    let root = local_root(name, true);
+    let path = root.join(crate::config::HOST_FILE_NAME);
+    let armed = crate::config::HostSettings { enabled: true, port: 3311, lan: None, published: None };
+    crate::config::write_host(&path, &armed).expect("host.json");
+    let snapshot = crate::config::HostSnapshot {
+        file: fs::read_to_string(&path).expect("host.json"),
+        autostart: Some(true),
+    };
+    (root, snapshot)
+}
+
+fn stand_down_on_disk(root: &Path) {
+    let off = crate::config::HostSettings { enabled: false, port: 3311, lan: None, published: Some(3311) };
+    crate::config::write_host(&root.join(crate::config::HOST_FILE_NAME), &off).expect("stood down");
+}
+
+#[test]
+fn a_refused_pairing_from_a_hosting_door_puts_host_mode_back_from_the_same_record() {
+    // ONE SNAPSHOT, ONE RESTORE: the record that keeps the door keeps host mode beside it, and the
+    // restore writes `host.json` back byte for byte before the record goes.
+    with_key_in_env();
+    let (root, snapshot) = hosting_root("switch-refused-hosting");
+    let before = bytes_under(&root);
+    stand_down_on_disk(&root);
+    let shell = Shell::rooted_for_tests(&root);
+    shell.switch_door_with(&pairing_door(PAIRED_ORIGIN), true, Some(snapshot.clone())).expect("a provisional switch");
+    let record = crate::config::read_switch(&root).expect("readable").expect("a record");
+    assert_eq!(record.host.as_ref(), Some(&snapshot));
+    pairing_wrote(&root);
+
+    let (_status, kept) = shell.restore_switch_and_host().expect("the restore");
+    assert_eq!(kept, Some(snapshot), "the restore did not hand back what it kept");
+    assert_eq!(bytes_under(&root), before, "host mode's setting did not come back with the door");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_killed_pairing_from_a_hosting_door_is_undone_at_launch_host_mode_included() {
+    with_key_in_env();
+    let (root, snapshot) = hosting_root("switch-killed-hosting");
+    let before = bytes_under(&root);
+    stand_down_on_disk(&root);
+    {
+        let shell = Shell::rooted_for_tests(&root);
+        shell.switch_door_with(&pairing_door(PAIRED_ORIGIN), true, Some(snapshot)).expect("a provisional switch");
+        pairing_wrote(&root);
+    }
+    // Before host mode's launch decision reads `host.json` — `main.rs` runs this first.
+    recover_door_switch(&paths_of(&root));
+    assert_eq!(bytes_under(&root), before, "the next launch did not bring host mode's setting back");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_switch_over_a_pending_one_carries_host_mode_and_does_not_re_enable_it_early() {
+    // The second pairing's configure finds host mode already stood down, so it keeps nothing of
+    // its own; the first record's snapshot moves to the new record, and `host.json` stays off
+    // under a door with no host listener until a restore puts it back.
+    with_key_in_env();
+    let (root, snapshot) = hosting_root("switch-over-hosting");
+    let before = bytes_under(&root);
+    stand_down_on_disk(&root);
+    let off = fs::read(root.join(crate::config::HOST_FILE_NAME)).unwrap();
+    let shell = Shell::rooted_for_tests(&root);
+    shell.switch_door_with(&pairing_door(PAIRED_ORIGIN), true, Some(snapshot.clone())).expect("the first pairing");
+    shell.switch_door_with(&pairing_door("https://192.168.1.25:8443"), true, None).expect("a second pairing");
+    assert_eq!(fs::read(root.join(crate::config::HOST_FILE_NAME)).unwrap(), off, "host.json was re-enabled early");
+    let record = crate::config::read_switch(&root).expect("readable").expect("a record");
+    assert_eq!(record.host, Some(snapshot));
+    shell.restore_switch().expect("the restore");
+    assert_eq!(bytes_under(&root), before);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_switch_record_reads_its_host_half_strictly_and_one_from_before_it_as_none() {
+    let root = candidate_root("switch-record-host");
+    let write = |v: serde_json::Value| fs::write(crate::config::switch_path(&root), v.to_string()).unwrap();
+    write(serde_json::json!({ "replaced": "{}", "dir": "cloud", "moved": false }));
+    assert_eq!(crate::config::read_switch(&root).unwrap().unwrap().host, None);
+    write(serde_json::json!({ "replaced": "{}", "dir": "cloud", "moved": false, "host": { "file": "x", "autostart": null } }));
+    assert_eq!(
+        crate::config::read_switch(&root).unwrap().unwrap().host,
+        Some(crate::config::HostSnapshot { file: "x".into(), autostart: None }),
+    );
+    for bad in [serde_json::json!({ "autostart": true }), serde_json::json!({ "file": "x", "autostart": "yes" })] {
+        write(serde_json::json!({ "replaced": "{}", "dir": "cloud", "moved": false, "host": bad }));
+        assert!(crate::config::read_switch(&root).is_err(), "a host half this build cannot read moved something");
+    }
+    let _ = fs::remove_dir_all(&root);
+}
+
 #[test]
 fn a_refused_pairing_from_the_hosted_door_puts_that_door_back_byte_for_byte() {
     with_key_in_env();
@@ -4566,7 +4661,7 @@ fn a_kill_mid_pairing_leaves_the_replaced_door_for_the_next_launch() {
         let before = bytes_under(&root);
         let path = root.join(crate::config::CONFIG_FILE_NAME);
         let file = crate::config::read_door_file(&path).expect("the door file");
-        let switch = crate::config::record_switch(&root, &file, Mode::Cloud, &|| clear_candidate_slot(&root)).expect("recorded");
+        let switch = crate::config::record_switch(&root, &file, Mode::Cloud, None, &|| clear_candidate_slot(&root)).expect("recorded");
         if stop >= 2 {
             crate::config::set_aside(&root, &switch).expect("set aside");
         }
@@ -4603,7 +4698,7 @@ fn a_restore_or_a_commit_cut_short_is_finished_by_the_next_launch() {
     let before = bytes_under(&root);
     let path = root.join(crate::config::CONFIG_FILE_NAME);
     let file = crate::config::read_door_file(&path).expect("the door file");
-    let switch = crate::config::record_switch(&root, &file, Mode::Cloud, &|| clear_candidate_slot(&root)).expect("recorded");
+    let switch = crate::config::record_switch(&root, &file, Mode::Cloud, None, &|| clear_candidate_slot(&root)).expect("recorded");
     crate::config::set_aside(&root, &switch).expect("set aside");
     pairing_wrote(&root);
     fs::remove_dir_all(root.join("engine-cloud")).expect("the pairing's directory, removed");

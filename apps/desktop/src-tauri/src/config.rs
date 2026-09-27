@@ -1435,6 +1435,28 @@ pub struct DoorSwitch {
     pub dir: Mode,
     /// Whether that directory existed and was set aside; `false` means the new door created it.
     pub moved: bool,
+    /// Host mode as the switch found it, when it was armed: the switch stands it down, and the
+    /// restore puts it back from here. `None` is a switch on an install that was not hosting.
+    pub host: Option<HostSnapshot>,
+}
+
+/// HOST MODE BEFORE A PROVISIONAL SWITCH, in the same record as the door, so one restore puts
+/// back both: `host.json` byte for byte (the disk half, [`undo_switch`]) and, at a live restore,
+/// start-at-login and the tailnet route (`host::rearm_after_restore`, from the restored file).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostSnapshot {
+    /// `host.json` as it stood before the stand-down wrote it off.
+    pub file: String,
+    /// Whether start-at-login was registered; `None` when the platform could not say.
+    pub autostart: Option<bool>,
+}
+
+impl DoorSwitch {
+    /// The same switch with its host half dropped: what a switch over a PENDING one undoes, so the
+    /// stood-down `host.json` stays as it is while the snapshot moves to the new record.
+    pub fn without_host(&self) -> DoorSwitch {
+        DoorSwitch { host: None, ..self.clone() }
+    }
 }
 
 pub fn switch_path(root: &Path) -> PathBuf {
@@ -1444,6 +1466,11 @@ pub fn switch_path(root: &Path) -> PathBuf {
 /// Where `mode`'s directory is kept while a switch is provisional.
 pub fn replaced_store(root: &Path, mode: Mode) -> PathBuf {
     root.join(format!("{}{REPLACED_SUFFIX}", mode.dir_name()))
+}
+
+/// `host.json`'s own text, for a switch's record to keep byte for byte; `None` when unreadable.
+pub fn read_host_file(path: &Path) -> Option<String> {
+    fs::read_to_string(path).ok()
 }
 
 /// The door file's own text when it holds a door this shell can read — what a switch keeps.
@@ -1471,7 +1498,20 @@ pub fn read_switch(root: &Path) -> Result<Option<DoorSwitch>, String> {
         _ => return Err(unreadable()),
     };
     let moved = value.get("moved").and_then(|v| v.as_bool()).ok_or_else(unreadable)?;
-    Ok(Some(DoorSwitch { replaced_file: replaced_file.to_string(), dir, moved }))
+    // Absent on a record from a build before host mode was kept, and on a switch with nothing to keep.
+    let host = match value.get("host") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(h) => {
+            let file = h.get("file").and_then(|v| v.as_str()).ok_or_else(unreadable)?;
+            let autostart = match h.get("autostart") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(serde_json::Value::Bool(b)) => Some(*b),
+                Some(_) => return Err(unreadable()),
+            };
+            Some(HostSnapshot { file: file.to_string(), autostart })
+        }
+    };
+    Ok(Some(DoorSwitch { replaced_file: replaced_file.to_string(), dir, moved, host }))
 }
 
 /// What empties the candidate slot: `engine.rs`'s one directory removal, by the constant name.
@@ -1483,17 +1523,22 @@ pub fn record_switch(
     root: &Path,
     replaced_file: &str,
     dir: Mode,
+    host: Option<&HostSnapshot>,
     clear: ClearSlot,
 ) -> Result<DoorSwitch, String> {
     // A set-aside directory with no record is an accepted switch's unfinished retire.
     retire_replaced(root, dir, clear)?;
     let moved = data_dir(root, dir).exists();
-    let body = serde_json::to_vec_pretty(&serde_json::json!({
+    let mut record = serde_json::json!({
         "replaced": replaced_file, "dir": dir.as_str(), "moved": moved,
-    }))
-    .map_err(|err| format!("the door switch could not be encoded ({err})"))?;
+    });
+    if let (Some(h), Some(object)) = (host, record.as_object_mut()) {
+        object.insert("host".into(), serde_json::json!({ "file": h.file, "autostart": h.autostart }));
+    }
+    let body = serde_json::to_vec_pretty(&record)
+        .map_err(|err| format!("the door switch could not be encoded ({err})"))?;
     write_private(&switch_path(root), &body)?;
-    Ok(DoorSwitch { replaced_file: replaced_file.to_string(), dir, moved })
+    Ok(DoorSwitch { replaced_file: replaced_file.to_string(), dir, moved, host: host.cloned() })
 }
 
 /// Set the new door's directory aside whole. The engine that held it must already be stopped.
@@ -1507,7 +1552,8 @@ pub fn set_aside(root: &Path, switch: &DoorSwitch) -> Result<(), String> {
 }
 
 /// Put the replaced door back: its directory where it was, the new door's gone, its
-/// `config.json`, and the record last. Every step is safe to run again after a kill mid-way.
+/// `config.json`, host mode's `host.json` when the switch kept one, and the record last. Every
+/// step is safe to run again after a kill mid-way.
 pub fn undo_switch(
     root: &Path,
     config_path: &Path,
@@ -1524,6 +1570,9 @@ pub fn undo_switch(
             .map_err(|err| format!("{} could not be put back ({err})", aside.display()))?;
     }
     write_private(config_path, switch.replaced_file.as_bytes())?;
+    if let Some(host) = &switch.host {
+        write_private(&root.join(HOST_FILE_NAME), host.file.as_bytes())?;
+    }
     remove(&switch_path(root))
 }
 
