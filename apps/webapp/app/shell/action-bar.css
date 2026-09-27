@@ -554,8 +554,14 @@
 }
 .mm-item:hover { background: var(--tint); }
 /* The roving focus is the menu's only cursor, so it has to be visible — a menu you can move
-   through and cannot see your position in is worse than no keyboard support. */
-.mm-item:focus-visible { background: var(--tint); outline: none; }
+   through and cannot see your position in is worse than no keyboard support. The tint alone
+   read 1.08:1 on the menu; the ring is the focus token (the accent under paper), inset so the
+   menu's padding holds it, and reaches 3:1 on every theme (`keyboard-focus-follows.test.tsx`). */
+.mm-item:focus-visible {
+  background: var(--tint);
+  outline: var(--focus-w) solid var(--focus, var(--accent));
+  outline-offset: calc(var(--focus-w) * -1);
+}
 
 /* ── ONE BORROWED RULE, NARROWED RATHER THAN REVERSED ─────────────────────────────────
  *
