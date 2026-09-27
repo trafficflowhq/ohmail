@@ -1265,6 +1265,15 @@ export function sentenceForKind(kind: HostLinkRefusal | string, host: string): s
     case "pair_link_spent": return DOOR_COPY.hostRefuseLinkUsed;
     case "pair_link_expired": return DOOR_COPY.hostRefuseLinkExpired;
     case "pair_link_revoked": return DOOR_COPY.hostRefuseLinkRevoked;
+    case "status": return DOOR_COPY.hostRefuseNotAnswering(host);
+    case "needs_setup": return DOOR_COPY.hostRefuseNotSetUp(host);
+    case "refused": return DOOR_COPY.hostRefuseNothingListening(host);
+    case "timeout": return DOOR_COPY.hostRefuseTimedOut(host);
+    case "tls_name": return DOOR_COPY.hostRefuseCertName(host);
+    case "tls_validity": return DOOR_COPY.hostRefuseCertDate(host);
+    case "tls_trust": return DOOR_COPY.hostRefuseCertTrust(host);
+    case "dns": return DOOR_COPY.hostRefuseUnknownName(host);
+    case "no_certificate": return DOOR_COPY.hostRefuseNoIdentity(host);
     case "restart_required": return DOOR_COPY.hostRefuseRestartFirst(host);
     case "pair_account_mismatch": return DOOR_COPY.hostRefuseAccountMismatch(host);
     case "unreachable": return DOOR_COPY.hostRefuseUnreachable(host);

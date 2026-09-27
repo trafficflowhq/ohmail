@@ -578,6 +578,17 @@ export const HOST_REFUSAL_KINDS = [
   "pair_link_spent",
   "pair_link_expired",
   "pair_link_revoked",
+  /* THE LINK CHECK'S OTHER ANSWERS — a server probe's and the pin probe's, read out of both by
+     `pairing-link-check-kinds-translated.test.ts`. */
+  "status",
+  "needs_setup",
+  "refused",
+  "timeout",
+  "tls_name",
+  "tls_validity",
+  "tls_trust",
+  "dns",
+  "no_certificate",
   /* AN EARLIER START-OVER IS STILL PENDING. Not the success above: nothing was paired, the token
      was not spent, and the app must be reopened before this can be tried again. */
   "restart_required",

@@ -330,6 +330,35 @@ const EN = {
   hostRefuseLinkRevoked:
     "That link was taken back on that computer, so nothing was changed here. Make a new one from "
     + "its Settings → Devices.",
+  /* THE LINK CHECK'S OTHER ANSWERS (`cloud-probe.ts`, `host-pin-probe.ts`): what answered at the
+     link's address, or why nothing could be checked. Nothing here has been configured yet. */
+  hostRefuseNotAnswering: (host: string) =>
+    `${host} answered, but not the way ohmail does. Check the link came from Settings `
+    + "→ Devices on that computer.",
+  hostRefuseNotSetUp: (host: string) =>
+    `ohmail on ${host} has not been set up yet. Finish setting it up there, then make `
+    + "a new link.",
+  hostRefuseNothingListening: (host: string) =>
+    `Nothing is answering at ${host}. Check that ohmail is open on that computer, then `
+    + "try again.",
+  hostRefuseTimedOut: (host: string) =>
+    `${host} did not answer in time. Check that it is on, awake and on the same `
+    + "network as this computer.",
+  hostRefuseCertName: (host: string) =>
+    `${host} answered with a certificate for a different name, so ohmail stopped. Make `
+    + "a new link from Settings → Devices on that computer.",
+  hostRefuseCertDate: (host: string) =>
+    `${host} answered with a certificate that is not valid right now. Check the date `
+    + "and time on both computers.",
+  hostRefuseCertTrust: (host: string) =>
+    `${host} answered with a certificate this computer does not trust, so ohmail `
+    + "stopped. Make a new link from Settings → Devices on that computer.",
+  hostRefuseUnknownName: (host: string) =>
+    `This network does not know the name ${host}. Check the link, and that both `
+    + "computers are on the same network.",
+  hostRefuseNoIdentity: (host: string) =>
+    `Something answered at ${host}, but it did not show an identity ohmail can check. `
+    + "Check the link came from Settings → Devices on that computer.",
   hostRefuseUnreachable: (host: string) => `Could not reach ${host}.`,
   /* THE OTHER COMPUTER ANSWERED THE REDEEM WITH A REFUSAL OF ITS OWN — not a spent code, not an
      outage. The remedy is the same place the link came from. */
@@ -775,6 +804,15 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   hostRefuseAccountUnnamed: ["host"],
   hostRefuseUnsupportedPlatform: ["host"],
   hostRefuseNoSession: ["host"],
+  hostRefuseNotAnswering: ["host"],
+  hostRefuseNotSetUp: ["host"],
+  hostRefuseNothingListening: ["host"],
+  hostRefuseTimedOut: ["host"],
+  hostRefuseCertName: ["host"],
+  hostRefuseCertDate: ["host"],
+  hostRefuseCertTrust: ["host"],
+  hostRefuseUnknownName: ["host"],
+  hostRefuseNoIdentity: ["host"],
   hostFootStale: ["host"],
   /* TWO VALUES, and the ORDER here is the argument order of the formatter above, never the
      order the placeholders happen to appear in the German sentence — German puts `machine`
