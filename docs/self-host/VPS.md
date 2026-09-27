@@ -113,6 +113,28 @@ Two optional blocks worth deciding now:
   compose file sets it on both from the one value. If that server also has
   no TLS, you will additionally confirm the connection-security notice when
   you add the mailbox; plaintext IMAP is never used without that consent.
+
+  If it has TLS on a certificate from your own authority (a self-signed one
+  included), make the stack trust that authority instead: put its root
+  certificate beside `docker-compose.yml` as `mail-ca.pem` and add a
+  `docker-compose.override.yml`, which compose reads on its own:
+
+  ```yaml
+  services:
+    api:
+      environment:
+        NODE_EXTRA_CA_CERTS: /etc/ohmail/mail-ca.pem
+      volumes:
+        - ./mail-ca.pem:/etc/ohmail/mail-ca.pem:ro
+    organizer:
+      environment:
+        NODE_EXTRA_CA_CERTS: /etc/ohmail/mail-ca.pem
+      volumes:
+        - ./mail-ca.pem:/etc/ohmail/mail-ca.pem:ro
+  ```
+
+  Then `docker compose up -d`. The certificate still has to name the host you
+  type into the mailbox form.
 - **Push distributor on your own LAN?** The mobile app can register a
   UnifiedPush endpoint so this server wakes the phone when mail arrives — a
   signal with no subject, no sender and no count in it. By default the
@@ -159,8 +181,8 @@ The first start pulls the images, creates the database, and applies the
 schema. Watch it settle with `docker compose ps`. What a good boot looks
 like, within a couple of minutes:
 
-- `web`, `api`, `organizer`, `db`, `minio` — `running (healthy)`
-- `proxy`, `mailpit` — `running` (they carry no health check)
+- `web`, `api`, `organizer`, `db`, `minio`, `mailpit` — `running (healthy)`
+- `proxy` — `running` (it carries no health check)
 - `minio-init` — gone from `ps`, or `Exited (0)` in `docker compose ps -a`:
   it runs once to create the staging bucket and is supposed to exit.
 
