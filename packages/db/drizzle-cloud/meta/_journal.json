@@ -211,6 +211,13 @@
       "when": 1791328224227,
       "tag": "0044_platform_signals_upstream_refused",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1791328224228,
+      "tag": "0044_attachment_staging_digest_validate",
+      "breakpoints": true
     }
   ]
 }
