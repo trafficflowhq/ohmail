@@ -411,6 +411,20 @@ describe("only an accepted pairing retires the door it replaced", () => {
   });
 });
 
+describe("leaving the pairing card with nothing pending", () => {
+  it.each([["the local door", LOCAL_DOOR], ["the ohmail Cloud door", HOSTED_DOOR]] as const)(
+    "from %s signs nothing out and changes no door", async (_name, start) => {
+      /* The card is left after Check the link and before Pair: no switch was made, so the door the
+         window stands on is the person's own and must not be asked to sign out anywhere. */
+      const shell = fakeShell({ door: start, answer: "paired" });
+      expect(await openPairingFromSettings()).toBe(true);
+      await leaveTheCard();
+      expect(shell.log.filter((l) => l.startsWith("sign-out")), shell.log.join(", ")).toEqual([]);
+      expect(shell.door()).toEqual(start);
+    },
+  );
+});
+
 describe("a link the other computer has already redeemed", () => {
   it("is refused at Check the link, before anything here is configured", async () => {
     const token = LINK.slice(LINK.lastIndexOf(".") + 1);

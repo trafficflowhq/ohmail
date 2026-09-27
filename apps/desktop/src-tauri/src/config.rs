@@ -1022,6 +1022,12 @@ fn env_for_door(config: &Config, root: &Path, adopt: bool) -> Vec<(OsString, OsS
             if let Some(address) = &l.address {
                 env.push(pair("OHMAIL_MAILBOX_ADDRESS", address.clone()));
             }
+            // The same path as a cloud door's: this engine answers the link and server check too,
+            // and a check reading another folder would admit a server the next door cannot verify.
+            env.push((
+                OsString::from(OPERATOR_CA_FILE_VAR),
+                operator_ca_file(root).into_os_string(),
+            ));
         }
         Config::Cloud(c) => {
             // ── THE LINE. Removing it does not break a test about this function's shape; it

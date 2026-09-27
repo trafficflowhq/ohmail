@@ -923,8 +923,8 @@ fn every_cloud_engine_is_handed_the_one_path_the_launch_reads() {
     // The candidate's engine runs in a directory of its own and is told the SAME path.
     let env = env_map(&env_for_in(&self_hosted_door(), &dir, &candidate_data_dir(&dir)).expect("env"));
     assert_eq!(env.get("OHMAIL_OPERATOR_CA_FILE"), Some(&named), "the candidate was told another path");
-    // A local door's engine dials no ohmail server, so it is told nothing.
-    assert!(!env_map(&env_for(&local_door(), &dir)).contains_key("OHMAIL_OPERATOR_CA_FILE"));
+    // A local door's engine answers the same check (`cloud-probe.ts`), so it is told the same path.
+    assert_eq!(env_map(&env_for(&local_door(), &dir)).get("OHMAIL_OPERATOR_CA_FILE"), Some(&named));
     let _ = fs::remove_dir_all(&dir);
 }
 

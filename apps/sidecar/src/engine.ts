@@ -291,6 +291,12 @@ export interface AdapterDialContext {
 export interface SidecarConfig {
   /** Where the local mirror lives. Created if absent; locked while open. */
   dataDir: string;
+  /**
+   * WHERE THE OPERATOR'S CERTIFICATE AUTHORITY IS — the shell's one path, as the cloud engine gets
+   * it: this engine answers the link and server check too (`cloud-probe.ts`), and a check that read
+   * another folder than the door it leads to would admit a server that door then cannot verify.
+   */
+  operatorCaFile?: string;
   /** The user's own IMAP (and optionally SMTP) server. */
   imap: SidecarImapConfig;
   /** The mailbox address. Defaults to the IMAP username, which is what it is for most servers. */
@@ -7905,7 +7911,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             });
           }
           if (localCloudProbeMatch) {
-            return answerCloudProbe(req, { dataDir: config.dataDir, log, configured: null });
+            return answerCloudProbe(req, {
+              dataDir: config.dataDir,
+              ...(config.operatorCaFile ? { operatorCaFile: config.operatorCaFile } : {}),
+              log,
+              configured: null,
+            });
           }
           if (localProbeMatch) {
             /* THE PROBE, AND ONLY THE PROBE. `probeConnection` dials and answers; it takes no

@@ -192,6 +192,10 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SidecarConf
     },
     ...(env.OHMAIL_MAILBOX_ADDRESS ? { address: env.OHMAIL_MAILBOX_ADDRESS } : {}),
     ...(env.OHMAIL_POLL_MS ? { pollIntervalMs: Number(env.OHMAIL_POLL_MS) } : {}),
+    // The operator's authority path, for the link and server check this engine answers too.
+    ...(env.OHMAIL_OPERATOR_CA_FILE?.trim()
+      ? { operatorCaFile: env.OHMAIL_OPERATOR_CA_FILE.trim() }
+      : {}),
     // The heartbeat window, on `OHMAIL_POLL_MS`'s idiom: absent means the product default, and
     // the ENGINE rules on the value. Unlike the host knobs below, a garbage value here REFUSES
     // the boot (`resolveHeartbeatTimeoutMs`) — `Number("garbage")` is NaN, and a NaN window would
