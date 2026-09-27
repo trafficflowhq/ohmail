@@ -24,8 +24,8 @@
 # Required values fail `docker compose config` loudly rather than booting half a stack.
 #
 # The three ohmail services run PREBUILT images from ghcr.io/trafficflowhq — `docker compose
-# up -d` pulls them; OHMAIL_IMAGE_TAG in .env pins a version (default: latest). Each image is
-# built BY THIS REPOSITORY'S OWN RELEASE WORKFLOW from the recipe in this tree —
+# up -d` pulls them, at the release this file ships with; OHMAIL_IMAGE_TAG in .env pins another
+# version. Each image is built BY THIS REPOSITORY'S OWN RELEASE WORKFLOW from the recipe in this tree —
 # apps/server/Dockerfile, apps/worker/Dockerfile.selfhost, apps/webapp/Dockerfile — against
 # the committed npm lockfile, so what an image contains is checkable against the source and
 # the recipe beside it, and any of the three can be rebuilt from a clone:
@@ -98,7 +98,7 @@ services:
       - caddy_config:/config
 
   web:
-    image: ghcr.io/trafficflowhq/ohmail-web:${OHMAIL_IMAGE_TAG:-latest}
+    image: ghcr.io/trafficflowhq/ohmail-web:${OHMAIL_IMAGE_TAG:-0.25.2}
     restart: unless-stopped
     environment:
       # Where the web container's OWN session gate asks "is this cookie a live session?" —
@@ -115,7 +115,7 @@ services:
       start_period: 30s
 
   api:
-    image: ghcr.io/trafficflowhq/ohmail-server:${OHMAIL_IMAGE_TAG:-latest}
+    image: ghcr.io/trafficflowhq/ohmail-server:${OHMAIL_IMAGE_TAG:-0.25.2}
     restart: unless-stopped
     depends_on:
       db:
@@ -212,7 +212,7 @@ services:
       start_period: 30s
 
   organizer:
-    image: ghcr.io/trafficflowhq/ohmail-worker:${OHMAIL_IMAGE_TAG:-latest}
+    image: ghcr.io/trafficflowhq/ohmail-worker:${OHMAIL_IMAGE_TAG:-0.25.2}
     restart: unless-stopped
     depends_on:
       api:

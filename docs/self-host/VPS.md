@@ -300,12 +300,15 @@ backup on the same disk dies with the disk.
 
 ## 10. Updates
 
-Pin a version in `.env` (`OHMAIL_IMAGE_TAG=<released tag>`) rather than
-riding `latest`, then updating is:
+The compose file pulls the release it came with, so updating is taking the
+newer file and its images:
 
 ```sh
-docker compose pull && docker compose up -d
+git pull && docker compose pull && docker compose up -d
 ```
+
+To stay on a release, set `OHMAIL_IMAGE_TAG=<released tag>` in `.env`. Not
+`latest`: its three images can skew for a moment while a release publishes.
 
 The server applies any schema changes at boot, before it starts listening.
 
