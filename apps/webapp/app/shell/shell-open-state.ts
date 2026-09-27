@@ -25,6 +25,7 @@ import {
   type OhmailEngine,
   type OhmailView,
   type TriagePileEntry,
+  type TriagePiles,
   type WaterlineMeta,
 } from "@ohmail/client-engine";
 import type { UndoToastFn } from "./undo-door";
@@ -231,13 +232,15 @@ export interface ShellOpenStateInput {
   folders: FolderEntity[];
   parked: ReadonlySet<string>;
   partition: { fresh: EngineMessage[]; seen: EngineMessage[] };
-  piles: { replyLater: TriagePileEntry[] };
+  piles: Pick<TriagePiles, "replyLater" | "setAside" | "resurface">;
   presented: EntityReader;
   receipts: EngineMessage[];
   /** The inline reply's id, closed by the route transition with every other overlay. */
   setReplyTo: Dispatch<SetStateAction<string | null>>;
-  /** Does the column view on screen list this message? A routed open it cannot show takes the reader. */
-  columnHolds: (id: string) => boolean;
+  /** The lists the tag, folder and Trash columns render — what a routed open may be read in. */
+  tagGroups: ReadonlyArray<{ tag: { id: string }; messages: ReadonlyArray<{ id: string }> }>;
+  folderMessages: ReadonlyArray<{ id: string }>;
+  trashRows: ReadonlyArray<{ id: string }>;
 }
 
 /** The record the shell composes with. Consumers destructure it: a memo may not depend on it. */
@@ -245,7 +248,8 @@ export type ShellOpenState = ReturnType<typeof useShellOpenState>;
 
 export function useShellOpenState({
   engine, reader, derived, route, t, toast, mutateAndReport, mailState, screener,
-  allOhbox, consentView, folders, parked, partition, piles, presented, receipts, setReplyTo, columnHolds,
+  allOhbox, consentView, folders, parked, partition, piles, presented, receipts, setReplyTo,
+  tagGroups, folderMessages, trashRows,
 }: ShellOpenStateInput) {
 
   /* ── view state ── */
@@ -292,6 +296,25 @@ export function useShellOpenState({
    * rule rather than a race between two `setState`s and a `hashchange`.
    */
   const [readerPending, setReaderPending] = useState<string | null>(null);
+  /**
+   * DOES THE COLUMN VIEW THE ROUTE NAMES LIST THIS MESSAGE — asked before a routed open is read in
+   * that view's own column rather than the reader. The same lists the views render; History lists
+   * every message.
+   */
+  const columnHolds = useStableCallback((id: string): boolean => {
+    const has = (rows: ReadonlyArray<{ id?: string; messageId?: string }>): boolean =>
+      rows.some((r) => (r.messageId ?? r.id) === id);
+    switch (route.view) {
+      case "history": return true;
+      case "triage":
+        return has(route.triagePile === "aside" ? piles.setAside
+          : route.triagePile === "resurface" ? piles.resurface : piles.replyLater);
+      case "tag": return has(tagGroups.find((g) => g.tag.id === route.tagId)?.messages ?? []);
+      case "folder": return has(folderMessages);
+      case "trash": return has(trashRows);
+      default: return false;
+    }
+  });
   /**
    * AND A REPLY THAT TRAVELS WITH THE OPEN — a reply draft pressed in Drafts. The same shape as
    * `readerPending`: the transition closes the inline editor with every other overlay, so an

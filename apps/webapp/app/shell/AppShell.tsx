@@ -1621,25 +1621,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
      that pane is mounted twice whenever the reader is open — see `message-chrome.tsx`. */
   const [replyTo, setReplyTo] = useState<string | null>(null);
   /**
-   * DOES THE COLUMN VIEW THE ROUTE NAMES LIST THIS MESSAGE — asked before a routed open is read in
-   * that view's own column rather than the reader. The same lists the views render; History lists
-   * every message.
-   */
-  const columnHolds = useStableCallback((id: string): boolean => {
-    switch (route.view) {
-      case "history": return true;
-      case "triage": {
-        const pile = route.triagePile === "aside" ? piles.setAside
-          : route.triagePile === "resurface" ? piles.resurface : piles.replyLater;
-        return pile.some((e) => e.messageId === id);
-      }
-      case "tag": return tagGroups.find((g) => g.tag.id === route.tagId)?.messages.some((m) => m.id === id) ?? false;
-      case "folder": return folderMessages.some((m) => m.id === id);
-      case "trash": return trashPage.items.some((m) => m.id === id);
-      default: return false;
-    }
-  });
-  /**
    * THE OPEN STATE — what is selected, what the reader shows, what the bar claims and what this
    * visit has spent, in `shell-open-state.ts`. Below `replyTo`, whose editor the route transition
    * closes with every other overlay, and above everything that reads a selection — `shell-compose.ts`
@@ -1658,7 +1639,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     subjectRule, toggleAbsoluteTime,
   } = useShellOpenState({
     engine, reader, derived, route, t, toast, mutateAndReport, mailState, screener,
-    allOhbox, consentView, folders, parked, partition, piles, presented, receipts, setReplyTo, columnHolds,
+    allOhbox, consentView, folders, parked, partition, piles, presented, receipts, setReplyTo,
+    tagGroups, folderMessages, trashRows: trashPage.items,
   });
 
   /**

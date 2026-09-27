@@ -704,6 +704,17 @@ export function useShellCompose({
    * taken before the drain is still the row, and one the mirror listed and then lost is gone.
    */
   const replyRows = useRef(new Map<string, { row: string; seen: boolean }>());
+  /**
+   * THE SEED LEAVES once the message has a row of its own — a confirmed send's, or the row a
+   * refused send left — and never when it IS that row (`keep`): that one holds the message.
+   */
+  const dropReplySeed = useStableCallback((key: string, keep: string | null | undefined) => {
+    const seeded = replySeedDrafts.current.get(key);
+    if (!seeded || seeded === keep) return;
+    replySeedDrafts.current.delete(key);
+    void engine.mutate({ kind: "draft_discard", draftId: seeded });
+    writeReplyMeta(`draft:${seeded}`, {}); // the phantom row's block state dies with it
+  });
   /*
    * The compose recovery is gone, and its absence is the fix. `recoverySeed`
    * seeded an `unverified` or stranded `sending` draft's text into a FRESH
@@ -776,13 +787,7 @@ export function useShellCompose({
     }
     // A reply seeded from a draft row settled: the row's message has been delivered (the send
     // wrote its own row), so the seed is a phantom draft now — see `replySeedDrafts`.
-    const seeded = replySeedDrafts.current.get(key);
-    // …never the row this very send went out from.
-    if (seeded && seeded !== m.draftId) {
-      replySeedDrafts.current.delete(key);
-      void engine.mutate({ kind: "draft_discard", draftId: seeded });
-      writeReplyMeta(`draft:${seeded}`, {}); // the phantom row's block state dies with it
-    }
+    dropReplySeed(key, m.draftId);
     // A reply settled. `key` is the answered message's id (`sendKeyOf`), which is exactly the row
     // that should move from "New for you" to "Earlier" — so hand it to the Ohbox for the gesture.
     setReplyDone({ messageId: key, at: new Date().toISOString() });
@@ -828,21 +833,15 @@ export function useShellCompose({
   const takeLaneRow = useStableCallback((lane: string, rowId: string) => {
     if (laneRowOf(lane) !== null) return;
     replyRows.current.set(lane, { row: rowId, seen: false });
-    const seeded = replySeedDrafts.current.get(lane);
-    if (seeded === undefined || seeded === rowId) return;
-    replySeedDrafts.current.delete(lane);
-    void engine.mutate({ kind: "draft_discard", draftId: seeded });
-    writeReplyMeta(`draft:${seeded}`, {});
+    dropReplySeed(lane, rowId);
   });
-  /** The lane's row while it is a draft to send from; `null` once it is anything else, or gone. */
+  /** The lane's row while the hold leaves it free to send from; forgotten once the mirror loses it. */
   const laneRowOf = useStableCallback((lane: string): string | null => {
     const held = replyRows.current.get(lane);
     if (held === undefined) return null;
-    const d = drafts.find((x) => x.id === held.row);
-    if (d === undefined && !held.seen) return held.row;
-    if (d !== undefined && d.status === "draft") { held.seen = true; return held.row; }
-    replyRows.current.delete(lane);
-    return null;
+    if (drafts.some((x) => x.id === held.row)) held.seen = true;
+    else if (held.seen) { replyRows.current.delete(lane); return null; }
+    return holdOf(engine, { lane, draftId: held.row, session: null }).kind === "free" ? held.row : null;
   });
 
   /**
@@ -979,7 +978,7 @@ export function useShellCompose({
         // The signature seals into the forward's note, and the server appends the quoted
         // original AFTER the body it is handed (`send-service.ts`) — so the block the editor
         // showed sits ABOVE the quoted history in what the recipient reads.
-        withSignature(withLaneRow(fwdRow, forwardSend(parent, {
+        withLaneRow(fwdRow, withSignature(forwardSend(parent, {
           body: replyBody.text,
           ...(replyBody.html ? { html: replyBody.html } : {}),
           // The resolved sender, or the receiving mailbox — the editor's lock judged the
@@ -989,7 +988,7 @@ export function useShellCompose({
           ...(replyAttachments.length > 0 ? { attachments: replyAttachments } : {}),
           plan: forwardEnvelopePlan(replyEnvelope, fromOptions.map((o) => o.address)),
           confirmed: fwdGate?.confirmed === true && parent.sensitivity?.no_forward === true,
-        })), sigText, sigHtml),
+        }), sigText, sigHtml)),
         withDone({ surface: "inline" as const }),
       );
       return;
