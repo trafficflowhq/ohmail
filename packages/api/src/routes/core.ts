@@ -1,6 +1,6 @@
 import { silentLogger } from "@trafficflow/core";
 import { serviceContext } from "../context.js";
-import { ownerCookie, OWNER_COOKIE } from "../cookies.js";
+import { jarCookie, ownerCookie } from "../cookies.js";
 import type { ApiDeps } from "../deps.js";
 import { withSessionAcquireCeiling } from "../middleware.js";
 import type { Route } from "../router.js";
@@ -22,7 +22,7 @@ import { sessionLifecycleRoutes } from "./session-lifecycle.js";
  */
 function healOwnerMarker(req: Request, deps: ApiDeps, accountId: string): string[] {
   if (!cookieSurface(deps)) return [];
-  if (parseCookies(req.headers.get("cookie"))[OWNER_COOKIE] !== undefined) return [];
+  if (jarCookie(parseCookies(req.headers.get("cookie")), "tf_owner") !== undefined) return [];
   return ownerCookie(accountId, deps.authConfig);
 }
 

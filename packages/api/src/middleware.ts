@@ -5,6 +5,7 @@ import {
 import { silentLogger } from "@trafficflow/core/mail";
 // The reader refusal, from the package that throws it — see the envelope arm below for why it
 // cannot live beside `ServiceError`.
+import { jarCookie } from "./cookies.js";
 import { csrfTokenFor } from "./csrf.js";
 import { errorResponse } from "./responses.js";
 import { lookupIdempotent, storedResponse, type StoredIdempotent } from "./idempotency.js";
@@ -41,7 +42,7 @@ function readSessionToken(req: Request, allowCookie: boolean): { value: string; 
     if (value) return { value, via: "bearer" };
   }
   if (allowCookie) {
-    const cookie = parseCookies(req.headers.get("cookie"))["tf_session"];
+    const cookie = jarCookie(parseCookies(req.headers.get("cookie")), "tf_session");
     if (cookie) return { value: cookie, via: "cookie" };
   }
   return null;
@@ -132,9 +133,13 @@ function mayRetry(
   // RESOLVED booleans, not the optional-field interface: `dbBusyResponse` narrows the caller's
   // partial knowledge to definite values first, so "absent" cannot reach here still meaning
   // "unknown" and then be read as permissive by accident.
-  protection: { routeIsIdempotent: boolean; hasAccount: boolean; routeRequiresSession: boolean },
+  protection: {
+    routeIsIdempotent: boolean; hasAccount: boolean; routeRequiresSession: boolean; routeIsReplaySafe: boolean;
+  },
 ): boolean {
   if (SAFE_METHODS.has(req.method.toUpperCase())) return true;
+  // The route deduplicates its own replays (`RouteOptions.replaySafe`), whatever ran before this.
+  if (protection.routeIsReplaySafe) return true;
   /**
    * Nothing ran — asked first, before idempotency, because it is a different question. On a
    * protected route a resolved session is a precondition: "protected, and no account resolved"
@@ -177,6 +182,8 @@ function mayRetry(
 export interface IdempotencyProtection {
   /** The matched route carries `options.idempotent`. */
   routeIsIdempotent?: boolean;
+  /** The matched route carries `options.replaySafe`. */
+  routeIsReplaySafe?: boolean;
   /** A session was resolved — `withIdempotency` needs an `accountId` and skips without one. */
   hasAccount?: boolean;
   /**
@@ -203,13 +210,16 @@ export function dbBusyResponse(
     routeIsIdempotent: protection.routeIsIdempotent === true,
     hasAccount: protection.hasAccount === true,
     routeRequiresSession: protection.routeRequiresSession === true,
+    routeIsReplaySafe: protection.routeIsReplaySafe === true,
   };
   return dbBusyResponseFor(req, known);
 }
 
 function dbBusyResponseFor(
   req: Request,
-  protection: { routeIsIdempotent: boolean; hasAccount: boolean; routeRequiresSession: boolean },
+  protection: {
+    routeIsIdempotent: boolean; hasAccount: boolean; routeRequiresSession: boolean; routeIsReplaySafe: boolean;
+  },
 ): Response {
   return errorResponse(
     "db_busy", 503,
@@ -367,6 +377,7 @@ export const withErrorEnvelope: Middleware = (next, route) => async (req, deps, 
         routeIsIdempotent: route.options?.idempotent === true,
         hasAccount: Boolean(deps.session?.accountId),
         routeRequiresSession: route.options?.public !== true,
+        routeIsReplaySafe: route.options?.replaySafe === true,
       });
     }
     /**
@@ -580,9 +591,9 @@ export const withSpendGate: Middleware = (next, route) => async (req, deps, para
 export const withCsrf: Middleware = (next) => async (req, deps, params) => {
   if (UNSAFE_METHODS.has(req.method.toUpperCase()) && deps.session?.via === "cookie") {
     const cookies = parseCookies(req.headers.get("cookie"));
-    const presented = cookies["tf_csrf"];
+    const presented = jarCookie(cookies, "tf_csrf");
     const header = req.headers.get("x-csrf-token");
-    const sessionToken = cookies["tf_session"];
+    const sessionToken = jarCookie(cookies, "tf_session");
     const failed = errorResponse("csrf_failed", 403, "csrf validation failed");
     if (!presented || !header || !sessionToken) return failed;
     const expected = csrfTokenFor(sessionToken);

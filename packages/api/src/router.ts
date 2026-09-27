@@ -214,6 +214,13 @@ export interface RouteOptions {
   opaqueParams?: readonly string[];
   /** Honors `Idempotency-Key` (`withIdempotency`). */
   idempotent?: boolean;
+  /**
+   * A replay of this request is safe by the route's OWN construction, not by `withIdempotency`, so a
+   * busy 503 may say `retryable: true`. Only a route whose handler deduplicates its own retries may
+   * claim it: the refresh door, whose rotation re-answers the same attempt id and converges a cookie
+   * retry inside its grace window.
+   */
+  replaySafe?: true;
   /** SSE / oauth-redirect: reduced pipeline — no JSON envelope, no CSRF, no idempotency. */
   raw?: boolean;
   /**

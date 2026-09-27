@@ -1,7 +1,7 @@
 import { classifyRefreshFailure, type SessionLifecycle } from "@trafficflow/services/auth";
 import { ServiceError } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
-import { clearSessionCookies, ownerCookieValue, sessionCookies, OWNER_COOKIE } from "../cookies.js";
+import { clearResumeCookie, clearSessionCookies, jarCookie, ownerCookieValue, sessionCookies } from "../cookies.js";
 import { csrfTokenFor } from "../csrf.js";
 import type { ApiDeps } from "../deps.js";
 import { accountErasedResponse, erasedAccountBearer, withSessionAcquireCeiling } from "../middleware.js";
@@ -62,11 +62,13 @@ export const sessionLifecycleRoutes: Route[] = [
     pattern: "/auth/refresh",
     relay: false,  /* resolves a credential from the request body */
     cost: "ceremony",
-    // A busy pool answers this door fast — see `withSessionAcquireCeiling`.
-    options: { public: true, credentialSubject: true, middleware: [withSessionAcquireCeiling] },
+    // A busy pool answers this door fast — see `withSessionAcquireCeiling` — and says a replay is
+    // safe: the rotation re-answers a repeated attempt id and converges a cookie retry in its grace.
+    options: { public: true, credentialSubject: true, replaySafe: true, middleware: [withSessionAcquireCeiling] },
     handler: async (req, deps) => {
       const jar = parseCookies(req.headers.get("cookie"));
-      const cookieRefresh = cookieSurface(deps) ? jar["tf_refresh"] : undefined;
+      // THE ONE READER OF THE REFRESH CREDENTIAL, in either spelling — a census holds it here.
+      const cookieRefresh = cookieSurface(deps) ? jarCookie(jar, "tf_refresh") : undefined;
       if (cookieRefresh) {
         // A REFUSED cookie refresh must clear the jar, not just refuse. The browser is told to
         // resume by `tf_resume`, which outlives a refresh token that has been revoked, rotated
@@ -101,7 +103,7 @@ export const sessionLifecycleRoutes: Route[] = [
           // confirms against `GET /auth/session`. Absent or malformed answers `null`: no cookie
           // set, none cleared.
           return noContent(sessionCookies(
-            tokens!, csrfTokenFor(tokens!.accessToken), deps.authConfig, ownerCookieValue(jar[OWNER_COOKIE]),
+            tokens!, csrfTokenFor(tokens!.accessToken), deps.authConfig, ownerCookieValue(jarCookie(jar, "tf_owner")),
           ));
         } catch (err) {
           /*
@@ -153,6 +155,12 @@ export const sessionLifecycleRoutes: Route[] = [
         );
         return json({ tokens }, 200);
       } catch (err) {
+        // A jar holding the resume marker and no refresh token sends every visit through the splash
+        // until the marker goes, so the answer that finds nothing to rotate takes it with it.
+        if (err instanceof ServiceError && err.code === "refresh_missing" && cookieSurface(deps)
+          && jarCookie(jar, "tf_resume") !== undefined) {
+          return json({ error: { code: err.code, message: err.message } }, err.httpStatus, clearResumeCookie());
+        }
         // A refused token of an ERASED account is told so — the session door's rule, for the
         // client that declared it (`erasedAccountBearer`). Anything else travels as it was.
         if (classifyRefreshFailure(err) === "session_refused" && typeof body.refreshToken === "string"
