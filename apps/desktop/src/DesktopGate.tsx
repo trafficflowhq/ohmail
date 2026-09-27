@@ -35,7 +35,7 @@ import {
   unknownSpeaks, type HostConnection,
 } from "../../webapp/app/shell/host-connection";
 import { BootStatus } from "./BootStatus.js";
-import { bridgeAvailable, bridgeFetch, engineStartOver, engineSwitchRestore, engineUnlockRetry } from "./bridge-fetch.js";
+import { bridgeAvailable, bridgeFetch, engineStartOver, engineUnlockRetry } from "./bridge-fetch.js";
 import {
   cloudNoticeDue, sessionOf, sessionReaders, signInCauseOf, waitForSessionMove, type CloudSessionWire,
 } from "./cloud-session.js";
@@ -60,7 +60,7 @@ import { DesktopWebSection } from "./DesktopWebSection.js";
 import {
   accountDoorFor, awayDoorFor, consentDoorFor, firstRunDoorFor, flavorOf, gateFor, imagesFromComputer,
   hostDoorFor, isDesktopHost, isManagedDoor, mailMount, pairedHostOf, pairedViaOf, profileImportDoorFor, readShell,
-  suggestDoorFor, type HostedSession, type Shell,
+  restorePairingSwitch, suggestDoorFor, type HostedSession, type Shell,
 } from "./doors.js";
 import { DesktopDevices } from "./DesktopDevices.js";
 import { awayOverBridge } from "./local-away.js";
@@ -252,7 +252,7 @@ export function DesktopGate() {
        window left unanswered (a reload mid-pairing), and its answer is never coming: the door it
        replaced comes back before anything is drawn over it. */
     if (delivered.current === null && next.kind === "status" && next.status.switchPending === true) {
-      next = await engineSwitchRestore().then((status): Shell => ({ kind: "status", status }), () => next);
+      next = await restorePairingSwitch().then((status): Shell => ({ kind: "status", status }), () => next);
     }
     const mark = lifecycleMark(next);
     /* `null` is "nothing delivered yet", which is the first answer of the launch and not a
@@ -914,7 +914,7 @@ export function DesktopGate() {
         setOverlay(null);
         /* A pairing still provisional when its card is left is undone: only an accepted one keeps
            its door. Nothing provisional, nothing changed. */
-        void engineSwitchRestore().catch(() => undefined).finally(() => void refresh());
+        void restorePairingSwitch().catch(() => undefined).finally(() => void refresh());
       }}
       onEntered={(r) => {
         /* THE SETTINGS OVERLAY, which is where a mailbox is CONNECTED AGAIN after a removal

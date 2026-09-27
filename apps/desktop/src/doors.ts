@@ -1003,10 +1003,39 @@ export async function pairThroughDoor(
 async function settleSwitch(result: HostDoorResult, paired: boolean): Promise<HostDoorResult> {
   try {
     if (paired) return { ...result, status: await engineSwitchCommit() };
-    return { ...result, status: await engineSwitchRestore(), restored: true };
+    return { ...result, status: await restorePairingSwitch(), restored: true };
   } catch (err) {
     return { ...result, problem: result.problem ?? sentence(err) };
   }
+}
+
+/** How long an undone pairing waits for the other computer to take its session back. */
+export const UNDO_AT_HOST_MS = 8_000;
+
+/**
+ * PUT BACK THE DOOR A PAIRING REPLACED — the one restore every way out of a pairing takes. While a
+ * switch is pending the running engine is the pairing's, and if its redeem reached the other
+ * computer it holds a session there: it signs that out first (`?revoke=host`), so this desktop
+ * does not stay on that computer's Devices list. Best effort and bounded; the restore follows.
+ */
+export async function restorePairingSwitch(): Promise<EngineStatus> {
+  let pending = false;
+  try {
+    pending = (await engineStatus()).switchPending === true;
+  } catch {
+    /* No answer: the restore below still runs, and changes nothing when nothing is pending. */
+  }
+  if (pending) {
+    try {
+      await bridgeFetch("/cloud/session?revoke=host", {
+        method: "DELETE",
+        signal: AbortSignal.timeout(UNDO_AT_HOST_MS),
+      });
+    } catch {
+      /* Best effort: the other computer's Devices list is where it can still be removed. */
+    }
+  }
+  return engineSwitchRestore();
 }
 
 /**

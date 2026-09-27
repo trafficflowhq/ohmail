@@ -186,6 +186,10 @@ function fakeShell(opts: {
           }
           return encode(200, JSON.stringify({ ok: true, flavor: "desktop-host", base: ORIGIN }));
         }
+        if (method === "DELETE" && url.startsWith("/cloud/session")) {
+          log.push(`sign-out ${url} on ${String(door!.flavor ?? door!.mode)}`);
+          return encode(200, JSON.stringify({ status: "signed_out", ...(url.includes("revoke=host") ? { revokedAtHost: paired } : {}) }));
+        }
         if (url === "/cloud/pair-redeem") {
           log.push("redeem asked");
           if (opts.answer === "never") return new Promise(() => undefined);
@@ -316,8 +320,14 @@ describe("a pairing the other computer refuses hands back the door it replaced",
     expect(shell.log.filter((l) => l === "logout"), "the refusal signed the replaced door out").toEqual([]);
     /* THE LEASE IS THE ENGINE'S TO READ: the restored door is sent no write — no organize press,
        no consent — and no guided setup is opened over it, which is where a press would come from. */
-    expect(shell.writes, "the window wrote to the restored door").toEqual([]);
+    expect(shell.writes.filter((w) => !w.endsWith(" on desktop-host")), "the window wrote to the restored door").toEqual([]);
     expect(window.location.hash, "the restore opened the guided setup").not.toContain("first-run");
+    /* The pairing's own door is asked to take its session back at the other computer, and only
+       before the restore: the restored door is never signed out. */
+    const revoke = shell.log.indexOf("sign-out /cloud/session?revoke=host on desktop-host");
+    expect(revoke, shell.log.join(", ")).toBeGreaterThan(-1);
+    expect(revoke).toBeLessThan(shell.log.indexOf("restore"));
+    expect(shell.log.filter((l) => l.startsWith("sign-out") && !l.endsWith("on desktop-host"))).toEqual([]);
   });
 
   it("a pairing whose engine outlives the walk's clock restores the door too", async () => {
@@ -347,6 +357,11 @@ describe("a pairing the other computer refuses hands back the door it replaced",
     await mount();
     for (let i = 0; i < 30; i += 1) await advance(500);
     console.info(`ABANDONED door on disk ${String(shell.door()?.flavor ?? shell.door()?.mode)} || ${shell.log.join(", ")}`);
+    /* THE REDEEM REACHED THE OTHER COMPUTER, so the pairing's door signs its session out there
+       before the next window puts the replaced door back. */
+    const revoke = shell.log.indexOf("sign-out /cloud/session?revoke=host on desktop-host");
+    expect(revoke, shell.log.join(", ")).toBeGreaterThan(shell.log.indexOf("redeem asked"));
+    expect(revoke).toBeLessThan(shell.log.lastIndexOf("restore"));
     expect(shell.door()).toEqual(LOCAL_DOOR);
     expect(shell.replaced()).toBeNull();
     expect(readsNotPaired()).toBe(false);
@@ -391,6 +406,8 @@ describe("only an accepted pairing retires the door it replaced", () => {
     expect(shell.replaced(), "an accepted pairing still keeps the door it replaced").toBeNull();
     expect(shell.log.filter((l) => l.startsWith("restore") && !l.endsWith("(nothing kept)"))).toEqual([]);
     expect(readsNotPaired()).toBe(false);
+    // Nothing was pending when the card was left, so nothing was signed out anywhere.
+    expect(shell.log.filter((l) => l.startsWith("sign-out"))).toEqual([]);
   });
 });
 

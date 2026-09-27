@@ -492,6 +492,28 @@ export function readMirrorErased(dataDir: string): boolean {
   return raw === null ? false : decodeMirrorRecord(raw).erased;
 }
 
+/** How long an undone pairing waits for the other computer to take its session back. */
+export const PAIR_UNDO_REVOKE_MS = 5_000;
+
+/**
+ * Sign this session out at the server that issued it — `POST /auth/logout` with its own bearer,
+ * which revokes its family there and so drops it from that server's Devices list. Answers whether
+ * the server said so; a refusal, an outage or the deadline answer false and change nothing here.
+ */
+async function revokeSessionAtHost(auth: CloudAuth): Promise<boolean> {
+  try {
+    const res = await auth.authedFetch("/auth/logout", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+      signal: AbortSignal.timeout(PAIR_UNDO_REVOKE_MS),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * How long a pairing's answer waits for the first mailbox list to name the served mailbox. One
  * hosted read on the network the link named; past this the answer goes without it and the
@@ -1654,13 +1676,20 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       }
 
       if (req.method === "DELETE" && path === "/cloud/session") {
+        /* AN UNDONE PAIRING TAKES ITS SESSION BACK AT THE OTHER COMPUTER TOO: `?revoke=host` asks
+           that server, with the bearer it handed over, to sign it out, so this desktop leaves its
+           Devices list. Best effort and bounded; the sign-out here happens either way. */
+        const live = authed;
+        const revokedAtHost = url.searchParams.get("revoke") === "host" && live !== null
+          ? await revokeSessionAtHost(live.auth)
+          : null;
         setHostedSession(null);
         const teardown = signOut();
         sessionTeardown = teardown.catch(() => undefined).finally(() => {
           sessionTeardown = null;
         });
         await teardown;
-        return json({ status: "signed_out" });
+        return json({ status: "signed_out", ...(revokedAtHost === null ? {} : { revokedAtHost }) });
       }
 
       // ── EVERYTHING ELSE NEEDS A HOSTED SESSION ─────────────────────────────────────────────
