@@ -9,13 +9,14 @@
  * not a mode: any key dismisses it and then does its normal job, so `?` `j` reads the map and
  * moves the cursor in two keystrokes.
  */
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { Icon, Kbd } from "@ohmail/ui";
 import {
   chordKeys, groupedBindings, useKeymap,
   type BindingGroup, type DisabledReason, type KeyBinding,
 } from "./keymap";
+import { useFocusFollows } from "./focus-follows";
 
 /**
  * `KeyboardEvent.key` values that are a modifier being held, not a keystroke being made.
@@ -45,6 +46,8 @@ export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () =>
   /* Trash's reasons live in their own namespace, where the view that raises them reads them. */
   const tRoot = useTranslations();
   const { bindings, mod } = useKeymap();
+  const sheetRef = useRef<HTMLDivElement>(null);
+  useFocusFollows(sheetRef, { active: open });
 
   useEffect(() => {
     if (!open) return;
@@ -58,7 +61,8 @@ export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () =>
     // "Mark read" for weeks, read as a bulk-selection bug). With modifiers ignored the chord
     // behaves: `Shift` does nothing, then `?` both dismisses here and toggles in the registry.
     const onKey = (e: KeyboardEvent) => {
-      if (MODIFIER_KEYS.has(e.key)) return;
+      // Tab moves inside the sheet (it is `aria-modal`); it is not a dismissal.
+      if (MODIFIER_KEYS.has(e.key) || e.key === "Tab") return;
       onClose();
     };
     document.addEventListener("keydown", onKey);
@@ -108,7 +112,7 @@ export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () =>
   return (
     <>
       <div className="ks-bg" onClick={onClose} />
-      <div className="ks" role="dialog" aria-modal="true" aria-label={t("title")}>
+      <div className="ks" ref={sheetRef} role="dialog" aria-modal="true" aria-label={t("title")}>
         <div className="ks-head">
           <h3>
             <Icon name="open" /> {t("title")}

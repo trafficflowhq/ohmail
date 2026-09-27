@@ -10,6 +10,7 @@ import { useTranslations } from "next-intl";
 import type { TagDTO } from "@ohmail/client-engine";
 import { TagDot, TextField } from "@ohmail/ui";
 import { hueOf } from "./format";
+import { useFocusFollows } from "./focus-follows";
 
 export interface TagPickerState {
   forId: string;
@@ -83,6 +84,7 @@ export function TagPicker({
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
+  useFocusFollows(rootRef);
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {

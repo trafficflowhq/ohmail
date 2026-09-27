@@ -49,6 +49,7 @@ import { usePileNames } from "./decision-copy";
 import { avatarHue, initialsOf, placeLabel } from "./format";
 import { displayAddress, displayAddressee, displayDomain } from "./idn";
 import { useOverlayClamp } from "./overlay-clamp";
+import { useFocusFollows } from "./focus-follows";
 import { addressHref } from "./address-view";
 import "./sender-sheet.css";
 import {
@@ -265,6 +266,7 @@ export function SenderMenu({
    * scroll, but never past the viewport's edges. See `overlay-clamp.ts` for the geometry.
    */
   const style = useOverlayClamp(rootRef, state);
+  useFocusFollows(rootRef);
 
   return (
     <div

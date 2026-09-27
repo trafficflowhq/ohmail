@@ -43,6 +43,7 @@ import { draftNoteKey, worthSaving } from "../shell/compose-autosave";
 import { formatRecipientChips, type ResolvedFrom } from "../shell/compose-from";
 import { SignatureBlock } from "../shell/SignatureBlock";
 import { SIG_FOLLOWING } from "../shell/signature";
+import { useFocusFollows } from "../shell/focus-follows";
 
 /**
  * The id the From control points `aria-describedby` at when the sender was matched to the
@@ -307,6 +308,10 @@ export function ComposeView({
     setConfirmCancel(false);
     rootRef.current?.querySelector<HTMLButtonElement>(".compose-cancel")?.focus();
   }, []);
+  /* Leaving — sent, discarded or closed — hands focus back to what opened Compose, and the
+     question keeps Tab on its two answers while it asks (`focus-follows.ts`). */
+  useFocusFollows(rootRef, { enter: false });
+  useFocusFollows(confirmRef, { active: confirmCancel, enter: false });
 
   /**
    * OPENING PUTS THE CARET WHERE THE WRITING STARTS: This form used to open with NOTHING focused. Two failures rode
@@ -921,18 +926,19 @@ export function ComposeView({
               </p>
             ) : null}
             {/* THE QUESTION SITS ABOVE THE ROW IT WAS ASKED FROM, at full panel width — the
-                Drafts list's panel, and deliberately not a modal: Compose was moved OUT of a
+                Drafts list's panel, and deliberately not an overlay: Compose was moved OUT of a
                 dialog the keyboard could not leave, and putting one back to ask about
                 abandoning a message would be the same mistake in a smaller box. */}
             {confirmCancel ? (
               /* AN alertdialog THAT TAKES FOCUS, because a destructive question that appears in
                  silence is one a screen-reader user answers by accident. Focus lands on the
                  panel itself (label + description are read together); Tab reaches the two
-                 answers. Deliberately still not modal and still inline — see the cancel note. */
+                 answers and stays on them, and Escape closes it. Inline, not an overlay. */
               <div
                 ref={confirmRef}
                 className="compose-confirm"
                 role="alertdialog"
+                aria-modal="true"
                 aria-label={t("cancelConfirm")}
                 aria-describedby="compose-cancel-what"
                 tabIndex={-1}

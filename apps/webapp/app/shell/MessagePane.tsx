@@ -27,6 +27,7 @@ import { useDrawnBody } from "./body-slice";
 import { subscribeSessionRevival, useSessionDead } from "./session-truth";
 import { endOpen } from "./ui-vitals";
 import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
+import { useFocusFollows } from "./focus-follows";
 import "./action-bar.css";
 
 /**
@@ -394,6 +395,13 @@ function ActionBar({
   useEffect(() => {
     if (panel === "resurface") resurfaceFirstRef.current?.focus();
   }, [panel]);
+  /* Where focus goes when a strip closes is the shell's one rule (`focus-follows.ts`); the
+     landings above stay the bar's, and so does the cancel's return to the trigger below. */
+  const stripRef = useRef<HTMLDivElement>(null);
+  useFocusFollows(stripRef, {
+    active: panel === "move" || panel === "resurface" || (panel === "delete" && deleteConfirmAdmitted),
+    enter: false,
+  });
   /** Hoisted above `toggleRead`, which needs it to decide WHICH key it is standing in for. */
   const read = !message.unread;
   /**
@@ -779,7 +787,7 @@ function ActionBar({
       t("resurfaceHorizonAt", { horizon, time });
     return (
       <div className="abar">
-        <div className="abar-panel">
+        <div className="abar-panel" ref={stripRef}>
           <span className="abar-lab">{t("resurfaceWhen")}</span>
           {/* THE TIME, VISIBLE BEFORE ANY CHOICE — the whole ask in one control. It carries the
               account's stored hour, or the product's 09:00 when nothing is stored, so the strip
@@ -885,7 +893,7 @@ function ActionBar({
   if (panel === "move") {
     return (
       <div className="abar">
-        <div className="abar-panel">
+        <div className="abar-panel" ref={stripRef}>
           <span className="abar-lab">{t("moveLabel")}</span>
           {MOVE_TARGETS.filter((v) => FOLDER_OF_VIEW[v] !== message.folder).map((v, i) => (
             <button
@@ -932,6 +940,7 @@ function ActionBar({
             destructive question was never reliably announced (review finding). */}
         <div
           className="abar-panel abar-delete"
+          ref={stripRef}
           role="alertdialog"
           aria-label={t("deleteAsk")}
           aria-describedby={deleteNoteId}

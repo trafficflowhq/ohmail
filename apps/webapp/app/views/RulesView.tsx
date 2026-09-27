@@ -28,7 +28,7 @@
  * and revoking is two clicks with the second under that sentence — pluralised for bulk, never weakened. A pane of
  * `SettingsView`, its own file so a test imports THIS and a route promotion is one branch.
  */
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button, Icon, SettingsNote, SettingsSection, Switch, TextField, useToast, type ToastOptions } from "@ohmail/ui";
 import { FOLDER_OF_VIEW, pressVerdict, tallyVerdicts } from "@ohmail/client-engine";
@@ -41,6 +41,7 @@ import { displayRuleMatch } from "../shell/idn";
 import { useListWindow } from "../shell/list-window";
 import { organizerRefusalOf, organizerRefusalSentence } from "../shell/organizer-refusal";
 import { postureRefusal, type RulesPosture } from "../shell/rules-posture";
+import { useFocusFollows } from "../shell/focus-follows";
 import "./rules.css";
 
 /**
@@ -263,6 +264,17 @@ export function RulesView({ rules, onRevoke, onRetarget, pastMail, posture }: Ru
    * because jsdom mounts this component without implementing scrollIntoView.
    */
   const confirmRef = useRef<HTMLDivElement | null>(null);
+  /* Escape closes an open confirm, from inside it or from the button that opened it, and focus
+     goes back to that button (`focus-follows.ts`). Keyed, so a confirm opened under another row
+     is its own. */
+  const bulkRef = useRef<HTMLDivElement | null>(null);
+  const closeConfirm = useCallback(() => setOpen(null), []);
+  useFocusFollows(confirmRef, {
+    active: open !== null && "ruleId" in open ? `${open.mode}:${open.ruleId}` : null,
+    enter: false,
+    onEscape: closeConfirm,
+  });
+  useFocusFollows(bulkRef, { active: open?.mode === "bulk", enter: false, onEscape: closeConfirm });
   useEffect(() => {
     if (open && open.mode !== "bulk") confirmRef.current?.scrollIntoView?.({ block: "nearest" });
   }, [open]);
@@ -455,7 +467,7 @@ export function RulesView({ rules, onRevoke, onRetarget, pastMail, posture }: Ru
           moment at which "your mail does not move" can be read BEFORE it is true. Removing it
           would make the sentence something the product says AFTER the act. */}
       {open?.mode === "bulk" ? (
-        <div className="rules-confirm">
+        <div className="rules-confirm" ref={bulkRef}>
           <span>{t("bulkRevokeExplain", { count: filtered.length })}</span>
           <span className="acts">
             <Button variant="primary" onClick={() => runBulk(filtered.map((r) => r.id))}>

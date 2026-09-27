@@ -21,6 +21,7 @@ import { displayAddress, displayRuleMatch } from "./idn";
 // The panel is opened from the sheet but can outlive it on screen, so it imports the
 // stylesheet itself rather than relying on `SenderMenu` having been mounted first.
 import "./sender-sheet.css";
+import { useFocusFollows } from "./focus-follows";
 
 export interface SenderAuditState {
   /** What the panel is about — an address, or a domain when the scope switch says so. */
@@ -37,11 +38,13 @@ export function SenderAuditPanel({ state, onClose }: { state: SenderAuditState; 
   // is still on the row behind it, which for a screen-reader user is a panel that does not
   // exist. Escape is owned by `AppShell`'s one ordered layer list, not by a listener here.
   useEffect(() => { closeRef.current?.focus(); }, []);
+  const panelRef = useRef<HTMLDivElement>(null);
+  useFocusFollows(panelRef);
 
   return (
     <>
       <div className="sa-bg" onClick={onClose} />
-      <div className="sa" role="dialog" aria-modal="true" aria-label={t("auditAria", { subject: state.title })}>
+      <div className="sa" ref={panelRef} role="dialog" aria-modal="true" aria-label={t("auditAria", { subject: state.title })}>
         <div className="sa-head">
           <h3>{state.domain ? t("auditTitleDomain", { domain: state.title }) : state.title}</h3>
           <button ref={closeRef} type="button" className="x" onClick={onClose} aria-label={t("auditClose")}>

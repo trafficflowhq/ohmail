@@ -172,6 +172,7 @@ import { KeymapProvider, useModGlyph } from "./keymap";
 import { CURSOR_HINT_MS } from "./cursor-placer";
 import type { ActedMarker } from "./after-verb";
 import { ZoneCursor } from "./zone-nav";
+import { FocusFollows } from "./focus-follows";
 import "./zone-cursor.css";
 import { ColumnHandles } from "./ColumnHandles";
 import { ShortcutSheet } from "./ShortcutSheet";
@@ -882,6 +883,8 @@ export function AppShell({
         {/* The derived focus zone, reflected as `:root[data-zone]` for the tile-cursor CSS
             (`zone-cursor.css`). See `ZoneCursor`. */}
         <ZoneCursor />
+        {/* Where focus goes when a surface closes or its control is taken away. See `focus-follows.ts`. */}
+        <FocusFollows />
         <MailStateHost probe={mailboxFacts} freshnessProbe={mirrorFreshness}>
           <ShellInner
             mailboxFacts={mailboxFacts}

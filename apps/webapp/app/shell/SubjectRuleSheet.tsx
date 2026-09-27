@@ -26,6 +26,7 @@ import { usePileNames } from "./decision-copy";
 import { avatarHue, initialsOf } from "./format";
 import { displayAddress, displayAddressee, displayRuleMatch } from "./idn";
 import { useOverlayClamp } from "./overlay-clamp";
+import { useFocusFollows } from "./focus-follows";
 import "./sender-sheet.css";
 import { RETRO_DEFAULT_ON, type ScreeningDest } from "./sender-screening";
 import {
@@ -146,6 +147,7 @@ export function SubjectRuleSheet({
    * destinations out of reach entirely. Same hook, same rule: flip, cap, scroll — never clip.
    */
   const style = useOverlayClamp(rootRef, state);
+  useFocusFollows(rootRef);
 
   return (
     <div
