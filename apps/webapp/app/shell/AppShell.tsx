@@ -167,7 +167,7 @@ const SCHEME_WORD_KEY: Record<ResolvedTheme, string> = {
   dark: "dock.schemeDark",
 };
 
-import { KeymapProvider, useModGlyph } from "./keymap";
+import { ariaShortcut, KeymapProvider, useModGlyph } from "./keymap";
 /* THE ONE CURSOR PLACER — the mechanism every list view shares; this shell is the `global`
    claimant, answering for the three views whose cursor it holds. See `cursor-placer.ts`. */
 import { CURSOR_HINT_MS } from "./cursor-placer";
@@ -439,6 +439,9 @@ function SearchViewLive(props: Omit<ComponentProps<typeof SearchView>, "version"
   const indexRev = useSearchIndexRevision();
   return <SearchView {...props} version={version} indexRev={indexRev} />;
 }
+
+/** The navigation rail's id, which both drawer toggles name in `aria-controls`. */
+const RAIL_ID = "shell-rail";
 
 function ShellRail({ groups, footer, offerDesktopCta, hostConnection, ...rest }: RailNavProps & {
   /**
@@ -1862,8 +1865,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * keep the order, the phase and the scope they have here.
    */
   const {
-    activeRailId, commands, effectiveView, mobileTitle, narrowNow, pushTier, railGroupsWithHints,
-    tagGroup,
+    activeRailId, commands, effectiveView, mobileTitle, narrowNow, paletteRef, pushTier, railGroupsWithHints,
+    railNow, railRef, readerRef, tagGroup,
   } = useShellKeys({
     engine, reader, demo, t, theme, route, palette, pullBinding, consent, syncStatus, mailState,
     facts, seedOwed, folderVerbs, screener, junkSaid, junkReadable, awaySupported, readsNew,
@@ -1875,7 +1878,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     drafts, folderMailboxes, folderMessages, folderOlder, folders, folderUnread, history,
     ohbox, openFolder, ownAddresses, partition, piles, receipts, scheduled, tagGroups, tags,
     trashPage,
-    barPanel, focused, fr, frValues, mirrorHolds, picker, railOpen, readerFor, readerMessage,
+    barPanel, focused, fr, frValues, mirrorHolds, picker, railOpen, readerFor, readerMessage, readerGone,
     selectedOhbox, senderAudit, senderMenu, senderMenuBack, setBarPanel, setFr, setFrPending, setPicker, setRailOpen,
     setReaderFor, setScreenerFull, setSenderAudit, setSenderMenu, setShortcutsOpen, setSubjectRule,
     shortcutsOpen, startFR, subjectRule,
@@ -2026,7 +2029,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       // held per-pane would be two offers, each able to spend an AI action the other one
       // knew nothing about.
       draftReply: draftReplyChrome,
-      openSenderMenu,
+      openSenderMenu, senderSheetFor: senderMenu?.messageId ?? null,
       // The "me" chip's identity and the contact popover's two verbs (viewer redesign). Write seeds
       // a compose; the Screener entry is the WIDENED openSenderMenu — the chip's address rides
       // as the override, so the sheet resolves the To/Cc person and not the message's sender.
@@ -2069,7 +2072,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       onReplySig, onReplySubject,
       consent.signatures, consent.signaturesHtml, consent.signaturesKnown,
       sendSurfaceMaxTotalBytes, replyBook,
-      openSenderMenu, ownNameOf, mailboxLabelOf, writeTo, openReply, openForward, openSubjectRule,
+      openSenderMenu, senderMenu?.messageId, ownNameOf, mailboxLabelOf, writeTo, openReply, openForward, openSubjectRule,
       conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages,
       consent.foldersEnabled, consent.resurfaceTime, rememberResurfaceTime, reader, barPanel, nowAt],
   );
@@ -2118,7 +2121,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       <button type="button" className="ritem dock-cmd" onClick={palette.openPalette}>
         {t("dock.command")}
         <span className="cnt">
-          <Kbd>{modCap}K</Kbd>
+          <Kbd shortcut={ariaShortcut("mod+k", modCap)}>{modCap}K</Kbd>
         </span>
       </button>
       <button
@@ -2226,6 +2229,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             type="button"
             className="tb-btn"
             aria-label={t("rail.openNav")}
+            aria-expanded={railOpen}
+            aria-controls={RAIL_ID}
             onClick={() => setRailOpen(true)}
           >
             <Icon name="menu" />
@@ -2243,6 +2248,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         <div className="deck">
           <ShellRail
             className={railOpen ? "open" : undefined}
+            id={RAIL_ID}
+            inert={railNow.offCanvas && !railOpen}
+            navRef={railRef}
             /* The default mark plus the Zero ribbon's ≡ — one hidden button, revealed ONLY
                by zero-layout.css at ribbon widths (`app.css` hides it everywhere at rest, so
                classic renders exactly what it rendered). At 722–899 and 392–721 the rail is
@@ -2261,6 +2269,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                      reads backwards to a screen reader. */
                   aria-label={railOpen ? t("rail.closeNav") : t("rail.openNav")}
                   aria-expanded={railOpen}
+                  aria-controls={RAIL_ID}
                   onClick={() => setRailOpen((o) => !o)}
                 >
                   <Icon name="menu" />
@@ -3356,6 +3365,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
            so `aria-modal` there would tell assistive tech reachable chrome is not. Both
            facts are SUBSCRIBED — they follow `w` and resizes with the sheet standing. */
         modal={narrowNow && !pushTier}
+        sheetRef={readerRef}
         onClose={() => setReaderFor(null)}
         /* The on-screen back control's accessible name — the stylesheet shows the control at
            phone width, where the esc hint is suppressed for coarse pointers and the backdrop
@@ -3515,6 +3525,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         footNavigate={t("palette.footNavigate")}
         footRun={t("palette.footRun")}
         footClose={t("palette.footClose")}
+        dialogRef={paletteRef}
       />
 
       {/* Tag picker */}

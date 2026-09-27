@@ -269,6 +269,8 @@ export interface MessageChrome {
   draftReply?: DraftReplyChrome;
   /** Open the screening popover for `messageId`, anchored on `anchor`. */
   openSenderMenu: (messageId: string, anchor: HTMLElement | null) => void;
+  /** The message whose screening sheet stands, so its opener can say it is expanded. */
+  senderSheetFor?: string | null;
   /**
    * The account's own name for one of its addresses, or null when it has none — what the "me" chip
    * wears instead of the sender's spelling of the reader. The answer is `GET /mailboxes`'

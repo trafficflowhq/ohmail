@@ -21,12 +21,13 @@ import { useBarDensity } from "./bar-density";
 import { InlineReply } from "./InlineReply";
 import { ForwardAskStrip } from "./ForwardAsk";
 import { inlineForwardKey } from "./mail-send";
-import { chordKeys, useBinding, useKeyPress, useModGlyph } from "./keymap";
+import { ariaShortcut, chordKeys, useBinding, useKeyPress, useModGlyph } from "./keymap";
 import { useBodyStalled, useJunkRefill, useMessageChrome, type MessageBarPanel } from "./message-chrome";
 import { useDrawnBody } from "./body-slice";
 import { subscribeSessionRevival, useSessionDead } from "./session-truth";
 import { endOpen } from "./ui-vitals";
 import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
+import { SENDER_SHEET_ID } from "./SenderMenu";
 import { useFocusFollows } from "./focus-follows";
 import "./action-bar.css";
 
@@ -224,7 +225,7 @@ export function Key({ chord }: { chord: string }) {
   const binding = useBinding(chord);
   const mod = useModGlyph();
   if (!binding) return null;
-  return <Kbd>{chordKeys(chord, mod).join(" ")}</Kbd>;
+  return <Kbd shortcut={ariaShortcut(chord, mod)}>{chordKeys(chord, mod).join(" ")}</Kbd>;
 }
 
 /**
@@ -723,11 +724,15 @@ function ActionBar({
      which is a different question and had no control anywhere outside the Screener.
      The anchor is the BUTTON — not a list row found by selector — because in the reader
      sheet the row is behind the overlay and a popover would open under it. */
+  const screeningOpen = chrome.senderSheetFor === message.id;
   const file = (measure: boolean) => (
     <>
       <button
         type="button"
         className="abar-b abar-v abar-screen"
+        aria-haspopup="dialog"
+        aria-expanded={screeningOpen}
+        aria-controls={screeningOpen && !measure ? SENDER_SHEET_ID : undefined}
         onClick={(e) => onScreen((e.currentTarget as HTMLElement | null) ?? null)}
       >
         {tr("action")}
@@ -1260,6 +1265,7 @@ function ActionBar({
           ariaLabel={t("actionMore")}
           anchor={moreRef.current}
           onClose={closeMenu}
+          onLeave={() => setMenuOpen(false)}
         />
       ) : null}
     </div>

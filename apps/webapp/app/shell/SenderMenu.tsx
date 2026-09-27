@@ -65,6 +65,9 @@ import {
   type SenderScreening,
 } from "./sender-screening";
 
+/** The sheet's id, which its opener names in `aria-controls` while it stands. */
+export const SENDER_SHEET_ID = "sender-sheet";
+
 export interface SenderMenuState {
   /** Any message from the sender — the mirror resolves the rest. */
   messageId: string;
@@ -285,8 +288,10 @@ export function SenderMenu({
   return (
     <div
       ref={rootRef}
+      id={SENDER_SHEET_ID}
       className={full ? "senderm sm-full" : "senderm"}
       role="dialog"
+      aria-modal="true"
       aria-label={t("aria", { sender: who })}
       style={style}
     >

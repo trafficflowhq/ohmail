@@ -2120,7 +2120,7 @@ export function HeldMail({
         {notice ? <BlockNoticeGloss notice={notice} /> : null}
         <span className="t num">{time ?? ""}</span>
       </div>
-      <h3>{subject}</h3>
+      <h2>{subject}</h2>
       {trackerNote ? (
         <div className="hm-chips">
           <span className="badge shield">

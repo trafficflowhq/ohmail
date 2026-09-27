@@ -146,7 +146,7 @@ export function MessageHeader({
    * never a dead control. An empty subject renders no line rather than an empty one.
    */
   const subjectLine = message.subject.trim() ? (
-    <p className="msg-subject">
+    <p className="msg-subject" role="heading" aria-level={2}>
       {chrome.openSubjectRule ? (
         <button
           type="button"
@@ -202,7 +202,7 @@ export function MessageHeader({
                 <span aria-hidden="true">⋯</span>
               </button>
               {menuOpen ? (
-                <MoreMenu items={menuItems} ariaLabel={tm("actions")} anchor={moreRef.current} onClose={closeMenu} />
+                <MoreMenu items={menuItems} ariaLabel={tm("actions")} anchor={moreRef.current} onClose={closeMenu} onLeave={() => setMenuOpen(false)} />
               ) : null}
             </span>
           ) : null}

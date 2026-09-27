@@ -36,7 +36,7 @@
 .tdot.hue-heather{background:var(--tg-heather-ink);opacity:.75}
 
 /* badges — the small in-row capsules */
-.badge{font-size:calc(10.5px + var(--type-up));color:var(--ink3);background:var(--tint2);border-radius:var(--r-pill);
+.badge{font-size:calc(10.5px + var(--type-up));color:var(--ink2);background:var(--tint2);border-radius:var(--r-pill);
   padding:1px 7px;display:inline-flex;align-items:center;gap:3px;font-variant-numeric:tabular-nums;font-weight:500}
 .badge svg{width:10px;height:10px}
 .badge.shield{color:var(--accent-ink);background:var(--accent-soft)}

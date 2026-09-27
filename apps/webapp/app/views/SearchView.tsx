@@ -32,6 +32,7 @@ import { displayAddress } from "../shell/idn";
 import { addressHref } from "../shell/address-view";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useZoneNav } from "../shell/zone-nav";
+import { useFocusFollows } from "../shell/focus-follows";
 import { storageOwner } from "../shell/storage-owner";
 import { searchSortKey, usePersistedChoice } from "../shell/persisted-ui";
 import { useListWindow } from "../shell/list-window";
@@ -745,6 +746,10 @@ export function SearchView({
     }
   }
 
+  /* Search stands in for the view it was opened over: leaving it gives focus back to its opener. */
+  const rootRef = useRef<HTMLElement>(null);
+  useFocusFollows(rootRef, { enter: false });
+
   /* Near the end of the list, the next store page. */
   const onScroll = (e: { currentTarget: HTMLElement }) => {
     const el = e.currentTarget;
@@ -752,7 +757,7 @@ export function SearchView({
   };
 
   return (
-    <section className="view col view-search">
+    <section ref={rootRef} className="view col view-search">
       <div className="vhead">
         <h1>{t("title")}</h1>
         {/*

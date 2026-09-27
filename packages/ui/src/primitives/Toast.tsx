@@ -19,6 +19,8 @@ export interface ToastOptions {
   action?: string;
   /** Fired at most once, when the action is pressed. */
   onAction?: () => void;
+  /** The key that presses the action from anywhere ("z"), stated to assistive tech on the button. */
+  actionKey?: string;
   /** Auto-dismiss in ms; defaults to 2600 (6000+ recommended with an action). */
   duration?: number;
   /**
@@ -43,6 +45,7 @@ const ToastContext = createContext<ToastFn | null>(null);
 interface ActiveToast {
   message: string;
   action?: string;
+  actionKey?: string;
   onAction?: () => void;
   yields?: boolean;
   key: number;
@@ -108,7 +111,8 @@ export function ToastHost({ children }: ToastHostProps) {
       s.noticeOn = false;
       setNoticeOn(false);
       const w = waiting.current;
-      if (w) noticeTimer.current = setTimeout(() => drawNotice(w.toast, w.duration), FADE_MS);
+      // After the fade a waiting notice draws; otherwise the sentence leaves the live region.
+      noticeTimer.current = setTimeout(() => (w ? drawNotice(w.toast, w.duration) : setNotice(null)), FADE_MS);
     }, duration);
   }, []);
 
@@ -116,6 +120,7 @@ export function ToastHost({ children }: ToastHostProps) {
     const next: ActiveToast = {
       message,
       action: options?.action,
+      actionKey: options?.actionKey,
       onAction: options?.onAction,
       yields: options?.yields,
       key: ++seq.current,
@@ -193,17 +198,19 @@ export function ToastHost({ children }: ToastHostProps) {
         onPointerCancel={pressEnd}
         onPointerLeave={pressEnd}
       >
+        {/* Each sentence is its own node, keyed per show: a repeat of the same words is a new
+            node in the polite region, so it is announced again. */}
         {held ? (
           <>
-            {held.message}
-            <button type="button" className="toast-act" onClick={fireAction}>
+            <span key={held.key}>{held.message}</span>
+            <button type="button" className="toast-act" aria-keyshortcuts={held.actionKey} onClick={fireAction}>
               {held.action}
             </button>
           </>
         ) : null}
       </div>
       <div ref={noticeEl} className={noticeOn ? "toast on" : "toast"} role="status" aria-live="polite">
-        {notice ? notice.message : null}
+        {notice ? <span key={notice.key}>{notice.message}</span> : null}
       </div>
     </ToastContext.Provider>
   );

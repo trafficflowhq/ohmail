@@ -23,7 +23,7 @@
 .infonote > .infonote-sum:focus-visible{outline:2px solid var(--focus,var(--ink2));
   outline-offset:2px;border-radius:calc(var(--r-ctl) * 4 / 8)}
 
-.infonote-more{margin-top:5px;line-height:1.45;color:inherit;opacity:.92}
+.infonote-more{margin-top:5px;line-height:1.45;color:inherit}
 
 /* The toggle's accessible name, for the reader that gets no glyph. */
 .infonote-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;

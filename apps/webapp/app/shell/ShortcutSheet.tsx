@@ -23,6 +23,9 @@ import { useFocusFollows } from "./focus-follows";
  * `AltGraph` and `CapsLock` are here for the same reason as the four obvious ones: a user
  * reaching for a chord on a non-US layout presses them on the way to a character.
  */
+/** The keys that scroll the focused list; there they scroll the sheet and dismiss nothing. */
+const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
+
 const MODIFIER_KEYS = new Set([
   "Shift", "Control", "Alt", "Meta", "AltGraph", "CapsLock", "NumLock", "ScrollLock",
   "Fn", "FnLock", "Hyper", "Super", "Symbol", "SymbolLock",
@@ -114,17 +117,30 @@ export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () =>
       <div className="ks-bg" onClick={onClose} />
       <div className="ks" ref={sheetRef} role="dialog" aria-modal="true" aria-label={t("title")}>
         <div className="ks-head">
-          <h3>
+          <h2 id="ks-title">
             <Icon name="open" /> {t("title")}
-          </h3>
+          </h2>
           <button type="button" className="x" aria-label={t("close")} onClick={onClose}>
             <Icon name="x" />
           </button>
         </div>
-        <div className="ks-cols">
+        {/* The list scrolls past the sheet's fold, so it is a Tab stop, and there the scroll keys
+            scroll it: stopped here, they reach neither the sheet's dismissal nor the list behind. */}
+        <div
+          className="ks-cols"
+          role="region"
+          aria-labelledby="ks-title"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (SCROLL_KEYS.has(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) {
+              e.stopPropagation();
+              e.nativeEvent.stopImmediatePropagation();
+            }
+          }}
+        >
           {groups.map((g) => (
             <section key={g.group}>
-              <h4>{groupLabel(g.group)}</h4>
+              <h3>{groupLabel(g.group)}</h3>
               <ul>
                 {rows(g.items).map((row) => (
                   <li

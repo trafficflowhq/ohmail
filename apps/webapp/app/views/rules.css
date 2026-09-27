@@ -27,6 +27,13 @@
   padding:5px 12px;background:var(--tint);transition:background .16s var(--swift),color .16s var(--swift)}
 .rules-facets button:hover{color:var(--ink)}
 .rules-facets button.on{background:var(--accent-soft);color:var(--accent-ink)}
+/* Under a coarse pointer a chip is 44 wide with a 44px strip; wrapped rows sit far enough apart
+   (44 - a 29px chip, and a pixel) that one row's strip never covers the next. */
+@media (pointer:coarse){
+  .rules-facets{row-gap:16px}
+  .rules-facets button{position:relative;min-width:44px}
+  .rules-facets button::before{content:"";position:absolute;left:0;right:0;top:50%;height:44px;translate:0 -50%;z-index:1}
+}
 
 /* bulk trigger — pushed to the trailing edge; the count of rules it will act on is on the label */
 .rules-bulk{margin-left:auto;font-size:calc(11.5px + var(--type-up));padding:5px 12px;color:var(--accent-ink)}

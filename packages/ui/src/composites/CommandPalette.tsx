@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { Icon, type IconName } from "../icons.js";
 import { Kbd } from "../primitives/Kbd.js";
 import { TextField } from "../primitives/TextField.js";
@@ -43,6 +43,8 @@ export interface CommandPaletteProps {
   footNavigate: string;
   footRun: string;
   footClose: string;
+  /** The dialog element, for the host's focus rule: a closed palette returns focus to its opener. */
+  dialogRef?: MutableRefObject<HTMLDivElement | null>;
 }
 
 /**
@@ -59,6 +61,7 @@ export function CommandPalette({
   footNavigate,
   footRun,
   footClose,
+  dialogRef,
 }: CommandPaletteProps) {
   const [query, setQuery] = useState("");
   const [sel, setSel] = useState(0);
@@ -89,7 +92,7 @@ export function CommandPalette({
   return (
     <>
       <div className="pal-bg" onClick={onClose} />
-      <div className="palette" role="dialog" aria-modal="true" aria-label={ariaLabel}>
+      <div ref={dialogRef} className="palette" role="dialog" aria-modal="true" aria-label={ariaLabel}>
         <TextField
           ref={inputRef}
           shape="line"

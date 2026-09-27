@@ -12,6 +12,7 @@
  */
 import { useCallback, useEffect, useRef, type ReactNode } from "react";
 import type { BarVerb } from "./bar-density";
+import { useFocusFollows } from "./focus-follows";
 
 export interface MoreMenuItem {
   /** Stable key, and the value a test selects on. */
@@ -38,6 +39,7 @@ export function MoreMenu({
   ariaLabel,
   anchor,
   onClose,
+  onLeave,
 }: {
   items: MoreMenuItem[];
   ariaLabel: string;
@@ -54,8 +56,12 @@ export function MoreMenu({
    * is read for one comparison and never focused or written to.
    */
   onClose: () => void;
+  /** Close without taking focus back: focus left the menu for somewhere else. Defaults to `onClose`. */
+  onLeave?: () => void;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
+  // A surface of the shell's focus rule: a sheet opened from an item returns to this menu's trigger.
+  useFocusFollows(rootRef, { enter: false });
 
   /**
    * The items that are actually on screen, in order.
@@ -207,6 +213,12 @@ export function MoreMenu({
       onClose();
       return;
     }
+    // Tab leaves the menu, so it closes: the caller puts focus on the trigger, and the browser's
+    // own Tab then moves on from there, as it would from a menu button that had never opened.
+    if (e.key === "Tab") {
+      onClose();
+      return;
+    }
     /**
      * And every other single-character key is the menu's too. The rule above was kept only for the
      * five keys the menu acts on; everything else reached the shell's mail shortcuts — with the menu
@@ -228,6 +240,10 @@ export function MoreMenu({
       aria-label={ariaLabel}
       aria-orientation="vertical"
       onKeyDown={onKeyDown}
+      onBlur={(e) => {
+        const to = e.relatedTarget;
+        if (to instanceof Node && !rootRef.current?.contains(to) && !anchor?.contains(to)) (onLeave ?? onClose)();
+      }}
     >
       {items.map((item) => (
         <button

@@ -50,7 +50,15 @@ export function Doorbell({
   const shown = initials.slice(0, limit);
   const overflow = initials.length - shown.length;
   return (
-    <button type="button" className={cls} aria-label={ariaLabel} onClick={onPress}>
+    /* Collapsed, it is drawn nowhere, so it is no Tab stop and no node in the tree. */
+    <button
+      type="button"
+      className={cls}
+      aria-label={ariaLabel}
+      onClick={onPress}
+      tabIndex={gone ? -1 : undefined}
+      aria-hidden={gone ? true : undefined}
+    >
       <span className="avs">
         {shown.map((i, idx) => (
           <Avatar key={`${i}-${idx}`} initials={i} size="s" hue={hues?.[idx]} />

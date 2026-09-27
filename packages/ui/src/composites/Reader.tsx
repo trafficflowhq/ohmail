@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, type MutableRefObject, type ReactNode } from "react";
 import { Kbd } from "../primitives/Kbd.js";
 import "./reader.css";
 
@@ -38,6 +38,8 @@ export interface ReaderProps {
    * overlay with no visible exit at all — backdrop tap worked, and nothing said so.
    */
   closeLabel: string;
+  /** The sheet element, for the host's focus rule while it stands. */
+  sheetRef?: MutableRefObject<HTMLDivElement | null>;
 }
 
 /**
@@ -55,6 +57,7 @@ export function Reader({
   modal = true,
   ariaLabel,
   closeLabel,
+  sheetRef,
 }: ReaderProps) {
   useEffect(() => {
     if (!open) return;
@@ -82,6 +85,7 @@ export function Reader({
         )}
       </span>
       <div
+        ref={sheetRef}
         className="reader"
         role="dialog"
         aria-modal={modal ? "true" : undefined}

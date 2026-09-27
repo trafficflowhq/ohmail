@@ -33,6 +33,7 @@ body.reading .shell {
   transform: scale(0.994);
   pointer-events: none;
 }
+
 /* THE GHOST, AT THE WIDTHS WHERE IT IS A DUPLICATE.
    `enterReader` no longer raises the sheet where the reading column is visible, so the
    reported double-render is gone at the source. This closes the one way back to it: open
@@ -104,6 +105,27 @@ body.reading .shell {
 }
 .deck > .rail {
   min-height: 0;
+}
+/* A SHORT VIEWPORT (200 % zoom on a 1280x800 window is 640x400): the page is the one scroller, so
+   the strips and a view's head scroll away with it, and each view's own scroller is one viewport
+   tall, so a windowed list keeps a bounded box and fills the screen once its head has gone. */
+@media (max-height: 480px) and (max-width: 900px) {
+  .app-root {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+  .shell,
+  .deck {
+    flex: none;
+  }
+  .view > .scroller,
+  .view > .stream,
+  .list-col > .scroller,
+  .list-col > .stream {
+    flex: none;
+    height: calc(100dvh - 10px);
+  }
 }
 
 /* EDGE-TO-EDGE READING STREAMS on desktop. The reading stream is one continuous scroll of
@@ -540,6 +562,11 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 [data-theme="dark"] .demo-ribbon button:hover {
   background: oklch(1 0 0 / 0.08);
 }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) .demo-ribbon button:hover {
+    background: oklch(1 0 0 / 0.08);
+  }
+}
 
 /* ================= sync status strip =======================
    A sibling of the deck, not a child of any view: it is `flex: none` inside
@@ -590,6 +617,14 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 }
 [data-theme="dark"] .sync-bar.stopped a:hover {
   background: oklch(0 0 0 / 0.2);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) .sync-bar.stopped a {
+    background: oklch(0 0 0 / 0.12);
+  }
+  :root:not([data-theme="light"]):not([data-theme="dark"]) .sync-bar.stopped a:hover {
+    background: oklch(0 0 0 / 0.2);
+  }
 }
 
 /* The progress and impediment variants share the strip's shape and differ only in
@@ -645,7 +680,6 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 }
 .sync-bar.warn .num {
   color: var(--accent-ink);
-  opacity: 0.75;
 }
 /* The strip's spoken sentence (`SyncBar.SyncAnnouncer`). Out of flow and one pixel, so it adds no
    flex slot and no gap to either shape; clipped rather than `display:none` or `visibility:hidden`,
@@ -679,6 +713,14 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 [data-theme="dark"] .sync-bar a:hover {
   background: oklch(1 0 0 / 0.14);
 }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) .sync-bar a {
+    background: oklch(1 0 0 / 0.08);
+  }
+  :root:not([data-theme="light"]):not([data-theme="dark"]) .sync-bar a:hover {
+    background: oklch(1 0 0 / 0.14);
+  }
+}
 /* …and `stopped` keeps its own, louder pair, declared after so it wins. */
 .sync-bar.stopped a {
   background: oklch(1 0 0 / 0.18);
@@ -691,6 +733,14 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 }
 [data-theme="dark"] .sync-bar.stopped a:hover {
   background: oklch(0 0 0 / 0.2);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) .sync-bar.stopped a {
+    background: oklch(0 0 0 / 0.12);
+  }
+  :root:not([data-theme="light"]):not([data-theme="dark"]) .sync-bar.stopped a:hover {
+    background: oklch(0 0 0 / 0.2);
+  }
 }
 
 /* ================= a newer ohmail =================
@@ -995,7 +1045,6 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 }
 .rail-sync .rs-num {
   font-size:calc(10.5px + var(--type-up));
-  opacity: 0.8;
   overflow-wrap: anywhere;
   font-feature-settings: "tnum";
   font-variant-numeric: tabular-nums;
@@ -1017,6 +1066,14 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 }
 [data-theme="dark"] .rail-sync a:hover {
   background: oklch(1 0 0 / 0.14);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) .rail-sync a {
+    background: oklch(1 0 0 / 0.08);
+  }
+  :root:not([data-theme="light"]):not([data-theme="dark"]) .rail-sync a:hover {
+    background: oklch(1 0 0 / 0.14);
+  }
 }
 /* BUSY is the quietest thing the rail says. `importing` and `awaiting` report work the server
    does on its own and can sit for six minutes; painting them in the accent would train a reader
@@ -1047,6 +1104,14 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 }
 [data-theme="dark"] .rail-sync.stopped a:hover {
   background: oklch(0 0 0 / 0.2);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) .rail-sync.stopped a {
+    background: oklch(0 0 0 / 0.12);
+  }
+  :root:not([data-theme="light"]):not([data-theme="dark"]) .rail-sync.stopped a:hover {
+    background: oklch(0 0 0 / 0.2);
+  }
 }
 /* The progress line. INDETERMINATE, and it has to be: `/sync` answers `hasMore` as a boolean,
    so the total is unknowable until the drain ends and a filled track would be an invention. A
@@ -1398,7 +1463,7 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 }
 .scn-seg button .scnt {
   font-size:calc(10.5px + var(--type-up));
-  color: var(--ink3);
+  color: var(--ink2);
   font-weight: 550;
   min-width: 0;
 }
@@ -1985,7 +2050,7 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .hm-line .mb-notice + .t {
   margin-left: 0;
 }
-.hmail h3 {
+.hmail h2 {
   font-size: 17px;
   font-weight: 600;
   letter-spacing: -0.015em;
@@ -2058,7 +2123,7 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .hmail.dull {
   box-shadow: var(--lift-0);
 }
-.hmail.dull h3 {
+.hmail.dull h2 {
   color: var(--ink2);
   font-weight: 550;
 }
@@ -2501,7 +2566,7 @@ textarea.c-input:read-only {
   background: oklch(1 0 0 / 0.08);
 }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .grounding .chip {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) .grounding .chip {
     background: oklch(1 0 0 / 0.08);
   }
 }
@@ -3705,6 +3770,11 @@ input.set-tag-input {
   background: var(--canvas);
   border: 1px solid var(--hair); /* input field — kept */
   border-radius:calc(var(--r-card) * 12 / 14);
+}
+/* The browser's own placeholder grey read 4.0:1 on the canvas; the text field's token instead. */
+.join-input::placeholder {
+  color: var(--ink3);
+  opacity: 1;
 }
 .join-input:focus {
   outline: 1.5px solid var(--accent);
@@ -6107,7 +6177,7 @@ input.set-tag-input {
   align-items: center;
   gap: 10px;
 }
-.ks-head h3 {
+.ks-head h2 {
   font-size:calc(13px + var(--type-up));
   font-weight: 650;
   margin: 0;
@@ -6115,7 +6185,7 @@ input.set-tag-input {
   align-items: center;
   gap: 8px;
 }
-.ks-head h3 svg {
+.ks-head h2 svg {
   color: var(--accent-ink);
 }
 .ks-head .x {
@@ -6139,7 +6209,7 @@ input.set-tag-input {
   /* a group's rows stay together: a column never breaks inside one */
   align-items: start;
 }
-.ks-cols h4 {
+.ks-cols h3 {
   font-size:calc(10.5px + var(--type-up));
   font-weight: 650;
   letter-spacing: 0.06em;
@@ -6797,4 +6867,16 @@ input.reply-subject-input { /* by element: this width and type outrank the line 
   .scn-head{row-gap:11px}
   .ohx-notice button{min-height:44px}
   .draft-open{min-height:44px}
+}
+/* UNDER A COARSE POINTER, the controls that were each the only way to their action measured under
+   44px. Drawn to 44 where a sideways strip would overlap the control beside it, the strip where
+   only the height is short; a fine pointer keeps every size it had. */
+@media (pointer: coarse) {
+  .abar .abar-more{min-width:44px}
+  .msg-more{min-width:44px;min-height:44px}
+  .frow .ftw{flex-basis:44px;width:44px}
+  .frow .fmore{min-width:44px;min-height:44px}
+  .set-nav button{min-width:44px}
+  /* The first row's strip was clipped 4px by the settings scroller's top edge. */
+  .set-nav{padding-top:5px}
 }

@@ -65,10 +65,10 @@
   background:var(--tint);color:var(--ink2);cursor:pointer;white-space:nowrap;
   transition:background .14s var(--swift),color .14s var(--swift),box-shadow .14s var(--swift)}
 .scn-chip:hover{background:var(--tint2);color:var(--ink)}
-.scn-chip .num{font-variant-numeric:tabular-nums;color:var(--ink3);margin-left:3px}
+.scn-chip .num{font-variant-numeric:tabular-nums;color:var(--ink2);margin-left:3px}
 .scn-chip.off{background:transparent;box-shadow:inset 0 0 0 1px var(--hair-soft);color:var(--ink3)}
 .scn-chip.on,.scn-chip.on:hover{background:var(--accent-soft);color:var(--accent-ink);box-shadow:none}
-.scn-chip.on .num{color:inherit;opacity:.8}
+.scn-chip.on .num{color:inherit}
 
 /* ── THE 44px TOUCH TARGET ON PHONES ────────────────────────────────────────────────────────
    44px is the thumb's number and the one both platforms publish. It is the size of the PRESSABLE

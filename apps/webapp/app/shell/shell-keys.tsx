@@ -38,7 +38,11 @@ import { useEnabledBinding, useKeyBindings, useKeyPress, type KeyBinding } from 
 import { pressResurfaceKey } from "./message-verbs";
 import type { MailboxFacts } from "./mail-state";
 import { isModalOpen } from "./modal-gate";
-import { readColumnHidden, readColumnHiddenFor, watchNarrow, watchZeroPushTier, zeroPushTier } from "./narrow";
+import { useFocusFollows } from "./focus-follows";
+import {
+  railLayout, readColumnHidden, readColumnHiddenFor, watchNarrow, watchRailLayout, watchZeroPushTier, zeroPushTier,
+  type RailLayout,
+} from "./narrow";
 import type { PullBinding } from "./PullNewMail";
 import { EMPTY_RICH, type RichValue } from "./rich-text";
 import { go, goFolder, goScreener, goSettings, goTag, goTriage, switchKeyOf, type Route, type TriagePileId } from "./routing";
@@ -181,6 +185,7 @@ export interface ShellKeysInput {
   railOpen: ShellOpenState["railOpen"];
   readerFor: ShellOpenState["readerFor"];
   readerMessage: ShellOpenState["readerMessage"];
+  readerGone: boolean;
   selectedOhbox: ShellOpenState["selectedOhbox"];
   senderAudit: ShellOpenState["senderAudit"];
   senderMenu: ShellOpenState["senderMenu"];
@@ -226,7 +231,7 @@ export function useShellKeys({
   allOhbox, ohboxCount, presented, pressSendAndDone, drafts, folderMailboxes, folderMessages, folderOlder, folders, folderUnread, history,
   ohbox, openFolder, ownAddresses, partition, piles, receipts, scheduled, tagGroups, tags,
   trashPage,
-  barPanel, focused, fr, frValues, picker, railOpen, readerFor, readerMessage,
+  barPanel, focused, fr, frValues, picker, railOpen, readerFor, readerMessage, readerGone,
   selectedOhbox, senderAudit, senderMenu, senderMenuBack, setBarPanel, setFr, setFrPending, setPicker, setRailOpen,
   setReaderFor, setScreenerFull, setSenderAudit, setSenderMenu, setShortcutsOpen, setSubjectRule,
   shortcutsOpen, startFR, subjectRule,
@@ -416,6 +421,22 @@ export function useShellKeys({
       else el.blur();
     }
   }, [railOpen]);
+
+  /* THE DRAWER (`narrow.ts`): parked off canvas it is inert; standing over the page it holds focus.
+     The reader sheet where it claims the page, and the palette, take focus and give it back. */
+  const [railNow, setRailNow] = useState<RailLayout>({ drawer: false, offCanvas: false });
+  useEffect(() => {
+    const take = (next: RailLayout): void =>
+      setRailNow((was) => (was.drawer === next.drawer && was.offCanvas === next.offCanvas ? was : next));
+    take(railLayout());
+    return watchRailLayout(take);
+  }, []);
+  const railRef = useRef<HTMLElement | null>(null);
+  useFocusFollows(railRef, { active: railOpen && railNow.drawer, trap: true });
+  const readerRef = useRef<HTMLDivElement | null>(null);
+  useFocusFollows(readerRef, { active: (readerMessage != null || readerGone) && narrowNow && !pushTier });
+  const paletteRef = useRef<HTMLDivElement | null>(null);
+  useFocusFollows(paletteRef, { active: palette.open, enter: false });
 
   /* The Zero sheet's lateral-exit gate: the PUSH tier only (review finding, round 2) — at
      the floating tier (≤391) Zero stands on classic's full-screen modal, whose one exit is
@@ -1398,8 +1419,12 @@ export function useShellKeys({
     effectiveView,
     mobileTitle,
     narrowNow,
+    paletteRef,
     pushTier,
     railGroupsWithHints,
+    railNow,
+    railRef,
+    readerRef,
     tagGroup,
   };
 }

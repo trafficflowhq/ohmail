@@ -128,6 +128,8 @@ function standingModal(): HTMLElement | null {
  * itself before anything behind it can.
  */
 function land(p: Place, returnTo: boolean): boolean {
+  // A document whose root has unmounted has no body: there is nowhere left to put focus.
+  if (document.body === null) return false;
   const modal = standingModal();
   const take = (el: HTMLElement | null | undefined): boolean =>
     el != null && el.isConnected && (modal === null || modal.contains(el))
@@ -165,11 +167,14 @@ export interface FocusFollowsOptions {
   /** Close on Escape, pressed inside it or on the control that opened it. Only for a surface
    *  the shell's Escape ladder does not own. */
   onEscape?: () => void;
+  /** Hold Tab inside while open, for a surface that covers the page and is not `aria-modal`
+   *  (the navigation drawer, which stays a navigation landmark). */
+  trap?: boolean;
 }
 
 /** The rule, for one surface. `ref` is its root; `aria-modal="true"` on it traps Tab. */
 export function useFocusFollows(ref: RefObject<HTMLElement | null>, opts: FocusFollowsOptions = {}): void {
-  const { active = true, enter = true } = opts;
+  const { active = true, enter = true, trap = false } = opts;
   const escape = useRef(opts.onEscape);
   escape.current = opts.onEscape;
   const closes = opts.onEscape !== undefined;
@@ -185,7 +190,7 @@ export function useFocusFollows(ref: RefObject<HTMLElement | null>, opts: FocusF
       });
     }
     const onTab = (e: KeyboardEvent): void => {
-      if (e.key !== "Tab" || root.getAttribute("aria-modal") !== "true") return;
+      if (e.key !== "Tab" || (!trap && root.getAttribute("aria-modal") !== "true")) return;
       e.preventDefault();
       const stops = tabbables(root);
       if (stops.length === 0) { tryFocus(root); return; }
@@ -219,7 +224,7 @@ export function useFocusFollows(ref: RefObject<HTMLElement | null>, opts: FocusF
         land(surface.opener, true);
       });
     };
-  }, [active, enter, closes, ref]);
+  }, [active, enter, closes, trap, ref]);
 }
 
 /**

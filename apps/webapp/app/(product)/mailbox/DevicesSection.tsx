@@ -171,10 +171,11 @@ export function DevicesSection() {
    * ({@link StepUpPrompt}); a verified factor re-runs the exact action, in place, with the
    * session the browser already holds. Every OTHER refusal keeps `InvitesSection.run`'s
    * honesty — said, never swallowed — and a genuinely dead session (a plain 401) still gets
-   * the sign-in-again sentence, because for that one the round trip IS the remedy.
+   * the sign-in-again sentence, because for that one the round trip IS the remedy. A second
+   * `step_up_required` after a verified factor is that sentence too, never a second prompt.
    */
   const run = useCallback(
-    (kind: Exclude<Busy, null>, fn: () => Promise<void>) => {
+    (kind: Exclude<Busy, null>, fn: () => Promise<void>, verified = false) => {
       void (async () => {
         setBusy(kind);
         setError(null);
@@ -184,7 +185,7 @@ export function DevicesSection() {
           if (alive.current) setStepUp(null);
         } catch (err) {
           if (!alive.current) return;
-          if (err instanceof ApiError && err.status === 403 && err.code === "step_up_required") {
+          if (err instanceof ApiError && err.status === 403 && err.code === "step_up_required" && !verified) {
             setStepUp({ kind, fn });
           } else {
             setError(
@@ -316,7 +317,7 @@ export function DevicesSection() {
           onVerified={() => {
             const parked = stepUp;
             setStepUp(null);
-            if (parked) run(parked.kind, parked.fn);
+            if (parked) run(parked.kind, parked.fn, true);
           }}
           onCancel={() => setStepUp(null)}
           onDiscarded={() => setStepUpDiscarded(true)}

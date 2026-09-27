@@ -317,6 +317,18 @@ export function chordKeys(chord: string, mod: string): string[] {
   return chord.split(" ").flatMap((step) => step.split("+").map((part) => caps[part] ?? part));
 }
 
+/**
+ * The chord in `aria-keyshortcuts` syntax — `"shift+f"` → `"Shift+F"`, `"mod+k"` → `"Control+K"`
+ * (`"Meta+K"` under ⌘). A sequence (`"g o"`) has no spelling there and answers undefined.
+ */
+export function ariaShortcut(chord: string, mod: string): string | undefined {
+  if (chord.includes(" ")) return undefined;
+  const parts = chord.split("+");
+  const shifted = parts.includes("shift");
+  const names: Record<string, string> = { mod: mod === "⌘" ? "Meta" : "Control", shift: "Shift", alt: "Alt" };
+  return parts.map((p) => names[p] ?? (shifted && p.length === 1 ? p.toUpperCase() : p)).join("+");
+}
+
 /* ── the provider ───────────────────────────────────────────────────────────────────── */
 
 export function KeymapProvider({ children }: { children: ReactNode }) {

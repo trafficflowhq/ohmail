@@ -50,6 +50,9 @@
 .row .amt{margin-left:auto;flex:none;font-variant-numeric:tabular-nums;font-size:calc(12.5px + var(--type-up));font-weight:550;color:var(--ink)}
 .row.seen .amt{color:var(--ink2)}
 .row .prev{font-size:calc(12px + var(--type-up));color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+/* Under the hover tint the muted ink falls under 4.5:1 in the dark faces; it takes the secondary one. */
+.row:hover .row-top .addr,.row:hover .row-top .t,.row:hover .prev,
+.row-slot:hover .row-top .addr,.row-slot:hover .row-top .t,.row-slot:hover .prev{color:var(--ink2)}
 /* THE GIVE-WAY ORDER IS FLEX-SHRINK ARITHMETIC, deliberately — not intrinsic sizing.
    `min-width:min-content` on the strip was tried as the floor and measured DIFFERENT across
    engines: Chromium floored it at the bounded members, Firefox kept part of the tail's

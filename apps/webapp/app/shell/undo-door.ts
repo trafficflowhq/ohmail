@@ -20,6 +20,9 @@ export interface UndoDoor {
   press: () => boolean;
 }
 
+/** The key the shell binds to the door's press; the capsule names it on its button. */
+const UNDO_KEY = "z";
+
 /** `ToastHost`'s own default, for an offer that names no duration. */
 const TOAST_DEFAULT_MS = 2600;
 
@@ -46,7 +49,7 @@ export function createUndoDoor(show: ToastFn, now: () => number = () => Date.now
     };
     plain.signal?.addEventListener("abort", () => { close(); ends.abort(); }, { once: true });
     live = { take, until: now() + (plain.duration ?? TOAST_DEFAULT_MS) };
-    show(message, { ...plain, onAction: () => { take(); }, signal: ends.signal });
+    show(message, { ...plain, actionKey: UNDO_KEY, onAction: () => { take(); }, signal: ends.signal });
   };
   return {
     toast,

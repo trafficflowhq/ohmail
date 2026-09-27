@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { Icon } from "../icons.js";
 import { Kbd } from "../primitives/Kbd.js";
 import { TagDot, type TagHueName } from "../primitives/Chip.js";
@@ -135,6 +135,15 @@ export interface RailNavProps {
   footer?: ReactNode;
   ariaLabel?: string;
   className?: string;
+  /** The nav's id, for the toggle's `aria-controls`. */
+  id?: string;
+  /**
+   * A drawer parked off canvas: out of the Tab order and the accessibility tree. The host says
+   * when (it knows the layout); the attribute is set on the nav itself.
+   */
+  inert?: boolean;
+  /** The nav element, for the host's focus rule while the drawer is open. */
+  navRef?: MutableRefObject<HTMLElement | null>;
 }
 
 /** Animated count — ticks up on change like the prototype's counters. */
@@ -181,7 +190,18 @@ export function RailNav({
   footer,
   ariaLabel,
   className,
+  id,
+  inert,
+  navRef,
 }: RailNavProps) {
+  const nav = useRef<HTMLElement | null>(null);
+  const setNav = useCallback((el: HTMLElement | null) => {
+    nav.current = el;
+    if (navRef) navRef.current = el;
+  }, [navRef]);
+  useEffect(() => {
+    nav.current?.toggleAttribute("inert", inert === true);
+  }, [inert]);
   /**
    * WHICH ROW IS SHOWING ITS QUICK-NAV KEY, and it is at most one.
    *
@@ -199,7 +219,7 @@ export function RailNav({
   const unreveal = (item: RailItem): void =>
     setRevealId((cur) => (cur === item.id ? null : cur));
   return (
-    <nav className={className ? `rail ${className}` : "rail"} aria-label={ariaLabel}>
+    <nav ref={setNav} id={id} className={className ? `rail ${className}` : "rail"} aria-label={ariaLabel}>
       <div className="wordmark">
         {/* Two elements, not one string: `.wordmark b em` paints the `em` half
             in accent-ink, so the rail echoes the "oh." app mark. Keep the split
@@ -220,7 +240,7 @@ export function RailNav({
           onClick={onCompose}
         >
           <Icon name="pen" /> {composeLabel}
-          {composeKbd ? <Kbd>{composeKbd}</Kbd> : null}
+          {composeKbd ? <Kbd shortcut={composeKbd}>{composeKbd}</Kbd> : null}
         </button>
       ) : null}
 
@@ -266,7 +286,7 @@ export function RailNav({
                 {item.label}
                 {cap ? (
                   <span className="cnt">
-                    <Kbd>{cap}</Kbd>
+                    <Kbd shortcut={item.navKey ?? item.kbdHint}>{cap}</Kbd>
                   </span>
                 ) : (
                   <Count value={item.count} hot={item.hot} />
