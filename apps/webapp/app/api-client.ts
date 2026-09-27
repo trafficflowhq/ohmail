@@ -1692,12 +1692,11 @@ export const mailboxes = {
    * REMOVE A MAILBOX AND ERASE OHMAIL'S COPY OF ITS MAIL — the same step-up gated route with
    * `?erase=1`. `confirm` is the address the person TYPED, never one this client fills in: the
    * server compares it to the row it is about to erase and refuses `erase_not_confirmed`
-   * otherwise. Answers the receipt. Nothing on the mail server is touched.
+   * otherwise. It travels in the BODY, so the address is not in the URL. Answers the receipt.
+   * Nothing on the mail server is touched.
    */
   erase: (id: string, confirm: string) =>
-    api<MailboxErasure>(
-      `/mailboxes/${id}?erase=1&confirm=${encodeURIComponent(confirm)}`, { method: "DELETE" },
-    ),
+    api<MailboxErasure>(`/mailboxes/${id}?erase=1`, { method: "DELETE", body: { confirm } }),
 
   /**
    * WHO IS ORGANIZING THIS MAILBOX RIGHT NOW, read from the mailbox itself. Exactly one ohmail organizes a mailbox at

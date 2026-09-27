@@ -512,16 +512,19 @@ export const mailboxRoutes: Route[] = [
       /* ── `?erase=1` — REMOVE THE MAILBOX AND ERASE OHMAIL'S COPY OF ITS MAIL ────────────
        *
        * Without it this route is the reversible removal it has always been. With it the mailbox's
-       * messages, bodies, read state, drafts, folder inventory and cached profile go, and
-       * `?confirm=` must repeat the mailbox's own address — the service compares it to the row it
-       * is about to erase, so neither a bare flag nor a mistyped id can erase anything. The
-       * bound is `RECIPIENT_ADDRESS_MAX_CHARS`: this is an address, read from a URL, and an
-       * unbounded query value reaching a comparison is the class `input-bounds-census` closes.
+       * messages, bodies, read state, drafts, folder inventory and cached profile go, and the body's
+       * `confirm` must repeat the mailbox's own address — the service compares it to the row it is
+       * about to erase, so neither a bare flag nor a mistyped id can erase anything. In the BODY so
+       * the address stays out of logs that record URLs; `?confirm=` is still read for a client built
+       * before. Bounded by `RECIPIENT_ADDRESS_MAX_CHARS`, the class `input-bounds-census` closes.
        */
       const query = new URL(req.url).searchParams;
-      const erase = query.get("erase") === "1"
-        ? { confirmAddress: (query.get("confirm") ?? "").slice(0, RECIPIENT_ADDRESS_MAX_CHARS) }
-        : undefined;
+      let erase: { confirmAddress: string } | undefined;
+      if (query.get("erase") === "1") {
+        const body = await readBody<{ confirm?: unknown }>(req);
+        const typed = typeof body.confirm === "string" ? body.confirm : (query.get("confirm") ?? "");
+        erase = { confirmAddress: typed.slice(0, RECIPIENT_ADDRESS_MAX_CHARS) };
+      }
       const { seq, erasing } = await mailbox(deps)
         .delete(serviceContext(deps, req), params.id!, { erase });
       /* An erasure answers 202 with what it WILL erase: the request stamps and the worker's
