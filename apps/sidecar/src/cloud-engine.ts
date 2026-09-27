@@ -492,6 +492,16 @@ export function readMirrorErased(dataDir: string): boolean {
   return raw === null ? false : decodeMirrorRecord(raw).erased;
 }
 
+/** Drop the erased flag from the record and keep every other field; nothing to do when unset. */
+export function clearMirrorErased(dataDir: string): void {
+  const raw = readMirrorRecordRaw(dataDir);
+  if (raw === null) return;
+  const r = decodeMirrorRecord(raw);
+  if (!r.erased) return;
+  writeFileSync(join(dataDir, MIRROR_OWNER_FILE),
+    encodeMirrorRecord(r.address, r.base, r.account, r.discardPending, false), { mode: 0o600 });
+}
+
 /** How long an undone pairing waits for the other computer to take its session back. */
 export const PAIR_UNDO_REVOKE_MS = 5_000;
 
@@ -752,13 +762,16 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
      * THE HOSTED ACCOUNT WAS DELETED — latched by the session's `account_erased` refusal and
      * cleared only when a new session is activated. It outlives the teardown that discards the
      * seal, so `/health` keeps saying it after `authed` is gone, and the record carries it across
-     * a relaunch (`readMirrorErased`) until a session writes a record of its own.
+     * a relaunch (`readMirrorErased`) until a new session clears it there too.
      */
     let accountErasedLatch = readMirrorErased(config.dataDir);
 
     const activate = (tokens: CloudTokens): Authed => {
-      // A NEW session is a new answer about its account: a sign-in after the card starts clean.
+      // A NEW session is a new answer about its account: a sign-in after the card starts clean,
+      // on disk as well, so a later launch with no session does not show the card again. A write
+      // that fails costs only that: the next `account_erased` answer latches it back regardless.
       accountErasedLatch = false;
+      try { clearMirrorErased(config.dataDir); } catch { /* see above */ }
       const auth = createCloudAuth({
         baseUrl: cloudBase,
         tokens,
