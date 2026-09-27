@@ -791,11 +791,11 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // `sync_lag` rule reads it on every alert pass and the worker writes it, so a host ahead of the
   // migration fails the pass on 42703. Deploy order migration → API → worker.
   ["mailboxes", "sync_progress_at"],
-  // mail 0129_mailbox_sent_folder — the mailbox's own Sent folder. The worker's attach writes it
+  // mail 0132_mailbox_sent_folder — the mailbox's own Sent folder. The worker's attach writes it
   // and correspondent knowledge reads it in the Screener's routes and passes, so an API or worker
   // ahead of the migration 42703s both. Deploy order migration → API → worker.
   ["mailboxes", "sent_folder"],
-  // mail 0129_screener_auto_act — the act on suggestions' own consent and its refusal on the
+  // mail 0133_screener_auto_act — the act on suggestions' own consent and its refusal on the
   // suggestion row. `GET /consent` selects the settings row whole and the suggestion entity selects
   // the refusal, so an API ahead of the migration 42703s both. Deploy order migration → API → worker.
   ["routing_decisions", "act_refusal"],
@@ -1032,7 +1032,7 @@ export type IndexMarker = readonly [indexname: string, definitionSubstring: stri
 /**
  * A column probed by its TYPE: `[table, column, udt_name]` against `information_schema.columns`.
  * A `(table, column)` pair cannot tell `integer` from `bigint`, so a migration whose whole content
- * is a type change was invisible to every other class. Mail 0129 is why this class exists.
+ * is a type change was invisible to every other class. Mail 0131 is why this class exists.
  */
 export type ColumnTypeMarker = readonly [table: string, column: string, udtName: string];
 
@@ -1121,7 +1121,7 @@ export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker>
  * CHECK lists: every entry names a mail table, so a local engine's store is incomplete without it.
  */
 export const MAIL_COLUMN_TYPE_MARKERS: ReadonlyArray<ColumnTypeMarker> = [
-  /* mail 0129_uid_bigint — the four IMAP locator columns, `integer` → `bigint`. A UID is unsigned
+  /* mail 0131_uid_bigint — the four IMAP locator columns, `integer` → `bigint`. A UID is unsigned
      32-bit and a server may issue one above 2^31; against an 0128 database the ingest, the failure
      ledger, "Not junk" and the settings cache all answer 22003 for it. The column exists on both
      databases, so only its type tells them apart. */
@@ -1148,7 +1148,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0129_screener_auto_act";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0133_screener_auto_act";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
@@ -1314,7 +1314,7 @@ export async function probeDatabase(
                        sql`, `,
                      )})) as schema_markers,
                  -- The TYPE half: the same view, asked for udt_name too, because a pair cannot
-                 -- tell int4 from int8 (mail 0129). Mail tables only, so always asked.
+                 -- tell int4 from int8 (mail 0131). Mail tables only, so always asked.
                  (select count(*) from information_schema.columns
                    where table_schema = 'public'
                      and (table_name, column_name, udt_name) in (${sql.join(

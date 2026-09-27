@@ -315,7 +315,7 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * means "these tables are gone", which an untaken drop leaves costing disk only. An index
  * migration is probed by its INDEX marker alone; a CHECK on a new object takes nothing extra; a
  * FOREIGN-KEY-only migration is probed by its KEY marker, which is what 0038 added the class for.
- * A VALIDATE-only one carries none: cloud 0044_attachment_staging_digest_validate flips only
+ * A VALIDATE-only one carries none: cloud 0045_attachment_staging_digest_validate flips only
  * `convalidated`, which no class sees. The tag names the newest PROVABLE entry.
  */
 export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0044_platform_signals_upstream_refused";

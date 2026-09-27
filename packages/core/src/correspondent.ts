@@ -150,7 +150,7 @@ export async function recipientsOfOwnWriting(db: Tx, accountId: string): Promise
  * THE ACCOUNT'S OWN WRITING, as predicates over `messages ⋈ message_instances ⋈ mailboxes ⟕
  * account_settings`: an instance in a Sent folder, arrived after the consent point, not an
  * automatic reply. A Sent folder is a Sent-shaped path or the one the attach wrote down
- * (`mailboxes.sent_folder`, mail 0129) — a server's own name for Sent. `null` when no mailbox
+ * (`mailboxes.sent_folder`, mail 0132) — a server's own name for Sent. `null` when no mailbox
  * holds either. The folders are read first and spelled exactly, so the instance read is the
  * unique index.
  */

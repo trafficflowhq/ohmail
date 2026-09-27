@@ -430,7 +430,7 @@ export const mailboxes = sqliteTable("mailboxes", {
   profileImportAskReason: text("profile_import_ask_reason"),
   /** Mail 0130 — when a cycle last read a never-completed mailbox; see the pg twin. LAST for 0111's reason. */
   syncProgressAt: integer("sync_progress_at", { mode: "timestamp_ms" }),
-  /** Mail 0129 — the mailbox's own Sent folder, written at attach; see the pg twin. LAST for 0111's reason. */
+  /** Mail 0132 — the mailbox's own Sent folder, written at attach; see the pg twin. LAST for 0111's reason. */
   sentFolder: text("sent_folder"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("mailboxes_id_account_uq").on(t.id, t.accountId),

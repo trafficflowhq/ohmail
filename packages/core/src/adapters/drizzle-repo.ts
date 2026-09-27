@@ -197,7 +197,7 @@ export interface MessageFailureInput {
 
 /**
  * The attach's discovery, as the mailbox row stores it: the provider's own Junk and Trash (mail
- * 0065) and the Sent path the adapter resolved (mail 0129, `watchedSentFolder ?? sentFolder`).
+ * 0065) and the Sent path the adapter resolved (mail 0132, `watchedSentFolder ?? sentFolder`).
  * Every field is required so an attach site cannot write two and leave the third stale.
  */
 export interface SpecialFolderColumns {
@@ -507,7 +507,7 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
   getMailboxSpecialFolders?(mailboxId: string): Promise<{ junkFolder: string | null; trashFolder: string | null }>;
   /**
    * Persist the connect-time discovery ({@link MailboxAdapter.findSpecialFolders} → Junk and
-   * Trash, the adapter's resolved Sent → `sent_folder`, mail 0129), re-written on every attach so
+   * Trash, the adapter's resolved Sent → `sent_folder`, mail 0132), re-written on every attach so
    * a renamed folder heals. OPTIONAL, as above.
    */
   setMailboxSpecialFolders?(mailboxId: string, f: SpecialFolderColumns): Promise<void>;
@@ -1246,7 +1246,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     return { junkFolder: row?.junkFolder ?? null, trashFolder: row?.trashFolder ?? null };
   }
 
-  /** Mail 0065/0129 — persist the connect-time discovery, all three columns every time (re-written on attach). */
+  /** Mail 0065/0132 — persist the connect-time discovery, all three columns every time (re-written on attach). */
   async setMailboxSpecialFolders(mailboxId: string, f: SpecialFolderColumns): Promise<void> {
     await this.db.update(mailboxes)
       .set({ junkFolder: f.junkFolder, trashFolder: f.trashFolder, sentFolder: f.sentFolder })
@@ -3118,7 +3118,7 @@ export function makeDrizzleRepo(db: Db): DrizzleRepo {
 /**
  * THE ATTACH'S DISCOVERY, WRITTEN DOWN — the one write both attach paths make (the hosted
  * worker's and the local engine's). Junk and Trash from `findSpecialFolders`; Sent as the scan
- * watches it, `watchedSentFolder ?? sentFolder` (mail 0129). `false` when the adapter or the repo
+ * watches it, `watchedSentFolder ?? sentFolder` (mail 0132). `false` when the adapter or the repo
  * cannot say, leaving the row as it stood; an adapter's throw is the caller's to log.
  */
 export async function recordSpecialFolders(

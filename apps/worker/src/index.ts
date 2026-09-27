@@ -2417,7 +2417,7 @@ export async function startWorkerWithLock(
         // IMAP. Best-effort: a discovery failure leaves the stored answer as it was, and the
         // fallbacks (Quarantine / refusal) are never destructive. See imap-types.ts for the
         // product rule this serves.
-        // Mail 0129: the Sent path the scan watches is written beside them (`recordSpecialFolders`).
+        // Mail 0132: the Sent path the scan watches is written beside them (`recordSpecialFolders`).
         try {
           await recordSpecialFolders(adapter, repo, mb.mailboxId);
         } catch (err) {

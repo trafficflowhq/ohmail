@@ -49,7 +49,7 @@ every entry past its watermark, in this journal and the cloud one:
 - **A column TYPE change on a growth table is refused unless it is measured.** Postgres
   rewrites the table and rebuilds every index on it under `ACCESS EXCLUSIVE`, held to the end
   of the pass, so ingest waits for all of it. The test admits such a migration by file name
-  only, with its reason. One is admitted: `0129_uid_bigint`, which widens the four UID
+  only, with its reason. One is admitted: `0131_uid_bigint`, which widens the four UID
   columns so a UID above 2^31 can be stored; its rewrite was timed on a populated database
   before it shipped.
 

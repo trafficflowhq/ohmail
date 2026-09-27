@@ -6299,7 +6299,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // every attach so a renamed folder heals, best-effort (`imap-types.ts` carries the rule).
           // A READER runs it too: one LIST and a write to this install's own row, and the knowledge
           // makes a promotion take effect on the next poll rather than the next launch.
-          // Mail 0129: the Sent path the scan watches, beside them — the worker's one write.
+          // Mail 0132: the Sent path the scan watches, beside them — the worker's one write.
           try {
             await recordSpecialFolders(conn, repo, mb.id);
           } catch (err) {

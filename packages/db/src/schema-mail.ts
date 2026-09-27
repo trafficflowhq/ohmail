@@ -448,7 +448,7 @@ export const mailboxes = pgTable("mailboxes", {
    */
   syncProgressAt: timestamp("sync_progress_at", { withTimezone: true }),
   /**
-   * THE MAILBOX'S OWN SENT FOLDER (mail 0129), beside {@link junkFolder}/{@link trashFolder} and on
+   * THE MAILBOX'S OWN SENT FOLDER (mail 0132), beside {@link junkFolder}/{@link trashFolder} and on
    * their rule: the canonical path the attach resolved (`watchedSentFolder ?? sentFolder`),
    * re-written on every attach. Correspondent knowledge admits it as Sent beside the Sent-shaped
    * names, so a server that marks Sent under a name of its own counts. NULL is "the last attach
@@ -607,7 +607,7 @@ export const junkRescues = pgTable("junk_rescues", {
   /** `mailboxes.junk_folder` AS IT STOOD AT THE PRESS — the source the move reads, never re-derived. */
   folder: text("folder").notNull(),
   uidvalidity: bigint("uidvalidity", { mode: "bigint" }).notNull(),
-  // bigint (mail 0129): a UID is unsigned 32-bit; mode number keeps every reader's type.
+  // bigint (mail 0131): a UID is unsigned 32-bit; mode number keeps every reader's type.
   uid: bigint("uid", { mode: "number" }).notNull(),
   /** 'pending' | 'refused' — CHECK-closed by the migration. A refused row STAYS, so the window says so. */
   status: text("status").notNull().default("pending"),
@@ -765,7 +765,7 @@ export const messageInstances = pgTable("message_instances", {
   messageId: uuid("message_id").notNull().references(() => messages.id),
   folder: text("folder").notNull(),
   uidvalidity: bigint("uidvalidity", { mode: "bigint" }).notNull(),
-  // bigint (mail 0129): a UID is unsigned 32-bit; mode number keeps every reader's type.
+  // bigint (mail 0131): a UID is unsigned 32-bit; mode number keeps every reader's type.
   uid: bigint("uid", { mode: "number" }).notNull(),
   isPrimary: boolean("is_primary").notNull().default(false),
   firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).defaultNow().notNull(),
@@ -796,7 +796,7 @@ export const messageFailures = pgTable("message_failures", {
   mailboxId: uuid("mailbox_id").notNull().references(() => mailboxes.id),
   folder: text("folder").notNull(),
   uidvalidity: bigint("uidvalidity", { mode: "bigint" }).notNull(),
-  // bigint (mail 0129): a UID is unsigned 32-bit; mode number keeps every reader's type.
+  // bigint (mail 0131): a UID is unsigned 32-bit; mode number keeps every reader's type.
   uid: bigint("uid", { mode: "number" }).notNull(),
   /** `MessageFailureCode`. A CHECK in the migration closes the set — see the file's header. */
   code: text("code").notNull(),
@@ -1845,7 +1845,7 @@ export const mailboxProfileMirror = pgTable("mailbox_profile_mirror", {
    * do".
    */
   uidvalidity: bigint("uidvalidity", { mode: "bigint" }),
-  /** The message the document was read from, inside that epoch. bigint since mail 0129. */
+  /** The message the document was read from, inside that epoch. bigint since mail 0131. */
   uid: bigint("uid", { mode: "number" }),
   /** THE DOCUMENT AS PARSED, envelope included — so a reader sees the version and producer that
       wrote it rather than inferring them. */

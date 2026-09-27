@@ -1,4 +1,4 @@
--- A UID ANY SERVER GIVES IS A UID WE CAN STORE (mail 0129). IMAP UIDs are unsigned 32-bit
+-- A UID ANY SERVER GIVES IS A UID WE CAN STORE (mail 0131). IMAP UIDs are unsigned 32-bit
 -- (RFC 3501), and nothing keeps a server below 2^31. The four locator columns were `integer`, so a
 -- message at such a UID was refused 22003 at ingest, at the failure ledger, at "Not junk" and at
 -- the settings cache — never stored, and offered again every cycle. `bigint` holds the whole range.

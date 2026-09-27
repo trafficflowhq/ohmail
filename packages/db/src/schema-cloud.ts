@@ -710,7 +710,7 @@ export const attachmentStaging = pgTable("attachment_staging", {
   ixAccount: index("attachment_staging_account_idx").on(t.accountId),
   ixExpires: index("attachment_staging_expires_idx").on(t.expiresAt),
   /* The shape, in the database: a malformed digest cannot be stored and then fail to match for
-     the wrong reason. Mirrors cloud 0041, which adds it NOT VALID (a growth table); 0044 validates it. */
+     the wrong reason. Mirrors cloud 0041, which adds it NOT VALID (a growth table); 0045 validates it. */
   ckDigest: check(
     "attachment_staging_content_sha256_hex",
     sql`${t.contentSha256} is null or ${t.contentSha256} ~ '^[0-9a-f]{64}$'`,

@@ -320,12 +320,6 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     ]
   },
   {
-    "name": "0129_mailbox_sent_folder.sql",
-    "statements": [
-      "ALTER TABLE \"mailboxes\" ADD COLUMN \"sent_folder\" text;"
-    ]
-  },
-  {
     "name": "0129_profile_import_ask.sql",
     "statements": [
       "ALTER TABLE \"mailboxes\" ADD COLUMN \"profile_import_ask_fingerprint\" text;",
@@ -335,17 +329,23 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     ]
   },
   {
-    "name": "0129_screener_auto_act.sql",
+    "name": "0130_mailbox_sync_soft_states.sql",
+    "statements": [
+      "ALTER TABLE \"mailboxes\" ADD COLUMN \"sync_progress_at\" integer;"
+    ]
+  },
+  {
+    "name": "0132_mailbox_sent_folder.sql",
+    "statements": [
+      "ALTER TABLE \"mailboxes\" ADD COLUMN \"sent_folder\" text;"
+    ]
+  },
+  {
+    "name": "0133_screener_auto_act.sql",
     "statements": [
       "ALTER TABLE \"account_settings\" ADD COLUMN \"screener_auto_act_at\" integer;",
       "ALTER TABLE \"routing_decisions\" ADD COLUMN \"act_refused_at\" integer;",
       "ALTER TABLE \"routing_decisions\" ADD COLUMN \"act_refusal\" text CONSTRAINT \"routing_decisions_act_refusal_closed\" CHECK (\"act_refusal\" in ('account_erased', 'not_organizer', 'mailbox_removed', 'store_fault'));"
-    ]
-  },
-  {
-    "name": "0130_mailbox_sync_soft_states.sql",
-    "statements": [
-      "ALTER TABLE \"mailboxes\" ADD COLUMN \"sync_progress_at\" integer;"
     ]
   }
 ] as const;
