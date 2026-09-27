@@ -884,8 +884,8 @@ export function useShellOpenState({
         return;
       case "folder":
         // The canonical folder deep-link WITH the open-message tail, in one hash write: the
-        // route↔open-state mirror then opens the reader over the folder view (the same
-        // overlay a tag hit gets), so the message is on screen in the folder that holds it.
+        // route↔open-state mirror then reads it in the folder's own column (the reader where
+        // that column is hidden), so the message is on screen in the folder that holds it.
         setLocated(target.id);
         replyAfter(route.view !== "folder");
         window.location.hash = `#/folder/${target.folderId}/m/${target.id}`;
