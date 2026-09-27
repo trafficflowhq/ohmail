@@ -2081,23 +2081,28 @@ export function OhboxView({
    * Fresh closures each render, read through the hook's ref at use time — nothing here can run stale, and nothing is
    * memoised for a gesture that happens at hand speed.
    */
+  /* THE DRAG'S LOOKUP IS `shown`, the list every verb resolves against — the three groups and
+     the Older tail. `byId` stays the groups': the session order prunes against it. */
+  const dragRowOf = (id: string): EngineMessage | undefined =>
+    byId.get(id) ?? olderShown.find((m) => m.id === id);
   const dragSourceFor = (rowId: string): DragSource | null => {
     const idx = rowIndexOf(rowId);
-    if (idx < 0) return null;
-    const g = navRows[idx]!;
-    const members = g.members;
+    const g = idx < 0 ? null : navRows[idx]!;
+    const lone = g === null ? olderShown.find((m) => m.id === rowId) : undefined;
+    if (g === null && lone === undefined) return null;
+    const members = g ? g.members : [lone!];
     const selection = picked.size > 0 && members.every((m) => picked.has(m.id));
     const ids = selection ? pickedIds : members.map((m) => m.id);
     const messages = ids
-      .map((id) => byId.get(id))
+      .map(dragRowOf)
       .filter((m): m is EngineMessage => m != null);
     if (messages.length === 0) return null;
     // The ghost wears what the ROW shows — same sender line, same subject — so what is in
     // hand is recognisably the thing that was picked up.
-    const shown = members.length > 1 ? g.latest : members[0]!;
+    const shown = g && members.length > 1 ? g.latest : members[0]!;
     const sent = sentLabelOf(shown);
-    const from = members.length > 1 ? groupSenders(g) : sent ? sent.label : senderName(shown);
-    const subject = members.length > 1 ? (threadSubject?.(g.key) ?? shown.subject) : shown.subject;
+    const from = g && members.length > 1 ? groupSenders(g) : sent ? sent.label : senderName(shown);
+    const subject = g && members.length > 1 ? (threadSubject?.(g.key) ?? shown.subject) : shown.subject;
     return { ids: messages.map((m) => m.id), messages, label: { from, subject }, selection };
   };
 
@@ -2112,7 +2117,7 @@ export function OhboxView({
       return;
     }
     if (source.ids.length === 1) {
-      const m = byId.get(source.ids[0]!);
+      const m = dragRowOf(source.ids[0]!);
       if (m) onAction(target.action, m);
       return;
     }
