@@ -32,7 +32,7 @@ let inFlight: Promise<boolean> | null = null;
 let inFlightRequest: AbortController | null = null;
 
 /**
- * What the last refresh actually learned — three answers, not two. `resumeSession` returns a
+ * What the last refresh actually learned — more than two answers. `resumeSession` returns a
  * boolean, and a boolean cannot carry the distinction: "the server says this session is gone" and
  * "the server did not answer" are different facts, and only the first is a verdict
  * (`AUTH-FLICKER-DIAGNOSIS.md`: a `503 db_busy` rendered as "You are signed out."). Not
