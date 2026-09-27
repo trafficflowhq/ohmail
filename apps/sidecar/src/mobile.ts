@@ -297,6 +297,11 @@ export interface PhoneEngine {
    */
   handBack(): Promise<readonly { mailboxId: string; released: number | null }[]>;
   /**
+   * The hand-back's latch alone, now: a drain in flight stops at its next cycle edge and nothing is
+   * released. For a Back that has to wait behind a {@link resume}; {@link handBack} or `resume` follows.
+   */
+  leave(): void;
+  /**
    * Take it back — call this when the app returns to the foreground after a {@link handBack}. It
    * asks the mailbox who holds it: free, and this install claims it again; held by a computer or
    * Cloud, and this install stands down and reads instead. Neither needs a press, and a resume can
@@ -1477,6 +1482,7 @@ async function composePhoneEngine(
     address: deps.address ?? dial.auth.user,
     wake: () => sidecar.wake(),
     handBack: () => sidecar.handBack(),
+    leave: () => sidecar.leave(),
     resume: () => sidecar.resume(),
     claimHere,
     heldElsewhere,

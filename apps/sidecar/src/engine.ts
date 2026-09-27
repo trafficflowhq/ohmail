@@ -577,6 +577,12 @@ export interface Sidecar {
    */
   handBack(): Promise<readonly { mailboxId: string; released: number | null }[]>;
   /**
+   * {@link handBack}'s LATCH ALONE, on every mailbox, now: each drain in flight stops at its next
+   * cycle edge and no poll re-arms, and nothing is released. For a phone's Back queued behind a
+   * {@link resume}; the caller follows with `handBack` or lifts it with `resume`.
+   */
+  leave(): void;
+  /**
    * TAKE EVERY MAILBOX BACK IF NOBODY ELSE HAS IT — {@link handBack}'s other half, and only a
    * phone has a caller. Per mailbox it is {@link LocalMailboxRuntime.resume}: the hand-back is
    * cleared and one gated cycle runs, so a free mailbox is claimed and a held one is not.
@@ -7022,6 +7028,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * suspend, so "organizing" over a stopped process is the two-organizers reading. The ANSWER
          * only decides whether the caller may report the mailbox handed back — `null` means it may not.
          */
+        /* THE LATCH ALONE — see `LocalMailboxRuntime.leave`. The same two lines `handBack` opens
+           with; a release or a resume follows from the caller. */
+        leave() {
+          if (stopped) return;
+          handedBack = true;
+          if (timer) { clearTimeout(timer); timer = null; }
+        },
         async handBack() {
           if (stopped) return 0;
           /* THE LATCH, BEFORE THE QUEUE and in the caller's tick. A drain in flight stops at its
@@ -8863,6 +8876,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          dropped because each dial logs its own failure and a caller has nothing to do with them;
          a hand-back's outcome decides what the app may SAY, so a rejection becomes this
          mailbox's `null` — "could not look" — rather than a missing entry. */
+      leave: (): void => {
+        for (const rt of runtimes.all()) rt.leave();
+      },
       handBack: async () => {
         const runs = runtimes.all();
         const settled = await Promise.allSettled(runs.map((rt) => rt.handBack()));

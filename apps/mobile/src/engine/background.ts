@@ -111,6 +111,13 @@ export interface BackgroundEngine {
    */
   resume(): Promise<readonly { readonly mailboxId: string; readonly served: number }[]>;
   /**
+   * THE HAND-BACK'S LATCH ALONE, set now — the engine's `leave()`. A drain in flight stops at its
+   * next cycle edge and no poll re-arms; nothing is released. A Back queued behind a resume sets it
+   * in its own tick, then either hands back or lifts it with {@link resume}. Absent in a
+   * composition that predates it: the Back waits behind the drain, as before.
+   */
+  leave?(): void;
+  /**
    * THE PERSON'S STOP, RECORDED WHERE A RELAUNCH READS IT — the engine's `stopOrganizing`.
    * Separate from {@link handBack} because the two are opposite instructions with opposite
    * durability: `handBack` leaves the ROW saying organizer so the next resume takes the mailbox
@@ -348,10 +355,34 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
    * `ohmail/_meta` says nobody is.
    */
   let tail: Promise<unknown> = Promise.resolve();
+  /** Jobs queued or running — a Back behind one latches the engine before it queues. */
+  let pending = 0;
   const serial = <T>(job: () => Promise<T>): Promise<T> => {
-    const next = tail.then(job, job);
+    pending += 1;
+    const next = tail.then(job, job).finally(() => { pending -= 1; });
     tail = next.catch(() => undefined);
     return next;
+  };
+  /**
+   * A BACK BEHIND A JOB LATCHES THE ENGINE NOW, as the engine's own hand-back does before its
+   * queue: a resume's forced drain ends only at a cycle edge that reads the latch, so queued behind
+   * it a Back set nothing and, with timers paused, waited for ever. Only where no service runs —
+   * a running one keeps the mailbox and nothing is to stop. Answers whether it latched.
+   */
+  const latchBehindQueue = (): boolean => {
+    if (pending === 0 || disposed || deps.engine.leave === undefined || organizerRuns()) return false;
+    try {
+      deps.engine.leave();
+      return true;
+    } catch (err) {
+      log("organizer_leave_latch_failed", { err });
+      return false;
+    }
+  };
+  /** A latch this Back set and did not spend on a hand-back is lifted: the organizer goes on. */
+  const liftLatch = (latched: boolean): void => {
+    if (!latched) return;
+    void deps.engine.resume().catch((err: unknown) => { log("organizer_resume_failed", { err }); });
   };
 
   /**
@@ -680,7 +711,7 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
     await stopBackground(why);
   };
 
-  const toBackground = async (): Promise<void> => {
+  const toBackground = async (latched = false): Promise<void> => {
     if (deps.service === null) {
       /* NOTHING CAN RUN ONCE THE APP LEAVES, so the mailbox goes back and somebody's desktop can
          have it while this phone is asleep. On iOS that is the platform and not a gap; the code
@@ -709,6 +740,7 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
          asked this phone for it, and asking the server to expunge records by our own id is a
          write about a mailbox this install has just been told is not its own. */
       disarmWatch();
+      liftLatch(latched);
       moved();
       return;
     }
@@ -743,6 +775,7 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
        background machine's decision off the log and nowhere else; without it the difference
        between "kept the mailbox" and "did nothing" is invisible until the mail server is asked. */
     log("organizer_background_holds", { why: "organizer_still_running", state: organizingWord(state) });
+    liftLatch(latched);
     armWatch();
   };
 
@@ -975,19 +1008,23 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
 
   return {
     /* SERIALIZED, and the whole transition is one job — see {@link serial}. */
-    phaseChanged: (next: AppPhase): Promise<void> => serial(async () => {
-      if (disposed) return;
-      /* `inactive` IS NOT A BACKGROUND. See {@link AppPhase}: it is the app switcher and the
-         incoming call, and acting on it would hand the mailbox back for a gesture nobody made. */
-      if (next === "inactive") return;
-      if (next === "background") {
-        inBackground = true;
-        await toBackground();
-        return;
-      }
-      inBackground = false;
-      await toForeground();
-    }),
+    phaseChanged: (next: AppPhase): Promise<void> => {
+      /* THE LATCH IN THE CALLER'S TICK, before the queue — see {@link latchBehindQueue}. */
+      const latched = next === "background" && latchBehindQueue();
+      return serial(async () => {
+        if (disposed) return;
+        /* `inactive` IS NOT A BACKGROUND. See {@link AppPhase}: it is the app switcher and the
+           incoming call, and acting on it would hand the mailbox back for a gesture nobody made. */
+        if (next === "inactive") return;
+        if (next === "background") {
+          inBackground = true;
+          await toBackground(latched);
+          return;
+        }
+        inBackground = false;
+        await toForeground();
+      });
+    },
     handedBack: () => handedBack,
     backgrounded: () => organizerRuns(),
     dispose() {

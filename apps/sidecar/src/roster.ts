@@ -379,6 +379,12 @@ export interface LocalMailboxRuntime {
    */
   handBack(): Promise<number | null>;
   /**
+   * THE HAND-BACK'S LATCH ALONE — set now, outside the serial queue: a drain in flight stops at its
+   * next cycle edge and no poll re-arms. Nothing is released; {@link handBack} or {@link resume}
+   * follows. A no-op on a stopped runtime.
+   */
+  leave(): void;
+  /**
    * TAKE IT BACK IF NOBODY ELSE HAS IT — clears the hand-back and runs one gated cycle.
    *
    * The gate claims a free mailbox and stands this install down against a holder, so a resume can

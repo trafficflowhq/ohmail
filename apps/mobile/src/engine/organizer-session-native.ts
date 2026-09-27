@@ -40,6 +40,7 @@ export function startOrganizerSessionNative(
     platform: Platform.OS === "android" ? "android" : "ios",
     engine: {
       handBack: () => engine.handBack(),
+      leave: () => engine.leave(),
       resume: () => engine.resume(),
       /* THE PERSON'S TWO VERBS, the engine's own. The app may not compose a request here — the
          privacy census admits a transport in six named files and this is not one — and the engine

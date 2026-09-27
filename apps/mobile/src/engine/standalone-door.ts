@@ -62,6 +62,8 @@ export interface StandaloneEngine {
   address: string;
   /** Remove this install's claim on every mailbox and leave the rows alone. */
   handBack(): Promise<readonly { mailboxId: string; released: number | null }[]>;
+  /** The hand-back's latch alone: drains stop at their next cycle edge, nothing is released. */
+  leave(): void;
   /**
    * DISCARD THE PASSWORD THIS ENGINE SEALED FOR ITSELF — the refused launch's second effect.
    *
