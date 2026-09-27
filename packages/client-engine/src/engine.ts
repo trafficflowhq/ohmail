@@ -230,6 +230,8 @@ interface SupersedeEffect {
   narrowed: PendingMutation[];
   /** Everything this call changed, kept so a refused replacement can put it all back. */
   undo: Array<{ entry: PendingMutation; index: number; mutation: EngineMutation }>;
+  /** A retired same-key send had a create out whose answer was unreadable — the newer verb carries it. */
+  createAttempted?: true;
   /**
    * Requests on the wire this call marked superseded — see
    * {@link PendingMutation.supersededBy}. The mark is made BEFORE
@@ -5634,7 +5636,7 @@ export class OhmailEngine {
       return { id, key, status: "rolled_back", seq: null, error };
     }
     const settleMarks = this.openReplacement(id);
-    const superseded = this.supersedeQueued(enriched, id);
+    const superseded = this.supersedeQueued(enriched, id, key);
     this.retireShadowsUnder(effects);
     this.overlays.set(id, effects);
     this.overlayRev++;
@@ -5658,6 +5660,7 @@ export class OhmailEngine {
     const pending: PendingMutation = {
       id, key, mutation: enriched, at: this.now().getTime(), n: this.outboxSeq++,
       ...(superseded.retired.length > 0 ? { retire: superseded.retired } : {}),
+      ...(superseded.createAttempted ? { createAttempted: true } : {}),
     };
     // ONE TRANSACTION: the newer row in, the rows it supersedes out, and every abandoned record it
     // marks stale. See `supersedeQueued` for why the removal may not be a separate best-effort
@@ -6604,7 +6607,7 @@ export class OhmailEngine {
    * the durable set holds both, or the newer one, and never the stale one alone. If that transaction is refused,
    * nothing was removed and the stale rows simply replay, which is the behaviour a storage-refused verb already has.
    */
-  private supersedeQueued(m: EngineMutation, by: string): SupersedeEffect {
+  private supersedeQueued(m: EngineMutation, by: string, sendKey: string): SupersedeEffect {
     const retired: string[] = [];
     const narrowed: PendingMutation[] = [];
     /** Everything this call changed, kept so a refused replacement can put it all back. */
@@ -6646,9 +6649,23 @@ export class OhmailEngine {
     }
     if (this.queue.length === 0) return { retired, narrowed, undo, markedInFlight };
     let changed = false;
+    let createAttempted = false;
     for (let i = this.queue.length - 1; i >= 0; i--) {
       const q = this.queue[i]!;
       const qm = q.mutation;
+      /* ONE KEY, ONE SEND. A send expressed again under a queued send's Idempotency-Key IS that
+         send — the caller resumed the key — and the newer words are its whole intent. Replaying the
+         older verb too made a second draft row, answered from the same reservation. It carries a
+         create the older verb could not read, so a reload's fresh adapter does not make another. */
+      if (m.kind === "mail_send" && qm.kind === "mail_send" && q.key === sendKey) {
+        undo.push({ entry: q, index: i, mutation: qm });
+        this.queue.splice(i, 1);
+        this.overlays.delete(q.id);
+        retired.push(q.id);
+        if (q.createAttempted === true) createAttempted = true;
+        changed = true;
+        continue;
+      }
       // Whole-entry replacement: same kind, same scalar target.
       if (key !== null && supersedeKey(qm) === key) {
         undo.push({ entry: q, index: i, mutation: qm });
@@ -6710,7 +6727,7 @@ export class OhmailEngine {
       this.overlayRev++;
       this.notify();
     }
-    return { retired, narrowed, undo, markedInFlight };
+    return { retired, narrowed, undo, markedInFlight, ...(createAttempted ? { createAttempted: true as const } : {}) };
   }
 
   /**
