@@ -347,20 +347,25 @@ export function sendPendingInOutbox(engine: OhmailEngine, lane: string): boolean
  */
 const outboxLanesCache = new WeakMap<EntityReader, { at: number; lanes: Set<string> }>();
 
+/** An outbox row as this reader needs it. `withdrawn`: Cancel's mark, kept until the next boot drops the row. */
+type OutboxRow = { mutation?: { kind?: string }; withdrawn?: boolean };
+
+/** A send still on its way: a `mail_send` row that Cancel did not withdraw. */
+const pendingSendRow = (r: OutboxRow): boolean => r.mutation?.kind === "mail_send" && r.withdrawn !== true;
+
 export function sendPendingInDurableOutbox(engine: OhmailEngine, lane: string): boolean {
   const reader = engine.read();
   // A hand-rolled partial reader has no stamp to invalidate on; it gets the honest uncached read.
   if (typeof reader.stampOf !== "function") {
-    const rows = reader.list(OUTBOX_TYPE) as ReadonlyArray<{ mutation?: { kind?: string } }>;
-    return rows.some((r) => r.mutation?.kind === "mail_send"
-      && sendKeyOf(r.mutation as unknown as MailSend) === lane);
+    const rows = reader.list(OUTBOX_TYPE) as ReadonlyArray<OutboxRow>;
+    return rows.some((r) => pendingSendRow(r) && sendKeyOf(r.mutation as unknown as MailSend) === lane);
   }
   const at = reader.stampOf(OUTBOX_TYPE);
   let hit = outboxLanesCache.get(reader);
   if (hit === undefined || hit.at !== at) {
     const lanes = new Set<string>();
-    for (const r of reader.list(OUTBOX_TYPE) as ReadonlyArray<{ mutation?: { kind?: string } }>) {
-      if (r.mutation?.kind !== "mail_send") continue;
+    for (const r of reader.list(OUTBOX_TYPE) as ReadonlyArray<OutboxRow>) {
+      if (!pendingSendRow(r)) continue;
       lanes.add(sendKeyOf(r.mutation as unknown as MailSend));
     }
     hit = { at, lanes };
