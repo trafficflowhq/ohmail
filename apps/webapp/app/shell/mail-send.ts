@@ -182,6 +182,24 @@ export interface MailSendApi {
   withdraw: (lane: string) => Promise<CancelSaid>;
 }
 
+/** The row a send refused for good was sent from, handed to the surface that may take it. */
+export interface RefusedRow {
+  rowId: string;
+  /** Whether the composer still holds the message this send was for — `composeStillHolds`. */
+  aboutThisCompose: boolean;
+}
+
+/**
+ * THE ROW A TERMINAL REFUSAL NAMES, or `undefined`. Only a result that says so: an `entityId`-less
+ * refusal names nothing, and guessing one (the composer's own row, the record's) would bind a
+ * message to a row nobody said was its. `unverified` parks and is never adopted.
+ */
+export function refusedRowOf(res: MutationResult, aboutThisCompose: boolean): RefusedRow | undefined {
+  if (res.status !== "rolled_back" || !res.entityId) return undefined;
+  if (res.error?.code === "send_unverified") return undefined;
+  return { rowId: res.entityId, aboutThisCompose };
+}
+
 /** What Cancel does with the engine's answer — see {@link MailSendApi.withdraw}. */
 export type CancelSaid = "close" | "already_sent";
 
@@ -1070,8 +1088,13 @@ export function useMailSend(
    * Returning `true` means the CALLER has spoken for this send, so the lane raises no sentence
    * of its own — one send, one toast. Only the confirmation's answer is read. `phase` names the
    * ending, a send replayed from the last session's outbox included.
+   *
+   * `left` is the row a refused send was sent from, when its refusal names one and the composer
+   * is still holding that message — see `ComposeFate.refusedWithRow`. Absent on every other ending.
    */
-  onOutcome?: (key: string, m: MailSend, accepted: boolean, phase?: SendPhase) => boolean,
+  onOutcome?: (
+    key: string, m: MailSend, accepted: boolean, phase?: SendPhase, left?: RefusedRow,
+  ) => boolean,
 ): MailSendApi {
   const t = useTranslations();
   const [states, setStates] = useState<Record<string, SendState>>({});
@@ -1394,7 +1417,11 @@ export function useMailSend(
         /* AND THE LANES THAT WILL NEVER CONFIRM SAY SO. A failed, duplicate or unverified send
            is the end of this press; an arm still waiting on it would wait for ever. `queued` is
            not terminal — the flush confirms it later and `settle` answers then. */
-        if (next.phase !== "queued") outcomeRef.current?.(key, m, false, next.phase);
+        if (next.phase !== "queued") {
+          const held = sentFor.current.get(key) ?? { draftId: m.draftId ?? null, session: null };
+          const about = key !== COMPOSE_SEND_KEY || composeStillHolds(held, owner.current);
+          outcomeRef.current?.(key, m, false, next.phase, refusedRowOf(res, about));
+        }
         setPhase(key, next);
       }
 
@@ -1655,6 +1682,8 @@ export function useMailSend(
           // And the lane's owner hears it as the live path's owner does: this send is over, not sent.
           outcomeRef.current?.(
             record.lane, { kind: "mail_send" } as unknown as MailSend, false, phaseFor(res).phase,
+            // The replay's own row, for the surface this answer speaks to and no other.
+            speaksForScreen ? refusedRowOf(res, true) : undefined,
           );
         }
       }

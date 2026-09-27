@@ -84,6 +84,7 @@ import {
   writeReplyDraft,
   writeReplyMeta,
   type LanePromotionPlan,
+  type RefusedRow,
   type SendPhase,
   type SendState,
 } from "./mail-send";
@@ -808,9 +809,13 @@ export function useShellCompose({
    * "Reply sent." is not raised and replaced — one press, one sentence.
    */
   const onSendOutcome = useStableCallback((
-    key: string, _m: MailSendMutation, accepted: boolean, phase?: SendPhase,
+    key: string, _m: MailSendMutation, accepted: boolean, phase?: SendPhase, left?: RefusedRow,
   ): boolean => {
     if (!accepted && phase === "failed") handBackLane(key);
+    // A compose send refused for good names its row, and the composer takes it — one draft, not two.
+    if (!accepted && left !== undefined && key === COMPOSE_SEND_KEY) {
+      settleComposeRef.current({ kind: "refusedWithRow", ...left });
+    }
     const plan = sendDoneArm.current.get(key);
     if (plan === undefined) return false;
     sendDoneArm.current.delete(key);

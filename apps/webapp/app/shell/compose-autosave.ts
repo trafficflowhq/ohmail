@@ -151,7 +151,13 @@ export type ComposeFate =
    * A discard of the bound row was refused: the server answered 409 `send_recorded` and KEPT it.
    * The binding was never really gone, so it is restored rather than re-made.
    */
-  | { kind: "restoredBy409"; rowId: string };
+  | { kind: "restoredBy409"; rowId: string }
+  /**
+   * A send was refused for good and its refusal names the row it was sent from — the adapter's own,
+   * for a press that carried none. Nothing was delivered, so the row is an ordinary draft again and
+   * this composer takes it, rather than its next pause writing a second row for the same message.
+   */
+  | { kind: "refusedWithRow"; rowId: string; aboutThisCompose: boolean };
 
 /**
  * WHAT A FLUSH DID — {@link ComposeAutosave.flush}'s answer. `nothing` covers empty, unchanged,
@@ -488,6 +494,23 @@ export function useComposeAutosave(opts: {
    * projection, which is the state all three reviewed sequences arrived at.
    */
   const settleCompose = useCallback((fate: ComposeFate) => {
+    if (fate.kind === "refusedWithRow") {
+      /* Only a composer holding no row takes it: one that holds another, or has one written down
+         that the mount adoption is still asking about, keeps what it has. `saved` stays `null`, so
+         the next pause writes the text on screen into the row. */
+      const written = readComposeRow();
+      if (!fate.aboutThisCompose || draftId !== null || (written !== null && written !== fate.rowId)) return;
+      adoptOff.current?.();
+      adoptOff.current = null;
+      adopted.current = true;
+      epoch.current += 1;
+      setDraftId(fate.rowId);
+      writeComposeRow(fate.rowId);
+      saved.current = null;
+      savedMailbox.current = null;
+      abandonedAt.current = null;
+      return;
+    }
     if (fate.kind === "restoredBy409") {
       /* THE SERVER KEPT THE ROW, so the binding was never really gone. Re-adopted rather than
          re-made: `adopt` restores the id AND marks the text on screen as already-saved, so the
