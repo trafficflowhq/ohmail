@@ -149,7 +149,7 @@ export const AWAY_RESPONDER_CRON_PATH = "/internal/away/run";
  */
 export const ACCOUNT_LIFECYCLE_CRON_PATH = "/internal/account-lifecycle/run";
 /** The erasure door the sweep's `erasureDue` names, one account per call (`?account=<uuid>`). */
-export const ACCOUNT_LIFECYCLE_ERASE_PATH = "/internal/account-lifecycle/erase";
+const ACCOUNT_LIFECYCLE_ERASE_PATH = "/internal/account-lifecycle/erase";
 
 /**
  * The sign-in throttle's security notices (`AuthService.drainSecurityNotices`), sent here and never

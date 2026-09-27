@@ -71,8 +71,8 @@ export const CYCLE_WAKE_REVISITS = 4;
  * The floor is what keeps a chatty IDLE from cutting the tail to one slice per wake; a settled tail
  * on the largest seeded lane account measured about two seconds.
  */
-export const TAIL_MIN_TURN_MS = 2_000;
-export const TAIL_TURN_BUDGET_MS = 20_000;
+const TAIL_MIN_TURN_MS = 2_000;
+const TAIL_TURN_BUDGET_MS = 20_000;
 /** A tail section whose worst case exceeds this runs under an `until` clock of this length. */
 export const TAIL_SLICE_BUDGET_MS = 3_000;
 

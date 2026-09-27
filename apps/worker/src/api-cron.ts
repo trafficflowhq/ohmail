@@ -329,7 +329,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * in it. A body this side cannot read continues nothing and erases nothing — an older API answers
  * neither field, which is the same as a finished sweep with nothing due.
  */
-export function readSweep(body: string): { next: string | null; erasureDue: string[] } {
+function readSweep(body: string): { next: string | null; erasureDue: string[] } {
   const none = { next: null, erasureDue: [] };
   if (body.length > 64 * 1024) return none;
   let parsed: unknown;
