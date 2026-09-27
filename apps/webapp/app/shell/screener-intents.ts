@@ -53,6 +53,8 @@ export interface ScreenerIntent {
   heldIds: string[];
   /** Enough of the sender to name them in a refusal toast, and no more. */
   from: { name: string | null; address: string };
+  /** The sender sheet's past-mail answer, when the decision came from the sheet. Optional on disk. */
+  applyRetro?: boolean;
 }
 
 /**

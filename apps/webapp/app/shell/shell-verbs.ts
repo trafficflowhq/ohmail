@@ -72,6 +72,7 @@ import {
 import type { ShellCompose } from "./shell-compose";
 import type { ShellDispatch } from "./shell-dispatch";
 import type { ShellOpenState } from "./shell-open-state";
+import type { ScreenerState } from "./screener-state";
 import { useStableCallback } from "./stable-callback";
 import { planSubjectRule, subjectRuleContext, subjectRuleToast, type TermField } from "./subject-rule";
 import { placePicker } from "./TagPicker";
@@ -161,6 +162,8 @@ export interface ShellVerbsInput {
   replyAll: boolean;
   /** The inline reply's id, the shell's own state, read only to keep that audience. */
   replyTo: string | null;
+  /** The Screener's own door: a sheet press about a sender at the gate is decided through it. */
+  screener: Pick<ScreenerState, "waiting" | "decide">;
 }
 
 /** The record the shell composes with. Consumers destructure it: a memo may not depend on it. */
@@ -172,7 +175,7 @@ export function useShellVerbs({
   rosterRef, routing, pressWatch, deleting, restoring,
   markSeen, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
   setSubjectRule,
-  toggleReply, openForward, openReply, draftReply, replyAll, replyTo,
+  toggleReply, openForward, openReply, draftReply, replyAll, replyTo, screener,
 }: ShellVerbsInput) {
   /* THE ROWS A SET IS PRESSED ON. The verb reader holds the mirror and the History and Search
      pages; the surface adds the rows the Ohbox shows past the mirror, so a selection holding an
@@ -308,6 +311,16 @@ export function useShellVerbs({
       return;
     }
     if (plan.mutations.length === 0) { say("toastAlready"); return; }
+    /* A SENDER AT THE GATE IS DECIDED THROUGH THE SCREENER'S DOOR — its delayed commit and its
+       Undo, as the list's own decision is. Not a step that removes rules: that writes more than
+       the list's Undo can take back, and goes at once as before. */
+    const gateRow = path === "decide" && resolutionExtras(press).length === 0
+      ? screener.waiting.find((r) => r.id === sender.scopes[scope].representativeId)
+      : undefined;
+    if (gateRow) {
+      screener.decide(gateRow, dest, { read: false, scope, applyRetro });
+      return;
+    }
     /* THROUGH `fileAndRefresh`, LIKE EVERY OTHER FILING DISPATCH. This one has not been since it
        shipped: the mail moved and the filing strip's count stayed stale until its next poll, up to
        thirty seconds later. Both Move arms already go through it. */

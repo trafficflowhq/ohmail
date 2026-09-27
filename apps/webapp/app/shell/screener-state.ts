@@ -90,6 +90,11 @@ export interface DecideOptions {
   read: boolean;
   scope: DecisionScope;
   quiet?: boolean;
+  /**
+   * Whether the rule the decide promotes also reaches the mail already filed — the sender sheet's
+   * second answer. Absent, the decide carries none, as every press from the list always has.
+   */
+  applyRetro?: boolean;
 }
 
 /**
@@ -119,6 +124,8 @@ interface PendingEntry {
    * worked.
    */
   quiet: boolean;
+  /** The sheet's past-mail answer, when the press came from the sheet — {@link DecideOptions}. */
+  applyRetro?: boolean;
   /** The Undo capsule this decision is offered under, shared by a bulk's rows (`commit` ends it). */
   offer?: { ids: readonly string[]; ends: AbortController };
   /**
@@ -918,6 +925,7 @@ export function useScreenerState(
      */
     heldIds: entry.sender.derived === true && entry.read ? heldMessageIds(entry.sender) : [],
     from: { name: entry.sender.from.name ?? null, address: entry.sender.from.address },
+    ...(entry.applyRetro !== undefined ? { applyRetro: entry.applyRetro } : {}),
   });
 
   const commit = (id: string) => {
@@ -1004,6 +1012,7 @@ export function useScreenerState(
         dest: d.dest as ScreenDest,
         ...(decision === "yes" ? { read: d.read } : {}),
         scope: d.scope,
+        ...(d.applyRetro !== undefined ? { applyRetro: d.applyRetro } : {}),
       }).then((res) => {
         done();
         if (res.status === "rolled_back") { refuse(d, res.error); return; }
@@ -1032,7 +1041,7 @@ export function useScreenerState(
       const sender = senderScreening(engine.read(), id);
       if (sender) {
         const dest = d.dest;
-        const plan = planScreeningChange(sender, dest, d.scope, true);
+        const plan = planScreeningChange(sender, dest, d.scope, true, d.applyRetro);
         // The toast's subject, not the rule's — the rule was already written from `plan`.
         const who = d.scope === "domain" ? displayDomain(sender.domain) : displayAddress(sender.address);
         const place = PLACE_LABEL[dest] ?? dest;
@@ -1161,6 +1170,7 @@ export function useScreenerState(
       read,
       scope: opts.scope,
       quiet: opts.quiet === true,
+      ...(opts.applyRetro !== undefined ? { applyRetro: opts.applyRetro } : {}),
       at: Date.now(),
       outTimer: setTimeout(() => {
         s.out.delete(id);

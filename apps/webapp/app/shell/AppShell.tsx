@@ -1870,7 +1870,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     rosterRef, routing, pressWatch, deleting, restoring,
     markSeen, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
     setSubjectRule,
-    toggleReply, openForward, openReply, draftReply, replyAll, replyTo,
+    toggleReply, openForward, openReply, draftReply, replyAll, replyTo, screener,
   });
 
   /* Assigned here so `openDraft`, which is declared several hundred lines above this, can open a
