@@ -2,8 +2,8 @@
  * SETTINGS → ABOUT → DIAGNOSTIC FILE, on the desktop. The window asks the shell for the log's
  * newest lines and the platform's names, builds the file with the one builder the phone shares,
  * and hands the text back for the shell to write beside `engine.log`. Nothing here opens a
- * connection. The install identity is kept in this window's storage and rotates on the builder's
- * schedule; a window with no storage writes under a fresh one each time.
+ * connection. The install identity is kept in this window's storage, through the durable door, and
+ * rotates on the builder's schedule; a refused write means the next file wears a fresh one.
  */
 import {
   buildDiagnosticBundle,
@@ -11,6 +11,7 @@ import {
   renderDiagnosticBundle,
   type DiagnosticMailboxInput,
 } from "@trafficflow/core/diagnostics";
+import { localStorageDoor, type StorageDoor } from "@ohmail/client-engine/durable";
 
 import { DESKTOP_WINDOW } from "../../webapp/app/shell/store-windows.js";
 import { invokeShell } from "./bridge-fetch.js";
@@ -23,7 +24,7 @@ export interface DesktopDiagnosticDeps {
   facts: () => Promise<unknown>;
   save: (text: string) => Promise<unknown>;
   now: () => Date;
-  storage: Pick<Storage, "getItem" | "setItem"> | null;
+  storage: StorageDoor;
   random16: () => Uint8Array;
   app: () => { uptimeMs: number | null; heapUsedBytes: number | null; heapTotalBytes: number | null };
 }
@@ -34,9 +35,9 @@ export interface DesktopDiagnosticState {
   mailboxes: readonly DiagnosticMailboxInput[];
 }
 
-function storedInstall(storage: DesktopDiagnosticDeps["storage"]): unknown {
+function storedInstall(storage: StorageDoor): unknown {
   try {
-    const raw = storage?.getItem(DIAGNOSTIC_INSTALL_KEY);
+    const raw = storage.get(DIAGNOSTIC_INSTALL_KEY);
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
@@ -52,13 +53,7 @@ export async function writeDesktopDiagnostics(
 ): Promise<string> {
   const now = deps.now();
   const { record, rotated } = diagnosticInstall(storedInstall(deps.storage), now, () => hex(deps.random16()));
-  if (rotated) {
-    try {
-      deps.storage?.setItem(DIAGNOSTIC_INSTALL_KEY, JSON.stringify(record));
-    } catch {
-      /* A refused write only means the next file wears a fresh identity. */
-    }
-  }
+  if (rotated) deps.storage.set(DIAGNOSTIC_INSTALL_KEY, JSON.stringify(record));
   const facts = (await deps.facts()) as { os?: unknown; arch?: unknown; lines?: unknown } | null;
   const lines = Array.isArray(facts?.lines) ? facts.lines.filter((l): l is string => typeof l === "string") : [];
   const bundle = buildDiagnosticBundle({
@@ -86,13 +81,7 @@ export function liveDesktopDiagnosticDeps(): DesktopDiagnosticDeps {
     facts: () => invokeShell("diagnostic_facts"),
     save: (text) => invokeShell("diagnostic_save", { text }),
     now: () => new Date(),
-    storage: (() => {
-      try {
-        return globalThis.localStorage ?? null;
-      } catch {
-        return null;
-      }
-    })(),
+    storage: localStorageDoor("diagnostics.install"),
     random16: () => globalThis.crypto.getRandomValues(new Uint8Array(16)),
     app: () => {
       const memory = (globalThis.performance as { memory?: { usedJSHeapSize?: number; totalJSHeapSize?: number } } | undefined)?.memory;

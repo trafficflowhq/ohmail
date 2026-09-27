@@ -93,6 +93,11 @@ describe("the desktop's diagnostic file row", () => {
     expect(saved[0]).not.toContain(HOST_NAME);
     expect(node.textContent).toContain(en.desktopDoor.diagnosticWritten.replace("{path}", WRITTEN));
     expect(node.textContent).toContain("Nothing was sent.");
+    // The identity went through the durable door and the next press writes under the same one.
+    expect(JSON.parse(localStorage.getItem("ohmail.diagnostics.install") ?? "{}").id).toMatch(/^[0-9a-f]{32}$/);
+    await press(node);
+    const installOf = (t: string) => (JSON.parse(t) as { sections: { k: string; hash?: string }[] }).sections.find((x) => x.k === "install")?.hash;
+    expect(installOf(saved[1]!)).toBe(installOf(saved[0]!));
   });
 
   it("the same row speaks German under a German catalogue", async () => {
