@@ -13,6 +13,123 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Settings → About writes a diagnostic file you can send us
+<!-- changes: maturity-026-m4-local.md -->
+
+On the desktop and the phone, Settings → About has a Diagnostic file row. One press writes a single
+file about how the app is running: its version and build, the platform, the number of messages and
+other items it holds, each mailbox's sync and organizer state as codes, and the recent log events as
+numbers and codes. It never contains an address, a subject, a folder name, a server name or a
+sentence from your mail, and home-directory names are removed from crash traces. The desktop writes
+it next to its log; the phone writes it next to its copy of your mail, so one backup setting covers
+both, and offers the share sheet. Nothing is sent: the row says where the file is, and you decide
+whether to send it to us.
+
+### After an update on Linux, the previous version no longer stays mounted
+<!-- changes: fix-026-update-no-old-image.md -->
+
+The previous AppImage stayed mounted, with its deleted file still taking disk space, until the
+updated app quit. It is now released as soon as the old version exits.
+
+### A message at any number the server gives is stored
+<!-- changes: fix-026-uid-bigint.md -->
+
+A mail server may number a message anywhere up to 4,294,967,295, and ohmail could store numbers
+only up to 2,147,483,647: a message above that was never stored and was downloaded again on every
+sync, and "Not junk" on it answered an error. Every number the server can give is now stored.
+The update rewrites four tables once: a large mailbox's first launch after it shows "Updating your
+local mail store…" for a while, and on a server new mail waits until it finishes.
+
+### A folder deleted in another mail app leaves with its letters
+<!-- changes: fix-025-folder-deleted.md -->
+
+A folder of your own that you delete in another mail app now leaves ohmail with its letters at the
+next sync, on every device: they are gone from the list, the conversation and Search. ohmail asks
+the mail server about the folder by name first and removes its letters only when the server says
+the folder does not exist, and a folder you rename elsewhere keeps its letters under the new name.
+A conversation's count no longer includes a letter deleted elsewhere.
+
+### A large mailbox shows mail within its first sync instead of after several minutes
+<!-- changes: fix-025-large-first-minute.md -->
+
+Connecting a mailbox with tens of thousands of messages used to show nothing for several minutes
+while ohmail worked out which messages were the most recent; on the desktop and phone apps a large
+enough mailbox could show nothing at all. The most recent mail now appears within the first sync
+and the rest follows behind it. This applies to Cloud, self-hosted servers and the desktop and
+phone apps. On Cloud and self-hosted servers a newly connected mailbox also starts syncing within
+seconds, instead of waiting up to half a minute for its turn.
+
+### A Screening change made on another device reaches the one that organizes
+<!-- changes: fix-025-reader-screening-edit.md -->
+
+On a device that does not organize the mailbox, a change to the Ohbox posture, to your words for
+it, or to the switch that files obvious bulk was sent to the organizing device and turned away
+there. It now applies. A signature too long to be sent there is refused when you save it.
+
+### The phone's Screener decisions offer Undo
+<!-- changes: fix-025-phone-screener-fifty.md -->
+
+On the phone, a Screener decision for a sender whose mail is past the gate no longer moves up to
+50 of their messages itself. The rule it writes brings that mail along through the server, as on
+the web. Every Screener decision now offers Undo for a few seconds before it is sent, including a
+decision for a whole domain.
+
+### Settings → Mailboxes can check a mailbox against your mail server and say which folders differ
+<!-- changes: maturity-026-mailbox-self-check.md -->
+
+Check this mailbox compares, for each folder ohmail reads, how many messages your mail server
+holds with how many ohmail holds, and says one sentence: in step with your mail server, or which
+folders differ and by how many messages, or why the server could not be read. A folder the server
+renumbered is named as such. It only reads: nothing on the server or in ohmail changes, and a
+difference is shown, never repaired. It is on the desktop, on the web and on a phone that opens
+its mailbox itself. A diagnostic file written after a check carries its result as counts and
+codes, with no folder names.
+
+### Mail you wrote from a Sent folder with its own name counts
+<!-- changes: fix-026-sent-folder-by-name.md -->
+
+People you wrote to from a Sent folder your provider names in its own words — a translated
+Outlook folder, for one — are no longer held in the Screener once the mailbox next connects.
+
+### ohmail can act on confident suggestions, behind its own switch
+<!-- changes: fix-026-auto-act-consent.md -->
+
+Settings → Screener has a new switch under "Suggest for new senders automatically": "Act on
+confident suggestions for me". While it is on, a waiting sender whose suggestion is at least 90%
+sure is filed where the suggestion says, and the rule is written for you and listed in Settings →
+Rules, where you can undo it. Senders you have written to and sensitive mail are never filed this
+way, and turning automatic suggestions off turns this off too. When ohmail tries and cannot file a
+sender, the Screener says so beside the sender's Accept.
+
+### A Screening change made on another device says where it went
+<!-- changes: fix-026-change-says-where.md -->
+
+On a device that does not organize the mailbox, a change in Settings → Screening said "Saved."
+although it had only been sent to the device that does. It now says it was sent, then "Applied."
+once that device has taken it, or names the device that could not read it. "All time" in the
+Screener's window now travels there too, instead of changing only this device. The away responder,
+the Screener's window and each signature say the same: that a change was sent, and which device
+could not take it. Settings → Rules lists the rules ohmail wrote for you under their own heading,
+"Decided for you by ohmail", with the same Change and Revoke.
+
+### A signature saved with formatting in the browser is kept
+<!-- changes: fix-026-change-says-where.md -->
+
+Saving a signature with bold, italic or a link in the browser cleared the signature for that
+address. The formatting is saved now.
+
+### Deleting an account or a mailbox leaves nothing owed and nothing stale
+<!-- changes: fix-025-erasure-nothing-owed.md -->
+
+- A refund still owed to you when you delete your account is kept, with nothing on it that names
+  you, until it is paid.
+- A device that was offline for longer than its sign-in window is told the account was deleted
+  and removes its copy of the mail. On the desktop, signing in after the deleted-account notice
+  clears it for good.
+- Erasing one mailbox's copy no longer makes a retried request in another mailbox answer that its
+  result was erased, and the typed confirmation travels in the request body, not the URL.
+- The closure mail names an erasure date only when the erasure will happen on it.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
