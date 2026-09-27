@@ -34,7 +34,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { OUTBOX_TYPE } from "@ohmail/client-engine";
+import { OUTBOX_TYPE, pressVerdict } from "@ohmail/client-engine";
 import type {
   EmailAddress, EngineMessage, EntityReader, MutationResult, OhmailEngine, SendAndDonePlan,
 } from "@ohmail/client-engine";
@@ -204,7 +204,7 @@ export interface RefusedRow {
  * message to a row nobody said was its. `unverified` parks and is never adopted.
  */
 export function refusedRowOf(res: MutationResult, aboutThisCompose: boolean): RefusedRow | undefined {
-  if (res.status !== "rolled_back" || !res.entityId) return undefined;
+  if (pressVerdict(res).kind !== "refused" || !res.entityId) return undefined;
   if (res.error?.code === "send_unverified") return undefined;
   return { rowId: res.entityId, aboutThisCompose };
 }
@@ -1096,16 +1096,10 @@ export function useMailSend(
   onSettled: (key: string, m: MailSend, aboutThisCompose: boolean) => void,
   /**
    * THIS LANE'S SEND, ANSWERED ONCE — `true` the moment the engine CONFIRMS it, `false` on any
-   * terminal outcome that is not a delivery. Confirmation and nothing weaker, for the reason
-   * `onSettled` is confirmation-only: a queued or unverified send may never have left.
-   *
-   * Returning `true` means the CALLER has spoken for this send, so the lane raises no sentence
-   * of its own — one send, one toast. Only the confirmation's answer is read. `phase` names the
-   * ending, a send replayed from the last session's outbox included.
-   *
-   * `detail.left` is the row a refused send was sent from, when its refusal names one and the
-   * composer still holds that message — see `ComposeFate.refusedWithRow`. `detail.andDone` is the
-   * Send + Done release, on a confirmation — a replayed one included. See {@link OutcomeDetail}.
+   * terminal outcome that is not a delivery; a queued or unverified send may never have left.
+   * Returning `true` means the CALLER has spoken for this send, so the lane raises no sentence of
+   * its own. `phase` names the ending, a send replayed from the last session included, and
+   * `detail` carries what the ending names — see {@link OutcomeDetail}.
    */
   onOutcome?: (
     key: string, m: MailSend, accepted: boolean, phase?: SendPhase, detail?: OutcomeDetail,

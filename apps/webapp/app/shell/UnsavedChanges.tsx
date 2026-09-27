@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
+import { pressVerdict } from "@ohmail/client-engine";
 import type { AbandonedMutation, EngineMutation, MutationResult, OhmailEngine } from "@ohmail/client-engine";
 
 /** What a retry answers — the engine's own result, carried to the row that asked for it. */
@@ -135,8 +136,10 @@ export function UnsavedChangesList({
     setBusy(id);
     try {
       const outcome = await onRetryQueued?.(id);
-      const code = outcome?.status === "rolled_back" ? (outcome.error?.code ?? "refused") : null;
-      setSaid(code === null ? null : { id, code, message: outcome?.error?.message ?? "" });
+      const v = outcome ? pressVerdict(outcome) : null;
+      setSaid(v?.kind === "refused"
+        ? { id, code: v.refusal?.code ?? "refused", message: v.refusal?.message ?? "" }
+        : null);
     } finally {
       setBusy(null);
     }
