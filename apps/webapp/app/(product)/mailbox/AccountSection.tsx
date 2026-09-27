@@ -276,9 +276,9 @@ export function AccountSection() {
       setTyped("");
       setCode("");
       setBusy(false);
-      setError(err instanceof ApiError && err.status >= 400 ? t("eraseRefused") : messageOf(err));
+      setError(err instanceof ApiError && err.status >= 400 ? t("eraseRefused") : sentence(err));
     }
-  }, [ceremony, t]);
+  }, [ceremony, t, sentence]);
 
   /**
    * Shared tail of all three second factors, and THE ONE DOOR the generation is read at — one
