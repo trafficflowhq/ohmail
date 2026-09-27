@@ -153,6 +153,8 @@ const FIELD_OF: Readonly<Partial<Record<RefusalKey, ServerField>>> = {
   standaloneNoHost: "imapHost",
   serverSettingsImapUnreachable: "imapHost",
   serverSettingsHostWhileOrganizing: "imapHost",
+  serverSettingsHostHeld: "imapHost",
+  serverSettingsHostHeldUnnamed: "imapHost",
   standaloneNoPort: "imapPort",
   /* The certificate is the server's: the host name is the field that fixes a mismatch. */
   standaloneCertificateRefused: "imapHost",

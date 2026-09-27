@@ -1562,6 +1562,10 @@ export const DE: Deck = {
     "ohmail hat deinen Posteingangsserver (IMAP) unter dieser Adresse und diesem Port nicht erreicht. Prüfe beides — auf diesem Telefon hat sich nichts geändert.",
   serverSettingsHostWhileOrganizing:
     "Solange dieses Telefon dieses Postfach organisiert, bleibt sein Posteingangsserver, wie er ist. Beende das Organisieren hier, ändere den Server und organisiere dann wieder hier.",
+  serverSettingsHostHeld: (name: string) =>
+    `${name} organisiert dieses Postfach auf diesem Server. Auf diesem Telefon hat sich nichts geändert.`,
+  serverSettingsHostHeldUnnamed:
+    "Eine andere Installation organisiert dieses Postfach auf diesem Server. Auf diesem Telefon hat sich nichts geändert.",
   serverSettingsRefused: (detail: string) =>
     `Diese Einstellungen wurden nicht behalten: ${detail}. Auf diesem Telefon hat sich nichts geändert.`,
 

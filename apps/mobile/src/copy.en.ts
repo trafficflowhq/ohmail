@@ -2364,6 +2364,11 @@ const TABLE = {
     "ohmail could not reach your incoming server (IMAP) at that address and port. Check both — nothing on this phone changed.",
   serverSettingsHostWhileOrganizing:
     "While this phone organizes this mailbox, its incoming server stays as it is. Stop organizing here, change the server, then start organizing here again.",
+  /* A NEW SERVER ANOTHER INSTALL ALREADY ORGANIZES: named where the claim names it. */
+  serverSettingsHostHeld: (name: string) =>
+    `${name} organizes this mailbox on that server. Nothing on this phone changed.`,
+  serverSettingsHostHeldUnnamed:
+    "Another install organizes this mailbox on that server. Nothing on this phone changed.",
   serverSettingsRefused: (detail: string) =>
     `Those settings were not kept: ${detail}. Nothing on this phone changed.`,
 

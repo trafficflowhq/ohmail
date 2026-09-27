@@ -385,6 +385,14 @@ export interface LocalMailboxRuntime {
    */
   leave(): void;
   /**
+   * CLAIM A NEW INCOMING HOST OR LOGIN BEFORE THE ROW MOVES THERE — on a mailbox this runtime
+   * organizes. Inside {@link serialize}, with this runtime's own identity and nonces, and the queue
+   * stays held until `keep` or `abandon`: nothing gates or drains between the claim and the row. A
+   * second name for the same folder renews the running claim in place; another server gets a claim
+   * this runtime then renews. `refused` wrote nothing and released nothing.
+   */
+  claimOnCandidate(dial: CandidateDial): Promise<CandidateClaim>;
+  /**
    * TAKE IT BACK IF NOBODY ELSE HAS IT — clears the hand-back and runs one gated cycle.
    *
    * The gate claims a free mailbox and stands this install down against a holder, so a resume can
@@ -432,6 +440,32 @@ export interface LocalMailboxRuntime {
    */
   launch(): Promise<DialAnswer>;
 }
+
+/** Where a mailbox is about to be dialled — the proved server, login and password. */
+export interface CandidateDial {
+  readonly host: string;
+  readonly port: number;
+  readonly secure: boolean;
+  readonly user: string;
+  readonly pass: string;
+  readonly allowInsecure?: boolean;
+}
+
+/**
+ * What {@link LocalMailboxRuntime.claimOnCandidate} answered. `organize` holds the runtime's queue
+ * until the caller calls `keep` (the row was written: the old claim goes where it is another
+ * folder, and the runtime may follow the host) or `abandon` (it was not: the candidate claim goes
+ * where it is another folder). `refused` names a live holder, or nobody when the folder could not
+ * be read or holds only a lapsed claim.
+ */
+export type CandidateClaim =
+  | {
+    readonly verdict: "organize";
+    readonly sameFolder: boolean;
+    keep(): Promise<void>;
+    abandon(): Promise<void>;
+  }
+  | { readonly verdict: "refused"; readonly holder: { readonly name: string; readonly kind: string } | null };
 
 /**
  * What {@link LocalMailboxRuntime.launch} answered. `failed` carries the start's own error — a

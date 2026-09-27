@@ -158,7 +158,9 @@ import {
   answerLeasePeek, deriveRequestKey, makeClockCorrectionWatch, type LeasePeekIo,
   type LeasePeekAnswer, type LeaseOp, type OrganizerKind,
   type OrganizerIntent,
+  isMalformed, metaReadBudget, parseClaim, writtenByThisProcess, type LeaseSelf,
 } from "@trafficflow/core/adapters/organizer-lease";
+import { holderIsLive } from "@trafficflow/core/reader-refusal";
 import type { ImapAuth } from "@trafficflow/core/adapters/imap-types";
 import { OrganizerProfileSync, syncProfileMirror } from "@trafficflow/worker/profile";
 import type { ProfileIo } from "@trafficflow/core/adapters/organizer-profile";
@@ -220,6 +222,7 @@ import { isEndedBearerExit, launchSessionExpiredResponse, mintLaunchBearer } fro
 // remove them. See that file's header for what is per mailbox and what is per install.
 import {
   LocalRoster,
+  type CandidateClaim, type CandidateDial,
   type CredentialBlock, type CredentialState, type DialAnswer, type LocalMailboxRuntime,
   type MailboxConnectionState, type OrganizerState,
 } from "./roster.js";
@@ -1092,6 +1095,13 @@ export function nextIdlePollMs(current: number, base: number, ceiling: number): 
  * claim — "there is nothing to heal here" — stated once with the reason attached.
  */
 const ONE_SHOT_DIAL: AdapterDialContext = { onConnectionError: () => { /* see above */ } };
+
+/**
+ * The dial context of a runtime's connection to a CANDIDATE server while a mailbox moves there
+ * (`claimOnCandidate`). Its life is the move's: every call on it is awaited inside the move, so a
+ * death between calls reaches the move as a throw and there is no poll of its own to mark.
+ */
+const CANDIDATE_DIAL: AdapterDialContext = { onConnectionError: () => { /* the move awaits its calls */ } };
 
 /**
  * A DIAL REFUSED BECAUSE THIS INSTALL HAS SIGNED OUT. The mailbox password is gone from the store
@@ -3222,33 +3232,237 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       };
 
       /**
-       * FOLLOW THE ROW'S PORT AND TLS MODE — the same mailbox, dialled differently. Only where host
-       * and login are unchanged: a different host is a different mailbox to the lease and is not
-       * followed here. Answers whether the dial moved; the next dial is built from the new values.
+       * THE HOST AND LOGIN THIS RUNTIME CLAIMED BEFORE THE ROW MOVED THERE — see
+       * {@link claimOnCandidate}. The one other mailbox {@link adoptRowDial} may follow: set by the
+       * move's keep, spent by the next follow.
+       */
+      let claimedHost: { host: string; user: string } | null = null;
+      /**
+       * A MOVE HOLDS THE QUEUE — set from the candidate's dial to its keep or abandon. No re-dial of
+       * the old server starts meanwhile: its gate would queue behind the move and then claim the
+       * folder the keep has just released.
+       */
+      let moving = false;
+
+      /**
+       * FOLLOW THE ROW'S PORT AND TLS MODE — the same mailbox, dialled differently. A different host
+       * or login is a different mailbox to the lease and is followed only where this runtime has
+       * already claimed it ({@link claimedHost}). Answers whether the dial moved; the next dial is
+       * built from the new values.
        */
       const adoptRowDial = async (): Promise<boolean> => {
+        const claimed = claimedHost;
+        claimedHost = null;
         const row = await storedLogin();
         const meta = (row?.meta ?? null) as
           { host?: unknown; port?: unknown; secure?: unknown; user?: unknown; insecureConsent?: unknown } | null;
         if (meta === null || typeof meta.host !== "string" || typeof meta.port !== "number"
           || typeof meta.secure !== "boolean") return false;
         const same = (a: unknown, b: string): boolean => typeof a === "string" && a.trim().toLowerCase() === b.trim().toLowerCase();
-        if (!same(meta.host, mbImap.host) || (meta.user !== undefined && !same(meta.user, mbImap.auth.user))) return false;
+        const at = (host: string, user: string): boolean => same(meta.host, host)
+          && (meta.user === undefined || same(meta.user, user));
+        const hostMoved = !at(mbImap.host, mbImap.auth.user);
+        if (hostMoved && (claimed === null || !at(claimed.host, claimed.user))) return false;
         const allowInsecure = meta.insecureConsent === true;
-        if (meta.port === mbImap.port && meta.secure === mbImap.secure
+        if (!hostMoved && meta.port === mbImap.port && meta.secure === mbImap.secure
           && allowInsecure === (mbImap.allowInsecure === true)) return false;
         const { allowInsecure: _was, ...rest } = mbImap;
-        mbImap = { ...rest, port: meta.port, secure: meta.secure, ...(allowInsecure ? { allowInsecure: true } : {}) };
+        const user = typeof meta.user === "string" ? meta.user : mbImap.auth.user;
+        mbImap = {
+          ...rest, host: meta.host, port: meta.port, secure: meta.secure, auth: { ...mbImap.auth, user },
+          ...(allowInsecure ? { allowInsecure: true } : {}),
+        };
+        imapConfig.host = meta.host;
         imapConfig.port = meta.port;
         imapConfig.secure = meta.secure;
+        imapConfig.auth = { ...imapConfig.auth, user };
         if (allowInsecure) imapConfig.allowInsecure = true; else delete imapConfig.allowInsecure;
         log("mailbox_dial_moved", {
           mailboxId: mb.id,
-          reason: "this mailbox's port or encryption was changed and proved, so the connection is "
-            + "re-opened on the new setting; the claim in ohmail/_meta is kept",
+          reason: hostMoved
+            ? "this mailbox's incoming server was changed after this install claimed it there, so "
+              + "the connection is re-opened on the new server and renews that claim"
+            : "this mailbox's port or encryption was changed and proved, so the connection is "
+              + "re-opened on the new setting; the claim in ohmail/_meta is kept",
         });
         return true;
       };
+
+      /**
+       * ONE LOOK AT A FOLDER FOR A CLAIM THIS PROCESS WROTE — the candidate server's `ohmail/_meta`
+       * under the same install id and a nonce this runtime armed is the running mailbox's own
+       * folder under another name. APPEND-less; a folder that cannot be read throws.
+       */
+      const holdsOwnClaim = async (conn: MailboxAdapter, self: LeaseSelf): Promise<boolean> => {
+        const peekIo = (conn as Partial<{ leasePeekIo(): LeasePeekIo }>).leasePeekIo;
+        if (typeof peekIo !== "function") return false;
+        const raw = await peekIo.call(conn).listClaims();
+        return raw.some((m) => {
+          const c = parseClaim(m.raw, m.ref, m.internalDate ?? null);
+          return c !== null && !isMalformed(c) && c.installId === installId
+            && writtenByThisProcess(self, c.nonce);
+        });
+      };
+
+      /**
+       * CLAIM THE CANDIDATE SERVER BEFORE THE ROW MOVES — see `LocalMailboxRuntime.claimOnCandidate`.
+       * The candidate is this runtime's own connection to the new server for the length of the move,
+       * never a one-shot identity: the claim is written with this runtime's nonces and renewed by it
+       * after the follow. The queue is held from the claim until `keep` or `abandon`.
+       */
+      const claimOnCandidate = (dial: CandidateDial): Promise<CandidateClaim> => new Promise((answer) => {
+        void serialize(async () => {
+          let settle: () => void = () => undefined;
+          const held = new Promise<void>((r) => { settle = r; });
+          const release = (): void => { moving = false; settle(); };
+          const cfg: ImapConfig = {
+            ...imapConfig, host: dial.host, port: dial.port, secure: dial.secure,
+            auth: { user: dial.user, pass: dial.pass },
+            /* The runtime's own deadlines: this is its connection for the length of the move. */
+            timeouts: imapConfig.timeouts,
+          };
+          if (dial.allowInsecure === true) cfg.allowInsecure = true; else delete cfg.allowInsecure;
+          const candidate = config.adapterFactory
+            ? config.adapterFactory(cfg, CANDIDATE_DIAL)
+            : new ImapAdapter(cfg, { onConnectionError: CANDIDATE_DIAL.onConnectionError });
+          const closeCandidate = (): Promise<void> => Promise.resolve()
+            .then(() => candidate.close()).catch(() => undefined);
+          /* WHAT THE RUNNING MAILBOX HOLDS, and what this move minted on ANOTHER server — kept apart
+             until the keep, because nothing renews either while the queue is held. */
+          const running = { current: leaseNonce, pending: leasePendingNonce };
+          let minted: string | null = null;
+          let sameFolder = false;
+          const releaseOn = (conn: MailboxAdapter, nonce: { current: string | null; pending: string | null },
+            why: string): Promise<number | "sibling" | null> =>
+            metaReadBudget().race(releaseOwnClaim(conn, installId, mb.id, nonce, log, why))
+              .catch((err: unknown) => {
+                log("organizer_claim_release_failed", { err, mailboxId: mb.id, reason: why });
+                return null;
+              });
+          try {
+            if (stopped || redialling) { answer({ verdict: "refused", holder: null }); return; }
+            moving = true;
+            await candidate.connect();
+            const self: LeaseSelf = {
+              installId, kind: organizerKind, displayName: machineName,
+              lastNonce: leaseNonce, pendingNonce: leasePendingNonce,
+            };
+            sameFolder = await holdsOwnClaim(candidate, self);
+            const outcome = await readMailboxLease({
+              adapter: candidate, mailboxId: mb.id, self, now: now(),
+              hasRequestKey: requestKey !== null, takeover: null,
+              ...(config.leaseStaleAfterMs !== undefined ? { staleAfterMs: config.leaseStaleAfterMs } : {}),
+              onNonceMinted: (n: string) => { if (sameFolder) leasePendingNonce = n; else minted = n; },
+              log,
+            });
+            if (!outcome.organize) {
+              await closeCandidate();
+              release();
+              const by = outcome.by;
+              const live = by !== null
+                && holderIsLive({ by: { kind: by.kind, name: by.displayName }, state: outcome.state });
+              log("organizer_host_change", {
+                mailboxId: mb.id, verdict: "refused", state: outcome.state,
+                reason: "another install holds this mailbox on the new server, so nothing there was "
+                  + "claimed and the row and the running claim are as they were",
+              });
+              answer({
+                verdict: "refused",
+                holder: live ? { name: organizerDisplayName(by.displayName) ?? "", kind: by.kind } : null,
+              });
+              return;
+            }
+            /* THE SAME FOLDER UNDER ANOTHER NAME: the gate renewed the running claim in place, so its
+               nonce is this runtime's from now, kept or not. */
+            if (sameFolder) { leaseNonce = outcome.nonce; leasePendingNonce = null; }
+            const candidateNonce = outcome.nonce;
+            log("organizer_host_change", {
+              mailboxId: mb.id, verdict: "claimed", state: sameFolder ? "same_folder" : "other_server",
+              reason: "this install claimed the new server under its own nonce before the row moves",
+            });
+            let settled = false;
+            answer({
+              verdict: "organize",
+              sameFolder,
+              keep: async () => {
+                if (settled) return;
+                settled = true;
+                try {
+                  const old = adapter;
+                  /* THE FOLLOW, STILL INSIDE THE HOLD: a cycle queued behind it must meet the new
+                     server's dial and a socket marked replaced, never the folder the move left. */
+                  claimedHost = { host: dial.host, user: dial.user };
+                  const followed = await adoptRowDial();
+                  if (!followed && !sameFolder) {
+                    await releaseOn(candidate, { current: candidateNonce, pending: minted },
+                      "the claim on the new server could not be removed; it ages out of ohmail/_meta there");
+                    return;
+                  }
+                  if (!sameFolder) {
+                    await releaseOn(old, running, "the claim on the previous server could not be "
+                      + "removed after the mailbox moved; it ages out of ohmail/_meta there");
+                    leaseNonce = candidateNonce;
+                    leasePendingNonce = null;
+                  }
+                  if (followed) {
+                    await rereadCredential();
+                    if (connectionDeadSince === null) {
+                      connectionDeadSince = now();
+                      connectionDeadBy = "replaced";
+                    }
+                    try {
+                      if (old.forceClose !== undefined) old.forceClose();
+                      else void Promise.resolve(old.close()).catch(() => undefined);
+                    } catch { /* the socket is going away regardless */ }
+                  }
+                  log("organizer_host_change", {
+                    mailboxId: mb.id, verdict: "kept", state: sameFolder ? "same_folder" : "other_server",
+                    reason: "the new server is kept and this install renews its claim there",
+                  });
+                } finally {
+                  await closeCandidate();
+                  release();
+                }
+              },
+              abandon: async () => {
+                if (settled) return;
+                settled = true;
+                try {
+                  if (!sameFolder) {
+                    await releaseOn(candidate, { current: candidateNonce, pending: minted },
+                      "the claim on the new server could not be removed after the change was not "
+                        + "kept; it ages out of ohmail/_meta there");
+                  }
+                  log("organizer_host_change", {
+                    mailboxId: mb.id, verdict: "abandoned", state: sameFolder ? "same_folder" : "other_server",
+                    reason: "the change was not kept, so the new server's claim was given back and the "
+                      + "running claim stands",
+                  });
+                } finally {
+                  await closeCandidate();
+                  release();
+                }
+              },
+            });
+            await held;
+          } catch (err) {
+            /* NOTHING WAS KEPT. A claim minted on another server before the throw is taken back; one
+               minted in the running folder is the runtime's own (`leasePendingNonce`) and stands. */
+            if (!sameFolder && minted !== null) {
+              await releaseOn(candidate, { current: minted, pending: null },
+                "a claim on the new server could not be removed after the change failed; it ages out");
+            }
+            await closeCandidate();
+            log("organizer_host_change_failed", {
+              err, mailboxId: mb.id,
+              reason: "the new server could not be claimed, so nothing was kept and the running claim "
+                + "stands",
+            });
+            answer({ verdict: "refused", holder: null });
+            release();
+          }
+        });
+      });
 
       /**
        * READ THE STORED PASSWORD AGAIN, AND USE IT IF IT OPENS. Answers whether it did.
@@ -6377,7 +6591,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * ladder step ({@link forcedNotBefore}, {@link ReconnectProfile}).
        */
       const redialIfDead = async ({ force = false }: { force?: boolean } = {}): Promise<void> => {
-        if (stopped || connectionDeadSince === null || redialling) return;
+        if (stopped || connectionDeadSince === null || redialling || moving) return;
         /* ── A REFUSED SIGN-IN IS NOT RETRIED, AND A FAILING SERVER IS BACKED OFF ────────────
          *
          * Both are the same defect seen from two sides: a dial that cannot succeed being repeated
@@ -7030,6 +7244,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          */
         /* THE LATCH ALONE — see `LocalMailboxRuntime.leave`. The same two lines `handBack` opens
            with; a release or a resume follows from the caller. */
+        claimOnCandidate,
         leave() {
           if (stopped) return;
           handedBack = true;
@@ -8319,25 +8534,52 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                  outgoing half refuses the whole change, so the working settings stay as they were. */
               const seal = COMPOSITION_SEAL[organizerKind];
               /* A NEW INCOMING HOST OR LOGIN IS ANOTHER MAILBOX TO THE LEASE. Where no door replaces this
-                 engine and this install holds the claim, it is refused before anything dials: the
-                 person stops organizing here, changes the server and starts again, and the start
-                 claims the new server through the ordinary gate. Not holding it, the change is kept
-                 and the running mailbox re-points below, with nothing to release. */
+                 engine and this install holds the claim, the running runtime claims the new server
+                 under its own nonce once the probe has proved it and before the row is kept
+                 (`claimOnCandidate`); a holder there refuses the change and names it. Without a
+                 password to dial the new server it is refused as before: stop organizing here, change
+                 the server, start again. Not holding it, the change is kept and the mailbox re-points
+                 below, with nothing to release. */
               const running = runtimes.get(mailboxId);
               const differs = (said: unknown, held: string): boolean => typeof said === "string"
                 && said.trim() !== "" && said.trim().toLowerCase() !== held.trim().toLowerCase();
               const hostMoves = !seal.doorReplacesEngine && running !== undefined
                 && (differs(incoming.host, running.imap.host) || differs(incoming.user, running.imap.auth.user));
-              if (hostMoves && running.organizer.claimed) {
+              const hostChangeRefused = (holder: { name: string; kind: string } | null): ServiceError => {
                 log("local_mailbox_host_change_refused", {
-                  mailboxId,
-                  reason: "the incoming server was changed on a mailbox this install organizes, so "
-                    + "nothing was dialled or stored; stopping here first releases the claim",
+                  mailboxId, verdict: holder === null ? "refused" : "held",
+                  reason: "the incoming server was changed on a mailbox this install organizes and could "
+                    + "not be claimed there, so nothing was stored and the running claim stands",
                 });
-                throw new ServiceError("organizer_host_change_refused", 409,
+                return new ServiceError("organizer_host_change_refused", 409,
                   "While this phone organizes this mailbox, its incoming server stays as it is. Stop "
-                    + "organizing here, change the server, then start organizing here again.");
-              }
+                    + "organizing here, change the server, then start organizing here again.",
+                  holder === null ? undefined : { holder });
+              };
+              const claimsFirst = hostMoves && running.organizer.claimed;
+              if (claimsFirst && passed !== true) throw hostChangeRefused(null);
+              /* THE MOVE, once the probe has proved the new server: the claim is taken inside the
+                 running runtime's queue, which stays held until the row is kept or not. */
+              const move: { claim: Extract<CandidateClaim, { verdict: "organize" }> | null } = { claim: null };
+              const imapProbe = makeImapProbe(deps, probeOpts);
+              const probe: typeof imapProbe = !claimsFirst ? imapProbe : async (input) => {
+                const verdict = await imapProbe(input);
+                if (verdict.verdict === "refuse" || move.claim !== null) return verdict;
+                /* NO PASSWORD TO DIAL THE NEW SERVER WITH, so no claim: the move is refused, never kept unclaimed. */
+                if (typeof input.imap.pass !== "string") throw hostChangeRefused(null);
+                const proven = verdict.proven;
+                const claim = await running.claimOnCandidate({
+                  host: proven?.host ?? input.imap.host,
+                  port: proven?.port ?? input.imap.port ?? 993,
+                  secure: proven?.secure ?? input.imap.secure ?? true,
+                  user: input.imap.user,
+                  pass: input.imap.pass,
+                  ...(proven?.insecure === true || input.imap.allowInsecure === true ? { allowInsecure: true } : {}),
+                });
+                if (claim.verdict === "refused") throw hostChangeRefused(claim.holder);
+                move.claim = claim;
+                return verdict;
+              };
               const write = (b: Record<string, unknown>) => deps.services!.mailbox.update(
                 {
                   db, accountId: core.accountId, userId: core.userId,
@@ -8345,21 +8587,29 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 },
                 mailboxId,
                 b as never,
-                { probe: makeImapProbe(deps, probeOpts), smtpProbe: makeSmtpProbe(deps, smtpProbeOpts) },
+                { probe, smtpProbe: makeSmtpProbe(deps, smtpProbeOpts) },
               );
-              const dto = seal.outgoingMayStayUnsettled ? await keepingIncoming(body, write) : await write(body);
-              if (sealWrite.stale()) {
-                /* BEFORE THE RE-POINT, so a mailbox is never attached on a credential that is
-                   about to be removed. Every transport of this mailbox, because the update writes
-                   the incoming and submission rows together. */
-                await discardCredentialsFor(mailboxId);
-                log("local_mailbox_seal_discarded", {
-                  mailboxId,
-                  reason: "this install signed out while the password was being checked, so the "
-                    + "credential the check stored was removed again and nothing dials on it",
-                });
-                throw signedOutMidWrite();
+              let dto: Awaited<ReturnType<typeof write>>;
+              try {
+                dto = seal.outgoingMayStayUnsettled ? await keepingIncoming(body, write) : await write(body);
+                if (sealWrite.stale()) {
+                  /* BEFORE THE RE-POINT, so a mailbox is never attached on a credential that is
+                     about to be removed. Every transport of this mailbox, because the update writes
+                     the incoming and submission rows together. */
+                  await discardCredentialsFor(mailboxId);
+                  log("local_mailbox_seal_discarded", {
+                    mailboxId,
+                    reason: "this install signed out while the password was being checked, so the "
+                      + "credential the check stored was removed again and nothing dials on it",
+                  });
+                  throw signedOutMidWrite();
+                }
+              } catch (err) {
+                /* NOT KEPT: the new server's claim goes back and the running claim stands. */
+                await move.claim?.abandon();
+                throw err;
               }
+              await move.claim?.keep();
                 /* And the running mailbox is re-pointed, not left for the next launch. "Takes effect
                  * on next launch" was tolerable for the SEED only because the shell replaces the
                  * engine (the next launch seconds away); there is no such gesture for mailbox two,
@@ -8373,7 +8623,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                  nothing else will dial it on this launch. Answered below, outside the re-point's
                  catch: a refusal is the press's answer, never a logged failure. */
               let launched: { rt: LocalMailboxRuntime; answer: Promise<DialAnswer | null> } | null = null;
-              if (live && (mailboxId !== world.mailboxId || hostMoves)) {
+              /* A MOVE THE RUNTIME CLAIMED IS FOLLOWED IN PLACE (the arm below): a detach would release
+                 the claim just taken, and the runtime that holds its nonce is the one to renew it. */
+              if (live && (mailboxId !== world.mailboxId || hostMoves) && move.claim === null) {
                 try {
                    /* Detach first, then the attach may THROW. The login is closed and the timer
                       cleared, so the mailbox is not left with no runtime while the log claims it

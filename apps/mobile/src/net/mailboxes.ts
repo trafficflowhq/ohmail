@@ -440,7 +440,7 @@ export async function changeServerSettings(
 export interface ServerChangeError {
   code?: unknown;
   message?: unknown;
-  details?: { transport?: unknown; reason?: unknown };
+  details?: { transport?: unknown; reason?: unknown; holder?: { name?: unknown; kind?: unknown } | null };
 }
 
 /**
@@ -448,7 +448,13 @@ export interface ServerChangeError {
  * field it is about in the reader's language; anything else quotes the engine's own words.
  */
 export function serverChangeRefusal(status: number, error: ServerChangeError | undefined): Refusal {
-  if (error?.code === "organizer_host_change_refused") return refuse("serverSettingsHostWhileOrganizing");
+  if (error?.code === "organizer_host_change_refused") {
+    /* A HOLDER ON THE NEW SERVER is named; without one the way through is the stop-and-start. */
+    const holder = error.details?.holder;
+    if (holder === undefined || holder === null) return refuse("serverSettingsHostWhileOrganizing");
+    const name = typeof holder.name === "string" ? holder.name.trim() : "";
+    return name === "" ? refuse("serverSettingsHostHeldUnnamed") : refuse("serverSettingsHostHeld", name);
+  }
   const d = error?.details;
   if (error?.code === "mailbox_probe_failed" && d !== undefined) {
     const out = d.transport === "smtp";
