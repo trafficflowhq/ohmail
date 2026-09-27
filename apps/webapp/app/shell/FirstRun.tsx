@@ -133,7 +133,15 @@ export interface FirstRunProps {
    * on, so a rate folded from it reads zero and no estimate ever appears. The DENOMINATOR is on
    * the facts (`serverMessageCount`), because only the server can say how much is out there.
    */
-  pull: { screened: number; history: number; pulled: number };
+  pull: {
+    screened: number; history: number; pulled: number;
+    /**
+     * The store has said this device holds every message it has (`OhmailEngine.storeCoverage`),
+     * so the two counts are the mailbox's own. Absent or false: they are this device's, and the
+     * summary says so, as the pull screen does. No server count of either exists to read instead.
+     */
+    whole?: boolean;
+  };
   /** How much mail the server says is in the mailbox — see `MailboxDTO.serverMessageCount`. */
   serverMessageCount?: number;
   /** The guided decision's sender, or `null` when the queue is empty (the step is skipped). */
@@ -1655,6 +1663,9 @@ export function FirstRun({
                     description={t("doneScreenedWhy")} />
                   <SettingsRow label={t("doneHistory", { count: pull.history })}
                     description={t("doneHistoryWhy")} />
+                  {/* THE SAME BASIS AS THE PULL SCREEN'S, unless the store has said the device holds
+                      the whole mailbox: over a window the pair summed to the window's ceiling. */}
+                  {pull.whole === true ? null : <p className="ob-basis">{t("counterBasis")}</p>}
                   <SettingsRow label={t("doneFolders")} description={t("doneWhere")} />
                 </>
               ) : (

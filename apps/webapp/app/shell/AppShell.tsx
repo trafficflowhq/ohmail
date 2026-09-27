@@ -3600,6 +3600,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                appeared. `screened` above keeps it — both of its operands are projections over the
                same reader, and a difference between two populations is not a count. */
             pulled,
+            /* Whether the pair is the mailbox's or this device's — the store's answer, never the window's. */
+            whole: engine.storeCoverage().state === "whole",
           }}
           decide={firstRunDecide}
           /* THE RUN NAMES A MAILBOX THIS INSTALL DOES NOT HOLD — the stage cannot derive it:
