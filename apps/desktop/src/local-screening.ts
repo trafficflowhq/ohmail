@@ -10,7 +10,7 @@
  */
 
 import { bridgeFetch } from "./bridge-fetch.js";
-import type { TravelledChangeWire } from "../../webapp/app/shell/travelled-change";
+import type { TravelledChangeWire } from "../../webapp/app/shell/travelled-change.js";
 
 /** Where the engine serves it. Root-relative, like every path in this window. */
 const SCREENING_PATH = "/account/screening";
