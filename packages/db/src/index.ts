@@ -167,7 +167,7 @@ export {
   /* The same wire format read from the other end: a host that has lost the lease hands its
      pending local moves to the install that holds the mailbox now. */
   STAND_DOWN_EXPORT_MAX, exportPendingMovesOnStandDown, type StandDownExport,
-  PROFILE_SIGNATURE_MAX, TRAVELLING_SIGNATURE_HTML_MAX_BYTES,
+  PROFILE_SIGNATURE_MAX, TRAVELLING_SIGNATURE_HTML_MAX_BYTES, TRAVELLING_OHBOX_BAR_MAX_BYTES,
   /* The away responder's member set as THIS package spells it — a second literal, tolerated only
      because db may not import core. Surfaced so the guards that hold the two spellings equal can
      read it from outside this package: `away-piles-one-validator.test.ts` generates its cases
@@ -178,7 +178,7 @@ export {
   RULE_TERM_MAX, RULE_MATCH_MAX, RULE_PRIORITY_MAX, validateRulePayload, applyRuleRequest,
   type ValidatedMovePayload, type MoveRefusal,
   type ApplyMessageMoveInput, type ApplyMessageMoveResult,
-  type ValidatedProfileUpdate, type ProfileAwayUpdate,
+  type ValidatedProfileUpdate, type ProfileAwayUpdate, type ProfileScreeningUpdate,
   type ApplyProfileUpdateInput, type ApplyProfileUpdateResult,
   type RuleKey, type RuleRefusal, type ValidatedRuleRequest,
   type ValidatedRuleCreate, type ValidatedRuleUpdate, type ValidatedRuleDelete,

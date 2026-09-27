@@ -192,6 +192,10 @@ export async function setScreeningPreference(
           `ohboxBar must be at most ${OHBOX_BAR_MAX_BYTES} bytes`,
         );
       }
+      // The column cannot hold a NUL, and the holder refuses one: said here, before it travels.
+      if (b.includes("\u0000")) {
+        throw new ServiceError("validation_failed", 400, "ohboxBar must not contain a NUL character");
+      }
     }
     values.ohboxBar = b ?? null;
     set.ohboxBar = b ?? null;
@@ -233,16 +237,18 @@ export async function setScreeningPreference(
     /* ONLY THE FIELDS THIS REQUEST NAMED. The payload is a partial and absence is load-bearing —
        sending the whole posture would let a door that changed the bar also overwrite a policy the
        person never touched on the machine that actually applies it. */
-    const travelling = {
-      screeningPreference: {
-        ...("ohboxPolicy" in update ? { ohboxPolicy: (update.ohboxPolicy ?? null) as string | null } : {}),
-        ...("ohboxBar" in update ? { ohboxBar: (update.ohboxBar ?? null) as string | null } : {}),
-        ...("screenerAutoApply" in update ? { screenerAutoApply: update.screenerAutoApply as boolean } : {}),
-      },
+    const screening = {
+      ...("ohboxPolicy" in update ? { ohboxPolicy: (update.ohboxPolicy ?? null) as string | null } : {}),
+      ...("ohboxBar" in update ? { ohboxBar: (update.ohboxBar ?? null) as string | null } : {}),
+      ...("screenerAutoApply" in update ? { screenerAutoApply: update.screenerAutoApply as boolean } : {}),
     };
+    const travelling = { screeningPreference: screening };
+    // An empty object names no setting and the holder refuses it, so nothing travels for it.
+    const named = Object.keys(screening).length > 0;
 
     if (!plan.writeLocally) {
       // The reader's own `account_settings` row is left untouched — never both.
+      if (!named) return;
       travel = await fanOutProfileEdit(tx, ctx, plan, travelling);
       pending = true;
       return;
@@ -250,7 +256,7 @@ export async function setScreeningPreference(
 
     await tx.insert(accountSettings).values(values)
       .onConflictDoUpdate({ target: accountSettings.accountId, set });
-    if (profileTravelled(plan)) travel = await fanOutProfileEdit(tx, ctx, plan, travelling);
+    if (named && profileTravelled(plan)) travel = await fanOutProfileEdit(tx, ctx, plan, travelling);
   });
 
   const current = await getScreeningPreference(ctx);

@@ -253,6 +253,21 @@ export const AWAY_PILES: ReadonlySet<string> = new Set([
 export const AWAY_SCREENER_PILE = "ohmail/Screener";
 /** `account_settings.ohbox_policy` — the closed pair, or `null` for "the product default". */
 const OHBOX_POLICY_VALUES: ReadonlySet<string> = new Set(["people_only", "people_and_replied"]);
+/**
+ * `account_settings.ohbox_bar`'s ceiling in BYTES, the column CHECK's `octet_length`. Restated
+ * from services' `OHBOX_BAR_MAX_BYTES` for the import direction {@link AWAY_PILES} explains;
+ * `profile-fan-out-round-trip.test.ts` holds the two doors to one boundary.
+ */
+export const TRAVELLING_OHBOX_BAR_MAX_BYTES = 2048;
+/** The three sub-keys the reader's screening door sends. Anything else refuses the record. */
+const SCREENING_KEYS: ReadonlySet<string> = new Set(["ohboxPolicy", "ohboxBar", "screenerAutoApply"]);
+
+/** The screening preference as it travels: partial, each present key replaces. */
+export interface ProfileScreeningUpdate {
+  ohboxPolicy?: string | null;
+  ohboxBar?: string | null;
+  screenerAutoApply?: boolean;
+}
 
 /** The away responder as it travels — the whole row, replaced together. */
 export interface ProfileAwayUpdate {
@@ -288,7 +303,40 @@ export interface ValidatedProfileUpdate {
    */
   signatureHtml?: string | null;
   dormancyDays?: number | null;
-  screeningPreference?: string | null;
+  screeningPreference?: ProfileScreeningUpdate;
+}
+
+/**
+ * The screening preference, or `null` to refuse the record. The OBJECT is what every reader
+ * sends; a bare posture string (or `null`) is the older spelling and means `{ ohboxPolicy }`.
+ * An unknown sub-key, a value outside its set or an empty object refuses rather than being
+ * dropped: a partial apply acked `applied` tells the reader an edit travelled that did not.
+ */
+function readScreeningUpdate(v: unknown): ProfileScreeningUpdate | null {
+  if (v === null) return { ohboxPolicy: null };
+  if (typeof v === "string") return OHBOX_POLICY_VALUES.has(v) ? { ohboxPolicy: v } : null;
+  if (typeof v !== "object" || Array.isArray(v)) return null;
+  const r = v as Record<string, unknown>;
+  if (Object.keys(r).some((k) => !SCREENING_KEYS.has(k))) return null;
+  const out: ProfileScreeningUpdate = {};
+  if ("ohboxPolicy" in r) {
+    const p = r.ohboxPolicy;
+    if (p !== null && !(typeof p === "string" && OHBOX_POLICY_VALUES.has(p))) return null;
+    out.ohboxPolicy = p;
+  }
+  if ("ohboxBar" in r) {
+    const b = r.ohboxBar;
+    if (b !== null && typeof b !== "string") return null;
+    // A NUL is a value the column cannot hold: refused here rather than failing the apply.
+    if (typeof b === "string"
+      && (Buffer.byteLength(b, "utf8") > TRAVELLING_OHBOX_BAR_MAX_BYTES || b.includes("\u0000"))) return null;
+    out.ohboxBar = b;
+  }
+  if ("screenerAutoApply" in r) {
+    if (typeof r.screenerAutoApply !== "boolean") return null;
+    out.screenerAutoApply = r.screenerAutoApply;
+  }
+  return Object.keys(out).length === 0 ? null : out;
 }
 
 /** ISO 8601 or null, and anything else refuses the whole record. */
@@ -346,10 +394,9 @@ export function validateProfileUpdatePayload(payload: unknown): ValidatedProfile
   }
 
   if ("screeningPreference" in o) {
-    const p = o.screeningPreference;
-    if (p === null) out.screeningPreference = null;
-    else if (typeof p === "string" && OHBOX_POLICY_VALUES.has(p)) out.screeningPreference = p;
-    else return null;
+    const screening = readScreeningUpdate(o.screeningPreference);
+    if (screening === null) return null;
+    out.screeningPreference = screening;
   }
 
   if ("awayResponder" in o) {
@@ -499,12 +546,24 @@ export async function applyProfileUpdate(
     wrote.push("dormancyDays");
   }
 
-  if (payload.screeningPreference !== undefined) {
-    settings.ohboxPolicy = payload.screeningPreference;
-    insert.ohboxPolicy = payload.screeningPreference;
-    wrote.push("screeningPreference");
+  const screening = payload.screeningPreference;
+  if (screening?.ohboxBar !== undefined) {
+    settings.ohboxBar = screening.ohboxBar;
+    insert.ohboxBar = screening.ohboxBar;
+    wrote.push("ohboxBar");
+  }
+  if (screening?.screenerAutoApply !== undefined) {
+    // A boolean on the wire, a timestamp in the column: the local door's own mapping.
+    settings.screenerAutoApplyAt = screening.screenerAutoApply ? now : null;
+    insert.screenerAutoApplyAt = screening.screenerAutoApply ? now : null;
+    wrote.push("screenerAutoApply");
+  }
+  if (screening?.ohboxPolicy !== undefined) {
+    settings.ohboxPolicy = screening.ohboxPolicy;
+    insert.ohboxPolicy = screening.ohboxPolicy;
+    wrote.push("ohboxPolicy");
 
-    if (payload.screeningPreference === "people_only") {
+    if (screening.ohboxPolicy === "people_only") {
       /* ONLY ON THE TRANSITION — see the header. The prior posture is read first, and a re-save
          that leaves it on `people_only` arms nothing. A double-flip that double-stamps merely
          re-arms an idempotent pass, which re-examines a drained backlog and writes zero. */

@@ -2,7 +2,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   accountSettings, contacts, mailboxes, mailboxProfileMirror, messageBodies, messages,
-  recordChanges, recordRuleDelta, rules,
+  recordChanges, recordRuleDelta, rules, PROFILE_SIGNATURE_MAX, TRAVELLING_SIGNATURE_HTML_MAX_BYTES,
   type LedgerTx, type OrganizedBy, type Tx,
 } from "@trafficflow/db";
 import { listMailboxUserFolders, listUserFolders } from "./folders.js";
@@ -1062,6 +1062,24 @@ export async function setMailboxSignature(
           "validation_failed", 400,
           `a signature that has to travel to the install organizing this mailbox must be at most `
           + `${TRAVELLING_SIGNATURE_MAX_CHARS} characters`,
+        );
+      }
+      /* AND IN THE HOLDER'S UNIT, which is BYTES for both halves: a multi-byte signature inside
+         the character bound, or markup past its own bound, was queued and then refused at the
+         holder as `invalid_payload`, which no pane shows. */
+      if (stored !== null && Buffer.byteLength(stored, "utf8") > PROFILE_SIGNATURE_MAX) {
+        throw new ServiceError(
+          "validation_failed", 400,
+          `a signature that has to travel to the install organizing this mailbox must be at most `
+          + `${PROFILE_SIGNATURE_MAX} bytes; accented letters and other scripts take more than one`,
+        );
+      }
+      if (storedHtml !== null
+        && Buffer.byteLength(storedHtml, "utf8") > TRAVELLING_SIGNATURE_HTML_MAX_BYTES) {
+        throw new ServiceError(
+          "validation_failed", 400,
+          `the formatting of a signature that has to travel to the install organizing this mailbox `
+          + `must be at most ${TRAVELLING_SIGNATURE_HTML_MAX_BYTES} bytes; remove some formatting or links`,
         );
       }
       /* BOTH SHAPES TRAVEL (ruling of 2026-09-10) — the SAME pair written above, so the holder
