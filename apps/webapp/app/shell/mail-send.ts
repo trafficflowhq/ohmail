@@ -1817,7 +1817,7 @@ export function useMailSend(
   }
 
   const send = useCallback(
-    (m: MailSend, opts?: { surface?: "inline"; heldRow?: string | null }) => {
+    (m: MailSend, opts?: { surface?: "inline"; heldRow?: string | null; andDone?: SendAndDonePlan }) => {
       const key = sendKeyOf(m, opts?.surface ?? "compose");
       // THE LOCK FIRST, off the ref, because it is the only check that is correct within one
       // tick. `canSend` then applies the SAME rule the button's `disabled` uses — through the
