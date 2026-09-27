@@ -2295,10 +2295,13 @@ export function OhboxView({
 
             They carry the mirror's own row wherever it has one (see `older-mail.ts`), so a
             message somebody files here behaves exactly like one above the line. */}
-        {older.items.length > 0 ? (
+        {/* `olderShown`, never `older.items`: a fetched row this list already renders above is
+            not listed a second time (the shell's verdicts keep the store's copies out; this is
+            the view's own belt over what it rendered). */}
+        {olderShown.length > 0 ? (
           <>
             <ListGroupLabel>{t("olderTitle")}</ListGroupLabel>
-            <ListRows multiSelectable ariaLabel={t("olderTitle")}>{older.items.map((m) => row(m))}</ListRows>
+            <ListRows multiSelectable ariaLabel={t("olderTitle")}>{olderShown.map((m) => row(m))}</ListRows>
           </>
         ) : null}
         {/* The tail says three true things by client. The demo keeps its own sentence (no
@@ -2313,7 +2316,7 @@ export function OhboxView({
             backwards past mail still in flight. The cost — a returning tab loses the tail for
             one drain — is cheap: `SyncBar` narrates, and both return with the drained mirror. */}
         {demo ? <div className="tail-row">{t("tail")}</div> : null}
-        {!demo && older.available && mayState ? (
+        {!demo && older.available && !older.pending && mayState ? (
           <div className="tail-row" role="status">
             {older.error !== null ? (
               <>
@@ -2334,7 +2337,7 @@ export function OhboxView({
                     somebody's whole mailbox, and it is said only because the server answered a
                     page with no cursor after it. An empty page, a refusal and a network failure
                     are all different, and none of them says this. */}
-                {older.items.length > 0 ? <>{t("olderShowing", { count: older.items.length })}{" "}</> : null}
+                {olderShown.length > 0 ? <>{t("olderShowing", { count: olderShown.length })}{" "}</> : null}
                 {older.exhausted ? (
                   t("olderEnd")
                 ) : (

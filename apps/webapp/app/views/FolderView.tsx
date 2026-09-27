@@ -359,7 +359,7 @@ export function FolderView({
               ))}
             </>
           ) : null}
-          {older.available ? (
+          {older.available && !older.pending ? (
             <div className="tail-row" role="status">
               {older.error !== null ? (
                 <>

@@ -618,6 +618,7 @@ export {
   // `ListMessagesCapableAdapter` in engine.ts.
   type ListOlderFn,
   type ListOlderOutcome,
+  type StoreCoverage,
   type ListOlderWire,
   // The Trash pair — two more structural capabilities a wrapper forwards by hand, for the same
   // reason and with the same risk. See `ListTrashCapableAdapter` / `RestoreFromTrashCapableAdapter`.
@@ -676,6 +677,7 @@ export {
   timelineSegments,
   segmentAt,
   readTimelineWire,
+  mirrorCoverage,
   StorePageCache,
   storeSearchList,
   type StoreKeyset,

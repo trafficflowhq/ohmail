@@ -163,9 +163,8 @@ export interface ListMessagesOptions {
    */
   folderId?: string;
   /**
-   * With `view: "folder"` or `view: "all"` and NO cursor: start strictly below this keyset position — the
-   * client mirror's boundary, so page one begins where the mirror ends. A cursor supersedes
-   * it (the cursor is the position); the six fixed views ignore it entirely.
+   * With NO cursor: start strictly below this keyset position — the client mirror's boundary, so
+   * page one begins where the mirror ends. A cursor supersedes it (the cursor is the position).
    */
   before?: { date: string | null; id: string };
   /**
@@ -584,6 +583,9 @@ export class MessageService {
       // Keyset for `date desc nulls last, id desc`: strictly "older" rows than the cursor tuple,
       // including the undated tail, which sorts after every dated row.
       filters.push(afterKeyset(decodeMsgCursor(opts.cursor)));
+    } else if (opts.before) {
+      // The caller's mirror edge, page one only: a windowed client is not re-served what it holds.
+      filters.push(afterKeyset(positionOf(opts.before, "before")));
     }
 
     // scoped-by: `filters` above leads with eq(messages.accountId, ctx.accountId)

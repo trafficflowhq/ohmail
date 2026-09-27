@@ -285,13 +285,9 @@ export function useShellDerivations({
   );
 
   /**
-   * Mail from beyond what this device kept — one keyset page at a time, on
-   * an explicit ask. The browser's mirror is a window over a server that
-   * still holds everything, so the bottom of a pile is a boundary, not an
-   * end; see `older-mail.ts` for why nothing fires speculatively and the
-   * rows are never written to the mirror. Inert on a client whose mirror
-   * IS the mailbox: `listOlderAvailable()` is false for the demo and the
-   * standalone desktop, and the view renders no control.
+   * Mail from beyond what this device kept — one keyset page at a time, on an explicit ask; see
+   * `older-mail.ts` for why nothing fires speculatively and the rows are never written to the
+   * mirror. Inert where the store says the mirror holds everything, and in the demo.
    */
   /** The open folder's entity id, for the reach-past hook below — route-derived, shell-early. */
   /**
@@ -349,7 +345,6 @@ export function useShellDerivations({
     else if (present && !t.present) { t.epoch += 1; t.present = true; }
     else if (!present && t.present) t.present = false;
   }
-  const older = useOlderMail(engine, "ohbox", derived);
   /**
    * The open FOLDER's reach past the mirror window (the folders foundation) — `older`'s twin,
    * keyed to the folder entity id so leaving a folder resets its paging. Called with an
@@ -385,6 +380,27 @@ export function useShellDerivations({
      the same derivation the phone reads. `ohbox.resurfaced` stays per message and is what
      `held()` inside the selector holds out; this is the shape the list renders. */
   const resurfacedRows = useMemo(() => resurfacedThreads(presented), [presented, derived]);
+  /**
+   * THE OHBOX'S REACH PAST THE WINDOW, answered by the store. Page one starts at the store's edge
+   * for this mirror (`storeCoverage().below`), and a fetched row the mirror holds never lists in
+   * Older: shown above ⇒ `hide`, held and placed elsewhere ⇒ `ban`. Only mail this device does
+   * not hold is `show`. The folder tail's verdicts, over the Ohbox surface.
+   */
+  const ohboxShownIds = useMemo(
+    () => new Set(ohboxSurfaceMessages(resurfacedRows, ohbox, []).map((m) => m.id)),
+    [resurfacedRows, ohbox],
+  );
+  const coverage = engine.storeCoverage();
+  const edgeDate = coverage.state === "partial" ? coverage.below.date : null;
+  const edgeId = coverage.state === "partial" ? coverage.below.id : null;
+  const ohboxOlderBoundary = useMemo(
+    () => (edgeId === null ? undefined : { date: edgeDate, id: edgeId }),
+    [edgeDate, edgeId],
+  );
+  const older = useOlderMail(
+    engine, "ohbox", derived, undefined, ohboxOlderBoundary,
+    (id) => (ohboxShownIds.has(id) ? "hide" : reader.get<EngineMessage>("message", id) ? "ban" : "show"),
+  );
   const partition = useMemo(() => feedPartition(presented, "reads"), [presented, derived]);
   /**
    * Receipts is a FLAT list, exactly as Reads is — no day headings.

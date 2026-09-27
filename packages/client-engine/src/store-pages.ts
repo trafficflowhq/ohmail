@@ -274,3 +274,28 @@ export function readTimelineWire(wire: unknown): StoreTimeline | null {
   }
   return { total: w.total, months, undated: typeof w.undated === "number" ? w.undated : 0 };
 }
+
+/**
+ * WHAT THE STORE HOLDS THAT THIS MIRROR DOES NOT — the mirror's rows counted per UTC month against
+ * the store's own timeline. `whole` when every month (and the undated tail) holds at least the
+ * store's count. Otherwise `below` is where the first short month starts, newest first: every
+ * store row above it is held, so a page asked strictly below it skips nothing the mirror lacks.
+ */
+export function mirrorCoverage(
+  t: StoreTimeline,
+  held: Iterable<{ date?: string | null }>,
+): { whole: true } | { whole: false; below: StoreKeyset } {
+  const perMonth = new Map<string, number>();
+  let undated = 0;
+  for (const m of held) {
+    const at = typeof m.date === "string" ? Date.parse(m.date) : Number.NaN;
+    if (!Number.isFinite(at)) { undated += 1; continue; }
+    const month = new Date(at).toISOString().slice(0, 7);
+    perMonth.set(month, (perMonth.get(month) ?? 0) + 1);
+  }
+  for (const s of timelineSegments(t)) {
+    const have = s.month === null ? undated : perMonth.get(s.month) ?? 0;
+    if (have < s.count) return { whole: false, below: s.before };
+  }
+  return { whole: true };
+}

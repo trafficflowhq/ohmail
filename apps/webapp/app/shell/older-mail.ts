@@ -1,14 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { EngineMessage, OhmailEngine, OhmailView } from "@ohmail/client-engine";
+import type { EngineMessage, ListOlderOutcome, OhmailEngine, OhmailView } from "@ohmail/client-engine";
 
 /**
  * The bottom of a pile, when the device holds only part of the mailbox. The mirror is a window in
  * front of a server holding all of it, so the end of a list is ambiguous — "this is your mail" or
- * "this is what this device kept". This hook lets a list tell them apart: one page per
+ * "this is what this device kept". This hook lets a list tell them apart: one ask per
  * {@link OlderMail.loadMore} call, never on mount, scroll or re-render — a prefetch would pull the
- * mailbox into a mirror that deliberately does not want it. The rows are NOT mirror rows:
+ * mailbox into a mirror that deliberately does not want it. Whether there is anything to ask for
+ * is the STORE's answer (`engine.storeCoverage()`), never the window policy's. The rows are NOT mirror rows:
  * `engine.listOlder` writes nothing (no sync sequence), and they live in this hook's state. The
  * merge prefers the mirror's own row (it carries the overlay and this device's triage; a wire item
  * is a pre-edit snapshot). Keyed to one view: leaving and returning starts from the top.
@@ -19,11 +20,17 @@ export interface OlderMail {
   /**
    * Is there anywhere further back to look?
    *
-   * `false` for a client whose mirror IS the mailbox — the demo, and the standalone desktop
-   * client. A list must render nothing at all in that case: an affordance to load older mail,
-   * over a client that has every message already, is an offer that cannot be kept.
+   * `false` for a client whose mirror IS the mailbox — the demo, and any client whose store
+   * says this mirror holds every message it has. A list must render nothing at all in that case:
+   * an affordance to load older mail, over a client that has every message already, is an offer
+   * that cannot be kept.
    */
   available: boolean;
+  /**
+   * The store has not answered yet whether older mail exists: say nothing about the boundary.
+   * The hook always states it; a surface handed an `OlderMail` without it reads "not pending".
+   */
+  pending?: boolean;
   /** Older messages fetched so far, mirror-preferred by id, in the order the server sent them. */
   items: EngineMessage[];
   /** A page is in flight. */
@@ -57,6 +64,9 @@ interface Page {
 }
 
 const EMPTY: Page = { items: [], cursor: null, loading: false, error: null, exhausted: false };
+
+/** Pages one press may walk past while every row they bring is one the list already shows. */
+export const OLDER_HOPS = 8;
 
 /** One scope's paging position — see the `paging` ref inside {@link useOlderMail}. */
 interface Paging {
@@ -148,8 +158,19 @@ export function useOlderMail(
    */
   scopeEpoch: number = 0,
 ): OlderMail {
-  const available = engine.listOlderAvailable();
+  const coverage = engine.storeCoverage();
+  const available = engine.listOlderAvailable() && coverage.state !== "whole";
+  const pending = available && coverage.state === "unread";
   const [page, setPage] = useState<Page>(EMPTY);
+  /* THE STORE IS ASKED, post-commit, whenever the engine says it is owed an answer — on mount, and
+     again when the mirror stops matching a `whole` answer. The bump re-renders on the answer. */
+  const [, setAsked] = useState(0);
+  useEffect(() => {
+    if (coverage.state !== "unread") return;
+    let live = true;
+    void engine.readStoreCoverage().then(() => { if (live) setAsked((n) => n + 1); });
+    return () => { live = false; };
+  }, [engine, coverage.state]);
 
   /** `suppress` behind a stable identity, so the memo's deps stay honest — consent-state's `link`. */
   const suppressRef = useRef<((id: string) => "show" | "hide" | "ban" | "hold") | undefined>(suppress);
@@ -235,12 +256,27 @@ export function useOlderMail(
     p.inFlight = true;
     setPage((prev) => ({ ...prev, loading: true, error: null }));
 
-    void engine
+    /* ONE PRESS BRINGS SOMETHING NEW. A page whose every row the list already shows (the store
+       re-serving what this device holds) is walked past, up to {@link OLDER_HOPS} pages; the
+       rows are kept either way, for the latch's reasons. */
+    const shows = (m: EngineMessage): boolean =>
+      (suppressRef.current?.(m.id) ?? "show") === "show" && !p.banned.has(m.id);
+    const ask = (cursor: string | null, hop: number, got: EngineMessage[]): Promise<ListOlderOutcome> => engine
       .listOlder(view, {
-        ...(p.cursor ? { cursor: p.cursor } : {}),
+        ...(cursor ? { cursor } : {}),
         ...(folderId ? { folderId } : {}),
-        ...(!p.cursor && startBelow ? { startBelow } : {}),
+        ...(!cursor && startBelow ? { startBelow } : {}),
       })
+      .then((outcome): Promise<ListOlderOutcome> | ListOlderOutcome => {
+        if (outcome.state !== "ready") return got.length === 0 ? outcome : { state: "ready", items: got, nextCursor: cursor };
+        const items = [...got, ...outcome.items];
+        const stale = paging.current !== p || committed.current.scope !== p.scope;
+        if (!stale && outcome.nextCursor !== null && hop + 1 < OLDER_HOPS && !outcome.items.some(shows)) {
+          return ask(outcome.nextCursor, hop + 1, items);
+        }
+        return { state: "ready", items, nextCursor: outcome.nextCursor };
+      });
+    void ask(p.cursor, 0, [])
       .then((outcome) => {
         // The answer counts only if THIS paging incarnation is still the live one AND its scope
         // is still the committed scope — a response for a list the UI has left changes nothing
@@ -339,6 +375,7 @@ export function useOlderMail(
   // renders the previous scope's rows.
   return {
     available,
+    pending,
     items,
     loading: page.loading,
     error: page.error,

@@ -916,6 +916,11 @@ export class HttpAdapter implements EngineAdapter {
     if (serverView === null) return null;
     const q = new URLSearchParams({ view: serverView });
     if (opts.cursor) q.set("cursor", opts.cursor);
+    else if (opts.startBelow) {
+      // The store's edge for this mirror (`OhmailEngine.storeCoverage`), page one only.
+      if (opts.startBelow.date !== null) q.set("beforeDate", opts.startBelow.date);
+      q.set("beforeId", opts.startBelow.id);
+    }
     if (opts.limit !== undefined) q.set("limit", String(opts.limit));
     const res = await this.request("GET", `/messages?${q.toString()}`);
     if (!res.ok) throw await this.rejectionOf(res);

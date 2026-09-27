@@ -31,8 +31,10 @@ import { consentIndex, decidedDestination } from "./consent-cutline.js";
 import { flattenResponse } from "./apply.js";
 import { CASCADE_TYPES } from "./mirror-bounds.js";
 import {
-  HISTORY_PAGE_CACHE_ROWS, HISTORY_PAGE_ROWS, StorePageCache, storePageKey, storeSearchList, storeSearchPageKey,
-  type StorePage, type StorePageOpts, type StorePageOutcome, type StoreSearchKey, type StoreTimelineFn, type StoreTimelineOutcome,
+  HISTORY_PAGE_CACHE_ROWS, HISTORY_PAGE_ROWS, StorePageCache, mirrorCoverage, storePageKey, storeSearchList,
+  storeSearchPageKey,
+  type StoreKeyset, type StorePage, type StorePageOpts, type StorePageOutcome, type StoreSearchKey,
+  type StoreTimeline, type StoreTimelineFn, type StoreTimelineOutcome,
 } from "./store-pages.js";
 import { classifyWindowSyncFailure, type WindowSyncFailure } from "./window-sync-failure.js";
 import type { WindowSearchPhases } from "./search-phases.js";
@@ -1167,6 +1169,17 @@ export type ListOlderOutcome =
   | { state: "unavailable" }
   | { state: "ready"; items: EngineMessage[]; nextCursor: string | null }
   | { state: "failed"; error: string; code: string | null };
+
+/**
+ * Whether the store holds mail this mirror does not ({@link OhmailEngine.storeCoverage}). `whole`:
+ * nothing older exists to fetch. `partial`: `below` is where a reach-past page starts. `unknown`:
+ * the store cannot say, and a list keeps offering. `unread`: not asked yet, or owed a re-ask.
+ */
+export type StoreCoverage =
+  | { state: "unread" }
+  | { state: "unknown" }
+  | { state: "whole" }
+  | { state: "partial"; below: StoreKeyset };
 
 // the Trash read, and putting one message back: MAIL THIS ACCOUNT DELETED IN OHMAIL, which is off-mirror by
 // construction. A delete tombstones the row (`apply.ts` rule 4, `entity: null`), so the mirror holds NOTHING for a
@@ -2446,6 +2459,11 @@ export class OhmailEngine {
   private timelineCall: Promise<StoreTimelineOutcome> | null = null;
   /** Moves with every applied page that brings a message this mirror had no record of — {@link storeArrivals}. */
   private storeArrivalsRev = 0;
+  /** The store's last timeline answer and whether this mirror held all of it then — {@link storeCoverage}. */
+  private coverageRead: { timeline: StoreTimeline; wasWhole: boolean } | null = null;
+  /** The last ask found no timeline (`unavailable`, or a refusal): the store cannot say. */
+  private coverageUnknown = false;
+  private coverageMemo: { stamp: number; read: object | null; value: StoreCoverage } | null = null;
 
   /**
    * Attachment metadata + byte state by message id.
@@ -7824,6 +7842,42 @@ export class OhmailEngine {
 
   listOlderAvailable(): boolean {
     return this.listOlderFn !== null;
+  }
+
+  /**
+   * DOES THE STORE HOLD MAIL THIS MIRROR DOES NOT — the mirror's rows per month against the store's
+   * own timeline ({@link mirrorCoverage}), never the window policy: a windowed mirror over a small
+   * mailbox holds all of it. `unread` until the store has answered, and again when the mirror
+   * stops matching an answer that said `whole` (a delete, an eviction): the caller re-asks.
+   */
+  storeCoverage(): StoreCoverage {
+    if (this.listOlderFn === null || this.timelineFn === null) return { state: "unknown" };
+    const read = this.coverageRead;
+    if (read === null) return this.coverageUnknown ? { state: "unknown" } : { state: "unread" };
+    const stamp = this.store.stampOf("message");
+    const memo = this.coverageMemo;
+    if (memo !== null && memo.stamp === stamp && memo.read === read) return memo.value;
+    const live = mirrorCoverage(read.timeline, this.store.list<EngineMessage>("message"));
+    const value: StoreCoverage = live.whole
+      ? { state: "whole" }
+      : read.wasWhole ? { state: "unread" } : { state: "partial", below: live.below };
+    this.coverageMemo = { stamp, read, value };
+    return value;
+  }
+
+  /** Ask the store's timeline (single-flight with History's) and answer {@link storeCoverage}. */
+  async readStoreCoverage(): Promise<StoreCoverage> {
+    if (this.listOlderFn === null || this.timelineFn === null) return { state: "unknown" };
+    const out = await this.timeline();
+    if (out.state === "ready") {
+      const whole = mirrorCoverage(out.timeline, this.store.list<EngineMessage>("message")).whole;
+      this.coverageRead = { timeline: out.timeline, wasWhole: whole };
+      this.coverageUnknown = false;
+    } else {
+      this.coverageRead = null;
+      this.coverageUnknown = true;
+    }
+    return this.storeCoverage();
   }
 
   /**
