@@ -86,6 +86,9 @@ function pictureQualityLabel(level: ImageQualityLevel): string {
 }
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 import { SavedSettingsPanel } from "../src/ui/ProfileImportCard";
+import { writePhoneDiagnostics } from "../src/engine/diagnostics";
+import { nativePhoneDiagnosticDeps, shareDiagnosticFile } from "../src/engine/diagnostics-native";
+import { diagnosticSaid, type DiagnosticPress } from "../src/ui/diagnostic-said";
 
 /** Gated like the tabs: the About block states a live session's facts, so it needs one. */
 export default function SettingsScreen() {
@@ -386,9 +389,50 @@ function SettingsBody() {
               {Copy.aboutOnDeviceBackup(backupSays)}
             </Txt>
           </View>
+          <DiagnosticPanel />
         </Panel>
       </Scroller>
     </Screen>
+  );
+}
+
+/**
+ * SETTINGS → ABOUT → DIAGNOSTIC FILE. One press writes one file beside the mirror (under the same
+ * backup exclusion) and the row then says where it is and that nothing was sent; the share sheet
+ * is offered for that file and is the person's own act. The sentence is `diagnosticSaid`'s.
+ */
+function DiagnosticPanel() {
+  const w = useWorld();
+  const connection = useConnection();
+  const [press, setPress] = useState<DiagnosticPress>({ k: "rest" });
+  const said = diagnosticSaid(press);
+  const write = useCallback(async () => {
+    setPress({ k: "busy" });
+    try {
+      const engine = connection.state.k === "live" ? connection.state.session.engine : null;
+      const where = await writePhoneDiagnostics(
+        { reader: engine?.read() ?? null, mailboxes: w.mailboxes.rows },
+        nativePhoneDiagnosticDeps(),
+      );
+      setPress(where === null ? { k: "failed" } : { k: "written", where });
+    } catch {
+      setPress({ k: "failed" });
+    }
+  }, [connection.state, w.mailboxes.rows]);
+  const share = useCallback(async (where: string) => {
+    if (!(await shareDiagnosticFile(where))) setPress({ k: "share_failed", where });
+  }, []);
+  return (
+    <View style={{ paddingHorizontal: 20, gap: 6, marginTop: 14 }}>
+      <Txt variant="settingsLabel">{Copy.diagnosticLabel}</Txt>
+      <Txt variant="note" tone="ink3">{said.sentence}</Txt>
+      <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
+        <Button label={said.action} disabled={said.busy} onPress={() => { if (!said.busy) void write(); }} />
+        {said.share !== null ? (
+          <Button label={Copy.diagnosticShare} variant="quiet" onPress={() => { void share(said.share!); }} />
+        ) : null}
+      </View>
+    </View>
   );
 }
 

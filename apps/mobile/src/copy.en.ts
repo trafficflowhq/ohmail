@@ -1299,6 +1299,23 @@ const TABLE = {
         : "Whether the copied mail is included in a backup could not be read on this build, so "
           + "nothing here claims it either way.",
 
+  /* --------------------------------------------- the diagnostic file */
+
+  diagnosticLabel: "Diagnostic file",
+  diagnosticWhy:
+    "Writes one file about how ohmail is running on this phone: versions, counts, error codes and "
+    + "recent log events, never addresses, subjects or folder names. Nothing is sent.",
+  diagnosticAction: "Write file",
+  diagnosticWriting: "Writing…",
+  diagnosticWritten: (path: string): string =>
+    `Written to ${path}, beside this phone's copied mail. Nothing was sent. Share it with us `
+    + "yourself if you want us to look.",
+  diagnosticShare: "Share file",
+  diagnosticShareFailed:
+    "This phone could not open the share sheet. The file is still where it was written; nothing "
+    + "was sent.",
+  diagnosticFailed: "The file could not be written. Nothing was sent.",
+
   /* --------------------------------------------- organizing in the background */
 
   /**

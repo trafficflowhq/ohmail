@@ -56,6 +56,24 @@ export function engineLogLevel(line: string): EngineLogLevel {
 let writer: EngineLogWriter | null = null;
 
 /**
+ * THE NEWEST LINES, KEPT FOR THE DIAGNOSTIC FILE. A phone has no `engine.log` to read back, so
+ * the sink keeps the last lines it was handed — already redacted by the engine's logger — and
+ * Settings → About builds the file from them. Bounded; nothing here is written anywhere else.
+ */
+export const ENGINE_LOG_RING_LINES = 400;
+const ring: string[] = [];
+
+/** What the sink was handed most recently, oldest first. A copy. */
+export function recentEngineLines(): readonly string[] {
+  return [...ring];
+}
+
+function remember(line: string): void {
+  ring.push(line);
+  if (ring.length > ENGINE_LOG_RING_LINES) ring.splice(0, ring.length - ENGINE_LOG_RING_LINES);
+}
+
+/**
  * Hand the sink its native half. Called once, at module scope in the app's root layout beside the
  * engine registration — before the first render and before anything opens a mirror, because a
  * line written ahead of it goes to `console` and a Release build drops it.
@@ -90,6 +108,7 @@ function devBuild(): boolean {
  */
 export function engineLogSink(): EngineLogSink {
   return (line) => {
+    remember(line);
     let wrote = false;
     const native = writer;
     if (native !== null) {

@@ -844,6 +844,24 @@ export const DE: Deck = {
         : "Ob die kopierte Post in einem Backup enthalten ist, konnte auf diesem Build nicht "
           + "gelesen werden — hier wird deshalb weder das eine noch das andere behauptet.",
 
+  /* --------------------------------------------- the diagnostic file */
+
+  diagnosticLabel: "Diagnosedatei",
+  diagnosticWhy:
+    "Schreibt eine Datei darüber, wie ohmail auf diesem Telefon läuft: Versionen, Anzahlen, "
+    + "Fehlercodes und die letzten Log-Ereignisse, nie Adressen, Betreffzeilen oder Ordnernamen. "
+    + "Es wird nichts gesendet.",
+  diagnosticAction: "Datei schreiben",
+  diagnosticWriting: "Wird geschrieben…",
+  diagnosticWritten: (path: string): string =>
+    `Gespeichert unter ${path}, neben der kopierten Post dieses Telefons. Es wurde nichts `
+    + "gesendet. Teile sie selbst mit uns, wenn wir sie ansehen sollen.",
+  diagnosticShare: "Datei teilen",
+  diagnosticShareFailed:
+    "Dieses Telefon konnte das Teilen-Menü nicht öffnen. Die Datei liegt weiter dort, wo sie "
+    + "geschrieben wurde; es wurde nichts gesendet.",
+  diagnosticFailed: "Die Datei konnte nicht geschrieben werden. Es wurde nichts gesendet.",
+
   /* --------------------------------------------- organizing in the background */
 
   stateOrganizing: "Organisiert",
