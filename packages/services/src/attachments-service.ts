@@ -592,7 +592,11 @@ export class AttachmentsService {
       .limit(1);
     if (!r) throw new ServiceError("not_found", 404, "attachment not found");
     const locator = r.nativeLocator as NativeLocator | null;
-    if (!locator) throw new ServiceError("upstream_unavailable", 502, "message location unknown");
+    // No locator is a message tombstoned out of the mailbox (the delete clears it): gone, not a
+    // mail server failing, so the gone arm's 404 rather than a 5xx.
+    if (!locator) {
+      throw new ServiceError("not_found", 404, "this message was deleted from the mailbox, so its attachment can no longer be loaded");
+    }
     return { id: r.id, filename: r.filename, contentType: r.contentType, partId: r.partId, mailboxId: r.mailboxId, locator, sizeBytes: r.sizeBytes };
   }
 

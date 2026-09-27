@@ -3,7 +3,7 @@ import { mailboxCredentials } from "@trafficflow/db";
 import { ImapAdapter, buildImapAuth, type CredMetaAuth } from "@trafficflow/core/adapters/imap";
 import type { NetTimeouts } from "@trafficflow/core/adapters/imap";
 import { SendConnections, type SendAdapter, type WarmSendAdapter } from "@trafficflow/core/mail";
-import { ServiceError } from "@trafficflow/services/mail";
+import { MailboxSideRefusal } from "@trafficflow/services/mail";
 import { clearedFor } from "./dial-host-guard.js";
 import type { ApiDeps } from "./deps.js";
 
@@ -51,7 +51,7 @@ export async function makeSendAdapter(
     .where(eq(mailboxCredentials.mailboxId, mailboxId));
 
   const imapRow = rows.find((r) => r.transport === "imap");
-  if (!imapRow) throw new ServiceError("upstream_unavailable", 502, "mailbox has no IMAP credentials");
+  if (!imapRow) throw new MailboxSideRefusal("upstream_unavailable", 502, "mailbox has no IMAP credentials");
   const smtpRow = rows.find((r) => r.transport === "smtp");
 
   // AFTER the credential read and BEFORE anything else: a live connection kept from an earlier
@@ -92,14 +92,14 @@ export async function makeSendAdapter(
         /**
          * No `smtp` row: the guess, and the one case where guessing is dishonest. `imap host:587`
          * with the imap secret is the convention and right for most providers. Not when the
-         * submission server was tried and refused: the local door marks the outgoing half unsettled
-         * precisely so a working mailbox is not held hostage to a blocked port — and the fallback
-         * would dial a server somebody was already told does not work and report the result as a
-         * fresh failure. The absence of a row is read together with the marker: no marker, guess; a
-         * marker, refuse with its reason. 502 `smtp_not_settled` keeps it out of the retry ladder.
+         * submission server was tried and refused: the local door marks the outgoing half
+         * unsettled so a working mailbox is not held hostage to a blocked port, and the fallback
+         * would dial a server somebody was already told does not work. No marker, guess; a marker,
+         * refuse with its reason. A 502 without `retryable` reads as retryable to every client,
+         * which is why it stays; `MailboxSideRefusal` keeps it out of the fault rows.
          */
         if (imapMeta.smtpUnsettled) {
-          throw new ServiceError(
+          throw new MailboxSideRefusal(
             "smtp_not_settled", 502,
             "Sending is not set up for this mailbox: its outgoing (SMTP) server has not been "
               + "settled. Receiving works. Set the outgoing server in Settings → Mailboxes.",

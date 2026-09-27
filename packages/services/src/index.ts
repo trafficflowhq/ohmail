@@ -1,6 +1,6 @@
 export const SERVICES_VERSION = "0.0.0";
 
-export { ServiceError, IdempotencyRaceLost, OAuthCodeReplayed, SettleFailed, TransientDialRefusal } from "./errors.js";
+export { ServiceError, IdempotencyRaceLost, MailboxSideRefusal, OAuthCodeReplayed, SettleFailed, TransientDialRefusal } from "./errors.js";
 export { readInstant, instantRefusal, type InstantReading } from "./instant.js";
 /* The read ceilings on STORED cardinality — the axis the input-bounds census cannot see, because
  * the request that triggers one of these reads carries a single scalar. See `read-bounds.ts`. */
@@ -282,8 +282,8 @@ export {
   SEND_ATTACHMENT_MAX_TOTAL_BYTES, SEND_ATTACHMENT_FIELD_MAX_CHARS,
   SEND_MAX_ATTACHMENT_PARTS, SEND_MAX_RECIPIENTS, dedupeStagedIds,
   SEND_MIME_ENVELOPE_BYTES, SEND_STAGED_OBJECT_MAX_BYTES, attachmentBudgetFor,
-  effectiveAttachmentCap, sendSurfaceFor,
-  type SendDeps, type SendResult, type SendAttachment, type SendInput,
+  effectiveAttachmentCap, sendSurfaceFor, mailServerRefusalOf,
+  type SendDeps, type SendResult, type SendAttachment, type SendInput, type MailServerRefusalKind,
   type StagedAttachmentSource, type ResolveStaleBy, type ResolveStaleOutcome,
 } from "./send-service.js";
 export {

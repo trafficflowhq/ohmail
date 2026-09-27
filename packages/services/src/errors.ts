@@ -17,6 +17,17 @@ export class ServiceError extends Error {
 }
 
 /**
+ * A 5xx about the person's mailbox, not a fault of ours: its server's standing refusal, an address
+ * this service will not dial, a credential this host does not hold. The STATUS stays because
+ * shipped clients retry a 502 that states no `retryable`; the envelope reads `notOurFault` and
+ * writes no fault row, since a fault row and the alerts on it mean OUR fault. Named `ServiceError`
+ * like its parent, so every door that matches the class by name still passes it through.
+ */
+export class MailboxSideRefusal extends ServiceError {
+  readonly notOurFault = true as const;
+}
+
+/**
  * An authorization code was presented a second time — and what the first presentation minted has
  * just been revoked (RFC 6749 §4.1.2 asks for both; only the refusal used to happen).
  *

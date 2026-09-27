@@ -1,8 +1,9 @@
 import { and, asc, eq, inArray, lt, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import {
-  attachments, contacts, drafts, mailboxes, messageBodies, messages, outboundSends,
-  outboundSendFingerprints, readAccountErasedAt, recordChange, threads, type LedgerTx, type Tx,
+  attachments, CERT_CODES, contacts, drafts, mailboxes, messageBodies, messages, outboundSends,
+  outboundSendFingerprints, readAccountErasedAt, recordChange, SERVER_UNAVAILABLE_RESPONSE_CODES,
+  threads, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import {
   createLogger, isMessageGone, mintMessageId, normalizeMessageId, recordSentMessage,
@@ -761,12 +762,67 @@ export class MailServerUnreachable extends ServiceError {
   }
 }
 
-/** One exchange with the person's own mail server; an unreachable server becomes the refusal. */
+/**
+ * The status of every refusal the person's mail server makes at a dial, for
+ * {@link SEND_UNREACHABLE_STATUS}'s reason. Every client reads these as failed and not retryable;
+ * the code carries which refusal it was.
+ */
+export const SEND_REFUSED_STATUS = SEND_UNREACHABLE_STATUS;
+
+/** What the person's mail server did to a dial. `null` is anything else, which is ours. */
+export type MailServerRefusalKind = "unreachable" | "not_secured" | "login_refused";
+
+/**
+ * By structural evidence only: the unreachable allow-list, a TLS code, then imapflow's failed-LOGIN
+ * flag. The flag is read BELOW the server's own "not now" (`UNAVAILABLE`, `LIMIT`, a throttle),
+ * which is no verdict on the password and stays unclassified, as the worker's classifier reads it.
+ */
+export function mailServerRefusalOf(err: unknown): MailServerRefusalKind | null {
+  if (mailServerUnreachable(err)) return "unreachable";
+  if (typeof err !== "object" || err === null || err instanceof ServiceError) return null;
+  const e = err as { code?: unknown; authenticationFailed?: unknown; serverResponseCode?: unknown };
+  const code = typeof e.code === "string" ? e.code : "";
+  if (code.startsWith("ERR_TLS_") || code.startsWith("ERR_SSL_") || CERT_CODES.has(code)) return "not_secured";
+  const said = typeof e.serverResponseCode === "string" ? e.serverResponseCode : "";
+  if (e.authenticationFailed === true && code !== "ETHROTTLE" && !SERVER_UNAVAILABLE_RESPONSE_CODES.has(said)) {
+    return "login_refused";
+  }
+  return null;
+}
+
+/** A connection the mail server would not secure, or a sign-in it refused: 424, never retried. */
+export class MailServerRefused extends ServiceError {
+  constructor(kind: "not_secured" | "login_refused", cause: unknown) {
+    const secure = kind === "not_secured";
+    super(secure ? "send_not_secured" : "send_login_refused", SEND_REFUSED_STATUS,
+      secure ? SEND_NOT_SECURED_SENTENCE : SEND_LOGIN_REFUSED_SENTENCE, undefined, false);
+    this.name = "MailServerRefused";
+    (this as { cause?: unknown }).cause = cause;
+  }
+}
+
+/** The typed refusal for a dial error the person's mail server caused, or the error unchanged. */
+function asMailServerRefusal(err: unknown): unknown {
+  const kind = mailServerRefusalOf(err);
+  if (kind === null) return err;
+  return kind === "unreachable" ? new MailServerUnreachable(err) : new MailServerRefused(kind, err);
+}
+
+/** One exchange with the person's own mail server; a refusal it made becomes the typed refusal. */
 async function atMailServer<T>(exchange: () => Promise<T>): Promise<T> {
   try {
     return await exchange();
   } catch (err) {
-    throw mailServerUnreachable(err) ? new MailServerUnreachable(err) : err;
+    throw asMailServerRefusal(err);
+  }
+}
+
+/** The envelope does not log a 4xx, so a refusal's own class and code are said once, here. */
+function logMailServerRefusal(deps: SendDeps, ctx: ServiceContext, draftId: string, err: unknown): void {
+  if (err instanceof MailServerUnreachable) {
+    (deps.log ?? defaultLog).warn("send_mail_server_unreachable", { draftId, accountId: ctx.accountId, err });
+  } else if (err instanceof MailServerRefused) {
+    (deps.log ?? defaultLog).warn("send_mail_server_refused", { draftId, accountId: ctx.accountId, err });
   }
 }
 
@@ -922,10 +978,7 @@ export class SendService {
         // else is a diagnostic and gets the standing sentence instead.
         await this.finalizeFailed(ctx, sendId, draftId,
           err instanceof ServiceError ? err.message : SEND_FAILED_SENTENCE);
-        // The envelope does not log a 4xx, so the dial's own class and code are said here, once.
-        if (err instanceof MailServerUnreachable) {
-          (deps.log ?? defaultLog).warn("send_mail_server_unreachable", { draftId, accountId: ctx.accountId, err });
-        }
+        logMailServerRefusal(deps, ctx, draftId, err);
         // The line is owed here too. This arm is the ONE class of failure the pre-SMTP window
         // exists for, and it was the one attempt that settled without saying what it cost —
         // "one line per settled attempt" was false for exactly the case somebody investigating
@@ -1002,19 +1055,33 @@ export class SendService {
               return { status: "sent", providerMessageId: err.providerMessageId, draftId, seq };
             }
             if (err instanceof SendNotSubmitted) {
-              // NEVER OFFERED: the session died securing the connection or logging in, so the
-              // message provably did not leave. Failed with the step named, never `unverified`.
+              // NEVER OFFERED: the socket never connected, or the session died securing the
+              // connection or logging in, so the message provably did not leave. Failed with the
+              // step named, never `unverified`, and the same refusal the IMAP leg's dial gets.
               phases.submitMs = Date.now() - tSubmit;
-              const secure = err.step === "secure";
-              const sentence = secure ? SEND_NOT_SECURED_SENTENCE : SEND_LOGIN_REFUSED_SENTENCE;
-              await this.finalizeFailed(ctx, sendId, draftId, sentence);
+              const refusal = err.step === "connect" ? new MailServerUnreachable(err)
+                : new MailServerRefused(err.step === "secure" ? "not_secured" : "login_refused", err);
+              await this.finalizeFailed(ctx, sendId, draftId, refusal.message);
+              logMailServerRefusal(deps, ctx, draftId, refusal);
               this.logPhases(deps, ctx, draftId, "failed", phases, started);
-              throw new ServiceError(secure ? "send_not_secured" : "send_login_refused", 502, sentence, undefined, false);
+              throw refusal;
             }
             // SMTP threw → the delivery is AMBIGUOUS (it may have reached the server
             // before the failure). VERIFY by Sent rather than assume either way; NEVER
             // blindly resend. Reuse the still-open adapter for the probe.
-            const inSent = await adapter.messageInSent(mintedMessageId);
+            let inSent: boolean;
+            try {
+              inSent = await adapter.messageInSent(mintedMessageId);
+            } catch (probeErr) {
+              // The mail server failed the check too, so the fate stays unknown: the reservation
+              // keeps its key for verify-by-Sent and the answer is the ceiling's `queued`. A probe
+              // fault of ours propagates and stays a 500.
+              const code = (probeErr as { code?: unknown } | null)?.code;
+              if (mailServerRefusalOf(probeErr) === null && code !== "EIMAPBOUND") throw probeErr;
+              phases.submitMs = Date.now() - tSubmit;
+              (deps.log ?? defaultLog).warn("send_sent_probe_failed", { draftId, accountId: ctx.accountId, sendId, err: probeErr });
+              return { status: "queued", providerMessageId: null, draftId, seq: reservation.seq };
+            }
             phases.submitMs = Date.now() - tSubmit;
             if (inSent) {
               const seq = await this.finalizeSent(ctx, sendId, mintedMessageId, draftId, mailboxId);

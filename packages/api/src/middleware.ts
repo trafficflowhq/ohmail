@@ -384,7 +384,14 @@ export const withErrorEnvelope: Middleware = (next, route) => async (req, deps, 
       return errorResponse(e.code, e.httpStatus, e.message, e.details);
     }
     if (err instanceof ServiceError) {
-      if (err.httpStatus >= 500) {
+      // A 5xx about the person's mailbox keeps its status for the clients that read it and is no
+      // fault of ours: no fault row, and a warn line rather than an error. Read by property, for
+      // the organizer arm's reason (two copies of the services package). See `MailboxSideRefusal`.
+      if (err.httpStatus >= 500 && (err as { notOurFault?: unknown }).notOurFault === true) {
+        log.warn("request_refused_mailbox", {
+          method: req.method, route: route.pattern, status: err.httpStatus, code: err.code,
+        });
+      } else if (err.httpStatus >= 500) {
         log.error("request_failed", {
           method: req.method, route: route.pattern, status: err.httpStatus, code: err.code, err,
         });

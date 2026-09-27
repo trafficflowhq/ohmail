@@ -84,6 +84,11 @@ export function SendStatus({
               /* The person's mail server could not be reached at the dial: nothing left, draft kept. */
               : send.code === "send_unreachable"
                 ? { tone: "error", text: t("statusUnreachable") }
+              /* The mail server would not secure the connection, or refused the sign-in: nothing left. */
+              : send.code === "send_not_secured"
+                ? { tone: "error", text: t("statusNotSecured") }
+              : send.code === "send_login_refused"
+                ? { tone: "error", text: t("statusLoginRefused") }
               : send.code === "forward_original_unavailable"
                 ? { tone: "error", text: t("statusForwardOriginalUnavailable") }
               /**

@@ -11,7 +11,7 @@
 
 export const SERVICES_VERSION = "0.0.0";
 
-export { ServiceError, IdempotencyRaceLost } from "./errors.js";
+export { ServiceError, IdempotencyRaceLost, MailboxSideRefusal } from "./errors.js";
 // The reader's zone and locale as a client states them — History's months, a forward's date.
 export {
   parseReaderZone, parseReaderLocale, forwardedDate, READER_ZONE_MAX_CHARS, READER_LOCALE_MAX_CHARS,
@@ -285,8 +285,8 @@ export {
   SEND_ATTACHMENT_MAX_TOTAL_BYTES, SEND_ATTACHMENT_FIELD_MAX_CHARS,
   SEND_MAX_ATTACHMENT_PARTS, SEND_MAX_RECIPIENTS, dedupeStagedIds,
   SEND_MIME_ENVELOPE_BYTES, SEND_STAGED_OBJECT_MAX_BYTES, attachmentBudgetFor,
-  effectiveAttachmentCap, sendSurfaceFor,
-  type SendDeps, type SendResult, type SendAttachment, type SendInput,
+  effectiveAttachmentCap, sendSurfaceFor, mailServerRefusalOf,
+  type SendDeps, type SendResult, type SendAttachment, type SendInput, type MailServerRefusalKind,
   type StagedAttachmentSource,
 } from "./send-service.js";
 export {

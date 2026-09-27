@@ -1,4 +1,4 @@
-import { ServiceError } from "@trafficflow/services/mail";
+import { MailboxSideRefusal, ServiceError } from "@trafficflow/services/mail";
 import { pinFrom, probeHostGuardFor } from "./imap-probe.js";
 import type { ApiDeps } from "./deps.js";
 
@@ -46,7 +46,7 @@ function hostRefusal(err: unknown, transport: "imap" | "smtp"): unknown {
   if (err.message.endsWith(UNRESOLVED)) {
     return Object.assign(new Error(`the ${leg} server's hostname did not resolve`), { code: "ENOTFOUND" });
   }
-  return new ServiceError(
+  return new MailboxSideRefusal(
     "mailbox_host_refused", 502,
     `This mailbox's ${leg} server is at an address that is not one this service will connect to. `
       + "Check the server settings in Settings → Mailboxes.",

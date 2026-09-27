@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { mailboxCredentials } from "@trafficflow/db";
 import { ImapAdapter, buildImapAuth, type CredMetaAuth } from "@trafficflow/core/adapters/imap";
-import { ServiceError, type OpenAdapter, type AttachmentAdapter } from "@trafficflow/services/mail";
+import { MailboxSideRefusal, ServiceError, type OpenAdapter, type AttachmentAdapter } from "@trafficflow/services/mail";
 import type { ApiDeps } from "./deps.js";
 import { clearedFor } from "./dial-host-guard.js";
 import { imapAdmission } from "./routes/shared.js";
@@ -219,7 +219,7 @@ async function openImapUnderCap(
     const rows = await deps.db.select().from(mailboxCredentials)
       .where(eq(mailboxCredentials.mailboxId, mailboxId));
     const imapRow = rows.find((r) => r.transport === "imap");
-    if (!imapRow) throw new ServiceError("upstream_unavailable", 502, "mailbox has no IMAP credentials");
+    if (!imapRow) throw new MailboxSideRefusal("upstream_unavailable", 502, "mailbox has no IMAP credentials");
 
     const meta = (imapRow.meta ?? {}) as CredMetaAuth & {
       host?: string; port?: number; secure?: boolean; insecureConsent?: boolean;

@@ -1,10 +1,19 @@
-import { ServiceError, type DownloadAllInput } from "@trafficflow/services/mail";
+import {
+  ServiceError, mailServerRefusalOf, type DownloadAllInput, type MailServerRefusalKind,
+} from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { jsonResponse, errorResponse } from "../responses.js";
 import { makeOpenAdapter } from "../attachments-adapter.js";
 import type { Route } from "../router.js";
 import { attachments, readBody } from "./shared.js";
 import { pagingNumber } from "../query-bounds.js";
+
+/** The sentence for a refusal the person's mail server made while one attachment was fetched. */
+const MAIL_SERVER_REFUSED: Record<MailServerRefusalKind, string> = {
+  unreachable: "your mail server could not be reached, so this attachment could not be loaded",
+  not_secured: "the connection to your mail server could not be secured, so this attachment could not be loaded",
+  login_refused: "your mail server refused the sign-in, so this attachment could not be loaded",
+};
 
 /**
  * Attachments & files. Metadata lives server-side; the blob bytes do not — `GET /attachments/:id`
@@ -82,15 +91,14 @@ export const attachmentRoutes: Route[] = [
       } catch (err) {
         if (err instanceof ServiceError) return errorResponse(err.code, err.httpStatus, err.message, err.details);
         /**
-         * "Upstream" is a claim about the user's mail server, and this arm cannot know it: a
-         * non-`ServiceError` here is an unclassified throw, most likely authored by this process
-         * — a malformed `:id` reaching a uuid column was once reported as `502
-         * upstream_unavailable`. `createApp.handle` now refuses that shape with a 400; the
-         * mislabel remains and will name the next programming fault the same wrong way. Left
-         * as-is deliberately: separating a genuine IMAP failure from an internal fault means
-         * classifying the open path's throws — its own change with its own tests. Recorded as a
-         * gap; this comment is the correction until then.
+         * A refusal the person's mail server made is 424, not a 5xx of ours, with the code it had
+         * and `retryable` stating what the 502 implied. Anything else is an unclassified throw,
+         * most likely ours, and keeps its 502, whose code still names the mail server.
          */
+        const refused = mailServerRefusalOf(err);
+        if (refused !== null) {
+          return errorResponse("upstream_unavailable", 424, MAIL_SERVER_REFUSED[refused], undefined, true);
+        }
         return errorResponse("upstream_unavailable", 502, "attachment fetch failed");
       }
     },

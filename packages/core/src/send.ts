@@ -98,13 +98,14 @@ export class SentCopyAppendFailed extends Error {
 }
 
 /** Where a submission stopped before the server was offered anything to deliver. */
-export type SendNotSubmittedStep = "secure" | "login";
+export type SendNotSubmittedStep = "connect" | "secure" | "login";
 
 /**
- * THE SERVER WAS NEVER OFFERED THE MESSAGE — the session died while its connection was being
- * secured, or the login was refused. Only the greeting, EHLO and STARTTLS (or a refused AUTH)
- * crossed, so the message provably did not leave: the send is failed, never `unverified`, and it
- * may be sent again. `step` names where it stopped; `cause` is the client's own error.
+ * THE SERVER WAS NEVER OFFERED THE MESSAGE — the socket never connected, the session died while
+ * its connection was being secured, or the login was refused. At most the greeting, EHLO and
+ * STARTTLS (or a refused AUTH) crossed, so the message provably did not leave: the send is failed,
+ * never `unverified`, and it may be sent again. `step` names where it stopped; `cause` is the
+ * client's own error.
  */
 export class SendNotSubmitted extends Error {
   readonly step: SendNotSubmittedStep;
@@ -114,7 +115,8 @@ export class SendNotSubmitted extends Error {
   constructor(step: SendNotSubmittedStep, cause: unknown) {
     const c = (cause ?? {}) as { message?: unknown; code?: unknown; responseCode?: unknown; command?: unknown };
     super(typeof c.message === "string" && c.message !== "" ? c.message
-      : step === "secure" ? "the connection to the mail server could not be secured" : "the mail server refused the login");
+      : step === "connect" ? "the mail server could not be reached"
+        : step === "secure" ? "the connection to the mail server could not be secured" : "the mail server refused the login");
     this.name = "SendNotSubmitted";
     this.step = step;
     (this as { cause?: unknown }).cause = cause;
@@ -126,16 +128,29 @@ export class SendNotSubmitted extends Error {
 }
 
 /**
+ * nodemailer's two deadlines that fire before the greeting: the TCP connect and the `220`. Its
+ * mid-session one says `Timeout`. Matched by message because nodemailer gives all three one code;
+ * `send-not-submitted.test.ts` pins these strings against the pinned nodemailer over real sockets.
+ */
+const BEFORE_GREETING_TIMEOUTS: ReadonlySet<string> = new Set(["Connection timeout", "Greeting never received"]);
+
+/**
  * Which step a submission error PROVES the envelope never reached, or null when it proves nothing.
  * nodemailer raises `ETLS` only while STARTTLS is asked for or the upgrade runs, and `EAUTH` only
  * during login; `tlsFailed` is the transport's stamp on an error before its handshake was confirmed.
- * A timeout, a reset or a close can happen after DATA and stays ambiguous.
+ * `connect`: DNS failed (`EDNS`) or the socket's own connect did (nodemailer overwrites the errno
+ * with `ESOCKET`, so the syscall is the evidence), or a deadline fired before the greeting. A
+ * timeout, a reset or a close can happen after DATA and stays ambiguous.
  */
 export function submissionNeverOffered(err: unknown): SendNotSubmittedStep | null {
   if (!err || typeof err !== "object") return null;
-  const e = err as { code?: unknown; tlsFailed?: unknown };
+  const e = err as { code?: unknown; tlsFailed?: unknown; syscall?: unknown; message?: unknown };
   if (e.tlsFailed === true || e.code === "ETLS") return "secure";
   if (e.code === "EAUTH") return "login";
+  if (e.code === "EDNS" || e.syscall === "connect" || e.syscall === "getaddrinfo") return "connect";
+  if (e.code === "ETIMEDOUT" && typeof e.message === "string" && BEFORE_GREETING_TIMEOUTS.has(e.message)) {
+    return "connect";
+  }
   return null;
 }
 
