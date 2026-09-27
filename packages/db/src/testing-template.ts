@@ -218,7 +218,7 @@ export interface TemplateDeps {
 }
 
 export const openFromTarball = async (buf: Buffer): Promise<PGlite> => {
-  const client = new PGlite({ loadDataDir: new Blob([buf as Uint8Array<ArrayBuffer>]) });
+  const client = new PGlite({ loadDataDir: new Blob([new Uint8Array(buf)]) });
   await client.waitReady;
   return client;
 };

@@ -56,6 +56,7 @@
       "@tiptap/pm/state": ["./node_modules/@tiptap/pm/state"],
       "@tiptap/pm/model": ["./node_modules/@tiptap/pm/model"],
       "@tiptap/pm/transform": ["./node_modules/@tiptap/pm/transform"],
+      "@tiptap/pm/view": ["./node_modules/@tiptap/pm/view"],
       "@ohmail/tokens/omarchy-rule": ["../../packages/tokens/omarchy/rule.ts"],
       "@ohmail/tokens": ["../../packages/tokens/src/index.ts"],
       "@ohmail/fixtures": ["../../packages/fixtures/src/index.ts"],

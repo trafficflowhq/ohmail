@@ -765,6 +765,7 @@ export default defineConfig({
       { find: "@tiptap/pm/model", replacement: r("./node_modules/@tiptap/pm/model") },
       // `rich-editor-marks.ts` reads `ReplaceStep` off the transform subpath; same proxy-dir rule.
       { find: "@tiptap/pm/transform", replacement: r("./node_modules/@tiptap/pm/transform") },
+      { find: "@tiptap/pm/view", replacement: r("./node_modules/@tiptap/pm/view") },
       { find: "dompurify", replacement: r("./node_modules/dompurify") },
       /* pdf.js is kept OUT of the runtime bundle: the desktop window never previews a PDF inline
          (worker-src 'none'; an attachment opens in the platform's own viewer over
