@@ -232,7 +232,7 @@ interface SupersedeEffect {
   undo: Array<{ entry: PendingMutation; index: number; mutation: EngineMutation }>;
   /**
    * Requests on the wire this call marked superseded — see
-   * {@link PendingMutation.supersededInFlight}. The mark is made BEFORE
+   * {@link PendingMutation.supersededBy}. The mark is made BEFORE
    * persistence and undone on refusal, not deferred: the write is awaited,
    * and before it returns the older request can answer retryably and
    * re-queue itself — neither half would retire it, and the older verb
@@ -273,12 +273,13 @@ interface PendingMutation {
    */
   retire?: string[];
   /**
-   * TRUE when a newer verb for the same target was expressed while this one was on the wire.
+   * THE NEWER VERB, by entry id, expressed for the same target while this one was on the wire.
    *
-   * It cannot be un-sent, but it must not be replayed: the newer verb has since established the
-   * state, and re-running this one would put the older value back over it.
+   * It cannot be un-sent, but it must not be replayed over the state the newer verb establishes.
+   * The mark is tentative until that verb's durable write decides: a retryable answer waits for
+   * the decision ({@link replacementDecided}), and a refused write takes the mark back.
    */
-  supersededInFlight?: boolean;
+  supersededBy?: string;
   /**
    * TRUE once a non-idempotent CREATE went out under this key and its answer could not be read.
    *
@@ -5632,7 +5633,8 @@ export class OhmailEngine {
       });
       return { id, key, status: "rolled_back", seq: null, error };
     }
-    const superseded = this.supersedeQueued(enriched);
+    const settleMarks = this.openReplacement(id);
+    const superseded = this.supersedeQueued(enriched, id);
     this.retireShadowsUnder(effects);
     this.overlays.set(id, effects);
     this.overlayRev++;
@@ -5660,7 +5662,13 @@ export class OhmailEngine {
     // ONE TRANSACTION: the newer row in, the rows it supersedes out, and every abandoned record it
     // marks stale. See `supersedeQueued` for why the removal may not be a separate best-effort
     // delete, and `commitReplacement` for why the marks may not be separate writes either.
-    const commit = await this.commitReplacement(pending, superseded);
+    let commit: { persisted: boolean; marks: number };
+    try {
+      commit = await this.commitReplacement(pending, superseded);
+    } catch (err) {
+      settleMarks();
+      throw err;
+    }
     const persisted = commit.persisted;
     /**
      * NO WRITE, NO WIRE — and the rule counts EVERY row this verb replaces, not only whole ones.
@@ -5684,6 +5692,7 @@ export class OhmailEngine {
        */
       // No marker goes back, because none was made: they ride the transaction that was refused.
       this.undoSupersede(superseded);
+      settleMarks();
       this.overlays.delete(id);
       this.overlayRev++;
       this.notify();
@@ -5695,6 +5704,7 @@ export class OhmailEngine {
         ),
       };
     }
+    settleMarks();
     if (!persisted && enriched.kind === "mail_send") {
       this.overlays.delete(id);
       this.overlayRev++;
@@ -6548,6 +6558,24 @@ export class OhmailEngine {
   }
 
   /**
+   * REPLACEMENTS WHOSE WRITE HAS NOT DECIDED YET, by entry id — the confirm phase of
+   * {@link PendingMutation.supersededBy}. Opened before a verb marks anything on the wire, settled
+   * once its marks are final (kept, or put back by {@link undoSupersede}).
+   */
+  private readonly replacementWrites = new Map<string, Promise<void>>();
+
+  private openReplacement(id: string): () => void {
+    let settle!: () => void;
+    this.replacementWrites.set(id, new Promise<void>((r) => { settle = r; }));
+    return () => { this.replacementWrites.delete(id); settle(); };
+  }
+
+  /** Resolves once that replacement's marks are final; at once for one already decided. */
+  private replacementDecided(id: string): Promise<void> {
+    return this.replacementWrites.get(id) ?? Promise.resolve();
+  }
+
+  /**
    * The engine's own durable-write lane for the outbox replacement transaction — see
    * {@link commitReplacement}. NOT the store's (`serializeWrite`), which orders the transactions
    * but not the READS that decide what goes in them, which is where the lost update lived.
@@ -6576,7 +6604,7 @@ export class OhmailEngine {
    * the durable set holds both, or the newer one, and never the stale one alone. If that transaction is refused,
    * nothing was removed and the stale rows simply replay, which is the behaviour a storage-refused verb already has.
    */
-  private supersedeQueued(m: EngineMutation): SupersedeEffect {
+  private supersedeQueued(m: EngineMutation, by: string): SupersedeEffect {
     const retired: string[] = [];
     const narrowed: PendingMutation[] = [];
     /** Everything this call changed, kept so a refused replacement can put it all back. */
@@ -6608,8 +6636,8 @@ export class OhmailEngine {
     const markedInFlight: PendingMutation[] = [];
     for (const q of this.inFlight.values()) {
       if (q.mutation.kind === m.kind && key !== null && supersedeKey(q.mutation) === key
-        && q.supersededInFlight !== true) {
-        q.supersededInFlight = true;
+        && q.supersededBy === undefined) {
+        q.supersededBy = by;
         // Only what THIS call marked. An entry an EARLIER supersession marked is superseded by a
         // verb that is still standing (it is in the queue, and a refused replacement puts it
         // back), so clearing it on this refusal would resurrect a verb the queue already replaces.
@@ -6700,9 +6728,10 @@ export class OhmailEngine {
      * `undo` is EMPTY whenever the queue was empty, and an empty queue is exactly the state the
      * wire scan above it exists for — so a `return` on `undo.length === 0` would skip the only
      * case where a mark is the sole thing this supersession changed. That road is reachable and
-     * built: `abandoned-marker refusal with a verb on the wire` in `outbox-lifecycle.test.ts`.
+     * built: "round eight … (1) a refused replacement does not drop the verb it had marked on the
+     * wire" in `outbox-lifecycle.test.ts`, red with this line removed.
      */
-    for (const q of effect.markedInFlight) q.supersededInFlight = false;
+    for (const q of effect.markedInFlight) delete q.supersededBy;
     if (effect.undo.length === 0) return;
     for (const { entry, mutation } of effect.undo) {
       entry.mutation = mutation;
@@ -6967,9 +6996,12 @@ export class OhmailEngine {
         p.lastError = { message: rejection.message, code: rejection.code, status: rejection.status };
         // BEFORE the re-persist below, so the flag reaches disk with the entry it belongs to.
         if (rejection.createAttempted) p.createAttempted = true;
-        if (p.supersededInFlight === true) {
+        // THE CONFIRM PHASE: a mark is final only once its replacement's write has decided — see
+        // `supersededBy`. A refused write has taken it back by the time this resumes.
+        if (p.supersededBy !== undefined) await this.replacementDecided(p.supersededBy);
+        if (p.supersededBy !== undefined) {
           // A newer verb for the same target was expressed while this was on the wire. Re-queuing
-          // it would replay the older value over the newer state — see `supersededInFlight`.
+          // it would replay the older value over the newer state — see `supersededBy`.
           await this.dropOutbox(p.id);
           this.overlays.delete(p.id);
           this.overlayRev++;
