@@ -322,7 +322,7 @@ const EN = {
   /* THE LINK CHECK'S OWN THREE: the other computer says the link cannot pair, asked by the token's
      hash before anything here is set up — so each sentence can say nothing was changed. */
   hostRefuseLinkUsed:
-    "That link has already been used, so nothing was changed here. Make a new one from Settings → "
+    "That link was used before, so nothing was changed here. Make a new one from Settings → "
     + "Devices on that computer.",
   hostRefuseLinkExpired:
     "That link has expired, so nothing was changed here. Make a new one from Settings → Devices on "
