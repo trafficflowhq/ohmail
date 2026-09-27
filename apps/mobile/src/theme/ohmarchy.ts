@@ -8,7 +8,7 @@
  * the desktop's. The generator's header has the four projections and the four groups not projected.
  * Paper is the ABSENT face: nothing here is consulted unless `Theme.face === "ohmarchy"`.
  */
-import type { LiftLevel } from "./lift";
+import type { LiftLevel } from "./lift-level";
 import type { Palette, SchemeName } from "./palette";
 import type { radius as paperRadius } from "./tokens";
 

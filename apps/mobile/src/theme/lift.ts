@@ -15,7 +15,8 @@ import { ohmarchyLift, type FaceShadowLayer } from "./ohmarchy";
 import { css, oklch, type Oklch } from "./oklch";
 import type { SchemeName } from "./palette";
 
-export type LiftLevel = "l0" | "l1" | "l2" | "l3" | "barEdge" | "sheetEdge";
+import type { LiftLevel } from "./lift-level";
+export type { LiftLevel };
 
 interface Layer {
   /** px */
