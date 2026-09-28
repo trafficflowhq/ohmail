@@ -164,6 +164,12 @@ export interface SuggestBatchControl {
    * at, or "8 of 8" reports a stopped run as complete.
    */
   progress: { done: number; total: number } | null;
+  /**
+   * WHY THE LAST RUN COULD NOT BUY, while that still stands — {@link ScreenerSuggestions.standing}.
+   * The resting control says it: a refused automatic batch had a toast and nothing that stayed.
+   * Optional: a host control that tracks no standing says nothing here.
+   */
+  standing?: SuggestStanding | null;
   /** Open the ladder over the senders with no answer yet. */
   open: () => void;
   /**
@@ -1137,6 +1143,7 @@ export function useScreenerSuggestions(opts: {
       quote,
       notice,
       progress,
+      standing,
       open: () => openOn("new", addresses, newSizes),
       openAgain: () => openOn("again", resuggestable, againSizes),
       choose: (n: number) => {

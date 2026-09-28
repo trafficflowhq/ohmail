@@ -63,9 +63,31 @@ export const UNAVAILABLE_KEY: Record<SuggestStanding, string> = {
   refused: "noSuggestionRefused",
 };
 
+/**
+ * The sentence a standing says on a row. The no-credits one names where credits come from,
+ * Settings → Subscription, so that clause is said only where Settings lists that pane
+ * (`subscriptionPane`).
+ */
+export function standingKey(standing: SuggestStanding, subscriptionPane = false): string {
+  return standing === "no_budget" && subscriptionPane ? "noSuggestionNoBudgetWhere" : UNAVAILABLE_KEY[standing];
+}
+
+/**
+ * The suggest strip's line for a standing, or `null`. Only the empty balance: it waits on the
+ * person, where the others are their own switch or a fault. Same pane rule as {@link standingKey}.
+ */
+export function stripStandingKey(standing: SuggestStanding | null | undefined, subscriptionPane = false): string | null {
+  if (standing !== "no_budget") return null;
+  return subscriptionPane ? "suggest.noCreditsWhere" : "suggest.noCredits";
+}
+
 /** The key a row with no advice renders: {@link noSuggestionReason}, with the standing's reason. */
-export function noSuggestionKey(reason: NoSuggestionReason, standing: SuggestStanding | null): string {
-  return reason === "unavailable" && standing !== null ? UNAVAILABLE_KEY[standing] : NO_SUGGESTION_KEY[reason];
+export function noSuggestionKey(
+  reason: NoSuggestionReason, standing: SuggestStanding | null, subscriptionPane = false,
+): string {
+  return reason === "unavailable" && standing !== null
+    ? standingKey(standing, subscriptionPane)
+    : NO_SUGGESTION_KEY[reason];
 }
 
 /**

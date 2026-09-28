@@ -1589,9 +1589,11 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 /* WHAT THE AI ALLOWANCE IS DOING. `flex-basis: 100%` puts it on its own line under the bulk
    strip's buttons — the same device `.scn-sg-note` uses — so it is a footnote to that row and
    never a fourth control in it. Same 11.5px/--ink3 as every other quiet line here: the sentence
-   has to be findable at the moment it matters and must not compete with the button that spends. */
+   has to be findable at the moment it matters and must not compete with the button that spends.
+   `order` keeps it under the whole row when the control that renders it sits mid-strip. */
 .scn-ai-credits {
   flex-basis: 100%;
+  order: 1;
   display: flex;
   align-items: baseline;
   gap: 6px;

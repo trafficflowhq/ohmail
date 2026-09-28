@@ -68,7 +68,7 @@ import { readerHolder, type ReaderHolding, type ScreenerRole } from "../shell/ma
 import type { HeldBodyStall, ScreenerState, SpamRow } from "../shell/screener-state";
 import type { SuggestBatchControl } from "../shell/screener-suggest";
 import {
-  noSuggestionKey, noSuggestionReason, type SuggestStanding,
+  noSuggestionKey, noSuggestionReason, stripStandingKey, type SuggestStanding,
 } from "../shell/no-suggestion";
 import type { RemoteImagesChrome } from "../shell/remote-images";
 import { MessageBody } from "../components/MessageBody";
@@ -279,49 +279,58 @@ function askState(control: SuggestBatchControl): AskWellState {
  * nothing-to-re-ask renders nothing. Exported for the desktop's hosted door, which brings its own transport but must
  * not render a second ladder — a second place for a price a purchase does not honour.
  */
-export function SuggestControl({ control }: { control: SuggestBatchControl }) {
+export function SuggestControl(
+  { control, subscriptionPane = false }: { control: SuggestBatchControl; subscriptionPane?: boolean },
+) {
   const t = useTranslations("screener");
   /* The quote's credit clause only where credits are charged (`managed-service.ts`). */
   const metered = useManagedService();
   const again = control.mode === "again";
   if (control.available === 0 && control.resuggestable === 0) return null;
+  const standingLine = stripStandingKey(control.standing, subscriptionPane);
 
   if (control.phase === "closed") {
     return (
-      <div className="scn-sg-rest">
-        {control.available === 0 ? (
-          // THE RESTING STATE — a fact, not a control. `role="status"` because it replaces a
-          // button in place when the last sender is answered for, and a surface that changes
-          // from an action to a sentence under a keyboard user's cursor has to say so.
-          //
-          // ONLY when every waiting sender carries a REAL suggestion (`unanswered === 0`, the
-          // filter chips' own selector): a hold is an answer but not a suggestion, so with any
-          // on screen this sentence would claim what the chip row right below counts against —
-          // the header/filter disagreement measured on a live account. The chips say the
-          // partition; this says nothing.
-          control.unanswered === 0 ? (
-            <span className="scn-sg-all" role="status">
-              {t("suggest.allSuggested", { count: control.resuggestable })}
-            </span>
-          ) : null
-        ) : (
-          /* A capsule like the apply beside it, not a ghost: it is the way to the strip's other
-             verb, and it spends nothing to press — the ask that opens names its price first. */
-          <Button onClick={control.open}>
-            {t("suggest.open")}
-          </Button>
-        )}
-        {/* Offered whenever there is anything to ask about again — beside the buy control while
-            the queue is mixed, alone once it is worked through. Its own affordance and not a
-            branch of the one to its left, for the reason the buy and apply controls are separate:
-            they are different acts. Pressing it enters the same quote → confirm → progress flow,
-            so nothing here can spend before the server has named a figure. */}
-        {control.resuggestable > 0 ? (
-          <Button onClick={control.openAgain}>
-            {t("suggest.again")}
-          </Button>
-        ) : null}
-      </div>
+      <>
+        <div className="scn-sg-rest">
+          {control.available === 0 ? (
+            // THE RESTING STATE — a fact, not a control. `role="status"` because it replaces a
+            // button in place when the last sender is answered for, and a surface that changes
+            // from an action to a sentence under a keyboard user's cursor has to say so.
+            //
+            // ONLY when every waiting sender carries a REAL suggestion (`unanswered === 0`, the
+            // filter chips' own selector): a hold is an answer but not a suggestion, so with any
+            // on screen this sentence would claim what the chip row right below counts against —
+            // the header/filter disagreement measured on a live account. The chips say the
+            // partition; this says nothing.
+            control.unanswered === 0 ? (
+              <span className="scn-sg-all" role="status">
+                {t("suggest.allSuggested", { count: control.resuggestable })}
+              </span>
+            ) : null
+          ) : (
+            /* A capsule like the apply beside it, not a ghost: it is the way to the strip's other
+               verb, and it spends nothing to press — the ask that opens names its price first. */
+            <Button onClick={control.open}>
+              {t("suggest.open")}
+            </Button>
+          )}
+          {/* Offered whenever there is anything to ask about again — beside the buy control while
+              the queue is mixed, alone once it is worked through. Its own affordance and not a
+              branch of the one to its left, for the reason the buy and apply controls are separate:
+              they are different acts. Pressing it enters the same quote → confirm → progress flow,
+              so nothing here can spend before the server has named a figure. */}
+          {control.resuggestable > 0 ? (
+            <Button onClick={control.openAgain}>
+              {t("suggest.again")}
+            </Button>
+          ) : null}
+        </div>
+        {/* WHY THE LAST RUN BOUGHT NOTHING, while that still stands: a refused automatic batch
+            was a toast, and the list under it then said nothing at all. A footnote to the strip,
+            not a control; the preview says the same fact in the row's words. */}
+        {standingLine ? <p className="scn-ai-credits" role="status">{t(standingLine)}</p> : null}
+      </>
     );
   }
 
@@ -547,6 +556,7 @@ export function ScreenerView({
   suggestNode,
   noSuggestionStanding = null,
   autoSuggest = false,
+  subscriptionPane = false,
   segment,
   selection,
   settled,
@@ -586,6 +596,11 @@ export function ScreenerView({
    * reads as "nothing is refusing".
    */
   noSuggestionStanding?: SuggestStanding | null;
+  /**
+   * DOES SETTINGS LIST THE SUBSCRIPTION PANE — the no-credits sentence says where credits come
+   * from by naming it, and only where it is. Absent reads as no.
+   */
+  subscriptionPane?: boolean;
   /**
    * HAS THIS ACCOUNT OPTED IN to automatic suggestions — the fact that turns a row's "no
    * suggestion yet" into "a suggestion is coming", so the cadence the opt-in bought is stated
@@ -1561,7 +1576,7 @@ export function ScreenerView({
                       suggestion writes nothing to the mailbox and moves no mail — it is advice
                       about senders, and a reader who wants to know what a model thinks before
                       taking the mailbox over is asking a question this install can answer. */}
-                  {suggestNode ?? (suggest ? <SuggestControl control={suggest} /> : null)}
+                  {suggestNode ?? (suggest ? <SuggestControl control={suggest} subscriptionPane={subscriptionPane} /> : null)}
                   {state.role.mode !== "blocked" ? (
                     <Button variant="ghost" kbdHint="s" onClick={() => state.markAllSpam(scopeOf)}>
                       {t("markAllSpam")}
@@ -1701,6 +1716,7 @@ export function ScreenerView({
             mailboxLabel={mailboxLabelFor(current as ScreenerSenderDTO)}
             standing={noSuggestionStanding}
             autoSuggest={autoSuggest}
+            subscriptionPane={subscriptionPane}
             {...(decisionFor(current as ScreenerSenderDTO) !== undefined
               ? { decision: decisionFor(current as ScreenerSenderDTO)! }
               : {})}
@@ -2354,6 +2370,7 @@ function WaitingPreview({
   mailboxLabel,
   standing,
   autoSuggest,
+  subscriptionPane,
 }: {
   sender: ScreenerSenderDTO;
   scope: DecisionScope;
@@ -2392,6 +2409,8 @@ function WaitingPreview({
   standing: SuggestStanding | null;
   /** See `ScreenerViewProps.autoSuggest` — the opt-in fact behind the "coming" sentence. */
   autoSuggest: boolean;
+  /** See `ScreenerViewProps.subscriptionPane`. */
+  subscriptionPane: boolean;
 }) {
   const t = useTranslations("screener");
   const tm = useTranslations("message");
@@ -2549,7 +2568,7 @@ function WaitingPreview({
              the refusal's reason. `data-why` is the state a test reads, so the assertion is not on a
              sentence's wording. */
           <div className="scn-why scn-why-none" data-why={noSuggestionReason(sender, standing, autoSuggest)}>
-            <span>{t(noSuggestionKey(noSuggestionReason(sender, standing, autoSuggest), standing))}</span>
+            <span>{t(noSuggestionKey(noSuggestionReason(sender, standing, autoSuggest), standing, subscriptionPane))}</span>
           </div>
         )}
         {sender.held.length > 1 ? (

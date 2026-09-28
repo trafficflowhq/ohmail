@@ -2676,6 +2676,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                    such row — the refusal used to reach the person as a single toast under the
                    batch that discovered it while every waiting row went on saying "yet". */
                 noSuggestionStanding={suggestions.standing}
+                /* Where credits come from is Settings → Subscription, said only where Settings lists
+                   it — the same node the nav entry is built from. */
+                subscriptionPane={!demo && Boolean(billingSection)}
                 /* The opt-in fact behind the rows' "a suggestion is coming" — the same read the
                    hook spends under, so the sentence and the spend cannot disagree. */
                 autoSuggest={consent.autoSuggest}

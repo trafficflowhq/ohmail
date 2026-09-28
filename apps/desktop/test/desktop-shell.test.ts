@@ -2990,7 +2990,7 @@ describe("the UI bundle's build config", () => {
     expect(shell).toMatch(/absorb: suggestions\.absorb/);
 
     const view = fs.readFileSync(path.resolve(APP, "../webapp/app/views/ScreenerView.tsx"), "utf8");
-    expect(view).toMatch(/suggestNode \?\? \(suggest \? <SuggestControl control=\{suggest\} \/> : null\)/);
+    expect(view).toMatch(/suggestNode \?\? \(suggest \? <SuggestControl control=\{suggest\} subscriptionPane=\{subscriptionPane\} \/> : null\)/);
 
     // The shared files name none of it. No bridge, no provider, no local route — the same rule the
     // Settings pane follows, and the reason a browser tab can compile these files at all.
