@@ -7,7 +7,7 @@ import {
   rules, recordMailboxProfileChange, type LedgerTx, parkedResumeWhere, parkedResumeSet,
 } from "@trafficflow/db";
 import { makeDb } from "@trafficflow/db/cloud";
-import { workerHeartbeats } from "@trafficflow/db/cloud";
+import { workerHeartbeats, pushSubscriptions } from "@trafficflow/db/cloud";
 import type { KeyProvider, OAuthTokenProvider } from "@trafficflow/core";
 import {
   buildImapAuth, oauthSmtpEndpoint, type ImapAuth, type CredMetaAuth,
@@ -1504,6 +1504,22 @@ export async function resumeParkedMailbox(
     .set(parkedResumeSet(now))
     .where(and(lifecycleWhere(mailboxId, opts.fence), parkedResumeWhere()))
     .returning({ id: mailboxes.id }));
+}
+
+/**
+ * THE PARK'S PUSH ROWS GO WITH ITS BLOCK (mail 0124, narrowed by 0135): an account's rows are
+ * deleted only while every live mailbox of it says `account_closed`, read by the delete itself.
+ * The reopening door clears that block before any tab can re-announce, so a subscription made
+ * after the payment is never taken by a pass that decided on a refusal from before it.
+ */
+export async function deleteParkedPushRows(db: WorkerDb, accountIds: readonly string[]): Promise<number> {
+  if (accountIds.length === 0) return 0;
+  const gone = await db.delete(pushSubscriptions).where(and(
+    inArray(pushSubscriptions.accountId, [...accountIds]),
+    sql`not exists (select 1 from ${mailboxes} m where m.account_id = ${pushSubscriptions.accountId}
+      and m.status <> 'disabled' and m.sync_blocked_reason is distinct from 'account_closed')`,
+  )).returning({ id: pushSubscriptions.id });
+  return gone.length;
 }
 
 /**

@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import {
   pruneIdempotencyKeys, pruneSendFingerprints, noticeSinkFor, setNoticeSink, accountSettings, mailboxCredentials, mailboxes,
@@ -9,7 +9,7 @@ import {
 } from "@trafficflow/db";
 import {
   makeEntitlementsClient, refundObligationsOn, makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout,
-  markScreenerSuggestOwed, owedSuggestAccounts, clearScreenerSuggestOwed, pushSubscriptions,
+  markScreenerSuggestOwed, owedSuggestAccounts, clearScreenerSuggestOwed,
   pruneErasedBearers, pruneAuthThrottle } from "@trafficflow/db/cloud";
 import {
   runAlertPass, firingToLog,
@@ -119,7 +119,7 @@ import {
   markMailboxFailed, markMailboxReadLimited, markMailboxProviderUnavailable, markMailboxConnected,
   markMailboxStoodDown, stampSyncProgress,
   clearOrganizerStandDown,
-  markMailboxReleased, refreshOrganizerHolder, resumeParkedMailbox,
+  markMailboxReleased, refreshOrganizerHolder, resumeParkedMailbox, deleteParkedPushRows,
   markMailboxSyncBlocked, clearMailboxSyncBlock,
   classifyMailboxError, isProviderRefusal, mailboxErrorDetail,
   stampMailboxSyncNow, stampInitialImportComplete, makeSyncWriteFence, type LeaderFence,
@@ -2940,23 +2940,6 @@ export async function startWorkerWithLock(
           });
         }
       }
-      if (roster.parked.length > 0) {
-        // Push rows go every pass — idempotent by construction (`inArray`, the arm omitted when
-        // the parked set is empty), and a parked account cannot re-register: the subscribe route
-        // is `work`, which the 402 gate refuses.
-        const parkedAccounts = [...new Set(roster.parked.map((m) => m.accountId))];
-        try {
-          await db.delete(pushSubscriptions)
-            .where(inArray(pushSubscriptions.accountId, parkedAccounts));
-        } catch (err) {
-          log.error("parked_push_delete_failed", {
-            accounts: parkedAccounts.length, err,
-            reason: "push subscriptions of parked accounts could not be deleted this pass; " +
-              "the delete repeats next pass",
-          });
-        }
-      }
-
       const desired = new Map(served.map((m) => [m.mailboxId, m]));
 
       // Detach anything no longer in the duty: soft-disabled, deleted,
@@ -3118,6 +3101,19 @@ export async function startWorkerWithLock(
       // construction, and the writer below is what puts `account_closed` on them — and what
       // clears it, because an un-parked account's rows re-enter `selected` with no bucket.
       await reconcileSyncBlocks([...selected, ...roster.parked]);
+
+      // Push rows go with the block, after it is written: idempotent, and only for an account
+      // every live mailbox of which says `account_closed` as the delete runs (mail 0135).
+      const parkedAccounts = [...new Set(roster.parked.map((m) => m.accountId))];
+      try {
+        await deleteParkedPushRows(db, parkedAccounts);
+      } catch (err) {
+        log.error("parked_push_delete_failed", {
+          accounts: parkedAccounts.length, err,
+          reason: "push subscriptions of parked accounts could not be deleted this pass; " +
+            "the delete repeats next pass",
+        });
+      }
     }
 
     /**
