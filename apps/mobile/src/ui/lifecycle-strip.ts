@@ -8,10 +8,14 @@
  */
 
 import type { AccountLifecycle } from "../net/access-lock";
+import type { AccessFeed } from "../net/account";
 import type { PhoneMailbox } from "../net/mailboxes";
 
 /** How close to the end of a trial the strip appears. The day-12 reminder mail is the other half. */
 export const TRIAL_NOTICE_DAYS = 2;
+
+/** A return this long after the last read asks again while nothing is drawn; while one is, the debounce. */
+export const QUIET_RETURN_MS = 15 * 60_000;
 
 /** What the strip says, or `null` for the states that have nothing to say. */
 export type Notice =
@@ -73,6 +77,27 @@ export function dismissed(key: string): boolean {
 
 export function remember(key: string): void {
   putAway.add(key);
+}
+
+/**
+ * WHAT THE FEED EARNS for this viewer: the notice, or `null` for nothing to say, a server with no
+ * program, or a notice put away (in this run, or in this mount where the set says so). Bound: the
+ * catch-up lives in module state, so a kill between the wall's lift and the strip's first paint
+ * loses it; that is seconds, and the service answers it once per closure.
+ */
+export function stripNotice(
+  entry: AccessFeed | null, owner: string | null, hidden: ReadonlySet<string>, now: number,
+): Notice | null {
+  if (entry === null || !entry.answer.metered) return null;
+  const next = noticeOf(entry.answer.lifecycle, entry.caughtUp ?? undefined, now);
+  if (next === null) return null;
+  const key = dismissKey(next, owner);
+  return hidden.has(key) || dismissed(key) ? null : next;
+}
+
+/** The schedule's read is done once an answer earns no deadline: that ends a hand-off poll. */
+export function settlesTheStrip(a: { metered: boolean; lifecycle?: AccountLifecycle }, now: number): boolean {
+  return !a.metered || noticeOf(a.lifecycle, undefined, now) === null;
 }
 
 /** Tests only: forget every dismissal, so one case cannot see another's. */

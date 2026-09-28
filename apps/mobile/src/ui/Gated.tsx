@@ -43,7 +43,11 @@ function firstPaintInputs(session: ConnectedSession): FirstPaintInputs {
   };
 }
 
-/** `true` once this session's mail may paint — at once, or after the bounded verdict read. */
+/**
+ * `true` once this session's mail may paint — at once, or after the bounded verdict read. Bound,
+ * accepted as the web's is: a stored `open` paints the mirror at once, so an account that closed
+ * since the last check meets its wall with the first 402, one drain later.
+ */
 function useFirstPaint(session: ConnectedSession | null): boolean {
   const atOnce = session === null || firstPainted.has(session) || paintsAtOnce(firstPaintInputs(session));
   const [openFor, setOpenFor] = useState<ConnectedSession | null>(null);

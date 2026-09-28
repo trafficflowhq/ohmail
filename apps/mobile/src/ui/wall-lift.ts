@@ -1,9 +1,10 @@
 /**
- * WHEN THE WALL ASKS WHETHER IT MAY LIFT. `opens` is one fresh access read answering `true` only
- * for `access: "open"`, and that read itself takes the wall down (`net/account.ts`); this decides
- * only when to ask: once on every return to the foreground, once a minute while the wall is shown
- * and the app in front, and a bounded poll after the way-back press. A spent poll offers one more.
- * Pure — the lifecycle and the clock are handed in, so the suite turns both by hand.
+ * WHEN THE ACCOUNT'S STANDING IS ASKED — one schedule, two users. `opens` is one fresh access read;
+ * `true` ends a poll. This decides only when to ask: once on every return to the foreground (past
+ * `returnFloor`), on `minute` while the app is in front (`null`, the default: never on a clock),
+ * and a bounded poll after the way-back press. The wall passes `WALL_READ_MS` and its read takes
+ * the wall down (`net/account.ts`); the account strip passes no minute. A spent poll offers one
+ * more. Pure — the lifecycle and the clock are handed in, so the suite turns both by hand.
  */
 import type { AppLifecycle, CadenceTimers } from "../net/drain-cadence";
 
@@ -24,6 +25,12 @@ export interface WallLiftInputs {
   onCheck: (check: WallCheck) => void;
   timers?: CadenceTimers;
   now?: () => number;
+  /** A read this often while the app is in front, or `null` (the default) for none. */
+  minute?: number | null;
+  /** How soon after the last read a return asks again. Default {@link RETURN_DEBOUNCE_MS}. */
+  returnFloor?: () => number;
+  /** When this client last had an answer, by any reader; the floor counts from the later of it and this schedule's own read. */
+  lastAsked?: () => number;
 }
 
 export interface WallLift {
@@ -88,22 +95,24 @@ export function wallLift(i: WallLiftInputs): WallLift {
   const onReturn = (): void => {
     if (stopped || polling) return;
     if (armed) { void poll(); return; }
-    if (now() - lastRead < RETURN_DEBOUNCE_MS) return;
+    const last = Math.max(lastRead, i.lastAsked?.() ?? Number.NEGATIVE_INFINITY);
+    if (now() - last < (i.returnFloor?.() ?? RETURN_DEBOUNCE_MS)) return;
     void readOnce();
   };
 
-  const armMinute = (): void => {
+  const every = i.minute ?? null;
+  const armMinute = (ms: number): void => {
     minute = timers.set(() => {
       minute = null;
       if (stopped) return;
       // At most one a minute: a return or a poll that asked inside the minute already answered it.
-      if (i.lifecycle.now() === "active" && !polling && now() - lastRead >= WALL_READ_MS) void readOnce();
-      armMinute();
-    }, WALL_READ_MS);
+      if (i.lifecycle.now() === "active" && !polling && now() - lastRead >= ms) void readOnce();
+      armMinute(ms);
+    }, ms);
   };
 
   const unsubscribe = i.lifecycle.subscribe((status) => { if (status === "active") onReturn(); });
-  armMinute();
+  if (every !== null) armMinute(every);
 
   return {
     armPoll: () => { armed = true; },

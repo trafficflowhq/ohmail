@@ -17,7 +17,7 @@ import { useLocale } from "../i18n/LocaleProvider";
 import { Button, Screen, Scroller, Txt } from "./base";
 import { dayStamp } from "./day-stamp";
 import { wallSays, type WallAction, type WallLine } from "./wall-says";
-import { wallLift, type WallCheck, type WallLift } from "./wall-lift";
+import { WALL_READ_MS, wallLift, type WallCheck, type WallLift } from "./wall-lift";
 import { useTheme } from "../theme";
 import {
   exportFilename, mintManageLink, opensTheWall, readAccess, readExport, SELF_HOST_GUIDE,
@@ -28,8 +28,8 @@ import type { AccessRefusedFacts } from "../net/access-lock";
 import type { AppLifecycle } from "../net/drain-cadence";
 import type { ConnectedSession } from "../net/pairing";
 
-/** React Native's `AppState`, as the wall's schedule reads it — the drain cadence's own shape. */
-const appLifecycle: AppLifecycle = {
+/** React Native's `AppState`, as the wall's and the strip's schedules read it — the drain cadence's own shape. */
+export const appLifecycle: AppLifecycle = {
   now: () => AppState.currentState,
   subscribe: (listener) => {
     const sub = AppState.addEventListener("change", listener);
@@ -84,6 +84,7 @@ export function AccountWall(
       },
       lifecycle: appLifecycle,
       onCheck: setCheck,
+      minute: WALL_READ_MS,
     });
     lift.current = machine;
     return () => {

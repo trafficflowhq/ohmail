@@ -26,6 +26,7 @@ import type { ReopenOutcome, StandaloneEngine } from "../engine/standalone-door"
 import { ServerProfileStore, type ServerProfile } from "../state/servers";
 import { BearerManagerRN, type FetchLike, type RefreshVault } from "./bearer";
 import { withAccessLock } from "./access-lock";
+import { forgetAccessFeed } from "./account";
 import { networkNow } from "./network-door";
 import {
   canPin, isNotTls, isPinFailure, pin as installPin, unpin, unreachableClause,
@@ -889,6 +890,8 @@ export async function forgetProfile(
   opts: { closed?: Promise<void>; revoke?: (() => Promise<boolean>) | null } = {},
 ): Promise<ForgetOutcome> {
   const row = (await env.profiles.list()).find((p) => p.id === profileId) ?? null;
+  // What the account door answered this pairing goes first: nothing of it may paint again.
+  forgetAccessFeed(profileId);
   /**
    * A second forget of a row the first already removed is not automatically
    * done. Two taps before the row re-renders both reach here: the first

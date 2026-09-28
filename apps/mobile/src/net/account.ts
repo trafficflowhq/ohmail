@@ -16,6 +16,7 @@ import {
   type AccessRefusedFacts, type AccountLifecycle,
 } from "./access-lock";
 import { recordVerdict } from "../state/access-verdict";
+import { RETURN_DEBOUNCE_MS } from "../ui/wall-lift";
 
 /** What `GET /account/access` said, reduced to what this phone draws. */
 export interface AccountAccess {
@@ -80,11 +81,69 @@ export function refusedFactsOf(a: AccountAccess): AccessRefusedFacts | null {
 }
 
 /**
- * EVERY ANSWER IS THE SERVICE'S FRESH WORD: an open one lifts the wall and opens the stale-402
- * window, a refused one raises the wall like a 402 would, and both are kept for the next launch's
- * first paint. An answer with no `access` says nothing and changes nothing.
+ * THE ACCESS FEED — the latest answer per pairing, whoever asked for it (the first-paint gate, the
+ * wall's lift, the strip), so the strip follows every one. It holds the one-time catch-up until it
+ * is put away, because the service answers that once, to whichever read asks first; module state,
+ * with its bound in `ui/lifecycle-strip.ts`. Forgetting the pairing forgets its entry.
+ */
+export interface AccessFeed {
+  answer: AccountAccess;
+  caughtUp: { since: string } | null;
+  /** When this answer arrived. */
+  at: number;
+}
+
+const feeds = new Map<string, AccessFeed>();
+const heldCatchUps = new Map<string, string>();
+const feedListeners = new Set<() => void>();
+const tellFeed = (): void => { for (const listener of [...feedListeners]) listener(); };
+
+function publishAccess(profileId: string, a: AccountAccess): void {
+  if (a.metered && a.caughtUp !== undefined) heldCatchUps.set(profileId, a.caughtUp.since);
+  const since = heldCatchUps.get(profileId);
+  feeds.set(profileId, { answer: a, caughtUp: since === undefined ? null : { since }, at: Date.now() });
+  tellFeed();
+}
+
+/** This pairing's feed, or `null` — the stored reference, so a snapshot is stable. */
+export function accessFeedFor(profileId: string): AccessFeed | null {
+  return feeds.get(profileId) ?? null;
+}
+
+export function onAccessFeed(listener: () => void): () => void {
+  feedListeners.add(listener);
+  return () => { feedListeners.delete(listener); };
+}
+
+/** The catch-up was put away: gone from the feed, never said twice. */
+export function putAwayCatchUp(profileId: string): void {
+  heldCatchUps.delete(profileId);
+  const entry = feeds.get(profileId);
+  if (entry !== undefined && entry.caughtUp !== null) {
+    feeds.set(profileId, { ...entry, caughtUp: null });
+    tellFeed();
+  }
+}
+
+/** The pairing is forgotten: nothing it was answered is kept. */
+export function forgetAccessFeed(profileId: string): void {
+  heldCatchUps.delete(profileId);
+  if (feeds.delete(profileId)) tellFeed();
+}
+
+/** Tests only. */
+export function resetAccessFeedForTests(): void {
+  feeds.clear();
+  heldCatchUps.clear();
+}
+
+/**
+ * EVERY ANSWER IS THE SERVICE'S FRESH WORD: published to the feed, an open one lifts the wall and
+ * opens the stale-402 window, a refused one raises the wall like a 402 would, and both are kept
+ * for the next launch's first paint. An answer with no `access` changes no verdict.
  */
 function noteAccess(session: ConnectedSession, a: AccountAccess): void {
+  publishAccess(session.profile.id, a);
   if (!a.metered) { recordVerdict(session.profile.id, "open"); return; }
   if (opensTheWall(a)) {
     recordVerdict(session.profile.id, "open");
@@ -101,10 +160,23 @@ function noteAccess(session: ConnectedSession, a: AccountAccess): void {
 /**
  * Ask the door. `null` is "could not ask" — never "nothing to say": a strip drawn from a failed
  * read would appear and vanish with the network, and a wall raised from one would be a wall over
- * a flaky minute.
+ * a flaky minute. A read asked inside {@link RETURN_DEBOUNCE_MS} of the last one for this session
+ * joins it: the wall and the strip both ask on the same return to the foreground. A failed read
+ * is not joined.
  */
-export async function readAccess(session: ConnectedSession): Promise<AccountAccess | null> {
-  if (session.standalone) return null;
+const asked = new WeakMap<ConnectedSession, { at: number; answer: Promise<AccountAccess | null> }>();
+
+export function readAccess(session: ConnectedSession): Promise<AccountAccess | null> {
+  if (session.standalone) return Promise.resolve(null);
+  const held = asked.get(session);
+  if (held !== undefined && Date.now() - held.at < RETURN_DEBOUNCE_MS) return held.answer;
+  const entry = { at: Date.now(), answer: askAccess(session) };
+  asked.set(session, entry);
+  void entry.answer.then((a) => { if (a === null && asked.get(session) === entry) asked.delete(session); });
+  return entry.answer;
+}
+
+async function askAccess(session: ConnectedSession): Promise<AccountAccess | null> {
   try {
     const res = await session.fetch(`${requestBase(session)}/account/access`, { method: "GET" });
     if (res.status !== 200) return null;
