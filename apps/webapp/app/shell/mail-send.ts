@@ -500,6 +500,8 @@ export function writeReplyDraft(messageId: string, value: RichValue): void {
 export interface ReplyEditorMeta {
   subject?: string;
   sig?: SignatureState;
+  /** The account row this browser last wrote or opened for the lane, at its stored stamp. */
+  row?: { id: string; at: string };
 }
 
 /** Likewise for the reply editor's metadata half. */
@@ -514,8 +516,10 @@ export function readReplyMeta(lane: string): ReplyEditorMeta {
     const parsed = JSON.parse(raw) as Partial<ReplyEditorMeta>;
     // Field-wise, like every scratch reader: only the shapes the model names restore.
     const sig = parsed.sig;
+    const row = parsed.row;
     return {
       ...(typeof parsed.subject === "string" ? { subject: parsed.subject } : {}),
+      ...(typeof row?.id === "string" && typeof row.at === "string" ? { row: { id: row.id, at: row.at } } : {}),
       ...(sig?.kind === "removed" ? { sig: { kind: "removed" as const } }
         : sig?.kind === "edited" && typeof sig.text === "string"
           ? { sig: { kind: "edited" as const, text: sig.text } }
@@ -528,7 +532,7 @@ export function readReplyMeta(lane: string): ReplyEditorMeta {
 
 export function writeReplyMeta(lane: string, meta: ReplyEditorMeta): void {
   // A meta with neither field stores nothing — absence IS the resting state, see above.
-  if (meta.subject === undefined && meta.sig === undefined) {
+  if (meta.subject === undefined && meta.sig === undefined && meta.row === undefined) {
     durableRemove(replyMetaKey(lane), "reply.meta");
     return;
   }
@@ -602,8 +606,8 @@ export type LanePromotion = "promoted" | "empty" | "unplaceable" | "refused";
 /**
  * PROMOTE, NEVER DROP — a half-written reply whose parent another mail client has taken away.
  *
- * The inline reply has no autosave and its only reader is the editor that opens ON the parent, so
- * a delete does not remove the words: it makes them unreachable. This turns them into a draft row
+ * The lane's scratch is read only by the editor that opens ON the parent, so a delete does not
+ * remove the words: it makes them unreachable. This turns them into a draft row
  * carrying `inReplyToMessageId` of the dead id (legal: the FK is nullable, the delete is soft).
  *
  * THE ORDER IS THE INVARIANT: the lane clears after the row is confirmed and never before, so a

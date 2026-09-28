@@ -23,6 +23,7 @@ import {
   sendAndDonePlanFor,
   sendingMailboxId,
   type ComposeAttachment,
+  type EmailAddress,
   type EngineDraft,
   type EngineMessage,
   type EngineMutation,
@@ -38,6 +39,7 @@ import {
   composePlan,
   composeSessionId,
   EMPTY_COMPOSE,
+  parseRecipients,
   readComposeDraft,
   readComposeRow,
   takeRecoveredComposer,
@@ -70,8 +72,10 @@ import {
 } from "./compose-from";
 import type { ConsentState } from "./consent-state";
 import { useDraftReply, type DraftedReply } from "./draft-reply";
+import { useReplyAutosave, type ReplyDraftForm } from "./reply-autosave";
 import { forwardEnvelopePlan, forwardSend } from "./forward-send";
 import {
+  clearReplyLane,
   COMPOSE_SEND_KEY,
   heldRowUnverified,
   inlineForwardKey,
@@ -227,12 +231,19 @@ export function useShellCompose({
    * having to remember.
    */
   const [replyEnvelope, setReplyEnvelope] = useState<ReplyEnvelopeEdit | null>(null);
+  /** What a reply row held beside its text — the audience and the sender — for the open to restore. */
+  const adoptedEdits = useRef<{ lane: string; envelope: ReplyEnvelopeEdit | null; fromId: string | null } | null>(null);
   useEffect(() => {
     // A FORWARD OPENS WITH THE ROWS ALREADY SHOWING, EMPTY — its audience is the user's to
     // pick and never derived (`forwardEnvelopePlan`), so a collapsed head would name nobody
     // and hide the one thing Send is waiting for. A reply keeps `null`: the computed audience
     // stands until the head is pressed, exactly as before.
     setReplyEnvelope(replyMode === "forward" ? { to: "", cc: "", bcc: "" } : null);
+    // …or, once, the audience held by the reply row this open adopted (`adoptReplyRow`).
+    const adopted = adoptedEdits.current;
+    if (adopted?.lane !== replyTo) return;
+    adoptedEdits.current = { ...adopted, envelope: null };
+    if (replyMode === "reply" && adopted.envelope !== null) setReplyEnvelope(adopted.envelope);
   }, [replyTo, replyAll, replyMode]);
   /**
    * THE REPLY'S PICKED SENDER and THE FILES IT WILL CARRY — both PER-MESSAGE and both stored
@@ -265,7 +276,9 @@ export function useShellCompose({
    * the editor or none, and a settled send spends them together.
    */
   useEffect(() => {
-    setReplyFromId(null);
+    const adopted = adoptedEdits.current;
+    if (adopted?.lane === replyTo) adoptedEdits.current = null;
+    setReplyFromId(replyMode === "reply" && adopted?.lane === replyTo ? adopted.fromId : null);
     setReplyAttachments([]);
     if (replyTo !== null) {
       const meta = readReplyMeta(replyMode === "forward" ? inlineForwardKey(replyTo) : replyTo);
@@ -363,16 +376,32 @@ export function useShellCompose({
     mode === "forward" ? inlineForwardKey(messageId) : messageId);
 
   const openReply = useStableCallback((messageId: string, all = false) => {
-    // The mode travels with the open, never separately: a Reply press while a reply-all
-    // editor is up on the same message is an explicit narrowing, and vice versa.
-    setReplyAll(all);
-    setReplyMode("reply");
-    setReplyTo(messageId);
-    setReplyBody(readReplyDraft(messageId));
-    // MOBILE. Under 900px the reading column is `display:none` (app.css), so an inline
-    // reply would mount into a pane nobody can see and `r` would look broken — measured on
-    // the shipped build at 390px. There, the reader IS the open message, so open it.
-    if (readColumnHidden()) setReaderFor(messageId);
+    const open = (body: RichValue): void => {
+      // The mode travels with the open, never separately: a Reply press while a reply-all
+      // editor is up on the same message is an explicit narrowing, and vice versa.
+      setReplyAll(all);
+      setReplyMode("reply");
+      setReplyTo(messageId);
+      setReplyBody(body);
+      // MOBILE. Under 900px the reading column is `display:none` (app.css), so an inline
+      // reply would mount into a pane nobody can see and `r` would look broken — measured on
+      // the shipped build at 390px. There, the reader IS the open message, so open it.
+      if (readColumnHidden()) setReaderFor(messageId);
+    };
+    const scratch = readReplyDraft(messageId);
+    // THE ACCOUNT'S ROW FOR THIS REPLY, written here or on another device, is what Reply opens.
+    const row = laneRowOf(messageId) === null ? accountReplyRow(messageId) : null;
+    if (row === null) { open(scratch); return; }
+    void openDraftDecision(row, {
+      readDraftBody: (id) => engine.readDraftBody(id),
+      openWithBody: (d, text) => open(adoptReplyRow(messageId, d, text, scratch, all)),
+      unavailable: () => {
+        // A row whose text cannot be read is neither written over nor twinned.
+        unreadableRows.current.add(messageId);
+        toast(t("drafts.bodyUnavailable"));
+        open(scratch);
+      },
+    });
   });
 
   /**
@@ -530,6 +559,12 @@ export function useShellCompose({
           || sendPendingInDurableOutbox(engine, lane)
           || holdOf(engine, { lane, draftId: null, session: null }).kind !== "free"
         ) continue;
+        // A reply the account already holds as a row with these words is a draft already.
+        const kept = lane === id ? accountReplyRow(id) : null;
+        if (kept?.body != null && kept.body.trim() === readReplyDraft(lane).text.trim()) {
+          clearReplyLane(lane);
+          continue;
+        }
         void promoteOrphanedReplyLane(
           lane, id, promotionPlanFor(lane, id, parent),
           (m) => engine.mutate(m as EngineMutation),
@@ -690,16 +725,16 @@ export function useShellCompose({
   const openMessageRef = useRef<(m: EngineMessage, opts?: { reply?: boolean }) => void>(() => {});
   /**
    * WHICH DRAFT ROW SEEDED WHICH REPLY EDITOR — `message id → draft id`, written by `openDraft`
-   * when a reply draft opens in its message's own inline editor. The inline reply has no
-   * autosave, so a send from that editor creates its own row; without this map the seeded row
+   * when a reply draft opens in its message's own inline editor. The lane takes that row and the
+   * send goes from it; should a send go without it (the row held at the press), the seeded row
    * would survive the delivery as a phantom draft — the sent message sitting in Drafts under
    * "haven't sent", reopenable with Send live. Entries leave when the send settles (discarded
-   * below) or when the row is discarded from the Drafts list (`discardDraft`).
+   * below unless it was the row sent) or when the row is discarded from the Drafts list.
    */
   const replySeedDrafts = useRef(new Map<string, string>());
   /**
    * THE ROW A REFUSED REPLY LEFT, per lane (`message id`, or `fwd:<id>`) — the compose lane's
-   * `refusedWithRow`, for an editor with no autosave to adopt it into. The lane's next press sends
+   * `refusedWithRow`, for the lane that held no row when it sent. The lane's next press sends
    * THAT row, so one message stays one draft. `seen` is whether the mirror has listed it: a row
    * taken before the drain is still the row, and one the mirror listed and then lost is gone.
    */
@@ -788,6 +823,7 @@ export function useShellCompose({
     // A reply seeded from a draft row settled: the row's message has been delivered (the send
     // wrote its own row), so the seed is a phantom draft now — see `replySeedDrafts`.
     dropReplySeed(key, m.draftId);
+    replyAutosave.forget(key);
     // A reply settled. `key` is the answered message's id (`sendKeyOf`), which is exactly the row
     // that should move from "New for you" to "Earlier" — so hand it to the Ohbox for the gesture.
     setReplyDone({ messageId: key, at: new Date().toISOString() });
@@ -842,6 +878,53 @@ export function useShellCompose({
     if (drafts.some((x) => x.id === held.row)) held.seen = true;
     else if (held.seen) { replyRows.current.delete(lane); return null; }
     return holdOf(engine, { lane, draftId: held.row, session: null }).kind === "free" ? held.row : null;
+  });
+
+  /** Lanes whose account row could not be read at the open: nothing writes for them. */
+  const unreadableRows = useRef(new Set<string>());
+  /** The account's reply row for a message — the newest one still a draft and free to write. */
+  const accountReplyRow = useStableCallback((messageId: string): EngineDraft | null => {
+    let best: EngineDraft | null = null;
+    for (const d of drafts) {
+      // `holdOf` parks every row past `draft`, so a free row is an ordinary draft.
+      if (d.inReplyToMessageId !== messageId) continue;
+      if (holdOf(engine, { lane: messageId, draftId: d.id, session: null }).kind !== "free") continue;
+      if (best === null || d.updatedAt > best.updatedAt) best = d;
+    }
+    return best;
+  });
+  /**
+   * THE LANE TAKES THE ROW, and the editor its text: the row's, unless this browser holds typing
+   * the row has not had yet (`scratch` differs and the row has not moved since this browser last
+   * wrote it). `scratch` null is an explicit open of the row. The audience, sender and subject
+   * live on the row only, so they are restored where they differ from the derived ones.
+   */
+  const adoptReplyRow = useStableCallback((
+    lane: string, d: EngineDraft, text: string, scratch: RichValue | null, all: boolean,
+  ): RichValue => {
+    replyRows.current.set(lane, { row: d.id, seen: true });
+    const meta = readReplyMeta(lane);
+    const moved = meta.row?.id === d.id && meta.row.at !== d.updatedAt;
+    const rowWins = scratch === null || isRichEmpty(scratch) || moved;
+    const parent = reader.get<EngineMessage>("message", lane) ?? null;
+    const derived = parent ? replySubject(parent.subject) : d.subject;
+    const subject = rowWins || meta.subject === undefined ? (d.subject !== derived ? d.subject : undefined) : meta.subject;
+    writeReplyMeta(lane, { ...meta, subject, row: { id: d.id, at: d.updatedAt } });
+    const plan = replyEnvelopePlan(parent, ownAddresses, all, null);
+    const who = (xs: readonly EmailAddress[]): string => xs.map((a) => a.address.toLowerCase()).join(",");
+    const edited = parent !== null && (who(d.to) !== who(plan.to ?? [parent.from])
+      || who(d.cc) !== who(plan.cc ?? []) || d.bcc.length > 0);
+    adoptedEdits.current = {
+      lane,
+      envelope: edited ? { to: formatRecipientChips(d.to), cc: formatRecipientChips(d.cc), bcc: formatRecipientChips(d.bcc) } : null,
+      fromId: parent !== null && d.mailboxId !== parent.mailboxId ? d.mailboxId : null,
+    };
+    const body = rowWins ? { text, html: "" } : scratch!;
+    if (rowWins) writeReplyDraft(lane, body);
+    if (rowWins || scratch!.text.trim() === text.trim()) {
+      replyAutosave.baseline(lane, { mailboxId: d.mailboxId, subject: d.subject, body: text, to: d.to, cc: d.cc, bcc: d.bcc });
+    }
+    return body;
   });
 
   /**
@@ -900,6 +983,47 @@ export function useShellCompose({
     () => (facts ? optionsFromFacts(facts) : optionsFromMirror(mailboxes)),
     [facts, mailboxes],
   );
+
+  /**
+   * THE INLINE REPLY IS A ROW ON THE ACCOUNT — `reply-autosave.ts`. The form is what the row
+   * would hold: the typed body (the signature seals at the send), the subject, the audience as
+   * the editor shows it (valid addresses only, as the compose form stores them) and the sender.
+   */
+  const replyParent = replyTo !== null && replyMode === "reply"
+    ? reader.get<EngineMessage>("message", replyTo) ?? null
+    : null;
+  let replyForm: ReplyDraftForm | null = null;
+  if (replyParent !== null) {
+    const plan = replyEnvelopePlan(replyParent, ownAddresses, replyAll, null);
+    const typed = (line: string): EmailAddress[] => parseRecipients(line).addresses;
+    replyForm = {
+      lane: replyParent.id,
+      threadId: replyParent.threadId ?? null,
+      mailboxId: resolveReplyFrom(fromOptions, replyParent.mailboxId, replyFromId).mailboxId ?? replyParent.mailboxId,
+      subject: replySubjectEdit ?? replySubject(replyParent.subject),
+      subjectEdited: replySubjectEdit !== null,
+      body: replyBody.text,
+      html: replyBody.html,
+      to: replyEnvelope ? typed(replyEnvelope.to) : plan.to ?? [replyParent.from],
+      cc: replyEnvelope ? typed(replyEnvelope.cc) : plan.cc ?? [],
+      bcc: replyEnvelope ? typed(replyEnvelope.bcc) : [],
+    };
+  }
+  const replyAutosave = useReplyAutosave(engine, replyForm, {
+    rowOf: (lane) => laneRowOf(lane),
+    // A send of this reply on its way, a row held for it, or a row it holds and may not write now.
+    refuses: (lane) => SEND_IN_FLIGHT_PHASES.has(mailSend.stateOf(lane).phase)
+      || sendPendingInOutbox(engine, lane)
+      || sendPendingInDurableOutbox(engine, lane)
+      || heldReplyRow(lane) !== null
+      || (replyRows.current.has(lane) && laneRowOf(lane) === null)
+      || (unreadableRows.current.has(lane) && accountReplyRow(lane) !== null),
+    took: (lane, row) => {
+      replyRows.current.set(lane, { row, seen: true });
+      const at = engine.read().get<EngineDraft>("draft", row)?.updatedAt;
+      if (at) writeReplyMeta(lane, { ...readReplyMeta(lane), row: { id: row, at } });
+    },
+  });
 
   /**
    * The body comes from REACT STATE, not from `readReplyDraft`: private mode refuses the `localStorage` write, so
@@ -1010,6 +1134,8 @@ export function useShellCompose({
     const plan = replyEnvelopePlan(parent, ownAddresses, replyAll, replyEnvelope);
     // A row still held for this message is the hold's to judge, never a row to send from.
     const laneRow = heldReplyRow(messageId) === null ? laneRowOf(messageId) : null;
+    // The text this press sends is not saved again, and a create still in the air is undone.
+    replyAutosave.seal(messageId);
     mailSend.send(withSignature({
       kind: "mail_send",
       inReplyTo: messageId,
@@ -1169,16 +1295,14 @@ export function useShellCompose({
    */
 
   /**
-   * And opening a reply does not adopt: the inline editor has no autosave — a per-message scratch buffer — so there
-   * is nothing to adopt the id INTO, and adopting it into the COMPOSE hook would point the next compose at a reply
-   * row. The draft's text seeds the editor, the row stays, and sending creates its own row — stated because it is the
-   * one place the "one row birth-to-sent" rule does not yet reach.
+   * And opening a reply adopts the row into the REPLY lane, never the compose hook (which would point the next
+   * compose at a reply row): the inline reply writes that row after a pause and sends from it (`adoptReplyRow`).
    */
   /**
    * ── THE UNCONFIRMED REPLY ROW THIS MESSAGE ALREADY HAS ──────────────────────────────────
    *
-   * The inline reply editor is a per-message scratch buffer and carries no row, so its press asked
-   * the hold about `null` and got `free` — while the row the previous press created sat at
+   * The inline reply's lane holds only a row the hold leaves free, so its press asked the hold
+   * about `null` and got `free` — while the row the previous press created sat at
    * `unverified` and the Drafts list said so. This is the only name that surface has for it.
    *
    * `status !== "draft"` because an ordinary draft cannot be held, and `draftsList` is the same
@@ -1243,14 +1367,14 @@ export function useShellCompose({
            not `openMessage` directly: that callback needs the screener row map and the consent
            partition and is therefore declared far below this one, so the reference is late-bound
            for the same reason `settleComposeRef` is. */
-        setReplyBody({ text: body, html: "" });
+        // The lane takes the row: the reply's pauses write it and its Send sends it.
+        setReplyBody(adoptReplyRow(parent.id, d, body, null, false));
         // A REPLY, whatever the dock last was: a forward left open would send this text as one.
         setReplyAll(false);
         setReplyMode("reply");
-        /* REMEMBER WHICH ROW SEEDED THIS EDITOR. The inline reply has no autosave, so the send
-           will create its own row — and without this note the seeded row would stay in Drafts
-           as a copy of a message that has been delivered, reopenable with Send live: the
-           double-send bait. `onSendSettled` discards it when a reply to THIS message confirms. */
+        /* REMEMBER WHICH ROW SEEDED THIS EDITOR. The send goes from it; one that went without it
+           would leave it in Drafts as a copy of a delivered message, reopenable with Send live:
+           the double-send bait. `onSendSettled` discards it then, never the row it sent. */
         replySeedDrafts.current.set(parent.id, d.id);
         // The editor opens WITH the message, past the route transition that closes overlays.
         openMessageRef.current(parent, { reply: true });
