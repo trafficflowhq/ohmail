@@ -1020,8 +1020,10 @@ export class SyncService {
     // too, so a bug that let the two disagree fails closed rather than leaking into another
     // account's bootstrap.
     const inTail = cursor?.phase === "tail" || tailOnly;
-    const repliedTo = db.select({ id: drafts.inReplyToMessageId }).from(drafts).where(eq(drafts.accountId, accountId));
-    const reachableTail = inTail
+    const repliedTo = inTail
+      ? db.select({ id: drafts.inReplyToMessageId }).from(drafts).where(eq(drafts.accountId, accountId))
+      : undefined;
+    const reachableTail = repliedTo !== undefined
       ? or(
         exists(
           db.select({ x: sql`1` }).from(messageTags).where(and(
