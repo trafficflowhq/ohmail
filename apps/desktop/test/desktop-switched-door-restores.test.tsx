@@ -99,10 +99,12 @@ function fakeShell(opts: {
   deleteMs?: number;
   /** The other computer does not take the session back: the engine answers `revokedAtHost: false`. */
   revokeFails?: boolean;
+  /** The shell has recorded a pairing and not yet written its door: `door` is still the one it replaces. */
+  staged?: boolean;
 }) {
   let restoreRefusals = opts.restoreRefusals ?? 0;
   let door: Door | null = opts.door;
-  let replaced: Door | null = null;
+  let replaced: Door | null = opts.staged ? opts.door : null;
   let startedAt = -Infinity;
   let paired = false;
   /** What the window told the shell's restore: the computer a session was left on. */
@@ -470,6 +472,23 @@ describe("an undone pairing the other computer did not take back", () => {
     expect(buttons(DOOR_COPY.installSwitchAction)).toHaveLength(1);
     expect(text()).not.toContain(said());
   });
+});
+
+describe("a window that finds a pairing recorded and its door not yet written", () => {
+  it.each([["the local door", LOCAL_DOOR], ["the ohmail Cloud door", HOSTED_DOOR]] as const)(
+    "from %s signs nothing out: the running engine is still the door the person had", async (_name, start) => {
+      /* The shell records the pairing before it stands hosting down and writes the door; a window
+         reloaded in between reads switchPending over the replaced door's own engine. */
+      const shell = fakeShell({ door: start, answer: "never", staged: true });
+      window.location.hash = "#/settings/desktop";
+      await mount();
+      for (let i = 0; i < 30; i += 1) await advance(500);
+      expect(shell.log.filter((l) => l.startsWith("sign-out")), shell.log.join(", ")).toEqual([]);
+      expect(shell.log).toContain("restore");
+      expect(shell.door()).toEqual(start);
+      expect(shell.replaced()).toBeNull();
+    },
+  );
 });
 
 describe("a link the other computer has already redeemed", () => {

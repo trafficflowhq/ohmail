@@ -1981,8 +1981,7 @@ impl Shell {
         provisional: bool,
         host: Option<config::HostSnapshot>,
     ) -> Result<serde_json::Value, String> {
-        let staged = if provisional { self.stage_switch(value, host.clone())? } else { None };
-        self.switch_door_staged(value, provisional, staged, host)
+        self.switch_away_with(value, provisional, host, || {})
     }
 
     /// THE RECORD FIRST: a provisional switch writes `door-switch.json`, host mode's snapshot in
@@ -1995,11 +1994,38 @@ impl Shell {
         host: Option<config::HostSnapshot>,
     ) -> Result<Option<config::DoorSwitch>, String> {
         let _door = self.door.lock().expect("shell door");
+        self.stage_locked(value, host)
+    }
+
+    fn stage_locked(
+        &self,
+        value: &serde_json::Value,
+        host: Option<config::HostSnapshot>,
+    ) -> Result<Option<config::DoorSwitch>, String> {
         let next = config::parse(value)?;
         let (Some(root), Some(path)) = (self.paths.app_data.as_deref(), self.paths.config_path()) else {
             return Ok(None);
         };
         stage_on_disk(root, &path, &next, host.as_ref())
+    }
+
+    /// A SWITCH AWAY FROM THE LOCAL DOOR, whole, UNDER ONE HOLD OF THE DOOR LOCK: the record, the
+    /// caller's stand-down, the switch. A restore arriving meanwhile (a reloaded window's first
+    /// read) waits and undoes a finished switch, never a half-taken one; nothing in the stand-down
+    /// takes this lock (its world step is the engine lock, its tailnet call `serve_ops`).
+    pub fn switch_away_with(
+        &self,
+        value: &serde_json::Value,
+        provisional: bool,
+        host: Option<config::HostSnapshot>,
+        stand_down: impl FnOnce(),
+    ) -> Result<serde_json::Value, String> {
+        let _door = self.door.lock().expect("shell door");
+        switch_in_order(
+            || if provisional { self.stage_locked(value, host.clone()) } else { Ok(None) },
+            stand_down,
+            |staged| self.switch_staged_locked(value, provisional, staged, host.clone()),
+        )
     }
 
     /// The switch itself, after [`Shell::stage_switch`]: `staged` is THIS attempt's record, which
@@ -2014,6 +2040,16 @@ impl Shell {
         // UNDER THE DOOR LOCK, whole: a sign-out re-reads the door under it and acts on what it
         // reads, so a switch landing between those two would be the race back by the other side.
         let _door = self.door.lock().expect("shell door");
+        self.switch_staged_locked(value, provisional, staged, host)
+    }
+
+    fn switch_staged_locked(
+        &self,
+        value: &serde_json::Value,
+        provisional: bool,
+        staged: Option<config::DoorSwitch>,
+        host: Option<config::HostSnapshot>,
+    ) -> Result<serde_json::Value, String> {
         let config = config::parse(value)?;
         let path = self.paths.config_path().ok_or_else(|| {
             "this computer named no place for the app to keep its settings".to_string()
@@ -4510,17 +4546,13 @@ fn engine_configure<R: tauri::Runtime>(
     // TAKEN BEFORE THE STAND-DOWN, which writes `host.json` off: a provisional switch keeps it in
     // its record, written before the stand-down, and a refused pairing restores host mode from it.
     let kept = if provisional { crate::host::snapshot_for_switch(&app, host.inner()) } else { None };
-    switch_in_order(
-        || if provisional { shell.stage_switch(&config, kept.clone()) } else { Ok(None) },
-        || {
-            crate::host::stand_down_on_shell_transition(
-                &app,
-                host.inner(),
-                "the install is switching to a door with no host listener",
-            );
-        },
-        |staged| shell.switch_door_staged(&config, provisional, staged, kept.clone()),
-    )
+    shell.switch_away_with(&config, provisional, kept, || {
+        crate::host::stand_down_on_shell_transition(
+            &app,
+            host.inner(),
+            "the install is switching to a door with no host listener",
+        );
+    })
 }
 
 /// THE ORDER OF A SWITCH AWAY FROM THE LOCAL DOOR, as one function so it can be driven: the

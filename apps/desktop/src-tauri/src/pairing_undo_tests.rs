@@ -5,6 +5,8 @@
 use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::Duration;
 
 use crate::config::{self, HostSnapshot, Undone};
 use crate::engine::{self, Shell, ShellPaths};
@@ -233,5 +235,37 @@ fn the_status_carries_the_computer_a_restore_was_told_of_and_nothing_else() {
     assert!(shell.status().get("pairingLeftAt").is_none(), "{}", shell.status());
     shell.restore_switch_undone(Some(PAIRED.into())).expect("a restore with nothing pending");
     assert_eq!(shell.status()["pairingLeftAt"], serde_json::Value::String(PAIRED.into()));
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_restore_during_the_stand_down_waits_for_the_switch_and_undoes_it_whole() {
+    // A reloaded window's first read restores a pending switch; one landing while the stand-down
+    // withdraws the tailnet route must find no half-taken switch.
+    with_key();
+    let (root, snapshot) = hosting("restore-mid-stand-down", Some(true));
+    let before = bytes_under(&root);
+    let shell = Arc::new(Shell::rooted_for_tests(&root));
+    let (tx, rx) = mpsc::channel();
+    let early = Mutex::new(None);
+    let ran = shell.switch_away_with(&pairing_door(), true, Some(snapshot), || {
+        let other = Arc::clone(&shell);
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(other.restore_switch_undone(None).map(|(_, undone)| undone.host.is_some()));
+        });
+        *early.lock().unwrap() = rx.recv_timeout(Duration::from_millis(1_500)).ok();
+        stand_down_on_disk(&root);
+    });
+    let early = early.lock().unwrap().take();
+    let hosting_on = config::read_host(&root.join(config::HOST_FILE_NAME)).is_some_and(|h| h.enabled);
+    let record = config::switch_path(&root).exists();
+    assert!(
+        early.is_none(),
+        "a restore ran inside the switch: {early:?}; the switch said {ran:?}; host.json on={hosting_on}, record={record}",
+    );
+    assert!(ran.is_ok(), "{ran:?}");
+    assert_eq!(rx.recv_timeout(Duration::from_secs(20)).expect("the restore answered"), Ok(true));
+    assert_eq!(bytes_under(&root), before, "host mode was not back after a restore during the stand-down");
     let _ = fs::remove_dir_all(&root);
 }

@@ -1029,7 +1029,9 @@ export async function restorePairingSwitch(): Promise<EngineStatus> {
   let base: string | null = null;
   try {
     const status = await engineStatus();
-    pending = status.switchPending === true;
+    /* Pending AND on the pairing's door: from the record until the door is written, the engine
+       running is the replaced door's own, and a sign-out there would sign the person out of it. */
+    pending = status.switchPending === true && isDesktopHost(status);
     base = status.cloudUrl ?? null;
   } catch {
     /* No answer: the restore below still runs, and changes nothing when nothing is pending. */
