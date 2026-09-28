@@ -3146,7 +3146,11 @@ export async function startWorkerWithLock(
           // replaced it is the kind of assertion a reviewer has to take on trust.
           if (block && block.reason !== null && nowMs - block.since >= syncBlockGraceMs) {
             const reason = block.reason;
-            const written = await markMailboxSyncBlocked(db, mb.mailboxId, reason, { fence });
+            // The wall's block rests on a verdict the reopening door can overturn mid-pass: it
+            // lands only on a row not kicked since this roster read it (mail 0135).
+            const written = await markMailboxSyncBlocked(db, mb.mailboxId, reason, {
+              fence, ...(reason === "account_closed" ? { kickAsRead: mb.kickStamp } : {}),
+            });
             if (!written) {
               log.info("mailbox_sync_block_write_fenced", {
                 mailboxId: mb.mailboxId, accountId: mb.accountId, syncBlockedReason: reason,

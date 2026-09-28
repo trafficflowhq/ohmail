@@ -143,6 +143,14 @@ export interface EnabledMailbox {
    */
   organizerParkedAt: Date | null;
   /**
+   * `sync_requested_at` AS TEXT, as this roster read it — the kick's own compare-and-clear form,
+   * exact to the microsecond. A kicked row's account has its refusal asked again, and the
+   * `account_closed` write lands only while the stamp is still this value: the reopening door
+   * clears the block and kicks in one statement, so a stamp that moved means a clear this pass
+   * did not see.
+   */
+  kickStamp: string | null;
+  /**
    * Mail 0029. What the row currently says about why this mailbox is not being synced. READ SO THE
    * WORKER KNOWS WHETHER THERE IS ANYTHING TO CLEAR, and for no other purpose — nothing decides on it,
    * like `disabledReason` above. It is in this narrow projection rather than re-read on demand because
@@ -234,8 +242,10 @@ export function shardFilter(selection: MailboxSelection = {}): SQL | undefined {
  * mailbox syncs, which is a self-hosted install's truth and the fail-open direction, since a missing
  * reader can only sync more and never drop a customer.
  */
-export type ParkedAccountsReader =
-  (accountIds: readonly string[], now: Date) => Promise<Set<string>>;
+export type ParkedAccountsReader = (
+  accountIds: readonly string[], now: Date,
+  recheck?: { accounts: ReadonlySet<string>; since: number },
+) => Promise<Set<string>>;
 
 /**
  * Every syncable mailbox in the selection: anything not soft-disabled (`status != 'disabled'`) whose
@@ -287,6 +297,7 @@ export async function loadRosterMailboxes(
       organizeConsentedAt: mailboxes.organizeConsentedAt,
       releaseRequestedAt: mailboxes.releaseRequestedAt,
       organizerParkedAt: mailboxes.organizerParkedAt,
+      kickStamp: sql<string | null>`${mailboxes.syncRequestedAt}::text`,
       syncBlockedReason: mailboxes.syncBlockedReason,
       retryAfter: mailboxes.retryAfter,
       retryCount: mailboxes.retryCount,
@@ -297,8 +308,11 @@ export async function loadRosterMailboxes(
     .orderBy(asc(mailboxes.createdAt), asc(mailboxes.id));
 
   const ids = [...new Set(rows.map((r) => r.accountId))];
+  // THE READ ABOVE HAS RETURNED: a call begun from here on began after every clear it saw, so a
+  // kicked account's refusal is asked again from this instant (mail 0135, see `kickStamp`).
+  const kicked = new Set(rows.filter((r) => r.kickStamp !== null).map((r) => r.accountId));
   const parked = parkedAccounts && ids.length > 0
-    ? await parkedAccounts(ids, now)
+    ? await parkedAccounts(ids, now, { accounts: kicked, since: Date.now() })
     : new Set<string>();
   const shape = (r: (typeof rows)[number]): EnabledMailbox => ({
     accountId: r.accountId, mailboxId: r.id, provider: r.provider, address: r.address, status: r.status,
@@ -317,6 +331,7 @@ export async function loadRosterMailboxes(
     organizeConsentedAt: r.organizeConsentedAt ?? null,
     releaseRequestedAt: r.releaseRequestedAt ?? null,
     organizerParkedAt: r.organizerParkedAt ?? null,
+    kickStamp: r.kickStamp ?? null,
     syncBlockedReason: r.syncBlockedReason ?? null,
     retryAfter: r.retryAfter ?? null,
     retryCount: r.retryCount ?? 0,
@@ -1292,7 +1307,11 @@ export { isMailboxSyncBlockReason };
  */
 export async function markMailboxSyncBlocked(
   db: WorkerDb, mailboxId: string, reason: MailboxSyncBlockReason,
-  opts: { fence?: LeaderFence; now?: Date } = {},
+  opts: {
+    fence?: LeaderFence; now?: Date;
+    /** The row's kick stamp as the decision read it: the write lands only while it is unchanged. */
+    kickAsRead?: string | null;
+  } = {},
 ): Promise<boolean> {
   const now = opts.now ?? new Date();
   // THE WRITE DOOR for a widenable set (mail 0029 opened it, mail 0102 widened it). The device
@@ -1304,7 +1323,11 @@ export async function markMailboxSyncBlocked(
     syncBlockedSince: sql`coalesce(${mailboxes.syncBlockedSince}, ${now.toISOString()}::timestamptz)`,
     // NOTHING ELSE. Not `status`, not `error_code`, not `error_detail`, not `failed_at`, not
     // `retry_count`. The absence is the design — see the block above this function.
-  }).where(lifecycleWhere(mailboxId, opts.fence)).returning({ id: mailboxes.id }));
+  }).where(and(
+    lifecycleWhere(mailboxId, opts.fence),
+    opts.kickAsRead === undefined ? undefined
+      : sql`${mailboxes.syncRequestedAt}::text is not distinct from ${opts.kickAsRead}`,
+  )).returning({ id: mailboxes.id }));
 }
 
 /**

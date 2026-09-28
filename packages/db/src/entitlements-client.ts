@@ -365,7 +365,7 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
    * a `fresh` one too. One image-heavy message sent 40-80 parallel calls for one account and
    * all of them timed out. An entry leaves as its call settles, inside the call's budget.
    */
-  const inflight = new Map<string, Promise<AccessVerdict | null>>();
+  const inflight = new Map<string, { call: Promise<AccessVerdict | null>; startedAt: number }>();
   /** Until when an account's last failed read answers for it ({@link ACCESS_FAULT_HOLD_MS}). */
   const faultHeldUntil = new Map<string, number>();
   /** Latched by the first 200 that carried a readable card — `/health`'s `plane` reading. */
@@ -435,7 +435,9 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
         if (priced) pricesStated = true;
         const verdict: AccessVerdict = read.ok && priced ? { ...read, prices: card } : read;
         const reuseMs = verdict.ok ? ttlMs : Math.min(ttlMs, ACCESS_REFUSED_TTL_MS);
-        cache.set(accountId, { verdict, readAt: at, freshUntil: at + reuseMs });
+        // A call that began earlier and answered later never replaces a newer verdict.
+        const prev = cache.get(accountId);
+        if (!prev || prev.readAt <= at) cache.set(accountId, { verdict, readAt: at, freshUntil: at + reuseMs });
         faultHeldUntil.delete(accountId);
         return verdict;
       }
@@ -447,21 +449,33 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
     return null;
   };
 
-  /** The call in flight for this account, or a new one. Its rejection reaches every waiter. */
-  const shared = (accountId: string): Promise<AccessVerdict | null> => {
-    const running = inflight.get(accountId);
-    if (running !== undefined) return running;
-    const started: Promise<AccessVerdict | null> = ask(accountId).finally(() => {
-      if (inflight.get(accountId) === started) inflight.delete(accountId);
+  /** A new call for this account, recorded as the one in flight. */
+  const begin = (accountId: string): Promise<AccessVerdict | null> => {
+    const entry = { call: null as unknown as Promise<AccessVerdict | null>, startedAt: clock() };
+    entry.call = ask(accountId).finally(() => {
+      if (inflight.get(accountId) === entry) inflight.delete(accountId);
     });
-    inflight.set(accountId, started);
-    return started;
+    inflight.set(accountId, entry);
+    return entry.call;
   };
+  /** The call in flight for this account, or a new one. Its rejection reaches every waiter. */
+  const shared = (accountId: string): Promise<AccessVerdict | null> =>
+    inflight.get(accountId)?.call ?? begin(accountId);
 
   const client: EntitlementsClient = {
     async access(accountId: string, opts?: AccessReadOpts): Promise<AccessVerdict> {
       const at = clock();
       const held = cache.get(accountId);
+      // ONLY AN ANSWER BEGUN SINCE `askedAfter`: a verdict or a call from before it says nothing
+      // about what happened since, so neither is reused, and a fault falls to allow, not to it.
+      if (opts?.askedAfter !== undefined) {
+        const since = opts.askedAfter;
+        if (held && held.readAt >= since) return held.verdict;
+        const running = inflight.get(accountId);
+        const answer = await (running && running.startedAt >= since ? running.call : begin(accountId));
+        const after = cache.get(accountId);
+        return answer ?? (after && after.readAt >= since ? after.verdict : UNMETERED_ACCESS);
+      }
       // `fresh` SKIPS THE REUSE AND THE HOLD, NOTHING ELSE: the held verdict is still what the
       // fault arm answers with, because "we could not ask again" is not evidence that the last
       // answer is wrong. A cached refusal asked about a minute after the program recovered is
