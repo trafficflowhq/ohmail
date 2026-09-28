@@ -135,7 +135,7 @@ void cloudSyncTypesAreComplete;
  * it can be assigned — so within a page ordered by seq the tag's own change is already in hand by
  * the time the message carrying the assignment is applied.
  */
-const APPLY_ORDER: readonly EntityType[] = [
+export const APPLY_ORDER: readonly EntityType[] = [
   /* `mailbox` is FIRST so that in the REVERSED delete pass it is LAST: the mailbox receipt takes
      everything keyed by that mailbox, and running it after the page's own per-row deletes leaves
      them nothing to find rather than the other way round. It never appears as a non-delete — the
