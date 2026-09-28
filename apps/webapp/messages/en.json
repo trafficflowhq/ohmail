@@ -2605,6 +2605,7 @@
     "noticeDismiss": "Mark read",
     "noticeOpenMailboxes": "Mailboxes",
     "stateReleased": "You stopped organizing this here on {when}.",
+    "stateParked": "Paused while the account was closed — organizing resumes on its own",
     "oauthDecideElsewhere": "For a mailbox signed in with OAuth, decisions can only be made on the install that organizes it.",
     "stateNotOrganized": "Nothing organizes this mailbox",
     "stateOrganizingHere": "This computer files this mailbox: it moves mail into your folders, screens strangers and applies your rules.",

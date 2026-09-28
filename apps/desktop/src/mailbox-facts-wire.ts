@@ -87,6 +87,8 @@ interface MailboxWire {
   organizerEventSeenAt?: string | null;
   /** When this install last gave this mailbox up on purpose — the pane's permanent line. */
   organizerReleasedAt?: string | null;
+  /** When a closed account's park released it (mail 0135) — no release or stop sentence while set. */
+  organizerParkedAt?: string | null;
   /** The standing "stop organizing here" ask, pending until the engine's pass confirms it. */
   releaseRequestedAt?: string | null;
   /** Why that ask has not finished — `sibling_lapse` is a clone's live claim (mail 0121). */
@@ -240,6 +242,7 @@ export async function readMailboxFactsVia(
     ...("organizerEventAt" in m ? { organizerEventAt: m.organizerEventAt } : {}),
     ...("organizerEventSeenAt" in m ? { organizerEventSeenAt: m.organizerEventSeenAt } : {}),
     ...("organizerReleasedAt" in m ? { organizerReleasedAt: m.organizerReleasedAt } : {}),
+    ...("organizerParkedAt" in m ? { organizerParkedAt: m.organizerParkedAt } : {}),
     // THE TWO PENDING ASKS, forwarded by the same `in` spread: absent is an engine that predates
     // the columns and withholds the pending sentence, which is what such an engine reports.
     ...("releaseRequestedAt" in m ? { releaseRequestedAt: m.releaseRequestedAt } : {}),

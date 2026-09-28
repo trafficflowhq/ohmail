@@ -2605,6 +2605,7 @@
     "noticeDismiss": "Als gelesen markieren",
     "noticeOpenMailboxes": "Postfächer",
     "stateReleased": "Du hast das Organisieren hier am {when} beendet.",
+    "stateParked": "Pausiert, während das Konto geschlossen war — das Organisieren läuft von selbst wieder an",
     "oauthDecideElsewhere": "Bei einem Postfach, das mit OAuth angemeldet ist, können Entscheidungen nur auf der Installation getroffen werden, die es organisiert.",
     "stateNotOrganized": "Dieses Postfach wird von nichts organisiert",
     "stateOrganizingHere": "Dieser Computer sortiert dieses Postfach ein: Er verschiebt Post in deine Ordner, prüft Fremde und wendet deine Regeln an.",

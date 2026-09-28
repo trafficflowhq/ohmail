@@ -73,6 +73,8 @@ export function toMailboxFacts(m: MailboxDTO): MailboxFacts {
     // same reason: absent is an older server, `null` is "not released", and only the second is
     // a fact about this mailbox.
     organizerReleasedAt: m.organizerReleasedAt,
+    // The wall's pause (mail 0135), untouched on the same rule: absent keeps the release sentence.
+    organizerParkedAt: m.organizerParkedAt,
     // THE TWO PENDING ASKS, untouched on the same rule: absent is an older server and withholds
     // the pending sentence, which is what such a server actually reports; `null` is "nothing
     // asked"; a stamp is a press the row has not answered yet.

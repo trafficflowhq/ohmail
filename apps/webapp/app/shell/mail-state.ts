@@ -92,7 +92,16 @@ export function standDownToken(wire: string | null): StandDownReason | null {
  * row. `released` is a derived fourth answer, not a wire member: adding it to {@link STAND_DOWN_REASONS} would break the
  * reconciliation for a token the server cannot send.
  */
-export type ReaderStandDown = StandDownReason | "released";
+export type ReaderStandDown = StandDownReason | "released" | "parked";
+
+/**
+ * THE WALL PAUSED THIS MAILBOX (mail 0135): the closed account's park released it and the account
+ * reading open resumes it, so no sentence may say a person stopped it or that its holder did.
+ * Absent is a host too old to send the marker, which keeps the sentence it always said.
+ */
+export function parkedByWall(m: { organizerParkedAt?: string | null }): boolean {
+  return m.organizerParkedAt !== null && m.organizerParkedAt !== undefined;
+}
 
 /**
  * A REMOVED MAILBOX — the tombstone a removal leaves, which `GET /mailboxes` still lists as a
@@ -119,6 +128,8 @@ export function readerStandDown(m: {
    * as NOT RELEASED, which keeps the stand-down sentence rather than inventing a release.
    */
   organizerReleasedAt?: string | null;
+  /** The wall's own release (mail 0135) — {@link parkedByWall}. */
+  organizerParkedAt?: string | null;
 }): ReaderStandDown | null {
   // THE LEGACY WIRE FIRST, unchanged: `disabled` with a reason is what an engine older than the
   // role column reports, and it is still the only thing those rows can say.
@@ -139,6 +150,8 @@ export function readerStandDown(m: {
      Losing an explanation costs a sentence; inventing one costs a false claim. */
   const consented = m.organizeConsentedAt !== null && m.organizeConsentedAt !== undefined;
   if (!holder && !consented) return null;
+  // Ahead of the holder and the release: a paused mailbox is neither stood down nor let go.
+  if (parkedByWall(m)) return "parked";
   /* The release is its own answer, and the MARKER names it. A consented
    * reader with nobody holding it used to report
    * `organized_elsewhere_unknown` — a row arguing with its own claim
@@ -545,7 +558,7 @@ export function readerMoveRefusal(
  * holder nobody ever agreed to organize — a freshly connected mailbox, whose next screen is the agreement. Newest
  * change first, so a one-line slot carries the most recent.
  */
-export type OrganizerNoticeKind = "elsewhere" | "stopped" | "here" | "released";
+export type OrganizerNoticeKind = "elsewhere" | "stopped" | "here" | "released" | "parked";
 
 export interface OrganizerNotice {
   /** The mailbox the line is about — the id the acknowledgement is sent for. */
@@ -592,11 +605,13 @@ export function organizerNotices(facts: ReadonlyArray<OrganizerRow> | null): Org
   return out.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
 }
 
-/** Which of the four sentences one row is in, or `null` for a row with nothing to announce. */
+/** Which kind one row is in, or `null` for a row with nothing to announce. `parked` says nothing. */
 function noticeKind(m: OrganizerRow): OrganizerNoticeKind | null {
   /* ABSENT READS AS ORGANIZER, the same default the role carries everywhere on this surface: a
      host that does not send the column has not demoted anybody. */
   if (m.organizerRole !== "reader") return "here";
+  // The wall's pause is not a handover: no "stopped", no "released" while the marker stands.
+  if (parkedByWall(m)) return "parked";
   const holder = Boolean(m.organizedBy && (m.organizedBy.kind || m.organizedBy.name));
   if (holder) return holderIsLive({ by: m.organizedBy, state: m.organizerState }) ? "elsewhere" : "stopped";
   /* NO HOLDER, AND NOBODY EVER AGREED — an ordinary freshly connected mailbox, whose next screen
@@ -744,6 +759,11 @@ export interface MailboxFacts {
    * this screen did. Read for the pane's permanent line and for nothing else.
    */
   organizerReleasedAt?: string | null;
+  /**
+   * WHEN THE CLOSED ACCOUNT'S PARK RELEASED THIS MAILBOX (mail 0135), or `null`; cleared by the
+   * promotion or the stand-down that spends its resume. Absent is an older host ({@link parkedByWall}).
+   */
+  organizerParkedAt?: string | null;
   /**
    * THE STANDING ASK TO STOP ORGANIZING THIS MAILBOX HERE, or `null` — pending until the
    * organizer's own pass confirms the record out of the mailbox (or the wait ends at the

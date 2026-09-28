@@ -1068,6 +1068,8 @@ export interface MailboxDTO {
    * both are readers with no holder, and only the first is something the person here did.
    */
   organizerReleasedAt?: string | null;
+  /** When the closed account's park released it (mail 0135); the account reading open resumes it. */
+  organizerParkedAt?: string | null;
   /** The standing "stop organizing here" ask, pending until the organizer's pass confirms it. */
   releaseRequestedAt?: string | null;
   /** Why that ask has not finished — `sibling_lapse` is a clone's live claim (mail 0121). */
