@@ -347,5 +347,11 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "ALTER TABLE \"routing_decisions\" ADD COLUMN \"act_refused_at\" integer;",
       "ALTER TABLE \"routing_decisions\" ADD COLUMN \"act_refusal\" text CONSTRAINT \"routing_decisions_act_refusal_closed\" CHECK (\"act_refusal\" in ('account_erased', 'not_organizer', 'mailbox_removed', 'store_fault'));"
     ]
+  },
+  {
+    "name": "0135_organizer_parked_at.sql",
+    "statements": [
+      "ALTER TABLE \"mailboxes\" ADD COLUMN \"organizer_parked_at\" integer;"
+    ]
   }
 ] as const;

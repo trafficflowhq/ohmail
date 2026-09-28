@@ -123,7 +123,10 @@ export function CloudShell({ demo }: { demo: boolean }) {
     return onAccessRefused((facts) => setRefused((held) => held ?? facts));
   }, [resolvedDemo]);
   const firstPaint = useFirstPaintGate(resolvedDemo, (facts) => setRefused((held) => held ?? facts));
-  /** The lift: the shell mounts again and the drain loop picks up from its stored cursors. */
+  /**
+   * The lift: the shell mounts again and the drain loop picks up from its stored cursors. The
+   * remount's boot reconcile re-announces the push registration, once; a call here would be a second.
+   */
   const lift = useCallback(() => {
     setRefused(null);
     reviveStandingDown();

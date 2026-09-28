@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import {
   pruneIdempotencyKeys, pruneSendFingerprints, noticeSinkFor, setNoticeSink, accountSettings, mailboxCredentials, mailboxes,
@@ -9,7 +9,7 @@ import {
 } from "@trafficflow/db";
 import {
   makeEntitlementsClient, refundObligationsOn, makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout,
-  markScreenerSuggestOwed, owedSuggestAccounts, clearScreenerSuggestOwed, pushSubscriptions,
+  markScreenerSuggestOwed, owedSuggestAccounts, clearScreenerSuggestOwed,
   pruneErasedBearers, pruneAuthThrottle } from "@trafficflow/db/cloud";
 import {
   runAlertPass, firingToLog,
@@ -119,7 +119,7 @@ import {
   markMailboxFailed, markMailboxReadLimited, markMailboxProviderUnavailable, markMailboxConnected,
   markMailboxStoodDown, stampSyncProgress,
   clearOrganizerStandDown,
-  markMailboxReleased, refreshOrganizerHolder,
+  markMailboxReleased, refreshOrganizerHolder, resumeParkedMailbox, deleteParkedPushRows,
   markMailboxSyncBlocked, clearMailboxSyncBlock,
   classifyMailboxError, isProviderRefusal, mailboxErrorDetail,
   stampMailboxSyncNow, stampInitialImportComplete, makeSyncWriteFence, type LeaderFence,
@@ -2833,6 +2833,36 @@ export async function startWorkerWithLock(
 
       const roster = await loadRosterMailboxes(db, selection, new Date(), parkedAccountsReader ?? undefined);
       const selected = roster.served;
+
+      // ── THE RESUME: a mailbox the wall released, on an account that reads open (mail 0135) ──
+      //
+      // The `join` a person's "Organize here" would write, and mirrored into THIS pass's row so the
+      // attach and the lease refresh below carry it: organizing is back within one roster pass. The
+      // gate still decides — a live foreign claim wins and the stand-down clears the marker, so a
+      // lost join is never stamped again. Filtered on the row as read, so a pass with nothing
+      // marked issues no statement.
+      for (const m of selected) {
+        if (m.organizerParkedAt === null || m.organizerRole !== "reader" || m.organizeConsentedAt === null
+          || m.releaseRequestedAt !== null || m.takeoverAuthorizedAt !== null) continue;
+        const now = new Date();
+        try {
+          if (await resumeParkedMailbox(db, m.mailboxId, { fence, now })) {
+            m.takeoverAuthorizedAt = now;
+            m.takeoverIntent = "join";
+            log.info("organizer_parked_resume", {
+              mailboxId: m.mailboxId, accountId: m.accountId,
+              reason: "the account is open again, so this install asks to organize the mailbox the " +
+                "wall released; the lease decides, and a live claim elsewhere keeps it",
+            });
+          }
+        } catch (err) {
+          log.error("organizer_parked_resume_write_failed", {
+            mailboxId: m.mailboxId, accountId: m.accountId, err,
+            reason: "the resume stamp was not written; the mailbox stays a reader and the next " +
+              "roster pass tries again",
+          });
+        }
+      }
       const served = selected.slice(0, maxMailboxes);
       const dropped = selected.slice(maxMailboxes);
       truncated = dropped.length;
@@ -2885,8 +2915,8 @@ export async function startWorkerWithLock(
       // removal alone cannot do. The claim release itself stays the detach loop below — leaving
       // the duty is the ONE teardown path that releases — and the ROW is stood down here, once
       // per closure by its own state (`organizer_role = 'organizer'` guards the write), so a
-      // restart mid-park still records the release. Consent is KEPT: organizing resumes only by
-      // the person's explicit press (DUAL-MODE §4, no seize-back).
+      // restart mid-park still records the release. Consent is KEPT, and the row carries the
+      // wall's marker: once the account reads open, the resume above asks for it back as a `join`.
       const parkedIds = new Set(roster.parked.map((m) => m.mailboxId));
       for (const id of [...parkedBlocked.keys()]) if (!parkedIds.has(id)) parkedBlocked.delete(id);
       for (const m of roster.parked) {
@@ -2899,7 +2929,7 @@ export async function startWorkerWithLock(
               mailboxId: m.mailboxId, accountId: m.accountId,
               reason: "the account's subscription ended, so this install stood the organizer " +
                 "down; the row keeps its credentials, its consent and its mirror, and organizing " +
-                "resumes through an explicit press once the account is open again",
+                "resumes on its own once the account is open again",
             });
           }
         } catch (err) {
@@ -2910,23 +2940,6 @@ export async function startWorkerWithLock(
           });
         }
       }
-      if (roster.parked.length > 0) {
-        // Push rows go every pass — idempotent by construction (`inArray`, the arm omitted when
-        // the parked set is empty), and a parked account cannot re-register: the subscribe route
-        // is `work`, which the 402 gate refuses.
-        const parkedAccounts = [...new Set(roster.parked.map((m) => m.accountId))];
-        try {
-          await db.delete(pushSubscriptions)
-            .where(inArray(pushSubscriptions.accountId, parkedAccounts));
-        } catch (err) {
-          log.error("parked_push_delete_failed", {
-            accounts: parkedAccounts.length, err,
-            reason: "push subscriptions of parked accounts could not be deleted this pass; " +
-              "the delete repeats next pass",
-          });
-        }
-      }
-
       const desired = new Map(served.map((m) => [m.mailboxId, m]));
 
       // Detach anything no longer in the duty: soft-disabled, deleted,
@@ -3088,6 +3101,19 @@ export async function startWorkerWithLock(
       // construction, and the writer below is what puts `account_closed` on them — and what
       // clears it, because an un-parked account's rows re-enter `selected` with no bucket.
       await reconcileSyncBlocks([...selected, ...roster.parked]);
+
+      // Push rows go with the block, after it is written: idempotent, and only for an account
+      // every live mailbox of which says `account_closed` as the delete runs (mail 0135).
+      const parkedAccounts = [...new Set(roster.parked.map((m) => m.accountId))];
+      try {
+        await deleteParkedPushRows(db, parkedAccounts);
+      } catch (err) {
+        log.error("parked_push_delete_failed", {
+          accounts: parkedAccounts.length, err,
+          reason: "push subscriptions of parked accounts could not be deleted this pass; " +
+            "the delete repeats next pass",
+        });
+      }
     }
 
     /**
@@ -3116,7 +3142,11 @@ export async function startWorkerWithLock(
           // replaced it is the kind of assertion a reviewer has to take on trust.
           if (block && block.reason !== null && nowMs - block.since >= syncBlockGraceMs) {
             const reason = block.reason;
-            const written = await markMailboxSyncBlocked(db, mb.mailboxId, reason, { fence });
+            // The wall's block rests on a verdict the reopening door can overturn mid-pass: it
+            // lands only on a row not kicked since this roster read it (mail 0135).
+            const written = await markMailboxSyncBlocked(db, mb.mailboxId, reason, {
+              fence, ...(reason === "account_closed" ? { kickAsRead: mb.kickStamp } : {}),
+            });
             if (!written) {
               log.info("mailbox_sync_block_write_fenced", {
                 mailboxId: mb.mailboxId, accountId: mb.accountId, syncBlockedReason: reason,

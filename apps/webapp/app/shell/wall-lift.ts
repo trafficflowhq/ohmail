@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { markWallLifted } from "./access-window";
 import { durableSessionSet, durableSet } from "./durable";
 
 /**
@@ -100,7 +101,10 @@ export function useWallLift(opts: {
         new Promise<false>((resolve) => { bound = setTimeout(() => resolve(false), LIFT_READ_BOUND_MS); }),
       ]);
       if (open) {
-        if (alive.current) latest.current.onLifted?.();
+        if (alive.current) {
+          markWallLifted();
+          latest.current.onLifted?.();
+        }
         return true;
       }
     } catch { /* no answer is not an answer: the wall stands and the schedule asks again */ } finally {

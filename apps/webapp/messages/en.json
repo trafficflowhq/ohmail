@@ -1747,7 +1747,7 @@
     "calloutUnreadTitle": "Unread is always on top",
     "calloutUnread": "New mail waits in one group at the top of the Ohbox until you read it — an empty New group means you're done.",
     "calloutEarlierTitle": "Everything read lands under Earlier",
-    "calloutEarlier": "Read mail sits under Earlier in the order it arrived; the one you have open stays where it is until you move on. Nothing to archive, nothing to tidy.",
+    "calloutEarlier": "Read mail sits under Earlier in the order it arrived; the one you have open stays where it is until you move on or answer it. Nothing to archive, nothing to tidy.",
     "calloutsLabel": "Things to notice in the demo",
     "hintsLabel": "Inside the demo",
     "hintCmdk": "everything, by name",
@@ -2605,6 +2605,7 @@
     "noticeDismiss": "Mark read",
     "noticeOpenMailboxes": "Mailboxes",
     "stateReleased": "You stopped organizing this here on {when}.",
+    "stateParked": "Paused while the account was closed — organizing resumes on its own",
     "oauthDecideElsewhere": "For a mailbox signed in with OAuth, decisions can only be made on the install that organizes it.",
     "stateNotOrganized": "Nothing organizes this mailbox",
     "stateOrganizingHere": "This computer files this mailbox: it moves mail into your folders, screens strangers and applies your rules.",
@@ -3985,9 +3986,7 @@
     "subscribe": "Subscribe",
     "fixPayment": "Fix payment",
     "later": "Later",
-    "caughtUp": "{count, plural, =0 {ohmail found nothing new since {date}.} one {ohmail caught up 1 message that arrived since {date}.} other {ohmail caught up # messages that arrived since {date}.}}",
-    "handedBack": "ohmail handed these mailboxes back when the account closed. It does not take them again on its own \u2014 organizing starts when you start it.",
-    "startOrganizing": "Start organizing",
+    "caughtUp": "ohmail is catching up on mail that arrived since {date}.",
     "dismiss": "Got it"
   },
   "accessLock": {

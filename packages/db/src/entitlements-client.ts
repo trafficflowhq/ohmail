@@ -3,7 +3,7 @@ import {
   type AccessLifecycle, type AccessLifecycleState, type AccessClosedReason, type ActionPrices,
   type AccessReadOpts, type AccessRefusal, type AccessVerdict, type EntitlementsPort,
   type ReleaseOutcome, type ReleaseReceipt, type SpendAction, type SpendMeta, type SpendOutcome,
-  type SpendRelease,
+  type SpendRelease, type ReturnConfirmOutcome,
 } from "./entitlements-port.js";
 import { isAiRefusalReason } from "./ai-gate-port.js";
 import { SPEND_ACTIONS, assertAttemptKey } from "./ledger-source.js";
@@ -32,7 +32,8 @@ export const ENTITLEMENTS_CALL_BUDGET_MS = 5_000;
 
 /** The program's paths — a closed union, so `post` cannot be sent one nobody has priced. */
 export type EntitlementsPath =
-  | "/v1/access" | "/v1/spend" | "/v1/spend/release" | "/v1/manage-link" | "/v1/account/release";
+  | "/v1/access" | "/v1/spend" | "/v1/spend/release" | "/v1/manage-link" | "/v1/account/release"
+  | "/v1/checkout/confirm";
 
 /** How long an `access` verdict is reused before it is re-read. */
 export const ACCESS_TTL_MS = 60_000;
@@ -44,6 +45,15 @@ export const ACCESS_TTL_MS = 60_000;
  * the fault arm's own (last verdict, else allow); `fresh` reads are never held.
  */
 export const ACCESS_FAULT_HOLD_MS = ENTITLEMENTS_CALL_BUDGET_MS;
+
+/**
+ * How long a REFUSAL is reused before it is asked again: five seconds, where an allow keeps
+ * {@link ACCESS_TTL_MS}. A fault is held; a refusal is re-asked, because the person may have just
+ * paid, and a minute-old refusal kept a paid account's mail unorganized and its wall up. At most one
+ * call per account per five seconds while refused, and only when something asks — concurrent askers
+ * share the call in flight. Never longer than the allow's own TTL.
+ */
+export const ACCESS_REFUSED_TTL_MS = 5_000;
 
 /**
  * How old a held ALLOW a READ route may answer on while it is re-read behind it: ten minutes. A
@@ -355,7 +365,7 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
    * a `fresh` one too. One image-heavy message sent 40-80 parallel calls for one account and
    * all of them timed out. An entry leaves as its call settles, inside the call's budget.
    */
-  const inflight = new Map<string, Promise<AccessVerdict | null>>();
+  const inflight = new Map<string, { call: Promise<AccessVerdict | null>; startedAt: number }>();
   /** Until when an account's last failed read answers for it ({@link ACCESS_FAULT_HOLD_MS}). */
   const faultHeldUntil = new Map<string, number>();
   /** Latched by the first 200 that carried a readable card — `/health`'s `plane` reading. */
@@ -424,7 +434,10 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
         const priced = card !== null && !("bad" in card);
         if (priced) pricesStated = true;
         const verdict: AccessVerdict = read.ok && priced ? { ...read, prices: card } : read;
-        cache.set(accountId, { verdict, readAt: at, freshUntil: at + ttlMs });
+        const reuseMs = verdict.ok ? ttlMs : Math.min(ttlMs, ACCESS_REFUSED_TTL_MS);
+        // A call that began earlier and answered later never replaces a newer verdict.
+        const prev = cache.get(accountId);
+        if (!prev || prev.readAt <= at) cache.set(accountId, { verdict, readAt: at, freshUntil: at + reuseMs });
         faultHeldUntil.delete(accountId);
         return verdict;
       }
@@ -436,21 +449,33 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
     return null;
   };
 
-  /** The call in flight for this account, or a new one. Its rejection reaches every waiter. */
-  const shared = (accountId: string): Promise<AccessVerdict | null> => {
-    const running = inflight.get(accountId);
-    if (running !== undefined) return running;
-    const started: Promise<AccessVerdict | null> = ask(accountId).finally(() => {
-      if (inflight.get(accountId) === started) inflight.delete(accountId);
+  /** A new call for this account, recorded as the one in flight. */
+  const begin = (accountId: string): Promise<AccessVerdict | null> => {
+    const entry = { call: null as unknown as Promise<AccessVerdict | null>, startedAt: clock() };
+    entry.call = ask(accountId).finally(() => {
+      if (inflight.get(accountId) === entry) inflight.delete(accountId);
     });
-    inflight.set(accountId, started);
-    return started;
+    inflight.set(accountId, entry);
+    return entry.call;
   };
+  /** The call in flight for this account, or a new one. Its rejection reaches every waiter. */
+  const shared = (accountId: string): Promise<AccessVerdict | null> =>
+    inflight.get(accountId)?.call ?? begin(accountId);
 
   const client: EntitlementsClient = {
     async access(accountId: string, opts?: AccessReadOpts): Promise<AccessVerdict> {
       const at = clock();
       const held = cache.get(accountId);
+      // ONLY AN ANSWER BEGUN SINCE `askedAfter`: a verdict or a call from before it says nothing
+      // about what happened since, so neither is reused, and a fault falls to allow, not to it.
+      if (opts?.askedAfter !== undefined) {
+        const since = opts.askedAfter;
+        if (held && held.readAt >= since) return held.verdict;
+        const running = inflight.get(accountId);
+        const answer = await (running && running.startedAt >= since ? running.call : begin(accountId));
+        const after = cache.get(accountId);
+        return answer ?? (after && after.readAt >= since ? after.verdict : UNMETERED_ACCESS);
+      }
       // `fresh` SKIPS THE REUSE AND THE HOLD, NOTHING ELSE: the held verdict is still what the
       // fault arm answers with, because "we could not ask again" is not evidence that the last
       // answer is wrong. A cached refusal asked about a minute after the program recovered is
@@ -537,6 +562,22 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       if (typeof outcome === "string" && OUTCOMES.has(outcome)) return outcome as ReleaseOutcome;
       named("/v1/account/release", res.status, "outcome");
       return "cancel_failed";
+    },
+
+    async confirmReturn(accountId: string, sessionId: string): Promise<ReturnConfirmOutcome> {
+      const res = await post("/v1/checkout/confirm", { accountId, sessionId });
+      if (!res) return "fault";
+      // 404 is an ANSWER here: unknown, another account's, the other key mode, or an older program.
+      if (res.status === 404) return "not_found";
+      if (res.status !== 200 || !res.bodyIsJson) return "fault";
+      const state = obj(res.body)?.state;
+      if (state === "confirmed" || state === "pending") {
+        // A refusal this process holds is now wrong: the next read asks.
+        if (state === "confirmed") cache.delete(accountId);
+        return state;
+      }
+      named("/v1/checkout/confirm", res.status, "state");
+      return "fault";
     },
 
     async aiPricing(): Promise<"plane" | "unpriced"> {

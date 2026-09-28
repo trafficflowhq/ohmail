@@ -17,7 +17,7 @@ import { registerSessionTransport, sessionMayAsk } from "./shell/session-truth";
 import type { TravelledChangeWire } from "./shell/travelled-change";
 import { readOwner, readOwnerMarker, rememberOwner } from "./shell/owner-cookie";
 import { refusedFactsOf, verdictOf } from "./access-verdict";
-import { storeVerdict } from "./shell/wall-lift";
+import { readStoredVerdict, storeVerdict } from "./shell/wall-lift";
 import { forgetOpenVerdict, markOpenVerdict, refusalIsStale } from "./shell/access-window";
 import {
   ACCOUNT_ERASED, ERASED_DECLARATION, clearAccountErased, erasedCapture, hearAccountErased,
@@ -1068,6 +1068,8 @@ export interface MailboxDTO {
    * both are readers with no holder, and only the first is something the person here did.
    */
   organizerReleasedAt?: string | null;
+  /** When the closed account's park released it (mail 0135); the account reading open resumes it. */
+  organizerParkedAt?: string | null;
   /** The standing "stop organizing here" ask, pending until the organizer's pass confirms it. */
   releaseRequestedAt?: string | null;
   /** Why that ask has not finished — `sibling_lapse` is a clone's live claim (mail 0121). */
@@ -2049,9 +2051,9 @@ export type AccountAccess =
       exportPath?: string;
       /**
        * THE ONE-TIME CATCH-UP, answered on the first open read after a closure and never again.
-       * `since` is the moment the account closed; `count` is what arrived while it was shut.
+       * `since` is when the wall stood the mailboxes down, else when the account closed. No count.
        */
-      caughtUp?: { since: string; count: number };
+      caughtUp?: { since: string };
     };
 
 /**
@@ -2661,9 +2663,11 @@ function accessRead(fresh: boolean): Promise<AccountAccess> {
 function noteVerdict(owner: string | null, a: AccountAccess): void {
   const verdict = verdictOf(a);
   if (verdict === null) return;
+  // Read before it is overwritten: an open answer over a stored `closed` is the reopening.
+  const lifted = readStoredVerdict(owner) === "closed";
   storeVerdict(owner, verdict);
   if (verdict === "open") {
-    if (a.metered) markOpenVerdict(owner);
+    if (a.metered) markOpenVerdict(owner, Date.now(), lifted);
     return;
   }
   forgetOpenVerdict();
@@ -2731,6 +2735,21 @@ export const account = {
    * app never inspects.
    */
   exportSettings: () => api<unknown>("/account/export"),
+  /**
+   * `POST /account/checkout/confirm` — the person is back from a Checkout; the service asks its
+   * program to apply the payment now. NEVER THROWS: any answer but the two states is `null`, and
+   * the caller polls access exactly as it did before (an older API answers 404).
+   */
+  confirmReturn: async (sessionId: string): Promise<"confirmed" | "pending" | null> => {
+    try {
+      const r = await api<{ state?: unknown }>("/account/checkout/confirm", {
+        method: "POST", body: { sessionId },
+      });
+      return r.state === "confirmed" || r.state === "pending" ? r.state : null;
+    } catch {
+      return null;
+    }
+  },
   manageLink: async (opts?: { lang?: "de" | "en" }): Promise<{ url: string } | null> => {
     try {
       // `lang` is the page's language on the far side; absent, that page reads the browser's.

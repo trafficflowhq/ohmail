@@ -241,6 +241,14 @@ export const mailboxes = pgTable("mailboxes", {
    * else caused. Cleared by every promotion, so it describes the CURRENT state.
    */
   organizerReleasedAt: timestamp("organizer_released_at", { withTimezone: true }),
+  /**
+   * Mail 0135 — when the WALL released this mailbox (`markMailboxReleased`, cause `account_parked`).
+   * A person's release writes NULL, so this is the one fact that tells the two apart: the account
+   * reading open again stamps a `join` over a marked reader (`organizer-park.ts`), and the promotion
+   * or stand-down that spends the stamp clears it. Every writer of {@link organizerReleasedAt} names
+   * this column too.
+   */
+  organizerParkedAt: timestamp("organizer_parked_at", { withTimezone: true }),
   // Mail 0065 — the provider's OWN Junk and Trash folders, as discovered at connect. Canonical
   // `/`-delimited paths, resolved by `ImapAdapter.findSpecialFolders` (SPECIAL-USE first, then
   // the name belts) and re-written on every connect, so a mailbox that gains or renames the

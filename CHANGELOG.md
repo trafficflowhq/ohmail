@@ -13,6 +13,49 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Large sync changes arrive in pages, and a desktop on Cloud logs the writes it sends
+<!-- changes: fix-026-sync-pages.md -->
+
+- A large set of changes, such as many long drafts saved at once, now arrives in pages. Before, it
+  could arrive as one reply too large for the desktop's own connection to its engine, and the sync
+  failed the same way on every retry. Snapshot pages were already bounded this way; now both kinds
+  of sync page are.
+- A desktop signed in to ohmail Cloud writes one line to its engine log for each change it sends
+  to your account: the kind of change, the answer and how long it took. Nothing of the message
+  itself is logged.
+- On a desktop signed in to Cloud, a mailbox that another ohmail install organizes is now sorted
+  by that install's rules, as on the web and the phone.
+- After one request fails, a desktop on Cloud tries the account again on the next read instead of
+  showing itself offline until its next sync.
+- A draft replying to old mail keeps the message it answers on a newly set-up device.
+
+### The dark sync link, the tag chips and the Screener's key hints meet the contrast minimum
+<!-- changes: fix-026-dark-aa.md -->
+
+In the dark themes the "Settings → Mailboxes" link in the sync box and strip sits on the theme's
+darkest ground rather than a white lift; in the ohmarchy face a tag's name is coloured to read on
+its own chip, over the tile and over the page; and the key hint on the Screener's suggested
+decision is no longer faded. All three read at 4.5:1 or better in both faces, light and dark.
+
+### The phone offers to screen senders already in the Inbox, as the web does
+<!-- changes: fix-026-phone-tells.md -->
+
+Mail that was already in the Inbox when you connected the phone stays in the Ohbox, and the Ohbox
+now offers to hold its undecided senders in the Screener with one press, as the web app does.
+
+### A Move pressed just before the app closes now keeps its rule
+<!-- changes: fix-026-phone-tells.md -->
+
+On the phone, a Move that decides where a sender's mail goes keeps that rule even when the app is
+closed right after the press; the next launch makes it and says so.
+
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.25.4] — 2026-09-28
+
 ### Settings → About writes a diagnostic file you can send us
 <!-- changes: maturity-026-m4-local.md -->
 
@@ -257,46 +300,39 @@ and Version labels, the default name of a desktop that paired without one, the p
 and its Einordnen action. Every screen now addresses the reader as du. The keyboard hints under
 the lists read whole in German, and the phone's Screener doorbell no longer says "Screener" twice.
 
-### Large sync changes arrive in pages, and a desktop on Cloud logs the writes it sends
-<!-- changes: fix-026-sync-pages.md -->
+### Answering the message you have open moves it to Earlier
+<!-- changes: fix-026-an-answer-files-the-open-row.md -->
 
-- A large set of changes, such as many long drafts saved at once, now arrives in pages. Before, it
-  could arrive as one reply too large for the desktop's own connection to its engine, and the sync
-  failed the same way on every retry. Snapshot pages were already bounded this way; now both kinds
-  of sync page are.
-- A desktop signed in to ohmail Cloud writes one line to its engine log for each change it sends
-  to your account: the kind of change, the answer and how long it took. Nothing of the message
-  itself is logged.
-- On a desktop signed in to Cloud, a mailbox that another ohmail install organizes is now sorted
-  by that install's rules, as on the web and the phone.
-- After one request fails, a desktop on Cloud tries the account again on the next read instead of
-  showing itself offline until its next sync.
-- A draft replying to old mail keeps the message it answers on a newly set-up device.
+A reply, reply all or forward of the message you have open in the Ohbox now moves it to Earlier with your
+answer as soon as the answer is sent; it no longer stays in New beside its own conversation until you move
+on.
 
-### The dark sync link, the tag chips and the Screener's key hints meet the contrast minimum
-<!-- changes: fix-026-dark-aa.md -->
+### Nothing tells you that you stopped organizing a mailbox the closure paused
+<!-- changes: open-026-paid-reopens-b.md -->
 
-In the dark themes the "Settings → Mailboxes" link in the sync box and strip sits on the theme's
-darkest ground rather than a white lift; in the ohmarchy face a tag's name is coloured to read on
-its own chip, over the tile and over the page; and the key hint on the Screener's suggested
-decision is no longer faded. All three read at 4.5:1 or better in both faces, light and dark.
+While an account is closed, a mailbox ohmail paused reads "Paused while the account was closed —
+organizing resumes on its own" on the web, the desktop and the phone. After you pay, the sync line
+says it is catching up without a date from before the closure, a stale answer in that first minute
+is not reported as a failed sync, and the catch-up note no longer lists mailboxes to start again.
+The phone shows the catch-up note again.
 
-### The phone offers to screen senders already in the Inbox, as the web does
-<!-- changes: fix-026-phone-tells.md -->
+### After you subscribe again, your mailboxes are organized again straight away
+<!-- changes: open-026-paid-reopens.md -->
 
-Mail that was already in the Inbox when you connected the phone stays in the Ohbox, and the Ohbox
-now offers to hold its undecided senders in the Screener with one press, as the web app does.
+After you pay for a closed account, it opens as soon as you are back from the payment page, and
+ohmail organizes your mailboxes again without a press on each one. A mailbox you had stopped
+organizing yourself stays stopped, and one that another ohmail install took over while the account
+was closed stays with it. The web app no longer says the subscription has ended right after you
+pay, notifications turned back on after the payment are kept, and the catch-up note says since when
+ohmail is catching up, without a count.
 
-### A Move pressed just before the app closes now keeps its rule
-<!-- changes: fix-026-phone-tells.md -->
+### Known issue — Android
 
-On the phone, a Move that decides where a sender's mail goes keeps that rule even when the app is
-closed right after the press; the next launch makes it and says so.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
+Android builds up to 0.25.3 were made without two fixes this repository carries for the phone's TLS
+transport and mail sender. On those builds an outgoing server on a STARTTLS port (587) does not
+send, and adding a mailbox on port 143 fails and closes the app; implicit TLS on 465 and 993 works.
+A valid certificate for a different name than the server's is accepted on those builds. The next
+Android build carries both fixes. iOS and the desktop are not affected.
 
 ## [0.25.3] — 2026-09-27
 
@@ -10141,7 +10177,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.3...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.4...HEAD
+[0.25.4]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.4
 [0.25.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.3
 [0.25.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.2
 [0.25.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.1

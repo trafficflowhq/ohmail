@@ -2125,7 +2125,7 @@ export class OhmailEngine {
 
   private readonly overlays = new Map<string, MutationEffect[]>();
   private overlayRev = 0;
-  /** The row being read, held in "New for you" until it is left — {@link holdOpenRow}. */
+  /** The row being read, held in "New for you" until it is left or answered — {@link holdOpenRow}. */
   private openRow: string | null = null;
   /**
    * THE OPTIMISTIC SENT COPIES, keyed by their overlay id — the confirm-time half of `mail_send`.
@@ -4431,9 +4431,10 @@ export class OhmailEngine {
    * THE ROW BEING READ KEEPS ITS PLACE (owner ruling 2026-09-18: a read never moves a row). A
    * surface names the message it opens out of "New for you" here BEFORE it saves the read, and
    * `ohboxView(read(), openRowHeld())` keeps it in New at its arrival slot until the reader moves
-   * on. Held only if it stands in New now: a read row, or a resurfaced one, holds nothing and ends
-   * the previous hold. It moves the overlay revision, so the read's paint and the hold reach every
-   * subscriber in one snapshot — a React state beside the paint lost that race to the notify.
+   * on or answers it. Held only if it stands in New now: a read row, or a resurfaced one, holds
+   * nothing and ends the previous hold. It moves the overlay revision, so the read's paint and the
+   * hold reach every subscriber in one snapshot — a React state beside the paint lost that race to
+   * the notify.
    */
   holdOpenRow(id: string): boolean {
     if (id === this.openRow) return true;
@@ -4460,14 +4461,31 @@ export class OhmailEngine {
   }
 
   /**
-   * An act that takes the held row out of New — a pin, a pile, a move, a delete — ends the hold:
-   * explicit acts alone move a row, and this one did, so a later release (Done on the pin) files
-   * it in Earlier rather than back in New. An act that leaves it in New (its read, a tag) keeps it.
+   * An act that takes the held row out of New — a pin, a pile, a move, a delete, or a confirmed
+   * answer ({@link endHoldAnswered}) — ends the hold: explicit acts alone move a row, and this
+   * one did, so a later release (Done on the pin) files it in Earlier rather than back in New. An
+   * act that leaves it in New (its read, a tag) keeps it.
    */
   private endHoldActedAway(effects: readonly MutationEffect[]): void {
     const held = this.openRow;
     if (held === null || !effects.some((e) => e.id === held)) return;
     if (!ohboxView(this.read(), held).newForYou.some((m) => m.id === held)) this.openRow = null;
+  }
+
+  /**
+   * A CONFIRMED answer into the held row's conversation (a reply, reply all or forward) files it
+   * with its Sent copy: an explicit act (owner defect 2026-09-28). A Send later has sent nothing;
+   * a 202 and a refusal never reach the confirm point. Answers whether the hold ended.
+   */
+  private endHoldAnswered(m: EngineMutation): boolean {
+    const held = this.openRow;
+    if (held === null || m.kind !== "mail_send" || m.sendAt) return false;
+    const thread = this.read().get<EngineMessage>("message", held)?.threadId ?? null;
+    const answers = m.inReplyTo === held || m.forwardOf === held
+      || (thread !== null && m.threadId === thread);
+    if (!answers) return false;
+    this.openRow = null;
+    return true;
   }
 
   subscribe(listener: () => void): () => void {
@@ -6857,7 +6875,11 @@ export class OhmailEngine {
        * was a sent message appearing in the Ohbox a minute late. `notify` fires on its own overlay bump because the
        * whole point is the row on screen before the branch below is entered.
        */
-      if (this.materializeSentOverlay(p.mutation, outcome)) {
+      // Both run, then ONE notify: a frame with the copy in Earlier and its row still held in New is
+      // the two-row defect (owner, 2026-09-28).
+      const painted = this.materializeSentOverlay(p.mutation, outcome);
+      const released = this.endHoldAnswered(p.mutation);
+      if (painted || released) {
         this.overlayRev++;
         this.notify();
       }
@@ -7167,7 +7189,7 @@ export class OhmailEngine {
   /**
    * ADD THE OPTIMISTIC SENT COPY of a confirmed send. A no-op for anything else. Gated on `mail_send` AND a
    * `providerMessageId`: the id is the server's word that the message left and was appended to Sent, and its absence
-   * (the FixturesAdapter, an older server) means no overlay rather than a fabricated one. The copy goes into {@link
+   * (an older server, or a Send later) means no overlay rather than a fabricated one. The copy goes into {@link
    * overlays} under a dedicated key so the {@link OverlayReader} merges it into every message read — the conversation
    * and the Ohbox see it with no change of their own — and its `messageIdHeader`/expiry are recorded in {@link
    * optimisticSent} for {@link reconcileOptimisticSent} to retire it by. Answers whether a copy was added, so the

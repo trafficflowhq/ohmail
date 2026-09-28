@@ -133,6 +133,7 @@ export const DE: Deck = {
   /* Der Übergangszustand: zurückgegeben und noch nicht wieder übernommen. */
   phoneStateHandedBack: "Zurückgegeben",
   phoneStateHandedBackWhy: "Ein anderer Computer kann dieses Postfach jetzt übernehmen.",
+  phoneStateParked: "Pausiert, während das Konto geschlossen war — das Organisieren läuft von selbst wieder an",
   phoneStateReader: (name: string) => `Organisiert von ${name}`,
   phoneStateReaderLegacy: "Organisiert von einer anderen Installation",
   /* Der normale gekoppelte Zustand. Es wird keine Maschine genannt, weil keine auf der Leitung
@@ -1660,15 +1661,7 @@ export const DE: Deck = {
   stripSubscribe: "Abo abschliessen",
   stripFixPayment: "Zahlung in Ordnung bringen",
   stripLater: "Später",
-  stripCaughtUp: (count: number, date: string) =>
-    count === 0
-      ? `ohmail hat seit dem ${date} nichts Neues gefunden.`
-      : count === 1
-        ? `ohmail hat 1 Nachricht nachgeholt, die seit dem ${date} angekommen ist.`
-        : `ohmail hat ${count} Nachrichten nachgeholt, die seit dem ${date} angekommen sind.`,
-  stripHandedBack:
-    "ohmail hat diese Postfächer zurückgegeben, als das Konto geschlossen wurde. Es nimmt sie nicht von selbst wieder — das Organisieren beginnt, wenn du es startest.",
-  stripStartOrganizing: "Organisieren starten",
+  stripCaughtUp: (date: string) => `ohmail holt die Nachrichten nach, die seit dem ${date} angekommen sind.`,
   stripDismiss: "Verstanden",
 
   renderErrorTitle: "Auf diesem Bildschirm ist etwas schiefgegangen.",

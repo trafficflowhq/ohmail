@@ -1150,14 +1150,18 @@ function isTerminalRefusal(err: unknown): boolean {
     && err.code !== null;
 }
 
+/** The service's own refusal of the ACCOUNT — our envelope's code, never a bare status. */
+function isAccountRefusal(err: unknown): boolean {
+  return err instanceof MutationRejectedError && err.status === 402 && err.code === "subscription_required";
+}
+
 /**
- * The service's own refusal of the ACCOUNT — our envelope's code, never a bare status — and not a
- * stale one: inside the window after an open verdict it is a transient, the same decision the
- * wall's sink reads (`access-window.ts`), so the loop never stands down with no wall to revive it.
+ * …and not a stale one: inside the window after an open verdict it is another instance's cached
+ * refusal, the same decision the wall's sink reads (`access-window.ts`). The loop then neither
+ * stands down (no wall would revive it) nor counts it: the account is open.
  */
 function isAccessRefusal(err: unknown): boolean {
-  return err instanceof MutationRejectedError && err.status === 402 && err.code === "subscription_required"
-    && !refusalIsStale();
+  return isAccountRefusal(err) && !refusalIsStale();
 }
 
 /** Every live loop's revive, so the shell can restart the ones a refusal stood down. */
@@ -1687,6 +1691,12 @@ export function startSyncScheduler(
         refusedAt = null;
         disarm();
         closeStream();
+        return;
+      }
+      if (isAccountRefusal(err)) {
+        // STALE (see above): retried at the current pace, neither counted nor reported.
+        refusedAt = null;
+        arm(pacedBackoff());
         return;
       }
       failures += 1;

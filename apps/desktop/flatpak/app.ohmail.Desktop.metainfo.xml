@@ -74,6 +74,41 @@
   </screenshots>
 
   <releases>
+    <release version="0.25.4" date="2026-09-28">
+      <description>
+        <ul>
+          <li>Settings → About writes a diagnostic file you can send us</li>
+          <li>After an update on Linux, the previous version no longer stays mounted</li>
+          <li>A message at any number the server gives is stored</li>
+          <li>A folder deleted in another mail app leaves with its letters</li>
+          <li>A large mailbox shows mail within its first sync instead of after several minutes</li>
+          <li>A Screening change made on another device reaches the one that organizes</li>
+          <li>The phone's Screener decisions offer Undo</li>
+          <li>Settings → Mailboxes can check a mailbox against your mail server and say which folders differ</li>
+          <li>Mail you wrote from a Sent folder with its own name counts</li>
+          <li>ohmail can act on confident suggestions, behind its own switch</li>
+          <li>A Screening change made on another device says where it went</li>
+          <li>A signature saved with formatting in the browser is kept</li>
+          <li>Deleting an account or a mailbox leaves nothing owed and nothing stale</li>
+          <li>Confirming an action no longer signs you in again</li>
+          <li>A phone's incoming server can be changed while it organizes</li>
+          <li>Every screen says who organizes a mailbox from what it has read</li>
+          <li>Replacing an authenticator works</li>
+          <li>Waiting changes and refused sends say where they stand</li>
+          <li>The web works by keyboard, at zoom and in the dark theme</li>
+          <li>Download all saves what it lists, and a found message's files show at once</li>
+          <li>A computer switched off mid-import loses about the last second of it</li>
+          <li>A message too large to download is listed, and says so</li>
+          <li>A mail server on your own network connects without TLS, with your consent for each half</li>
+          <li>A reply draft opens where you can finish it</li>
+          <li>German screens say it in German</li>
+          <li>Answering the message you have open moves it to Earlier</li>
+          <li>Nothing tells you that you stopped organizing a mailbox the closure paused</li>
+          <li>After you subscribe again, your mailboxes are organized again straight away</li>
+          <li>Known issue — Android</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.25.3" date="2026-09-27">
       <description>
         <ul>
@@ -307,23 +342,6 @@
           <li>A desktop paired with ohmail Cloud files your mail by your rules again</li>
           <li>A rule for some of a sender's mail files only that mail</li>
           <li>Answer Later and Parked list messages in the same order on every device</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.24.0" date="2026-09-24">
-      <description>
-        <ul>
-          <li>Delete, move and tag work on every message in History and Search</li>
-          <li>History shows every message you own, and Search pages through your whole mailbox</li>
-          <li>Search on the desktop answers in milliseconds, with the count right behind</li>
-          <li>The desktop searches your whole mailbox from its own store, and indexes older mail while idle</li>
-          <li>Search says how many messages match right after the first results</li>
-          <li>Search reaches every message you own, and History goes back to the first one</li>
-          <li>Removing a mailbox can erase ohmail's copy of its mail</li>
-          <li>On a desktop paired with ohmail Cloud, a change a slow server confirms shows at once</li>
-          <li>On a desktop paired with ohmail Cloud, every change shows at once and stays</li>
-          <li>History on a desktop paired with ohmail Cloud lists your whole mailbox</li>
-          <li>Search pages on ohmail Cloud answer faster</li>
         </ul>
       </description>
     </release>
