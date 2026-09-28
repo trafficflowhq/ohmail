@@ -101,6 +101,12 @@ export interface Mail {
    * count was 0 on every row of every list.
    */
   threadCount?: number;
+  /**
+   * AN OHBOX ROW'S CONVERSATION — its key and every message it stands for, set only by `liveOhbox`
+   * (the engine's `ohboxRows`). `id` stays the open target the verbs act on; the list keys on this.
+   */
+  rowKey?: string;
+  memberIds?: readonly string[];
   /** The tags this message carries, in the tag list's order; absent where it carries none. */
   tags?: readonly MailTag[];
   /**

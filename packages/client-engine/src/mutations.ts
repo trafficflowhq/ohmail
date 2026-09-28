@@ -98,12 +98,12 @@ function stateRecordIdOf(reader: EntityReader, messageId: string): string {
 
 /**
  * Where it surfaces, corrected: this used to say the copy "matches no pile view and reaches the surface only through
- * its conversation". No longer true — `ohboxView`'s own-sent union files the account's own sent mail into "Earlier",
+ * its conversation". No longer true — `ohboxView`'s own-sent union files the account's own sent mail into the Ohbox,
  * and `isOwnSent` asks whether the row's folder is the mailbox's Sent folder, which `folder: "Sent"` satisfies. So
- * the copy appears in Earlier as well as its conversation, from confirmation until the real row replaces it. That is
- * right and needs no gate: a just-sent message belongs in the sender's own history, `unread: false` keeps it out of
- * "New for you", and the `messageIdHeader` reconcile means the two are never in the list together. Any surface
- * reading the mirror can see a provisional row — `local` is the flag to test, never the folder.
+ * the copy appears in the Ohbox, filed with its conversation (New while something in it is unread, else Earlier),
+ * from confirmation until the real row replaces it. That is right and needs no gate: a just-sent message belongs in
+ * the sender's own history, and the `messageIdHeader` reconcile means the two are never in the list together. Any
+ * surface reading the mirror can see a provisional row — `local` is the flag to test, never the folder.
  */
 export function sentOverlayMessage(
   reader: EntityReader,

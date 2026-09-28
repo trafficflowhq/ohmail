@@ -83,8 +83,8 @@ const ANNOS: Anno[] = [
     // (only mail you said yes to — the hero's own lead, repeated verbatim), the Screener (one press decides; spam to
     // the provider's native Junk, the sender rule remembers, the unsubscribe goes out where the list offers one
     // click), and the two group labels the Ohbox model stands on (owner review 2026-08-31 — the right-side pair must
-    // point at what the demo VISIBLY does): unread mail waits in one group at the top, and everything read files
-    // itself under "Earlier".
+    // point at what the demo VISIBLY does): unread mail waits in one group at the top, and a conversation that has
+    // all been read files itself under "Earlier".
 
     // Each sentence is judged against the code by `landing-mailbox-truth.test.ts` — the group claims against
     // `client-engine/selectors.ts#ohboxView`, whose `newForYou`/`previouslySeen` split is exactly what the two labels

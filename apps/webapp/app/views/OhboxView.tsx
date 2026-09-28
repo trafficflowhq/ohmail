@@ -11,7 +11,9 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEve
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { rowThread, rowThreadOf } from "../shell/row-thread";
-import { countWhen, isOwnSent, isResurfaced, listSurface, presentsUnread, saysEmpty } from "@ohmail/client-engine";
+import {
+  arrivalMs, countWhen, foldOhboxRows, isOwnSent, isResurfaced, listSurface, presentsUnread, saysEmpty,
+} from "@ohmail/client-engine";
 import type { ListSurface } from "@ohmail/client-engine";
 import type { EngineMessage, ResurfacedThreadRow, TagDTO } from "@ohmail/client-engine";
 import {
@@ -31,9 +33,7 @@ import { ShortcutHint } from "../shell/ShortcutHint";
 import { readColumnHidden } from "../shell/narrow";
 import { ACTED_FRESH_MS, nextSurvivor, readAfterVerb, type ActedMarker } from "../shell/after-verb";
 import { storageOwner } from "../shell/storage-owner";
-import {
-  groupResurfaced, groupSection, sendTimeOf, type OhboxRowGroup,
-} from "./ohbox-groups";
+import type { OhboxRowGroup } from "./ohbox-groups";
 import { PLACE_LABEL, avatarOf, resurfaceLabel, rowAddress, rowStamp, senderName, sentAvatarOf, sentRowRecipient, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useZoneNav } from "../shell/zone-nav";
@@ -378,8 +378,8 @@ export function OhboxView({
    * at the selector's slot — the top for genuinely new mail (appending filed every post-mount arrival at the
    * bottom; reported). A read message leaves "New for you" NOW — keeping read rows made a read mailbox look
    * unread all session: the moment the selector re-files a row it slides (`SETTLE_MS`) and `dismissed` releases
-   * its slot. The one unmoved row is the message being read — its place is held until the reader leaves it ({@link
-   * armRead}). `promoted` is the reverse move: an explicit mark-unread enters at the FRONT of New and
+   * its slot. The one unmoved row is the message being read — its place is held until the reader leaves or answers
+   * it ({@link armRead}). `promoted` is the reverse move: an explicit mark-unread enters at the FRONT of New and
    * cancels a slide in flight — the later explicit act wins, immediately.
    */
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
@@ -533,29 +533,6 @@ export function OhboxView({
     .filter((m): m is EngineMessage => m != null);
   const displayPrev = previouslySeen.filter((m) => !upper.has(m.id));
 
-  /**
-   * One row per conversation, per section. Five unread replies in one thread were five rows in
-   * "New for you". `groupSection` (`ohbox-groups.ts`) folds each section's DISPLAY list — after
-   * session placement, so a fold never fights the session order — into one row per `threadId`.
-   * New and Earlier fold by that rule; RESURFACED folds by the engine's row, which also carries
-   * the badge and the server's count ({@link groupResurfaced}); the server-paged Older tail is
-   * not this client's to fold. Messages remain the unit of everything but the rows: the meta
-   * count, mark-all-read, read-state and the pick set keep message semantics — a grouped row is
-   * a rendering and a keyboard stop, not a new entity.
-   */
-  const groupedNew = groupSection(displayNew);
-  const groupedPrev = groupSection(displayPrev);
-  const groupedResurfaced = groupResurfaced(resurfacedRows, displayResurfaced);
-  /** The rows on screen, top to bottom — what j/k walk and what a pick range spans. */
-  const navRows: OhboxRowGroup[] = [
-    ...groupedResurfaced,
-    ...groupedNew,
-    ...groupedPrev,
-  ];
-  /** The row holding this message, folded or not; -1 for a message not in the three groups. */
-  const rowIndexOf = (id: string | null): number =>
-    id == null ? -1 : navRows.findIndex((g) => g.members.some((m) => m.id === id));
-
   // Selection and read-state follow the MESSAGES on screen, top to bottom.
   const all = [...displayResurfaced, ...displayNew, ...displayPrev];
   const unreadIds = all.filter((m) => m.unread).map((m) => m.id);
@@ -572,6 +549,34 @@ export function OhboxView({
   const inGroups = new Set(all.map((m) => m.id));
   const olderShown = older.items.filter((m) => !inGroups.has(m.id));
   const shown = olderShown.length === 0 ? all : [...all, ...olderShown];
+
+  /**
+   * ONE ROW PER CONVERSATION, ACROSS SECTIONS — the engine's `foldOhboxRows`, the fold the phone
+   * draws too. It runs AFTER session placement, so the session order positions rows but cannot
+   * make a second one: a member still sliding out of New keeps its conversation's row there, and a
+   * Sent copy or an Older-tail row of a conversation standing above rides that row. Messages stay
+   * the unit of the meta count, mark-all-read, read state and the pick set.
+   */
+  const folded = foldOhboxRows(
+    { resurfaced: displayResurfaced, new: displayNew, earlier: displayPrev, older: olderShown },
+    resurfacedRows,
+  );
+  const groupedResurfaced: OhboxRowGroup[] = folded.resurfaced;
+  const groupedNew: OhboxRowGroup[] = folded.new;
+  const groupedPrev: OhboxRowGroup[] = folded.earlier;
+  const olderRows: OhboxRowGroup[] = folded.older;
+  /** The rows on screen, top to bottom — what j/k walk and what a pick range spans. */
+  const navRows: OhboxRowGroup[] = [
+    ...groupedResurfaced,
+    ...groupedNew,
+    ...groupedPrev,
+  ];
+  /** The row holding this message, folded or not; -1 for a message not in the three groups. */
+  const rowIndexOf = (id: string | null): number =>
+    id == null ? -1 : navRows.findIndex((g) => g.members.some((m) => m.id === id));
+  /** The Older-tail row holding this message, or `undefined`. */
+  const olderRowOf = (id: string): OhboxRowGroup | undefined =>
+    olderRows.find((g) => g.members.some((m) => m.id === id));
   /**
    * WHAT THIS PANE MAY SAY ABOUT ITSELF — one reading, shared with the phone
    * (`@ohmail/client-engine`'s `listSurface`). Every claim below is derived from it: the empty
@@ -584,7 +589,7 @@ export function OhboxView({
   /** May this pane state a number, or locate the mail, as fact yet? — `countWhen`'s predicate. */
   const mayState = countWhen(listInput, true) === true;
   /** Does "Earlier" hold any of the account's own sent mail? Gates the history-window note. */
-  const hasOwnSent = displayPrev.some(isOwnSent);
+  const hasOwnSent = all.some(isOwnSent);
 
   /**
    * The list is a window over `[New for you, Earlier]`: a mirror window still holds thousands
@@ -716,7 +721,7 @@ export function OhboxView({
    * A message not in any row — the Older tail — is its own pick, exactly as before.
    */
   const togglePick = useCallback((id: string) => {
-    const row = navRows[rowIndexOf(id)];
+    const row = navRows[rowIndexOf(id)] ?? olderRowOf(id);
     const ids = row ? row.members.map((m) => m.id) : [id];
     setPicked((prev) => {
       const next = new Set(prev);
@@ -871,8 +876,9 @@ export function OhboxView({
 
   /**
    * The renderable twin of {@link heldRead}: the row loses its dot and the verb says "Mark unread" at the arm,
-   * the same moment the write goes out, while the engine's hold keeps the row in its slot until it is left. One
-   * writer for the pair, {@link hold}; a refused write releases both, so a read the account refused never looks done.
+   * the same moment the write goes out, while the engine's hold keeps the row in its slot until it is left or
+   * answered. One writer for the pair, {@link hold}; a refused write releases both, so a read the account refused
+   * never looks done.
    */
   const [armedRead, setArmedRead] = useState<string | null>(null);
   const onReadArmedRef = useRef(onReadArmed);
@@ -1129,7 +1135,7 @@ export function OhboxView({
    */
   useEffect(() => {
     // The row being read never reaches `earlierIds` while it is read: the SELECTOR keeps it in New
-    // (`ohboxView`'s `openHeld`, held by the engine from the arm) until it is left. A skip keyed on
+    // (`ohboxView`'s `openHeld`, held by the engine from the arm) until it is left or answered. A skip keyed on
     // this view's own `armedRead` lost to the read's paint, which renders first.
     for (const id of resurfacedOrder.current) if (earlierIds.has(id)) slideOut(id);
     for (const id of newOrder.current) if (earlierIds.has(id)) slideOut(id);
@@ -1185,9 +1191,9 @@ export function OhboxView({
    * selection standing on a member that stopped leading its row (a newer reply arrived) still
    * knows which row it is on.
    */
-  const order = olderShown.length === 0
+  const order = olderRows.length === 0
     ? navRows.map((g) => g.openTarget.id)
-    : [...navRows.map((g) => g.openTarget.id), ...olderShown.map((m) => m.id)];
+    : [...navRows.map((g) => g.openTarget.id), ...olderRows.map((g) => g.openTarget.id)];
   /**
    * Where the cursor stands in that walk. Row MEMBERSHIP for the three groups — so a selection on
    * a member that stopped leading its row still knows which row it is on — and position for the
@@ -1198,7 +1204,7 @@ export function OhboxView({
   const orderIndexOf = (id: string | null): number => {
     const row = rowIndexOf(id);
     if (row >= 0) return row;
-    const k = id == null ? -1 : olderShown.findIndex((m) => m.id === id);
+    const k = id == null ? -1 : olderRows.findIndex((g) => g.members.some((m) => m.id === id));
     return k < 0 ? -1 : navRows.length + k;
   };
   const at = orderIndexOf(selected?.id ?? null);
@@ -1824,8 +1830,8 @@ export function OhboxView({
   const pickState = (on: boolean): boolean | undefined => (picked.size > 0 ? on : undefined);
 
   /**
-   * `actions` and `windowIndex` are threaded only by the mappers that have them. NEVER pass `row`
-   * or `groupRow` straight to `.map`: the array index would arrive as `windowIndex` and stamp a
+   * `actions` and `windowIndex` are threaded only by the mappers that have them. NEVER pass
+   * `groupRow` straight to `.map`: the array index would arrive as `windowIndex` and stamp a
    * `data-index` from another list's counting, which the window would then measure as its own.
    * Every call site wraps them in a lambda for that reason.
    */
@@ -1851,7 +1857,7 @@ export function OhboxView({
       subject={m.subject}
       preview={m.protected ? t("protectedPreview") : m.snippet}
       /* As PRESENTED: a row whose read is armed drops its dot and its weight the moment the
-         reading is established and saved, and keeps its slot until it is left. See `armedRead`. */
+         reading is established and saved, and keeps its slot until it is left or answered. See `armedRead`. */
       unread={effUnread(m)}
       seen={!effUnread(m)}
       selected={selected?.id === m.id}
@@ -1903,8 +1909,6 @@ export function OhboxView({
     );
   };
 
-  /** The plain row, exactly as it always rendered — safe under `.map(row)`. */
-  const row = (m: EngineMessage, windowIndex?: number) => rowWith(m, undefined, windowIndex);
 
   /**
    * THE VOICES A GROUPED ROW SPEAKS FOR — one message per distinct sender, newest first. The unread members while the
@@ -1914,9 +1918,10 @@ export function OhboxView({
    * Lund, Bo Ek" and whose faces are somebody else's would be two answers to one question.
    */
   const groupVoices = (g: OhboxRowGroup): EngineMessage[] => {
-    const pool = (g.unreadCount > 0 ? g.members.filter((m) => m.unread) : [g.latest])
+    const ms = (m: EngineMessage): number => arrivalMs(m) ?? Number.NEGATIVE_INFINITY;
+    const pool = (g.unreadCount > 0 ? g.members.filter((m) => m.unread) : [g.face])
       .slice()
-      .sort((a, b) => sendTimeOf(b) - sendTimeOf(a));
+      .sort((a, b) => (ms(a) === ms(b) ? 0 : ms(b) - ms(a)));
     const seen = new Set<string>();
     const out: EngineMessage[] = [];
     for (const m of pool) {
@@ -1944,10 +1949,10 @@ export function OhboxView({
    */
 
   /**
-   * `settling` ONLY WHEN EVERY MEMBER IS SLIDING: the slide is per MESSAGE — read one of five unread replies and that
-   * message alone descends while the row stands and its count drops; read the last and the whole conversation
-   * re-files under "Earlier" as one row. A row that animated on each member would be five slides, four ending where
-   * they started.
+   * `settling` ONLY WHEN EVERY PLACING MEMBER IS SLIDING: the slide is per MESSAGE, and a conversation leaves New only
+   * once none of it is unread — then every member it placed there descends and the row re-files under "Earlier" as
+   * one. `placing`, never `members`: a Sent copy absorbed from Earlier is not sliding, and keying on it would take
+   * the slide away from exactly the answered row.
    */
   const groupRow = (g: OhboxRowGroup, windowIndex?: number, actions?: ReactNode, inSet?: MessageRowProps["inSet"]) => {
     /* The slot travels through the singleton arm too: a conversation with one message on screen
@@ -1955,7 +1960,7 @@ export function OhboxView({
        a second member arrived would be a control that comes and goes with the mail. */
     if (g.members.length === 1) return rowWith(g.members[0]!, actions, windowIndex, inSet);
     const target = g.openTarget;
-    const shown = g.latest;
+    const shown = g.face;
     const voices = groupVoices(g);
     /**
      * THE ROW'S FACES, and they are the SENDER LINE's people whenever there are people on it. Two sources, one
@@ -1972,9 +1977,9 @@ export function OhboxView({
      * THE NEWEST MEMBER IS THE ACCOUNT'S OWN REPLY — the conversation ends, so far, with the reader's own words, and
      * the row says who they went to rather than showing the reader their own name (see `sentLabelOf`). Two arms, one
      * label, never both:
-     * · everything read (the live shape — own-sent is never unread, so a folded reply sits in an all-read "Earlier"
-     *   row): the sender line and the LEAD circle are the recipient's, exactly as on a singleton sent row — the strip
-     *   beside the subject keeps the conversation's people either way;
+     * · everything read (an answered conversation under "Earlier"): the sender line and the LEAD circle are the
+     *   recipient's, exactly as on a singleton sent row — the strip beside the subject keeps the conversation's
+     *   people either way;
      */
 
     /**
@@ -2011,7 +2016,7 @@ export function OhboxView({
         {...rowStamp(shown, now, absoluteTime, onToggleTime)}
         subject={threadSubject?.(g.key) ?? shown.subject}
         // see the docblock: the conversation slides only when the whole of it is on its way down.
-        className={g.members.every((m) => settling.has(m.id)) ? "settling" : undefined}
+        className={g.placing.every((m) => settling.has(m.id)) ? "settling" : undefined}
         preview={
           shown.protected
             ? t("protectedPreview")
@@ -2087,10 +2092,9 @@ export function OhboxView({
     byId.get(id) ?? olderShown.find((m) => m.id === id);
   const dragSourceFor = (rowId: string): DragSource | null => {
     const idx = rowIndexOf(rowId);
-    const g = idx < 0 ? null : navRows[idx]!;
-    const lone = g === null ? olderShown.find((m) => m.id === rowId) : undefined;
-    if (g === null && lone === undefined) return null;
-    const members = g ? g.members : [lone!];
+    const g = idx < 0 ? olderRowOf(rowId) ?? null : navRows[idx]!;
+    if (g === null) return null;
+    const members = g.members;
     const selection = picked.size > 0 && members.every((m) => picked.has(m.id));
     const ids = selection ? pickedIds : members.map((m) => m.id);
     const messages = ids
@@ -2099,10 +2103,10 @@ export function OhboxView({
     if (messages.length === 0) return null;
     // The ghost wears what the ROW shows — same sender line, same subject — so what is in
     // hand is recognisably the thing that was picked up.
-    const shown = g && members.length > 1 ? g.latest : members[0]!;
+    const shown = members.length > 1 ? g.face : members[0]!;
     const sent = sentLabelOf(shown);
-    const from = g && members.length > 1 ? groupSenders(g) : sent ? sent.label : senderName(shown);
-    const subject = g && members.length > 1 ? (threadSubject?.(g.key) ?? shown.subject) : shown.subject;
+    const from = members.length > 1 ? groupSenders(g) : sent ? sent.label : senderName(shown);
+    const subject = members.length > 1 ? (threadSubject?.(g.key) ?? shown.subject) : shown.subject;
     return { ids: messages.map((m) => m.id), messages, label: { from, subject }, selection };
   };
 
@@ -2303,10 +2307,10 @@ export function OhboxView({
         {/* `olderShown`, never `older.items`: a fetched row this list already renders above is
             not listed a second time (the shell's verdicts keep the store's copies out; this is
             the view's own belt over what it rendered). */}
-        {olderShown.length > 0 ? (
+        {olderRows.length > 0 ? (
           <>
             <ListGroupLabel>{t("olderTitle")}</ListGroupLabel>
-            <ListRows multiSelectable ariaLabel={t("olderTitle")}>{olderShown.map((m) => row(m))}</ListRows>
+            <ListRows multiSelectable ariaLabel={t("olderTitle")}>{olderRows.map((g) => groupRow(g))}</ListRows>
           </>
         ) : null}
         {/* The tail says three true things by client. The demo keeps its own sentence (no

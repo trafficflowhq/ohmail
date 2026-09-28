@@ -596,8 +596,8 @@ const ohboxCache = new WeakMap<EntityReader, { v: number; openHeld: string | nul
  * the only place it is. Scope: this is the only surface that holds parked rows out — Reads and
  * Receipts are streams and still list a parked issue; `openTargetFor` depends on that asymmetry
  * and `search-locate.test.ts` pins it. `openHeld` is the row being read
- * ({@link OhmailEngine.holdOpenRow}): it stays in "New for you" at its arrival slot until the
- * reader moves on or answers it — a read never moves a row.
+ * ({@link OhmailEngine.holdOpenRow}): it keeps its conversation in "New for you" until the reader
+ * moves on or answers it — a read never moves a row. A conversation stands in ONE group.
  */
 export function ohboxView(reader: EntityReader, openHeld: string | null = null): OhboxView {
   // Memoized on the reader's version like its siblings (`resurfacedThreads`, `screenerSegments`,
@@ -613,9 +613,9 @@ export function ohboxView(reader: EntityReader, openHeld: string | null = null):
   const inbox = messagesIn(reader, FOLDER_OF_VIEW.ohbox);
   /**
    * The account's own sent mail, folder-agnostic ({@link isOwnSent}), newest first — MINUS the
-   * replies the away responder sent on the person's behalf. Writing a message is finishing with
-   * it, which is why own-sent mail joins this block at all; an automatic reply is the case
-   * where that reasoning fails — nobody finished with anything — and the send-date fallback put
+   * replies the away responder sent on the person's behalf. Writing a message is taking part in
+   * its conversation, which is why own-sent mail stands in the Ohbox at all; an automatic reply is
+   * the case where that reasoning fails — nobody wrote anything — and the send-date fallback put
    * one "Re: …" row per answered message at the top. A calendar acknowledgement
    * ({@link isItipAcknowledgement}) is the same class and is held out for the same reason.
    * `!== true`, never `=== false`: the field is absent on older mirrors/servers and absent must
@@ -660,32 +660,29 @@ export function ohboxView(reader: EntityReader, openHeld: string | null = null):
   for (const row of resurfacedThreads(reader)) for (const m of row.members) inRow.add(m.id);
   const held = (m: EngineMessage): boolean =>
     !pinned.has(m.id) && !inRow.has(m.id) && !parked.has(m.id);
-  // The open row files as unread until it is left or answered; only that one row — mail read anywhere else
-  // moves at once, and `held` above still takes a filed, parked or pinned row out.
-  const fresh = (m: EngineMessage): boolean => m.unread || m.id === openHeld;
+  // THE CONVERSATION IS THE UNIT OF PLACE (owner 2026-09-28): one fresh member — unread INBOX
+  // mail, or the row being read until it is left or answered — files every Ohbox member of its
+  // conversation in New; otherwise all of them are Earlier. ONE chronology in both, by arrival
+  // (owner 2026-09-18): `all` is date-desc, so the filters below need no sort. Read state stays
+  // per message; the parked and resurfaced hold-outs above are per message and unchanged.
+  // Collapsed by Message-ID first ({@link collapseTwins}): the optimistic Sent copy stands beside
+  // its ingested twin until the end of a drain, and the pair always shares one conversation.
+  const inboxIds = new Set(inbox.map((m) => m.id));
+  const sentIds = new Set(sent.map((m) => m.id));
+  const members = collapseTwins(
+    all.filter((m) => (inboxIds.has(m.id) || sentIds.has(m.id)) && held(m)),
+    "",
+  );
+  const freshKeys = new Set<string>();
+  for (const m of members) {
+    if ((inboxIds.has(m.id) && m.unread) || m.id === openHeld) freshKeys.add(conversationKeyOf(m));
+  }
+  const inNew = (m: EngineMessage): boolean => freshKeys.has(conversationKeyOf(m));
 
   const view: OhboxView = {
     resurfaced: resurfaced.filter((m) => !parked.has(m.id)),
-    // Unread mail is ordered by ARRIVAL, unchanged: nothing has been read, so there is no reading
-    // order to use and the question the group answers is what came in. Resurfaced rows are held
-    // out — they sit pinned above, never doubled here.
-    newForYou: inbox.filter((m) => fresh(m) && held(m)),
-    // "Earlier" is read INBOX mail joined by the account's own sent mail, in ARRIVAL order
-    // like every other group — ONE chronology, a sent row at its send instant (its `sortAt`)
-    // among the received rows. Owner ruling 2026-09-18, reversing 2026-08-08's "reading order":
-    // `lastReadAt` is state (the seen pill), never a sort key, so reading a message never moves
-    // it — two sorts here stacked the whole sent history above the unstamped received history.
-    // Pinned ids are held out of BOTH inputs. Collapsed by Message-ID for the reading pane's
-    // reason ({@link collapseTwins}): the optimistic Sent copy stands beside the ingested row
-    // until the END of a drain, and Exchange re-files its own SMTP copies. No `openId`: a pile
-    // has no open message; a real row beats a `local: true` one.
-    previouslySeen: collapseTwins(
-      [
-        ...inbox.filter((m) => !fresh(m) && held(m)),
-        ...sent.filter(held),
-      ],
-      "",
-    ).sort(byDateDesc),
+    newForYou: members.filter(inNew),
+    previouslySeen: members.filter((m) => !inNew(m)),
   };
   ohboxCache.set(reader, { v, openHeld, view });
   return view;
@@ -840,6 +837,14 @@ export function conversationSize(reader: EntityReader, m: Pick<EngineMessage, "t
   return n > 1 ? n : 0;
 }
 
+/**
+ * WHICH CONVERSATION A MESSAGE BELONGS TO, as the Ohbox places and draws it: its thread, or the
+ * message alone. The `msg:` prefix keeps a thread id from ever colliding with a message id.
+ */
+export function conversationKeyOf(m: Pick<EngineMessage, "id" | "threadId">): string {
+  return m.threadId ?? `msg:${m.id}`;
+}
+
 const rowsCache = new WeakMap<EntityReader, { v: number; rows: ResurfacedThreadRow[] }>();
 
 /**
@@ -855,7 +860,7 @@ export function resurfacedThreads(reader: EntityReader): ResurfacedThreadRow[] {
   const claims = winningStates(reader);
   const byKey = new Map<string, EngineMessage[]>();
   for (const m of messagesByDateDesc(reader)) {
-    const key = m.threadId ?? `msg:${m.id}`;
+    const key = conversationKeyOf(m);
     const held = byKey.get(key);
     if (held) held.push(m);
     else byKey.set(key, [m]);

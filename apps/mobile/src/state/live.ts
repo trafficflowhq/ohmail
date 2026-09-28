@@ -94,6 +94,9 @@ import {
   type WithdrawOutcome,
   type ZonedComposition,
   resurfacedThreads,
+  ohboxRows,
+  threadSubject,
+  type OhboxRow,
   conversationSize,
   forwardPress,
   tagsCrossView,
@@ -1156,27 +1159,35 @@ export interface WorldOhbox {
 }
 
 /**
- * The Ohbox — `ohboxView` over the projection, reshaped and nothing more. `openHeld` is the row the
- * reader is on (`OhmailEngine.holdOpenRow`, held by `openMessage`): it stays in New until it is left.
+ * The Ohbox — the engine's rows (`ohboxRows`) over the projection, reshaped and nothing more.
+ * `openHeld` is the row the reader is on (`OhmailEngine.holdOpenRow`, held by `openMessage`): it
+ * keeps its conversation in New until it is left or answered.
  */
 export function liveOhbox(pres: EntityReader, v: WorldView, openHeld: string | null = null): WorldOhbox {
   const box = ohboxView(pres, openHeld);
-  const map = (list: EngineMessage[]) => list.map((m) => toMail(pres, m, v));
-  const fresh = map(box.newForYou);
-  const seen = map(box.previouslySeen);
   /**
-   * ONE ROW PER CONVERSATION, from the engine's own `resurfacedThreads` — the same rows the web
-   * app draws. The pin is per message, so `box.resurfaced` lists a conversation parked as five
-   * messages five times; the row is what the reader asked to see again. The row faces and opens
-   * on the newest member somebody ELSE wrote (`resurfacedFocus`) and carries the badge for what
-   * arrived since — a conversation the away responder answered last showed the account's own
-   * mail as its face and opened on it (2026-09-21).
+   * ONE ROW PER CONVERSATION ACROSS THE SECTIONS — the fold the web app draws. The row's id, verbs
+   * and open are its open target's (the latest unread member, or a resurfaced row's focus); its
+   * sender, snippet and time are its face's, and a conversation wears its stored name. Read state
+   * and the counts below stay per message.
    */
-  const rows = resurfacedThreads(pres);
-  const resurfaced = rows.map((r) => {
+  const rows = ohboxRows(pres, openHeld);
+  const toRow = (r: OhboxRow): WorldMail => {
     const mail = toMail(pres, r.openTarget, v);
-    return r.newSince.length > 0 ? { ...mail, newSince: r.newSince.length } : mail;
-  });
+    const face = r.face === r.openTarget ? mail : toMail(pres, r.face, v);
+    const subject = r.members.length > 1 ? threadSubject(pres, r.key) ?? face.subject : face.subject;
+    return {
+      ...mail,
+      from: face.from, snippet: face.snippet, time: face.time, subject,
+      unread: r.members.some(presentsUnread),
+      rowKey: r.key,
+      memberIds: r.members.map((m) => m.id),
+      ...(r.resurfaced && r.resurfaced.newSince > 0 ? { newSince: r.resurfaced.newSince } : {}),
+    };
+  };
+  const resurfaced = rows.resurfaced.map(toRow);
+  const fresh = rows.new.map(toRow);
+  const seen = rows.earlier.map(toRow);
   /* THE COUNT IS ABOUT THE MAILBOX; THE BOLD IS ABOUT THE PIN. The rows above have been
      through `toMail`, whose `unread` is `presentsUnread` and therefore true for every pin —
      counting THEM would say "1 unread" over a message the mail server calls read. So the set
@@ -1187,16 +1198,12 @@ export function liveOhbox(pres: EntityReader, v: WorldView, openHeld: string | n
   const unreadIds = [
     // The held open row stands in New and is read: the count follows the read, not the place.
     ...box.newForYou.filter((m) => m.unread).map((m) => m.id),
-    ...rows.flatMap((r) => r.members.filter((m) => m.unread).map((m) => m.id)),
+    ...rows.resurfaced.flatMap((r) => r.members.filter((m) => m.unread).map((m) => m.id)),
   ];
-  return {
-    resurfaced,
-    fresh,
-    seen,
-    unreadIds,
-    unread: unreadIds.length,
-    total: resurfaced.length + fresh.length + seen.length,
-  };
+  // MESSAGES, like the web's meta and the copy ("{n} messages"): a row can stand for several.
+  const total = [...rows.resurfaced, ...rows.new, ...rows.earlier]
+    .reduce((n, r) => n + r.members.length, 0);
+  return { resurfaced, fresh, seen, unreadIds, unread: unreadIds.length, total };
 }
 
 /** The Ohbox's offer: mail from senders nobody decided about, still in the Inbox on the server. */

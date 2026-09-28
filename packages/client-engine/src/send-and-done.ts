@@ -1,4 +1,4 @@
-import { ohboxView, resurfacedThreads } from "./selectors.js";
+import { isOwnSent, ohboxView, resurfacedThreads } from "./selectors.js";
 import { inverseMutations } from "./undo.js";
 import type { EntityReader } from "./store.js";
 import type { EngineMessage, EngineMutation } from "./types.js";
@@ -66,10 +66,10 @@ export function sendAndDonePlanFor(
     if (!row.members.some((m) => m.id === sourceId)) continue;
     return planOver(reader, "resurfaced", row.pinned);
   }
-  /* The two flat groups fold by conversation WITHIN one section (the list's own rule): reading
-     one of five unread replies moves that message to Earlier, and a row stops waiting only when
-     its last unread member has gone — so a release that reached across the sections would file
-     history the reader never saw. */
+  /* The two flat groups each hold whole conversations (`ohboxView` files a conversation in ONE
+     group), so the source's section is the conversation's one section and the release is that
+     row's: from New it finishes the unread members, from an all-read Earlier row it changes
+     nothing and the plain Send stands. */
   const inNew = view.newForYou.find((m) => m.id === sourceId);
   if (inNew) return planOver(reader, "new", threadIn(view.newForYou, inNew));
   const inEarlier = view.previouslySeen.find((m) => m.id === sourceId);
@@ -77,10 +77,14 @@ export function sendAndDonePlanFor(
   return null;
 }
 
-/** One section's members of this message's conversation; the message alone when it has none. */
+/**
+ * The conversation's members the release reads, or the message alone when it has none. The
+ * account's own mail is left out: it is read already, and the confirm-time copy's id is the
+ * client's own, which no server row answers to.
+ */
 function threadIn(section: readonly EngineMessage[], m: EngineMessage): EngineMessage[] {
   if (m.threadId == null) return [m];
-  return section.filter((r) => r.threadId === m.threadId);
+  return section.filter((r) => r.threadId === m.threadId && !isOwnSent(r));
 }
 
 /**

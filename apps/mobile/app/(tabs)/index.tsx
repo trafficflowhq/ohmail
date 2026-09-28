@@ -2,9 +2,9 @@
  * Ohbox — mail from people you said Yes to.
  *
  * The list splits new / previously seen and never re-sorts under the reader.
- * The split is the engine's own `ohboxView` — new-for-you / earlier, plus the
- * resurfaced pin group above both (mail whose "show me this again" moment has
- * come). The screen renders what `useWorld()` answers and holds no logic of
+ * The split is the engine's own rows (`ohboxRows`), one per conversation —
+ * new-for-you / earlier, plus the resurfaced pin group above both (mail whose
+ * "show me this again" moment has come). The screen renders what `useWorld()` answers and holds no logic of
  * its own. An empty mailbox renders an honest empty state, never sample mail.
  * The rows go through `MailList`, which mounts a window of them, not the mailbox.
  */
@@ -72,7 +72,7 @@ function OhboxBody() {
       <TopBar />
       <MailList
         groups={groups}
-        rowKey={(m) => m.id}
+        rowKey={(m) => m.rowKey ?? m.id}
         renderRow={(m) => <MailRow m={m} onPress={() => openRow(m.id)} swipe />}
         rowInset={6}
         refresh={pull}

@@ -347,6 +347,8 @@ export {
   // the web app and the phone render the same rows from it.
   resurfacedFocus,
   resurfacedThreads,
+  // ONE ROW PER CONVERSATION across every Ohbox section — the key both folds and the census read.
+  conversationKeyOf,
   // The instant a row dates a message by (`Date:` else arrival) — exported so the surfaces order
   // and open by the rule the selector sorts by, rather than each re-spelling it.
   arrivalMs,
@@ -406,6 +408,15 @@ export {
   type TriagePileEntry,
   type TriagePiles,
 } from "./selectors.js";
+
+// The Ohbox as ROWS, one per conversation across its sections — the fold every surface draws.
+export {
+  foldOhboxRows,
+  ohboxRows,
+  type OhboxRow,
+  type OhboxRowLists,
+  type OhboxRowSection,
+} from "./ohbox-rows.js";
 
 // The address book — every correspondent the mirror knows, for the compose field.
 export {

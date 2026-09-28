@@ -525,7 +525,7 @@ export function useShellOpenState({
   /**
    * THE OHBOX'S ARMED READ — reported by `OhboxView.onReadArmed`, held here for ONE consumer:
    * the reader sheet's `MessagePane`, whose read-state verb derives from `message.unread`. The
-   * Ohbox saves the read at the arm and holds the row in place until it is left; this carries
+   * Ohbox saves the read at the arm and holds the row in place until it is left or answered; this carries
    * the same presentation to the sheet, so sheet and row never disagree, and a refused save
    * clears it for both. The sheet is mounted HERE, so the fact travels up. A report of
    * view-local presentation state, never a second writer of read-state: nothing else may

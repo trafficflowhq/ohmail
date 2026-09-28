@@ -1001,8 +1001,9 @@ export function useShellKeys({
    * the consumer is outside React: it puts a badge on a window, and doing that while rendering is
    * a side effect in the middle of one.
    */
-  /* UNREAD, not the group's length: the row being read stands in New until it is left
-     (`ohboxView`'s `openHeld`), and it is read — the count follows the read, the place does not. */
+  /* UNREAD, not the group's length: the row being read stands in New until it is left or answered
+     (`ohboxView`'s `openHeld`), and so does the read history of a waiting conversation — the count
+     follows the read, the place does not. */
   const ohboxUnread = ohbox.newForYou.filter((m) => m.unread).length;
   useEffect(() => {
     onUnread?.(ohboxUnread);
