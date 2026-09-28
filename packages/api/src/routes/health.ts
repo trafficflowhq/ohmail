@@ -872,6 +872,12 @@ export const SCHEMA_INDEX_MARKERS: ReadonlyArray<IndexMarker> = [
   // stays green, and the first page stops answering in milliseconds.
   ["message_search_head_tsv_idx", "ON public.message_search USING gin (head_tsv)"],
   ["message_search_text_tsv_idx", "ON public.message_search USING gin (text_tsv)"],
+  // mail 0018_login_email_identity, listed last because it was found last. The SILENT kind: the
+  // registration's check reads before it inserts, so only this index serializes two registrations
+  // of one address, and `register` catches its 23505. Absent, both commit and a login opens
+  // whichever row Postgres returns first. `invites.revoked_at` vouched for it while both halves
+  // were one migration; since the split they run in separate transactions.
+  ["users_email_unique_idx", "ON public.users USING btree (email)"],
 ];
 
 /**
