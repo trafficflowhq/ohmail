@@ -53,8 +53,12 @@ export const BUDGETS = {
    * 368-467 MB at boot without it and 336-338 MB with it. A reading near this ceiling is that
    * retention come back. */
   engineRssKb: 450 * 1024,
-  /* The engine's own boot, from its `boot_phases.totalReadyMs`. NO MEASUREMENT BEHIND IT YET, and
-   * the table rules it `records`. */
+  /* The engine's own boot, `boot_phases.totalReadyMs`, on this step's shape: an empty install that
+   * makes its store while the 5k fixture waits on the server. MEASURED 2026-09-28 on a Linux desktop,
+   * five starts of the build that makes a new store in memory: 1 814-3 456 ms. The ceiling is the
+   * worst plus 16 %, rounded up. The base read 8 436-13 814 ms there in the same minutes and 4 349 ms
+   * on a hosted runner, so the desktop over-states a runner, and a first start that writes its store
+   * to the disk page by page again stays over the line. The plan's 4 000 ms is the same line. */
   engineReadyMs: 4000,
   /* The first import, from `first_sync_finished`. The released build's own line read 33.1 messages
    * a second because its clock began at the END of the drain that found the import open; measured
@@ -62,9 +66,15 @@ export const BUDGETS = {
    * times a released build, and it is read only when the import finished inside the run — against
    * a `totalMs` that now covers the drain that found the import open. */
   syncMsgPerS: 60,
+  /* The window's cold start to a usable list (`ui_vitals.listUsableMs`), on the same shape and the
+   * same five starts: 2 730-4 800 ms, the list mark at most 1 344 ms past the engine's. A runner's list
+   * came 4 288 ms past its engine (0.25.3 rc2), so the ceiling is the worst plus that 2 944 ms
+   * difference, rounded up, and the runner's 8 637 ms reading of the base stays over it. The plan's
+   * 2 000 ms is the goal, printed beside it. */
+  startToListMs: 7800,
+  startToListGoalMs: 2000,
   /* Everything below is read from `ui_vitals` and has NO MEASUREMENT BEHIND IT YET; the table
    * rules every one of them `records`. */
-  startToListMs: 2000,
   frameGapMs: 50,
   longTaskMs: 200,
   longTaskMax: 0,
@@ -388,8 +398,8 @@ export function collect({ samples, log, uiInBundle, uiFields, expectMessages, fi
   if (readyMs === null) {
     add("engine_ready", "RECORDED", "UNREAD", "<the log carries no boot_phases line>", "");
   } else {
-    add("engine_ready", "RECORDED", readyMs <= BUDGETS.engineReadyMs ? "PASS" : "FAIL",
-      `${readyMs} ms against ${BUDGETS.engineReadyMs} ms`, "no measurement behind the budget yet, so the table rules it records; the reading is real");
+    add("engine_ready", "DECIDES", readyMs <= BUDGETS.engineReadyMs ? "PASS" : "FAIL",
+      `${readyMs} ms against ${BUDGETS.engineReadyMs} ms`, "measured: an empty install's first start on this step's shape; the header says where the line came from");
   }
 
   const rssBytes = lastField(log, "engine_vitals", "rss");
@@ -429,14 +439,15 @@ export function collect({ samples, log, uiInBundle, uiFields, expectMessages, fi
   } else if (ui.state === "absent") {
     add("ui_vitals", "RECORDED", "UNREAD", ui.why, "");
   }
-  /* All four are printed. The perf table rules every latency budget `records` until a run reads
-   * under it; `longFrames` is a count no ceiling has been measured for; and `longTasks` comes from
-   * an observer WebKit does not have, so the Linux desktop writes 0 whether or not a task ran long.
-   * A vocabulary drift still reddens every one of them, below. */
+  /* All four are printed and `start_to_list` decides, on its measured ceiling above. The open's
+   * p95 has no measurement behind it; `longFrames` is a count no ceiling has been measured for; and
+   * `longTasks` comes from an observer WebKit does not have, so the Linux desktop writes 0 whether
+   * or not a task ran long. A vocabulary drift still reddens every one of them, below. */
   const latency = [
-    ["start_to_list", "RECORDED", "worst",
-      (v) => `${v} ms against ${BUDGETS.startToListMs} ms`, (v) => v <= BUDGETS.startToListMs,
-      "the window's own cold start to a usable list; no measurement behind the budget yet"],
+    ["start_to_list", "DECIDES", "worst",
+      (v) => `${v} ms against ${BUDGETS.startToListMs} ms (goal ${BUDGETS.startToListGoalMs} ms)`,
+      (v) => v <= BUDGETS.startToListMs,
+      "measured: the window's cold start to a usable list on this step's shape; the header says where the line came from"],
     ["open_p95", "RECORDED", "worst",
       (v) => `p95 ${v} ms against ${BUDGETS.openP95Ms} ms`, (v) => v <= BUDGETS.openP95Ms,
       "the window computes this p95 over its last hundred opens; the worst report of the run"],
