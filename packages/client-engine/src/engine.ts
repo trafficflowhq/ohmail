@@ -690,6 +690,18 @@ function isPersistedOutboxEntry(e: unknown): e is PersistedOutboxEntry {
  * said nothing usable — an unhandled 500 says "internal error" — the surface is responsible for
  * saying so plainly rather than repeating it.
  */
+/**
+ * A verb WAITING ON THIS CLIENT'S QUEUE as a surface lists it — a frozen copy, never the engine's
+ * live entry, whose `mutation` the queue narrows in place. See {@link OhmailEngine.queuedDiscards}.
+ */
+export interface QueuedChange {
+  readonly id: string;
+  readonly key: string;
+  readonly mutation: EngineMutation;
+}
+
+const NO_QUEUED: readonly QueuedChange[] = Object.freeze([]);
+
 export interface AbandonedMutation {
   id: string;
   key: string;
@@ -2147,6 +2159,8 @@ export class OhmailEngine {
    * the store's own version rather than invalidated by hand.
    */
   private abandonedCache: { v: number; out: AbandonedMutation[] } | null = null;
+  /** See {@link OhmailEngine.queuedDiscards} — the previous snapshot, kept while it is still true. */
+  private queuedDiscardsCache: readonly QueuedChange[] = NO_QUEUED;
   /**
    * OVERLAYS WHOSE ECHO HAS NOT BEEN APPLIED YET, overlay id → the {@link drainEpoch} captured when the mutation's
    * POST returned. An entry lands here when the post-confirm reconcile drain FAILED (or was deliberately deferred by
@@ -6222,6 +6236,8 @@ export class OhmailEngine {
       // A record whose create already went out unread keeps saying so: Try again on it, in this
       // session or the next, must not repeat a create the route cannot deduplicate.
       ...(p.createAttempted === true ? { createAttempted: true } : {}),
+      // Its Send + Done release, for the Try again that confirms it (`retryAbandonedOnce`).
+      ...(p.andDone !== undefined ? { andDone: p.andDone } : {}),
     };
     /**
      * TWO WRITES, TWO FAILURE MODES, AND NEITHER MAY BE SWALLOWED: This used to be one `try` around both calls with
@@ -6414,6 +6430,8 @@ export class OhmailEngine {
       restored: true, attempts: 0,
       // Try again on a record whose create went out unread is still not a second create.
       ...(e.createAttempted === true ? { createAttempted: true } : {}),
+      // A Send + Done given up on and tried again still files its source once it is confirmed.
+      ...(e.mutation.kind === "mail_send" && isAndDonePlan(e.andDone) ? { andDone: e.andDone } : {}),
     };
 
     /**
@@ -7198,6 +7216,7 @@ export class OhmailEngine {
           attempts: p.attempts ?? 0,
           lastError: { message: rejection.message, code, status: rejection.status },
           ...(p.createAttempted === true ? { createAttempted: true } : {}),
+          ...(p.andDone !== undefined ? { andDone: p.andDone } : {}),
           ...(code === "send_unverified" ? {} : { retryRefused: code ?? "refused" }),
         };
         try {
@@ -7460,6 +7479,25 @@ export class OhmailEngine {
 
   pendingMutations(): ReadonlyArray<{ id: string; key: string; mutation: EngineMutation }> {
     return [...this.queue];
+  }
+
+  /**
+   * THE DRAFT DISCARDS WAITING ON THE QUEUE, for the strip that lists them beside the abandoned
+   * rows. Its overlay erases the draft (`mutations.ts`), so while it waits this is the only place
+   * the draft is still named. Membership is the queue's own: a verb on the wire is off it, a
+   * withdrawn one is spliced and never restored, a held-back one is pushed back at the end. The
+   * previous array is kept while every index has the same id, key and mutation (by reference —
+   * the queue narrows `mutation` in place), because `useSyncExternalStore` compares by identity.
+   */
+  queuedDiscards(): readonly QueuedChange[] {
+    const next = this.queue.filter((p) => p.mutation.kind === "draft_discard");
+    const prev = this.queuedDiscardsCache;
+    if (next.length === prev.length && next.every((p, i) =>
+      p.id === prev[i]!.id && p.key === prev[i]!.key && p.mutation === prev[i]!.mutation)) return prev;
+    this.queuedDiscardsCache = next.length === 0
+      ? NO_QUEUED
+      : Object.freeze(next.map((p) => Object.freeze({ id: p.id, key: p.key, mutation: p.mutation })));
+    return this.queuedDiscardsCache;
   }
 
   /**

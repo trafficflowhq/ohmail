@@ -1,38 +1,24 @@
 "use client";
 
-import { useCallback, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useState, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
 import { pressVerdict } from "@ohmail/client-engine";
-import type { AbandonedMutation, EngineMutation, MutationResult, OhmailEngine } from "@ohmail/client-engine";
+import type { AbandonedMutation, MutationResult, OhmailEngine, QueuedChange } from "@ohmail/client-engine";
 
 /** What a retry answers — the engine's own result, carried to the row that asked for it. */
 type RetryOutcome = MutationResult;
 import { useEngine, useAbandoned } from "./engine";
 
-/** A verb still on the outbox, retried on its own — the engine's queue entry, as listed here. */
-export interface QueuedChange {
-  id: string;
-  key: string;
-  mutation: EngineMutation;
-}
-
 const NO_QUEUED: readonly QueuedChange[] = [];
 
 /**
- * THE QUEUED DISCARDS, from the engine's own queue. A Delete that could not reach the account
- * waits there and was told once, by a toast; listed here beside the abandoned rows it stays
- * visible for as long as it waits. One snapshot per distinct set, as `useSyncExternalStore` needs.
+ * THE QUEUED DISCARDS, from the engine's own selector (`queuedDiscards`), which the phone reads
+ * too. A Delete that could not reach the account waits there and was told once, by a toast; listed
+ * here beside the abandoned rows it stays visible for as long as it waits.
  */
 function useQueuedDiscards(engine: OhmailEngine): readonly QueuedChange[] {
-  const last = useRef<readonly QueuedChange[]>(NO_QUEUED);
   const subscribe = useCallback((cb: () => void) => engine.subscribe(cb), [engine]);
-  const snapshot = useCallback((): readonly QueuedChange[] => {
-    const next = engine.pendingMutations().filter((p) => p.mutation.kind === "draft_discard");
-    const prev = last.current;
-    if (next.length === prev.length && next.every((p, i) => p.id === prev[i]!.id)) return prev;
-    last.current = next.length === 0 ? NO_QUEUED : next;
-    return last.current;
-  }, [engine]);
+  const snapshot = useCallback(() => engine.queuedDiscards(), [engine]);
   return useSyncExternalStore(subscribe, snapshot, () => NO_QUEUED);
 }
 import "./unsaved-changes.css";

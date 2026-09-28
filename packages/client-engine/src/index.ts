@@ -588,6 +588,8 @@ export {
   // inferred from end-to-end behaviour, which fixture shapes make an unreliable way to reach it.
   targetOf,
   type AbandonedMutation,
+  // A verb waiting on the queue as the strip lists it — `OhmailEngine.queuedDiscards`.
+  type QueuedChange,
   // The boot replay's per-attempt deadline and the unkeyed-create replay horizon — exported so
   // the guards read the shipped numbers, not copies.
   OUTBOX_REPLAY_DEADLINE_MS,
