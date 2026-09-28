@@ -11,6 +11,7 @@ import { AccessibilityInfo, Animated, Easing, Platform, View, type LayoutChangeE
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { Copy } from "../copy";
+import { logNotice } from "../engine/engine-log";
 import { sayArg } from "../refusal";
 import { useTheme } from "../theme";
 import { useWorld, useWorldToast } from "../state/world";
@@ -381,6 +382,8 @@ function ToastPill({ entry, newest, dismiss, onScreen, lift, onHeight, onPressin
     /* AND A HELD WINDOW STARTS COUNTING NOW, armed after the hold so the offer leaves first: the
        Undo a person can press and the commit it cancels are one clock (`held-routing.ts`). */
     entry.shown?.();
+    /* AND IT IS WRITTEN DOWN: the key and the Undo flag, on the frame it is first on screen. */
+    logNotice(typeof entry.say === "object" && entry.say !== null ? entry.say.say : "text", undo !== undefined);
   };
 
   useEffect(() => {

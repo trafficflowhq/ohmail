@@ -163,6 +163,16 @@ export function logLaunchReplay(made: number, refused: number, expired: number, 
 }
 
 /**
+ * ONE LINE WHEN A NOTICE IS ON SCREEN — its deck key and whether it offers Undo, never its words or
+ * what they interpolate. A notice stands 3.2 s, and a device run reading the screen by dumps of two
+ * seconds and more read one as absent while the app had raised it; this line is what such a run
+ * reads instead. A sentence built from raw text is logged as `text`, with nothing of the text in it.
+ */
+export function logNotice(key: string, undo: boolean): void {
+  engineLogSink()(JSON.stringify({ service: "app", event: "notice_shown", say: key, undo }));
+}
+
+/**
  * ONE LINE PER READING OF THE PHONE'S NETWORK, as the platform gave it to the door
  * (`net/network-door.ts`) — what a device run reads to tell a reader that never spoke from a
  * surface that ignored it. Three closed words, nothing to redact.
