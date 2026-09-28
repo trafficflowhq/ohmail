@@ -7486,14 +7486,14 @@ export class OhmailEngine {
    * rows. Its overlay erases the draft (`mutations.ts`), so while it waits this is the only place
    * the draft is still named. Membership is the queue's own: a verb on the wire is off it, a
    * withdrawn one is spliced and never restored, a held-back one is pushed back at the end. The
-   * previous array is kept while every index has the same id, key and mutation (by reference —
-   * the queue narrows `mutation` in place), because `useSyncExternalStore` compares by identity.
+   * previous array is kept while every index has the same id and key (`useSyncExternalStore`
+   * compares by identity). No discard's `mutation` changes in place: only read verbs are narrowed,
+   * and an undone supersession puts back the entry's own object.
    */
   queuedDiscards(): readonly QueuedChange[] {
     const next = this.queue.filter((p) => p.mutation.kind === "draft_discard");
     const prev = this.queuedDiscardsCache;
-    if (next.length === prev.length && next.every((p, i) =>
-      p.id === prev[i]!.id && p.key === prev[i]!.key && p.mutation === prev[i]!.mutation)) return prev;
+    if (next.length === prev.length && next.every((p, i) => p.id === prev[i]!.id && p.key === prev[i]!.key)) return prev;
     this.queuedDiscardsCache = next.length === 0
       ? NO_QUEUED
       : Object.freeze(next.map((p) => Object.freeze({ id: p.id, key: p.key, mutation: p.mutation })));
