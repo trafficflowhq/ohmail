@@ -392,14 +392,14 @@ export const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
 export const DEFAULT_ALERT_REPEAT_MS = 60 * 60 * 1000;
 
 /** Confirmed pages, the first included, before an unchanged critical falls to daily. */
-const DEFAULT_CRITICAL_HOURLY_PAGES = 3;
+export const DEFAULT_CRITICAL_HOURLY_PAGES = 3;
 
 /**
  * The flap floor. A condition that fires again within this long of resolving continues its
  * occurrence — send history, `opened_at` — instead of paging at once; past it, a re-open is a
  * new occurrence. It is also how long a resolution must hold before it is announced.
  */
-const DEFAULT_ALERT_FLAP_FLOOR_MS = 60 * 60 * 1000;
+export const DEFAULT_ALERT_FLAP_FLOOR_MS = 60 * 60 * 1000;
 
 /** A resolution older than the floor plus this is never announced: stale news, and a deploy
  *  must not mail about every tombstone it finds. */

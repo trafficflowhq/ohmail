@@ -756,7 +756,10 @@ export async function startWorkerWithLock(
     // endpoint turned out to blackhole this host's egress (see `alert-mail.ts` for the
     // measurement). Both arms share the injected `alertPost` seam, so no test opens a socket.
     const mailArm = resendAlertSink(
-      { apiKey: config.resendApiKey, from: config.mailFrom, to: config.alertEmail },
+      {
+        apiKey: config.resendApiKey, from: config.mailFrom, to: config.alertEmail,
+        consoleUrl: config.adminUrl,
+      },
       config.alertPost,
     );
     if (mailArm) alertSinks.push(mailArm);

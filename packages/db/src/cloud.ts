@@ -108,6 +108,7 @@ export {
   alertSignature, firingToLog, alertClass, incidentsOf, signalsOf,
   alertDriverStatuses, platformSignalWindow, CLOUD_JOURNAL_HEAD_WHEN,
   DEFAULT_ALERT_THRESHOLDS, DEFAULT_ALERT_REPEAT_MS, DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS,
+  DEFAULT_CRITICAL_HOURLY_PAGES, DEFAULT_ALERT_FLAP_FLOOR_MS,
   SCOPED_ALERT_KINDS, ALERT_KIND_ARMS, alertKindArms, DRIVER_NEVER_RAN, evaluateAlertsWithScope,
   isSchemaBehind,
   alertSchemaReadable,
@@ -126,6 +127,7 @@ export {
 
 export {
   resendAlertSink, RESEND_EMAILS_URL, type ResendAlertSinkConfig,
+  renderAlertMail, renderResolvedMail, ALERT_MAIL_SCHEDULE, type AlertMail, type AlertMailInput,
 } from "./alert-mail.js";
 
 /* The API's own 5xx record (cloud 0033). CLOUD-ONLY — `index.ts` does not carry it, because the

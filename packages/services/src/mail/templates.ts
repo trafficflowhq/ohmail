@@ -1,3 +1,5 @@
+import { renderAlertMail } from "@trafficflow/db/cloud";
+
 /**
  * The transactional templates. Plain TypeScript returning `{ subject, text, html }` — no template
  * engine: a handful of emails does not justify a dependency on the one path whose output lands in
@@ -484,42 +486,11 @@ export interface OperatorAlertData {
 }
 
 function operatorAlert(d: OperatorAlertData): RenderedEmail {
-  const url = safeUrl(d.consoleUrl);
-  const n = d.alerts.length;
-  const subject = `[${d.environment}] ohmail: ${n} alert${n === 1 ? "" : "s"} firing`;
-  return {
-    subject,
-    text: textShell(
-      subject,
-      [
-        `Observed by the ${d.source} alert pass.`,
-        ...d.alerts.map((a) => `[${a.severity}] ${a.title}\n  ${a.detail}`),
-        `Admin console: ${url}`,
-      ],
-      [
-        "This is an automated operator alert. It repeats at most once an hour while the condition lasts.",
-        "TrafficFlow GmbH, Zürich, Switzerland",
-      ],
-    ),
-    html: shell({
-      title: subject,
-      blocks: [
-        `Observed by the ${esc(d.source)} alert pass.`,
-        // `<strong>`, not `<b>`: the template allow-list in `mail-templates.test.ts`
-        // enumerates every element these files may emit, and `<b>` is not on it.
-        ...d.alerts.map(
-          (a) =>
-            `<strong>[${esc(a.severity)}] ${esc(a.title)}</strong><br>` +
-            `<span style="color:${INK2};">${esc(a.detail)}</span>`,
-        ),
-      ],
-      action: { label: "Open the admin console", url },
-      footer: [
-        "This is an automated operator alert. It repeats at most once an hour while the condition lasts.",
-        "TrafficFlow GmbH, Zürich, Switzerland",
-      ],
-    }),
-  };
+  // THE WORKER'S MAIL ARM SENDS THESE BYTES TOO: both drivers page from one `alert_state`, so
+  // one renderer (`packages/db`) makes the mail, whichever driver won the claim.
+  return renderAlertMail({
+    alerts: d.alerts, environment: d.environment, source: d.source, consoleUrl: safeUrl(d.consoleUrl),
+  });
 }
 
 /**

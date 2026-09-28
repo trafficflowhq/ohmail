@@ -420,6 +420,11 @@ export interface WorkerConfig {
   alertEmail?: string;
   /** `MAIL_FROM` — the From the product already sends transactional mail as. */
   mailFrom?: string;
+  /**
+   * `TF_ADMIN_URL` — the admin console the alert mail links to, spelled as the API host spells it,
+   * so both hosts' alert mail is the same bytes. Unset: the mail carries no console link.
+   */
+  adminUrl?: string;
   /** `RESEND_API_KEY` — the mail arm's bearer credential. Scoped, sending-only. */
   resendApiKey?: string;
   /**
@@ -926,6 +931,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     alertTelegramBotToken: env.TF_ALERT_TELEGRAM_BOT_TOKEN,
     alertTelegramChatId: env.TF_ALERT_TELEGRAM_CHAT_ID,
     mailFrom: env.MAIL_FROM,
+    adminUrl: env.TF_ADMIN_URL,
     resendApiKey: env.RESEND_API_KEY,
     alertIntervalMs: optInt(env, "TF_ALERT_INTERVAL_MS", DEFAULT_ALERT_INTERVAL_MS),
     apiCron: apiCronFrom(env),

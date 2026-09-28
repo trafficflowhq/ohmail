@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import {
-  classifyTransportError, nodePostJson, renderAlertText,
+  classifyTransportError, nodePostJson,
+  DEFAULT_ALERT_FLAP_FLOOR_MS, DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS, DEFAULT_ALERT_REPEAT_MS,
+  DEFAULT_CRITICAL_HOURLY_PAGES,
   type AlertDeliveryResult, type AlertSink, type PostJson, type ResolutionNotice,
 } from "./alerts.js";
 
@@ -11,8 +13,8 @@ import {
  * alert. Its own module: `alerts.ts` stays "drizzle plus one fetch", and the worker imports core
  * + db only. `TF_ALERT_EMAIL` arms it: unset ⇒ null (a deliberate disarm); set but unusable ⇒ a
  * sink refusing every delivery naming the fault. Divergent from the API host's all-or-nothing
- * block: no customer mail to protect here. Text from `Alert` fields only; exactly four payload
- * keys (pinned); the API key redacted; no retry loop — the cadence is the retry.
+ * block: no customer mail to protect here. The mail is {@link renderAlertMail}'s, from `Alert`
+ * fields only; five payload keys (pinned); the key redacted; the cadence is the retry.
  */
 
 /** Where the mail arm posts. Fixed rather than configurable — the credential picks the account. */
@@ -30,6 +32,112 @@ export interface ResendAlertSinkConfig {
   from?: string | undefined;
   /** `TF_ALERT_EMAIL` — the operator address alert mail goes to. The arming variable. */
   to?: string | undefined;
+  /** `TF_ADMIN_URL` — the console the mail links to, the API host's spelling. Absent: no link. */
+  consoleUrl?: string | undefined;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════════════════
+   THE ALERT MAIL — one renderer for both hosts' mail arms
+   ════════════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * One alert mail. Both drivers run the pass on one `alert_state` and whichever wins the claim
+ * mails, so both mail arms send these bytes: this worker sink, and the API host's operator
+ * template, which returns this unchanged. A pure function of its input — no clock, no host.
+ */
+export interface AlertMail { subject: string; text: string; html: string }
+
+export interface AlertMailInput {
+  /** The fields a mail prints. `severity` is a string: the API host's template data carries one. */
+  alerts: ReadonlyArray<{ severity: string; title: string; detail: string }>;
+  environment: string;
+  /** Which driver observed it: `worker` or `api`. */
+  source: string;
+  /** The admin console. An https URL (http on localhost) renders a link; anything else, none. */
+  consoleUrl?: string | null;
+}
+
+const hours = (ms: number): string => `${ms / 3_600_000} h`;
+
+/** The page schedule, from the constants the pass runs on — the footer every alert mail carries. */
+export const ALERT_MAIL_SCHEDULE =
+  "Sent when an alert starts and when it gets worse than any earlier mail about it said (for " +
+  "example a higher severity, or its count past the next doubling). A falling count sends " +
+  "nothing. While " +
+  `it stands, a critical alert is sent again after ${hours(DEFAULT_ALERT_REPEAT_MS)} until it ` +
+  `has been sent ${DEFAULT_CRITICAL_HOURLY_PAGES} times, then every ` +
+  `${hours(DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS)}; a warning every ` +
+  `${hours(DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS)}.`;
+
+const RESOLVED_MAIL_SCHEDULE =
+  `Sent once, after the alert has stayed resolved for ${hours(DEFAULT_ALERT_FLAP_FLOOR_MS)}.`;
+
+const escHtml = (v: string): string => v
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+/** The console link, normalised so both hosts print one spelling, or null. */
+function consoleLink(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  try {
+    const u = new URL(raw.trim());
+    const local = u.hostname === "localhost" || u.hostname === "127.0.0.1";
+    return u.protocol === "https:" || (u.protocol === "http:" && local) ? u.toString() : null;
+  } catch { return null; }
+}
+
+/** Plain text and a minimal html from the same blocks: no remote resource, every value escaped. */
+function mailOf(subject: string, blocks: ReadonlyArray<{ strong?: string; body: string }>,
+  link: string | null, footer: string): AlertMail {
+  const text = [
+    subject, "",
+    ...blocks.flatMap((b) => [b.strong ? `${b.strong}\n  ${b.body}` : b.body, ""]),
+    ...(link ? [`Admin console: ${link}`, ""] : []),
+    "—", footer, "",
+  ].join("\n");
+  const P = '<p style="margin:0 0 12px;">';
+  const html = [
+    "<!doctype html>", '<html lang="en">', "<head>", '<meta charset="utf-8">',
+    '<meta name="viewport" content="width=device-width,initial-scale=1">',
+    `<title>${escHtml(subject)}</title>`, "</head>",
+    '<body style="margin:0;padding:24px 16px;background:#ffffff;color:#1e1a16;' +
+      "font:15px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;\">",
+    `<h1 style="margin:0 0 16px;font-size:18px;">${escHtml(subject)}</h1>`,
+    ...blocks.map((b) => b.strong
+      ? `${P}<strong>${escHtml(b.strong)}</strong><br><span>${escHtml(b.body)}</span></p>`
+      : `${P}${escHtml(b.body)}</p>`),
+    ...(link ? [`${P}<a href="${escHtml(link)}">Open the admin console</a></p>`] : []),
+    `<p style="margin:24px 0 0;color:#5c534b;font-size:13px;">${escHtml(footer)}</p>`,
+    "</body>", "</html>", "",
+  ].join("\n");
+  return { subject, text, html };
+}
+
+/** The firing mail. Every value comes from `Alert` fields, which are counts, ages and rule names. */
+export function renderAlertMail(input: AlertMailInput): AlertMail {
+  const n = input.alerts.length;
+  return mailOf(
+    `[${input.environment}] ohmail: ${n} alert${n === 1 ? "" : "s"} firing`,
+    [
+      { body: `Observed by the ${input.source} alert pass.` },
+      ...input.alerts.map((a) => ({ strong: `[${a.severity}] ${a.title}`, body: a.detail })),
+    ],
+    consoleLink(input.consoleUrl), ALERT_MAIL_SCHEDULE,
+  );
+}
+
+/** The resolved mail: key, kind, the firing's span and its page count. No clock, no driver. */
+export function renderResolvedMail(
+  notices: readonly ResolutionNotice[], environment: string, consoleUrl?: string | null,
+): AlertMail {
+  return mailOf(
+    `[${environment}] ohmail: resolved — ${notices.map((n) => n.key).join(", ")}`,
+    notices.map((n) => ({
+      body: `${n.key} (${n.kind}) — firing since ${n.openedAt}, resolved at ${n.resolvedAt}, ` +
+        `paged ${n.pages} time(s). It has stayed resolved since.`,
+    })),
+    consoleLink(consoleUrl), RESOLVED_MAIL_SCHEDULE,
+  );
 }
 
 /**
@@ -105,6 +213,7 @@ export function resendAlertSink(
   const from = cfg.from?.trim() ?? "";
   const to = cfg.to?.trim() ?? "";
   if (!to) return null;
+  const consoleUrl = cfg.consoleUrl ?? null;
 
   const missing = [
     ...(apiKey ? [] : ["RESEND_API_KEY"]),
@@ -152,12 +261,10 @@ export function resendAlertSink(
   return {
     name: "mail",
     async notify(alerts, ctx) {
-      const body = JSON.stringify({
-        from,
-        to: [to],
-        subject: `ohmail ${ctx.environment}: ${alerts.length} alert(s) firing`,
-        text: renderAlertText(alerts, ctx),
+      const mail = renderAlertMail({
+        alerts, environment: ctx.environment, source: ctx.source, consoleUrl,
       });
+      const body = JSON.stringify({ from, to: [to], subject: mail.subject, text: mail.text, html: mail.html });
       // Retries of the same page inside one bucket replay the stored result instead of mailing
       // again; a different body or alert set is a different key, so nothing is refused.
       const bucket = Math.floor(ctx.now.getTime() / ALERT_IDEMPOTENCY_BUCKET_MS);
@@ -167,22 +274,10 @@ export function resendAlertSink(
     async notifyResolved(notices, ctx) {
       // Built from the notices and the environment only: whichever driver retries, whenever,
       // sends these exact bytes under this exact key.
-      const body = JSON.stringify({
-        from,
-        to: [to],
-        subject: `ohmail ${ctx.environment}: resolved — ${notices.map((n) => n.key).join(", ")}`,
-        text: renderResolvedText(notices, ctx.environment),
-      });
+      const mail = renderResolvedMail(notices, ctx.environment, consoleUrl);
+      const body = JSON.stringify({ from, to: [to], subject: mail.subject, text: mail.text, html: mail.html });
       const first = notices[0]!;
       return send(body, `tf-alert/resolved/${first.key}/${first.resolvedAt}/${digest(body)}`);
     },
   };
-}
-
-/** The resolved notice's text: key, kind, the occurrence's span and its page count. */
-function renderResolvedText(notices: readonly ResolutionNotice[], environment: string): string {
-  const lines = notices.map((n) =>
-    `• ${n.key} (${n.kind}) — firing since ${n.openedAt}, resolved at ${n.resolvedAt}, ` +
-    `paged ${n.pages} time(s). It has stayed resolved since.`);
-  return `ohmail ${environment} — resolved\n\n${lines.join("\n")}`;
 }
