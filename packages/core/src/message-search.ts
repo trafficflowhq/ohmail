@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, isNull, lt, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import {
-  accountSettings, attachments, messageBodies, messages, messageSearch, type Tx,
+  accounts, accountSettings, attachments, messageBodies, messages, messageSearch, type Tx,
 } from "@trafficflow/db";
 import { dialect, type SearchDocumentParts } from "@trafficflow/db/dialect";
 import { htmlToPlainText } from "./html-text.js";
@@ -24,6 +24,14 @@ export const SEARCH_INDEX_BATCH = 500;
 export const SEARCH_INDEX_ROUNDS_PER_CYCLE = 4;
 /** Rows one INSERT statement carries — under every store's bound-parameter ceiling. */
 const INSERT_CHUNK = 100;
+/**
+ * The stored html a round reads per message, in characters: `message_bodies_html_cap`'s own
+ * ceiling, so only a row written before the cap is cut. The text is read to the document's own
+ * {@link SEARCH_BODY_MAX_CHARS}, which is all of it the document keeps.
+ */
+export const SEARCH_HTML_READ_MAX_CHARS = 262_144;
+/** Accounts one cycle tail's backfill section visits, at most. */
+export const SEARCH_INDEX_ACCOUNTS_PER_TAIL = 16;
 
 /** Where a document's body words came from. `headers_only`: the stored body had no words. */
 export type { SearchSource } from "@trafficflow/db";
@@ -146,7 +154,8 @@ export async function searchInputsFromStore(
   const rows = await db.select({
     id: messages.id, subject: messages.subject, fromAddress: messages.fromAddress,
     fromName: messages.fromName, to: messages.toAddresses, cc: messages.ccAddresses,
-    text: messageBodies.text, html: messageBodies.html,
+    text: sql<string | null>`substr(${messageBodies.text}, 1, ${SEARCH_BODY_MAX_CHARS})`,
+    html: sql<string | null>`substr(${messageBodies.html}, 1, ${SEARCH_HTML_READ_MAX_CHARS})`,
   }).from(messages)
     .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
     .where(and(eq(messages.accountId, accountId), inArray(messages.id, ids)));
@@ -200,6 +209,26 @@ export async function searchIndexProgress(db: Tx, accountId: string): Promise<{ 
     from messages m left join message_search s on s.message_id = m.id
     where m.account_id = ${accountId} and m.deleted_at is null`);
   return { total: Number(rows[0]?.[0] ?? 0), done: Number(rows[0]?.[1] ?? 0) };
+}
+
+/**
+ * The accounts the backfill still owes: living mail and no marker. The tail walks this list, not
+ * its snapshot of enabled mailboxes, so an account whose only mailbox is disabled, or whose account
+ * is parked, is still indexed from the store. `shard` is the caller's predicate over `accounts.id`.
+ */
+export async function searchIndexOwedAccounts(
+  db: Tx, opts: { limit: number; shard?: SQL },
+): Promise<string[]> {
+  const rows = await db.select({ id: accounts.id }).from(accounts)
+    .leftJoin(accountSettings, eq(accountSettings.accountId, accounts.id))
+    .where(and(
+      isNull(accountSettings.searchIndexBuiltAt),
+      sql`exists (select 1 from ${messages} where ${messages.accountId} = ${accounts.id} and ${messages.deletedAt} is null)`,
+      opts.shard,
+    ))
+    .orderBy(accounts.id)
+    .limit(opts.limit);
+  return rows.map((r) => r.id);
 }
 
 /** Has this account's backfill finished? `false` for no settings row or a failed read. */

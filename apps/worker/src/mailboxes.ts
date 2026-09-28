@@ -232,6 +232,12 @@ export function shardFilter(selection: MailboxSelection = {}): SQL | undefined {
   return shards > 1 ? shardPredicate(shards, shardIndex) : undefined;
 }
 
+/** The same rule over any account id column (`accounts.id`), for a pass that lists accounts itself. */
+export function accountShardFilter(selection: MailboxSelection, accountId: SQL | AnyPgColumn): SQL | undefined {
+  const { shards, shardIndex } = validateShard(selection);
+  return shards > 1 ? sql`((hashtext(${accountId}::text) % ${shards}) + ${shards}) % ${shards} = ${shardIndex}` : undefined;
+}
+
 /**
  * Which accounts the roster must skip — composed by the host, absent on a deployment that meters
  * nothing. It used to be one query over this database's own subscription and suspension rows, shared

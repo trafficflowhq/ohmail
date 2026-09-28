@@ -121,12 +121,12 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     name: "search_index_backfill",
     module: `${CORE}/message-search.ts`, entry: "searchIndexBackfillPass",
     // The SAME module the desktop engine's composition imports from `@trafficflow/core/mail`,
-    // gated there on idle and power; here it runs at the visit's tail.
-    triggers: ["visit"],
-    cadence: "after a SUCCESSFUL sync, per account, until account_settings.search_index_built_at is written",
-    budget: "SEARCH_INDEX_ROUNDS_PER_CYCLE rounds × SEARCH_INDEX_BATCH rows, one transaction per round",
+    // gated there on idle and power; here it runs in the cycle tail.
+    triggers: ["cycle-tail"],
+    cadence: "every cycle tail, for this shard's accounts with living mail and no account_settings.search_index_built_at — synced or not, parked or not",
+    budget: "SEARCH_INDEX_ACCOUNTS_PER_TAIL accounts × SEARCH_INDEX_ROUNDS_PER_CYCLE rounds × SEARCH_INDEX_BATCH rows, one transaction per round",
     owns: "every living message has its search document, built from the store alone (no mailbox read)",
-    fence: "store-only — no adapter, no lease; the document's FK refuses a row whose message is gone, and a failure never counts toward the mailbox's failure budget",
+    fence: "store-only — no adapter, no lease; the document's FK refuses a row whose message is gone, and a failure is logged and never fails the tail",
   },
   {
     name: "kickstart",

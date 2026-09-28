@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import {
-  pruneIdempotencyKeys, pruneSendFingerprints, noticeSinkFor, setNoticeSink, accountSettings, mailboxCredentials, mailboxes,
+  pruneIdempotencyKeys, pruneSendFingerprints, noticeSinkFor, setNoticeSink, accounts, accountSettings, mailboxCredentials, mailboxes,
   messages, folderState, junkSweepCandidateWhere, closeStoodDownAppointments,
   RELEASED_ORGANIZER_SEND_SENTENCE, capabilitiesColumn, exportPendingMovesOnStandDown,
   UNMETERED, isMetered, AccountErasedError, type EntitlementsComposition,
@@ -106,7 +106,7 @@ import { refundObligationDrainPass } from "./refund-obligation-drain.js";
 import { mailboxErasurePass } from "./mailbox-erasure-pass.js";
 import { syncKickPass } from "./sync-kick.js";
 import { sensitiveBackfillPass } from "./sensitive-backfill.js";
-import { searchIndexBackfillPass } from "@trafficflow/core/mail";
+import { SEARCH_INDEX_ACCOUNTS_PER_TAIL, searchIndexBackfillPass, searchIndexOwedAccounts } from "@trafficflow/core/mail";
 import { storageEvictPass } from "./storage-evict.js";
 import { isCliEntry, flushExit, installCrashHandlers } from "./entry.js";
 import {
@@ -124,7 +124,7 @@ import {
   markMailboxSyncBlocked, clearMailboxSyncBlock,
   classifyMailboxError, isProviderRefusal, mailboxErrorDetail,
   stampMailboxSyncNow, stampInitialImportComplete, makeSyncWriteFence, type LeaderFence,
-  accountsOf, organizedMailboxIdsOf, accountInShard, shardFilter,
+  accountsOf, organizedMailboxIdsOf, accountInShard, accountShardFilter, shardFilter,
   type EnabledMailbox, type MailboxDisabledReason, type MailboxErrorPhase,
   type MailboxSyncBlockReason, type ParkedAccountsReader,
 } from "./mailboxes.js";
@@ -3885,24 +3885,6 @@ export async function startWorkerWithLock(
             });
           }
 
-          // The search documents for mail ingested before mail 0125 — STORE-ONLY: built from the
-          // stored text/html and headers, no mailbox read, so it needs nothing from this visit's
-          // connection. Bounded per run (SEARCH_INDEX_ROUNDS_PER_CYCLE rounds of SEARCH_INDEX_BATCH),
-          // a no-op once the account's marker is written. A failure never fails the cycle.
-          try {
-            const indexed = await searchIndexBackfillPass({ db: db as unknown as Tx, accountId: rt.accountId });
-            if (indexed.ran && indexed.written > 0) {
-              log.info("search_index_backfill_pass", {
-                mailboxId: rt.mailboxId, accountId: rt.accountId,
-                written: indexed.written, rounds: indexed.rounds, marked: indexed.marked,
-              });
-            }
-          } catch (err) {
-            log.error("search_index_backfill_failed", {
-              mailboxId: rt.mailboxId, accountId: rt.accountId, err,
-              reason: "no marker was written, so the next cycle resumes at the first message without a search document; search still reads those through the older columns",
-            });
-          }
 
           // Put the connection back on watch — the last act of every successful visit. Everything above
           // re-SELECTed other folders on this same connection, and imapflow idles on whichever mailbox
@@ -4878,6 +4860,41 @@ export async function startWorkerWithLock(
               reason: "no sender was filed past the failure and nothing is marked — a filed sender " +
                 "leaves the Screener and stops being a candidate, so the next cycle resumes at the " +
                 "next waiting sender and every one of them still carries its own Apply",
+            });
+          }
+        },
+      },
+      search_index_backfill: {
+        // ── THE SEARCH DOCUMENTS THE STORE STILL OWES (mail 0125) ─────────────────────────
+        // Store-only: built from stored text, html and headers, no mailbox read. Its list is the
+        // accounts with living mail and no marker, read here rather than taken from the snapshot:
+        // an account whose only mailbox is disabled, or whose account is parked, never syncs and
+        // was never indexed. Bounded per account (rounds × batch); a failure never fails the tail.
+        enter: async () => {
+          try {
+            return await searchIndexOwedAccounts(db as unknown as Tx, {
+              limit: SEARCH_INDEX_ACCOUNTS_PER_TAIL, shard: accountShardFilter(selection, accounts.id),
+            });
+          } catch (err) {
+            noteIfSharedDatabaseFault(err);
+            log.warn("search_index_owed_read_failed", {
+              err, reason: "the accounts owed a search index could not be read; the next tail reads them again",
+            });
+            return [];
+          }
+        },
+        run: async (accountId) => {
+          try {
+            const indexed = await searchIndexBackfillPass({ db: db as unknown as Tx, accountId });
+            if (indexed.ran && indexed.written > 0) {
+              log.info("search_index_backfill_pass", {
+                accountId, written: indexed.written, rounds: indexed.rounds, marked: indexed.marked,
+              });
+            }
+          } catch (err) {
+            log.error("search_index_backfill_failed", {
+              accountId, err,
+              reason: "no marker was written, so the next tail resumes at the first message without a search document; search still reads those through the older columns",
             });
           }
         },

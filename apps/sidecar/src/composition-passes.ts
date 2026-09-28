@@ -77,7 +77,7 @@ export class AppointmentsRefused extends ScheduleService {
  * WHICH STORE-ONLY PASSES each composition schedules — work on this install's own store with no
  * mailbox connection and no promise about a later moment. `search-index-backfill` is the
  * `search_index_backfill` pass (`@trafficflow/core/mail`), gated on idle and power here
- * (`search-backfill.ts`). The hosted deployment runs it at each visit's tail in the worker, never in
+ * (`search-backfill.ts`). The hosted deployment runs it in the worker's cycle tail, never in
  * this composition; the phone does not schedule it (search there reads rows without a document the
  * older way, which stays complete).
  */

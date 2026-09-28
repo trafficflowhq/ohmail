@@ -19,6 +19,7 @@ export const TAIL_SECTION_PLAN = [
   { name: "screener_auto_apply", passes: ["screener_auto_apply"] },
   { name: "screener_auto_suggest", passes: ["screener_auto_suggest"] },
   { name: "screener_auto_act", passes: ["screener_auto_act"] },
+  { name: "search_index_backfill", passes: ["search_index_backfill"] },
   { name: "mailbox_erasure", passes: ["mailbox_erasure"] },
   { name: "global_maintenance", passes: ["global_maintenance"] },
 ] as const;
