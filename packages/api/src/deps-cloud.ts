@@ -5,6 +5,7 @@ import type {
   AlertSink, AlertThresholds, EvaluateOptions, MsOAuthBootstrap,
 } from "@trafficflow/db/cloud";
 import type { FetchLike, MicrosoftDeviceClient } from "@trafficflow/core";
+import type { StaffSigningKey } from "./staff-assertion.js";
 
 /**
  * The hosted half of the dependency surface, declared where only a hosted build will see it.
@@ -60,7 +61,7 @@ declare module "./deps.js" {
      */
     alerts?: AlertsConfig;
     /**
-     * Deployment config for the six `GET /admin/*` reads. ABSENT ⇒ every one
+     * Deployment config for the `/admin/*` routes. ABSENT ⇒ every one
      * of them answers **404** and this host has no admin surface, which is the only safe
      * default: these endpoints project every account on the platform, and a deployment that has
      * configured no secret must not advertise an endpoint whose authentication is an empty
@@ -121,8 +122,9 @@ declare module "./deps.js" {
   }
 }
 
+
 /**
- * What the six `GET /admin/*` reads need. Built by the host from its environment, never read
+ * What the `/admin/*` routes need. Built by the host from its environment, never read
  * from `process.env` inside a route. One secret: the caller is the admin console's own
  * server-side proxy — not a browser, not a person — so the secret never leaves the two
  * deployments that hold it. What it does not buy is an identity: no per-person revocation, no
@@ -149,6 +151,12 @@ export interface AdminConfig {
    * timeout deterministically without waiting the production duration.
    */
   readTimeoutMs?: number;
+  /**
+   * The staff assertion signing key (`STAFF_ASSERTION_SIGNING_KEY`, `STAFF_ASSERTION_KID`),
+   * parsed at boot. Absent or null ⇒ `POST /admin/staff/assertion` answers `503
+   * assertion_unarmed`; there is no fallback key.
+   */
+  assertion?: StaffSigningKey | null;
 }
 
 /**

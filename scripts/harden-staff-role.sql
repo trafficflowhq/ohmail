@@ -501,7 +501,8 @@ REVOKE ALL ON public.messages FROM ohmail_admin;
 -- to staff for user management. `users` holds no credential — password hashes are in
 -- `credentials`, TOTP in `totp_secrets`, both un-granted below by omission.
 REVOKE ALL ON public.accounts FROM ohmail_admin;
-GRANT SELECT (id, name, ai_enabled, created_at) ON public.accounts TO ohmail_admin;
+-- `erased_at` (cloud 0047's projection): a timestamp, so the console can say an account is gone.
+GRANT SELECT (id, name, ai_enabled, created_at, erased_at) ON public.accounts TO ohmail_admin;
 
 REVOKE ALL ON public.users FROM ohmail_admin;
 GRANT SELECT (id, account_id, email, display_name, email_verified_at, created_at)
@@ -527,10 +528,10 @@ GRANT SELECT (id, account_id, email, display_name, email_verified_at, created_at
 -- references. The provisioning guard suite exercises the real six admin reads through this
 -- role, which is what caught it.
 --
--- `disabled_reason` and `takeover_authorized_at` (mail 0027) stay UNGRANTED, and by decision
--- rather than by oversight: `admin-service.ts` does not project them, so granting them would
--- widen what staff can read past what the console displays. Add them in the diff that adds the
--- projection, not before.
+-- The ORGANIZER columns (mail 0027 onward) are granted with the account page that projects them:
+-- each is a closed set behind a CHECK or a timestamp. `organized_by_name`, `organized_by_install_id`
+-- and `organized_by_capabilities` stay UNGRANTED: each is a header off the lease message, which
+-- anything able to write to the mailbox can choose. Staff see role and kind, never the holder.
 --
 -- `sync_progress_at` (mail 0130) is a timestamp the `sync_lag` rule reads, and that rule runs on
 -- this role; the migration grants it too, so the alert does not wait for a re-run of this file.
@@ -538,7 +539,10 @@ REVOKE ALL ON public.mailboxes FROM ohmail_admin;
 GRANT SELECT (
   id, account_id, provider, address, created_at, display_name, status, last_sync_at,
   auth_kind, error_code, error_detail, failed_at, retry_count, kickstart_at,
-  sync_blocked_reason, sync_blocked_since, sync_progress_at
+  sync_blocked_reason, sync_blocked_since, sync_progress_at,
+  organizer_role, organized_by_kind, organized_since, organizer_state,
+  organizer_released_at, organize_consented_at, disabled_reason, retry_after,
+  release_requested_at, release_refusal, takeover_authorized_at, takeover_intent
 ) ON public.mailboxes TO ohmail_admin;
 
 -- `mailbox_credentials` — PRESENCE ONLY. `(mailbox_id, transport)` IS the primary key, which is
@@ -809,6 +813,27 @@ REVOKE ALL ON public.api_faults FROM ohmail_admin;
 GRANT SELECT (id, at, route, method, status, error_class, request_id, arm)
   ON public.api_faults TO ohmail_admin;
 
+-- ── 10b. The account page's lifecycle, debt and staff-audit facts (cloud 0047). ──────────
+--
+-- `account_lifecycle_notices` is which lifecycle mail an account was sent and when: a closed kind
+-- and two timestamps. `credit_refund_obligations` is this server's own debt to its entitlements
+-- program, as ids, counts, timestamps and one of this repository's fault words — never `meta`
+-- and never `attempt`. `staff_audit_events` is what staff did; the console reads it through this
+-- role and never writes it (the API writes on its runtime connection).
+REVOKE ALL ON public.account_lifecycle_notices FROM ohmail_admin;
+GRANT SELECT (account_id, kind, anchor, sent_at) ON public.account_lifecycle_notices TO ohmail_admin;
+
+REVOKE ALL ON public.credit_refund_obligations FROM ohmail_admin;
+GRANT SELECT (account_id, owed_at, settled_at, tries, last_fault)
+  ON public.credit_refund_obligations TO ohmail_admin;
+
+REVOKE ALL ON public.staff_audit_events FROM ohmail_admin;
+GRANT SELECT (
+  id, at, request_id, staff_user_id, staff_session_id, actor_label, roles, action,
+  target_account_id, target_user_id, target_mailbox_id, outcome, refusal_code, reason_code,
+  ticket_ref, result_count, query_hmac, audience, detail
+) ON public.staff_audit_events TO ohmail_admin;
+
 -- ── 11. WHAT IS DELIBERATELY NOT GRANTED, and is enforced by the step-2 blanket revoke ────
 --
 --   messages            the ROW is the oracle; §4 has the argument
@@ -838,6 +863,9 @@ GRANT SELECT (id, at, route, method, status, error_class, request_id, arm)
 --                       (`devices`, `sessions` and `auth_events` moved OUT of this census in
 --                       §6's stanza: named non-credential columns for the staleness and
 --                       reuse-revocation alerts, never a token, hash or key column)
+--   staff_users, staff_sessions, staff_role_grants, staff_audit_log
+--                       the credentials and roles that protect the console: the role that
+--                       serves it cannot read them
 --
 -- None of them appears above, so step 2 leaves `ohmail_admin` holding nothing on any of them,
 -- and a future table is in the same position until somebody adds a stanza for it.

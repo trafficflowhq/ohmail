@@ -1,5 +1,6 @@
 import { and, eq, isNotNull } from "drizzle-orm";
 import { auditLog, mailboxes } from "./schema.js";
+import { staffAuditEvents } from "./schema-cloud.js";
 import { auditAction } from "./staff-channels.js";
 import type { Tx } from "./change-log.js";
 
@@ -20,6 +21,12 @@ export interface MailboxResyncWrite {
   /** The operator's stated reason, recorded in the audit payload. */
   note: string;
   now: Date;
+  /**
+   * The staff audit row for this write, built and checked by the API's one writer and inserted
+   * HERE, inside the effect's transaction: a resync whose row cannot be written rolls back.
+   */
+  staffEvent: (o: { outcome: "ok" | "no_change"; accountId: string; changed: boolean }) =>
+    typeof staffAuditEvents.$inferInsert;
 }
 
 export interface MailboxResyncOutcome {
@@ -42,16 +49,15 @@ export interface MailboxResyncOutcome {
 
 /**
  * Release a quarantined mailbox: clear its durable retry backoff so the leader re-dials on its
- * next roster pass. Idempotent — a second call, or a call against a mailbox with no backoff,
- * returns `changed: false` and writes no audit row. `SELECT … FOR UPDATE` rather than a guarded
- * `UPDATE … RETURNING` for one reason: the outcome has to carry the backoff that WAS in force,
- * and `RETURNING` gives the NEW value of an updated column — a guard-in-the-statement would
- * report `null` for the value it just cleared. With the lock, two operators clicking at once
- * serialize: one releases and writes one audit row, the other reads NULL and gets `changed:
- * false`.
+ * next roster pass. Idempotent — a second call, or a mailbox with no backoff, returns `changed:
+ * false`, writes no `audit_log` row and records a `no_change` staff event. `SELECT … FOR UPDATE`
+ * rather than a guarded `UPDATE … RETURNING`: the outcome carries the backoff that WAS in force,
+ * and `RETURNING` gives the NEW value — it would report `null` for the value it just cleared.
+ * With the lock, two operators clicking at once serialize: one releases and writes one audit
+ * row, the other reads NULL and gets `changed: false`.
  */
 export async function resyncMailbox(db: Tx, input: MailboxResyncWrite): Promise<MailboxResyncOutcome> {
-  const { mailboxId, staffId, note, now } = input;
+  const { mailboxId, staffId, note, now, staffEvent } = input;
   return db.transaction(async (tx) => {
     const [row] = await tx
       .select({ accountId: mailboxes.accountId, retryAfter: mailboxes.retryAfter })
@@ -65,6 +71,7 @@ export async function resyncMailbox(db: Tx, input: MailboxResyncWrite): Promise<
     // the second is "there was nothing to do".
     if (!row) return { changed: false, accountId: null, clearedRetryAfter: null, auditId: null, auditAt: null };
     if (row.retryAfter == null) {
+      await tx.insert(staffAuditEvents).values(staffEvent({ outcome: "no_change", accountId: row.accountId, changed: false }));
       return { changed: false, accountId: row.accountId, clearedRetryAfter: null, auditId: null, auditAt: null };
     }
 
@@ -87,6 +94,7 @@ export async function resyncMailbox(db: Tx, input: MailboxResyncWrite): Promise<
       inverse: null,
       createdAt: now,
     }).returning({ id: auditLog.id, createdAt: auditLog.createdAt });
+    await tx.insert(staffAuditEvents).values(staffEvent({ outcome: "ok", accountId: row.accountId, changed: true }));
     return {
       changed: true,
       accountId: row.accountId,

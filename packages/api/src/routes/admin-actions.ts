@@ -1,6 +1,8 @@
 import { silentLogger } from "@trafficflow/core";
 import { resyncMailbox } from "@trafficflow/db/cloud";
-import { resolveStaffSession, staffTokenOf, type StaffIdentity } from "./admin-staff.js";
+import { actorOf, resolveStaffSession, staffTokenOf, type StaffIdentity } from "./admin-staff.js";
+import { recordStaffEvents, adoptRequestId, rolesAdmit, staffEventRow } from "../staff-audit.js";
+import type { StaffRole } from "@trafficflow/services";
 import { mailboxResyncAnswer } from "../admin-write-wire.js";
 import { withStaffStepUp } from "../staff-step-up.js";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
@@ -22,10 +24,13 @@ const str = (v: unknown): string => (typeof v === "string" ? v : "");
  * has not observed (see `resyncMailbox` in packages/db).
  */
 type MailboxWriteRun = (
-  input: { mailboxId: string; note: string },
+  input: { mailboxId: string; note: string; requestId: string },
   staff: StaffIdentity,
   deps: ApiDeps,
 ) => Promise<{ status: number; body: unknown }>;
+
+/** The roles a mailbox write admits; `billing` does not operate mailboxes. */
+const MAILBOX_WRITE_ROLES: readonly StaffRole[] = ["support", "ops", "owner"];
 
 function staffMailboxWriteRoute(name: string, run: MailboxWriteRun): Handler {
   return async (req, deps) => {
@@ -51,13 +56,22 @@ function staffMailboxWriteRoute(name: string, run: MailboxWriteRun): Handler {
       return json(401, { error: { code: "staff_session_required" } });
     }
 
+    const requestId = adoptRequestId(req, deps);
+    if (!rolesAdmit(staff.roles, MAILBOX_WRITE_ROLES)) {
+      await recordStaffEvents(deps.db, [{
+        requestId, at: deps.now(), actor: actorOf(staff), action: "write.mailbox.resync",
+        outcome: "refused", refusalCode: "role_required", targetMailboxId: str(body.mailboxId).trim(),
+      }]).catch((err: unknown) => log.error("admin_audit_failed", { err }));
+      return json(403, { error: { code: "role_required" } });
+    }
+
     const mailboxId = str(body.mailboxId).trim();
     if (!mailboxId) return json(400, { error: { code: "mailbox_id_required" } });
     const note = str(body.note).trim();
     if (note.length < MIN_NOTE_LENGTH) return json(400, { error: { code: "note_required" } });
 
     try {
-      const out = await run({ mailboxId, note }, staff, deps);
+      const out = await run({ mailboxId, note, requestId }, staff, deps);
       return json(out.status, out.body);
     } catch (err) {
       log.error("admin_write_failed", { err });
@@ -67,20 +81,34 @@ function staffMailboxWriteRoute(name: string, run: MailboxWriteRun): Handler {
 }
 
 async function resync(
-  input: { mailboxId: string; note: string },
+  input: { mailboxId: string; note: string; requestId: string },
   staff: StaffIdentity,
   deps: ApiDeps,
 ): Promise<{ status: number; body: unknown }> {
+  const now = deps.now();
   const outcome = await resyncMailbox(deps.db, {
     mailboxId: input.mailboxId,
     staffId: staff.staffId,
     note: input.note,
-    now: deps.now(),
+    now,
+    // The note stays in `audit_log.payload` alone; the staff row carries the outcome only.
+    staffEvent: (o) => staffEventRow({
+      requestId: input.requestId, at: now, actor: actorOf(staff), action: "write.mailbox.resync",
+      outcome: o.outcome, targetAccountId: o.accountId, targetMailboxId: input.mailboxId,
+      detail: { changed: o.changed },
+    }),
   });
   // A mailbox id that matches no row is the operator's mistake, not a no-op, and it must not
   // read as one: 404 rather than a 200 that says `changed: false` beside a wrong id.
-  if (outcome.accountId === null) return { status: 404, body: { error: { code: "mailbox_not_found" } } };
-  // `changed: false` is a mailbox that was not parked — a 200 that wrote no audit row, exactly as
+  if (outcome.accountId === null) {
+    await recordStaffEvents(deps.db, [{
+      requestId: input.requestId, at: now, actor: actorOf(staff), action: "write.mailbox.resync",
+      outcome: "refused", refusalCode: "mailbox_not_found", targetMailboxId: input.mailboxId,
+    }]).catch(() => { /* a refusal serves nothing; its record is best-effort */ });
+    return { status: 404, body: { error: { code: "mailbox_not_found" } } };
+  }
+  // `changed: false` is a mailbox that was not parked — a 200 that wrote no `audit_log` row (the
+  // staff audit records it as `no_change`), exactly as
   // a replayed suspend is, and `audit` is null beside it. The console renders the difference
   // rather than calling both of them success, because "released" and "there was nothing to
   // release" are different things to the person deciding what to try next. The audit row's

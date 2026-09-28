@@ -65,7 +65,7 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   // message or mutation with a joinable id and an event time. Do not re-add any of the four to
   // serve a console field — the fields they served are now the honest nothing, and
   // `admin-service.ts` carries the argument for where the real replacement belongs.
-  "public.accounts": ["id", "name", "ai_enabled", "created_at"],
+  "public.accounts": ["id", "name", "ai_enabled", "created_at", "erased_at" /* cloud 0047: a timestamp */],
   "public.users": [
     "id", "account_id", "email", "display_name", "email_verified_at", "created_at",
   ],
@@ -75,15 +75,21 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   // this census must name them or `assertContentBlind` refuses the very grant the console needs.
   // The SAFEST columns on this list: a CLOSED set behind a CHECK constraint, so unlike
   // `error_detail` — whose safety rests on a write-site allowlist — no value a mail server chose
-  // can reach the column at all. `disabled_reason` and `takeover_authorized_at` are deliberately
-  // still ABSENT: `admin-service.ts` does not project them, and this list is what the console
-  // reads, not what the table holds. Add them in the diff that adds the projection.
+  // can reach the column at all.
   "public.mailboxes": [
     "id", "account_id", "provider", "address", "created_at", "display_name", "status",
     "last_sync_at", "auth_kind", "error_code", "error_detail", "failed_at", "retry_count",
     "kickstart_at", "sync_blocked_reason", "sync_blocked_since",
     // Mail 0130: the `sync_lag` rule reads it, and that rule runs on this role.
     "sync_progress_at",
+    // The organizer facts the account page projects (cloud 0047's grants): each a closed set
+    // behind a CHECK or a timestamp. NOT `organized_by_name`, `organized_by_install_id` or
+    // `organized_by_capabilities`: each is a header off the lease message, which anything able to
+    // write to the mailbox can choose. `staff-role.pg.test.ts` proves all three refuse.
+    "organizer_role", "organized_by_kind", "organized_since",
+    "organizer_state", "organizer_released_at", "organize_consented_at", "disabled_reason",
+    "retry_after", "release_requested_at", "release_refusal", "takeover_authorized_at",
+    "takeover_intent",
   ],
   // PRESENCE ONLY: the composite primary key, and nothing that makes a mailbox connectable.
   "public.mailbox_credentials": ["mailbox_id", "transport"],
@@ -219,6 +225,16 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   // and a route that failed for want of a connection has no account resolved to attribute it to.
   "public.api_faults": [
     "id", "at", "route", "method", "status", "error_class", "request_id", "arm",
+  ],
+  // Cloud 0047's account page: which lifecycle mail an account was sent (a closed kind, two
+  // timestamps), this server's owed credit reversals (never `meta`, never `attempt`) and the staff
+  // audit, which the console reads here and the API writes on its runtime connection.
+  "public.account_lifecycle_notices": ["account_id", "kind", "anchor", "sent_at"],
+  "public.credit_refund_obligations": ["account_id", "owed_at", "settled_at", "tries", "last_fault"],
+  "public.staff_audit_events": [
+    "id", "at", "request_id", "staff_user_id", "staff_session_id", "actor_label", "roles",
+    "action", "target_account_id", "target_user_id", "target_mailbox_id", "outcome",
+    "refusal_code", "reason_code", "ticket_ref", "result_count", "query_hmac", "audience", "detail",
   ],
   // The `security_barrier` view, and the ONLY route to `audit_log`. Four named scalars: no
   // `payload`, no `inverse`. The bags are never granted, in any shape.

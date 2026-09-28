@@ -203,6 +203,12 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // migration runs in one transaction, so its presence implies the other two and the CHECK. Absent,
   // every authenticator replacement 42703s at the enrol; the deploy gate names it first.
   ["totp_secrets", "pending_started_at"],
+  // cloud 0047_staff_roles_and_audit — two tables that fail differently. Without
+  // `staff_role_grants.revoked_at` the live role read 42P01s and every staff request answers 503;
+  // without `staff_audit_events.target_account_id` the audit insert fails and every staff read is
+  // refused `audit_failed`. The trigger body is probed below.
+  ["staff_role_grants", "revoked_at"],
+  ["staff_audit_events", "target_account_id"],
 ] as const;
 
 /**
@@ -245,14 +251,14 @@ export const CLOUD_INDEX_MARKERS: ReadonlyArray<IndexMarker> = [
 /**
  * The CLOUD trigger functions probed by BODY — the fifth marker class.
  *
- * See {@link FunctionDefinitionMarker} for why `pg_proc.prosrc` and why a substring. EMPTY
- * today, and kept for {@link CLOUD_CHECK_DEFINITION_MARKERS}' reason: every function it named
- * belonged to a metering table, and `CREATE OR REPLACE FUNCTION` is exactly the statement a
- * hand-repair or a restored dump can leave at an older definition with every name probe still
- * reporting healthy — so the class is what the next replaced trigger needs.
+ * See {@link FunctionDefinitionMarker} for why `pg_proc.prosrc` and why a substring:
+ * `CREATE OR REPLACE FUNCTION` is exactly the statement a hand-repair or a restored dump can
+ * leave at an older definition with every name probe still reporting healthy.
  */
 export const CLOUD_FUNCTION_MARKERS: ReadonlyArray<FunctionDefinitionMarker> = [
-
+  /* Cloud 0047 — the staff audit's append-only guard. A body replaced by a hand-repair would keep
+     every name probe green while rows could be edited or deleted. */
+  ["staff_audit_events_append_only", "staff_audit_events is append-only"],
 ] as const;
 
 /**
@@ -322,7 +328,7 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * A VALIDATE-only one carries none: cloud 0045_attachment_staging_digest_validate flips only
  * `convalidated`, which no class sees. The tag names the newest PROVABLE entry.
  */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0046_totp_pending_replacement";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0047_staff_roles_and_audit";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

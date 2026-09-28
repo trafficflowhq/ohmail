@@ -576,6 +576,67 @@ export const staffAuditLog = pgTable("staff_audit_log", {
 }));
 
 /**
+ * Cloud 0047 — which roles a staff member holds. Read live on every staff request (`revoked_at IS
+ * NULL`), never cached; a revocation stamps the row and keeps it, so the grant history stays.
+ * `owner` implies every other role. The content-blind role holds no grant on this table.
+ */
+export const STAFF_ROLES = ["support", "billing", "ops", "owner"] as const;
+
+export const staffRoleGrants = pgTable("staff_role_grants", {
+  staffUserId: uuid("staff_user_id").notNull().references(() => staffUsers.id),
+  role: text("role").notNull(),
+  grantedBy: uuid("granted_by").references(() => staffUsers.id),
+  grantedAt: timestamp("granted_at", { withTimezone: true }).defaultNow().notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  revokedBy: uuid("revoked_by").references(() => staffUsers.id),
+}, (t) => ({
+  pk: primaryKey({ name: "staff_role_grants_pk", columns: [t.staffUserId, t.role, t.grantedAt] }),
+  uqLive: uniqueIndex("staff_role_grants_live_uq").on(t.staffUserId, t.role)
+    .where(sql`"revoked_at" is null`),
+  ckRole: check("staff_role_grants_role_closed", sql`${t.role} in ('support', 'billing', 'ops', 'owner')`),
+  ckRevoked: check("staff_role_grants_revoked_together",
+    sql`(${t.revokedAt} is null) = (${t.revokedBy} is null)`),
+}));
+
+/**
+ * Cloud 0047 — every staff read and write the API serves, written BEFORE the answer (a failed
+ * insert refuses the request). Append-only by trigger. `target_account_id` has no key on purpose:
+ * erasure does not walk this table, so an erased account's rows survive under the id alone.
+ * `detail` holds closed-set scalars only, checked per action before the insert; a search term is
+ * never stored, only `query_hmac`.
+ */
+export const staffAuditEvents = pgTable("staff_audit_events", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  at: timestamp("at", { withTimezone: true }).defaultNow().notNull(),
+  requestId: uuid("request_id").notNull(),
+  staffUserId: uuid("staff_user_id").notNull().references(() => staffUsers.id),
+  staffSessionId: uuid("staff_session_id"),
+  actorLabel: text("actor_label").notNull(),
+  roles: text("roles").array().notNull(),
+  action: text("action").notNull(),
+  targetAccountId: uuid("target_account_id"),
+  targetUserId: uuid("target_user_id"),
+  targetMailboxId: uuid("target_mailbox_id"),
+  outcome: text("outcome").notNull(),
+  refusalCode: text("refusal_code"),
+  reasonCode: text("reason_code"),
+  ticketRef: text("ticket_ref"),
+  resultCount: integer("result_count"),
+  queryHmac: text("query_hmac"),
+  audience: text("audience"),
+  detail: jsonb("detail"),
+}, (t) => ({
+  ixAccountAt: index("staff_audit_events_account_at_idx").on(t.targetAccountId, t.at.desc()),
+  ixStaffAt: index("staff_audit_events_staff_at_idx").on(t.staffUserId, t.at.desc()),
+  ixRequest: index("staff_audit_events_request_idx").on(t.requestId),
+  ckOutcome: check("staff_audit_events_outcome_closed",
+    sql`${t.outcome} in ('ok', 'no_change', 'refused', 'failed')`),
+  ckReason: check("staff_audit_events_reason_closed", sql`${t.reasonCode} in (
+    'customer_request', 'incident', 'billing_dispute', 'fraud_or_abuse', 'ops_maintenance', 'legal')`),
+  ckTicket: check("staff_audit_events_ticket_shape", sql`${t.ticketRef} ~ '^[A-Za-z0-9#._:-]{1,64}$'`),
+}));
+
+/**
  * The mailbox OAuth2 ceremony (cloud 0009) — a redirect consent flow in flight, hosted-only. A
  * row lives between "Connect Outlook" and the redirect back; it holds the PKCE verifier and the
  * owning account, consumed exactly once. `state` is the PRIMARY KEY because it is the consumption
@@ -888,7 +949,7 @@ export const cloudSchema = {
   credentials, webauthnCredentials, webauthnChallenges, totpSecrets, recoveryCodes, loginTokens,
   oauthAuthCodes, authEvents, authThrottle, pushSubscriptions,
   workerHeartbeats, alertState, alertPassRuns, platformSignals, apiFaults,
-  waitlist, staffUsers, staffSessions, staffAuditLog,
+  waitlist, staffUsers, staffSessions, staffAuditLog, staffRoleGrants, staffAuditEvents,
   mailboxOauthCeremonies, mailboxOauthDeviceCeremonies,
   oauthProviderConfig, attachmentStaging, invites,
   creditRefundObligations, screenerSuggestOwed, accountLifecycleNotices, erasedBearers,

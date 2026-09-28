@@ -38,7 +38,7 @@ import {
   makePlatformSignalPort,
 } from "@trafficflow/services";
 import {
-  makeProbeHostGuard, apiAlertSinkSummary, API_FAULT_RECORD_BUDGET_MS,
+  makeProbeHostGuard, apiAlertSinkSummary, API_FAULT_RECORD_BUDGET_MS, staffSigningKeyOf,
 } from "@trafficflow/api";
 import type { ApiDeps, ApiServices, ChangeWakeHub } from "@trafficflow/api";
 import { waitUntil } from "@vercel/functions";
@@ -766,7 +766,13 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
     // ABSENT ⇒ every `GET /admin/*` answers 404 — a deployment with no
     // `TF_ADMIN_SECRET` has no admin console, which is the state every host is in until
     // somebody arms it deliberately.
-    admin: cfg.admin ? { secret: cfg.admin.secret, environment: cfg.environment } : undefined,
+    admin: cfg.admin
+      ? {
+        secret: cfg.admin.secret,
+        environment: cfg.environment,
+        assertion: staffSigningKeyOf(cfg.admin.assertionKey, cfg.admin.assertionKid),
+      }
+      : undefined,
     // The content-blind staff connection, armed by `DATABASE_URL_ADMIN` ALONE.
     //
     // It used to read `cfg.admin.databaseUrl`, which meant the console's credential decided

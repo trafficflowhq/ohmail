@@ -1,5 +1,8 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { accounts, auditLog, mailboxCredentials, mailboxes, users, isMailboxSyncBlockReason, staffChannelWord } from "@trafficflow/db";
+import {
+  accounts, accountStorage, auditLog, devices, mailboxCredentials, mailboxes, sessions, users,
+  isMailboxSyncBlockReason, staffChannelWord,
+} from "@trafficflow/db";
 import {
   authEvents,
   invites,
@@ -14,11 +17,19 @@ import {
   SIGNAL_BUCKET_MS,
   listStuckSends,
   DEFAULT_ALERT_THRESHOLDS,
+  accountLifecycleNotices,
+  creditRefundObligations,
+  staffAuditEvents,
+  STAFF_ROLES,
   type ContentBlind,
 } from "@trafficflow/db/cloud";
+import { narrowedDetail, STAFF_AUDIT_ACTIONS, STAFF_REASON_CODES } from "./staff-audit-detail.js";
+import type { AuthAuditEvent, DeviceKind } from "./auth/types.js";
 import type { Db } from "./context.js";
 import type {
-  AccountDetail, AccountPage, AccountQuery, AccountSummary, ActionCatalog, ActionSpec,
+  AccountBatch, AccountDetailV2, AdminLifecycleNotice, AdminSearchMatchedOn, AdminSearchPage,
+  AdminSearchResult, OpenSyncFacts, StaffActivityPage, StaffEvent, StaffRole, SyncRosterPage,
+  AccountPage, AccountQuery, AccountSummary, ActionCatalog, ActionSpec,
   AdminAlertDriver, AdminPlatformSignal, AlertSummary, AuditEntry,
   FunnelSnapshot, FunnelStage, MailboxHealth, SecurityEvent,
   StaleSend, WorkerInstanceHealth, WorkerSnapshot,
@@ -453,28 +464,457 @@ async function loadSecurityEvents(db: AdminDb, accountId: string): Promise<Secur
   }
 }
 
-export async function adminAccountDetail(db: AdminDb, now: Date, id: string): Promise<AccountDetail | null> {
+/** Who is reading, as far as a staff read needs to know: the roles decide masking and views. */
+export interface AdminReader {
+  roles: readonly StaffRole[];
+}
+
+/** `ops` reads the platform, not the people: login addresses are masked to their domain. */
+export const readerMasksAddresses = (reader: AdminReader): boolean =>
+  !reader.roles.includes("owner") && reader.roles.includes("ops")
+  && !reader.roles.includes("support") && !reader.roles.includes("billing");
+
+export function maskAddress(address: string): string {
+  const at = address.lastIndexOf("@");
+  return at < 0 ? "•••" : `•••${address.slice(at)}`;
+}
+
+/** The closed `auth_events.event` vocabulary; a stored value outside it renders `other`. */
+const ADMIN_AUTH_EVENTS = [
+  "login", "login_failed", "2fa_verified", "2fa_failed", "logout", "device_revoked",
+  "recovery_used", "lockout", "enrollment_started", "email_verified", "desktop_link_issued",
+  "desktop_approval_confirmed", "desktop_approval_denied", "desktop_approval_refused",
+  "refresh_reuse_revoked", "refresh_recovered", "refresh_replayed",
+] as const satisfies readonly AuthAuditEvent["event"][];
+type MissingAuthEvent = Exclude<AuthAuditEvent["event"], (typeof ADMIN_AUTH_EVENTS)[number]>;
+export const ADMIN_AUTH_EVENTS_EXHAUSTIVE: MissingAuthEvent extends never ? true : never = true;
+const authEventWord = (v: string): string => (ADMIN_AUTH_EVENTS as readonly string[]).includes(v) ? v : "other";
+
+/** `devices.kind` has no CHECK; the kinds the seams admit, and `other` for anything else. */
+const ADMIN_DEVICE_KINDS = [
+  "web", "macos", "desktop-linux", "desktop-macos", "desktop-windows", "mobile-android", "mobile-ios",
+] as const satisfies readonly DeviceKind[];
+type MissingDeviceKind = Exclude<DeviceKind, (typeof ADMIN_DEVICE_KINDS)[number]>;
+export const ADMIN_DEVICE_KINDS_EXHAUSTIVE: MissingDeviceKind extends never ? true : never = true;
+const deviceKindWord = (v: string): string => (ADMIN_DEVICE_KINDS as readonly string[]).includes(v) ? v : "other";
+
+/** `release_refusal` is closed at its writer and has no CHECK, so the read narrows it too. */
+const RELEASE_REFUSALS = ["sibling_lapse"] as const;
+/** `last_fault` is one of this repository's fault words; anything else renders `other`. */
+const FAULT_WORD_RE = /^[a-z0-9_.:-]{1,64}$/;
+const faultWord = (v: string | null): string | null => (v === null ? null : FAULT_WORD_RE.test(v) ? v : "other");
+
+/** How far back the account page reads auth events and session revocations. */
+const ACCOUNT_HISTORY_DAYS = 30;
+/** Staff actions shown on the account page; the activity route pages the rest. */
+export const ADMIN_STAFF_ACTIONS_ON_PAGE = 20;
+export const ADMIN_STAFF_ACTIVITY_PAGE = 50;
+
+/**
+ * The worker's roster pass, in seconds — how long a change to a mailbox row can wait before the
+ * leader acts on it. The API cannot import the worker; a test holds the two equal.
+ */
+export const WORKER_ROSTER_INTERVAL_SECONDS = 30;
+
+async function loadOrganizerFacts(db: AdminDb, accountId: string): Promise<Map<string, {
+  createdAt: string; organizerRole: string; organizerState: string | null; organizedByKind: string | null;
+  organizedSince: string | null; organizerReleasedAt: string | null;
+  releaseRequestedAt: string | null; releaseRefusal: string | null; takeoverAuthorizedAt: string | null;
+  takeoverIntent: string; consentOnRecord: boolean; disabledReason: string | null;
+  retryAfter: string | null; syncProgressAt: string | null;
+}>> {
+  const rows = await db
+    .select({
+      id: mailboxes.id, createdAt: mailboxes.createdAt,
+      organizerRole: mailboxes.organizerRole, organizerState: mailboxes.organizerState,
+      organizedByKind: mailboxes.organizedByKind,
+      organizedSince: mailboxes.organizedSince, organizerReleasedAt: mailboxes.organizerReleasedAt,
+      releaseRequestedAt: mailboxes.releaseRequestedAt, releaseRefusal: mailboxes.releaseRefusal,
+      takeoverAuthorizedAt: mailboxes.takeoverAuthorizedAt, takeoverIntent: mailboxes.takeoverIntent,
+      organizeConsentedAt: mailboxes.organizeConsentedAt, disabledReason: mailboxes.disabledReason,
+      retryAfter: mailboxes.retryAfter, syncProgressAt: mailboxes.syncProgressAt,
+    })
+    .from(mailboxes)
+    .where(eq(mailboxes.accountId, accountId));
+  return new Map(rows.map((r) => [r.id, {
+    createdAt: asDate(r.createdAt).toISOString(),
+    organizerRole: r.organizerRole,
+    organizerState: r.organizerState,
+    organizedByKind: r.organizedByKind,
+    organizedSince: iso(r.organizedSince),
+    organizerReleasedAt: iso(r.organizerReleasedAt),
+    releaseRequestedAt: iso(r.releaseRequestedAt),
+    releaseRefusal: r.releaseRefusal === null ? null
+      : (RELEASE_REFUSALS as readonly string[]).includes(r.releaseRefusal) ? r.releaseRefusal : "other",
+    takeoverAuthorizedAt: iso(r.takeoverAuthorizedAt),
+    takeoverIntent: r.takeoverIntent,
+    consentOnRecord: r.organizeConsentedAt !== null,
+    disabledReason: r.disabledReason,
+    retryAfter: iso(r.retryAfter),
+    syncProgressAt: iso(r.syncProgressAt),
+  }]));
+}
+
+/** `staff_audit_events` rows as {@link StaffEvent}s, every `detail` narrowed through the list. */
+function staffEventOf(r: {
+  id: string; at: Date | string; requestId: string; staffUserId: string; actorLabel: string;
+  roles: string[]; action: string; outcome: string; refusalCode: string | null; reasonCode: string | null;
+  ticketRef: string | null; targetAccountId: string | null; targetUserId: string | null;
+  targetMailboxId: string | null; resultCount: number | null; audience: string | null; detail: unknown;
+}): StaffEvent {
+  const known = (STAFF_AUDIT_ACTIONS as readonly string[]).includes(r.action);
+  return {
+    id: r.id,
+    at: asDate(r.at).toISOString(),
+    requestId: r.requestId,
+    staffUserId: r.staffUserId,
+    actorLabel: r.actorLabel,
+    roles: r.roles.filter((x): x is StaffRole => (STAFF_ROLES as readonly string[]).includes(x)),
+    // An action this build does not know cannot be named; it is dropped by the caller.
+    action: (known ? r.action : "read.overview") as StaffEvent["action"],
+    outcome: (["ok", "no_change", "refused", "failed"].includes(r.outcome) ? r.outcome : "failed") as StaffEvent["outcome"],
+    refusalCode: r.refusalCode !== null && /^[a-z][a-z0-9_]{0,63}$/.test(r.refusalCode) ? r.refusalCode : null,
+    reasonCode: (STAFF_REASON_CODES as readonly string[]).includes(r.reasonCode ?? "") ? r.reasonCode as StaffEvent["reasonCode"] : null,
+    ticketRef: r.ticketRef,
+    targetAccountId: r.targetAccountId,
+    targetUserId: r.targetUserId,
+    targetMailboxId: r.targetMailboxId,
+    resultCount: r.resultCount,
+    audience: r.audience,
+    detail: known ? narrowedDetail(r.action, r.detail) : {},
+  };
+}
+
+const STAFF_EVENT_COLUMNS = {
+  id: staffAuditEvents.id, at: staffAuditEvents.at, requestId: staffAuditEvents.requestId,
+  staffUserId: staffAuditEvents.staffUserId, actorLabel: staffAuditEvents.actorLabel,
+  roles: staffAuditEvents.roles, action: staffAuditEvents.action, outcome: staffAuditEvents.outcome,
+  refusalCode: staffAuditEvents.refusalCode, reasonCode: staffAuditEvents.reasonCode,
+  ticketRef: staffAuditEvents.ticketRef, targetAccountId: staffAuditEvents.targetAccountId,
+  targetUserId: staffAuditEvents.targetUserId, targetMailboxId: staffAuditEvents.targetMailboxId,
+  resultCount: staffAuditEvents.resultCount, audience: staffAuditEvents.audience,
+  detail: staffAuditEvents.detail,
+};
+
+async function loadStaffEvents(
+  db: AdminDb, accountId: string, o: { reads: boolean; before: { at: string; id: string } | null; limit: number },
+): Promise<StaffEvent[]> {
+  const reads = sql`${staffAuditEvents.action} like 'read.%'`;
+  const where = [
+    eq(staffAuditEvents.targetAccountId, accountId),
+    o.reads ? undefined : sql`not (${reads})`,
+    o.before
+      ? sql`(${staffAuditEvents.at}, ${staffAuditEvents.id}) < (${o.before.at}::timestamptz, ${o.before.id}::uuid)`
+      : undefined,
+  ].filter((x): x is NonNullable<typeof x> => x !== undefined);
+  const rows = await db
+    .select(STAFF_EVENT_COLUMNS)
+    .from(staffAuditEvents)
+    .where(and(...where))
+    .orderBy(desc(staffAuditEvents.at), desc(staffAuditEvents.id))
+    .limit(o.limit);
+  return rows
+    .filter((r) => (STAFF_AUDIT_ACTIONS as readonly string[]).includes(r.action))
+    .map((r) => staffEventOf({ ...r, roles: r.roles ?? [] }));
+}
+
+/**
+ * `GET /admin/accounts/:id` — the account page. Every figure is a count, a timestamp, an id or
+ * a closed-set word; the holder's display name, a session's tokens and a spend's provenance are
+ * never read. Sequential reads on the `max: 1` blind pool, like every admin read group.
+ */
+export async function adminAccountDetail(
+  db: AdminDb, now: Date, id: string, reader: AdminReader = { roles: ["owner"] },
+): Promise<AccountDetailV2 | null> {
   // A malformed id must be a 404, not a Postgres `invalid input syntax for type uuid` 500 —
   // the path segment is whatever the caller typed.
   if (!UUID_RE.test(id)) return null;
   const roster = await loadRoster(db, now);
-  const account = roster.find((a) => a.id === id);
-  if (!account) return null;
+  const summary = roster.find((a) => a.id === id);
+  if (!summary) return null;
+  const mask = readerMasksAddresses(reader);
 
-  // Sequential — the max:1 blind pool deadlocks on parallel reads when one opens a
-  // transaction (see adminWorker above). Same rule for every admin read group.
+  const [accountRow] = await db
+    .select({ erasedAt: accounts.erasedAt }).from(accounts).where(eq(accounts.id, id)).limit(1);
+  const userRows = await db
+    .select({ id: users.id, email: users.email, createdAt: users.createdAt, emailVerifiedAt: users.emailVerifiedAt })
+    .from(users).where(eq(users.accountId, id)).orderBy(users.createdAt);
   const mailboxList = await loadMailboxes(db, now, [id]);
+  const organizer = await loadOrganizerFacts(db, id);
+  const notices = await db
+    .select({ kind: accountLifecycleNotices.kind, anchor: accountLifecycleNotices.anchor, sentAt: accountLifecycleNotices.sentAt })
+    .from(accountLifecycleNotices).where(eq(accountLifecycleNotices.accountId, id))
+    .orderBy(desc(accountLifecycleNotices.sentAt)).limit(ADMIN_LIST_LIMIT);
+  const [storageRow] = await db
+    .select({ bytes: accountStorage.bytes, updatedAt: accountStorage.updatedAt })
+    .from(accountStorage).where(eq(accountStorage.accountId, id)).limit(1);
+  const deviceRows = await db
+    .select({ id: devices.id, kind: devices.kind, createdAt: devices.createdAt, lastSyncedAt: devices.lastSyncedAt })
+    .from(devices).where(eq(devices.accountId, id)).orderBy(desc(devices.createdAt)).limit(ADMIN_LIST_LIMIT);
+  const since = new Date(now.getTime() - ACCOUNT_HISTORY_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const [sessionRow] = await db
+    .select({
+      full: sql<number>`count(*) filter (where ${sessions.revokedAt} is null and ${sessions.scope} = 'full')::int`,
+      enrollment: sql<number>`count(*) filter (where ${sessions.revokedAt} is null and ${sessions.scope} = 'enrollment')::int`,
+      revoked30d: sql<number>`count(*) filter (where ${sessions.revokedAt} >= ${since}::timestamptz)::int`,
+      lastSeenAt: sql<string | null>`max(${sessions.lastSeenAt})`,
+    })
+    .from(sessions).where(eq(sessions.accountId, id));
+  const authRows = await db
+    .select({ userId: authEvents.userId, event: authEvents.event, at: authEvents.at })
+    .from(authEvents)
+    .where(and(eq(authEvents.accountId, id), sql`${authEvents.at} >= ${since}::timestamptz`))
+    .orderBy(desc(authEvents.at)).limit(ADMIN_LIST_LIMIT * 2);
+  const [owed] = await db
+    .select({
+      count: sql<number>`count(*)::int`,
+      oldestOwedAt: sql<string | null>`min(${creditRefundObligations.owedAt})`,
+      tries: sql<number>`coalesce(max(${creditRefundObligations.tries}), 0)::int`,
+      lastFault: sql<string | null>`(array_agg(${creditRefundObligations.lastFault} order by ${creditRefundObligations.tries} desc, ${creditRefundObligations.owedAt}))[1]`,
+    })
+    .from(creditRefundObligations)
+    .where(and(eq(creditRefundObligations.accountId, id), sql`${creditRefundObligations.settledAt} is null`));
+  const staffActions = await loadStaffEvents(db, id, { reads: false, before: null, limit: ADMIN_STAFF_ACTIONS_ON_PAGE });
   const audit = await loadAudit(db, id);
   const securityEvents = await loadSecurityEvents(db, id);
 
+  const address = (email: string): string => (mask ? maskAddress(email) : email);
   return {
     now: now.toISOString(),
-    account,
-    mailboxes: mailboxList,
+    account: {
+      ...summary,
+      ownerEmail: summary.ownerEmail ? address(summary.ownerEmail) : "",
+      erasedAt: iso(accountRow?.erasedAt ?? null),
+    },
+    users: userRows.map((u) => ({
+      id: u.id, email: address(u.email), createdAt: asDate(u.createdAt).toISOString(),
+      emailVerifiedAt: iso(u.emailVerifiedAt), lastLoginAt: null,
+    })),
+    mailboxes: mailboxList.flatMap((m) => {
+      const o = organizer.get(m.id);
+      return o ? [{ ...m, ...o }] : [];
+    }),
+    lifecycleNotices: notices.map((n) => ({
+      kind: n.kind as AdminLifecycleNotice["kind"], anchor: asDate(n.anchor).toISOString(), sentAt: asDate(n.sentAt).toISOString(),
+    })),
+    storage: storageRow ? { bytes: int(storageRow.bytes), updatedAt: asDate(storageRow.updatedAt).toISOString() } : null,
+    devices: deviceRows.map((d) => ({
+      id: d.id, kind: deviceKindWord(d.kind), pairedAt: asDate(d.createdAt).toISOString(), lastSyncedAt: iso(d.lastSyncedAt),
+    })),
+    sessions: {
+      active: { full: int(sessionRow?.full), enrollment: int(sessionRow?.enrollment) },
+      revoked30d: int(sessionRow?.revoked30d),
+      lastSeenAt: iso(sessionRow?.lastSeenAt ?? null),
+    },
+    authEvents: authRows.map((a) => ({ userId: a.userId, event: authEventWord(a.event), at: asDate(a.at).toISOString() })),
+    owedReversals: owed && int(owed.count) > 0 && owed.oldestOwedAt
+      ? { count: int(owed.count), oldestOwedAt: asDate(owed.oldestOwedAt).toISOString(), tries: int(owed.tries), lastFault: faultWord(owed.lastFault) }
+      : null,
+    staffActions,
     audit,
     securityEvents,
   };
 }
+
+/** `?cursor=` for the activity route: `<iso>,<uuid>`, or null when absent or malformed. */
+export function staffActivityCursorOf(raw: string | null): { at: string; id: string } | null {
+  if (!raw) return null;
+  const [at, id] = raw.split(",");
+  if (!at || !id || !UUID_RE.test(id) || Number.isNaN(Date.parse(at))) return null;
+  return { at: new Date(at).toISOString(), id };
+}
+
+/**
+ * `GET /admin/accounts/:id/staff-activity` — every staff event on one account, newest first.
+ * The reads (`views`, who looked) are served to `owner` only; everybody else gets the actions.
+ */
+export async function adminStaffActivity(
+  db: AdminDb, now: Date, id: string, reader: AdminReader, cursor: string | null,
+): Promise<StaffActivityPage | null> {
+  if (!UUID_RE.test(id)) return null;
+  const owner = reader.roles.includes("owner");
+  const events = await loadStaffEvents(db, id, {
+    reads: owner, before: staffActivityCursorOf(cursor), limit: ADMIN_STAFF_ACTIVITY_PAGE,
+  });
+  const last = events.length === ADMIN_STAFF_ACTIVITY_PAGE ? events[events.length - 1]! : null;
+  const isRead = (e: StaffEvent): boolean => e.action.startsWith("read.");
+  return {
+    now: now.toISOString(),
+    actions: events.filter((e) => !isRead(e)),
+    ...(owner ? { views: events.filter(isRead) } : {}),
+    nextCursor: last ? `${last.at},${last.id}` : null,
+  };
+}
+
+/** Search classes, in the order a single account's matches are ranked. */
+const MATCH_RANK: readonly AdminSearchMatchedOn[] = [
+  "account_id", "user", "mailbox", "login_address", "mailbox_address",
+  "account_id_prefix", "mailbox_domain", "account_name",
+];
+export const ADMIN_SEARCH_LIMIT = 25;
+const DOMAIN_RE = /^(?=.{3,253}$)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/;
+
+/**
+ * `GET /admin/search?q=` — exact matches and prefixes only, never a substring. A uuid matches an
+ * account, user or mailbox id; 8 to 31 hex digits an account id's prefix; an address the login
+ * or mailbox address exactly; a domain (or `@domain`) a mailbox address's domain exactly; any term
+ * the folded account name's prefix. Each account appears once, under its best match.
+ */
+export async function adminSearch(db: AdminDb, now: Date, raw: string, reader: AdminReader): Promise<AdminSearchPage> {
+  const q = raw.trim().toLowerCase().slice(0, 320);
+  const found = new Map<string, AdminSearchMatchedOn>();
+  const names = new Map<string, string>();
+  const hit = (accountId: string, on: AdminSearchMatchedOn): void => {
+    const held = found.get(accountId);
+    if (!held || MATCH_RANK.indexOf(on) < MATCH_RANK.indexOf(held)) found.set(accountId, on);
+  };
+  if (q) {
+    const hex = q.replace(/-/g, "");
+    const uuid = UUID_RE.test(q) ? q
+      : /^[0-9a-f]{32}$/.test(hex) ? `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}` : null;
+    if (uuid) {
+      for (const r of await db.select({ id: accounts.id }).from(accounts).where(eq(accounts.id, uuid))) hit(r.id, "account_id");
+      for (const r of await db.select({ a: users.accountId }).from(users).where(eq(users.id, uuid))) hit(r.a, "user");
+      for (const r of await db.select({ a: mailboxes.accountId }).from(mailboxes).where(eq(mailboxes.id, uuid))) hit(r.a, "mailbox");
+    } else if (/^[0-9a-f-]+$/.test(q) && /^[0-9a-f]{8,31}$/.test(hex)) {
+      for (const r of await db.select({ id: accounts.id }).from(accounts)
+        .where(sql`replace(${accounts.id}::text, '-', '') like ${`${hex}%`}`).limit(ADMIN_SEARCH_LIMIT + 1)) {
+        hit(r.id, "account_id_prefix");
+      }
+    }
+    const at = q.indexOf("@");
+    if (at > 0) {
+      for (const r of await db.select({ a: users.accountId }).from(users).where(sql`lower(${users.email}) = ${q}`)) hit(r.a, "login_address");
+      for (const r of await db.select({ a: mailboxes.accountId }).from(mailboxes).where(sql`lower(${mailboxes.address}) = ${q}`)) hit(r.a, "mailbox_address");
+    }
+    const domain = at === 0 ? q.slice(1) : at < 0 ? q : null;
+    if (domain && DOMAIN_RE.test(domain)) {
+      for (const r of await db.select({ a: mailboxes.accountId }).from(mailboxes)
+        .where(sql`lower(split_part(${mailboxes.address}, '@', 2)) = ${domain}`)) {
+        hit(r.a, "mailbox_domain");
+      }
+    }
+    const folded = fold(q);
+    for (const r of await db.select({ id: accounts.id, name: accounts.name }).from(accounts)) {
+      names.set(r.id, r.name);
+      if (r.name && fold(r.name).startsWith(folded)) hit(r.id, "account_name");
+    }
+  }
+  // Ranked and cut BEFORE the second read, so its `IN` list is at most one page plus one.
+  const ranked = [...found.keys()]
+    .filter((id) => names.has(id))
+    .sort((a, b) => MATCH_RANK.indexOf(found.get(a)!) - MATCH_RANK.indexOf(found.get(b)!)
+      || (names.get(a) ?? "").localeCompare(names.get(b) ?? "") || a.localeCompare(b));
+  const hits = ranked.slice(0, ADMIN_SEARCH_LIMIT + 1);
+  const rows = hits.length === 0 ? [] : await db
+    .select({ id: accounts.id, name: accounts.name, erasedAt: accounts.erasedAt })
+    .from(accounts).where(inArray(accounts.id, hits));
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const owners = await ownerEmails(db, hits);
+  const mask = readerMasksAddresses(reader);
+  const results = hits
+    .filter((id) => byId.has(id))
+    .map((id): AdminSearchResult => {
+      const row = byId.get(id)!;
+      const owner = owners.get(id) ?? "";
+      const who = mask && owner ? maskAddress(owner) : owner;
+      return {
+        accountId: id,
+        matchedOn: found.get(id)!,
+        label: row.name && who ? `${row.name} · ${who}` : row.name || who,
+        erasedAt: iso(row.erasedAt),
+      };
+    });
+  return { now: now.toISOString(), results: results.slice(0, ADMIN_SEARCH_LIMIT), truncated: ranked.length > ADMIN_SEARCH_LIMIT };
+}
+
+export const ADMIN_BATCH_MAX = 100;
+
+/** `GET /admin/accounts?ids=` — the summaries of the ids asked for, in the order asked. */
+export async function adminAccountsByIds(
+  db: AdminDb, now: Date, ids: readonly string[], reader: AdminReader,
+): Promise<AccountBatch> {
+  const wanted = ids.map((x) => x.trim().toLowerCase());
+  const roster = await loadRoster(db, now);
+  const byId = new Map(roster.map((a) => [a.id, a]));
+  const mask = readerMasksAddresses(reader);
+  const rows: AccountSummary[] = [];
+  const unknownIds: string[] = [];
+  for (const id of wanted) {
+    const a = UUID_RE.test(id) ? byId.get(id) : undefined;
+    if (!a) unknownIds.push(id);
+    else rows.push(mask && a.ownerEmail ? { ...a, ownerEmail: maskAddress(a.ownerEmail) } : a);
+  }
+  return { now: now.toISOString(), rows, unknownIds };
+}
+
+export const ADMIN_SYNC_ROSTER_MAX = 500;
+
+/** Released by its organizer and held by nobody since — the reader state a reopen leaves. */
+const RELEASED_NO_HOLDER = sql`${mailboxes.organizerRole} = 'reader' and ${mailboxes.organizerReleasedAt} is not null and ${mailboxes.organizerState} is distinct from 'held'`;
+
+/**
+ * `GET /admin/sync-roster?cursor=&limit=` — each account's mailbox facts, keyset-paged by id.
+ * `nextCursor` is the last id when the page was full, else null.
+ */
+export async function adminSyncRoster(
+  db: AdminDb, now: Date, cursor: string | null, limit: number,
+): Promise<SyncRosterPage> {
+  const size = Math.min(ADMIN_SYNC_ROSTER_MAX, Math.max(1, Math.trunc(limit) || ADMIN_SYNC_ROSTER_MAX));
+  const after = cursor && UUID_RE.test(cursor) ? cursor.toLowerCase() : null;
+  const accountRows = await db
+    .select({ id: accounts.id, erasedAt: accounts.erasedAt })
+    .from(accounts)
+    .where(after ? sql`${accounts.id} > ${after}::uuid` : undefined)
+    .orderBy(accounts.id)
+    .limit(size);
+  const pageIds = accountRows.map((r) => r.id);
+  const facts = pageIds.length === 0 ? [] : await db
+    .select({
+      accountId: mailboxes.accountId,
+      mailboxes: sql<number>`count(*)::int`,
+      disabled: sql<number>`count(*) filter (where ${mailboxes.status} = 'disabled')::int`,
+      blockedAccountClosed: sql<number>`count(*) filter (where ${mailboxes.syncBlockedReason} = 'account_closed')::int`,
+      oldestBlockedSince: sql<string | null>`min(${mailboxes.syncBlockedSince}) filter (where ${mailboxes.syncBlockedReason} = 'account_closed')`,
+      releasedNoHolder: sql<number>`count(*) filter (where ${RELEASED_NO_HOLDER})::int`,
+      oldestReleasedAt: sql<string | null>`min(${mailboxes.organizerReleasedAt}) filter (where ${RELEASED_NO_HOLDER})`,
+      lastSyncMax: sql<string | null>`max(${mailboxes.lastSyncAt})`,
+    })
+    .from(mailboxes).where(inArray(mailboxes.accountId, pageIds)).groupBy(mailboxes.accountId);
+  const notices = pageIds.length === 0 ? [] : await db
+    .select({
+      accountId: accountLifecycleNotices.accountId,
+      closed: sql<string | null>`max(${accountLifecycleNotices.anchor}) filter (where ${accountLifecycleNotices.kind} = 'closed')`,
+      reopened: sql<string | null>`max(${accountLifecycleNotices.anchor}) filter (where ${accountLifecycleNotices.kind} = 'reopened')`,
+    })
+    .from(accountLifecycleNotices).where(inArray(accountLifecycleNotices.accountId, pageIds))
+    .groupBy(accountLifecycleNotices.accountId);
+  const factBy = new Map(facts.map((f) => [f.accountId, f]));
+  const noticeBy = new Map(notices.map((n) => [n.accountId, n]));
+  return {
+    now: now.toISOString(),
+    rows: accountRows.map((a): OpenSyncFacts => {
+      const f = factBy.get(a.id);
+      const n = noticeBy.get(a.id);
+      return {
+        accountId: a.id,
+        mailboxes: int(f?.mailboxes),
+        disabled: int(f?.disabled),
+        blockedAccountClosed: int(f?.blockedAccountClosed),
+        oldestBlockedSince: iso(f?.oldestBlockedSince ?? null),
+        releasedNoHolder: int(f?.releasedNoHolder),
+        oldestReleasedAt: iso(f?.oldestReleasedAt ?? null),
+        lastSyncMax: iso(f?.lastSyncMax ?? null),
+        lastClosedNoticeAnchor: iso(n?.closed ?? null),
+        lastReopenedNoticeAnchor: iso(n?.reopened ?? null),
+        erasedAt: iso(a.erasedAt),
+      };
+    }),
+    nextCursor: accountRows.length === size ? accountRows[accountRows.length - 1]!.id : null,
+    workerRosterIntervalSeconds: WORKER_ROSTER_INTERVAL_SECONDS,
+  };
+}
+
 
 /**
  * The signup funnel, as counts. Every figure is a COUNT and nothing is joined to a person: the

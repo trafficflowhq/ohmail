@@ -4,7 +4,9 @@ import {
   webRedirectUri, MICROSOFT_PROVIDER, MS_DEFAULT_SCOPES,
 } from "@trafficflow/db/cloud";
 import { MS_TENANT_RE } from "@trafficflow/core";
-import { resolveStaffSession, staffTokenOf, type StaffIdentity } from "./admin-staff.js";
+import { actorOf, resolveStaffSession, staffTokenOf, type StaffIdentity } from "./admin-staff.js";
+import { recordStaffEvents, adoptRequestId, rolesAdmit } from "../staff-audit.js";
+import type { StaffAuditAction, StaffRole } from "@trafficflow/services";
 import { withStaffStepUp } from "../staff-step-up.js";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import type { ApiDeps } from "../deps.js";
@@ -56,7 +58,10 @@ type StaffRun = (
  * refactor that moves those checks in the same diff as a new auth surface is a refactor whose
  * guards nobody watched fail.
  */
-function staffConfigRoute(name: string, run: StaffRun): Handler {
+/** The application registration is infrastructure: `ops` and `owner` read and change it. */
+const OAUTH_CONFIG_ROLES: readonly StaffRole[] = ["ops", "owner"];
+
+function staffConfigRoute(name: string, action: StaffAuditAction, run: StaffRun): Handler {
   return async (req, deps) => {
     const cfg = deps.admin;
     const log = (deps.logger ?? silentLogger).child({ route: `/admin/oauth/${name}` });
@@ -78,6 +83,20 @@ function staffConfigRoute(name: string, run: StaffRun): Handler {
     if (!staff) {
       log.warn("admin_oauth_no_staff_session", {});
       return json(401, { error: { code: "staff_session_required" } });
+    }
+
+    // Recorded BEFORE the read or the write runs; no record, no answer.
+    const event = { requestId: adoptRequestId(req, deps), at: deps.now(), actor: actorOf(staff), action };
+    if (!rolesAdmit(staff.roles, OAUTH_CONFIG_ROLES)) {
+      await recordStaffEvents(deps.db, [{ ...event, outcome: "refused", refusalCode: "role_required" }])
+        .catch((err: unknown) => log.error("admin_audit_failed", { err }));
+      return json(403, { error: { code: "role_required" } });
+    }
+    try {
+      await recordStaffEvents(deps.db, [{ ...event, outcome: "ok" }]);
+    } catch (err) {
+      log.error("admin_audit_failed", { err });
+      return json(503, { error: { code: "audit_failed" } });
     }
 
     try {
@@ -285,6 +304,6 @@ const COST = "unauthenticated" as const;
 /* `relay: false` throughout: the hosted console's own surface, never forwarded by a Cloud-mode
  * install's relay. Declared per route because the field has no default. */
 export const adminOAuthRoutes: Route[] = [
-  { method: "POST", pattern: "/admin/oauth/microsoft", relay: false, cost: COST, options: OPTIONS, handler: staffConfigRoute("microsoft", readConfig) },
-  { method: "POST", pattern: "/admin/oauth/microsoft/save", relay: false, cost: COST, options: WRITE_OPTIONS, handler: staffConfigRoute("microsoft/save", saveConfig) },
+  { method: "POST", pattern: "/admin/oauth/microsoft", relay: false, cost: COST, options: OPTIONS, handler: staffConfigRoute("microsoft", "read.oauth_provider", readConfig) },
+  { method: "POST", pattern: "/admin/oauth/microsoft/save", relay: false, cost: COST, options: WRITE_OPTIONS, handler: staffConfigRoute("microsoft/save", "write.oauth_provider", saveConfig) },
 ];

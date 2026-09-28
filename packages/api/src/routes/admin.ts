@@ -2,12 +2,17 @@ import { silentLogger, type Logger } from "@trafficflow/core";
 import {
   adminAccountDetail, adminAccounts, adminActions, adminAlerts,
   adminAlertDrivers, adminPlatformSignals, adminWorker,
-  adminWorkerInstances, adminFunnel,
-  type AccountQuery, type AdminDb, type ApiHealth, type OverviewSnapshot,
+  adminWorkerInstances, adminFunnel, adminAccountsByIds, adminSearch, adminStaffActivity,
+  adminSyncRoster, maskAddress, readerMasksAddresses, isUuid, ADMIN_BATCH_MAX, ADMIN_SYNC_ROSTER_MAX,
+  type AccountQuery, type AdminDb, type AdminReader, type ApiHealth, type OverviewSnapshot,
+  type StaffAuditAction, type StaffRole,
 } from "@trafficflow/services";
 import { DEFAULT_ALERT_THRESHOLDS, alertSchemaReadable } from "@trafficflow/db/cloud";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
-import { resolveStaffSession } from "./admin-staff.js";
+import { actorOf, resolveStaffSession } from "./admin-staff.js";
+import {
+  queryHmacOf, recordStaffEvents, adoptRequestId, rolesAdmit, type StaffEventInput,
+} from "../staff-audit.js";
 import { API_VERSION } from "../version.js";
 import { healthFault, probeDatabase } from "./health.js";
 // The BOTH-HALVES census. Hosted-only by construction — see `health-cloud.ts`; the admin console
@@ -21,7 +26,7 @@ import type { Handler, Route, RouteParams } from "../router.js";
 import { pagingNumber } from "../query-bounds.js";
 
 /**
- * `GET /admin/*` — the eight reads behind the staff console; no write route here (queries:
+ * `GET /admin/*` — the reads behind the staff console; no write route here (queries:
  * `admin-service.ts`). Authorization: the shared secret AND a live staff session ({@link
  * STAFF_SESSION_HEADER}). Every route is `{ public, anonymous, raw }`; `anonymous` runs the
  * pipeline with no `withSession`, so a logged-in customer gets a byte-identical answer to a
@@ -138,10 +143,21 @@ export interface StaffContext {
 
 /**
  * The staff read contract. `req` stays because `accountQueryOf` needs the query string and a
- * `Request` carries no database; `params` stays for `/admin/accounts/:id`.
+ * `Request` carries no database; `params` stays for `/admin/accounts/:id`. `reader` is the
+ * caller's live roles — scalars, never a handle — so a read can mask for `ops` and keep the
+ * views for `owner`.
  */
 export type StaffRead =
-  (req: Request, ctx: StaffContext, params: RouteParams) => Promise<unknown>;
+  (req: Request, ctx: StaffContext, params: RouteParams, reader: AdminReader) => Promise<unknown>;
+
+/** What a read's audit row carries beyond the actor: its target, its query's hash, its detail. */
+type AuditExtra = Pick<StaffEventInput, "targetAccountId" | "queryHmac" | "detail">;
+
+interface StaffReadPolicy {
+  /** The roles admitted; `"any"` is any live role (a staff member with none is refused). */
+  roles?: readonly StaffRole[] | "any";
+  audit?: (req: Request, params: RouteParams, secret: string) => AuditExtra;
+}
 
 async function overview(ctx: StaffContext): Promise<OverviewSnapshot> {
   const now = ctx.now();
@@ -255,7 +271,7 @@ export const STAFF_SESSION_HEADER = "x-staff-session";
 
 /**
  * The gate, the staff session, the blind handle, the try/catch and the `no-store` JSON, applied
- * identically to all eight — written once so "every admin read is authorized the same way, on the
+ * identically to every read — written once so "every admin read is authorized the same way, on the
  * same connection" is checkable by reading one function. Two refusals, not the same fact: 404
  * when the surface is unarmed (no secret or no `DATABASE_URL_ADMIN`; `/health` names which half),
  * and 503 when the handle refuses to exist — the boot attestation watched the connection answer a
@@ -263,7 +279,7 @@ export const STAFF_SESSION_HEADER = "x-staff-session";
  * until the database or environment is fixed. This function is also where `deps` stops: it builds
  * a {@link StaffContext} and passes that.
  */
-function adminRoute(name: string, read: StaffRead): Handler {
+function adminRoute(name: string, action: StaffAuditAction, read: StaffRead, policy: StaffReadPolicy = {}): Handler {
   return async (req, deps, params) => {
     const cfg = deps.admin;
     const staff = deps.adminDb;
@@ -299,6 +315,26 @@ function adminRoute(name: string, read: StaffRead): Handler {
       log.warn("admin_read_no_staff_session", {});
       return json(401, { error: { code: "staff_session_required" } });
     }
+    // AUDIT BEFORE SERVE. The row is written on the runtime connection before the read runs; a
+    // failed insert is `503 audit_failed` and the read never runs. A refusal serves nothing, so
+    // its row is best-effort. The adopted request id is the one `app.ts` echoes.
+    const requestId = adoptRequestId(req, deps);
+    const row: StaffEventInput = {
+      requestId, at: deps.now(), actor: actorOf(staffWho), action, outcome: "ok",
+      ...(policy.audit?.(req, params, cfg.secret) ?? {}),
+    };
+    if (!rolesAdmit(staffWho.roles, policy.roles ?? "any")) {
+      await recordStaffEvents(deps.db, [{ ...row, outcome: "refused", refusalCode: "role_required" }])
+        .catch((err: unknown) => log.error("admin_audit_failed", { err }));
+      return json(403, { error: { code: "role_required" } });
+    }
+    try {
+      await recordStaffEvents(deps.db, [row]);
+    } catch (err) {
+      log.error("admin_audit_failed", { err });
+      return json(503, { error: { code: "audit_failed" } });
+    }
+    const reader: AdminReader = { roles: staffWho.roles };
     try {
       // INSIDE the try: a handle that refuses to construct is a 503 an operator can read, and
       // the reason is logged. It must never fall back to `deps.db`.
@@ -317,7 +353,7 @@ function adminRoute(name: string, read: StaffRead): Handler {
             logger: log,
             apiHealth: () => apiHealthFor(req, deps),
           };
-          return read(req, ctx, params);
+          return read(req, ctx, params, reader);
         }),
         cfg.readTimeoutMs ?? ADMIN_READ_TIMEOUT_MS,
       );
@@ -330,11 +366,11 @@ function adminRoute(name: string, read: StaffRead): Handler {
   };
 }
 
-/** All NINE are GET, all nine are `public + anonymous + raw`. There is no tenth. */
+/** Every read is GET and `public + anonymous + raw`. */
 const OPTIONS = { public: true, anonymous: true, raw: true } as const;
 
 /**
- * All NINE are `unauthenticated`: their authority is a shared secret compared in
+ * Every read is `unauthenticated`: its authority is a shared secret compared in
  * constant time (`secret-auth.ts`), never a user session, and ANONYMOUS_PIPELINE resolves
  * no session at all, so there is no account whose verification state could be judged.
  * `test/spend-gate.test.ts` asserts that pairing in both directions — an `anonymous` route must
@@ -344,6 +380,16 @@ const OPTIONS = { public: true, anonymous: true, raw: true } as const;
  */
 const COST = "unauthenticated" as const;
 
+/** `?ids=a,b,…` — at most {@link ADMIN_BATCH_MAX}; null when the parameter is absent. */
+function idsOf(req: Request): string[] | null {
+  const raw = new URL(req.url).searchParams.get("ids");
+  if (raw === null) return null;
+  return raw.split(",").map((x) => x.trim()).filter((x) => x.length > 0);
+}
+
+const accountTarget = (_req: Request, params: RouteParams): AuditExtra =>
+  ({ targetAccountId: isUuid(params.id) ? params.id : null });
+
 export const adminRoutes: Route[] = [
   {
     method: "GET",
@@ -351,7 +397,7 @@ export const adminRoutes: Route[] = [
     relay: false,  /* the hosted console's own surface */
     cost: COST,
     options: OPTIONS,
-    handler: adminRoute("overview", (_req, ctx) => overview(ctx)),
+    handler: adminRoute("overview", "read.overview", (_req, ctx) => overview(ctx)),
   },
   {
     method: "GET",
@@ -359,8 +405,22 @@ export const adminRoutes: Route[] = [
     relay: false,  /* the hosted console's own surface */
     cost: COST,
     options: OPTIONS,
-    handler: adminRoute("accounts", (req, ctx) =>
-      adminAccounts(ctx.db, ctx.now(), accountQueryOf(req))),
+    // `?ids=` is the batch by id, in the order asked; without it, the paged roster as before.
+    handler: adminRoute("accounts", "read.roster", async (req, ctx, _params, reader) => {
+      const ids = idsOf(req);
+      if (ids !== null) return adminAccountsByIds(ctx.db, ctx.now(), ids.slice(0, ADMIN_BATCH_MAX), reader);
+      const page = await adminAccounts(ctx.db, ctx.now(), accountQueryOf(req));
+      return readerMasksAddresses(reader)
+        ? { ...page, accounts: page.accounts.map((a) => ({ ...a, ownerEmail: a.ownerEmail && maskAddress(a.ownerEmail) })) }
+        : page;
+    }, {
+      audit: (req): AuditExtra => {
+        const ids = idsOf(req);
+        if (ids !== null) return { detail: { ids: Math.min(ids.length, ADMIN_BATCH_MAX) } };
+        const q = accountQueryOf(req);
+        return { detail: { filter: q.filter ?? "all", page: q.page ?? 0 } };
+      },
+    }),
   },
   {
     method: "GET",
@@ -371,8 +431,44 @@ export const adminRoutes: Route[] = [
     // `null` for an unknown id, not 404: the seam's `account(id)` is typed
     // `Promise<AccountDetail | null>`, and the console renders "no such account" from the
     // null rather than from an error path it would otherwise need twice.
-    handler: adminRoute("accounts/:id", (_req, ctx, params) =>
-      adminAccountDetail(ctx.db, ctx.now(), params.id ?? "")),
+    handler: adminRoute("accounts/:id", "read.account", (_req, ctx, params, reader) =>
+      adminAccountDetail(ctx.db, ctx.now(), params.id ?? "", reader), { audit: accountTarget }),
+  },
+  {
+    method: "GET",
+    pattern: "/admin/accounts/:id/staff-activity",
+    relay: false,  /* the hosted console's own surface */
+    cost: COST,
+    options: OPTIONS,
+    handler: adminRoute("accounts/:id/staff-activity", "read.account.activity", (req, ctx, params, reader) =>
+      adminStaffActivity(ctx.db, ctx.now(), params.id ?? "", reader, activityCursorOf(req)),
+    { audit: accountTarget }),
+  },
+  {
+    method: "GET",
+    pattern: "/admin/search",
+    relay: false,  /* the hosted console's own surface */
+    cost: COST,
+    options: OPTIONS,
+    // The term is never recorded: the audit row carries its keyed hash.
+    handler: adminRoute("search", "read.search", (req, ctx, _params, reader) =>
+      adminSearch(ctx.db, ctx.now(), searchTermOf(req), reader), {
+      audit: (req, _params, secret) => {
+        const q = searchTermOf(req);
+        return { queryHmac: q.trim() ? queryHmacOf(secret, q) : null };
+      },
+    }),
+  },
+  {
+    method: "GET",
+    pattern: "/admin/sync-roster",
+    relay: false,  /* the hosted console's own surface */
+    cost: COST,
+    options: OPTIONS,
+    handler: adminRoute("sync-roster", "read.sync_roster", (req, ctx) => {
+      const q = syncRosterQueryOf(req);
+      return adminSyncRoster(ctx.db, ctx.now(), q.cursor, q.limit);
+    }, { audit: (req) => ({ detail: { limit: syncRosterQueryOf(req).limit } }) }),
   },
   {
     method: "GET",
@@ -380,7 +476,7 @@ export const adminRoutes: Route[] = [
     relay: false,  /* the hosted console's own surface */
     cost: COST,
     options: OPTIONS,
-    handler: adminRoute("funnel", (_req, ctx) => adminFunnel(ctx.db, ctx.now())),
+    handler: adminRoute("funnel", "read.funnel", (_req, ctx) => adminFunnel(ctx.db, ctx.now())),
   },
   {
     method: "GET",
@@ -388,7 +484,7 @@ export const adminRoutes: Route[] = [
     relay: false,  /* the hosted console's own surface */
     cost: COST,
     options: OPTIONS,
-    handler: adminRoute("worker", (_req, ctx) => adminWorker(ctx.db, ctx.now())),
+    handler: adminRoute("worker", "read.worker", (_req, ctx) => adminWorker(ctx.db, ctx.now())),
   },
   {
     method: "GET",
@@ -396,6 +492,26 @@ export const adminRoutes: Route[] = [
     relay: false,  /* the hosted console's own surface */
     cost: COST,
     options: OPTIONS,
-    handler: adminRoute("actions", (_req, ctx) => adminActions(ctx.db, ctx.now())),
+    handler: adminRoute("actions", "read.actions", (_req, ctx) => adminActions(ctx.db, ctx.now())),
   },
 ];
+
+/** `?q=`, bounded before any fold. */
+function searchTermOf(req: Request): string {
+  return (new URL(req.url).searchParams.get("q") ?? "").slice(0, 320);
+}
+
+/**
+ * `?cursor=&limit=` for the sync roster: the cursor is the last account id of the previous page
+ * (anything else is ignored by the read), the limit clamped to 1..{@link ADMIN_SYNC_ROSTER_MAX}.
+ */
+function syncRosterQueryOf(req: Request): { cursor: string | null; limit: number } {
+  const p = new URL(req.url).searchParams;
+  const n = pagingNumber(p.get("limit"));
+  return { cursor: p.get("cursor"), limit: n && n > 0 ? Math.min(ADMIN_SYNC_ROSTER_MAX, n) : ADMIN_SYNC_ROSTER_MAX };
+}
+
+/** `?cursor=` for an account's staff activity: `<iso>,<uuid>`, parsed (or dropped) by the read. */
+function activityCursorOf(req: Request): string | null {
+  return new URL(req.url).searchParams.get("cursor")?.slice(0, 100) ?? null;
+}

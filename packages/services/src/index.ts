@@ -352,12 +352,16 @@ export {
   type WaitlistServiceDeps, type WaitlistJoinInput, type WaitlistJoinResult,
   type MintInviteInput, type MintInviteResult, type WaitlistEntry,
 } from "./waitlist-service.js";
-// The staff read surface — the ONLY cross-account reader in the repo. Six pure reads behind
+// The staff read surface — the ONLY cross-account reader in the repo. Pure reads behind
 // `GET /admin/*`; no write, no `ServiceContext`, and a projection that cannot name a subject,
 // a body, a credential or a Stripe payload. See the header of `admin-service.ts`.
 export * from "./admin-dto.js";
+export * from "./staff-audit-detail.js";
 export {
-  adminAccounts, adminAccountDetail,
+  adminAccounts, adminAccountDetail, adminAccountsByIds, adminSearch, adminStaffActivity,
+  adminSyncRoster, maskAddress, readerMasksAddresses, staffActivityCursorOf,
+  ADMIN_BATCH_MAX, ADMIN_SEARCH_LIMIT, ADMIN_STAFF_ACTIONS_ON_PAGE, ADMIN_STAFF_ACTIVITY_PAGE,
+  ADMIN_SYNC_ROSTER_MAX, WORKER_ROSTER_INTERVAL_SECONDS, type AdminReader,
   adminFunnel, adminWorker, adminWorkerInstances,
   adminAlerts, adminAlertDrivers, adminPlatformSignals, adminActions, adminAttentionRank,
   ADMIN_LIST_LIMIT, ADMIN_DEFAULT_PAGE_SIZE, ADMIN_MAX_PAGE_SIZE, ADMIN_OPTIONS_LIMIT,

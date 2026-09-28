@@ -465,7 +465,7 @@ export type StaffRole = "support" | "billing" | "ops" | "owner";
 export type StaffAuditAction =
   | "read.overview" | "read.roster" | "read.search" | "read.account" | "read.account.activity"
   | "read.sync_roster" | "read.funnel" | "read.worker" | "read.actions"
-  | "assert.external" | "write.mailbox.resync"
+  | "read.oauth_provider" | "assert.external" | "write.mailbox.resync" | "write.oauth_provider"
   | "staff.signin" | "staff.signin_failed" | "staff.stepup" | "staff.stepup_failed"
   | "staff.signout" | "staff.role_grant" | "staff.role_revoke" | "staff.totp_reset";
 
@@ -582,7 +582,9 @@ export interface AdminAccountUser {
 
 /**
  * A mailbox with its organizer facts — closed sets and timestamps only. The holder's display
- * name and capabilities are never read. `consentOnRecord` is `organize_consented_at` set.
+ * name, install id and capabilities are never read: each is a header value off the lease
+ * message, which anything able to write to the mailbox can choose. `consentOnRecord` is
+ * `organize_consented_at` set.
  */
 export interface AdminMailboxDetail extends MailboxHealth {
   createdAt: string;

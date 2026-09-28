@@ -1,11 +1,25 @@
+import { randomUUID } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { staffSessions, staffUsers, staffAuditLog, authThrottle } from "@trafficflow/db/cloud";
+import {
+  staffSessions, staffUsers, staffAuditLog, staffRoleGrants, authThrottle, STAFF_ROLES,
+} from "@trafficflow/db/cloud";
+import type { Tx } from "@trafficflow/db";
 import {
   scryptHasher, generateToken, hashToken, throttleKeysFor,
-  newTotpSecret, totpUri, verifyTotp,
+  newTotpSecret, totpUri, verifyTotp, isUuid, AUDIT_PATH_RE,
   STAFF_STEP_UP_WINDOW_SECONDS,
+  type StaffAssertionAnswer, type StaffAuditAction, type StaffRole,
 } from "@trafficflow/services";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
+import {
+  queryHmacOf, recordStaffEvents, adoptRequestId, rolesAdmit,
+  type StaffActor, type StaffEventInput,
+} from "../staff-audit.js";
+import {
+  mintStaffAssertion, newJti, requestDigest, STAFF_ASSERTION_ISSUER,
+  STAFF_ASSERTION_MAX_REQUESTS, STAFF_ASSERTION_READ_TTL_SECONDS, STAFF_ASSERTION_WRITE_TTL_SECONDS,
+  type StaffAssertionClaims, type StaffAssertionTier,
+} from "../staff-assertion.js";
 import { clientIp } from "../context.js";
 import type { ApiDeps } from "../deps.js";
 import type { Handler, Route } from "../router.js";
@@ -272,24 +286,59 @@ function timingSafeEqualStr(a: string, b: string): boolean {
  * database dump, or a read-only injection anywhere in the product, yields digests.
  */
 async function mintSession(
-  db: ApiDeps["db"], staffId: string, now: Date,
-): Promise<{ token: string; expiresAt: Date }> {
+  db: Tx, staffId: string, now: Date,
+): Promise<{ token: string; expiresAt: Date; sessionId: string }> {
   const token = generateToken(32);
   const expiresAt = new Date(now.getTime() + SESSION_TTL_SECONDS * 1000);
+  const sessionId = randomUUID();
   // `lastTwofaAt: now` and not a default: every path that reaches here has just verified a TOTP
   // code, so the stamp is a fact this call knows rather than one the column guesses.
   await db.insert(staffSessions).values({
-    staffUserId: staffId, tokenHash: hashToken(token), expiresAt, createdAt: now, lastTwofaAt: now,
+    id: sessionId, staffUserId: staffId, tokenHash: hashToken(token), expiresAt, createdAt: now, lastTwofaAt: now,
   });
-  return { token, expiresAt };
+  return { token, expiresAt, sessionId };
+}
+
+/**
+ * Mint a session and record the sign-in in ONE transaction: a sign-in the audit cannot record
+ * hands out no token.
+ */
+async function mintAuditedSession(
+  deps: ApiDeps, user: { id: string; email: string }, now: Date, requestId: string,
+): Promise<{ token: string; expiresAt: Date }> {
+  return (deps.db as unknown as Tx).transaction(async (tx) => {
+    const minted = await mintSession(tx, user.id, now);
+    const roles = await liveRolesOf(tx, user.id);
+    await recordStaffEvents(tx, [{
+      requestId, at: now, action: "staff.signin", outcome: "ok",
+      actor: { staffId: user.id, sessionId: minted.sessionId, email: user.email, roles },
+    }]);
+    return { token: minted.token, expiresAt: minted.expiresAt };
+  });
 }
 
 export interface StaffIdentity {
   staffId: string;
+  /** The `staff_sessions` row this request presented. */
+  sessionId: string;
   email: string;
   /** When this session's holder last proved a second factor — `staff_sessions.last_twofa_at`. */
   lastTwofaAt: Date;
+  /** Read from `staff_role_grants` on every resolution (`revoked_at IS NULL`), never cached. */
+  roles: StaffRole[];
 }
+
+/** The live roles of one staff member, in `STAFF_ROLES` order. A revocation counts at once. */
+export async function liveRolesOf(db: Pick<Tx, "select">, staffId: string): Promise<StaffRole[]> {
+  const rows = await db.select({ role: staffRoleGrants.role }).from(staffRoleGrants)
+    .where(and(eq(staffRoleGrants.staffUserId, staffId), isNull(staffRoleGrants.revokedAt)));
+  const held = new Set(rows.map((r) => r.role));
+  return STAFF_ROLES.filter((r) => held.has(r));
+}
+
+/** The staff member a resolved session names, as the audit records them. */
+export const actorOf = (who: StaffIdentity): StaffActor =>
+  ({ staffId: who.staffId, sessionId: who.sessionId, email: who.email, roles: who.roles });
 
 /**
  * THE ONE READ of a staff write's session token. `withStaffStepUp` judges the token it finds at
@@ -315,10 +364,13 @@ export async function resolveStaffSession(
   db: ApiDeps["db"], token: string | undefined, now: Date,
 ): Promise<StaffIdentity | null> {
   if (!token || token.length < 16) return null;
+  // The live roles ride the same statement: one read per request, never a cached grant.
   const [row] = await db
     .select({
-      id: staffUsers.id, email: staffUsers.email,
+      id: staffUsers.id, email: staffUsers.email, sessionId: staffSessions.id,
       expiresAt: staffSessions.expiresAt, lastTwofaAt: staffSessions.lastTwofaAt,
+      roles: sql<string[] | null>`array(select ${staffRoleGrants.role} from ${staffRoleGrants}
+        where ${staffRoleGrants.staffUserId} = ${staffUsers.id} and ${staffRoleGrants.revokedAt} is null)`,
     })
     .from(staffSessions)
     .innerJoin(staffUsers, eq(staffUsers.id, staffSessions.staffUserId))
@@ -326,7 +378,49 @@ export async function resolveStaffSession(
     .limit(1);
   if (!row) return null;
   if (row.expiresAt.getTime() <= now.getTime()) return null;
-  return { staffId: row.id, email: row.email, lastTwofaAt: row.lastTwofaAt };
+  const held = new Set(row.roles ?? []);
+  const roles = STAFF_ROLES.filter((r) => held.has(r));
+  return { staffId: row.id, sessionId: row.sessionId, email: row.email, lastTwofaAt: row.lastTwofaAt, roles };
+}
+
+/**
+ * Consume one TOTP code for a staff member: verified against the active secret, single-use per
+ * timestep by the compare-and-swap on `totp_last_consumed_step` (two presentations of one code
+ * cannot both win). The caller throttles and answers; this only says what happened.
+ */
+async function consumeStaffTotp(
+  deps: ApiDeps, staffId: string, code: string, now: Date,
+): Promise<"ok" | "invalid" | "no_enrollment"> {
+  const [user] = await deps.db.select().from(staffUsers).where(eq(staffUsers.id, staffId)).limit(1);
+  if (!user?.totpActivated || !user.totpSecretEnc || user.totpKeyVersion === null) return "no_enrollment";
+  const totpSecret = await deps.keyProvider.decrypt(user.totpSecretEnc, user.totpKeyVersion);
+  const v = verifyTotp({
+    secret: totpSecret, token: code, now, window: TOTP_WINDOW,
+    afterStep: user.totpLastConsumedStep === null ? null : Number(user.totpLastConsumedStep),
+  });
+  if (!v.valid) return "invalid";
+  const advanced = await deps.db.update(staffUsers)
+    .set({ totpLastConsumedStep: BigInt(v.timeStep!), updatedAt: now })
+    .where(and(
+      eq(staffUsers.id, user.id),
+      user.totpLastConsumedStep === null
+        ? isNull(staffUsers.totpLastConsumedStep)
+        : eq(staffUsers.totpLastConsumedStep, user.totpLastConsumedStep),
+    ))
+    .returning();
+  return advanced.length === 0 ? "invalid" : "ok";
+}
+
+/**
+ * Record a staff event whose answer serves nothing — a refusal, a sign-out — where a failure to
+ * record must not change the answer. Anything that SERVES records fail-closed instead.
+ */
+async function recordBestEffort(deps: ApiDeps, event: StaffEventInput): Promise<void> {
+  try {
+    await recordStaffEvents(deps.db, [event]);
+  } catch (err) {
+    deps.logger?.child({ route: "/admin/staff" }).error("staff_audit_failed", { err, action: event.action });
+  }
 }
 
 /* ── the routes ────────────────────────────────────────────────────────────────────────── */
@@ -403,8 +497,21 @@ async function signIn(
   // ALWAYS a full scrypt verify, even with no such row. See `decoy()`.
   const passwordOk = await scryptHasher.verify(password, user?.passwordHash ?? (await decoy()));
 
+  const requestId = adoptRequestId(req, deps);
+  // A failure is recorded against a staff member only when the address names one: the row's
+  // `staff_user_id` is a key, and an unknown address is nobody to record.
+  const failed = async (step: "password" | "totp"): Promise<void> => {
+    if (!user) return;
+    await recordBestEffort(deps, {
+      requestId, at: now, action: "staff.signin_failed", outcome: "refused", refusalCode: "invalid",
+      actor: { staffId: user.id, sessionId: null, email: user.email, roles: await liveRolesOf(deps.db as unknown as Tx, user.id) },
+      detail: { step },
+    });
+  };
+
   if (!user || !passwordOk) {
     for (const key of keys) await throttleFail(deps.db, key, now);
+    await failed("password");
     return { status: 401, body: { ok: false, status: "invalid" } };
   }
   // The customer door's rule (`AuthService.rehashIfStale`): a verified password under an older
@@ -444,6 +551,7 @@ async function signIn(
   });
   if (!v.valid) {
     for (const key of keys) await throttleFail(deps.db, key, now);
+    await failed("totp");
     return { status: 401, body: { ok: false, status: "invalid" } };
   }
 
@@ -468,11 +576,12 @@ async function signIn(
     // Somebody else consumed this step between the read and the write. That is the replay this
     // guard exists for, and it is refused exactly like a wrong code.
     for (const key of keys) await throttleFail(deps.db, key, now);
+    await failed("totp");
     return { status: 401, body: { ok: false, status: "invalid" } };
   }
 
   for (const key of keys) await throttleClear(deps.db, key);
-  const { token, expiresAt } = await mintSession(deps.db, user.id, now);
+  const { token, expiresAt } = await mintAuditedSession(deps, user, now, requestId);
   return {
     status: 200,
     body: { ok: true, status: "signed_in", token, email: user.email, expiresAt: expiresAt.toISOString() },
@@ -610,7 +719,7 @@ async function totpConfirm(
     return { status: 200, body: { ok: true, status: "reenrolled", email: user.email } };
   }
 
-  const { token, expiresAt } = await mintSession(deps.db, staffId, now);
+  const { token, expiresAt } = await mintAuditedSession(deps, { id: staffId, email: user.email }, now, adoptRequestId(req, deps));
   return {
     status: 200,
     body: { ok: true, status: "signed_in", token, email: user.email, expiresAt: expiresAt.toISOString() },
@@ -639,6 +748,7 @@ async function whoami(
       body: {
         ok: true,
         email: who.email,
+        roles: who.roles,
         stepUpWindowSeconds: STAFF_STEP_UP_WINDOW_SECONDS,
         stepUpFresh: now.getTime() - who.lastTwofaAt.getTime() <= STAFF_STEP_UP_WINDOW_SECONDS * 1000,
       },
@@ -671,38 +781,27 @@ async function stepUp(
     return { status: 429, body: { ok: false, status: "throttled", retryAfterSeconds: verdict.retryAfterSeconds } };
   }
 
-  const [user] = await deps.db.select().from(staffUsers).where(eq(staffUsers.id, session.staffId)).limit(1);
-  if (!user?.totpActivated || !user.totpSecretEnc || user.totpKeyVersion === null) {
+  const requestId = adoptRequestId(req, deps);
+  const consumed = await consumeStaffTotp(deps, session.staffId, code, now);
+  if (consumed === "no_enrollment") {
     return { status: 409, body: { error: { code: "no_enrollment" } } };
   }
+  if (consumed === "invalid") {
+    await throttleFail(deps.db, ip, now);
+    await recordBestEffort(deps, {
+      requestId, at: now, action: "staff.stepup_failed", outcome: "refused", refusalCode: "invalid",
+      actor: actorOf(session),
+    });
+    return { status: 401, body: { ok: false, status: "invalid" } };
+  }
 
-  const totpSecret = await deps.keyProvider.decrypt(user.totpSecretEnc, user.totpKeyVersion);
-  const v = verifyTotp({
-    secret: totpSecret, token: code, now, window: TOTP_WINDOW,
-    afterStep: user.totpLastConsumedStep === null ? null : Number(user.totpLastConsumedStep),
+  // The fresh stamp and its record, together: a step-up the audit cannot record grants nothing.
+  await (deps.db as unknown as Tx).transaction(async (tx) => {
+    await tx.update(staffSessions)
+      .set({ lastTwofaAt: now })
+      .where(and(eq(staffSessions.tokenHash, hashToken(token!)), isNull(staffSessions.revokedAt)));
+    await recordStaffEvents(tx, [{ requestId, at: now, action: "staff.stepup", outcome: "ok", actor: actorOf(session) }]);
   });
-  if (!v.valid) {
-    await throttleFail(deps.db, ip, now);
-    return { status: 401, body: { ok: false, status: "invalid" } };
-  }
-
-  const advanced = await deps.db.update(staffUsers)
-    .set({ totpLastConsumedStep: BigInt(v.timeStep!), updatedAt: now })
-    .where(and(
-      eq(staffUsers.id, user.id),
-      user.totpLastConsumedStep === null
-        ? isNull(staffUsers.totpLastConsumedStep)
-        : eq(staffUsers.totpLastConsumedStep, user.totpLastConsumedStep),
-    ))
-    .returning();
-  if (advanced.length === 0) {
-    await throttleFail(deps.db, ip, now);
-    return { status: 401, body: { ok: false, status: "invalid" } };
-  }
-
-  await deps.db.update(staffSessions)
-    .set({ lastTwofaAt: now })
-    .where(and(eq(staffSessions.tokenHash, hashToken(token!)), isNull(staffSessions.revokedAt)));
   await throttleClear(deps.db, ip);
 
   return {
@@ -710,7 +809,7 @@ async function stepUp(
     body: {
       ok: true,
       status: "stepped_up",
-      email: user.email,
+      email: session.email,
       stepUpWindowSeconds: STAFF_STEP_UP_WINDOW_SECONDS,
       freshUntil: new Date(now.getTime() + STAFF_STEP_UP_WINDOW_SECONDS * 1000).toISOString(),
     },
@@ -767,6 +866,13 @@ async function totpReset(
   await deps.db.insert(staffAuditLog).values({
     staffUserId: user.id, action: "staff.totp.reset", actor: operator, note, createdAt: now,
   });
+  // The structured record beside the old table's note: the operator's name is the label (no
+  // staff session is presented to this command), the note stays in `staff_audit_log` alone.
+  await recordStaffEvents(deps.db, [{
+    requestId: randomUUID(), at: now, action: "staff.totp_reset", outcome: "ok",
+    actor: { staffId: user.id, sessionId: null, email: operator.slice(0, 64), roles: await liveRolesOf(deps.db as unknown as Tx, user.id) },
+    detail: { sessionsRevoked: revoked.length },
+  }]);
 
   return {
     status: 200,
@@ -782,19 +888,222 @@ async function totpReset(
 
 /** `POST /admin/staff/sign-out` — revoke now, not at expiry. Idempotent. */
 async function signOut(
-  body: Record<string, unknown>, deps: ApiDeps,
+  body: Record<string, unknown>, deps: ApiDeps, req: Request,
 ): Promise<{ status: number; body: unknown }> {
   const token = str(body.token);
   if (token) {
+    const now = deps.now();
+    const who = await resolveStaffSession(deps.db, token, now);
     await deps.db.update(staffSessions)
-      .set({ revokedAt: deps.now() })
+      .set({ revokedAt: now })
       .where(and(eq(staffSessions.tokenHash, hashToken(token)), isNull(staffSessions.revokedAt)));
+    // After the revoke, and best-effort: a sign-out must never fail for want of its record.
+    if (who) {
+      await recordBestEffort(deps, { requestId: adoptRequestId(req, deps), at: now, action: "staff.signout", outcome: "ok", actor: actorOf(who) });
+    }
   }
   return { status: 200, body: { ok: true } };
 }
 
+/* ── the staff assertion mint ─────────────────────────────────────────────────────────── */
+
+const AUDIENCE_RE = /^[a-z0-9][a-z0-9.-]{0,63}$/;
+const BODY_SHA_RE = /^[0-9a-f]{64}$/;
+const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
+type AssertMethod = (typeof METHODS)[number];
+
+interface AssertRequest { method: AssertMethod; path: string; pathname: string; query: string; bodySha256: string }
+
+/** One request of the mint's list, or null. The path's query is hashed, never recorded. */
+function assertRequestOf(v: unknown): AssertRequest | null {
+  if (!v || typeof v !== "object") return null;
+  const r = v as Record<string, unknown>;
+  const method = str(r.method).toUpperCase();
+  const path = str(r.path);
+  const bodySha256 = str(r.bodySha256).toLowerCase();
+  if (!(METHODS as readonly string[]).includes(method) || !BODY_SHA_RE.test(bodySha256)) return null;
+  if (path.length === 0 || path.length > 2048 || /[\s\u0000-\u001f\u007f]/.test(path)) return null;
+  const q = path.indexOf("?");
+  const pathname = q < 0 ? path : path.slice(0, q);
+  if (!AUDIT_PATH_RE.test(pathname)) return null;
+  return { method: method as AssertMethod, path, pathname, query: q < 0 ? "" : path.slice(q + 1), bodySha256 };
+}
+
 /**
- * All seven are `public + anonymous + raw`, exactly as the six reads are, and for the same
+ * `POST /admin/staff/assertion` — signed statements for another program, one per request, bound
+ * to that request's method, path and body. `scope: "write"` needs a factor proved inside the
+ * step-up window (tier 1) or a TOTP consumed by this call (tier 2); a read is tier 0. One
+ * `assert.external` row per request is written before any assertion is returned.
+ */
+async function mintAssertions(
+  body: Record<string, unknown>, deps: ApiDeps, req: Request,
+): Promise<{ status: number; body: unknown }> {
+  const now = deps.now();
+  const who = await resolveStaffSession(deps.db, staffTokenOf(body), now);
+  if (!who) return { status: 401, body: { error: { code: "staff_session_required" } } };
+  const key = deps.admin?.assertion ?? null;
+  if (!key) return { status: 503, body: { error: { code: "assertion_unarmed" } } };
+
+  // The console names the request id in the body: it is the id the other program's audit joins
+  // on, so it wins over the header and becomes this request's id.
+  const requestId = isUuid(body.requestId)
+    ? (deps.requestId = body.requestId.toLowerCase())
+    : adoptRequestId(req, deps);
+  const audience = str(body.audience);
+  const scope = str(body.scope);
+  const list = Array.isArray(body.requests) ? body.requests.map(assertRequestOf) : [];
+  const requests = list.filter((r): r is AssertRequest => r !== null);
+  const secret = deps.admin!.secret;
+  const rowsFor = (outcome: "ok" | "refused", refusalCode: string | null, tier: StaffAssertionTier): StaffEventInput[] =>
+    (requests.length > 0 ? requests : [null]).map((r, index): StaffEventInput => ({
+      requestId, at: now, action: "assert.external" as StaffAuditAction, outcome, refusalCode,
+      actor: actorOf(who), audience: AUDIENCE_RE.test(audience) ? audience : null,
+      queryHmac: r && r.query ? queryHmacOf(secret, r.query) : null,
+      detail: r
+        ? { method: r.method, path: r.pathname, scope: scope === "write" ? "write" : "read", tier, index }
+        : undefined,
+    }));
+  const refuse = async (status: number, code: string): Promise<{ status: number; body: unknown }> => {
+    await recordBestEffort(deps, rowsFor("refused", code, 0)[0]!);
+    return { status, body: { error: { code } } };
+  };
+
+  if (!rolesAdmit(who.roles, "any")) return refuse(403, "role_required");
+  if (!AUDIENCE_RE.test(audience)) return refuse(400, "audience_invalid");
+  if (scope !== "read" && scope !== "write") return refuse(400, "scope_invalid");
+  if (list.length === 0 || list.length > STAFF_ASSERTION_MAX_REQUESTS || requests.length !== list.length) {
+    return refuse(400, "requests_invalid");
+  }
+  if (scope === "read" && requests.some((r) => r.method !== "GET")) return refuse(400, "scope_mismatch");
+
+  let tier: StaffAssertionTier = 0;
+  const code = str(body.totp).replace(/\s+/g, "");
+  if (code) {
+    const ip = ipKey(req, deps);
+    const verdict = await throttleReserve(deps.db, ip, now);
+    if (verdict.locked) {
+      return { status: 429, body: { ok: false, status: "throttled", retryAfterSeconds: verdict.retryAfterSeconds } };
+    }
+    const consumed = await consumeStaffTotp(deps, who.staffId, code, now);
+    if (consumed !== "ok") {
+      await throttleFail(deps.db, ip, now);
+      return refuse(401, "totp_invalid");
+    }
+    await deps.db.update(staffSessions).set({ lastTwofaAt: now }).where(eq(staffSessions.id, who.sessionId));
+    await throttleClear(deps.db, ip);
+    tier = 2;
+  } else if (scope === "write") {
+    if (now.getTime() - who.lastTwofaAt.getTime() > STAFF_STEP_UP_WINDOW_SECONDS * 1000) {
+      return refuse(403, "step_up_required");
+    }
+    tier = 1;
+  }
+
+  const iat = Math.floor(now.getTime() / 1000);
+  const exp = iat + (scope === "write" ? STAFF_ASSERTION_WRITE_TTL_SECONDS : STAFF_ASSERTION_READ_TTL_SECONDS);
+  const assertions = requests.map((r) => {
+    const claims: StaffAssertionClaims = {
+      v: 1, iss: STAFF_ASSERTION_ISSUER, aud: audience, sub: who.staffId, sid: who.sessionId,
+      label: who.email.slice(0, 200), roles: [...who.roles], tier, rid: requestId,
+      req: requestDigest(r.method, r.path, r.bodySha256), iat, exp, jti: newJti(),
+    };
+    return mintStaffAssertion(claims, key);
+  });
+  // BEFORE the answer, all rows or none: an assertion nobody recorded is never handed out.
+  try {
+    await recordStaffEvents(deps.db, rowsFor("ok", null, tier));
+  } catch (err) {
+    deps.logger?.child({ route: "/admin/staff/assertion" }).error("staff_audit_failed", { err });
+    return { status: 503, body: { error: { code: "audit_failed" } } };
+  }
+  const answer: StaffAssertionAnswer = {
+    assertions, expiresAt: new Date(exp * 1000).toISOString(), kid: key.kid, tier,
+  };
+  return { status: 200, body: answer };
+}
+
+/* ── staff roles ──────────────────────────────────────────────────────────────────────── */
+
+/**
+ * `POST /admin/staff/roles` — an owner grants or revokes one role, with a TOTP consumed by this
+ * call (tier 2). Nobody changes their own roles. Inside the transaction every live owner grant is
+ * locked `FOR UPDATE` and the caller must still be among them: two owners revoking each other at
+ * once serialize, the second finds it is no owner any more, and the last owner stays.
+ */
+async function changeRole(
+  body: Record<string, unknown>, deps: ApiDeps, req: Request,
+): Promise<{ status: number; body: unknown }> {
+  const now = deps.now();
+  const who = await resolveStaffSession(deps.db, staffTokenOf(body), now);
+  if (!who) return { status: 401, body: { error: { code: "staff_session_required" } } };
+  const requestId = adoptRequestId(req, deps);
+  const op = str(body.op);
+  const role = str(body.role) as StaffRole;
+  const action: StaffAuditAction = op === "revoke" ? "staff.role_revoke" : "staff.role_grant";
+  const refuse = async (status: number, code: string, target?: string): Promise<{ status: number; body: unknown }> => {
+    await recordBestEffort(deps, {
+      requestId, at: now, action, outcome: "refused", refusalCode: code, actor: actorOf(who),
+      detail: target && (STAFF_ROLES as readonly string[]).includes(role) ? { role, targetStaffUserId: target } : {},
+    });
+    return { status, body: { error: { code } } };
+  };
+
+  if (!rolesAdmit(who.roles, ["owner"])) return refuse(403, "role_required");
+  if (op !== "grant" && op !== "revoke") return refuse(400, "op_invalid");
+  if (!(STAFF_ROLES as readonly string[]).includes(role)) return refuse(400, "role_invalid");
+  const code = str(body.totp).replace(/\s+/g, "");
+  if (!code) return refuse(401, "totp_required");
+  const ip = ipKey(req, deps);
+  const verdict = await throttleReserve(deps.db, ip, now);
+  if (verdict.locked) {
+    return { status: 429, body: { ok: false, status: "throttled", retryAfterSeconds: verdict.retryAfterSeconds } };
+  }
+  if (await consumeStaffTotp(deps, who.staffId, code, now) !== "ok") {
+    await throttleFail(deps.db, ip, now);
+    return refuse(401, "totp_invalid");
+  }
+  await throttleClear(deps.db, ip);
+  await deps.db.update(staffSessions).set({ lastTwofaAt: now }).where(eq(staffSessions.id, who.sessionId));
+
+  const email = normalizeEmail(body.staffEmail);
+  const [target] = email
+    ? await deps.db.select({ id: staffUsers.id }).from(staffUsers).where(eq(staffUsers.email, email)).limit(1)
+    : [];
+  if (!target) return refuse(404, "staff_not_found");
+  if (target.id === who.staffId) return refuse(409, "self_change_refused", target.id);
+
+  const outcome = await (deps.db as unknown as Tx).transaction(async (tx) => {
+    const record = (o: "ok" | "no_change" | "refused", refusalCode: string | null): Promise<void> =>
+      recordStaffEvents(tx, [{
+        requestId, at: now, action, outcome: o, refusalCode, actor: actorOf(who),
+        detail: { role, targetStaffUserId: target.id },
+      }]);
+    // The caller's authority, re-read under the lock every concurrent change also takes.
+    const owners = await tx.select({ id: staffRoleGrants.staffUserId }).from(staffRoleGrants)
+      .where(and(eq(staffRoleGrants.role, "owner"), isNull(staffRoleGrants.revokedAt)))
+      .for("update");
+    if (!owners.some((o) => o.id === who.staffId)) { await record("refused", "role_required"); return "role_required" as const; }
+    const live = await tx.select({ grantedAt: staffRoleGrants.grantedAt }).from(staffRoleGrants)
+      .where(and(eq(staffRoleGrants.staffUserId, target.id), eq(staffRoleGrants.role, role), isNull(staffRoleGrants.revokedAt)))
+      .for("update");
+    if (op === "grant") {
+      if (live.length > 0) { await record("no_change", null); return "no_change" as const; }
+      await tx.insert(staffRoleGrants).values({ staffUserId: target.id, role, grantedBy: who.staffId, grantedAt: now });
+      await record("ok", null);
+      return "ok" as const;
+    }
+    if (live.length === 0) { await record("no_change", null); return "no_change" as const; }
+    await tx.update(staffRoleGrants).set({ revokedAt: now, revokedBy: who.staffId })
+      .where(and(eq(staffRoleGrants.staffUserId, target.id), eq(staffRoleGrants.role, role), isNull(staffRoleGrants.revokedAt)));
+    await record("ok", null);
+    return "ok" as const;
+  });
+  if (outcome === "role_required") return { status: 403, body: { error: { code: "role_required" } } };
+  return { status: 200, body: { ok: true, op, role, changed: outcome === "ok", at: now.toISOString() } };
+}
+
+/**
+ * Every one is `public + anonymous + raw`, exactly as the reads are, and for the same
  * reason: `ANONYMOUS_PIPELINE` resolves no customer session, so there is no `users` row whose
  * state could be confused with a staff one. The authority is the shared secret plus, inside the
  * handler, `staff_users`.
@@ -816,4 +1125,8 @@ export const adminStaffRoutes: Route[] = [
   { method: "POST", pattern: "/admin/staff/totp/reset", relay: false, cost: COST, options: OPTIONS, handler: staffRoute("totp/reset", totpReset) },
   { method: "POST", pattern: "/admin/staff/whoami", relay: false, cost: COST, options: OPTIONS, handler: staffRoute("whoami", whoami) },
   { method: "POST", pattern: "/admin/staff/sign-out", relay: false, cost: COST, options: OPTIONS, handler: staffRoute("sign-out", signOut) },
+  // Both verify their own factor: the mint by the session's step-up stamp or a TOTP in its body,
+  // the roles change by a TOTP in its body alone. Neither carries `withStaffStepUp`.
+  { method: "POST", pattern: "/admin/staff/assertion", relay: false, cost: COST, options: OPTIONS, handler: staffRoute("assertion", mintAssertions) },
+  { method: "POST", pattern: "/admin/staff/roles", relay: false, cost: COST, options: OPTIONS, handler: staffRoute("roles", changeRole) },
 ];

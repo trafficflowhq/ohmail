@@ -40,6 +40,8 @@ export {
 // Shared-secret authentication for the two endpoints whose caller is a machine
 // (`/internal/alerts`, `/admin/*`). Exported so its properties can be pinned by a test.
 export { secretMatches, bearerOf, presentsSecret, secretRouteJson } from "./secret-auth.js";
+// The staff assertion signing key, parsed from its environment value by the host at boot.
+export { staffSigningKeyOf, type StaffSigningKey } from "./staff-assertion.js";
 
 // The path the host deployment's cron schedule points at. Exported so the deployment config
 // and the router cannot disagree about it; a suite on the host side pins the agreement.

@@ -225,6 +225,13 @@
       "when": 1791328224229,
       "tag": "0046_totp_pending_replacement",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1791328224230,
+      "tag": "0047_staff_roles_and_audit",
+      "breakpoints": true
     }
   ]
 }

@@ -43,6 +43,12 @@ export interface UnscopedTable {
 export const NO_ACCOUNT_SCOPE: readonly UnscopedTable[] = [
   { table: "staff_sessions", why: "an operator's session; `staff_users` belongs to no account" },
   { table: "staff_audit_log", why: "an operator's own trail; `staff_users` belongs to no account" },
+  { table: "staff_role_grants", why: "an operator's roles; `staff_users` belongs to no account" },
+  {
+    table: "staff_audit_events",
+    why: "an operator's own trail; `target_account_id` names an account without a key on purpose, " +
+      "so erasure leaves the rows under the id alone",
+  },
   { table: "oauth_provider_config", why: "one row per provider, set by an operator, account-wide" },
   {
     table: "invites",

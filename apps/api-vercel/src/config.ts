@@ -374,6 +374,13 @@ export interface AlertsHostConfig {
 export interface AdminHostConfig {
   /** `TF_ADMIN_SECRET`. A DIFFERENT value from `TF_ALERT_SECRET` — see {@link loadAdminConfig}. */
   secret: string;
+  /**
+   * `STAFF_ASSERTION_SIGNING_KEY` and `STAFF_ASSERTION_KID`, raw. Parsed by `deps.ts`; either
+   * absent (or a key that is not Ed25519) leaves the assertion mint answering
+   * `503 assertion_unarmed` while the rest of the console works.
+   */
+  assertionKey?: string;
+  assertionKid?: string;
 }
 
 /**
@@ -1062,7 +1069,14 @@ export function loadAdminConfig(env: NodeJS.ProcessEnv): AdminLoad {
   const staff = loadStaffDbConfig(env);
   if (!staff.staffDb) return unarmed(staff.refusal!);
 
-  return { admin: { secret }, unarmed: null };
+  return {
+    admin: {
+      secret,
+      assertionKey: env.STAFF_ASSERTION_SIGNING_KEY?.trim() || undefined,
+      assertionKid: env.STAFF_ASSERTION_KID?.trim() || undefined,
+    },
+    unarmed: null,
+  };
 }
 
 export function loadMailConfig(env: NodeJS.ProcessEnv): MailHostConfig | null {
