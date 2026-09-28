@@ -257,6 +257,22 @@ and Version labels, the default name of a desktop that paired without one, the p
 and its Einordnen action. Every screen now addresses the reader as du. The keyboard hints under
 the lists read whole in German, and the phone's Screener doorbell no longer says "Screener" twice.
 
+### Large sync changes arrive in pages, and a desktop on Cloud logs the writes it sends
+<!-- changes: fix-026-sync-pages.md -->
+
+- A large set of changes, such as many long drafts saved at once, now arrives in pages. Before, it
+  could arrive as one reply too large for the desktop's own connection to its engine, and the sync
+  failed the same way on every retry. Snapshot pages were already bounded this way; now both kinds
+  of sync page are.
+- A desktop signed in to ohmail Cloud writes one line to its engine log for each change it sends
+  to your account: the kind of change, the answer and how long it took. Nothing of the message
+  itself is logged.
+- On a desktop signed in to Cloud, a mailbox that another ohmail install organizes is now sorted
+  by that install's rules, as on the web and the phone.
+- After one request fails, a desktop on Cloud tries the account again on the next read instead of
+  showing itself offline until its next sync.
+- A draft replying to old mail keeps the message it answers on a newly set-up device.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
