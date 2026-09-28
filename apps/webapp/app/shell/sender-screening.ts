@@ -600,14 +600,19 @@ export async function dispatchScreeningChange(
 ): Promise<ScreeningToastKey> {
   const rules = plan.ruleMutations.map((m) => mutate(m));
   /* …AND THE DECIDE, in the plan's own order: a refused decision is the answer the sentence owes.
-     The moves still go unawaited and roll their own rows back. */
+     A refused move rolls its own row back and is not the sentence's status, but the answer waits
+     for every move to settle: the caller reads the list back, and an unsettled move is still
+     painted at the place it was sent to. */
   const decides: Array<Promise<{ status: MutationStatus }>> = [];
+  const moves: Array<Promise<unknown>> = [];
   for (const m of plan.mutations) {
     if (plan.ruleMutations.includes(m)) continue;
     if (m.kind === "screener_decide") decides.push(mutate(m));
-    else void mutate(m);
+    else moves.push(mutate(m));
   }
-  return screeningToast(plan, worstStatus(await Promise.all([...rules, ...decides])));
+  const worst = worstStatus(await Promise.all([...rules, ...decides]));
+  await Promise.allSettled(moves);
+  return screeningToast(plan, worst);
 }
 
 /**

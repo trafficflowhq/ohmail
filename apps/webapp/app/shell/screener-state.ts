@@ -599,6 +599,13 @@ export function useScreenerState(
      * id. Keyed by address, the sender stays where the press put it.
      */
     queued: new Map<string, PendingDecision>(),
+    /**
+     * Senders from a page past the first whose decision was sent, keyed by {@link senderKey}. The
+     * mirror holds none of their mail, so no overlay hides them: each is held out of the queue and
+     * the count until a first page asked after the answer lands (`settledAsk` is the page's ask at
+     * the answer; `null` while it is on its way).
+     */
+    sentOnward: new Map<string, { settledAsk: number | null }>(),
     bulkBusy: false,
     /** See {@link ScreenerState.applying}. Guarded by `bulkBusy`, so only one run ever owns it. */
     applying: null as { done: number; total: number } | null,
@@ -982,6 +989,8 @@ export function useScreenerState(
     const storeRep = rawRep == null && (screenerWaitingNames(engine.read(), id) || onwardIds.current.has(id));
     const gatePhysical = !derived || storeRep
       || (rawRep != null && physicalFolderOf(rawRep) === FOLDER_OF_VIEW.screener);
+    const onwardKey = rawRep == null && !screenerWaitingNames(engine.read(), id) && onwardIds.current.has(id)
+      ? senderKey(d.from.address) : null;
 
     if (gatePhysical) {
       // Gate-physical: the decide, exactly as before. Spam must ride the NO
@@ -1005,6 +1014,15 @@ export function useScreenerState(
       // error anywhere. `queued` is deliberately NOT a refusal — the mutation is on the retry queue
       // with its Idempotency-Key and the user's intent still stands, which is the one status where
       // the row staying gone is the truthful answer.
+      if (onwardKey !== null) s.sentOnward.set(onwardKey, { settledAsk: null });
+      const settleOnward = (kept: boolean) => {
+        if (onwardKey === null) return;
+        const ask = screenerWaitingOf(engine.read())?.page.ask ?? -1;
+        for (const [k, v] of s.sentOnward) if (v.settledAsk !== null && v.settledAsk < ask) s.sentOnward.delete(k);
+        if (kept) s.sentOnward.set(onwardKey, { settledAsk: ask });
+        else s.sentOnward.delete(onwardKey);
+        bump();
+      };
       void engine.mutate({
         kind: "screener_decide",
         senderId: id,
@@ -1015,6 +1033,7 @@ export function useScreenerState(
         ...(d.applyRetro !== undefined ? { applyRetro: d.applyRetro } : {}),
       }).then((res) => {
         done();
+        settleOnward(res.status !== "rolled_back");
         if (res.status === "rolled_back") { refuse(d, res.error); return; }
         /* The organizer took it, and will carry it out later. `pendingWith`
          * is present only where the server queued the decision instead of
@@ -1026,7 +1045,7 @@ export function useScreenerState(
          * same sender again with nothing saying why. The mark is on the
          * ADDRESS because the overlay's row id is gone by then. */
         if (res.pendingWith) markQueued(d, res.pendingWith.name);
-      }, () => { done(); refuse(d); });
+      }, () => { done(); settleOnward(false); refuse(d); });
     } else {
       // Past the gate: a rule, not a decide (#116). The sender's mail is
       // physically in the INBOX, presented in the Screener because they are
@@ -1324,9 +1343,12 @@ export function useScreenerState(
   const restoredKeys = new Set(
     (restoredIntents.current ?? []).map((r) => senderKey(r.from.address)),
   );
+  /* A later page's sender stays out until a first page asked after its decision's answer lands. */
+  const sentKeys = new Set([...s.sentOnward]
+    .filter(([, v]) => v.settledAsk === null || firstAsk <= v.settledAsk).map(([k]) => k));
   const senderHeld = (x: ScreenerSenderDTO): boolean => {
     const k = senderKey(x.from.address);
-    return pendingKeys.has(k) || restoredKeys.has(k);
+    return pendingKeys.has(k) || restoredKeys.has(k) || sentKeys.has(k);
   };
   const visibleWaiting = waiting.filter((x) => (!senderHeld(x) || s.out.has(x.id))
     && !decidedElsewhere.has(x.id) && notDecided(x));
@@ -1360,8 +1382,10 @@ export function useScreenerState(
   /* ONE COUNT FOR ONE QUEUE. From the store it is the store's own total, less the rows on screen
      this session holds out by name (pressed and in their undo window, decided in another tab);
      from the device it is the rows the window happened to hold, and the meta says so. */
+  const shownKeys = new Set(waiting.map((x) => senderKey(x.from.address)));
+  const sentAway = [...sentKeys].filter((k) => !shownKeys.has(k)).length;
   const waitingCount = segments.source === "store"
-    ? Math.max(0, segments.waitingTotal + overriddenCount - (waiting.length - undecided.length))
+    ? Math.max(0, segments.waitingTotal + overriddenCount - (waiting.length - undecided.length) - sentAway)
     : undecided.length;
   // Counted over the SAME set the bulk would act on — including the `hold` exclusion, which is
   // why this predicate must stay a copy of `applyAll`'s and not merely of "has a suggestion".
