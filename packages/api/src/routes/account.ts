@@ -135,7 +135,8 @@ export const accountRoutes: Route[] = [
       // The catch-up banner, only where a lifecycle exists to have reopened from. Then the
       // reopening itself (owner, 2026-09-28): the `account_closed` block goes, and every mailbox
       // the WALL released is asked back as a `join` — the gate decides, a live claim elsewhere
-      // keeps its mailbox, and a mailbox the person released is never touched.
+      // keeps its mailbox, and a mailbox the person released is never touched. In THIS order: the
+      // catch-up may be anchored on the `account_closed` block the reopening clears.
       const caughtUp = verdict.lifecycle ? await reopenedCatchUp(deps, ctx) : null;
       await resumeAfterReopen(deps, ctx);
       return json({

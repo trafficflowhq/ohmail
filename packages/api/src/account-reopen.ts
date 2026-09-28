@@ -8,11 +8,12 @@ import type { ApiDeps } from "./deps.js";
 
 /**
  * THE REOPENING BANNER'S ONE FACT (cloud 0040) — an idempotent INSERT on a GET, deliberate and
- * named here so nobody "fixes" it. The anchor is the PARK (mail 0135: the newest instant the wall
- * released a mailbox of this account), else the newest `closed` notice's for a closure that
- * released nothing. ONCE PER CLOSURE: a `reopened` notice sent after the anchor answers it, so the
- * promotion clearing the marker cannot start a second banner. NO COUNT: this read runs before the
- * worker's first pass, so any number here is the free month's mail. Best-effort by contract.
+ * named here so nobody "fixes" it. The anchor is the PARK (mail 0135), else the newest
+ * `account_closed` block (a reader-only account parks nothing), else the newest `closed` notice.
+ * The route asks this BEFORE `resumeAfterReopen` clears the block. ONCE PER CLOSURE: a `reopened`
+ * notice sent after the anchor answers it. NO COUNT: any number here is the free month's mail.
+ * Bound: the worker's belt can clear the block before any client reads, and then a reader-only
+ * account reopened inside one night has no anchor and no banner. Best-effort by contract.
  */
 export async function reopenedCatchUp(
   deps: ApiDeps, ctx: ServiceContext,
@@ -21,6 +22,11 @@ export async function reopenedCatchUp(
   try {
     const [parked] = await deps.db.select({ at: max(mailboxes.organizerParkedAt) })
       .from(mailboxes).where(eq(mailboxes.accountId, accountId));
+    const [blocked] = await deps.db.select({ at: max(mailboxes.syncBlockedSince) })
+      .from(mailboxes).where(and(
+        eq(mailboxes.accountId, accountId),
+        eq(mailboxes.syncBlockedReason, "account_closed"),
+      ));
     const [closed] = await deps.db.select({ anchor: accountLifecycleNotices.anchor })
       .from(accountLifecycleNotices)
       .where(and(
@@ -29,7 +35,7 @@ export async function reopenedCatchUp(
       ))
       .orderBy(desc(accountLifecycleNotices.anchor))
       .limit(1);
-    const anchor = parked?.at ?? closed?.anchor ?? null;
+    const anchor = parked?.at ?? blocked?.at ?? closed?.anchor ?? null;
     if (anchor === null) return null;
     const [answered] = await deps.db.select({ anchor: accountLifecycleNotices.anchor })
       .from(accountLifecycleNotices)
