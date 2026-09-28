@@ -1961,7 +1961,15 @@ export function planPhoneRouting(
 ): EngineMutation[] {
   const folder = FOLDER_OF_VIEW[intent.dest];
   if (!folder || intent.from === undefined) return [];
-  return withoutBacklog(releaseRules(reader, intent.address, intent.from as Folder, folder).mutations);
+  const rules = withoutBacklog(releaseRules(reader, intent.address, intent.from as Folder, folder).mutations);
+  /* THE LETTER'S HALF, for a kill between the rule's record and the letter's dispatch: a letter the
+     press named, still where the press found it, moves with the rule. A dispatched move is in the
+     outbox and the reader already shows the letter at the place, so nothing moves twice. */
+  const letters = intent.messageIds.flatMap((id): EngineMutation[] => {
+    const m = reader.get<EngineMessage>("message", id);
+    return m !== undefined && m.folder === intent.from && m.folder !== folder ? [{ kind: "move", messageId: id, folder }] : [];
+  });
+  return [...rules, ...letters];
 }
 
 /**
@@ -3676,18 +3684,38 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const rules = writes.filter((w) => w.kind !== "move");
     const mail = writes.filter((w) => w.kind === "move");
     const inv = mail.flatMap((w) => inverseMutations(engine.verbRead(), w));
+    const pressId = deps.uuid ? deps.uuid() : `${messageId}:${now().getTime()}`;
+    const subject = routingSubject({ scope: "sender", address: m.from.address });
+    /* THE RULE HALF IS ON DISK BEFORE THE LETTER MOVES. The letter's move rides the outbox the
+       moment it is dispatched; a rule held only after its answer was lost to a kill in between,
+       with the letter moved and nothing said. Held first, the launch finishes both halves. */
+    const opened = rules.length === 0 ? null : await holdRouting({
+      v: 1,
+      id: pressId,
+      seedId: messageId,
+      address: m.from.address,
+      scope: "sender",
+      dest: dest as ScreenDest,
+      messageIds: [messageId],
+      from: row.presentedFolder,
+      at: now().getTime(),
+    });
     /* RAW answers, never `watched`: it folds `awaiting_organizer` into landed-or-not, and on a
        mailbox this phone only reads EVERY write here comes back that way (`move` is named in the
        202 census). Folding them would say "Moved" over a move nobody made. */
     const answers = await Promise.all(
       mail.map((w) => inMessageOrder(w, () => engine.mutate(w).catch((): MutationResult | null => null))),
     );
+    /* A letter that did not move takes its rule with it: the press is one decision. */
+    const dropHeld = (): void => { if (opened?.held) undoRouting(subject); };
     if (answers.some((r) => r === null || r.status === "rolled_back")) {
+      dropHeld();
       toast(refuse("liveSaveFailed"));
       return false;
     }
     const queued = [...answers].reverse().find((r) => r?.status === "awaiting_organizer");
     if (queued) {
+      dropHeld();
       const holder = queued.queuedWith?.name ?? null;
       /* Two calls rather than one with a spread: each sentence is passed exactly its own
          arguments, which is what `refusal.test.ts` reads out of this file's source. */
@@ -3706,26 +3734,13 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const decides = mail.length > 0
       ? refuse("toastRuledMoved", moveTargetLabel(dest), mail.length, who)
       : refuse("toastRuledFuture", moveTargetLabel(dest), who);
-    const pressId = deps.uuid ? deps.uuid() : `${messageId}:${now().getTime()}`;
-    const opened = await holdRouting({
-      v: 1,
-      id: pressId,
-      seedId: messageId,
-      address: m.from.address,
-      scope: "sender",
-      dest: dest as ScreenDest,
-      messageIds: [messageId],
-      from: row.presentedFolder,
-      at: now().getTime(),
-    });
-    if (!opened.held) {
+    if (!opened?.held) {
       /* NO SESSION OR NO RECORD TO HOLD IT BY — the rules go now unless the window already sent
          them, and the sentence does not offer an undo it cannot honour. */
-      if (!opened.sent) await Promise.all(rules.map((w) => engine.mutate(w).catch(() => null)));
+      if (!opened?.sent) await Promise.all(rules.map((w) => engine.mutate(w).catch(() => null)));
       toast(decides);
       return true;
     }
-    const subject = routingSubject({ scope: "sender", address: m.from.address });
     toast(decides, {
       holdMs: UNDO_MS,
       /* ONE CLOCK: the pill's hold starts at its first layout, and so does the window's. */
