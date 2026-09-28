@@ -281,6 +281,18 @@ darkest ground rather than a white lift; in the ohmarchy face a tag's name is co
 its own chip, over the tile and over the page; and the key hint on the Screener's suggested
 decision is no longer faded. All three read at 4.5:1 or better in both faces, light and dark.
 
+### The phone offers to screen senders already in the Inbox, as the web does
+<!-- changes: fix-026-phone-tells.md -->
+
+Mail that was already in the Inbox when you connected the phone stays in the Ohbox, and the Ohbox
+now offers to hold its undecided senders in the Screener with one press, as the web app does.
+
+### A Move pressed just before the app closes now keeps its rule
+<!-- changes: fix-026-phone-tells.md -->
+
+On the phone, a Move that decides where a sender's mail goes keeps that rule even when the app is
+closed right after the press; the next launch makes it and says so.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
