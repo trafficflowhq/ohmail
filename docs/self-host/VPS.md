@@ -112,7 +112,8 @@ Two optional blocks worth deciding now:
   this has to be set on **both** the `api` and the `organizer`. The bundled
   compose file sets it on both from the one value. If that server also has
   no TLS, you will additionally confirm the connection-security notice when
-  you add the mailbox; plaintext IMAP is never used without that consent.
+  you add the mailbox; plaintext IMAP is never used without that consent, and
+  only while the server's name points at an address on your own network.
 
   If it has TLS on a certificate from your own authority (a self-signed one
   included), make the stack trust that authority instead: put its root

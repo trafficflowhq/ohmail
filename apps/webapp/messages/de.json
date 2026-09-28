@@ -2516,6 +2516,7 @@
     "desktopStateHandedOver": "An eine andere Installation übergeben",
     "desktopStateDisconnected": "Getrennt",
     "desktopStateSignInRefused": "Der Mailserver hat die Anmeldung abgelehnt.",
+    "desktopStatePlaintextRefused": "Die Adresse des Mailservers liegt nicht mehr in deinem eigenen Netzwerk, darum schickt ohmail dein Passwort nicht unverschlüsselt dorthin.",
     "desktopStateCredentialUnreadable": "Dieser Computer kann das gespeicherte Passwort nicht öffnen, daher wird nichts synchronisiert.",
     "desktopStateSignInAgain": "Dieser Computer kann das gespeicherte Passwort nicht öffnen. Gib es erneut ein, damit wieder synchronisiert wird.",
     "desktopStateNeedsCredential": "Dieses Postfach braucht sein Passwort erneut. Gib es ein, damit wieder synchronisiert wird.",

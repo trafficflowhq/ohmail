@@ -4674,3 +4674,17 @@ describe("a stop that left this computer's settings behind says so", () => {
     expect(said).not.toContain("settings stayed on this computer");
   });
 });
+
+describe("a mailbox connected without encryption whose server's address left the person's network", () => {
+  const copy = (messages as unknown as { mailboxes: Record<string, string> }).mailboxes;
+  it("says that, and not that the mail server cannot be reached", async () => {
+    // The engine refused before any socket; the outage clock rides beside it, and loses to it.
+    FACTS = [{ ...MAILBOX, status: "error", errorCode: "connect" }];
+    bridgeReply = () => new Response(JSON.stringify({
+      items: [{ mailboxId: "mbx-1", reachable: false, unreachableSince: "2026-08-07T09:00:00.000Z", plaintextRefused: true }],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+    const el = await render("local");
+    expect(el.textContent).toContain(copy.desktopStatePlaintextRefused!);
+    expect(el.textContent).not.toContain(copy.desktopStateUnreachable!);
+  });
+});

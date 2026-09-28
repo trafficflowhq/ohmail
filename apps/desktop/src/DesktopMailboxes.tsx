@@ -67,6 +67,12 @@ export interface MailboxReach {
   /** The server answered and refused the sign-in — a different fact with a different remedy. */
   signInRefused: boolean;
   /**
+   * A MAILBOX CONNECTED WITHOUT TLS WHOSE SERVER'S NAME NO LONGER RESOLVES TO THE PERSON'S OWN
+   * NETWORK: nothing was dialled, so "can't reach the mail server" would be the wrong sentence.
+   * Optional because an engine older than the field says nothing about it.
+   */
+  plaintextRefused?: boolean;
+  /**
    * THE STORED PASSWORD COULD NOT BE USED, so no server was dialled at all — `null` when it was.
    *
    * Its own fact, above `reachable` in the state ladder: "can't reach the mail server" would send
@@ -376,6 +382,7 @@ export async function readMailboxReachVia(
       mailboxId?: unknown; reachable?: unknown; unreachableSince?: unknown; signInRefused?: unknown;
       credentialBlocked?: unknown; profileBlocked?: unknown; needsCredential?: unknown;
       settingsLeft?: unknown;
+      plaintextRefused?: unknown;
     };
     /* NO ID, NOTHING TO SAY IT ABOUT. Dropped rather than faulted: marking the slice would let one
        unattributable entry speak for rows it never named. */
@@ -395,6 +402,7 @@ export async function readMailboxReachVia(
          cannot have refused a sign-in, and the dangerous default is the other one — telling
          somebody their password was rejected because their app is out of date. */
       signInRefused: it.signInRefused === true,
+      plaintextRefused: it.plaintextRefused === true,
       /* THE EXACT BOOLEAN, on this file's standing rule: an engine older than the field says
          nothing about it, and "this mailbox needs its password" is not a sentence to invent
          from an absence. */
@@ -1404,7 +1412,8 @@ export function DesktopMailboxes(
     const r = reach.rows[m.id];
     if (m.status === "error") {
       const specific = r?.answered === true
-        && (r.signInRefused || r.credentialBlocked !== null || r.needsCredential || !r.reachable);
+        && (r.signInRefused || r.plaintextRefused === true || r.credentialBlocked !== null
+          || r.needsCredential || !r.reachable);
       if (!specific) {
         return say(t("desktopStateError", { code: m.errorCode ?? t("desktopUnknownCode") }));
       }
@@ -1431,6 +1440,8 @@ export function DesktopMailboxes(
        answer to the same question and the generic one would send somebody to check a network
        that is working perfectly. */
     if (r?.signInRefused) return say(t("desktopStateSignInRefused"));
+    /* NOTHING WAS DIALLED: the consented server's name left the person's own network. */
+    if (r?.plaintextRefused) return say(t("desktopStatePlaintextRefused"));
     /* ── THE PASSWORD ON THIS COMPUTER, NOT THE SERVER — and it outranks the outage arm below.
      *
      * No socket was opened at all: the stored password could not be read, or it was proved

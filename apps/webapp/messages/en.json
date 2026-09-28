@@ -2516,6 +2516,7 @@
     "desktopStateHandedOver": "Handed over to another install",
     "desktopStateDisconnected": "Disconnected",
     "desktopStateSignInRefused": "The mail server refused the sign-in.",
+    "desktopStatePlaintextRefused": "The mail server's address is no longer on your own network, so ohmail will not send your password to it unencrypted.",
     "desktopStateCredentialUnreadable": "This computer can't open the saved password, so nothing is syncing.",
     "desktopStateSignInAgain": "This computer can't open the saved password. Enter it again to start syncing.",
     "desktopStateCredentialForeign": "The saved password belongs to a different mail server, so nothing is syncing.",
