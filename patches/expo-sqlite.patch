@@ -1,0 +1,42 @@
+diff --git a/ios/SQLiteModule.swift b/ios/SQLiteModule.swift
+index 368bb7a5381ce388c2d638dc3e52374f4101a0a8..839a5acf858dd6ac0f89b991f2cdc09d17562892 100644
+--- a/ios/SQLiteModule.swift
++++ b/ios/SQLiteModule.swift
+@@ -311,9 +311,15 @@ public final class SQLiteModule: Module {
+       throw Exceptions.FileSystemModuleNotFound()
+     }
+ 
+-    guard let pathUrl = URL(string: path) else {
++    guard URL(string: path) != nil else {
+       throw DatabaseInvalidPathException(path)
+     }
++    // `URL(string:)` VALIDATES here; it must not be the URL handed onward. A filesystem path is not
++    // a URL string — it percent-encodes whatever a URL may not carry, a space above all, and answers
++    // a NON-file URL, whose `toFilePath()` is that encoded `absoluteString`. So for any container
++    // whose path holds a space, sqlite was given `/…/a%20b/…/x.db` and could not open it, while
++    // `ensureDirExists` created that encoded directory and left the real one empty.
++    let pathUrl = URL(fileURLWithPath: path)
+     fileSystem.ensureDirExists(withPath: pathUrl.deletingLastPathComponent().toFilePath())
+ 
+     return pathUrl
+diff --git a/ios/SQLiteModuleLibSQL.swift b/ios/SQLiteModuleLibSQL.swift
+index 64f6fd0928afc5da1e13a25a7a20a531de796154..d8d1f73f0a3d653d65703333b3ab17a086432c15 100644
+--- a/ios/SQLiteModuleLibSQL.swift
++++ b/ios/SQLiteModuleLibSQL.swift
+@@ -335,9 +335,15 @@ public final class SQLiteModule: Module {
+       throw Exceptions.FileSystemModuleNotFound()
+     }
+ 
+-    guard let pathUrl = URL(string: path) else {
++    guard URL(string: path) != nil else {
+       throw DatabaseInvalidPathException(path)
+     }
++    // `URL(string:)` VALIDATES here; it must not be the URL handed onward. A filesystem path is not
++    // a URL string — it percent-encodes whatever a URL may not carry, a space above all, and answers
++    // a NON-file URL, whose `toFilePath()` is that encoded `absoluteString`. So for any container
++    // whose path holds a space, sqlite was given `/…/a%20b/…/x.db` and could not open it, while
++    // `ensureDirExists` created that encoded directory and left the real one empty.
++    let pathUrl = URL(fileURLWithPath: path)
+     fileSystem.ensureDirExists(withPath: pathUrl.deletingLastPathComponent().toFilePath())
+ 
+     return pathUrl

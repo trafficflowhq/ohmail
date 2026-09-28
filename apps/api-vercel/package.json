@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "license": "AGPL-3.0-only",
   "dependencies": {
+    "@vercel/functions": "2.2.4",
     "@trafficflow/api": "*",
     "@trafficflow/core": "*",
     "@trafficflow/db": "*",

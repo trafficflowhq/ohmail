@@ -597,7 +597,7 @@ const ohboxCache = new WeakMap<EntityReader, { v: number; openHeld: string | nul
  * Receipts are streams and still list a parked issue; `openTargetFor` depends on that asymmetry
  * and `search-locate.test.ts` pins it. `openHeld` is the row being read
  * ({@link OhmailEngine.holdOpenRow}): it stays in "New for you" at its arrival slot until the
- * reader moves on or answers it — a read never moves a row.
+ * reader moves on — a read never moves a row.
  */
 export function ohboxView(reader: EntityReader, openHeld: string | null = null): OhboxView {
   // Memoized on the reader's version like its siblings (`resurfacedThreads`, `screenerSegments`,
@@ -660,7 +660,7 @@ export function ohboxView(reader: EntityReader, openHeld: string | null = null):
   for (const row of resurfacedThreads(reader)) for (const m of row.members) inRow.add(m.id);
   const held = (m: EngineMessage): boolean =>
     !pinned.has(m.id) && !inRow.has(m.id) && !parked.has(m.id);
-  // The open row files as unread until it is left or answered; only that one row — mail read anywhere else
+  // The open row files as unread until it is left; only that one row — mail read anywhere else
   // moves at once, and `held` above still takes a filed, parked or pinned row out.
   const fresh = (m: EngineMessage): boolean => m.unread || m.id === openHeld;
 

@@ -1,9 +1,12 @@
-import { deleteAccount, throttleKeysFor } from "@trafficflow/services";
+import { and, desc, eq, gt, sql } from "drizzle-orm";
+import { deleteAccount, throttleKeysFor, withAccountTx } from "@trafficflow/services";
+import type { ServiceContext } from "@trafficflow/services";
+import { messages } from "@trafficflow/db";
 import type { ReleaseOutcome } from "@trafficflow/db";
 /* Hosted-only, like `internal.ts`'s cloud imports: `accountRoutes` is mounted by `routes/index.ts`
    and deliberately NOT by the local door ("deleting the data directory IS the erasure"), so the
-   cloud table the reopening reads never enters a standalone bundle. */
-import { reopenedCatchUp, resumeAfterReopen } from "../account-reopen.js";
+   cloud table never enters a standalone bundle. */
+import { accountLifecycleNotices } from "@trafficflow/db/cloud";
 import { ServiceError } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { clearSessionCookies } from "../cookies.js";
@@ -13,12 +16,44 @@ import type { ApiDeps } from "../deps.js";
 import type { Route } from "../router.js";
 
 /**
- * THE ONE FIELD `POST /account/checkout/confirm` READS: the session id the program's return URL
- * carried, relayed verbatim. Opaque here — its shape is the program's business — so the bound is a
- * token's: 1 to 255 letters, digits, `_` or `-`, refused 400 before anything is dialled.
+ * THE REOPENING BANNER'S ONE FACT (cloud 0040) — an idempotent INSERT on a GET, deliberate and
+ * named here so nobody "fixes" it: the first open read after a closure claims the `reopened`
+ * notice (anchor = the newest `closed` notice's own anchor, ON CONFLICT DO NOTHING) and answers
+ * how much mail arrived while the account was closed. Exactly one read carries it — a replay
+ * conflicts on the PK and answers nothing, so dismissal needs no server state. Best-effort by
+ * contract: the wall's read must never fail over its banner.
  */
-export const RETURN_SESSION_ID_MAX_CHARS = 255;
-const RETURN_SESSION_ID = /^[A-Za-z0-9_-]{1,255}$/;
+async function reopenedCatchUp(
+  deps: ApiDeps, ctx: ServiceContext,
+): Promise<{ since: string; count: number } | null> {
+  const accountId = ctx.accountId;
+  try {
+    const [closed] = await deps.db.select({ anchor: accountLifecycleNotices.anchor })
+      .from(accountLifecycleNotices)
+      .where(and(
+        eq(accountLifecycleNotices.accountId, accountId),
+        eq(accountLifecycleNotices.kind, "closed"),
+      ))
+      .orderBy(desc(accountLifecycleNotices.anchor))
+      .limit(1);
+    if (!closed) return null;
+    // FENCED, like every session-holding writer of an account-owned row: a GET racing the
+    // caller's own erasure must not plant a notice after the Art. 17 sweep commits.
+    const inserted = await withAccountTx(ctx, async (tx) =>
+      tx.insert(accountLifecycleNotices)
+        .values({ accountId, kind: "reopened", anchor: closed.anchor })
+        .onConflictDoNothing()
+        .returning());
+    if (inserted.length === 0) return null;
+    const [row] = await deps.db.select({ n: sql<number>`count(*)::int` }).from(messages)
+      .where(and(eq(messages.accountId, accountId), gt(messages.createdAt, closed.anchor)));
+    return { since: closed.anchor.toISOString(), count: row?.n ?? 0 };
+  } catch {
+    // A missing table (an API ahead of cloud 0040), a fenced refusal or any read fault costs
+    // the banner, never the wall's read.
+    return null;
+  }
+}
 
 /** What an erasure leaves on a host with no billing program: the pseudonymous account row and the token hashes. */
 const RETAINED_UNMETERED =
@@ -132,12 +167,12 @@ export const accountRoutes: Route[] = [
           exportPath: "/account/export",
         }, 200);
       }
-      // The catch-up banner, only where a lifecycle exists to have reopened from. Then the
-      // reopening itself (owner, 2026-09-28): the `account_closed` block goes, and every mailbox
-      // the WALL released is asked back as a `join` — the gate decides, a live claim elsewhere
-      // keeps its mailbox, and a mailbox the person released is never touched.
+      // The catch-up banner, only where a lifecycle exists to have reopened from: an OPEN
+      // verdict whose account has an unanswered `closed` notice claims `reopened` and says how
+      // much arrived meanwhile. NO auto re-claim rides on this (DUAL-MODE §4): un-parking
+      // resumes SYNC as reader, and organizing resumes per mailbox through the person's own
+      // `POST /mailboxes/:id/organize` press.
       const caughtUp = verdict.lifecycle ? await reopenedCatchUp(deps, ctx) : null;
-      await resumeAfterReopen(deps, ctx);
       return json({
         metered: true,
         access: "open",
@@ -185,41 +220,6 @@ export const accountRoutes: Route[] = [
         );
       }
       return json(link, 200);
-    },
-  },
-  /**
-   * `POST /account/checkout/confirm` — the person is back from a Checkout: ask the program to apply
-   * it now instead of waiting for its webhook. `paid` on `manage-link`'s terms (a hop to a third
-   * party through the program, a verified address as the floor), reachable while refused because
-   * the wall is up when it runs, no step-up (it moves no mail and reads a payment already made).
-   * The ACCOUNT is the session's; the body names only the session id. 200 `{state}` is the
-   * program's `confirmed` or `pending`; every other answer is a 4xx/5xx the caller polls past.
-   */
-  {
-    method: "POST",
-    pattern: "/account/checkout/confirm",
-    // A browser returns from a Checkout; no install's write-through relay has a reason to forward it.
-    relay: false,
-    cost: "paid",
-    replay: "ephemeral",
-    handler: async (req, deps) => {
-      const ctx = serviceContext(deps, req);
-      const sessionId = (await readBody<{ sessionId?: unknown } | null>(req))?.sessionId;
-      if (typeof sessionId !== "string" || !RETURN_SESSION_ID.test(sessionId)) {
-        throw new ServiceError("invalid_session_id", 400, "sessionId must be the id the return address carried.");
-      }
-      const port = entitlementsPort(deps);
-      if (!port?.confirmReturn) {
-        throw new ServiceError("no_return_confirm", 404, "This deployment confirms no checkout.");
-      }
-      const outcome = await port.confirmReturn(ctx.accountId, sessionId);
-      if (outcome === "not_found") {
-        throw new ServiceError("return_not_found", 404, "No such checkout for this account.");
-      }
-      if (outcome === "fault") {
-        throw new ServiceError("return_unconfirmed", 503, "The checkout could not be confirmed now.");
-      }
-      return json({ state: outcome }, 200);
     },
   },
 ];

@@ -2053,8 +2053,7 @@ export function MailboxSection() {
         /* A HOLDER WHOSE LEASE LAPSED IS NOBODY — the refusal's own decider. "ohmail on your own
            machine has claimed this mailbox" over a claim nobody renews had a person trusting a
            laptop that stopped while new mail waited in the Inbox. */
-        const lapsed = standDown !== null && standDown !== "released" && standDown !== "parked"
-          && readerHolderLapsed(m);
+        const lapsed = standDown !== null && standDown !== "released" && readerHolderLapsed(m);
         return (
           <div className="mbx-row" key={m.id}>
             <div className="mbx-main">
@@ -2117,10 +2116,7 @@ export function MailboxSection() {
                   is this one. Pointed at a claim of our own it offers to displace ourselves, opens a connection to
                   ask who holds a mailbox the row already names, and leaves the claim exactly where it is.
                 */}
-              {/* PAUSED BY THE WALL (mail 0135): the account reading open resumes it, so no press. */}
-              {standDown === "parked" ? (
-                <span className="mbx-sub">{t("stateParked")}</span>
-              ) : standDown === "released" ? (
+              {standDown === "released" ? (
                 <>
                   <span className="mbx-sub">
                     {t("stateReleased", { when: dayStamp(m.organizerReleasedAt) })}

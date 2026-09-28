@@ -988,8 +988,6 @@ function mailboxRow(world: LocalWorld, m: MailboxDTO, now: Date) {
      * hosted row is the authority for both; the capability travels as the DERIVED answer and is
      * stored back in the column the local read derives from, `false` writing NULL. */
     organizerReleasedAt: asDate(m.organizerReleasedAt),
-    // The wall's pause (mail 0135): without it a paused row reads as one this account released.
-    organizerParkedAt: asDate(m.organizerParkedAt),
     organizedByCapabilities: m.organizerAcceptsRequests === true ? CAPABILITY_REQUESTS : null,
     organizeConsentedAt: asDate(m.organizeConsentedAt),
     smtpMaxSizeBytes: m.smtpMaxSizeBytes ?? null,

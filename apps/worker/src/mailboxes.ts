@@ -4,10 +4,10 @@ import {
   mailboxes, mailboxCredentials, isOrganizerRole, organizerDisplayName, capabilitiesColumn, type Tx,
   organizerKindColumn, closedSetValue, fenceErased, MailboxErasedError,
   type OrganizerRole, type OrganizerKind, type OrganizerState,
-  rules, recordMailboxProfileChange, type LedgerTx, parkedResumeWhere, parkedResumeSet,
+  rules, recordMailboxProfileChange, type LedgerTx,
 } from "@trafficflow/db";
 import { makeDb } from "@trafficflow/db/cloud";
-import { workerHeartbeats, pushSubscriptions } from "@trafficflow/db/cloud";
+import { workerHeartbeats } from "@trafficflow/db/cloud";
 import type { KeyProvider, OAuthTokenProvider } from "@trafficflow/core";
 import {
   buildImapAuth, oauthSmtpEndpoint, type ImapAuth, type CredMetaAuth,
@@ -137,20 +137,6 @@ export interface EnabledMailbox {
    */
   releaseRequestedAt: Date | null;
   /**
-   * Mail 0135. WHEN THE WALL RELEASED THIS MAILBOX, or NULL. Read so the roster can resume it once
-   * the account is open again ({@link resumeParkedMailbox}); a release the person asked for is NULL
-   * here and is never resumed.
-   */
-  organizerParkedAt: Date | null;
-  /**
-   * `sync_requested_at` AS TEXT, as this roster read it — the kick's own compare-and-clear form,
-   * exact to the microsecond. A kicked row's account has its refusal asked again, and the
-   * `account_closed` write lands only while the stamp is still this value: the reopening door
-   * clears the block and kicks in one statement, so a stamp that moved means a clear this pass
-   * did not see.
-   */
-  kickStamp: string | null;
-  /**
    * Mail 0029. What the row currently says about why this mailbox is not being synced. READ SO THE
    * WORKER KNOWS WHETHER THERE IS ANYTHING TO CLEAR, and for no other purpose — nothing decides on it,
    * like `disabledReason` above. It is in this narrow projection rather than re-read on demand because
@@ -242,10 +228,8 @@ export function shardFilter(selection: MailboxSelection = {}): SQL | undefined {
  * mailbox syncs, which is a self-hosted install's truth and the fail-open direction, since a missing
  * reader can only sync more and never drop a customer.
  */
-export type ParkedAccountsReader = (
-  accountIds: readonly string[], now: Date,
-  recheck?: { accounts: ReadonlySet<string>; since: number },
-) => Promise<Set<string>>;
+export type ParkedAccountsReader =
+  (accountIds: readonly string[], now: Date) => Promise<Set<string>>;
 
 /**
  * Every syncable mailbox in the selection: anything not soft-disabled (`status != 'disabled'`) whose
@@ -296,8 +280,6 @@ export async function loadRosterMailboxes(
       organizedByInstallId: mailboxes.organizedByInstallId,
       organizeConsentedAt: mailboxes.organizeConsentedAt,
       releaseRequestedAt: mailboxes.releaseRequestedAt,
-      organizerParkedAt: mailboxes.organizerParkedAt,
-      kickStamp: sql<string | null>`${mailboxes.syncRequestedAt}::text`,
       syncBlockedReason: mailboxes.syncBlockedReason,
       retryAfter: mailboxes.retryAfter,
       retryCount: mailboxes.retryCount,
@@ -308,11 +290,8 @@ export async function loadRosterMailboxes(
     .orderBy(asc(mailboxes.createdAt), asc(mailboxes.id));
 
   const ids = [...new Set(rows.map((r) => r.accountId))];
-  // THE READ ABOVE HAS RETURNED: a call begun from here on began after every clear it saw, so a
-  // kicked account's refusal is asked again from this instant (mail 0135, see `kickStamp`).
-  const kicked = new Set(rows.filter((r) => r.kickStamp !== null).map((r) => r.accountId));
   const parked = parkedAccounts && ids.length > 0
-    ? await parkedAccounts(ids, now, { accounts: kicked, since: Date.now() })
+    ? await parkedAccounts(ids, now)
     : new Set<string>();
   const shape = (r: (typeof rows)[number]): EnabledMailbox => ({
     accountId: r.accountId, mailboxId: r.id, provider: r.provider, address: r.address, status: r.status,
@@ -330,8 +309,6 @@ export async function loadRosterMailboxes(
     organizedByInstallId: r.organizedByInstallId ?? null,
     organizeConsentedAt: r.organizeConsentedAt ?? null,
     releaseRequestedAt: r.releaseRequestedAt ?? null,
-    organizerParkedAt: r.organizerParkedAt ?? null,
-    kickStamp: r.kickStamp ?? null,
     syncBlockedReason: r.syncBlockedReason ?? null,
     retryAfter: r.retryAfter ?? null,
     retryCount: r.retryCount ?? 0,
@@ -1174,8 +1151,6 @@ export async function markMailboxStoodDown(
     // quieter of the two events to a person whose mailbox somebody else has just taken, and the
     // claim-back screen would name no previous holder on the one occasion there is one.
     organizerReleasedAt: null,
-    // Mail 0135 — and a resume that lost to a live holder is answered: no second stamp next pass.
-    organizerParkedAt: null,
     // Mail 0088: the organizing situation just changed, so say when. One of the five writers of the
     // (role, state, holder) triple, and every one stamps this in the SAME statement as the fact it is
     // announcing — not a second write, for the reason the holder columns ride this statement: a row
@@ -1227,8 +1202,6 @@ export async function markMailboxReleased(
     cause?: "release_request" | "account_parked";
   } = {},
 ): Promise<boolean> {
-  // One instant for the release, its marker and its event, so the three agree to the millisecond.
-  const now = opts.now ?? new Date();
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes).set({
     organizerRole: "reader",
     // Nobody holds it. See the header — this is the whole difference from a stand-down.
@@ -1245,10 +1218,7 @@ export async function markMailboxReleased(
     // AND THE RECORD THAT IT HAPPENED. The ask is gone; without this the row is byte-identical to a
     // stood-down reader whose winner has since gone away, and `standDownMemory` would have to
     // derive "released" from an absence three other writers also produce. See the column.
-    organizerReleasedAt: now,
-    // Mail 0135 — WHO released it. Only the wall's park writes the marker; the person's own release
-    // clears one, so a mailbox they stopped is never resumed on its own.
-    organizerParkedAt: opts.cause === "account_parked" ? now : null,
+    organizerReleasedAt: opts.now ?? new Date(),
     // AND ANY UNSPENT TAKEOVER GOES WITH IT. The two stamps are contradictory instructions about
     // the same mailbox, and a release that left a becoming authorized would be promoted straight
     // back by the very next gate — the control undoing itself, which is this feature's own named
@@ -1261,7 +1231,7 @@ export async function markMailboxReleased(
     syncBlockedReason: null, syncBlockedSince: null,
     retryAfter: null,
     // Mail 0088 — the fifth writer of the triple. See `markMailboxStoodDown`'s note.
-    organizerEventAt: now,
+    organizerEventAt: opts.now ?? new Date(),
   }).where(and(
     lifecycleWhere(mailboxId, opts.fence),
     /* THE REQUEST MUST STILL BE STANDING (the default cause). A worker carries a release decision
@@ -1307,11 +1277,7 @@ export { isMailboxSyncBlockReason };
  */
 export async function markMailboxSyncBlocked(
   db: WorkerDb, mailboxId: string, reason: MailboxSyncBlockReason,
-  opts: {
-    fence?: LeaderFence; now?: Date;
-    /** The row's kick stamp as the decision read it: the write lands only while it is unchanged. */
-    kickAsRead?: string | null;
-  } = {},
+  opts: { fence?: LeaderFence; now?: Date } = {},
 ): Promise<boolean> {
   const now = opts.now ?? new Date();
   // THE WRITE DOOR for a widenable set (mail 0029 opened it, mail 0102 widened it). The device
@@ -1323,11 +1289,7 @@ export async function markMailboxSyncBlocked(
     syncBlockedSince: sql`coalesce(${mailboxes.syncBlockedSince}, ${now.toISOString()}::timestamptz)`,
     // NOTHING ELSE. Not `status`, not `error_code`, not `error_detail`, not `failed_at`, not
     // `retry_count`. The absence is the design — see the block above this function.
-  }).where(and(
-    lifecycleWhere(mailboxId, opts.fence),
-    opts.kickAsRead === undefined ? undefined
-      : sql`${mailboxes.syncRequestedAt}::text is not distinct from ${opts.kickAsRead}`,
-  )).returning({ id: mailboxes.id }));
+  }).where(lifecycleWhere(mailboxId, opts.fence)).returning({ id: mailboxes.id }));
 }
 
 /**
@@ -1463,8 +1425,6 @@ export async function clearOrganizerStandDown(
       // is cleared unconditionally. Left standing it would make the next claim-back report "you
       // stopped organizing this" about a mailbox this install is organizing.
       organizerReleasedAt: null,
-      // Mail 0135 — the resume this promotion answers is spent with its stamp.
-      organizerParkedAt: null,
       // Mail 0088 — the second writer of the (role, state, holder) triple. A PROMOTION is an event
       // in exactly the sense the notice means: the person is entitled to be told once that this
       // install now organizes the mailbox, and on any other door they have open the sentence is
@@ -1487,39 +1447,6 @@ export async function clearOrganizerStandDown(
     await clearOwedRetroFences(w, mailboxId);
     await ringMailboxProfile(w, landed, mailboxId);
   });
-}
-
-/**
- * RESUME A MAILBOX THE WALL RELEASED (mail 0135), once its account is open again: the `join` stamp
- * `parkedResumeWhere` admits, FENCED like every lifecycle write. It writes a request, never the role
- * — the gate decides, and a live foreign claim wins. `false` is a row that did not qualify (already
- * stamped, released by the person, no longer a reader) or a fenced-out write; the caller mirrors
- * the stamp into its roster row only on `true`.
- */
-export async function resumeParkedMailbox(
-  db: WorkerDb, mailboxId: string, opts: { fence?: LeaderFence; now?: Date } = {},
-): Promise<boolean> {
-  const now = opts.now ?? new Date();
-  return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes)
-    .set(parkedResumeSet(now))
-    .where(and(lifecycleWhere(mailboxId, opts.fence), parkedResumeWhere()))
-    .returning({ id: mailboxes.id }));
-}
-
-/**
- * THE PARK'S PUSH ROWS GO WITH ITS BLOCK (mail 0124, narrowed by 0135): an account's rows are
- * deleted only while every live mailbox of it says `account_closed`, read by the delete itself.
- * The reopening door clears that block before any tab can re-announce, so a subscription made
- * after the payment is never taken by a pass that decided on a refusal from before it.
- */
-export async function deleteParkedPushRows(db: WorkerDb, accountIds: readonly string[]): Promise<number> {
-  if (accountIds.length === 0) return 0;
-  const gone = await db.delete(pushSubscriptions).where(and(
-    inArray(pushSubscriptions.accountId, [...accountIds]),
-    sql`not exists (select 1 from ${mailboxes} m where m.account_id = ${pushSubscriptions.accountId}
-      and m.status <> 'disabled' and m.sync_blocked_reason is distinct from 'account_closed')`,
-  )).returning({ id: pushSubscriptions.id });
-  return gone.length;
 }
 
 /**

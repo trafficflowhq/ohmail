@@ -1,0 +1,33 @@
+diff --git a/lib/smtp-connection/index.js b/lib/smtp-connection/index.js
+index 7ab94f3d9fd3a799833687d569e81b0e8cce2d9b..7ab7361db29365c50e42715c005769e4c3df2963 100644
+--- a/lib/smtp-connection/index.js
++++ b/lib/smtp-connection/index.js
+@@ -906,6 +906,28 @@ class SMTPConnection extends EventEmitter {
+      *        has been secured
+      */
+     _upgradeConnection(callback) {
++        // ANYTHING STILL UNREAD WHEN THE UPGRADE BEGINS WAS SENT IN CLEARTEXT, AND MUST NOT BE
++        // ATTRIBUTED TO THE ENCRYPTED SESSION.
++        //
++        // A server may send nothing between its `220` and the client's ClientHello, so a second
++        // response sitting in the queue — or a partial line in the remainder — was written by
++        // somebody who is not the server, or by a server pipelining what it must not pipeline.
++        // Either way it would be read back AFTER the handshake and answered as though it had
++        // arrived encrypted: an attacker who can append to the greeting gets a reply of their
++        // choosing treated as the server's, which for the AUTH stage is the credentials.
++        //
++        // The IMAP client in this program already refuses on exactly this condition. This is the
++        // same refusal for the mail-sending half, which had none.
++        if ((this._responseQueue && this._responseQueue.length) || (this._remainder && this._remainder.length)) {
++            return callback(
++                new Error(
++                    'the server sent more data after its STARTTLS response, so the upgrade is refused: ' +
++                    'those bytes arrived in cleartext and would otherwise be read as part of the ' +
++                    'encrypted session'
++                )
++            );
++        }
++
+         // do not remove all listeners or it breaks node v0.10 as there's
+         // apparently a 'finish' event set that would be cleared as well
+ 

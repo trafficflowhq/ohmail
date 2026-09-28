@@ -599,7 +599,6 @@ function ThisPhonePanel() {
           known: w.mailboxes.known,
           role: row.organizerRole,
           serverHolds: row.organizedByThisInstall,
-          parked: (row.organizerParkedAt ?? null) !== null,
           organizer: claimHolderOf(row),
         }),
       }));

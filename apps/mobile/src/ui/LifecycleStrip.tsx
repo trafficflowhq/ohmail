@@ -5,24 +5,29 @@
  * a lie about what has happened. It decides nothing — `lifecycle-strip.ts` answers which notice
  * there is and whether it was put away; this renders it and presses.
  *
- * The catch-up names no mailbox: a mailbox the closure paused resumes on its own (mail 0135), and
- * one the person stopped, or another install took, says so in Settings.
+ * NO AUTO RE-CLAIM (DUAL-MODE §4): ohmail released every lease when the account closed, and the
+ * press that resumes organizing is the Settings screen's own, reached by route with its ceremony.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import { Linking, View } from "react-native";
+import { useRouter } from "expo-router";
 import { Copy } from "../copy";
 import { useLocale } from "../i18n/LocaleProvider";
 import { Button, Panel, Txt, useTopPad } from "./base";
 import { dayStamp } from "./day-stamp";
-import { dismissKey, dismissed, noticeOf, remember, type Notice } from "./lifecycle-strip";
+import { dismissKey, dismissed, noticeOf, remember, stoodDown, type Notice } from "./lifecycle-strip";
 import { mintManageLink, readAccess, type ManageLink } from "../net/account";
 import { linksOutToBilling } from "../distribution";
+import { readMailboxes } from "../net/mailboxes";
+import type { PhoneMailbox } from "../net/mailboxes";
 import type { ConnectedSession } from "../net/pairing";
 
 export function LifecycleStrip({ session }: { session: ConnectedSession | null }) {
   const locale = useLocale();
+  const router = useRouter();
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [handedBack, setHandedBack] = useState<PhoneMailbox[]>([]);
   /* Does the service operate an account page — `manageUrl` is that fact and nothing more; the
      press mints its own link. Absent on a deployment with no subscription page, and the press is
      then not drawn — a button that goes nowhere is worse than no button. */
@@ -47,6 +52,11 @@ export function LifecycleStrip({ session }: { session: ConnectedSession | null }
       if (next === null || dismissed(dismissKey(next, session.ownerKey))) return;
       setNotice(next);
       setOffersPage(a.manageUrl !== undefined);
+      // Only the catch-up names mailboxes, so only it pays for the roster read.
+      if (next.kind !== "caughtUp") return;
+      void readMailboxes(session).then((rows) => {
+        if (live && rows !== null) setHandedBack(stoodDown(rows));
+      });
     });
     return () => { live = false; };
   }, [session]);
@@ -76,8 +86,28 @@ export function LifecycleStrip({ session }: { session: ConnectedSession | null }
     return (
       <Panel style={{ marginHorizontal: 16, marginTop: top, padding: 14, gap: 8 }}>
         <Txt variant="body" accessibilityRole="summary">
-          {Copy.stripCaughtUp(dayStamp(notice.since, locale))}
+          {Copy.stripCaughtUp(notice.count, dayStamp(notice.since, locale))}
         </Txt>
+        {handedBack.length > 0 ? (
+          <>
+            <Txt variant="note" tone="ink2">{Copy.stripHandedBack}</Txt>
+            {handedBack.map((m) => (
+              <View
+                key={m.id}
+                style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}
+              >
+                <Txt variant="note" tone="ink2" style={{ flexShrink: 1 }}>
+                  {m.displayName ?? m.address}
+                </Txt>
+                <Button
+                  label={Copy.stripStartOrganizing}
+                  variant="quiet"
+                  onPress={() => router.push("/settings")}
+                />
+              </View>
+            ))}
+          </>
+        ) : null}
         <Button label={Copy.stripDismiss} variant="quiet" onPress={putAway} />
       </Panel>
     );

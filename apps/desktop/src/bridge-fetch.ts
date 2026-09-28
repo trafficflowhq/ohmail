@@ -24,7 +24,7 @@ import {
 } from "@ohmail/client-engine";
 import { DESKTOP_WINDOW } from "../../webapp/app/shell/store-windows.js";
 import { WindowOutboxStore } from "./window-outbox-store.js";
-import { readStoredVerdict, storeVerdict } from "../../webapp/app/shell/wall-lift.js";
+import { storeVerdict } from "../../webapp/app/shell/wall-lift.js";
 import { forgetOpenVerdict, markOpenVerdict, refusalIsStale } from "../../webapp/app/shell/access-window.js";
 import { storageOwner } from "../../webapp/app/shell/storage-owner.js";
 
@@ -149,8 +149,7 @@ function noticeAccessAnswer(status: number, body: Uint8Array): void {
   }
   if (answer === null || answer.metered !== true) return;
   if (answer.access === "open") {
-    // An open answer over a stored `closed` is the reopening (the web client's rule).
-    markOpenVerdict(storageOwner(), Date.now(), readStoredVerdict(storageOwner()) === "closed");
+    markOpenVerdict(storageOwner());
     storeVerdict(storageOwner(), "open");
   } else if (answer.access === "refused") {
     forgetOpenVerdict();

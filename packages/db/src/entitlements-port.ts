@@ -202,24 +202,14 @@ export interface RefundObligationPort {
 export type ReleaseOutcome = "none" | "cancelled" | "cancel_failed";
 
 /**
- * What the program said about a Checkout the person has just returned from. `confirmed`: it is
- * this account's, paid and applied, so access reads open. `pending`: not yet — keep asking access.
- * `not_found`: an unknown session, another account's, or a program without the door. `fault`: no
- * answer. Four words, so an outage is never read as "not yours".
- */
-export type ReturnConfirmOutcome = "confirmed" | "pending" | "not_found" | "fault";
-
-/**
  * How a read of `access` may be answered. `fresh` asks past every cache and hold; `staleAllow` is
  * a READ route's: an ALLOW held a little past its TTL answers at once and is re-read behind it,
- * and a held refusal is asked about again first. `askedAfter` (the client's clock) answers only
- * from a call begun at or after that instant — no older held verdict, no older call in flight, and
- * on a fault no older verdict either. One of the three, never two.
+ * and a held refusal is asked about again first. One or the other, never both — a read cannot ask
+ * for the newest answer and accept an old one.
  */
 export type AccessReadOpts =
-  | { fresh?: boolean; staleAllow?: never; askedAfter?: never }
-  | { staleAllow: true; fresh?: never; askedAfter?: never }
-  | { askedAfter: number; fresh?: never; staleAllow?: never };
+  | { fresh?: boolean; staleAllow?: never }
+  | { staleAllow: true; fresh?: never };
 
 export interface EntitlementsPort {
   /**
@@ -271,13 +261,6 @@ export interface EntitlementsPort {
   /** The person is being erased: stop the money. Bounded and never throwing, because Article 17
    *  may not be withheld because a payment processor is unreachable. */
   releaseAccount(accountId: string): Promise<ReleaseOutcome>;
-  /**
-   * Ask the program to apply a Checkout the person has just returned from, instead of waiting for
-   * its webhook. `sessionId` is relayed as the return URL carried it; the program checks it names
-   * THIS account. Grants no credits here — the answer is relayed and access is read fresh after.
-   * Never throws. Optional: a program without the door answers `not_found` at the route.
-   */
-  confirmReturn?(accountId: string, sessionId: string): Promise<ReturnConfirmOutcome>;
 }
 
 /**
@@ -344,30 +327,19 @@ export function isMetered(e: EntitlementsComposition): e is EntitlementsPort {
  * parked. `null` on an unmetered host: nobody parks there, and the caller says so explicitly.
  * The client never throws and a fault answers last-known/allow, so a faulting read syncs more.
  */
-export type ParkedAccountsReader = (
-  accountIds: readonly string[], now: Date,
-  /** Accounts whose refusal must be asked again from `since` (the client's clock) — see below. */
-  recheck?: { accounts: ReadonlySet<string>; since: number },
-) => Promise<Set<string>>;
+export type ParkedAccountsReader =
+  (accountIds: readonly string[], now: Date) => Promise<Set<string>>;
 
 /** Bounded fan-out: one `access` per account, eight at a time. */
 export const PARKED_READ_CONCURRENCY = 8;
 
 export function parkedAccountsOf(entitlements: EntitlementsComposition): ParkedAccountsReader | null {
   if (!isMetered(entitlements)) return null;
-  return async (accountIds, _now, recheck) => {
+  return async (accountIds) => {
     const parked = new Set<string>();
     for (let i = 0; i < accountIds.length; i += PARKED_READ_CONCURRENCY) {
       const chunk = accountIds.slice(i, i + PARKED_READ_CONCURRENCY);
-      /* A REFUSAL IS ASKED AGAIN FOR A RECHECKED ACCOUNT (mail 0135): its row was kicked, and the
-         reopening door kicks in the statement that clears the block, so a refusal held from
-         before the kick may predate the clear. Only a refusal is asked twice; an allow stands. */
-      const verdicts = await Promise.all(chunk.map(async (id) => {
-        const held = await entitlements.access(id);
-        return held.ok || !recheck?.accounts.has(id)
-          ? held
-          : entitlements.access(id, { askedAfter: recheck.since });
-      }));
+      const verdicts = await Promise.all(chunk.map((id) => entitlements.access(id)));
       chunk.forEach((id, j) => { if (!verdicts[j]!.ok) parked.add(id); });
     }
     return parked;

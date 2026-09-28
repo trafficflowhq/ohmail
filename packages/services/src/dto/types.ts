@@ -637,13 +637,6 @@ export interface MailboxDTO {
    * instead of showing it for ever beside a row that has long since answered.
    */
   takeoverAuthorizedAt: ISODateTime | null;
-  /**
-   * When the WALL stood this mailbox down, or `null` (mail 0135). Set only by the park of a closed
-   * account; a release the person asked for is `null` here. While set, the row is paused rather than
-   * released: organizing resumes on its own once the account is open, so no surface may say the
-   * person stopped it. Cleared by the promotion or stand-down that answers the resume.
-   */
-  organizerParkedAt: ISODateTime | null;
   id: string;
   provider: string;              // 'imap' today; 'exchange' planned
   address: string;

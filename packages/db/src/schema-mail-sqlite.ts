@@ -432,8 +432,6 @@ export const mailboxes = sqliteTable("mailboxes", {
   syncProgressAt: integer("sync_progress_at", { mode: "timestamp_ms" }),
   /** Mail 0132 — the mailbox's own Sent folder, written at attach; see the pg twin. LAST for 0111's reason. */
   sentFolder: text("sent_folder"),
-  /** Mail 0135 — when the wall released this mailbox; see the pg twin. No device writes it. LAST for 0111's reason. */
-  organizerParkedAt: integer("organizer_parked_at", { mode: "timestamp_ms" }),
 }, (t) => ({
   ixIdAccount: uniqueIndex("mailboxes_id_account_uq").on(t.id, t.accountId),
   // ONE ACTIVE MAILBOX PER ADDRESS (mail 0021). PARTIAL, because `delete` is a soft delete to

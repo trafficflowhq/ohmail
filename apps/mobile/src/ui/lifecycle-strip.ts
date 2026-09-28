@@ -16,7 +16,7 @@ export const TRIAL_NOTICE_DAYS = 2;
 /** What the strip says, or `null` for the states that have nothing to say. */
 export type Notice =
   | { kind: "grace" | "pastDue" | "trialEnding"; deadline: string }
-  | { kind: "caughtUp"; since: string };
+  | { kind: "caughtUp"; since: string; count: number };
 
 /**
  * Decide the notice from the server's own facts and one clock reading.
@@ -26,12 +26,11 @@ export type Notice =
  */
 export function noticeOf(
   lifecycle: AccountLifecycle | undefined,
-  caughtUp: { since: string } | undefined,
+  caughtUp: { since: string; count: number } | undefined,
   now: number,
 ): Notice | null {
   // The catch-up outranks the rest: an account that has just reopened is not also in a grace.
-  // No count: the service answers only when the closure began (mail 0135), as it does for the web.
-  if (caughtUp) return { kind: "caughtUp", since: caughtUp.since };
+  if (caughtUp && caughtUp.count >= 0) return { kind: "caughtUp", ...caughtUp };
   if (lifecycle === undefined) return null;
   if (lifecycle.state === "grace" && lifecycle.graceUntil) {
     return { kind: "grace", deadline: lifecycle.graceUntil };
@@ -81,9 +80,12 @@ export function resetDismissalsForTests(): void {
 }
 
 /**
- * The mailboxes somebody agreed to let ohmail organize and that this install reads now — the
- * standalone strip's `stoppedHere`. A mailbox that never consented was never stopped, and a
- * server older than the consent column names none: an absent consent is never one of these.
+ * The mailboxes ohmail handed back while the account was closed, and has not been asked to retake.
+ *
+ * Role READER with a consent on record: somebody agreed to let ohmail organize this mailbox and
+ * ohmail is not the organizer now. A mailbox that never consented was never stood down, and a
+ * server older than the consent column names none — so an absent consent is NOT a stood-down
+ * mailbox, the direction that never invites somebody to re-start something they never started.
  */
 export function stoodDown(items: readonly PhoneMailbox[]): PhoneMailbox[] {
   return items.filter((m) => m.organizerRole === "reader" && m.organizeConsentedAt != null);

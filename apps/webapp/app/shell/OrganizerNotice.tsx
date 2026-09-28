@@ -45,8 +45,7 @@ export function OrganizerNotice({
    * did not happen, and the surface must not claim it did.
    */
   const [acknowledged, setAcknowledged] = useState<ReadonlySet<string>>(() => new Set());
-  // A mailbox the wall paused gets no line: the account strip says why, and the resume says `here`.
-  const live = notices.filter((n) => n.kind !== "parked" && !acknowledged.has(n.id));
+  const live = notices.filter((n) => !acknowledged.has(n.id));
   if (live.length === 0) return null;
 
   const sentence = (n: OrganizerNoticeFact): ReactNode => {

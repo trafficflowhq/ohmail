@@ -13,13 +13,6 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
-
-## [0.25.4] — 2026-09-28
-
 ### Settings → About writes a diagnostic file you can send us
 <!-- changes: maturity-026-m4-local.md -->
 
@@ -264,39 +257,10 @@ and Version labels, the default name of a desktop that paired without one, the p
 and its Einordnen action. Every screen now addresses the reader as du. The keyboard hints under
 the lists read whole in German, and the phone's Screener doorbell no longer says "Screener" twice.
 
-### Answering the message you have open moves it to Earlier
-<!-- changes: fix-026-an-answer-files-the-open-row.md -->
+### Still to come
 
-A reply, reply all or forward of the message you have open in the Ohbox now moves it to Earlier with your
-answer as soon as the answer is sent; it no longer stays in New beside its own conversation until you move
-on.
-
-### Nothing tells you that you stopped organizing a mailbox the closure paused
-<!-- changes: open-026-paid-reopens-b.md -->
-
-While an account is closed, a mailbox ohmail paused reads "Paused while the account was closed —
-organizing resumes on its own" on the web, the desktop and the phone. After you pay, the sync line
-says it is catching up without a date from before the closure, a stale answer in that first minute
-is not reported as a failed sync, and the catch-up note no longer lists mailboxes to start again.
-The phone shows the catch-up note again.
-
-### After you subscribe again, your mailboxes are organized again straight away
-<!-- changes: open-026-paid-reopens.md -->
-
-After you pay for a closed account, it opens as soon as you are back from the payment page, and
-ohmail organizes your mailboxes again without a press on each one. A mailbox you had stopped
-organizing yourself stays stopped, and one that another ohmail install took over while the account
-was closed stays with it. The web app no longer says the subscription has ended right after you
-pay, notifications turned back on after the payment are kept, and the catch-up note says since when
-ohmail is catching up, without a count.
-
-### Known issue — Android
-
-Android builds up to 0.25.3 were made without two fixes this repository carries for the phone's TLS
-transport and mail sender. On those builds an outgoing server on a STARTTLS port (587) does not
-send, and adding a mailbox on port 143 fails and closes the app; implicit TLS on 465 and 993 works.
-A valid certificate for a different name than the server's is accepted on those builds. The next
-Android build carries both fixes. iOS and the desktop are not affected.
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
 
 ## [0.25.3] — 2026-09-27
 
@@ -10141,8 +10105,7 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.4...HEAD
-[0.25.4]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.4
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.3...HEAD
 [0.25.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.3
 [0.25.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.2
 [0.25.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.1

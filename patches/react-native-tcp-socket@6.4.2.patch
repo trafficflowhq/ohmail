@@ -1,0 +1,683 @@
+diff --git a/android/src/main/java/com/asterinet/react/tcpsocket/SSLCertificateHelper.java b/android/src/main/java/com/asterinet/react/tcpsocket/SSLCertificateHelper.java
+index 1e0622fb26819507088c6b2147a407e23fe3d25f..b47ef34cb33c60dd9f77b77983b259db4ddaceee 100644
+--- a/android/src/main/java/com/asterinet/react/tcpsocket/SSLCertificateHelper.java
++++ b/android/src/main/java/com/asterinet/react/tcpsocket/SSLCertificateHelper.java
+@@ -20,6 +20,7 @@ import java.security.KeyStore;
+ import java.security.PrivateKey;
+ import java.security.SecureRandom;
+ import java.security.cert.Certificate;
++import java.security.cert.CertificateException;
+ import java.security.cert.CertificateFactory;
+ import java.security.spec.PKCS8EncodedKeySpec;
+ import java.security.cert.X509Certificate;
+@@ -31,6 +32,7 @@ import java.util.Locale;
+ 
+ import javax.net.ssl.KeyManagerFactory;
+ import javax.net.ssl.SSLContext;
++import javax.net.ssl.SSLEngine;
+ import javax.net.ssl.SSLPeerUnverifiedException;
+ import javax.net.ssl.SSLServerSocketFactory;
+ import javax.net.ssl.SSLSession;
+@@ -38,6 +40,7 @@ import javax.net.ssl.SSLSocket;
+ import javax.net.ssl.SSLSocketFactory;
+ import javax.net.ssl.TrustManager;
+ import javax.net.ssl.TrustManagerFactory;
++import javax.net.ssl.X509ExtendedTrustManager;
+ import javax.net.ssl.X509TrustManager;
+ 
+ import com.facebook.react.bridge.Arguments;
+@@ -52,17 +55,6 @@ import org.json.JSONObject;
+ 
+ final class SSLCertificateHelper {
+ 
+-    /**
+-     * Creates an SSLSocketFactory instance for use with all CAs provided.
+-     *
+-     * @return An SSLSocketFactory which trusts all CAs when provided to network clients
+-     */
+-    static SSLSocketFactory createBlindSocketFactory() throws GeneralSecurityException {
+-        SSLContext ctx = SSLContext.getInstance("TLS");
+-        ctx.init(null, new TrustManager[]{new BlindTrustManager()}, null);
+-        return ctx.getSocketFactory();
+-    }
+-
+     static SSLServerSocketFactory createServerSocketFactory(Context context, @NonNull final String keyStoreResourceUri) throws GeneralSecurityException, IOException {
+         char[] password = "".toCharArray();
+ 
+@@ -74,8 +66,11 @@ final class SSLCertificateHelper {
+         KeyManagerFactory keyManagerFactory = KeyManagerFactory.getInstance("X509");
+         keyManagerFactory.init(keyStore, password);
+ 
++        // The platform's defaults rather than a manager that accepts everything. A server's trust
++        // managers govern CLIENT certificates, which this one never asks for — so the blind
++        // manager bought nothing here and left the class alive for the path where it was a hole.
+         SSLContext sslContext = SSLContext.getInstance("TLS");
+-        sslContext.init(keyManagerFactory.getKeyManagers(), new TrustManager[]{new BlindTrustManager()}, null);
++        sslContext.init(keyManagerFactory.getKeyManagers(), null, new SecureRandom());
+ 
+         return sslContext.getServerSocketFactory();
+     }
+@@ -186,34 +181,128 @@ final class SSLCertificateHelper {
+             }
+         } 
+         
+-        if (keyStore != null) {
+-            // Initialize the KeyManagerFactory with this cert
+-            KeyManagerFactory keyManagerFactory = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+-            keyManagerFactory.init(keyStore, new char[0]);
+-
+-            // Create an SSL context that uses the created trust manager
+-            SSLContext sslContext = SSLContext.getInstance("TLS");
+-            sslContext.init(keyManagerFactory.getKeyManagers(), new TrustManager[]{new BlindTrustManager()}, null);
+-            return sslContext.getSocketFactory();
+-        } else {
+-            // Keep old behavior
+-            InputStream caInput = getResolvableinputStream(context, optionResCa);
+-            // Generate the CA Certificate from the raw resource file
+-            Certificate ca = CertificateFactory.getInstance("X.509").generateCertificate(caInput);
+-            caInput.close();
+-            // Load the key store using the CA
+-            keyStore = KeyStore.getInstance(KeyStore.getDefaultType());
+-            keyStore.load(null, null);
+-            keyStore.setCertificateEntry("ca", ca);
++        // ONE CONTEXT, AND ITS TRUST MANAGER IS NEVER THE CALLER'S TO REPLACE.
++        //
++        // A client certificate is a KEY manager — it says who WE are. It has nothing to do with
++        // who the server may be, and the two used to be conflated here: supplying a client
++        // identity installed a trust manager that accepted every chain, so an option about our own
++        // credentials silently turned off every check on theirs.
++        //
++        // A supplied `ca` ADDS an anchor and does not replace the platform's, which is what the
++        // option is for — reaching a server with a private root — and not a way to narrow trust to
++        // one issuer while losing every public one.
++        final KeyManagerFactory keyManagerFactory =
++                keyStore == null ? null : KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
++        if (keyManagerFactory != null) keyManagerFactory.init(keyStore, new char[0]);
++
++        final SSLContext sslContext = SSLContext.getInstance("TLS");
++        sslContext.init(
++                keyManagerFactory == null ? null : keyManagerFactory.getKeyManagers(),
++                new TrustManager[]{ additiveTrustManager(caKeyStore(context, optionResCa)) },
++                new SecureRandom());
++        return sslContext.getSocketFactory();
++    }
++
++    /** A key store holding just the caller's CA, or null when they supplied none. */
++    private static KeyStore caKeyStore(@NonNull final Context context, final ResolvableOption optionResCa)
++            throws IOException, GeneralSecurityException {
++        if (optionResCa == null) return null;
++        try (InputStream caInput = getResolvableinputStream(context, optionResCa)) {
++            final Certificate ca = CertificateFactory.getInstance("X.509").generateCertificate(caInput);
++            final KeyStore roots = KeyStore.getInstance(KeyStore.getDefaultType());
++            roots.load(null, null);
++            roots.setCertificateEntry("ca", ca);
++            return roots;
++        }
++    }
++
++    /**
++     * The platform's trust anchors, PLUS the caller's if they gave one.
++     *
++     * EXTENDED on purpose, and this is the half that is easy to lose: hostname verification is
++     * performed by the trust manager, and only the extended interface receives the socket whose
++     * parameters ask for it. A plain `X509TrustManager` is wrapped in a shim that checks the chain
++     * and NOT the name — so installing one silently undoes
++     * `setEndpointIdentificationAlgorithm("HTTPS")` while every other line still reads as if TLS
++     * were being verified.
++     */
++    private static X509ExtendedTrustManager additiveTrustManager(final KeyStore extraRoots)
++            throws GeneralSecurityException {
++        final X509ExtendedTrustManager platform = extendedTrustManagerFor(null);
++        if (extraRoots == null) return platform;
++        return new AdditiveTrustManager(platform, extendedTrustManagerFor(extraRoots));
++    }
++
++    private static X509ExtendedTrustManager extendedTrustManagerFor(final KeyStore store)
++            throws GeneralSecurityException {
++        final TrustManagerFactory tmf =
++                TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
++        tmf.init(store);
++        for (final TrustManager tm : tmf.getTrustManagers()) {
++            if (tm instanceof X509ExtendedTrustManager) return (X509ExtendedTrustManager) tm;
++        }
++        // Refusing beats degrading: without an extended manager the name cannot be checked, and a
++        // connection that cannot check the name is the one this whole file exists to prevent.
++        throw new GeneralSecurityException(
++                "no X509ExtendedTrustManager is available, so the server's name could not be verified");
++    }
++
++    /**
++     * Accepts a chain the platform accepts, OR one the caller's own anchor accepts. Never neither.
++     *
++     * Every overload delegates, including the three that carry the socket or engine — those are
++     * the ones through which hostname verification happens, so dropping them would be the same
++     * defect as installing a plain manager.
++     */
++    private static final class AdditiveTrustManager extends X509ExtendedTrustManager {
++        private final X509ExtendedTrustManager platform;
++        private final X509ExtendedTrustManager extra;
++
++        AdditiveTrustManager(final X509ExtendedTrustManager platform, final X509ExtendedTrustManager extra) {
++            this.platform = platform;
++            this.extra = extra;
++        }
+ 
+-            // Initialize the TrustManager with this CA
+-            TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+-            tmf.init(keyStore);
++        private interface Check { void run(X509ExtendedTrustManager tm) throws CertificateException; }
+ 
+-            // Create an SSL context that uses the created trust manager
+-            SSLContext sslContext = SSLContext.getInstance("TLS");
+-            sslContext.init(null, tmf.getTrustManagers(), new SecureRandom());
+-            return sslContext.getSocketFactory();
++        private void either(final Check check) throws CertificateException {
++            try {
++                check.run(platform);
++            } catch (final CertificateException fromPlatform) {
++                try {
++                    check.run(extra);
++                } catch (final CertificateException fromExtra) {
++                    fromPlatform.addSuppressed(fromExtra);
++                    throw fromPlatform;
++                }
++            }
++        }
++
++        @Override public void checkClientTrusted(X509Certificate[] c, String a) throws CertificateException {
++            either(tm -> tm.checkClientTrusted(c, a));
++        }
++        @Override public void checkClientTrusted(X509Certificate[] c, String a, Socket s) throws CertificateException {
++            either(tm -> tm.checkClientTrusted(c, a, s));
++        }
++        @Override public void checkClientTrusted(X509Certificate[] c, String a, SSLEngine e) throws CertificateException {
++            either(tm -> tm.checkClientTrusted(c, a, e));
++        }
++        @Override public void checkServerTrusted(X509Certificate[] c, String a) throws CertificateException {
++            either(tm -> tm.checkServerTrusted(c, a));
++        }
++        @Override public void checkServerTrusted(X509Certificate[] c, String a, Socket s) throws CertificateException {
++            either(tm -> tm.checkServerTrusted(c, a, s));
++        }
++        @Override public void checkServerTrusted(X509Certificate[] c, String a, SSLEngine e) throws CertificateException {
++            either(tm -> tm.checkServerTrusted(c, a, e));
++        }
++        @Override public X509Certificate[] getAcceptedIssuers() {
++            final X509Certificate[] p = platform.getAcceptedIssuers();
++            final X509Certificate[] x = extra.getAcceptedIssuers();
++            final X509Certificate[] all = new X509Certificate[p.length + x.length];
++            System.arraycopy(p, 0, all, 0, p.length);
++            System.arraycopy(x, 0, all, p.length, x.length);
++            return all;
+         }
+     }
+ 
+@@ -234,19 +323,6 @@ final class SSLCertificateHelper {
+         }
+     }
+ 
+-    private static class BlindTrustManager implements X509TrustManager {
+-        public X509Certificate[] getAcceptedIssuers() {
+-            return null;
+-        }
+-
+-        @SuppressLint("TrustAllX509TrustManager")
+-        public void checkClientTrusted(X509Certificate[] chain, String authType) {
+-        }
+-
+-        @SuppressLint("TrustAllX509TrustManager")
+-        public void checkServerTrusted(X509Certificate[] chain, String authType) {
+-        }
+-    }
+ 
+     public static ReadableMap getCertificateInfo(Socket socket, boolean wantPeerCert) {
+         WritableMap certInfo = Arguments.createMap();
+diff --git a/android/src/main/java/com/asterinet/react/tcpsocket/TcpSocketClient.java b/android/src/main/java/com/asterinet/react/tcpsocket/TcpSocketClient.java
+index 75115700e46138a43b5c63c36bee88016bd6129e..22a5af34acd00a4203587ae2ca119e5dcf167077 100644
+--- a/android/src/main/java/com/asterinet/react/tcpsocket/TcpSocketClient.java
++++ b/android/src/main/java/com/asterinet/react/tcpsocket/TcpSocketClient.java
+@@ -11,11 +11,13 @@ import java.io.IOException;
+ import java.net.InetAddress;
+ import java.net.InetSocketAddress;
+ import java.net.Socket;
++import java.net.SocketTimeoutException;
+ import java.security.GeneralSecurityException;
+ import java.util.Arrays;
+ import java.util.concurrent.ExecutorService;
+ import java.util.concurrent.Executors;
+ 
++import javax.net.ssl.SSLParameters;
+ import javax.net.ssl.SSLSocket;
+ import javax.net.ssl.SSLSocketFactory;
+ 
+@@ -26,6 +28,33 @@ class TcpSocketClient extends TcpSocket {
+     private TcpReceiverTask receiverTask;
+     private Socket socket;
+     private boolean closed = true;
++    /**
++     * The name the caller asked to reach, kept because TLS needs it twice: as the SNI extension
++     * and as the name the certificate is checked against. Upstream passed neither, so a
++     * certificate for any host satisfied a dial to any other.
++     */
++    private String peerName;
++
++    /**
++     * How long a receive may block before the loop looks at the pause flag again.
++     *
++     * Upstream's loop checked the flag only AFTER an unbounded read, so a paused receiver was
++     * still sitting inside `read()` and still ate the next bytes off the wire. That is what made
++     * the STARTTLS upgrade unimplementable: the TLS handshake and the plaintext reader raced for
++     * the same stream and the handshake lost, reporting `Unable to parse TLS packet header`.
++     */
++    private static final int RECEIVE_POLL_MS = 250;
++
++    /**
++     * How long a TLS handshake may take.
++     *
++     * Stated separately because the two deadlines are unrelated and sharing one is a bug: the
++     * poll above exists so a paused receiver stops reading promptly, and applying it to a
++     * handshake makes every connection over a real network fail with `Read timed out` — a
++     * message that names neither TLS nor the poll it came from.
++     */
++    private static final int HANDSHAKE_TIMEOUT_MS = 30_000;
++
+ 
+     TcpSocketClient(TcpEventListener receiverListener, Integer id, Socket socket) {
+         super(id);
+@@ -41,13 +70,15 @@ class TcpSocketClient extends TcpSocket {
+ 
+     public void connect(Context context, String address, final Integer port, ReadableMap options, Network network, ReadableMap tlsOptions) throws IOException, GeneralSecurityException {
+         if (socket != null) throw new IOException("Already connected");
+-        if (tlsOptions != null) {
+-            SSLSocketFactory ssf = getSSLSocketFactory(context, tlsOptions);
+-            socket = ssf.createSocket();
+-            ((SSLSocket) socket).setUseClientMode(true);
+-        } else {
+-            socket = new Socket();
+-        }
++        // The name to verify against is the caller's if they gave one, and the dialled address
++        // otherwise. ONE resolution, used by both this path and the upgrade below — they disagreed
++        // before, so an implicit-TLS dial could not reach a pinned address and still check a name.
++        peerName = peerNameFrom(tlsOptions, address);
++        // A PLAIN socket first, always. Upstream built the SSLSocket with the no-argument
++        // `createSocket()` and then connected it by address, which leaves the socket with no peer
++        // name at all: no SNI goes out, and there is nothing for the certificate to be checked
++        // against. Connecting first and layering afterwards is what makes both possible.
++        socket = new Socket();
+         // Get the addresses
+         final String localAddress = options.hasKey("localAddress") ? options.getString("localAddress") : "0.0.0.0";
+         final InetAddress localInetAddress = InetAddress.getByName(localAddress);
+@@ -67,17 +98,149 @@ class TcpSocketClient extends TcpSocket {
+         socket.bind(new InetSocketAddress(localInetAddress, localPort));
+         final int connectTimeout = options.hasKey("connectTimeout") ? options.getInt("connectTimeout") : 0; 
+         socket.connect(new InetSocketAddress(remoteInetAddress, port), connectTimeout);
+-        if (socket instanceof SSLSocket) ((SSLSocket) socket).startHandshake();
++        if (tlsOptions != null) {
++            socket.setSoTimeout(HANDSHAKE_TIMEOUT_MS);
++            SSLSocketFactory ssf = getSSLSocketFactory(context, tlsOptions);
++            SSLSocket secure = (SSLSocket) ssf.createSocket(socket, peerName, port, true);
++            secure.setUseClientMode(true);
++            applyTlsFloor(secure, tlsOptions);
++            secure.startHandshake();
++            socket = secure;
++        }
++        // Only now: the poll bounds the RECEIVE LOOP, and a handshake is not one.
++        socket.setSoTimeout(RECEIVE_POLL_MS);
+         startListening();
+     }
+ 
++    /**
++     * Encrypt the connection already carrying the session — the STARTTLS upgrade.
++     *
++     * Three things have to be true and upstream had none of them: no read may be in flight when
++     * the handshake starts, the certificate must be checked against the name the caller asked
++     * for rather than the address it resolved to, and the receiver must read the DECRYPTED
++     * stream afterwards rather than the plaintext socket it captured at connect time.
++     */
+     public void startTLS(Context context, ReadableMap tlsOptions) throws IOException, GeneralSecurityException {
+         if (socket instanceof SSLSocket) return;
+-        SSLSocketFactory ssf = getSSLSocketFactory(context, tlsOptions);
+-        SSLSocket sslSocket = (SSLSocket) ssf.createSocket(socket, socket.getInetAddress().getHostAddress(), socket.getPort(), true);
+-        sslSocket.setUseClientMode(true);
+-        sslSocket.startHandshake();
+-        socket = sslSocket;
++        final String name = peerNameFrom(tlsOptions, peerName);
++        if (name == null) throw new IOException("startTLS without a peer name to verify against");
++        boolean upgraded = false;
++        try {
++            // Inside the try, so a receiver that will not quiesce still reaches the `finally` that
++            // un-pauses it. Outside, giving up left the reader paused for the life of the process:
++            // a connection that is open, silent, and never delivers another byte.
++            if (receiverTask != null) receiverTask.pauseForUpgradeAndAwaitIdle();
++
++            // ANY PLAINTEXT STILL UNREAD IS INJECTED PLAINTEXT. The server may send nothing between
++            // its `OK begin TLS` and our ClientHello, so a byte waiting here was written by
++            // somebody who is not the server, or by a server pipelining responses it must not
++            // pipeline. Either way it would be read back AFTER the handshake and attributed to the
++            // encrypted session, which is the whole of a STARTTLS injection.
++            if (socket.getInputStream().available() > 0) {
++                throw new IOException(
++                        "refusing the TLS upgrade: plaintext arrived after the STARTTLS command and "
++                                + "would be read as though it came from the encrypted session");
++            }
++
++            socket.setSoTimeout(HANDSHAKE_TIMEOUT_MS);
++            SSLSocketFactory ssf = getSSLSocketFactory(context, tlsOptions);
++            SSLSocket sslSocket = (SSLSocket) ssf.createSocket(socket, name, socket.getPort(), true);
++            sslSocket.setUseClientMode(true);
++            applyTlsFloor(sslSocket, tlsOptions);
++            sslSocket.startHandshake();
++            sslSocket.setSoTimeout(RECEIVE_POLL_MS);
++            socket = sslSocket;
++            upgraded = true;
++        } finally {
++            if (!upgraded) {
++                // A FAILED UPGRADE CLOSES THE CONNECTION. Leaving it open leaves a writable
++                // CLEARTEXT socket that the session was about to trust — the caller has already
++                // sent STARTTLS and believes the next byte is encrypted, so anything written after
++                // this point goes out in the clear, credentials included.
++                closed = true;
++                try { socket.close(); } catch (final IOException ignored) { /* already gone */ }
++                receiverListener.onClose(getId(), null);
++            } else if (receiverTask != null) {
++                receiverTask.resumeFromUpgrade(socket);
++            }
++        }
++    }
++
++    /** The name a certificate is checked against: the caller's `servername`, else the dial's. */
++    private static String peerNameFrom(final ReadableMap tlsOptions, final String fallback) {
++        if (tlsOptions != null && tlsOptions.hasKey("servername")) {
++            final String given = tlsOptions.getString("servername");
++            if (given != null && !given.isEmpty()) return given;
++        }
++        return fallback;
++    }
++
++    /**
++     * The checks a TLS dial gets no matter what the caller asked for.
++     *
++     * `setEndpointIdentificationAlgorithm("HTTPS")` is the one that matters: a bare `SSLSocket`
++     * validates the chain and NOT the name, so without it a certificate issued for any host is
++     * accepted for every host. `minVersion` is honoured here because the platform has no option
++     * of that name — the caller's floor would otherwise be silently discarded.
++     */
++    private void applyTlsFloor(SSLSocket s, ReadableMap tlsOptions) {
++        SSLParameters params = s.getSSLParameters();
++        params.setEndpointIdentificationAlgorithm("HTTPS");
++        s.setSSLParameters(params);
++        final String min = tlsOptions.hasKey("minVersion") ? tlsOptions.getString("minVersion") : null;
++        if (min == null) return;
++        final java.util.List<String> ladder = Arrays.asList("TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3");
++        final int floor = ladder.indexOf(min);
++        // AN UNKNOWN FLOOR IS A REFUSAL, NOT A SHRUG. A typo, a newer name this list has not
++        // learned, or a value from somewhere unexpected used to mean "apply no floor at all" —
++        // the caller asks for MORE protection and silently receives less, which is the one
++        // direction a security option must never fail in.
++        if (floor < 0) {
++            throw new IllegalArgumentException(
++                    "unknown TLS minVersion '" + min + "'; expected one of " + ladder);
++        }
++        // THE INTERSECTION OF WHAT THE PLATFORM ALREADY ENABLES AND WHAT THE CALLER WILL ACCEPT.
++        // Filtering `getSupportedProtocols()` was wrong in the dangerous direction: the platform
++        // SUPPORTS TLS 1.0 and 1.1 and deliberately does not ENABLE them, so a floor of "TLSv1"
++        // turned an option that only ever narrows into one that switched two dead protocols back
++        // on.
++        // THE SET THE PLATFORM HAD ENABLED BEFORE THIS METHOD TOUCHED ANYTHING. Held onto because
++        // the self-check below cannot do its job without it: knowing only the floor, it cannot tell
++        // a narrowed set from a widened one.
++        final java.util.List<String> wasEnabled = Arrays.asList(s.getEnabledProtocols());
++        final java.util.List<String> keep = new java.util.ArrayList<>();
++        for (final String proto : wasEnabled) {
++            if (ladder.indexOf(proto) >= floor) keep.add(proto);
++        }
++        if (keep.isEmpty()) {
++            throw new IllegalArgumentException(
++                    "no enabled TLS protocol meets the requested minimum " + min
++                            + "; enabled are " + Arrays.toString(s.getEnabledProtocols()));
++        }
++        s.setEnabledProtocols(keep.toArray(new String[0]));
++
++        // THE FLOOR CHECKS ITSELF, because the mistake it guards against is invisible from outside.
++        // Filtering the SUPPORTED list rather than the ENABLED one re-enables protocols the platform
++        // had deliberately switched off, and no dial to a modern server reveals it: the handshake
++        // still negotiates the best version both sides offer.
++        //
++        // TWO ASSERTIONS, because the first alone cannot see that mistake. Everything the supported
++        // list yields also clears the floor, so a check that only compares against the floor passes
++        // just as happily on the widened set. The second compares against what was enabled BEFORE,
++        // which is the only reading that tells narrowing from widening.
++        for (final String enabled : s.getEnabledProtocols()) {
++            if (ladder.indexOf(enabled) < floor) {
++                throw new IllegalStateException(
++                        "the TLS floor did not hold: " + enabled + " is enabled below the requested "
++                                + min + ". Enabled are " + Arrays.toString(s.getEnabledProtocols()));
++            }
++            if (!wasEnabled.contains(enabled)) {
++                throw new IllegalStateException(
++                        "the TLS floor turned " + enabled + " back on; the platform had it disabled. "
++                                + "A minimum version may only narrow what is enabled. Enabled before: "
++                                + wasEnabled + ", after: " + Arrays.toString(s.getEnabledProtocols()));
++            }
++        }
+     }
+ 
+     private boolean containsKey(ReadableArray array, String key) {
+@@ -114,19 +277,17 @@ class TcpSocketClient extends TcpSocket {
+         final String certAlias = tlsOptions.hasKey("certAlias") ? tlsOptions.getString("certAlias") : "";
+         final KeystoreInfo keystoreInfo = new KeystoreInfo(keystoreName, caAlias, certAlias, keyAlias);
+ 
+-        if (tlsOptions.hasKey("rejectUnauthorized") && !tlsOptions.getBoolean("rejectUnauthorized")) {
+-            if ((customTlsKey != null && customTlsCert != null) ||
+-                    (keyAlias != null && !keyAlias.isEmpty() && customTlsKey == null) ) {
+-                ssf = SSLCertificateHelper.createCustomTrustedSocketFactory(
+-                        context,
+-                        customTlsCa,
+-                        customTlsKey,
+-                        customTlsCert,
+-                        keystoreInfo
+-                );
+-            } else {
+-                ssf = SSLCertificateHelper.createBlindSocketFactory();
+-            }
++        // `rejectUnauthorized: false` no longer buys a trust-nothing factory. A caller may ADD a
++        // root of its own (`ca`, or a keystore alias) and may not take the default checks away:
++        // a mail client that accepts any certificate hands the password to whoever answers.
++        if (customTlsKey != null || (keyAlias != null && !keyAlias.isEmpty())) {
++            ssf = SSLCertificateHelper.createCustomTrustedSocketFactory(
++                    context,
++                    customTlsCa,
++                    customTlsKey,
++                    customTlsCert,
++                    keystoreInfo
++            );
+         } else {
+             ssf = (customTlsCa != null)
+                     ? SSLCertificateHelper.createCustomTrustedSocketFactory(
+@@ -223,7 +384,10 @@ class TcpSocketClient extends TcpSocket {
+         }
+     }
+ 
++
+     public void resume() {
++        // No interlock is needed here any more: the receiver keeps the upgrade's pause under its
++        // own monitor and `resume()` cannot reach it — see `TcpReceiverTask.upgradePaused`.
+         if (receiverTask != null) {
+             receiverTask.resume();
+         }
+@@ -238,7 +402,22 @@ class TcpSocketClient extends TcpSocket {
+ 
+         private final TcpSocketClient clientSocket;
+         private final TcpEventListener receiverListener;
+-        private boolean paused = false;
++        /** Flow control's pause — the application is not reading. `resume()` clears THIS one. */
++        private boolean flowPaused = false;
++        /**
++         * The upgrade's pause, which flow control may not clear.
++         *
++         * As one flag with the above, an ordinary `resume()` — which the JavaScript side issues
++         * from a microtask whenever the application reads — un-paused the receiver in the middle
++         * of a handshake. Guarding that with a separate "am I upgrading" boolean only narrowed the
++         * window, because reading it and clearing the pause were two steps. Two reasons under one
++         * monitor is the shape that has no window.
++         */
++        private boolean upgradePaused = false;
++        /** True while the loop is inside a read; the upgrade waits for it to fall. */
++        private boolean reading = false;
++        /** Set when the socket underneath is replaced, so the loop re-opens its stream. */
++        private boolean streamStale = false;
+ 
+         public TcpReceiverTask(TcpSocketClient clientSocket, TcpEventListener receiverListener) {
+             this.clientSocket = clientSocket;
+@@ -247,14 +426,18 @@ class TcpSocketClient extends TcpSocket {
+ 
+         /**
+          * An infinite loop to block and read data from the socket.
++         *
++         * The pause flag is read BEFORE the receive and the receive itself is bounded, so a
++         * pause takes effect within {@link #RECEIVE_POLL_MS} instead of "whenever the peer next
++         * sends something" — which for an idle IMAP connection is never. The stream is re-opened
++         * whenever the socket underneath has been swapped, because the buffered reader the loop
++         * held belongs to the plaintext socket and would keep reading it straight past the
++         * handshake.
+          */
+         @Override
+         public void run() {
+             int socketId = clientSocket.getId();
+             Socket socket = clientSocket.getSocket();
+-
+-            // Guard against null socket - can happen if destroy() is called
+-            // before the receiver task starts, or if socket creation failed
+             if (socket == null) {
+                 return;
+             }
+@@ -263,8 +446,28 @@ class TcpSocketClient extends TcpSocket {
+             try {
+                 BufferedInputStream in = new BufferedInputStream(socket.getInputStream());
+                 while (!socket.isClosed()) {
+-                    int bufferCount = in.read(buffer);
+-                    waitIfPaused();
++                    // WAITING AND MARKING ARE ONE OPERATION. As two, there was a window between
++                    // "not paused" and "now reading" in which an upgrade could see an idle reader,
++                    // return, and start a handshake that the reader then read the first record of.
++                    // The pause and the read-in-progress flag live under one monitor so that
++                    // window does not exist.
++                    beginRead();
++                    if (takeStreamStale()) {
++                        socket = clientSocket.getSocket();
++                        if (socket == null || socket.isClosed()) { endRead(); break; }
++                        in = new BufferedInputStream(socket.getInputStream());
++                    }
++                    int bufferCount;
++                    try {
++                        bufferCount = in.read(buffer);
++                    } catch (SocketTimeoutException idle) {
++                        // Nothing arrived inside the poll window. The only reason this read is
++                        // bounded at all is so a pause gets a turn.
++                        endRead();
++                        continue;
++                    } finally {
++                        endRead();
++                    }
+                     if (bufferCount > 0) {
+                         receiverListener.onData(socketId, Arrays.copyOfRange(buffer, 0, bufferCount));
+                     } else if (bufferCount == -1) {
+@@ -280,18 +483,61 @@ class TcpSocketClient extends TcpSocket {
+         }
+ 
+         public synchronized void pause() {
+-            paused = true;
++            flowPaused = true;
+         }
+ 
+         public synchronized void resume() {
+-            paused = false;
+-            notify();
++            // Flow control clears only its OWN pause. An upgrade's pause is not this method's to
++            // lift, and the upgrade lifts it itself when it finishes.
++            flowPaused = false;
++            notifyAll();
++        }
++
++        /** Wait until no reason to be paused remains, and mark the read in progress — atomically. */
++        private synchronized void beginRead() throws InterruptedException {
++            while (flowPaused || upgradePaused) wait();
++            reading = true;
+         }
+ 
+-        private synchronized void waitIfPaused() throws InterruptedException {
+-            while (paused) {
+-                wait();
++        /** The read is over; anyone waiting for the reader to fall idle may proceed. */
++        private synchronized void endRead() {
++            reading = false;
++            notifyAll();
++        }
++
++        /**
++         * Pause for a TLS upgrade and do not return until the loop is demonstrably out of its read.
++         *
++         * "Paused" alone is not enough: a reader still inside `read()` will take the server's first
++         * record and leave the handshake looking at the middle of a packet. The read is bounded by
++         * the receive poll, so this waits at most a few of those.
++         */
++        public synchronized void pauseForUpgradeAndAwaitIdle() throws IOException {
++            upgradePaused = true;
++            final long deadline = System.currentTimeMillis() + RECEIVE_POLL_MS * 8L;
++            while (reading && System.currentTimeMillis() < deadline) {
++                try {
++                    wait(RECEIVE_POLL_MS);
++                } catch (InterruptedException ie) {
++                    Thread.currentThread().interrupt();
++                    throw new IOException("interrupted while quiescing the receiver for TLS");
++                }
+             }
++            if (reading) throw new IOException("receiver would not quiesce; refusing to upgrade mid-read");
++        }
++
++        /** Lift the upgrade's pause, against the socket that replaced the one being read. */
++        public synchronized void resumeFromUpgrade(Socket replacement) {
++            streamStale = replacement != null;
++            upgradePaused = false;
++            notifyAll();
+         }
++
++        private synchronized boolean takeStreamStale() {
++            boolean was = streamStale;
++            streamStale = false;
++            return was;
++        }
++
+     }
+ }
+diff --git a/android/src/main/java/com/asterinet/react/tcpsocket/TcpSocketModule.java b/android/src/main/java/com/asterinet/react/tcpsocket/TcpSocketModule.java
+index 121edb47dbecb4ca2a044722b2ad5a71d50c1fa7..068bff8ca085ae953d6ac398f434f29dc513a815 100644
+--- a/android/src/main/java/com/asterinet/react/tcpsocket/TcpSocketModule.java
++++ b/android/src/main/java/com/asterinet/react/tcpsocket/TcpSocketModule.java
+@@ -114,7 +114,11 @@ public class TcpSocketModule extends ReactContextBaseJavaModule {
+         TcpSocketClient socketClient = (TcpSocketClient) socketMap.get(cId);
+         // Not yet connected
+         if (socketClient == null) {
+-            pendingTLS.put(cId, tlsOptions);
++            // COPIED, not retained. A `ReadableMap` is a view onto a bridge buffer that the
++            // framework is free to recycle once the call that delivered it returns; holding the
++            // reference until `connect()` reads it later yields a map that is empty or worse, and
++            // the symptom is a TLS option that is silently not applied rather than an error.
++            pendingTLS.put(cId, copyOf(tlsOptions));
+         } else {
+             try {
+                 socketClient.startTLS(mReactContext, tlsOptions);
+@@ -124,6 +128,13 @@ public class TcpSocketModule extends ReactContextBaseJavaModule {
+         }
+     }
+ 
++    /** A snapshot of a bridge map that outlives the call which delivered it. */
++    private static ReadableMap copyOf(final ReadableMap source) {
++        final com.facebook.react.bridge.WritableMap copy = com.facebook.react.bridge.Arguments.createMap();
++        copy.merge(source);
++        return copy;
++    }
++
+     @SuppressLint("StaticFieldLeak")
+     @SuppressWarnings("unused")
+     @ReactMethod

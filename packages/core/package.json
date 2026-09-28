@@ -29,6 +29,7 @@
     "./outbound-text": "./src/outbound-text.ts",
     "./model-name": "./src/model-name.ts",
     "./transport-frame": "./src/transport-frame.ts",
+    "./url-escapes": "./src/url-escapes.ts",
     "./diagnostics": "./src/diagnostics/index.ts"
   },
   "dependencies": {

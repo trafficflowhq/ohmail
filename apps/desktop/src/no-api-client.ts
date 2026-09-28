@@ -210,7 +210,6 @@ export interface MailboxDTO {
     organizerEventAt?: string | null;
     organizerEventSeenAt?: string | null;
     organizerReleasedAt?: string | null;
-    organizerParkedAt?: string | null;
     organizerAcceptsRequests?: boolean;
     errorCode?: "auth" | "connect" | "tls" | "timeout" | "storage" | "sync" | "unknown" | null;
     errorDetail?: string | null;

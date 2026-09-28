@@ -946,13 +946,6 @@
       "when": 1791602600038,
       "tag": "0134_withheld_too_large",
       "breakpoints": true
-    },
-    {
-      "idx": 135,
-      "version": "7",
-      "when": 1791602600039,
-      "tag": "0135_organizer_parked_at",
-      "breakpoints": true
     }
   ]
 }

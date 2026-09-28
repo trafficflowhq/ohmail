@@ -68,6 +68,7 @@ import {
 } from "./dto/materialize.js";
 import { foldersEnabled, listUserFolders, userFoldersByIds, type UserFolderRow } from "./folders.js";
 import { DRAFT_ROW_MAX_BYTES, PageByteBudget, weighChange } from "./sync-page-byte-budget.js";
+import { PAGE_MAX_ROW_BYTES } from "@trafficflow/core/transport-frame";
 import type {
   ChangeOp, DraftDTO, Folder, SnapshotResponse, SnapshotWindow, SyncChange, SyncResponse,
 } from "./dto/types.js";
@@ -540,6 +541,8 @@ export class SyncService {
     let rows: (typeof changeLog.$inferSelect)[];
     /** Coalesced mode only: the lookahead entity's first-seq − 1, `null` ⇒ window consumed. */
     let coalescedCutCursor: bigint | null = null;
+    /** Coalesced mode only: each emitted row's entity's first seq in the window, by position. */
+    let firstSeqs: bigint[] = [];
     if (coalesced) {
       // scoped-by: `filters` above leads with eq(changeLog.accountId, accountId)
       const spanRows = db.$with("span").as(
@@ -582,6 +585,7 @@ export class SyncService {
         .orderBy(sql`${pageEntities.firstSeq}`);
       const lookahead = joined.length > limit ? joined[limit] : undefined;
       coalescedCutCursor = lookahead === undefined ? null : BigInt(lookahead.firstSeq) - 1n;
+      firstSeqs = joined.slice(0, limit).map((r) => BigInt(r.firstSeq));
       rows = joined.slice(0, limit).map(({ firstSeq: _first, ...row }) => row);
     } else {
       // scoped-by: `filters` above leads with eq(changeLog.accountId, accountId)
@@ -663,14 +667,41 @@ export class SyncService {
       ["tag", prefetchedTags],
     ]);
 
-    for (const row of rows) {
+    /**
+     * THE SNAPSHOT'S BYTE BOUND, ON THE DELTA TOO. Rows alone let one page of large drafts pass
+     * the frame the local transport refuses whole. Every change is charged; the first row the
+     * budget does not admit ends the page, and the cursor resumes AT that row. The first row
+     * always rides, so the walk advances; a draft heavier than any page is withheld exactly as
+     * the snapshot withholds it, which is what keeps that first row inside the frame.
+     */
+    const budget = new PageByteBudget(PAGE_MAX_ROW_BYTES);
+    let carried = 0;
+    /** The position of the first row this page did not carry, `null` ⇒ the bytes cut nothing. */
+    let cutAt: number | null = null;
+    const carry = (bucket: SyncChange[], at: number, change: SyncChange): boolean => {
+      let bytes = weighChange(change);
+      if (change.type === "draft" && change.entity !== undefined && bytes > DRAFT_ROW_MAX_BYTES) {
+        change = { ...change, entity: draftRowWithheldDTO(change.entity as DraftDTO) };
+        bytes = weighChange(change);
+      }
+      if (carried > 0 && !budget.admits(bytes)) {
+        cutAt = at;
+        return false;
+      }
+      budget.charge(bytes);
+      bucket.push(change);
+      carried += 1;
+      return true;
+    };
+
+    for (const [at, row] of rows.entries()) {
       const type = row.entityType as EntityType;
       const id = row.entityId;
       const seq = Number(row.seq);
       const op = row.op as ChangeOp;
 
       if (op === "delete") {
-        deletes.push({ type, op: "delete", id, seq, updatedAt: row.createdAt.toISOString() });
+        if (!carry(deletes, at, { type, op: "delete", id, seq, updatedAt: row.createdAt.toISOString() })) break;
         continue;
       }
 
@@ -693,22 +724,22 @@ export class SyncService {
                 })()
                 : await materialize(db, accountId, type, id);
       if (entity === null) {
-        deletes.push({ type, op: "delete", id, seq, updatedAt: row.createdAt.toISOString() });
+        if (!carry(deletes, at, { type, op: "delete", id, seq, updatedAt: row.createdAt.toISOString() })) break;
         continue;
       }
 
       const updatedAt = (entity as { updatedAt?: string }).updatedAt ?? row.createdAt.toISOString();
       const change: SyncChange = { type, op, id, seq, updatedAt, entity };
 
+      let bucket = updates;
       if (op === "move") {
         const meta = (row.meta as { from: Folder | null; to: Folder } | null) ?? null;
         if (meta) change.move = meta;
-        moves.push(change);
+        bucket = moves;
       } else if (op === "create") {
-        creates.push(change);
-      } else {
-        updates.push(change);
+        bucket = creates;
       }
+      if (!carry(bucket, at, change)) break;
     }
 
     // cursor and hasMore, per mode. Plain page: cursor = max seq actually returned (unchanged
@@ -722,7 +753,13 @@ export class SyncService {
     // loop would spin on for ever.
     let cursorSeq: bigint;
     let hasMore: boolean;
-    if (!coalesced) {
+    const cut = cutAt as number | null;
+    if (cut !== null) {
+      // THE BYTES ENDED THE PAGE: resume AT the row they refused — its seq on a plain page, its
+      // entity's first seq on a coalesced one (the lookahead's rule, one entity earlier).
+      cursorSeq = (coalesced ? firstSeqs[cut]! : rows[cut]!.seq) - 1n;
+      hasMore = true;
+    } else if (!coalesced) {
       cursorSeq = rows.length > 0 ? rows[rows.length - 1]!.seq : sinceSeq;
       hasMore = rows.length === limit;
     } else if (rows.length === 0) {
@@ -783,7 +820,7 @@ export class SyncService {
      * bootstrap never completes. Every emission below is charged, and the two PAGED phases stop
      * on it. See `sync-page-byte-budget.ts` for where the number comes from.
      */
-    const budget = new PageByteBudget();
+    const budget = new PageByteBudget(PAGE_MAX_ROW_BYTES);
     const changeOf = (type: EntityType, id: string, entity: unknown, updatedAt: string): SyncChange =>
       ({ type, op: "create", id, seq, updatedAt, entity });
     /** Emit and charge. Page-1 live state and a message's own children go through here: they are

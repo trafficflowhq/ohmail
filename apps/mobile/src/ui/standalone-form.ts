@@ -274,11 +274,6 @@ export type PhoneClaim =
    * happening.
    */
   | { k: "handedBack" }
-  /**
-   * PAUSED BY THE CLOSED ACCOUNT (mail 0135): the paired server released it at the park and takes
-   * it back on its own once the account is open — not `free` (no press is owed) and not a stop.
-   */
-  | { k: "parked" }
   /** Somebody else holds it, and named itself. */
   | { k: "theirs"; name: string; kind: HolderKind }
   /** Somebody else holds it and named nothing — an install from before the holder columns. */
@@ -303,8 +298,6 @@ export function claimChipLabel(claim: PhoneClaim): string | null {
       return Copy.phoneStatePairedServer;
     case "handedBack":
       return Copy.phoneStateHandedBack;
-    case "parked":
-      return Copy.phoneStateParked;
     case "theirs":
       return Copy.phoneStateReader(claim.name);
     case "theirsUnnamed":
@@ -420,8 +413,6 @@ export function claimFrom(
     role: "organizer" | "reader" | null;
     /** `MailboxDTO.organizedByThisInstall` — see below; it only ever admits the paired arm. */
     serverHolds: boolean;
-    /** `MailboxDTO.organizerParkedAt` is set — the closed account's pause. Absent reads as not paused. */
-    parked?: boolean;
     organizer: { name: string; stopped: boolean; kind?: string | null } | null;
   },
 ): PhoneClaim {
@@ -434,8 +425,6 @@ export function claimFrom(
    * the live hosted service the role reads `organizer` while that boolean reads `false`. The
    * webapp's own rule one install further (`app/shell/mail-state.ts#noticeKind`). */
   if (read.role === "organizer" || read.serverHolds) return { k: "pairedServer" };
-  // Ahead of every holder arm: a paused mailbox is neither free nor stopped (the web's rule).
-  if (read.parked === true) return { k: "parked" };
   const holder = read.organizer;
   /* A HOLDER WHOSE LEASE LAPSED IS NOBODY, by the reader refusal's own decider: it organizes
      nothing, and a card naming it would send somebody to a machine that stopped. */
@@ -578,9 +567,6 @@ export function claimNoteLine(claim: PhoneClaim, os: string): string | null {
          answered the roster organizes whether or not this app is open. Its own sentence says so
          and says what this phone does instead, in the reader's words the two foreign arms use. */
       return Copy.phoneStatePairedServerWhy;
-    case "parked":
-      // The chip is the whole sentence, and the platform rule describes a phone that organizes.
-      return null;
     case "handedBack":
       /* AND THIS ONE DOES GET A SENTENCE, where `free` gets none: the chip names a state a person
          has never seen a word for, and what it means for them is that their laptop may take the
