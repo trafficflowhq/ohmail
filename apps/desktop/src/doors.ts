@@ -615,6 +615,8 @@ export const HOST_REFUSAL_KINDS = [
   "identity_pending",
   "unsupported_platform",
   "invalid_request",
+  /* This window undid the pairing while the other computer was still answering the redeem. */
+  "pairing_undone",
 ] as const;
 export type HostRefusalKind = (typeof HOST_REFUSAL_KINDS)[number];
 
@@ -1009,33 +1011,43 @@ async function settleSwitch(result: HostDoorResult, paired: boolean): Promise<Ho
   }
 }
 
-/** How long an undone pairing waits for the other computer to take its session back. */
+/**
+ * How long an undone pairing waits for the other computer to take its session back — the whole
+ * `DELETE`, which spends at most the engine's one deadline (`PAIR_UNDO_REVOKE_MS`, pinned below
+ * this by `pairing-undo-deadline.test.ts`) before its local sign-out.
+ */
 export const UNDO_AT_HOST_MS = 8_000;
 
 /**
  * PUT BACK THE DOOR A PAIRING REPLACED — the one restore every way out of a pairing takes. While a
- * switch is pending the running engine is the pairing's, and if its redeem reached the other
- * computer it holds a session there: it signs that out first (`?revoke=host`), so this desktop
- * does not stay on that computer's Devices list. Best effort and bounded; the restore follows.
+ * switch is pending the running engine is the pairing's; `?revoke=host` undoes its redeem if it is
+ * still in flight and signs out at the other computer any session it holds. When that computer did
+ * not take it back, the shell is told which computer, and Settings says where to look.
  */
 export async function restorePairingSwitch(): Promise<EngineStatus> {
   let pending = false;
+  let base: string | null = null;
   try {
-    pending = (await engineStatus()).switchPending === true;
+    const status = await engineStatus();
+    pending = status.switchPending === true;
+    base = status.cloudUrl ?? null;
   } catch {
     /* No answer: the restore below still runs, and changes nothing when nothing is pending. */
   }
+  let leftAt: string | null = null;
   if (pending) {
     try {
-      await bridgeFetch("/cloud/session?revoke=host", {
+      const res = await bridgeFetch("/cloud/session?revoke=host", {
         method: "DELETE",
         signal: AbortSignal.timeout(UNDO_AT_HOST_MS),
       });
+      const said = (await res.json().catch(() => null)) as { revokedAtHost?: unknown } | null;
+      if (said?.revokedAtHost === false) leftAt = base;
     } catch {
-      /* Best effort: the other computer's Devices list is where it can still be removed. */
+      /* No answer in time: a session sealed on disk is still named by the shell's own undo. */
     }
   }
-  return engineSwitchRestore();
+  return engineSwitchRestore(leftAt);
 }
 
 /**

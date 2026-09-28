@@ -160,21 +160,24 @@ fn main() {
     // — `open_log` is idempotent and `Shell::start` still opens it for the default path — so the
     // probe's outcome lands somewhere a person can read it.
     #[cfg(feature = "local-engine")]
-    let host_boot = {
+    let (host_boot, launch_undone) = {
         engine::Shell::open_log(&app);
         let paths = engine::Shell::paths(&app);
-        // A pairing the last run never settled puts its replaced door back before anything reads it.
-        engine::recover_door_switch(&paths);
-        host::HostBoot::detect(&paths)
+        // A pairing the last run never settled puts its replaced door back before anything reads
+        // it; what that undo took back is finished below, once the shell and host mode exist.
+        let undone = engine::recover_door_switch(&paths);
+        (host::HostBoot::detect(&paths), undone)
     };
     #[cfg(feature = "local-engine")]
     let shell = std::sync::Arc::new(engine::Shell::start(&app, host_boot.plan()));
+    #[cfg(feature = "local-engine")]
+    shell.note_pairing_left(launch_undone.session_left_at.clone());
     #[cfg(feature = "local-engine")]
     engine::manage(&app, std::sync::Arc::clone(&shell));
     // The tray, the serve re-assertion, and the state the window reads — armed installs only;
     // a disarmed one gets a dormant struct and none of the machinery.
     #[cfg(feature = "local-engine")]
-    let host_runtime = host::manage(&app, std::sync::Arc::clone(&shell), host_boot);
+    let host_runtime = host::manage(&app, std::sync::Arc::clone(&shell), host_boot, &launch_undone);
 
     // The Omarchy theme feed. On an Omarchy system this spawns the watch that re-skins the
     // window when the desktop theme changes; everywhere else it is one directory stat and a

@@ -1395,6 +1395,12 @@ pub struct Shell {
     pending_door: AtomicBool,
 }
 
+/// THE PAIRED COMPUTER A PAIRING WAS UNDONE AGAINST WHILE IT STILL HELD A SESSION THERE — this
+/// install on that computer's Devices list with nothing here left to sign it out. Set by any undo
+/// that says so (the launch's, or the window's when the other computer did not take it back) and
+/// reported as `pairingLeftAt` for the run, keyed by data directory: one per app, one per case.
+static PAIRING_LEFT_AT: Mutex<Vec<(PathBuf, String)>> = Mutex::new(Vec::new());
+
 /// The three states a quit can be in. A plain flag would not do: the difference between "nobody
 /// started one" and "one was started and its bound ran out" decides whether the last wait may call
 /// [`Shell::stop`] again, and calling it on a supervisor that is already stuck would hang the exit
@@ -1975,6 +1981,36 @@ impl Shell {
         provisional: bool,
         host: Option<config::HostSnapshot>,
     ) -> Result<serde_json::Value, String> {
+        let staged = if provisional { self.stage_switch(value, host.clone())? } else { None };
+        self.switch_door_staged(value, provisional, staged, host)
+    }
+
+    /// THE RECORD FIRST: a provisional switch writes `door-switch.json`, host mode's snapshot in
+    /// it, BEFORE the first half it takes — the stand-down — so a kill at any later instant finds
+    /// a record to undo from. Moves nothing. `None` where there is nothing to keep (no door) or a
+    /// pending switch's record already carries the snapshot.
+    pub fn stage_switch(
+        &self,
+        value: &serde_json::Value,
+        host: Option<config::HostSnapshot>,
+    ) -> Result<Option<config::DoorSwitch>, String> {
+        let _door = self.door.lock().expect("shell door");
+        let next = config::parse(value)?;
+        let (Some(root), Some(path)) = (self.paths.app_data.as_deref(), self.paths.config_path()) else {
+            return Ok(None);
+        };
+        stage_on_disk(root, &path, &next, host.as_ref())
+    }
+
+    /// The switch itself, after [`Shell::stage_switch`]: `staged` is THIS attempt's record, which
+    /// the disk half recognises and neither undoes nor writes again.
+    pub fn switch_door_staged(
+        &self,
+        value: &serde_json::Value,
+        provisional: bool,
+        staged: Option<config::DoorSwitch>,
+        host: Option<config::HostSnapshot>,
+    ) -> Result<serde_json::Value, String> {
         // UNDER THE DOOR LOCK, whole: a sign-out re-reads the door under it and acts on what it
         // reads, so a switch landing between those two would be the race back by the other side.
         let _door = self.door.lock().expect("shell door");
@@ -1996,8 +2032,9 @@ impl Shell {
         if pending.is_some() || (provisional && self.paths.config().is_some()) {
             let mut outcome = Ok(());
             self.replace_with(|| {
-                match switch_on_disk(&root, &path, &config, pending.as_ref(), provisional, host.as_ref()) {
-                    Ok(()) => {
+                match switch_on_disk(&root, &path, &config, pending.as_ref(), staged.as_ref(), provisional, host.as_ref()) {
+                    Ok(left_at) => {
+                        self.note_pairing_left(left_at);
                         log_configured(&config, provisional);
                         self.pending_door.store(false, Ordering::SeqCst);
                         leave_erased_copy(&root, &config);
@@ -2057,22 +2094,55 @@ impl Shell {
     pub fn restore_switch_and_host(
         &self,
     ) -> Result<(serde_json::Value, Option<config::HostSnapshot>), String> {
+        self.restore_switch_undone(None).map(|(status, undone)| (status, undone.host))
+    }
+
+    /// THE WINDOW'S RESTORE, answering every half the undo took back. `left_at` is the paired
+    /// computer the window says still holds this install's session (it did not take it back in
+    /// time); a session the undo found sealed on disk says the same. Either is kept for the run.
+    pub fn restore_switch_undone(
+        &self,
+        left_at: Option<String>,
+    ) -> Result<(serde_json::Value, config::Undone), String> {
         let _door = self.door.lock().expect("shell door");
+        self.note_pairing_left(left_at);
         let root = self.paths.app_data.clone().unwrap_or_default();
         let (Some(switch), Some(path)) = (config::read_switch(&root)?, self.paths.config_path()) else {
-            return Ok((self.status(), None));
+            return Ok((self.status(), config::Undone::default()));
         };
-        let mut outcome = Ok(());
+        let mut outcome = Ok(config::Undone::default());
         self.replace_with(|| {
             match config::undo_switch(&root, &path, &switch, &|| clear_candidate_slot(&root)) {
-                Ok(()) => log_line(format_args!("the pairing did not finish; the door it replaced is back")),
+                Ok(undone) => {
+                    log_line(format_args!("the pairing did not finish; the door it replaced is back"));
+                    outcome = Ok(undone);
+                }
                 Err(reason) => outcome = Err(reason),
             }
             self.pending_door.store(false, Ordering::SeqCst);
             self.planned(None)
         });
-        outcome?;
-        Ok((self.status(), switch.host))
+        let undone = outcome?;
+        self.note_pairing_left(undone.session_left_at.clone());
+        Ok((self.status(), undone))
+    }
+
+    /// Keep, for the run, the computer an undone pairing left this install listed on. Only an
+    /// address-shaped value is kept: it is rendered, and nothing else belongs in the status.
+    pub fn note_pairing_left(&self, base: Option<String>) {
+        let Some(base) = base.map(|b| b.trim().to_string()) else { return };
+        let shaped = base.len() <= 2048 && (base.starts_with("https://") || base.starts_with("http://"));
+        if shaped {
+            let key = self.paths.app_data.clone().unwrap_or_default();
+            let mut left = PAIRING_LEFT_AT.lock().expect("pairing left");
+            left.retain(|(root, _)| *root != key);
+            left.push((key, base));
+        }
+    }
+
+    fn pairing_left_at(&self) -> Option<String> {
+        let key = self.paths.app_data.clone().unwrap_or_default();
+        PAIRING_LEFT_AT.lock().expect("pairing left").iter().find(|(root, _)| *root == key).map(|(_, b)| b.clone())
     }
 
     /// Forget the account: clear the engine's sealed secrets, stop it, and forget the door.
@@ -2300,6 +2370,9 @@ impl Shell {
             if self.paths.app_data.as_deref().is_some_and(|root| config::switch_path(root).exists()) {
                 object.insert("switchPending".into(), true.into());
             }
+            if let Some(base) = self.pairing_left_at() {
+                object.insert("pairingLeftAt".into(), base.into());
+            }
             // The one path the operator's certificate authority is read from, for the door's
             // sentence; no data folder, no path, rather than a guess naming a file nothing reads.
             if let Some(root) = &self.paths.app_data {
@@ -2377,43 +2450,74 @@ fn discard_erased_copy(root: &Path) -> bool {
     }
 }
 
-/// The disk half of [`Shell::switch_door`], run with the engine stopped. A pending switch is undone
-/// first; a provisional one is recorded, then its directory set aside, then the door written — and
-/// a step that fails undoes the ones before it, so the old door's engine is what starts again.
+/// The staged half of a provisional switch, with the engine still running: the record is written
+/// while nothing has moved, so it may precede the stop. A pending switch's record already carries
+/// host mode's snapshot and is left for [`switch_on_disk`]; an install with no door keeps nothing.
+pub(crate) fn stage_on_disk(
+    root: &Path,
+    path: &Path,
+    next: &Config,
+    host: Option<&config::HostSnapshot>,
+) -> Result<Option<config::DoorSwitch>, String> {
+    if config::read_switch(root)?.is_some() {
+        return Ok(None);
+    }
+    let Some(file) = config::read_door_file(path) else { return Ok(None) };
+    config::record_switch(root, &file, next.mode(), host, &|| clear_candidate_slot(root)).map(Some)
+}
+
+/// The disk half of [`Shell::switch_door`], run with the engine stopped. THIS attempt's staged
+/// record is kept as it is; a PRIOR pending one has its door put back under the record, which the
+/// new record then replaces (a snapshot on disk at every instant). Then the directory is set
+/// aside and the door written. A failure once a record exists leaves the record, so the settle or
+/// the next launch undoes from it, host mode included. Answers a session a prior attempt left.
 fn switch_on_disk(
     root: &Path,
     path: &Path,
     next: &Config,
     pending: Option<&config::DoorSwitch>,
+    staged: Option<&config::DoorSwitch>,
     provisional: bool,
     host: Option<&config::HostSnapshot>,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     let clear = || clear_candidate_slot(root);
-    if let Some(switch) = pending {
-        // The pending switch's DOOR goes back; its host snapshot moves to this one's record, so
-        // the stood-down `host.json` is not re-enabled under a door that has no host listener.
-        config::undo_switch(root, path, &switch.without_host(), &clear)?;
-        log_line(format_args!("a pairing that had not been answered was set aside for this switch"));
-    }
-    let host = host.or_else(|| pending.and_then(|p| p.host.as_ref()));
-    let kept = match provisional.then(|| config::read_door_file(path)).flatten() {
-        Some(file) => {
-            let switch = config::record_switch(root, &file, next.mode(), host, &clear)?;
-            if let Err(reason) = config::set_aside(root, &switch) {
-                let _ = config::remove(&config::switch_path(root));
-                return Err(reason);
-            }
-            Some(switch)
+    let mut left_at = None;
+    let kept = match (staged, pending) {
+        (Some(own), Some(on_disk)) if own == on_disk => Some(own.clone()),
+        (Some(_), _) => {
+            return Err("the pairing's record changed before its door was written, so nothing was moved".to_string())
         }
-        None => None,
+        (None, Some(prior)) if provisional => {
+            // Its host snapshot moves to this record, so the stood-down `host.json` is not
+            // re-enabled under a door that has no host listener.
+            left_at = config::undo_door(root, path, prior, &clear)?;
+            log_line(format_args!("a pairing that had not been answered was set aside for this switch"));
+            let host = host.or(prior.host.as_ref());
+            Some(config::record_switch(root, &prior.replaced_file, next.mode(), host, &clear)?)
+        }
+        (None, Some(prior)) => {
+            left_at = config::undo_switch(root, path, &prior.without_host(), &clear)?.session_left_at;
+            log_line(format_args!("a pairing that had not been answered was set aside for this switch"));
+            None
+        }
+        // Nothing staged and nothing pending (a pending record the stage saw was settled since):
+        // recorded here, as late as the stand-down allows.
+        (None, None) if provisional => match config::read_door_file(path) {
+            Some(file) => Some(config::record_switch(root, &file, next.mode(), host, &clear)?),
+            None => None,
+        },
+        (None, None) => None,
     };
+    if let Some(switch) = &kept {
+        config::set_aside(root, switch)?;
+    }
     if let Err(reason) = config::write(path, next) {
         if let Some(switch) = &kept {
-            let _ = config::undo_switch(root, path, switch, &clear);
+            let _ = config::undo_door(root, path, switch, &clear);
         }
         return Err(reason);
     }
-    Ok(())
+    Ok(left_at)
 }
 
 fn log_configured(config: &Config, provisional: bool) {
@@ -2429,14 +2533,23 @@ fn log_configured(config: &Config, provisional: bool) {
 /// app was killed mid-pairing, and a pairing nobody answered did not happen), and an accepted
 /// switch's unfinished retire is finished. Host mode's launch decision reads the door after this.
 /// Then a deleted hosted account's copy that no door opens is removed — a discard cut short.
-pub fn recover_door_switch(paths: &ShellPaths) {
-    let (Some(root), Some(path)) = (paths.app_data.as_deref(), paths.config_path()) else { return };
+///
+/// Answers what the undo took back, for the launch to finish: start-at-login from host mode's
+/// snapshot (`host::manage`), and the paired computer still holding a session (`pairingLeftAt`).
+pub fn recover_door_switch(paths: &ShellPaths) -> config::Undone {
+    let (Some(root), Some(path)) = (paths.app_data.as_deref(), paths.config_path()) else {
+        return config::Undone::default();
+    };
     let clear = || clear_candidate_slot(root);
+    let mut undone = config::Undone::default();
     match config::read_switch(root) {
         Ok(Some(switch)) => match config::undo_switch(root, &path, &switch, &clear) {
-            Ok(()) => log_line(format_args!(
-                "a pairing the last run did not finish was undone; the door it replaced is back"
-            )),
+            Ok(back) => {
+                log_line(format_args!(
+                    "a pairing the last run did not finish was undone; the door it replaced is back"
+                ));
+                undone = back;
+            }
             Err(reason) => log_line(format_args!(
                 "a pairing the last run did not finish could not be undone yet ({reason})"
             )),
@@ -2454,6 +2567,7 @@ pub fn recover_door_switch(paths: &ShellPaths) {
     if !config::switch_path(root).exists() && !matches!(paths.config().map(|c| c.mode()), Some(Mode::Cloud)) {
         discard_erased_copy(root);
     }
+    undone
 }
 
 impl Inner {
@@ -4390,20 +4504,36 @@ fn engine_configure<R: tauri::Runtime>(
 ) -> Result<serde_json::Value, String> {
     // The exact `true` and nothing truthy: a provisional switch is one a pairing asked for.
     let provisional = provisional == Some(true);
-    let mut kept = None;
-    if config::parse(&config)?.mode() != Mode::Local {
-        // TAKEN BEFORE THE STAND-DOWN, which writes `host.json` off: a provisional switch keeps it
-        // in its record, and a refused pairing restores host mode from it.
-        if provisional {
-            kept = crate::host::snapshot_for_switch(&app, host.inner());
-        }
-        crate::host::stand_down_on_shell_transition(
-            &app,
-            host.inner(),
-            "the install is switching to a door with no host listener",
-        );
+    if config::parse(&config)?.mode() == Mode::Local {
+        return shell.switch_door_with(&config, provisional, None);
     }
-    shell.switch_door_with(&config, provisional, kept)
+    // TAKEN BEFORE THE STAND-DOWN, which writes `host.json` off: a provisional switch keeps it in
+    // its record, written before the stand-down, and a refused pairing restores host mode from it.
+    let kept = if provisional { crate::host::snapshot_for_switch(&app, host.inner()) } else { None };
+    switch_in_order(
+        || if provisional { shell.stage_switch(&config, kept.clone()) } else { Ok(None) },
+        || {
+            crate::host::stand_down_on_shell_transition(
+                &app,
+                host.inner(),
+                "the install is switching to a door with no host listener",
+            );
+        },
+        |staged| shell.switch_door_staged(&config, provisional, staged, kept.clone()),
+    )
+}
+
+/// THE ORDER OF A SWITCH AWAY FROM THE LOCAL DOOR, as one function so it can be driven: the
+/// record, then the stand-down, then the switch. A kill after the stand-down finds a record that
+/// puts back `host.json` and start-at-login; the reverse order left neither and no record.
+pub(crate) fn switch_in_order<T>(
+    stage: impl FnOnce() -> Result<Option<config::DoorSwitch>, String>,
+    stand_down: impl FnOnce(),
+    switch: impl FnOnce(Option<config::DoorSwitch>) -> Result<T, String>,
+) -> Result<T, String> {
+    let staged = stage()?;
+    stand_down();
+    switch(staged)
 }
 
 /// The other computer accepted the pairing: keep its door, retire the one it replaced. Takes
@@ -4416,16 +4546,18 @@ fn engine_switch_commit(shell: tauri::State<'_, Arc<Shell>>) -> Result<serde_jso
 
 /// The pairing did not finish: put back the door it replaced, and host mode as the switch found
 /// it — `host.json` from the record, then start-at-login and the tailnet route re-armed from that
-/// file. Takes nothing, and changes nothing when no switch is provisional.
+/// file. Changes nothing when no switch is provisional. `leftAt` is the paired computer the window
+/// says did not take this install's session back; it is shown, never acted on.
 #[cfg(feature = "local-engine")]
 #[tauri::command(async)]
 fn engine_switch_restore<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     shell: tauri::State<'_, Arc<Shell>>,
     host: tauri::State<'_, Arc<crate::host::HostRuntime<R>>>,
+    left_at: Option<String>,
 ) -> Result<serde_json::Value, String> {
-    let (status, kept) = shell.restore_switch_and_host()?;
-    match kept {
+    let (status, undone) = shell.restore_switch_undone(left_at)?;
+    match undone.host {
         Some(snapshot) => {
             crate::host::rearm_after_restore(&app, host.inner(), &snapshot);
             Ok(shell.status())

@@ -95,12 +95,18 @@ function fakeShell(opts: {
   spentHash?: string;
   /** The shell refuses this many restores first (a gesture in flight, a directory held). */
   restoreRefusals?: number;
+  /** How long the engine's `DELETE /cloud/session` takes: its sign-out at the other computer. */
+  deleteMs?: number;
+  /** The other computer does not take the session back: the engine answers `revokedAtHost: false`. */
+  revokeFails?: boolean;
 }) {
   let restoreRefusals = opts.restoreRefusals ?? 0;
   let door: Door | null = opts.door;
   let replaced: Door | null = null;
   let startedAt = -Infinity;
   let paired = false;
+  /** What the window told the shell's restore: the computer a session was left on. */
+  let leftAt: string | null = null;
   const log: string[] = [];
   /** Every probe body the window sent. */
   const probes: Record<string, unknown>[] = [];
@@ -115,6 +121,7 @@ function fakeShell(opts: {
     const shape = {
       mode: door.mode, flavor: door.flavor, cloudUrl: door.cloudUrl, address: door.address,
       ...(replaced ? { switchPending: true } : {}),
+      ...(leftAt ? { pairingLeftAt: leftAt } : {}),
     };
     if (Date.now() - startedAt < startMs()) return { state: "starting", attempt: 1, of: 4, ...shape };
     const id = mailboxOf(door);
@@ -147,6 +154,7 @@ function fakeShell(opts: {
           throw new Error("the replaced door could not be put back yet");
         }
         log.push(`restore${replaced ? "" : " (nothing kept)"}`);
+        if (typeof payload?.leftAt === "string") leftAt = payload.leftAt;
         if (replaced) {
           door = replaced;
           replaced = null;
@@ -188,7 +196,14 @@ function fakeShell(opts: {
         }
         if (method === "DELETE" && url.startsWith("/cloud/session")) {
           log.push(`sign-out ${url} on ${String(door!.flavor ?? door!.mode)}`);
-          return encode(200, JSON.stringify({ status: "signed_out", ...(url.includes("revoke=host") ? { revokedAtHost: paired } : {}) }));
+          if (opts.deleteMs) await new Promise((r) => setTimeout(r, opts.deleteMs));
+          /* The engine's shape: `revokedAtHost` only where a session was minted (held, or landing
+             from a redeem the undo marked), `false` when the other computer did not take it back. */
+          const minted = paired || (opts.revokeFails === true && log.includes("redeem asked"));
+          return encode(200, JSON.stringify({
+            status: "signed_out",
+            ...(url.includes("revoke=host") && minted ? { revokedAtHost: opts.revokeFails !== true } : {}),
+          }));
         }
         if (url === "/cloud/pair-redeem") {
           log.push("redeem asked");
@@ -423,6 +438,38 @@ describe("leaving the pairing card with nothing pending", () => {
       expect(shell.door()).toEqual(start);
     },
   );
+});
+
+describe("an undone pairing the other computer did not take back", () => {
+  /* The window goes away while the redeem is out; the next one undoes it, and the engine answers
+     whether the other computer took the session back. */
+  async function abandonMidRedeem(revokeFails: boolean) {
+    const shell = fakeShell({ door: LOCAL_DOOR, answer: "never", revokeFails });
+    expect(await openPairingFromSettings()).toBe(true);
+    await press(DOOR_COPY.hostPair);
+    await until("the redeem", () => shell.log.includes("redeem asked"), 20_000);
+    await act(async () => { root!.unmount(); });
+    el!.remove();
+    window.location.hash = "#/settings/desktop";
+    await mount();
+    for (let i = 0; i < 30; i += 1) await advance(500);
+    return shell;
+  }
+  const said = (): string => DOOR_COPY.pairingLeftAt("192.168.1.24", machineWord());
+
+  it("is said under Settings → Switch, naming that computer", async () => {
+    const shell = await abandonMidRedeem(true);
+    expect(shell.door()).toEqual(LOCAL_DOOR);
+    expect(buttons(DOOR_COPY.installSwitchAction)).toHaveLength(1);
+    expect(text(), text().slice(0, 300)).toContain(said());
+  });
+
+  it("one the other computer took back says nothing", async () => {
+    const shell = await abandonMidRedeem(false);
+    expect(shell.door()).toEqual(LOCAL_DOOR);
+    expect(buttons(DOOR_COPY.installSwitchAction)).toHaveLength(1);
+    expect(text()).not.toContain(said());
+  });
 });
 
 describe("a link the other computer has already redeemed", () => {

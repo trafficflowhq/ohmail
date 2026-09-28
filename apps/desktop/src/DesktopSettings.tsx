@@ -16,7 +16,7 @@ import { engineLogout, type EngineStatus } from "./bridge-fetch.js";
 import { renewCloudSession } from "./cloud-session.js";
 import type { HostedSession } from "./doors.js";
 import { DOOR_COPY, machineWord } from "./door-copy.js";
-import { isDesktopHost, isManagedDoor, pairedHostOf, pairedViaOf } from "./doors.js";
+import { hostLabelOf, isDesktopHost, isManagedDoor, pairedHostOf, pairedViaOf } from "./doors.js";
 import { agoStamp } from "../../webapp/app/shell/format";
 import { DesktopAiSettings } from "./DesktopAiSettings.js";
 import type { LocalAiStatus } from "./local-ai.js";
@@ -421,6 +421,12 @@ export function DesktopSettings({
           <Button onClick={onSwitchDoor} disabled={busy}>{DOOR_COPY.installSwitchAction}</Button>
         }
       />
+      {/* An undone pairing the other computer did not take back: where this install is still listed. */}
+      {status.pairingLeftAt ? (
+        <SettingsNote>
+          {DOOR_COPY.pairingLeftAt(hostLabelOf(status.pairingLeftAt) ?? status.pairingLeftAt, machineWord())}
+        </SettingsNote>
+      ) : null}
 
       {mode === "confirm" ? (
         <SettingsRow

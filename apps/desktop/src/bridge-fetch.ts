@@ -471,6 +471,12 @@ export interface EngineStatus {
    * on disk, until the pairing is committed or that door is put back. Absent otherwise.
    */
   switchPending?: boolean;
+  /**
+   * AN UNDONE PAIRING LEFT THIS INSTALL LISTED ON THAT COMPUTER — its address, for the run. Set by
+   * the shell's undo when a session sealed there was discarded, or when the window was told the
+   * other computer did not take it back. Absent otherwise.
+   */
+  pairingLeftAt?: string;
   mailboxId?: string;
   accountId?: string;
   userId?: string;
@@ -668,11 +674,13 @@ export async function engineSwitchCommit(): Promise<EngineStatus> {
 /**
  * The pairing did not finish: the shell puts back the door it replaced and starts its engine.
  * Changes nothing when no switch is provisional, so any way out of the pairing card may ask.
+ * `leftAt` names the other computer that did not take this install's session back.
  */
-export async function engineSwitchRestore(): Promise<EngineStatus> {
+export async function engineSwitchRestore(leftAt: string | null = null): Promise<EngineStatus> {
+  const payload = leftAt === null ? undefined : { leftAt };
   return alone(
     "changing the door",
-    () => shell().invoke(SWITCH_RESTORE_COMMAND) as Promise<EngineStatus>,
+    () => shell().invoke(SWITCH_RESTORE_COMMAND, payload) as Promise<EngineStatus>,
   );
 }
 

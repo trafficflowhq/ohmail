@@ -59,6 +59,10 @@ use crate::engine::{self, EngineState, Found, Plan, Shell};
 #[path = "host_tests.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "pairing_undo_tests.rs"]
+mod pairing_undo_tests;
+
 // ── The frozen spawn contract: three variables always, the assets path when packaged ────────
 
 /// Arms the engine's host door. The engine reads the EXACT string "1" and nothing else — the
@@ -1197,6 +1201,7 @@ pub fn manage<R: tauri::Runtime>(
     app: &tauri::App<R>,
     shell: Arc<Shell>,
     boot: HostBoot,
+    launch_undone: &config::Undone,
 ) -> Arc<HostRuntime<R>> {
     use tauri::Manager;
     let runtime = Arc::new(HostRuntime {
@@ -1219,6 +1224,9 @@ pub fn manage<R: tauri::Runtime>(
     });
     app.manage(Arc::clone(&runtime));
 
+    // A pairing the last run did not finish: start-at-login comes back with the host mode it
+    // restored. The tray is the armed boot's own, stood up just below.
+    complete_launch_undo_with(boot.armed, launch_undone, &|| enable_autostart(app.handle()), &|| {});
     if boot.armed {
         stand_up_tray(app.handle(), &runtime);
         // The launch publication, when the probe found an identity: wait for the engine's own
@@ -1834,15 +1842,7 @@ pub fn rearm_after_restore<R: tauri::Runtime>(
         host,
         boot,
         &|| {
-            if snapshot.autostart == Some(true) {
-                use tauri_plugin_autostart::ManagerExt;
-                if let Err(err) = app.autolaunch().enable() {
-                    engine::log_line(format_args!(
-                        "host mode: start-at-login could not be registered again ({err})"
-                    ));
-                }
-            }
-            stand_up_tray(app, host);
+            after_restore_with(snapshot, &|| enable_autostart(app), &|| stand_up_tray(app, host), "after a refused pairing");
         },
         &|plan| {
             host.shell.set_host_plan(plan);
@@ -1850,6 +1850,58 @@ pub fn rearm_after_restore<R: tauri::Runtime>(
         },
         &|port, generation| host.publish_when_listening(port, generation),
     );
+}
+
+/// THE APP HALF OF AN UNDONE PAIRING, whichever undo ran it — the window's restore or the launch
+/// after a kill: start-at-login registered again when the snapshot says it was, then the tray.
+/// `None` (the platform could not say) registers nothing and says so. Answers the enable's verdict.
+pub(crate) fn after_restore_with(
+    snapshot: &config::HostSnapshot,
+    enable: &dyn Fn() -> Result<(), String>,
+    tray: &dyn Fn(),
+    occasion: &str,
+) -> Option<bool> {
+    let enabled = match snapshot.autostart {
+        Some(true) => Some(match enable() {
+            Ok(()) => {
+                engine::log_line(format_args!("start-at-login registered again {occasion}"));
+                true
+            }
+            Err(err) => {
+                engine::log_line(format_args!("host mode: start-at-login could not be registered again ({err})"));
+                false
+            }
+        }),
+        Some(false) => None,
+        None => {
+            engine::log_line(format_args!(
+                "start-at-login was not registered again {occasion}: whether it was on before the pairing is unknown"
+            ));
+            None
+        }
+    };
+    tray();
+    enabled
+}
+
+/// THE LAUNCH'S HALF, for a pairing the last run did not finish: `recover_door_switch` already put
+/// `host.json` back and the boot armed from it, so what is left is the app half. Only on an armed
+/// boot, as the live restore re-arms only from an arming setting.
+pub(crate) fn complete_launch_undo_with(
+    armed: bool,
+    undone: &config::Undone,
+    enable: &dyn Fn() -> Result<(), String>,
+    tray: &dyn Fn(),
+) -> Option<bool> {
+    match (&undone.host, armed) {
+        (Some(snapshot), true) => after_restore_with(snapshot, enable, tray, "after the launch undo"),
+        _ => None,
+    }
+}
+
+fn enable_autostart<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().enable().map_err(|err| err.to_string())
 }
 
 /// Arm the runtime from a launch-shaped decision, in the arming's order: flags and plan, then the

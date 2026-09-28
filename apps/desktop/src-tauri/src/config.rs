@@ -1557,6 +1557,16 @@ pub fn set_aside(root: &Path, switch: &DoorSwitch) -> Result<(), String> {
         .map_err(|err| format!("{} could not be set aside ({err})", dir.display()))
 }
 
+/// WHAT AN UNDONE SWITCH TOOK BACK, answered by every undo so each caller finishes the same
+/// halves: host mode's snapshot (the app re-registers start-at-login from it), and the paired
+/// computer's address when the directory the undo discarded held a session sealed there — a
+/// session this install can no longer sign out, which the window then says.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Undone {
+    pub host: Option<HostSnapshot>,
+    pub session_left_at: Option<String>,
+}
+
 /// Put the replaced door back: its directory where it was, the new door's gone, its
 /// `config.json`, host mode's `host.json` when the switch kept one, and the record last. Every
 /// step is safe to run again after a kill mid-way.
@@ -1565,10 +1575,37 @@ pub fn undo_switch(
     config_path: &Path,
     switch: &DoorSwitch,
     clear: ClearSlot,
-) -> Result<(), String> {
+) -> Result<Undone, String> {
+    let session_left_at = undo_door(root, config_path, switch, clear)?;
+    if let Some(host) = &switch.host {
+        write_private(&root.join(HOST_FILE_NAME), host.file.as_bytes())?;
+    }
+    remove(&switch_path(root))?;
+    Ok(Undone { host: switch.host.clone(), session_left_at })
+}
+
+/// The door half of [`undo_switch`], with the RECORD KEPT: a switch over a pending one puts that
+/// door back and then writes its own record over the old, so a snapshot is on disk at every
+/// instant. Answers the paired computer's address when the directory it discards held a sealed
+/// session, read from the pairing's `config.json` before the replaced door is written over it.
+pub fn undo_door(
+    root: &Path,
+    config_path: &Path,
+    switch: &DoorSwitch,
+    clear: ClearSlot,
+) -> Result<Option<String>, String> {
     let (dir, aside) = (data_dir(root, switch.dir), replaced_store(root, switch.dir));
     // With `moved`, an absent set-aside directory means it is already back where it was.
-    if !switch.moved || aside.exists() {
+    let discards = !switch.moved || aside.exists();
+    let left_at = if discards && dir.join(CLOUD_SESSION_SEAL).exists() {
+        match read(config_path) {
+            Some(Config::Cloud(door)) if door.flavor.as_deref() == Some(DESKTOP_HOST_FLAVOR) => Some(door.cloud_url),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    if discards {
         discard_dir(root, &dir, clear)?;
     }
     if switch.moved && aside.exists() {
@@ -1576,10 +1613,7 @@ pub fn undo_switch(
             .map_err(|err| format!("{} could not be put back ({err})", aside.display()))?;
     }
     write_private(config_path, switch.replaced_file.as_bytes())?;
-    if let Some(host) = &switch.host {
-        write_private(&root.join(HOST_FILE_NAME), host.file.as_bytes())?;
-    }
-    remove(&switch_path(root))
+    Ok(left_at)
 }
 
 /// Keep the new door. Removing the record IS the commit, and an `Err` means nothing changed. The

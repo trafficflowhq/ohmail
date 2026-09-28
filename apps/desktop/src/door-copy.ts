@@ -330,6 +330,8 @@ const EN = {
   hostRefuseLinkRevoked:
     "That link was taken back on that computer, so nothing was changed here. Make a new one from "
     + "its Settings → Devices.",
+  hostRefusePairingUndone: (host: string) =>
+    `The pairing was stopped here before ${host} answered, so nothing was changed here.`,
   /* THE LINK CHECK'S OTHER ANSWERS (`cloud-probe.ts`, `host-pin-probe.ts`): what answered at the
      link's address, or why nothing could be checked. Nothing here has been configured yet. */
   hostRefuseNotAnswering: (host: string) =>
@@ -645,6 +647,11 @@ const EN = {
   installSwitchWhyHost: (host: string, machine: string) =>
     `Open a different door: your own mail server, another computer, or a hosted account. The copy `
     + `from ${host} on this ${machine} is discarded; your mailbox itself is untouched.`,
+  /* AN UNDONE PAIRING THE OTHER COMPUTER DID NOT TAKE BACK. It names where to look and promises
+     nothing: this install holds no session there any more, so only that computer can remove it. */
+  pairingLeftAt: (host: string, machine: string) =>
+    `A pairing with ${host} did not finish. This ${machine} may still be listed on ${host} under `
+    + "Settings → Devices.",
   installSignOutWhyHost: (host: string, machine: string) =>
     `Ends the pairing with ${host} and forgets which mailbox this is. Your mail stays on this `
     + `${machine} and on your server.`,
@@ -826,6 +833,7 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   hostRefuseNotSetUp: ["host"],
   hostRefuseNothingListening: ["host"],
   hostRefuseTimedOut: ["host"],
+  hostRefusePairingUndone: ["host"],
   hostRefuseCertName: ["host"],
   hostRefuseCertDate: ["host"],
   hostRefuseCertTrust: ["host"],
@@ -856,6 +864,7 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   takeoverRest: ["count"],
   takeoverRosterUnknown: ["host"],
   installSwitchWhyHost: ["host", "machine"],
+  pairingLeftAt: ["host", "machine"],
   installSignOutWhyHost: ["host", "machine"],
   installSignOutConfirmWhyHost: ["machine", "host"],
   gateRestart: ["host"],

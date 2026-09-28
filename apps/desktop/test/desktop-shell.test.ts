@@ -583,7 +583,7 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these thirty-one files and no others", () => {
+  it("is these thirty-two files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
       // HOW MANY ALLOCATOR ARENAS THIS APP'S PROCESSES MAY HAVE. glibc gives a contending
@@ -651,6 +651,9 @@ describe("the Rust side", () => {
       "omarchy.rs",
       "omarchy_core.rs",
       "omarchy_core_tests.rs",
+      // A pairing that does not finish, undone by the window or by the next launch: the tests of
+      // the one restore, declared under `host.rs` and compiled with it, under `local-engine`.
+      "pairing_undo_tests.rs",
       // GENERATED, and the only file here nobody edits. The renderer ceiling `vitals.rs` reports
       // against, written out of the project's one budget table — it was a literal in `vitals.rs`
       // while two gates read a different number, so the log line a person sees and the line a gate
