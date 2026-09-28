@@ -80,7 +80,7 @@ export function DraftReader({
         <DetailBar title={Copy.draftsTitle} />
         <Scroller>
           <Txt variant="note" tone="ink3" style={{ padding: 20 }}>
-            {Copy.trashRowGone}
+            {Copy.draftsRowGone}
           </Txt>
         </Scroller>
       </Screen>

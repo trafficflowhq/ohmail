@@ -2125,6 +2125,8 @@ const TABLE = {
     "This draft can't be edited here. Edit and send it from ohmail on the web or the desktop.",
   /** The Drafts card's verb: the composer opens bound to this row. */
   draftsEdit: "Edit",
+  /** The card over a draft that left Drafts — sent, discarded or drained away while it was open. */
+  draftsRowGone: "This draft is no longer in Drafts.",
   /** PHONE-ONLY (3/5): the detail screen's heading over the text itself. */
   draftsTextHeading: "Message",
   /**
