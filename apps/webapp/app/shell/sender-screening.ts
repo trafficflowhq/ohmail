@@ -95,9 +95,9 @@ export interface ScreeningSubject {
   /** Where the lists show that mail ({@link senderScreening}'s `placeOf`), or null when spread. */
   current: ScreeningPlace | null;
   /**
-   * WHERE THEIR MAIL GOES: the pile of the rule the router files this subject's mail by (the
-   * winner of its term-free twins, the rule a press would retarget), or null with no such rule.
-   * The sheet marks this, never {@link current}: letters an older rule filed stay where they are.
+   * WHERE THEIR MAIL GOES — the sheet's mark. With a decision, its pile (`decidedDestination` for
+   * an address; the winning domain rule for a domain), never {@link current}: letters an older rule
+   * filed stay where they are. With none, the one place the lists show them, as before.
    */
   ruled: ScreeningDest | null;
   /** Each place the lists show that mail in, with how many — most first. */
@@ -199,7 +199,7 @@ export function senderScreening(
   theirs.sort(byDateDesc);
 
   const rules = rulesList(reader).filter((r) => r.enabled && ruleMatchesSender(r, subjectAddress));
-  const sender = subjectOf(mine, placeOf, ruledBy(rules, "sender", subjectAddress.trim().toLowerCase()));
+  const sender = subjectOf(mine, placeOf, decidedDestination(consentIndex(rules), subjectAddress));
   // The chip's display name, from the seed message's own entries: the sender's when the
   // override IS the sender (or there is none), else whatever the To/Cc entry wrote — the same
   // spelling the chip's face wore. Null for an address the seed does not carry.
@@ -218,17 +218,15 @@ export function senderScreening(
     representativeId: sender.representativeId,
     // With no domain there is nothing to widen to, so the domain subject IS the sender subject
     // and `SenderMenu` refuses to offer the switch. It is never a silently-empty second option.
-    scopes: { sender, domain: domain === "" ? sender : subjectOf(theirs, placeOf, ruledBy(rules, "domain", domain)) },
+    scopes: {
+      sender,
+      domain: domain === "" ? sender : subjectOf(theirs, placeOf, twinWinner(ruleTwins(rules, "domain", domain))?.destination ?? null),
+    },
     rules,
   };
 }
 
-/** The pile the subject's winning twin files into — {@link ScreeningSubject.ruled}. */
-function ruledBy(rules: readonly RuleDTO[], kind: "sender" | "domain", match: string): ScreeningDest | null {
-  const winner = twinWinner(ruleTwins(rules, kind, match));
-  const place = winner ? DEST_OF_FOLDER.get(canonicalDestination(winner.destination) as Folder) : undefined;
-  return place === undefined || place === "screener" ? null : place;
-}
+
 
 /** The `match` a rule at this scope carries — normalized ONCE, for the overlay and the wire. */
 export function ruleMatchOf(s: SenderScreening, scope: ScreeningScope): string {
@@ -241,13 +239,19 @@ export function domainOf(address: string): string {
   return at >= 0 ? address.slice(at + 1).trim().toLowerCase() : "";
 }
 
+/** The pile a decision files into, or null for the gate or a folder of the person's own. */
+function pileOf(folder: Folder): ScreeningDest | null {
+  const place = DEST_OF_FOLDER.get(canonicalDestination(folder) as Folder);
+  return place === undefined || place === "screener" ? null : place;
+}
+
 /**
  * The four facts the sheet renders, plus the sender count, for one already-sorted message set.
  * `current` is where the LISTS show the mail — a rule's placement, History — never the filed
  * folder when the two differ; `waiting` and the representative stay physical, the decide's door.
  */
 function subjectOf(
-  messages: EngineMessage[], placeOf: ReadonlyMap<string, Folder | null> | undefined, ruled: ScreeningDest | null,
+  messages: EngineMessage[], placeOf: ReadonlyMap<string, Folder | null> | undefined, decided: Folder | null,
 ): ScreeningSubject {
   const shown = (m: EngineMessage): ScreeningPlace | undefined => {
     const place = placeOf?.has(m.id) ? placeOf.get(m.id)! : m.folder;
@@ -259,10 +263,11 @@ function subjectOf(
     if (p) counts.set(p, (counts.get(p) ?? 0) + 1);
   }
   const held = messages.filter((m) => m.folder === FOLDER_OF_VIEW.screener);
+  const current = counts.size === 1 ? [...counts.keys()][0]! : null;
   return {
     messages,
-    current: counts.size === 1 ? [...counts.keys()][0]! : null,
-    ruled,
+    current,
+    ruled: decided === null ? (current === "screener" || current === "history" ? null : current) : pileOf(decided),
     places: [...counts].map(([place, count]) => ({ place, count })).sort((a, b) => b.count - a.count),
     waiting: held.length > 0,
     // The newest HELD message, because `POST /screener/:id` resolves `:id` against held mail
