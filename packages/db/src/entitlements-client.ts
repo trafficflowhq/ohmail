@@ -3,7 +3,7 @@ import {
   type AccessLifecycle, type AccessLifecycleState, type AccessClosedReason, type ActionPrices,
   type AccessReadOpts, type AccessRefusal, type AccessVerdict, type EntitlementsPort,
   type ReleaseOutcome, type ReleaseReceipt, type SpendAction, type SpendMeta, type SpendOutcome,
-  type SpendRelease, type CheckoutConfirmOutcome,
+  type SpendRelease, type ReturnConfirmOutcome,
 } from "./entitlements-port.js";
 import { isAiRefusalReason } from "./ai-gate-port.js";
 import { SPEND_ACTIONS, assertAttemptKey } from "./ledger-source.js";
@@ -550,7 +550,7 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       return "cancel_failed";
     },
 
-    async checkoutConfirm(accountId: string, sessionId: string): Promise<CheckoutConfirmOutcome> {
+    async confirmReturn(accountId: string, sessionId: string): Promise<ReturnConfirmOutcome> {
       const res = await post("/v1/checkout/confirm", { accountId, sessionId });
       if (!res) return "fault";
       // 404 is an ANSWER here: unknown, another account's, the other key mode, or an older program.

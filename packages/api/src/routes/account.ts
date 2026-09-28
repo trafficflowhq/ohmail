@@ -17,8 +17,8 @@ import type { Route } from "../router.js";
  * carried, relayed verbatim. Opaque here — its shape is the program's business — so the bound is a
  * token's: 1 to 255 letters, digits, `_` or `-`, refused 400 before anything is dialled.
  */
-export const CHECKOUT_SESSION_ID_MAX_CHARS = 255;
-const CHECKOUT_SESSION_ID = /^[A-Za-z0-9_-]{1,255}$/;
+export const RETURN_SESSION_ID_MAX_CHARS = 255;
+const RETURN_SESSION_ID = /^[A-Za-z0-9_-]{1,255}$/;
 
 /** What an erasure leaves on a host with no billing program: the pseudonymous account row and the token hashes. */
 const RETAINED_UNMETERED =
@@ -205,19 +205,19 @@ export const accountRoutes: Route[] = [
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
       const sessionId = (await readBody<{ sessionId?: unknown } | null>(req))?.sessionId;
-      if (typeof sessionId !== "string" || !CHECKOUT_SESSION_ID.test(sessionId)) {
+      if (typeof sessionId !== "string" || !RETURN_SESSION_ID.test(sessionId)) {
         throw new ServiceError("invalid_session_id", 400, "sessionId must be the id the return address carried.");
       }
       const port = entitlementsPort(deps);
-      if (!port?.checkoutConfirm) {
-        throw new ServiceError("no_checkout_confirm", 404, "This deployment confirms no checkout.");
+      if (!port?.confirmReturn) {
+        throw new ServiceError("no_return_confirm", 404, "This deployment confirms no checkout.");
       }
-      const outcome = await port.checkoutConfirm(ctx.accountId, sessionId);
+      const outcome = await port.confirmReturn(ctx.accountId, sessionId);
       if (outcome === "not_found") {
-        throw new ServiceError("checkout_not_found", 404, "No such checkout for this account.");
+        throw new ServiceError("return_not_found", 404, "No such checkout for this account.");
       }
       if (outcome === "fault") {
-        throw new ServiceError("checkout_unconfirmed", 503, "The checkout could not be confirmed now.");
+        throw new ServiceError("return_unconfirmed", 503, "The checkout could not be confirmed now.");
       }
       return json({ state: outcome }, 200);
     },

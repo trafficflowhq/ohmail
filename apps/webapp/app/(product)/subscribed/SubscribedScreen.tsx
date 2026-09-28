@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Spinner } from "@ohmail/ui";
 import { apiConfigured } from "../../api-client";
-import { confirmCheckoutReturn } from "../../checkout-return";
+import { confirmAccountReturn } from "../../account-return";
 import { resolveOwnerOutcome } from "../session-outcome";
 import { SELF_HOST_BUILD } from "../../hello";
 
@@ -31,7 +31,7 @@ export function SubscribedScreen() {
         if (!alive) return;
         if (outcome.kind === "owner") {
           setSignedIn(true);
-          void confirmCheckoutReturn(window.location.search)
+          void confirmAccountReturn(window.location.search)
             .finally(() => { window.location.replace("/?billing=success"); });
           return;
         }

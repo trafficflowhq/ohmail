@@ -2736,7 +2736,7 @@ export const account = {
    * program to apply the payment now. NEVER THROWS: any answer but the two states is `null`, and
    * the caller polls access exactly as it did before (an older API answers 404).
    */
-  checkoutConfirm: async (sessionId: string): Promise<"confirmed" | "pending" | null> => {
+  confirmReturn: async (sessionId: string): Promise<"confirmed" | "pending" | null> => {
     try {
       const r = await api<{ state?: unknown }>("/account/checkout/confirm", {
         method: "POST", body: { sessionId },

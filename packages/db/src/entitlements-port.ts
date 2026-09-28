@@ -207,7 +207,7 @@ export type ReleaseOutcome = "none" | "cancelled" | "cancel_failed";
  * `not_found`: an unknown session, another account's, or a program without the door. `fault`: no
  * answer. Four words, so an outage is never read as "not yours".
  */
-export type CheckoutConfirmOutcome = "confirmed" | "pending" | "not_found" | "fault";
+export type ReturnConfirmOutcome = "confirmed" | "pending" | "not_found" | "fault";
 
 /**
  * How a read of `access` may be answered. `fresh` asks past every cache and hold; `staleAllow` is
@@ -275,7 +275,7 @@ export interface EntitlementsPort {
    * THIS account. Grants no credits here — the answer is relayed and access is read fresh after.
    * Never throws. Optional: a program without the door answers `not_found` at the route.
    */
-  checkoutConfirm?(accountId: string, sessionId: string): Promise<CheckoutConfirmOutcome>;
+  confirmReturn?(accountId: string, sessionId: string): Promise<ReturnConfirmOutcome>;
 }
 
 /**

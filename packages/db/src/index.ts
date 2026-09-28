@@ -435,5 +435,5 @@ export {
   type AccessLifecycle, type AccessLifecycleState, type AccessClosedReason,
   type SpendOutcome, type SpendAction, type SpendRelease, type ReleaseOutcome,
   type ReleaseReceipt, type RefundObligation, type RefundObligationPort,
-  type RefundObligationReason, type CheckoutConfirmOutcome,
+  type RefundObligationReason, type ReturnConfirmOutcome,
 } from "./entitlements-port.js";

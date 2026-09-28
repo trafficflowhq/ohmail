@@ -2005,10 +2005,9 @@ function climb(input: MailStateInputs): MailState {
   // <ts>}` — gating on the reason gave that mailbox silence. Complete only
   // because reason non-null ⇒ since non-null (five writers audited, each
   // sets and clears both in one statement).
-  // …except the WALL's own block right after the service said open (mail 0135): the worker's
-  // report is the one the reopening invalidates, and it clears within a pass. Inside that window
-  // the row renders its ordinary state rather than "this subscription has ended".
   const reopened = refusalIsStale(now);
+  // …except the WALL's own block inside the minute after the service said open (mail 0135): the
+  // reopening has just cleared it, and a list read a moment before still carries it.
   const blocked = live.find((m) => m.syncBlockedSince !== null
     && !(reopened && m.syncBlockedReason === "account_closed"));
   if (blocked) {
