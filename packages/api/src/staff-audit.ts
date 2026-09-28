@@ -79,11 +79,22 @@ export function staffEventRow(e: StaffEventInput): typeof staffAuditEvents.$infe
 
 type Inserter = Pick<ApiDeps["db"], "insert">;
 
-/** Insert rows, all or none. A throw here is the caller's `503 audit_failed`. */
+/** The one failure a staff route answers `503 audit_failed`: its row could not be written. */
+export class StaffAuditWriteError extends Error {
+  constructor(readonly cause: unknown) {
+    super("staff audit row could not be written");
+    this.name = "StaffAuditWriteError";
+  }
+}
+
+/** Insert rows, all or none. Any failure — a refused detail, a database fault — throws {@link StaffAuditWriteError}. */
 export async function recordStaffEvents(db: Inserter, events: readonly StaffEventInput[]): Promise<void> {
   if (events.length === 0) return;
-  const rows = events.map(staffEventRow);
-  await db.insert(staffAuditEvents).values(rows);
+  try {
+    await db.insert(staffAuditEvents).values(events.map(staffEventRow));
+  } catch (err) {
+    throw new StaffAuditWriteError(err);
+  }
 }
 
 /**

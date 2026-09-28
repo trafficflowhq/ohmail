@@ -87,17 +87,16 @@ function staffConfigRoute(name: string, action: StaffAuditAction, run: StaffRun)
 
     // Recorded BEFORE the read or the write runs; no record, no answer.
     const event = { requestId: adoptRequestId(req, deps), at: deps.now(), actor: actorOf(staff), action };
-    if (!rolesAdmit(staff.roles, OAUTH_CONFIG_ROLES)) {
-      await recordStaffEvents(deps.db, [{ ...event, outcome: "refused", refusalCode: "role_required" }])
-        .catch((err: unknown) => log.error("admin_audit_failed", { err }));
-      return json(403, { error: { code: "role_required" } });
-    }
+    const refused = !rolesAdmit(staff.roles, OAUTH_CONFIG_ROLES);
     try {
-      await recordStaffEvents(deps.db, [{ ...event, outcome: "ok" }]);
+      await recordStaffEvents(deps.db, [refused
+        ? { ...event, outcome: "refused", refusalCode: "role_required" }
+        : { ...event, outcome: "ok" }]);
     } catch (err) {
       log.error("admin_audit_failed", { err });
       return json(503, { error: { code: "audit_failed" } });
     }
+    if (refused) return json(403, { error: { code: "role_required" } });
 
     try {
       const out = await run(body, staff, deps);

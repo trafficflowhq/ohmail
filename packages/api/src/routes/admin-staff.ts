@@ -12,7 +12,7 @@ import {
 } from "@trafficflow/services";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import {
-  queryHmacOf, recordStaffEvents, adoptRequestId, rolesAdmit,
+  queryHmacOf, recordStaffEvents, adoptRequestId, rolesAdmit, StaffAuditWriteError,
   type StaffActor, type StaffEventInput,
 } from "../staff-audit.js";
 import {
@@ -412,10 +412,12 @@ async function consumeStaffTotp(
 }
 
 /**
- * Record a staff event whose answer serves nothing — a refusal, a sign-out — where a failure to
- * record must not change the answer. Anything that SERVES records fail-closed instead.
+ * The sign-out's record, and nothing else's: a sign-out removes access, and removing access never
+ * waits on its row. Every other staff act, a refusal included, answers only once its row is
+ * written; a failed write throws {@link StaffAuditWriteError} and the wrapper answers
+ * `503 audit_failed`.
  */
-async function recordBestEffort(deps: ApiDeps, event: StaffEventInput): Promise<void> {
+async function recordSignOut(deps: ApiDeps, event: StaffEventInput): Promise<void> {
   try {
     await recordStaffEvents(deps.db, [event]);
   } catch (err) {
@@ -452,6 +454,10 @@ function staffRoute(name: string, run: (body: Record<string, unknown>, deps: Api
       const out = await run(body ?? {}, deps, req);
       return json(out.status, out.body);
     } catch (err) {
+      if (err instanceof StaffAuditWriteError) {
+        log?.error("admin_audit_failed", { err: err.cause });
+        return json(503, { error: { code: "audit_failed" } });
+      }
       log?.error("admin_staff_failed", { err });
       return json(503, { error: { code: "admin_staff_failed" } });
     }
@@ -502,11 +508,11 @@ async function signIn(
   // `staff_user_id` is a key, and an unknown address is nobody to record.
   const failed = async (step: "password" | "totp"): Promise<void> => {
     if (!user) return;
-    await recordBestEffort(deps, {
+    await recordStaffEvents(deps.db, [{
       requestId, at: now, action: "staff.signin_failed", outcome: "refused", refusalCode: "invalid",
       actor: { staffId: user.id, sessionId: null, email: user.email, roles: await liveRolesOf(deps.db as unknown as Tx, user.id) },
       detail: { step },
-    });
+    }]);
   };
 
   if (!user || !passwordOk) {
@@ -788,10 +794,10 @@ async function stepUp(
   }
   if (consumed === "invalid") {
     await throttleFail(deps.db, ip, now);
-    await recordBestEffort(deps, {
+    await recordStaffEvents(deps.db, [{
       requestId, at: now, action: "staff.stepup_failed", outcome: "refused", refusalCode: "invalid",
       actor: actorOf(session),
-    });
+    }]);
     return { status: 401, body: { ok: false, status: "invalid" } };
   }
 
@@ -899,7 +905,7 @@ async function signOut(
       .where(and(eq(staffSessions.tokenHash, hashToken(token)), isNull(staffSessions.revokedAt)));
     // After the revoke, and best-effort: a sign-out must never fail for want of its record.
     if (who) {
-      await recordBestEffort(deps, { requestId: adoptRequestId(req, deps), at: now, action: "staff.signout", outcome: "ok", actor: actorOf(who) });
+      await recordSignOut(deps, { requestId: adoptRequestId(req, deps), at: now, action: "staff.signout", outcome: "ok", actor: actorOf(who) });
     }
   }
   return { status: 200, body: { ok: true } };
@@ -964,7 +970,7 @@ async function mintAssertions(
         : undefined,
     }));
   const refuse = async (status: number, code: string): Promise<{ status: number; body: unknown }> => {
-    await recordBestEffort(deps, rowsFor("refused", code, 0)[0]!);
+    await recordStaffEvents(deps.db, [rowsFor("refused", code, 0)[0]!]);
     return { status, body: { error: { code } } };
   };
 
@@ -1010,12 +1016,7 @@ async function mintAssertions(
     return mintStaffAssertion(claims, key);
   });
   // BEFORE the answer, all rows or none: an assertion nobody recorded is never handed out.
-  try {
-    await recordStaffEvents(deps.db, rowsFor("ok", null, tier));
-  } catch (err) {
-    deps.logger?.child({ route: "/admin/staff/assertion" }).error("staff_audit_failed", { err });
-    return { status: 503, body: { error: { code: "audit_failed" } } };
-  }
+  await recordStaffEvents(deps.db, rowsFor("ok", null, tier));
   const answer: StaffAssertionAnswer = {
     assertions, expiresAt: new Date(exp * 1000).toISOString(), kid: key.kid, tier,
   };
@@ -1041,10 +1042,10 @@ async function changeRole(
   const role = str(body.role) as StaffRole;
   const action: StaffAuditAction = op === "revoke" ? "staff.role_revoke" : "staff.role_grant";
   const refuse = async (status: number, code: string, target?: string): Promise<{ status: number; body: unknown }> => {
-    await recordBestEffort(deps, {
+    await recordStaffEvents(deps.db, [{
       requestId, at: now, action, outcome: "refused", refusalCode: code, actor: actorOf(who),
       detail: target && (STAFF_ROLES as readonly string[]).includes(role) ? { role, targetStaffUserId: target } : {},
-    });
+    }]);
     return { status, body: { error: { code } } };
   };
 

@@ -1,7 +1,7 @@
 import { silentLogger } from "@trafficflow/core";
 import { resyncMailbox } from "@trafficflow/db/cloud";
 import { actorOf, resolveStaffSession, staffTokenOf, type StaffIdentity } from "./admin-staff.js";
-import { recordStaffEvents, adoptRequestId, rolesAdmit, staffEventRow } from "../staff-audit.js";
+import { recordStaffEvents, adoptRequestId, rolesAdmit, staffEventRow, StaffAuditWriteError } from "../staff-audit.js";
 import type { StaffRole } from "@trafficflow/services";
 import { mailboxResyncAnswer } from "../admin-write-wire.js";
 import { withStaffStepUp } from "../staff-step-up.js";
@@ -58,10 +58,15 @@ function staffMailboxWriteRoute(name: string, run: MailboxWriteRun): Handler {
 
     const requestId = adoptRequestId(req, deps);
     if (!rolesAdmit(staff.roles, MAILBOX_WRITE_ROLES)) {
-      await recordStaffEvents(deps.db, [{
-        requestId, at: deps.now(), actor: actorOf(staff), action: "write.mailbox.resync",
-        outcome: "refused", refusalCode: "role_required", targetMailboxId: str(body.mailboxId).trim(),
-      }]).catch((err: unknown) => log.error("admin_audit_failed", { err }));
+      try {
+        await recordStaffEvents(deps.db, [{
+          requestId, at: deps.now(), actor: actorOf(staff), action: "write.mailbox.resync",
+          outcome: "refused", refusalCode: "role_required", targetMailboxId: str(body.mailboxId).trim(),
+        }]);
+      } catch (err) {
+        log.error("admin_audit_failed", { err });
+        return json(503, { error: { code: "audit_failed" } });
+      }
       return json(403, { error: { code: "role_required" } });
     }
 
@@ -74,6 +79,10 @@ function staffMailboxWriteRoute(name: string, run: MailboxWriteRun): Handler {
       const out = await run({ mailboxId, note, requestId }, staff, deps);
       return json(out.status, out.body);
     } catch (err) {
+      if (err instanceof StaffAuditWriteError) {
+        log.error("admin_audit_failed", { err: err.cause });
+        return json(503, { error: { code: "audit_failed" } });
+      }
       log.error("admin_write_failed", { err });
       return json(503, { error: { code: "admin_write_failed" } });
     }
@@ -104,7 +113,7 @@ async function resync(
     await recordStaffEvents(deps.db, [{
       requestId: input.requestId, at: now, actor: actorOf(staff), action: "write.mailbox.resync",
       outcome: "refused", refusalCode: "mailbox_not_found", targetMailboxId: input.mailboxId,
-    }]).catch(() => { /* a refusal serves nothing; its record is best-effort */ });
+    }]);
     return { status: 404, body: { error: { code: "mailbox_not_found" } } };
   }
   // `changed: false` is a mailbox that was not parked — a 200 that wrote no `audit_log` row (the

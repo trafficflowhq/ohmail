@@ -316,24 +316,21 @@ function adminRoute(name: string, action: StaffAuditAction, read: StaffRead, pol
       return json(401, { error: { code: "staff_session_required" } });
     }
     // AUDIT BEFORE SERVE. The row is written on the runtime connection before the read runs; a
-    // failed insert is `503 audit_failed` and the read never runs. A refusal serves nothing, so
-    // its row is best-effort. The adopted request id is the one `app.ts` echoes.
+    // failed insert is `503 audit_failed` and the read never runs. A role refusal answers only
+    // once its row is written too. The adopted request id is the one `app.ts` echoes.
     const requestId = adoptRequestId(req, deps);
     const row: StaffEventInput = {
       requestId, at: deps.now(), actor: actorOf(staffWho), action, outcome: "ok",
       ...(policy.audit?.(req, params, cfg.secret) ?? {}),
     };
-    if (!rolesAdmit(staffWho.roles, policy.roles ?? "any")) {
-      await recordStaffEvents(deps.db, [{ ...row, outcome: "refused", refusalCode: "role_required" }])
-        .catch((err: unknown) => log.error("admin_audit_failed", { err }));
-      return json(403, { error: { code: "role_required" } });
-    }
+    const refused = !rolesAdmit(staffWho.roles, policy.roles ?? "any");
     try {
-      await recordStaffEvents(deps.db, [row]);
+      await recordStaffEvents(deps.db, [refused ? { ...row, outcome: "refused", refusalCode: "role_required" } : row]);
     } catch (err) {
       log.error("admin_audit_failed", { err });
       return json(503, { error: { code: "audit_failed" } });
     }
+    if (refused) return json(403, { error: { code: "role_required" } });
     const reader: AdminReader = { roles: staffWho.roles };
     try {
       // INSIDE the try: a handle that refuses to construct is a 503 an operator can read, and
