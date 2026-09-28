@@ -2,7 +2,7 @@ import { users, providerFamily, UNMETERED, UNMETERED_ACCESS, parkedAccountsOf, t
 import { readDbTls } from "@trafficflow/db/cloud";
 import {
   acquireImapSlot, releaseImapSlot, webhookAlertSink,
-  recordApiFault,
+  recordApiFault, accountsAtCapOf,
   resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER,
   makeSupabaseStagingStorage, makeS3StagingStorage,
   // The organizer's last completed pass, for the filing strip (mail 0097).
@@ -604,8 +604,10 @@ export function buildDeps(req: Request, rt: ServerRuntime): ApiDeps {
         sinks: alertSinksFor(cfg, rt.logger),
         environment: cfg.environment,
         // `null`: the bag's port is UNMETERED, so this server parks nobody and every stale
-        // mailbox is on duty — the page may say its owner is not receiving mail.
+        // mailbox is on duty — the page may say its owner is not receiving mail. For the same
+        // reason nobody here has a storage cap, and the rule says so rather than "no reader".
         parkedAccounts: parkedAccountsOf(UNMETERED),
+        accountsAtCap: accountsAtCapOf(UNMETERED),
       }
       : undefined,
     // NO admin, NO adminDb: selfHostRoutes carries no admin group at all — account isolation on

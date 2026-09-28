@@ -1,5 +1,5 @@
 import {
-  makeOwnedDb, writeHeartbeat, clearHeartbeat, makeEntitlementsClient,
+  makeOwnedDb, writeHeartbeat, clearHeartbeat, makeEntitlementsClient, entitlementsFaultRecorder,
 } from "@trafficflow/db/cloud";
 import {
   closeStoodDownAppointments, UNMETERED,
@@ -412,6 +412,8 @@ export async function runReconcileCron(
         config.entitlements
           ? makeEntitlementsClient({
             baseUrl: config.entitlements.url, secret: config.entitlements.secret,
+            // A failed call is a row (arm `worker`), awaited: this sweep's process exits after it.
+            onCallFault: entitlementsFaultRecorder(() => db as unknown as Tx, "worker", { log }),
           })
           : (UNMETERED satisfies EntitlementsComposition),
         log,

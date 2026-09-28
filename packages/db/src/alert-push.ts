@@ -1,6 +1,6 @@
 import {
-  classifyTransportError, nodePostJson, redactEndpoint, renderAlertText,
-  type AlertSink, type PostJson,
+  classifyTransportError, nodePostJson, redactEndpoint, renderAlertText, renderResolvedText,
+  type AlertDeliveryResult, type AlertSink, type PostJson,
 } from "./alerts.js";
 
 /**
@@ -113,47 +113,51 @@ export function telegramAlertSink(
 
   const endpoint = `${TELEGRAM_API_ORIGIN}/bot${botToken}/sendMessage`;
 
+  const send = async (render: () => string): Promise<AlertDeliveryResult> => {
+    try {
+      const full = render();
+      const text = full.length > TELEGRAM_TEXT_LIMIT
+        ? `${full.slice(0, TELEGRAM_TEXT_BUDGET)}\n… (truncated)`
+        : full;
+      const body = JSON.stringify({
+        // A STRING, never a number: chat ids for channels run past 2^53 and `JSON.stringify`
+        // of a rounded double would post to a chat that does not exist. Telegram accepts both
+        // forms; only one of them survives a large id.
+        chat_id: chatId,
+        text,
+        // An alert's detail sentences name no URL, but a rule that grows one later must not
+        // turn a page into a preview fetch from the pager's own infrastructure.
+        disable_web_page_preview: true,
+      });
+      const res = await post(endpoint, body);
+      // Telegram's HTTP status mirrors the `ok` field of its envelope: a 2xx is always
+      // `{"ok":true,...}` and a refusal is a 4xx carrying `description`. So the status is
+      // the whole verdict here, and the description arrives through `PostJson`'s body, which
+      // is read on refusals only.
+      if (res.status >= 200 && res.status < 300) return { ok: true, outcome: "ok" };
+      return {
+        ok: false,
+        outcome: "refused",
+        error: redact(`HTTP ${res.status}${res.body ? ` — ${res.body}` : ""}`, endpoint),
+      };
+    } catch (err) {
+      // Never throws — the other arms must still get their chance — and it says what
+      // happened, with a closed code beside the sentence so a dead arm is machine-visible
+      // and not merely readable.
+      const e = err as { name?: unknown; message?: unknown; cause?: { message?: unknown; code?: unknown } };
+      const causeRaw = e?.cause?.code ?? e?.cause?.message;
+      const cause = causeRaw === undefined || causeRaw === "" ? "" : asText(causeRaw);
+      const name = e?.name === undefined ? "Error" : asText(e.name);
+      const message = e?.message === undefined ? asText(err) : asText(e.message);
+      const text = `${name}: ${message}${cause ? ` (${cause})` : ""}`;
+      return { ok: false, outcome: classifyTransportError(err), error: redact(text, endpoint) };
+    }
+  };
   return {
     name: "telegram",
-    async notify(alerts, ctx) {
-      try {
-        const full = `ohmail ${ctx.environment}\n\n${renderAlertText(alerts, ctx)}`;
-        const text = full.length > TELEGRAM_TEXT_LIMIT
-          ? `${full.slice(0, TELEGRAM_TEXT_BUDGET)}\n… (truncated)`
-          : full;
-        const body = JSON.stringify({
-          // A STRING, never a number: chat ids for channels run past 2^53 and `JSON.stringify`
-          // of a rounded double would post to a chat that does not exist. Telegram accepts both
-          // forms; only one of them survives a large id.
-          chat_id: chatId,
-          text,
-          // An alert's detail sentences name no URL, but a rule that grows one later must not
-          // turn a page into a preview fetch from the pager's own infrastructure.
-          disable_web_page_preview: true,
-        });
-        const res = await post(endpoint, body);
-        // Telegram's HTTP status mirrors the `ok` field of its envelope: a 2xx is always
-        // `{"ok":true,...}` and a refusal is a 4xx carrying `description`. So the status is
-        // the whole verdict here, and the description arrives through `PostJson`'s body, which
-        // is read on refusals only.
-        if (res.status >= 200 && res.status < 300) return { ok: true, outcome: "ok" };
-        return {
-          ok: false,
-          outcome: "refused",
-          error: redact(`HTTP ${res.status}${res.body ? ` — ${res.body}` : ""}`, endpoint),
-        };
-      } catch (err) {
-        // Never throws — the other arms must still get their chance — and it says what
-        // happened, with a closed code beside the sentence so a dead arm is machine-visible
-        // and not merely readable.
-        const e = err as { name?: unknown; message?: unknown; cause?: { message?: unknown; code?: unknown } };
-        const causeRaw = e?.cause?.code ?? e?.cause?.message;
-        const cause = causeRaw === undefined || causeRaw === "" ? "" : asText(causeRaw);
-        const name = e?.name === undefined ? "Error" : asText(e.name);
-        const message = e?.message === undefined ? asText(err) : asText(e.message);
-        const text = `${name}: ${message}${cause ? ` (${cause})` : ""}`;
-        return { ok: false, outcome: classifyTransportError(err), error: redact(text, endpoint) };
-      }
-    },
+    notify: (alerts, ctx) => send(() => `ohmail ${ctx.environment}\n\n${renderAlertText(alerts, ctx)}`),
+    // From the notices and the environment alone, so a retry posts the same text.
+    notifyResolved: (notices, ctx) =>
+      send(() => `ohmail ${ctx.environment}\n\n${renderResolvedText(notices, ctx.environment)}`),
   };
 }

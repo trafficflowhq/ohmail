@@ -1,5 +1,5 @@
 import { UNMETERED, isSpendMetered, type SpendComposition, type Tx } from "@trafficflow/db";
-import { makeOwnedDb, makeEntitlementsClient } from "@trafficflow/db/cloud";
+import { makeOwnedDb, makeEntitlementsClient, entitlementsFaultRecorder } from "@trafficflow/db/cloud";
 import type { SpendPort } from "@trafficflow/db";
 import { generateProposals, silentLogger, unconfiguredProposer, type Logger, type WorkflowPort } from "@trafficflow/core";
 import { selectionOf, type WorkerConfig } from "./config.js";
@@ -167,8 +167,12 @@ export async function runProposalCron(
     /* ONE ENTITLEMENTS PORT FOR THIS INVOCATION, or a named unmetered state — the composition
      * `index.ts` makes, for its reason: `ENTITLEMENTS_URL` set ⇒ the HTTP client, unset ⇒ nothing
      * meters and the spend call sites are handed nothing. */
+    // A failed call is a row (arm `worker`), awaited: this process exits when the pass ends.
     const entitlements: SpendComposition = config.entitlements
-      ? makeEntitlementsClient({ baseUrl: config.entitlements.url, secret: config.entitlements.secret })
+      ? makeEntitlementsClient({
+        baseUrl: config.entitlements.url, secret: config.entitlements.secret,
+        onCallFault: entitlementsFaultRecorder(() => db as unknown as Tx, "worker", { log }),
+      })
       : UNMETERED;
     const spend = isSpendMetered(entitlements) ? entitlements : undefined;
     let generated = 0;

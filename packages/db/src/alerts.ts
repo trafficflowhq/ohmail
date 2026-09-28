@@ -5,9 +5,14 @@ import {
   devices, mailboxes, outboundSends, platformSignals, sessions, workerHeartbeats,
 } from "./schema.js";
 import { imapRefusalsInWindow } from "./imap-admission.js";
-import { apiFaultWindow, poolerRefusalsInWindow } from "./api-faults.js";
+import {
+  apiFaultWindow, poolerRefusalsInWindow, ENTITLEMENTS_FAULT_GRAIN, ENTITLEMENTS_FAULT_ROUTE_PREFIX,
+  type ApiFaultArm, type ApiFaultRouteCount,
+} from "./api-faults.js";
 import type { Tx } from "./change-log.js";
-import type { ParkedAccountsReader } from "./entitlements-port.js";
+import type {
+  AccountsAtCapReader, AtCapAccount, ParkedAccountsReader,
+} from "./entitlements-port.js";
 
 /**
  * One evaluator, one delivery pass, two classes of finding. {@link AlertKind} is authoritative; a
@@ -149,17 +154,8 @@ export type AlertKind =
    */
   | "session_refresh_replayed";
 
-/**
- * One at-cap account, as rule 5 reads it: counted bytes at or over the account's cap.
- *
- * The SHAPE is the alert's, so it lives beside the rule; the ANSWER is the host's, because the
- * cap is a limit whoever operates the service sets.
- */
-export interface AtCapAccount {
-  accountId: string;
-  bytes: number;
-  storageBytesLimit: number;
-}
+/** One at-cap account, as rule 5 reads it — the port's shape, re-exported beside the rule. */
+export type { AtCapAccount, AtCapReading, AccountsAtCapReader } from "./entitlements-port.js";
 
 export type AlertSeverity = "critical" | "warning";
 
@@ -603,11 +599,12 @@ export interface EvaluateOptions {
    */
   parkedAccounts?: ParkedAccountsReader | null | undefined;
   /**
-   * WHO IS AT THEIR STORAGE CAP — composed by the host, for `parkedAccounts`' reason: the cap
-   * is a limit the operator sets, not a fact this database holds. Absent ⇒ nobody is at a cap,
-   * which is the truth on an unmetered install.
+   * WHO IS AT THEIR STORAGE CAP — composed by the host (`accountsAtCapOf`), for `parkedAccounts`'
+   * reason: the cap is a limit the operator sets, not a fact this database holds. `null` states
+   * that this host caps nobody. ABSENT is no reader: the rule is unread, never "nobody at a cap".
+   * A reading short of its population marks the rule `partial` and its sentence says how short.
    */
-  accountsAtCap?: () => Promise<readonly AtCapAccount[]>;
+  accountsAtCap?: AccountsAtCapReader | null | undefined;
   /**
    * Whether this deployment runs an API alert arm. The worker states it from its `apiCron` config:
    * that pair's secret must match the API host's, so it exists only beside an API host with armed
@@ -657,7 +654,15 @@ export interface EvaluationScope {
   measuredWindows: ReadonlySet<string>;
   /** Kinds this evaluation did not read: a refused read (42501), or an input nobody stated. */
   unread: ReadonlySet<AlertKind>;
+  /** Why, for every member of `unread` — the words a board renders instead of a zero. */
+  unreadReasons: ReadonlyMap<AlertKind, UnreadReason>;
 }
+
+/**
+ * `no_reader`: the host stated no input for the rule. `refused`: the read was refused (42501, or
+ * the database is older than this bundle). `partial`: the rule read less than its population.
+ */
+export type UnreadReason = "no_reader" | "refused" | "partial";
 
 /**
  * Per kind, the two ways an open row closes, both BY AN EVALUATION and never by a human.
@@ -848,15 +853,50 @@ export function isSchemaBehind(alerts: readonly Alert[]): boolean {
   return alerts.length === 1 && alerts[0]!.kind === "schema_behind";
 }
 
+const ARM_WORD: { readonly [A in ApiFaultArm]: string } = { api: "API host", worker: "worker" };
+
+/**
+ * `api_fault_rate`'s title and detail for one route. A route this API served answered 5xx; an
+ * `entitlements:` route is a call OUT that failed, and is worded as one, counting what its arm's
+ * grain records — calls from the API host, minutes with a failure from the worker.
+ */
+export function apiFaultRateText(
+  r: Pick<ApiFaultRouteCount, "route" | "arm" | "faults" | "newest">, t: AlertThresholds, now: Date,
+): { title: string; detail: string } {
+  const window = humanAge(Math.round(t.apiFaultWindowMs / 1000));
+  const newest = `Newest ${humanAge(secondsBetween(now, r.newest))} ago.`;
+  if (!r.route.startsWith(ENTITLEMENTS_FAULT_ROUTE_PREFIX)) {
+    return {
+      title: `${r.route} answered ${r.faults} 5xx`,
+      detail: `${r.route} returned ${r.faults} 5xx from the ${r.arm} in the last ${window}, past ` +
+        `the floor of ${t.apiFaultMinPerRoute}. ${newest}`,
+    };
+  }
+  const arm = r.arm as ApiFaultArm;
+  const who = ARM_WORD[arm] ?? r.arm;
+  const path = r.route.slice(ENTITLEMENTS_FAULT_ROUTE_PREFIX.length);
+  const perMinute = ENTITLEMENTS_FAULT_GRAIN[arm] === "minute";
+  const counted = perMinute ? `in ${r.faults} separate minute(s)` : `${r.faults} times`;
+  return {
+    title: `calls from the ${who} to the entitlements program failed ${counted}`,
+    detail: `Calls from the ${who} to the entitlements program's ${path} failed ${counted} in the ` +
+      `last ${window}, past the floor of ${t.apiFaultMinPerRoute}: each got no answer inside its ` +
+      `budget or a 5xx, and the caller took its fault arm (the last verdict it knew, else allow).` +
+      (perMinute ? " The worker records one row per path per minute, so this counts minutes, not calls." : "") +
+      ` ${newest}`,
+  };
+}
+
 export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promise<Alert[]> {
   return (await evaluateAlertsWithScope(db, opts)).alerts;
 }
 
 /** Every kind unread: what a pass that stopped at the schema preflight looked at. */
 function nothingRead(opts: EvaluateOptions): EvaluationScope {
+  const kinds = Object.keys(ALERT_KIND_ARMS) as AlertKind[];
   return {
     driver: opts.driver, shards: [], measuredWindows: new Set(),
-    unread: new Set(Object.keys(ALERT_KIND_ARMS) as AlertKind[]),
+    unread: new Set(kinds), unreadReasons: new Map(kinds.map((k) => [k, "refused" as const])),
   };
 }
 
@@ -869,6 +909,11 @@ export async function evaluateAlertsWithScope(
   const shards = opts.shards ?? [0];
   const alerts: Alert[] = [];
   const unread = new Set<AlertKind>();
+  const unreadReasons = new Map<AlertKind, UnreadReason>();
+  const markUnread = (kind: AlertKind, why: UnreadReason): void => {
+    unread.add(kind);
+    unreadReasons.set(kind, why);
+  };
   const measuredWindows = new Set<string>();
 
   // ── PREFLIGHT, BEFORE ANY READ THAT THIS BUNDLE'S MIGRATION MADE POSSIBLE ─────────────
@@ -1219,8 +1264,25 @@ export async function evaluateAlertsWithScope(
   // and the operator's remedy is the same whoever is in it. Warning, not critical: the product is
   // behaving as specified — mail still arrives and organizes, the user has been told — but a
   // human should know who is bumping the ceiling before the support mail arrives.
-  const atCap = opts.accountsAtCap ? await opts.accountsAtCap() : [];
-  if (!opts.accountsAtCap) unread.add("storage_at_cap");
+  // No reader is UNREAD, never "nobody at a cap"; a reading short of its population is PARTIAL:
+  // what it found is paged and said to be partial, and its silence clears nothing.
+  let atCap: readonly AtCapAccount[] = [];
+  let capShort: { read: number; total: number } | null = null;
+  if (opts.accountsAtCap === undefined) markUnread("storage_at_cap", "no_reader");
+  else if (opts.accountsAtCap !== null) {
+    try {
+      const reading = await opts.accountsAtCap(db, now);
+      atCap = reading.atCap;
+      if (reading.read < reading.total) {
+        capShort = { read: reading.read, total: reading.total };
+        markUnread("storage_at_cap", "partial");
+      }
+    } catch (err) {
+      const code = (err as { code?: string })?.code ?? (err as { cause?: { code?: string } })?.cause?.code;
+      if (code !== "42501") throw err;
+      markUnread("storage_at_cap", "refused");
+    }
+  }
   const { parked: capParked } = await parkedOf(atCap.map((r) => r.accountId));
   const atCapOnDuty = atCap.filter((r) => !capParked.has(r.accountId));
   if (atCapOnDuty.length > 0) {
@@ -1252,6 +1314,10 @@ export async function evaluateAlertsWithScope(
         (capWide
           ? ` ${atCapOnDuty.length} accounts reaching the ceiling together is not a per-account ` +
             `pattern: THE EVICT PASS IS BROKEN. Check worker storage_evict_pass.`
+          : "") +
+        (capShort
+          ? ` Partial reading: ${capShort.read} of ${capShort.total} accounts read, the largest ` +
+            `first; the rest are not counted.`
           : ""),
       count: atCapOnDuty.length,
       oldestSeconds: null,
@@ -1377,7 +1443,7 @@ export async function evaluateAlertsWithScope(
     // 42501 insufficient_privilege: a handle the provisioner's grants have not reached yet.
     // Everything else stays fatal — a swallowed real fault is a silenced pager.
     if (code !== "42501") throw err;
-    unread.add("device_sync_stale");
+    markUnread("device_sync_stale", "refused");
   }
 
   // 8b. A deviceless session that stopped converging — the browser-door install. The population
@@ -1439,7 +1505,7 @@ export async function evaluateAlertsWithScope(
   } catch (err) {
     const code = (err as { code?: string })?.code ?? (err as { cause?: { code?: string } })?.cause?.code;
     if (code !== "42501") throw err;
-    unread.add("session_sync_stale");
+    markUnread("session_sync_stale", "refused");
   }
 
   // 9. Refresh-token reuse revoked a family — an attack or a broken client, never routine.
@@ -1534,7 +1600,7 @@ export async function evaluateAlertsWithScope(
   } catch (err) {
     const code = (err as { code?: string })?.code ?? (err as { cause?: { code?: string } })?.cause?.code;
     if (code !== "42501") throw err;
-    unread.add("session_reuse_revoked"); unread.add("credential_replay_wide");
+    markUnread("session_reuse_revoked", "refused"); markUnread("credential_replay_wide", "refused");
   }
 
   // 9c. A CLIENT THAT CANNOT ADOPT ITS OWN ROTATIONS. `refresh_replayed` is written every time a
@@ -1591,7 +1657,7 @@ export async function evaluateAlertsWithScope(
   } catch (err) {
     const code = (err as { code?: string })?.code ?? (err as { cause?: { code?: string } })?.cause?.code;
     if (code !== "42501") throw err;
-    unread.add("session_refresh_replayed");
+    markUnread("session_refresh_replayed", "refused");
   }
 
   // 10. The model provider has been unreachable long enough that mail is degraded. Read from
@@ -1700,11 +1766,7 @@ export async function evaluateAlertsWithScope(
       key: `api_fault_rate:${r.arm}:${r.route}`,
       kind: "api_fault_rate",
       severity: "critical",
-      title: `${r.route} answered ${r.faults} 5xx`,
-      detail:
-        `${r.route} returned ${r.faults} 5xx from the ${r.arm} in the last ` +
-        `${humanAge(Math.round(t.apiFaultWindowMs / 1000))}, past the floor of ` +
-        `${t.apiFaultMinPerRoute}. Newest ${humanAge(secondsBetween(now, r.newest))} ago.`,
+      ...apiFaultRateText(r, t, now),
       count: r.faults,
       oldestSeconds: null,
       cls: "incident",
@@ -1793,7 +1855,7 @@ export async function evaluateAlertsWithScope(
   } catch (err) {
     const code = (err as { code?: string })?.code ?? (err as { cause?: { code?: string } })?.cause?.code;
     if (code !== "42501") throw err;
-    unread.add("imap_admission_refused");
+    markUnread("imap_admission_refused", "refused");
   }
 
   // 15. The OTHER alert driver has stopped running — evaluated by the other driver, and that is
@@ -1889,7 +1951,7 @@ export async function evaluateAlertsWithScope(
     }
   }
 
-  return { alerts, scope: { driver: opts.driver, shards, measuredWindows, unread } };
+  return { alerts, scope: { driver: opts.driver, shards, measuredWindows, unread, unreadReasons } };
 }
 
 /**
@@ -2227,43 +2289,52 @@ export function webhookAlertSink(url: string | undefined, post: PostJson = nodeP
     };
   }
 
+  const send = async (render: () => string): Promise<AlertDeliveryResult> => {
+    try {
+      const res = await post(endpoint, render());
+      if (res.status >= 200 && res.status < 300) return { ok: true, outcome: "ok" };
+      return {
+        ok: false,
+        outcome: "refused",
+        error: redactEndpoint(
+          `HTTP ${res.status}${res.body ? ` — ${res.body}` : ""}`, endpoint,
+        ),
+      };
+    } catch (err) {
+      // A sink NEVER throws: the other sink must still get its chance. It does now say what
+      // happened — `AbortError` (the 8 s timeout), `TypeError: fetch failed` with an
+      // `ENOTFOUND`/`ECONNREFUSED` cause, a TLS failure — because "the webhook refused" with
+      // no reason attached is the state this whole file spent months in.
+      const e = err as { name?: string; message?: string; cause?: { message?: string; code?: string } };
+      const cause = e?.cause?.code ?? e?.cause?.message ?? "";
+      const text = `${e?.name ?? "Error"}: ${e?.message ?? String(err)}${cause ? ` (${cause})` : ""}`;
+      return { ok: false, outcome: classifyTransportError(err), error: redactEndpoint(text, endpoint) };
+    }
+  };
   return {
     name: "webhook",
-    async notify(alerts, ctx) {
-      try {
-        const body = JSON.stringify({
-          // `text`/`title` are what a chat webhook renders; everything else is ignored by
-          // the ones that do not understand it and consumed by the ones that do.
-          title: `ohmail ${ctx.environment}: ${alerts.length} alert(s)`,
-          text: renderAlertText(alerts, ctx),
-          source: ctx.source,
-          environment: ctx.environment,
-          firedAt: ctx.now.toISOString(),
-          alerts: alerts.map((a) => ({
-            key: a.key, kind: a.kind, severity: a.severity,
-            title: a.title, detail: a.detail, count: a.count, oldestSeconds: a.oldestSeconds,
-          })),
-        });
-        const res = await post(endpoint, body);
-        if (res.status >= 200 && res.status < 300) return { ok: true, outcome: "ok" };
-        return {
-          ok: false,
-          outcome: "refused",
-          error: redactEndpoint(
-            `HTTP ${res.status}${res.body ? ` — ${res.body}` : ""}`, endpoint,
-          ),
-        };
-      } catch (err) {
-        // A sink NEVER throws: the other sink must still get its chance. It does now say what
-        // happened — `AbortError` (the 8 s timeout), `TypeError: fetch failed` with an
-        // `ENOTFOUND`/`ECONNREFUSED` cause, a TLS failure — because "the webhook refused" with
-        // no reason attached is the state this whole file spent months in.
-        const e = err as { name?: string; message?: string; cause?: { message?: string; code?: string } };
-        const cause = e?.cause?.code ?? e?.cause?.message ?? "";
-        const text = `${e?.name ?? "Error"}: ${e?.message ?? String(err)}${cause ? ` (${cause})` : ""}`;
-        return { ok: false, outcome: classifyTransportError(err), error: redactEndpoint(text, endpoint) };
-      }
-    },
+    notify: (alerts, ctx) => send(() => JSON.stringify({
+      // `text`/`title` are what a chat webhook renders; everything else is ignored by
+      // the ones that do not understand it and consumed by the ones that do.
+      title: `ohmail ${ctx.environment}: ${alerts.length} alert(s)`,
+      text: renderAlertText(alerts, ctx),
+      source: ctx.source,
+      environment: ctx.environment,
+      firedAt: ctx.now.toISOString(),
+      alerts: alerts.map((a) => ({
+        key: a.key, kind: a.kind, severity: a.severity,
+        title: a.title, detail: a.detail, count: a.count, oldestSeconds: a.oldestSeconds,
+      })),
+    })),
+    // Built from the notices and the environment alone, so every retry posts the same bytes.
+    notifyResolved: (notices, ctx) => send(() => JSON.stringify({
+      title: `ohmail ${ctx.environment}: ${notices.length} resolved`,
+      text: renderResolvedText(notices, ctx.environment),
+      environment: ctx.environment,
+      resolved: notices.map((n) => ({
+        key: n.key, kind: n.kind, openedAt: n.openedAt, resolvedAt: n.resolvedAt, pages: n.pages,
+      })),
+    })),
   };
 }
 
@@ -2271,6 +2342,14 @@ export function webhookAlertSink(url: string | undefined, post: PostJson = nodeP
 export function renderAlertText(alerts: readonly Alert[], ctx: AlertNotifyContext): string {
   const head = `ohmail ${ctx.environment} — ${alerts.length} alert(s) firing (observed by ${ctx.source})`;
   const body = alerts.map((a) => `• [${a.severity}] ${a.title}\n  ${a.detail}`).join("\n");
+  return `${head}\n\n${body}`;
+}
+
+/** The resolved notice's plain text, from the notices alone: no clock, no driver (see the mail's). */
+export function renderResolvedText(notices: readonly ResolutionNotice[], environment: string): string {
+  const head = `ohmail ${environment} — resolved: ${notices.map((n) => n.key).join(", ")}`;
+  const body = notices.map((n) => `• ${n.key} (${n.kind}) — firing since ${n.openedAt}, resolved at ` +
+    `${n.resolvedAt}, paged ${n.pages} time(s). It has stayed resolved since.`).join("\n");
   return `${head}\n\n${body}`;
 }
 

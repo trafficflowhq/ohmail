@@ -4,11 +4,12 @@ import {
   pruneIdempotencyKeys, pruneSendFingerprints, noticeSinkFor, setNoticeSink, accountSettings, mailboxCredentials, mailboxes,
   messages, folderState, junkSweepCandidateWhere, closeStoodDownAppointments,
   RELEASED_ORGANIZER_SEND_SENTENCE, capabilitiesColumn, exportPendingMovesOnStandDown,
-  UNMETERED, isMetered, parkedAccountsOf, AccountErasedError, type EntitlementsComposition,
+  UNMETERED, isMetered, AccountErasedError, type EntitlementsComposition,
   type StandDownExport,
 } from "@trafficflow/db";
 import {
   makeEntitlementsClient, refundObligationsOn, makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout,
+  entitlementsFaultRecorder, alertReadersOf,
   markScreenerSuggestOwed, owedSuggestAccounts, clearScreenerSuggestOwed,
   pruneErasedBearers, pruneAuthThrottle } from "@trafficflow/db/cloud";
 import {
@@ -1175,10 +1176,14 @@ export async function startWorkerWithLock(
      * `ENTITLEMENTS_URL` set ⇒ the HTTP client of that program; unset ⇒ `UNMETERED`, and the
      * spend call sites are handed nothing and charge nothing. Composed UNCONDITIONALLY, before
      * any live model is: metering must exist before the spend does, not after. */
+    // Each failed call is a warn line and an `api_faults` row (arm `worker`, one per path per
+    // minute). NOT awaited: this client answers the per-mailbox path, which must not wait on a write.
+    const recordEntitlementsFault = entitlementsFaultRecorder(() => db as unknown as Tx, "worker", { log });
     const entitlements: EntitlementsComposition = config.entitlements
       ? makeEntitlementsClient({
         baseUrl: config.entitlements.url, secret: config.entitlements.secret,
         ...(config.entitlements.accessTtlMs !== undefined ? { ttlMs: config.entitlements.accessTtlMs } : {}),
+        onCallFault: (f) => { void recordEntitlementsFault(f); },
       })
       : UNMETERED;
     /** The spend half the call sites take — `undefined` where nothing meters. */
@@ -1199,7 +1204,8 @@ export async function startWorkerWithLock(
      * last-known/allow, so a faulting reader can only sync more. The pass once read no parked set
      * and paged hourly about accounts this roster had parked (`alert-pass-callers-name-parked`).
      */
-    const parkedAccountsReader: ParkedAccountsReader | null = parkedAccountsOf(entitlements);
+    const alertReaders = alertReadersOf(entitlements);
+    const parkedAccountsReader: ParkedAccountsReader | null = alertReaders.parkedAccounts;
 
     // The LIVE classifier, behind a per-process circuit breaker. ONE circuit for the process, because
     // the failure domain is the shared API key and endpoint — per-mailbox circuits would each burn
@@ -5360,8 +5366,10 @@ export async function startWorkerWithLock(
         const result = await runAlertPass(db as unknown as Tx, {
           sinks: alertSinks, shards: [], source: "worker", environment,
           deliveryStreak: alertDeliveryStreak,
-          // The roster's parked set: an account it does not sync is never on duty for a page.
+          // The roster's parked set: an account it does not sync is never on duty for a page. The
+          // at-cap reader is this driver's to run: a pass is periodic, a console request is not.
           parkedAccounts: parkedAccountsReader,
+          accountsAtCap: alertReaders.accountsAtCap,
           // THE DRIVER'S OWN NAME, which is what makes two of the rules possible.
           //
           // `alert_driver_dark` looks at the OTHER driver's row — never its own — because a

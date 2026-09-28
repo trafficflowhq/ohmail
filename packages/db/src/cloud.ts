@@ -122,8 +122,15 @@ export {
   type AlertSinkOutcome, type SinkOutcome, type DeliveryReport, type SinkStreak,
   type SinkDegradation, type AlertSinkHealth,
   type AlertClass, type AlertDriver, type AlertDriverStatus, type PlatformSignalWindow,
-  type AlertKindArms, type EvaluationScope, type NeverRanFacts,
+  type AlertKindArms, type EvaluationScope, type NeverRanFacts, type UnreadReason,
+  type AtCapReading, type AccountsAtCapReader, renderResolvedText, apiFaultRateText,
 } from "./alerts.js";
+
+/* Who is at their storage cap, read for the two alert drivers, and the one reader bag a host
+ * composes for them. CLOUD-ONLY: the reader reads a table and asks the entitlements program. */
+export {
+  accountsAtCapOf, alertReadersOf, AT_CAP_READ_LIMIT, type AlertReaders,
+} from "./at-cap-reader.js";
 
 export {
   resendAlertSink, RESEND_EMAILS_URL, type ResendAlertSinkConfig,
@@ -134,9 +141,10 @@ export {
  * table does not exist in a local install and the recorder reaches it through a port. */
 export {
   recordApiFault, entitlementsFaultRow, apiFaultWindow, poolerRefusalsInWindow,
-  pruneApiFaults, faultClassOf,
+  pruneApiFaults, faultClassOf, entitlementsFaultRecorder,
   API_FAULT_RETENTION_MS, POOLER_REFUSAL_ERROR_CLASS, OUTLIVED_REQUEST_ERROR_CLASS,
-  type ApiFaultInput, type ApiFaultArm, type ApiFaultRouteCount,
+  ENTITLEMENTS_FAULT_GRAIN, ENTITLEMENTS_FAULT_ROUTE_PREFIX,
+  type ApiFaultInput, type ApiFaultArm, type ApiFaultRouteCount, type FaultRecorderLog,
 } from "./api-faults.js";
 
 /* Retention (mail 0122). CLOUD-ONLY: the prunes are the hosted worker's, and the
@@ -298,7 +306,7 @@ export {
  * lets a host with no such program name the member it fills with `UNMETERED`.
  */
 export {
-  makeEntitlementsClient, ENTITLEMENTS_CALL_BUDGET_MS, ACCESS_TTL_MS,
+  makeEntitlementsClient, ENTITLEMENTS_CALL_BUDGET_MS, ACCESS_TTL_MS, CALL_FAULT_UNRECORDED,
   PRICE_PROBE_ACCOUNT, PRICE_PROBE_BUDGET_MS,
   type EntitlementsClient, type EntitlementsClientConfig, type EntitlementsFetch, type CallFault,
   type EntitlementsPath,

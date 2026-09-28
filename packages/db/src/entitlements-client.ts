@@ -115,6 +115,9 @@ export interface CallFault {
   outlivedRequest: boolean;
 }
 
+/** The named opt-out for {@link EntitlementsClientConfig.onCallFault}: logged, never counted. */
+export const CALL_FAULT_UNRECORDED = "unrecorded";
+
 export interface EntitlementsClientConfig {
   /** `ENTITLEMENTS_URL` — the program's origin. A trailing slash is normalized. */
   baseUrl: string;
@@ -132,14 +135,15 @@ export interface EntitlementsClientConfig {
    */
   onContractFault?: (f: ContractFault) => void;
   /**
-   * Where an outage goes. Absent ⇒ `console.warn`. Until this existed the fault arm was SILENT:
-   * a program too slow to answer produced a 503 per press and not one line saying why.
+   * Where an outage goes — REQUIRED, so a host that records no fault row says so by name
+   * (`"unrecorded"`: the call is logged by `console.warn` and counted nowhere). An optional hook
+   * let four of five host compositions write no row, and a fault nobody counts reads as none.
    *
    * AWAITED, because a host that writes a row here is serverless and is killed the moment it
    * answers — a floating promise would record nothing on the one platform the row exists for.
    * It may not throw; if it does, the answer is unchanged and the report is dropped.
    */
-  onCallFault?: (f: CallFault) => void | Promise<void>;
+  onCallFault: ((f: CallFault) => void | Promise<void>) | typeof CALL_FAULT_UNRECORDED;
   /**
    * The host's keep-alive for work that runs after the response (the serverless platform's
    * `waitUntil`). A host that freezes an instance once it answers MUST pass it: the refresh behind
@@ -344,6 +348,10 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
     throw new Error(
       "entitlements client: BILLING_PLANE_SECRET is required — the bearer rides every request");
   }
+  if (typeof cfg.onCallFault !== "function" && cfg.onCallFault !== CALL_FAULT_UNRECORDED) {
+    throw new Error(
+      "entitlements client: onCallFault is required — a recorder, or \"unrecorded\" by name");
+  }
 
   const base = raw.replace(/\/+$/, "");
   const budgetFor = (p: EntitlementsPath): number =>
@@ -359,7 +367,7 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       + "took the fault path (last known verdict, else allow), so nothing is locked out and "
       + "nothing is metered on it.");
   });
-  const reportCall = cfg.onCallFault ?? ((f: CallFault) => {
+  const reportCall = typeof cfg.onCallFault === "function" ? cfg.onCallFault : ((f: CallFault) => {
     console.warn(
       `[entitlements] ${f.path} `
       + (f.status === null ? "did not answer" : `answered ${String(f.status)}`)

@@ -1,5 +1,6 @@
 import type { SpendAction } from "./ledger-source.js";
 import type { AiRefusalReason } from "./ai-gate-port.js";
+import type { Tx } from "./change-log.js";
 
 /**
  * The entitlements port — the one question the open server asks about an account's standing, and
@@ -352,6 +353,30 @@ export type ParkedAccountsReader = (
 
 /** Bounded fan-out: one `access` per account, eight at a time. */
 export const PARKED_READ_CONCURRENCY = 8;
+
+/**
+ * One account at or over its storage cap, as the storage rule reads it: counted stored-body bytes
+ * beside the cap the entitlements program states.
+ */
+export interface AtCapAccount {
+  accountId: string;
+  bytes: number;
+  storageBytesLimit: number;
+}
+
+/**
+ * WHO IS AT THEIR STORAGE CAP, AS A READING — the at-cap accounts among those read, how many were
+ * read, and how many hold stored mail. `read < total` is a partial reading and is said as one: an
+ * account past the bound, or one whose cap could not be asked, is not read, never "under its cap".
+ */
+export interface AtCapReading {
+  atCap: readonly AtCapAccount[];
+  read: number;
+  total: number;
+}
+
+/** Reads the at-cap population through the pass's own handle; the hosted barrel builds one. */
+export type AccountsAtCapReader = (db: Tx, now: Date) => Promise<AtCapReading>;
 
 export function parkedAccountsOf(entitlements: EntitlementsComposition): ParkedAccountsReader | null {
   if (!isMetered(entitlements)) return null;

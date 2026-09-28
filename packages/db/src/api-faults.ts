@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { apiFaults } from "./schema.js";
 import type { Tx } from "./change-log.js";
+import type { CallFault } from "./entitlements-client.js";
 
 /**
  * THE API'S OWN 5xx RECORD (cloud 0033) — write, read, prune.
@@ -35,6 +36,20 @@ export const OUTLIVED_REQUEST_ERROR_CLASS = "EntitlementsCallOutlivedRequest";
 /** Which arm answered the request. `alert_pass_runs.driver`'s closed set, with a CHECK behind it. */
 export type ApiFaultArm = "api" | "worker";
 
+/** The synthetic route a failed call OUT to the entitlements program is recorded under. */
+export const ENTITLEMENTS_FAULT_ROUTE_PREFIX = "entitlements:";
+
+/**
+ * HOW EACH ARM RECORDS A FAILED CALL TO THE ENTITLEMENTS PROGRAM: a row per call from the API host,
+ * a row per path per minute from the worker. The worker asks per account on every cycle, roster
+ * read and alert pass, so an outage would write up to 360 rows per account per hour (one call per
+ * budget plus fault hold, 10 s); the minute bounds it at 60 per path per hour per process.
+ * `api_fault_rate` reads this table to say what its count counts.
+ */
+export const ENTITLEMENTS_FAULT_GRAIN: { readonly [A in ApiFaultArm]: "call" | "minute" } = {
+  api: "call", worker: "minute",
+};
+
 export interface ApiFaultInput {
   route: string;
   method: string;
@@ -50,10 +65,10 @@ export interface ApiFaultInput {
  *
  * The route is SYNTHETIC and names the far end and its path (`entitlements:/v1/spend`): the route
  * whose request failed already writes its own 503 row, so a second row under that pattern would
- * double every count read from this table. `arm` is a PARAMETER, not a literal —
- * `api_faults_arm_check` is `("arm" IN ('api','worker'))`, measured refusing `entitlements` with
- * 23514 — so a widened CHECK is a one-value change. The status is CHECK-constrained to 500-599:
- * nothing arriving reads 504, the program's own 5xx passes through, anything else reads 502.
+ * double every count read from this table. `arm` is the HOST whose call failed, by ruling
+ * (2026-09-29) — the prefix names the far end, so no third arm value exists. The status is
+ * CHECK-constrained to 500-599: nothing arriving reads 504, the program's own 5xx passes through,
+ * anything else reads 502.
  */
 export function entitlementsFaultRow(
   fault: { path: string; status: number | null; outlivedRequest?: boolean },
@@ -61,7 +76,7 @@ export function entitlementsFaultRow(
 ): ApiFaultInput {
   const s = fault.status;
   return {
-    route: `entitlements:${fault.path}`,
+    route: `${ENTITLEMENTS_FAULT_ROUTE_PREFIX}${fault.path}`,
     method: "POST",
     status: s === null ? 504 : (s >= 500 && s <= 599 ? s : 502),
     // A closed set, not the status spelled into a name: every rule that groups on this column
@@ -74,6 +89,43 @@ export function entitlementsFaultRow(
     requestId: null,
     arm,
     at,
+  };
+}
+
+/** The one line shape a fault recorder logs to; a host's `Logger` satisfies it. */
+export interface FaultRecorderLog {
+  warn(event: string, fields?: Record<string, unknown>): void;
+}
+
+/**
+ * THE ONE RECORDER A HOST HANDS ITS ENTITLEMENTS CLIENT as `onCallFault`: a warn line per failed
+ * call, and a row at the arm's grain ({@link ENTITLEMENTS_FAULT_GRAIN}). Never rejects — a row that
+ * cannot be written is a warn line, not the caller's error. `handle` is asked per row, so a host
+ * may give each write a fresh connection. The caller decides whether to await it.
+ */
+export function entitlementsFaultRecorder(
+  handle: () => Tx, arm: ApiFaultArm,
+  opts: { log?: FaultRecorderLog; now?: () => Date } = {},
+): (fault: CallFault) => Promise<void> {
+  const clock = opts.now ?? (() => new Date());
+  const recordedMinute = new Map<string, number>();
+  return async (fault) => {
+    const at = clock();
+    const row = entitlementsFaultRow(fault, arm, at);
+    opts.log?.warn("entitlements_call_fault", {
+      route: row.route, status: fault.status, errorClass: row.errorClass,
+      elapsedMs: fault.elapsedMs, budgetMs: fault.budgetMs,
+    });
+    if (ENTITLEMENTS_FAULT_GRAIN[arm] === "minute") {
+      const minute = Math.floor(at.getTime() / 60_000);
+      if (recordedMinute.get(row.route) === minute) return;
+      recordedMinute.set(row.route, minute);
+    }
+    try {
+      await recordApiFault(handle(), row);
+    } catch (err) {
+      opts.log?.warn("entitlements_fault_unrecorded", { route: row.route, errorClass: faultClassOf(err) });
+    }
   };
 }
 
