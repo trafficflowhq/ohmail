@@ -74,4 +74,4 @@ pub fn withhold_from_the_restart() -> usize {
 
 #[cfg(test)]
 #[path = "inherited_fds_tests.rs"]
-mod tests;
+pub(crate) mod tests;

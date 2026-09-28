@@ -2,6 +2,18 @@
 
 use super::*;
 
+/// ONE LOCK FOR EVERY TEST IN THIS CRATE THAT STARTS A PROCESS, held for the test's whole body.
+/// A forked child holds a copy of every descriptor open at the fork until its own exec, so a stub
+/// a test writes and then executes fails "Text file busy" when another thread forks while the
+/// stub's write descriptor is open. Every test that forks, or writes a file and executes it, takes
+/// this first; poisoned is still held, so one red test does not redden the rest.
+pub(crate) static LIVE_PROCESS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg_attr(not(any(target_os = "linux", feature = "local-engine")), allow(dead_code))]
+pub(crate) fn live_process() -> std::sync::MutexGuard<'static, ()> {
+    LIVE_PROCESS.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[test]
 fn only_what_a_launch_handed_in_is_withheld() {
     // The measured launch: the keep-alive's read end at 3 and the mount directory at 1023 carry
@@ -15,6 +27,8 @@ fn only_what_a_launch_handed_in_is_withheld() {
 #[cfg(target_os = "linux")]
 mod live {
     use super::super::{handed_in, open_descriptors, sys, withhold_from_the_restart};
+    use super::live_process;
+    use std::io::{Read, Write};
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
     use std::process::{Command, Stdio};
 
@@ -43,14 +57,20 @@ mod live {
 
     /// Does a process started now hold this pipe? Read from the child's own descriptor table,
     /// where the old image's pipe was seen. The restart's spawn is this same `Command::spawn`.
+    ///
+    /// Read only once the child has echoed a byte back. `spawn` returns before the child's exec
+    /// has closed its close-on-exec descriptors, and a table read in that window still lists them
+    /// or is refused outright (both measured, 2026-09-28); an echo is the child's own code running.
     fn a_child_holds(pipe_name: &str) -> bool {
-        let mut child = Command::new("sleep")
-            .arg("30")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
+        let mut child = Command::new("cat")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .expect("sleep");
+            .expect("cat");
+        let mut echoed = [0u8; 1];
+        child.stdin.as_mut().expect("its input").write_all(b"x").expect("write to cat");
+        child.stdout.as_mut().expect("its output").read_exact(&mut echoed).expect("cat echoes");
         let held = std::fs::read_dir(format!("/proc/{}/fd", child.id()))
             .expect("the child's descriptors")
             .filter_map(|entry| std::fs::read_link(entry.ok()?.path()).ok())
@@ -62,6 +82,7 @@ mod live {
 
     #[test]
     fn a_restart_hands_the_new_copy_no_keep_alive() {
+        let _live = live_process();
         let (reader, _writer) = keep_alive();
         let fd = reader.as_raw_fd();
         let name = name_of(fd);

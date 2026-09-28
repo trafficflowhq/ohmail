@@ -12,6 +12,8 @@
 //! half of the protocol rather than about a script that was written to agree with it.
 
 use super::*;
+// Every test here that starts a child process holds it for its whole body; see its home.
+use crate::inherited_fds::tests::live_process;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -498,6 +500,7 @@ fn an_environment_data_directory_beats_the_shells_own() {
 
 #[test]
 fn a_build_with_no_engine_beside_it_is_not_an_error() {
+    let _live = live_process();
     // Nothing at that path, and nothing retries: this is the interface preview, which is what the
     // shell has shipped since it existed.
     let engine = Engine::spawn_with(
@@ -843,6 +846,7 @@ fn the_shipped_probe_tells_runnable_from_merely_present() {
 
 #[test]
 fn the_engine_is_running_when_it_says_it_is_serving() {
+    let _live = live_process();
     let fixture = Fixture::new("serving");
     let engine = Engine::spawn_with(fixture.launch("serve"), quick());
 
@@ -882,6 +886,7 @@ fn the_engine_is_running_when_it_says_it_is_serving() {
 
 #[test]
 fn a_process_that_never_says_ready_is_never_reported_as_serving() {
+    let _live = live_process();
     // The whole reason `ready` is the signal: a locked data directory, a missing credential or a
     // failed migration all produce a process that exists and will never serve.
     let fixture = Fixture::new("never-ready");
@@ -916,6 +921,7 @@ fn a_process_that_never_says_ready_is_never_reported_as_serving() {
 #[cfg(unix)]
 #[test]
 fn with_host_mode_armed_a_closed_window_leaves_the_engine_serving_and_quit_reaps_it() {
+    let _live = live_process();
     use crate::host::{lifecycle_action, LifecycleAction, WindowSignal};
     let fixture = Fixture::new("armed-close");
     let engine = Engine::spawn_with(fixture.launch("serve"), quick());
@@ -954,6 +960,7 @@ fn with_host_mode_armed_a_closed_window_leaves_the_engine_serving_and_quit_reaps
 /// window can read — and an engine that says nothing leaves the slot honestly empty.
 #[test]
 fn the_host_listener_signal_is_read_off_the_diagnostic_stream() {
+    let _live = live_process();
     let fixture = Fixture::new("host-signal");
     let engine = Engine::spawn_with(fixture.launch("serve-host"), quick());
     wait_for(|| engine.host_signal().is_some(), Duration::from_secs(10), "the host signal");
@@ -972,6 +979,7 @@ fn the_host_listener_signal_is_read_off_the_diagnostic_stream() {
 
 #[test]
 fn quitting_leaves_no_engine_behind() {
+    let _live = live_process();
     let fixture = Fixture::new("quit");
     // A grace the child cannot outlast on a loaded runner: past quick()'s 400 ms stop kills it,
     // and a kill is exactly what this test says did not happen (rc4 arm64, 2026-09-23).
@@ -1000,6 +1008,7 @@ fn quitting_leaves_no_engine_behind() {
 
 #[test]
 fn quitting_closes_the_engines_input_rather_than_killing_it() {
+    let _live = live_process();
     // The distinction matters: EOF on stdin is what makes the engine finish its in-flight work,
     // close IMAP and close its database in that order. A kill skips all three.
     let fixture = Fixture::new("graceful");
@@ -1027,6 +1036,7 @@ fn quitting_closes_the_engines_input_rather_than_killing_it() {
 
 #[test]
 fn an_engine_that_ignores_the_ask_is_killed_rather_than_left_running() {
+    let _live = live_process();
     let fixture = Fixture::new("deaf");
     let engine = Engine::spawn_with(fixture.launch("serve-deaf"), quick());
     wait_for(
@@ -1057,6 +1067,7 @@ fn an_engine_that_ignores_the_ask_is_killed_rather_than_left_running() {
 
 #[test]
 fn stopping_twice_is_the_same_as_stopping_once() {
+    let _live = live_process();
     // The shell stops the engine when the window is destroyed and again when the app exits, and
     // on Windows and Linux both fire.
     let fixture = Fixture::new("twice");
@@ -1074,6 +1085,7 @@ fn stopping_twice_is_the_same_as_stopping_once() {
 
 #[test]
 fn a_stopped_engine_is_not_restarted() {
+    let _live = live_process();
     let fixture = Fixture::new("no-resurrect");
     let engine = Engine::spawn_with(fixture.launch("serve"), quick());
     wait_for(
@@ -1096,6 +1108,7 @@ fn a_stopped_engine_is_not_restarted() {
 /// seconds.
 #[test]
 fn the_supervisor_sleeps_through_an_idle_engine() {
+    let _live = live_process();
     let fixture = Fixture::new("idle");
     let engine = Engine::spawn_with(fixture.launch("serve"), quick());
     wait_for(
@@ -1121,6 +1134,7 @@ fn the_supervisor_sleeps_through_an_idle_engine() {
 /// rather than `quick`'s 400 ms so that the two outcomes are an order of magnitude apart.
 #[test]
 fn a_child_that_leaves_is_noticed_without_waiting_for_a_timer() {
+    let _live = live_process();
     let fixture = Fixture::new("prompt");
     let timings = Timings { stop_grace: Duration::from_secs(3), ..quick() };
     let engine = Engine::spawn_with(fixture.launch("serve"), timings);
@@ -1154,6 +1168,7 @@ fn a_child_that_leaves_is_noticed_without_waiting_for_a_timer() {
 /// assertion then reads the whole grace period.
 #[test]
 fn the_close_press_hands_the_engine_off_and_the_exit_waits_for_it() {
+    let _live = live_process();
     let fixture = Fixture::new("quit-off-thread");
     let shell = Arc::new(Shell::around(Engine::spawn_with(fixture.launch("serve-deaf"), quick())));
     wait_for(
@@ -1186,6 +1201,7 @@ fn the_close_press_hands_the_engine_off_and_the_exit_waits_for_it() {
 /// engine must still be reaped there rather than left behind.
 #[test]
 fn an_exit_with_no_press_before_it_still_stops_the_engine() {
+    let _live = live_process();
     let fixture = Fixture::new("quit-unwarned");
     let timings = Timings { stop_grace: Duration::from_secs(5), ..quick() };
     let shell = Arc::new(Shell::around(Engine::spawn_with(fixture.launch("serve"), timings)));
@@ -1210,6 +1226,7 @@ fn an_exit_with_no_press_before_it_still_stops_the_engine() {
 
 #[test]
 fn an_engine_that_dies_is_noticed_and_restarted_a_bounded_number_of_times() {
+    let _live = live_process();
     let fixture = Fixture::new("crashloop");
     let engine = Engine::spawn_with(fixture.launch("serve-then-die"), quick());
 
@@ -1250,6 +1267,7 @@ fn an_engine_that_dies_is_noticed_and_restarted_a_bounded_number_of_times() {
 /// the user to go looking for a second copy that did not exist.
 #[test]
 fn giving_up_quotes_what_the_engine_actually_said() {
+    let _live = live_process();
     let fixture = Fixture::new("loud-crashloop");
     let engine = Engine::spawn_with(fixture.launch("die-loudly"), quick());
 
@@ -1289,6 +1307,7 @@ fn giving_up_quotes_what_the_engine_actually_said() {
 /// full disk would be reported as that request. `ready` is what tells the two apart.
 #[test]
 fn a_run_that_served_is_diagnosed_by_its_last_error_not_its_first() {
+    let _live = live_process();
     let fixture = Fixture::new("served-crashloop");
     let engine = Engine::spawn_with(fixture.launch("serve-then-loud-die"), quick());
 
@@ -1321,6 +1340,7 @@ fn a_run_that_served_is_diagnosed_by_its_last_error_not_its_first() {
 /// layer up. Reported by review.
 #[test]
 fn a_later_silent_attempt_does_not_erase_the_reason_an_earlier_one_gave() {
+    let _live = live_process();
     let fixture = Fixture::new("loud-once-crashloop");
     let engine = Engine::spawn_with(fixture.launch("loud-once"), quick());
 
@@ -1347,6 +1367,7 @@ fn a_later_silent_attempt_does_not_erase_the_reason_an_earlier_one_gave() {
 
 #[test]
 fn a_stray_write_to_the_frame_stream_is_fatal_to_that_run() {
+    let _live = live_process();
     // The engine goes to some length to keep its stdout pure, because a length-prefixed stream
     // has no resync point. If prose ever reaches it anyway, the only correct response is to end
     // the run — and to say so, because the symptom otherwise appears nowhere near the cause.
@@ -1369,6 +1390,7 @@ fn a_stray_write_to_the_frame_stream_is_fatal_to_that_run() {
 
 #[test]
 fn stopping_during_a_restart_delay_does_not_wait_the_delay_out() {
+    let _live = live_process();
     let mut timings = quick();
     timings.backoff_base = Duration::from_secs(30);
     timings.backoff_cap = Duration::from_secs(30);
@@ -1469,6 +1491,7 @@ fn get(path: &str) -> EngineRequest {
 
 #[test]
 fn a_request_crosses_the_pipe_and_the_answer_comes_back() {
+    let _live = live_process();
     let f = Fixture::new("echo");
     let engine = Engine::spawn_with(f.launch("echo"), quick());
     serving(&engine);
@@ -1494,6 +1517,7 @@ fn a_request_crosses_the_pipe_and_the_answer_comes_back() {
 /// refused, and a second name moves nothing.
 #[test]
 fn a_mailbox_named_after_ready_fills_the_empty_id_before_the_next_answer() {
+    let _live = live_process();
     let f = Fixture::new("unnamed");
     let engine = Engine::spawn_with(f.launch("unnamed"), quick());
     serving(&engine);
@@ -1510,6 +1534,7 @@ fn a_mailbox_named_after_ready_fills_the_empty_id_before_the_next_answer() {
 /// …and a launch whose `ready` named its mailbox keeps it: the frame fills an empty id, never moves one.
 #[test]
 fn a_mailbox_frame_never_moves_a_mailbox_ready_named() {
+    let _live = live_process();
     let f = Fixture::new("renamed");
     let engine = Engine::spawn_with(f.launch("renamed"), quick());
     serving(&engine);
@@ -1524,6 +1549,7 @@ fn a_mailbox_frame_never_moves_a_mailbox_ready_named() {
 
 #[test]
 fn the_shell_adds_the_authorization_and_the_caller_cannot() {
+    let _live = live_process();
     // THE POINT OF THE WHOLE ARRANGEMENT. The per-launch session token is the engine's credential;
     // it reaches the child and never the caller. A caller that could set the header could also read
     // back what it set, which is the one way a token gets out of this process.
@@ -1551,6 +1577,7 @@ fn the_shell_adds_the_authorization_and_the_caller_cannot() {
 
 #[test]
 fn a_root_relative_path_is_composed_against_the_engines_own_base() {
+    let _live = live_process();
     // THE JOIN NOBODY WAS TESTING, and it was broken.
     //
     // The window's client addresses the engine with root-relative paths — `/sync?since=0`,
@@ -1588,6 +1615,7 @@ fn a_root_relative_path_is_composed_against_the_engines_own_base() {
 
 #[test]
 fn a_request_body_reaches_the_engine_intact() {
+    let _live = live_process();
     let f = Fixture::new("body");
     let engine = Engine::spawn_with(f.launch("echo"), quick());
     serving(&engine);
@@ -1609,6 +1637,7 @@ fn a_request_body_reaches_the_engine_intact() {
 
 #[test]
 fn an_engine_that_dies_mid_request_fails_the_caller_instead_of_hanging() {
+    let _live = live_process();
     // THE ACCEPTANCE FOR THE WHOLE CORRELATION MAP, and the reason there is no timer in this file.
     //
     // `mute` accepts the request and answers nothing. Killing it must fail the caller — a promise
@@ -1666,6 +1695,7 @@ fn a_request_before_serving_is_refused_by_name() {
 
 #[test]
 fn the_credential_state_rides_on_the_ready_frame() {
+    let _live = live_process();
     let f = Fixture::new("cred");
     let engine = Engine::spawn_with(f.launch("echo"), quick());
     serving(&engine);
@@ -1710,6 +1740,7 @@ fn the_boot_contracts_refusal_survives_the_trip_through_this_shell() {
 
 #[test]
 fn the_status_the_window_can_read_carries_no_token() {
+    let _live = live_process();
     // `engine_status` is the one thing a page may read about the engine, and the token is the one
     // thing it must never contain. Asserted on the serialization rather than on the struct, because
     // the serialization is what crosses.
@@ -1729,6 +1760,7 @@ fn the_status_the_window_can_read_carries_no_token() {
 
 #[test]
 fn a_starting_engine_names_its_phase_and_a_serving_one_carries_none() {
+    let _live = live_process();
     // The boot narration: the engine writes `phase` frames while it is still starting — "opening
     // the store", "replaying the log" — and the window reads the latest off `engine_status` to put
     // words on a wait that is otherwise one sentence for everything. Three claims, one run:
@@ -1759,6 +1791,7 @@ fn a_starting_engine_names_its_phase_and_a_serving_one_carries_none() {
 
 #[test]
 fn the_schema_upgrade_carries_its_count_and_a_pair_that_says_nothing_carries_none() {
+    let _live = live_process();
     // The launch behind this: a large store spent minutes applying migrations behind one
     // motionless sentence. The engine now says how far it has got with the phase, and the window
     // renders "(3 of 12)" — so the two numbers have to reach `engine_status` beside the phase they
@@ -2500,6 +2533,7 @@ fn reopening_a_log_appends_and_rotates_from_the_size_it_found() {
 
 #[test]
 fn the_shells_lines_and_the_engines_own_diagnostics_both_reach_the_file() {
+    let _live = live_process();
     // The two halves of what a person needs and a packaged app throws away: this shell's account of
     // starting and stopping, and the engine's own JSON lines. And the one thing that must never be
     // in either — the per-launch session token, which the `ready` frame carries in-band.
@@ -3026,6 +3060,7 @@ fn the_status_names_the_paired_computer_from_the_door_and_never_the_bridge() {
 
 #[test]
 fn an_inherited_mail_server_setting_does_not_reach_a_cloud_child() {
+    let _live = live_process();
     // ── WHY THIS SPAWNS A REAL PROCESS ──────────────────────────────────────────────────────
     //
     // `unset_for` returning the right list is a fact about a list. What matters is whether the
@@ -3062,6 +3097,7 @@ fn an_inherited_mail_server_setting_does_not_reach_a_cloud_child() {
 
 #[test]
 fn a_local_child_still_inherits_what_the_environment_says() {
+    let _live = live_process();
     // The other direction, and it is not a symmetry worth breaking: inheritance is how a developer
     // configures the local door by hand, and `unset_for` is empty for it.
     let f = Fixture::new("inherit");
@@ -3982,6 +4018,7 @@ fn a_list_variable_keeps_only_the_machine_s_own_entries() {
 /// that keeps running (it execs the browser itself) must not be read as either.
 #[test]
 fn an_opener_that_exits_non_zero_is_a_refusal_and_one_still_running_is_not() {
+    let _live = live_process();
     let refused = "ohmail: this computer would not open a browser";
 
     let mut command = Command::new(node());
@@ -4017,6 +4054,7 @@ fn an_opener_that_exits_non_zero_is_a_refusal_and_one_still_running_is_not() {
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 #[test]
 fn the_opener_is_handed_the_address_and_not_the_bundle() {
+    let _live = live_process();
     let dir = std::env::temp_dir()
         .join(format!("ohmail-stub-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::SeqCst)));
     fs::create_dir_all(&dir).expect("temp dir");
@@ -4107,6 +4145,7 @@ fn the_unlock_press_refuses_while_the_engine_has_not_given_up() {
 #[cfg(unix)]
 #[test]
 fn the_unlock_press_removes_the_stale_lock_and_starts_the_engine_again() {
+    let _live = live_process();
     use std::os::unix::fs::PermissionsExt;
     with_key_in_env();
     let root = candidate_root("unlock-retry");
@@ -4224,6 +4263,7 @@ fn the_set_aside_stamp_spells_the_instant_in_utc() {
 #[cfg(unix)]
 #[test]
 fn the_start_over_press_sets_the_store_aside_and_starts_the_engine_again() {
+    let _live = live_process();
     use std::os::unix::fs::PermissionsExt;
     with_key_in_env();
     let root = candidate_root("start-over");

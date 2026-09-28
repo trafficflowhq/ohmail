@@ -31,6 +31,8 @@ fn staged(tag: &str) -> PathBuf {
 
 #[test]
 fn a_payload_carries_the_contract_fields_raw() {
+    // `gather` runs `fc-match` and `hyprctl`: a fork, so it holds the crate's live-process lock.
+    let _live = crate::inherited_fds::tests::live_process();
     let dir = staged("payload");
     let payload = gather(&dir).expect("a staged theme gathers");
     assert_eq!(payload["slug"], "tokyo-night");
