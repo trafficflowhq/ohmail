@@ -2461,7 +2461,7 @@ function queuedSendsOf(engine: OhmailEngine): Map<string, QueuedMeta> {
 const strayAnswers = new WeakMap<OhmailEngine, MutationResult[]>();
 
 function keepStrays(engine: OhmailEngine, results: readonly MutationResult[], own: string): void {
-  const others = results.filter((r) => r.key !== own && r.status !== "queued");
+  const others = results.filter((r) => r.key !== own && (r.status !== "queued" || sendAccepted(r)));
   if (others.length > 0) strayAnswers.set(engine, [...(strayAnswers.get(engine) ?? []), ...others]);
 }
 
