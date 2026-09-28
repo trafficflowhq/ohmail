@@ -58,6 +58,7 @@ export { describeProbeFailure, probeCloudDoor, probeCloudServer, PROBE_DEADLINE_
 import type { Diagnostic } from "./log.js";
 import { startEngineVitals } from "./vitals.js";
 import { createSessionWatch, heldReadingOf, sameReading } from "./session-watch.js";
+import { leftOf, pairFlights, PAIR_UNDO_REVOKE_MS, revokeBearerAtHost } from "./pair-undo.js";
 
 /**
  * The cloud engine — a read-only mirror of a hosted account, in the same stdio process the shell
@@ -503,20 +504,20 @@ export function clearMirrorErased(dataDir: string): void {
 }
 
 /** How long an undone pairing waits for the other computer to take its session back. */
-export const PAIR_UNDO_REVOKE_MS = 5_000;
+export { PAIR_UNDO_REVOKE_MS };
 
 /**
  * Sign this session out at the server that issued it — `POST /auth/logout` with its own bearer,
  * which revokes its family there and so drops it from that server's Devices list. Answers whether
  * the server said so; a refusal, an outage or the deadline answer false and change nothing here.
  */
-async function revokeSessionAtHost(auth: CloudAuth): Promise<boolean> {
+async function revokeSessionAtHost(auth: CloudAuth, deadline: number): Promise<boolean> {
   try {
     const res = await auth.authedFetch("/auth/logout", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "{}",
-      signal: AbortSignal.timeout(PAIR_UNDO_REVOKE_MS),
+      signal: AbortSignal.timeout(leftOf(deadline)),
     });
     return res.ok;
   } catch {
@@ -688,6 +689,8 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       wake: CloudWake;
     }
     let authed: Authed | null = null;
+    /** Pairing redeems between spending the token and keeping what came back — see `pair-undo.ts`. */
+    const flights = pairFlights();
     /** Waiting drains by `since`/`limit`/`types`: a second drain on one cursor shares the first's wait. */
     const heldDrains = new Map<string, Promise<SyncResponse>>();
 
@@ -1538,6 +1541,14 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           );
         }
 
+        /* THE UNDO LATCH. From here to what is kept, an undo marks this flight, and a redeem that
+           lands marked keeps nothing and signs its bearer out there within the undo's deadline. */
+        const flight = flights.open();
+        const undone = async (accessToken: string, by: number): Promise<Response> => {
+          flight.settle(await revokeBearerAtHost(config.fetchImpl ?? fetch, cloudBase, accessToken, by));
+          log?.("cloud_pair_undone", { changed: true });
+          return json({ error: { code: "pairing_undone", message: "the pairing was undone here before it finished" } }, 409);
+        };
         let redeemed: Awaited<ReturnType<typeof redeemPairingToken>>;
         try {
           redeemed = await redeemPairingToken(
@@ -1550,11 +1561,15 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
             token,
           );
         } catch (err) {
+          flight.settle(null);
           if (err instanceof CloudSignInError) {
             return json({ error: { code: err.code, message: err.message } }, err.status);
           }
           throw err;
         }
+        // BEFORE ANY SEAL: a marked redeem writes nothing here and signs its bearer out there.
+        const undoneBy = flight.undoneBy();
+        if (undoneBy !== null) return undone(redeemed.tokens.accessToken, undoneBy);
 
         const recordedAccount = readMirrorAccount(config.dataDir);
         /* ── THE SECOND PRESS IS THE SAME HOLE, REACHED THE OTHER WAY ──────────────────────
@@ -1587,6 +1602,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
             { mode: 0o600 },
           );
           restartRequired = true;
+          flight.settle(null);
           log?.("cloud_pair_started_over", { changed: true });
           return json({
             status: "paired",
@@ -1597,6 +1613,11 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         }
         const answer = accountAnswer(recordedAccount, redeemed.accountId);
         if (answer !== "admitted") {
+          /* The host minted a session this install does not keep: it is signed out there too, so a
+             refused pairing leaves no row on that computer's Devices list. */
+          flight.settle(await revokeBearerAtHost(
+            config.fetchImpl ?? fetch, cloudBase, redeemed.tokens.accessToken, Date.now() + PAIR_UNDO_REVOKE_MS,
+          ));
           // REFUSED, AND NOTHING KEPT. The pair is not sealed and `activate` is not called, so
           // every read below stays `409 not_signed_in` — there is no window in which this session
           // reaches the previous world's rows. The DISCARD is deliberately not done here, for the
@@ -1660,6 +1681,8 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           );
         }
         const live = activate(redeemed.tokens);
+        // Kept, and signed in: an undo from here signs `authed` out like any session.
+        flight.settle(null);
         log?.("cloud_paired", { mailboxId: served });
         // NOT AWAITED — a first pull takes a while and a pairing that appears to hang for it looks
         // broken. The mirror reports its own progress through `/health.online`.
@@ -1689,13 +1712,16 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       }
 
       if (req.method === "DELETE" && path === "/cloud/session") {
-        /* AN UNDONE PAIRING TAKES ITS SESSION BACK AT THE OTHER COMPUTER TOO: `?revoke=host` asks
-           that server, with the bearer it handed over, to sign it out, so this desktop leaves its
-           Devices list. Best effort and bounded; the sign-out here happens either way. */
+        /* AN UNDONE PAIRING TAKES ITS SESSION BACK AT THE OTHER COMPUTER TOO: `?revoke=host` marks
+           a redeem still in flight undone first, then signs out, with its own bearer there, the
+           session this install holds. ONE deadline for both; the sign-out here happens either way. */
+        const revoke = url.searchParams.get("revoke") === "host";
+        const deadline = Date.now() + PAIR_UNDO_REVOKE_MS;
+        const inFlight = revoke ? await flights.undo(deadline) : null;
         const live = authed;
-        const revokedAtHost = url.searchParams.get("revoke") === "host" && live !== null
-          ? await revokeSessionAtHost(live.auth)
-          : null;
+        const revokedAtHost = revoke && live !== null
+          ? await revokeSessionAtHost(live.auth, deadline)
+          : inFlight;
         setHostedSession(null);
         const teardown = signOut();
         sessionTeardown = teardown.catch(() => undefined).finally(() => {
