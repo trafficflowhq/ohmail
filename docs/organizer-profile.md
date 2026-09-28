@@ -40,7 +40,12 @@ One RFC822 message in `ohmail/_meta`:
 - A plain-text body: a short human preamble (for whoever finds the message in
   an ordinary mail client), then the JSON document. A reader takes the
   substring from the body's first `{` to its last `}` — the preamble is
-  guaranteed not to contain `{`.
+  guaranteed not to contain `{`. Every string value except the format fields
+  (`updatedAt`, `producer`, rule and notification kinds, a rule's provenance,
+  the away reply's audience, rate, dates and piles) is written as JSON
+  `\uXXXX` escapes, so names and addresses are not searchable as text; any
+  JSON parser reads the same values. The body is 7-bit ASCII
+  (`Content-Transfer-Encoding: 7bit`).
 
 ## The JSON document, version 2
 
@@ -172,15 +177,19 @@ Subject: ohmail settings for this mailbox
 Date: Thu, 27 Aug 2026 09:30:00 GMT
 MIME-Version: 1.0
 Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
 
 This message stores your ohmail settings for this mailbox: which senders
 you have screened in, your filing rules, notification choices, away reply
-and tag names. Keeping them here means they live in YOUR mailbox — they
+and tag names. Keeping them here means they live in YOUR mailbox: they
 travel with it to any computer or service you connect it from, and they
-remain yours, readable, even if you stop using ohmail.
+remain yours even if you stop using ohmail.
+
+Names and addresses below are written as JSON escapes; any JSON tool
+shows them as text.
 
 Deleting this message is safe. It only resets ohmail's settings for this
-mailbox — your mail is not touched. ohmail writes a fresh copy when its
+mailbox; your mail is not touched. ohmail writes a fresh copy when its
 settings next change.
 
 The format: versioned JSON, documented in ohmail's published source
@@ -195,43 +204,43 @@ The format: versioned JSON, documented in ohmail's published source
   },
   "screener": [
     {
-      "address": "ines.aebersold@example.ch",
-      "name": "Ines Aebersold"
+      "address": "\u0069\u006e\u0065\u0073\u002e\u0061\u0065\u0062\u0065\u0072\u0073\u006f\u006c\u0064\u0040\u0065\u0078\u0061\u006d\u0070\u006c\u0065\u002e\u0063\u0068",
+      "name": "\u0049\u006e\u0065\u0073\u0020\u0041\u0065\u0062\u0065\u0072\u0073\u006f\u006c\u0064"
     },
     {
-      "address": "orders@ninefold-press.example"
+      "address": "\u006f\u0072\u0064\u0065\u0072\u0073\u0040\u006e\u0069\u006e\u0065\u0066\u006f\u006c\u0064\u002d\u0070\u0072\u0065\u0073\u0073\u002e\u0065\u0078\u0061\u006d\u0070\u006c\u0065"
     }
   ],
   "rules": [
     {
       "kind": "domain",
-      "match": "billing.example",
-      "destination": "ohmail/Receipts",
+      "match": "\u0062\u0069\u006c\u006c\u0069\u006e\u0067\u002e\u0065\u0078\u0061\u006d\u0070\u006c\u0065",
+      "destination": "\u006f\u0068\u006d\u0061\u0069\u006c\u002f\u0052\u0065\u0063\u0065\u0069\u0070\u0074\u0073",
       "priority": 0,
       "enabled": true,
       "provenance": "manual",
-      "subjectContains": "invoice"
+      "subjectContains": "\u0069\u006e\u0076\u006f\u0069\u0063\u0065"
     },
     {
       "kind": "sender",
-      "match": "deals@loudmail.example",
-      "destination": "ohmail/Quarantine",
+      "match": "\u0064\u0065\u0061\u006c\u0073\u0040\u006c\u006f\u0075\u0064\u006d\u0061\u0069\u006c\u002e\u0065\u0078\u0061\u006d\u0070\u006c\u0065",
+      "destination": "\u006f\u0068\u006d\u0061\u0069\u006c\u002f\u0051\u0075\u0061\u0072\u0061\u006e\u0074\u0069\u006e\u0065",
       "priority": 0,
       "enabled": true,
       "provenance": "promoted"
     },
     {
       "kind": "sender",
-      "match": "newsletter@ninefold-press.example",
-      "destination": "ohmail/Reads",
+      "match": "\u006e\u0065\u0077\u0073\u006c\u0065\u0074\u0074\u0065\u0072\u0040\u006e\u0069\u006e\u0065\u0066\u006f\u006c\u0064\u002d\u0070\u0072\u0065\u0073\u0073\u002e\u0065\u0078\u0061\u006d\u0070\u006c\u0065",
+      "destination": "\u006f\u0068\u006d\u0061\u0069\u006c\u002f\u0052\u0065\u0061\u0064\u0073",
       "priority": 0,
       "enabled": true,
       "provenance": "promoted"
     },
     {
       "kind": "sender",
-      "match": "noreply@roundabout.example",
-      "destination": "ohmail/Screened",
+      "match": "\u006e\u006f\u0072\u0065\u0070\u006c\u0079\u0040\u0072\u006f\u0075\u006e\u0064\u0061\u0062\u006f\u0075\u0074\u002e\u0065\u0078\u0061\u006d\u0070\u006c\u0065",
+      "destination": "\u006f\u0068\u006d\u0061\u0069\u006c\u002f\u0053\u0063\u0072\u0065\u0065\u006e\u0065\u0064",
       "priority": 0,
       "enabled": false,
       "provenance": "manual"
@@ -240,12 +249,12 @@ The format: versioned JSON, documented in ohmail's published source
   "notifyRules": [
     {
       "kind": "sender",
-      "target": "ines.aebersold@example.ch"
+      "target": "\u0069\u006e\u0065\u0073\u002e\u0061\u0065\u0062\u0065\u0072\u0073\u006f\u006c\u0064\u0040\u0065\u0078\u0061\u006d\u0070\u006c\u0065\u002e\u0063\u0068"
     }
   ],
   "awayResponder": {
     "enabled": false,
-    "body": "Thanks for writing — I read mail again on 2 September.",
+    "body": "\u0054\u0068\u0061\u006e\u006b\u0073\u0020\u0066\u006f\u0072\u0020\u0077\u0072\u0069\u0074\u0069\u006e\u0067\u0020\u2014\u0020\u0049\u0020\u0072\u0065\u0061\u0064\u0020\u006d\u0061\u0069\u006c\u0020\u0061\u0067\u0061\u0069\u006e\u0020\u006f\u006e\u0020\u0032\u0020\u0053\u0065\u0070\u0074\u0065\u006d\u0062\u0065\u0072\u002e",
     "startsAt": "2026-08-24T00:00:00.000Z",
     "endsAt": "2026-09-02T00:00:00.000Z",
     "audience": "screened_in",
@@ -256,10 +265,10 @@ The format: versioned JSON, documented in ohmail's published source
     ]
   },
   "tagNames": [
-    "kiln",
-    "pottery-fair"
+    "\u006b\u0069\u006c\u006e",
+    "\u0070\u006f\u0074\u0074\u0065\u0072\u0079\u002d\u0066\u0061\u0069\u0072"
   ],
-  "signature": "-- \nJuno Marchetti\nkiln + wheel, Basel"
+  "signature": "\u002d\u002d\u0020\u000a\u004a\u0075\u006e\u006f\u0020\u004d\u0061\u0072\u0063\u0068\u0065\u0074\u0074\u0069\u000a\u006b\u0069\u006c\u006e\u0020\u002b\u0020\u0077\u0068\u0065\u0065\u006c\u002c\u0020\u0042\u0061\u0073\u0065\u006c"
 }
 ```
 

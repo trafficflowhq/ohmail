@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import {
   DEFAULT_STALE_AFTER_MS, META_FOLDER, MetaEnumRefusedError, enumerateMetaFolder, isMalformed,
   makeMetaFolderRef, metaReadBudget, parseClaim, withServerClock,
@@ -612,12 +613,15 @@ function headerSafe(v: string): string {
 const PREAMBLE = [
   "This message stores your ohmail settings for this mailbox: which senders",
   "you have screened in, your filing rules, notification choices, away reply",
-  "and tag names. Keeping them here means they live in YOUR mailbox — they",
+  "and tag names. Keeping them here means they live in YOUR mailbox: they",
   "travel with it to any computer or service you connect it from, and they",
-  "remain yours, readable, even if you stop using ohmail.",
+  "remain yours even if you stop using ohmail.",
+  "",
+  "Names and addresses below are written as JSON escapes; any JSON tool",
+  "shows them as text.",
   "",
   "Deleting this message is safe. It only resets ohmail's settings for this",
-  "mailbox — your mail is not touched. ohmail writes a fresh copy when its",
+  "mailbox; your mail is not touched. ohmail writes a fresh copy when its",
   "settings next change.",
   "",
   "The format: versioned JSON, documented in ohmail's published source",
@@ -625,10 +629,72 @@ const PREAMBLE = [
 ] as const;
 
 /**
+ * THE STRING VALUES WRITTEN AS THEY ARE: format fields and enums, never a person's words. Every
+ * other string VALUE is written as `\uXXXX`, one escape per UTF-16 code unit, so a mail client's
+ * search index finds no name, address or rule text in this message. The list is closed, so a new
+ * field is escaped until someone adds it here. Keys, numbers and booleans are plain.
+ */
+const PLAIN_STRING_VALUES: ReadonlySet<string> = new Set([
+  "updatedAt", "producer.kind", "producer.version", "rules[].kind", "rules[].provenance",
+  "notifyRules[].kind", "awayResponder.audience", "awayResponder.throttle",
+  "awayResponder.startsAt", "awayResponder.endsAt", "awayResponder.piles[]",
+]);
+
+const hex4 = (unit: number): string => `\\u${unit.toString(16).padStart(4, "0")}`;
+
+/** A JSON string literal: plain ASCII where the path allows it, `\uXXXX` for every code unit otherwise. */
+function stringLiteral(value: string, plain: boolean): string {
+  if (!plain) {
+    let out = "\"";
+    for (let i = 0; i < value.length; i++) out += hex4(value.charCodeAt(i));
+    return `${out}"`;
+  }
+  // JSON.stringify's own escapes, then anything outside printable ASCII as \uXXXX.
+  return JSON.stringify(value).replace(/[^\x20-\x7e]/g, (ch) => hex4(ch.charCodeAt(0)));
+}
+
+/** `JSON.stringify(value, null, 2)`'s layout and key order, with string values spelled as above. */
+function serializeValue(value: unknown, path: string, indent: string): string | undefined {
+  if (value === null) return "null";
+  if (typeof value === "string") return stringLiteral(value, PLAIN_STRING_VALUES.has(path));
+  if (typeof value === "number" || typeof value === "boolean") return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "[]";
+    const inner = `${indent}  `;
+    const items = value.map((v) => `${inner}${serializeValue(v, `${path}[]`, inner) ?? "null"}`);
+    return `[\n${items.join(",\n")}\n${indent}]`;
+  }
+  if (typeof value === "object") {
+    const inner = `${indent}  `;
+    const entries: string[] = [];
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      const s = serializeValue(v, path === "" ? k : `${path}.${k}`, inner);
+      if (s !== undefined) entries.push(`${inner}${JSON.stringify(k)}: ${s}`);
+    }
+    return entries.length === 0 ? "{}" : `{\n${entries.join(",\n")}\n${indent}}`;
+  }
+  return undefined;
+}
+
+/**
+ * THE DOCUMENT AS THE MESSAGE CARRIES IT: pure ASCII, and every shipped reader (`JSON.parse` of the
+ * body from its first `{` to its last `}`) decodes it to the same values, so no fingerprint moves
+ * and `v` stays as it is. Asserted, not assumed: a serialization that parses to anything else
+ * throws before the message is appended.
+ */
+export function serializeProfileDoc(doc: OrganizerProfileDoc): string {
+  const out = serializeValue(doc, "", "")!;
+  if (!isDeepStrictEqual(JSON.parse(out), JSON.parse(JSON.stringify(doc)))) {
+    throw new Error("the settings document did not serialize to itself");
+  }
+  return out;
+}
+
+/**
  * One RFC822 message per profile.
  *
- * The JSON is pretty-printed so the stranger reading the raw message sees structure rather than
- * one unbroken line, and so no line is longer than its longest string value.
+ * The JSON keeps its two-space layout, with every person's value written as JSON escapes by
+ * {@link serializeProfileDoc}, so the whole message is 7-bit ASCII and a search finds none of it.
  */
 export function formatProfileMessage(doc: OrganizerProfileDoc, opts: { installId: string }): string {
   const lines = [
@@ -639,10 +705,11 @@ export function formatProfileMessage(doc: OrganizerProfileDoc, opts: { installId
     `Date: ${new Date(doc.updatedAt).toUTCString()}`,
     `MIME-Version: 1.0`,
     `Content-Type: text/plain; charset=utf-8`,
+    `Content-Transfer-Encoding: 7bit`,
     "",
     ...PREAMBLE,
     "",
-    JSON.stringify(doc, null, 2),
+    serializeProfileDoc(doc),
     "",
   ];
   return lines.join("\r\n");

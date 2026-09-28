@@ -19,6 +19,6 @@ export const PROFILE_MESSAGE_SUBJECT = "ohmail settings for this mailbox";
 export const PROFILE_MESSAGE_EXCERPT =
   "This message stores your ohmail settings for this mailbox: which senders " +
   "you have screened in, your filing rules, notification choices, away reply " +
-  "and tag names. Keeping them here means they live in YOUR mailbox — they " +
+  "and tag names. Keeping them here means they live in YOUR mailbox: they " +
   "travel with it to any computer or service you connect it from, and they " +
-  "remain yours, readable, even if you stop using ohmail.";
+  "remain yours even if you stop using ohmail.";
