@@ -49,6 +49,71 @@ now offers to hold its undecided senders in the Screener with one press, as the 
 On the phone, a Move that decides where a sender's mail goes keeps that rule even when the app is
 closed right after the press; the next launch makes it and says so.
 
+### Screener presses show what they did, and a release can be undone
+<!-- changes: fix-026-screener-presses.md -->
+
+Allow, Not spam and back to Waiting in the Screener now offer Undo, as Move does. Mail you screen
+from the Inbox shows in the Screener at once, a decision on a sender further down the queue lowers
+the count when you press it, and a release pressed while your mailbox is still loading waits for it
+instead of failing. A "Not junk" your mail server refused can be left in Junk.
+
+### The desktop app says what it could not do instead of waiting
+<!-- changes: fix-026-shell-deadlines.md -->
+
+- A request from the window to the app itself now gives up after a minute with a sentence, where it
+  could wait for ever. Try again on the "cannot open your mailbox" card starts the mail engine
+  again; where there is no engine to start, the button reads Read again.
+- Host mode no longer holds ohmail's launch when Tailscale does not answer; after ten seconds it is
+  treated as not running.
+- On Windows, a window whose web process stops is reloaded, and uninstalling ohmail removes the
+  host-mode web client too.
+- Settings → Mailboxes says when a stop left this computer's settings on this computer only, and
+  Settings → Desktop names the mailboxes this computer holds.
+
+### A new install opens faster
+<!-- changes: perf-026-opens-fast.md -->
+
+The first start of a new install makes its local copy of the mailbox in memory and writes it to
+the disk once, instead of writing it a page at a time and waiting for the disk after each page. On
+a Linux desktop, measured in the same minutes, a new install is ready in 1.8-3.5 s where it took
+8.4-13.8 s, and its list appears in 2.7-4.8 s instead of 9.6-14.7 s. Starting an install that
+already holds mail is unchanged.
+
+### A mailbox connected without encryption is only ever dialled at an address on your own network
+<!-- changes: fix-026-plaintext-private.md -->
+
+A self-hosted mailbox connected without encryption keeps working while its server is on your own
+network: every connection, for syncing, sending and attachments, checks where the server's name
+points at that moment and connects only to an address on your own network. A mailbox whose server's
+name now points outside it stops, nothing is sent, and Settings → Mailboxes says the server's
+address is no longer on your own network. Add mailbox in the app now offers the same consent for
+each half as setup and Settings → Mailboxes, and Settings → AI says when a self-hosted server has no
+AI model.
+
+### A reply you start is in your drafts, and News draws a letter's pictures
+<!-- changes: fix-026-web-keeps.md -->
+
+A reply typed in the message and left unsent is saved to your drafts after a short pause, as a new
+message is, so Drafts lists it on every device. Reply on that message, here or on another device,
+opens that draft and Send sends it, so one reply stays one draft. A letter opened in News or
+Receipts draws the pictures it carries in its text. The sender sheet marks where the sender's rule
+files their mail and names that rule when some of their letters sit elsewhere.
+
+### A Move made just before the app closes keeps its place
+<!-- changes: fix-026-paired-move.md -->
+
+On a phone signed in to ohmail Cloud or to your own server, a Move made just before the app closes
+keeps its place: the next launch finishes it once and says so.
+
+### Sending from the phone
+<!-- changes: fix-026-phone-send.md -->
+
+A send the server has accepted says "Still sending.", and a mail server that could not be reached
+says so in its own words. An answer that comes after the phone stopped waiting for it reaches the
+composer, which then sends the draft the refusal left rather than writing a second one. Drafts
+addressed in To alone, without formatting, open in the phone's composer from Drafts: what is typed
+is saved into the draft as it goes, and Send sends that draft.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
