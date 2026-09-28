@@ -459,11 +459,6 @@ export function sqliteDialect(): Dialect {
           rank: ftsRank(sql`m.rowid`, "messages_fts", q),
         };
       },
-      lexicalArms: (q: string, from: SQL, where: SQL): SQL[] => [
-        sql`select m.id, m.date ${from} where ${where} and ${ftsRows(sql`m.rowid`, "messages_fts", q)}`,
-        sql`select m.id, m.date ${from} join message_bodies b on b.message_id = m.id where ${where}
-              and ${ftsRows(sql`b.rowid`, "message_bodies_fts", q)}`,
-      ],
       fuzzy: (q: string, corpus: SearchCorpus, _opts): SearchArm => {
         // There is no trigram index to have, so this is the degrade the server also falls back to
         // — one shape on both dialects rather than a device-only third behaviour.

@@ -249,13 +249,6 @@ export function pgDialect(): Dialect {
         // sequential scan of the whole account.
         return { pred: sql`s.head_tsv @@ ${tsq}`, rank: sql`ts_rank_cd(s.head_tsv, ${tsq})` };
       },
-      lexicalArms: (q: string, from: SQL, where: SQL): SQL[] => {
-        const tsq = sql`websearch_to_tsquery(${TEXT_SEARCH_CONFIG}, ${q})`;
-        return [
-          sql`select m.id, m.date ${from} where ${where} and m.subject_tsv @@ ${tsq}`,
-          sql`select m.id, m.date ${from} join message_bodies b on b.message_id = m.id where ${where} and b.body_tsv @@ ${tsq}`,
-        ];
-      },
       fuzzy: (q: string, corpus: SearchCorpus, opts): SearchArm => {
         const like = `%${q}%`;
         if (corpus === "kb") {
