@@ -1828,6 +1828,12 @@ export interface ScreenerWaitingPageDTO {
    * count on screen drops by the rows hidden, until the next answer states the store's own again.
    */
   rows: number;
+  /**
+   * How far a walk of the pages after this one has read (`screenerWaitingPage`): the senders
+   * those pages listed, the last row's instant, and where the next page starts — null once the
+   * walk reached the queue's end. Absent until a walk from this page; a new answer drops it.
+   */
+  walked?: { edge: string; listed: string[]; nextCursor: string | null };
 }
 
 export interface ScreenerWaitingSenderDTO {

@@ -1408,6 +1408,28 @@ export function screenerWaitingOf(
   return { page, senders };
 }
 
+/**
+ * WHAT THE STORE'S PAGES SPEAK FOR — the first page and any walk past it. `listed`: the senders
+ * they named. `boundary`: an unlisted sender whose gate mail is newer than this instant is not
+ * waiting (the route orders by the representative's date); `-Infinity` once a page ended the
+ * queue, `Infinity` when no row states an instant. The partition and the segments both read it.
+ */
+export function queueCoverage(
+  store: { page: ScreenerWaitingPageDTO; senders: readonly ScreenerWaitingSenderDTO[] },
+): { listed: Set<string>; boundary: number } {
+  const listed = new Set(store.senders.map((s) => senderKey(s.address)));
+  const walked = store.page.walked;
+  for (const key of walked?.listed ?? []) listed.add(key);
+  if (store.page.nextCursor === null || (walked !== undefined && walked.nextCursor === null)) {
+    return { listed, boundary: -Infinity };
+  }
+  const instant = (at: string | undefined): number => (at === undefined || at === "" ? Number.NaN : Date.parse(at));
+  const walkedAt = instant(walked?.edge);
+  const pageAt = instant(store.senders[store.senders.length - 1]?.receivedAt);
+  const at = Number.isNaN(walkedAt) ? pageAt : walkedAt;
+  return { listed, boundary: Number.isNaN(at) ? Infinity : at };
+}
+
 /** Does the store's queue page name this message as a sender's representative? */
 export function screenerWaitingNames(reader: EntityReader, messageId: string): boolean {
   return reader.list<ScreenerWaitingDTO>(SCREENER_WAITING_TYPE)
@@ -1454,24 +1476,24 @@ function joinStore(
 }
 
 /**
- * THE MIRROR'S HELD SENDERS THE PAGE CANNOT SPEAK FOR — older than its last row, while the queue
- * goes on past it. They may be on a later page, so they stay on screen after the page's own rows
- * rather than vanish; a sender the page does list, or one newer than its last row, is the page's.
+ * THE MIRROR'S HELD SENDERS THE PAGE CANNOT SPEAK FOR — older than the last row the pages read
+ * ({@link queueCoverage}), while the queue goes on past it. They may be on a later page, so they
+ * stay on screen after the page's own rows rather than vanish; one the page lists is the page's,
+ * and an unlisted one newer than that row is not waiting. A sender a later page listed stays.
  */
 function pastThePage(
   reader: EntityReader, store: { page: ScreenerWaitingPageDTO; senders: ScreenerWaitingSenderDTO[] },
   derived: ReadonlyMap<string, ScreenerSenderDTO>,
 ): ScreenerSenderDTO[] {
-  if (store.page.nextCursor === null) return [];
-  const last = store.senders[store.senders.length - 1];
-  const edge = last === undefined || last.receivedAt === "" ? Number.NaN : Date.parse(last.receivedAt);
-  const listed = new Set(store.senders.map((s) => senderKey(s.address)));
+  const { listed, boundary } = queueCoverage(store);
+  const onPage = new Set(store.senders.map((s) => senderKey(s.address)));
   const out: ScreenerSenderDTO[] = [];
   for (const [key, dto] of derived) {
-    if (listed.has(key) || dto.gatePhysical === false) continue;
+    if (onPage.has(key) || dto.gatePhysical === false) continue;
+    if (listed.has(key)) { out.push(dto); continue; }
     const date = reader.get<EngineMessage>("message", dto.id)?.date;
     const ms = date ? Date.parse(date) : Number.NaN;
-    if (Number.isNaN(edge) || Number.isNaN(ms) || ms <= edge) out.push(dto);
+    if (Number.isNaN(ms) || ms <= boundary) out.push(dto);
   }
   return out;
 }

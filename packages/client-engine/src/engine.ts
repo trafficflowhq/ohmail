@@ -13,7 +13,7 @@
 // carry mailparser and `node:crypto`, which no consumer of this engine can load.
 import { CALENDAR_FALLBACK_FILENAME, isCalendarMime } from "@trafficflow/core/ics";
 import type {
-  AttachmentWire, EngineAdapter, MutationOutcome, MutationQueued, ScreenerWaitingItemWire,
+  AttachmentWire, EngineAdapter, MutationOutcome, MutationQueued, ScreenerWaitingItemWire, ScreenerWaitingWire,
 } from "./adapters/adapter.js";
 import { messageIdKey, mutationEffects, replySubject, sentOverlayMessage, type MutationEffect } from "./mutations.js";
 import { SHADOW_DRAIN_BOUND, shadowAgrees, shadowKeysOf, verbTargetsOf, type ShadowKey } from "./shadow.js";
@@ -2044,6 +2044,8 @@ const HELD_ARRIVALS_MAX = 200;
 const SCREENER_WAITING_PAGE = 200;
 /** How many pages-onward representatives a decision may still be sent for. */
 const SCREENER_PAGE_REPS_MAX = 5000;
+/** The most senders a walk of the queue's pages records as listed; past it the walk stops speaking. */
+const SCREENER_WALK_LISTED_MAX = 1000;
 /** The verbs whose success can change who is waiting at the gate. */
 const QUEUE_VERBS: ReadonlySet<EngineMutation["kind"]> = new Set<EngineMutation["kind"]>([
   "screener_decide", "rule_create", "rule_update", "rule_delete",
@@ -5394,7 +5396,28 @@ export class OhmailEngine {
       if (this.screenerPageReps.size <= SCREENER_PAGE_REPS_MAX) break;
       this.screenerPageReps.delete(id);
     }
+    if (cursor !== null) await this.noteQueueWalk(cursor, wire);
     return { senders: wire.items.map((item, i) => waitingRow(item, i, total)), nextCursor: wire.nextCursor };
+  }
+
+  /**
+   * A PAGE THAT CONTINUES THE MIRROR'S PAGE IS THE STORE SPEAKING PAST IT: record how far the walk
+   * has read on the page row, so the partition and the segments stop holding an unlisted sender
+   * the pages have passed ({@link queueCoverage}). Only the next page of this walk counts, and a
+   * walk past {@link SCREENER_WALK_LISTED_MAX} senders stops recording rather than forget any.
+   */
+  private async noteQueueWalk(cursor: string, wire: ScreenerWaitingWire): Promise<void> {
+    const row = this.store.entries<ScreenerWaitingDTO>(SCREENER_WAITING_TYPE)
+      .find((e) => e.id === SCREENER_WAITING_PAGE_ID)?.entity;
+    if (row?.kind !== "page") return;
+    if ((row.walked ? row.walked.nextCursor : row.nextCursor) !== cursor) return;
+    const listed = new Set(row.walked?.listed ?? []);
+    for (const item of wire.items) listed.add(senderKey(item.address));
+    if (listed.size > SCREENER_WALK_LISTED_MAX) return;
+    const last = wire.items[wire.items.length - 1];
+    const walked = { edge: last?.receivedAt ?? row.walked?.edge ?? "", listed: [...listed], nextCursor: wire.nextCursor };
+    await this.store.commitLocal([{ type: SCREENER_WAITING_TYPE, id: SCREENER_WAITING_PAGE_ID, entity: { ...row, walked } }], []);
+    this.notify();
   }
 
   /** A new ask, superseding any in the air; never awaited, and a failure waits for the next settle. */

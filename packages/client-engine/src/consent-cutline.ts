@@ -8,10 +8,12 @@ import {
 } from "@trafficflow/core/rule-order";
 import type { EntityReader } from "./store.js";
 import { ownAddressKeys } from "./own-address.js";
-import { isOwnSent, isResurfaced, messagesByDateDesc, rulesList, senderKey } from "./selectors.js";
 import {
-  MAILBOX_PROFILE_TYPE, RETIRED_DECIDED_TYPE, SCREENER_WAITING_PAGE_ID, SCREENER_WAITING_TYPE, type EngineMessage,
-  type Folder, type MailboxProfileEntity, type RuleDTO, type ScreenerWaitingDTO,
+  isOwnSent, isResurfaced, messagesByDateDesc, queueCoverage, rulesList, screenerWaitingOf, senderKey,
+} from "./selectors.js";
+import {
+  MAILBOX_PROFILE_TYPE, RETIRED_DECIDED_TYPE, type EngineMessage,
+  type Folder, type MailboxProfileEntity, type RuleDTO,
 } from "./types.js";
 
 /** The router's key for a rule's `match`, for the press modules, which import no rule order. */
@@ -315,21 +317,11 @@ function placedDestination(index: ConsentIndex, m: EngineMessage): Folder | null
  * queue. A subject the server is still deciding is left to the Screener's decided rows.
  */
 function storeSaysNotWaiting(reader: EntityReader): (m: EngineMessage, key: string) => boolean {
-  const rows = reader.list<ScreenerWaitingDTO>(SCREENER_WAITING_TYPE);
-  const page = rows.find((r) => r.kind === "page" && r.id === SCREENER_WAITING_PAGE_ID);
-  if (page === undefined || page.kind !== "page") return () => false;
-  const listed = new Set<string>();
-  let last: { order: number; at: number } | null = null;
-  for (const r of rows) {
-    if (r.kind !== "sender") continue;
-    listed.add(senderKey(r.address));
-    const at = r.receivedAt === "" ? Number.NaN : Date.parse(r.receivedAt);
-    if (last === null || r.order > last.order) last = { order: r.order, at };
-  }
+  const store = screenerWaitingOf(reader);
+  if (store === null) return () => false;
   // No readable instant on the last row: the page speaks for no gate mail but its own.
-  const boundary = page.nextCursor === null ? -Infinity : last === null ? Infinity
-    : Number.isNaN(last.at) ? Infinity : last.at;
-  const deciding = new Set(page.inFlight.map((d) => `${d.scope}:${d.match}`));
+  const { listed, boundary } = queueCoverage(store);
+  const deciding = new Set(store.page.inFlight.map((d) => `${d.scope}:${d.match}`));
   return (m, key) => {
     if (listed.has(key) || deciding.has(`sender:${key}`)) return false;
     const at = key.lastIndexOf("@");
