@@ -318,7 +318,7 @@ export interface SettingsDTO {
  * user's own server. `"junk_filed"` — the spam verdict filed it to the provider's native \Junk
  * (mail 0065); the sender rule is the durable artifact, the bytes live on in Junk. `"expunged"` —
  * every watched copy is gone (mail 0065); the husk stops the account paying for its bytes.
- * `"too_large"` — over the download ceiling (mail 0131): only its headers were read, never its
+ * `"too_large"` — over the download ceiling (mail 0134): only its headers were read, never its
  * body. Absent for every ordinarily stored body, including a genuinely empty one.
  */
 export type WithheldMarker = "storage_cap" | "junk_filed" | "expunged" | "too_large";

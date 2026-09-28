@@ -1,4 +1,4 @@
--- A MESSAGE OVER THE DOWNLOAD CEILING IS A ROW (mail 0131). A message past MAX_RAW_MESSAGE_BYTES
+-- A MESSAGE OVER THE DOWNLOAD CEILING IS A ROW (mail 0134). A message past MAX_RAW_MESSAGE_BYTES
 -- is ingested from its header block alone and its body is the husk `too_large`, so it is listed
 -- and says why it is empty instead of existing nowhere. The withheld_reason CHECK gains that one
 -- member; drop-then-add, the shape 0065 used, because a desktop engine replays this journal.

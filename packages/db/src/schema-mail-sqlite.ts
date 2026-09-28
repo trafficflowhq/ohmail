@@ -1012,7 +1012,7 @@ export const messageBodies = sqliteTable("message_bodies", {
    * them), and the message on the IMAP server is UNTOUCHED. A marker and not "no row": no-row is
    * indistinguishable from "not yet mirrored"; the DTO must say WHY the text is empty; a future
    * restore is an UPDATE with this as its predicate. Repair passes SKIP non-null rows. Mail 0065
-   * adds `'junk_filed'` and `'expunged'`, mail 0131 `'too_large'` (ingested from its header
+   * adds `'junk_filed'` and `'expunged'`, mail 0134 `'too_large'` (ingested from its header
    * block); an already-withheld row keeps its first reason.
    */
   withheldReason: text("withheld_reason"),
