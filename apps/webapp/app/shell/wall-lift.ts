@@ -5,11 +5,12 @@ import { markWallLifted } from "./access-window";
 import { durableSessionSet, durableSet } from "./durable";
 
 /**
- * THE WALL LIFTS ITSELF on the service's fresh word and on nothing else. `lifts` is one fresh
- * read of the account's standing that answers `true` only for `access: "open"`; the host supplies
- * it (the browser tab through its client, the desktop window through its bridge). Asked once on
- * every return to the window, once a minute while shown, and as a bounded poll after a hand-off
- * press (this tab, this half hour) or a `?billing=success` arrival. A spent poll offers one more.
+ * WHEN THE ACCOUNT'S STANDING IS ASKED — one schedule, two users. {@link useAccessSchedule} asks on
+ * every return to the window, on its `minute` while shown (`null`: never on a clock), and as a
+ * bounded poll after a hand-off press (this tab, this half hour) or a `?billing=success` arrival.
+ * The wall ({@link useWallLift}) lifts itself on the service's fresh `access: "open"` and nothing
+ * else; the account strip reads the same schedule with no lift and no minute. A spent poll offers
+ * one more.
  */
 
 export const LIFT_POLL_MS = 2_000;
@@ -17,8 +18,8 @@ export const LIFT_POLL_MAX = 30;
 export const WALL_READ_MS = 60_000;
 /** A read that has not answered by then is no answer, so a hung request cannot hold the poll. */
 export const LIFT_READ_BOUND_MS = 10_000;
-/** Focus and visibility fire together on a tab switch; one read answers both. */
-const RETURN_DEBOUNCE_MS = 1_500;
+/** Focus and visibility fire together on a tab switch; one read answers both. The access door joins inside it too. */
+export const RETURN_DEBOUNCE_MS = 1_500;
 
 /**
  * WHERE THIS DEVICE LAST FOUND THE ACCOUNT — `open` or `closed`, per owner, written on every
@@ -77,12 +78,18 @@ export type WallCheck = "idle" | "checking" | "pending";
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-export function useWallLift(opts: {
-  /** One fresh read; `true` only when the service answered `access: "open"`. */
-  lifts: () => Promise<boolean>;
-  /** Absent = a wall with no way to lift, which asks nothing. */
-  onLifted: (() => void) | undefined;
+export function useAccessSchedule(opts: {
+  /** One fresh read; `true` ends a poll. Absent = a schedule that asks nothing. */
+  read: (() => Promise<boolean>) | undefined;
+  /** What a `true` answer does, beyond ending the poll. */
+  onOpen?: () => void;
+  /** A read this often while the tab is in front, or `null` for none. */
+  minute: number | null;
   owner: string | null;
+  /** How soon after the last read a return asks again. Default {@link RETURN_DEBOUNCE_MS}. */
+  returnFloor?: () => number;
+  /** When this client last had an answer, by any reader; the floor counts from the later of it and this schedule's own read. */
+  lastAsked?: () => number;
 }): { check: WallCheck; armPoll: () => void; checkAgain: () => void } {
   const [check, setCheck] = useState<WallCheck>("idle");
   const alive = useRef(true);
@@ -91,70 +98,72 @@ export function useWallLift(opts: {
   const lastRead = useRef(0);
   const latest = useRef(opts);
   useEffect(() => { latest.current = opts; });
+  const minute = opts.minute;
 
   const readOnce = useCallback(async (): Promise<boolean> => {
+    const read = latest.current.read;
+    if (read === undefined) return false;
     lastRead.current = Date.now();
     let bound: ReturnType<typeof setTimeout> | undefined;
     try {
       const open = await Promise.race([
-        latest.current.lifts(),
+        read(),
         new Promise<false>((resolve) => { bound = setTimeout(() => resolve(false), LIFT_READ_BOUND_MS); }),
       ]);
       if (open) {
-        if (alive.current) {
-          markWallLifted();
-          latest.current.onLifted?.();
-        }
+        if (alive.current) latest.current.onOpen?.();
         return true;
       }
-    } catch { /* no answer is not an answer: the wall stands and the schedule asks again */ } finally {
+    } catch { /* no answer is not an answer: the schedule asks again */ } finally {
       clearTimeout(bound);
     }
     return false;
   }, []);
 
   const poll = useCallback(async (): Promise<void> => {
-    if (polling.current || latest.current.onLifted === undefined) return;
+    if (polling.current || latest.current.read === undefined) return;
     polling.current = true;
     armed.current = false;
     setCheck("checking");
     for (let i = 0; i < LIFT_POLL_MAX && alive.current; i += 1) {
       if (i > 0) await wait(LIFT_POLL_MS);
       if (!alive.current) break;
-      if (await readOnce()) { polling.current = false; return; }
+      if (await readOnce()) { polling.current = false; if (alive.current) setCheck("idle"); return; }
     }
     polling.current = false;
     if (alive.current) setCheck("pending");
   }, [readOnce]);
 
   const onReturn = useCallback((): void => {
-    if (polling.current || latest.current.onLifted === undefined) return;
+    if (polling.current || latest.current.read === undefined) return;
     if (armed.current) { void poll(); return; }
-    if (Date.now() - lastRead.current < RETURN_DEBOUNCE_MS) return;
+    const floor = latest.current.returnFloor?.() ?? RETURN_DEBOUNCE_MS;
+    const last = Math.max(lastRead.current, latest.current.lastAsked?.() ?? 0);
+    if (Date.now() - last < floor) return;
     void readOnce();
   }, [poll, readOnce]);
 
   useEffect(() => {
     alive.current = true;
-    if (latest.current.onLifted !== undefined) {
+    if (latest.current.read !== undefined) {
       const billed = new URLSearchParams(window.location.search).get("billing") === "success";
       if (billed || handoffIsRecent(latest.current.owner)) void poll();
     }
     const onVisibility = (): void => { if (document.visibilityState === "visible") onReturn(); };
     window.addEventListener("focus", onReturn);
     document.addEventListener("visibilitychange", onVisibility);
-    const minute = setInterval(() => {
-      if (document.visibilityState === "visible" && !polling.current && latest.current.onLifted !== undefined) {
+    const clock = minute === null ? undefined : setInterval(() => {
+      if (document.visibilityState === "visible" && !polling.current && latest.current.read !== undefined) {
         void readOnce();
       }
-    }, WALL_READ_MS);
+    }, minute);
     return () => {
       alive.current = false;
       window.removeEventListener("focus", onReturn);
       document.removeEventListener("visibilitychange", onVisibility);
-      clearInterval(minute);
+      if (clock !== undefined) clearInterval(clock);
     };
-  }, [onReturn, poll, readOnce]);
+  }, [onReturn, poll, readOnce, minute]);
 
   const armPoll = useCallback(() => {
     armed.current = true;
@@ -162,4 +171,21 @@ export function useWallLift(opts: {
   }, []);
   const checkAgain = useCallback(() => { void poll(); }, [poll]);
   return { check, armPoll, checkAgain };
+}
+
+/** THE WALL'S SCHEDULE: a minute clock, and a `true` answer is the lift. */
+export function useWallLift(opts: {
+  /** One fresh read; `true` only when the service answered `access: "open"`. */
+  lifts: () => Promise<boolean>;
+  /** Absent = a wall with no way to lift, which asks nothing. */
+  onLifted: (() => void) | undefined;
+  owner: string | null;
+}): { check: WallCheck; armPoll: () => void; checkAgain: () => void } {
+  const { lifts, onLifted, owner } = opts;
+  return useAccessSchedule({
+    read: onLifted === undefined ? undefined : lifts,
+    onOpen: onLifted === undefined ? undefined : () => { markWallLifted(); onLifted(); },
+    minute: WALL_READ_MS,
+    owner,
+  });
 }

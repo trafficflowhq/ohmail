@@ -1,11 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
-import { account, apiConfigured, type AccountLifecycle } from "../../api-client";
+import {
+  account, accessFeedFor, apiConfigured, onAccessFeed, putAwayCatchUp,
+  type AccessFeed, type AccountAccess, type AccountLifecycle,
+} from "../../api-client";
+import { SELF_HOST_BUILD } from "../../hello";
 import { dayStamp } from "../../shell/format";
 import { durableSessionSet } from "../../shell/durable";
+import { readOwner } from "../../shell/owner-cookie";
 import { storageOwner } from "../../shell/storage-owner";
+import { RETURN_DEBOUNCE_MS, useAccessSchedule } from "../../shell/wall-lift";
 import { leaveForManagePage } from "./SubscriptionSection";
 
 /**
@@ -18,6 +24,9 @@ import { leaveForManagePage } from "./SubscriptionSection";
  * Cloud-only by construction: the shared shell takes it as a node, so the desktop window and the
  * demo cannot grow one (`CloudShell` withholds it), and the copy never reaches either bundle.
  */
+
+/** A return this long after the last read asks again while nothing is drawn; while one is, the debounce. */
+export const QUIET_RETURN_MS = 15 * 60_000;
 
 /** How close to the end of a trial the strip appears. The day-12 reminder mail is the other half. */
 export const TRIAL_NOTICE_DAYS = 2;
@@ -88,31 +97,61 @@ function remember(key: string): void {
   durableSessionSet(key, "1", "lifecycle.banner");
 }
 
+/** What the feed earns for this viewer: a notice, or `null`. Put-away keys are the dismissal's. */
+function noticeFromFeed(entry: AccessFeed | null, hidden: ReadonlySet<string>, now: number): Notice | null {
+  if (entry === null || !entry.answer.metered) return null;
+  const next = noticeOf(entry.answer.lifecycle, entry.caughtUp ?? undefined, now);
+  if (next === null) return null;
+  const key = dismissKey(next, storageOwner());
+  return hidden.has(key) || dismissed(key) ? null : next;
+}
+
+/** The schedule's read: `true` once the answer earns no deadline, which ends a hand-off poll. */
+async function readForStrip(): Promise<boolean> {
+  const a: AccountAccess = await account.access({ fresh: true });
+  return !a.metered || noticeOf(a.lifecycle, undefined, Date.now()) === null;
+}
+
+/**
+ * IT FOLLOWS THE ACCOUNT, not its own mount: it draws from the access feed (`api-client.ts`),
+ * so any answer this tab receives moves it, and it asks once on every return to the tab (the
+ * wall's schedule, no lift and no clock), polling after a hand-off. Bound: a tab that keeps focus
+ * throughout a payment made on another device reads only on its next return.
+ */
 export function LifecycleBanner() {
   const t = useTranslations("accountLifecycle");
-  const [notice, setNotice] = useState<Notice | null>(null);
-  const [gone, setGone] = useState(false);
+  const active = !SELF_HOST_BUILD && apiConfigured();
+  const entry = useSyncExternalStore(onAccessFeed, () => accessFeedFor(readOwner()), () => null);
+  // Put away in THIS mount, so "Later" holds where the session store refuses the write.
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set());
   const [busy, setBusy] = useState(false);
   const alive = useRef(true);
+  const drawn = useRef(false);
   useEffect(() => () => { alive.current = false; }, []);
 
+  const notice = noticeFromFeed(entry, hidden, Date.now());
+  useEffect(() => { drawn.current = notice !== null; });
+
+  const { armPoll } = useAccessSchedule({
+    read: active ? readForStrip : undefined,
+    minute: null,
+    owner: readOwner(),
+    returnFloor: () => (drawn.current ? RETURN_DEBOUNCE_MS : QUIET_RETURN_MS),
+    lastAsked: () => accessFeedFor(readOwner())?.at ?? 0,
+  });
+
   useEffect(() => {
-    if (!apiConfigured()) return;
-    let live = true;
-    // The SHARED read: `useManageOffer` already asks this at the shell's mount, so this joins
-    // that answer rather than issuing a second one. A failure says nothing and draws nothing.
-    void account.access().then((a) => {
-      if (!live || !a.metered) return;
-      const next = noticeOf(a.lifecycle, a.caughtUp, Date.now());
-      if (next === null || dismissed(dismissKey(next, storageOwner()))) return;
-      setNotice(next);
-    }).catch(() => { /* no verdict, no sentence */ });
-    return () => { live = false; };
-  }, []);
+    if (!active) return;
+    // The first paint joins the answer the shell's mount already asked for, or asks it.
+    void account.access().catch(() => { /* no verdict, no sentence */ });
+  }, [active]);
 
   const putAway = useCallback(() => {
-    if (notice) remember(dismissKey(notice, storageOwner()));
-    setGone(true);
+    if (notice === null) return;
+    const key = dismissKey(notice, storageOwner());
+    remember(key);
+    if (notice.kind === "caughtUp") putAwayCatchUp(readOwner());
+    setHidden((was) => new Set([...was, key]));
   }, [notice]);
 
   const toManage = useCallback(async () => {
@@ -120,12 +159,16 @@ export function LifecycleBanner() {
     try {
       const link = await account.manageLink();
       const url = link?.url;
-      if (typeof url === "string" && url.length > 0) { leaveForManagePage(url); return; }
+      if (typeof url === "string" && url.length > 0) {
+        armPoll();
+        leaveForManagePage(url);
+        return;
+      }
     } catch { /* the strip stays; the Subscription pane is the other way to the same page */ }
     if (alive.current) setBusy(false);
-  }, []);
+  }, [armPoll]);
 
-  if (notice === null || gone) return null;
+  if (notice === null) return null;
 
   if (notice.kind === "caughtUp") {
     // No mailbox list: a mailbox the closure paused resumes on its own (mail 0135), and one the

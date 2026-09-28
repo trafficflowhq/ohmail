@@ -17,7 +17,8 @@ import { registerSessionTransport, sessionMayAsk } from "./shell/session-truth";
 import type { TravelledChangeWire } from "./shell/travelled-change";
 import { readOwner, readOwnerMarker, rememberOwner } from "./shell/owner-cookie";
 import { refusedFactsOf, verdictOf } from "./access-verdict";
-import { readStoredVerdict, storeVerdict } from "./shell/wall-lift";
+import { RETURN_DEBOUNCE_MS, readStoredVerdict, storeVerdict } from "./shell/wall-lift";
+import { durableSessionRemove, durableSessionSet } from "./shell/durable";
 import { forgetOpenVerdict, markOpenVerdict, refusalIsStale } from "./shell/access-window";
 import {
   ACCOUNT_ERASED, ERASED_DECLARATION, clearAccountErased, erasedCapture, hearAccountErased,
@@ -442,6 +443,9 @@ function checkAnswerOwner(path: string, seen: string | null | undefined, ceremon
   }
 }
 
+/** Writes this client has sent, for the access door's join rule (`accessRead`). */
+let writesSent = 0;
+
 /**
  * One request. Returns the parsed body, or throws {@link ApiError}.
  *
@@ -471,6 +475,8 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
   // else's session; the second stops an answer being handed back when the jar changed while it
   // was in flight. Both are the same question — see {@link apiOwnerHolds}.
   mustHold();
+  // Every write this client sends moves the access door's join stamp (`accessRead`).
+  if ((opts.method ?? "GET") !== "GET") writesSent += 1;
 
   /*
    * A cookie-writing request takes the lock, and does not recover under it.
@@ -2637,17 +2643,25 @@ export const away = {
  *
  * Keyed by the account marker, so a sign-in as somebody else in the same page load cannot be
  * handed the previous account's verdict. A REJECTION is never held: a billing endpoint having a
- * bad minute must not become this session's permanent answer. A `fresh` reader that arrives
- * while a read is already in flight joins it rather than issuing a second.
+ * bad minute must not become this session's permanent answer. A `fresh` reader joins a read in
+ * flight, and one issued inside {@link RETURN_DEBOUNCE_MS} — focus and visibility fire together,
+ * and a wall and a strip ask on the same return — unless a write left this client since, because
+ * a write (a confirmed payment, a connected mailbox) can change the answer.
  */
-let accessHeld: { owner: string | null; answer: Promise<AccountAccess>; settled: boolean } | null = null;
+let accessHeld: {
+  owner: string | null; answer: Promise<AccountAccess>; settled: boolean; at: number; writes: number;
+} | null = null;
 
 function accessRead(fresh: boolean): Promise<AccountAccess> {
   const owner = readOwner();
   const held = accessHeld;
-  if (held !== null && held.owner === owner && (!fresh || !held.settled)) return held.answer;
+  if (held !== null && held.owner === owner) {
+    const joinable = !held.settled
+      || (Date.now() - held.at < RETURN_DEBOUNCE_MS && held.writes === writesSent);
+    if (!fresh || joinable) return held.answer;
+  }
   const answer = api<AccountAccess>("/account/access");
-  const entry = { owner, answer, settled: false };
+  const entry = { owner, answer, settled: false, at: Date.now(), writes: writesSent };
   accessHeld = entry;
   void answer.then(
     (a) => { entry.settled = true; noteVerdict(owner, a); },
@@ -2657,10 +2671,11 @@ function accessRead(fresh: boolean): Promise<AccountAccess> {
 }
 
 /**
- * Every answer is the service's fresh word: stored for the next first paint, an open one opens the
- * stale-402 window, and a refused one raises the wall like a 402 would.
+ * Every answer is the service's fresh word: published to the feed, stored for the next first
+ * paint, an open one opens the stale-402 window, and a refused one raises the wall like a 402.
  */
 function noteVerdict(owner: string | null, a: AccountAccess): void {
+  publishAccess(owner, a);
   const verdict = verdictOf(a);
   if (verdict === null) return;
   // Read before it is overwritten: an open answer over a stored `closed` is the reopening.
@@ -2678,10 +2693,80 @@ function noteVerdict(owner: string | null, a: AccountAccess): void {
   }
 }
 
-/** Forget the held verdict — for a test, and for any act that changes what the account may do. */
+/**
+ * THE ACCESS FEED — the latest answer this tab received, whoever asked for it, so the account
+ * strip follows the wall's lift read, the first-paint gate and every pane. Per OWNER: a reader
+ * whose owner is not the feed's reads nothing. It holds the one-time catch-up until it is put
+ * away, because the service answers that once, to whichever reader asks first; kept per session
+ * under `ohmail.lifecycle.<owner>.caughtUp`, the strip's own dismissal door, so a reload keeps it.
+ */
+export interface AccessFeed {
+  owner: string | null;
+  answer: AccountAccess;
+  caughtUp: { since: string } | null;
+  /** When this answer arrived. */
+  at: number;
+}
+
+let feed: AccessFeed | null = null;
+let heldCatchUp: { owner: string; since: string | null } | null = null;
+const feedListeners = new Set<() => void>();
+
+const catchUpKey = (owner: string): string => `ohmail.lifecycle.${owner}.caughtUp`;
+
+function catchUpFor(owner: string | null): { since: string } | null {
+  if (owner === null) return null;
+  if (heldCatchUp?.owner !== owner) {
+    let since: string | null = null;
+    try {
+      const raw = globalThis.sessionStorage?.getItem(catchUpKey(owner));
+      since = typeof raw === "string" && raw.length > 0 ? raw : null;
+    } catch { /* storage refused: nothing kept, nothing to say */ }
+    heldCatchUp = { owner, since };
+  }
+  return heldCatchUp.since === null ? null : { since: heldCatchUp.since };
+}
+
+function publishAccess(owner: string | null, a: AccountAccess): void {
+  const answered = a.metered && typeof a.caughtUp?.since === "string" ? a.caughtUp.since : null;
+  if (answered !== null && owner !== null) {
+    heldCatchUp = { owner, since: answered };
+    durableSessionSet(catchUpKey(owner), answered, "lifecycle.banner");
+  }
+  feed = {
+    owner, answer: a, caughtUp: answered !== null ? { since: answered } : catchUpFor(owner), at: Date.now(),
+  };
+  for (const listener of [...feedListeners]) listener();
+}
+
+/** The feed for this owner, or `null` — the stored reference, so a snapshot is stable. */
+export function accessFeedFor(owner: string | null): AccessFeed | null {
+  return feed !== null && feed.owner === owner ? feed : null;
+}
+
+export function onAccessFeed(listener: () => void): () => void {
+  feedListeners.add(listener);
+  return () => { feedListeners.delete(listener); };
+}
+
+/** The catch-up was put away: gone from the feed and from the session, never said twice. */
+export function putAwayCatchUp(owner: string | null): void {
+  if (owner === null) return;
+  heldCatchUp = { owner, since: null };
+  durableSessionRemove(catchUpKey(owner), "lifecycle.banner");
+  if (feed !== null && feed.owner === owner && feed.caughtUp !== null) {
+    feed = { ...feed, caughtUp: null };
+    for (const listener of [...feedListeners]) listener();
+  }
+}
+
+/** Forget the held verdict and the feed — for a test, and for any act that changes what the account may do. */
 export function forgetAccess(): void {
   accessHeld = null;
+  feed = null;
+  heldCatchUp = null;
   forgetOpenVerdict();
+  for (const listener of [...feedListeners]) listener();
 }
 
 export const account = {
@@ -2722,8 +2807,8 @@ export const account = {
    * SHARED read because the asking is per MOUNT — five surfaces ask this, several of them every
    * time a pane opens, which the plane's logs read as an access read about every twenty seconds
    * for one signed-in account. Pass `fresh` where the verdict GATES something a person is about
-   * to be refused: the Mailboxes pane's return to the list (the entitlement is mutable from
-   * outside this tab) and the connect presses. See {@link accessRead}.
+   * to be refused (the Mailboxes pane's return to the list, the connect presses) and where a
+   * schedule asks on a return (the wall, the account strip). See {@link accessRead}.
    */
   access: (opts?: { fresh?: boolean }) => accessRead(opts?.fresh === true),
   /**
