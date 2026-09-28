@@ -210,6 +210,8 @@ interface DraftKeyset {
 
 interface MessageSnapshotCursor {
   asOfSeq: bigint;
+  /** The run of the store that issued it, `null` for a store with no runs. See {@link DraftsSnapshotCursor}. */
+  generation: number | null;
   /** The previous page's last `messages.date` as epoch ms; `null` ⇒ the undated tail. */
   date: number | null;
   id: string;
@@ -239,6 +241,11 @@ interface MessageSnapshotCursor {
  */
 interface DraftsSnapshotCursor {
   asOfSeq: bigint;
+  /**
+   * THE RUN OF THE STORE THAT ISSUED THIS PAGE, `null` for a store with no runs. `asOfSeq` is a
+   * seq of that run, so a walk that spans an unclean restart is refused rather than committed.
+   */
+  generation: number | null;
   emitted: number;
   phase: "drafts";
   draft: DraftKeyset;
@@ -347,6 +354,7 @@ export class SyncService {
   encodeSnapshotCursor(c: SnapshotCursor): string {
     const payload = {
       v: 1, s: c.asOfSeq.toString(10), n: c.emitted,
+      ...(c.generation === null ? {} : { g: c.generation }),
       // A drafts-phase cursor carries no message keyset; every other phase carries one.
       ...(c.phase === "drafts" ? {} : { d: c.date, i: c.id }),
       ...(c.phase ? { p: c.phase } : {}),
@@ -370,8 +378,12 @@ export class SyncService {
       if (cursor.length > SNAPSHOT_CURSOR_MAX_CHARS) throw new Error("cursor too long");
       const raw: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
       if (typeof raw !== "object" || raw === null) throw new Error("not an object");
-      const { v, s, d, i, n, p, da, di } = raw as Record<string, unknown>;
+      const { v, s, d, i, n, p, da, di, g } = raw as Record<string, unknown>;
       if (v !== 1) throw new Error("unknown cursor version");
+      if (g !== undefined && (typeof g !== "number" || !Number.isSafeInteger(g) || g < 0)) {
+        throw new Error("bad store run");
+      }
+      const generation = g === undefined ? null : g as number;
       // The digit count bounds the PARSE (`BigInt` accepts a three-hundred-digit string happily,
       // which then reaches `Number(asOfSeq)` as `Infinity`) and the RANGE bounds the value — a
       // `change_log` seq is a `bigserial`, and nineteen digits reaches past what one can hold.
@@ -401,7 +413,7 @@ export class SyncService {
         // draft position — either shape is a cursor this service never issued.
         if (d !== undefined || i !== undefined) throw new Error("a drafts cursor with a message keyset");
         if (draft === undefined) throw new Error("a drafts cursor with no draft keyset");
-        return { asOfSeq: BigInt(s), emitted: n, phase: "drafts", ...draft };
+        return { asOfSeq: BigInt(s), generation, emitted: n, phase: "drafts", ...draft };
       }
       // A UUID, not merely a non-empty string: `i` is bound against `messages.id` (and its
       // siblings) further down, so `{"i":"x"}` in a hand-built cursor reached Postgres as 22P02 —
@@ -414,7 +426,7 @@ export class SyncService {
         throw new Error("bad keyset date");
       }
       return {
-        asOfSeq: BigInt(s), date: d as number | null, id: i, emitted: n,
+        asOfSeq: BigInt(s), generation, date: d as number | null, id: i, emitted: n,
         ...(p === "tail" ? { phase: "tail" as const } : {}),
         ...draft,
       };
@@ -799,6 +811,16 @@ export class SyncService {
     const { db, accountId } = ctx;
     const limit = clampPageLimit(opts.limit, DEFAULT_LIMIT, MAX_LIMIT);
     const cursor = opts.cursor && opts.cursor !== "" ? this.decodeSnapshotCursor(opts.cursor) : null;
+    const gen = ctx.storeGeneration ?? null;
+    /* A PAGE CURSOR OF ANOTHER RUN IS REFUSED, and one naming no run where the store has one is
+       too: its `asOfSeq` counts a log that may have lost rows since. Unlike the delta's first-run
+       admission, a restarted walk costs one bootstrap, so no cursor is admitted on a guess. */
+    if (cursor !== null && cursor.generation !== gen) {
+      throw new ServiceError(
+        "cursor_expired", 410,
+        "snapshot cursor belongs to another run of this store; restart the snapshot with no cursor",
+      );
+    }
     // TAIL-ONLY: page 1 of a walk that starts IN the tail. PRESENCE and not a second spelling
     // test — the option's type admits the one phase there is, and the route decides the
     // vocabulary at the read (where `input-bounds-census` asks for it). A later phase would widen
@@ -962,7 +984,7 @@ export class SyncService {
         asOfSeq: seq,
         changes,
         nextCursor: draftNext === undefined ? null : this.encodeSnapshotCursor({
-          asOfSeq, emitted: cursor.emitted, phase: "drafts", draft: draftNext,
+          asOfSeq, generation: gen, emitted: cursor.emitted, phase: "drafts", draft: draftNext,
         }),
         window: SNAPSHOT_WINDOW,
       };
@@ -1145,6 +1167,7 @@ export class SyncService {
     const fullPage = (walked.length === walkLimit || stoppedAt < rows.length) && last !== undefined;
     const keysetOf = (phase?: "tail"): string => this.encodeSnapshotCursor({
       asOfSeq,
+      generation: gen,
       date: last!.date ? last!.date.getTime() : null,
       id: last!.id,
       emitted,
@@ -1187,13 +1210,12 @@ export class SyncService {
     // cursor the client adopts when the snapshot ends.
     if (nextCursor === null && draftNext !== undefined) {
       nextCursor = this.encodeSnapshotCursor({
-        asOfSeq, emitted, phase: "drafts", draft: draftNext,
+        asOfSeq, generation: gen, emitted, phase: "drafts", draft: draftNext,
       });
     }
 
     /* Spread, not `?? undefined`: a store with no generation must leave the field ABSENT, which
        is the answer a client reads as "mint the shape you always did". */
-    const gen = ctx.storeGeneration ?? null;
     return {
       asOfSeq: seq, changes, nextCursor, window: SNAPSHOT_WINDOW,
       ...(gen === null ? {} : { storeGeneration: gen }),
