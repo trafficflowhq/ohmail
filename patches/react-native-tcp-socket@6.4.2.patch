@@ -1,8 +1,8 @@
 diff --git a/android/src/main/java/com/asterinet/react/tcpsocket/SSLCertificateHelper.java b/android/src/main/java/com/asterinet/react/tcpsocket/SSLCertificateHelper.java
-index 1e0622fb26819507088c6b2147a407e23fe3d25f..b47ef34cb33c60dd9f77b77983b259db4ddaceee 100644
+index 1e0622fb26819507088c6b2147a407e23fe3d25f..159fe31173d3c5f56bfa30549c17eee04b50b114 100644
 --- a/android/src/main/java/com/asterinet/react/tcpsocket/SSLCertificateHelper.java
 +++ b/android/src/main/java/com/asterinet/react/tcpsocket/SSLCertificateHelper.java
-@@ -20,6 +20,7 @@ import java.security.KeyStore;
+@@ -20,17 +20,24 @@ import java.security.KeyStore;
  import java.security.PrivateKey;
  import java.security.SecureRandom;
  import java.security.cert.Certificate;
@@ -10,7 +10,16 @@ index 1e0622fb26819507088c6b2147a407e23fe3d25f..b47ef34cb33c60dd9f77b77983b259db
  import java.security.cert.CertificateFactory;
  import java.security.spec.PKCS8EncodedKeySpec;
  import java.security.cert.X509Certificate;
-@@ -31,6 +32,7 @@ import java.util.Locale;
++import java.security.PublicKey;
++import java.security.interfaces.ECPublicKey;
+ import java.security.interfaces.RSAPublicKey;
++import java.security.spec.ECFieldFp;
+ import java.text.SimpleDateFormat;
+ import java.util.Base64;
+ import java.util.Date;
++import java.util.LinkedHashMap;
+ import java.util.Locale;
++import java.util.Map;
  
  import javax.net.ssl.KeyManagerFactory;
  import javax.net.ssl.SSLContext;
@@ -18,7 +27,7 @@ index 1e0622fb26819507088c6b2147a407e23fe3d25f..b47ef34cb33c60dd9f77b77983b259db
  import javax.net.ssl.SSLPeerUnverifiedException;
  import javax.net.ssl.SSLServerSocketFactory;
  import javax.net.ssl.SSLSession;
-@@ -38,6 +40,7 @@ import javax.net.ssl.SSLSocket;
+@@ -38,6 +45,7 @@ import javax.net.ssl.SSLSocket;
  import javax.net.ssl.SSLSocketFactory;
  import javax.net.ssl.TrustManager;
  import javax.net.ssl.TrustManagerFactory;
@@ -26,7 +35,7 @@ index 1e0622fb26819507088c6b2147a407e23fe3d25f..b47ef34cb33c60dd9f77b77983b259db
  import javax.net.ssl.X509TrustManager;
  
  import com.facebook.react.bridge.Arguments;
-@@ -52,17 +55,6 @@ import org.json.JSONObject;
+@@ -52,17 +60,6 @@ import org.json.JSONObject;
  
  final class SSLCertificateHelper {
  
@@ -44,7 +53,7 @@ index 1e0622fb26819507088c6b2147a407e23fe3d25f..b47ef34cb33c60dd9f77b77983b259db
      static SSLServerSocketFactory createServerSocketFactory(Context context, @NonNull final String keyStoreResourceUri) throws GeneralSecurityException, IOException {
          char[] password = "".toCharArray();
  
-@@ -74,8 +66,11 @@ final class SSLCertificateHelper {
+@@ -74,8 +71,11 @@ final class SSLCertificateHelper {
          KeyManagerFactory keyManagerFactory = KeyManagerFactory.getInstance("X509");
          keyManagerFactory.init(keyStore, password);
  
@@ -57,7 +66,7 @@ index 1e0622fb26819507088c6b2147a407e23fe3d25f..b47ef34cb33c60dd9f77b77983b259db
  
          return sslContext.getServerSocketFactory();
      }
-@@ -186,34 +181,128 @@ final class SSLCertificateHelper {
+@@ -186,34 +186,128 @@ final class SSLCertificateHelper {
              }
          } 
          
@@ -212,7 +221,7 @@ index 1e0622fb26819507088c6b2147a407e23fe3d25f..b47ef34cb33c60dd9f77b77983b259db
          }
      }
  
-@@ -234,19 +323,6 @@ final class SSLCertificateHelper {
+@@ -234,19 +328,6 @@ final class SSLCertificateHelper {
          }
      }
  
@@ -232,6 +241,75 @@ index 1e0622fb26819507088c6b2147a407e23fe3d25f..b47ef34cb33c60dd9f77b77983b259db
  
      public static ReadableMap getCertificateInfo(Socket socket, boolean wantPeerCert) {
          WritableMap certInfo = Arguments.createMap();
+@@ -262,9 +343,10 @@ final class SSLCertificateHelper {
+                     certDetails.putMap("subject", parseDN(cert.getSubjectDN().getName()));
+                     certDetails.putMap("issuer", parseDN(cert.getIssuerDN().getName()));
+                     certDetails.putBoolean("ca", cert.getBasicConstraints() != -1);
+-                    certDetails.putString("modulus", getModulus(cert));
+-                    certDetails.putInt("bits", getModulusBitLength(cert));
+-                    certDetails.putString("exponent", "0x" + getExponent(cert));
++                    for (Map.Entry<String, Object> fact : keyFacts(cert.getPublicKey()).entrySet()) {
++                        if (fact.getValue() instanceof Integer) certDetails.putInt(fact.getKey(), (Integer) fact.getValue());
++                        else certDetails.putString(fact.getKey(), String.valueOf(fact.getValue()));
++                    }
+                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                         certDetails.putString("pubkey", Base64.getEncoder().encodeToString(cert.getPublicKey().getEncoded()));
+                     }
+@@ -330,18 +412,44 @@ final class SSLCertificateHelper {
+         BigInteger serialNumber = cert.getSerialNumber();
+         return serialNumber.toString(16).toUpperCase(); // Convert to hex string and uppercase
+     }
+-    private static String getModulus(X509Certificate cert) throws Exception {
+-        RSAPublicKey rsaPubKey = (RSAPublicKey) cert.getPublicKey();
+-        return rsaPubKey.getModulus().toString(16).toUpperCase();
++    /**
++     * THE PEER KEY, READ BY ITS TYPE. Upstream cast every key to RSAPublicKey, so a server with an
++     * ECDSA certificate made getPeerCertificate reject, and the STARTTLS confirmation read that as
++     * a failed upgrade. RSA keeps upstream's three fields; EC reports its size and, for the NIST
++     * prime curves, the names node's tls reports; any other key reports neither and never throws.
++     */
++    static Map<String, Object> keyFacts(PublicKey key) {
++        Map<String, Object> facts = new LinkedHashMap<>();
++        if (key instanceof RSAPublicKey) {
++            RSAPublicKey rsa = (RSAPublicKey) key;
++            facts.put("modulus", rsa.getModulus().toString(16).toUpperCase());
++            facts.put("bits", rsa.getModulus().bitLength());
++            facts.put("exponent", "0x" + rsa.getPublicExponent().toString(16).toUpperCase());
++        } else if (key instanceof ECPublicKey) {
++            java.security.spec.ECParameterSpec params = ((ECPublicKey) key).getParams();
++            facts.put("bits", params.getCurve().getField().getFieldSize());
++            String[] names = nistCurveOf(params);
++            if (names != null) {
++                facts.put("asn1Curve", names[0]);
++                facts.put("nistCurve", names[1]);
++            }
++        }
++        return facts;
+     }
+ 
+-    private static int getModulusBitLength(X509Certificate cert) throws Exception {
+-        RSAPublicKey rsaPubKey = (RSAPublicKey) cert.getPublicKey();
+-        return rsaPubKey.getModulus().bitLength();
+-    }
+-    private static String getExponent(X509Certificate cert) throws Exception {
+-        RSAPublicKey rsaPubKey = (RSAPublicKey) cert.getPublicKey();
+-        return rsaPubKey.getPublicExponent().toString(16).toUpperCase();
++    /** The NIST prime curves by their field prime; any other curve is named nothing. */
++    private static String[] nistCurveOf(java.security.spec.ECParameterSpec params) {
++        if (!(params.getCurve().getField() instanceof ECFieldFp)) return null;
++        BigInteger p = ((ECFieldFp) params.getCurve().getField()).getP();
++        BigInteger two = BigInteger.valueOf(2);
++        if (p.equals(two.pow(256).subtract(two.pow(224)).add(two.pow(192)).add(two.pow(96)).subtract(BigInteger.ONE))) {
++            return new String[] { "prime256v1", "P-256" };
++        }
++        if (p.equals(two.pow(384).subtract(two.pow(128)).subtract(two.pow(96)).add(two.pow(32)).subtract(BigInteger.ONE))) {
++            return new String[] { "secp384r1", "P-384" };
++        }
++        if (p.equals(two.pow(521).subtract(BigInteger.ONE))) return new String[] { "secp521r1", "P-521" };
++        return null;
+     }
+ 
+     private static String getFingerprint(X509Certificate cert, String algorithm) throws Exception {
 diff --git a/android/src/main/java/com/asterinet/react/tcpsocket/TcpSocketClient.java b/android/src/main/java/com/asterinet/react/tcpsocket/TcpSocketClient.java
 index 75115700e46138a43b5c63c36bee88016bd6129e..22a5af34acd00a4203587ae2ca119e5dcf167077 100644
 --- a/android/src/main/java/com/asterinet/react/tcpsocket/TcpSocketClient.java
