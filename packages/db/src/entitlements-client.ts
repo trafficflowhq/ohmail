@@ -1,7 +1,7 @@
 import {
-  UNMETERED_ACCESS,
+  AI_USAGE_LINES_PER_POST, AI_USAGE_LINES_PER_RELEASE, UNMETERED_ACCESS,
   type AccessLifecycle, type AccessLifecycleState, type AccessClosedReason, type ActionPrices,
-  type AccessReadOpts, type AccessRefusal, type AccessVerdict, type EntitlementsPort,
+  type AccessReadOpts, type AccessRefusal, type AccessVerdict, type AiUsageLine, type EntitlementsPort,
   type ReleaseOutcome, type ReleaseReceipt, type SpendAction, type SpendMeta, type SpendOutcome,
   type SpendRelease, type ReturnConfirmOutcome,
 } from "./entitlements-port.js";
@@ -33,7 +33,7 @@ export const ENTITLEMENTS_CALL_BUDGET_MS = 5_000;
 /** The program's paths — a closed union, so `post` cannot be sent one nobody has priced. */
 export type EntitlementsPath =
   | "/v1/access" | "/v1/spend" | "/v1/spend/release" | "/v1/manage-link" | "/v1/account/release"
-  | "/v1/checkout/confirm";
+  | "/v1/checkout/confirm" | "/v1/usage";
 
 /** How long an `access` verdict is reused before it is re-read. */
 export const ACCESS_TTL_MS = 60_000;
@@ -87,6 +87,17 @@ export type EntitlementsFetch = (url: string, init: {
   body: string;
   signal: AbortSignal;
 }) => Promise<{ status: number; json(): Promise<unknown> }>;
+
+/**
+ * USAGE THE PROGRAM DID NOT SAY IT RECORDED: a 200 without `usageRecorded` (an older program
+ * drops the field silently, and this is the only reading of that), or lines this client would
+ * not send (another account's, or more than one release carries). Counts only.
+ */
+export interface UsageUnrecorded {
+  path: "/v1/spend/release" | "/v1/usage";
+  lines: number;
+  why: "no_usage_recorded_field" | "not_sent";
+}
 
 /** A drift between the two sides, named. `field` is what could not be read, never a value. */
 export interface ContractFault {
@@ -144,6 +155,8 @@ export interface EntitlementsClientConfig {
    * It may not throw; if it does, the answer is unchanged and the report is dropped.
    */
   onCallFault: ((f: CallFault) => void | Promise<void>) | typeof CALL_FAULT_UNRECORDED;
+  /** Where {@link UsageUnrecorded} goes. Absent ⇒ `console.warn` naming `usage_not_recorded`. */
+  onUsageUnrecorded?: (f: UsageUnrecorded) => void;
   /**
    * The host's keep-alive for work that runs after the response (the serverless platform's
    * `waitUntil`). A host that freezes an instance once it answers MUST pass it: the refresh behind
@@ -374,6 +387,15 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       + ` in ${String(f.elapsedMs)} ms of a ${String(f.budgetMs)} ms budget. The call took the `
       + "fault path, so no verdict was read from it.");
   });
+  const reportUsage = cfg.onUsageUnrecorded ?? ((f: UsageUnrecorded) => {
+    console.warn(`[entitlements] usage_not_recorded path=${f.path} lines=${String(f.lines)} why=${f.why}`);
+  });
+  const usageUnrecorded = (f: UsageUnrecorded): void => {
+    try { reportUsage(f); } catch { /* observability is never load-bearing */ }
+  };
+  /** Did a 200 say how many lines it wrote? An older program answers without the field. */
+  const usageRecordedIn = (res: Exchange): boolean =>
+    res.bodyIsJson && typeof obj(res.body)?.usageRecorded === "number";
   /** A reporter that throws must not replace the answer with its own failure. */
   const named = (path: string, status: number, field: string): void => {
     try { report({ path, status, field }); } catch { /* observability is never load-bearing */ }
@@ -576,6 +598,15 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       // It is REPORTED rather than swallowed: the receipt is what lets a caller that owes money
       // back record the debt instead of dropping it.
       assertAttemptKey(r.action, r.attemptKey);
+      // USAGE NEVER COSTS THE RELEASE. The program refuses a whole release carrying another
+      // account's line or more than one work item's calls, and a refused release re-arms a
+      // refund's obligation — so such lines are dropped here, counted, and never sent.
+      const offered = r.usage ?? [];
+      const usage = offered.length <= AI_USAGE_LINES_PER_RELEASE
+        && offered.every((l) => l.accountId === accountId) ? offered : [];
+      if (usage.length < offered.length) {
+        usageUnrecorded({ path: "/v1/spend/release", lines: offered.length, why: "not_sent" });
+      }
       const res = await post("/v1/spend/release", {
         accountId, action: r.action, attemptKey: r.attemptKey, refund: r.refund,
         // Named only when there is a charge to reverse. The program defaults a missing `attempt`
@@ -583,11 +614,31 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
         // a neighbour's attempt into a request that must reverse nothing.
         ...(r.refund ? { attempt: r.attempt } : {}),
         ...(r.meta ? { meta: r.meta } : {}),
+        ...(usage.length > 0 ? { usage } : {}),
       });
+      if (res?.status === 200 && usage.length > 0 && !usageRecordedIn(res)) {
+        usageUnrecorded({ path: "/v1/spend/release", lines: usage.length, why: "no_usage_recorded_field" });
+      }
       // A 200 AND NOTHING ELSE. `post` already reported the outage or the refusing status through
       // `onCallFault`; a non-200 is not a release the program took, and reading one as `settled`
       // would be the swallow wearing a return type.
       return res?.status === 200 ? "settled" : "unreachable";
+    },
+
+    async recordUsage(lines: readonly AiUsageLine[]): Promise<ReleaseReceipt> {
+      // AT MOST ONCE: the caller logs an `unreachable` batch and drops it, because a retried
+      // POST with no identity would count its lines twice. Chunking is the caller's.
+      if (lines.length === 0) return "settled";
+      if (lines.length > AI_USAGE_LINES_PER_POST) {
+        usageUnrecorded({ path: "/v1/usage", lines: lines.length, why: "not_sent" });
+        return "unreachable";
+      }
+      const res = await post("/v1/usage", { lines });
+      if (res?.status !== 200) return "unreachable";
+      if (!usageRecordedIn(res)) {
+        usageUnrecorded({ path: "/v1/usage", lines: lines.length, why: "no_usage_recorded_field" });
+      }
+      return "settled";
     },
 
     async manageLink(accountId: string, lang?: "de" | "en"): Promise<{ url: string } | null> {

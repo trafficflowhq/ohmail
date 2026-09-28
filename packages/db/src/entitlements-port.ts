@@ -124,6 +124,9 @@ export type SpendRelease = {
   attemptKey: string;
   /** Provenance for the reversal's own ledger row. Ids and counts, never a message's content. */
   meta?: SpendMeta;
+  /** The model calls this work made, when the host records usage: at most
+   *  {@link AI_USAGE_LINES_PER_RELEASE}, each naming this release's account. */
+  usage?: readonly AiUsageLine[];
 } & (
   | { refund: false }
   | {
@@ -157,6 +160,58 @@ export type ReleaseReceipt =
  * and counts, and nothing a sender chose.
  */
 export type SpendMeta = Record<string, unknown>;
+
+/** Which host made a model call. */
+export type AiUsageHost = "api" | "worker" | "server";
+
+/**
+ * ONE MODEL CALL'S USAGE, as the entitlements program is told it: ids and counts, never content.
+ * The account and the action are the caller's; the counts are the model client's report. No
+ * request id (it stays in the host's `ai_call` log line) and no cost: the program prices the
+ * tokens itself, so no estimate made here is a figure it has to trust.
+ */
+export interface AiUsageLine {
+  accountId: string;
+  action: SpendAction;
+  host: AiUsageHost;
+  model: string;
+  /** When the call ended, ISO 8601. */
+  at: string;
+  ok: boolean;
+  attempts: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
+  /** A breakdown of `outputTokens`, never counted on top of it. */
+  thinkingTokens: number | null;
+}
+
+/** The most lines one release carries: one work item's calls, never a batch. */
+export const AI_USAGE_LINES_PER_RELEASE = 8;
+/** The most lines one `recordUsage` call carries. */
+export const AI_USAGE_LINES_PER_POST = 500;
+
+/** The report fields a line copies. Structural, so this file names nothing in the model client. */
+export type AiUsageCounts = Pick<AiUsageLine,
+  "model" | "ok" | "attempts" | "inputTokens" | "outputTokens" | "cacheReadTokens"
+  | "cacheWriteTokens" | "thinkingTokens">;
+
+/** One line from one report. Copies the counts and nothing else: a report's request id and cost
+ *  estimate stay behind. */
+export function aiUsageLineOf(
+  report: AiUsageCounts,
+  who: { accountId: string; action: SpendAction; host: AiUsageHost },
+  at: Date = new Date(),
+): AiUsageLine {
+  return {
+    accountId: who.accountId, action: who.action, host: who.host, model: report.model,
+    at: at.toISOString(), ok: report.ok, attempts: report.attempts,
+    inputTokens: report.inputTokens, outputTokens: report.outputTokens,
+    cacheReadTokens: report.cacheReadTokens, cacheWriteTokens: report.cacheWriteTokens,
+    thinkingTokens: report.thinkingTokens,
+  };
+}
 
 /** Why a spend bought nothing. The `credit_refund_obligations_reason_check` set, as words. */
 export type RefundObligationReason =
@@ -259,6 +314,13 @@ export interface EntitlementsPort {
    * release costs the customer nothing (the attempt stays open, so the retry is free).
    */
   release(accountId: string, r: SpendRelease): Promise<ReleaseReceipt>;
+  /**
+   * Usage of model calls no release carries (ingest classification, workflow steps), at most
+   * {@link AI_USAGE_LINES_PER_POST} lines. Delivered at most once: a caller logs a refused batch
+   * and drops it, so the record under-counts and never over-counts. OPTIONAL: an older program
+   * and an unmetered host record nothing. Never throws.
+   */
+  recordUsage?(lines: readonly AiUsageLine[]): Promise<ReleaseReceipt>;
   /**
    * The one customer-facing door the managed service has: plan choice for an account with no
    * subscription, and plan status for one that has. A KNOWN account always gets a URL, so this is

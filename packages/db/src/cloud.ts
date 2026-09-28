@@ -309,7 +309,7 @@ export {
   makeEntitlementsClient, ENTITLEMENTS_CALL_BUDGET_MS, ACCESS_TTL_MS, CALL_FAULT_UNRECORDED,
   PRICE_PROBE_ACCOUNT, PRICE_PROBE_BUDGET_MS,
   type EntitlementsClient, type EntitlementsClientConfig, type EntitlementsFetch, type CallFault,
-  type EntitlementsPath,
+  type EntitlementsPath, type UsageUnrecorded,
 } from "./entitlements-client.js";
 
 /**

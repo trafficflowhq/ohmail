@@ -438,4 +438,6 @@ export {
   type SpendOutcome, type SpendAction, type SpendRelease, type ReleaseOutcome,
   type ReleaseReceipt, type RefundObligation, type RefundObligationPort,
   type RefundObligationReason, type ReturnConfirmOutcome,
+  aiUsageLineOf, AI_USAGE_LINES_PER_POST, AI_USAGE_LINES_PER_RELEASE,
+  type AiUsageLine, type AiUsageHost, type AiUsageCounts,
 } from "./entitlements-port.js";
