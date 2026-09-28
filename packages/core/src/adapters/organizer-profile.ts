@@ -709,7 +709,8 @@ export function formatProfileMessage(doc: OrganizerProfileDoc, opts: { installId
     "",
     ...PREAMBLE,
     "",
-    serializeProfileDoc(doc),
+    // CRLF inside the document too: a bare LF is not RFC 5322, and Dovecot rewrites it on storage.
+    serializeProfileDoc(doc).replace(/\n/g, "\r\n"),
     "",
   ];
   return lines.join("\r\n");
