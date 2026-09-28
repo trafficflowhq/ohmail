@@ -3063,7 +3063,7 @@ function OrganizerPanel({ state, t, filer, now, spent, onCancel, onConfirm }: {
   spent: boolean;
   onCancel: () => void;
   onConfirm: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { peek } = state;
   if (peek === null) return <span className="mbx-sub">{t("organizerChecking")}</span>;
 

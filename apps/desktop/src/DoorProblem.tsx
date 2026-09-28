@@ -33,7 +33,7 @@ export function DoorProblem({
   onUse?: (suggestion: HostSuggestion) => void;
   /** Drawn between the last field and the button it answers, rather than above the form. */
   atPress?: boolean;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   /* Brought into view and focused as it appears, wherever the card draws it. */
   const said = useRefusalAtThePress<HTMLParagraphElement>(problem);
   if (!problem) return null;

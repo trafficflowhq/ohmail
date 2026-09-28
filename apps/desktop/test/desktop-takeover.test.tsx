@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { act } from "react-dom/test-utils";
+import { act } from "react";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
