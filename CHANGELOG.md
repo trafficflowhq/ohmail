@@ -8709,7 +8709,7 @@ record follows the copy that is still there.
 
 ### Sending
 
-**A sent message is in the Ohbox, at the top of Earlier, the moment you send it.** Three
+**A sent message is in the Ohbox the moment you send it, with its conversation.** Three
 separate things stood between pressing Send and seeing the message, and none of them was
 the mail server — it holds the message before the app goes looking for it.
 
