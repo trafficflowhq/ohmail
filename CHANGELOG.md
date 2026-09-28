@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.25.4] — 2026-09-28
+
 ### Settings → About writes a diagnostic file you can send us
 <!-- changes: maturity-026-m4-local.md -->
 
@@ -256,11 +263,6 @@ be made, a passkey prompt that was closed) are German, as are the Screener's Spa
 and Version labels, the default name of a desktop that paired without one, the phone's own name
 and its Einordnen action. Every screen now addresses the reader as du. The keyboard hints under
 the lists read whole in German, and the phone's Screener doorbell no longer says "Screener" twice.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
 
 ## [0.25.3] — 2026-09-27
 
@@ -10105,7 +10107,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.3...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.4...HEAD
+[0.25.4]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.4
 [0.25.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.3
 [0.25.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.2
 [0.25.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.1
