@@ -1326,16 +1326,16 @@ sentence in English and German. They showed in English on a German desktop.
 <!-- changes: fix-025-pairing-undo.md -->
 
 A desktop that serves your other devices stops doing so while a pairing is set up. When the other
-computer refused, the pairing ran out of time or ohmail was closed mid-pairing, hosting stayed off,
-start at login was removed and the tailnet route was withdrawn. All three now come back with the
-desktop's connection.
+computer refused, the pairing ran out of time or ohmail was closed mid-pairing, hosting stayed off
+and the tailnet route was withdrawn. Both now come back with the desktop's connection, and start
+at login does too when the other computer refused or the pairing ran out of time.
 
 ### A pairing that does not finish leaves the other computer's Devices list
 <!-- changes: fix-025-pairing-undo.md -->
 
-When a pairing had already reached the other computer and was then undone, this desktop stayed on
-that computer's Devices list. The desktop now signs the pairing out there before it goes back, when
-that computer answers within a few seconds.
+When a pairing the other computer had already answered was then undone, this desktop stayed on
+that computer's Devices list. The desktop now signs the pairing out there before it goes back,
+when that computer answers within a few seconds.
 
 ### Signing out closes every tab
 <!-- changes: fix-025-sign-out-every-tab.md -->
