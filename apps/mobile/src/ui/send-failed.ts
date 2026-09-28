@@ -12,6 +12,6 @@ import type { ConnectionSay, FailedSendCopy } from "../state/live";
 
 export function failedSendLine(kind: FailedSendCopy, connection: ConnectionSay | null, kept: boolean): string {
   const offline = connection !== null && (connection.kind === "lost" || connection.kind === "gone");
-  if (kind === "replyFailed" && offline && kept) return Copy.composeNotSentOffline;
+  if ((kind === "replyFailed" || kind === "replyUnreachable") && offline && kept) return Copy.composeNotSentOffline;
   return Copy[kind];
 }

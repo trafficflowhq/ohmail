@@ -124,6 +124,7 @@ import {
 } from "./held-routing";
 import type { ScreeningAnswer } from "../net/consent";
 import { networkNow, type NetworkState } from "../net/network-door";
+import { queuedCaptionKey } from "../engine/send-waits";
 import type { ServerWaitingSender } from "../net/screener";
 import {
   destDone,
@@ -2243,11 +2244,23 @@ export function sendOutcomeOfResult(r: MutationResult | null): SendOutcome {
  * THE SENTENCE A FAILED SEND EARNS. A session that never secured its connection or had its login
  * refused offered nothing, and says which step stopped it; every other failure keeps the plain one.
  */
-export type FailedSendCopy = "replyNotSecured" | "replyLoginRefused" | "replyFailed";
+export type FailedSendCopy = "replyNotSecured" | "replyLoginRefused" | "replyUnreachable" | "replyFailed";
 
 export function failedSendCopy(r: MutationResult | null): FailedSendCopy {
   const code = r?.error?.code;
-  return code === "send_not_secured" ? "replyNotSecured" : code === "send_login_refused" ? "replyLoginRefused" : "replyFailed";
+  return code === "send_not_secured" ? "replyNotSecured"
+    : code === "send_login_refused" ? "replyLoginRefused"
+      : code === "send_unreachable" ? "replyUnreachable"
+        : "replyFailed";
+}
+
+/**
+ * THE SERVER HAS THIS SEND: a queued result whose code is the send route's own 202 (`send_queued`),
+ * the reservation committed under its key. Every other queued result is the transport's and the
+ * request may never have arrived. The web's `phaseFor` makes the same split.
+ */
+export function sendAccepted(r: MutationResult | null): boolean {
+  return r !== null && r.status === "queued" && r.error?.code === "send_queued";
 }
 
 /**
@@ -2265,6 +2278,8 @@ export interface SendResult {
   draftId?: string;
   /** `failed` only: which sentence the refusal earned, said in the composer ({@link failedSendCopy}). */
   failure?: FailedSendCopy;
+  /** `queued` only: the server accepted it ({@link sendAccepted}), so it is still sending, not waiting. */
+  accepted?: true;
 }
 
 /**
@@ -2360,6 +2375,78 @@ export interface FlushedOutcome {
    * "Reply sent." over the newer words would name a message nobody sent.
    */
   earlierWent: boolean;
+  /** A refused mail_send: the row the refusal left, which the composer binds so a press is that row. */
+  draftId?: string;
+  /** A refused mail_send: the sentence the refusal earned ({@link failedSendCopy}). */
+  failure?: FailedSendCopy;
+}
+
+/**
+ * WHAT A LOCKED COMPOSER READS OFF THE LEDGER beside the status: the server accepted the send
+ * (still sending, not waiting), or it was refused, leaving this row and earning this sentence.
+ */
+export interface SendSettlement {
+  accepted: boolean;
+  draftId: string | null;
+  failure: FailedSendCopy | null;
+}
+export const NO_SETTLEMENT: SendSettlement = { accepted: false, draftId: null, failure: null };
+
+/** What a queued intent was, captured while the queue still holds it — see {@link sendsOffTheQueue}. */
+interface QueuedMeta { kind: EngineMutation["kind"]; forward: boolean; sendAt: string | null }
+
+function queuedMetaOf(m: EngineMutation): QueuedMeta {
+  return {
+    kind: m.kind,
+    forward: m.kind === "mail_send" && !!m.forwardOf,
+    sendAt: (m.kind === "mail_send" ? m.sendAt : undefined) ?? null,
+  };
+}
+
+/**
+ * SENDS WHOSE ANSWER MAY COME WHEN THE QUEUE NO LONGER HOLDS THEM. A dispatch that outlives the
+ * engine's deadline leaves the queue and answers LATE, through a later flush, so a flush that
+ * reads kinds off `pendingMutations()` alone called a late refused send a failed save. Keyed by
+ * engine, written while the send is known, spent when its terminal answer is read.
+ */
+const sendsOffTheQueue = new WeakMap<OhmailEngine, Map<string, QueuedMeta>>();
+
+function queuedSendsOf(engine: OhmailEngine): Map<string, QueuedMeta> {
+  let known = sendsOffTheQueue.get(engine);
+  if (known === undefined) sendsOffTheQueue.set(engine, (known = new Map()));
+  return known;
+}
+
+/**
+ * ANSWERS A PRESS'S OWN FLUSH TOOK FOR OTHER KEYS. `flushPending` hands each answer to exactly one
+ * caller, and the press keeps only its own; the rest wait here for the ledger's next flush.
+ */
+const strayAnswers = new WeakMap<OhmailEngine, MutationResult[]>();
+
+function keepStrays(engine: OhmailEngine, results: readonly MutationResult[], own: string): void {
+  const others = results.filter((r) => r.key !== own && r.status !== "queued");
+  if (others.length > 0) strayAnswers.set(engine, [...(strayAnswers.get(engine) ?? []), ...others]);
+}
+
+/** Is any answer waiting for a flush — the engine's late ones, or strays a press's flush took? */
+export function answersWaiting(engine: OhmailEngine): boolean {
+  return engine.hasLateResults() || (strayAnswers.get(engine)?.length ?? 0) > 0;
+}
+
+/** Record a send answered `queued`, so its late answer is read as the send it is. */
+export function noteQueuedSend(engine: OhmailEngine, r: MutationResult, m: EngineMutation): void {
+  if (r.status === "queued" && m.kind === "mail_send") queuedSendsOf(engine).set(r.key, queuedMetaOf(m));
+}
+
+/**
+ * IS A RECONNECT FLUSH OWED? An answer waiting with no caller always is (`hasLateResults`: a
+ * dispatch that outlived its deadline answered after the queue let go of it); otherwise a pending
+ * key not yet retried since the last drain. Measured on a phone: a 424 that arrived late was never
+ * collected, and the composer said "still trying" for eight minutes.
+ */
+export function reconnectFlushDue(pendingKeys: readonly string[], tried: ReadonlySet<string>, hasLate: boolean): boolean {
+  if (hasLate) return true;
+  return pendingKeys.length > 0 && !pendingKeys.every((k) => tried.has(k));
 }
 
 /**
@@ -2372,28 +2459,31 @@ export interface FlushedOutcome {
  * "maybe delivered — check Sent", never "try again". Failures that are still retryable
  * re-queue inside the engine and simply stay pending.
  */
-export async function flushQueued(engine: OhmailEngine): Promise<Map<string, FlushedOutcome>> {
-  const kinds = new Map(
-    engine.pendingMutations().map((p) => [
-      p.key,
-      {
-        kind: p.mutation.kind,
-        forward: p.mutation.kind === "mail_send" && !!p.mutation.forwardOf,
-        sendAt: (p.mutation.kind === "mail_send" ? p.mutation.sendAt : undefined) ?? null,
-      },
-    ]),
-  );
+export async function flushQueued(
+  engine: OhmailEngine,
+  /** A send the server says it has (`send_queued`): not terminal, but the composer says so. */
+  onAccepted?: (key: string) => void,
+): Promise<Map<string, FlushedOutcome>> {
+  const kinds = new Map(engine.pendingMutations().map((p) => [p.key, queuedMetaOf(p.mutation)]));
+  const offQueue = queuedSendsOf(engine);
+  for (const [key, meta] of kinds) if (meta.kind === "mail_send") offQueue.set(key, meta);
   const outcomes = new Map<string, FlushedOutcome>();
-  const results = await engine.flushPending().catch(() => []);
+  const strays = strayAnswers.get(engine) ?? [];
+  strayAnswers.delete(engine);
+  const results = [...strays, ...await engine.flushPending().catch(() => [])];
   for (const r of results) {
-    if (r.status === "queued") continue;
+    if (r.status === "queued") {
+      if (sendAccepted(r)) onAccepted?.(r.key);
+      continue;
+    }
     /**
      * A WITHDRAWN INTENT OWES NO SENTENCE. Cancel took this verb off the queue, and the flush
      * that was already carrying it reports the rollback it made of it — "Reply failed." over a
      * send the person themselves cancelled is the wrong sentence, and there is no right one.
      */
-    if (r.error?.code === OUTBOX_WITHDRAWN_CODE) continue;
-    const meta = kinds.get(r.key) ?? { kind: "mark_seen" as const, forward: false, sendAt: null };
+    if (r.error?.code === OUTBOX_WITHDRAWN_CODE) { offQueue.delete(r.key); continue; }
+    const meta = kinds.get(r.key) ?? offQueue.get(r.key) ?? { kind: "mark_seen" as const, forward: false, sendAt: null };
+    offQueue.delete(r.key);
     const status =
       r.status === "confirmed" ? ("confirmed" as const)
         : r.error?.code === "send_unverified" ? ("unverified" as const)
@@ -2402,8 +2492,10 @@ export async function flushQueued(engine: OhmailEngine): Promise<Map<string, Flu
     // Terminal: the sentence is about to be said, so the mark is spent here rather than kept
     // for a second announcement of the same send.
     forgetResumedOverOtherText(engine, r.key);
+    const refusedSend = status === "rolled_back" && meta.kind === "mail_send";
     outcomes.set(r.key, {
       status, kind: meta.kind, forward: meta.forward, sendAt: meta.sendAt, earlierWent,
+      ...(refusedSend ? { failure: failedSendCopy(r), ...(r.entityId ? { draftId: r.entityId } : {}) } : {}),
     });
   }
   return outcomes;
@@ -3951,9 +4043,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       // Idempotency-Key the first dispatch minted — may settle this send. An unrelated
       // mutation confirming is not this message delivering.
       const flushed = await engine.flushPending().catch(() => []);
+      keepStrays(engine, flushed, first.key);
       settled = flushed.find((r) => r.key === first.key) ?? first;
     }
     const outcome = sendOutcomeOfResult(settled);
+    /* The 202 is said once, then later answers for the key are `in_flight`: either one counts. */
+    const accepted = outcome === "queued" && (sendAccepted(first) || sendAccepted(settled));
     /**
      * WHICH MESSAGE THIS CONFIRMATION IS ABOUT. A press that resumed a standing key is answered
      * from the first reservation when there is one — never two copies, never a silent second
@@ -3971,11 +4066,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     else if (outcome === "sent" || sayRefusals) {
       toast(
         outcome === "sent" ? (earlierWent ? earlierWentToast : sentToast)
-          : outcome === "queued" ? refuse(networkNow() === "offline" ? "replyQueuedOffline" : "replyQueued")
+          : outcome === "queued" ? refuse(queuedCaptionKey(networkNow(), accepted))
             : outcome === "unverified" ? refuse("replyUnverified")
-              : failedSendCopy(settled) === "replyNotSecured" ? refuse("replyNotSecured")
-                : failedSendCopy(settled) === "replyLoginRefused" ? refuse("replyLoginRefused")
-                  : refuse("replyFailed"),
+              : refuse(failedSendCopy(settled)),
       );
     }
     return {
@@ -3983,6 +4076,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       ...(outcome === "queued" && first ? { key: first.key } : {}),
       ...(outcome === "failed" && settled?.entityId ? { draftId: settled.entityId } : {}),
       ...(outcome === "failed" ? { failure: failedSendCopy(settled) } : {}),
+      ...(accepted ? { accepted: true as const } : {}),
     };
   };
 
@@ -4012,7 +4106,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     if (standing !== undefined && networkNow() === "offline" && !sendTextDiffers(standing.mutation, m)) {
       return Promise.resolve({ id: standing.id, key: standing.key, status: "queued", seq: null });
     }
-    return engine.mutate(m, standing === undefined ? {} : { key: standing.key });
+    return engine.mutate(m, standing === undefined ? {} : { key: standing.key })
+      .then((r) => { noteQueuedSend(engine, r, m); return r; });
   };
 
   /**

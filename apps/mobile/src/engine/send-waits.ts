@@ -16,7 +16,14 @@ export function sendWaitsForNetwork(method: string, path: string, network: Netwo
   return network === "offline" && method.toUpperCase() === "POST" && SEND_STEP.test(path);
 }
 
-/** Which queued sentence a waiting send earns, read off the network door: offline, it goes when it is back. */
-export function queuedCaptionKey(network: NetworkState): "replyQueuedOffline" | "replyQueued" {
+/**
+ * Which queued sentence a waiting send earns. Accepted by the server, it is still sending (the
+ * web's `statusSendingLong`); otherwise read off the network door: offline, it goes when it is back.
+ */
+export function queuedCaptionKey(
+  network: NetworkState,
+  accepted = false,
+): "replySendingLong" | "replyQueuedOffline" | "replyQueued" {
+  if (accepted) return "replySendingLong";
   return network === "offline" ? "replyQueuedOffline" : "replyQueued";
 }

@@ -1015,6 +1015,8 @@ export function ComposeSheet({
   const [phase, setPhase] = useState<"idle" | "sending" | "queued" | "unverified">("idle");
   /** The queued send's Idempotency-Key — what the settle effect follows through the ledger. */
   const [queuedKey, setQueuedKey] = useState<string | null>(null);
+  /** The queued send is the server's (`SendResult.accepted`): it says it is still sending. */
+  const [accepted, setAccepted] = useState(false);
   /** The phone's network, so a send waiting for it says so in place (`send-waits.ts`). */
   const network = useNetworkNow();
   /**
@@ -1148,19 +1150,25 @@ export function ComposeSheet({
   useEffect(() => {
     if (phase !== "queued" || queuedKey === null) return;
     const settled = w.sendOutcome(queuedKey);
+    const said = w.sendSettlement(queuedKey);
     // Confirmed: the flush already announced the send (kind-aware toast); this just closes.
     if (settled === "confirmed") onClose();
     else if (settled === "rolled_back") {
       // The queued copy is gone with the rollback — a fresh Send cannot double-deliver.
       setQueuedKey(null);
+      setAccepted(false);
       setPhase("idle");
       // …and the send did NOT go after all, so the too-late sentence may not stand over a
       // re-armed Send. Cleared with the phase that raised it.
       setAlreadySent(false);
-      // The re-armed Send says why it is back: a retry that died is still a refused send.
-      setFailNote("replyFailed");
+      // The refusal left a row: the next press sends THAT row, never a second copy of one letter.
+      if (said.draftId !== null) setDraftId(said.draftId);
+      // The re-armed Send says why it is back, in the words the refusal earned.
+      setFailNote(said.failure ?? "replyFailed");
     }
     else if (settled === "unverified") setPhase("unverified");
+    // Still queued, and the server has said it holds the send: it is sending, not waiting.
+    else if (said.accepted) setAccepted(true);
     // `unverified` stays locked: the server could not say whether the message left, so the
     // only honest controls are the check-Sent sentence (in place and toasted) and Cancel.
   }, [phase, queuedKey, w, onClose]);
@@ -1307,6 +1315,7 @@ export function ComposeSheet({
     }
     if (result.outcome === "queued") {
       setQueuedKey(result.key ?? null);
+      setAccepted(result.accepted === true);
       setPhase("queued");
       return;
     }
@@ -1576,7 +1585,7 @@ export function ComposeSheet({
           ) : null}
           {phase === "queued" || phase === "unverified" ? (
             <Txt variant="caption" tone="ink3">
-              {phase === "queued" ? Copy[queuedCaptionKey(network)] : Copy.replyUnverified}
+              {phase === "queued" ? Copy[queuedCaptionKey(network, accepted)] : Copy.replyUnverified}
             </Txt>
           ) : null}
           {phase === "unverified" && againNote ? (

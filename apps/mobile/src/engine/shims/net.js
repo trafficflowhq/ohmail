@@ -34,6 +34,35 @@ function socketLogLine(event, fields) {
 }
 
 /**
+ * THE PLATFORM'S ERROR IS A STRING. Both natives emit a socket failure as its message alone
+ * (Android `putString("error", e.getMessage())`, iOS `@"error" : msg`), so a classifier that reads
+ * a code read nothing, and imapflow's strict-mode `err._connId = …` threw on the primitive. Every
+ * error leaves this bridge an `Error`, with the errno its message carries: the token Android
+ * prints (`ECONNREFUSED (Connection refused)`), else the sentence iOS prints. An `Error` passes.
+ */
+const ERRNO_IN_MESSAGE = /\b(ECONNREFUSED|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|EHOSTDOWN|ENETUNREACH|ENETDOWN|EADDRNOTAVAIL|ECONNRESET|ECONNABORTED|EPIPE|ETIMEDOUT)\b/;
+const ERRNO_BY_SENTENCE = [
+  [/connection refused/i, "ECONNREFUSED"],
+  [/unable to resolve host|no address associated with hostname|nodename nor servname|name or service not known/i, "ENOTFOUND"],
+  [/no route to host/i, "EHOSTUNREACH"],
+  [/network is unreachable/i, "ENETUNREACH"],
+  [/connection reset|reset by peer/i, "ECONNRESET"],
+  [/connection abort/i, "ECONNABORTED"],
+  [/broken pipe/i, "EPIPE"],
+  [/timed out|failed to connect to .* after \d+ ?ms/i, "ETIMEDOUT"],
+];
+
+function nativeError(err) {
+  if (err instanceof Error) return err;
+  const message = typeof err === "string" && err !== "" ? err : "the connection failed and the platform gave no reason";
+  const e = new Error(message);
+  const token = ERRNO_IN_MESSAGE.exec(message);
+  const code = token ? token[1] : ERRNO_BY_SENTENCE.find(([re]) => re.test(message))?.[1];
+  if (code) e.code = code;
+  return e;
+}
+
+/**
  * One native socket, as a Duplex.
  *
  * Exported so `tls.js` can wrap an upgraded socket in the same bridge rather than writing a second
@@ -77,7 +106,10 @@ class NativeSocketBridge extends Duplex {
       this.connecting = false;
       this.emit("connect");
     });
-    native.on("error", (err) => { this.emit("error", typeof mapError === "function" ? mapError(err) : err); });
+    native.on("error", (raw) => {
+      const err = nativeError(raw);
+      this.emit("error", typeof mapError === "function" ? mapError(err) : err);
+    });
     native.on("timeout", () => { this.emit("timeout"); });
     native.on("close", (hadError) => {
       this.connecting = false;
@@ -212,6 +244,7 @@ module.exports = {
   createConnection: connect,
   Socket: NativeSocketBridge,
   NativeSocketBridge,
+  nativeError,
   setSocketLog,
   socketLogLine,
   isIP,

@@ -57,7 +57,7 @@ import { usePrefs } from "./store";
 import {
   connectionSay, firstSyncSay,
   dispatchHeldRouting,
-  flushQueued,
+  answersWaiting, flushQueued, NO_SETTLEMENT, reconnectFlushDue, type SendSettlement,
   liveActions,
   planHeldRouting,
   presentedOptions,
@@ -487,6 +487,8 @@ export interface World {
    * a session swap — the queue is memory-only and died with its composer).
    */
   sendOutcome(key: string): "pending" | "confirmed" | "rolled_back" | "unverified" | "unknown";
+  /** What the ledger knows beside the status: accepted by the server, or the row and sentence of a refusal. */
+  sendSettlement(key: string): SendSettlement;
   actions: WorldActions;
 }
 
@@ -676,6 +678,7 @@ function emptyWorld(actions: WorldActions): World {
       revision: 0,
     },
     sendOutcome: () => "unknown",
+    sendSettlement: () => NO_SETTLEMENT,
     actions,
   };
 }
@@ -1246,6 +1249,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * here: the toast, and the ledger a locked composer settles from.
    */
   const outcomes = useRef(new Map<string, "confirmed" | "rolled_back" | "unverified">());
+  /** Beside each outcome: a refused send's row and sentence, and keys the server accepted. */
+  const settlements = useRef(new Map<string, SendSettlement>());
   const [outcomeSeq, setOutcomeSeq] = useState(0);
   /** The engine mid-flush (held by identity alone — the engine type stays behind the seam,
    *  which is why this is `object`), or null. SESSION-SCOPED: profile A's in-flight flush
@@ -1263,6 +1268,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     },
     [],
   );
+  const settlementOf = useCallback((key: string): SendSettlement => settlements.current.get(key) ?? NO_SETTLEMENT, []);
   /** Keys already retried since the last drain — a requeued batch is NOT immediately retried
    *  again (a persistent 500 or a ten-minute `send_in_flight` would loop hot); the next
    *  drain's start clears the latch, because a fresh drain is the next connectivity proof. */
@@ -1273,7 +1279,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (conn.syncing || engine === null || flushing.current === engine) return;
     const pending = engine.pendingMutations();
-    if (pending.length === 0) return;
+    if (!reconnectFlushDue(pending.map((m) => m.key), tried.current, answersWaiting(engine))) return;
     // Everything pending was already retried since the last drain: wait for the next one.
     // (When a flush DOES run with a new key beside a stuck one, the whole queue replays —
     // the engine's flush has no key filter — so a stuck key is replayed at most once per
@@ -1281,17 +1287,22 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // chain is bounded by PARTICIPATING NEW ARRIVALS: with none, nothing re-runs until the
     // next drain; each arrival buys the stuck key one replay, never a loop of its own. A
     // keyed flush is an engine seam change and deliberately not made from this app.)
-    if (pending.every((m) => tried.current.has(m.key))) return;
     for (const m of pending) tried.current.add(m.key);
     const flushed = engine;
     flushing.current = flushed;
-    void flushQueued(flushed)
+    let acceptedNow = false;
+    void flushQueued(flushed, (key) => {
+      if (backendEngineRef.current !== flushed) return;
+      settlements.current.set(key, { ...(settlements.current.get(key) ?? NO_SETTLEMENT), accepted: true });
+      acceptedNow = true;
+    })
       .then((settled) => {
         // A flush that outlived its session says nothing: the ledger and the toasts belong
         // to the session on screen, and this one's is gone.
         if (backendEngineRef.current !== flushed) return;
         for (const [key, o] of settled) {
           outcomes.current.set(key, o.status);
+          settlements.current.set(key, { accepted: false, draftId: o.draftId ?? null, failure: o.failure ?? null });
           // The one visible sentence per terminal outcome — a background send confirming
           // announces itself (the queued toast promised it would keep trying), an
           // unverified one says check-Sent, and any other rollback says it plainly.
@@ -1311,12 +1322,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
               );
             }
             else if (o.status === "unverified") showToast(refuse("replyUnverified"));
-            else showToast(refuse("replyFailed"));
+            else showToast(refuse(o.failure ?? "replyFailed"));
           } else if (o.status === "rolled_back") {
             showToast(refuse("liveSaveFailed"));
           }
         }
-        if (settled.size > 0) setOutcomeSeq((n) => n + 1);
+        if (settled.size > 0 || acceptedNow) setOutcomeSeq((n) => n + 1);
       })
       .finally(() => {
         if (flushing.current === flushed) flushing.current = null;
@@ -1334,6 +1345,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   // The outgoing session's ledger must not answer for the next session's keys.
   useEffect(() => {
     outcomes.current = new Map();
+    settlements.current = new Map();
   }, [sessionKey]);
 
   /* The CURRENT backend, refreshed per render; the stable facade delegates per call. */
@@ -1475,7 +1487,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
      overlay carries the named rows until it closes (`@ohmail/client-engine#presentAt`). */
   const heldPlaces = useSyncExternalStore(subscribeRoutingPlaces, routingPlaces);
 
-  const projected = useMemo<Omit<World, "boot" | "abandoned" | "face" | "autoAct" | "sendOutcome"> | null>(() => {
+  const projected = useMemo<Omit<World, "boot" | "abandoned" | "face" | "autoAct" | "sendOutcome" | "sendSettlement"> | null>(() => {
     if (engine === null || session === null) return null;
     /* THE STANDALONE DOOR HAS NOBODY TO ASK — this app IS the engine there and `GET /consent` is
        a route this session does not dial (the same fact the queue read is skipped for, below).
@@ -1714,10 +1726,11 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       },
       autoAct: autoAct === null ? null : { ...autoAct, pending: autoActPending, set: setAutoActOn },
       sendOutcome: outcomeOf,
+      sendSettlement: settlementOf,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projected, engine, session, actions, zone, conn.syncing, conn.syncError, outcomeSeq,
-    outcomeOf, accountFace, accountFaceKnown, facePending, applyFaceAllDevices,
+    outcomeOf, settlementOf, accountFace, accountFaceKnown, facePending, applyFaceAllDevices,
     autoAct, autoActPending, setAutoActOn]);
 
   /**
