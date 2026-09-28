@@ -77,6 +77,7 @@ import {
   type UnsubscribeResult,
   type WithheldMarker,
   type HeldReleaseGroupDTO,
+  type RuleDTO,
   type UnscreenedGroupDTO,
   type ScreenerWaitingDTO,
   type ScreenerWaitingPageDTO,
@@ -2342,6 +2343,12 @@ export class OhmailEngine {
    * mailbox, so the settle asks again. `seq`: the newest ask, so an older answer never lands last.
    */
   private screenerWait: { armed: boolean; dirty: boolean; seq: number } = { armed: false, dirty: false, seq: 0 };
+  /**
+   * The undecided-sender offer's freshness ({@link refreshUnscreened}). `armed`: a surface asked.
+   * `owed`: a page changed what it counts (a rule's walk ended, a mailbox went), so the settle
+   * asks again. `bell`: that ask in flight.
+   */
+  private unscreenedAsk: { armed: boolean; owed: boolean; bell: Promise<void> | null } = { armed: false, owed: false, bell: null };
   /** Representatives served on pages past the first, which the mirror never holds (capped). */
   private readonly screenerPageReps = new Set<string>();
   /** Which index answered — see {@link OhmailEngine.searchIndexRevision}. */
@@ -3327,6 +3334,7 @@ export class OhmailEngine {
       this.sweepAwaitingEcho(epoch);
       // The held-release offer re-asks when this drain moved the settings stamp or brought held mail.
       this.ringHeldReleaseBell();
+      this.ringUnscreenedBell();
       // The queue's page re-asks when this drain touched the gate, a rule, the settings or a mailbox.
       if (this.screenerWait.armed && this.screenerWait.dirty) this.reaskScreenerWaiting();
       return;
@@ -3954,6 +3962,7 @@ export class OhmailEngine {
     this.noteGateArrivals(changes);
     this.noteStoreArrivals(changes);
     this.noteQueueChanges(changes);
+    this.noteOfferChanges(changes);
     this.storePages.adopt(changes);
   }
 
@@ -5245,6 +5254,35 @@ export class OhmailEngine {
   }
 
   /**
+   * DID THIS PAGE CHANGE WHAT THE TWO OFFERS COUNT? Both count rules whose past-mail walk has
+   * ended or that asked for none (`held-release-service.ts#decidedRule`), and every mailbox. A
+   * rule entering or leaving that state, or a mailbox delete, owes both a re-ask at the settle.
+   * A rule arriving with its walk still running is not one: it is counted when the walk ends.
+   */
+  private noteOfferChanges(changes: SyncChange[]): void {
+    const settled = (r: RuleDTO | null | undefined): boolean =>
+      r != null && r.enabled !== false && (r.retro === undefined || r.retro.requestedAt === null || r.retro.doneAt !== null);
+    for (const ch of changes) {
+      const removed = ch.type === MAILBOX_TYPE && ch.op === "delete";
+      const walked = ch.type === "rule" && settled(this.store.record("rule", ch.id)?.entity as RuleDTO | undefined)
+        !== settled(ch.op === "delete" ? null : ch.entity as RuleDTO | undefined);
+      if (!removed && !walked) continue;
+      this.heldRelease.owed = true;
+      this.unscreenedAsk.owed = true;
+      return;
+    }
+  }
+
+  /** The undecided-sender offer's bell, rung at the settle like the held-release one; never awaited. */
+  private ringUnscreenedBell(): void {
+    const u = this.unscreenedAsk;
+    if (!u.armed || !u.owed || u.bell !== null) return;
+    u.bell = this.refreshUnscreened()
+      .catch(() => { /* an offer: the next change asks again */ })
+      .finally(() => { u.bell = null; });
+  }
+
+  /**
    * "NOT NOW" — dismiss the offer AS READ. The fingerprint is taken off the mirror rows this
    * surface showed, never re-derived, so a set that changed since the read stays offered. The
    * re-read afterwards is what removes the row from every surface of this device; other devices
@@ -5289,6 +5327,8 @@ export class OhmailEngine {
   async refreshUnscreened(): Promise<void> {
     const ask = this.adapter.unscreened;
     if (!ask) return;
+    this.unscreenedAsk.armed = true;
+    this.unscreenedAsk.owed = false;
     const wire = await ask.call(this.adapter);
     const before = this.read().list<UnscreenedGroupDTO>(UNSCREENED_TYPE);
     const keep = new Set(wire.groups.map((g) => g.address));
