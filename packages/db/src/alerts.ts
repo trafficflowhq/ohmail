@@ -273,6 +273,15 @@ export interface AlertThresholds {
    */
   apiFaultMinPerRoute: number;
   /**
+   * How many DISTINCT MINUTES with a failed call make the worker's entitlements reading an incident,
+   * in the same window. The worker writes one row per path per minute (`ENTITLEMENTS_FAULT_GRAIN`),
+   * so its count is minutes: judged by the call floor, nine minutes of outage read as nothing.
+   * THREE: one failing minute is a blip, two can be one blip across a minute boundary, three are the
+   * program failing for at least two minutes. A continuous outage reads nine to eleven, so no
+   * minute-offset jitter takes it near the floor.
+   */
+  apiFaultMinMinutesPerRoute: number;
+  /**
    * How many pooled-acquire refusals inside the window make an incident, deployment-wide.
    *
    * One refusal is the acquire ceiling WORKING (`middleware.ts` says so at the branch), so the
@@ -364,6 +373,7 @@ export const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
   api5xxMinRate: 0.02,
   apiFaultWindowMs: 10 * 60 * 1000,
   apiFaultMinPerRoute: 10,
+  apiFaultMinMinutesPerRoute: 3,
   poolerRefusalThreshold: 10,
   imapRefusalWindowMs: 15 * 60 * 1000,
   imapRefusalThreshold: 5,
@@ -855,33 +865,50 @@ export function isSchemaBehind(alerts: readonly Alert[]): boolean {
 
 const ARM_WORD: { readonly [A in ApiFaultArm]: string } = { api: "API host", worker: "worker" };
 
+type FaultRouteReading = Pick<ApiFaultRouteCount, "route" | "arm" | "faults" | "minutes" | "newest">;
+
+/**
+ * What `api_fault_rate` counts for one route and the floor it is judged by, per the arm's grain:
+ * calls against the call floor, or — for the worker's entitlements rows — distinct failing minutes
+ * against the minute floor. The rule and its sentence both read this, so they cannot disagree.
+ */
+export function apiFaultReading(
+  r: FaultRouteReading, t: AlertThresholds,
+): { count: number; floor: number; perMinute: boolean } {
+  const perMinute = r.route.startsWith(ENTITLEMENTS_FAULT_ROUTE_PREFIX)
+    && ENTITLEMENTS_FAULT_GRAIN[r.arm as ApiFaultArm] === "minute";
+  return perMinute
+    ? { count: r.minutes, floor: t.apiFaultMinMinutesPerRoute, perMinute }
+    : { count: r.faults, floor: t.apiFaultMinPerRoute, perMinute };
+}
+
 /**
  * `api_fault_rate`'s title and detail for one route. A route this API served answered 5xx; an
  * `entitlements:` route is a call OUT that failed, and is worded as one, counting what its arm's
  * grain records — calls from the API host, minutes with a failure from the worker.
  */
 export function apiFaultRateText(
-  r: Pick<ApiFaultRouteCount, "route" | "arm" | "faults" | "newest">, t: AlertThresholds, now: Date,
+  r: FaultRouteReading, t: AlertThresholds, now: Date,
 ): { title: string; detail: string } {
   const window = humanAge(Math.round(t.apiFaultWindowMs / 1000));
   const newest = `Newest ${humanAge(secondsBetween(now, r.newest))} ago.`;
+  const { count, floor, perMinute } = apiFaultReading(r, t);
   if (!r.route.startsWith(ENTITLEMENTS_FAULT_ROUTE_PREFIX)) {
     return {
-      title: `${r.route} answered ${r.faults} 5xx`,
-      detail: `${r.route} returned ${r.faults} 5xx from the ${r.arm} in the last ${window}, past ` +
-        `the floor of ${t.apiFaultMinPerRoute}. ${newest}`,
+      title: `${r.route} answered ${count} 5xx`,
+      detail: `${r.route} returned ${count} 5xx from the ${r.arm} in the last ${window}, past ` +
+        `the floor of ${floor}. ${newest}`,
     };
   }
-  const arm = r.arm as ApiFaultArm;
-  const who = ARM_WORD[arm] ?? r.arm;
+  const who = ARM_WORD[r.arm as ApiFaultArm] ?? r.arm;
   const path = r.route.slice(ENTITLEMENTS_FAULT_ROUTE_PREFIX.length);
-  const perMinute = ENTITLEMENTS_FAULT_GRAIN[arm] === "minute";
-  const counted = perMinute ? `in ${r.faults} separate minute(s)` : `${r.faults} times`;
+  const counted = perMinute ? `in ${count} separate minute(s)` : `${count} times`;
   return {
     title: `calls from the ${who} to the entitlements program failed ${counted}`,
     detail: `Calls from the ${who} to the entitlements program's ${path} failed ${counted} in the ` +
-      `last ${window}, past the floor of ${t.apiFaultMinPerRoute}: each got no answer inside its ` +
-      `budget or a 5xx, and the caller took its fault arm (the last verdict it knew, else allow).` +
+      `last ${window}, past the floor of ${floor}${perMinute ? " minutes" : ""}: each got no answer ` +
+      `inside its budget or a 5xx, and the caller took its fault arm (the last verdict it knew, else ` +
+      `allow).` +
       (perMinute ? " The worker records one row per path per minute, so this counts minutes, not calls." : "") +
       ` ${newest}`,
   };
@@ -1761,13 +1788,14 @@ export async function evaluateAlertsWithScope(
   // `imap_admission_refused` got wrong — and `api-faults.pg.test.ts` drives both arms to check it.
   const faultWindow = await apiFaultWindow(db, now, t.apiFaultWindowMs);
   for (const r of faultWindow) {
-    if (r.faults < t.apiFaultMinPerRoute) continue;
+    const reading = apiFaultReading(r, t);
+    if (reading.count < reading.floor) continue;
     alerts.push({
       key: `api_fault_rate:${r.arm}:${r.route}`,
       kind: "api_fault_rate",
       severity: "critical",
       ...apiFaultRateText(r, t, now),
-      count: r.faults,
+      count: reading.count,
       oldestSeconds: null,
       cls: "incident",
       // The envelope records the fault above the session, so no row carries an account.
@@ -1775,7 +1803,7 @@ export async function evaluateAlertsWithScope(
       fixHref: "/reliability",
       // Bucketed per doubling, for the reason the rule above buckets its rate: a count over a
       // sliding window moves on every pass during an incident, and tens still re-paged each one.
-      signature: `faults|${pow2Floor(r.faults)}`,
+      signature: `faults|${pow2Floor(reading.count)}`,
     });
   }
 

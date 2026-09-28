@@ -168,6 +168,8 @@ export interface ApiFaultRouteCount {
   route: string;
   arm: string;
   faults: number;
+  /** Distinct clock minutes holding a fault — the worker's grain, whatever its process count. */
+  minutes: number;
   poolerRefusals: number;
   newest: Date;
 }
@@ -189,6 +191,7 @@ export async function apiFaultWindow(
       route: apiFaults.route,
       arm: apiFaults.arm,
       faults: sql<number>`count(*)::int`,
+      minutes: sql<number>`count(distinct date_trunc('minute', ${apiFaults.at}))::int`,
       poolerRefusals:
         sql<number>`count(*) filter (where ${apiFaults.errorClass} = ${POOLER_REFUSAL_ERROR_CLASS})::int`,
       newest: sql<Date>`max(${apiFaults.at})`,
@@ -204,6 +207,7 @@ export async function apiFaultWindow(
       route: r.route,
       arm: r.arm,
       faults: Number(r.faults ?? 0),
+      minutes: Number(r.minutes ?? 0),
       poolerRefusals: Number(r.poolerRefusals ?? 0),
       newest: new Date(r.newest as unknown as string),
     }))
