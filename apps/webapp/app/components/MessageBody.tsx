@@ -3634,11 +3634,14 @@ export function MessageBody({
     }
   }, []);
 
+  // Keyed on the DOCUMENT, not the `mail` object: a re-sanitize that yields the same bytes (a new
+  // map of the same pictures, a host's new closure) is the same frame and must not probe it again.
+  const frameKey = mail?.state === "ok" ? mail.frameKey : null;
   useEffect(() => {
     // THE FRAME ON SCREEN MUST BE THE ONE THIS MAIL LOADED. A fresh element's document is the
     // browser's empty one until `load` fires, and measuring or observing that measures nothing
     // and observes a body that is about to be replaced.
-    if (mail?.state !== "ok" || loadedKey !== mail.frameKey) return;
+    if (frameKey === null || loadedKey !== frameKey) return;
     measure();
     const frame = frameRef.current;
     const shell = shellRef.current;
@@ -3649,7 +3652,7 @@ export function MessageBody({
     if (body) ro.observe(body);
     if (shell) ro.observe(shell);
     return () => ro.disconnect();
-  }, [loadedKey, measure, mail]);
+  }, [loadedKey, measure, frameKey]);
 
   /**
    * IS THERE A FRAME ON SCREEN, OR IS THIS THE APP'S OWN TYPE?: Computed HERE, above the three early returns below,
@@ -3693,15 +3696,16 @@ export function MessageBody({
   /**
    * ── AND THE SAME FOR REMOTE PICTURES, ON A DOOR THAT FETCHES THEM ITSELF ────────────────
    *
-   * Gated on `remoteLoaded` because that is the whole question the account already answered:
-   * asking for bytes the reader has not consented to would be the per-message button pressing
-   * itself. `pixel` entries are filtered here rather than by the callee — see
-   * {@link MessageBodyProps.onRemoteImages}. `via === "img"` because a CSS `url()` cannot be
-   * swapped for a `data:` URI. The JOIN is the effect's dependency rather than the array, which
-   * would be a fresh identity every render and would re-fire this on every paint.
+   * Gated on `remoteLoaded`: asking for bytes the reader has not consented to would be the button
+   * pressing itself. `pixel` entries are filtered here, see {@link MessageBodyProps.onRemoteImages};
+   * `via === "img"` because a CSS `url()` cannot take a `data:` URI. A held picture is left out
+   * (`blocked` still lists it for the privacy count), so the list drains. The JOIN is the effect's
+   * dependency because the array is a fresh identity every render.
    */
   const wantedRemote = mail?.state === "ok" && !framelessView && remoteLoaded
-    ? [...new Set(mail.blocked.filter((b) => b.via === "img" && !b.pixel).map((b) => b.url))]
+    ? [...new Set(mail.blocked
+      .filter((b) => b.via === "img" && !b.pixel && !resolvedRemoteImages?.has(b.url))
+      .map((b) => b.url))]
     : undefined;
   const wantedRemoteKey = wantedRemote?.join("\u0000");
   useEffect(() => {

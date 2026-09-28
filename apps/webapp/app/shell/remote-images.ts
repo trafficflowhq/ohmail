@@ -169,17 +169,28 @@ export function useRemoteImages(opts: RemoteImagesOptions): RemoteImagesChrome |
   const mayReadRef = useRef(opts.mayRead);
   mayReadRef.current = opts.mayRead;
 
-  const proxyFor = useCallback(
-    (messageId: string) => (url: string) => {
+  /**
+   * ONE FUNCTION PER MESSAGE: `MessageBody` re-sanitizes when its `imageProxy` changes identity,
+   * and the hosts call this during render, so a fresh closure per call re-sanitized and re-measured
+   * the open message on every render. Cleared whole at {@link PROXY_CACHE_MAX}; an id then costs one
+   * re-sanitize, never a loop. `mayRead` is still asked at call time.
+   */
+  const proxies = useRef(new Map<string, (url: string) => string>());
+  const proxyFor = useCallback((messageId: string) => {
+    const hit = proxies.current.get(messageId);
+    if (hit) return hit;
+    if (proxies.current.size >= PROXY_CACHE_MAX) proxies.current.clear();
+    const proxy = (url: string): string => {
       // An empty `src` renders nothing and requests nothing, which is the right answer here:
       // there is no honest image to show for an account this window does not belong to, and a
       // broken-image icon would be a claim about the mail rather than about the session.
       const may = mayReadRef.current;
       if (may && !may()) return "";
       return imageProxyUrl(API_BASE ?? "", window.location.origin, messageId, url);
-    },
-    [],
-  );
+    };
+    proxies.current.set(messageId, proxy);
+    return proxy;
+  }, []);
 
   const consented = useCallback((messageId: string) => allowed.has(messageId), [allowed]);
 
@@ -226,6 +237,12 @@ export function useRemoteImages(opts: RemoteImagesOptions): RemoteImagesChrome |
   );
   const inFlight = useRef(new Set<string>());
   const refused = useRef(new Set<string>());
+  /**
+   * What ARRIVED, per message, read synchronously. `resolved` is render state and the rendering
+   * re-reports every blanked-or-shown url, so a skip keyed on it came one render late and the
+   * picture that had just arrived was asked for again, round after round (the desktop loop).
+   */
+  const held = useRef(new Map<string, Set<string>>());
   /** Bytes already spent per message, against the budget the embedded pictures use. */
   const spent = useRef(new Map<string, number>());
 
@@ -240,13 +257,14 @@ export function useRemoteImages(opts: RemoteImagesOptions): RemoteImagesChrome |
   const needRemote = useCallback((messageId: string, urls: string[]): void => {
     const fetchImage = fetchImageRef.current;
     if (!fetchImage) return;
+    const heldHere = held.current.get(messageId);
     for (const url of urls) {
       const key = `${messageId}\u0000${url}`;
-      if (inFlight.current.has(key) || refused.current.has(key)) continue;
+      if (inFlight.current.has(key) || refused.current.has(key) || heldHere?.has(url)) continue;
       /* THE PER-MESSAGE PART COUNT, and it is counted against what has been ASKED rather than
          what arrived: a sender can name any number of pictures, and a bound that only counted
          successes would let them spend the budget with failures. */
-      const already = resolved.get(messageId)?.size ?? 0;
+      const already = heldHere?.size ?? 0;
       if (already + inFlight.current.size >= INLINE_IMAGE_MAX_PARTS) break;
       if ((spent.current.get(messageId) ?? 0) >= INLINE_IMAGE_MAX_TOTAL_BYTES) break;
       inFlight.current.add(key);
@@ -262,6 +280,8 @@ export function useRemoteImages(opts: RemoteImagesOptions): RemoteImagesChrome |
             return;
           }
           spent.current.set(messageId, (spent.current.get(messageId) ?? 0) + bytes);
+          const forHeld = held.current.get(messageId) ?? new Set<string>();
+          held.current.set(messageId, forHeld.add(url));
           setResolved((prev) => {
             const next = new Map(prev);
             const forMessage = new Map(next.get(messageId) ?? []);
@@ -278,7 +298,7 @@ export function useRemoteImages(opts: RemoteImagesOptions): RemoteImagesChrome |
         }
       })();
     }
-  }, [resolved]);
+  }, []);
 
   return useMemo(
     () => (
@@ -292,3 +312,6 @@ export function useRemoteImages(opts: RemoteImagesOptions): RemoteImagesChrome |
 
 /** One identity for "this message has no fetched pictures", never mutated. */
 const EMPTY: ReadonlyMap<string, string> = new Map();
+
+/** How many messages keep their proxy function before the cache is cleared whole. */
+const PROXY_CACHE_MAX = 256;
