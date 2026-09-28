@@ -102,6 +102,7 @@
           <li>A mail server on your own network connects without TLS, with your consent for each half</li>
           <li>A reply draft opens where you can finish it</li>
           <li>German screens say it in German</li>
+          <li>Known issue — Android</li>
         </ul>
       </description>
     </release>
