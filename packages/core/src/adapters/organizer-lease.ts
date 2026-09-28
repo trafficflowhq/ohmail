@@ -6,7 +6,7 @@ import {
 import { WATCHED_FOLDERS, type ImapAuth } from "./imap-types.js";
 import {
   boundListResponse, boundedFetch, ImapDeadline, isImapBoundExceeded,
-  IMAP_META_BYTES_MAX, IMAP_META_DEADLINE_MS,
+  IMAP_META_BYTES_MAX, IMAP_META_DEADLINE_MS, META_ENUM_BYTES_MAX,
 } from "./imap-bounds.js";
 import { epochOf, epochVerdict, uidRefsAtEpoch } from "../epoch.js";
 import {
@@ -2306,9 +2306,9 @@ export interface LeaseImapClient extends MetaFolderClient {
     /* `internalDate` is the SERVER's clock — the writer-side skew check's only source. Optional on
        the query and on the reply: a client that does not report it leaves the skew unknown, which
        refuses nothing. See `clockSkewRefusal`. */
-    query: { uid?: boolean; headers?: boolean | string[]; internalDate?: boolean },
+    query: { uid?: boolean; headers?: boolean | string[]; internalDate?: boolean; flags?: boolean },
     options?: { uid?: boolean },
-  ): AsyncIterableIterator<{ uid: number; seq?: number; headers?: Buffer; internalDate?: Date }>;
+  ): AsyncIterableIterator<{ uid: number; seq?: number; headers?: Buffer; internalDate?: Date; flags?: Set<string> }>;
   append(path: string, content: string | Buffer, flags?: string[]): Promise<unknown>;
   /**
    * COPY `ohmail/_meta` INTO ITSELF, so its records get fresh uids at the top of its uid space —
@@ -2691,6 +2691,149 @@ export async function readMetaFolderWindow(
     truncated: from > 1 || first.evicted,
     ...(first.by !== null ? { truncatedBy: first.by } : from > 1 ? { truncatedBy: "records" as const } : {}),
     total,
+  };
+}
+
+// ── THE WHOLE FOLDER, ENUMERATED ─────────────────────────────────────────────────────────────
+
+/**
+ * THE MOST RECORDS ONE ENUMERATION OF `ohmail/_meta` MAY LIST — the one ceiling every reader of
+ * the whole folder shares (the settings listing, the lease past its window). Above it the read
+ * refuses by name before any FETCH is sent; nothing is decided from part of the folder.
+ */
+export const META_ENUM_RECORDS_MAX = 20_000;
+
+/** The client {@link enumerateMetaFolder} drives. Both ImapFlow-backed clients satisfy it structurally. */
+export interface MetaEnumClient {
+  fetch(
+    range: string,
+    query: { uid?: boolean; headers?: boolean; internalDate?: boolean; flags?: boolean },
+    options?: { uid?: boolean },
+  ): AsyncIterable<{ uid: number; headers?: Buffer; internalDate?: Date; flags?: Set<string> }>;
+  status?: SequenceProbeClient["status"];
+  readonly mailbox?: { exists?: number; uidValidity?: number | bigint } | false;
+}
+
+/** One retained row: the uid, its header section as sent, the server's clock and the message's flags. */
+export interface MetaEnumRow {
+  ref: number;
+  raw: string;
+  internalDate: Date | null;
+  flags: readonly string[];
+}
+
+/** Why an enumeration refused. Each one is "could not prove what the folder holds", never "it holds nothing". */
+export type MetaEnumCode =
+  | "no_count" | "over_ceiling" | "bytes" | "incomplete" | "headerless" | "generation_moved"
+  | "read_deadline" | "blind";
+
+export class MetaEnumRefusedError extends Error {
+  readonly code: MetaEnumCode;
+  /** Rows the read had seen when it refused. */
+  readonly rows: number;
+  /** The server's message count, where it gave one. */
+  readonly total: number | null;
+  readonly ceiling: number;
+  constructor(code: MetaEnumCode, detail: { rows: number; total: number | null; ceiling: number; cause?: unknown }) {
+    super(`${META_FOLDER} could not be enumerated: ${code} (${detail.rows} rows seen, `
+      + `${detail.total ?? "no"} counted, ceiling ${detail.ceiling})`, detail.cause === undefined ? {} : { cause: detail.cause });
+    this.name = "MetaEnumRefusedError";
+    this.code = code;
+    this.rows = detail.rows;
+    this.total = detail.total;
+    this.ceiling = detail.ceiling;
+  }
+}
+
+/**
+ * EVERY MESSAGE IN `ohmail/_meta`, BY ONE HEADER FETCH, PROVED COMPLETE BY THE SERVER'S OWN COUNT.
+ *
+ * `UID FETCH 1:* (UID FLAGS INTERNALDATE BODY.PEEK[HEADER])`, anchored at both ends, under the
+ * caller's lock and budget. Every row is COUNTED; only rows `keep` accepts are RETAINED, so memory
+ * holds what the caller reads. It refuses rather than answer from part of the folder: no count,
+ * over the ceiling (before any FETCH), a renumbering during the read, a row without headers, fewer
+ * rows than the count (asked twice), or the caller's own record listed unrecognised (`probe`, the
+ * positive control, judged first so it names itself). An empty answer is complete by construction.
+ */
+export async function enumerateMetaFolder(
+  client: MetaEnumClient,
+  path: string,
+  budget: ImapDeadline,
+  opts: {
+    keep: (headerBlock: string) => boolean;
+    probe?: { uid: number; recognised: (headerBlock: string) => boolean } | null;
+    /** Default {@link META_ENUM_RECORDS_MAX} and {@link META_ENUM_BYTES_MAX}. Tests only. */
+    recordsMax?: number;
+    bytesMax?: number;
+  },
+): Promise<{
+  records: MetaEnumRow[]; total: number; count: number; generation: Generation;
+  probe: "kept" | "seen_not_kept" | "absent" | "unasked";
+}> {
+  const recordsMax = opts.recordsMax ?? META_ENUM_RECORDS_MAX;
+  const bytesMax = opts.bytesMax ?? META_ENUM_BYTES_MAX;
+  const probe = opts.probe ?? null;
+  const refuse = (code: MetaEnumCode, rows: number, total: number | null, cause?: unknown): MetaEnumRefusedError =>
+    new MetaEnumRefusedError(code, { rows, total, ceiling: code === "bytes" ? bytesMax : recordsMax, cause });
+
+  const count = await lastSequence(client, path, budget);
+  if (count === undefined) throw refuse("no_count", 0, null);
+  const before = generationOf(client);
+  if (count === 0) return { records: [], total: 0, count: 0, generation: before, probe: probe === null ? "unasked" : "absent" };
+  if (count > recordsMax) throw refuse("over_ceiling", 0, count);
+
+  type Seen = { uid: number; raw: string; headerless: boolean; kept: boolean; internalDate: Date | null; flags: readonly string[] };
+  let seen: Seen[];
+  try {
+    const read = await boundedFetch(
+      client.fetch("1:*", { uid: true, headers: true, internalDate: true, flags: true }, { uid: true }),
+      {
+        max: recordsMax, bound: "enumerate_uids", onOverflow: "throw", deadline: budget, folder: path,
+        bytes: { max: bytesMax, of: (m) => m.headers?.byteLength ?? 0 },
+        map: (m): Seen => {
+          const raw = m.headers?.toString("utf8") ?? "";
+          const headerless = raw.length === 0;
+          return {
+            uid: m.uid, raw, headerless, kept: !headerless && opts.keep(raw),
+            internalDate: m.internalDate instanceof Date ? m.internalDate : null,
+            flags: m.flags === undefined ? [] : [...m.flags],
+          };
+        },
+      },
+    );
+    seen = read.items;
+  } catch (err) {
+    if (isImapBoundExceeded(err)) {
+      const code: MetaEnumCode = err.bound === "read_bytes" ? "bytes" : err.bound === "read_deadline" ? "read_deadline" : "over_ceiling";
+      throw refuse(code, err.bound === "enumerate_uids" ? err.observed : 0, count, err);
+    }
+    throw err;
+  }
+
+  /* Through the door, as every `_meta` cleanup compares: only a PROVEN renumbering refuses, and a
+     connection that states no UIDVALIDITY is not one. */
+  if (epochVerdict(epochOf(before), epochOf(generationOf(client))) === "stale") {
+    throw refuse("generation_moved", seen.length, count);
+  }
+
+  let probed: "kept" | "seen_not_kept" | "absent" | "unasked" = "unasked";
+  if (probe !== null) {
+    const own = seen.find((s) => s.uid === probe.uid);
+    if (own === undefined) probed = "absent";
+    else if (own.headerless || !probe.recognised(own.raw)) throw refuse("blind", seen.length, count);
+    else probed = own.kept ? "kept" : "seen_not_kept";
+  }
+  if (seen.some((s) => s.headerless)) throw refuse("headerless", seen.length, count);
+
+  const distinct = new Set(seen.map((s) => s.uid)).size;
+  if (distinct < count) {
+    const again = await lastSequence(client, path, budget);
+    if (again === undefined || distinct < again) throw refuse("incomplete", seen.length, again ?? count);
+  }
+  return {
+    records: seen.filter((s) => s.kept)
+      .map((s) => ({ ref: s.uid, raw: s.raw, internalDate: s.internalDate, flags: s.flags })),
+    total: seen.length, count, generation: before, probe: probed,
   };
 }
 

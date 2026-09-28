@@ -225,6 +225,13 @@ export function bodyOverrunCeiling(declared: number | undefined): number {
  */
 export const IMAP_META_BYTES_MAX = boundFromEnv("TF_IMAP_META_MAX_BYTES", 8 * 1024 * 1024);
 
+/**
+ * Bytes one ENUMERATION of `ohmail/_meta` may transfer — every header section of the whole folder,
+ * charged on every row. A header block there is under a kilobyte, so the record ceiling's 20 000
+ * rows come to about 14 MB; this is room over that, and finite.
+ */
+export const META_ENUM_BYTES_MAX = boundFromEnv("TF_IMAP_META_ENUM_MAX_BYTES", 32 * 1024 * 1024);
+
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // TIME CEILINGS — the slow-loris arm
 // ─────────────────────────────────────────────────────────────────────────────────────────────
