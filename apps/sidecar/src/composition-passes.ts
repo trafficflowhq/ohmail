@@ -22,7 +22,10 @@ export const COMPOSITION_PASSES:
      answer is the same either way: appointments are kept. */
   cloud: ["scheduled-send"],
   /* A phone. `ScheduledSendPassDeps.mailboxIds` already carries the shape of this answer for the
-     pass itself — "this caller has no mailboxes to claim for", which must claim nothing. */
+     pass itself — "this caller has no mailboxes to claim for", which must claim nothing. The away
+     responder is deliberately NOT an outbound pass, by the ruling of 2026-09-11: a phone answers
+     away mail while ohmail runs on it and waits otherwise — a reply to mail that has arrived, not
+     a promise about a later moment — and its away screen says so (`awayWhereThisPhone`). */
   mobile: [],
 };
 

@@ -5373,12 +5373,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       ): Promise<void> => {
         /** Set by the refusal below, read by `cancelled` so the pass ends where it stands. */
         let leaseLost = false;
-        /* ── THE SEND BOUNDARY ASKS THE LEASE, BECAUSE THE CONNECTION ANSWERS SOMETHING ELSE ──
+        /* ── THE LEASE IS ASKED, BECAUSE THE CONNECTION ANSWERS SOMETHING ELSE ─────────────────
          * Choosing another organizer mid-pass leaves THIS socket open and healthy, so the
          * connection check admits every remaining reply and two installs answer one correspondent.
-         * An away reply is irreversible mail sent in somebody's name, so the authority is re-asked
-         * at the last point before delivery — `check()` is the permit's own bounded re-read — and
-         * a refusal both refuses this send and ends the pass.
+         * An away reply is irreversible mail sent in somebody's name, so the pass re-asks the
+         * authority before its reservation and again at the dial — `check()` is the permit's own
+         * bounded re-read — and a refusal both refuses this send and ends the pass.
          * An UNREADABLE lease is not a stand-down: a read that throws leaves the receipt untouched
          * (`lease.ts`), so the permit's `revoked` latch decides and an outage lets mail flow.
          */
@@ -5391,37 +5391,24 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               + "its own pass, and mail continues to arrive either way",
           });
         };
-        /** The permit's own bounded re-read, once, with the refusal kept for whoever wants to throw it. */
-        const askPermit = async (): Promise<{ err: unknown } | null> => {
+        /* THE PASS'S OWN `stillOrganizing` — the permit's bounded re-read, and the only door the
+           question has. The pass asks it before the reservation and at the dial, and only the pass
+           can tell a refusal that dialled nothing from an SMTP throw: asked inside the transport,
+           the refusal landed in the SMTP arm and kept a reservation this install never offered
+           again. No permit at all is a refusal; an unreadable one is not (see above). */
+        const stillOurs = async (): Promise<boolean> => {
           if (!("check" in permit)) {
             refuse();
-            return { err: new Error("no organizer lease permit authorises this away reply") };
+            return false;
           }
           try {
             await permit.check();
-            return null;
-          } catch (err) {
-            if (!leaseStoodDown(permit)) return null;
+            return true;
+          } catch {
+            if (!leaseStoodDown(permit)) return true;
             refuse();
-            return { err };
+            return false;
           }
-        };
-        /* THE SAME QUESTION, BEFORE THE RESERVATION IS SPENT — the pass's own `stillOrganizing`.
-           A refusal at the send boundary leaves a reservation the loser can never offer again;
-           asked here, the candidate stays whole and the install that holds the mailbox answers
-           it. The boundary ask below stays as the last word before a delivery. */
-        const stillOurs = async (): Promise<boolean> => (await askPermit()) === null;
-        const askLease = async (): Promise<void> => {
-          const refusal = await askPermit();
-          if (refusal !== null) throw refusal.err;
-        };
-        const sendUnderLease: OpenSendAdapter = async (
-          mailboxId: string,
-        ): Promise<SendAdapter> => {
-          const sender = await openLocalSend(mailboxId);
-          /* SPREAD, never a hand-written literal: a method this door forgets to name does not
-             exist to the pass, which is how `forceClose` was silently lost at the sibling seam. */
-          return { ...sender, send: async (msg) => { await askLease(); return sender.send(msg); } };
         };
         try {
           const r = await runAwayResponderPass(db as never, {
@@ -5438,7 +5425,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             cancelled: () =>
               stopped || gen !== generation || conn !== adapter
               || leaseLost || leaseStoodDown(permit),
-            openSendAdapter: sendUnderLease,
+            openSendAdapter: openLocalSend,
             stillOrganizing: stillOurs,
             mailboxIds: [mb.id],
             now,

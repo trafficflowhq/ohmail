@@ -1,4 +1,4 @@
-import { and, asc, eq, exists, gt, gte, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, exists, gt, gte, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import {
   awayReplies, awayResponders, awaySenderState, folderState, mailboxes, messageBodies, messages,
   AccountErasedError, MailboxErasedError, fenceErased,
@@ -107,12 +107,12 @@ export interface AwayResponderPassDeps {
   /** The send transport — `makeSendAdapter` on the hosted and self-hosted hosts, the local dial on the desktop. */
   openSendAdapter: OpenSendAdapter;
   /**
-   * HAS THIS INSTALL BEEN TOLD IT STILL HOLDS THIS MAILBOX? — asked BEFORE the reservation is
-   * spent, injected for the reason {@link accountEligible} is. `cancelled` is the CHEAP half (a
-   * cached latch read between rows); this is the re-read, and the difference is what the defect
-   * was made of — a handover that lands mid-pass is not in the cache when the next candidate is
-   * drawn. `false` leaves the candidate WHOLE: no ledger row, no spent throttle, nobody recorded
-   * as answered. Absent resolves to "yes", which is every hosted caller unchanged.
+   * HAS THIS INSTALL BEEN TOLD IT STILL HOLDS THIS MAILBOX? — asked twice per candidate: before
+   * the reservation, and again at the send boundary, after the fence re-read and before the dial.
+   * `false` leaves the candidate WHOLE either way: no ledger row, no spent throttle, the reply
+   * still owed — at the boundary by releasing the reservation just taken. `cancelled` is the
+   * cheap latch between rows; this is the re-read. Only the desktop and phone engine inject it.
+   * The hosted route and the self-host clock pass none, and absent resolves to "yes" there.
    */
   stillOrganizing?: (mailboxId: string) => Promise<boolean>;
   /**
@@ -148,7 +148,7 @@ export interface AwayResponderPassDeps {
 export interface AwayResponderPassResult {
   /** Accounts with a live responder that this invocation looked at. */
   accounts: number;
-  /** Candidates DECIDED — every one of them wrote a ledger row. */
+  /** Candidates DECIDED — every one of them wrote a ledger row. A released reservation is not one. */
   examined: number;
   sent: number;
   /** SMTP threw; the claim is kept and no second copy is ever offered. */
@@ -202,7 +202,8 @@ export interface AwayResponderPassResult {
   refusedErased: number;
   /**
    * CANDIDATES LEFT WHOLE because this install no longer holds their mailbox — nothing written,
-   * nothing spent, nothing sent.
+   * nothing spent, nothing sent. A refusal at the send boundary counts here too: its reservation
+   * is released, so it ends in the same state as one refused before the reservation.
    *
    * Its own counter for the reason every counter here has one: `deferredCandidates` says a
    * mailbox had no path to send BY, and this says this install had no standing to send AT ALL.
@@ -847,12 +848,12 @@ async function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
 /**
  * One candidate: decide, reserve, send, finalize — the order is the correctness argument. (1)
  * ELIGIBILITY, no network: a suppression writes its ledger row and stops. (2) THE RESERVATION,
- * one transaction committed BEFORE anything dials: `INSERT … ON CONFLICT DO NOTHING RETURNING` (0
- * rows = another runner owns it), and the sender upsert whose WHERE is the throttle (0 rows =
- * answered recently, finalized `throttled`). (3) THE SEND, outside the transaction — SMTP is not
- * transactional. (4) THE FINALIZE, a compare-and-swap on `outcome='pending'`. Reserving BEFORE
- * the send makes a crash cost ONE UNSENT REPLY; after, a duplicate reply to a stranger on every
- * re-run — and at-most-once is the requirement.
+ * one transaction committed BEFORE anything dials: the ledger INSERT (0 rows = another runner owns
+ * it) and the sender upsert whose WHERE is the throttle (0 rows = finalized `throttled`). (3) THE
+ * SEND, outside the transaction, after the lease is asked once more — a refusal there dialled
+ * nothing, so it RELEASES the reservation. (4) THE FINALIZE, a compare-and-swap on the
+ * reservation's own row id and `outcome='pending'`. Reserving BEFORE the send makes a crash cost
+ * ONE UNSENT REPLY; after, a duplicate reply on every re-run — and at-most-once is the requirement.
  */
 async function answerOne(
   db: Db, deps: AwayResponderPassDeps, responder: LiveResponder, candidate: Candidate,
@@ -909,11 +910,9 @@ async function answerOne(
   /* ── 2b. THE LEASE, ASKED BEFORE THE RESERVATION IS SPENT ────────────────────────────────
    * An away reply is reserved only by an install that has been TOLD it holds the mailbox. Asked
    * after the transport — a candidate with no send path must not cost a lease read — and before
-   * `reserve`, because a refusal AFTER it leaves a SPENT reservation on the install that lost:
-   * the send boundary's own ask lands in the SMTP catch arm, which keeps the claim because an
-   * SMTP throw is ambiguous, and a refusal taken before any dial is not ambiguous at all. This
-   * writes nothing, so the candidate stays offerable — here, and on the install that now holds
-   * the mailbox.
+   * `reserve`, so the ordinary refusal writes nothing at all: no ledger row, and no throttle a
+   * sibling runner could read in the moment before a release. The candidate stays offerable —
+   * here, and on the install that now holds the mailbox. Step 3c asks again at the dial.
    */
   if (deps.stillOrganizing && !(await deps.stillOrganizing(candidate.mailboxId))) {
     result.refusedNotOrganizer += 1;
@@ -960,11 +959,12 @@ async function answerOne(
     // does not); this one has nothing to decide and nothing to report about it.
     return "go on";
   }
-  result.examined += 1;
   if (reservation === "throttled") {
+    result.examined += 1;
     result.throttled += 1;
     return "go on";
   }
+  const claim = reservation;
 
   /* ── 3b. THE PRE-DIAL RE-READ, the fence itself and not half of it ───────────────────────
    * The reservation COMMITTED, and an erasure can still land between that commit and this dial;
@@ -983,6 +983,7 @@ async function answerOne(
     });
   } catch (err) {
     if (!isErasedRefusal(err)) throw err;
+    result.examined += 1;
     result.refusedErased += 1;
     log.warn("away_reply_refused_erased", {
       accountId: responder.accountId, mailboxId: candidate.mailboxId, messageId: candidate.id,
@@ -991,6 +992,24 @@ async function answerOne(
     });
     return "go on";
   }
+
+  /* ── 3c. THE LEASE, ASKED AT THE SEND BOUNDARY, BY THE PASS ──────────────────────────────
+   * The last word before a delivery. Asked here and not inside the transport, because only the
+   * pass can tell a refusal that dialled nothing from an SMTP throw that may have delivered
+   * something: this one is certain, so the reservation is RELEASED rather than kept `unverified`,
+   * and the reply stays owed — here, if the lease comes back, or on the install that holds it. */
+  if (deps.stillOrganizing && !(await deps.stillOrganizing(candidate.mailboxId))) {
+    await release(db, claim);
+    result.refusedNotOrganizer += 1;
+    log.info("away_reply_released_not_organizer", {
+      accountId: responder.accountId, mailboxId: candidate.mailboxId, messageId: candidate.id,
+      reason: "another install took this mailbox between the reservation and the dial, so " +
+        "nothing was sent; the reservation was released and the reply is still owed; the " +
+        "install that holds the mailbox answers it",
+    });
+    return "stop";
+  }
+  result.examined += 1;
 
   // ── 4. THE SEND, UNDER ONE DEADLINE ──────────────────────────────────────────────────────
   try {
@@ -1028,7 +1047,7 @@ async function answerOne(
     // answer, which is the half an unattended pass can hold on its own. A BREACHED DEADLINE ends
     // here too and for the same reason: a send that did not finish is ambiguous in exactly the way
     // a throw is, and the one thing it may not do is leave the reservation open for ever.
-    await finalize(db, candidate, responder.accountId, "unverified", scrub(err), null, now());
+    await finalize(db, claim, "unverified", scrub(err), null, now());
     result.unverified += 1;
     log.error("away_reply_send_failed", {
       accountId: responder.accountId, mailboxId: candidate.mailboxId, messageId: candidate.id,
@@ -1041,7 +1060,7 @@ async function answerOne(
   }
 
   // ── 5. THE FINALIZE, compare-and-swap ────────────────────────────────────────────────────
-  await finalize(db, candidate, responder.accountId, "sent", null, minted, now());
+  await finalize(db, claim, "sent", null, minted, now());
   result.sent += 1;
   log.info("away_reply_sent", {
     accountId: responder.accountId, mailboxId: candidate.mailboxId, messageId: candidate.id,
@@ -1051,19 +1070,25 @@ async function answerOne(
 }
 
 /**
+ * A reservation this pass holds, named by its LEDGER ROW. Every ending keys on `id`: the
+ * row's `message_id` is provenance that an expunge sets NULL (mail 0118) while the reply is on
+ * the wire, and a finalize keyed on it matched nothing and left a delivered reply `pending`.
+ */
+interface AwayClaim { id: string; accountId: string; sender: string }
+
+/**
  * The reservation transaction — the ledger INSERT and the throttle upsert, committed together.
  * The upsert IS the throttle: a read ("answered in 24 h?") lets two runners both pass before
  * either writes, and for a never-answered sender there is no row to lock. `INSERT … ON CONFLICT
  * (account_id, sender) DO UPDATE SET … WHERE <predicate>` has no gap: one statement, the primary
  * key orders two runners, and zero rows returned is a DECISION, not a race. Same transaction as
- * the ledger row because split they disagree in the direction that sends twice: sender-state
- * without ledger leaves the message a candidate again; ledger without sender-state lets the next
- * message through the throttle.
+ * the ledger row because split they disagree in the direction that sends twice. The one way back
+ * is {@link release}, for a refusal that dialled nothing.
  */
 async function reserve(
   db: Db, responder: LiveResponder, candidate: Candidate, sender: string,
   textHash: string, minted: string, at: Date,
-): Promise<"reserved" | "throttled" | "owned_elsewhere"> {
+): Promise<AwayClaim | "throttled" | "owned_elsewhere"> {
   return bridgeTx(db).transaction(async (tx) => {
     /* ── THE ERASURE FENCE, THE FIRST STATEMENT ──────────────────────────────────────────────
      * Both rows this transaction writes carry the CORRESPONDENT'S ADDRESS, and both are tables
@@ -1146,12 +1171,12 @@ async function reserve(
         .where(and(eq(awayReplies.id, claim[0]!.id), eq(awayReplies.outcome, "pending")));
       return "throttled";
     }
-    return "reserved";
+    return { id: claim[0]!.id, accountId: responder.accountId, sender };
   });
 }
 
 /**
- * THE TERMINAL WRITE, COMPARE-AND-SWAP on `outcome='pending'`.
+ * THE TERMINAL WRITE, COMPARE-AND-SWAP on the claim's own row and `outcome='pending'`.
  *
  * The CAS is what makes exactly one writer record an ending. Without it, a late finalizer from a
  * run that was overtaken could turn `sent` into `unverified` — the same defect found in the
@@ -1159,7 +1184,7 @@ async function reserve(
  * an `unverified` row has no send instant it can honestly claim.
  */
 async function finalize(
-  db: Db, candidate: Candidate, accountId: string,
+  db: Db, claim: AwayClaim,
   outcome: "sent" | "unverified", reason: string | null, minted: string | null, at: Date,
 ): Promise<void> {
   await bridgeTx(db).update(awayReplies)
@@ -1169,10 +1194,56 @@ async function finalize(
       ...(outcome === "sent" ? { sentAt: at } : {}),
     })
     .where(and(
-      eq(awayReplies.accountId, accountId),
-      eq(awayReplies.messageId, candidate.id),
+      eq(awayReplies.id, claim.id),
+      eq(awayReplies.accountId, claim.accountId),
       eq(awayReplies.outcome, "pending"),
     ));
+}
+
+/**
+ * THE WAY BACK, for a refusal that dialled nothing: the pending row goes, and the sender's throttle
+ * state is RE-PROJECTED from the ledger rather than restored from a snapshot. The state is the
+ * projection of the reservations still standing (`sent`, `unverified`, `pending`, each carrying the
+ * instant and hash its upsert wrote): the newest one is put back, and with none left the row goes
+ * unless it carries a bounce. A snapshot is exact only while no sibling reservation on the same
+ * sender interleaves; a sibling's upsert takes the row lock and lands after this commits, so the
+ * projection is exact under every throttle. Deletes and updates only, so it recreates nothing an
+ * erasure took.
+ */
+async function release(db: Db, claim: AwayClaim): Promise<void> {
+  await bridgeTx(db).transaction(async (tx) => {
+    const gone = await tx.delete(awayReplies).where(and(
+      eq(awayReplies.id, claim.id),
+      eq(awayReplies.accountId, claim.accountId),
+      eq(awayReplies.outcome, "pending"),
+    )).returning({ id: awayReplies.id });
+    // A sweep or a finalize reached the row first; there is nothing of this claim left to undo.
+    if (gone.length === 0) return;
+    // `text_hash IS NOT NULL`: every row a reservation wrote carries one; a mirrored carrier row
+    // (`cloud-mirror.ts`) records a reply this store never reserved and never throttled on.
+    const [standing] = await tx.select({ at: awayReplies.decidedAt, textHash: awayReplies.textHash })
+      .from(awayReplies)
+      .where(and(
+        eq(awayReplies.accountId, claim.accountId),
+        eq(awayReplies.sender, claim.sender),
+        inArray(awayReplies.outcome, ["sent", "unverified", "pending"]),
+        isNotNull(awayReplies.textHash),
+      ))
+      .orderBy(desc(awayReplies.decidedAt))
+      .limit(1);
+    if (standing) {
+      await tx.update(awaySenderState)
+        .set({ lastRepliedAt: standing.at, lastTextHash: standing.textHash! })
+        .where(and(
+          eq(awaySenderState.accountId, claim.accountId), eq(awaySenderState.sender, claim.sender),
+        ));
+    } else {
+      await tx.delete(awaySenderState).where(and(
+        eq(awaySenderState.accountId, claim.accountId), eq(awaySenderState.sender, claim.sender),
+        isNull(awaySenderState.undeliverableAt),
+      ));
+    }
+  });
 }
 
 /**

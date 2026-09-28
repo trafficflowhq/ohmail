@@ -1547,8 +1547,8 @@ export const awayResponderSent = sqliteTable("away_responder_sent", {
  * pinning the oldest page of every cycle — a ledger row takes each decided row out of the
  * candidate set, so the window shrinks; and `UNIQUE (account_id, message_id)` is the structural
  * half of at-most-once — two runners race the INSERT, one gets a row. Written BEFORE the send:
- * `pending` commits with the throttle reservation, and the finalize is a compare-and-swap on
- * `outcome='pending'`. `message_id` is nullable — 0118 SETs it NULL, and `sender` stays.
+ * `pending` commits with the throttle reservation, and the finalize is a compare-and-swap on the
+ * row's own `id` and `outcome='pending'`. `message_id` is nullable (0118 SETs it NULL); `sender` stays.
  */
 export const awayReplies = sqliteTable("away_replies", {
   id: text("id").default(UUID_V4).primaryKey(),
@@ -1567,10 +1567,11 @@ export const awayReplies = sqliteTable("away_replies", {
   sender: text("sender").notNull(),
   /**
    * What was decided; the CHECK (a closed five-member enum) lives in the migration. `pending` —
-   * reserved, not yet sent; terminal only in the crash case, never retried. `sent` — SMTP
-   * accepted it. `unverified` — SMTP threw: the delivery is AMBIGUOUS (it may have reached the
-   * server), so the claim is KEPT and no second copy is ever offered; the interactive send path
-   * answers the same ambiguity the same way. `throttled` — the per-sender reservation refused:
+   * reserved, not yet sent; terminal only in the crash case, never retried, and DELETED when the
+   * lease refuses at the dial, which sent nothing. `sent` — SMTP accepted it. `unverified` —
+   * SMTP threw: the delivery is AMBIGUOUS (it may have reached the server), so the claim is KEPT
+   * and no second copy is ever offered; the interactive send path answers the same ambiguity the
+   * same way. `throttled` — the per-sender reservation refused:
    * this person was answered recently enough. `suppressed` — an eligibility guard held; `reason`
    * names which.
    */
@@ -1609,7 +1610,7 @@ export const awaySenderState = sqliteTable("away_sender_state", {
   accountId: text("account_id").notNull(),
   /** The lowercased envelope author. Half of the primary key, and the throttle's subject. */
   sender: text("sender").notNull(),
-  /** When this person was last answered. NOT NULL: a row exists only because one was sent. */
+  /** When this person was last answered. NOT NULL: a row exists only because a reply was reserved. */
   lastRepliedAt: integer("last_replied_at", { mode: "timestamp_ms" }).notNull(),
   /** The `awayTextHash` of what they were told — what `per_message` compares against. */
   lastTextHash: text("last_text_hash").notNull(),
