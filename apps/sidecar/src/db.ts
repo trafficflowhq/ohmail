@@ -22,6 +22,7 @@ import {
   scheduleStoreLanes, type StoreLaneCensus,
 } from "./store-lanes.js";
 import { LocalStoreFs } from "./pglite-transport.js";
+import { makeStoreInMemory } from "./fresh-store.js";
 import { keepIngestPlans } from "./pglite-plans.js";
 import type { Diagnostic } from "./log.js";
 
@@ -916,6 +917,26 @@ function fsyncDir(dir: string): void {
   }
 }
 
+/**
+ * A NEW STORE'S CLUSTER, made in memory and written out once (`fresh-store.ts`), or by `initdb` on
+ * the disk as before when that fails: what the worker wrote is removed first, because `initdb`
+ * refuses a directory holding anything. Only an absent or empty `pgdata` is filled here, so the
+ * removal can only take files this call wrote.
+ */
+async function makeFreshStore(pgDataDir: string, log?: Diagnostic): Promise<void> {
+  if (existsSync(pgDataDir) && readdirSync(pgDataDir).length > 0) return;
+  try {
+    await makeStoreInMemory(pgDataDir);
+  } catch (err) {
+    rmSync(pgDataDir, { recursive: true, force: true });
+    log?.("fresh_store_copy_failed", {
+      err,
+      reason: "the new local store could not be made in memory, so it is made on this computer's "
+        + "disk as before; this first start takes a few seconds longer",
+    });
+  }
+}
+
 function markStoreUnfinished(dataDir: string): void {
   const fd = openSync(join(dataDir, STORE_UNFINISHED_FILE), "w");
   try {
@@ -1528,6 +1549,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
        AWAITED HERE ON PURPOSE: `new PGlite()` returns before the WASM, the mount and Postgres'
        startup are done, and without the wait all of it would be attributed to `adoptBaseline`. */
     const startPglite = async (): Promise<PGlite> => {
+      if (fresh) await makeFreshStore(pgDataDir, log);
       const pg = new PGlite({
         dataDir: pgDataDir,
         fs: new LocalStoreFs(pgDataDir),
