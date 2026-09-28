@@ -60,6 +60,8 @@ export interface JunkWire {
   list(opts?: { cursor?: string }): Promise<JunkPageWire>;
   body(mailboxId: string, uid: number, uidValidity: string): Promise<{ subject: string; text: string }>;
   rescue(mailboxId: string, uid: number, uidValidity: string, opts?: { allow?: { sender: string } }): Promise<JunkRescueWire>;
+  /** Clear a refused rescue command by its id; the message stays in Junk. */
+  dismissRescue(rescueId: string): Promise<unknown>;
   search(q: string): Promise<JunkSearchWire>;
   sweepPreview(): Promise<JunkSweepWire>;
   sweepRequest(): Promise<JunkSweepWire>;
@@ -78,6 +80,7 @@ const cloudWire: JunkWire = {
   list: (opts) => screenerApi.junkList(opts),
   body: (m, u, v) => screenerApi.junkBody(m, u, v),
   rescue: (m, u, v, opts) => screenerApi.junkRescue(m, u, v, opts),
+  dismissRescue: (id) => screenerApi.junkRescueDismiss(id),
   search: (q) => screenerApi.junkSearch(q),
   sweepPreview: () => screenerApi.junkSweepPreview(),
   sweepRequest: () => screenerApi.junkSweepRequest(),
@@ -178,6 +181,8 @@ export interface JunkWindowControl {
    */
   rescue: (item: JunkItemWire, opts?: { allow?: boolean }) => void;
   rescuing: (item: JunkItemWire) => boolean;
+  /** Clear a refused rescue: the row stays, the message stays in Junk, the refusal goes. */
+  dismissRescue: (item: JunkItemWire) => void;
   search: JunkSearchControl;
   sweep: JunkSweepControl;
 }
@@ -475,6 +480,27 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
 
   const rescuing = useCallback((item: JunkItemWire) => busy.has(junkKeyOf(item)), [busy]);
 
+  /* A REFUSED COMMAND, CLEARED. The message is still in Junk, so the row stays and only the
+     refusal leaves it; the server answers 404 for one another device already cleared. */
+  const dismissRescue = useCallback((item: JunkItemWire) => {
+    const key = junkKeyOf(item);
+    const id = item.rescueId;
+    if (item.rescue !== "refused" || id === undefined) return;
+    const cleared = (i: JunkItemWire): JunkItemWire => {
+      if (junkKeyOf(i) !== key) return i;
+      const { rescue: _r, rescueId: _id, ...rest } = i;
+      return rest;
+    };
+    setBusy((cur) => new Set(cur).add(key));
+    const settle = () => setBusy((cur) => { const n = new Set(cur); n.delete(key); return n; });
+    const done = () => { settle(); setItems((cur) => cur.map(cleared)); setHits((cur) => cur.map(cleared)); toast(t("junkRescueDismissed")); };
+    void wire.dismissRescue(id).then(done, (err: unknown) => {
+      if (wire.codeOf(err) === "not_found") { done(); return; }
+      settle();
+      toast(t("junkRescueDismissFailed"));
+    });
+  }, [toast, t, wire]);
+
   /* ── THE ONE-TIME SWEEP OFFER ──────────────────────────────────────────────────────────── */
   const [sweepPhase, setSweepPhase] = useState<JunkSweepControl["phase"]>("unknown");
   const [sweepPreview, setSweepPreview] = useState<JunkSweepWire | null>(null);
@@ -545,7 +571,7 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
   return {
     supported,
     phase, items, visible, mailboxes: boxes, nextCursor, olderLoading,
-    reload, loadOlder, bodyFor, openBody, rescue, rescuing,
+    reload, loadOlder, bodyFor, openBody, rescue, rescuing, dismissRescue,
     search: {
       query, setQuery, phase: searchPhase, hits, localCount: localKept.length,
       mailboxes: searchBoxes, truncated,

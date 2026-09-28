@@ -3099,6 +3099,13 @@ function JunkPreview({
             <Button variant="ghost" onClick={() => junk.rescue(item, { allow: true })} disabled={busy}>
               {t("junkAllow")}
             </Button>
+            {/* A REFUSED command can be cleared: the message stays in Junk and the row stops
+                saying the mail server refused it. */}
+            {item.rescue === "refused" && item.rescueId !== undefined ? (
+              <Button variant="ghost" onClick={() => junk.dismissRescue(item)} disabled={busy}>
+                {t("junkRescueDismiss")}
+              </Button>
+            ) : null}
           </div>
         )}
         <div className="d-sub">

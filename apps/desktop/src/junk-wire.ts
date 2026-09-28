@@ -63,6 +63,8 @@ export function junkVia(fetchImpl: (path: string, init?: RequestInit) => Promise
       jsonOf(await post("/screener/junk/rescue", {
         mailboxId, uid, uidValidity, ...(opts?.allow ? { allow: opts.allow } : {}),
       })),
+    dismissRescue: async (id) =>
+      jsonOf(await fetchImpl(`/screener/junk/rescue/${encodeURIComponent(id)}`, { method: "DELETE" })),
     search: async (q) => jsonOf(await fetchImpl(`/screener/junk/search?q=${encodeURIComponent(q)}`)),
     sweepPreview: async () => jsonOf(await fetchImpl("/screener/junk/sweep")),
     sweepRequest: async () => jsonOf(await post("/screener/junk/sweep")),

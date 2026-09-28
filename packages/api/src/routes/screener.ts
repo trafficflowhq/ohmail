@@ -6,7 +6,7 @@ import {
 import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import {
-  listJunk, junkBody, rescueJunk, searchJunk, junkSweepPreview, requestJunkSweep,
+  listJunk, junkBody, rescueJunk, dismissJunkRescue, searchJunk, junkSweepPreview, requestJunkSweep,
 } from "../junk-window.js";
 import type { Route } from "../router.js";
 import { screener, readBody } from "./shared.js";
@@ -322,6 +322,19 @@ export const screenerRoutes: Route[] = [
       return jsonResponse(await rescueJunk(deps, ctx, {
         mailboxId, uid, uidValidity, ...(allow !== undefined ? { allow } : {}),
       }), { status: 202 });
+    },
+  },
+  {
+    // Clear a "Not junk" the mail server refused: the message stays in Junk and the row stops
+    // saying so. `work`, organizer only, and only a refused command (a pending one is the
+    // organizer's). The `:id` is shape-checked as a uuid before the pipeline, like every path id.
+    method: "DELETE",
+    pattern: "/screener/junk/rescue/:id",
+    relay: true,
+    cost: "work",
+    replay: "state",
+    handler: async (req, deps, params) => {
+      return jsonResponse(await dismissJunkRescue(deps, serviceContext(deps, req), params.id!));
     },
   },
   {

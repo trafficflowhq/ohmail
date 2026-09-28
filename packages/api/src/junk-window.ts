@@ -67,6 +67,8 @@ export interface JunkItem extends Omit<FolderPageItem, "seq"> {
    * same fact from here and the client needs one shape for it.
    */
   rescue?: "queued" | "refused";
+  /** The standing command's id, beside `rescue` — what `DELETE /screener/junk/rescue/:id` names. */
+  rescueId?: string;
 }
 
 export interface JunkMailboxState {
@@ -252,7 +254,7 @@ async function attributeRescues(deps: ApiDeps, accountId: string, items: JunkIte
   const uids = [...new Set(items.map((i) => i.uid))];
   const rows = await deps.db
     .select({
-      mailboxId: junkRescues.mailboxId, uidvalidity: junkRescues.uidvalidity,
+      id: junkRescues.id, mailboxId: junkRescues.mailboxId, uidvalidity: junkRescues.uidvalidity,
       uid: junkRescues.uid, status: junkRescues.status,
     })
     .from(junkRescues)
@@ -263,14 +265,15 @@ async function attributeRescues(deps: ApiDeps, accountId: string, items: JunkIte
       inArray(junkRescues.uid, uids),
     ));
   const standing = new Map(
-    rows.map((r) => [`${r.mailboxId} ${String(r.uidvalidity)} ${r.uid}`, r.status]),
+    rows.map((r) => [`${r.mailboxId} ${String(r.uidvalidity)} ${r.uid}`, r]),
   );
   // The column's word is `pending`; the wire's is `queued`. Two vocabularies deliberately: the
   // row is pending against a QUEUE, and what a person is told is that their press is queued.
   for (const it of items) {
-    const status = standing.get(`${it.mailboxId} ${it.uidValidity} ${it.uid}`);
-    if (status === "pending") it.rescue = "queued";
-    else if (status === "refused") it.rescue = "refused";
+    const row = standing.get(`${it.mailboxId} ${it.uidValidity} ${it.uid}`);
+    if (row?.status === "pending") it.rescue = "queued";
+    else if (row?.status === "refused") it.rescue = "refused";
+    if (it.rescue !== undefined) it.rescueId = row!.id;
   }
 }
 
@@ -562,6 +565,32 @@ export async function rescueJunk(
       ? { status: "queued" as const, rescueId: row!.id, allowed }
       : { status: "queued" as const, rescueId: row!.id };
   }, { db: deps.db, mailboxId: args.mailboxId });
+}
+
+/**
+ * CLEAR A REFUSED "NOT JUNK": the person read the mail server's refusal and leaves the message in
+ * Junk. A REFUSED command only — a pending one may be mid-move under the lease, and clearing it
+ * could race the move. The delete is a compare-and-set on the status, so a re-press landing
+ * between the read and the delete keeps its command. A reader clears nothing, as it rescues nothing.
+ */
+export async function dismissJunkRescue(
+  deps: ApiDeps, ctx: ServiceContext, id: string,
+): Promise<{ dismissed: true }> {
+  const accountId = ctx.accountId;
+  await requireFolders(deps, accountId);
+  const [row] = await deps.db
+    .select({ mailboxId: junkRescues.mailboxId })
+    .from(junkRescues)
+    .where(and(eq(junkRescues.id, id), eq(junkRescues.accountId, accountId)));
+  if (!row) throw new ServiceError("not_found", 404, "no refused move to clear");
+  await assertOrganizerRole(deps.db as unknown as Tx, dialect(deps.db), accountId, row.mailboxId);
+  return withAccountTx(ctx, async (tx) => {
+    const gone = await tx.delete(junkRescues)
+      .where(and(eq(junkRescues.id, id), eq(junkRescues.accountId, accountId), eq(junkRescues.status, "refused")))
+      .returning({ id: junkRescues.id });
+    if (gone.length === 0) throw new ServiceError("conflict", 409, "that move is still being made on your mail server");
+    return { dismissed: true as const };
+  }, { db: deps.db, mailboxId: row.mailboxId });
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════

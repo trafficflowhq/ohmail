@@ -2973,6 +2973,10 @@ export const screener = {
       body: { mailboxId, uid, uidValidity, ...(opts.allow ? { allow: opts.allow } : {}) },
     }),
 
+  /** Clear a "Not junk" the mail server refused: the message stays in Junk. Refused ones only. */
+  junkRescueDismiss: (rescueId: string) =>
+    api<{ dismissed: true }>(`/screener/junk/rescue/${encodeURIComponent(rescueId)}`, { method: "DELETE" }),
+
   /**
    * The search-append (§16.2's table): one server-side SEARCH per junk folder behind the same
    * read budget as the list, the newest hits merged. A mailbox that did not answer in time is
@@ -3036,6 +3040,8 @@ export interface JunkItemWire {
    * ABSENT means no command — the row leaves the window when the move lands.
    */
   rescue?: "queued" | "refused";
+  /** The standing command's id, beside `rescue` — what clearing a refused one names. */
+  rescueId?: string;
 }
 
 export interface JunkMailboxWire {

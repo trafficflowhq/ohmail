@@ -38,6 +38,7 @@ export const WRITE_ROWS: Readonly<Record<string, WriteRoute>> = {
   "DELETE /pair/:id": none,
   "DELETE /push/subscriptions/:id": none,
   "DELETE /rules/:id": verbs("rule_delete"),
+  "DELETE /screener/junk/rescue/:id": none,
   "DELETE /snippets/:id": none,
   "DELETE /tags/:id": verbs("tag_delete"),
   "DELETE /workflows/:id": none,
