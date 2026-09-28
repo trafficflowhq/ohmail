@@ -189,6 +189,19 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
   }, [initialCode]);
 
   /**
+   * WHERE AN ENTITLED ACCOUNT LANDS — one rule for the resume and for the paid return: no mailbox
+   * is the mailbox step, and an account that has one is set up (the done step names it). `live`
+   * is the caller's own cancellation; nothing moves once it answers false.
+   */
+  const landEntitled = useCallback(async (live: () => boolean = () => true): Promise<void> => {
+    const { items } = await mailboxes.list();
+    if (!live()) return;
+    if (items.length === 0) { setStep("mailbox"); return; }
+    setConnected(items[0]!);
+    setStep("done");
+  }, []);
+
+  /**
    * Resume where the SERVER thinks we are.
    *
    * A reload during onboarding is common (the passkey prompt can feel like a navigation),
@@ -257,15 +270,12 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
          speak. `false` is the only answer that routes to the plan step. */
       if (may === false) { setStep("plan"); return; }
 
-      const { items } = await mailboxes.list();
-      if (items.length === 0) { setStep("mailbox"); return; }
-      setConnected(items[0]!);
-      setStep("done");
+      await landEntitled();
     } catch {
       // No session at all is the normal first visit; anything else means the server said
       // "not you", and starting over is the only honest response.
     }
-  }, []);
+  }, [landEntitled]);
 
   useEffect(() => { void bootstrap(); }, [bootstrap]);
 
@@ -305,7 +315,11 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
       const may = await account.access({ fresh: true }).then((a) => !a.metered || a.canAddMailbox)
         .catch(() => null);
       if (cancelled) return;
-      if (may === true) { setStep("mailbox"); return; }
+      if (may === true) {
+        // An account that already has a mailbox is set up, not asked to connect one.
+        await landEntitled(() => !cancelled).catch(() => { if (!cancelled) setStep("mailbox"); });
+        return;
+      }
       /* KEEP POLLING ONLY ON A RETURN. On a first arrival there is nothing in flight to wait
          for, so one read is the whole of it and the screen shows the link. */
       if (billingReturn !== "success" || ++attempts >= ACCESS_POLL_ATTEMPTS) {
