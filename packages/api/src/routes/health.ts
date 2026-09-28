@@ -800,6 +800,10 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // the refusal, so an API ahead of the migration 42703s both. Deploy order migration → API → worker.
   ["routing_decisions", "act_refusal"],
   ["account_settings", "screener_auto_act_at"],
+  // mail 0135_organizer_parked_at — when the wall released a mailbox. The worker's roster reads it
+  // every pass and `GET /account/access` writes the resume over it, so a host ahead of the migration
+  // 42703s both. Deploy order migration → API → worker.
+  ["mailboxes", "organizer_parked_at"],
 ] as const;
 
 /**
@@ -1152,7 +1156,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0134_withheld_too_large";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0135_organizer_parked_at";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud

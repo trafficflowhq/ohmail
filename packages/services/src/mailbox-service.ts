@@ -2987,6 +2987,8 @@ export class MailboxService {
       releaseRefusal:
         m.releaseRequestedAt !== null && m.releaseRefusal === "sibling_lapse" ? "sibling_lapse" : null,
       takeoverAuthorizedAt: m.takeoverAuthorizedAt ? m.takeoverAuthorizedAt.toISOString() : null,
+      // Mail 0135 — the wall's park, projected raw like the release stamp beside it.
+      organizerParkedAt: m.organizerParkedAt ? m.organizerParkedAt.toISOString() : null,
       // WHAT THIS MAILBOX'S SUBMISSION SERVER SAID IT WILL ACCEPT (mail 0055). UNCONDITIONAL, for
       // the reason the two lines above are: it is meaningful in every lifecycle state, and it is
       // read by the compose surface rather than by any error copy. `null` is "not known" — no
