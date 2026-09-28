@@ -39,11 +39,11 @@ export interface PhoneMailbox {
    * WHEN SOMEBODY AGREED to let ohmail organize this mailbox — `MailboxDTO.organizeConsentedAt`,
    * `null` where nobody ever did and where a server older than the column answered.
    *
-   * Read for one thing: `organizerRole === "reader"` alone cannot tell a mailbox ohmail HANDED
-   * BACK when the account closed from one nobody ever asked it to organize, and the catch-up
-   * strip offers to re-start only the first kind. An absent consent is therefore never a
-   * stood-down mailbox — the direction that cannot invite somebody to resume what they never
-   * began.
+   * Read for one thing: `organizerRole === "reader"` alone cannot tell a mailbox somebody
+   * stopped from one nobody ever asked ohmail to organize, and the standalone strip offers to
+   * re-start only the first kind (`ui/lifecycle-strip.ts#stoodDown`). An absent consent is
+   * therefore never a stopped mailbox — the direction that cannot invite somebody to resume what
+   * they never began.
    */
   organizeConsentedAt: string | null;
   /**
