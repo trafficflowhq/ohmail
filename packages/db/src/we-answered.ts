@@ -35,10 +35,10 @@ export function weAnsweredThisSenderWhere(d: Dialect, row: {
   const empty = d.castJsonb(sql`'[]'`);
   /* THE THREE ARMS OF "ADDRESSED TO THEM", in the order they appear below. Their address in our
      To/Cc. Our reply NAMING a message they wrote, because a person answering a list writes to the
-     list and not to the author. And a Sent row whose recipients were never recorded — the columns
-     predate the ingest writing them and `sender-name-backfill` is what fills them — where UNKNOWN
-     keeps the exclusion rather than reading as "addressed to somebody else" on every account whose
-     backfill has not run. These passes MOVE mail; the permissive reading is the recoverable one. */
+     list and not to the author. And a Sent row whose recipients are UNKNOWN — both columns empty
+     while its stored headers name a To or Cc `sender-name-backfill` has not copied yet, or while
+     this store holds no body row for it at all. These passes MOVE mail, so unknown keeps the
+     exclusion; a row whose stored headers name neither is addressed to nobody, and keeps nothing. */
   return sql`exists (
     select 1 from ${messages} sent
      where sent.account_id = ${row.accountId}
@@ -63,7 +63,11 @@ export function weAnsweredThisSenderWhere(d: Dialect, row: {
          or ${answersAMessageOfTheirsWhere(d, {
            accountId: row.accountId, threadId: row.threadId, fromAddress: row.fromAddress,
          })}
-         or (sent.to_addresses = ${empty} and sent.cc_addresses = ${empty})
+         or (sent.to_addresses = ${empty} and sent.cc_addresses = ${empty} and not exists (
+           select 1 from ${messageBodies} nb
+            where nb.message_id = sent.id
+              and not (${d.jsonHasAny(sql`nb.headers`, ["to", "cc"])})
+         ))
        )
   )`;
 }

@@ -492,8 +492,8 @@ export interface Dialect {
    */
   substr(x: SQL | unknown, from: SQL | unknown, length?: SQL | unknown): SQL;
 
-  /** Does this JSON object hold any of these keys at its top level? */
-  jsonHasAny(column: SQL | unknown, keys: readonly string[]): Promise<SQL> | SQL;
+  /** Does this JSON object hold any of these keys at its top level? Synchronous on both stores. */
+  jsonHasAny(column: SQL | unknown, keys: readonly string[]): SQL;
 
   /**
    * Run a statement for its effect and hand back the rows, if any — each row as an ARRAY of its
