@@ -40,6 +40,7 @@ export function hostedMailbox(id: string, address: string): MailboxDTO {
     organizerRole: "organizer", organizedBy: null, organizerState: null, organizedByThisInstall: true,
     organizeConsentedAt: null, organizerEventAt: null, organizerEventSeenAt: null, organizerAcceptsRequests: false,
     organizerReleasedAt: null, releaseRequestedAt: null, releaseRefusal: null, takeoverAuthorizedAt: null,
+    organizerParkedAt: null,
     inboundQuietSince: null, inboundQuietDismissedAt: null, smtpMaxSizeBytes: null, folders: [],
     createdAt: "2026-01-01T00:04:00.000Z",
   };
