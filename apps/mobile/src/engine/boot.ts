@@ -458,6 +458,10 @@ function accountGuarded(
     // The Screener's queue from the store, forwarded on `listMessages`' rule: a read of this
     // account's own held senders, whose answer the engine's partition and count are built from.
     screenerWaiting: (page) => adapter.screenerWaiting(page),
+    /* The Ohbox's undecided-sender offer and its press — the web's pair, on `screenerWaiting`'s and
+       `mutate`'s rules. Left out of this literal, the engine reads "this door has no offer". */
+    unscreened: () => adapter.unscreened(),
+    screenUnscreened: (addresses) => adapter.screenUnscreened(addresses),
   };
 }
 

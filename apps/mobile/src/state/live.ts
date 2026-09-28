@@ -100,6 +100,8 @@ import {
   type ForwardAsk,
   holderIsLive,
   ruleMatchKey,
+  unscreenedGroups,
+  unscreenedTotalOf,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
 import { activeLocale } from "../i18n/locale";
@@ -1164,6 +1166,25 @@ export function liveOhbox(pres: EntityReader, v: WorldView, openHeld: string | n
     unread: unreadIds.length,
     total: resurfaced.length + fresh.length + seen.length,
   };
+}
+
+/** The Ohbox's offer: mail from senders nobody decided about, still in the Inbox on the server. */
+export interface WorldUnscreened {
+  /** Messages across every shown group — the server's own count. */
+  total: number;
+  /** Who wrote them, largest group first: what the press screens. */
+  senders: readonly string[];
+}
+
+/**
+ * THE WEB'S UNDECIDED-SENDER OFFER, off the store's answer (`GET /screener/unscreened`) that the
+ * engine keeps in the mirror. `null` with nothing to offer or a door that has not answered: the
+ * offer is absent either way, never "nothing undecided".
+ */
+export function liveUnscreened(reader: EntityReader): WorldUnscreened | null {
+  const groups = unscreenedGroups(reader);
+  const total = unscreenedTotalOf(reader);
+  return total > 0 && groups.length > 0 ? { total, senders: groups.map((g) => g.id) } : null;
 }
 
 export interface WorldReads {
@@ -2738,6 +2759,11 @@ export interface LiveWorldActions {
   screeningForecast(messageId: string, dest: Destination, scope: Scope, applyRetro: boolean): PressForecast | null;
   /** "Their rules": every rule deciding the sender's mail today, as the lists place it. */
   screeningRules(messageId: string, scope: Scope): RulesInPlay | null;
+  /**
+   * THE OHBOX'S OFFER, PRESSED — the web's screening action on the same route: every shown group
+   * goes to the Screener, and the sentence names what the server moved. `false` on a refusal.
+   */
+  screenUnscreened(): Promise<boolean>;
 
   /* The folder verbs (FOLDERS-SPEC.md stage 2) — the webapp `useFolderVerbs` arms.
    * User-commanded real IMAP operations in the user's own mailbox, on the same engine
@@ -4300,6 +4326,19 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return rulesInPlay({ reader: raw, placeOf: consentPartition(raw, options).placeOf, subject: at.subject, scope, match: at.match });
   };
 
+  /* The web's press (`screener-state.ts#pressUnscreened`): the count said is the one the SERVER
+     moved, since another door may have decided a sender since the offer was drawn. */
+  const screenUnscreened = async (): Promise<boolean> => {
+    try {
+      const count = await engine.screenUnscreenedSenders();
+      toast(count > 0 ? refuse("unscreenedMoved", count) : refuse("unscreenedMovedNone"));
+      return true;
+    } catch {
+      toast(refuse("unscreenedFailed"));
+      return false;
+    }
+  };
+
   /**
    * THE WINDOW PRESS (the web's `holdScreenPress`): the press says what it does, with Undo; the
    * commit re-plans through `planScreenCommit` and the list is read back once the rules are answered
@@ -4516,7 +4555,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, markAllSeen, move,
     deleteMessage, trashList, trashRestore,
     sendReply, sendForward, sendNew, sendAndDoneOffered, withdrawSend, cancelSchedule, tagToggle, tagCreate, screenSender,
-    screeningForecast, screeningRules,
+    screeningForecast, screeningRules, screenUnscreened,
     draftDiscard, draftResolve, draftSendAgain, draftKeep,
     folderCreate, folderRename, folderDelete, folderDismiss,
   };
@@ -4633,6 +4672,8 @@ export interface WorldActions {
   screenSender(messageId: string, dest: Destination, scope: Scope, applyRetro?: boolean, press?: PhoneScreenPress): void;
   screeningForecast(messageId: string, dest: Destination, scope: Scope, applyRetro: boolean): PressForecast | null;
   screeningRules(messageId: string, scope: Scope): RulesInPlay | null;
+  /** The Ohbox's undecided-sender offer, pressed — awaited by its card. See {@link LiveWorldActions.screenUnscreened}. */
+  screenUnscreened(): Promise<boolean>;
   /* The folder verbs — see {@link LiveWorldActions} for each arm's contract. */
   folderCreate(mailboxId: string, name: string): void;
   folderRename(folderId: string, name: string): void;
@@ -4700,6 +4741,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     screenSender: (id, dest, scope, applyRetro, press) => void current().screenSender(id, dest, scope, applyRetro, press),
     screeningForecast: (id, dest, scope, applyRetro) => current().screeningForecast(id, dest, scope, applyRetro),
     screeningRules: (id, scope) => current().screeningRules(id, scope),
+    screenUnscreened: () => current().screenUnscreened(),
     folderCreate: (mailboxId, name) => void current().folderCreate(mailboxId, name),
     folderRename: (id, name) => void current().folderRename(id, name),
     folderDelete: (id) => void current().folderDelete(id),

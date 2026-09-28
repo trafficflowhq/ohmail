@@ -1699,6 +1699,15 @@ const TABLE = {
       : `Moved ${n} messages that were waiting when ohmail closed.`,
   routingReplayExpired: (n: number) =>
     `${n === 1 ? "1 filing rule was" : `${n} filing rules were`} never made — too much time passed since you asked. File that mail again if you still want the rule.`,
+  /** THE OHBOX'S UNDECIDED-SENDER OFFER — the web's `screener.unscreened*` sentences, word for word. */
+  unscreenedLead: (n: number) =>
+    n === 1
+      ? "1 message from a sender you have not decided about is still in the Inbox on your mail server."
+      : `${n} messages from senders you have not decided about are still in the Inbox on your mail server.`,
+  unscreenedAll: (n: number) => `Screen ${n}`,
+  unscreenedMoved: (n: number) => `Screened ${n}. Your organizer moves them on the next pass.`,
+  unscreenedMovedNone: "Nothing left to screen.",
+  unscreenedFailed: "Could not screen that mail. Try again.",
   /** The deliberate read/unread, spoken so the pill has a sentence to ride (silent before the undo work). */
   toastRead: "Marked as read.",
   toastUnread: "Marked as unread.",
