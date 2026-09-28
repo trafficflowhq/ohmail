@@ -1088,7 +1088,8 @@ export function useScreenerState(
         ...(d.applyRetro !== undefined ? { applyRetro: d.applyRetro } : {}),
       }).then((res) => {
         done();
-        settleOnward(res.status !== "rolled_back");
+        // A wait keeps the sender out as an answer does: the decision still stands.
+        settleOnward(pressVerdict(res).kind !== "refused");
         if (res.status === "rolled_back") { refuse(d, res.error); return; }
         /* The organizer took it, and will carry it out later. `pendingWith`
          * is present only where the server queued the decision instead of
