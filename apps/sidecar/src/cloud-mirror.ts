@@ -1450,6 +1450,34 @@ async function mirrorAutoReply(
   return true;
 }
 
+/**
+ * THE ORGANIZER'S ARRANGEMENT, stored as the document this store's own reader would cache: each
+ * rule at its index, so `profile:<mailbox>:<index>` names the same rule on both doors. No locator
+ * — nothing here reads the mailbox — and the hosted read instant. Only for a mirrored mailbox, and
+ * behind BOTH stamps in a function of its own: this table's key to the account is SQL-only.
+ */
+async function applyProfileUpsert(
+  tx: Tx, dia: Dialect, world: LocalWorld, ch: SyncChange, now: Date,
+  gen: BootstrapGen | null, known: ReadonlySet<string>,
+): Promise<boolean> {
+  const p = ch.entity as MailboxProfileDTO | undefined;
+  if (!p || p.mailboxId !== ch.id || !Array.isArray(p.rules)) return false;
+  if (!known.has(ch.id)) return false;
+  try {
+    await fenceErased(tx, dia, { accountId: world.accountId, mailboxId: ch.id });
+  } catch (err) {
+    if (err instanceof AccountErasedError || err instanceof MailboxErasedError) return false;
+    throw err;
+  }
+  const doc = { rules: profileDocRules(p.rules) };
+  const readAt = asDate(p.asOf) ?? now;
+  const row = { accountId: world.accountId, uidvalidity: null, uid: null, doc, readAt };
+  await tx.insert(mailboxProfileMirror).values({ mailboxId: ch.id, ...row })
+    .onConflictDoUpdate({ target: mailboxProfileMirror.mailboxId, set: row });
+  gen?.mailbox_profile.add(ch.id);
+  return true;
+}
+
 async function applyUpsert(
   tx: Tx,
   /**
@@ -1478,23 +1506,8 @@ async function applyUpsert(
     case "rule":
     case "approval":
       return applyAccountUpsert(tx, dia, world, ch, now, gen);
-    case "mailbox_profile": {
-      /* THE ORGANIZER'S ARRANGEMENT, stored as the document this store's own reader would cache:
-         each rule at its index, so `profile:<mailbox>:<index>` names the same rule on both doors.
-         No locator — nothing here reads the mailbox — and the hosted read instant. Guarded on the
-         mirrored mailbox and its tombstone, the folder arm's rule. */
-      const p = ch.entity as MailboxProfileDTO | undefined;
-      if (!p || p.mailboxId !== ch.id || !Array.isArray(p.rules)) return false;
-      if (!known.has(ch.id)) return false;
-      if (await readMailboxErasedAt(tx, dia, ch.id) !== null) return false;
-      const doc = { rules: profileDocRules(p.rules) };
-      const readAt = asDate(p.asOf) ?? now;
-      const row = { accountId: world.accountId, uidvalidity: null, uid: null, doc, readAt };
-      await tx.insert(mailboxProfileMirror).values({ mailboxId: ch.id, ...row })
-        .onConflictDoUpdate({ target: mailboxProfileMirror.mailboxId, set: row });
-      gen?.mailbox_profile.add(ch.id);
-      return true;
-    }
+    case "mailbox_profile":
+      return applyProfileUpsert(tx, dia, world, ch, now, gen, known);
     case "folder": {
       // ONE OF THE MAILBOX'S OWN FOLDERS (the folders foundation). The local row takes the
       // HOSTED entity's id verbatim — the local /sync materializes folder entities BY ROW ID
