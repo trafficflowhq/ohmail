@@ -43,14 +43,19 @@ export interface RoutingReplay {
   moved: readonly AnyRoutingIntent[];
   /** Past the journal's horizon: never made. */
   expired: readonly AnyRoutingIntent[];
+  /** Committed at the launch and refused by the server, which the dispatch has already said. */
+  refused: readonly AnyRoutingIntent[];
 }
 
 /** What one session's window needs to plan and to send. Supplied when the session opens. */
 export interface RoutingSessionDeps {
   /** The ROUTING half, re-read from the mirror at the commit — never replayed from the record. */
   plan: (intent: AnyRoutingIntent) => readonly EngineMutation[];
-  /** `false` for a commit the server refused, which the dispatch has already said. */
-  dispatch: (mutations: readonly EngineMutation[], intent: AnyRoutingIntent) => Promise<boolean | void>;
+  /**
+   * `false` for a commit the server refused, which the dispatch has already said; `"nothing"` for
+   * one with nothing left to send — neither made nor refused, and a launch says nothing for it.
+   */
+  dispatch: (mutations: readonly EngineMutation[], intent: AnyRoutingIntent) => Promise<boolean | void | "nothing">;
   windowMs: number;
   /** The account's mirror. REQUIRED: a defaulted jar is how a surface stops keeping records. */
   journal: RoutingJournal;
@@ -104,14 +109,27 @@ const REVERSALS_KEPT = 16;
 const listeners = new Set<() => void>();
 /** The snapshot the projection subscribes to — a NEW map per change, the store's contract. */
 let snapshot: ReadonlyMap<string, Folder> = new Map();
+/** Presses whose record has not landed yet: no frame shows them until it has. */
+const landing = new Set<string>();
 
+/**
+ * A MOVE THAT DECIDES NO RULE SHOWS NO HELD PLACE: its letter's own move draws it, once the record
+ * has landed. `holdsRule: false` is the phone's mark on that v1 row (`live.ts#PhoneMoveIntent`).
+ */
+function showsPlace(i: AnyRoutingIntent): boolean {
+  return !(i.v === 1 && (i as { holdsRule?: unknown }).holdsRule === false);
+}
+
+/** Every open press's place, and NO new snapshot when it equals the last: each is a world re-derivation. */
 function publish(open: readonly AnyRoutingIntent[]): void {
   const next = new Map<string, Folder>();
   for (const i of open) {
+    if (landing.has(i.id) || !showsPlace(i)) continue;
     const folder = FOLDER_OF_VIEW[i.dest];
     if (!folder) continue;
     for (const id of i.messageIds) next.set(id, folder);
   }
+  if (next.size === snapshot.size && [...next].every(([id, f]) => snapshot.get(id) === f)) return;
   snapshot = next;
   for (const cb of listeners) cb();
 }
@@ -136,7 +154,7 @@ export function openRoutingSession(deps: RoutingSessionDeps): void {
   closeRoutingSession();
   const door = journalDoor(deps.journal);
   /** Each launch commit's answer, captured only while the replay sends — what the sentence counts. */
-  let launched: Map<string, Promise<boolean>> | null = null;
+  let launched: Map<string, Promise<boolean | void | "nothing">> | null = null;
   const win = createRoutingWindow({
     /* ONE ACCOUNT PER MIRROR: the account-keyed name is kept for its shape, not its scope. */
     door,
@@ -145,8 +163,9 @@ export function openRoutingSession(deps: RoutingSessionDeps): void {
     plan: deps.plan,
     dispatch: (mutations, intent) => {
       const back = deps.reverse?.(mutations, intent) ?? null;
-      const landed = deps.dispatch(mutations, intent).then((ok) => ok !== false, () => false);
-      launched?.set(intent.id, landed);
+      const answer = deps.dispatch(mutations, intent).then((ok) => ok, () => false as const);
+      const landed = answer.then((ok) => ok !== false);
+      launched?.set(intent.id, answer);
       if (back) {
         reversals.set(intent.id, () => landed.then((ok) => (ok ? back() : [])));
         for (const id of reversals.keys()) { if (reversals.size <= REVERSALS_KEPT) break; reversals.delete(id); }
@@ -164,9 +183,11 @@ export function openRoutingSession(deps: RoutingSessionDeps): void {
   launched = null;
   void seen.then(async ({ committed, resumed, expired }) => {
     const done = [...committed, ...resumed];
-    const ok = await Promise.all(done.map((i) => answers.get(i.id) ?? Promise.resolve(false)));
-    const moved = done.filter((_, k) => ok[k]);
-    if (moved.length > 0 || expired.length > 0) deps.onReplayed?.({ moved, expired });
+    const ok = await Promise.all(done.map((i) => answers.get(i.id) ?? Promise.resolve("nothing" as const)));
+    /* A commit that sent nothing made nothing: nothing was waiting, so the launch is quiet. */
+    const moved = done.filter((_, k) => ok[k] !== false && ok[k] !== "nothing");
+    const refused = done.filter((_, k) => ok[k] === false);
+    if (moved.length > 0 || expired.length > 0 || refused.length > 0) deps.onReplayed?.({ moved, expired, refused });
   });
 }
 
@@ -178,6 +199,11 @@ export function closeRoutingSession(): void {
   liveDoor = null;
   reversals.clear();
   publish([]);
+}
+
+/** Is a press on this subject held open now — the question a Move that decides no rule asks first. */
+export function heldOn(subject: string): boolean {
+  return live ? live.pending().some((p) => routingSubject(p) === subject) : false;
 }
 
 /** What a hold answered. `sent`: the routing already went, so the caller neither sends nor offers Undo. */
@@ -194,9 +220,13 @@ export async function holdRouting(intent: AnyRoutingIntent): Promise<PhoneRoutin
   const win = live;
   const door = liveDoor;
   if (!win || !door) return { held: false, superseded: false, sent: false };
+  landing.add(intent.id);
   const out = win.open(intent);
-  if (!out.held) return { ...out, sent: true };
-  if ((await door.landed()) === "stored") return { ...out, sent: false };
+  const shown = (): void => { landing.delete(intent.id); if (live === win) publish(win.pending()); };
+  if (!out.held) { shown(); return { ...out, sent: true }; }
+  const stored = await door.landed();
+  shown();
+  if (stored === "stored") return { ...out, sent: false };
   /* THE RECORD DID NOT LAND, so this press may not promise an Undo. Still open: taken back, and
      the caller sends now. Gone meanwhile (a flush, a later press about the sender): nothing is
      left for the caller to send. */

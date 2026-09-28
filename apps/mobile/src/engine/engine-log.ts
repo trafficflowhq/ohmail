@@ -154,6 +154,15 @@ export function logAttachmentRefusal(reason: AttachmentRefusal): void {
 }
 
 /**
+ * ONE LINE PER LAUNCH THAT FINISHED WHAT THE LAST SESSION LEFT IN ITS ROUTING WINDOW — how many
+ * presses it made, how many the server refused, how many had aged out, and how many sentences it
+ * said. Counts only, so there is nothing to redact; a device run reads the launch's sentence here.
+ */
+export function logLaunchReplay(made: number, refused: number, expired: number, said: number): void {
+  engineLogSink()(JSON.stringify({ service: "app", event: "launch_replay", made, refused, expired, said }));
+}
+
+/**
  * ONE LINE PER READING OF THE PHONE'S NETWORK, as the platform gave it to the door
  * (`net/network-door.ts`) — what a device run reads to tell a reader that never spoke from a
  * surface that ignored it. Three closed words, nothing to redact.

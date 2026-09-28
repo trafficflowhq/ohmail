@@ -56,12 +56,13 @@ import { foldersFlag, freshestRead } from "./folders-flag";
 import { usePrefs } from "./store";
 import {
   connectionSay, firstSyncSay,
+  dispatchHeldRouting,
   flushQueued,
   liveActions,
   planHeldRouting,
   presentedOptions,
-  routingReplaySay,
   routingReversal,
+  sayRoutingReplay,
   liveFolder,
   liveFolders,
   liveFolderUnread,
@@ -1172,26 +1173,18 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       windowMs: UNDO_MS,
       journal,
       plan: (intent) => planHeldRouting(engine.read(), intent, (changed) => noteScreenChanged(intent.id, changed)),
-      dispatch: async (mutations, intent) => {
-        const answers = await Promise.all(
-          mutations.map((mu) => engine.mutate(mu).catch(() => null)),
-        );
-        const refused = answers.some((r) => r === null || r?.status === "rolled_back");
+      dispatch: (mutations, intent) => dispatchHeldRouting(engine, mutations, intent, {
         // A sheet press reads its list back itself, and says the refusal with it.
-        if (answerScreenPress(intent.id, mutations, answers)) return !refused;
+        answered: (answers) => answerScreenPress(intent.id, mutations, answers),
         /* A RULE THE SERVER REFUSED IS SAID. The press's own sentence was raised seconds ago and
            claimed the mail moved, which is still true — what is not is the rule, and a refusal
            nobody is told is the shape this window exists to remove. */
-        if (refused) {
-          showToast(refuse("liveSaveFailed"));
-          return false;
-        }
-        return true;
-      },
+        refused: () => showToast(refuse("liveSaveFailed")),
+      }),
       /* A MOVE'S WAY BACK once its window has sent the rules; a sheet press's rules can carry the
          backlog pass the person asked for, and a Screener decision has no inverse at all. */
       reverse: (mutations, intent) => (intent.v === 1 ? routingReversal(() => engine.read(), mutations) : null),
-      onReplayed: (replay) => { for (const say of routingReplaySay(replay)) showToast(say); },
+      onReplayed: (replay) => { for (const say of sayRoutingReplay(replay)) showToast(say); },
     });
     return () => { closeRoutingSession(); };
   }, [engine, journal, showToast]);

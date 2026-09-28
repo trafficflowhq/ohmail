@@ -106,7 +106,7 @@ import {
 import { Copy } from "../copy";
 import { activeLocale } from "../i18n/locale";
 import { blobToBase64 } from "../mail/blob-base64";
-import { logAttachmentRefusal } from "../engine/engine-log";
+import { logAttachmentRefusal, logLaunchReplay } from "../engine/engine-log";
 import { refuse, type Refusal, type RefusalArg } from "../refusal";
 import {
   mailboxProfiles, planScreenCommit, pressForecast, pressOutcome, ruleFingerprint, rulesInPlay, stayVerdict,
@@ -119,7 +119,7 @@ import { ACCESS_REFUSED_CODE } from "../net/access-lock";
 import { folderLeafOf, folderUnreadCounts } from "./folders";
 /* Move/Junk: the mail now, the sender's routing after the window. See the module. */
 import {
-  holdRouting, holdScreenRouting, restartRouting, takeRoutingReversal, undoRouting,
+  heldOn, holdRouting, holdScreenRouting, restartRouting, takeRoutingReversal, undoRouting,
   type RoutingReplay, type ScreenCommitAnswer,
 } from "./held-routing";
 import type { ScreeningAnswer } from "../net/consent";
@@ -1963,14 +1963,29 @@ export function planPhoneRouting(
   const folder = FOLDER_OF_VIEW[intent.dest];
   if (!folder || intent.from === undefined) return [];
   const rules = withoutBacklog(releaseRules(reader, intent.address, intent.from as Folder, folder).mutations);
-  /* THE LETTER'S HALF, for a kill between the rule's record and the letter's dispatch: a letter the
-     press named, still where the press found it, moves with the rule. A dispatched move is in the
-     outbox and the reader already shows the letter at the place, so nothing moves twice. */
+  /* THE LETTER'S HALF, for a kill between the press's record and the letter's dispatch: a letter the
+     press named, still in the folder the press found it in, moves with the rule. A dispatched move
+     is in the outbox and the reader already shows the letter at the place, so nothing moves twice.
+     A row from before `found` was recorded reads the shown place. */
+  const found = foundOf(intent) ?? intent.from;
   const letters = intent.messageIds.flatMap((id): EngineMutation[] => {
     const m = reader.get<EngineMessage>("message", id);
-    return m !== undefined && m.folder === intent.from && m.folder !== folder ? [{ kind: "move", messageId: id, folder }] : [];
+    return m !== undefined && m.folder === found && m.folder !== folder ? [{ kind: "move", messageId: id, folder }] : [];
   });
   return [...rules, ...letters];
+}
+
+/**
+ * THE PHONE'S MOVE INTENT: the engine's v1 row plus the folder the letter was IN at the press.
+ * `from` is where it was SHOWN, which the rule ladder needs; a letter shown in the Screener or
+ * Reads can sit in the Inbox, so only `found` says whether it is still where the press left it.
+ * `holdsRule: false` marks a press that decides no rule: it shows no held place (`held-routing.ts`).
+ */
+export type PhoneMoveIntent = RoutingIntent & { found?: string; holdsRule?: false };
+
+function foundOf(intent: RoutingIntent): string | undefined {
+  const f = (intent as PhoneMoveIntent).found;
+  return typeof f === "string" && f.length > 0 ? f : undefined;
 }
 
 /**
@@ -2024,6 +2039,33 @@ export function planHeldRouting(
   return out.writes;
 }
 
+/**
+ * THE ONE DISPATCH A HELD PRESS COMMITS THROUGH — the world's session and the suites alike. A
+ * Move's letter goes under the press id as its Idempotency-Key, and the press's own letter move
+ * still QUEUED under that key (a kill before it was answered, restored at this launch) is taken
+ * back and sent from here, unless the mirror already has the letter there: the server makes it
+ * once and this commit answers for it. `"nothing"`: nothing was left to send.
+ */
+export async function dispatchHeldRouting(
+  engine: OhmailEngine, mutations: readonly EngineMutation[], intent: AnyRoutingIntent,
+  hooks: { answered: (answers: readonly (MutationResult | null)[]) => boolean; refused: () => void },
+): Promise<boolean | "nothing"> {
+  const own = intent.v === 1
+    ? engine.pendingMutations().find((p) => p.key === intent.id && p.mutation.kind === "move")?.mutation
+    : undefined;
+  if (own) await engine.withdrawQueued(intent.id);
+  const owed = own?.kind === "move" && !mutations.some((m) => m.kind === "move")
+    && engine.read().get<EngineMessage>("message", own.messageId)?.folder !== own.folder;
+  const sent = owed ? [...mutations, own] : [...mutations];
+  const answers = await Promise.all(sent.map((mu) =>
+    engine.mutate(mu, intent.v === 1 && mu.kind === "move" ? { key: intent.id } : {}).catch(() => null)));
+  const refused = answers.some((r) => r === null || r?.status === "rolled_back");
+  const made = sent.length === 0 ? "nothing" as const : true;
+  if (hooks.answered(answers)) return refused ? false : made;
+  if (refused) { hooks.refused(); return false; }
+  return made;
+}
+
 /** Screen out and Spam are the endpoint's `no`; the three places a sender may write to are `yes`. */
 const decisionOf = (dest: ScreenDest): "yes" | "no" => (dest === "screened" || dest === "spam" ? "no" : "yes");
 
@@ -2052,6 +2094,13 @@ export function planDecideCommit(reader: EntityReader, intent: DecideIntent): En
     }
   }
   return out;
+}
+
+/** What a launch says about its replay, and the one line a device run reads it from. */
+export function sayRoutingReplay(r: RoutingReplay): Refusal[] {
+  const says = routingReplaySay(r);
+  logLaunchReplay(r.moved.length, r.refused.length, r.expired.length, says.length);
+  return says;
 }
 
 /**
@@ -3687,10 +3736,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const inv = mail.flatMap((w) => inverseMutations(engine.verbRead(), w));
     const pressId = deps.uuid ? deps.uuid() : `${messageId}:${now().getTime()}`;
     const subject = routingSubject({ scope: "sender", address: m.from.address });
-    /* THE RULE HALF IS ON DISK BEFORE THE LETTER MOVES. The letter's move rides the outbox the
-       moment it is dispatched; a rule held only after its answer was lost to a kill in between,
-       with the letter moved and nothing said. Held first, the launch finishes both halves. */
-    const opened = rules.length === 0 ? null : await holdRouting({
+    /* THE PRESS IS ON DISK BEFORE ANYTHING SHOWS OR LEAVES, rule or none: its place is drawn once
+       the record has landed, and the letter's move carries the press id as its Idempotency-Key.
+       A letter's move alone was only an outbox row, written through the mirror's one lane after
+       the letter was already drawn at its place, so a kill before that row lost a Move the
+       screen had shown. Held first, the launch finishes both halves once and says so. */
+    const intent: PhoneMoveIntent = {
       v: 1,
       id: pressId,
       seedId: messageId,
@@ -3699,13 +3750,23 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       dest: dest as ScreenDest,
       messageIds: [messageId],
       from: row.presentedFolder,
+      found: m.folder,
+      ...(rules.length === 0 ? { holdsRule: false as const } : {}),
       at: now().getTime(),
-    });
+    };
+    /* A Move that decides no rule never replaces a held press about the same sender: the window
+       keeps one press per sender, and dropping a held rule for a letter's move would lose it. */
+    const opened = rules.length === 0 && heldOn(subject)
+      ? { held: false, superseded: false, sent: false }
+      : await holdRouting(intent);
     /* RAW answers, never `watched`: it folds `awaiting_organizer` into landed-or-not, and on a
        mailbox this phone only reads EVERY write here comes back that way (`move` is named in the
        202 census). Folding them would say "Moved" over a move nobody made. */
+    /* A flush while the record landed (the app leaving) has already sent the letter from the
+       window under this key; a second send would read as a refusal of a Move that was made. */
+    const unsent = mail.filter((w) => w.kind !== "move" || engine.read().get<EngineMessage>("message", w.messageId)?.folder !== w.folder);
     const answers = await Promise.all(
-      mail.map((w) => inMessageOrder(w, () => engine.mutate(w).catch((): MutationResult | null => null))),
+      unsent.map((w) => inMessageOrder(w, () => engine.mutate(w, { key: pressId }).catch((): MutationResult | null => null))),
     );
     /* A letter that did not move takes its rule with it: the press is one decision. */
     const dropHeld = (): void => { if (opened?.held) undoRouting(subject); };
@@ -3726,7 +3787,14 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       return true;
     }
     if (rules.length === 0) {
-      toast(refuse("toastMoved", moveTargetLabel(dest)), undoable(inv));
+      /* Its Undo takes the record back with the letter: a window left open would find the letter
+         where the press found it and move it again. One clock, as below. */
+      const back = undoable(inv);
+      toast(refuse("toastMoved", moveTargetLabel(dest)), back && opened?.held ? {
+        ...back,
+        shown: () => { restartRouting(subject); },
+        undo: () => { undoRouting(subject); back.undo?.(); },
+      } : back);
       return true;
     }
     /* A PRESS THAT DECIDES THE SENDER SAYS SO, in the web's words (`screeningToast`): the letter
