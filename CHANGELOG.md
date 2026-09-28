@@ -114,6 +114,90 @@ composer, which then sends the draft the refusal left rather than writing a seco
 addressed in To alone, without formatting, open in the phone's composer from Drafts: what is typed
 is saved into the draft as it goes, and Send sends that draft.
 
+### Server alerts mail less, in one format
+<!-- changes: fix-026-alerts-tell-the-truth.md -->
+
+A server's alerts no longer count a timed-out access refresh behind a read as a fault, mail again
+only when an alert gets worse, and arrive in one format whichever process sends them.
+
+### Security update: the web app on Next 15.5, the web and desktop apps on React 19
+<!-- changes: deps-026-next-15.md -->
+
+- The web app runs on Next 15.5 and the web and desktop apps on React 19. Next 15.5 fixes two
+  critical advisories in Next 14, in the image optimizer and on Windows-hosted servers; neither was
+  reachable in ohmail's configuration.
+
+### Pictures in a message are fetched once
+<!-- changes: fix-026-a-picture-fetched-once.md -->
+
+On the desktop, the pictures in an open message were fetched again and again while it stayed open,
+and on macOS the reading pane's scroll bar flickered. Each picture is now fetched once.
+
+### The Android build carries its TLS and mail-sender fixes
+<!-- changes: release-026-patches.md -->
+
+The Android app is now built with the two fixes this repository carries for its TLS connections
+and its mail sender, so a mail server on a STARTTLS port (587 for sending, 143 for reading)
+connects and sends, and a certificate issued for a different name than the server's is refused. A
+build without them now fails instead of publishing. The desktop app and the self-host images are
+built with the mail sender's fix the same way.
+
+### One settings message per mailbox
+<!-- changes: fix-026-one-settings-message.md -->
+
+ohmail keeps one settings message per mailbox in `ohmail/_meta` and removes the older copies, its
+own and the ones other ohmail installs left behind, a hundred at a time. Where a server refuses to
+delete, the folder holds two at most. Before, on servers that answer ohmail's search for these
+messages with nothing, every settings change added a copy that other mail apps showed and found in
+searches.
+
+### A full ohmail/_meta folder no longer stops organizing
+<!-- changes: fix-026-the-lease-reads-every-claim.md -->
+
+ohmail keeps organizing a mailbox whose mail server does not answer its searches, with up to 20 000
+records in the ohmail/_meta folder. The organizer also removes the leftover organizer records other
+installs wrote there, a thousand at a time.
+
+### A conversation is one row in the Ohbox
+<!-- changes: fix-026-one-row-per-conversation.md -->
+
+A conversation is one row in the Ohbox: in New while anything in it is unread or open, under Earlier
+once it is all read, at the time of its newest message — in the browser, in the desktop app and on
+the phone. Your replies ride the conversation's row, and reading one of several new replies no
+longer moves that message to a second row under Earlier.
+
+### Links in designed mail open your browser on Linux
+<!-- changes: fix-026-a-link-in-a-message-opens.md -->
+
+Clicking a link in a message shown in the sender's own layout did nothing on Linux. It now opens in
+your browser, and an email address opens a new message.
+
+### Settings lists Subscription as soon as you sign in
+<!-- changes: fix-026-settings-and-suggest.md -->
+
+Right after signing in with a password and a code, Settings lists Subscription without a reload,
+and Settings → Mailboxes points there only while Settings lists it.
+
+### The Screener says when suggestions need credits
+<!-- changes: fix-026-settings-and-suggest.md -->
+
+With automatic suggestions on and no AI credits left, the Screener now says so under its controls
+and names where credits come from, instead of a notice that disappears.
+
+### /health checks the sign-in address index
+<!-- changes: fix-026-migration-markers.md -->
+
+`/health` now also checks the unique index that keeps one sign-in address to one account. A
+server whose database lacks it answers 503 instead of reporting itself healthy.
+
+### A waiting draft discard is listed on the phone, and Send + Done files the conversation when the reply goes out later
+<!-- changes: fix-026-outbox-state.md -->
+
+A draft you discard while the phone cannot reach your account stays listed with the other changes
+that have not gone through, with Try again and Discard; Discard keeps the draft. Send + Done on the
+phone files the conversation when the reply goes out later, when the connection comes back, on the
+next start or after Try again, not only when it goes at once.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
