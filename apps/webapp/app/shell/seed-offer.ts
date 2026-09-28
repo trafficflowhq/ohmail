@@ -12,6 +12,11 @@ export function seedNotNowKey(owner: string | null): string {
   return `ohmail.ui.seed.notNow.${owner ?? "local"}`;
 }
 
+/** Whether the polled `/mailboxes` facts hold a live mailbox (`null` while unread) — the sync strip's `noMailbox` rule. */
+export function hasLiveMailbox(facts: readonly { status: string }[] | null): boolean | null {
+  return facts === null ? null : facts.some((m) => m.status !== "disabled");
+}
+
 export interface SeedOffer {
   /** The review takes the stage now. */
   owed: boolean;
@@ -28,12 +33,14 @@ export interface SeedOffer {
 
 /**
  * WHEN THE SENT-MAIL REVIEW TAKES THE STAGE. Offered once the server says it is owed
- * (`seedConfirmedAt` null, read — `known`), where the browser client that runs it exists, until it
+ * (`seedConfirmedAt` null, read — `known`), on an account with a mailbox to review (`hasMailbox`;
+ * `null` is not known yet and is not owed), where the browser client that runs it exists, until it
  * is answered, put off, or found to have nobody in it. The stored "Not now" is read after mount
  * (hydration) and held as the KEY it was read under, so another account's answer never applies.
  */
 export function useSeedOffer(input: {
   demo: boolean; known: boolean; supported: boolean; seedConfirmedAt: string | null;
+  hasMailbox: boolean | null;
 }): SeedOffer {
   const key = seedNotNowKey(storageOwner());
   const [heldKey, setHeldKey] = useState<string | null>(null);
@@ -47,7 +54,7 @@ export function useSeedOffer(input: {
     }
   }, [key]);
   const notNow = heldKey === key;
-  const owed = !input.demo && input.known && input.supported
+  const owed = !input.demo && input.known && input.hasMailbox === true && input.supported
     && (reopened || (input.seedConfirmedAt === null && !handedBack && !notNow));
 
   const reopen = useCallback(() => setReopened(true), []);

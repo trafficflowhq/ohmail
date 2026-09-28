@@ -267,7 +267,7 @@ import { TriageView } from "../views/TriageView";
 import { DraftsView } from "../views/DraftsView";
 import { reconcileWakeRegistration, updateNotifyWords } from "./notification-settings.js";
 import { usePersistedFlag, UI_KEYS } from "./persisted-ui.js";
-import { useSeedOffer } from "./seed-offer";
+import { hasLiveMailbox, useSeedOffer } from "./seed-offer";
 import { durableSessionSet } from "./durable";
 import { ManagedServiceContext } from "./managed-service";
 
@@ -1314,9 +1314,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * ConsentState.cloudClient} is published separately from `standalone`.
    */
   const seedSupported = consent.cloudClient;
-  const seedOffer = useSeedOffer({
-    demo, known: consent.known, supported: seedSupported, seedConfirmedAt: consent.seedConfirmedAt,
-  });
+  const seedOffer = useSeedOffer({ demo, known: consent.known, supported: seedSupported,
+    seedConfirmedAt: consent.seedConfirmedAt, hasMailbox: hasLiveMailbox(facts) });
   const seedOwed = seedOffer.owed;
   /**
    * THE WHOLE-MIRROR DERIVATIONS — the consent partition, the presentation projection and every
