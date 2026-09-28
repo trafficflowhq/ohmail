@@ -17,7 +17,7 @@ import { registerSessionTransport, sessionMayAsk } from "./shell/session-truth";
 import type { TravelledChangeWire } from "./shell/travelled-change";
 import { readOwner, readOwnerMarker, rememberOwner } from "./shell/owner-cookie";
 import { refusedFactsOf, verdictOf } from "./access-verdict";
-import { storeVerdict } from "./shell/wall-lift";
+import { readStoredVerdict, storeVerdict } from "./shell/wall-lift";
 import { forgetOpenVerdict, markOpenVerdict, refusalIsStale } from "./shell/access-window";
 import {
   ACCOUNT_ERASED, ERASED_DECLARATION, clearAccountErased, erasedCapture, hearAccountErased,
@@ -2663,9 +2663,11 @@ function accessRead(fresh: boolean): Promise<AccountAccess> {
 function noteVerdict(owner: string | null, a: AccountAccess): void {
   const verdict = verdictOf(a);
   if (verdict === null) return;
+  // Read before it is overwritten: an open answer over a stored `closed` is the reopening.
+  const lifted = readStoredVerdict(owner) === "closed";
   storeVerdict(owner, verdict);
   if (verdict === "open") {
-    if (a.metered) markOpenVerdict(owner);
+    if (a.metered) markOpenVerdict(owner, Date.now(), lifted);
     return;
   }
   forgetOpenVerdict();

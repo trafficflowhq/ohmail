@@ -27,7 +27,7 @@
    why a reader's press has nowhere to go, shared with the server's refusal. Each import is the
    alternative to a second copy of a rule that must never diverge — see `address-key.ts`. */
 import { addressKey } from "./address-key";
-import { refusalIsStale } from "./access-window";
+import { liftedAt, refusalIsStale } from "./access-window";
 import {
   holderIsLive, holderStopped, rosterRefusalReason, type RequestRefusalReason,
 } from "@trafficflow/core/reader-refusal";
@@ -1952,6 +1952,10 @@ function climb(input: MailStateInputs): MailState {
   // `asOf` for every `stale` by construction; the guard is belt for a
   // probe-fed desktop value.
   if (freshness.state === "stale" && freshness.asOf !== null) {
+    // …but never a date from before the account reopened (mail 0135): it would date the closure.
+    // The first drain after the lift moves `asOf` past it.
+    const lifted = liftedAt();
+    if (lifted !== null && Date.parse(freshness.asOf) < lifted) return { ...QUIET, key: "catchingUp" };
     return { ...QUIET, key: "stale", clock: true, count: mirrored, asOf: freshness.asOf };
   }
 

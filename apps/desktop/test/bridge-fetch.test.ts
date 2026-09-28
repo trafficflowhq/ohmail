@@ -442,8 +442,9 @@ describe("the access notice after an open verdict", () => {
       await bridgeFetch(ACCOUNT_ACCESS_PATH);
       expect(localStorage.getItem("ohmail.access.mbx_stale")).toBe("open");
       // The window the drain loop reads is this one: the bridge's open answer feeds it.
-      const { refusalIsStale } = await import("../../webapp/app/shell/access-window.js");
+      const { liftedAt, refusalIsStale } = await import("../../webapp/app/shell/access-window.js");
       expect(refusalIsStale()).toBe(true);
+      expect(liftedAt(), "an open answer with no refusal before it is not a reopening").toBeNull();
       await bridgeFetch("/mailboxes");
       expect(seen, "a stale 402 raised the lock inside the window").toEqual([]);
       vi.setSystemTime(new Date("2026-09-26T08:01:01.000Z"));
@@ -451,6 +452,9 @@ describe("the access notice after an open verdict", () => {
       await bridgeFetch("/mailboxes");
       expect(seen).toHaveLength(1);
       expect(localStorage.getItem("ohmail.access.mbx_stale")).toBe("closed");
+      // Paid: the next open answer lands over the stored refusal, and that instant is the reopening.
+      await bridgeFetch(ACCOUNT_ACCESS_PATH);
+      expect(liftedAt()).toBe(Date.parse("2026-09-26T08:01:01.000Z"));
       stop();
       setStorageOwner(null);
     } finally {
