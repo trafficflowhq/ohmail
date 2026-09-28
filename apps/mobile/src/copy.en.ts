@@ -2119,10 +2119,10 @@ const TABLE = {
   draftsOpenConversation: "Open the conversation",
   /**
    * PHONE-ONLY (2/5): the stated degradation, said only on a draft this phone cannot take whole
-   * (`draftEditOf`): Cc, Bcc, formatting, or a send on record.
+   * (`draftEditOf`: Cc, Bcc, formatting, a send on record, or a text this mirror does not hold).
    */
   draftsEditNote:
-    "This draft has Cc, Bcc, formatting or a send on record. Edit and send it from ohmail on the web or the desktop.",
+    "This draft can't be edited here. Edit and send it from ohmail on the web or the desktop.",
   /** The Drafts card's verb: the composer opens bound to this row. */
   draftsEdit: "Edit",
   /** PHONE-ONLY (3/5): the detail screen's heading over the text itself. */
