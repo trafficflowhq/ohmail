@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNotNull, max, or } from "drizzle-orm";
+import { and, desc, eq, gt, max, or } from "drizzle-orm";
 import { withAccountTx } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 import { mailboxes, parkedResumeSet, parkedResumeWhere } from "@trafficflow/db";
@@ -68,7 +68,7 @@ export async function resumeAfterReopen(deps: ApiDeps, ctx: ServiceContext): Pro
     const [owed] = await deps.db.select({ id: mailboxes.id }).from(mailboxes)
       .where(and(eq(mailboxes.accountId, accountId), or(
         eq(mailboxes.syncBlockedReason, "account_closed"),
-        isNotNull(mailboxes.organizerParkedAt),
+        parkedResumeWhere(),
       )))
       .limit(1);
     if (!owed) return;
