@@ -277,6 +277,7 @@ export function useShellDispatch({
       expired: (count: number) => t("screening.toastRuleExpired", { count }),
       correction: (key, note) =>
         t(`screening.${key}`, { sender: note.sender, place: note.place, count: note.count }),
+      releaseKept: (note) => t("screener.toastReleaseRuleKept", { sender: note.sender }),
     }), [t]),
   });
 

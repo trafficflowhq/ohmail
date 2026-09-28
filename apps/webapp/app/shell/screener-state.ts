@@ -14,6 +14,7 @@ import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
   FOLDER_OF_VIEW,
+  inverseMutations,
   physicalFolderOf,
   heldReleaseDismissedOf,
   heldReleaseFingerprintOf,
@@ -38,6 +39,7 @@ import {
   type UnscreenedGroupDTO,
   type OhmailEngine,
   type PressTally,
+  type RoutingOpen,
   type ScreenDest,
   type ScreenerSegments,
   type ScreenerSenderDTO,
@@ -75,6 +77,22 @@ import { displayAddress, displayAddressee, displayDomain, displayDomainLabel } f
 import { activeFormatZone } from "./locale";
 import { useAppLocale } from "./LocaleContext";
 import type { UndoToastFn } from "./undo-door";
+import type { ReleasePressInput } from "./routing-undo";
+
+/**
+ * THE SHELL'S ROUTING WINDOW, for the release presses — the one Move's rule change is held in
+ * (`routing-undo.ts`), and the Undo offer every held window raises through the one door.
+ */
+export interface ScreenerReleaseWindow {
+  hold: (press: ReleasePressInput) => RoutingOpen;
+  /** Take back the held press about this sender; `true` only while its window was open. */
+  cancel: (address: string) => boolean;
+  toastWithUndo: (
+    sentence: string,
+    inverses: readonly EngineMutation[],
+    held?: { cancel: () => boolean; undone: string },
+  ) => void;
+}
 import {
   DECISION_QUIET,
   type DecisionDestination,
@@ -550,6 +568,12 @@ export function useScreenerState(
    */
   shownAt: (subject: readonly EngineMessage[], dest: DecisionDestination) => string[] = (subject, dest) =>
     screeningShown(engine.read(), subject, dest, { consent: null, now: new Date(), ownAddresses: [] }),
+  /**
+   * Where Allow, Not spam and back to Waiting hold their rule change for the undo window, as Move
+   * does. Absent ⇒ the rule is written at the press and no Undo is offered: the demo, and a caller
+   * that builds no window.
+   */
+  releaseWindow?: ScreenerReleaseWindow,
 ): ScreenerState {
   const t = useTranslations("screener");
   /* The five pile names as the catalogue has them, so a toast naming a destination uses the
@@ -781,6 +805,36 @@ export function useScreenerState(
       return false;
     }
     clearRefused(sender);
+    return true;
+  };
+
+  /**
+   * A RELEASE WITH ITS UNDO. The mail moves now, the engine's reversal read before it is sent;
+   * the rule change waits in the routing window and is written when the window closes. Undo
+   * cancels the rule and moves the mail back, through the one door. `false`: no window here.
+   */
+  const releaseWithUndo = (
+    sender: ScreenerSenderDTO, segment: "screened" | "spam", dest: "ohbox" | "reads" | "screener",
+    ruleMutations: EngineMutation[], moveIds: string[], sentence: string,
+    after?: (ok: boolean) => void,
+  ): boolean => {
+    if (!releaseWindow || (ruleMutations.length === 0 && moveIds.length === 0)) return false;
+    const wanted = FOLDER_OF_VIEW[dest];
+    const pre = engine.verbRead();
+    const inverses = moveIds.flatMap((messageId) => inverseMutations(pre, { kind: "move", messageId, folder: wanted }));
+    void moveAll(moveIds, wanted).then((tally) => { const ok = releaseSaid(tally, sender, segment); after?.(ok); });
+    if (ruleMutations.length === 0) { releaseWindow.toastWithUndo(sentence, inverses); return true; }
+    const open = releaseWindow.hold({
+      id: crypto.randomUUID(), seedId: sender.id, address: sender.from.address,
+      from: segment === "spam" ? FOLDER_OF_VIEW.spam : FOLDER_OF_VIEW.screened, dest, messageIds: moveIds,
+      note: { sender: displayAddress(sender.from.address), place: dest === "screener" ? t("segWaiting") : piles[dest], count: moveIds.length },
+    });
+    // A jar that refused the record sent the rule at once, so no Undo is on offer.
+    if (!open.held) { toast(`${sentence} ${tSession("noUndoHere")}`); return true; }
+    releaseWindow.toastWithUndo(sentence, inverses, {
+      cancel: () => releaseWindow.cancel(sender.from.address),
+      undone: ts("toastRoutingUndoneRules"),
+    });
     return true;
   };
 
@@ -1622,17 +1676,18 @@ export function useScreenerState(
     const segFolder = segment === "spam" ? FOLDER_OF_VIEW.spam : FOLDER_OF_VIEW.screened;
     const rules = releaseRules(raw, sender.from.address, segFolder, wanted);
     if (rules.kind === "stands") { ruleStands(sender, segment, rules.domain); return; }
-    // Both halves are WATCHED: the optimistic sentence at the press, the truth when the wire has answered.
-    void releaseHeld(rules.mutations, physicallyHeldIn(raw, sender, segFolder), wanted)
-      .then((tally) => releaseSaid(tally, sender, segment));
     // ONE SENTENCE PER WRITE, because only one is true: no rule, their own rule retargeted, or an
     // address rule beside a domain rule that still decides everyone else there.
     const said = { count: sender.held.length, sender: displayAddress(sender.from.address), dest: piles[dest] };
-    toast(
-      rules.kind === "address"
-        ? t("toastReleasedAddress", { ...said, domain: displayDomain(rules.domain) })
-        : t(rules.kind === "retarget" ? "toastReleasedRuled" : "toastReleased", said),
-    );
+    const sentence = rules.kind === "address"
+      ? t("toastReleasedAddress", { ...said, domain: displayDomain(rules.domain) })
+      : t(rules.kind === "retarget" ? "toastReleasedRuled" : "toastReleased", said);
+    const moveIds = physicallyHeldIn(raw, sender, segFolder);
+    if (releaseWithUndo(sender, segment, dest, rules.mutations, moveIds, sentence)) return;
+    // Both halves are WATCHED: the optimistic sentence at the press, the truth when the wire has answered.
+    void releaseHeld(rules.mutations, moveIds, wanted)
+      .then((tally) => releaseSaid(tally, sender, segment));
+    toast(sentence);
   };
 
   /**
@@ -1702,6 +1757,8 @@ export function useScreenerState(
       const wide = holding.find((r) => r.kind !== "sender");
       if (wide) { ruleStands(row.sender, "spam", ruleMatchKey(wide.match)); return; }
       const deletions: EngineMutation[] = holding.map((r) => ({ kind: "rule_delete", ruleId: r.id }));
+      const back = physicallyHeldIn(raw, row.sender, FOLDER_OF_VIEW.spam);
+      if (releaseWithUndo(row.sender, "spam", "screener", deletions, back, t("toastNotSpamWaiting", { sender: senderLabel(row.sender) }))) return;
       void releaseHeld(
         deletions,
         physicallyHeldIn(raw, row.sender, FOLDER_OF_VIEW.spam),
@@ -1756,8 +1813,8 @@ export function useScreenerState(
       const pinAt = s.pins.findIndex((p) => p.id === row.sender.id);
       s.pins = s.pins.filter((p) => p.id !== row.sender.id);
       bump();
-      void releaseHeld(rules.mutations, quarantined.map((m) => m.id), "INBOX").then((tally) => {
-        if (releaseSaid(tally, row.sender, "spam")) return;
+      const repin = (ok: boolean) => {
+        if (ok) return;
         /* The pin goes back for a wait as well as for a refusal: nothing has moved in either
            case, and the derived row this session hid would otherwise come back unmarked. */
         if (!s.pins.some((p) => p.id === row.sender.id)) {
@@ -1766,6 +1823,13 @@ export function useScreenerState(
           s.pins = back;
         }
         bump();
+      };
+      const sentence = widened === null
+        ? t("toastNotSpamOhbox", { sender: senderLabel(row.sender) })
+        : t("toastNotSpamOhboxAddress", { sender: senderLabel(row.sender), domain: displayDomain(widened) });
+      if (releaseWithUndo(row.sender, "spam", "ohbox", rules.mutations, quarantined.map((m) => m.id), sentence, repin)) return;
+      void releaseHeld(rules.mutations, quarantined.map((m) => m.id), "INBOX").then((tally) => {
+        repin(releaseSaid(tally, row.sender, "spam"));
       });
     } else if (row.sender.derived) {
       release(row.sender, "ohbox", "spam");

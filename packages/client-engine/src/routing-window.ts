@@ -6,6 +6,7 @@ import {
   routingSubject,
   takeRoutingIntents,
   type AnyRoutingIntent,
+  type JarIntent,
 } from "./routing-intents.js";
 
 /**
@@ -55,7 +56,7 @@ export interface RoutingOpen {
   superseded: boolean;
 }
 
-export interface RoutingWindowDeps {
+export interface RoutingWindowDeps<I extends JarIntent = AnyRoutingIntent> {
   /** The jar. REQUIRED: a defaulted door is how a surface silently stops keeping records. */
   door: StorageDoor;
   /** The journal key — owner-scoped by the caller, whose account rule this is. */
@@ -67,22 +68,22 @@ export interface RoutingWindowDeps {
    * answer — the rule is already standing, or the sender has moved past this press — and the
    * caller says so rather than dispatching nothing in silence.
    */
-  plan: (intent: AnyRoutingIntent) => readonly EngineMutation[];
+  plan: (intent: I) => readonly EngineMutation[];
   /** What the routing half is committed THROUGH. The surface's own filing dispatch. */
-  dispatch: (mutations: readonly EngineMutation[], intent: AnyRoutingIntent) => Promise<void>;
+  dispatch: (mutations: readonly EngineMutation[], intent: I) => Promise<void>;
   /** The cross-tab coordinator, where there is more than one window. */
   windows?: TabWindows | undefined;
   /** Called whenever the open set changes, with the intents still held. */
-  onPending?: (open: readonly AnyRoutingIntent[]) => void;
+  onPending?: (open: readonly I[]) => void;
   /** Epoch ms. Injected so the TTL and the resume are testable without a fake clock. */
   now?: () => number;
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
   clearTimer?: (h: ReturnType<typeof setTimeout>) => void;
 }
 
-export interface RoutingWindow {
+export interface RoutingWindow<I extends JarIntent = AnyRoutingIntent> {
   /** One press. Opens a window, or commits at once when the jar refused the record. */
-  open: (intent: AnyRoutingIntent) => RoutingOpen;
+  open: (intent: I) => RoutingOpen;
   /** Take the press on this subject back. `true` ONLY when a window was open. */
   undo: (subject: string) => boolean;
   /**
@@ -94,27 +95,27 @@ export interface RoutingWindow {
   /** Commit every open window now, without waiting. Unmount, `pagehide`, sign-out. */
   flush: () => void;
   /** The intents a window is open over. */
-  pending: () => readonly AnyRoutingIntent[];
+  pending: () => readonly I[];
   /**
    * BOOT. Commits what elapsed while the app was closed, RESUMES what did not with the time it
    * has left, hands back what died of age so the caller can say so, and SKIPS what another tab
    * is holding or has already resolved. Once per mount.
    */
   replay: (nowMs: number) => Promise<{
-    committed: AnyRoutingIntent[];
-    resumed: AnyRoutingIntent[];
-    expired: AnyRoutingIntent[];
-    elsewhere: AnyRoutingIntent[];
+    committed: I[];
+    resumed: I[];
+    expired: I[];
+    elsewhere: I[];
   }>;
 }
 
-export function createRoutingWindow(deps: RoutingWindowDeps): RoutingWindow {
+export function createRoutingWindow<I extends JarIntent = AnyRoutingIntent>(deps: RoutingWindowDeps<I>): RoutingWindow<I> {
   const arm = deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
   const disarm = deps.clearTimer ?? ((h) => clearTimeout(h));
   const clock = deps.now ?? (() => Date.now());
 
   /** One entry per OPEN press, by subject. */
-  const open = new Map<string, { intent: AnyRoutingIntent; timer: ReturnType<typeof setTimeout> }>();
+  const open = new Map<string, { intent: I; timer: ReturnType<typeof setTimeout> }>();
 
   const publish = (): void => { deps.onPending?.([...open.values()].map((e) => e.intent)); };
 
@@ -125,7 +126,7 @@ export function createRoutingWindow(deps: RoutingWindowDeps): RoutingWindow {
    * leaves: the engine persists a verb to its outbox ahead of the wire, so between here and that
    * write this journal is the only durable copy of the press.
    */
-  const send = (intent: AnyRoutingIntent): void => {
+  const send = (intent: I): void => {
     const done = (): void => {
       disarmRoutingIntent(deps.door, deps.key, intent.id);
       /* AND NO OTHER TAB MAY REPLAY IT — resolved means resolved, whichever tab boots next. */
@@ -151,7 +152,7 @@ export function createRoutingWindow(deps: RoutingWindowDeps): RoutingWindow {
     send(entry.intent);
   };
 
-  const hold = (intent: AnyRoutingIntent, ms: number): void => {
+  const hold = (intent: I, ms: number): void => {
     const timer = arm(() => close(routingSubject(intent)), ms);
     open.set(routingSubject(intent), { intent, timer });
     deps.windows?.claim([{ id: intent.id, at: intent.at }]);
@@ -225,10 +226,13 @@ export function createRoutingWindow(deps: RoutingWindowDeps): RoutingWindow {
          there is nobody to ask and no await: the commit starts inside this call, before the
          caller's next paint, so a surface replaying at launch never shows the old place first. */
       if (deps.windows) await deps.windows.ask();
-      const { live, expired } = takeRoutingIntents(deps.door, deps.key, nowMs);
-      const committed: AnyRoutingIntent[] = [];
-      const resumed: AnyRoutingIntent[] = [];
-      const foreign: AnyRoutingIntent[] = [];
+      /* A jar holds only rows this surface wrote, so its rows are this window's `I`. */
+      const taken = takeRoutingIntents(deps.door, deps.key, nowMs);
+      const live = taken.live as I[];
+      const expired = taken.expired as I[];
+      const committed: I[] = [];
+      const resumed: I[] = [];
+      const foreign: I[] = [];
       const heldElsewhere = deps.windows?.elsewhere(nowMs, deps.windowMs) ?? new Set<string>();
       const settledElsewhere = deps.windows?.resolved() ?? new Set<string>();
       for (const intent of live) {

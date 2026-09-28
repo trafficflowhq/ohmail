@@ -27,7 +27,9 @@ import {
   type EngineMutation,
   type EntityReader,
   type Folder,
+  type JarIntent,
   type MutationStatus,
+  type ReleaseIntent,
   type RoutingIntent,
   type RoutingOpen,
   type ScreenDest,
@@ -40,6 +42,7 @@ import { storageOwner } from "./storage-owner";
 import { UNDO_MS } from "./screener-state";
 import {
   planScreeningChange,
+  releaseCommit,
   screeningToast,
   senderScreening,
   worstStatus,
@@ -74,6 +77,22 @@ export interface RoutingUndoCopy {
   expired: (count: number) => string;
   /** The server's own answer, when it differs from what the press said. */
   correction: (key: ScreeningToastKey, note: RoutingNote) => string;
+  /** Back to Waiting's rule deletion was refused: the mail moved, the rule stands. */
+  releaseKept: (note: RoutingNote) => string;
+}
+
+/** A Screener release — Allow, Not spam, back to Waiting — whose mail already moved. */
+export interface ReleasePressInput {
+  id: string;
+  /** A message of the sender's the press was made on. */
+  seedId: string;
+  address: string;
+  /** The pile released from, as a folder: Screened out or Quarantine. */
+  from: Folder;
+  dest: ReleaseIntent["dest"];
+  /** The messages the press moved, shown at `dest` while the window runs. */
+  messageIds: readonly string[];
+  note: RoutingNote;
 }
 
 /** One routing press, as the shell hands it over. */
@@ -124,6 +143,8 @@ export interface RoutingUndo {
   hold: (press: RoutingPressInput) => RoutingOpen;
   /** Hold one sender-sheet press as a v2 intent in the screen jar. */
   holdScreen: (press: ScreenPressInput) => RoutingOpen;
+  /** Hold one Screener release's rule change as a v4 intent in the release jar. */
+  holdRelease: (press: ReleasePressInput) => RoutingOpen;
   /** The subject a press is about — what {@link RoutingUndo.undo} takes. */
   subjectOf: (address: string) => string;
   /** Take the press on this subject back: the intent is dropped, nothing was sent. */
@@ -194,7 +215,7 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
     [],
   );
 
-  const window_ = useMemo(() => createRoutingWindow({
+  const window_ = useMemo(() => createRoutingWindow<JarIntent>({
     door: localStorageDoor("routing.intents"),
     key: routingIntentsKey(latest.current.owner ?? storageOwner()),
     windowMs: latest.current.windowMs ?? UNDO_MS,
@@ -202,6 +223,8 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
     ...(latest.current.now ? { now: () => latest.current.now!() } : {}),
 
     plan: (i) => {
+      /* A RELEASE RE-READS THE RULES HOLDING THE SENDER WHERE THEY WERE SHOWN. */
+      if (i.v === 4) return releaseCommit(latest.current.read(), i);
       /* A SENDER-SHEET PRESS RE-PLANS THROUGH THE ONE COMMIT PLANNER, its answers riding the
          intent: the ladder, and a shown rule removed only while it is as shown. */
       if (i.v === 2) {
@@ -219,6 +242,21 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
     },
 
     dispatch: async (mutations, i) => {
+      if (i.v === 4) {
+        const note = notes.current.get(i.id);
+        notes.current.delete(i.id);
+        const worst = worstStatus(await Promise.all(mutations.map((m) => latest.current.send(m))));
+        /* The press already said where the mail went; only a rule the server did not take is
+           news. Back to Waiting deletes rules, and a deletion held offline is said by no one. */
+        if (note === undefined || worst === null || worst === "confirmed") return;
+        if (i.dest === "screener") {
+          if (worst === "rolled_back") latest.current.toast(latest.current.copy.releaseKept(note));
+          return;
+        }
+        const key = worst === "rolled_back" ? "toastRuleFailed" : worst === "queued" ? "toastRuleQueued" : "toastRuleOrganizer";
+        latest.current.toast(latest.current.copy.correction(key, note));
+        return;
+      }
       if (i.v === 2) {
         const held = screens.current.get(i.id);
         screens.current.delete(i.id);
@@ -312,6 +350,24 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
       };
       screens.current.set(press.id, { changed: [], press });
       const out = window_.open(intent);
+      return out;
+    }, [window_]),
+    holdRelease: useCallback((press: ReleasePressInput): RoutingOpen => {
+      const intent: ReleaseIntent = {
+        v: 4,
+        verb: "release",
+        id: press.id,
+        seedId: press.seedId,
+        address: press.address,
+        scope: "sender",
+        from: press.from,
+        dest: press.dest,
+        messageIds: [...press.messageIds],
+        at: (latest.current.now ?? Date.now)(),
+      };
+      notes.current.set(press.id, press.note);
+      const out = window_.open(intent);
+      if (!out.held) notes.current.delete(press.id);
       return out;
     }, [window_]),
     hold: useCallback((press: RoutingPressInput): RoutingOpen => {

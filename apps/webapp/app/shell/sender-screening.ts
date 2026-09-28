@@ -25,6 +25,7 @@ import {
   type MutationStatus,
   type PressForecast,
   type PressResolution,
+  type ReleaseIntent,
   type RuleDTO,
   ruleMatchKey,
 } from "@ohmail/client-engine";
@@ -665,6 +666,22 @@ export function releaseRules(reader: EntityReader, address: string, from: Folder
     mutations: standing ? [] : [{ kind: "rule_create", ruleKind: "sender", match, destination: wanted, applyRetro: true }],
     domain,
   };
+}
+
+/**
+ * WHAT A HELD RELEASE WRITES WHEN ITS WINDOW CLOSES, re-read from the mirror then and never
+ * replayed from the press. Back to Waiting deletes the sender's own holding rules and writes
+ * nothing under a domain rule, as the press refuses; the other releases take {@link releaseRules}.
+ */
+export function releaseCommit(reader: EntityReader, intent: ReleaseIntent): EngineMutation[] {
+  const from = intent.from as Folder;
+  if (intent.dest === "screener") {
+    const holding = holdingRules(reader, intent.address, from);
+    if (holding.some((r) => r.kind !== "sender")) return [];
+    return holding.map((r) => ({ kind: "rule_delete", ruleId: r.id }));
+  }
+  const rules = releaseRules(reader, intent.address, from, FOLDER_OF_VIEW[intent.dest]);
+  return rules.kind === "stands" ? [] : rules.mutations;
 }
 
 /**

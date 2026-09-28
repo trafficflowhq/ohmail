@@ -93,8 +93,31 @@ export interface DecideIntent {
   at: number;
 }
 
-/** Any row a routing window holds. */
+/**
+ * A SCREENER RELEASE, v4 — Allow, Not spam, back to Waiting — its own jar ({@link releaseIntentsKey})
+ * for v2's reason. The mail moved at the press; the commit re-reads the rules holding the sender
+ * at `from` and writes the release's rule change then. `screener` is back to Waiting, which only
+ * deletes the sender's own holding rules.
+ */
+export interface ReleaseIntent {
+  v: 4;
+  verb: "release";
+  id: string;
+  seedId: string;
+  address: string;
+  scope: "sender";
+  /** The pile the sender was released from, as a folder: Screened out or Quarantine. */
+  from: string;
+  dest: ScreenDest | "screener";
+  messageIds: string[];
+  at: number;
+}
+
+/** Any row the phone's and the web's shared windows hold. */
 export type AnyRoutingIntent = RoutingIntent | ScreenIntent | DecideIntent;
+
+/** Any row a journal jar holds: the shared rows and the web Screener's releases. */
+export type JarIntent = AnyRoutingIntent | ReleaseIntent;
 
 export const SCREEN_SHOWN_MAX = 20;
 
@@ -108,13 +131,18 @@ export function decideIntentsKey(key: string): string {
   return `${key}.decide`;
 }
 
+/** The release jar, under the same name for the same sweep. */
+export function releaseIntentsKey(key: string): string {
+  return `${key}.release`;
+}
+
 /**
  * WHOSE ROUTING — and the key supersession is decided on. A second press about one sender inside
  * one window is not two decisions: it is a change of mind, and only the last may be written.
  * Keyed on the subject and NOT on subject+place, because Reads-then-Receipts IS that change of
  * mind and keeping both would write two rules for one sender.
  */
-export function routingSubject(i: Pick<AnyRoutingIntent, "scope" | "address"> & { v?: AnyRoutingIntent["v"] }): string {
+export function routingSubject(i: Pick<JarIntent, "scope" | "address"> & { v?: JarIntent["v"] }): string {
   /* A DECISION IS ITS OWN SUBJECT: a Move of one of the sender's letters inside the window is not
      a change of mind about whether they may write, so it must not drop the decision unsent. */
   if (i.v === 3) {
@@ -209,6 +237,21 @@ export function isDecideIntent(x: unknown): x is DecideIntent {
     && typeof r.at === "number" && Number.isFinite(r.at);
 }
 
+/** A v4 row, or not one — the same refusal of absent answers as {@link isScreenIntent}. */
+export function isReleaseIntent(x: unknown): x is ReleaseIntent {
+  if (typeof x !== "object" || x === null) return false;
+  const r = x as Record<string, unknown>;
+  return r.v === 4 && r.verb === "release"
+    && typeof r.id === "string" && r.id.length > 0
+    && typeof r.seedId === "string" && r.seedId.length > 0
+    && typeof r.address === "string" && r.address.length > 0
+    && r.scope === "sender"
+    && (r.from === FOLDER_OF_VIEW.screened || r.from === FOLDER_OF_VIEW.spam)
+    && typeof r.dest === "string" && Object.prototype.hasOwnProperty.call(FOLDER_OF_VIEW, r.dest)
+    && Array.isArray(r.messageIds) && r.messageIds.every((m) => typeof m === "string")
+    && typeof r.at === "number" && Number.isFinite(r.at);
+}
+
 /**
  * The journal as stored, unfiltered by age. Never throws: a blocked or corrupt jar reads empty,
  * and a row this build cannot read is DROPPED rather than guessed at — the opposite of the
@@ -216,7 +259,7 @@ export function isDecideIntent(x: unknown): x is DecideIntent {
  * journal entry has not been expressed at all, and replaying a shape we cannot read would file
  * mail under a rule nobody chose. Each jar reads only its own row shape.
  */
-function loadJar<T extends AnyRoutingIntent>(door: StorageDoor, key: string, valid: (x: unknown) => x is T): T[] {
+function loadJar<T extends JarIntent>(door: StorageDoor, key: string, valid: (x: unknown) => x is T): T[] {
   try {
     const raw = door.get(key);
     if (!raw) return [];
@@ -227,17 +270,20 @@ function loadJar<T extends AnyRoutingIntent>(door: StorageDoor, key: string, val
   }
 }
 
-/** The three jars under one key: the v1 rows, the screen rows, the decide rows. */
-function load(door: StorageDoor, key: string): { v1: RoutingIntent[]; screen: ScreenIntent[]; decide: DecideIntent[] } {
+/** The four jars under one key: the v1 rows, the screen rows, the decide rows, the release rows. */
+function load(door: StorageDoor, key: string): {
+  v1: RoutingIntent[]; screen: ScreenIntent[]; decide: DecideIntent[]; release: ReleaseIntent[];
+} {
   return {
     v1: loadJar(door, key, isRoutingIntent),
     screen: loadJar(door, screenIntentsKey(key), isScreenIntent),
     decide: loadJar(door, decideIntentsKey(key), isDecideIntent),
+    release: loadJar(door, releaseIntentsKey(key), isReleaseIntent),
   };
 }
 
 /** Write one jar, and SAY WHETHER IT LANDED — `screener-intents.ts#save`'s reason. */
-function save(door: StorageDoor, key: string, rows: readonly AnyRoutingIntent[]): DurableWrite {
+function save(door: StorageDoor, key: string, rows: readonly JarIntent[]): DurableWrite {
   return rows.length === 0
     ? door.remove(key)
     : door.set(key, JSON.stringify(rows.slice(-ROUTING_INTENTS_MAX)));
@@ -248,7 +294,7 @@ function save(door: StorageDoor, key: string, rows: readonly AnyRoutingIntent[])
  * append: two live intents for one sender cannot both be the reader's word, and a re-press after
  * an expiry is the only way the two would otherwise meet.
  */
-export function armRoutingIntent(door: StorageDoor, key: string, intent: AnyRoutingIntent): DurableWrite {
+export function armRoutingIntent(door: StorageDoor, key: string, intent: JarIntent): DurableWrite {
   const subject = routingSubject(intent);
   const jars = load(door, key);
   const bounded = intent.messageIds.length <= ROUTING_INTENT_IDS_MAX
@@ -257,9 +303,12 @@ export function armRoutingIntent(door: StorageDoor, key: string, intent: AnyRout
   const v1 = jars.v1.filter((r) => routingSubject(r) !== subject);
   const screen = jars.screen.filter((r) => routingSubject(r) !== subject);
   const decide = jars.decide.filter((r) => routingSubject(r) !== subject);
+  const release = jars.release.filter((r) => routingSubject(r) !== subject);
   if (bounded.v !== 1 && v1.length !== jars.v1.length) save(door, key, v1);
   if (bounded.v !== 2 && screen.length !== jars.screen.length) save(door, screenIntentsKey(key), screen);
   if (bounded.v !== 3 && decide.length !== jars.decide.length) save(door, decideIntentsKey(key), decide);
+  if (bounded.v !== 4 && release.length !== jars.release.length) save(door, releaseIntentsKey(key), release);
+  if (bounded.v === 4) return save(door, releaseIntentsKey(key), [...release, bounded]);
   if (bounded.v === 3) return save(door, decideIntentsKey(key), [...decide, bounded]);
   if (bounded.v === 2) return save(door, screenIntentsKey(key), [...screen, bounded]);
   return save(door, key, [...v1, bounded]);
@@ -280,6 +329,8 @@ export function disarmRoutingIntent(door: StorageDoor, key: string, pressId: str
   if (screen.length !== jars.screen.length) save(door, screenIntentsKey(key), screen);
   const decide = jars.decide.filter((r) => r.id !== pressId);
   if (decide.length !== jars.decide.length) save(door, decideIntentsKey(key), decide);
+  const release = jars.release.filter((r) => r.id !== pressId);
+  if (release.length !== jars.release.length) save(door, releaseIntentsKey(key), release);
 }
 
 /**
@@ -291,11 +342,11 @@ export function disarmRoutingIntent(door: StorageDoor, key: string, pressId: str
  */
 export function takeRoutingIntents(
   door: StorageDoor, key: string, nowMs: number,
-): { live: AnyRoutingIntent[]; expired: AnyRoutingIntent[] } {
+): { live: JarIntent[]; expired: JarIntent[] } {
   const jars = load(door, key);
-  const live: AnyRoutingIntent[] = [];
-  const expired: AnyRoutingIntent[] = [];
-  const split = <T extends AnyRoutingIntent>(rows: T[], jarKey: string): void => {
+  const live: JarIntent[] = [];
+  const expired: JarIntent[] = [];
+  const split = <T extends JarIntent>(rows: T[], jarKey: string): void => {
     const kept = rows.filter((r) => nowMs - r.at <= ROUTING_INTENT_TTL_MS);
     for (const r of rows) (kept.includes(r) ? live : expired).push(r);
     if (kept.length !== rows.length) save(door, jarKey, kept);
@@ -303,6 +354,7 @@ export function takeRoutingIntents(
   split(jars.v1, key);
   split(jars.screen, screenIntentsKey(key));
   split(jars.decide, decideIntentsKey(key));
+  split(jars.release, releaseIntentsKey(key));
   live.sort((a, b) => a.at - b.at);
   return { live, expired };
 }
