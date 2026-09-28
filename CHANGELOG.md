@@ -273,6 +273,14 @@ the lists read whole in German, and the phone's Screener doorbell no longer says
   showing itself offline until its next sync.
 - A draft replying to old mail keeps the message it answers on a newly set-up device.
 
+### The dark sync link, the tag chips and the Screener's key hints meet the contrast minimum
+<!-- changes: fix-026-dark-aa.md -->
+
+In the dark themes the "Settings → Mailboxes" link in the sync box and strip sits on the theme's
+darkest ground rather than a white lift; in the ohmarchy face a tag's name is coloured to read on
+its own chip, over the tile and over the page; and the key hint on the Screener's suggested
+decision is no longer faded. All three read at 4.5:1 or better in both faces, light and dark.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
