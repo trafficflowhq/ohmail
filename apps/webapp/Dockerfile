@@ -47,13 +47,13 @@ RUN npm ci --no-audit --no-fund
 # EXACT versions, not ranges: the committed lockfile cannot pin what the manifests do not
 # declare, so a caret here would let two otherwise-identical builds of one release resolve
 # different declaration files — the image must be reproducible from the tree alone. The React
-# types match the major the manifests resolve (react 18), and all four are REMOVED again
+# types match the versions the workspace lockfile resolves, and all four are REMOVED again
 # after the build (below), so the runtime copy ships nothing the type pass pulled in.
 RUN npm install --no-save \
       typescript@5.6.3 \
       @types/node@22.10.2 \
-      @types/react@18.3.12 \
-      @types/react-dom@18.3.1
+      @types/react@19.2.17 \
+      @types/react-dom@19.2.7
 # THE LOCKFILE HOISTS `styled-jsx` — next's own dependency — TO THE ROOT while nesting next,
 # react and react-dom under this app, and the root also carries a DIFFERENT React major for an
 # unrelated workspace. styled-jsx resolves `react` by walking UP from where it physically sits,
