@@ -245,23 +245,22 @@ export function MailStateProvider({
     : engineFreshness;
 
   /**
-   * Fold every observation of the mirror's size in. In an effect, not during render: `growthStep` records a TIME, and
-   * a StrictMode double-invoked render recording two rises for one arrival would let a single message satisfy the
-   * two-rise rule. While the first drain is still landing, the mirror is being READ, not growing: the live engine
-   * starts with an empty in-memory mirror, so the seed captured 0 and hydration arrived as one jump — read as the
-   * first rise of a first import, latching "Syncing your mail. N messages" over a finished mailbox, with N the size
-   * of the whole mirror. So while `bootstrapping` is true every observation RE-BASELINES the sampler; a genuine first
-   * import is still announced by the import FLOOR (`initialImportCompletedAt`, bounded by `importFloorSpeaks`). Once
-   * the first drain settles, arrivals are measured from the device's own count.
+   * Fold every observation of the mirror's size in, IN THE RENDER THAT MAKES IT, through React's own state queue
+   * keyed by the observation: React re-runs this body with the fold applied before anything commits, so an arrival
+   * paints with its growth and costs one commit, not two, and a StrictMode double render folds it once. While the
+   * first drain is still landing, the mirror is being READ, not growing (the live engine starts empty, and hydration
+   * would read as the first rise of an import), so while `bootstrapping` every observation RE-BASELINES the sampler;
+   * a genuine first import is still announced by the import FLOOR (`importFloorSpeaks`). The clock is re-read with
+   * each observation, or a rise in a quiet spell would be judged against a `beat` minutes old.
    */
-  useEffect(() => {
+  const [folded, setFolded] = useState(() => ({ pulled, bootstrapping: sync.bootstrapping }));
+  if (folded.pulled !== pulled || folded.bootstrapping !== sync.bootstrapping) {
+    setFolded({ pulled, bootstrapping: sync.bootstrapping });
     setGrowth((prev) =>
       sync.bootstrapping ? seedGrowth(pulled) : growthStep(prev, pulled, Date.now()),
     );
-    // The clock is re-read whenever the mirror moves, not only on the interval — otherwise a
-    // rise arriving during a quiet spell would be judged against a `beat` minutes old.
     setBeat(Date.now());
-  }, [pulled, sync.bootstrapping]);
+  }
 
   const state = useMemo(
     () =>
