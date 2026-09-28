@@ -8,7 +8,7 @@
  * `@trafficflow/db/admin`. A runtime module needing something here is a signal to question the
  * requirement, not widen the root.
  */
-export { ensureHotPathIndexes, HOT_PATH_INDEXES } from "./hot-path-indexes.js";
+export { ensureHotPathIndexes, HOT_PATH_INDEXES, HOT_PATH_INDEX_SPECS } from "./hot-path-indexes.js";
 export {
   runMigrations, PartialMigrationError,
   LEGACY_MIGRATIONS_DIR, MAIL_MIGRATIONS_DIR, CLOUD_MIGRATIONS_DIR,

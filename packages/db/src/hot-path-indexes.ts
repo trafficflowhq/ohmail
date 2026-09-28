@@ -5,12 +5,10 @@ import {
 
 /**
  * The hot-path indexes, built CONCURRENTLY outside the migrator — `concurrent-index.ts` owns the
- * how, this file owns the WHICH. Five are built at any size: the profile-import "already
- * resolved?" probe on `audit_log` (runs on every candidate, and an audit log only grows), the
- * storage-eviction victim read on `messages` (a Sort — no index offers `coalesce(date,
- * created_at), id` order), the newest-first walk every list page and every sync-snapshot page
- * takes over the same table (a second Sort, on a different key), and the two retention prunes'
- * age keys. The first three scan today, measured with `EXPLAIN`.
+ * how, this file owns the WHICH. Six are built at any size: the profile-import "already resolved?"
+ * probe on `audit_log`, the storage-eviction victim read and the newest-first list walk on
+ * `messages` (each a Sort without its index), the two retention prunes' age keys, and the Screener
+ * auto-apply held page on `folder_state`. Each was measured scanning with `EXPLAIN`.
  */
 
 /**
@@ -74,6 +72,18 @@ export const HOT_PATH_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
     ddl: sql`create index concurrently if not exists "messages_account_msg_order_idx"
       on public.messages using btree ("account_id","date" desc nulls last,"id" desc)
       where "deleted_at" is null`,
+  },
+  {
+    // THE SCREENER AUTO-APPLY HELD PAGE (`screener-auto.ts` `heldPageSql`), which walks the held
+    // queue by `message_id` from its cursor. Without it the page reads `folder_state`'s unique index
+    // from the first entry and filters, page after page. PARTIAL on the page's own literals, so it
+    // holds only the held rows; `folder_state` is a growth table, hence here and not in a journal.
+    // Unconditional: the held queue grows with the mailbox, like `messages` above.
+    name: "folder_state_screener_held_idx",
+    table: "folder_state",
+    ddl: sql`create index concurrently if not exists "folder_state_screener_held_idx"
+      on public.folder_state using btree ("message_id")
+      where "desired_folder" = 'ohmail/Screener' and "last_set_by" = 'us'`,
   },
   {
     // THE DEFERRED ONE, and the deferral is now a condition rather than a note: it builds itself
