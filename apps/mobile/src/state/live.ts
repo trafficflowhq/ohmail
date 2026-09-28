@@ -124,7 +124,6 @@ import {
 } from "./held-routing";
 import type { ScreeningAnswer } from "../net/consent";
 import { networkNow, type NetworkState } from "../net/network-door";
-import { queuedCaptionKey } from "../engine/send-waits";
 import type { ServerWaitingSender } from "../net/screener";
 import {
   destDone,
@@ -1003,6 +1002,35 @@ export interface WorldDraft {
    * verbatim, `WorldScheduled.failure`'s treatment and for its reason.
    */
   failure: string | null;
+  /** What the phone's composer opens this draft with ({@link draftEditOf}); `null` where it cannot. */
+  edit: WorldDraftEdit | null;
+}
+
+/** An open draft the phone's composer can take whole: the row it writes into and what it seeds. */
+export interface WorldDraftEdit {
+  mailboxId: string;
+  /** To, as the composer's field types it: `Name <address>` entries, comma-separated. */
+  to: string;
+  /** The subject of record, empty where none — never the list's stand-in. */
+  subject: string;
+}
+
+/**
+ * WHICH DRAFTS THE PHONE EDITS: a plain `draft` whose text this mirror holds, addressed in To
+ * alone, with no markup. The composer has no Cc, Bcc or rich text, and a save or a send writes
+ * the row whole, so opening any other draft here would drop part of it without a word.
+ */
+export function draftEditOf(d: EngineDraft): WorldDraftEdit | null {
+  const markup = (d as { html?: unknown }).html;
+  if (d.status !== "draft" || !draftBodyKnown(d) || d.cc.length > 0 || d.bcc.length > 0) return null;
+  if (typeof markup === "string" && markup !== "") return null;
+  if (typeof d.mailboxId !== "string" || d.mailboxId === "") return null;
+  const typed = d.to.map((a) => {
+    const name = a.name?.trim() ?? "";
+    if (name === "" || name.includes('"')) return a.address;
+    return /[,;<>@]/.test(name) ? `"${name}" <${a.address}>` : `${name} <${a.address}>`;
+  });
+  return { mailboxId: d.mailboxId, to: typed.join(", "), subject: d.subject };
 }
 
 /**
@@ -1047,6 +1075,7 @@ export function liveDrafts(reader: EntityReader, v: WorldView): WorldDraft[] {
       repliesHere,
       inReplyToMessageId: repliesHere ? parent : null,
       failure: d.sendError ?? null,
+      edit: draftEditOf(d),
     };
   });
 }
@@ -2254,6 +2283,14 @@ export function failedSendCopy(r: MutationResult | null): FailedSendCopy {
         : "replyFailed";
 }
 
+/** The refused send's sentence as a refusal, each key spelled out so the refusal census reads it. */
+export function refusedSendSay(kind: FailedSendCopy | null | undefined): Refusal {
+  return kind === "replyNotSecured" ? refuse("replyNotSecured")
+    : kind === "replyLoginRefused" ? refuse("replyLoginRefused")
+      : kind === "replyUnreachable" ? refuse("replyUnreachable")
+        : refuse("replyFailed");
+}
+
 /**
  * THE SERVER HAS THIS SEND: a queued result whose code is the send route's own 202 (`send_queued`),
  * the reservation committed under its key. Every other queued result is the transport's and the
@@ -2537,6 +2574,8 @@ export interface DraftKeep {
   files: number;
   /** The row this composer is bound to ({@link SendResult.draftId}): the keep updates it in place. */
   draftId?: string | null;
+  /** A composer's own save as it goes: the row is written and nothing is said. */
+  quiet?: boolean;
 }
 
 /** `kept` — the account holds it or the outbox does; `refused` — nothing was kept, and said. */
@@ -4066,9 +4105,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     else if (outcome === "sent" || sayRefusals) {
       toast(
         outcome === "sent" ? (earlierWent ? earlierWentToast : sentToast)
-          : outcome === "queued" ? refuse(queuedCaptionKey(networkNow(), accepted))
+          : outcome === "queued"
+            ? refuse(accepted ? "replySendingLong" : networkNow() === "offline" ? "replyQueuedOffline" : "replyQueued")
             : outcome === "unverified" ? refuse("replyUnverified")
-              : refuse(failedSendCopy(settled)),
+              : refusedSendSay(failedSendCopy(settled)),
       );
     }
     return {
@@ -4336,6 +4376,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       })
       .then((res) => res, () => null);
     if (r === null || r.status === "rolled_back") return "refused";
+    if (k.quiet === true) return "kept";
     const without = k.files > 0;
     if (r.status === "queued") {
       toast(refuse(without ? "composeKeptQueuedWithoutFiles" : "composeKeptQueued"));

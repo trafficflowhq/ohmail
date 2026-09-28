@@ -57,7 +57,7 @@ import { usePrefs } from "./store";
 import {
   connectionSay, firstSyncSay,
   dispatchHeldRouting,
-  answersWaiting, flushQueued, NO_SETTLEMENT, reconnectFlushDue, type SendSettlement,
+  answersWaiting, flushQueued, NO_SETTLEMENT, reconnectFlushDue, refusedSendSay, type SendSettlement,
   liveActions,
   planHeldRouting,
   presentedOptions,
@@ -1322,7 +1322,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
               );
             }
             else if (o.status === "unverified") showToast(refuse("replyUnverified"));
-            else showToast(refuse(o.failure ?? "replyFailed"));
+            else showToast(refusedSendSay(o.failure));
           } else if (o.status === "rolled_back") {
             showToast(refuse("liveSaveFailed"));
           }

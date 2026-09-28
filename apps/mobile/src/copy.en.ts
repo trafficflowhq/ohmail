@@ -2118,11 +2118,13 @@ const TABLE = {
    */
   draftsOpenConversation: "Open the conversation",
   /**
-   * PHONE-ONLY (2/5): the stated degradation, `scheduledEditNote`'s twin and for its reason.
-   * This screen reads drafts and answers for held sends; it does not edit them.
+   * PHONE-ONLY (2/5): the stated degradation, said only on a draft this phone cannot take whole
+   * (`draftEditOf`): Cc, Bcc, formatting, or a send on record.
    */
   draftsEditNote:
-    "Drafts are read and recovered here. Edit and send them from ohmail on the web or the desktop.",
+    "This draft has Cc, Bcc, formatting or a send on record. Edit and send it from ohmail on the web or the desktop.",
+  /** The Drafts card's verb: the composer opens bound to this row. */
+  draftsEdit: "Edit",
   /** PHONE-ONLY (3/5): the detail screen's heading over the text itself. */
   draftsTextHeading: "Message",
   /**

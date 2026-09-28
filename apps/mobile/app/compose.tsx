@@ -6,7 +6,7 @@
  * a Modal over whatever was on screen, so leaving it is the same act everywhere: closing goes
  * back, and over a queued send the close withdraws it first (`ComposeSheet.closeComposer`).
  */
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { Copy } from "../src/copy";
 import { useWorld } from "../src/state/world";
 import { Empty, Screen } from "../src/ui/base";
@@ -32,6 +32,8 @@ export default function ComposeScreen() {
 
 function ComposeBody() {
   const w = useWorld();
+  /* `?draft=<id>`: the Drafts card's Edit — the sheet opens bound to that row, or not at all. */
+  const { draft: draftParam } = useLocalSearchParams<{ draft?: string }>();
   const leave = () => {
     if (router.canGoBack()) router.back();
     else router.replace("/");
@@ -43,6 +45,24 @@ function ComposeBody() {
       <Screen>
         <DetailBar title={Copy.composeNew} />
         <Empty title={Copy.composeNoMailbox} hint={Copy.composeNoMailboxHint} />
+      </Screen>
+    );
+  }
+  if (typeof draftParam === "string" && draftParam !== "") {
+    const row = w.drafts.find((d) => d.id === draftParam);
+    /* A row this phone cannot take whole is never opened as a fresh letter: that would be a second row. */
+    if (!row || row.edit === null) {
+      return (
+        <Screen>
+          <DetailBar title={Copy.draftsTitle} />
+          <Empty title={Copy.draftsTitle} hint={Copy.draftsEditNote} />
+        </Screen>
+      );
+    }
+    return (
+      <Screen>
+        <DetailBar title={Copy.draftsTitle} />
+        <ComposeSheet m={null} mode="new" draft={{ id: row.id, body: row.body, ...row.edit }} onClose={leave} />
       </Screen>
     );
   }

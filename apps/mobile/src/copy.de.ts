@@ -1393,7 +1393,8 @@ export const DE: Deck = {
     "Angefragt. Die Installation, die dieses Postfach organisiert, verwirft ihn bei ihrem nächsten Durchlauf.",
   draftsOpenConversation: "Unterhaltung öffnen",
   draftsEditNote:
-    "Entwürfe werden hier gelesen und zurückgeholt. Bearbeiten und senden kannst du sie in ohmail im Web oder auf dem Desktop.",
+    "Dieser Entwurf hat Cc, Bcc, Formatierung oder einen Sendeversuch. Bearbeiten und senden kannst du ihn in ohmail im Web oder auf dem Desktop.",
+  draftsEdit: "Bearbeiten",
   draftsTextHeading: "Nachricht",
   draftsTextEmpty: "Noch nichts geschrieben.",
 

@@ -234,6 +234,18 @@ export function DraftReader({
             </Txt>
           ) : null}
 
+          {/* EDIT — the composer bound to this row: what is typed is saved into it, and Send sends it. */}
+          {row.edit !== null ? (
+            <View style={{ paddingHorizontal: 18, paddingVertical: 8 }}>
+              <Button
+                label={Copy.draftsEdit}
+                variant="quiet"
+                disabled={busy}
+                onPress={() => router.push({ pathname: "/compose", params: { draft: row.id } })}
+              />
+            </View>
+          ) : null}
+
           {/* OPEN THE CONVERSATION — offered only where `liveDrafts` measured the parent present
               in THIS mirror. Never a promise about a message this device may not hold. */}
           {row.repliesHere && row.inReplyToMessageId !== null ? (
@@ -288,10 +300,12 @@ export function DraftReader({
           </View>
         </Panel>
 
-        {/* Where the message goes to be finished — `scheduledEditNote`'s twin, for its reason. */}
-        <Txt variant="hint" tone="ink3" style={{ paddingHorizontal: 18, paddingBottom: 8 }}>
-          {Copy.draftsEditNote}
-        </Txt>
+        {/* Where a draft this phone cannot take whole goes to be finished. */}
+        {row.edit === null ? (
+          <Txt variant="hint" tone="ink3" style={{ paddingHorizontal: 18, paddingBottom: 8 }}>
+            {Copy.draftsEditNote}
+          </Txt>
+        ) : null}
       </Scroller>
     </Screen>
   );

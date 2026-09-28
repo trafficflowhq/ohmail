@@ -32,6 +32,7 @@ import {
   nextWeekAt,
   nextWeekNine,
   keptRecipients,
+  type WorldDraftEdit,
   parseRecipients,
   readerZone,
   resurfaceClock,
@@ -981,10 +982,14 @@ function PhoneResolveStep({ step, domain, onChoice, onCommit, onCancel }: {
    removable, editable, serialized exactly as shown (SIG-MOB; `signature.ts` is the shared
    model, `SignatureBlock.tsx` the webapp reference). ─────────────────────────────────────── */
 
+/** How long after the last keystroke a composer bound to a draft writes it — the web's autosave. */
+export const DRAFT_AUTOSAVE_MS = 2000;
+
 export function ComposeSheet({
   m,
   mode,
   forwardConfirmed = false,
+  draft,
   onClose,
 }: {
   /** The message being answered — `null` for a mail with no parent (the `new` mode). */
@@ -992,6 +997,8 @@ export function ComposeSheet({
   mode: "reply" | "replyAll" | "forward" | "new";
   /** The forward ask was answered (`forward-ask`); the send carries the confirmation. */
   forwardConfirmed?: boolean;
+  /** A draft opened from Drafts: the composer is bound to its row from the first keystroke. */
+  draft?: { id: string; body: string } & WorldDraftEdit;
   onClose: () => void;
 }) {
   const t = useTheme();
@@ -1001,10 +1008,10 @@ export function ComposeSheet({
   const panelBounds = useSheetPanelBounds();
   /** The send-later day rows, named by `Intl` in the app's language. */
   const locale = useLocale();
-  const [body, setBody] = useState("");
-  const [to, setTo] = useState("");
+  const [body, setBody] = useState(draft?.body ?? "");
+  const [to, setTo] = useState(draft?.to ?? "");
   /** A parent-less mail's own subject. Reply and forward derive theirs; this one is typed. */
-  const [subject, setSubject] = useState("");
+  const [subject, setSubject] = useState(draft?.subject ?? "");
   /**
    * The composer's send phase. `queued` is TERMINAL for this composer: the text stands on
    * the engine's retry queue under its Idempotency-Key (the reconnect flush retries it, the
@@ -1075,7 +1082,9 @@ export function ComposeSheet({
    * sends that row and the keep on close updates it, so one letter is one draft however often
    * Send is pressed with the network gone. `null` until a refusal names one.
    */
-  const [draftId, setDraftId] = useState<string | null>(null);
+  const [draftId, setDraftId] = useState<string | null>(draft?.id ?? null);
+  /** What the bound row last held from this sheet — the seed until the first save. */
+  const saved = useRef<string | null>(draft ? JSON.stringify([draft.to, draft.subject, draft.body]) : null);
   /** The last press was refused, and which sentence it earned — said in the sheet, see `send-failed.ts`. */
   const [failNote, setFailNote] = useState<FailedSendCopy | null>(null);
   /* The ONE shared bound (`composeAttachCap`) of the sending mailbox's announced `SIZE` —
@@ -1084,7 +1093,7 @@ export function ComposeSheet({
   /* WHICH MAILBOX THIS LEAVES FROM — the parent's for a reply or forward (what `Engine.enrich`
      would derive anyway, made explicit), the engine's `sendingMailboxId` for a parent-less
      mail. `null` only where this phone has mirrored nothing, and the send refuses by name. */
-  const mailboxId = m?.mailboxId ?? w.mailboxes.sendingId;
+  const mailboxId = draft?.mailboxId ?? m?.mailboxId ?? w.mailboxes.sendingId;
   /* The sending address, only where the phone has read the mailbox list — `null` is "not
      asked yet", which states nothing rather than a guessed address. */
   const fromAddress = w.mailboxes.rows.find((r) => r.id === mailboxId)?.address ?? null;
@@ -1139,6 +1148,22 @@ export function ComposeSheet({
   const zone = readerZone();
   /* An edit is a new question: the note about the last close no longer describes what is here. */
   useEffect(() => { setKeepNote(null); }, [body, subject, to, attachments.length]);
+  /* A DRAFT OPENED HERE IS WRITTEN AS IT IS EDITED: two seconds after the last keystroke its row
+     holds what is on screen, quietly, so leaving the app mid-sentence loses nothing. Only a bound
+     sheet saves this way; a fresh one keeps on close. */
+  const onScreen = JSON.stringify([to, subject, body]);
+  useEffect(() => {
+    if (draft === undefined || draftId === null || phase !== "idle" || saved.current === onScreen) return;
+    const timer = setTimeout(() => {
+      saved.current = onScreen;
+      void w.actions.draftKeep({
+        mode: "new", messageId: null, mailboxId, to: keptRecipients(to), subject, body, files: 0, draftId, quiet: true,
+      });
+    }, DRAFT_AUTOSAVE_MS);
+    return () => clearTimeout(timer);
+    // `w`, `mailboxId` and the three fields are read at the timer; `onScreen` is their change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, draftId, phase, onScreen]);
 
   /**
    * THE LOCKED COMPOSER SETTLES ITSELF. A queued send is retried by the world layer's
@@ -1263,9 +1288,9 @@ export function ComposeSheet({
    */
   const closeComposer = () => {
     if (cancelAct({ phase, key: queuedKey, alreadySent }) === "close") {
-      const act = keepAct({
-        phase, worth: worthKeeping({ fresh, subject, body }), files: attachments.length, armed: keepNote !== null,
-      });
+      /* A bound draft keeps exactly what is on screen, emptied included; unchanged, it just closes. */
+      const worth = draft !== undefined && draftId !== null ? saved.current !== onScreen : worthKeeping({ fresh, subject, body });
+      const act = keepAct({ phase, worth, files: attachments.length, armed: keepNote !== null });
       if (act === "close") {
         onClose();
         return;
@@ -1277,9 +1302,11 @@ export function ComposeSheet({
       if (keeping.current) return;
       keeping.current = true;
       void (async () => {
+        /* A draft opened from Drafts is kept where it was, unannounced: its keep's Undo would
+           discard a row that existed before this sheet. */
         const kept = await w.actions.draftKeep({
           mode, messageId: m?.id ?? null, mailboxId, to: addressed ? keptRecipients(to) : [],
-          subject, body, files: attachments.length, draftId,
+          subject, body, files: attachments.length, draftId, ...(draft !== undefined ? { quiet: true } : {}),
         });
         keeping.current = false;
         if (kept === "kept") onClose();
