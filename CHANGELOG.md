@@ -165,6 +165,98 @@ was already set up. It now shows a new key, and the authenticator you have keeps
 code from the new one is confirmed. A replacement not confirmed within 15 minutes has to be started
 again.
 
+### Waiting changes and refused sends say where they stand
+<!-- changes: fix-026-outbox-row-state.md -->
+
+A draft you deleted while the account could not be reached now stays listed with the other changes
+that have not gone through, with Try again and Discard, instead of being mentioned once. A message
+sent before its first save that is then refused keeps a single draft. On the phone, a reply sent
+again with no connection replaces the waiting one rather than leaving a second draft. Discarding a
+message whose send is not confirmed says the draft stays in Drafts, and opening Compose on a message
+you left unfinished says so. Send + Done files the conversation even when the reply goes through on
+a later start.
+
+### The web works by keyboard, at zoom and in the dark theme
+<!-- changes: fix-026-web-keyboard-zoom.md -->
+
+- At phone width the closed navigation drawer is out of the Tab order, and its button says whether
+  it is open. Open, it takes focus and keeps Tab inside until it closes.
+- Sheets take focus, keep Tab inside and give focus back to what opened them: the Screening sheet,
+  the letter sheet on a phone and the command palette. Escape out of Search returns to where it was
+  opened. A message's menus close when Tab leaves them, and the shortcut list scrolls by keyboard.
+- Buttons are named by their words, with their shortcut stated beside them, and a message's subject
+  is a heading. A notice is read out each time it appears, and the Undo button names its key, z.
+- At 200 % zoom the page scrolls as one, so the message list gets the screen instead of a strip.
+- Under the Auto theme in a dark system the sync strip's link reads as it does in Dark, and quiet
+  text on raised surfaces in the dark theme is easier to read.
+- On touch screens, the More and message menus, a folder's controls, the Rules filters and the
+  Settings sections are 44 px to press.
+- Settings → Devices asks for the second factor once per action.
+
+### Download all saves what it lists, and a found message's files show at once
+<!-- changes: fix-026-files-everywhere.md -->
+
+- Download all on a message opened outside the Ohbox could let go of the list it was saving, save
+  nothing and say the files could not be fetched. It saves every file it lists.
+- A message opened while a long conversation's files are still loading lists its own files first.
+- On the phone, a message whose PDF the message itself displays lists that PDF.
+- On touch screens the Download button on a file is 44 px to press.
+
+### A computer switched off mid-import loses about the last second of it
+<!-- changes: fix-026-store-flush-clock.md -->
+
+While a first import runs, the app's copy of your mailbox commits without waiting for the disk and
+writes that record out on its own once a second, so a computer that loses power mid-import loses
+about the last second of the import, a few seconds when the copy is busy, and the next launch
+fetches it again from the mailbox. It used to depend on how the import happened to commit. One
+message's commit also holds the copy for less time while the search indexes catch up, so a list or
+a search opened during a large import waits less, and the copy's change log is compacted once an
+hour, so it stays the size of the mailbox rather than of its history.
+
+### A message too large to download is listed, and says so
+<!-- changes: fix-026-too-large-shown.md -->
+
+A message larger than 64 MB, which ohmail does not download, is now in the list with its sender,
+subject and date, and can be found, moved, flagged and deleted like any other. Opening it says it is
+too large to download and to open it in your mail provider. Messages an earlier version skipped for
+their size appear after the update.
+
+### A mail server on your own network connects without TLS, with your consent for each half
+<!-- changes: fix-026-selfhost-says.md -->
+
+A mail server on your own network that offers no encryption can now be connected: the mailbox step
+in setup and Settings → Mailboxes each show "Incoming mail (IMAP) without encryption" and "Outgoing
+mail (SMTP) without encryption" for the half that refused, and each is consented on its own. A
+server that is not on your own network is still refused, and the refusal says why; this also applies
+on ohmail Cloud, where no such server is offered a plaintext connection any more. A mailbox already
+connected this way keeps working. On a self-hosted server a refusal names what its operator can
+change: TF_PROBE_ALLOW_PRIVATE=1 for a mail server on the local network, NODE_EXTRA_CA_CERTS for a
+certificate from a private authority, and a port written after the server name, as
+mail.example.com:1143. The sync strip's "Settings → Mailboxes" link opens Mailboxes. Setup no longer
+says it creates an Ohbox folder: the Ohbox is the Inbox. A self-hosted server with no AI model no
+longer offers AI in setup, and Suggest says no model is connected. Test connection asks for the
+second factor in place when the confirmation window has closed. OHMAIL_MAIL_UI_PORT moves the
+bundled mail sink's port for a second stack on one box.
+
+### A reply draft opens where you can finish it
+<!-- changes: fix-026-reply-draft-editor.md -->
+
+Opening a reply draft from Drafts shows its conversation with the draft in the reply editor, ready
+to type, and the window no longer shifts up. A reply refused for good keeps one draft instead of one
+per attempt. A letter opened in History, Answer Later, Trash, a folder, a tag, News or Receipts is
+in the address, so a reload reopens it and Back closes it. On a phone the list of rules scrolls with
+the page. A decision taken in the sender sheet about someone in the Screener can be undone, like one
+taken from the list.
+
+### German screens say it in German
+<!-- changes: fix-026-german.md -->
+
+With the language set to Deutsch, the sentences ohmail writes itself (a connection that could not
+be made, a passkey prompt that was closed) are German, as are the Screener's Spam-Ordner, the Stil
+and Version labels, the default name of a desktop that paired without one, the phone's own name
+and its Einordnen action. Every screen now addresses the reader as du. The keyboard hints under
+the lists read whole in German, and the phone's Screener doorbell no longer says "Screener" twice.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
