@@ -2818,7 +2818,7 @@ export class OhmailEngine {
     // `hydrate()` resolves, and latching there loses the previous session's verbs for good.
     this.restoreOutboxIfLoaded();
     await this.replayOutbox();
-    await this.drain();
+    await this.drainPublishing();
   }
 
   /** Replay every queued verb, oldest first, under its original Idempotency-Key. */
@@ -3122,7 +3122,24 @@ export class OhmailEngine {
     return moved;
   }
 
-  private async drain(): Promise<void> {
+  /**
+   * ONE NOTIFY PER DRAIN STEP. A poll's page, what its settle retires and the freshness stamp
+   * reach a subscriber as one notify, so no snapshot holds rows without their stamp; a backlog
+   * still publishes once per {@link BACKLOG_PUBLISH_PAGES}. Rows applied and not yet published
+   * go out on a throw too: a drain that stops early is never silent.
+   */
+  private async drainPublishing(): Promise<void> {
+    const owed = { rows: false };
+    try {
+      await this.drain(owed);
+    } catch (err) {
+      if (owed.rows) this.notify();
+      throw err;
+    }
+  }
+
+  private async drain(owed: { rows: boolean }): Promise<void> {
+    const publish = (): void => { owed.rows = false; this.notify(); };
     /**
      * This drain's epoch — the other half of {@link awaitingEcho}'s happens-before. Stamped
      * BEFORE the first page is requested, so "registered epoch < this epoch" means the POST
@@ -3251,7 +3268,7 @@ export class OhmailEngine {
           await this.resetReceived();
           // The wipe took the rules with it — the re-bootstrap owes the rules-first pass again.
           rulesFirstDone = false;
-          this.notify();
+          publish();
           // Back to the top: with a snapshot route the cursor of "0" selects the snapshot and the
           // delta drain then resumes from `asOfSeq`; without one it selects `since=0`, which is
           // the pre-snapshot path and still converges. The fallback is not dead code — it is what
@@ -3271,6 +3288,7 @@ export class OhmailEngine {
       // Before the rows, which tombstone the mailbox the receipt names.
       await this.noteRemovalOwesRefill(flat);
       this.noteApplied(flat);
+      owed.rows = true;
       await this.store.applyResponse(resp);
       // AFTER THE ROWS, NEVER BEFORE. A kill between the two leaves the written count BEHIND the
       // mirror, which the consumer's floor absorbs; the other order leaves it AHEAD, and the rows
@@ -3285,10 +3303,9 @@ export class OhmailEngine {
         await this.pruneToPolicy(highBefore);
         // AND ONE PUBLISH PER {@link BACKLOG_PUBLISH_PAGES} OF THEM — see the constant. The settle
         // below always publishes, so the last rows never wait on this.
-        if (pagesThisDrain % BACKLOG_PUBLISH_PAGES === 0) this.notify();
+        if (pagesThisDrain % BACKLOG_PUBLISH_PAGES === 0) publish();
         continue;
       }
-      this.notify();
       // A drain that took more than one page was a CATCH-UP, not a poll — see
       // {@link OhmailEngine.prefetchRecentBodies}.
       this.caughtUpInOnePage = pagesThisDrain <= 1;
@@ -3297,15 +3314,15 @@ export class OhmailEngine {
       // at its most complete — the last page's own rows are judged here and nowhere earlier. A
       // `full` policy returns immediately.
       // A removal's short window is refilled BEFORE the settle prune trims it back to the policy.
-      if (await this.refillWindow()) this.notify();
-      if (await this.pruneToPolicy()) this.notify();
+      await this.refillWindow();
+      await this.pruneToPolicy();
       // A drain is the one thing that can deliver the REAL Sent row an optimistic copy is standing
       // in for — retire any copy the mirror now holds under the same header (or that has aged out),
       // so the conversation shows the ingested row alone rather than a duplicate.
       const before = this.optimisticSent.size;
       this.reconcileOptimisticSent();
-      if (this.optimisticSent.size !== before) { this.overlayRev++; this.notify(); }
-      if (this.repaintRestored()) { this.overlayRev++; this.notify(); }
+      if (this.optimisticSent.size !== before) this.overlayRev++;
+      if (this.repaintRestored()) this.overlayRev++;
       // THE DRAIN'S LAST WORD: this mirror was fully caught up at this moment, on this device's
       // own clock. Written at COMPLETION and nowhere earlier — a drain that fails or aborts
       // mid-backlog leaves the old stamp standing, so the next drain still reads as a stale
@@ -3321,17 +3338,15 @@ export class OhmailEngine {
           && this.store.getMeta<number>(STORE_POLICY_GENERATION_META) !== STORE_POLICY_GENERATION) {
         await this.store.setMeta(STORE_POLICY_GENERATION_META, STORE_POLICY_GENERATION);
       }
-      // ANNOUNCE THE SETTLE. The stamp is what {@link OhmailEngine.freshness} reads, and the
-      // last data notify above fired BEFORE the stamp landed — so without this, a surface
-      // rendering "as of 14:32 · catching up" off a freshness subscription keeps the label up
-      // until something ELSE happens to notify (the next drain, seconds to minutes away). The
-      // label must clear at the settle, not at the next coincidence; `freshness-label.test.ts`
-      // watches this line red.
-      this.notify();
       // THE OVERLAY SWEEP, only on this successful exit: every overlay whose POST returned
       // before this drain began now has its echo IN the mirror, so retiring it changes what is
       // rendered from "the overlay's claim" to "the server's identical statement".
       this.sweepAwaitingEcho(epoch);
+      // THE SETTLE'S ONE PUBLISH, after the stamp {@link OhmailEngine.freshness} reads: the last
+      // page, the prune, the retired copies and overlays and the stamp are one snapshot, never
+      // the new rows under the old "as of". `one-notify-per-poll.test.ts` and
+      // `freshness-label.test.ts` watch this line.
+      publish();
       // The held-release offer re-asks when this drain moved the settings stamp or brought held mail.
       this.ringHeldReleaseBell();
       this.ringUnscreenedBell();
@@ -3362,10 +3377,8 @@ export class OhmailEngine {
       swept = had || swept;
     }
     swept = this.sweepShadows(epoch) || swept;
-    if (swept) {
-      this.overlayRev++;
-      this.notify();
-    }
+    // No notify of its own: the drain's settle publishes right after, in the same snapshot.
+    if (swept) this.overlayRev++;
   }
 
   /**
