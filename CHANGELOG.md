@@ -272,6 +272,32 @@ send, and adding a mailbox on port 143 fails and closes the app; implicit TLS on
 A valid certificate for a different name than the server's is accepted on those builds. The next
 Android build carries both fixes. iOS and the desktop are not affected.
 
+### Answering the message you have open moves it to Earlier
+<!-- changes: fix-026-an-answer-files-the-open-row.md -->
+
+A reply, reply all or forward of the message you have open in the Ohbox now moves it to Earlier with your
+answer as soon as the answer is sent; it no longer stays in New beside its own conversation until you move
+on.
+
+### Nothing tells you that you stopped organizing a mailbox the closure paused
+<!-- changes: open-026-paid-reopens-b.md -->
+
+While an account is closed, a mailbox ohmail paused reads "Paused while the account was closed —
+organizing resumes on its own" on the web, the desktop and the phone. After you pay, the sync line
+says it is catching up without a date from before the closure, a stale answer in that first minute
+is not reported as a failed sync, and the catch-up note no longer lists mailboxes to start again.
+The phone shows the catch-up note again.
+
+### After you subscribe again, your mailboxes are organized again straight away
+<!-- changes: open-026-paid-reopens.md -->
+
+After you pay for a closed account, it opens as soon as you are back from the payment page, and
+ohmail organizes your mailboxes again without a press on each one. A mailbox you had stopped
+organizing yourself stays stopped, and one that another ohmail install took over while the account
+was closed stays with it. The web app no longer says the subscription has ended right after you
+pay, notifications turned back on after the payment are kept, and the catch-up note says since when
+ohmail is catching up, without a count.
+
 ## [0.25.3] — 2026-09-27
 
 ### The desktop app recovers when its window stops
