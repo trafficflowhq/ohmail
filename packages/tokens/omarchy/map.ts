@@ -40,24 +40,34 @@ export interface OmarchyThemeRaw extends OmarchySystemRaw {
  *  sits near its background can run the walk to the end and still land under the floor —
  *  every step "helped" and none sufficed. All 22 stock themes clear these; the palette that
  *  fails them is user-authored and unreadable-by-contrast, and the honest answer for it is
- *  the same as for one that does not parse: keep the last good theme. */
+ *  the same as for one that does not parse: keep the last good theme.
+ *  A tag's ink is asked on the chip's own ground — its wash over the tile and over the canvas. */
 export function clearsFloors(map: OhmarchyMap, t: Record<string, string>): boolean {
   const panel = t["--panel"];
-  const floors: [string, string, number][] = [
-    ["--ink", panel, 4.5],
-    ["--ink2", panel, 4.5],
-    ["--ink3", panel, 4.5],
-    ["--accent", panel, 3],
-    ["--accent-ink", panel, 4.5],
-    ["--on-accent", t["--accent"], 4.5],
-    ["--danger", panel, 4.5],
-    ...map.TAG_HUES.map(([name]): [string, string, number] => [`--tg-${name}-ink`, panel, 4.5]),
-  ];
   try {
+    const floors: [string, string, number][] = [
+      ["--ink", panel, 4.5],
+      ["--ink2", panel, 4.5],
+      ["--ink3", panel, 4.5],
+      ["--accent", panel, 3],
+      ["--accent-ink", panel, 4.5],
+      ["--on-accent", t["--accent"], 4.5],
+      ["--danger", panel, 4.5],
+      ...map.TAG_HUES.flatMap(([name]): [string, string, number][] =>
+        [panel, t["--canvas"]].map((g) => [`--tg-${name}-ink`, washOver(map, t[`--tg-${name}-bg`], g), 4.5])),
+    ];
     return floors.every(([slot, against, floor]) => map.contrast(t[slot], against) >= floor);
   } catch {
     return false; // a slot the contrast math cannot read is a floor not cleared
   }
+}
+
+/** A chip's `rgba(r,g,b,a)` wash composited over one ground, as the law's own `mix` paints it. */
+function washOver(map: OhmarchyMap, wash: string, ground: string): string {
+  const m = String(wash).match(/^rgba\((\d+),(\d+),(\d+),([\d.]+)\)$/);
+  if (!m) throw new Error("not a chip wash: " + wash);
+  const rgb = "#" + [m[1], m[2], m[3]].map((v) => Number(v).toString(16).padStart(2, "0")).join("");
+  return map.mix(ground, rgb, Number(m[4]));
 }
 
 /**

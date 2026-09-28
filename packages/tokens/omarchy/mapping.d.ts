@@ -28,9 +28,10 @@ export interface OhmarchyMap {
   mix(a: string, b: string, t: number): string;
   alpha(c: string, a: number): string;
   hue(c: string): number | null;
+  /** `against` is one ground, or a list of grounds that must all clear. */
   ensure(
     c: string,
-    against: string,
+    against: string | string[],
     floor: number,
     target: string,
   ): { value: string; walked: number };
