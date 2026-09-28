@@ -399,7 +399,11 @@ export function useLatestWins(alive: { current: boolean }): () => LatestWins {
   }, [alive]);
 }
 
-export function MailboxSection() {
+/**
+ * `subscriptionPane`: does Settings list the Subscription pane beside this one? The connect
+ * refusal's pointer names that pane, so it is said only where the pane is (absent = not known).
+ */
+export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?: boolean }) {
   const t = useTranslations("mailboxes");
   /* The step-up prompt's namespace, for the one sentence a gated write says when signing in is the remedy. */
   const td = useTranslations("devices");
@@ -2509,12 +2513,12 @@ export function MailboxSection() {
           {/* THE REFUSAL, AT SCREEN ONE. See `connectBlock` for why each state gets its
               own sentence and why an unknown never produces one. The remedy for all three of
               these states is the Subscription entry in the settings nav beside this pane, which
-              links to the page the service operator serves — so `blocked_where` still names
-              something on screen rather than a destination this app would have to describe. */}
+              links to the page the service operator serves — so `blocked_where` names
+              something on screen, and is withheld while that entry is not there. */}
           {block ? (
             <>
               <p className="acct-lead">{t(`blocked_${block}`)}</p>
-              {block === "email_unverified" ? null : (
+              {block === "email_unverified" || !subscriptionPane ? null : (
                 <p className="acct-fine">{t("blocked_where")}</p>
               )}
             </>

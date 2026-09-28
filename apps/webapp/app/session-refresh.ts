@@ -151,6 +151,12 @@ export async function withSessionCookieLock<T>(fn: () => Promise<T>): Promise<T>
       const after = csrfToken();
       if (after !== null && after !== before) {
         noteSessionMinted();
+        // A minted session disproves a held death. Signed out, `/login` latches one (its session
+        // read refreshes into a coded 401), and the sign-in is a client-side navigation: the new
+        // shell's first reads (the access read behind Settings → Subscription) were refused before
+        // the wire, and nothing asked again. After `noteSessionMinted`, so the renewal the revival
+        // arms counts from this mint.
+        markSessionAlive();
         // A refresh still in flight here carries the PREVIOUS jar; its answer must not land after
         // this mint. The server has revoked that session in the mint's transaction.
         inFlightRequest?.abort();

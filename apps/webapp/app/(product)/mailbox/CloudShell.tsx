@@ -298,7 +298,7 @@ export function CloudShell({ demo }: { demo: boolean }) {
         sendSurfaceMaxTotalBytes={COMPOSE_ATTACH_STAGED_SURFACE_BYTES}
         accountSection={<AccountSection />}
         securitySection={<SecuritySection />}
-        mailboxSection={<><MailboxSection /><MailboxSelfCheck check={mailboxApi.selfCheck} /></>}
+        mailboxSection={<><MailboxSection subscriptionPane={manageOffered} /><MailboxSelfCheck check={mailboxApi.selfCheck} /></>}
         /* UNCONDITIONAL, unlike the row below it: every host this shell runs on has an account
            and mounts `GET/PATCH /account/ai`, including a self-hosted server whose operator pays
            the model bill themselves. `AppShell` withholds it on the demo. */
