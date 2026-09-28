@@ -1309,6 +1309,10 @@ async function applyAccountUpsert(
         hits: stats.hits ?? 0,
         lastHitAt: asDate(stats.lastHitAt),
         demotions: stats.demotions ?? 0,
+        // The backlog pass stamps the sender sheet reads, in the conflict set for the term's
+        // un-set reason: an account that asks for the pass again clears `doneAt`, here too.
+        retroRequestedAt: asDate(r.retro?.requestedAt),
+        retroDoneAt: asDate(r.retro?.doneAt),
         updatedAt: asDate(r.updatedAt) ?? now,
       };
       /* THE CREATION INSTANT TRAVELS WITH THE RULE, in the insert AND the conflict set. Without
