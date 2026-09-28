@@ -15,6 +15,11 @@ export const STAFF_ASSERTION_ISSUER = "ohmail-api";
 export const STAFF_ASSERTION_READ_TTL_SECONDS = 120;
 export const STAFF_ASSERTION_WRITE_TTL_SECONDS = 60;
 export const STAFF_ASSERTION_MAX_REQUESTS = 8;
+/**
+ * How far in the verifier's future an `iat` may sit and still be admitted: the minting API and
+ * the verifying program run on separate clocks. `exp` gets no such allowance.
+ */
+export const STAFF_ASSERTION_CLOCK_SKEW_SECONDS = 30;
 
 export type StaffAssertionTier = 0 | 1 | 2;
 
@@ -93,7 +98,7 @@ export interface StaffAssertionExpectation {
 
 /**
  * The reference verifier, in the order a verifier must ask: shape, key by `kid`, signature,
- * then the claims (`v`, `iss`, `aud`, `iat <= now < exp`, the TTL ceiling, `req`). Every
+ * then the claims (`v`, `iss`, `aud`, the TTL ceiling, `iat - 30 s <= now < exp`, `req`). Every
  * refusal is the one code; `why` is for logs and tests, never for the caller.
  */
 export function verifyStaffAssertion(
@@ -121,7 +126,8 @@ export function verifyStaffAssertion(
   if (!Number.isSafeInteger(c.iat) || !Number.isSafeInteger(c.exp)) return refuse("shape");
   const ttl = expect.write ? STAFF_ASSERTION_WRITE_TTL_SECONDS : STAFF_ASSERTION_READ_TTL_SECONDS;
   if (c.exp - c.iat > ttl) return refuse("ttl");
-  if (expect.now < c.iat || expect.now >= c.exp) return refuse("expired");
+  if (expect.now < c.iat - STAFF_ASSERTION_CLOCK_SKEW_SECONDS) return refuse("not_yet_valid");
+  if (expect.now >= c.exp) return refuse("expired");
   if (c.req !== requestDigest(expect.method, expect.pathWithQuery, expect.bodySha256)) {
     return refuse("request");
   }
