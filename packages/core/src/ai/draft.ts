@@ -106,7 +106,10 @@ export function makeSonnetDrafter(client: AnthropicLike, opts: SonnetDrafterOpts
   return {
     async draft(input: DraftInput, call?: DraftCallOptions): Promise<DraftResult> {
       const params = buildDraftParams(input, opts);
-      const resp = await client.messages.create(params, call?.signal ? { signal: call.signal } : undefined);
+      const own = call && (call.signal || call.onUsage)
+        ? { ...(call.signal ? { signal: call.signal } : {}), ...(call.onUsage ? { onUsage: call.onUsage } : {}) }
+        : undefined;
+      const resp = await client.messages.create(params, own);
       const text = extractJsonText(resp.content);
       let parsed: unknown;
       try {

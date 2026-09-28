@@ -1,7 +1,7 @@
 import type { SpendPort } from "@trafficflow/db";
 import { ClassifierFaultError } from "./classifier-fault.js";
 import { SensitivePayloadRefusal } from "@trafficflow/core";
-import type { ClassifierPort, ClassifierInput, ClassifierResult, Logger } from "@trafficflow/core";
+import type { AiCallOptions, ClassifierPort, ClassifierInput, ClassifierResult, Logger } from "@trafficflow/core";
 
 /**
  * THE CLASSIFIER CIRCUIT BREAKER — what stops a model-provider incident from becoming "ohmail stopped
@@ -188,11 +188,13 @@ export function makeClassifierCircuit(
    */
   async function guard(
     mailboxId: string | undefined,
-    ask: (input: ClassifierInput) => Promise<ClassifierResult>, input: ClassifierInput,
+    ask: (input: ClassifierInput, call?: AiCallOptions) => Promise<ClassifierResult>, input: ClassifierInput,
+    call?: AiCallOptions,
   ): Promise<ClassifierResult> {
     let result: ClassifierResult;
     try {
-      result = await ask(input);
+      // The call's usage hook rides through unchanged; the breaker counts, it does not attribute.
+      result = await (call ? ask(input, call) : ask(input));
     } catch (err) {
       // A REFUSAL AT THE SINK IS NOT A MODEL FAULT, AND COUNTING IT AS ONE WAS THE BUG.
       // `SensitivePayloadRefusal` says on the class the breaker must never count it as an outage; without
@@ -250,9 +252,12 @@ export function makeClassifierCircuit(
    */
   function wrapperFor(mailboxId: string | undefined): ClassifierPort {
     return {
-      classify: (input) => guard(mailboxId, inner.classify.bind(inner), input),
+      classify: (input, call) => guard(mailboxId, inner.classify.bind(inner), input, call),
       ...(inner.screen
-        ? { screen: (input: ClassifierInput) => guard(mailboxId, inner.screen!.bind(inner), input) }
+        ? {
+          screen: (input: ClassifierInput, call?: AiCallOptions) =>
+            guard(mailboxId, inner.screen!.bind(inner), input, call),
+        }
         : {}),
     };
   }

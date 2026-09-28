@@ -1,5 +1,6 @@
 import { DESTINATIONS, isDecidedDestination, type Destination } from "./types.js";
 import type { ClassifierInput, ClassifierPort, ClassifierResult } from "./classifier-port.js";
+import type { AiCallOptions } from "./ai-call-report.js";
 import { redactForModel, screenOutboundText, type OutboundScreen } from "./sensitive.js";
 
 /**
@@ -290,11 +291,11 @@ export interface ScreeningAsk {
  * and `subject` is stored raw. The caller decides whether it may spend BEFORE calling this.
  */
 export async function askScreeningQuestion(
-  classifier: ClassifierPort, ask: ScreeningAsk,
+  classifier: ClassifierPort, ask: ScreeningAsk, call?: AiCallOptions,
 ): Promise<ClassifierResult> {
   const safe = redactForModel(ask.subject, ask.snippet);
   const put = classifier.screen?.bind(classifier) ?? classifier.classify.bind(classifier);
-  return put({
+  const input = {
     from: { name: null, address: ask.fromAddress },
     subject: safe.subject,
     snippet: safe.snippet,
@@ -303,7 +304,8 @@ export async function askScreeningQuestion(
     outbound: "prescreened" as const,
     ...(ask.ohboxBar ? { ohboxBar: ask.ohboxBar } : {}),
     ...(ask.senderFacts ? { senderFacts: ask.senderFacts } : {}),
-  });
+  };
+  return call ? put(input, call) : put(input);
 }
 
 export function classifyUserPayload(input: ClassifierInput): ClassifyUserPayload {

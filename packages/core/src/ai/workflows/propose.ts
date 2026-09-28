@@ -1,4 +1,5 @@
 import type { AnthropicLike } from "../classify.js";
+import type { AiCallOptions } from "../../ai-call-report.js";
 import {
   ALLOWED_TOOLS, type ToolName, type WorkflowStep, type WorkflowTrigger,
 } from "../../workflow-shapes.js";
@@ -41,7 +42,8 @@ export interface WorkflowProposal {
 }
 
 export interface WorkflowPort {                          // injected into the proposal cron / service
-  propose(patterns: WorkflowPattern[]): Promise<WorkflowProposal[]>;
+  /** `call` is this one call's usage hook ({@link AiCallOptions}); a port may ignore it. */
+  propose(patterns: WorkflowPattern[], call?: AiCallOptions): Promise<WorkflowProposal[]>;
 }
 
 export interface OpusProposerOpts {
@@ -242,10 +244,10 @@ function coerceStep(raw: unknown): WorkflowStep {
  */
 export function makeOpusProposer(client: AnthropicLike, opts: OpusProposerOpts = {}): WorkflowPort {
   return {
-    async propose(patterns: WorkflowPattern[]): Promise<WorkflowProposal[]> {
+    async propose(patterns: WorkflowPattern[], call?: AiCallOptions): Promise<WorkflowProposal[]> {
       if (patterns.length === 0) return [];
       const params = buildProposeParams(patterns, opts);
-      const resp = await client.messages.create(params);
+      const resp = await (call ? client.messages.create(params, call) : client.messages.create(params));
       let parsed: unknown;
       try {
         parsed = JSON.parse(extractJsonText(resp.content));

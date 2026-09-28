@@ -1,3 +1,5 @@
+import type { AiCallOptions } from "./ai-call-report.js";
+
 /**
  * The drafting seam — the port and its shapes, no implementation behind it. A drafter is
  * optional: a deployment injecting none simply offers no drafts, so code that merely NAMES the
@@ -42,7 +44,7 @@ export interface DraftResult {
  * left, so the call stops before the kill and the charge behind it can be returned. Optional — a
  * drafter that ignores it is still cut off by its caller, it only keeps its socket open longer.
  */
-export interface DraftCallOptions {
+export interface DraftCallOptions extends AiCallOptions {
   signal?: AbortSignal;
 }
 

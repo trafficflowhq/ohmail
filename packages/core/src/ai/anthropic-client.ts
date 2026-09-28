@@ -1,6 +1,9 @@
 import { assertPublicHttpUrlShape } from "../net/ssrf-guard.js";
 import type { AnthropicLike } from "./classify.js";
 import type { Logger } from "../log.js";
+import type { AiCallOptions, AnthropicCallReport } from "../ai-call-report.js";
+
+export type { AiCallOptions, AnthropicCallReport } from "../ai-call-report.js";
 
 /**
  * The live model client — a `fetch` shim over `POST /v1/messages` satisfying {@link
@@ -34,46 +37,6 @@ const DEFAULT_MAX_RETRIES = 2;
 const DEFAULT_BACKOFF_MS = 500;
 /** Never honour an absurd `retry-after`; a 20-minute sleep inside a sync cycle is an outage. */
 const MAX_RETRY_AFTER_MS = 20_000;
-
-/**
- * What one metered model call cost, in the vocabulary a margin analysis needs. Handed to
- * {@link AnthropicClientOptions.onUsage} after every call, success or failure.
- *
- * This exists because the plan card sells "20 000 AI actions for $29/mo", and until the token
- * counts behind one action are on record that number is a guess. Every field is either measured
- * or explicitly `null` — nothing here is inferred.
- */
-export interface AnthropicCallReport {
-  /** The model actually billed (the response's `model`, falling back to the request's). */
-  model: string;
-  /** `false` ⇒ the call ended in a throw; token fields are `null`. */
-  ok: boolean;
-  /** HTTP status of the last attempt, or `null` if no response was ever received. */
-  status: number | null;
-  /** Wall time across every attempt, including backoff. What a user waits. */
-  latencyMs: number;
-  /** 1 ⇒ no retry happened. */
-  attempts: number;
-  /** Anthropic's `request-id` header — the only handle their support can act on. */
-  requestId: string | null;
-  inputTokens: number | null;
-  outputTokens: number | null;
-  cacheReadTokens: number | null;
-  cacheWriteTokens: number | null;
-  /**
-   * Output tokens spent on thinking. Present on Sonnet 5 / Opus 5, which run ADAPTIVE THINKING
-   * BY DEFAULT — and `max_tokens` caps thinking plus text together, so this is the number that
-   * says whether a `max_tokens` is generous or about to truncate the answer.
-   */
-  thinkingTokens: number | null;
-  /**
-   * Estimated cost in USD micro-dollars (1e-6 USD), or `null` for a model this build has no
-   * price for. An ESTIMATE — the invoice is authoritative — but it is the only per-action number
-   * available at the moment the action happens, which is what makes a tier's margin measurable
-   * rather than reconstructible a month later.
-   */
-  costMicroUsd: number | null;
-}
 
 /**
  * Published list prices, USD per million tokens, as of 2026-09-28.
@@ -288,9 +251,11 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
     log?.info("ai_call", { ...r });
   });
 
-  async function emit(r: AnthropicCallReport): Promise<void> {
-    // AWAITED, and the try/catch covers both a synchronous throw and a rejected promise. See
+  async function emit(r: AnthropicCallReport, own?: AiCallOptions["onUsage"]): Promise<void> {
+    // The call's own hook FIRST, on the same object (see {@link AiCallOptions}). Then the process
+    // reporter, AWAITED; the try/catch covers a synchronous throw and a rejected promise. See
     // {@link AnthropicClientOptions.onUsage} for why the await is here at all.
+    try { own?.(r); } catch { /* a hook that fails is not allowed to become the outcome */ }
     try { await report(r); } catch { /* a reporter that fails is not allowed to become the outcome */ }
   }
 
@@ -301,7 +266,7 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
   return {
     messages: {
       async create(
-        params: unknown, call?: { signal?: AbortSignal },
+        params: unknown, call?: { signal?: AbortSignal } & AiCallOptions,
       ): Promise<{ content: unknown; usage?: unknown }> {
         const startedAt = now();
         // THE CALLER'S DEADLINE BINDS EVERY ATTEMPT AND EVERY WAIT BETWEEN THEM. A per-attempt
@@ -362,7 +327,7 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
                 model, ok: true, status: response.status, latencyMs: now() - startedAt,
                 attempts: attempt, requestId: lastRequestId, ...usage,
                 costMicroUsd: estimateCostMicroUsd(model, usage),
-              });
+              }, call?.onUsage);
               return { content: parsed.content, usage: parsed.usage };
             }
 
@@ -401,7 +366,7 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
           attempts: attempt, requestId: lastRequestId,
           inputTokens: null, outputTokens: null, cacheReadTokens: null,
           cacheWriteTokens: null, thinkingTokens: null, costMicroUsd: null,
-        });
+        }, call?.onUsage);
         throw lastError;
       },
     },

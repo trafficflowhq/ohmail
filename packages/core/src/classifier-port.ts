@@ -1,4 +1,5 @@
 import type { Destination, EmailAddress } from "./types.js";
+import type { AiCallOptions } from "./ai-call-report.js";
 
 /**
  * The classifier seam — the port only, no implementation behind it. The port is optional on
@@ -53,7 +54,8 @@ export interface ClassifierResult {
 }
 
 export interface ClassifierPort {                        // added to PipelineDeps (optional)
-  classify(input: ClassifierInput): Promise<ClassifierResult>;
+  /** `call` is this one call's usage hook ({@link AiCallOptions}); a port may ignore it. */
+  classify(input: ClassifierInput, call?: AiCallOptions): Promise<ClassifierResult>;
   /**
    * The screening question — "what should happen to this first-contact sender". A separate
    * method, not a flag on {@link classify}: a different question over a different answer set, and
@@ -64,5 +66,5 @@ export interface ClassifierPort {                        // added to PipelineDep
    * first-contact sender is `ohmail/Screener`, "hold — the person decides". Worse advice, not
    * unsafe advice.
    */
-  screen?(input: ClassifierInput): Promise<ClassifierResult>;
+  screen?(input: ClassifierInput, call?: AiCallOptions): Promise<ClassifierResult>;
 }

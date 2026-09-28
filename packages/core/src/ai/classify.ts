@@ -1,4 +1,5 @@
 import type { ClassifierInput, ClassifierResult, ClassifierPort } from "../classifier-port.js";
+import type { AiCallOptions } from "../ai-call-report.js";
 import {
   CLASSIFY_RESULT_SCHEMA, SCREENING_PREFIX, SCREENING_RESULT_SCHEMA, TAXONOMY_PREFIX,
   classifyUserPayload, coerceClassifierResult, coerceScreeningResult,
@@ -36,8 +37,11 @@ export type { ClassifyUserPayload } from "../classify-prompt.js";
  * satisfies this shape.
  */
 export interface AnthropicLike {
-  /** `opts.signal` ends the call, retries and the wait before one included (see `makeAnthropicClient`). */
-  messages: { create(params: unknown, opts?: { signal?: AbortSignal }): Promise<{ content: unknown; usage?: unknown }> };
+  /** `opts.signal` ends the call, retries and the wait before one included (see `makeAnthropicClient`);
+   *  `opts.onUsage` is that one call's usage hook ({@link AiCallOptions}). */
+  messages: {
+    create(params: unknown, opts?: { signal?: AbortSignal } & AiCallOptions): Promise<{ content: unknown; usage?: unknown }>;
+  };
 }
 
 export interface HaikuClassifierOpts {
@@ -138,8 +142,10 @@ export function buildScreeningParams(input: ClassifierInput, opts: HaikuClassifi
 }
 
 /** One structured-output round trip. Shared by both questions; only the params differ. */
-async function ask(params: Record<string, unknown>, opts: HaikuClassifierOpts): Promise<unknown> {
-  const resp = await opts.client.messages.create(params);
+async function ask(
+  params: Record<string, unknown>, opts: HaikuClassifierOpts, call?: AiCallOptions,
+): Promise<unknown> {
+  const resp = await (call ? opts.client.messages.create(params, call) : opts.client.messages.create(params));
   const text = extractJsonText(resp.content);
   try {
     return JSON.parse(text);
@@ -150,11 +156,11 @@ async function ask(params: Record<string, unknown>, opts: HaikuClassifierOpts): 
 
 export function makeHaikuClassifier(opts: HaikuClassifierOpts): ClassifierPort {
   return {
-    async classify(input: ClassifierInput): Promise<ClassifierResult> {
-      return coerceClassifierResult(await ask(buildClassifyParams(input, opts), opts));
+    async classify(input: ClassifierInput, call?: AiCallOptions): Promise<ClassifierResult> {
+      return coerceClassifierResult(await ask(buildClassifyParams(input, opts), opts, call));
     },
-    async screen(input: ClassifierInput): Promise<ClassifierResult> {
-      return coerceScreeningResult(await ask(buildScreeningParams(input, opts), opts));
+    async screen(input: ClassifierInput, call?: AiCallOptions): Promise<ClassifierResult> {
+      return coerceScreeningResult(await ask(buildScreeningParams(input, opts), opts, call));
     },
   };
 }
