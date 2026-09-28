@@ -531,16 +531,12 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
   };
 
   /**
-   * A PRESS THAT IS NOT A MUTATION — `gatedRead`'s wrapper on `mutate`'s rule.
-   *
-   * `holds`, not `mayReadIdentity`: this changes the account's own server state and its answer is
-   * re-read into the mirror, so the warm open that makes an unconfirmed READ correct would make an
-   * unconfirmed press somebody else's mail moving. It throws {@link ForeignSessionError} and not
-   * {@link MutationRejectedError} because there is no outbox to hold it under an idempotency key —
-   * a press refused here has not happened and the surface says so, rather than being told later.
-   * A press in the warm open (`unconfirmed`) WAITS for the confirm, bounded by
-   * {@link PRESS_CONFIRM_WAIT_MS}: nothing is wrong yet, and a refusal there was a sentence about
-   * a failure that had not happened.
+   * A PRESS THAT IS NOT A MUTATION — `gatedRead`'s wrapper on `mutate`'s rule. `holds`, not
+   * `mayReadIdentity`: it changes the account's own server state and its answer is re-read into
+   * the mirror, so an unconfirmed press could move somebody else's mail. A press in the warm open
+   * WAITS for the confirm, bounded by {@link PRESS_CONFIRM_WAIT_MS}, since nothing is wrong yet.
+   * It throws {@link ForeignSessionError}, not {@link MutationRejectedError}: there is no outbox
+   * to hold it, so a refused press has not happened and the surface says so.
    */
   const confirmed = (ms: number): Promise<void> => new Promise((resolve) => {
     const done = (): void => { clearTimeout(timer); openers.delete(done); resolve(); };
