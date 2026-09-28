@@ -8169,6 +8169,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               reachable: r.connection.reachable,
               unreachableSince: r.connection.unreachableSince?.toISOString() ?? null,
               signInRefused: r.connection.signInRefused,
+              /* A PLAINTEXT SERVER OFF THE PERSON'S OWN NETWORK — nothing was dialled. */
+              plaintextRefused: r.connection.plaintextRefused === true,
               /* NO PASSWORD FOR THIS MAILBOX ON THIS COMPUTER — a flat boolean, because there is
                  nothing else to say: no clock, no code, no server involved. A surface older than
                  the field reads an absent one as `false`, which is the state this install was in
