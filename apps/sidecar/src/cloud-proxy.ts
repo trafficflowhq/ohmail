@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { RELAY_ALLOWLIST, relayVerdict } from "@trafficflow/api/relay-allowlist";
 import { offlineResponse, type CloudAuth } from "./cloud-auth.js";
 import type { CloudMirror } from "./cloud-mirror.js";
@@ -75,6 +76,28 @@ function parseSeq(raw: string | null): bigint | null {
   }
 }
 
+/** The route PATTERN a write matched — `:id` placeholders only, never an id — or `other`. */
+function routeClassOf(method: string, pathname: string): string {
+  const key = routeKeyOf(method, pathname);
+  return key === null ? "other" : key.slice(key.indexOf(" ") + 1);
+}
+
+/** A prefix of the Idempotency-Key's sha256, so a line can be matched to the account's record. */
+function keyHashOf(req: Request): string | null {
+  const key = req.headers.get("idempotency-key");
+  return key ? createHash("sha256").update(key).digest("hex").slice(0, 16) : null;
+}
+
+/** The account's own `error.code`, held to an identifier grammar, from a CLONE of the answer. */
+async function refusalCodeOf(res: Response): Promise<string | null> {
+  try {
+    const code = ((await res.clone().json()) as { error?: { code?: unknown } } | null)?.error?.code;
+    return typeof code === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(code) ? code : null;
+  } catch {
+    return null;
+  }
+}
+
 export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThroughProxy {
   const echoDeadlineMs = cfg.echoDeadlineMs ?? DEFAULT_ECHO_DEADLINE_MS;
   /* An empty allowlist would refuse every write and read as an offline install. */
@@ -127,6 +150,7 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
     const body = hasBody ? await req.arrayBuffer() : undefined;
 
     let res: Response;
+    const started = Date.now();
     try {
       res = await cfg.auth.authedFetch(path, {
         method,
@@ -143,6 +167,18 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
           "the mutation is refused rather than dropped",
       });
       return offlineResponse();
+    }
+
+    /* ONE LINE PER FORWARDED WRITE, the only record of it on this machine: the route's pattern,
+       the account's status, the round trip and the key's hash — never the body, the path's ids or
+       the key. A refusal also names the account's code, so it can be told from a transport fault. */
+    if (method !== "GET" && method !== "HEAD") {
+      const routeClass = routeClassOf(method, url.pathname);
+      const keyHash = keyHashOf(req);
+      cfg.log?.("cloud_write_forwarded", { method, routeClass, status: res.status, ms: Date.now() - started, keyHash });
+      if (res.status >= 400) {
+        cfg.log?.("cloud_write_refused", { method, routeClass, status: res.status, code: await refusalCodeOf(res), keyHash });
+      }
     }
 
     // THE ECHO-AWAIT, by what the write changes here (`cloud-write-rows.ts`): nothing (its reads
