@@ -4,7 +4,7 @@ import {
   mailboxes, mailboxCredentials, isOrganizerRole, organizerDisplayName, capabilitiesColumn, type Tx,
   organizerKindColumn, closedSetValue, fenceErased, MailboxErasedError,
   type OrganizerRole, type OrganizerKind, type OrganizerState,
-  rules, recordMailboxProfileChange, type LedgerTx,
+  rules, recordMailboxProfileChange, type LedgerTx, parkedResumeWhere, parkedResumeSet,
 } from "@trafficflow/db";
 import { makeDb } from "@trafficflow/db/cloud";
 import { workerHeartbeats } from "@trafficflow/db/cloud";
@@ -136,6 +136,12 @@ export interface EnabledMailbox {
    * at all — reading the lease first would renew a claim this install is about to delete.
    */
   releaseRequestedAt: Date | null;
+  /**
+   * Mail 0135. WHEN THE WALL RELEASED THIS MAILBOX, or NULL. Read so the roster can resume it once
+   * the account is open again ({@link resumeParkedMailbox}); a release the person asked for is NULL
+   * here and is never resumed.
+   */
+  organizerParkedAt: Date | null;
   /**
    * Mail 0029. What the row currently says about why this mailbox is not being synced. READ SO THE
    * WORKER KNOWS WHETHER THERE IS ANYTHING TO CLEAR, and for no other purpose — nothing decides on it,
@@ -280,6 +286,7 @@ export async function loadRosterMailboxes(
       organizedByInstallId: mailboxes.organizedByInstallId,
       organizeConsentedAt: mailboxes.organizeConsentedAt,
       releaseRequestedAt: mailboxes.releaseRequestedAt,
+      organizerParkedAt: mailboxes.organizerParkedAt,
       syncBlockedReason: mailboxes.syncBlockedReason,
       retryAfter: mailboxes.retryAfter,
       retryCount: mailboxes.retryCount,
@@ -309,6 +316,7 @@ export async function loadRosterMailboxes(
     organizedByInstallId: r.organizedByInstallId ?? null,
     organizeConsentedAt: r.organizeConsentedAt ?? null,
     releaseRequestedAt: r.releaseRequestedAt ?? null,
+    organizerParkedAt: r.organizerParkedAt ?? null,
     syncBlockedReason: r.syncBlockedReason ?? null,
     retryAfter: r.retryAfter ?? null,
     retryCount: r.retryCount ?? 0,
@@ -1151,6 +1159,8 @@ export async function markMailboxStoodDown(
     // quieter of the two events to a person whose mailbox somebody else has just taken, and the
     // claim-back screen would name no previous holder on the one occasion there is one.
     organizerReleasedAt: null,
+    // Mail 0135 — and a resume that lost to a live holder is answered: no second stamp next pass.
+    organizerParkedAt: null,
     // Mail 0088: the organizing situation just changed, so say when. One of the five writers of the
     // (role, state, holder) triple, and every one stamps this in the SAME statement as the fact it is
     // announcing — not a second write, for the reason the holder columns ride this statement: a row
@@ -1202,6 +1212,8 @@ export async function markMailboxReleased(
     cause?: "release_request" | "account_parked";
   } = {},
 ): Promise<boolean> {
+  // One instant for the release, its marker and its event, so the three agree to the millisecond.
+  const now = opts.now ?? new Date();
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes).set({
     organizerRole: "reader",
     // Nobody holds it. See the header — this is the whole difference from a stand-down.
@@ -1218,7 +1230,10 @@ export async function markMailboxReleased(
     // AND THE RECORD THAT IT HAPPENED. The ask is gone; without this the row is byte-identical to a
     // stood-down reader whose winner has since gone away, and `standDownMemory` would have to
     // derive "released" from an absence three other writers also produce. See the column.
-    organizerReleasedAt: opts.now ?? new Date(),
+    organizerReleasedAt: now,
+    // Mail 0135 — WHO released it. Only the wall's park writes the marker; the person's own release
+    // clears one, so a mailbox they stopped is never resumed on its own.
+    organizerParkedAt: opts.cause === "account_parked" ? now : null,
     // AND ANY UNSPENT TAKEOVER GOES WITH IT. The two stamps are contradictory instructions about
     // the same mailbox, and a release that left a becoming authorized would be promoted straight
     // back by the very next gate — the control undoing itself, which is this feature's own named
@@ -1231,7 +1246,7 @@ export async function markMailboxReleased(
     syncBlockedReason: null, syncBlockedSince: null,
     retryAfter: null,
     // Mail 0088 — the fifth writer of the triple. See `markMailboxStoodDown`'s note.
-    organizerEventAt: opts.now ?? new Date(),
+    organizerEventAt: now,
   }).where(and(
     lifecycleWhere(mailboxId, opts.fence),
     /* THE REQUEST MUST STILL BE STANDING (the default cause). A worker carries a release decision
@@ -1425,6 +1440,8 @@ export async function clearOrganizerStandDown(
       // is cleared unconditionally. Left standing it would make the next claim-back report "you
       // stopped organizing this" about a mailbox this install is organizing.
       organizerReleasedAt: null,
+      // Mail 0135 — the resume this promotion answers is spent with its stamp.
+      organizerParkedAt: null,
       // Mail 0088 — the second writer of the (role, state, holder) triple. A PROMOTION is an event
       // in exactly the sense the notice means: the person is entitled to be told once that this
       // install now organizes the mailbox, and on any other door they have open the sentence is
@@ -1447,6 +1464,23 @@ export async function clearOrganizerStandDown(
     await clearOwedRetroFences(w, mailboxId);
     await ringMailboxProfile(w, landed, mailboxId);
   });
+}
+
+/**
+ * RESUME A MAILBOX THE WALL RELEASED (mail 0135), once its account is open again: the `join` stamp
+ * `parkedResumeWhere` admits, FENCED like every lifecycle write. It writes a request, never the role
+ * — the gate decides, and a live foreign claim wins. `false` is a row that did not qualify (already
+ * stamped, released by the person, no longer a reader) or a fenced-out write; the caller mirrors
+ * the stamp into its roster row only on `true`.
+ */
+export async function resumeParkedMailbox(
+  db: WorkerDb, mailboxId: string, opts: { fence?: LeaderFence; now?: Date } = {},
+): Promise<boolean> {
+  const now = opts.now ?? new Date();
+  return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes)
+    .set(parkedResumeSet(now))
+    .where(and(lifecycleWhere(mailboxId, opts.fence), parkedResumeWhere()))
+    .returning({ id: mailboxes.id }));
 }
 
 /**

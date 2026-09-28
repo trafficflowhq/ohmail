@@ -159,6 +159,9 @@ export {
   type OrganizerRole, type OrganizerKind, type OrganizerState, type OrganizerIntent,
   type OrganizedBy, type OrganizerRoleRow, type RequestEligibility, type RequestRefusalReason,
 } from "./organizer-role.js";
+// Mail 0135 — the resume of a mailbox the wall released, one statement for the worker's roster and
+// the API's reopening door. Reaches `schema-mail.js` alone.
+export { parkedResumeWhere, parkedResumeSet } from "./organizer-park.js";
 
 /* The junk rescue's two states (`junk_rescues`) — one constant, narrowed at the write door and
    spelled out by the CHECK on both stores. Reaches nothing. */

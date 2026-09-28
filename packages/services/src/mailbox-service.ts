@@ -1750,6 +1750,8 @@ export class MailboxService {
         // Mail 0121 — a tombstone explains nothing; the refusal goes with the request.
         releaseRefusal: null,
         organizerReleasedAt: null,
+        // Mail 0135 — and nothing resumes a removed mailbox.
+        organizerParkedAt: null,
         // ── AND THE SYNC BLOCK, FOR THE IDENTICAL REASON (mail 0029) ─────────────────────
         //
         // `mailbox-errors.ts` names the writers that hold "every writer that makes the statement
@@ -1891,7 +1893,16 @@ export class MailboxService {
         && this.deps.installId !== undefined
         && current.organizedByInstallId !== null
         && current.organizedByInstallId === this.deps.installId;
-      if (!organizing && !ourStrandedClaim) return { outcome: "not_organizing" as const };
+      if (!organizing && !ourStrandedClaim) {
+        /* A MAILBOX THE WALL PAUSED (mail 0135) is not organizing, so there is nothing to stop — but
+           the press still means "do not start again here", so the marker that would resume it on
+           the account's reopening goes. */
+        if (current.organizerParkedAt !== null) {
+          await tx.update(mailboxes).set({ organizerParkedAt: null })
+            .where(and(eq(mailboxes.id, id), eq(mailboxes.accountId, ctx.accountId)));
+        }
+        return { outcome: "not_organizing" as const };
+      }
       await tx.update(mailboxes)
         .set({
           // NOT the role, and not the holder columns. **The GATE demotes**, exactly as it promotes,
@@ -1902,6 +1913,8 @@ export class MailboxService {
           releaseRequestedAt: ctx.now(),
           // Mail 0121 — a FRESH ask has no refusal yet; the release pass writes one if it earns it.
           releaseRefusal: null,
+          // Mail 0135 — the person's stop outranks a wall's resume.
+          organizerParkedAt: null,
           // The block is this process's report about the worker's relationship to the mailbox, and
           // this request invalidates it in both directions — `update` and `organizeHere` apply the
           // same rule. The worker re-writes it within one pass if it is still true.
@@ -2359,6 +2372,8 @@ export class MailboxService {
         // Mail 0121 — the refusal goes with the request it explains.
         releaseRefusal: null,
         organizerReleasedAt: null,
+        // Mail 0135 — the press is the stamp now; a wall's resume has nothing left to ask.
+        organizerParkedAt: null,
         // The block is this process's report about the worker's relationship to the mailbox, and
         // this request invalidates it in both directions — the same rule `update` applies. The
         // worker re-writes it within one roster pass if it is still true.
