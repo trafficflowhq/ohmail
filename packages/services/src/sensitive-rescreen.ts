@@ -1,7 +1,7 @@
-import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, sql, type SQL } from "drizzle-orm";
 import {
   mailboxes, messages, messageBodies, folderState, messageStates, drafts, approvals,
-  rules as rulesTbl, auditLog, changeLog, recordChange, ruleNamesSenderSql, type Tx, auditAction,} from "@trafficflow/db";
+  rules as rulesTbl, auditLog, changeLog, recordChange, ruleNamesSenderSql, type Tx, auditAction, weAnsweredThisSenderWhere,} from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   DEFAULT_OHBOX_POLICY, authVerdictFromHeaders, evaluateRules,
@@ -631,7 +631,7 @@ async function moveDestinations(
  * is not ours to move: `last_set_by = 'us'` only; no enabled UN-NARROWED sender/domain rule (a
  * NARROWED rule's mail still reaches `evaluateRules`, the ONE matcher; `screener-auto.ts` keeps
  * the broad predicate — it never calls the evaluator); no non-`none` triage row; no reply draft;
- * no own-address reply in the thread. READ IS NOT AN EXCLUSION: reading is not consent. THE LOCK
+ * no reply of ours to this sender. READ IS NOT AN EXCLUSION: reading is not consent. THE LOCK
  * is for the writers that take no mailbox row; a KEPT row is re-examined by the loser.
  */
 async function selectCandidates(
@@ -690,19 +690,15 @@ async function selectCandidates(
        where a.message_id = ${messages.id} and a.status <> 'pending'
     )`,
   ];
-  // 5 — the user replied from their own mail client. Guarded on a non-empty address list because
-  // `in ()` is a syntax error, and skipped for a NULL `thread_id` because an unthreaded message
-  // has no conversation to search. (`thread_id` is NULL only until the thread backfill reaches a
-  // row; every production candidate observed was threaded.)
-  if (opts.ownAddresses.length > 0) {
-    filters.push(sql`not exists (
-      select 1 from ${messages} sent
-       where sent.account_id = ${messages.accountId}
-         and sent.thread_id = ${messages.threadId}
-         and ${messages.threadId} is not null
-         and lower(sent.from_address) in ${sql`(${sql.join(opts.ownAddresses.map((a) => sql`${a}`), sql`, `)})`}
-    )`);
-  }
+  // 5 — the user answered THIS sender, the one engagement question its three sibling passes ask:
+  // an own-address reply addressed to them, not the away responder's. No guard on an empty address
+  // list: the predicate answers `false` for one, and `not false` admits, as skipping the arm did.
+  filters.push(sql`not ${weAnsweredThisSenderWhere(dialect(t), {
+    accountId: messages.accountId as unknown as SQL,
+    threadId: messages.threadId as unknown as SQL,
+    fromAddress: messages.fromAddress as unknown as SQL,
+    ownAddresses: opts.ownAddresses,
+  })}`);
   if (opts.afterId) filters.push(gt(messages.id, sql`${opts.afterId}::uuid`));
   if (opts.touchedSince) {
     filters.push(sql`${folderState.updatedAt} >= ${opts.touchedSince.toISOString()}::timestamptz`);
