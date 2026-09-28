@@ -4,8 +4,8 @@ import { storageOwner } from "./storage-owner";
  * THE ONE STALENESS DECISION about a `402 subscription_required`. After the service's fresh open
  * verdict, another API instance may hold the old refusal for its verdict cache's life
  * (`ACCESS_TTL_MS`, `packages/db/src/entitlements-client.ts`). Inside that window a 402 raises no
- * wall AND stands no drain loop down — the loop counts it as a transient — so a wall that has just
- * lifted cannot be re-raised, and a loop cannot stand down with no wall left to revive it.
+ * wall AND stands no drain loop down — the loop retries it without counting it — so a wall that has
+ * just lifted cannot be re-raised, and a loop cannot stand down with no wall left to revive it.
  * Every reader asks {@link refusalIsStale}; every open or refused answer is recorded here.
  */
 export const STALE_REFUSAL_MS = 60_000;
