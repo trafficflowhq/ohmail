@@ -3987,8 +3987,6 @@
     "fixPayment": "Fix payment",
     "later": "Later",
     "caughtUp": "ohmail is catching up on mail that arrived since {date}.",
-    "handedBack": "ohmail handed these mailboxes back when the account closed. It does not take them again on its own \u2014 organizing starts when you start it.",
-    "startOrganizing": "Start organizing",
     "dismiss": "Got it"
   },
   "accessLock": {

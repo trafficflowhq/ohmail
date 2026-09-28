@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { account, apiConfigured, mailboxes as mailboxApi, type AccountLifecycle, type MailboxDTO } from "../../api-client";
+import { account, apiConfigured, type AccountLifecycle } from "../../api-client";
 import { dayStamp } from "../../shell/format";
 import { durableSessionSet } from "../../shell/durable";
 import { storageOwner } from "../../shell/storage-owner";
@@ -88,18 +88,10 @@ function remember(key: string): void {
   durableSessionSet(key, "1", "lifecycle.banner");
 }
 
-/** The mailboxes ohmail handed back while the account was closed, and has not been asked to retake. */
-export function stoodDown(items: readonly MailboxDTO[]): MailboxDTO[] {
-  // Role READER with a consent on record: somebody agreed to let ohmail organize this mailbox and
-  // ohmail is not the organizer now. A mailbox that never consented was never stood down.
-  return items.filter((m) => m.organizerRole === "reader" && m.organizeConsentedAt != null);
-}
-
 export function LifecycleBanner() {
   const t = useTranslations("accountLifecycle");
   const [notice, setNotice] = useState<Notice | null>(null);
   const [gone, setGone] = useState(false);
-  const [handedBack, setHandedBack] = useState<MailboxDTO[]>([]);
   const [busy, setBusy] = useState(false);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
@@ -114,10 +106,6 @@ export function LifecycleBanner() {
       const next = noticeOf(a.lifecycle, a.caughtUp, Date.now());
       if (next === null || dismissed(dismissKey(next, storageOwner()))) return;
       setNotice(next);
-      if (next.kind !== "caughtUp") return;
-      // Only the catch-up names mailboxes, so only it pays for the list.
-      void mailboxApi.list().then((r) => { if (live) setHandedBack(stoodDown(r.items)); })
-        .catch(() => { /* the count is still worth saying */ });
     }).catch(() => { /* no verdict, no sentence */ });
     return () => { live = false; };
   }, []);
@@ -140,30 +128,13 @@ export function LifecycleBanner() {
   if (notice === null || gone) return null;
 
   if (notice.kind === "caughtUp") {
+    // No mailbox list: a mailbox the closure paused resumes on its own (mail 0135), and one the
+    // person stopped, or another install took, says so in Settings → Mailboxes.
     return (
       <div className="acct-note" role="status">
         <p className="acct-note-line">
           {t("caughtUp", { date: dayStamp(notice.since) })}
         </p>
-        {handedBack.length > 0
-          ? (
-            <>
-              {/* NO AUTO RE-CLAIM, EVER (DUAL-MODE §4): ohmail released the lease when the account
-                  closed and does not take it back on its own. The press that resumes organizing is
-                  the one in Settings → Mailboxes, reached by the route rather than rebuilt here —
-                  it carries the second-factor ceremony the route demands. */}
-              <p className="acct-note-line">{t("handedBack")}</p>
-              <ul className="acct-note-list">
-                {handedBack.map((m) => (
-                  <li key={m.id}>
-                    <span className="acct-note-mbx">{m.address}</span>
-                    <a className="acct-note-go" href="#/settings/mailboxes">{t("startOrganizing")}</a>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )
-          : null}
         <button type="button" className="acct-later" onClick={putAway}>{t("dismiss")}</button>
       </div>
     );

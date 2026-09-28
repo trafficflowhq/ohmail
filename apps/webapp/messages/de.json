@@ -3987,8 +3987,6 @@
     "fixPayment": "Zahlung in Ordnung bringen",
     "later": "Sp\u00e4ter",
     "caughtUp": "ohmail holt die Nachrichten nach, die seit dem {date} angekommen sind.",
-    "handedBack": "ohmail hat diese Postf\u00e4cher zur\u00fcckgegeben, als das Konto geschlossen wurde. Es nimmt sie nicht von selbst wieder \u2014 das Organisieren beginnt, wenn du es startest.",
-    "startOrganizing": "Organisieren starten",
     "dismiss": "Verstanden"
   },
   "accessLock": {
