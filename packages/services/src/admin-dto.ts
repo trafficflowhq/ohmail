@@ -452,3 +452,237 @@ export interface ActionCatalog {
   actions: ActionSpec[];
   recent: AuditEntry[];
 }
+
+/* ── staff roles and the staff audit (cloud 0047) ──────────────────────────────────────── */
+
+/** A staff role. `owner` implies every other; roles are read live on every request. */
+export type StaffRole = "support" | "billing" | "ops" | "owner";
+
+/**
+ * What an operator did, as `staff_audit_events.action` records it — a closed set with the
+ * same members as `STAFF_AUDIT_ACTIONS` in `staff-audit-detail.ts`.
+ */
+export type StaffAuditAction =
+  | "read.overview" | "read.roster" | "read.search" | "read.account" | "read.account.activity"
+  | "read.sync_roster" | "read.funnel" | "read.worker" | "read.actions"
+  | "assert.external" | "write.mailbox.resync"
+  | "staff.signin" | "staff.signin_failed" | "staff.stepup" | "staff.stepup_failed"
+  | "staff.signout" | "staff.role_grant" | "staff.role_revoke" | "staff.totp_reset";
+
+export type StaffAuditOutcome = "ok" | "no_change" | "refused" | "failed";
+
+export type StaffReasonCode =
+  | "customer_request" | "incident" | "billing_dispute" | "fraud_or_abuse" | "ops_maintenance" | "legal";
+
+/**
+ * One `staff_audit_events` row as the console renders it. `detail` holds closed-set scalars
+ * only (the per-action allowlist in `staff-audit.ts`); the search term is never stored, only
+ * its keyed hash, and that hash does not travel.
+ */
+export interface StaffEvent {
+  id: string;
+  at: string;
+  requestId: string;
+  staffUserId: string;
+  actorLabel: string;
+  roles: StaffRole[];
+  action: StaffAuditAction;
+  outcome: StaffAuditOutcome;
+  refusalCode: string | null;
+  reasonCode: StaffReasonCode | null;
+  ticketRef: string | null;
+  targetAccountId: string | null;
+  targetUserId: string | null;
+  targetMailboxId: string | null;
+  resultCount: number | null;
+  audience: string | null;
+  detail: Record<string, string | number | boolean | null>;
+}
+
+/** `GET /admin/accounts/:id/staff-activity`. `views` (the reads) is present for `owner` only. */
+export interface StaffActivityPage {
+  now: string;
+  actions: StaffEvent[];
+  views?: StaffEvent[];
+  nextCursor: string | null;
+}
+
+/* ── search, batch and the sync roster ─────────────────────────────────────────────────── */
+
+export type AdminSearchMatchedOn =
+  | "account_id" | "account_id_prefix" | "user" | "mailbox"
+  | "login_address" | "mailbox_address" | "mailbox_domain" | "account_name";
+
+/**
+ * One account a search found, and which exact rule found it. Matches are exact or prefix,
+ * never a substring. `label` carries the account's first login address, masked for `ops`.
+ */
+export interface AdminSearchResult {
+  accountId: string;
+  matchedOn: AdminSearchMatchedOn;
+  label: string;
+  erasedAt: string | null;
+}
+
+/** `GET /admin/search?q=` — at most 25 results; `truncated` says more matched. */
+export interface AdminSearchPage {
+  now: string;
+  results: AdminSearchResult[];
+  truncated: boolean;
+}
+
+/** `GET /admin/accounts?ids=` — rows in the order asked; ids with no account listed apart. */
+export interface AccountBatch {
+  now: string;
+  rows: AccountSummary[];
+  unknownIds: string[];
+}
+
+/**
+ * The open server's sync facts for one account, for joining against another program's view.
+ * `releasedNoHolder` counts mailboxes whose organizer released them with nobody holding the
+ * lease since: `organizer_role = 'reader'`, `organizer_released_at` set, state not `held`.
+ */
+export interface OpenSyncFacts {
+  accountId: string;
+  mailboxes: number;
+  disabled: number;
+  blockedAccountClosed: number;
+  oldestBlockedSince: string | null;
+  releasedNoHolder: number;
+  oldestReleasedAt: string | null;
+  lastSyncMax: string | null;
+  lastClosedNoticeAnchor: string | null;
+  lastReopenedNoticeAnchor: string | null;
+  erasedAt: string | null;
+}
+
+/** `GET /admin/sync-roster?cursor=&limit=` — keyset by account id; `nextCursor` null at the end. */
+export interface SyncRosterPage {
+  now: string;
+  rows: OpenSyncFacts[];
+  nextCursor: string | null;
+  workerRosterIntervalSeconds: number;
+}
+
+/* ── the account page, v2 ──────────────────────────────────────────────────────────────── */
+
+export interface AdminAccountRecord extends AccountSummary {
+  erasedAt: string | null;
+}
+
+/** A login on the account. `lastLoginAt` is always null until the security block ships. */
+export interface AdminAccountUser {
+  id: string;
+  email: string;
+  createdAt: string;
+  emailVerifiedAt: string | null;
+  lastLoginAt: null;
+}
+
+/**
+ * A mailbox with its organizer facts — closed sets and timestamps only. The holder's display
+ * name and capabilities are never read. `consentOnRecord` is `organize_consented_at` set.
+ */
+export interface AdminMailboxDetail extends MailboxHealth {
+  createdAt: string;
+  organizerRole: string;
+  organizerState: string | null;
+  organizedByKind: string | null;
+  organizedSince: string | null;
+  organizerReleasedAt: string | null;
+  releaseRequestedAt: string | null;
+  releaseRefusal: string | null;
+  takeoverAuthorizedAt: string | null;
+  takeoverIntent: string;
+  consentOnRecord: boolean;
+  disabledReason: string | null;
+  retryAfter: string | null;
+  syncProgressAt: string | null;
+}
+
+export interface AdminLifecycleNotice {
+  kind: "trial_two_days" | "closed" | "erasure_week" | "reopened";
+  anchor: string;
+  sentAt: string;
+}
+
+export interface AdminDevice {
+  id: string;
+  kind: string;
+  pairedAt: string;
+  lastSyncedAt: string | null;
+}
+
+/** Session counts: live now by scope, revoked in the last 30 days, and the newest activity. */
+export interface AdminSessionFacts {
+  active: { full: number; enrollment: number };
+  revoked30d: number;
+  lastSeenAt: string | null;
+}
+
+/** One `auth_events` row from the last 30 days — the event name and its moment. */
+export interface AdminAuthEvent {
+  userId: string | null;
+  event: string;
+  at: string;
+}
+
+/** Credit reversals this server owes the entitlements program and has not settled. */
+export interface AdminOwedReversals {
+  count: number;
+  oldestOwedAt: string;
+  tries: number;
+  lastFault: string | null;
+}
+
+/**
+ * `GET /admin/accounts/:id`. A superset of {@link AccountDetail}: `audit` and
+ * `securityEvents` stay so a console reading the older shape keeps working. `staffActions` is
+ * the last 20 non-read staff events on this account; `ownerEmail` and every user's `email` are
+ * masked for the `ops` role.
+ */
+export interface AccountDetailV2 {
+  now: string;
+  account: AdminAccountRecord;
+  users: AdminAccountUser[];
+  mailboxes: AdminMailboxDetail[];
+  lifecycleNotices: AdminLifecycleNotice[];
+  storage: { bytes: number; updatedAt: string } | null;
+  devices: AdminDevice[];
+  sessions: AdminSessionFacts;
+  authEvents: AdminAuthEvent[];
+  owedReversals: AdminOwedReversals | null;
+  staffActions: StaffEvent[];
+  audit: AuditEntry[];
+  securityEvents: SecurityEvent[];
+}
+
+/* ── the staff assertion mint ──────────────────────────────────────────────────────────── */
+
+/** One request an assertion is minted for: the method, the path with its query, the body hash. */
+export interface StaffAssertionRequest {
+  method: string;
+  path: string;
+  bodySha256: string;
+}
+
+/**
+ * `POST /admin/staff/assertion` — one assertion per request, in the order asked. The console
+ * chooses the header that carries each one; this API names none.
+ */
+export interface StaffAssertionAnswer {
+  assertions: string[];
+  expiresAt: string;
+  kid: string;
+  tier: 0 | 1 | 2;
+}
+
+/** `POST /admin/staff/whoami`'s identity, with the roles read live for this request. */
+export interface StaffWhoami {
+  ok: true;
+  email: string;
+  roles: StaffRole[];
+  stepUpWindowSeconds: number;
+  stepUpFresh: boolean;
+}
