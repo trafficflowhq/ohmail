@@ -1020,6 +1020,7 @@ export class SyncService {
     // too, so a bug that let the two disagree fails closed rather than leaking into another
     // account's bootstrap.
     const inTail = cursor?.phase === "tail" || tailOnly;
+    const repliedTo = db.select({ id: drafts.inReplyToMessageId }).from(drafts).where(eq(drafts.accountId, accountId));
     const reachableTail = inTail
       ? or(
         exists(
@@ -1057,10 +1058,7 @@ export class SyncService {
         /* A MESSAGE A DRAFT ANSWERS. Every draft rides the pages, so its reply target must too:
            the client pins it, and the change that could bring it sits below the cursor. An
            uncorrelated IN, read once: `in_reply_to_message_id` has no index to probe per row. */
-        inArray(
-          messages.id,
-          db.select({ id: drafts.inReplyToMessageId }).from(drafts).where(eq(drafts.accountId, accountId)),
-        ),
+        inArray(messages.id, repliedTo),
       )
       : undefined;
 
