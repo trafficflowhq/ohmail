@@ -198,6 +198,38 @@ that have not gone through, with Try again and Discard; Discard keeps the draft.
 phone files the conversation when the reply goes out later, when the connection comes back, on the
 next start or after Try again, not only when it goes at once.
 
+### Closing ohmail during a pairing no longer turns start at login off
+<!-- changes: fix-026-pairing-undo.md -->
+
+A desktop that serves your other devices stops doing so while a pairing with another computer is
+set up. When ohmail was closed or stopped during the pairing, the next start brought hosting back
+but left start at login off. It now comes back too. When the pairing leaves this desktop listed on
+the other computer, Settings → Switch names that computer and where to look.
+
+### A pairing undone while the other computer answers keeps nothing
+<!-- changes: fix-026-pairing-undo.md -->
+
+If the pairing was undone while the other computer was still answering, for example by reopening
+the window, the session that computer sent arrived afterwards and stayed, and this desktop stayed
+on its Devices list. The desktop now keeps nothing from that answer and signs it out on the other
+computer. A pairing refused because that computer names a different account is signed out there
+too.
+
+### A rule saved with spaces around its address counts everywhere
+<!-- changes: fix-026-screener-decides-once.md -->
+
+A rule whose address was saved with spaces around it is now honoured by the Screener's decisions,
+Not junk and automatic filing, not only by the filing of new mail.
+
+### After you pay, the trial and payment notes go away on their own
+<!-- changes: fix-026-strip-follows-payment.md -->
+
+After paying in another tab or on another device, the trial or payment note at the top of the web
+app and the phone app is gone the next time you return to it, with no reload. The note that ohmail
+is catching up stays until you put it away, a reload no longer loses it, and the phone shows it
+too. Paying from the setup flow with a mailbox already connected finishes setup, and an account
+with no mailbox is no longer offered the sent-mail review.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
