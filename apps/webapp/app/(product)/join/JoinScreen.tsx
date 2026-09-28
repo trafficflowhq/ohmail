@@ -38,6 +38,7 @@ import { splitHostPort } from "../host-port";
 import { useRefusalAtThePress } from "../../shell/refusal-at-the-press";
 import { SELF_HOST_BUILD } from "../../hello";
 import { JOIN_INVITE_KEY, signupPosture } from "../../invite-posture";
+import { confirmCheckoutReturn } from "../../checkout-return";
 
 type Step = "invite" | "account" | "sent" | "factor" | "codes" | "verify" | "plan" | "mailbox" | "done";
 
@@ -314,7 +315,10 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
       setTimeout(() => { void tick(); }, ACCESS_POLL_MS);
     };
 
-    void tick();
+    // A return from Checkout asks the service to apply the payment first — once, bounded — and the
+    // poll below then reads the answer rather than waiting on the program's webhook.
+    if (billingReturn === "success") void confirmCheckoutReturn(window.location.search).finally(() => { void tick(); });
+    else void tick();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, billingReturn]);

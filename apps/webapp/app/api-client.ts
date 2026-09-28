@@ -2731,6 +2731,21 @@ export const account = {
    * app never inspects.
    */
   exportSettings: () => api<unknown>("/account/export"),
+  /**
+   * `POST /account/checkout/confirm` — the person is back from a Checkout; the service asks its
+   * program to apply the payment now. NEVER THROWS: any answer but the two states is `null`, and
+   * the caller polls access exactly as it did before (an older API answers 404).
+   */
+  checkoutConfirm: async (sessionId: string): Promise<"confirmed" | "pending" | null> => {
+    try {
+      const r = await api<{ state?: unknown }>("/account/checkout/confirm", {
+        method: "POST", body: { sessionId },
+      });
+      return r.state === "confirmed" || r.state === "pending" ? r.state : null;
+    } catch {
+      return null;
+    }
+  },
   manageLink: async (opts?: { lang?: "de" | "en" }): Promise<{ url: string } | null> => {
     try {
       // `lang` is the page's language on the far side; absent, that page reads the browser's.

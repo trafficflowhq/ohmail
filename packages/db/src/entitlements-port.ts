@@ -202,6 +202,14 @@ export interface RefundObligationPort {
 export type ReleaseOutcome = "none" | "cancelled" | "cancel_failed";
 
 /**
+ * What the program said about a Checkout the person has just returned from. `confirmed`: it is
+ * this account's, paid and applied, so access reads open. `pending`: not yet — keep asking access.
+ * `not_found`: an unknown session, another account's, or a program without the door. `fault`: no
+ * answer. Four words, so an outage is never read as "not yours".
+ */
+export type CheckoutConfirmOutcome = "confirmed" | "pending" | "not_found" | "fault";
+
+/**
  * How a read of `access` may be answered. `fresh` asks past every cache and hold; `staleAllow` is
  * a READ route's: an ALLOW held a little past its TTL answers at once and is re-read behind it,
  * and a held refusal is asked about again first. One or the other, never both — a read cannot ask
@@ -261,6 +269,13 @@ export interface EntitlementsPort {
   /** The person is being erased: stop the money. Bounded and never throwing, because Article 17
    *  may not be withheld because a payment processor is unreachable. */
   releaseAccount(accountId: string): Promise<ReleaseOutcome>;
+  /**
+   * Ask the program to apply a Checkout the person has just returned from, instead of waiting for
+   * its webhook. `sessionId` is relayed as the return URL carried it; the program checks it names
+   * THIS account. Grants no credits here — the answer is relayed and access is read fresh after.
+   * Never throws. Optional: a program without the door answers `not_found` at the route.
+   */
+  checkoutConfirm?(accountId: string, sessionId: string): Promise<CheckoutConfirmOutcome>;
 }
 
 /**

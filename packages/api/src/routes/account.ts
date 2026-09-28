@@ -12,6 +12,14 @@ import { accessFor, cookieSurface, entitlementsPort, json, readBody } from "./sh
 import type { ApiDeps } from "../deps.js";
 import type { Route } from "../router.js";
 
+/**
+ * THE ONE FIELD `POST /account/checkout/confirm` READS: the session id the program's return URL
+ * carried, relayed verbatim. Opaque here — its shape is the program's business — so the bound is a
+ * token's: 1 to 255 letters, digits, `_` or `-`, refused 400 before anything is dialled.
+ */
+export const CHECKOUT_SESSION_ID_MAX_CHARS = 255;
+const CHECKOUT_SESSION_ID = /^[A-Za-z0-9_-]{1,255}$/;
+
 /** What an erasure leaves on a host with no billing program: the pseudonymous account row and the token hashes. */
 const RETAINED_UNMETERED =
   "the account row only, with a random id and no name, and hashes of its sign-in tokens for up to 400 days after they expire";
@@ -177,6 +185,41 @@ export const accountRoutes: Route[] = [
         );
       }
       return json(link, 200);
+    },
+  },
+  /**
+   * `POST /account/checkout/confirm` — the person is back from a Checkout: ask the program to apply
+   * it now instead of waiting for its webhook. `paid` on `manage-link`'s terms (a hop to a third
+   * party through the program, a verified address as the floor), reachable while refused because
+   * the wall is up when it runs, no step-up (it moves no mail and reads a payment already made).
+   * The ACCOUNT is the session's; the body names only the session id. 200 `{state}` is the
+   * program's `confirmed` or `pending`; every other answer is a 4xx/5xx the caller polls past.
+   */
+  {
+    method: "POST",
+    pattern: "/account/checkout/confirm",
+    // A browser returns from a Checkout; no install's write-through relay has a reason to forward it.
+    relay: false,
+    cost: "paid",
+    replay: "ephemeral",
+    handler: async (req, deps) => {
+      const ctx = serviceContext(deps, req);
+      const sessionId = (await readBody<{ sessionId?: unknown } | null>(req))?.sessionId;
+      if (typeof sessionId !== "string" || !CHECKOUT_SESSION_ID.test(sessionId)) {
+        throw new ServiceError("invalid_session_id", 400, "sessionId must be the id the return address carried.");
+      }
+      const port = entitlementsPort(deps);
+      if (!port?.checkoutConfirm) {
+        throw new ServiceError("no_checkout_confirm", 404, "This deployment confirms no checkout.");
+      }
+      const outcome = await port.checkoutConfirm(ctx.accountId, sessionId);
+      if (outcome === "not_found") {
+        throw new ServiceError("checkout_not_found", 404, "No such checkout for this account.");
+      }
+      if (outcome === "fault") {
+        throw new ServiceError("checkout_unconfirmed", 503, "The checkout could not be confirmed now.");
+      }
+      return json({ state: outcome }, 200);
     },
   },
 ];

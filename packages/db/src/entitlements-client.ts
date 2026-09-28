@@ -3,7 +3,7 @@ import {
   type AccessLifecycle, type AccessLifecycleState, type AccessClosedReason, type ActionPrices,
   type AccessReadOpts, type AccessRefusal, type AccessVerdict, type EntitlementsPort,
   type ReleaseOutcome, type ReleaseReceipt, type SpendAction, type SpendMeta, type SpendOutcome,
-  type SpendRelease,
+  type SpendRelease, type CheckoutConfirmOutcome,
 } from "./entitlements-port.js";
 import { isAiRefusalReason } from "./ai-gate-port.js";
 import { SPEND_ACTIONS, assertAttemptKey } from "./ledger-source.js";
@@ -32,7 +32,8 @@ export const ENTITLEMENTS_CALL_BUDGET_MS = 5_000;
 
 /** The program's paths — a closed union, so `post` cannot be sent one nobody has priced. */
 export type EntitlementsPath =
-  | "/v1/access" | "/v1/spend" | "/v1/spend/release" | "/v1/manage-link" | "/v1/account/release";
+  | "/v1/access" | "/v1/spend" | "/v1/spend/release" | "/v1/manage-link" | "/v1/account/release"
+  | "/v1/checkout/confirm";
 
 /** How long an `access` verdict is reused before it is re-read. */
 export const ACCESS_TTL_MS = 60_000;
@@ -547,6 +548,22 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       if (typeof outcome === "string" && OUTCOMES.has(outcome)) return outcome as ReleaseOutcome;
       named("/v1/account/release", res.status, "outcome");
       return "cancel_failed";
+    },
+
+    async checkoutConfirm(accountId: string, sessionId: string): Promise<CheckoutConfirmOutcome> {
+      const res = await post("/v1/checkout/confirm", { accountId, sessionId });
+      if (!res) return "fault";
+      // 404 is an ANSWER here: unknown, another account's, the other key mode, or an older program.
+      if (res.status === 404) return "not_found";
+      if (res.status !== 200 || !res.bodyIsJson) return "fault";
+      const state = obj(res.body)?.state;
+      if (state === "confirmed" || state === "pending") {
+        // A refusal this process holds is now wrong: the next read asks.
+        if (state === "confirmed") cache.delete(accountId);
+        return state;
+      }
+      named("/v1/checkout/confirm", res.status, "state");
+      return "fault";
     },
 
     async aiPricing(): Promise<"plane" | "unpriced"> {

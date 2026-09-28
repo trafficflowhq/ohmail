@@ -4,13 +4,15 @@ import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Spinner } from "@ohmail/ui";
 import { apiConfigured } from "../../api-client";
+import { confirmCheckoutReturn } from "../../checkout-return";
 import { resolveOwnerOutcome } from "../session-outcome";
 import { SELF_HOST_BUILD } from "../../hello";
 
 /**
  * One `GET /auth/session` (through the shared classifier, so a lapsed-but-resumable session is
- * renewed rather than read as absent). A full session continues to `/` at once; anything else is
- * the one sentence and the way to the app, whose own gate signs the person in if it has to.
+ * renewed rather than read as absent). A full session confirms the Checkout it came back from, once
+ * and bounded, and continues to `/?billing=success`, which arms the wall's lift poll in whatever tab
+ * this is; anything else is the one sentence and the way to the app.
  */
 export function SubscribedScreen() {
   const t = useTranslations("subscribed");
@@ -29,7 +31,8 @@ export function SubscribedScreen() {
         if (!alive) return;
         if (outcome.kind === "owner") {
           setSignedIn(true);
-          window.location.replace("/");
+          void confirmCheckoutReturn(window.location.search)
+            .finally(() => { window.location.replace("/?billing=success"); });
           return;
         }
         setSignedIn(false);
