@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, sql, type SQL } from "drizzle-orm";
 import {
   accountSettings, accountSyncState, approvals, auditLog, changeLog, drafts, folderState, mailboxes,
   messageBodies, messageStates, messages, rules as rulesTbl, recordChange,
@@ -25,6 +25,15 @@ import { ruleInputOf, upsertDesired } from "./rule-pass.js";
 const SCREENER: Destination = "ohmail/Screener";
 
 /**
+ * The held set the walk pages over, as the held page spells it: LITERALS, so a partial index on
+ * exactly this predicate is provable at plan time whatever the driver does with parameters. The
+ * hot-path spec `folder_state_screener_held_idx` carries the same two values, pinned by a test.
+ */
+export const HELD_PAGE_PREDICATE = { folder: SCREENER, setBy: "us" } as const;
+/** The first held page's cursor: below every uuid, so every page is the same statement. */
+const BEFORE_EVERY_ID = "00000000-0000-0000-0000-000000000000";
+
+/**
  * Rows examined per transaction — the same 100 as the sibling passes: {@link recordChange} takes the
  * account's `account_sync_state` row lock for the length of its transaction, so a whole-queue
  * transaction would stall every API write for that account.
@@ -41,7 +50,7 @@ export const SCREENER_AUTO_WRITES_PER_CYCLE = 100;
 /**
  * Pages one account's queue may walk in one cycle. A bound, not a `while (true)`: kept rows (a plain
  * stranger, a sensitive message) STAY, so a "loop until an empty page" pass would re-read them for
- * ever — termination is the cursor, monotone in `messages.id`, or a short page.
+ * ever — termination is the cursor, monotone in the held `folder_state.message_id`, or a short page.
  */
 export const SCREENER_AUTO_MAX_PAGES = 500;
 
@@ -200,6 +209,7 @@ export async function screenerAutoApplyPass(
   let afterId: string | null = resume?.afterId ?? null;
   const pages = plan.changed === null ? maxPages : Math.ceil(plan.changed.length / batch);
   let clockStop = false;
+  let endedShort = false;
 
   for (let page = plan.changed === null ? 0 : resume?.page ?? 0, ran = 0; page < pages; page++, ran++) {
     if (result.moved >= budget) { result.capped = true; break; }
@@ -225,18 +235,21 @@ export async function screenerAutoApplyPass(
         .from(accountSettings).where(eq(accountSettings.accountId, accountId)).limit(1).for("update");
       if (!live?.autoApplyAt) {
         return {
-          revoked: true, rows: 0, moved: 0, kept: 0, sensitivityExcluded: 0,
-          lastId: null, capped: false, destinations: {} as Record<string, number>,
+          revoked: true, held: 0, lastHeld: null, rows: 0, moved: 0, kept: 0, sensitivityExcluded: 0,
+          capped: false, destinations: {} as Record<string, number>,
         };
       }
 
-      const only = plan.changed?.slice(page * batch, (page + 1) * batch) ?? null;
-      const candidates = await selectCandidates(tx, { accountId, ownAddresses, limit: batch, afterId, only });
+      // A full walk pages over the HELD ids by their own index, then asks the candidate statement
+      // about exactly those; an incremental walk asks it about its slice of changed ids.
+      const held = plan.changed?.slice(page * batch, (page + 1) * batch)
+        ?? await heldPage(tx, { accountId, afterId, limit: batch });
+      const candidates = held.length === 0 ? []
+        : await selectCandidates(tx, { accountId, ownAddresses, limit: batch, only: held });
 
       let moved = 0;
       let kept = 0;
       let sensitivityExcluded = 0;
-      let lastId: string | null = null;
       let capped = false;
       const destinations: Record<string, number> = {};
 
@@ -244,7 +257,6 @@ export async function screenerAutoApplyPass(
         // Budget enforced PER ROW, so the cap is exact and the cursor resumes at the last row this
         // pass actually decided about — never past one it skipped.
         if (result.moved + moved >= budget) { capped = true; break; }
-        lastId = c.messageId;
 
         // THE ONLY DETERMINISTIC JUDGMENT A STRANGER GETS: the strong-bulk floor. Null ⇒ keep (a
         // plain stranger, a relevant alert). No model call, no spend, computed from headers on disk.
@@ -275,8 +287,8 @@ export async function screenerAutoApplyPass(
       }
 
       return {
-        revoked: false, rows: candidates.length, moved, kept, sensitivityExcluded,
-        lastId, capped, destinations,
+        revoked: false, held: held.length, lastHeld: held[held.length - 1] ?? null,
+        rows: candidates.length, moved, kept, sensitivityExcluded, capped, destinations,
       };
     });
 
@@ -300,18 +312,18 @@ export async function screenerAutoApplyPass(
       result.destinations[to] = (result.destinations[to] ?? 0) + n;
     }
     if (outcome.capped) { result.capped = true; break; }
-    // A short page is the end of the queue. A full page of kept rows still advances the cursor past
-    // them (it is monotone in `messages.id`, not in candidacy), so the walk terminates.
+    // A short HELD page is the end of the queue. The cursor is the last held id, never a
+    // candidate's: candidates are a subset of the page in the same order, so a page of kept rows
+    // advances past all of them and the walk terminates.
     if (plan.changed !== null) continue;
-    if (outcome.rows < batch) break;
-    afterId = outcome.lastId ?? afterId;
+    if (outcome.held < batch) { endedShort = true; break; }
+    afterId = outcome.lastHeld ?? afterId;
   }
 
   // THE MARK MOVES ONLY OVER A WALK THAT FINISHED: a capped or revoked walk leaves it where it was,
   // so the next walk re-reads everything this one did not decide. A full walk that ran out of pages
   // is capped in effect and moves nothing either.
-  const finished = !result.capped && !result.revoked && !clockStop
-    && (plan.changed !== null || result.examined < maxPages * batch);
+  const finished = !result.capped && !result.revoked && !clockStop && (plan.changed !== null || endedShort);
   if (deps.walk && result.revoked) deps.walk.delete(accountId);
   else if (deps.walk && finished) deps.walk.set(accountId, plan.next);
 
@@ -374,21 +386,40 @@ function idsOf(v: unknown): string[] {
 }
 
 /**
- * ONE page of the held Screener queue this pass may reconsider — LOCKED FOR UPDATE, oldest id first.
- * Candidates: `folder_state.desired_folder = 'ohmail/Screener'` (held, and the idempotency — a moved row
- * is desired into Reads/Receipts and drops out); `last_set_by = 'us'` (`external` is the user's own client;
- * `'peer'` excluded, since auto-applying to mail nobody on this install decided about is what this pass may
- * not do — only `rule-retro` admits `'peer'` for any sender, on a press); mailbox not `disabled`.
- * User-intent exclusions (siblings' predicates): no enabled `rules` row for sender/domain; no non-`none`
- * `message_states`; no `drafts` reply; no DECIDED `approvals` (`status <> 'pending'`); no same-thread
- * own-address reply. SENSITIVITY is NOT a candidate predicate — applied by the single KEEP guard in
- * {@link screenerAutoApplyPass}. `FOR UPDATE OF folder_state` (not `message_bodies`, LEFT JOIN nullable side). */
+ * ONE PAGE OF THE HELD QUEUE, as ids — no lock, ordered by `folder_state.message_id` from the cursor.
+ * The keyset sits on the driving side, so the page reads its index from the cursor rather than from
+ * the first held row of the deployment. `folder_state` has no tenant key: the join to `messages`
+ * scopes the page to the account. Literals for the folder predicate and the limit, so the statement
+ * has two parameters and one text; the candidate statement re-asks every predicate under its lock.
+ */
+export function heldPageSql(opts: { accountId: string; afterId: string | null; limit: number }): SQL {
+  if (!Number.isInteger(opts.limit) || opts.limit < 1 || opts.limit > 10_000) {
+    throw new Error(`a held page of ${String(opts.limit)} rows is not a page`);
+  }
+  const lit = (v: string): SQL => sql.raw(`'${v.replace(/'/g, "''")}'`);
+  return sql`select fs.message_id from ${folderState} fs
+    join ${messages} m on m.id = fs.message_id
+   where m.account_id = ${opts.accountId}
+     and fs.desired_folder = ${lit(HELD_PAGE_PREDICATE.folder)} and fs.last_set_by = ${lit(HELD_PAGE_PREDICATE.setBy)}
+     and fs.message_id > ${opts.afterId ?? BEFORE_EVERY_ID}::uuid
+   order by fs.message_id limit ${sql.raw(String(opts.limit))}`;
+}
+
+async function heldPage(t: Tx, opts: { accountId: string; afterId: string | null; limit: number }): Promise<string[]> {
+  const rows = await dialect(t).exec(t, heldPageSql(opts));
+  return rows.map((r) => String(r[0]));
+}
+
+/**
+ * The candidates among the ids asked about — LOCKED FOR UPDATE, oldest id first, every predicate
+ * re-read on the locked row. Held (`desired_folder` the Screener, `last_set_by = 'us'`; `external` is
+ * the user's own client, `peer` another install's), on a mailbox this install organizes, and none of
+ * the user-intent exclusions: an enabled rule for the sender or domain, a triage state, a reply draft,
+ * a decided approval, an own-address reply. Sensitivity is the pass's KEEP guard, not a predicate.
+ */
 async function selectCandidates(
   t: Tx,
-  opts: {
-    accountId: string; ownAddresses: readonly string[]; limit: number; afterId: string | null;
-    only: readonly string[] | null;
-  },
+  opts: { accountId: string; ownAddresses: readonly string[]; limit: number; only: readonly string[] },
 ): Promise<AutoRow[]> {
   const filters = [
     eq(messages.accountId, opts.accountId),
@@ -429,12 +460,13 @@ async function selectCandidates(
     )`,
     // 3 — the user is replying, or has replied, through the app.
     sql`not exists (
-      select 1 from ${drafts} d where d.in_reply_to_message_id = ${messages.id}
+      select 1 from ${drafts} d
+       where d.account_id = ${messages.accountId} and d.in_reply_to_message_id = ${messages.id}
     )`,
     // 4 — the user decided on an AI proposal about this message.
     sql`not exists (
       select 1 from ${approvals} a
-       where a.message_id = ${messages.id} and a.status <> 'pending'
+       where a.account_id = ${messages.accountId} and a.message_id = ${messages.id} and a.status <> 'pending'
     )`,
   ];
   /* 5 — THE USER ANSWERED THIS SENDER, through `weAnsweredThisSenderWhere` like its two siblings.
@@ -446,8 +478,8 @@ async function selectCandidates(
     fromAddress: messages.fromAddress as unknown as SQL,
     ownAddresses: opts.ownAddresses,
   })}`);
-  if (opts.afterId) filters.push(gt(messages.id, sql`${opts.afterId}::uuid`));
-  if (opts.only) filters.push(inArray(messages.id, [...opts.only]));
+  // ONE array parameter, so the statement's text does not depend on how many ids it is asked about.
+  filters.push(sql`${messages.id} = any(${sql.param([...opts.only])}::uuid[])`);
 
   const rows = await t.select({
     messageId: messages.id,
