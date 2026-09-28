@@ -3083,6 +3083,36 @@ export function frameIdentity(doc: string): string {
 }
 
 /**
+ * WHAT A MEASUREMENT READS, taken from the live state: the element and its document, the column,
+ * the height last written, and the mail's box. Two equal readings mean the frame and its mail are
+ * exactly as the last run left them, so {@link measure} skips the probe. Read at the END of a run
+ * too, in the final state, which is the state the next run starts from.
+ */
+interface MeasureInputs {
+  frame: HTMLIFrameElement;
+  doc: Document;
+  column: number;
+  height: string;
+  offsetHeight: number;
+  scrollHeight: number;
+  scrollWidth: number;
+}
+
+function measureInputs(frame: HTMLIFrameElement, doc: Document): MeasureInputs {
+  const root = doc.documentElement;
+  return {
+    frame, doc, column: frame.clientWidth, height: frame.style.height,
+    offsetHeight: root.offsetHeight, scrollHeight: root.scrollHeight, scrollWidth: root.scrollWidth,
+  };
+}
+
+function sameMeasureInputs(a: MeasureInputs | null, b: MeasureInputs): boolean {
+  return a !== null && a.frame === b.frame && a.doc === b.doc && a.column === b.column
+    && a.height === b.height && a.offsetHeight === b.offsetHeight
+    && a.scrollHeight === b.scrollHeight && a.scrollWidth === b.scrollWidth;
+}
+
+/**
  * THE SCROLLABLE ANCESTORS OF THE FRAME, nearest first, plus the document scroller. {@link measure} sizes the frame
  * by briefly SHRINKING it to {@link PROBE_PX}. Anything that scrolls above the frame — the reading pane, the app
  * column, the page itself — has its own `scrollHeight` drop by the difference the instant the frame shrinks, and the
@@ -3324,6 +3354,8 @@ export function MessageBody({
    * navigation it replaces.
    */
   const heightRef = useRef<string>("");
+  /** What the last measurement left behind, read back at the top of the next one. */
+  const lastMeasure = useRef<MeasureInputs | null>(null);
 
   /**
    * DARK VIEWING — READ THE THEME, LET THE READER OVERRIDE IT PER MESSAGE: `useOptionalTheme` and not `useTheme`:
@@ -3542,8 +3574,8 @@ export function MessageBody({
    * one task, so the probe is never observed and (4) stays safe. An early `return` in between
    * would leave the frame AT the probe height and start a permanent oscillation — the only
    * branch here is on the write itself. The 1 px epsilon and the remembered height are GONE
-   * with the feedback edge that needed them: the reading is a pure function of the content, so
-   * a re-measure that changes nothing writes the same string, a no-op.
+   * with the feedback edge that needed them. A call whose inputs have not moved since the last
+   * one returns BEFORE the probe ({@link measureInputs}), so it reads and writes nothing.
    */
   /**
    * Stable, so React detaches and attaches the ref only when the ELEMENT changes — which is
@@ -3558,6 +3590,10 @@ export function MessageBody({
     const frame = frameRef.current;
     const doc = frame?.contentDocument;
     if (!frame || !doc?.documentElement) return;
+    // The frame and its mail are as the last run left them, so the probe would write what is
+    // already there, and the probe itself clamps the pane's scroll for a task. Checked before the
+    // scrollers are read and before any attribute comes off, so no half-probe is left behind.
+    if (sameMeasureInputs(lastMeasure.current, measureInputs(frame, doc))) return;
     // ── PRESERVE THE PANE'S SCROLL ACROSS THE PROBE ────────────────────────────────────
     // Capture the scroll offset of every scrollable ancestor BEFORE the probe shrinks the
     // frame, and restore each AFTER the final height is written. Without this, the probe's
@@ -3632,6 +3668,7 @@ export function MessageBody({
     for (let i = 0; i < scrollers.length; i++) {
       if (scrollers[i]!.scrollTop !== tops[i]) scrollers[i]!.scrollTop = tops[i]!;
     }
+    lastMeasure.current = measureInputs(frame, doc);
   }, []);
 
   // Keyed on the DOCUMENT, not the `mail` object: a re-sanitize that yields the same bytes (a new
