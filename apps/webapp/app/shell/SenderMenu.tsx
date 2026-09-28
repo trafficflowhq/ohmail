@@ -496,8 +496,9 @@ export function SenderMenu({
               key={dest}
               data-dest={dest}
               role="option"
-              aria-selected={subject.current === dest}
-              className={subject.current === dest ? "sel" : undefined}
+              /* Where their RULE files their mail — never where the letters sit (`ruled`). */
+              aria-selected={subject.ruled === dest}
+              className={subject.ruled === dest ? "sel" : undefined}
               // Focusable and key-operable: the sheet opens from the `s` key, and an option a
               // keyboard cannot reach is the same defect as one rendered off-screen.
               tabIndex={0}
@@ -515,7 +516,7 @@ export function SenderMenu({
               {DECISION_OF_DEST[dest] === "no" && subject.waiting ? (
                 <span className="sm-warn" aria-hidden="true">↗</span>
               ) : null}
-              {subject.current === dest ? <span className="ck">✓</span> : null}
+              {subject.ruled === dest ? <span className="ck">✓</span> : null}
             </li>
           ))}
         </ul>

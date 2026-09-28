@@ -16,8 +16,10 @@ import {
   decidedDestination,
   pressOverTwins,
   retroPassWouldMove,
+  ruleTwins,
   rulesList,
   senderKey,
+  twinWinner,
   type EngineMessage,
   type EngineMutation,
   type EntityReader,
@@ -92,6 +94,12 @@ export interface ScreeningSubject {
   messages: EngineMessage[];
   /** Where the lists show that mail ({@link senderScreening}'s `placeOf`), or null when spread. */
   current: ScreeningPlace | null;
+  /**
+   * WHERE THEIR MAIL GOES: the pile of the rule the router files this subject's mail by (the
+   * winner of its term-free twins, the rule a press would retarget), or null with no such rule.
+   * The sheet marks this, never {@link current}: letters an older rule filed stay where they are.
+   */
+  ruled: ScreeningDest | null;
   /** Each place the lists show that mail in, with how many — most first. */
   places: Array<{ place: ScreeningPlace; count: number }>;
   /** Still waiting: the ONLY state `POST /screener/:id` will resolve. */
@@ -190,7 +198,8 @@ export function senderScreening(
   mine.sort(byDateDesc);
   theirs.sort(byDateDesc);
 
-  const sender = subjectOf(mine, placeOf);
+  const rules = rulesList(reader).filter((r) => r.enabled && ruleMatchesSender(r, subjectAddress));
+  const sender = subjectOf(mine, placeOf, ruledBy(rules, "sender", subjectAddress.trim().toLowerCase()));
   // The chip's display name, from the seed message's own entries: the sender's when the
   // override IS the sender (or there is none), else whatever the To/Cc entry wrote — the same
   // spelling the chip's face wore. Null for an address the seed does not carry.
@@ -209,9 +218,16 @@ export function senderScreening(
     representativeId: sender.representativeId,
     // With no domain there is nothing to widen to, so the domain subject IS the sender subject
     // and `SenderMenu` refuses to offer the switch. It is never a silently-empty second option.
-    scopes: { sender, domain: domain === "" ? sender : subjectOf(theirs, placeOf) },
-    rules: rulesList(reader).filter((r) => r.enabled && ruleMatchesSender(r, subjectAddress)),
+    scopes: { sender, domain: domain === "" ? sender : subjectOf(theirs, placeOf, ruledBy(rules, "domain", domain)) },
+    rules,
   };
+}
+
+/** The pile the subject's winning twin files into — {@link ScreeningSubject.ruled}. */
+function ruledBy(rules: readonly RuleDTO[], kind: "sender" | "domain", match: string): ScreeningDest | null {
+  const winner = twinWinner(ruleTwins(rules, kind, match));
+  const place = winner ? DEST_OF_FOLDER.get(canonicalDestination(winner.destination) as Folder) : undefined;
+  return place === undefined || place === "screener" ? null : place;
 }
 
 /** The `match` a rule at this scope carries — normalized ONCE, for the overlay and the wire. */
@@ -230,7 +246,9 @@ export function domainOf(address: string): string {
  * `current` is where the LISTS show the mail — a rule's placement, History — never the filed
  * folder when the two differ; `waiting` and the representative stay physical, the decide's door.
  */
-function subjectOf(messages: EngineMessage[], placeOf?: ReadonlyMap<string, Folder | null>): ScreeningSubject {
+function subjectOf(
+  messages: EngineMessage[], placeOf: ReadonlyMap<string, Folder | null> | undefined, ruled: ScreeningDest | null,
+): ScreeningSubject {
   const shown = (m: EngineMessage): ScreeningPlace | undefined => {
     const place = placeOf?.has(m.id) ? placeOf.get(m.id)! : m.folder;
     return place === null ? "history" : DEST_OF_FOLDER.get(canonicalDestination(place) as Folder);
@@ -244,6 +262,7 @@ function subjectOf(messages: EngineMessage[], placeOf?: ReadonlyMap<string, Fold
   return {
     messages,
     current: counts.size === 1 ? [...counts.keys()][0]! : null,
+    ruled,
     places: [...counts].map(([place, count]) => ({ place, count })).sort((a, b) => b.count - a.count),
     waiting: held.length > 0,
     // The newest HELD message, because `POST /screener/:id` resolves `:id` against held mail

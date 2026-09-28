@@ -6,7 +6,7 @@ import {
 } from "./consent-cutline.js";
 import { mutationEffects, type MutationEffect } from "./mutations.js";
 import type { ScreenIntent } from "./routing-intents.js";
-import { pressOverTwins } from "./rule-twins.js";
+import { pressOverTwins, ruleTwins, twinWinner } from "./rule-twins.js";
 import { rulesList, senderKey } from "./selectors.js";
 import type { EntityReader } from "./store.js";
 import { FOLDER_OF_VIEW, type EngineMessage, type EngineMutation, type Folder, type RuleDTO } from "./types.js";
@@ -334,8 +334,11 @@ export function rulesInPlay(input: {
     }
     counts.set(by.id, (counts.get(by.id) ?? 0) + 1);
   }
+  // THE RULE THE SUBJECT'S MAIL FOLLOWS is named even while its letters sit where an older rule
+  // filed them: it is where their mail goes, and the rows alone would leave it unsaid.
+  const own = twinWinner(ruleTwins(local, input.scope, input.match));
   const named = rules.filter((r) => {
-    if (counts.has(r.id)) return true;
+    if (counts.has(r.id) || r === own) return true;
     if (r.kind !== "sender" || ruleTerms(r).body === null) return false;
     return input.scope === "sender" ? ruleMatchKey(r.match) === input.match : false;
   });
@@ -360,8 +363,11 @@ export function rulesInPlay(input: {
     : null;
   const only = lines.length === 1 ? lines[0]!.rules[0]! : null;
   const t = only ? ruleTerms(only) : null;
+  // A lone rule that does not place every row is worth naming: the mail is split from it.
+  const placed = lines.reduce((n, l) => n + (l.count ?? 0), 0);
   const worthShowing = lines.length >= 2 || inside !== null
-    || (only !== null && (t!.subject !== null || t!.body !== null || only.kind === "domain" || only.priority > 0));
+    || (only !== null && (t!.subject !== null || t!.body !== null || only.kind === "domain" || only.priority > 0
+      || placed < input.subject.length));
   return { lines, inside, worthShowing };
 }
 
