@@ -46,6 +46,15 @@ export const ACCESS_TTL_MS = 60_000;
 export const ACCESS_FAULT_HOLD_MS = ENTITLEMENTS_CALL_BUDGET_MS;
 
 /**
+ * How long a REFUSAL is reused before it is asked again: five seconds, where an allow keeps
+ * {@link ACCESS_TTL_MS}. A fault is held; a refusal is re-asked, because the person may have just
+ * paid, and a minute-old refusal kept a paid account's mail unorganized and its wall up. At most one
+ * call per account per five seconds while refused, and only when something asks — concurrent askers
+ * share the call in flight. Never longer than the allow's own TTL.
+ */
+export const ACCESS_REFUSED_TTL_MS = 5_000;
+
+/**
  * How old a held ALLOW a READ route may answer on while it is re-read behind it: ten minutes. A
  * read route writes and spends nothing, and the refresh it starts is the answer every later
  * request reads, so a refusal reaches the next one. A longer gap is a new session, and its first
@@ -424,7 +433,8 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
         const priced = card !== null && !("bad" in card);
         if (priced) pricesStated = true;
         const verdict: AccessVerdict = read.ok && priced ? { ...read, prices: card } : read;
-        cache.set(accountId, { verdict, readAt: at, freshUntil: at + ttlMs });
+        const reuseMs = verdict.ok ? ttlMs : Math.min(ttlMs, ACCESS_REFUSED_TTL_MS);
+        cache.set(accountId, { verdict, readAt: at, freshUntil: at + reuseMs });
         faultHeldUntil.delete(accountId);
         return verdict;
       }
