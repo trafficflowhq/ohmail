@@ -77,8 +77,6 @@ export interface RoutingUndoCopy {
   expired: (count: number) => string;
   /** The server's own answer, when it differs from what the press said. */
   correction: (key: ScreeningToastKey, note: RoutingNote) => string;
-  /** Back to Waiting's rule deletion was refused: the mail moved, the rule stands. */
-  releaseKept: (note: RoutingNote) => string;
 }
 
 /** A Screener release — Allow, Not spam, back to Waiting — whose mail already moved. */
@@ -92,7 +90,8 @@ export interface ReleasePressInput {
   dest: ReleaseIntent["dest"];
   /** The messages the press moved, shown at `dest` while the window runs. */
   messageIds: readonly string[];
-  note: RoutingNote;
+  /** The rule change's answers, handed back to the press. */
+  after: (results: readonly RoutingSendResult[]) => void;
 }
 
 /** One routing press, as the shell hands it over. */
@@ -149,6 +148,8 @@ export interface RoutingUndo {
   subjectOf: (address: string) => string;
   /** Take the press on this subject back: the intent is dropped, nothing was sent. */
   undo: (subject: string) => boolean;
+  /** Start this subject's window again from now, when its offer reaches the screen. */
+  restart: (subject: string) => boolean;
   /** Where held presses are showing their mail — composed into the presentation reader. */
   places: ReadonlyMap<string, Folder>;
 }
@@ -199,6 +200,8 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
   const built = useRef(new Map<string, ScreeningPlan | null>());
   /** A sender-sheet press's commit plan and its in-memory half, by press id. */
   const screens = useRef(new Map<string, { changed: string[]; press?: ScreenPressInput }>());
+  /** A release's in-memory half, by press id: whom its answer is handed back to. */
+  const releases = useRef(new Map<string, ReleasePressInput["after"]>());
 
   /**
    * ONE COORDINATOR, ON ITS OWN CHANNEL. The journal is per ORIGIN, so a second tab's launch
@@ -243,18 +246,11 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
 
     dispatch: async (mutations, i) => {
       if (i.v === 4) {
-        const note = notes.current.get(i.id);
-        notes.current.delete(i.id);
-        const worst = worstStatus(await Promise.all(mutations.map((m) => latest.current.send(m))));
-        /* The press already said where the mail went; only a rule the server did not take is
-           news. Back to Waiting deletes rules, and a deletion held offline is said by no one. */
-        if (note === undefined || worst === null || worst === "confirmed") return;
-        if (i.dest === "screener") {
-          if (worst === "rolled_back") latest.current.toast(latest.current.copy.releaseKept(note));
-          return;
-        }
-        const key = worst === "rolled_back" ? "toastRuleFailed" : worst === "queued" ? "toastRuleQueued" : "toastRuleOrganizer";
-        latest.current.toast(latest.current.copy.correction(key, note));
+        const after = releases.current.get(i.id);
+        releases.current.delete(i.id);
+        const results = await Promise.all(mutations.map((m) => latest.current.send(m)));
+        /* A replayed press has nobody to hand its answer to, as a replayed Move has none. */
+        after?.(results);
         return;
       }
       if (i.v === 2) {
@@ -365,9 +361,9 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
         messageIds: [...press.messageIds],
         at: (latest.current.now ?? Date.now)(),
       };
-      notes.current.set(press.id, press.note);
+      releases.current.set(press.id, press.after);
       const out = window_.open(intent);
-      if (!out.held) notes.current.delete(press.id);
+      if (!out.held) releases.current.delete(press.id);
       return out;
     }, [window_]),
     hold: useCallback((press: RoutingPressInput): RoutingOpen => {
@@ -390,5 +386,6 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
       return out;
     }, [window_]),
     undo: useCallback((subject: string) => window_.undo(subject), [window_]),
+    restart: useCallback((subject: string) => window_.restart(subject), [window_]),
   };
 }

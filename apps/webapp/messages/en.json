@@ -921,7 +921,6 @@
     "toastNotSpamOhbox": "Not spam — filed to Ohbox. {sender} is allowed now.",
     "toastNotSpamOhboxAddress": "Not spam — filed to Ohbox. {sender} is allowed from now on; the rule for {domain} still screens everyone else there.",
     "toastNotSpamWaiting": "Not spam — {sender} is back in Waiting.",
-    "toastReleaseRuleKept": "{sender}'s mail moved, but their rule could not be removed. Future mail from them is unchanged.",
     "toastDeleted": "Deleted — {sender}.",
     "bulkOhbox": "{count} to Ohbox",
     "bulkReads": "{count} to News",

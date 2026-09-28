@@ -921,7 +921,6 @@
     "toastNotSpamOhbox": "Kein Spam — in die Ohbox einsortiert. {sender} ist jetzt zugelassen.",
     "toastNotSpamOhboxAddress": "Kein Spam — in die Ohbox einsortiert. {sender} ist ab jetzt zugelassen; die Regel für {domain} sortiert alle anderen dort weiterhin aus.",
     "toastNotSpamWaiting": "Kein Spam — {sender} steht wieder unter „Wartend“.",
-    "toastReleaseRuleKept": "Die Post von {sender} wurde verschoben, aber ihre Regel lie\u00df sich nicht entfernen. K\u00fcnftige Post von ihnen bleibt, wie sie war.",
     "toastDeleted": "Gelöscht — {sender}.",
     "bulkOhbox": "{count} in die Ohbox",
     "bulkReads": "{count} nach News",

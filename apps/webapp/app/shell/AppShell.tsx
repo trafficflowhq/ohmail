@@ -1119,7 +1119,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const {
     fileAndRefresh, rosterRef, deleting, restoring, refusalCopy, routing, pressWatch,
-    toastWithUndo, mutateAndReport, mutateSetAndReport, runArmedUndo, undoToast,
+    toastWithUndo, mutateAndReport, mutateSetAndReport, runArmedUndo, undoToast, screenerRelease,
   } = useShellDispatch({ engine, reader, toast: hostToast, t, demo, refreshFacts });
   /* Every sentence below leaves through the undo door, so an Undo raised anywhere is one `z` takes. */
   const toast = undoToast;
@@ -1429,14 +1429,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   });
   const screenerShownAt = useStableCallback((subject: readonly EngineMessage[], dest: ScreeningDest) =>
     screeningShown(engine.read(), subject, dest, { consent: demo ? null : consent, now: nowAt(), ownAddresses }));
-  /* The release presses hold their rule change in the routing window Move uses, with its Undo. */
-  const cancelRelease = useStableCallback((address: string) => routing.undo(routing.subjectOf(address)));
   const screener = useScreenerState(
     engine, derived, toast, suggestions.suggestions, presented, autoUnsubscribeDiscloses,
     // The SAME addresses `consentView` was built from — the queue's rows and the partition's
     // reckoning read one list, so the reader is never a row in their own Screener.
-    screenerRole, suggestions.outstandingDecisions, ownAddresses, screenerShownAt,
-    demo ? undefined : { hold: routing.holdRelease, cancel: cancelRelease, toastWithUndo },
+    screenerRole, suggestions.outstandingDecisions, ownAddresses, screenerShownAt, screenerRelease,
   );
   /**
    * The opt-in's quote, bound to the SAME list the automatic batch will slice.

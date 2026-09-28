@@ -34,6 +34,7 @@ import { usePressWatch, type PressWatch } from "./press-watch";
 import { placeLabel } from "./format";
 import { useStableCallback } from "./stable-callback";
 import { createUndoDoor, type UndoToastFn } from "./undo-door";
+import type { ScreenerReleaseWindow } from "./screener-state";
 
 /**
  * WHAT THE SPINE IS HANDED. Every field is required and none has a default: a forgotten `demo`
@@ -59,6 +60,8 @@ export interface ShellDispatch {
   restoring: ReturnType<typeof useDeleteUndo>;
   refusalCopy: { named: (name: string) => string; unknown: () => string; nobody: () => string };
   routing: ReturnType<typeof useRoutingUndo>;
+  /** The routing window the Screener's release presses hold their rule change in; absent in the demo. */
+  screenerRelease: ScreenerReleaseWindow | undefined;
   /** A sender-sheet press waiting on its backlog pass, told once when it finishes. */
   pressWatch: PressWatch;
   refusalSentence: (err: MutationRejectedError | undefined) => string;
@@ -277,7 +280,6 @@ export function useShellDispatch({
       expired: (count: number) => t("screening.toastRuleExpired", { count }),
       correction: (key, note) =>
         t(`screening.${key}`, { sender: note.sender, place: note.place, count: note.count }),
-      releaseKept: (note) => t("screener.toastReleaseRuleKept", { sender: note.sender }),
     }), [t]),
   });
 
@@ -436,6 +438,13 @@ export function useShellDispatch({
     },
   );
 
+  /* The Screener's release presses hold their rule change in the routing window, with Move's Undo. */
+  const cancelRelease = useStableCallback((address: string) => routing.undo(routing.subjectOf(address)));
+  const restartRelease = useStableCallback((address: string) => routing.restart(routing.subjectOf(address)));
+  const screenerRelease = useMemo<ScreenerReleaseWindow | undefined>(() => (demo ? undefined : {
+    hold: routing.holdRelease, cancel: cancelRelease, restart: restartRelease, toastWithUndo,
+  }), [demo, routing.holdRelease, cancelRelease, restartRelease, toastWithUndo]);
+
   return {
     fileAndRefresh,
     rosterRef,
@@ -443,6 +452,7 @@ export function useShellDispatch({
     restoring,
     refusalCopy,
     routing,
+    screenerRelease,
     pressWatch,
     refusalSentence,
     dispatchPress,

@@ -87,6 +87,8 @@ export interface ScreenerReleaseWindow {
   hold: (press: ReleasePressInput) => RoutingOpen;
   /** Take back the held press about this sender; `true` only while its window was open. */
   cancel: (address: string) => boolean;
+  /** Start the held press's window again from now, when its offer reaches the screen. */
+  restart: (address: string) => boolean;
   toastWithUndo: (
     sentence: string,
     inverses: readonly EngineMutation[],
@@ -809,9 +811,11 @@ export function useScreenerState(
   };
 
   /**
-   * A RELEASE WITH ITS UNDO. The mail moves now, the engine's reversal read before it is sent;
-   * the rule change waits in the routing window and is written when the window closes. Undo
-   * cancels the rule and moves the mail back, through the one door. `false`: no window here.
+   * A RELEASE WITH ITS UNDO. The rule change waits in the routing window from the press and is
+   * written when it closes; the mail moves now, its reversal read before it is sent. Undo is
+   * offered once the moves landed. A refused move takes the rule change back and a wait says so,
+   * both without an offer; the rule's own answer at the close speaks only if it is a refusal.
+   * `false`: no window here.
    */
   const releaseWithUndo = (
     sender: ScreenerSenderDTO, segment: "screened" | "spam", dest: "ohbox" | "reads" | "screener",
@@ -822,18 +826,26 @@ export function useScreenerState(
     const wanted = FOLDER_OF_VIEW[dest];
     const pre = engine.verbRead();
     const inverses = moveIds.flatMap((messageId) => inverseMutations(pre, { kind: "move", messageId, folder: wanted }));
-    void moveAll(moveIds, wanted).then((tally) => { const ok = releaseSaid(tally, sender, segment); after?.(ok); });
-    if (ruleMutations.length === 0) { releaseWindow.toastWithUndo(sentence, inverses); return true; }
-    const open = releaseWindow.hold({
-      id: crypto.randomUUID(), seedId: sender.id, address: sender.from.address,
+    const address = sender.from.address;
+    const held = ruleMutations.length > 0 && releaseWindow.hold({
+      id: crypto.randomUUID(), seedId: sender.id, address,
       from: segment === "spam" ? FOLDER_OF_VIEW.spam : FOLDER_OF_VIEW.screened, dest, messageIds: moveIds,
-      note: { sender: displayAddress(sender.from.address), place: dest === "screener" ? t("segWaiting") : piles[dest], count: moveIds.length },
-    });
-    // A jar that refused the record sent the rule at once, so no Undo is on offer.
-    if (!open.held) { toast(`${sentence} ${tSession("noUndoHere")}`); return true; }
-    releaseWindow.toastWithUndo(sentence, inverses, {
-      cancel: () => releaseWindow.cancel(sender.from.address),
-      undone: ts("toastRoutingUndoneRules"),
+      after: (results) => {
+        const tally = tallyVerdicts(results.map(pressVerdict));
+        if (tally.refused > 0) { releaseSaid(tally, sender, segment); after?.(false); }
+      },
+    }).held;
+    void moveAll(moveIds, wanted).then((tally) => {
+      if (tally.refused > 0 && held) releaseWindow.cancel(address);
+      const ok = releaseSaid(tally, sender, segment);
+      after?.(ok);
+      if (!ok) return;
+      // A jar that refused the record sent the rule at once, so no Undo is on offer.
+      if (ruleMutations.length > 0 && !held) { toast(`${sentence} ${tSession("noUndoHere")}`); return; }
+      if (held) releaseWindow.restart(address);
+      releaseWindow.toastWithUndo(sentence, inverses, held
+        ? { cancel: () => releaseWindow.cancel(address), undone: ts("toastRoutingUndoneRules") }
+        : undefined);
     });
     return true;
   };
