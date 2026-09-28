@@ -8,8 +8,7 @@
  * body, and the reader scrolled past a duplicate to reach the textarea — so this is head + textarea +
  * actions + status, scrolled into view on open. The payload never changed: sending is
  * `{inReplyTo, body}` with `body` exactly what was typed (`http-adapter.ts` `mailSend`); no quoted
- * original leaves the account. The draft is a row on the account, written after a pause
- * (`reply-autosave.ts`); `localStorage` keeps the unsent text per message as the cushion.
+ * original leaves the account. The draft is an account row (`reply-autosave.ts`), kept locally too.
  */
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";

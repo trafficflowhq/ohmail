@@ -14,6 +14,7 @@ import {
   FOLDER_OF_VIEW,
   consentIndex,
   decidedDestination,
+  mailboxProfiles,
   pressOverTwins,
   retroPassWouldMove,
   ruleTwins,
@@ -199,7 +200,9 @@ export function senderScreening(
   theirs.sort(byDateDesc);
 
   const rules = rulesList(reader).filter((r) => r.enabled && ruleMatchesSender(r, subjectAddress));
-  const sender = subjectOf(mine, placeOf, decidedDestination(consentIndex(rules), subjectAddress));
+  // Per mailbox, as the lists judge it: a mailbox this install reads is decided by its organizer.
+  const index = consentIndex(rulesList(reader), mailboxProfiles(reader));
+  const sender = subjectOf(mine, placeOf, decidedDestination(index, subjectAddress, seed.mailboxId));
   // The chip's display name, from the seed message's own entries: the sender's when the
   // override IS the sender (or there is none), else whatever the To/Cc entry wrote — the same
   // spelling the chip's face wore. Null for an address the seed does not carry.
