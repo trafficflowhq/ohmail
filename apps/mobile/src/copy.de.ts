@@ -1468,6 +1468,9 @@ export const DE: Deck = {
   /* Carried with the English above; see `copy.en.ts` for why these live in the deck. */
   unsavedCount: (n: number): string =>
     (n === 1 ? "1 Änderung konnte nicht gespeichert werden" : `${n} Änderungen konnten nicht gespeichert werden`),
+  unsavedPendingCount: (n: number): string =>
+    (n === 1 ? "1 Änderung ist noch nicht durch" : `${n} Änderungen sind noch nicht durch`),
+  unsavedQueuedWhy: "Dieses Telefon konnte dein Konto nicht erreichen. Es versucht es weiter.",
   unsavedShow: "Anzeigen",
   unsavedHide: "Ausblenden",
   unsavedRetry: "Erneut versuchen",

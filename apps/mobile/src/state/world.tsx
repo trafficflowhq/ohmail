@@ -98,6 +98,7 @@ import {
   type FolderEntity,
   type ScreenerRow,
   type AbandonedMutation,
+  type QueuedChange,
   /* THROUGH `live.ts`, not from the engine package: `privacy.test.ts#ENGINE_IMPORTERS` is a
      short allow-list and this file is not on it — the type leaves by the door the phone
      already has (the re-export beside `AbandonedMutation`). */
@@ -209,6 +210,12 @@ export interface World {
    * render after a boot — when nothing has been dispatched and the only evidence is on disk.
    */
   abandoned: readonly AbandonedMutation[];
+  /**
+   * DRAFT DISCARDS WAITING ON THIS PHONE'S QUEUE — the engine's `queuedDiscards()`, the selector
+   * the browser's strip reads. The discard's paint erases the draft from Drafts while the request
+   * waits, so the strip beside the abandoned rows is the only place it is still named.
+   */
+  queued: readonly QueuedChange[];
   /**
    * WHICH SESSION this is — the live session's mirror owner key, or `"none"`. The one
    * legitimate effect dependency for "do this again when the world changes": the actions
@@ -543,6 +550,9 @@ const NO_ACTIONS: WorldActions = {
   // The empty world has no engine; the shape is kept honest for a caller that reads the result.
   retryAbandoned: async (id: string) => ({ id, key: id, status: "rolled_back" as const, seq: null }),
   discardAbandoned: async () => undefined,
+  // Nothing is queued on the empty world: no verb waits, so Try again finds none.
+  retryQueued: async () => null,
+  discardQueued: async () => "gone" as const,
   hydrateHeld: () => undefined,
   holdFiles: () => undefined,
   releaseFiles: () => undefined,
@@ -593,6 +603,7 @@ const NO_ACTIONS: WorldActions = {
 };
 
 const EMPTY_ABANDONED: readonly AbandonedMutation[] = Object.freeze([]);
+const EMPTY_QUEUED: readonly QueuedChange[] = Object.freeze([]);
 
 /**
  * HOW OFTEN THE LIVE-VERDICT WATCHER RE-READS — the engine's own poll cadence.
@@ -612,6 +623,7 @@ function emptyWorld(actions: WorldActions): World {
     // than a fresh `[]`: this object is compared by identity in places, and a new array per call
     // is the same re-render trap `useAbandoned` avoids on the web.
     abandoned: EMPTY_ABANDONED,
+    queued: EMPTY_QUEUED,
     worldKey: "none",
     account: { name: "", email: "" },
     standalone: false,
@@ -1277,7 +1289,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     if (conn.syncing) tried.current.clear();
   }, [conn.syncing]);
   useEffect(() => {
-    if (conn.syncing || engine === null || flushing.current === engine) return;
+    if (conn.syncing || engine === null || acts === null || flushing.current === engine) return;
     const pending = engine.pendingMutations();
     if (!reconnectFlushDue(pending.map((m) => m.key), tried.current, answersWaiting(engine))) return;
     // Everything pending was already retried since the last drain: wait for the next one.
@@ -1291,7 +1303,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     const flushed = engine;
     flushing.current = flushed;
     let acceptedNow = false;
-    void flushQueued(flushed, (key) => {
+    void flushQueued(flushed, acts.releaseConfirmed, (key) => {
       if (backendEngineRef.current !== flushed) return;
       settlements.current.set(key, { ...(settlements.current.get(key) ?? NO_SETTLEMENT), accepted: true });
       acceptedNow = true;
@@ -1311,7 +1323,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
             // (`FlushedOutcome.sendAt`) exactly so a background flush cannot announce an
             // appointment as a delivery. The time is read in the reader's own clock, the same
             // sentence the foreground press would have spoken.
-            if (o.status === "confirmed") {
+            // A SEND + DONE this flush confirmed filed its source and says so, with its Undo, in
+            // place of the ordinary sentence: one press, one sentence.
+            if (o.status === "confirmed" && o.done !== null) showToast(o.done.say, o.done.opts);
+            else if (o.status === "confirmed") {
               // WHICH MESSAGE, FIRST IN THE CHAIN. A confirmation the server answered from an
               // earlier reservation is about that press's words, and about its arrangement —
               // naming a time this press asked for would promise one nobody made. See
@@ -1341,7 +1356,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       });
     // `conn.syncing` falling is the drain-completed signal; `outcomeSeq` re-checks after a flush.
     // `zone` is a mount-stable memo; it is named because the appointment sentence reads it.
-  }, [conn.syncing, engine, showToast, outcomeSeq, zone]);
+  }, [conn.syncing, engine, acts, showToast, outcomeSeq, zone]);
   // The outgoing session's ledger must not answer for the next session's keys.
   useEffect(() => {
     outcomes.current = new Map();
@@ -1364,6 +1379,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           forwardFetch: (id) => acts.forwardFetch(id),
           retryAbandoned: (id) => acts.retryAbandoned(id),
           discardAbandoned: (id) => acts.discardAbandoned(id),
+          retryQueued: (id) => acts.retryQueued(id),
+          discardQueued: (key) => acts.discardQueued(key),
           hydrateHeld: (ids) => acts.hydrateHeld(ids),
           holdFiles: (ids) => acts.holdFiles(ids),
           releaseFiles: (ids) => acts.releaseFiles(ids),
@@ -1487,7 +1504,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
      overlay carries the named rows until it closes (`@ohmail/client-engine#presentAt`). */
   const heldPlaces = useSyncExternalStore(subscribeRoutingPlaces, routingPlaces);
 
-  const projected = useMemo<Omit<World, "boot" | "abandoned" | "face" | "autoAct" | "sendOutcome" | "sendSettlement"> | null>(() => {
+  const projected = useMemo<Omit<World, "boot" | "abandoned" | "queued" | "face" | "autoAct" | "sendOutcome" | "sendSettlement"> | null>(() => {
     if (engine === null || session === null) return null;
     /* THE STANDALONE DOOR HAS NOBODY TO ASK — this app IS the engine there and `GET /consent` is
        a route this session does not dial (the same fact the queue read is skipped for, below).
@@ -1718,6 +1735,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         firstSync: firstSyncSay(standaloneHereFor(session)),
       },
       abandoned: engine.abandoned(),
+      queued: engine.queuedDiscards(),
       face: {
         account: accountFace,
         known: accountFaceKnown,

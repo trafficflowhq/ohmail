@@ -9,7 +9,7 @@
  */
 import { useState } from "react";
 import { ScrollView, View, useWindowDimensions } from "react-native";
-import type { AbandonedMutation } from "../state/live";
+import type { AbandonedMutation, MutationResult, QueuedChange } from "../state/live";
 import { Copy } from "../copy";
 import { describeKind, reason } from "./unsaved-copy";
 import { useTheme } from "../theme";
@@ -36,6 +36,10 @@ export function UnsavedChanges() {
   const narrow = width < 380;
 
   const rows = world.abandoned;
+  /* A DISCARD STILL WAITING ON THE QUEUE, listed beside them — its paint took the draft out of
+     Drafts, so this is the only place it is still named while it waits (the browser's strip). */
+  const queued: readonly QueuedChange[] = world.queued;
+  const listed = rows.length + queued.length;
   /**
    * NOTHING TO SAY, NOTHING ON SCREEN — except a result that has not been said yet.
    *
@@ -46,7 +50,7 @@ export function UnsavedChanges() {
    * because the outcome it carries is about work that no longer has a row. Parity with the
    * browser, which had the identical collision.
    */
-  if (rows.length === 0 && said === null) return null;
+  if (listed === 0 && said === null) return null;
 
   /**
    * For a verb `ownerSettled` covers, this row is the only thing waiting on the result, so a
@@ -64,20 +68,39 @@ export function UnsavedChanges() {
       setBusy(null);
     }
   };
+  /**
+   * TRY AGAIN ON A QUEUED DISCARD — `null` is a verb the drain took (or settled) between the
+   * paint and the press: nothing to say, and nothing to throw. A refusal leaves the queue and
+   * says why in the row, as a retry does; a verb still queued says nothing new.
+   */
+  const retryQueued = async (id: string) => {
+    setBusy(id);
+    try {
+      const outcome: MutationResult | null = await world.actions.retryQueued(id);
+      const refused = outcome !== null && outcome.status === "rolled_back";
+      setSaid(refused ? { id, message: outcome.error?.message ?? "" } : null);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   return (
     <View style={{ paddingHorizontal: 16, paddingBottom: 6, gap: 6 }}>
-      {rows.length === 0 && said !== null ? (
+      {listed === 0 && said !== null ? (
         <Tap onPress={() => setSaid(null)} accessibilityRole="button">
           <Txt variant="meta" tone="ink3">
             {said.message || Copy.unsavedNoReason} · {Copy.unsavedDismiss}
           </Txt>
         </Tap>
       ) : null}
-      {rows.length === 0 ? null : (
+      {listed === 0 ? null : (
         <Tap onPress={() => setOpen((v) => !v)} accessibilityRole="button">
           <Txt variant="meta" tone="ink3">
-            {Copy.unsavedCount(rows.length)} · {open ? Copy.unsavedHide : Copy.unsavedShow}
+            {[
+              rows.length > 0 ? Copy.unsavedCount(rows.length) : null,
+              queued.length > 0 ? Copy.unsavedPendingCount(queued.length) : null,
+              open ? Copy.unsavedHide : Copy.unsavedShow,
+            ].filter((part) => part !== null).join(" · ")}
           </Txt>
         </Tap>
       )}
@@ -132,6 +155,34 @@ export function UnsavedChanges() {
                 <Txt variant="meta" tone="ink3">{Copy.unsavedDiscard}</Txt>
               </Tap>
             </View>
+              </View>
+            ))}
+            {queued.map((m) => (
+              <View
+                key={m.id}
+                style={{ gap: 4, paddingTop: 6, borderTopWidth: 1, borderTopColor: t.c.hairSoft }}
+              >
+                <Txt variant="meta">{describeKind(m)}</Txt>
+                <Txt variant="meta" tone="ink3">
+                  {said?.id === m.id ? (said.message || Copy.unsavedNoReason) : Copy.unsavedQueuedWhy}
+                </Txt>
+                <View style={{ flexDirection: narrow ? "column" : "row", gap: narrow ? 6 : 16, paddingTop: 2 }}>
+                  <Tap
+                    disabled={busy === m.id}
+                    onPress={() => void retryQueued(m.id)}
+                    accessibilityRole="button"
+                  >
+                    <Txt variant="meta" tone="accent">{Copy.unsavedRetry}</Txt>
+                  </Tap>
+                  {/* Withdrawn: nothing sends it, now or after a restart, and the draft is back. */}
+                  <Tap
+                    disabled={busy === m.id}
+                    onPress={() => void act(m.id, async () => { await world.actions.discardQueued(m.key); return {}; })}
+                    accessibilityRole="button"
+                  >
+                    <Txt variant="meta" tone="ink3">{Copy.unsavedDiscard}</Txt>
+                  </Tap>
+                </View>
               </View>
             ))}
           </ScrollView>

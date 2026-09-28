@@ -2267,6 +2267,10 @@ const TABLE = {
   // The phone's half of the browser's "could not be saved" strip. Same words on both platforms
   // deliberately: a person who uses both should not have to learn two names for one state.
   unsavedCount: (n: number) => (n === 1 ? "1 change could not be saved" : `${n} changes could not be saved`),
+  /* A draft discard still waiting on this phone's queue — the browser's `sync.unsavedPendingCount`
+     word for word; its why names the phone, and it tries again each time the account answers. */
+  unsavedPendingCount: (n: number) => (n === 1 ? "1 change has not gone through yet" : `${n} changes have not gone through yet`),
+  unsavedQueuedWhy: "This phone could not reach your account. It keeps trying.",
   unsavedShow: "Show them",
   unsavedHide: "Hide",
   unsavedRetry: "Try again",

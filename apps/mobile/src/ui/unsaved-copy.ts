@@ -44,7 +44,8 @@ const KINDS = new Map<string, keyof typeof Copy>(Object.entries({
   rule_delete: "unsavedKindRule",
 }));
 
-export function describeKind(m: AbandonedMutation): string {
+/** Takes a queued verb too: only the kind is read. */
+export function describeKind(m: Pick<AbandonedMutation, "mutation">): string {
   const key = KINDS.get(m.mutation.kind);
   return key === undefined ? Copy.unsavedKindOther : (Copy[key] as string);
 }

@@ -86,8 +86,9 @@ import {
   routingSubject,
   type DecideIntent,
   type RoutingIntent,
-  sendAndDone,
+  applySendAndDone,
   sendAndDonePlanFor,
+  type SendAndDonePlan,
   type TagDTO,
   type TrashRowWire,
   type WallClockVerdict,
@@ -2423,6 +2424,11 @@ export interface FlushedOutcome {
   draftId?: string;
   /** A refused mail_send: the sentence the refusal earned ({@link failedSendCopy}). */
   failure?: FailedSendCopy;
+  /**
+   * mail_send only: the Send + Done release this confirmation ran, as the sentence it earned
+   * ({@link ReleaseConfirmed}) — said INSTEAD of the ordinary one, one sentence per press.
+   */
+  done: DoneSaid | null;
 }
 
 /**
@@ -2505,6 +2511,8 @@ export function reconnectFlushDue(pendingKeys: readonly string[], tried: Readonl
  */
 export async function flushQueued(
   engine: OhmailEngine,
+  /** REQUIRED: a flush that confirms a Send + Done and cannot release it files nothing. */
+  release: ReleaseConfirmed,
   /** A send the server says it has (`send_queued`): not terminal, but the composer says so. */
   onAccepted?: (key: string) => void,
 ): Promise<Map<string, FlushedOutcome>> {
@@ -2515,6 +2523,7 @@ export async function flushQueued(
   const strays = strayAnswers.get(engine) ?? [];
   strayAnswers.delete(engine);
   const results = [...strays, ...await engine.flushPending().catch(() => [])];
+  const done = await release(results);
   for (const r of results) {
     if (r.status === "queued") {
       if (sendAccepted(r)) onAccepted?.(r.key);
@@ -2540,6 +2549,7 @@ export async function flushQueued(
     outcomes.set(r.key, {
       status, kind: meta.kind, forward: meta.forward, sendAt: meta.sendAt, earlierWent,
       ...(refusedSend ? { failure: failedSendCopy(r), ...(r.entityId ? { draftId: r.entityId } : {}) } : {}),
+      done: done.get(r.key) ?? null,
     });
   }
   return outcomes;
@@ -2612,13 +2622,18 @@ export interface ToastOpts {
   shown?: () => void;
 }
 
+/** The sentence a Send + Done release earned, with the Undo that puts the row back. */
+export interface DoneSaid {
+  say: RefusalArg;
+  opts?: ToastOpts;
+}
+
 /**
- * SEND + DONE's second half, as the send machine sees it: given whether the engine ACCEPTED the
- * message, it answers with the one sentence the press earned — or `null`, which hands the
- * sentence back to the send (a refused send, and a release the account was not allowed to make,
- * are both told in their own words).
+ * SEND + DONE's release over the results a road was HANDED — see `releaseConfirmed` in
+ * {@link liveActions}. Keyed by Idempotency-Key; a key absent from the answer earned no sentence
+ * of its own (a plain send, a refused one, or a release the account would not make).
  */
-type DoneHalf = (accepted: boolean) => Promise<{ say: RefusalArg; opts?: ToastOpts } | null>;
+export type ReleaseConfirmed = (results: readonly MutationResult[]) => Promise<ReadonlyMap<string, DoneSaid>>;
 
 export interface LiveDeps {
   engine: OhmailEngine;
@@ -2719,7 +2734,7 @@ export interface LiveDeps {
  */
 /* …and the reader type, for the same reason: the world holds the projection the lists are
    drawn from and hands it back through {@link LiveDeps.presented}, so it has to name it. */
-export type { AbandonedMutation, EntityReader, MutationResult } from "@ohmail/client-engine";
+export type { AbandonedMutation, EntityReader, MutationResult, QueuedChange } from "@ohmail/client-engine";
 /* The sheet's step reads the press's forecast and the rules in play by this door too. */
 export type {
   ConflictGroup, ConsentOptions, PressForecast, RuleDTO as WorldRule, RuleLine, RulesInPlay,
@@ -2766,6 +2781,15 @@ export interface LiveWorldActions {
   retryAbandoned(id: string): Promise<MutationResult>;
   /** Throw a given-up change away for good. The optimistic row reverted when it was abandoned. */
   discardAbandoned(id: string): Promise<void>;
+  /**
+   * TRY AGAIN ON A QUEUED DISCARD — now, under its own key (`engine.retryQueued`). `null` is a
+   * verb no longer waiting (the drain took it, or it settled): there is nothing to say.
+   */
+  retryQueued(id: string): Promise<MutationResult | null>;
+  /** DISCARD A QUEUED DISCARD — withdrawn, so nothing sends it and the draft comes back. */
+  discardQueued(key: string): Promise<WithdrawOutcome>;
+  /** Send + Done's release over a road's results — the one caller of `applySendAndDone`. */
+  releaseConfirmed: ReleaseConfirmed;
   /** The sender screen's open: fetch every held body so the decision is over real mail. */
   hydrateHeld(ids: string[]): void;
   /**
@@ -3783,29 +3807,35 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     sendAndDonePlanFor(presentedReader(), messageId) !== null;
 
   /**
-   * SEND + DONE — the release, armed at the press and run only on an accepted send.
+   * SEND + DONE — the plan, read at the press and carried by the send's own outbox row.
    *
-   * The plan is read HERE, before anything is dispatched: it names the section the source is in
-   * now, and the send itself releases a pin as it settles, so an inverse read afterwards would
-   * put the row back where the SEND left it rather than where the reader found it. The order,
-   * the release and the "only after acceptance" rule are the engine's one intent — the same
-   * `sendAndDone` the webapp composer takes — so the two surfaces cannot drift.
+   * Read HERE, before anything is dispatched: it names the section the source is in now, and the
+   * send itself releases a pin as it settles, so a read afterwards would put the row back where
+   * the SEND left it. An appointment finishes nothing (`sendAt` is mail still on the account).
    */
-  const doneHalf = (messageId: string): DoneHalf | undefined => {
-    const plan = sendAndDonePlanFor(presentedReader(), messageId);
-    if (plan === null) return undefined;
-    return async (accepted) => {
-      const out = await sendAndDone({
-        plan,
-        send: () => Promise.resolve(accepted),
-        /* The row's own Done door — `engine.mutate` through the watched seam, exactly as
-           `resurfaceDone` dispatches it. */
-        dispatch: async (m) => (await watched(engine.mutate(m))).kind === "applied",
-      });
-      return out.kind === "sent_and_done"
-        ? { say: refuse("toastSentAndDone"), opts: undoable(plan.undo) }
-        : null;
-    };
+  const donePlan = (messageId: string, andDone: boolean): SendAndDonePlan | null =>
+    andDone ? sendAndDonePlanFor(presentedReader(), messageId) : null;
+
+  /**
+   * THE RELEASE, ON EVERY ROAD THAT CONFIRMS A SEND — the press, its own flush, the reconnect
+   * flush and Try again on the strip each pass the results the engine HANDED them, and a
+   * confirmed `mail_send` carrying `andDone` files its source (`applySendAndDone`, the one caller
+   * here). The engine hands a result over once; `released` holds the one case where two callers
+   * share a result — Try again pressed twice joins the first retry.
+   */
+  const released = new WeakSet<MutationResult>();
+  const releaseConfirmed: ReleaseConfirmed = async (results) => {
+    const said = new Map<string, DoneSaid>();
+    for (const r of results) {
+      if (r.status !== "confirmed" || r.andDone === undefined || released.has(r)) continue;
+      released.add(r);
+      const plan = r.andDone;
+      /* The row's own Done door — `engine.mutate` through the watched seam, exactly as
+         `resurfaceDone` dispatches it. A refused step files nothing more and earns no sentence. */
+      const filed = await applySendAndDone(plan, async (m) => (await watched(engine.mutate(m))).kind === "applied");
+      if (filed) said.set(r.key, { say: refuse("toastSentAndDone"), opts: undoable(plan.undo) });
+    }
+    return said;
   };
 
   /**
@@ -4073,24 +4103,25 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     p: Promise<MutationResult>,
     sentToast: RefusalArg,
     earlierWentToast: RefusalArg,
-    /**
-     * SEND + DONE's second half, armed at the press and answered HERE, where the outcome is
-     * known. It takes the acceptance as its argument and OWNS the sentence when it fires: one
-     * press says one thing, rather than "Reply sent." replaced a beat later.
-     */
-    doneHalf?: DoneHalf,
     /** `false` for a caller that says a refused send in its own place (the Drafts card). */
     sayRefusals = true,
   ): Promise<SendResult> => {
     const first = await p.then((r) => r, () => null);
     let settled: MutationResult | null = first;
+    /* SEND + DONE's release OWNS the sentence when it files: one press says one thing, rather
+       than "Reply sent." replaced a beat later. A send still queued leaves it to the road that
+       confirms it (the reconnect flush), which says it there. */
+    let done: ReadonlyMap<string, DoneSaid> = new Map();
     if (first && first.status === "queued") {
       // The flush replays the WHOLE queue; only THIS send's own result — matched by the
       // Idempotency-Key the first dispatch minted — may settle this send. An unrelated
       // mutation confirming is not this message delivering.
       const flushed = await engine.flushPending().catch(() => []);
       keepStrays(engine, flushed, first.key);
+      done = await releaseConfirmed(flushed);
       settled = flushed.find((r) => r.key === first.key) ?? first;
+    } else if (first && first.status === "confirmed") {
+      done = await releaseConfirmed([first]);
     }
     const outcome = sendOutcomeOfResult(settled);
     /* The 202 is said once, then later answers for the key are `in_flight`: either one counts. */
@@ -4104,10 +4135,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
      */
     const earlierWent = outcome !== "queued" && earlierVersionWent(engine, settled);
     if (outcome !== "queued" && first !== null) forgetResumedOverOtherText(engine, first.key);
-    /* The release runs on the OUTCOME, whatever it is: the intent is what refuses to dispatch
-       anything the engine did not accept, and it answers with the sentence it earned or `null`
-       for the ordinary one — a refused send is told in the send's own words and nothing else. */
-    const said = doneHalf ? await doneHalf(outcome === "sent") : null;
+    const said = first ? done.get(first.key) : undefined;
     if (said) toast(said.say, said.opts);
     else if (outcome === "sent" || sayRefusals) {
       toast(
@@ -4135,7 +4163,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * mail has gone. A fresh key there is a second copy in somebody's inbox, which is the whole
    * defect. Nothing standing ⇒ `mutate` mints, and persists it with the outbox row.
    */
-  const dispatchSend = (m: EngineMutation): Promise<MutationResult> => {
+  const dispatchSend = (m: EngineMutation, andDone: SendAndDonePlan | null = null): Promise<MutationResult> => {
     const intent = sendIntentOf(m);
     const standing = intent === null
       ? undefined
@@ -4153,8 +4181,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     if (standing !== undefined && networkNow() === "offline" && !sendTextDiffers(standing.mutation, m)) {
       return Promise.resolve({ id: standing.id, key: standing.key, status: "queued", seq: null });
     }
-    return engine.mutate(m, standing === undefined ? {} : { key: standing.key })
-      .then((r) => { noteQueuedSend(engine, r, m); return r; });
+    return engine.mutate(m, {
+      ...(standing === undefined ? {} : { key: standing.key }),
+      // Send + Done's plan rides the send's own outbox row, so whichever road confirms it releases.
+      ...(andDone !== null ? { andDone } : {}),
+    }).then((r) => { noteQueuedSend(engine, r, m); return r; });
   };
 
   /**
@@ -4196,6 +4227,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     /* THE SAME ADDRESSES THE SHEET WAS DRAWN FROM. Read through the getter at SEND time, not at
        construction — see {@link LiveDeps.ownAddresses}. */
     const env = all ? replyAllRecipients(m, deps.ownAddresses?.() ?? NO_OWN_ADDRESSES) : null;
+    /* SEND + DONE, read BEFORE the dispatch — the plan the release inverts is the state the
+       reader is looking at, not the state the send leaves behind. An appointment finishes
+       nothing: `sendAt` is a message still on the account, and filing its source would say it
+       had been answered. */
+    const plan = donePlan(messageId, andDone && sendAt === null);
     return sent(
       dispatchSend(withSignature({
         kind: "mail_send" as const,
@@ -4210,7 +4246,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         ...(attachments.length > 0 ? { attachments } : {}),
         // The row a refused press left (`SendResult.draftId`): this press sends THAT row.
         ...(draftId ? { draftId } : {}),
-      }, sig)),
+      }, sig), plan),
       // THE CONFIRMED SENTENCE IS THE WHOLE DIFFERENCE, and it is honest rather than
       // convenient: nothing was sent, an appointment was made, and "Reply sent." over a
       // message still sitting on the account is exactly the false claim the four-outcome
@@ -4221,11 +4257,6 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       // EARLIER press's reservation, so naming a time this press asked for would promise an
       // arrangement nobody made.
       Copy.replyEarlierWent,
-      /* SEND + DONE, armed BEFORE the dispatch — the plan the release inverts is the state the
-         reader is looking at, not the state the send leaves behind. An appointment finishes
-         nothing: `sendAt` is a message still on the account, and filing its source would say
-         it had been answered. */
-      andDone && sendAt === null ? doneHalf(messageId) : undefined,
     );
   };
 
@@ -4346,7 +4377,6 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       }),
       Copy.composeSent,
       Copy.composeEarlierWent,
-      undefined,
       false,
     );
     return r.outcome;
@@ -4407,6 +4437,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       toast(refuse("replyFailed"));
       return { outcome: "failed" };
     }
+    /* SEND + DONE — read before the dispatch, for the reply arm's reason. */
+    const plan = donePlan(messageId, andDone);
     return sent(
       dispatchSend(withSignature({
         kind: "mail_send" as const,
@@ -4423,11 +4455,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         to,
         ...(attachments.length > 0 ? { attachments } : {}),
         ...(draftId ? { draftId } : {}),
-      }, sig)),
+      }, sig), plan),
       Copy.forwarded,
       Copy.forwardEarlierWent,
-      /* SEND + DONE — armed before the dispatch, for the reply arm's reason. */
-      andDone ? doneHalf(messageId) : undefined,
     );
   };
 
@@ -4770,11 +4800,18 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     async retryAbandoned(id) {
       // The RESULT is returned, not swallowed: on the phone the sheet row is the only owner of an
       // owner-settled verb, so a `send_unverified` answer said nowhere is said to nobody.
-      return engine.retryAbandoned(id);
+      const res = await engine.retryAbandoned(id);
+      // A Send + Done tried again from the strip files its source once it is confirmed.
+      const said = (await releaseConfirmed([res])).get(res.key);
+      if (said) toast(said.say, said.opts);
+      return res;
     },
     async discardAbandoned(id) {
       await engine.discardAbandoned(id);
     },
+    retryQueued: (id) => engine.retryQueued(id),
+    discardQueued: (key) => engine.withdrawQueued(key),
+    releaseConfirmed,
     openMessage, leaveMessage, hydrateMessage, forwardFetch, hydrateHeld, holdFiles, releaseFiles, loadInlineImages,
     openAttachmentBytes,
     releaseAttachments,
@@ -4817,6 +4854,9 @@ export interface WorldActions {
    */
   retryAbandoned(id: string): Promise<MutationResult>;
   discardAbandoned(id: string): Promise<void>;
+  /** The two answers on a queued discard — see {@link LiveWorldActions.retryQueued}. Awaited too. */
+  retryQueued(id: string): Promise<MutationResult | null>;
+  discardQueued(key: string): Promise<WithdrawOutcome>;
   /** The sender screen's open: fetch every held body. */
   hydrateHeld(ids: string[]): void;
   /** A screen's hold on the file lists it shows — see {@link LiveWorldActions.holdFiles}. */
@@ -4930,6 +4970,8 @@ export function stableActions(current: () => WorldActions): WorldActions {
     forwardFetch: (id) => current().forwardFetch(id),
     retryAbandoned: (id) => current().retryAbandoned(id),
     discardAbandoned: (id) => current().discardAbandoned(id),
+    retryQueued: (id) => current().retryQueued(id),
+    discardQueued: (key) => current().discardQueued(key),
     hydrateHeld: (ids) => current().hydrateHeld(ids),
     holdFiles: (ids) => current().holdFiles(ids),
     releaseFiles: (ids) => current().releaseFiles(ids),
