@@ -1,5 +1,5 @@
 import {
-  assertPublicHost, nodeHostResolver, SsrfRefusal, type HostResolver,
+  assertPublicHost, nodeHostResolver, privateNetworkScope, SsrfRefusal, type HostResolver,
 } from "@trafficflow/core/net";
 
 /**
@@ -15,6 +15,8 @@ import {
 /** The deployment's verdict on a host: the addresses to pin, or `null` for "dial by name". */
 export interface DialHostGuard {
   check(host: string, transport: "imap" | "smtp"): Promise<readonly string[] | null>;
+  /** Asked where a plaintext dial's host resolves NOW. Absent: no plaintext dial is admitted. */
+  readonly scope?: HostResolver;
 }
 
 /**
@@ -24,6 +26,11 @@ export interface DialHostGuard {
  */
 export const ALLOW_ANY_DIAL_HOST: DialHostGuard = { check: async () => null };
 
+/** The self-host policy with a resolver, so a consented plaintext dial can be re-asked. */
+export function allowAnyDialHost(resolver: HostResolver): DialHostGuard {
+  return { check: async () => null, scope: resolver };
+}
+
 /**
  * The MANAGED policy: private, loopback, link-local, CGNAT, unresolvable and unparseable targets
  * are refused before a socket exists, and what cleared is the pin. The resolver is required at
@@ -31,7 +38,7 @@ export const ALLOW_ANY_DIAL_HOST: DialHostGuard = { check: async () => null };
  * take the refuse branch and ship the permit branch unexecuted.
  */
 export function makeDialHostGuard(resolver: HostResolver): DialHostGuard {
-  return { check: async (host) => assertPublicHost(host, resolver) };
+  return { check: async (host) => assertPublicHost(host, resolver), scope: resolver };
 }
 
 /**
@@ -47,7 +54,7 @@ export function dialHostGuardFromEnv(
   env: NodeJS.ProcessEnv = process.env, resolver: HostResolver = nodeHostResolver,
 ): DialHostGuard {
   return (env.TF_PROBE_ALLOW_PRIVATE ?? "").trim() === "1"
-    ? ALLOW_ANY_DIAL_HOST
+    ? allowAnyDialHost(resolver)
     : makeDialHostGuard(resolver);
 }
 
@@ -68,6 +75,24 @@ export class MailboxHostRefused extends Error {
   }
 }
 
+/**
+ * A consented plaintext dial whose host no longer resolves to the person's own network. The
+ * detail the mailbox row stores, so Settings says that sentence and not "not available".
+ */
+export class MailboxPlaintextRefused extends Error {
+  readonly code = "MAILBOX_PLAINTEXT_REFUSED";
+  constructor(transport: "imap" | "smtp") {
+    super(
+      `this mailbox's ${transport === "imap" ? "incoming (IMAP)" : "outgoing (SMTP)"} server's address `
+      + "is no longer on your own network, so the password is not sent to it unencrypted",
+    );
+    this.name = "MailboxPlaintextRefused";
+  }
+}
+
+/** One stored leg: its TLS mode and its own plaintext consent (`TransportCreds` has both). */
+export interface DialLeg { secure: boolean; allowInsecure?: boolean }
+
 /** The gate's own word for "the resolver had nothing to say" — a FIELD, never a message tail. */
 const UNRESOLVED = "host did not resolve";
 
@@ -80,8 +105,8 @@ const UNRESOLVED = "host did not resolve";
  * leaves by the ordinary door and only a cleared-and-refused address gets {@link MailboxHostRefused}.
  */
 export async function checkedDial(
-  guard: DialHostGuard | undefined, host: string, transport: "imap" | "smtp",
-): Promise<{ pin?: readonly string[] }> {
+  guard: DialHostGuard | undefined, host: string, transport: "imap" | "smtp", leg?: DialLeg,
+): Promise<{ pin?: readonly string[]; allowInsecure?: true }> {
   // A COMPOSITION WITH NO POLICY REFUSES, and names the input. The alternative is a silent dial by
   // name, which is the state this whole module removes — and it would be invisible, because it
   // looks exactly like a healthy self-hosted install.
@@ -92,9 +117,9 @@ export async function checkedDial(
       + "=1 permits a mail server on your own network) and compose `dialHostGuardFromEnv`",
     );
   }
+  let cleared: readonly string[] | null;
   try {
-    const cleared = await guard.check(host, transport);
-    return cleared && cleared.length > 0 ? { pin: cleared } : {};
+    cleared = await guard.check(host, transport);
   } catch (err) {
     if (err instanceof SsrfRefusal) {
       if (err.why === UNRESOLVED) throw new Error(`the ${transport} server's hostname did not resolve`);
@@ -102,4 +127,14 @@ export async function checkedDial(
     }
     throw err;
   }
+  const pin = cleared && cleared.length > 0 ? cleared : null;
+  if (leg?.allowInsecure !== true || leg.secure) return pin ? { pin } : {};
+  /* THE PLAINTEXT DIAL, and the only place its flag is set. Admitted only where every address the
+     name resolves to now is private, pinned there; a pin from the enforcing policy is public by
+     construction. An unanswered lookup leaves by the ordinary door, as above. */
+  if (pin || !guard.scope) throw new MailboxPlaintextRefused(transport);
+  const scope = await privateNetworkScope(host, guard.scope);
+  if (scope.kind === "unresolved") throw new Error(`the ${transport} server's hostname did not resolve`);
+  if (scope.kind === "public") throw new MailboxPlaintextRefused(transport);
+  return { pin: scope.pin, allowInsecure: true };
 }

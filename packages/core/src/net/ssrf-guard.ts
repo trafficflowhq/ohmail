@@ -195,23 +195,37 @@ export function isPrivateNetworkAddress(ip: string): boolean {
 }
 
 /**
- * The addresses `host` resolves to when EVERY one of them is private (see
- * {@link isPrivateNetworkAddress}), else `null`. A literal needs no DNS; a name that does not
- * resolve, or that answers with one public address among private ones, is `null`. The return is
- * the pin a plaintext dial connects to, so a second lookup cannot move it somewhere public.
+ * Where `host` is for a dial without TLS: `private` when EVERY address it resolves to is private
+ * (see {@link isPrivateNetworkAddress}), with those addresses as the pin; `public` when one is not;
+ * `unresolved` when the resolver said nothing. A literal needs no DNS. Apart from `public` because
+ * a resolver that is down for a minute says nothing about where the server is.
  */
-export async function privateNetworkPin(host: string, resolver: HostResolver): Promise<string[] | null> {
+export type PrivateNetworkScope =
+  | { kind: "private"; pin: string[] } | { kind: "public" } | { kind: "unresolved" };
+
+export async function privateNetworkScope(host: string, resolver: HostResolver): Promise<PrivateNetworkScope> {
   const h = host.trim().toLowerCase().replace(/\.$/, "");
   const bare = h.startsWith("[") && h.endsWith("]") ? h.slice(1, -1) : h;
-  if (parseIpv4(bare) || parseIpv6(bare)) return isPrivateNetworkAddress(bare) ? [bare] : null;
+  if (parseIpv4(bare) || parseIpv6(bare)) {
+    return isPrivateNetworkAddress(bare) ? { kind: "private", pin: [bare] } : { kind: "public" };
+  }
   let addrs: string[];
   try {
     addrs = await resolver.resolve(bare);
   } catch {
-    return null;
+    return { kind: "unresolved" };
   }
-  if (addrs.length === 0 || !addrs.every(isPrivateNetworkAddress)) return null;
-  return addrs;
+  if (addrs.length === 0) return { kind: "unresolved" };
+  return addrs.every(isPrivateNetworkAddress) ? { kind: "private", pin: addrs } : { kind: "public" };
+}
+
+/**
+ * The pin a plaintext dial connects to when {@link privateNetworkScope} answers `private`, else
+ * `null`, so a second lookup cannot move the dial somewhere public.
+ */
+export async function privateNetworkPin(host: string, resolver: HostResolver): Promise<string[] | null> {
+  const scope = await privateNetworkScope(host, resolver);
+  return scope.kind === "private" ? scope.pin : null;
 }
 
 /** A DNS name we are willing to resolve: LDH labels, and a non-numeric last label. */

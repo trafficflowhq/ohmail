@@ -77,6 +77,8 @@ import { displayAddress } from "../../shell/idn";
 import { SELF_HOST_BUILD } from "../../hello";
 import { StepUpPrompt } from "./StepUpPrompt";
 import { gatedRefusal } from "./gated-refusal";
+import { mailboxErrorKey } from "../../shell/mailbox-error-key";
+import { PlaintextConsent } from "../../shell/PlaintextConsent";
 
 /**
  * `list` → the pane at rest. `form` → typing credentials for a NEW mailbox. `edit` → changing the
@@ -2301,7 +2303,7 @@ export function MailboxSection() {
                    code, an errno, an SQLSTATE, never a message — and belongs in the tooltip
                    beside how long this has been going on, not in the label. */
                 <span className="mbx-bad" title={errorTitle(m, now, t)}>
-                  {t(m.errorCode ? `err_${m.errorCode}` : "syncError")}
+                  {t(mailboxErrorKey(m.errorCode ?? null, m.errorDetail))}
                 </span>
               ) : m.syncBlockedSince ? (
                 /**
@@ -2659,37 +2661,15 @@ export function MailboxSection() {
                       {t("useSuggestedHost", { host: suggestion.host })}
                     </Button>
                   ) : null}
-                  {insecureOffer.imap || insecureOffer.smtp ? (
-                    <>
-                      {insecureOffer.imap ? (
-                        <label className="join-label" htmlFor="mb-insecure">
-                          <input
-                            id="mb-insecure" type="checkbox"
-                            checked={typed.allowInsecure}
-                            onChange={(e) => {
-                              setTyped((v) => ({ ...v, allowInsecure: e.target.checked }));
-                              clearVerdict();
-                            }}
-                          />{" "}
-                          {t("insecureConsentLabel")}
-                        </label>
-                      ) : null}
-                      {insecureOffer.smtp ? (
-                        <label className="join-label" htmlFor="mb-insecure-smtp">
-                          <input
-                            id="mb-insecure-smtp" type="checkbox"
-                            checked={typed.allowInsecureSmtp}
-                            onChange={(e) => {
-                              setTyped((v) => ({ ...v, allowInsecureSmtp: e.target.checked }));
-                              clearVerdict();
-                            }}
-                          />{" "}
-                          {t("insecureConsentLabelSmtp")}
-                        </label>
-                      ) : null}
-                      <SettingsNote icon="shield">{t("insecureConsentWarning")}</SettingsNote>
-                    </>
-                  ) : null}
+                  <PlaintextConsent
+                    ids={{ imap: "mb-insecure", smtp: "mb-insecure-smtp" }}
+                    offer={insecureOffer}
+                    checked={{ imap: typed.allowInsecure, smtp: typed.allowInsecureSmtp }}
+                    onChange={(k, on) => {
+                      setTyped((v) => (k === "imap" ? { ...v, allowInsecure: on } : { ...v, allowInsecureSmtp: on }));
+                      clearVerdict();
+                    }}
+                  />
                 </>
               ) : null}
 
@@ -2886,31 +2866,12 @@ export function MailboxSection() {
               {t("useSuggestedHost", { host: suggestion.host })}
             </Button>
           ) : null}
-          {insecureOffer.imap || insecureOffer.smtp ? (
-            <>
-              {insecureOffer.imap ? (
-                <label className="join-label" htmlFor="mb-edit-insecure">
-                  <input
-                    id="mb-edit-insecure" type="checkbox"
-                    checked={edited.allowInsecure}
-                    onChange={(e) => setEdited((v) => ({ ...v, allowInsecure: e.target.checked }))}
-                  />{" "}
-                  {t("insecureConsentLabel")}
-                </label>
-              ) : null}
-              {insecureOffer.smtp ? (
-                <label className="join-label" htmlFor="mb-edit-insecure-smtp">
-                  <input
-                    id="mb-edit-insecure-smtp" type="checkbox"
-                    checked={edited.allowInsecureSmtp}
-                    onChange={(e) => setEdited((v) => ({ ...v, allowInsecureSmtp: e.target.checked }))}
-                  />{" "}
-                  {t("insecureConsentLabelSmtp")}
-                </label>
-              ) : null}
-              <SettingsNote icon="shield">{t("insecureConsentWarning")}</SettingsNote>
-            </>
-          ) : null}
+          <PlaintextConsent
+            ids={{ imap: "mb-edit-insecure", smtp: "mb-edit-insecure-smtp" }}
+            offer={insecureOffer}
+            checked={{ imap: edited.allowInsecure, smtp: edited.allowInsecureSmtp }}
+            onChange={(k, on) => setEdited((v) => (k === "imap" ? { ...v, allowInsecure: on } : { ...v, allowInsecureSmtp: on }))}
+          />
 
           <div className="acct-actions">
             <Button variant="primary" type="submit" disabled={edited.pass.length === 0}>

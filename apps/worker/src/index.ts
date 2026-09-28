@@ -2287,18 +2287,16 @@ export async function startWorkerWithLock(
          */
         adapter = makeAdapter({
           host: creds.imap.host, port: creds.imap.port, secure: creds.imap.secure,
-          ...(await checkedDial(dialHostGuard, creds.imap.host, "imap")),
-          // The connect-time plaintext consent, if the credential row carries one. See
-          // `TransportCreds.allowInsecure` for why omitting this strands a consented mailbox.
-          ...(creds.imap.allowInsecure ? { allowInsecure: true } : {}),
+          // The row's plaintext consent reaches the adapter only through the check, which admits
+          // it at an address on the person's own network, pinned there.
+          ...(await checkedDial(dialHostGuard, creds.imap.host, "imap", creds.imap)),
           // The `auth` union already assembled by the shared builder: `{ user, pass }` for a
           // password mailbox, `{ user, fetchAccessToken }` for oauth2. Passed through untouched.
           auth: creds.imap.auth,
           smtp: creds.smtp ? {
             host: creds.smtp.host, port: creds.smtp.port, secure: creds.smtp.secure,
-            ...(await checkedDial(dialHostGuard, creds.smtp.host, "smtp")),
             // The submission server's own plaintext consent, from the `smtp` row alone.
-            ...(creds.smtp.allowInsecure ? { allowInsecure: true } : {}),
+            ...(await checkedDial(dialHostGuard, creds.smtp.host, "smtp", creds.smtp)),
             // An smtp credential row is always a password (oauth mailboxes carry no smtp row); narrow
             // to the password member so it fits `ImapConfig.smtp.auth`, and omit auth otherwise.
             ...("pass" in creds.smtp.auth ? { auth: creds.smtp.auth } : {}),

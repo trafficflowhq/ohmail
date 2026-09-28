@@ -47,6 +47,9 @@ export { jsonResponse, errorResponse, type JsonResponseInit } from "./responses.
 // already carries.
 export { makeSendAdapter } from "./send-adapter.js";
 export { sendConnections } from "./send-adapter.js";
+// The plaintext dial's one rule, for the engine's own organizer: a stored consent is honoured only
+// at an address on the person's own network, re-asked at every dial.
+export { plaintextDialPin, PlaintextDialRefused } from "./dial-host-guard.js";
 // The per-request ServiceContext builder, for engine-side route modules (the sidecar's own
 // tables — AI settings, the stdio pairing mint) that call services exactly as the shared
 // handlers do. Mail-safe: it reads `deps.session` and the platform IP headers, nothing hosted.

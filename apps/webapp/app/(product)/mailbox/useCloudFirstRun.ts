@@ -28,6 +28,7 @@ import {
 import { StepUpPrompt } from "./StepUpPrompt";
 import { SELF_HOST_BUILD, serverHello } from "../../hello";
 import { probeReasonOf } from "./MailboxSection";
+import { plaintextOfferOf } from "../../shell/probe-refusal";
 
 /**
  * `POST /mailboxes` wants a provider id and the two transports; the flow's own shape is already
@@ -212,6 +213,8 @@ export function useCloudFirstRun(demo: boolean, pairNode?: ReactNode): FirstRunH
       // The connect form's own classifier, and its fallback — one vocabulary for the taxonomy,
       // and the SERVER's sentence for anything this build has no copy for.
       probeReason: probeReasonOf,
+      // Both modes are `POST /mailboxes`, which carries each protocol's consent.
+      plaintextOffer: (err: unknown) => plaintextOfferOf(err),
       probeMessage: (err: unknown) => (err instanceof ApiError ? messageOf(err) : null),
       ...(SELF_HOST_BUILD && operatorAi !== undefined ? { selfhostAi: operatorAi } : {}),
       ...(pairNode ? { pairNode } : {}),

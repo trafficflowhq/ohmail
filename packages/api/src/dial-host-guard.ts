@@ -1,4 +1,6 @@
-import { MailboxSideRefusal, ServiceError } from "@trafficflow/services/mail";
+import {
+  MailboxSideRefusal, ServiceError, privateNetworkScope, type HostResolver,
+} from "@trafficflow/services/mail";
 import { pinFrom, probeHostGuardFor } from "./imap-probe.js";
 import type { ApiDeps } from "./deps.js";
 
@@ -51,4 +53,51 @@ function hostRefusal(err: unknown, transport: "imap" | "smtp"): unknown {
     `This mailbox's ${leg} server is at an address that is not one this service will connect to. `
       + "Check the server settings in Settings → Mailboxes.",
   );
+}
+
+/** One stored leg of a mailbox: where it dials, its TLS mode and its own plaintext consent. */
+export interface DialLeg { host: string; port: number; secure: boolean; consent: boolean }
+
+/**
+ * THE FIELDS ONE LEG DIALS WITH, and the only place `allowInsecure` is set for a stored consent.
+ * A leg without TLS is asked again where its name resolves NOW and admitted only when every
+ * address is private, pinned to them: the consent was given for a server on the person's own
+ * network, and a name that has since moved must not carry the password there in clear.
+ */
+export async function dialFieldsFor(
+  deps: ApiDeps, leg: DialLeg, transport: "imap" | "smtp",
+): Promise<{ pin?: readonly string[]; allowInsecure?: true }> {
+  const pin = await clearedFor(deps, leg.host, leg.port, transport);
+  if (!leg.consent || leg.secure) return pin ? { pin } : {};
+  // The enforcing guard clears public addresses only, so a pin from it is never a private one.
+  if (pin) throw new PlaintextDialRefused(transport);
+  return { pin: await plaintextDialPin(deps.services?.probeScopeResolver, leg.host, transport), allowInsecure: true };
+}
+
+/**
+ * The addresses a plaintext dial to `host` may use, from `resolver` at the moment of the dial.
+ * No resolver, or one public address among the answers, is a refusal. A resolver that said
+ * nothing leaves as the socket's own ENOTFOUND, for {@link hostRefusal}'s reason.
+ */
+export async function plaintextDialPin(
+  resolver: HostResolver | undefined, host: string, transport: "imap" | "smtp",
+): Promise<readonly string[]> {
+  if (!resolver) throw new PlaintextDialRefused(transport);
+  const scope = await privateNetworkScope(host, resolver);
+  if (scope.kind === "private") return pinFrom(scope.pin)!;
+  if (scope.kind === "public") throw new PlaintextDialRefused(transport);
+  const leg = transport === "imap" ? "incoming (IMAP)" : "outgoing (SMTP)";
+  throw Object.assign(new Error(`the ${leg} server's hostname did not resolve`), { code: "ENOTFOUND" });
+}
+
+/** The refusal, in the mailbox's own sentence. `mailbox_host_refused`'s class: no fault row. */
+export class PlaintextDialRefused extends MailboxSideRefusal {
+  constructor(readonly transport: "imap" | "smtp") {
+    super(
+      "mailbox_host_refused", 502,
+      `This mailbox's ${transport === "imap" ? "incoming (IMAP)" : "outgoing (SMTP)"} server's address `
+        + "is no longer on your own network, so ohmail will not send your password to it unencrypted.",
+    );
+    this.name = "PlaintextDialRefused";
+  }
 }

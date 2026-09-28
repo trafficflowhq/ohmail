@@ -28,8 +28,9 @@ import { checkedDial, type DialHostGuard } from "./dial-host-guard.js";
  * becomes a closed code — a probe that may not dial costs this mailbox its ceiling and nothing else.
  */
 export function makeSmtpSizeDial(guard: DialHostGuard | undefined): SmtpSizeDial {
-  return async (smtp) => verifySmtpLogin(
-    { ...smtp, ...(await checkedDial(guard, smtp.host, "smtp")) },
+  // The stored consent is the check's to admit, never spread through to the socket.
+  return async ({ allowInsecure, ...smtp }) => verifySmtpLogin(
+    { ...smtp, ...(await checkedDial(guard, smtp.host, "smtp", { secure: smtp.secure, allowInsecure })) },
     WORKER_NET_TIMEOUTS,
   );
 }

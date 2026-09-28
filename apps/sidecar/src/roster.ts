@@ -122,6 +122,12 @@ export interface MailboxConnectionState {
    */
   certificateRefused: boolean;
   /**
+   * A MAILBOX CONNECTED WITHOUT TLS WHOSE SERVER'S NAME NO LONGER RESOLVES TO THE PERSON'S OWN
+   * NETWORK, so no password was sent. Retried on the ladder: the network coming back heals it.
+   * Optional so a state built elsewhere reads as "not refused".
+   */
+  plaintextRefused?: boolean;
+  /**
    * NO PASSWORD ON THIS INSTALL FOR THIS MAILBOX, so nothing was ever dialled — its own state,
    * and neither {@link reachable} nor an outage. Set where a runtime starts with no usable
    * login and returns without opening a socket: `reachable` used to stay true there because it

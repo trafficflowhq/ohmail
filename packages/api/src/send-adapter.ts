@@ -4,7 +4,7 @@ import { ImapAdapter, buildImapAuth, type CredMetaAuth } from "@trafficflow/core
 import type { NetTimeouts } from "@trafficflow/core/adapters/imap";
 import { SendConnections, type SendAdapter, type WarmSendAdapter } from "@trafficflow/core/mail";
 import { MailboxSideRefusal } from "@trafficflow/services/mail";
-import { clearedFor } from "./dial-host-guard.js";
+import { dialFieldsFor } from "./dial-host-guard.js";
 import type { ApiDeps } from "./deps.js";
 
 interface CredMeta extends CredMetaAuth {
@@ -64,8 +64,11 @@ export async function makeSendAdapter(
     const imapPort = imapMeta.port ?? 993;
     // BEFORE the secret is decrypted, and before any transport exists: a server this deployment
     // will not dial should cost no key material, and a refusal that arrives after the adapter is
-    // built is a refusal that arrives after a socket may have opened. See {@link clearedFor}.
-    const imapPin = await clearedFor(deps, imapMeta.host ?? "", imapPort, "imap");
+    // built is a refusal that arrives after a socket may have opened. See {@link dialFieldsFor}.
+    const imapDial = await dialFieldsFor(deps, {
+      host: imapMeta.host ?? "", port: imapPort, secure: imapMeta.secure ?? true,
+      consent: imapMeta.insecureConsent === true,
+    }, "imap");
     const imapSecret = await deps.keyProvider.decrypt(imapRow.secretEnc, imapRow.keyVersion);
     // The IMAP auth goes through the SHARED builder — an oauth2 row becomes the token callback here,
     // never a password. `imapSecret` is a REFRESH TOKEN for oauth, a password otherwise.
@@ -75,9 +78,10 @@ export async function makeSendAdapter(
     // token covers both transports, so the host/port/secure come from `meta.smtp` and `ImapAdapter.send`
     // fetches a token per message. For PASSWORD, the dedicated smtp row when present, else the imap
     // host/user + imap secret (shared-credential providers, e.g. GreenMail).
-    let smtpConfig: {
-      host: string; port: number; secure: boolean; auth?: { user: string; pass: string }; allowInsecure?: boolean;
-    };
+    let smtpConfig: { host: string; port: number; secure: boolean; auth?: { user: string; pass: string } };
+    // The smtp ROW's consent only: the no-row fallback guessed its server, and a guess was never
+    // probed, so it has nothing to consent to.
+    let smtpConsent = false;
     if (imapMeta.authType === "oauth2") {
       const s = imapMeta.smtp ?? {};
       smtpConfig = {
@@ -118,24 +122,24 @@ export async function makeSendAdapter(
         secure: smtpMeta.secure ?? false,
         // GreenMail runs with auth disabled; omit auth when there is no user to bind.
         ...(smtpUser ? { auth: { user: smtpUser, pass: smtpPass } } : {}),
-        // The smtp ROW's consent only: the no-row fallback above guessed its server, and a guess
-        // was never probed, so it has nothing to consent to.
-        ...(smtpRow && smtpMeta.insecureConsent === true ? { allowInsecure: true } : {}),
       };
+      smtpConsent = smtpRow !== undefined && smtpMeta.insecureConsent === true;
     }
 
     // The submission server is its own name on its own transport — its own check, its own pin. The
     // no-smtp-row fallback dials the IMAP host on 587, which is a second transport on one name and
     // is checked as one rather than borrowing the IMAP leg's verdict.
-    const smtpPin = await clearedFor(deps, smtpConfig.host, smtpConfig.port, "smtp");
+    const smtpDial = await dialFieldsFor(deps, {
+      host: smtpConfig.host, port: smtpConfig.port, secure: smtpConfig.secure, consent: smtpConsent,
+    }, "smtp");
 
     const adapter = newAdapter({
       host: imapMeta.host ?? "",
       port: imapPort,
       secure: imapMeta.secure ?? true,
-      // The cleared addresses, so the socket goes where the check went. `host` above is untouched:
-      // the pin narrows the ADDRESS and nothing else — see `ImapConfig.pin`.
-      ...(imapPin ? { pin: imapPin } : {}),
+      // The cleared addresses, so the socket goes where the check went, and the plaintext consent
+      // only as re-asked there. `host` above is untouched: the pin narrows the ADDRESS alone.
+      ...imapDial,
       // SHORTER DEADLINES FOR A CALLER THAT HAS LESS TIME, threaded rather than raced.
       //
       // The reconciling pass runs three dials inside the same 60-second invocation the default
@@ -145,11 +149,8 @@ export async function makeSendAdapter(
       // deadline means a breach is the adapter's own honest "this mailbox did not answer" — which
       // is a fact the caller can act on, and which its give-up may legitimately act on after a day.
       ...(opts.timeouts ? { timeouts: opts.timeouts } : {}),
-      // The connect-time plaintext consent, threaded like the worker threads it — an IMAP append
-      // to the Sent folder of a consented no-TLS mailbox must dial the way the probe proved.
-      ...(imapMeta.insecureConsent === true ? { allowInsecure: true } : {}),
       auth: imapAuth,
-      smtp: { ...smtpConfig, ...(smtpPin ? { pin: smtpPin } : {}) },
+      smtp: { ...smtpConfig, ...smtpDial },
       sentDomain: domainOf(imapMeta.user),
     });
     // Same reason as `makeOpenAdapter`: `connect()` logs in and LISTs, so a failure after login

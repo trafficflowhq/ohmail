@@ -673,6 +673,8 @@ export interface MailboxFacts {
   status: string;
   /** Null unless `status === 'error'`. A stable key; the wording lives in `messages/*.json`. */
   errorCode: string | null;
+  /** The allowlisted token beside it; one of them changes the sentence (`mailboxErrorKey`). */
+  errorDetail?: string | null;
   /**
    * WHEN THIS INSTALL LAST FOUND THE MAIL SERVER UNREACHABLE, from the outage's first observation —
    * the local door's own socket, overlaid on `GET /mailboxes`; absent on every other door and
@@ -1369,6 +1371,8 @@ export interface MailState {
   reason: SyncBlockReason | StandDownReason | null;
   /** `mailboxError` only — the `errorCode` key whose sentence lives in `mailboxes.err_*`. */
   errorCode: string | null;
+  /** `mailboxError` only — the detail token beside it, for `mailboxErrorKey`. */
+  errorDetail?: string | null;
   /** `mailboxError` only — the mailbox's server cannot be reached from here right now. */
   unreachable?: boolean;
   /**
@@ -2061,6 +2065,7 @@ function climb(input: MailStateInputs): MailState {
       key: "mailboxError",
       count: mirrored,
       errorCode: failed.errorCode ?? (unreachable ? "connect" : "unknown"),
+      ...(failed.errorDetail ? { errorDetail: failed.errorDetail } : {}),
       address: failed.address,
       ...(unreachable ? { unreachable } : {}),
     };

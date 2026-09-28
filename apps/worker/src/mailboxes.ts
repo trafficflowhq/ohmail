@@ -42,10 +42,9 @@ export interface TransportCreds {
   secure: boolean;
   /**
    * `meta.insecureConsent` — the connect flow proved this server offers no TLS and the user
-   * opted in to plaintext, per transport. Threaded to `ImapConfig.allowInsecure` (IMAP) or
-   * `ImapConfig.smtp.allowInsecure` (SMTP), where it turns the mandatory STARTTLS into an
-   * opportunistic one; dropped anywhere on this path, a consented mailbox strands on its first
-   * sync or send with a STARTTLS refusal.
+   * opted in to plaintext, per transport. A CLAIM, not a dial setting: only `checkedDial` turns it
+   * into `allowInsecure`, at an address on the person's own network. Dropped anywhere on this
+   * path, a consented mailbox strands on its first sync or send with a STARTTLS refusal.
    */
   allowInsecure?: boolean;
   auth: ImapAuth;
@@ -698,7 +697,7 @@ export function classifyMailboxError(err: unknown, phase: MailboxErrorPhase): Ma
     // `dial-host-guard.ts`'s refusal, read by CLASS through the closed code it carries. `connect`
     // because that is what it is — no connection was made — never `auth` (nothing was presented)
     // and never `unknown`, which is where it fell before this arm existed.
-    if (code === "MAILBOX_HOST_REFUSED") return "connect";
+    if (code === "MAILBOX_HOST_REFUSED" || code === "MAILBOX_PLAINTEXT_REFUSED") return "connect";
   }
 
   // ── THE FLAG: "the LOGIN command did not succeed", and nothing above it explained why. ──

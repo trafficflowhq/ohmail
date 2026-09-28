@@ -515,7 +515,7 @@ export function classifySmtpSizeFailure(err: unknown): SmtpSizeFailure {
     // the only one here that is OURS, and a string because the guard lives in a host that core
     // cannot import. Without this arm a policy refusal reads `unknown`, which is the one answer we
     // provably know to be wrong: no connection was attempted, and that is what `unreachable` says.
-    case "MAILBOX_HOST_REFUSED": return "unreachable";
+    case "MAILBOX_HOST_REFUSED": case "MAILBOX_PLAINTEXT_REFUSED": return "unreachable";
     case "ETLS": return "tls_refused";
     default: return "unknown";
   }

@@ -24,6 +24,7 @@ import { useDecisionBarCopy } from "./decision-copy";
 import { useKeyBindings } from "./keymap";
 import { PROVIDERS, hostsFor, providerById, providerLabel, type ProviderPreset } from "./providers";
 import { noPortProbeKey } from "./no-port-sentence";
+import { PlaintextConsent } from "./PlaintextConsent";
 import {
   deriveOnboardingStep, onboardingPath, sendingLine,
   type OnboardingFacts, type OnboardingStep,
@@ -766,6 +767,22 @@ export function FirstRun({
   const preset = providerById(providerId);
 
   /**
+   * THE PLAINTEXT CONSENT, per protocol (`PlaintextConsent`). A line opens only on the door's
+   * reading of a refusal, and both the line and the tick go when a server field changes: a
+   * consent is about one server. A tick retires the test, because it changes what is dialled.
+   */
+  const [offer, setOffer] = useState<{ imap: boolean; smtp: boolean }>({ imap: false, smtp: false });
+  const [plain, setPlain] = useState<{ imap: boolean; smtp: boolean }>({ imap: false, smtp: false });
+  const retireConsent = useCallback(() => {
+    setOffer({ imap: false, smtp: false });
+    setPlain({ imap: false, smtp: false });
+  }, []);
+  const openOffer = useCallback((err: unknown) => {
+    const opens = host.plaintextOffer?.(err, add === true ? "add" : "seed") ?? null;
+    if (opens) setOffer((o) => ({ ...o, [opens]: true }));
+  }, [add, host]);
+
+  /**
    * A PRESET CHANGE REWRITES THE HOSTS THROUGH `hostsFor`, WHICH TAKES THE PREVIOUS CHOICE.
    *
    * Not tidiness — `providers.ts` records the credential leak this closes: without the previous
@@ -789,7 +806,8 @@ export function FirstRun({
     // continue" on evidence gathered against a different host entirely — and a test still in
     // flight against the old provider would land the same way, which is why this RETIRES.
     retireTest();
-  }, [imapHost, providerId, retireTest, smtpHost]);
+    retireConsent();
+  }, [imapHost, providerId, retireConsent, retireTest, smtpHost]);
 
   const mailboxInput = useCallback((): FirstRunMailboxInput => {
     const port = Number(imapPort);
@@ -802,6 +820,7 @@ export function FirstRun({
         ...(Number.isInteger(port) && port > 0 ? { port } : {}),
         secure: preset.manual ? port === 993 : preset.imap.secure,
         pass,
+        ...(offer.imap && plain.imap ? { allowInsecure: true } : {}),
       },
       ...(smtpHost.trim() ? {
         smtp: {
@@ -809,10 +828,11 @@ export function FirstRun({
           ...(Number.isInteger(sPort) && sPort > 0 ? { port: sPort } : {}),
           secure: preset.manual ? sPort === 465 : preset.smtp.secure,
           pass,
+          ...(offer.smtp && plain.smtp ? { allowInsecure: true } : {}),
         },
       } : {}),
     };
-  }, [address, imapHost, imapPort, pass, preset, smtpHost, smtpPort]);
+  }, [address, imapHost, imapPort, offer, pass, plain, preset, smtpHost, smtpPort]);
 
   const test = useCallback(async () => {
     const mine = ++testSeq.current;
@@ -824,11 +844,12 @@ export function FirstRun({
       setVerdict({ ok });
     } catch (err) {
       if (testSeq.current !== mine) return;
+      openOffer(err);
       setVerdict({ reason: host.probeReason(err), message: host.probeMessage(err) });
     } finally {
       if (testSeq.current === mine) setTesting(false);
     }
-  }, [host, mailboxInput]);
+  }, [host, mailboxInput, openOffer]);
 
   /**
    * "Connect and continue" IS DISABLED UNTIL A TEST HAS PASSED, and the gate reads the VERDICT
@@ -1109,7 +1130,9 @@ export function FirstRun({
                * already opening, because the id it seals onto is the one the replaced engine
                * settles on. That is why the parameter is required at the seam and why the word
                * comes off the route rather than out of a fallback here. */
-              const { id } = await host.connect(mailboxInput(), add === true ? "add" : "seed");
+              /* A connect refused for a protocol with no TLS on a private network opens its line. */
+              const { id } = await host.connect(mailboxInput(), add === true ? "add" : "seed")
+                .catch((err: unknown) => { openOffer(err); throw err; });
               /* AND THE VERDICT IS RETIRED WITH THE FORM IT DESCRIBED. It proved a login that has
                * since been stored; leaving it standing would arm this screen's primary again the
                * moment somebody walked back onto it. */
@@ -1200,24 +1223,29 @@ export function FirstRun({
                 <div className="set-fields">
                   <SettingsField htmlFor={`${ids}-imap`} label={t("imapHost")}>
                     <TextField id={`${ids}-imap`} mono value={imapHost}
-                      onChange={(e) => { setImapHost(e.target.value); retireTest(); }} />
+                      onChange={(e) => { setImapHost(e.target.value); retireTest(); retireConsent(); }} />
                   </SettingsField>
                   <SettingsField htmlFor={`${ids}-imap-port`} label={t("imapPort")}>
                     <TextField id={`${ids}-imap-port`} mono inputMode="numeric"
                       value={imapPort}
-                      onChange={(e) => { setImapPort(e.target.value); retireTest(); }} />
+                      onChange={(e) => { setImapPort(e.target.value); retireTest(); retireConsent(); }} />
                   </SettingsField>
                   <SettingsField htmlFor={`${ids}-smtp`} label={t("smtpHost")}>
                     <TextField id={`${ids}-smtp`} mono value={smtpHost}
-                      onChange={(e) => { setSmtpHost(e.target.value); retireTest(); }} />
+                      onChange={(e) => { setSmtpHost(e.target.value); retireTest(); retireConsent(); }} />
                   </SettingsField>
                   <SettingsField htmlFor={`${ids}-smtp-port`} label={t("smtpPort")}>
                     <TextField id={`${ids}-smtp-port`} mono inputMode="numeric"
                       value={smtpPort}
-                      onChange={(e) => { setSmtpPort(e.target.value); retireTest(); }} />
+                      onChange={(e) => { setSmtpPort(e.target.value); retireTest(); retireConsent(); }} />
                   </SettingsField>
                 </div>
               ) : null}
+              <PlaintextConsent
+                ids={{ imap: `${ids}-imap-plaintext`, smtp: `${ids}-smtp-plaintext` }}
+                offer={offer} checked={plain}
+                onChange={(k, on) => { setPlain((v) => ({ ...v, [k]: on })); retireTest(); }}
+              />
               <SettingsActions>
                 {/* NOT a submit: this button asks the mail server a question and the form's ↵
                     belongs to the step's forward verb. */}

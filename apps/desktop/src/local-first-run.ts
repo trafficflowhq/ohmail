@@ -70,6 +70,7 @@ export function addMailboxBody(input: FirstRunMailboxInput): Record<string, unkn
       ...(input.imap.secure === undefined ? {} : { secure: input.imap.secure }),
       user,
       pass: input.imap.pass,
+      ...(input.imap.allowInsecure === true ? { allowInsecure: true } : {}),
       /* SENDING IS SETTLED BY A SUCCESSFUL CREATE. The engine's add route retries without the
          submission block when that dial is refused, writing the probe's reason into this key —
          so the create that DOES prove it has to say so positively, or a mailbox re-added after a
@@ -85,6 +86,7 @@ export function addMailboxBody(input: FirstRunMailboxInput): Record<string, unkn
             ...(input.smtp.secure === undefined ? {} : { secure: input.smtp.secure }),
             user: (input.smtp.user ?? "").trim() || user,
             pass: input.smtp.pass ?? input.imap.pass,
+            ...(input.smtp.allowInsecure === true ? { allowInsecure: true } : {}),
           },
         }
       : {}),
@@ -210,6 +212,18 @@ export function localProbeMessage(err: unknown): string | null {
 }
 
 /**
+ * THE PLAINTEXT OFFER in the engine's refusal — `plaintextOfferOf`'s rule, against this door's
+ * envelope. Only on an ADD: the seed's connect writes the shell's settings file, which carries no
+ * consent, so a line there would be a promise the connect cannot keep.
+ */
+export function localPlaintextOffer(err: unknown, mode: "seed" | "add"): "imap" | "smtp" | null {
+  if (mode !== "add" || !(err instanceof LocalWireError) || err.code !== "mailbox_probe_failed") return null;
+  const d = err.details as { transport?: unknown; tls?: { kind?: unknown; plaintext?: unknown } } | null | undefined;
+  if (d?.tls?.kind !== "tls_unavailable" || d.tls.plaintext !== "offered") return null;
+  return d.transport === "smtp" ? "smtp" : "imap";
+}
+
+/**
  * THE FLOW'S MAILBOX SHAPE AS THE SHELL'S DOOR WANTS IT.
  *
  * `enterLocalDoor` derives `secure` from the PORT (`implicitTls`) rather than taking the form's
@@ -303,6 +317,7 @@ export function useLocalFirstRun(opts: LocalFirstRunOptions): FirstRunHost | und
                   ...(input.smtp.port === undefined ? {} : { port: input.smtp.port }),
                   ...(input.smtp.secure === undefined ? {} : { secure: input.smtp.secure }),
                   ...(input.smtp.user === undefined ? {} : { user: input.smtp.user }),
+                  ...(input.smtp.allowInsecure === true ? { allowInsecure: true } : {}),
                 },
               }
             : {}),
@@ -447,6 +462,7 @@ export function useLocalFirstRun(opts: LocalFirstRunOptions): FirstRunHost | und
       forgetMailbox,
       probeReason: localProbeReason,
       probeMessage: localProbeMessage,
+      plaintextOffer: localPlaintextOffer,
       providerForm,
       ...(pairNode ? { pairNode } : {}),
     } satisfies FirstRunHost;

@@ -26,6 +26,7 @@ export function toMailboxFacts(m: MailboxDTO): MailboxFacts {
     displayName: m.displayName ?? null,
     status: m.status,
     errorCode: m.errorCode ?? null,
+    errorDetail: m.errorDetail ?? null,
     // WHY a `disabled` mailbox is disabled (mail 0027), when the organizer lease decided
     // it. Without this line the strip cannot tell a mailbox another install has claimed from a
     // mailbox the user removed, and answers both with "No mailbox connected, so nothing can

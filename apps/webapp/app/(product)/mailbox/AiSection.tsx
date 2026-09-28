@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { SettingsNote, SettingsRow, SettingsSection, Switch } from "@ohmail/ui";
 import { aiSettings } from "../../api-client";
+import { SELF_HOST_BUILD, serverHello } from "../../hello";
 import { useRefusalSentence } from "../refusal-sentence";
 
 /**
@@ -18,7 +19,14 @@ import { useRefusalSentence } from "../refusal-sentence";
  */
 export function AiSection() {
   const t = useTranslations("settings");
+  const tr = useTranslations("aiRefusal");
   const sentence = useRefusalSentence();
+  /**
+   * A SELF-HOSTED SERVER WITH NO MODEL, from `/hello` — `true` only once the server says so. The
+   * switch still reads the account's flag; this says why nothing will answer while it is on.
+   * Compiled away on the managed build, which pays no round trip for it.
+   */
+  const [noModel, setNoModel] = useState(false);
   /** `null` = the server has not answered. The switch is drawn and NOT pressable until it has. */
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -36,6 +44,11 @@ export function AiSection() {
          the remedy is the same either way. A refused WRITE does, and shows the server's own. */
       .catch(() => { if (alive.current) setError(t("aiUnreadable")); });
   }, [t]);
+
+  useEffect(() => {
+    if (!SELF_HOST_BUILD) return;
+    void serverHello().then((h) => { if (alive.current && h?.features.ai === false) setNoModel(true); });
+  }, []);
 
   const toggle = useCallback((next: boolean) => {
     setError(null);
@@ -59,7 +72,7 @@ export function AiSection() {
       {error ? <p className="acct-warn" role="alert">{error}</p> : null}
       <SettingsRow
         label={t("aiLabel")}
-        description={t("aiSub")}
+        description={noModel ? <>{t("aiSub")} {tr("noModel")}</> : t("aiSub")}
         control={
           <Switch
             checked={enabled === true}

@@ -4,6 +4,7 @@ import {
   buildImapAuth, learnSmtpMaxSize, oauthSmtpEndpoint, verifySmtpLogin,
   type CredMetaAuth, type SmtpSizeCreds, type SmtpSizeDial, type SmtpSizeOutcome,
 } from "@trafficflow/core/adapters/imap";
+import { dialFieldsFor } from "./dial-host-guard.js";
 import { PROBE_TIMEOUTS } from "./imap-probe.js";
 import type { ApiDeps } from "./deps.js";
 
@@ -33,6 +34,15 @@ export const SMTP_SIZE_DEADLINE_MS = 40_000;
 
 /** The dial from this host: a real SMTP login on the TLS floor, on the connect probe's timeouts. */
 export const apiSmtpSizeDial: SmtpSizeDial = (smtp) => verifySmtpLogin(smtp, PROBE_TIMEOUTS);
+
+/** {@link apiSmtpSizeDial}, with a consented plaintext leg re-asked at the dial like a send's. */
+export function apiSmtpSizeDialFor(deps: ApiDeps): SmtpSizeDial {
+  return async ({ allowInsecure, ...smtp }) => (allowInsecure === true && !smtp.secure
+    ? verifySmtpLogin({
+      ...smtp, ...(await dialFieldsFor(deps, { host: smtp.host, port: smtp.port, secure: false, consent: true }, "smtp")),
+    }, PROBE_TIMEOUTS)
+    : verifySmtpLogin(smtp, PROBE_TIMEOUTS));
+}
 
 interface CredMeta extends CredMetaAuth {
   host?: string; port?: number; secure?: boolean; insecureConsent?: boolean;
@@ -298,7 +308,7 @@ export async function learnMissingSmtpSizes(
   deps: ApiDeps,
   opts: { dial?: SmtpSizeDial; now?: () => Date } = {},
 ): Promise<SmtpSizePassResult> {
-  const dial = opts.dial ?? apiSmtpSizeDial;
+  const dial = opts.dial ?? apiSmtpSizeDialFor(deps);
   const now = opts.now ?? ((): Date => new Date());
   // ONE clock read for the whole selection: the deadline's origin and both backoff cutoffs are the
   // same instant by construction, so no interleaving can make a row "due" against one and not the

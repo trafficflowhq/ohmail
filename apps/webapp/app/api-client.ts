@@ -1681,7 +1681,7 @@ export const mailboxes = {
    */
   probe: (b: {
     address: string;
-    imap: { host: string; port?: number; secure?: boolean; user?: string; pass: string };
+    imap: { host: string; port?: number; secure?: boolean; user?: string; pass: string; allowInsecure?: boolean };
   }) =>
     api<{ ok: true; host: string; user: string; folders: number | null }>(
       "/mailboxes/probe", { method: "POST", body: b },

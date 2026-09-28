@@ -75,7 +75,11 @@ export const OAUTH_ERROR_DETAIL_CODES: ReadonlySet<string> = new Set(["OAUTH_INV
  * which connect failure it was: a mail server whose address now points somewhere this deployment
  * will not connect to, rather than one that is merely down.
  */
-export const DIAL_REFUSAL_DETAIL_CODES: ReadonlySet<string> = new Set(["MAILBOX_HOST_REFUSED"]);
+export const DIAL_REFUSAL_DETAIL_CODES: ReadonlySet<string> = new Set([
+  "MAILBOX_HOST_REFUSED",
+  // A plaintext consent whose server's name no longer resolves to the person's own network.
+  "MAILBOX_PLAINTEXT_REFUSED",
+]);
 
 /**
  * Timeouts — Node's errnos AND the ones the INSTALLED IMAP client actually emits. The four imapflow

@@ -78,7 +78,7 @@ import {
 import { makeSessionLifecycle } from "@trafficflow/services/auth";
 import {
   API_VERSION, ALLOW_ANY_PROBE_HOST, createApp, DEFAULT_SSE, errorResponse, localRoutes, makeImapProbe,
-  makeSendAdapter, makeSmtpProbe, matchRoute, sendConnections,
+  makeSendAdapter, makeSmtpProbe, matchRoute, PlaintextDialRefused, plaintextDialPin, sendConnections,
   type ProbeDialer, type SmtpProbeOptions,
   type ApiDeps, type ApiServices, type App, type Route,
 } from "@trafficflow/api/local";
@@ -1488,7 +1488,7 @@ async function discloseLocalSyncFailures(
   res: Response,
   states: readonly {
     mailboxId: string;
-    connection: { unreachableSince: Date | null; signInRefused: boolean };
+    connection: { unreachableSince: Date | null; signInRefused: boolean; plaintextRefused?: boolean };
     /** Absent on a caller that cannot say, which overlays nothing. */
     holderLooked?: boolean;
     /** Absent on a caller that cannot say, which overlays no block. */
@@ -1505,6 +1505,8 @@ async function discloseLocalSyncFailures(
     }
   }
   const failures = new Map<string, MailboxErrorCode>();
+  /* The closed detail token beside a failure, where the refusal is this install's own. */
+  const details = new Map<string, string>();
   /* AND THE OUTAGE'S OWN CLOCK, from its first observation: a fact, not an error, so it rides
      beside `status` at any age. The list's status line and a Pull press read it; the Settings
      pane says the same sentence from the reach poll with no bound either. */
@@ -1512,7 +1514,11 @@ async function discloseLocalSyncFailures(
   const unreadable = new Map<string, string>();
   for (const r of states) {
     if (r.connection.signInRefused) failures.set(r.mailboxId, "auth");
-    else if (r.connection.unreachableSince !== null) {
+    else if (r.connection.plaintextRefused === true) {
+      /* Settled at once: nothing was dialled, and the sentence is not "can't reach the server". */
+      failures.set(r.mailboxId, "connect");
+      details.set(r.mailboxId, "MAILBOX_PLAINTEXT_REFUSED");
+    } else if (r.connection.unreachableSince !== null) {
       outages.set(r.mailboxId, r.connection.unreachableSince.toISOString());
       if (at.getTime() - r.connection.unreachableSince.getTime() >= LOCAL_CONNECTION_DEAD_AFTER_MS) {
         failures.set(r.mailboxId, "connect");
@@ -1542,6 +1548,7 @@ async function discloseLocalSyncFailures(
     // louder, truer fact about the row than this install's socket, and stays untouched.
     const healthy = id !== null && m!.status === "connected";
     const code = healthy ? failures.get(id) : undefined;
+    const detail = healthy ? details.get(id) : undefined;
     const since = healthy ? outages.get(id) : undefined;
     /* "Not syncing" is true of an ORGANIZER that cannot read its lease and false of a reader,
        which keeps mirroring; a block the row already carries is the store's and stands. */
@@ -1552,6 +1559,7 @@ async function discloseLocalSyncFailures(
       ...(row as object),
       ...checked,
       ...(code !== undefined ? { status: "error", errorCode: code } : {}),
+      ...(detail !== undefined ? { errorDetail: detail } : {}),
       ...(since !== undefined ? { unreachableSince: since } : {}),
       ...(blockedSince !== undefined
         ? { syncBlockedReason: "lease_unreadable", syncBlockedSince: blockedSince } : {}),
@@ -3110,6 +3118,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        */
       let certificateRefusedNow = false;
       /**
+       * THE CONSENTED PLAINTEXT SERVER IS NO LONGER ON THE PERSON'S OWN NETWORK — see
+       * {@link pinPlaintextDial}. The ladder keeps climbing: a laptop that comes home heals it,
+       * and a dial that gets through clears it.
+       */
+      let plaintextRefusedNow = false;
+      /**
        * THE STORED PASSWORD THIS LAUNCH COULD NOT DIAL WITH — see {@link CredentialBlock}.
        *
        * Its own field and not a second meaning for `signInRefused`: nothing answered this launch,
@@ -3364,6 +3378,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           try {
             if (stopped || redialling) { answer({ verdict: "refused", holder: null }); return; }
             moving = true;
+            await pinPlaintextDial(cfg);
             await candidate.connect();
             const self: LeaseSelf = {
               installId, kind: organizerKind, displayName: machineName,
@@ -3533,6 +3548,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             "Nothing was deleted: re-entering the password re-seals the row under this key",
         });
         return false;
+      };
+
+      /**
+       * THE PLAINTEXT DIAL'S CHECK, before every connect built from a config of this mailbox: a
+       * stored consent is honoured only where the name resolves NOW to the person's own network,
+       * and the socket is pinned there. A dial with TLS carries no pin: this door dials by name.
+       */
+      const pinPlaintextDial = async (cfg: ImapConfig): Promise<void> => {
+        if (cfg.allowInsecure !== true || cfg.secure) { delete cfg.pin; return; }
+        cfg.pin = await plaintextDialPin(nodeHostResolver, cfg.host, "imap");
       };
 
       /**
@@ -6394,6 +6419,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            merely the row being read. Refusing is the whole act: the poll timer lands here again
            and refuses again until the process ends or somebody signs back in. */
         if (signedOutSinceDial()) throw new SignedOutError();
+        await pinPlaintextDial(imapConfig);
         await adapter.connect();
         /* The login is open: a press waiting on this launch has its answer ({@link launch}). */
         onDialled?.();
@@ -6726,6 +6752,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           redialNotBefore = 0;
           /* The handshake went through, so the certificate is no longer the answer. */
           certificateRefusedNow = false;
+          plaintextRefusedNow = false;
           /* The press's floor goes with the ladder — DEFENCE, not a watched invariant, said here
            * so a later reader does not take it for a guarantee. Its contrary state is unreachable:
            * a FORCED dial runs only once the floor has passed, so a later press is admitted whether
@@ -6765,6 +6792,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * A refused sign-in stops the automatic re-dial for good; anything else widens the
            * wait. Without this the log line below was literally true — "the next poll tries
            * again" — and that was the defect, not the remedy. */
+          if (err instanceof PlaintextDialRefused) plaintextRefusedNow = true;
           if (certificateRefused(err)) {
             /* No password was sent: the platform refused the handshake before LOGIN. Force or
                not, the press floor rations the next ask; the automatic ladder stops here. */
@@ -6937,6 +6965,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             signInRefused,
             /* THE CERTIFICATE, named apart from an outage: nothing is re-dialling it. */
             certificateRefused: certificateRefusedNow,
+            /* THE PLAINTEXT SERVER OFF THE PERSON'S NETWORK, named apart from an outage too. */
+            plaintextRefused: plaintextRefusedNow,
             /* AND WHAT THE FIRST SYNC PRODUCED, read in the same pass for the reason the record's
                own header gives: two reads would be two clocks. */
             firstSync: firstSync.state(),
@@ -7086,6 +7116,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              * here closed the login twice. */
             noteConnectionDead(err, generation, null);
             if (certificateRefused(err)) certificateRefusedNow = true;
+            if (err instanceof PlaintextDialRefused) plaintextRefusedNow = true;
             if (credentialsRefused(err)) {
               signInRefused = true;
               log("mailbox_sign_in_failed", {
@@ -7319,6 +7350,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 : new ImapAdapter(imapConfig, ONE_SHOT_DIAL);
               try {
                 if (signedOutSinceDial()) throw new SignedOutError();
+                await pinPlaintextDial(imapConfig);
                 await fresh.connect();
                 releasedAnswer = await ask(fresh);
               } catch (err) {
@@ -8226,6 +8258,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                     ...(typeof imap.secure === "boolean" ? { secure: imap.secure } : {}),
                     ...(typeof imap.user === "string" ? { user: imap.user } : {}),
                     pass: typeof imap.pass === "string" ? imap.pass : "",
+                    ...(imap.allowInsecure === true ? { allowInsecure: true } : {}),
                   },
                   /* The outgoing block by the same rule, and the password is deliberately not
                      read from it: one form, one identity, and the service falls back to the
@@ -8236,6 +8269,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                     ...(typeof smtp.port === "number" ? { port: smtp.port } : {}),
                     ...(typeof smtp.secure === "boolean" ? { secure: smtp.secure } : {}),
                     ...(typeof smtp.user === "string" ? { user: smtp.user } : {}),
+                    ...(smtp.allowInsecure === true ? { allowInsecure: true } : {}),
                   },
                 },
                 {

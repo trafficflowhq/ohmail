@@ -77,11 +77,11 @@ function organizeInputOf(body: Record<string, unknown>): {
  */
 function probeInputOf(body: Record<string, unknown>): {
   address: string;
-  imap: { host: string; port?: number; secure?: boolean; user?: string; pass: string };
+  imap: { host: string; port?: number; secure?: boolean; user?: string; pass: string; allowInsecure?: boolean };
 } {
   const address = typeof body.address === "string" ? body.address : "";
   const imap = (body.imap && typeof body.imap === "object" ? body.imap : {}) as Record<string, unknown>;
-  const out: { address: string; imap: { host: string; port?: number; secure?: boolean; user?: string; pass: string } } = {
+  const out: ReturnType<typeof probeInputOf> = {
     address,
     imap: {
       host: typeof imap.host === "string" ? imap.host : "",
@@ -94,6 +94,8 @@ function probeInputOf(body: Record<string, unknown>): {
   if (typeof imap.port === "number") out.imap.port = imap.port;
   if (typeof imap.secure === "boolean") out.imap.secure = imap.secure;
   if (typeof imap.user === "string") out.imap.user = imap.user;
+  // The plaintext consent, as a claim the probe re-proves for a server on a private network only.
+  if (imap.allowInsecure === true) out.imap.allowInsecure = true;
   return out;
 }
 

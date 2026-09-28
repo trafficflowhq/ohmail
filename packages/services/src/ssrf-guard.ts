@@ -18,8 +18,8 @@ import { ServiceError } from "./errors.js";
  */
 
 export {
-  isBlockedAddress, isPrivateNetworkAddress, privateNetworkPin, nodeHostResolver,
-  type HostResolver, type PublicUrlOptions,
+  isBlockedAddress, isPrivateNetworkAddress, privateNetworkPin, privateNetworkScope, nodeHostResolver,
+  type HostResolver, type PrivateNetworkScope, type PublicUrlOptions,
 } from "@trafficflow/core/net";
 
 /**

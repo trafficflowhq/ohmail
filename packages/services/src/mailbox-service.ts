@@ -1047,8 +1047,8 @@ export class MailboxService {
     ctx: ServiceContext,
     input: {
       address: string;
-      imap: { host: string; port?: number; secure?: boolean; user?: string; pass: string };
-      smtp?: { host?: string; port?: number; secure?: boolean; user?: string; pass?: string };
+      imap: { host: string; port?: number; secure?: boolean; user?: string; pass: string; allowInsecure?: boolean };
+      smtp?: { host?: string; port?: number; secure?: boolean; user?: string; pass?: string; allowInsecure?: boolean };
     },
     opts: { probe: MailboxProbe; smtpProbe?: SmtpProbe },
   ): Promise<{ ok: true; host: string; user: string; folders: number | null; sending?: SendingProbe }> {
@@ -1066,7 +1066,11 @@ export class MailboxService {
     const verdict = await opts.probe({
       accountId: ctx.accountId,
       address,
-      imap: { host, port: input.imap.port, secure: input.imap.secure, user, pass: input.imap.pass },
+      imap: {
+        host, port: input.imap.port, secure: input.imap.secure, user, pass: input.imap.pass,
+        // A consent CLAIM, as `create` forwards it: the probe re-proves it or refuses.
+        allowInsecure: input.imap.allowInsecure === true ? true : undefined,
+      },
     });
 
     if (verdict.verdict === "refuse") throw probeRefused(verdict.code, verdict.tls);
@@ -1112,7 +1116,7 @@ export class MailboxService {
     imapUser: string,
     input: {
       imap: { pass: string };
-      smtp?: { host?: string; port?: number; secure?: boolean; user?: string; pass?: string };
+      smtp?: { host?: string; port?: number; secure?: boolean; user?: string; pass?: string; allowInsecure?: boolean };
     },
     smtpProbe: SmtpProbe,
   ): Promise<SendingProbe> {
@@ -1127,6 +1131,7 @@ export class MailboxService {
         secure: input.smtp?.secure,
         user: (input.smtp?.user ?? "").trim() || imapUser,
         pass: input.smtp?.pass ?? input.imap.pass,
+        allowInsecure: input.smtp?.allowInsecure === true ? true : undefined,
       },
     });
     // `store_unverified` is a refusal HERE for `probeConnection`'s own reason: the question is

@@ -2446,6 +2446,7 @@
     "err_storage": "Synchronisierung fehlgeschlagen — ohmail konnte diese Post nicht speichern. Das liegt an uns.",
     "err_sync": "Synchronisierung beim Lesen des Postfachs fehlgeschlagen.",
     "err_unknown": "Synchronisierung fehlgeschlagen, und wir konnten nicht sagen, warum.",
+    "err_plaintext_refused": "Synchronisierung fehlgeschlagen — die Adresse des Mailservers liegt nicht mehr in deinem eigenen Netzwerk, darum schickt ohmail dein Passwort nicht unverschlüsselt dorthin.",
     "probe_auth": "Dieser Mailserver hat das Passwort abgelehnt. Wenn dein Anbieter ein anwendungsspezifisches Passwort verlangt, leg dort eines an und nimm es hier statt deines Kontopassworts.",
     "probe_connect": "Wir haben diesen Mailserver nicht erreicht. Prüf IMAP-Server und Port.",
     "probe_tls": "Das Zertifikat dieses Mailservers wurde abgelehnt, wir haben also abgebrochen, bevor das Passwort rausging. Prüf den IMAP-Server und ob dieser Port TLS erwartet.",

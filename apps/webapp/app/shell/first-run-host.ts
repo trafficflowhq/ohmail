@@ -42,8 +42,9 @@ export interface FirstRunProbeOk {
 export interface FirstRunMailboxInput {
   address: string;
   provider: string;
-  imap: { host: string; port?: number; secure?: boolean; user?: string; pass: string };
-  smtp?: { host: string; port?: number; secure?: boolean; user?: string; pass?: string };
+  /** `allowInsecure`: the person's plaintext consent for that protocol, a claim the server re-proves. */
+  imap: { host: string; port?: number; secure?: boolean; user?: string; pass: string; allowInsecure?: boolean };
+  smtp?: { host: string; port?: number; secure?: boolean; user?: string; pass?: string; allowInsecure?: boolean };
 }
 
 /**
@@ -180,6 +181,13 @@ export interface FirstRunHost {
   probeReason: (err: unknown) => string | null;
   /** The server's own sentence for an error, for the fallback the line above describes. */
   probeMessage: (err: unknown) => string | null;
+
+  /**
+   * THE PLAINTEXT CONSENT A REFUSAL OFFERS — the protocol whose line may render, or `null`. The
+   * server offers it only for a server with no TLS on a private network. Absent, or `null` for a
+   * `mode` whose connect cannot carry a consent: the line would be a promise the door cannot keep.
+   */
+  plaintextOffer?: (err: unknown, mode: "seed" | "add") => "imap" | "smtp" | null;
 
   /**
    * THE STANDALONE DOOR'S AI PROVIDER FORM, injected. See the header. Absent everywhere else.

@@ -2446,6 +2446,7 @@
     "err_storage": "Sync failed — ohmail could not store this mail. This one is on us.",
     "err_sync": "Sync failed while reading the mailbox.",
     "err_unknown": "Sync failed, and we could not tell why.",
+    "err_plaintext_refused": "Sync failed — the mail server's address is no longer on your own network, so ohmail will not send your password to it unencrypted.",
     "probe_auth": "That mail server refused the password. If your provider requires an app-specific password, generate one there and use it here instead of your account password.",
     "probe_connect": "We could not reach that mail server. Check the IMAP host and port.",
     "probe_tls": "That mail server's certificate was refused, so we stopped before sending the password. Check the IMAP host, and whether that port expects TLS.",
