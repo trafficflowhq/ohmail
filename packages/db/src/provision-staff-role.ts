@@ -17,6 +17,10 @@ import postgres from "postgres";
 import { transactionPoolerReason } from "./session-url.js";
 import { pgTlsOptions } from "./pg-tls.js";
 import { STAFF_ADMIN_VIEWS, STAFF_ROLE_LIVE_IN_PRODUCTION } from "./staff-grants.js";
+import { resetCeilings } from "./migrate.js";
+
+/** The ceilings this runner lifts for its own DDL, and resets before it closes. */
+const LIFTED = ["statement_timeout", "idle_in_transaction_session_timeout"] as const;
 
 // `fileURLToPath`, never `.pathname` — this checkout lives under a directory with a SPACE.
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -78,13 +82,14 @@ async function main(): Promise<number> {
     onnotice: (n) => notices.push(`${n.severity}: ${n.message}${n.detail ? " — " + n.detail : ""}`),
   });
 
+  let lifted = false;
   try {
     // `client.ts#ROLE_DEFAULT_TIMEOUTS` is a ROLE-ONLY default (every database this role opens,
     // not only the one this script targets) precisely because that is the only shape proven to
     // reach a transaction-mode pooler. This is a hand-run DDL script and must not inherit it as
     // a ceiling on its own statements.
-    await sql.unsafe(`set statement_timeout = 0`);
-    await sql.unsafe(`set idle_in_transaction_session_timeout = 0`);
+    for (const guc of LIFTED) await sql.unsafe(`set ${guc} = 0`);
+    lifted = true;
     const who = (await sql`select current_database() db, current_user usr`)[0]!;
     console.log(`database : ${who.db}\nconnected: ${who.usr}\n`);
 
@@ -154,6 +159,8 @@ async function main(): Promise<number> {
       console.log("\nserver notices — the `no privileges could be revoked` ones are EXPECTED:");
       for (const n of notices) console.log(`  ${n}`);
     }
+    // A session pooler hands this backend to its next client as it is left.
+    if (lifted) await resetCeilings(sql, (m) => console.error(m), LIFTED);
     await sql.end({ timeout: 5 }).catch(() => {});
   }
 }
