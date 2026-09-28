@@ -5151,3 +5151,82 @@ fn the_diagnostic_save_writes_the_builders_file_and_nothing_else() {
     assert!(write_diagnostic_file(&dir, &huge).is_err(), "a file over the cap was written");
     assert_eq!(fs::read_to_string(&path).expect("read back"), second, "a refusal touched the last good file");
 }
+
+/// THE ROUTE TABLE for a new-window request, the one door a message frame's links have.
+/// Mutations watched: route `mailto:` to the browser → the Compose rows go red; drop the own-host
+/// arm → the `tauri.localhost` rows go red. The first rows are the positive control.
+fn popup_rows() -> Vec<(String, PopupRoute)> {
+    let browser = |u: &str| (u.to_string(), PopupRoute::Browser(u.to_string()));
+    let ignored = |u: &str| (u.to_string(), PopupRoute::Ignored);
+    let long = format!("https://example.test/{}", "a".repeat(EXTERNAL_URL_MAX));
+    let bidi = "https://example.test/\u{202e}txt.exe".to_string();
+    vec![
+        browser("https://example.test/deactivate"),
+        browser("http://example.test/"),
+        browser("HTTPS://EXAMPLE.TEST/"),
+        browser("https://elsewhere.test/path?q=1"),
+        // A host that only CONTAINS an own-origin name is somebody else's.
+        browser("https://tauri.localhost.example.test/"),
+        browser("https://nottauri.localhost/"),
+        ("mailto:x@y.test?subject=A%26B".into(), PopupRoute::Compose("mailto:x@y.test?subject=A%26B".into())),
+        ("MAILTO:x@y.test".into(), PopupRoute::Compose("MAILTO:x@y.test".into())),
+        ignored("mailto:x@y.test?subject=a\u{0}b"),
+        ignored("tel:+41000000000"),
+        ignored("cid:part1@fixture.test"),
+        ignored("file:///etc/passwd"),
+        ignored("data:text/html,hi"),
+        ignored("javascript:alert(1)"),
+        ignored("blob:http://tauri.localhost/0000"),
+        ignored("about:blank"),
+        ignored("ohmail://link?code=abc"),
+        ignored("tauri://localhost/x"),
+        ignored("ipc://localhost/x"),
+        ignored("asset://localhost/x"),
+        ignored("http://tauri.localhost/x"),
+        ignored("https://TAURI.localhost/#/settings"),
+        ignored("http://ipc.localhost/"),
+        ignored("http://asset.localhost/x"),
+        ignored("http://someone@tauri.localhost:80/x"),
+        ignored("no-scheme-at-all"),
+        (long.clone(), PopupRoute::Refused(long)),
+        (bidi.clone(), PopupRoute::Refused(bidi)),
+        ("https:///no-host".into(), PopupRoute::Refused("https:///no-host".into())),
+    ]
+}
+
+#[test]
+fn a_new_window_request_is_routed_by_the_one_table() {
+    let rows = popup_rows();
+    assert!(rows.len() >= 18, "the table lost rows: {}", rows.len());
+    for (url, want) in rows {
+        assert_eq!(popup_route(&url), want, "popup_route({url:?})");
+    }
+}
+
+/// EVERY route answers Deny, and only a routed link is handed off the UI thread, exactly
+/// once. Mutations watched: answer `Allow` → red on every row; hand Ignored off → red on those.
+#[test]
+fn every_new_window_request_is_denied_and_routed_links_leave_once() {
+    use std::cell::RefCell;
+    for (url, want) in popup_rows() {
+        let jobs = RefCell::new(Vec::new());
+        let response = answer::<tauri::Wry>(&url, |route| jobs.borrow_mut().push(route));
+        assert!(matches!(response, tauri::webview::NewWindowResponse::Deny), "{url:?} was not denied");
+        let jobs = jobs.into_inner();
+        if want == PopupRoute::Ignored {
+            assert!(jobs.is_empty(), "{url:?} is ignored and still left the UI thread: {jobs:?}");
+        } else {
+            assert_eq!(jobs, vec![want], "{url:?} did not leave exactly once");
+        }
+    }
+}
+
+/// The refusal a window hears is never longer than its parser admits, and cut on a character.
+#[test]
+fn a_refusal_payload_is_cut_to_the_gate_bound() {
+    assert_eq!(refusal_payload("https://example.test/x"), "https://example.test/x");
+    let long = format!("https://example.test/{}", "é".repeat(EXTERNAL_URL_MAX));
+    let cut = refusal_payload(&long);
+    assert!(cut.len() <= EXTERNAL_URL_MAX && cut.len() > EXTERNAL_URL_MAX - 2, "cut to {}", cut.len());
+    assert!(long.starts_with(&cut));
+}

@@ -179,6 +179,7 @@ pub fn attach<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
             }
         })
         .setup(|app| {
+            build_main_window(app)?;
             // The config window exists from here: its web process is watched from its first
             // frame (`renderer_recovery.rs`).
             crate::renderer_recovery::arm(app.handle());
@@ -209,6 +210,25 @@ pub fn attach<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
             crate::launch_window::prepare(app);
             Ok(())
         })
+}
+
+/// Build the main window from its config entry (`"create": false` there), the line Tauri runs
+/// itself at the same moment, so the engine build can give it a new-window handler: every link in a
+/// message frame reaches the shell as that request (`engine::on_new_window`). The plain build
+/// attaches none, which is the behaviour it always had.
+fn build_main_window<R: Runtime>(app: &tauri::App<R>) -> Result<(), Box<dyn std::error::Error>> {
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|w| w.label == "main")
+        .ok_or("ohmail: tauri.conf.json names no main window")?;
+    let builder = tauri::WebviewWindowBuilder::from_config(app.handle(), config)?;
+    #[cfg(feature = "local-engine")]
+    let builder = builder.on_new_window(crate::engine::on_new_window(app.handle().clone()));
+    builder.build()?;
+    Ok(())
 }
 
 /// Hand the window's frame to the compositor.

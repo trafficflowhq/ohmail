@@ -24,8 +24,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  *     click is cancelled so the webview cannot navigate;
  *  2. no other scheme ever reaches the opener — `cid:` above all, which names a part of the
  *     message being read and must not leave the machine;
- *  3. a message frame is a second document with its own listener, and inside one NOTHING is
- *     "the app's own navigation";
+ *  3. in a document where nothing is the app's own navigation (`trustSameOrigin: false`),
+ *     nothing but an http/https address leaves; a MESSAGE FRAME carries no listener at all —
+ *     its links are the shell's new-window door (`popup_route` in `engine.rs`);
  *  4. the WEB app is untouched: nothing is installed, no listener exists, and an anchor keeps
  *     the semantics the browser gives it;
  *  5. the shell's grant names the command. This is the silent shape the whole slice is about —
@@ -40,10 +41,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  *    refusing it                                                 red;
  *  · make `interceptLinkClicks` install regardless of          → the web-app case goes red;
  *    `enableExternalLinks`
- *  · pass `trustSameOrigin: true` from the frame               → the frame case goes red;
+ *  · pass `trustSameOrigin: true` for the untrusted document  → that case goes red;
  *  · register `open_external` and leave it out of the          → the grant case goes red;
  *    capability
- *  · stop installing on the frame in `MessageBody`             → the wiring case goes red.
+ *  · install the listener on the frame again in `MessageBody`  → the wiring case goes red.
  */
 
 type Invoked = { command: string; payload?: Record<string, unknown> };
@@ -225,10 +226,10 @@ describe("the desktop window, armed", () => {
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────────────────
-   A MESSAGE FRAME — a second document, and nothing in it is the app's own navigation.
+   A SECOND DOCUMENT, and nothing in it is the app's own navigation.
    ───────────────────────────────────────────────────────────────────────────────────────── */
 
-describe("inside a message frame", () => {
+describe("in a document that is not the app's own", () => {
   it("an http link goes out, and a same-origin one does NOT get to navigate the app", async () => {
     const mod = await freshModule();
     mod.enableExternalLinks();
@@ -319,8 +320,11 @@ describe("the window is granted the command it calls", () => {
   });
 });
 
-describe("the message frame is wired to the same handler", () => {
-  it("MessageBody installs the interceptor on the frame's own document", () => {
+/* A MESSAGE FRAME CARRIES NO LISTENER. WebKit (macOS, Linux) calls none in a frame sandboxed
+   without scripts, so the frame's one door is the shell's new-window handler, on every engine;
+   a listener here would be a second door on Chromium alone (the frame-links rig measures both). */
+describe("the message frame is left to the shell's new-window door", () => {
+  it("MessageBody installs no link listener on the frame's document", () => {
     const rel = "apps/webapp/app/components/MessageBody.tsx";
     let body: string;
     try {
@@ -328,8 +332,10 @@ describe("the message frame is wired to the same handler", () => {
     } catch {
       body = readFileSync(resolve(process.cwd(), "../webapp/app/components/MessageBody.tsx"), "utf8");
     }
-    expect(body).toMatch(/interceptLinkClicks\(\s*frameDoc\s*,\s*\{\s*trustSameOrigin:\s*false/);
-    expect(body).toMatch(/contentDocument/);
+    expect(body, "a link listener is installed in the mail renderer again").not.toMatch(/interceptLinkClicks/);
+    expect(body, "a click listener is put on a document in the mail renderer").not.toMatch(/addEventListener\(\s*["']click["']/);
+    // Positive control: the frame whose links leave by the door is still this file's.
+    expect(body).toMatch(/sandbox=\{FRAME_SANDBOX\}/);
   });
 });
 

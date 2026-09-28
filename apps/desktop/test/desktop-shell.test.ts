@@ -68,7 +68,7 @@ describe("tauri.conf.json", () => {
     build: { frontendDist: string };
     app: {
       withGlobalTauri: boolean;
-      windows: { label: string; minWidth: number; dragDropEnabled?: boolean; visible?: boolean }[];
+      windows: { label: string; minWidth: number; dragDropEnabled?: boolean; visible?: boolean; create?: boolean }[];
       security: {
         csp: string;
         freezePrototype: boolean;
@@ -96,6 +96,22 @@ describe("tauri.conf.json", () => {
     expect(rust).toMatch(/#\[cfg\(not\(feature = "local-engine"\)\)\]\s*\{\s*builder = launch_window::attach\(builder\);/);
     expect(read("src-tauri/src/launch_window.rs")).toMatch(/arm_fallback\(launch, FALLBACK,/);
     expect(read("src/main.tsx")).toMatch(/^reportWindowReady\(\);$/m);
+  });
+
+  /* ONE MAIN WINDOW, BUILT IN THE ONE SETUP WITH ITS NEW-WINDOW HANDLER — the only door a message
+     frame's links have (`engine::on_new_window`). Mutations watched red: `create: false` dropped
+     (Tauri builds a second `main` and the launch refuses); the build moved below
+     `renderer_recovery::arm` (the watch arms before the window exists). */
+  it("builds the main window in the setup, first, with the new-window handler", () => {
+    const main = conf.app.windows.find((w) => w.label === "main");
+    expect(main?.create, "Tauri would build the main window a second time").toBe(false);
+    const menu = rustCode(read("src-tauri/src/menu.rs"));
+    expect(menu).toMatch(/\.setup\(\|app\| \{\s*build_main_window\(app\)\?;\s*crate::renderer_recovery::arm\(app\.handle\(\)\);/);
+    const build = menu.slice(menu.indexOf("fn build_main_window"));
+    expect(build).toMatch(/WebviewWindowBuilder::from_config\(app\.handle\(\), config\)\?;/);
+    expect(build).toMatch(
+      /#\[cfg\(feature = "local-engine"\)\]\s*let builder = builder\.on_new_window\(crate::engine::on_new_window\(app\.handle\(\)\.clone\(\)\)\);\s*builder\.build\(\)\?;/,
+    );
   });
 
   it("is ohmail, at the release version, under its own identifier", () => {

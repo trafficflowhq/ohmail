@@ -6024,6 +6024,12 @@ pub fn code_from_link(raw: &str) -> Option<String> {
 #[cfg(feature = "local-engine")]
 pub const MAILTO_EVENT: &str = "link:mailto";
 
+/// The event the shell emits when a link clicked in a message will not open, carrying the
+/// address: the window says so in the same sentence its own open refusal uses. The payload is
+/// never written to a log.
+#[cfg(feature = "local-engine")]
+pub const LINK_REFUSED_EVENT: &str = "link:refused";
+
 /// Longer than any real mailto link by orders of magnitude, and short enough that a hostile page
 /// cannot push megabytes through a scheme activation. The window's parser applies its own,
 /// tighter, per-field caps; this bound is only what may cross the bridge at all.
@@ -6107,6 +6113,124 @@ fn announce_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, raw: &str) {
         None => log_line(format_args!(
             "a link arrived on this app's scheme that it does not answer; ignored"
         )),
+    }
+}
+
+/// Where a new-window request from the window goes. Every link in a message frame is forced to
+/// `target="_blank"`, so its click reaches the shell as this request on all three engines; WebKit
+/// calls no listener in a frame sandboxed without scripts, so this is the frame's only door.
+#[cfg(feature = "local-engine")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PopupRoute {
+    /// An address [`external_url`] admits, for the user's own browser.
+    Browser(String),
+    /// A `mailto:` link, byte-exact, for the compose form.
+    Compose(String),
+    /// An http(s) address [`external_url`] refuses: said on screen, never opened.
+    Refused(String),
+    /// The app's own origin, or a scheme this app never opens (`cid:` above all).
+    Ignored,
+}
+
+/// Tauri's http(s) spellings of the window's own origin. Its `tauri:`, `ipc:` and `asset:` schemes
+/// need no entry: every scheme but http(s) and mailto is ignored already.
+#[cfg(feature = "local-engine")]
+const OWN_HOSTS: [&str; 3] = ["tauri.localhost", "ipc.localhost", "asset.localhost"];
+
+/// The host of an `http(s)://` address, lowercased, without userinfo or port.
+#[cfg(feature = "local-engine")]
+fn http_host(url: &str) -> Option<String> {
+    let rest = strip_scheme(url, "http://").or_else(|| strip_scheme(url, "https://"))?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = authority.rsplit('@').next().unwrap_or("");
+    let host = if host.starts_with('[') { host } else { host.split(':').next().unwrap_or("") };
+    Some(host.to_ascii_lowercase())
+}
+
+/// Classify one new-window request. Pure: `mailto:` to compose; http(s) on the app's own host
+/// ignored (a middle-click on an in-app link must not send the browser to `tauri.localhost`), any
+/// other http(s) through the one gate; everything else ignored.
+#[cfg(feature = "local-engine")]
+pub fn popup_route(url: &str) -> PopupRoute {
+    let Some((scheme, _)) = url.split_once(':') else { return PopupRoute::Ignored };
+    let scheme = scheme.to_ascii_lowercase();
+    if scheme == "mailto" {
+        return mailto_link(url).map_or(PopupRoute::Ignored, PopupRoute::Compose);
+    }
+    if scheme != "http" && scheme != "https" {
+        return PopupRoute::Ignored;
+    }
+    if http_host(url).is_some_and(|host| OWN_HOSTS.contains(&host.as_str())) {
+        return PopupRoute::Ignored;
+    }
+    match external_url(url) {
+        Ok(admitted) => PopupRoute::Browser(admitted.to_string()),
+        Err(_) => PopupRoute::Refused(url.to_string()),
+    }
+}
+
+/// The handler's whole answer: classify, hand any routed link to `spawn`, and DENY. No second
+/// window ever exists, and nothing slow runs here — the callback is on the UI thread.
+#[cfg(feature = "local-engine")]
+pub fn answer<R: tauri::Runtime>(url: &str, spawn: impl Fn(PopupRoute)) -> tauri::webview::NewWindowResponse<R> {
+    let route = popup_route(url);
+    if route != PopupRoute::Ignored {
+        spawn(route);
+    }
+    tauri::webview::NewWindowResponse::Deny
+}
+
+/// The main window's new-window handler (`menu.rs` builds the window with it).
+#[cfg(feature = "local-engine")]
+pub fn on_new_window<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> impl Fn(tauri::Url, tauri::webview::NewWindowFeatures) -> tauri::webview::NewWindowResponse<R> + Send + 'static {
+    move |url, _features| {
+        answer::<R>(url.as_str(), |route| {
+            let app = app.clone();
+            thread::spawn(move || deliver_popup(&app, route));
+        })
+    }
+}
+
+/// The address a refusal hands the window, cut to the gate's bound on a character boundary: the
+/// over-length refusal is said too, and the window's parser admits nothing longer.
+#[cfg(feature = "local-engine")]
+pub fn refusal_payload(url: &str) -> String {
+    let mut end = url.len().min(EXTERNAL_URL_MAX);
+    while !url.is_char_boundary(end) {
+        end -= 1;
+    }
+    url[..end].to_string()
+}
+
+/// Carry out one routed link, off the UI thread. One log line each, and never the address.
+#[cfg(feature = "local-engine")]
+fn deliver_popup<R: tauri::Runtime>(app: &tauri::AppHandle<R>, route: PopupRoute) {
+    use tauri::{Emitter, Manager};
+    let refused = |url: String, why: String| {
+        log_line(format_args!("a link in a message was not opened: {why}"));
+        let _ = app.emit(LINK_REFUSED_EVENT, refusal_payload(&url));
+    };
+    match route {
+        PopupRoute::Browser(url) => match spawn_opener(&url) {
+            Ok(()) => log_line(format_args!("a link in a message went to the browser through the new-window door")),
+            Err(why) => refused(url, why),
+        },
+        PopupRoute::Refused(url) => {
+            let why = external_url(&url).err().unwrap_or_default();
+            refused(url, why);
+        }
+        PopupRoute::Compose(raw) => {
+            if let Some(pending) = app.try_state::<MailtoPending>() {
+                if let Ok(mut slot) = pending.0.lock() {
+                    *slot = Some(raw);
+                }
+            }
+            log_line(format_args!("a mailto link in a message is held for the compose form"));
+            let _ = app.emit(MAILTO_EVENT, ());
+        }
+        PopupRoute::Ignored => {}
     }
 }
 

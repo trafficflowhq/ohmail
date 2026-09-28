@@ -312,10 +312,10 @@ describe("the desktop window, armed, with a compose sink", () => {
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────────────────
-   A MESSAGE FRAME — where the address a stranger wrote actually lives.
+   A DOCUMENT THAT IS NOT THE APP'S OWN — a stranger's address, and nothing else opens.
    ───────────────────────────────────────────────────────────────────────────────────────── */
 
-describe("inside a message frame", () => {
+describe("in a document that is not the app's own", () => {
   it("an address in someone else's mail opens a compose, and opens nothing else", async () => {
     const mod = await freshModule();
     mod.enableExternalLinks();

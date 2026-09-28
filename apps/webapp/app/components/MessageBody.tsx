@@ -28,7 +28,6 @@ import {
   type TableRowNode,
 } from "../shell/BodyText";
 import { UI_KEYS, usePersistedIdSet } from "../shell/persisted-ui";
-import { interceptLinkClicks } from "../shell/open-external";
 import "./message-body.css";
 import { liveCopy } from "../shell/locale";
 import { CAPTION_KEY, type BlockNotice, type NoticeKind } from "./BlockNotice";
@@ -3989,17 +3988,11 @@ export function MessageBody({
             sandbox={FRAME_SANDBOX}
             referrerPolicy="no-referrer"
             srcDoc={mail.doc}
-            onLoad={(ev) => {
-              /* THE SENDER'S OWN LINKS, which are in a document of their own.
-                 A click in here does not bubble to the app — separate documents — so the shell's
-                 one link handler is installed on this one too. It is inert unless the desktop
-                 build armed it (`shell/open-external.ts`), which is what leaves the web app's
-                 anchors exactly as the browser gives them.
-                 `contentDocument` is reachable because this frame's sandbox keeps
-                 `allow-same-origin`; scripts are still not in that list, so nothing in here can
-                 have moved the links before this runs. */
-              const frameDoc = (ev.currentTarget as HTMLIFrameElement).contentDocument;
-              if (frameDoc) interceptLinkClicks(frameDoc, { trustSameOrigin: false });
+            onLoad={() => {
+              /* THE SENDER'S LINKS leave as the new-window request each `target=_blank` click
+                 makes: a browser answers it with a tab, the desktop shell through `popup_route`
+                 (`engine.rs`). No listener goes on this document — WebKit calls none in a frame
+                 sandboxed without scripts. */
               setLoadedKey(mail.frameKey);
               measure();
             }}

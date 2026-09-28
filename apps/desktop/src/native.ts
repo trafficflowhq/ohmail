@@ -261,6 +261,40 @@ export function offLinkCode(run: (code: string) => void): void {
   if (linkCodeHandler === run) linkCodeHandler = null;
 }
 
+/**
+ * The event the shell emits when a link clicked in a message will not open, and the longest
+ * address it carries (the shell's gate bound). One listener for the life of the window and the
+ * latest handler wins, {@link onLinkCode}'s shape, because the gate re-registers with its toast.
+ */
+export const LINK_REFUSED_EVENT = "link:refused";
+const REFUSED_URL_MAX = 4096;
+let linkRefusedHandler: ((url: string) => void) | null = null;
+let linkRefusedListening = false;
+
+/** The address a `link:refused` payload carried, or null for anything that is not one. */
+export function urlOfRefusalPayload(payload: unknown): string | null {
+  const raw =
+    typeof payload === "string"
+      ? payload
+      : typeof (payload as { payload?: unknown } | null)?.payload === "string"
+        ? (payload as { payload: string }).payload
+        : null;
+  return raw !== null && raw.length > 0 && raw.length <= REFUSED_URL_MAX ? raw : null;
+}
+
+/** Run `run` when the shell refuses a link a person clicked in a message. */
+export async function onLinkRefused(run: (url: string) => void): Promise<void> {
+  linkRefusedHandler = run;
+  if (linkRefusedListening) return;
+  linkRefusedListening = true;
+  await listen(LINK_REFUSED_EVENT, urlOfRefusalPayload, (url) => linkRefusedHandler?.(url));
+}
+
+/** Stop answering refusals — the registering mount is going away and none replaced it. */
+export function offLinkRefused(run: (url: string) => void): void {
+  if (linkRefusedHandler === run) linkRefusedHandler = null;
+}
+
 /** One `plugin:event|listen`, shared by the two menu channels. */
 async function listen<T>(
   event: string,

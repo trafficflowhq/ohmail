@@ -1,12 +1,10 @@
 /**
- * Links in a message, on a desktop that has no second window. Every outbound link carries
- * `target="_blank"` (the sanitizer forces it), and a `_blank` click is a request for a NEW WINDOW,
- * forwarded to whatever the host registered — this app registers nothing, so the webview dropped
- * the request silently: not the navigation policy, not the CSP, not a missing permission, which is
- * why no log anywhere showed it. A click interceptor rather than a new-window handler, because
- * attaching one means this process owning the main window's creation, shared with the interface
- * preview whose published claim is that it spawns no process — so the seam is here: one handler on
- * the two documents that exist, and a link added tomorrow is covered by having been rendered.
+ * Links in the APP'S OWN document, on a desktop that has no second window. A `_blank` click is a
+ * new-window request the webview hands to its host; this listener answers it first in the app's
+ * document — prose mail and the app's own link-outs — so those reach the shell's opener. A message
+ * frame's clicks never reach it: WebKit calls no listener in a frame sandboxed without scripts, so
+ * they arrive at the shell as the new-window request itself (`popup_route` in `engine.rs`). Both
+ * doors end at the same gate (`external_url`) and the same opener.
  */
 
 /**
@@ -21,14 +19,11 @@
  */
 
 /**
- * Two documents: a body is the app's own elements or a sandboxed `<iframe srcdoc>`, and a click in
- * the frame does not bubble to the embedder, so the handler is installed on each (the frame is
- * reachable because its sandbox keeps `allow-same-origin`). Off everywhere except the one build
- * that needs it: {@link enableExternalLinks} is called by the desktop entry point of the
- * engine-bearing build and nothing else — the web app installs no listener and anchors keep browser
- * semantics (inert by construction, not by a branch), and the desktop preview installs nothing
- * either: its grant is empty, and a click that invoked a command and was refused by the ACL would
- * make its no-command claim false while still opening nothing.
+ * One document: the app's own. A message frame is a document of its own and carries no listener;
+ * its links are the shell's new-window door. Off everywhere except the one build that needs it:
+ * {@link enableExternalLinks} is called by the desktop entry point of the engine-bearing build and
+ * nothing else, so the web app installs no listener and its anchors keep browser semantics (inert
+ * by construction, not by a branch).
  */
 
 /** The shell command that hands one address to the platform's opener. `engine.rs` owns the gate. */
@@ -123,7 +118,7 @@ export function enableExternalLinks(): void {
   enabled = true;
 }
 
-/** Whether {@link interceptLinkClicks} will do anything. Read by the suite, and by the frame. */
+/** Whether {@link interceptLinkClicks} will do anything. Read by the suite. */
 export function externalLinksEnabled(): boolean {
   return enabled;
 }
@@ -193,7 +188,7 @@ interface InterceptOptions {
   /**
    * Whether a link to this document's OWN origin may be left to the browser. `true` for the app's document, where
    * same-origin anchors are the client's own navigation — the `#/settings` routes, the in-page jumps — and preventing
-   * them would break the app. `false` inside a message frame, where nothing is the app's own navigation. A `srcdoc`
+   * them would break the app. `false` for a document where nothing is the app's own navigation, such as a message's. A `srcdoc`
    * document inherits the embedder's base URL, so a sender writing `<a href="/x">` or an absolute link to the app's
    * own origin would otherwise be handed straight to the webview, which would navigate the frame — or, having escaped
    * it, the window — inside the app's origin. That is the catastrophic shape this file's header rules out, and it is

@@ -80,7 +80,8 @@ import { useLocalFirstRun } from "./local-first-run.js";
 import { LocalSuggest } from "./local-suggest.js";
 import { CloudSuggest } from "./CloudSuggest.js";
 import {
-  claimMailto, postOsNotice, onMailto, onMenuCommand, onMenuNavigate, setBadge, type MenuCommand,
+  claimMailto, offLinkRefused, onLinkRefused, postOsNotice, onMailto, onMenuCommand, onMenuNavigate, setBadge,
+  type MenuCommand,
 } from "./native.js";
 import { decideNotices } from "@ohmail/client-engine";
 import { readChannels } from "../../webapp/app/shell/notification-settings";
@@ -330,15 +331,22 @@ export function DesktopGate() {
      can say anything is under a toast host that does not exist yet. The buttons that open a web
      page have shown this sentence since they were written; the anchor path had a console line
      and nothing on screen, which is the defect this feature exists to end arriving through the
-     one door left open. A long address is cut: the host is at the front and a toast is one line. */
+     one door left open. A long address is cut: the host is at the front and a toast is one line.
+     One `say` serves both refusal routes — the app document's opener and the shell's door for a
+     message frame's links — so the two cannot word it differently. */
   const toast = useOptionalToast();
   useEffect(() => {
     if (!toast) return;
-    setOpenFailureSink((url) => {
+    const say = (url: string): void => {
       const shown = url.length > ADDRESS_SHOWN ? `${url.slice(0, ADDRESS_SHOWN)}…` : url;
       toast(DOOR_COPY.linkNoBrowser(machineWord(), shown));
-    });
-    return () => setOpenFailureSink(null);
+    };
+    setOpenFailureSink(say);
+    void onLinkRefused(say);
+    return () => {
+      setOpenFailureSink(null);
+      offLinkRefused(say);
+    };
   }, [toast]);
 
   const onStatus = useCallback((next: EngineStatus) => {

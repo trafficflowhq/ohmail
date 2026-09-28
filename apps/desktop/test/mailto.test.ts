@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { emptyDraft, parseMailto } from "../src/mailto.js";
@@ -178,6 +180,18 @@ describe("parseMailto", () => {
   it("treats empty and valueless query pairs as nothing", () => {
     const d = parseMailto("mailto:a@x.example?&&subject&body=&=orphan");
     expect(d).toEqual({ to: ["a@x.example"], cc: [], bcc: [], subject: "", body: "" });
+  });
+});
+
+/* THE BYTES THE SHELL'S DOOR HANDS OVER. A framed `mailto:` reaches compose as the raw string the
+   Rust route table keeps byte-exact (`popup_rows` in `engine_tests.rs`); read from there, so the
+   two halves are asked about one string. */
+describe("the shell's new-window door", () => {
+  it("hands a mailto the parser reads as one subject, never a second header", () => {
+    const rust = readFileSync(resolve(__dirname, "../src-tauri/src/engine_tests.rs"), "utf8");
+    const raw = /PopupRoute::Compose\("(mailto:[^"]*%26[^"]*)"/.exec(rust)?.[1];
+    expect(raw, "the route table lost its encoded-ampersand row").toBe("mailto:x@y.test?subject=A%26B");
+    expect(parseMailto(raw!)).toEqual({ to: ["x@y.test"], cc: [], bcc: [], subject: "A&B", body: "" });
   });
 });
 

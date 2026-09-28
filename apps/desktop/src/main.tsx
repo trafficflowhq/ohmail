@@ -99,9 +99,9 @@ function BootFailure({ error }: { error: unknown }) {
    In a tab, `target="_blank"` opens a tab. In this window there is no tab: a `_blank` click is
    a new-window REQUEST, and a webview whose host registered no handler for one answers it with
    no window — silently, correctly, and with no error anywhere. Every link in the app did
-   nothing, in a mail body and out of it. `open-external.ts` carries the mechanism and why the
-   seam is here; this is the one call that arms it, and the two documents it is armed on are
-   this one and each message frame (`MessageBody.tsx`). */
+   nothing, in a mail body and out of it. `open-external.ts` carries the mechanism; this is the
+   one call that arms it, on this document. A message frame's links reach the shell as the
+   new-window request itself (`popup_route` in `engine.rs`). */
 /* AND AN ATTACHMENT OPENS IN THE VIEWER THIS COMPUTER ALREADY HAS, SWITCHED ON HERE FOR THE SAME
    REASONS. In a tab, a hidden `<a download>` saves the file. In this window the webview asks its
    host to perform the download and, finding no handler registered, cancels it — so every
