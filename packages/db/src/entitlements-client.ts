@@ -107,6 +107,12 @@ export interface CallFault {
   elapsedMs: number;
   /** What bounded it, so a reader can tell a slow program from a refusing one. */
   budgetMs: number;
+  /**
+   * No request was waiting on the call when it faulted: a refresh started behind a response. A
+   * missing answer there can be the host freezing the work rather than the program, and it
+   * refused nobody (the held verdict answered).
+   */
+  outlivedRequest: boolean;
 }
 
 export interface EntitlementsClientConfig {
@@ -134,6 +140,23 @@ export interface EntitlementsClientConfig {
    * It may not throw; if it does, the answer is unchanged and the report is dropped.
    */
   onCallFault?: (f: CallFault) => void | Promise<void>;
+  /**
+   * The host's keep-alive for work that runs after the response (the serverless platform's
+   * `waitUntil`). A host that freezes an instance once it answers MUST pass it: the refresh behind
+   * a read route is otherwise frozen, and its abort fires on thaw as a timeout the program never
+   * caused. Absent on a host that stays alive, where the work runs on.
+   */
+  waitUntil?: (work: Promise<unknown>) => void;
+}
+
+/**
+ * One `/v1/access` call in flight: when it began (an `askedAfter` read reuses only a call begun
+ * since), and whether any request waits on it (a fault on one nobody waited on outlived it).
+ */
+interface Flight {
+  call: Promise<AccessVerdict | null>;
+  startedAt: number;
+  waited: boolean;
 }
 
 /** One completed exchange, or the fact that there was not one. */
@@ -348,13 +371,18 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
     try { report({ path, status, field }); } catch { /* observability is never load-bearing */ }
   };
   const callFault = async (
-    path: EntitlementsPath, status: number | null, startedAt: number,
+    path: EntitlementsPath, status: number | null, startedAt: number, flight?: Flight,
   ): Promise<void> => {
     try {
       await reportCall({
         path, status, elapsedMs: Date.now() - startedAt, budgetMs: budgetFor(path),
+        outlivedRequest: flight !== undefined && !flight.waited,
       });
     } catch { /* observability is never load-bearing */ }
+  };
+  /** Work that outlives the request goes to the host. The answer never depends on the port. */
+  const keepAlive = (work: Promise<unknown>): void => {
+    try { cfg.waitUntil?.(work); } catch { /* a throwing port costs the refresh, not the read */ }
   };
 
   /** Per-account verdicts. `freshUntil` bounds REUSE, `readAt` a read route's stale allow; the
@@ -365,7 +393,7 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
    * a `fresh` one too. One image-heavy message sent 40-80 parallel calls for one account and
    * all of them timed out. An entry leaves as its call settles, inside the call's budget.
    */
-  const inflight = new Map<string, { call: Promise<AccessVerdict | null>; startedAt: number }>();
+  const inflight = new Map<string, Flight>();
   /** Until when an account's last failed read answers for it ({@link ACCESS_FAULT_HOLD_MS}). */
   const faultHeldUntil = new Map<string, number>();
   /** Latched by the first 200 that carried a readable card — `/health`'s `plane` reading. */
@@ -376,7 +404,9 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
    * that answers headers and then stalls still returns at the ceiling. Never throws: every
    * caller here has a degrade arm and a rejection would only move the mapping outwards.
    */
-  const post = async (path: EntitlementsPath, payload: unknown): Promise<Exchange | null> => {
+  const post = async (
+    path: EntitlementsPath, payload: unknown, flight?: Flight,
+  ): Promise<Exchange | null> => {
     // `Date.now()`, not the injected clock: a frozen test clock would report every call as
     // instant and switch the whole line off silently.
     const startedAt = Date.now();
@@ -409,10 +439,10 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
         // A non-JSON body is a fact the caller reads: `bodyIsJson` stays false, the status decides.
         body = undefined;
       }
-      if (res.status !== 200) await callFault(path, res.status, startedAt);
+      if (res.status !== 200) await callFault(path, res.status, startedAt, flight);
       return { status: res.status, body, bodyIsJson };
     } catch {
-      await callFault(path, null, startedAt);
+      await callFault(path, null, startedAt, flight);
       return null;
     } finally {
       clearTimeout(timer);
@@ -420,9 +450,9 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
   };
 
   /** One read of the program: the verdict it cached, or `null` for every fault (then held). */
-  const ask = async (accountId: string): Promise<AccessVerdict | null> => {
+  const ask = async (accountId: string, flight: Flight): Promise<AccessVerdict | null> => {
     const at = clock();
-    const res = await post("/v1/access", { accountId });
+    const res = await post("/v1/access", { accountId }, flight);
     // A 200 is the only answer. 400/401/503 are not verdicts about this account (the contract's
     // own status table), so they take the fault path without being reported as drift.
     if (res && res.status === 200) {
@@ -449,18 +479,28 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
     return null;
   };
 
-  /** A new call for this account, recorded as the one in flight. */
-  const begin = (accountId: string): Promise<AccessVerdict | null> => {
-    const entry = { call: null as unknown as Promise<AccessVerdict | null>, startedAt: clock() };
-    entry.call = ask(accountId).finally(() => {
+  /** A new call for this account, recorded as the one in flight; `behind` a response, unwaited. */
+  const begin = (accountId: string, behind = false): Promise<AccessVerdict | null> => {
+    const entry: Flight = {
+      call: null as unknown as Promise<AccessVerdict | null>, startedAt: clock(), waited: !behind,
+    };
+    entry.call = ask(accountId, entry).finally(() => {
       if (inflight.get(accountId) === entry) inflight.delete(accountId);
     });
     inflight.set(accountId, entry);
     return entry.call;
   };
+  /** A request waits on a call already in flight, so its fault is no longer one nobody saw. */
+  const join = (entry: Flight): Promise<AccessVerdict | null> => {
+    entry.waited = true;
+    return entry.call;
+  };
   /** The call in flight for this account, or a new one. Its rejection reaches every waiter. */
-  const shared = (accountId: string): Promise<AccessVerdict | null> =>
-    inflight.get(accountId)?.call ?? begin(accountId);
+  const shared = (accountId: string, behind = false): Promise<AccessVerdict | null> => {
+    const running = inflight.get(accountId);
+    if (running === undefined) return begin(accountId, behind);
+    return behind ? running.call : join(running);
+  };
 
   const client: EntitlementsClient = {
     async access(accountId: string, opts?: AccessReadOpts): Promise<AccessVerdict> {
@@ -472,7 +512,7 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
         const since = opts.askedAfter;
         if (held && held.readAt >= since) return held.verdict;
         const running = inflight.get(accountId);
-        const answer = await (running && running.startedAt >= since ? running.call : begin(accountId));
+        const answer = await (running && running.startedAt >= since ? join(running) : begin(accountId));
         const after = cache.get(accountId);
         return answer ?? (after && after.readAt >= since ? after.verdict : UNMETERED_ACCESS);
       }
@@ -485,9 +525,13 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
         if ((faultHeldUntil.get(accountId) ?? 0) > at) return held?.verdict ?? UNMETERED_ACCESS;
         // A READ route answers on a held ALLOW inside the bound; the refresh runs behind it through
         // the one call in flight, and a write arriving meanwhile joins it. A held refusal waits.
-        // Nobody awaits the refresh: a fault is held as ever, and a rejection has no reader.
+        // Nobody awaits the refresh: a fault is held as ever, and a rejection has no reader. The
+        // read that starts it hands it to the host ({@link EntitlementsClientConfig.waitUntil});
+        // a call already in flight has its own keeper.
         if (opts?.staleAllow && held?.verdict.ok && at - held.readAt < ACCESS_STALE_ALLOW_MS) {
-          void shared(accountId).catch(() => undefined);
+          const starts = !inflight.has(accountId);
+          const refresh = shared(accountId, true).catch(() => undefined);
+          if (starts) keepAlive(refresh);
           return held.verdict;
         }
       }
@@ -589,8 +633,11 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
         timer = setTimeout(resolve, PRICE_PROBE_BUDGET_MS);
         (timer as unknown as { unref?: () => void }).unref?.();
       });
+      // The probe can outlive `/health`'s answer, so the host keeps it alive like a refresh.
+      const probe = client.access(PRICE_PROBE_ACCOUNT).catch(() => undefined);
+      keepAlive(probe);
       try {
-        await Promise.race([client.access(PRICE_PROBE_ACCOUNT).catch(() => undefined), budget]);
+        await Promise.race([probe, budget]);
       } finally {
         clearTimeout(timer);
       }

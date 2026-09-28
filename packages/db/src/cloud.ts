@@ -133,7 +133,7 @@ export {
 export {
   recordApiFault, entitlementsFaultRow, apiFaultWindow, poolerRefusalsInWindow,
   pruneApiFaults, faultClassOf,
-  API_FAULT_RETENTION_MS, POOLER_REFUSAL_ERROR_CLASS,
+  API_FAULT_RETENTION_MS, POOLER_REFUSAL_ERROR_CLASS, OUTLIVED_REQUEST_ERROR_CLASS,
   type ApiFaultInput, type ApiFaultArm, type ApiFaultRouteCount,
 } from "./api-faults.js";
 

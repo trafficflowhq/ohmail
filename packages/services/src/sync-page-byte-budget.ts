@@ -1,3 +1,4 @@
+import { PAGE_MAX_ROW_BYTES } from "@trafficflow/core/transport-frame";
 import { DRAFT_BODY_MAX_BYTES } from "@trafficflow/core/outbound-text";
 
 /**
@@ -37,16 +38,7 @@ export function weighChange(change: unknown): number {
 export class PageByteBudget {
   private spent = 0;
 
-  /**
-   * A limit of 0, a negative one or none at all would leave the page bounded by rows alone —
-   * the shape that sent pages past the frame — so it is refused here, by name, and never read
-   * as "unbounded". Callers pass `PAGE_MAX_ROW_BYTES`.
-   */
-  constructor(private readonly limit: number) {
-    if (!Number.isSafeInteger(limit) || limit <= 0) {
-      throw new RangeError(`PageByteBudget: a limit of ${String(limit)} bounds no page in bytes`);
-    }
-  }
+  constructor(private readonly limit: number = PAGE_MAX_ROW_BYTES) {}
 
   /** What a page may still spend, with `held` bytes kept back for a later phase. */
   remaining(held = 0): number {

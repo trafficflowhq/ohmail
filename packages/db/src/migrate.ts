@@ -63,18 +63,13 @@ interface MigrationSession {
  */
 const SESSION_CEILINGS = ["statement_timeout", "lock_timeout", "idle_in_transaction_session_timeout"] as const;
 
-/** The RESET before a close, shared with the operator CLIs that lift some of the same ceilings. */
-export async function resetCeilings(
-  raw: Pick<Sql, "unsafe">,
-  log: ((msg: string) => void) | undefined,
-  gucs: readonly string[] = SESSION_CEILINGS,
-): Promise<void> {
-  for (const guc of gucs) {
+async function resetCeilings(raw: Sql, log: ((msg: string) => void) | undefined): Promise<void> {
+  for (const guc of SESSION_CEILINGS) {
     try {
       await raw.unsafe(`reset ${guc}`);
     } catch (err) {
       const cls = (err as { code?: unknown }).code ?? (err instanceof Error ? err.name : typeof err);
-      log?.(`could not reset ${guc} before closing a session (${String(cls)}): ` +
+      log?.(`could not reset ${guc} before closing a migration session (${String(cls)}): ` +
         "a pooled backend may keep it at 0");
     }
   }

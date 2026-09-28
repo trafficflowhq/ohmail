@@ -100,8 +100,6 @@ import {
   type ForwardAsk,
   holderIsLive,
   ruleMatchKey,
-  unscreenedGroups,
-  unscreenedTotalOf,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
 import { activeLocale } from "../i18n/locale";
@@ -1169,25 +1167,6 @@ export function liveOhbox(pres: EntityReader, v: WorldView, openHeld: string | n
   };
 }
 
-/** The Ohbox's offer: mail from senders nobody decided about, still in the Inbox on the server. */
-export interface WorldUnscreened {
-  /** Messages across every shown group — the server's own count. */
-  total: number;
-  /** Who wrote them, largest group first: what the press screens. */
-  senders: readonly string[];
-}
-
-/**
- * THE WEB'S UNDECIDED-SENDER OFFER, off the store's answer (`GET /screener/unscreened`) that the
- * engine keeps in the mirror. `null` with nothing to offer or a door that has not answered: the
- * offer is absent either way, never "nothing undecided".
- */
-export function liveUnscreened(reader: EntityReader): WorldUnscreened | null {
-  const groups = unscreenedGroups(reader);
-  const total = unscreenedTotalOf(reader);
-  return total > 0 && groups.length > 0 ? { total, senders: groups.map((g) => g.id) } : null;
-}
-
 export interface WorldReads {
   items: WorldMail[];
   /** The waterline renders directly ABOVE this id — the anchor itself sits below the line. */
@@ -1962,15 +1941,7 @@ export function planPhoneRouting(
 ): EngineMutation[] {
   const folder = FOLDER_OF_VIEW[intent.dest];
   if (!folder || intent.from === undefined) return [];
-  const rules = withoutBacklog(releaseRules(reader, intent.address, intent.from as Folder, folder).mutations);
-  /* THE LETTER'S HALF, for a kill between the rule's record and the letter's dispatch: a letter the
-     press named, still where the press found it, moves with the rule. A dispatched move is in the
-     outbox and the reader already shows the letter at the place, so nothing moves twice. */
-  const letters = intent.messageIds.flatMap((id): EngineMutation[] => {
-    const m = reader.get<EngineMessage>("message", id);
-    return m !== undefined && m.folder === intent.from && m.folder !== folder ? [{ kind: "move", messageId: id, folder }] : [];
-  });
-  return [...rules, ...letters];
+  return withoutBacklog(releaseRules(reader, intent.address, intent.from as Folder, folder).mutations);
 }
 
 /**
@@ -2768,11 +2739,6 @@ export interface LiveWorldActions {
   screeningForecast(messageId: string, dest: Destination, scope: Scope, applyRetro: boolean): PressForecast | null;
   /** "Their rules": every rule deciding the sender's mail today, as the lists place it. */
   screeningRules(messageId: string, scope: Scope): RulesInPlay | null;
-  /**
-   * THE OHBOX'S OFFER, PRESSED — the web's screening action on the same route: every shown group
-   * goes to the Screener, and the sentence names what the server moved. `false` on a refusal.
-   */
-  screenUnscreened(): Promise<boolean>;
 
   /* The folder verbs (FOLDERS-SPEC.md stage 2) — the webapp `useFolderVerbs` arms.
    * User-commanded real IMAP operations in the user's own mailbox, on the same engine
@@ -3685,38 +3651,18 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const rules = writes.filter((w) => w.kind !== "move");
     const mail = writes.filter((w) => w.kind === "move");
     const inv = mail.flatMap((w) => inverseMutations(engine.verbRead(), w));
-    const pressId = deps.uuid ? deps.uuid() : `${messageId}:${now().getTime()}`;
-    const subject = routingSubject({ scope: "sender", address: m.from.address });
-    /* THE RULE HALF IS ON DISK BEFORE THE LETTER MOVES. The letter's move rides the outbox the
-       moment it is dispatched; a rule held only after its answer was lost to a kill in between,
-       with the letter moved and nothing said. Held first, the launch finishes both halves. */
-    const opened = rules.length === 0 ? null : await holdRouting({
-      v: 1,
-      id: pressId,
-      seedId: messageId,
-      address: m.from.address,
-      scope: "sender",
-      dest: dest as ScreenDest,
-      messageIds: [messageId],
-      from: row.presentedFolder,
-      at: now().getTime(),
-    });
     /* RAW answers, never `watched`: it folds `awaiting_organizer` into landed-or-not, and on a
        mailbox this phone only reads EVERY write here comes back that way (`move` is named in the
        202 census). Folding them would say "Moved" over a move nobody made. */
     const answers = await Promise.all(
       mail.map((w) => inMessageOrder(w, () => engine.mutate(w).catch((): MutationResult | null => null))),
     );
-    /* A letter that did not move takes its rule with it: the press is one decision. */
-    const dropHeld = (): void => { if (opened?.held) undoRouting(subject); };
     if (answers.some((r) => r === null || r.status === "rolled_back")) {
-      dropHeld();
       toast(refuse("liveSaveFailed"));
       return false;
     }
     const queued = [...answers].reverse().find((r) => r?.status === "awaiting_organizer");
     if (queued) {
-      dropHeld();
       const holder = queued.queuedWith?.name ?? null;
       /* Two calls rather than one with a spread: each sentence is passed exactly its own
          arguments, which is what `refusal.test.ts` reads out of this file's source. */
@@ -3735,13 +3681,26 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const decides = mail.length > 0
       ? refuse("toastRuledMoved", moveTargetLabel(dest), mail.length, who)
       : refuse("toastRuledFuture", moveTargetLabel(dest), who);
-    if (!opened?.held) {
+    const pressId = deps.uuid ? deps.uuid() : `${messageId}:${now().getTime()}`;
+    const opened = await holdRouting({
+      v: 1,
+      id: pressId,
+      seedId: messageId,
+      address: m.from.address,
+      scope: "sender",
+      dest: dest as ScreenDest,
+      messageIds: [messageId],
+      from: row.presentedFolder,
+      at: now().getTime(),
+    });
+    if (!opened.held) {
       /* NO SESSION OR NO RECORD TO HOLD IT BY — the rules go now unless the window already sent
          them, and the sentence does not offer an undo it cannot honour. */
-      if (!opened?.sent) await Promise.all(rules.map((w) => engine.mutate(w).catch(() => null)));
+      if (!opened.sent) await Promise.all(rules.map((w) => engine.mutate(w).catch(() => null)));
       toast(decides);
       return true;
     }
+    const subject = routingSubject({ scope: "sender", address: m.from.address });
     toast(decides, {
       holdMs: UNDO_MS,
       /* ONE CLOCK: the pill's hold starts at its first layout, and so does the window's. */
@@ -4342,19 +4301,6 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return rulesInPlay({ reader: raw, placeOf: consentPartition(raw, options).placeOf, subject: at.subject, scope, match: at.match });
   };
 
-  /* The web's press (`screener-state.ts#pressUnscreened`): the count said is the one the SERVER
-     moved, since another door may have decided a sender since the offer was drawn. */
-  const screenUnscreened = async (): Promise<boolean> => {
-    try {
-      const count = await engine.screenUnscreenedSenders();
-      toast(count > 0 ? refuse("unscreenedMoved", count) : refuse("unscreenedMovedNone"));
-      return true;
-    } catch {
-      toast(refuse("unscreenedFailed"));
-      return false;
-    }
-  };
-
   /**
    * THE WINDOW PRESS (the web's `holdScreenPress`): the press says what it does, with Undo; the
    * commit re-plans through `planScreenCommit` and the list is read back once the rules are answered
@@ -4571,7 +4517,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, markAllSeen, move,
     deleteMessage, trashList, trashRestore,
     sendReply, sendForward, sendNew, sendAndDoneOffered, withdrawSend, cancelSchedule, tagToggle, tagCreate, screenSender,
-    screeningForecast, screeningRules, screenUnscreened,
+    screeningForecast, screeningRules,
     draftDiscard, draftResolve, draftSendAgain, draftKeep,
     folderCreate, folderRename, folderDelete, folderDismiss,
   };
@@ -4688,8 +4634,6 @@ export interface WorldActions {
   screenSender(messageId: string, dest: Destination, scope: Scope, applyRetro?: boolean, press?: PhoneScreenPress): void;
   screeningForecast(messageId: string, dest: Destination, scope: Scope, applyRetro: boolean): PressForecast | null;
   screeningRules(messageId: string, scope: Scope): RulesInPlay | null;
-  /** The Ohbox's undecided-sender offer, pressed — awaited by its card. See {@link LiveWorldActions.screenUnscreened}. */
-  screenUnscreened(): Promise<boolean>;
   /* The folder verbs — see {@link LiveWorldActions} for each arm's contract. */
   folderCreate(mailboxId: string, name: string): void;
   folderRename(folderId: string, name: string): void;
@@ -4757,7 +4701,6 @@ export function stableActions(current: () => WorldActions): WorldActions {
     screenSender: (id, dest, scope, applyRetro, press) => void current().screenSender(id, dest, scope, applyRetro, press),
     screeningForecast: (id, dest, scope, applyRetro) => current().screeningForecast(id, dest, scope, applyRetro),
     screeningRules: (id, scope) => current().screeningRules(id, scope),
-    screenUnscreened: () => current().screenUnscreened(),
     folderCreate: (mailboxId, name) => void current().folderCreate(mailboxId, name),
     folderRename: (id, name) => void current().folderRename(id, name),
     folderDelete: (id) => void current().folderDelete(id),

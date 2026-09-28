@@ -68,7 +68,6 @@ import {
 } from "./dto/materialize.js";
 import { foldersEnabled, listUserFolders, userFoldersByIds, type UserFolderRow } from "./folders.js";
 import { DRAFT_ROW_MAX_BYTES, PageByteBudget, weighChange } from "./sync-page-byte-budget.js";
-import { PAGE_MAX_ROW_BYTES } from "@trafficflow/core/transport-frame";
 import type {
   ChangeOp, DraftDTO, Folder, SnapshotResponse, SnapshotWindow, SyncChange, SyncResponse,
 } from "./dto/types.js";
@@ -210,8 +209,6 @@ interface DraftKeyset {
 
 interface MessageSnapshotCursor {
   asOfSeq: bigint;
-  /** The run of the store that issued it, `null` for a store with no runs. See {@link DraftsSnapshotCursor}. */
-  generation: number | null;
   /** The previous page's last `messages.date` as epoch ms; `null` ⇒ the undated tail. */
   date: number | null;
   id: string;
@@ -241,11 +238,6 @@ interface MessageSnapshotCursor {
  */
 interface DraftsSnapshotCursor {
   asOfSeq: bigint;
-  /**
-   * THE RUN OF THE STORE THAT ISSUED THIS PAGE, `null` for a store with no runs. `asOfSeq` is a
-   * seq of that run, so a walk that spans an unclean restart is refused rather than committed.
-   */
-  generation: number | null;
   emitted: number;
   phase: "drafts";
   draft: DraftKeyset;
@@ -354,7 +346,6 @@ export class SyncService {
   encodeSnapshotCursor(c: SnapshotCursor): string {
     const payload = {
       v: 1, s: c.asOfSeq.toString(10), n: c.emitted,
-      ...(c.generation === null ? {} : { g: c.generation }),
       // A drafts-phase cursor carries no message keyset; every other phase carries one.
       ...(c.phase === "drafts" ? {} : { d: c.date, i: c.id }),
       ...(c.phase ? { p: c.phase } : {}),
@@ -378,12 +369,8 @@ export class SyncService {
       if (cursor.length > SNAPSHOT_CURSOR_MAX_CHARS) throw new Error("cursor too long");
       const raw: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
       if (typeof raw !== "object" || raw === null) throw new Error("not an object");
-      const { v, s, d, i, n, p, da, di, g } = raw as Record<string, unknown>;
+      const { v, s, d, i, n, p, da, di } = raw as Record<string, unknown>;
       if (v !== 1) throw new Error("unknown cursor version");
-      if (g !== undefined && (typeof g !== "number" || !Number.isSafeInteger(g) || g < 0)) {
-        throw new Error("bad store run");
-      }
-      const generation = g === undefined ? null : g as number;
       // The digit count bounds the PARSE (`BigInt` accepts a three-hundred-digit string happily,
       // which then reaches `Number(asOfSeq)` as `Infinity`) and the RANGE bounds the value — a
       // `change_log` seq is a `bigserial`, and nineteen digits reaches past what one can hold.
@@ -413,7 +400,7 @@ export class SyncService {
         // draft position — either shape is a cursor this service never issued.
         if (d !== undefined || i !== undefined) throw new Error("a drafts cursor with a message keyset");
         if (draft === undefined) throw new Error("a drafts cursor with no draft keyset");
-        return { asOfSeq: BigInt(s), generation, emitted: n, phase: "drafts", ...draft };
+        return { asOfSeq: BigInt(s), emitted: n, phase: "drafts", ...draft };
       }
       // A UUID, not merely a non-empty string: `i` is bound against `messages.id` (and its
       // siblings) further down, so `{"i":"x"}` in a hand-built cursor reached Postgres as 22P02 —
@@ -426,7 +413,7 @@ export class SyncService {
         throw new Error("bad keyset date");
       }
       return {
-        asOfSeq: BigInt(s), generation, date: d as number | null, id: i, emitted: n,
+        asOfSeq: BigInt(s), date: d as number | null, id: i, emitted: n,
         ...(p === "tail" ? { phase: "tail" as const } : {}),
         ...draft,
       };
@@ -553,8 +540,6 @@ export class SyncService {
     let rows: (typeof changeLog.$inferSelect)[];
     /** Coalesced mode only: the lookahead entity's first-seq − 1, `null` ⇒ window consumed. */
     let coalescedCutCursor: bigint | null = null;
-    /** Coalesced mode only: each emitted row's entity's first seq in the window, by position. */
-    let firstSeqs: bigint[] = [];
     if (coalesced) {
       // scoped-by: `filters` above leads with eq(changeLog.accountId, accountId)
       const spanRows = db.$with("span").as(
@@ -597,7 +582,6 @@ export class SyncService {
         .orderBy(sql`${pageEntities.firstSeq}`);
       const lookahead = joined.length > limit ? joined[limit] : undefined;
       coalescedCutCursor = lookahead === undefined ? null : BigInt(lookahead.firstSeq) - 1n;
-      firstSeqs = joined.slice(0, limit).map((r) => BigInt(r.firstSeq));
       rows = joined.slice(0, limit).map(({ firstSeq: _first, ...row }) => row);
     } else {
       // scoped-by: `filters` above leads with eq(changeLog.accountId, accountId)
@@ -679,41 +663,14 @@ export class SyncService {
       ["tag", prefetchedTags],
     ]);
 
-    /**
-     * THE SNAPSHOT'S BYTE BOUND, ON THE DELTA TOO. Rows alone let one page of large drafts pass
-     * the frame the local transport refuses whole. Every change is charged; the first row the
-     * budget does not admit ends the page, and the cursor resumes AT that row. The first row
-     * always rides, so the walk advances; a draft heavier than any page is withheld exactly as
-     * the snapshot withholds it, which is what keeps that first row inside the frame.
-     */
-    const budget = new PageByteBudget(PAGE_MAX_ROW_BYTES);
-    let carried = 0;
-    /** The position of the first row this page did not carry, `null` ⇒ the bytes cut nothing. */
-    let cutAt: number | null = null;
-    const carry = (bucket: SyncChange[], at: number, change: SyncChange): boolean => {
-      let bytes = weighChange(change);
-      if (change.type === "draft" && change.entity !== undefined && bytes > DRAFT_ROW_MAX_BYTES) {
-        change = { ...change, entity: draftRowWithheldDTO(change.entity as DraftDTO) };
-        bytes = weighChange(change);
-      }
-      if (carried > 0 && !budget.admits(bytes)) {
-        cutAt = at;
-        return false;
-      }
-      budget.charge(bytes);
-      bucket.push(change);
-      carried += 1;
-      return true;
-    };
-
-    for (const [at, row] of rows.entries()) {
+    for (const row of rows) {
       const type = row.entityType as EntityType;
       const id = row.entityId;
       const seq = Number(row.seq);
       const op = row.op as ChangeOp;
 
       if (op === "delete") {
-        if (!carry(deletes, at, { type, op: "delete", id, seq, updatedAt: row.createdAt.toISOString() })) break;
+        deletes.push({ type, op: "delete", id, seq, updatedAt: row.createdAt.toISOString() });
         continue;
       }
 
@@ -736,22 +693,22 @@ export class SyncService {
                 })()
                 : await materialize(db, accountId, type, id);
       if (entity === null) {
-        if (!carry(deletes, at, { type, op: "delete", id, seq, updatedAt: row.createdAt.toISOString() })) break;
+        deletes.push({ type, op: "delete", id, seq, updatedAt: row.createdAt.toISOString() });
         continue;
       }
 
       const updatedAt = (entity as { updatedAt?: string }).updatedAt ?? row.createdAt.toISOString();
       const change: SyncChange = { type, op, id, seq, updatedAt, entity };
 
-      let bucket = updates;
       if (op === "move") {
         const meta = (row.meta as { from: Folder | null; to: Folder } | null) ?? null;
         if (meta) change.move = meta;
-        bucket = moves;
+        moves.push(change);
       } else if (op === "create") {
-        bucket = creates;
+        creates.push(change);
+      } else {
+        updates.push(change);
       }
-      if (!carry(bucket, at, change)) break;
     }
 
     // cursor and hasMore, per mode. Plain page: cursor = max seq actually returned (unchanged
@@ -765,13 +722,7 @@ export class SyncService {
     // loop would spin on for ever.
     let cursorSeq: bigint;
     let hasMore: boolean;
-    const cut = cutAt as number | null;
-    if (cut !== null) {
-      // THE BYTES ENDED THE PAGE: resume AT the row they refused — its seq on a plain page, its
-      // entity's first seq on a coalesced one (the lookahead's rule, one entity earlier).
-      cursorSeq = (coalesced ? firstSeqs[cut]! : rows[cut]!.seq) - 1n;
-      hasMore = true;
-    } else if (!coalesced) {
+    if (!coalesced) {
       cursorSeq = rows.length > 0 ? rows[rows.length - 1]!.seq : sinceSeq;
       hasMore = rows.length === limit;
     } else if (rows.length === 0) {
@@ -811,16 +762,6 @@ export class SyncService {
     const { db, accountId } = ctx;
     const limit = clampPageLimit(opts.limit, DEFAULT_LIMIT, MAX_LIMIT);
     const cursor = opts.cursor && opts.cursor !== "" ? this.decodeSnapshotCursor(opts.cursor) : null;
-    const gen = ctx.storeGeneration ?? null;
-    /* A PAGE CURSOR OF ANOTHER RUN IS REFUSED, and one naming no run where the store has one is
-       too: its `asOfSeq` counts a log that may have lost rows since. Unlike the delta's first-run
-       admission, a restarted walk costs one bootstrap, so no cursor is admitted on a guess. */
-    if (cursor !== null && cursor.generation !== gen) {
-      throw new ServiceError(
-        "cursor_expired", 410,
-        "snapshot cursor belongs to another run of this store; restart the snapshot with no cursor",
-      );
-    }
     // TAIL-ONLY: page 1 of a walk that starts IN the tail. PRESENCE and not a second spelling
     // test — the option's type admits the one phase there is, and the route decides the
     // vocabulary at the read (where `input-bounds-census` asks for it). A later phase would widen
@@ -842,7 +783,7 @@ export class SyncService {
      * bootstrap never completes. Every emission below is charged, and the two PAGED phases stop
      * on it. See `sync-page-byte-budget.ts` for where the number comes from.
      */
-    const budget = new PageByteBudget(PAGE_MAX_ROW_BYTES);
+    const budget = new PageByteBudget();
     const changeOf = (type: EntityType, id: string, entity: unknown, updatedAt: string): SyncChange =>
       ({ type, op: "create", id, seq, updatedAt, entity });
     /** Emit and charge. Page-1 live state and a message's own children go through here: they are
@@ -984,7 +925,7 @@ export class SyncService {
         asOfSeq: seq,
         changes,
         nextCursor: draftNext === undefined ? null : this.encodeSnapshotCursor({
-          asOfSeq, generation: gen, emitted: cursor.emitted, phase: "drafts", draft: draftNext,
+          asOfSeq, emitted: cursor.emitted, phase: "drafts", draft: draftNext,
         }),
         window: SNAPSHOT_WINDOW,
       };
@@ -1020,10 +961,7 @@ export class SyncService {
     // too, so a bug that let the two disagree fails closed rather than leaking into another
     // account's bootstrap.
     const inTail = cursor?.phase === "tail" || tailOnly;
-    const repliedTo = inTail
-      ? db.select({ id: drafts.inReplyToMessageId }).from(drafts).where(eq(drafts.accountId, accountId))
-      : undefined;
-    const reachableTail = repliedTo !== undefined
+    const reachableTail = inTail
       ? or(
         exists(
           db.select({ x: sql`1` }).from(messageTags).where(and(
@@ -1057,10 +995,6 @@ export class SyncService {
             eq(routingDecisions.status, "pending_approval"),
           )),
         ),
-        /* A MESSAGE A DRAFT ANSWERS. Every draft rides the pages, so its reply target must too:
-           the client pins it, and the change that could bring it sits below the cursor. An
-           uncorrelated IN, read once: `in_reply_to_message_id` has no index to probe per row. */
-        inArray(messages.id, repliedTo),
       )
       : undefined;
 
@@ -1174,7 +1108,6 @@ export class SyncService {
     const fullPage = (walked.length === walkLimit || stoppedAt < rows.length) && last !== undefined;
     const keysetOf = (phase?: "tail"): string => this.encodeSnapshotCursor({
       asOfSeq,
-      generation: gen,
       date: last!.date ? last!.date.getTime() : null,
       id: last!.id,
       emitted,
@@ -1217,12 +1150,13 @@ export class SyncService {
     // cursor the client adopts when the snapshot ends.
     if (nextCursor === null && draftNext !== undefined) {
       nextCursor = this.encodeSnapshotCursor({
-        asOfSeq, generation: gen, emitted, phase: "drafts", draft: draftNext,
+        asOfSeq, emitted, phase: "drafts", draft: draftNext,
       });
     }
 
     /* Spread, not `?? undefined`: a store with no generation must leave the field ABSENT, which
        is the answer a client reads as "mint the shape you always did". */
+    const gen = ctx.storeGeneration ?? null;
     return {
       asOfSeq: seq, changes, nextCursor, window: SNAPSHOT_WINDOW,
       ...(gen === null ? {} : { storeGeneration: gen }),

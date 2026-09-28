@@ -41,6 +41,7 @@ import {
   makeProbeHostGuard, apiAlertSinkSummary, API_FAULT_RECORD_BUDGET_MS,
 } from "@trafficflow/api";
 import type { ApiDeps, ApiServices, ChangeWakeHub } from "@trafficflow/api";
+import { waitUntil } from "@vercel/functions";
 import { allowCookieAuthForRequest, type HostConfig } from "./config.js";
 import { makeChangeWakeHub } from "./wake-hub.js";
 
@@ -381,16 +382,24 @@ function buildServices(cfg: HostConfig): ApiServices {
          * A fresh pooled handle with the same short acquire ceiling the 5xx recorder uses — an
          * abandoned insert must not sit on the pool in front of the next request. Awaited,
          * because serverless is killed the moment it answers, and a throw is swallowed so a dark
-         * board never becomes the customer's error.
+         * board never becomes the customer's error. The row carries no timing; this line does.
          */
         onCallFault: async (f) => {
+          const row = entitlementsFaultRow(f, "api", new Date());
+          hostLogger(cfg).warn("entitlements_call_fault", {
+            route: row.route, status: f.status, errorClass: row.errorClass,
+            elapsedMs: f.elapsedMs, budgetMs: f.budgetMs,
+          });
           await recordApiFault(
             makePooledDb(cfg.databaseUrlPooled, {
               acquireTimeoutMs: API_FAULT_RECORD_BUDGET_MS,
             }) as unknown as Tx,
-            entitlementsFaultRow(f, "api", new Date()),
+            row,
           );
         },
+        // This platform freezes an instance once it answers; the refresh behind a read route
+        // runs after the answer, so it is handed to the platform to finish.
+        waitUntil,
       })
       : UNMETERED;
     return composed;

@@ -116,12 +116,10 @@ import {
   type WorldSearch,
   type WorldTag,
   type WorldTagged,
-  type WorldUnscreened,
   type WorldView,
   type ConnectionSay,
   type FirstSyncSay,
   liveFiles,
-  liveUnscreened,
   mirrorNewestFirst,
   offMirrorRevision,
   openOffMirror,
@@ -153,7 +151,7 @@ import {
 export type {
   FolderEntity, MoveTarget, PhoneOrganizer, ScreenerRow, WorldActions, WorldHistory, WorldMail,
   WorldPile, WorldScheduled, WorldScreener, WorldSearch, WorldTag, WorldTagged, WorldDraft, DraftHeldSays,
-  DraftSendAgainOutcome, WorldUnscreened,
+  DraftSendAgainOutcome,
 } from "./live";
 
 export interface World {
@@ -280,8 +278,6 @@ export interface World {
     unread: number;
     total: number;
     meta: string;
-    /** The web's undecided-sender offer, from the store (`live.ts#liveUnscreened`); `null` is none. */
-    unscreened: WorldUnscreened | null;
   };
   doorbell: { initials: string[]; count: number };
   reads: {
@@ -582,7 +578,6 @@ const NO_ACTIONS: WorldActions = {
   screenSender: () => undefined,
   screeningForecast: () => null,
   screeningRules: () => null,
-  screenUnscreened: async () => false,
   folderCreate: () => undefined,
   folderRename: () => undefined,
   folderDelete: () => undefined,
@@ -616,7 +611,7 @@ function emptyWorld(actions: WorldActions): World {
     // Nothing has been asked on the empty world, so `known` is false and the banner is withheld
     // — the same honest-unknown the boot facts keep between a teardown and the redirect.
     mailboxes: { known: false, ownAddresses: [], organizer: null, rows: [], sendingId: null, settingsBell: null },
-    ohbox: { resurfaced: [], fresh: [], seen: [], unreadIds: [], unread: 0, total: 0, meta: "", unscreened: null },
+    ohbox: { resurfaced: [], fresh: [], seen: [], unreadIds: [], unread: 0, total: 0, meta: "" },
     doorbell: { initials: [], count: 0 },
     reads: { items: [], waterlineAboveId: null, unreadIds: [], waterLabel: Copy.waterline, newCount: 0, meta: "" },
     receipts: { groups: [], waterlineAboveId: null, waterLabel: Copy.waterline, total: 0, newCount: 0, meta: "" },
@@ -994,9 +989,6 @@ export function WorldProvider({ children }: { children: ReactNode }) {
            presented in the Ohbox rather than at the gate. */
         void queueRead(() => readScreenerWaiting(session));
         void session.engine.refreshScreenerWaiting().catch(() => { /* the next cadence asks again */ });
-        /* THE OHBOX'S UNDECIDED-SENDER OFFER, the web's read on the same cadence: mail already in the
-           Inbox at the connect stays in the Ohbox, and a store that has not answered offers nothing. */
-        void session.engine.refreshUnscreened().catch(() => { /* an offer the door cannot make is absent */ });
         /* BOTH DOORS: the decisions this phone sent live where its presses land. */
         void relayRead(() => readRelayedDecisions(session));
         /* Stamped BEFORE the request leaves — the whole point of the two-phase read. */
@@ -1420,13 +1412,6 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           screenSender: (id, dest, scope, applyRetro, press) => void acts.screenSender(id, dest, scope, applyRetro, press),
           screeningForecast: (id, dest, scope, applyRetro) => acts.screeningForecast(id, dest, scope, applyRetro),
           screeningRules: (id, scope) => acts.screeningRules(id, scope),
-          /* A press that held them asks the queue again at once, so the Screener lists them without
-             waiting for the next drain; the read is the cadence's own (`foldersFlag.read`). */
-          screenUnscreened: async () => {
-            const held = await acts.screenUnscreened();
-            if (held) void machine?.refresh();
-            return held;
-          },
           folderCreate: (mailboxId, name) => void acts.folderCreate(mailboxId, name),
           folderRename: (id, name) => void acts.folderRename(id, name),
           folderDelete: (id) => void acts.folderDelete(id),
@@ -1566,7 +1551,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         sendingId: sendingMailboxId(base),
         settingsBell: engine.read().entries("settings")[0]?.seq ?? null,
       },
-      ohbox: { ...ohbox, meta: Copy.metaUnreadOf(ohbox.unread, ohbox.total), unscreened: liveUnscreened(engine.read()) },
+      ohbox: { ...ohbox, meta: Copy.metaUnreadOf(ohbox.unread, ohbox.total) },
       doorbell: {
         initials: screener.waiting.map((r) => r.initial),
         count: screener.waiting.length,

@@ -11,7 +11,6 @@
 import { argv, env } from "node:process";
 import postgres from "postgres";
 import { transactionPoolerReason } from "./session-url.js";
-import { resetCeilings } from "./migrate.js";
 import { pgTlsOptions } from "./pg-tls.js";
 import {
   HOST_ROLES, SENSITIVE_PROBE_TABLES, applySupabaseLockdown, closeDataApiEndpoint,
@@ -79,16 +78,13 @@ async function main(): Promise<number> {
   });
 
   let failed = false;
-  /** The ceilings this runner lifts for its own DDL, and resets before it closes. */
-  const LIFTED = ["statement_timeout", "idle_in_transaction_session_timeout"] as const;
-  let lifted = false;
   /** Relations the external probe will ask about — read from the database, unioned with the list. */
   let probeTables: string[] = [...SENSITIVE_PROBE_TABLES];
   try {
     // `client.ts#ROLE_DEFAULT_TIMEOUTS` is a ROLE-ONLY default, so this hand-run DDL script must
     // not silently inherit a 55 s ceiling on its own statements.
-    for (const guc of LIFTED) await sql.unsafe(`set ${guc} = 0`);
-    lifted = true;
+    await sql.unsafe(`set statement_timeout = 0`);
+    await sql.unsafe(`set idle_in_transaction_session_timeout = 0`);
     const who = (await sql<Array<{ db: string; usr: string }>>`
       SELECT current_database() AS db, current_user AS usr`)[0]!;
     console.log(`database : ${who.db}\nconnected: ${who.usr}\n`);
@@ -207,8 +203,6 @@ async function main(): Promise<number> {
     } catch {
       /* nothing open — expected on the success path */
     }
-    // After the ROLLBACK, so the RESET is not undone with it: a pooler hands the backend on as left.
-    if (lifted) await resetCeilings(sql, (m) => console.error(m), LIFTED);
     await sql.end();
   }
 

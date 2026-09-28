@@ -179,8 +179,6 @@ export function createWindowOutbox(deps: WindowOutboxDeps): WindowOutbox {
       return json(500, { error: { code: "storage_refused", message: "the outbox could not be written to disk" } });
     }
     held = next;
-    // The accepted write's own line: how many changes are queued now, and nothing of them.
-    deps.log("window_outbox_recorded", { count: next.size });
     return new Response(null, { status: 204 });
   };
 

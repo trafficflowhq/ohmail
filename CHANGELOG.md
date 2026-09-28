@@ -13,42 +13,6 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
-### Large sync changes arrive in pages, and a desktop on Cloud logs the writes it sends
-<!-- changes: fix-026-sync-pages.md -->
-
-- A large set of changes, such as many long drafts saved at once, now arrives in pages. Before, it
-  could arrive as one reply too large for the desktop's own connection to its engine, and the sync
-  failed the same way on every retry. Snapshot pages were already bounded this way; now both kinds
-  of sync page are.
-- A desktop signed in to ohmail Cloud writes one line to its engine log for each change it sends
-  to your account: the kind of change, the answer and how long it took. Nothing of the message
-  itself is logged.
-- On a desktop signed in to Cloud, a mailbox that another ohmail install organizes is now sorted
-  by that install's rules, as on the web and the phone.
-- After one request fails, a desktop on Cloud tries the account again on the next read instead of
-  showing itself offline until its next sync.
-- A draft replying to old mail keeps the message it answers on a newly set-up device.
-
-### The dark sync link, the tag chips and the Screener's key hints meet the contrast minimum
-<!-- changes: fix-026-dark-aa.md -->
-
-In the dark themes the "Settings → Mailboxes" link in the sync box and strip sits on the theme's
-darkest ground rather than a white lift; in the ohmarchy face a tag's name is coloured to read on
-its own chip, over the tile and over the page; and the key hint on the Screener's suggested
-decision is no longer faded. All three read at 4.5:1 or better in both faces, light and dark.
-
-### The phone offers to screen senders already in the Inbox, as the web does
-<!-- changes: fix-026-phone-tells.md -->
-
-Mail that was already in the Inbox when you connected the phone stays in the Ohbox, and the Ohbox
-now offers to hold its undecided senders in the Screener with one press, as the web app does.
-
-### A Move pressed just before the app closes now keeps its rule
-<!-- changes: fix-026-phone-tells.md -->
-
-On the phone, a Move that decides where a sender's mail goes keeps that rule even when the app is
-closed right after the press; the next launch makes it and says so.
-
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

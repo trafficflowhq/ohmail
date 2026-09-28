@@ -24,6 +24,14 @@ export const API_FAULT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
  */
 export const POOLER_REFUSAL_ERROR_CLASS = "DbAcquireTimeoutError";
 
+/**
+ * A credit-check call no request was waiting on that got no answer: a refresh behind a response.
+ * On a host that freezes after answering it is the host's pause as often as the program's, and it
+ * refused nobody, so it is recorded under its own class and is not a 5xx the API served. How long
+ * it ran is on the warn line the same call writes; the row carries no timing.
+ */
+export const OUTLIVED_REQUEST_ERROR_CLASS = "EntitlementsCallOutlivedRequest";
+
 /** Which arm answered the request. `alert_pass_runs.driver`'s closed set, with a CHECK behind it. */
 export type ApiFaultArm = "api" | "worker";
 
@@ -48,16 +56,19 @@ export interface ApiFaultInput {
  * nothing arriving reads 504, the program's own 5xx passes through, anything else reads 502.
  */
 export function entitlementsFaultRow(
-  fault: { path: string; status: number | null }, arm: ApiFaultArm, at: Date,
+  fault: { path: string; status: number | null; outlivedRequest?: boolean },
+  arm: ApiFaultArm, at: Date,
 ): ApiFaultInput {
   const s = fault.status;
   return {
     route: `entitlements:${fault.path}`,
     method: "POST",
     status: s === null ? 504 : (s >= 500 && s <= 599 ? s : 502),
-    // A closed pair, not the status spelled into a name: every rule that groups on this column
-    // wants a small set, and the exact status is on the warn line the same call writes.
-    errorClass: s === null ? "EntitlementsCallTimeout" : "EntitlementsCallRefused",
+    // A closed set, not the status spelled into a name: every rule that groups on this column
+    // wants a small set, and the exact status is on the warn line the same call writes. A program
+    // that ANSWERED 5xx did so whoever waited; only a missing answer behind a response is moot.
+    errorClass: s !== null ? "EntitlementsCallRefused"
+      : fault.outlivedRequest ? OUTLIVED_REQUEST_ERROR_CLASS : "EntitlementsCallTimeout",
     // Our own request id is bound by the middleware, downstream of the client that dials. Null is
     // the state the column names, not a value we could have had and dropped.
     requestId: null,
@@ -114,7 +125,8 @@ export interface ApiFaultRouteCount {
  *
  * A COUNT and never a rate: this table holds no successes, so there is no denominator to divide
  * by. `platformSignals` owns the ratio question and has both counts; a rate invented from one of
- * them would be a quotient over an unknown population.
+ * them would be a quotient over an unknown population. A call that outlived its request answered
+ * no request, so it is not in the population ({@link OUTLIVED_REQUEST_ERROR_CLASS}).
  */
 export async function apiFaultWindow(
   db: Tx, now: Date, windowMs: number,
@@ -132,7 +144,8 @@ export async function apiFaultWindow(
     .from(apiFaults)
     // `.toISOString()::timestamptz` and not the Date: a JS Date inside a raw fragment has no
     // column to take its type from, and postgres@3 refuses it where PGlite accepts it.
-    .where(sql`${apiFaults.at} >= ${cut.toISOString()}::timestamptz`)
+    .where(sql`${apiFaults.at} >= ${cut.toISOString()}::timestamptz
+      and ${apiFaults.errorClass} <> ${OUTLIVED_REQUEST_ERROR_CLASS}`)
     .groupBy(apiFaults.route, apiFaults.arm);
   return rows
     .map((r) => ({

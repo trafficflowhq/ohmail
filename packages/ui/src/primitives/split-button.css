@@ -22,9 +22,7 @@
 .dbtn kbd{font-size:9.5px;padding:0 4px;min-width:15px;border-radius:calc(var(--r-ctl) * 5 / 8);line-height:1.6;
   background:transparent;border-color:var(--hair-soft);color:var(--ink3)}
 .dbtn .d-main{gap:7px}
-/* The suggested capsule's cap wears the label's full ink, as a cap on a primary button does: its
-   ground is already the accent wash, so a fade puts it under 4.5:1. */
-.dbtn.ai .d-main kbd{border-color:var(--accent-hair);color:inherit}
+.dbtn.ai .d-main kbd{border-color:var(--accent-hair);color:inherit;opacity:.75}
 /* The ✓ half's cap is the whole point of the pair reading as ONE instruction — "⇧ and the
    letter to my left" — so the icon and the cap sit tight together rather than as two items
    in a row. */

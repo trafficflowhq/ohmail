@@ -8,7 +8,7 @@
  * its own. An empty mailbox renders an honest empty state, never sample mail.
  * The rows go through `MailList`, which mounts a window of them, not the mailbox.
  */
-import { useCallback, useState, useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import { View } from "react-native";
 import { Copy } from "../../src/copy";
 import {
@@ -16,7 +16,7 @@ import {
 } from "../../src/engine/organizer-session";
 import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
-import { useWorld, type WorldMail, type WorldUnscreened } from "../../src/state/world";
+import { useWorld, type WorldMail } from "../../src/state/world";
 import { Button, Empty, Panel, Screen, Tail, Txt } from "../../src/ui/base";
 import { Doorbell, TopBar } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
@@ -96,7 +96,6 @@ function OhboxBody() {
                 />
               </Panel>
             ) : null}
-            <UnscreenedOffer offer={w.ohbox.unscreened} screen={w.actions.screenUnscreened} />
             {/* Who organizes this mailbox, where it is news — the Settings card's own claim. */}
             <OrganizerStrip />
             <Doorbell initials={w.doorbell.initials} count={w.doorbell.count} />
@@ -133,33 +132,6 @@ function OhboxBody() {
       list={list}
       renderDetail={(id, ctx) => <MessageReader id={id} inPane={ctx.inPane} onClose={ctx.onClose} />}
     />
-  );
-}
-
-/**
- * MAIL FROM SENDERS NOBODY DECIDED ABOUT, STILL IN THE INBOX ON THE SERVER — the web's offer, in the
- * card the reading notice above uses. Mail that was in the Inbox when the phone connected stays in
- * the Ohbox; nothing moves until this is pressed, and the press is the web's route.
- */
-function UnscreenedOffer({ offer, screen }: { offer: WorldUnscreened | null; screen: () => Promise<boolean> }) {
-  const [pressing, setPressing] = useState(false);
-  if (offer === null) return null;
-  const press = (): void => {
-    if (pressing) return;
-    setPressing(true);
-    void screen().finally(() => setPressing(false));
-  };
-  return (
-    <Panel style={{ paddingVertical: 14, paddingHorizontal: 18, marginBottom: 12 }}>
-      <Txt variant="note" tone="ink2" accessibilityRole="text">{Copy.unscreenedLead(offer.total)}</Txt>
-      <Button
-        label={Copy.unscreenedAll(offer.total)}
-        variant="solid"
-        disabled={pressing}
-        onPress={press}
-        style={{ marginTop: 8, alignSelf: "flex-start" }}
-      />
-    </Panel>
   );
 }
 

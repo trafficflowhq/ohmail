@@ -55,14 +55,11 @@
   }
 
   /* Walk `c` toward `target` in 5% steps until it clears `floor` against
-     `against` — one ground, or a list of grounds that must ALL clear.
-     Bounded (20 steps → target itself), monotonic, mechanical.
+     `against`. Bounded (20 steps → target itself), monotonic, mechanical.
      Returns { value, walked } so a validator can report which themes needed it. */
   function ensure(c, against, floor, target) {
-    const grounds = Array.isArray(against) ? against : [against];
-    const clears = (v) => grounds.every((g) => contrast(v, g) >= floor);
     let t = 0, v = c;
-    while (!clears(v) && t < 1) { t = Math.min(1, t + 0.05); v = mix(c, target, t); }
+    while (contrast(v, against) < floor && t < 1) { t = Math.min(1, t + 0.05); v = mix(c, target, t); }
     return { value: v, walked: t > 0 ? Math.round(t * 100) : 0 };
   }
 
@@ -103,7 +100,6 @@
     const note = (slot, msg) => notes.push({ slot, msg });
 
     const bg = c.background, fg = c.foreground;
-    const canvas = c.dark_background || bg;
     const dfg = c.dark_foreground || fg;
     const bfg = c.bright_foreground || fg;
 
@@ -149,11 +145,10 @@
     const danger = ensure(c.red, bg, 4.5, fg);
     if (danger.walked) note("--danger", `red walked ${danger.walked}% toward foreground`);
 
-    /* Tag ramp: nearest hue per slot from the chromatic set; bg at alpha
-       .14 (Omarchy renders its own tags/badges as tinted text, never candy
-       chips), ink floored at 4.5:1 on that wash — the chip's own ground,
-       over the tile AND over the canvas, since a chip stands on both.
-       Achromatic palettes get the ink ramp instead of fake hues. */
+    /* Tag ramp: nearest hue per slot from the chromatic set; ink floored
+       at 4.5:1 as text, bg at alpha .14 (Omarchy renders its own tags/
+       badges as tinted text, never candy chips). Achromatic palettes get
+       the ink ramp instead of fake hues. */
     const pool = ["red", "yellow", "orange", "green", "cyan", "blue", "magenta",
       "bright_red", "bright_yellow", "bright_green", "bright_cyan", "bright_blue", "bright_magenta"]
       .map((k) => c[k]).filter(Boolean)
@@ -170,7 +165,7 @@
       } else {
         pick = mix(fg, dfg, 0.33); // achromatic theme: tags are quiet ink
       }
-      const tink = ensure(pick, [mix(bg, pick, 0.14), mix(canvas, pick, 0.14)], 4.5, fg);
+      const tink = ensure(pick, bg, 4.5, fg);
       tags[`--tg-${name}-ink`] = tink.value;
       tags[`--tg-${name}-bg`] = alpha(pick, 0.14);
       if (tink.walked) note(`--tg-${name}-ink`, `walked ${tink.walked}% toward foreground`);
@@ -185,7 +180,7 @@
        the focused window, which is exactly Omarchy's idiom. */
     const inactive = "rgba(89,89,89,0.67)"; // hyprland default, fixed across themes
     const tokens = {
-      "--canvas": canvas,
+      "--canvas": c.dark_background || bg,
       "--panel": bg,
       "--float": bg,
       "--ink": ink.value,

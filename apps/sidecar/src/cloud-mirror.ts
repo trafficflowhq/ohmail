@@ -30,7 +30,7 @@ import {
 } from "@trafficflow/core/drain-policy";
 import type {
   ApprovalDTO, ChangeOp, DraftDTO, EntityType, MailboxDTO, MessageBodyBatchItem, MessageDTO,
-  MailboxProfileDTO, MessageStateDTO, Page, RoutingDecisionDTO, RuleDTO, ScreenerSuggestionDTO, SnapshotResponse,
+  MessageStateDTO, Page, RoutingDecisionDTO, RuleDTO, ScreenerSuggestionDTO, SnapshotResponse,
   SyncChange, SyncResponse,
   TagDTO, ThreadDTO, WithheldMarker,
 } from "@trafficflow/services/mail";
@@ -95,12 +95,6 @@ export const CLOUD_SYNC_TYPES = [
    * to say for these rows; the wire's `decision` is what the window renders.
    */
   "screener_suggestion",
-  /**
-   * THE ORGANIZER'S ARRANGEMENT for a mailbox the hosted account only READS — the document's rules
-   * as the hosted store caches them. Written into this store's `mailbox_profile_mirror`, so the
-   * local door judges that mailbox by the organizer's rules as the web and the phone do.
-   */
-  "mailbox_profile",
 ] as const satisfies readonly EntityType[];
 
 /**
@@ -113,7 +107,18 @@ export const CLOUD_SYNC_TYPES = [
  * `satisfies` above catches the reverse. The `as const` is load-bearing — a widened annotation
  * makes the assertion vacuous.
  */
-type CloudSyncTypeMissing = Exclude<EntityType, (typeof CLOUD_SYNC_TYPES)[number]>;
+/**
+ * THE ONE TYPE THIS MIRROR DOES NOT ASK FOR, named rather than forgotten. `mailbox_profile` is a
+ * projection of the organizer's document the HOSTED store caches for a mailbox it only reads;
+ * this store holds no copy of that document to apply it to, and the local feed materializes the
+ * type from a `mailbox_profile_mirror` row only a local reader cycle writes. Gap row
+ * HOSTED-DESKTOP-CLOUD-READER-ARRANGEMENT.
+ */
+export const CLOUD_UNMIRRORED_TYPES = ["mailbox_profile"] as const satisfies readonly EntityType[];
+
+type CloudSyncTypeMissing = Exclude<
+  EntityType, (typeof CLOUD_SYNC_TYPES)[number] | (typeof CLOUD_UNMIRRORED_TYPES)[number]
+>;
 type CloudSyncTypesAreComplete = [CloudSyncTypeMissing] extends [never] ? true
   : { "EntityType missing from CLOUD_SYNC_TYPES — the desktop would never be sent it": CloudSyncTypeMissing };
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -130,14 +135,12 @@ void cloudSyncTypesAreComplete;
  * it can be assigned — so within a page ordered by seq the tag's own change is already in hand by
  * the time the message carrying the assignment is applied.
  */
-export const APPLY_ORDER: readonly EntityType[] = [
+const APPLY_ORDER: readonly EntityType[] = [
   /* `mailbox` is FIRST so that in the REVERSED delete pass it is LAST: the mailbox receipt takes
      everything keyed by that mailbox, and running it after the page's own per-row deletes leaves
      them nothing to find rather than the other way round. It never appears as a non-delete — the
      feed emits this type only as a delete — so its place in the upsert order is inert. */
   "mailbox",
-  // Its key is into `mailboxes`, which the refresh writes before the drain.
-  "mailbox_profile",
   "settings", "folder", "tag", "thread", "message", "message_state", "rule", "draft", "routing_decision",
   // After `message`: the suggestion's upsert FK-skips when its message is not mirrored, so it
   // must be given the page's own message first — the same reason every child follows its parent.
@@ -351,12 +354,6 @@ interface CursorState {
    * which reads `false` — exactly the population whose rules all share one instant.
    */
   ruleInstantRepair: boolean;
-  /**
-   * Set once the one-time arrangement repair has run — see `repairProfiles`. This mirror did not
-   * ask for `mailbox_profile` before, and no delta re-delivers a document nobody changes. Absent
-   * from every older cursor file, which reads `false`.
-   */
-  profileRepair: boolean;
   /**
    * Set once the one-time away-reply repair has been CONSIDERED — see `repairAutoReplies`. The
    * `message` arm used to drop the hosted `autoReplyByUs`; absent from every older cursor file,
@@ -577,7 +574,6 @@ interface CursorFile {
   tagBackfillBegun?: unknown;
   folderBackfill?: unknown;
   ruleInstantRepair?: unknown;
-  profileRepair?: unknown;
   autoReplyRepair?: unknown;
   capMarkerRepair?: unknown;
   /** ISO instant of the last completed pull; absent on every file from before the freshen. */
@@ -627,7 +623,6 @@ function readCursor(path: string): CursorState {
       folderBackfill: j.folderBackfill === true,
       // `=== true`: an absent key (every pre-repair file) reads FALSE, so those mirrors repair once.
       ruleInstantRepair: j.ruleInstantRepair === true,
-      profileRepair: j.profileRepair === true,
       autoReplyRepair: j.autoReplyRepair === true,
       // `=== true`, never `?? true`: an absent key must read FALSE. The inverse would silently
       // exempt every install that HAS the defect and leave only fresh ones correct.
@@ -647,8 +642,6 @@ function readCursor(path: string): CursorState {
       tagBackfillBegun: false, folderBackfill: false,
       // A fresh install's rule arm carries the creation instant from its first row: nothing to repair.
       ruleInstantRepair: true,
-      // And its bootstrap asks for the arrangement from its first page.
-      profileRepair: true,
       // And its message arm carries the away-reply flag from its first row.
       autoReplyRepair: true,
       // A fresh install has no pre-marker rows and its walk writes markers from the start.
@@ -671,7 +664,6 @@ function writeCursor(path: string, state: CursorState): void {
     tagBackfillBegun: state.tagBackfillBegun,
     folderBackfill: state.folderBackfill,
     ruleInstantRepair: state.ruleInstantRepair,
-    profileRepair: state.profileRepair,
     autoReplyRepair: state.autoReplyRepair,
     capMarkerRepair: state.capMarkerRepair,
     ...(state.lastDrainAt !== null ? { lastDrainAt: state.lastDrainAt } : {}),
@@ -714,7 +706,6 @@ interface BootstrapGen {
   approval: MarkSet;
   routing_decision: MarkSet;
   tag: MarkSet;
-  mailbox_profile: MarkSet;
   /**
    * Append every id marked since the last flush to the generation file, fsynced. Called after
    * a page's transaction commits and BEFORE the cursor advances past it — the cursor is the
@@ -753,7 +744,6 @@ function genPathFor(cursorPath: string): string {
 
 const GEN_TYPES = [
   "folder", "thread", "message", "message_state", "rule", "draft", "approval", "routing_decision", "tag",
-  "mailbox_profile",
 ] as const;
 type GenType = (typeof GEN_TYPES)[number];
 
@@ -775,7 +765,6 @@ function genOver(path: string, sets: Record<GenType, Set<string>>, keyingStale =
     thread: mark("thread"), message: mark("message"), message_state: mark("message_state"),
     rule: mark("rule"), draft: mark("draft"), approval: mark("approval"),
     routing_decision: mark("routing_decision"), tag: mark("tag"),
-    mailbox_profile: mark("mailbox_profile"),
     flush(): void {
       if (pending.length === 0) return;
       const fd = openSync(path, "a");
@@ -803,7 +792,6 @@ const emptyGenSets = (): Record<GenType, Set<string>> => ({
   folder: new Set(),
   thread: new Set(), message: new Set(), message_state: new Set(), rule: new Set(),
   draft: new Set(), approval: new Set(), routing_decision: new Set(), tag: new Set(),
-  mailbox_profile: new Set(),
 });
 
 /** A FRESH generation: truncate the file, stamp the keying, start marking from nothing. */
@@ -1193,25 +1181,6 @@ async function answersAccountErased(res: Response): Promise<boolean> {
 }
 
 /**
- * A profile DTO's rules back into the document's list, each at the index its id names, the gaps
- * `null` (the projection skips an entry it cannot read, and skips `null` the same way). An id
- * that does not name an index, or an index out of order, keeps the DTO's own order instead.
- */
-function profileDocRules(rules: readonly RuleDTO[]): unknown[] {
-  const entry = (r: RuleDTO) => ({
-    kind: r.kind, match: r.match, destination: r.destination, priority: r.priority,
-    provenance: r.provenance, enabled: r.enabled,
-    subjectContains: r.subjectContains, bodyContains: r.bodyContains,
-  });
-  const at = rules.map((r) => /^profile:[^:]+:(\d{1,5})$/.exec(r.id)?.[1]);
-  const ordered = at.every((n, i) => n !== undefined && (i === 0 || Number(n) > Number(at[i - 1])));
-  if (!ordered) return rules.map(entry);
-  const list: unknown[] = Array.from({ length: Number(at[at.length - 1] ?? -1) + 1 }, () => null);
-  rules.forEach((r, i) => { list[Number(at[i])] = entry(r); });
-  return list;
-}
-
-/**
  * The thread STUB two arms write before their own row, so an FK holds when the thread's own
  * change has not arrived — its own function, and behind the account fence, because `threads` is
  * a table the account alone owns. `false` means the account is erased and nothing was written:
@@ -1342,10 +1311,6 @@ async function applyAccountUpsert(
         hits: stats.hits ?? 0,
         lastHitAt: asDate(stats.lastHitAt),
         demotions: stats.demotions ?? 0,
-        // The backlog pass stamps the sender sheet reads, in the conflict set for the term's
-        // un-set reason: an account that asks for the pass again clears `doneAt`, here too.
-        retroRequestedAt: asDate(r.retro?.requestedAt),
-        retroDoneAt: asDate(r.retro?.doneAt),
         updatedAt: asDate(r.updatedAt) ?? now,
       };
       /* THE CREATION INSTANT TRAVELS WITH THE RULE, in the insert AND the conflict set. Without
@@ -1452,34 +1417,6 @@ async function mirrorAutoReply(
   return true;
 }
 
-/**
- * THE ORGANIZER'S ARRANGEMENT, stored as the document this store's own reader would cache: each
- * rule at its index, so `profile:<mailbox>:<index>` names the same rule on both doors. No locator
- * — nothing here reads the mailbox — and the hosted read instant. Only for a mirrored mailbox, and
- * behind BOTH stamps in a function of its own: this table's key to the account is SQL-only.
- */
-async function applyProfileUpsert(
-  tx: Tx, dia: Dialect, world: LocalWorld, ch: SyncChange, now: Date,
-  gen: BootstrapGen | null, known: ReadonlySet<string>,
-): Promise<boolean> {
-  const p = ch.entity as MailboxProfileDTO | undefined;
-  if (!p || p.mailboxId !== ch.id || !Array.isArray(p.rules)) return false;
-  if (!known.has(ch.id)) return false;
-  try {
-    await fenceErased(tx, dia, { accountId: world.accountId, mailboxId: ch.id });
-  } catch (err) {
-    if (err instanceof AccountErasedError || err instanceof MailboxErasedError) return false;
-    throw err;
-  }
-  const doc = { rules: profileDocRules(p.rules) };
-  const readAt = asDate(p.asOf) ?? now;
-  const row = { accountId: world.accountId, uidvalidity: null, uid: null, doc, readAt };
-  await tx.insert(mailboxProfileMirror).values({ mailboxId: ch.id, ...row })
-    .onConflictDoUpdate({ target: mailboxProfileMirror.mailboxId, set: row });
-  gen?.mailbox_profile.add(ch.id);
-  return true;
-}
-
 async function applyUpsert(
   tx: Tx,
   /**
@@ -1508,8 +1445,6 @@ async function applyUpsert(
     case "rule":
     case "approval":
       return applyAccountUpsert(tx, dia, world, ch, now, gen);
-    case "mailbox_profile":
-      return applyProfileUpsert(tx, dia, world, ch, now, gen, known);
     case "folder": {
       // ONE OF THE MAILBOX'S OWN FOLDERS (the folders foundation). The local row takes the
       // HOSTED entity's id verbatim — the local /sync materializes folder entities BY ROW ID
@@ -1887,10 +1822,6 @@ async function applyDelete(tx: Tx, ch: SyncChange, detached?: DetachedSurvivor[]
       await tx.delete(messages).where(eq(messages.id, ch.id));
       return true;
     }
-    case "mailbox_profile":
-      // The arrangement alone: the mailbox and its mail are not this entity's.
-      await tx.delete(mailboxProfileMirror).where(eq(mailboxProfileMirror.mailboxId, ch.id));
-      return true;
     case "folder":
       // The inventory row alone: a folder entity's delete says "stop showing this folder", never
       // anything about mail — the messages that lived there keep their own lifecycle (the
@@ -2187,11 +2118,6 @@ async function sweepPhantoms(db: LocalDb, world: LocalWorld, gen: BootstrapGen, 
       .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
       .where(eq(mailboxes.accountId, world.accountId)))
       if (!gen.folder.has(r.id)) await sweepOne("folder", r.id);
-    /* An arrangement the bootstrap never named — the document went, or the mailbox is no longer
-       one the account only reads. Keyed by mailbox, the entity's own id. */
-    for (const r of await tx.select({ id: mailboxProfileMirror.mailboxId }).from(mailboxProfileMirror)
-      .where(eq(mailboxProfileMirror.accountId, world.accountId)))
-      if (!gen.mailbox_profile.has(r.id)) await sweepOne("mailbox_profile", r.id);
 
     await reconcileLocalFoldersFlag(tx, dialect(db), world, now);
     await loopTurn();
@@ -3270,47 +3196,6 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
 
   /**
-   * The one-time arrangement repair — `repairRuleInstants`' shape, asked once whatever the pull
-   * was: a bootstrap in flight across the upgrade applied its page 1 without the type. Snapshot
-   * page 1 carries every arrangement; each lands through the `mailbox_profile` arm and is
-   * announced on the local log. Marked only once read; a failure retries on the next pull.
-   */
-  const repairProfiles = async (): Promise<number> => {
-    if (cursor.profileRepair) return 0;
-    let snap: SnapshotResponse | null = null;
-    try {
-      snap = await fetchSnapshotPage();
-    } catch (err) {
-      cfg.log?.("cloud_profile_repair_deferred", {
-        err,
-        reason: "the one-time arrangement repair could not read the snapshot; the next pull retries",
-      });
-      return 0;
-    }
-    if (!snap) return 0;
-    const profiles = snap.changes.filter((c) => c.type === "mailbox_profile" && c.op !== "delete");
-    let appliedCount = 0;
-    await cfg.db.transaction(async (tx) => {
-      for (const ch of profiles) {
-        if (!(await applyUpsert(tx, dialect(cfg.db), cfg.world, ch, now(), null, knownMailboxes))) continue;
-        await recordChange(tx, {
-          accountId: cfg.world.accountId, entityType: "mailbox_profile", entityId: ch.id, op: "update", meta: null,
-        });
-        appliedCount += 1;
-      }
-    });
-    cursor.profileRepair = true;
-    writeCursor(cfg.cursorPath, cursor);
-    if (appliedCount > 0) {
-      cfg.log?.("cloud_profile_repair_applied", {
-        count: appliedCount,
-        reason: "this mirror did not carry the organizer's arrangement for the mailboxes the account only reads",
-      });
-    }
-    return appliedCount;
-  };
-
-  /**
    * The one-time away-reply repair — `repairRuleInstants`' shape. A pre-fix build mirrored every
    * message without the hosted `autoReplyByUs`, and no delta re-delivers a reply nobody edits. Only
    * the account's OWN rows can carry it, so the newest of those are re-read from Cloud (bounded),
@@ -3736,7 +3621,6 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       await repairStaleTags();
       await repairStaleFolders(sweep !== null && sweep !== undefined);
       await repairRuleInstants(sweep !== null && sweep !== undefined);
-      await repairProfiles();
       await repairAutoReplies(sweep !== null && sweep !== undefined);
       /* THE QUARANTINE'S WAY BACK IN — after the drain and the sweep (whose generation never
          marked these rows), before the body pass (a healed message gets its body this same pull).

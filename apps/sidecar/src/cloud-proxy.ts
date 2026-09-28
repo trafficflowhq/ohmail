@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { RELAY_ALLOWLIST, relayVerdict } from "@trafficflow/api/relay-allowlist";
 import { offlineResponse, type CloudAuth } from "./cloud-auth.js";
 import type { CloudMirror } from "./cloud-mirror.js";
@@ -76,28 +75,6 @@ function parseSeq(raw: string | null): bigint | null {
   }
 }
 
-/** The route PATTERN a write matched — `:id` placeholders only, never an id — or `other`. */
-function routeClassOf(method: string, pathname: string): string {
-  const key = routeKeyOf(method, pathname);
-  return key === null ? "other" : key.slice(key.indexOf(" ") + 1);
-}
-
-/** A prefix of the Idempotency-Key's sha256, so a line can be matched to the account's record. */
-function keyHashOf(req: Request): string | null {
-  const key = req.headers.get("idempotency-key");
-  return key ? createHash("sha256").update(key).digest("hex").slice(0, 16) : null;
-}
-
-/** The account's own `error.code`, held to an identifier grammar, from a CLONE of the answer. */
-async function refusalCodeOf(res: Response): Promise<string | null> {
-  try {
-    const code = ((await res.clone().json()) as { error?: { code?: unknown } } | null)?.error?.code;
-    return typeof code === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(code) ? code : null;
-  } catch {
-    return null;
-  }
-}
-
 export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThroughProxy {
   const echoDeadlineMs = cfg.echoDeadlineMs ?? DEFAULT_ECHO_DEADLINE_MS;
   /* An empty allowlist would refuse every write and read as an offline install. */
@@ -105,24 +82,14 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
     throw new Error(`the relay allowlist holds ${RELAY_ALLOWLIST.length} routes; this build is incomplete`);
   }
 
-  /**
-   * ONE READ MAY ASK AFTER THIS DOOR'S OWN FORWARD FAILED. That failure marks the mirror offline,
-   * and every relayed read answered 503 unasked until the next good pull. So the next read asks the
-   * account: an answer clears the flag, a failure leaves offline mode as the pull found it.
-   */
-  let probeOwed = false;
-
   const forward = async (req: Request): Promise<Response> => {
+    // PRIMARY OFFLINE GATE. Refused BEFORE the forward, so an offline write reaches neither Cloud
+    // nor the local database — the "offline writes nothing" invariant, held by construction.
+    if (!cfg.mirror.online()) return offlineResponse();
+
     const url = new URL(req.url);
     const path = `${url.pathname}${url.search}`;
     const method = req.method.toUpperCase();
-    const mutation = method !== "GET" && method !== "HEAD";
-
-    // PRIMARY OFFLINE GATE. Refused BEFORE the forward, so an offline write reaches neither Cloud
-    // nor the local database — the "offline writes nothing" invariant, held by construction.
-    if (cfg.mirror.online()) probeOwed = false;
-    else if (mutation || !probeOwed) return offlineResponse();
-    else probeOwed = false;
 
     /* Matched on the pathname, so a query string cannot slip past it, and refused before the body
        is read — a refused request reaches neither the network nor a buffer. */
@@ -160,7 +127,6 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
     const body = hasBody ? await req.arrayBuffer() : undefined;
 
     let res: Response;
-    const started = Date.now();
     try {
       res = await cfg.auth.authedFetch(path, {
         method,
@@ -169,8 +135,7 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
       });
     } catch (err) {
       // The forward could not reach Cloud: mark the mirror offline so the next request short-
-      // circuits, and answer the same 503. Nothing was written anywhere. A failed probe owes none.
-      probeOwed = cfg.mirror.online();
+      // circuits, and answer the same 503. Nothing was written anywhere.
       cfg.mirror.markConnectivity(false);
       cfg.log?.("cloud_forward_failed", {
         err,
@@ -180,28 +145,13 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
       return offlineResponse();
     }
 
-    // The account answered, so it is reachable whatever it said.
-    if (!cfg.mirror.online()) cfg.mirror.markConnectivity(true);
-
-    /* ONE LINE PER FORWARDED WRITE, the only record of it on this machine: the route's pattern,
-       the account's status, the round trip and the key's hash — never the body, the path's ids or
-       the key. A refusal also names the account's code, so it can be told from a transport fault. */
-    if (mutation) {
-      const routeClass = routeClassOf(method, url.pathname);
-      const keyHash = keyHashOf(req);
-      cfg.log?.("cloud_write_forwarded", { method, routeClass, status: res.status, ms: Date.now() - started, keyHash });
-      if (res.status >= 400) {
-        cfg.log?.("cloud_write_refused", { method, routeClass, status: res.status, code: await refusalCodeOf(res), keyHash });
-      }
-    }
-
     // THE ECHO-AWAIT, by what the write changes here (`cloud-write-rows.ts`): nothing (its reads
     // relay) answers at once; a seq waits for the mirror to pull that far; no seq waits for a page
     // asked after the answer; mailbox rows for a list asked after it. The window re-drains local
     // `/sync` next, so a covered write is already in it. What the bound cuts, the route's follow-up
     // chain keeps asking for, and the window's drain waits on that chain (`cloud-engine.ts`).
     const target = res.ok ? parseSeq(res.headers.get("x-sync-seq")) : null;
-    const write = res.ok && mutation;
+    const write = res.ok && method !== "GET" && method !== "HEAD";
     const rows = write ? writeRowsOf(method, url.pathname)?.rows ?? "sync" : "none";
     if (target === null && rows === "none") return res;
     const boxes = rows === "mailboxes" || rows === "sync+mailboxes";
