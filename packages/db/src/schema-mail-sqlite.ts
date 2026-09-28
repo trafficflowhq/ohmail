@@ -11,6 +11,7 @@
 import { sqliteTable, text, integer, real, unique, uniqueIndex, index, primaryKey, customType, check } from "drizzle-orm/sqlite-core";
 import { sql, desc } from "drizzle-orm";
 import type { SignedOutMeta } from "./schema-mail.js";
+import { ruleMatchKeySql } from "./rule-match-sql.js";
 
 /**
  * A 64-bit counter that stays a `bigint` in TypeScript and a native integer in the store.
@@ -896,6 +897,9 @@ export const rules = sqliteTable("rules", {
    */
   ixRetroOwed: index("rules_retro_owed_idx").on(t.accountId)
     .where(sql`${t.retroRequestedAt} is not null and ${t.retroDoneAt} is null`),
+  // Mail 0136 — the rule key within the account, as the server twin declares it.
+  ixAccountMatchKey: index("rules_account_match_key_idx").on(t.accountId, ruleMatchKeySql(t.match))
+    .where(sql`${t.enabled}`),
 }));
 
 export const contacts = sqliteTable("contacts", {
@@ -1109,7 +1113,12 @@ export const approvals = sqliteTable("approvals", {
   expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
-}, (t) => ({ ix: index("approvals_account_status_idx").on(t.accountId, t.status) }));
+}, (t) => ({
+  ix: index("approvals_account_status_idx").on(t.accountId, t.status),
+  // Mail 0136, as the server twin declares it.
+  ixAccountMessage: index("approvals_account_message_idx").on(t.accountId, t.messageId)
+    .where(sql`${t.messageId} is not null`),
+}));
 
 export const messageStates = sqliteTable("message_states", {
   id: text("id").default(UUID_V4).primaryKey(),
@@ -1803,6 +1812,9 @@ export const drafts = sqliteTable("drafts", {
   // it holds only live appointments and ordinary draft churn never touches it.
   ixScheduledDue: index("drafts_scheduled_due_idx").on(t.sendAt)
     .where(sql`${t.status} = 'scheduled'`),
+  // Mail 0136, as the server twin declares it.
+  ixAccountReply: index("drafts_account_reply_idx").on(t.accountId, t.inReplyToMessageId)
+    .where(sql`${t.inReplyToMessageId} is not null`),
 }));
 
 // Migration 0013 — the gated idempotent send state machine. ONE row per (accountId,

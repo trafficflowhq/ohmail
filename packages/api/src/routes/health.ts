@@ -878,6 +878,12 @@ export const SCHEMA_INDEX_MARKERS: ReadonlyArray<IndexMarker> = [
   // whichever row Postgres returns first. `invites.revoked_at` vouched for it while both halves
   // were one migration; since the split they run in separate transactions.
   ["users_email_unique_idx", "ON public.users USING btree (email)"],
+  // mail 0136_screener_probe_indexes. The SILENT kind: the Screener auto-apply candidate statement
+  // asks each of the three once per held row, and without them it re-filters the account's rules
+  // and scans approvals and drafts under every page — no query is wrong, every test stays green.
+  ["rules_account_match_key_idx", "ON public.rules USING btree (account_id, TRIM(BOTH FROM lower(match))) WHERE enabled"],
+  ["approvals_account_message_idx", "ON public.approvals USING btree (account_id, message_id) WHERE (message_id IS NOT NULL)"],
+  ["drafts_account_reply_idx", "ON public.drafts USING btree (account_id, in_reply_to_message_id) WHERE (in_reply_to_message_id IS NOT NULL)"],
 ];
 
 /**
@@ -1162,7 +1168,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0135_organizer_parked_at";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0136_screener_probe_indexes";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud

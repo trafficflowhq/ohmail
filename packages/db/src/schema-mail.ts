@@ -11,6 +11,7 @@
 
 import { pgTable, uuid, text, timestamp, bigint, bigserial, boolean, jsonb, integer, real, unique, uniqueIndex, index, primaryKey, customType, check } from "drizzle-orm/pg-core";
 import { sql, desc } from "drizzle-orm";
+import { ruleMatchKeySql } from "./rule-match-sql.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Migration 0008 — full-text `tsvector`. A DB-MANAGED
@@ -991,6 +992,10 @@ export const rules = pgTable("rules", {
    */
   ixRetroOwed: index("rules_retro_owed_idx").on(t.accountId)
     .where(sql`${t.retroRequestedAt} is not null and ${t.retroDoneAt} is null`),
+  // Mail 0136 — "has the user ruled on this sender?", asked per held row by the Screener passes:
+  // the key the router keys a rule by, within the account, enabled rules only.
+  ixAccountMatchKey: index("rules_account_match_key_idx").on(t.accountId, ruleMatchKeySql(t.match))
+    .where(sql`${t.enabled}`),
 }));
 
 export const contacts = pgTable("contacts", {
@@ -1218,7 +1223,12 @@ export const approvals = pgTable("approvals", {
   expiresAt: timestamp("expires_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-}, (t) => ({ ix: index("approvals_account_status_idx").on(t.accountId, t.status) }));
+}, (t) => ({
+  ix: index("approvals_account_status_idx").on(t.accountId, t.status),
+  // Mail 0136 — "did the user decide an approval about this message?", asked per held row.
+  ixAccountMessage: index("approvals_account_message_idx").on(t.accountId, t.messageId)
+    .where(sql`${t.messageId} is not null`),
+}));
 
 export const messageStates = pgTable("message_states", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -1990,6 +2000,9 @@ export const drafts = pgTable("drafts", {
   // it holds only live appointments and ordinary draft churn never touches it.
   ixScheduledDue: index("drafts_scheduled_due_idx").on(t.sendAt)
     .where(sql`${t.status} = 'scheduled'`),
+  // Mail 0136 — "is the user replying to this message?", asked per held row.
+  ixAccountReply: index("drafts_account_reply_idx").on(t.accountId, t.inReplyToMessageId)
+    .where(sql`${t.inReplyToMessageId} is not null`),
 }));
 
 // Migration 0013 — the gated idempotent send state machine. ONE row per (accountId,

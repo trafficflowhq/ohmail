@@ -353,5 +353,13 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "ALTER TABLE \"mailboxes\" ADD COLUMN \"organizer_parked_at\" integer;"
     ]
+  },
+  {
+    "name": "0136_screener_probe_indexes.sql",
+    "statements": [
+      "CREATE INDEX IF NOT EXISTS \"rules_account_match_key_idx\" ON \"rules\" (\"account_id\", trim(lower(\"match\"))) WHERE \"enabled\";",
+      "CREATE INDEX IF NOT EXISTS \"approvals_account_message_idx\" ON \"approvals\" (\"account_id\", \"message_id\") WHERE \"message_id\" IS NOT NULL;",
+      "CREATE INDEX IF NOT EXISTS \"drafts_account_reply_idx\" ON \"drafts\" (\"account_id\", \"in_reply_to_message_id\") WHERE \"in_reply_to_message_id\" IS NOT NULL;"
+    ]
   }
 ] as const;
