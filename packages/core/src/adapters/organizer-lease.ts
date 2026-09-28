@@ -627,11 +627,9 @@ export type LeaseVerdict = OrganizeVerdict | StandDownVerdict | AvailableVerdict
 // ── LAYER 1: FORMAT ─────────────────────────────────────────────────────────────────────────
 
 /**
- * "THIS RECORD CARRIES ITS DISCRIMINATOR", spelled as a SEARCH term every server answers alike —
- * the one spelling for every `ohmail/_meta` record type (claim, ack, settings document). Every
- * discriminator is written with the value `1` and every parser admits only `1`. A header value of
- * `true` compiles to `HEADER <name> ""`, which some servers answer with nothing (Infomaniak,
- * measured), so the value is asked for instead.
+ * "THIS RECORD CARRIES ITS DISCRIMINATOR" — the value `1` every `ohmail/_meta` record type writes
+ * and every parser admits. Once a SEARCH term; no lease decision asks SEARCH now, and the ack
+ * sweep's local matcher ({@link hasAckHeader}) reads the value from here so the two cannot drift.
  */
 export function metaHeaderTerm(name: string): Record<string, string> {
   return { [name]: "1" };
@@ -1595,6 +1593,49 @@ function reasonFor(c: OrganizerClaim): StandDownReason {
 }
 
 
+/** The most foreign residue one renew's cleanup removes, oldest uid first; the rest waits a pass. */
+export const RESIDUE_REMOVE_MAX_PER_PASS = 1_000;
+
+/**
+ * OTHER INSTALLS' CLAIMS NO ELECTION CAN RANK — what a confirmed organizer may remove outside a
+ * takeover (ARCH-LEASE-BLIND-SEARCH §3.1(f)). A record is residue iff (1) it is readable, of a kind
+ * and protocol this build ranks; (2) another install wrote it; (3) it is not its install's coalesce
+ * winner, and that winner stands without the install's residue; (4) it is two windows behind the
+ * folder's newest heartbeat AND the reader's clock. `decideLease` over the claims with and without
+ * it gives the same verdict, reason, winner and `authorized` (property-tested). Pure.
+ */
+export function claimResidue(
+  claims: readonly ClaimRecord[],
+  self: Pick<LeaseSelf, "installId" | "protocol">,
+  now: Date,
+  staleAfterMs: number = DEFAULT_STALE_AFTER_MS,
+): OrganizerClaim[] {
+  const stamped = withServerClock(claims);
+  const election = runElection(stamped, now, staleAfterMs);
+  const winners = new Map(election.candidates.map((c) => [c.installId, c.ref] as const));
+  const ourProtocol = self.protocol ?? CLAIM_PROTOCOL;
+  const twoWindows = 2 * staleAfterMs;
+  const byInstall = new Map<string, number[]>();
+  stamped.forEach((c, i) => {
+    if (isMalformed(c) || c.kind === "unknown" || c.protocol > ourProtocol) return;
+    if (c.installId === self.installId) return;
+    if (c.ref === undefined || winners.get(c.installId) === c.ref) return;
+    const hb = c.heartbeat.getTime();
+    if (election.clock.newestHeartbeat - hb < twoWindows || now.getTime() - hb < twoWindows) return;
+    byInstall.set(c.installId, [...(byInstall.get(c.installId) ?? []), i]);
+  });
+  const out: OrganizerClaim[] = [];
+  for (const [installId, at] of byInstall) {
+    /* The install's winner must survive its own residue's removal: `compareRecency` is not
+       transitive across a believable and an unbelievable writer stamp, so removing a loser can
+       change which record coalesce keeps. Such an install keeps all its records. */
+    const gone = new Set(at);
+    const without = coalesce(stamped.filter((c, i) => !gone.has(i) && !isMalformed(c) && c.installId === installId), now);
+    if (without.valid[0]?.ref !== winners.get(installId)) continue;
+    for (const i of at) out.push(claims[i] as OrganizerClaim);
+  }
+  return out;
+}
 
 // ── LAYER 2b: LOOKING WITHOUT DECIDING ──────────────────────────────────────────────────────
 
@@ -1820,41 +1861,10 @@ export function makeLeasePeekIo(
 
       const lock = await lockWithin(client, at.path, budget);
       try {
-        // The shared bounded read — see {@link readMetaFolderWindow}. A folder too full to read in
-        // one window is reported as a read that FAILED, which {@link readLeasePeek} turns into
-        // {@link LeaseUnavailableError}: this surface exists to tell a person who holds their
-        // mailbox, and "I could not see all of it" must render as unknown rather than as nobody.
-        const read = await readMetaFolderWindow(client, at.path, undefined, undefined, budget);
-        if (!read.truncated) return read.records;
-        /* ── A FULL FOLDER MUST NOT RENDER AS "NOBODY HOLDS THIS MAILBOX" ────────────────────
-         *
-         * This surface exists to tell a person WHO organizes their mailbox, so the claims are asked
-         * for by header exactly as the election asks for them — the answer is complete for claims
-         * and independent of position, and the person is shown the real holder instead of an
-         * apology. Read-only: SEARCH and FETCH, never an APPEND.
-         *
-         * The refusal survives for the case where the server cannot be asked, because "I could not
-         * see all of it" must still render as unknown rather than as nobody. */
-        /**
-         * The peek refuses an oversized claim set; it never shows part of one. `searchHeaders`
-         * caps what it carries; for a decider that cap is a bound (the gate refuses anything past
-         * its own ceiling), but the peek had no ceiling, so the cap silently became its ANSWER:
-         * seven hundred claims came back as the first five hundred and one, and what fell off is
-         * by uid — the NEWEST. A live renewal omitted while old residue survives renders as
-         * "stopped": telling a person nobody organizes a mailbox somebody is actively organizing.
-         * So it asks to be REFUSED, in the class every lease fault uses — rendered as an
-         * unreadable lease, never an empty one.
-         */
-        const claims = await searchHeaders(
-          client,
-          at.path,
-          { header: metaHeaderTerm(H.lease) },
-          { max: META_RECORDS_MAX_PER_FETCH, refuseWhenOver: true, budget },
-        );
-        if (claims !== null) return claims;
-        throw new MetaFolderTruncatedError(
-          read.records.length, read.total, read.records, read.truncatedBy,
-        );
+        /* The gate's own read, so the person is shown the holder the gate elects. Past the window
+           it enumerates the folder; a read that cannot prove itself complete refuses, which
+           {@link readLeasePeek} renders as unreadable and never as nobody. */
+        return (await readLeaseRecords(client, at.path, budget, null)).records;
       } finally {
         lock.release();
       }
@@ -1882,6 +1892,13 @@ export interface ReadLeasePeekInput {
  * that showed an empty organizer panel because a FETCH timed out would invite a takeover of a
  * mailbox somebody is actively organizing.
  */
+/** `meta_folder_full` for a read the folder's SIZE refused; `null` for every other fault. */
+function metaFullOp(err: unknown): "meta_folder_full" | null {
+  if (err instanceof MetaFolderTruncatedError) return "meta_folder_full";
+  if (err instanceof MetaEnumRefusedError && (err.code === "over_ceiling" || err.code === "bytes")) return "meta_folder_full";
+  return null;
+}
+
 export async function readLeasePeek(input: ReadLeasePeekInput): Promise<LeasePeek> {
   let messages: RawClaimMessage[];
   try {
@@ -1899,6 +1916,9 @@ export async function readLeasePeek(input: ReadLeasePeekInput): Promise<LeasePee
     if (err instanceof MetaFolderTruncatedError) {
       input.log?.("lease_meta_truncated", { read: err.read, limit: err.limit, total: err.total });
     }
+    if (err instanceof MetaEnumRefusedError) {
+      input.log?.("lease_enum_refused", { code: err.code, records: err.rows, total: err.total, ceiling: err.ceiling });
+    }
     /* ── THE FAULT KEEPS ITS OWN NAME ────────────────────────────────────────────────────────
      *
      * Every throw here used to leave as `list_claims`, so one `LeaseOp` stood for two facts that
@@ -1908,10 +1928,10 @@ export async function readLeasePeek(input: ReadLeasePeekInput): Promise<LeasePee
      * two doors report one fact under one name. */
     if (err instanceof LeaseUnavailableError) throw err;
     throw new LeaseUnavailableError(
-      err instanceof MetaFolderTruncatedError
+      err instanceof MetaFolderTruncatedError || err instanceof MetaEnumRefusedError
         ? err.message
         : `the organizer lease in ${META_FOLDER} could not be read`,
-      { op: err instanceof MetaFolderTruncatedError ? "meta_folder_full" : "list_claims", cause: err },
+      { op: metaFullOp(err) ?? "list_claims", cause: err },
     );
   }
   const claims = messages
@@ -1946,9 +1966,8 @@ export type LeasePeekAnswer =
    * nobody does.
    *
    * `op` is `no_lease_peek_io` for an adapter with no read-only accessor, and otherwise whatever
-   * {@link readLeasePeek} assigned — measured as `list_claims` for every fault out of `listClaims`,
-   * a folder over the read ceiling INCLUDED. A folder too full to read is told apart by the
-   * `lease_meta_truncated` line the read emits, not by this field.
+   * {@link readLeasePeek} assigned: `meta_folder_full` for a folder too full to read, `list_claims`
+   * for every other fault out of `listClaims`.
    */
   | { readonly answer: "unreadable"; readonly op: LeaseOp; readonly cause: unknown };
 
@@ -2060,14 +2079,15 @@ export type LeaseOp =
    * provider fault and not a folder fault: the machine is wrong, and no claim was written.
    */
   | "clock_skew"
-  /* The folder is over the ceiling AND the claim set could not be read, or itself exceeds it.
+  /* The folder holds more than one enumeration may read (`META_ENUM_RECORDS_MAX` records or
+   * `META_ENUM_BYTES_MAX` bytes), or an io handed the gate a truncated read.
    * Same CLASS as every other lease IO fault on purpose: the hosts' exemptions and the LOCAL/Cloud
    * exclusions are all by class, so a new class would fall into `maxSyncFailures` and quarantine a
    * customer's mailbox over a folder that is not its fault. */
   | "meta_folder_full"
   /** STORE `\Deleted` + EXPUNGE the acknowledgements past their life — see {@link RequestOp}. */
   | "sweep_acks"
-  /** COPY + EXPUNGE the records that fell out of the claim read's reach — see {@link RequestOp}. */
+  /** COPY + EXPUNGE the records deeper than {@link SEARCH_WALK_SPAN} — see {@link RequestOp}. */
   | "compact_meta";
 
 export class LeaseUnavailableError extends Error {
@@ -2184,35 +2204,18 @@ export interface LeaseIo {
   /** STORE `\Deleted` + EXPUNGE the given messages. */
   removeClaims(refs: readonly unknown[]): Promise<void>;
   /**
-   * The records a release may decide from — a complete, current read of the folder, or a refusal.
-   * A current folder read under the folder's UIDVALIDITY, not a server search: a real provider
-   * refused the header search on every poll, and a release locatable only through a verb the
-   * server may decline is refusable for ever. A whole-folder read answers "which are mine"
-   * completely; one that could not throws {@link ClaimReleaseError} rather than returning a
-   * slice. The result is CANDIDATES, other installs' records included: the selection is the
-   * caller's, with the gate's own parser — the settings document carries the install-id header
-   * too, and expunging it here would delete the mailbox's settings.
+   * The records a release may decide from — the lease's own complete read, or a refusal
+   * ({@link ClaimReleaseError}), never a slice. CANDIDATES, other installs' records included:
+   * the selection is the caller's, with the gate's own parser, so a settings document carrying
+   * the install-id header is never expunged here.
    */
   findOwnRecords?(installId: string): Promise<RawClaimMessage[] | null>;
   /**
-   * Every claim in the folder, asked of the SERVER by header rather than read out of a window.
-   * What an election reads when the bounded window could not cover the folder: a window is
-   * newest-first, and a live incumbent renewed just before a burst of appends is exactly an old
-   * record — electing on the window can report "nobody organizes this mailbox" about one somebody
-   * is actively organizing, and a second install then claims it. Only claims carry
-   * `X-Ohmail-Lease`, so the set is complete for claims and position-independent, and it is a
-   * handful of records rather than a folder. `null` means the connection cannot ask, and the gate
-   * refuses rather than guessing.
+   * HOW THE LAST `listClaims` READ THE FOLDER: `null` for the window, the counts when it read past
+   * it by enumeration. The gate's `lease_meta_enumerated` line comes from here and decides nothing.
    */
-  listClaimRecords?(): Promise<RawClaimMessage[] | null>;
+  lastEnumeration?(): { records: number; claims: number; total: number } | null;
 
-  /**
-   * WHY THE LAST CLAIM READ REFUSED, when it did. `null` after a read that answered.
-   *
-   * Optional because the peek's io has no such memory to report on; a caller that finds it absent
-   * learns nothing and must not conclude anything from that.
-   */
-  claimReadFact?(): ClaimReadFact | null;
   /**
    * THE SELECTED FOLDER'S UID GENERATION, where the server reports one.
    *
@@ -2420,13 +2423,11 @@ export async function lastSequence(
 }
 
 /**
- * One bounded read of `ohmail/_meta`, NEWEST FIRST — the only FETCH in this module (a census pins
- * the two `client.fetch(` calls). Newest first because `1:*` returns oldest first and a ceiling
- * breaking out of that loop keeps the OLDEST records: everything live is appended at the END, so
- * five hundred harmless messages would hide every claim and decision for good — and a truncated
- * read was indistinguishable from a complete one. Over the ceiling the FETCH asks `exists -
- * ceiling + 1 : *`. `truncated` is the point of returning a record: the peek and drains refuse on
- * it; the GATE acts on the window, because refusing there stops a customer's mail. One message
+ * One bounded read of `ohmail/_meta`, NEWEST FIRST. Newest first because `1:*` returns oldest
+ * first and a ceiling breaking out of that loop keeps the OLDEST records: everything live is
+ * appended at the END. Over the ceiling the FETCH asks `exists - ceiling + 1 : *`. `truncated` is
+ * the point of returning a record: the drains refuse on it, and the lease reads the whole folder
+ * instead ({@link readLeaseRecords}) — nothing decides from a truncated window. One message
  * beyond the ceiling is read and discarded, so exactly-the-ceiling is complete.
  */
 export interface MetaFolderRead {
@@ -2466,12 +2467,9 @@ export class MetaFolderTruncatedError extends Error {
   /** The folder's message count, where the server reported one. */
   readonly total: number | null;
   /**
-   * THE NEWEST RECORDS THE WINDOW DID COVER — carried so a caller that can act on a partial view
-   * may, without a second round trip.
-   *
-   * An error carrying a payload is a smell and this one is deliberate: exactly one caller can act
-   * on a partial view of this folder and it is the ELECTION, for the reason written at the gate's
-   * own catch. The peek and both drains cannot, do not, and never touch this field.
+   * THE NEWEST RECORDS THE WINDOW DID COVER. No caller acts on them: the lease refuses a truncated
+   * read by class (`meta_folder_full`) and the drains refuse it too. Kept REQUIRED so a
+   * construction site cannot hand anybody an empty election by omission.
    */
   readonly records: readonly RawMetaMessage[];
   /**
@@ -2559,6 +2557,8 @@ export async function readMetaFolderWindow(
    * caller reading the window on its own still gets.
    */
   budget?: ImapDeadline,
+  /** A count the caller already asked STATUS for under this lock, so the read sends no second one. */
+  counted?: { count: number | undefined },
 ): Promise<MetaFolderRead> {
   // An empty `_meta` is the normal state of a fresh mailbox, and `1:*` is not a valid messageset
   // when a mailbox holds nothing. The failure this defends: the folder is created one call
@@ -2577,7 +2577,7 @@ export async function readMetaFolderWindow(
    * not a fast path, because there is no way to know whether it is current ({@link
    * selectedCount}).
    */
-  const probed = await lastSequence(client, path, budget);
+  const probed = counted !== undefined ? counted.count : await lastSequence(client, path, budget);
 
   /* A CACHED COUNT MAY END THE READ, BUT MAY NEVER BE COUNTED BACK FROM ────────────────────
    *
@@ -2837,16 +2837,47 @@ export async function enumerateMetaFolder(
   };
 }
 
+/** What one lease read found. `enumerated` carries the counts when it read past the window. */
+interface LeaseRead {
+  records: RawClaimMessage[];
+  generation: Generation;
+  enumerated: { records: number; claims: number; total: number } | null;
+  probe: "kept" | "seen_not_kept" | "absent" | "unasked";
+}
+
 /**
- * Every record in the folder matching a header, asked of the server — the one place this module
- * turns a header into a set of messages; three callers route through it (the own-records read,
- * the election's claim set, the peek), because a second copy is a second answer to "which
- * messages carry this header". `null`, never `[]`, when the connection cannot ask or the server
- * refuses: could-not-look and there-are-none are different answers — the election refuses on the
- * first and may elect on the second. Callers spell the header through {@link metaHeaderTerm},
- * because an empty-value term is answered with nothing on some servers. The caller holds the
- * lock; this issues no APPEND and no STORE.
+ * THE CLAIMS IN `ohmail/_meta`, COMPLETE OR REFUSED — the one read behind every lease decision:
+ * the election, the read-back, the custody check, the baseline, the release and the peek. At or
+ * under the window, or with no count, it is the window read (one STATUS, one FETCH). Past it, or
+ * when the window came back short of the folder, it is {@link enumerateMetaFolder} keeping what
+ * {@link parseClaim} recognises. A truncated window is never returned and no SEARCH is asked; a
+ * read that cannot prove itself complete throws {@link MetaEnumRefusedError}. Caller holds the lock.
  */
+async function readLeaseRecords(
+  client: LeaseImapClient, path: string, budget: ImapDeadline,
+  own: { uid: number; installId: string } | null,
+): Promise<LeaseRead> {
+  const count = await lastSequence(client, path, budget);
+  if (count === undefined || count <= META_RECORDS_MAX_PER_FETCH) {
+    const read = await readMetaFolderWindow(client, path, undefined, undefined, budget, { count });
+    if (!read.truncated) return { records: read.records, generation: generationOf(client), enumerated: null, probe: "unasked" };
+  }
+  const isOwn = (h: string): boolean => {
+    const c = parseClaim(h);
+    return c !== null && !isMalformed(c) && own !== null && c.installId === own.installId;
+  };
+  const listed = await enumerateMetaFolder(client, path, budget, {
+    keep: (h) => parseClaim(h) !== null,
+    probe: own === null ? null : { uid: own.uid, recognised: isOwn },
+  });
+  return {
+    records: listed.records.map((r) => ({ ref: r.ref, raw: r.raw, internalDate: r.internalDate })),
+    generation: listed.generation,
+    enumerated: { records: listed.total, claims: listed.records.length, total: listed.count },
+    probe: listed.probe,
+  };
+}
+
 /**
  * An expunge that resolved `true` is not a removal, and this is the only place that says so.
  * `messageDelete` is `resolveRange` then `run('EXPUNGE')`; the STORE marking `\Deleted` is
@@ -2885,48 +2916,25 @@ async function proveGone(
   }
 }
 
-/**
- * The most uids a header search will carry forward, one PAST the largest ceiling any caller
- * applies to the result — so "exactly at the ceiling" stays distinguishable from "over it", which
- * is what the claim-set refusal turns on. A server that answers with more than this is answering
- * about a folder no caller here will act on anyway.
- */
+/** The most uids one compaction window's SEARCH may carry; a window names at most 500. */
 const SEARCH_UIDS_MAX = 501;
 
-/**
- * How many uids go into one FETCH command. Keeps the command line and the in-flight reply bounded
- * regardless of what the server said, which the single-command form could not.
- */
-const SEARCH_FETCH_BATCH = 100;
-
-/**
- * How wide one descending UID window is. A window can name at most this many uids, so it bounds
- * the SEARCH reply the way {@link SEARCH_FETCH_BATCH} bounds the FETCH command.
- */
+/** How wide one UID window is — the compaction's move and the ack sweep's read. */
 const SEARCH_UID_WINDOW = 500;
 
-/**
- * How many windows one search may walk before it gives up and reports that it could not ask.
- * Bounds the ROUND TRIPS the way the window bounds the reply: a sparse uid space would otherwise
- * page for ever looking for a handful of records.
- */
+/** How many windows one uid walk may take before it reports that it could not say. */
 const SEARCH_WINDOW_BUDGET = 20;
 
 /**
- * HOW DEEP A UID SPACE ONE CLAIM READ CAN SEE TO THE BOTTOM OF — the window times the budget, and
- * the number the folder's shape has to stay inside.
- *
- * Derived rather than written down, because the two constants above are what actually decide it
- * and a third literal is how they come to disagree. It is the invariant's one number: every live
- * record in `ohmail/_meta` sits within this many uids of the top, the compaction is what keeps it
- * so ({@link RequestOrganizerIo.compactMeta}), and the gate's refusal names it.
+ * The uid depth compaction keeps `ohmail/_meta` inside: past it the organizer moves its oldest
+ * records to the top ({@link RequestOrganizerIo.compactMeta}). Builds up to 0.25.4 read claims by
+ * a walk this deep, so a folder kept inside it still elects the same winner on those builds.
  */
 export const SEARCH_WALK_SPAN = SEARCH_UID_WINDOW * SEARCH_WINDOW_BUDGET;
 
 /**
- * How many uids one EXPUNGE of the ack sweep carries. Two hundred, for the same reason the fetch
- * batch is a hundred: the command line stays a fixed size whatever the folder did, and a refusal
- * costs one batch rather than the whole compaction.
+ * How many uids one EXPUNGE carries — the ack sweep's and the claim removal's. The command line
+ * stays a fixed size whatever the folder did, and a refusal costs one batch rather than the pass.
  */
 const SWEEP_DELETE_BATCH = 200;
 
@@ -3006,14 +3014,10 @@ export class ClaimReleaseError extends Error {
 }
 
 /**
- * The search itself is bounded, not only what is done with its answer. The reply to a bare `UID
- * SEARCH` is however many uids the server chooses, materialised before a line of ours runs — "we
- * then ignore most of them" is not a defence against having received them. So the folder is
- * searched in DESCENDING UID WINDOWS (`UID SEARCH <criteria> UID <lo>:<hi>`), each reply bounded
- * by construction; descending because every caller wants the newest records and stops once it has
- * enough. Two costs, stated: round trips on a sparse folder — hence a WINDOW BUDGET, and
- * exhausting it returns `null`, which callers treat as could-not-ask; and a starting point — with
- * no `uidNext` to ask for, the single unbounded search remains, kept deliberately.
+ * The UIDS in one bounded uid range of the folder, asked of the server in descending windows
+ * (`UID SEARCH <criteria> UID <lo>:<hi>`), each reply bounded by construction. Compaction's
+ * enumeration only, with no HEADER term: no lease decision rests on a SEARCH. A refused window,
+ * no `uidNext`, or a walk out of its window budget is `refused`, never an answer.
  */
 async function searchDescending(
   client: Pick<LeaseImapClient, "search" | "mailbox" | "status" | "fetch">,
@@ -3025,82 +3029,35 @@ async function searchDescending(
   budget?: ImapDeadline,
 ): Promise<DescendingWalk> {
   if (typeof client.search !== "function") return { kind: "refused" };
-
-  /**
-   * The top of the uid space is asked for, never remembered. This read `client.mailbox.uidNext`,
-   * which is whatever the last untagged response left on the cached mailbox object; holding the
-   * lock does not refresh it. Counting back from a stale value is worse here than for the count:
-   * the windows walk DOWN from this number, so a stale-low value puts every window below the
-   * newest records — and the caller most affected is the ELECTION, which reads a claim set
-   * missing the incumbent's live claim, takes the nobody-organizes arm, and appends a second one.
-   * So it is a STATUS on the folder by name, every time; an absent or unusable answer is `null`,
-   * which every caller treats as could-not-ask and none organizes on.
-   */
-  const top = await highestUid(client, path, budget);
-
-  /* ONE CALL SITE, and the census in `organizer-lease-meta-window.test.ts` counts on it: two ways
-   * of asking this server about this folder, no more. The windowed walk and the unbounded fallback
-   * are the same question with and without a `UID` term, so they issue from one site rather than
-   * two — a second would read as a third way of asking.
-   *
-   * The census matches source TEXT, so spelling the call pattern out in a comment counts as a use
-   * of it. That is not a flaw in the census: it is why it can be trusted to notice a real one. */
-  /* ── WITHOUT A CEILING THERE IS NO WINDOW, AND ONE UNBOUNDED PASS IS NOT THE ANSWER ──────
-   *
-   * The previous version fell back to a single unbounded search here, which made the bound
-   * conditional on the server choosing to answer: a server that declines STATUS got exactly the
-   * unbounded reply the windows exist to prevent, and nothing said so. "I could not ask in a way
-   * I can bound" is a partial answer, and this module has one word for that. */
-  const ceiling = span?.from ?? top;
+  /* The top is asked of the SERVER by STATUS, never read off the connection's cached mailbox:
+     a stale-low top puts every window below the newest records. No top, no window. */
+  const ceiling = span?.from ?? await highestUid(client, path, budget);
   if (ceiling === null || ceiling < 1) return { kind: "refused" };
-  /* The walk never goes below `bottom`. For the ordinary claim read that is the start of the uid
-   * space; for the gap read below it is the incumbent's own uid, which is the only uid a walk is
-   * ever allowed to stop above — see the note at its call site. */
   const bottom = Math.max(1, span?.downTo ?? 1);
   if (ceiling < bottom) return { kind: "covered", uids: [] };
 
   const out: number[] = [];
   let hi = ceiling;
-
   for (let window = 0; window < SEARCH_WINDOW_BUDGET; window++) {
     const lo = Math.max(bottom, hi - SEARCH_UID_WINDOW + 1);
-    /* The WINDOW budget bounds how many searches this walk issues; it says nothing about how long
-     * one of them takes, and a walk of sixteen windows each just under a per-command ceiling is a
-     * stall the window count cannot see. The read's own clock is the bound on the total. */
+    // One call site: the census counts it, and the read's clock bounds the whole walk.
     const search = client.search({ ...query, uid: `${lo}:${hi}` }, { uid: true });
     const found = await (budget === undefined ? search : budget.race(search, path));
     if (!Array.isArray(found)) return { kind: "refused" };
     out.push(...found);
-    if (lo === bottom) return { kind: "covered", uids: out };
-    if (out.length > max) return { kind: "covered", uids: out };  // the caller's ceiling decides
+    if (lo === bottom || out.length > max) return { kind: "covered", uids: out };
     hi = lo - 1;
   }
-  const floor = Math.max(bottom, hi + 1);
-  /* ── A WALK THAT PASSED BENEATH THE FOLDER'S OWN BOTTOM COVERED THE FOLDER ────────────────
-   *
-   * A uid per renewal and none returned: the space passes this walk's ten thousand in about two
-   * days while the folder stays small, and from then on the walk never reaches uid 1.
-   *
-   * NOT A BOUND ON THE WALK. A bound at OUR OWN uid starts the read above a live foreign claim
-   * appended before our last renewal. The folder's own bottom is the lowest uid it HOLDS, so
-   * passing beneath it skips nothing, and it errs only downward. */
-  const bottomUid = await folderBottomUid(client, budget);
-  if (bottomUid !== null && bottomUid >= floor) return { kind: "covered", uids: out };
-  /* The budget ran out with folder still unexamined. That is not an answer, and reporting it as
-   * one would be the "could not look" / "there are none" confusion this module refuses everywhere
-   * else — but WHERE it ran out is a fact the caller can act on, so it comes back too. Everything
-   * at or above `floor` was covered; nothing below it was looked at. */
-  return { kind: "short", uids: out, floor, ...(bottomUid === null ? {} : { bottomUid }) };
+  return { kind: "refused" };
 }
 
 /**
  * THE LOWEST UID THE FOLDER HOLDS — sequence 1, whose uid is the smallest because uids ascend with
  * sequence numbers inside a generation. One row over the wire, asked of the server.
  *
- * `null` is every way of not knowing, and a caller reads it as "the bottom is unknown" rather than
- * "the folder is empty": it decides whether a short walk may be called complete, so the only safe
- * unknown is the one that keeps refusing. A FETCH and not a SEARCH because `UID SEARCH ALL` answers
- * with every uid in the folder — the unbounded reply the windows exist to avoid.
+ * `null` is every way of not knowing, which compaction reads as "nothing to move" rather than as an
+ * empty folder. A FETCH and not a SEARCH because `UID SEARCH ALL` answers with every uid in the
+ * folder — the unbounded reply the windows exist to avoid.
  */
 async function folderBottomUid(
   client: Pick<LeaseImapClient, "fetch">,
@@ -3130,11 +3087,9 @@ async function folderBottomUid(
 
 /**
  * The highest uid the folder could hold, asked of the SERVER — or `null` for every way of not
- * knowing. One function because there is one question: both descending walks need a ceiling to
- * start from, and each had grown its own copy of this block; the census counts call sites so a
- * third cannot appear unnoticed. Never `client.mailbox.uidNext` — that is whatever the last
- * untagged response left on the connection, and a stale-low ceiling puts every window below the
- * newest records, rendering as a claim that cannot be found or settings that have vanished.
+ * knowing: the compaction and the ack sweep both start from it, and the census counts the STATUS
+ * sites. Never `client.mailbox.uidNext` — that is whatever the last untagged response left on the
+ * connection, and a stale-low ceiling puts every window below the newest records.
  */
 async function highestUid(
   client: Pick<LeaseImapClient, "status">, path: string,
@@ -3157,24 +3112,6 @@ async function highestUid(
 }
 
 /**
- * WHAT A DESCENDING WALK MANAGED TO COVER.
- *
- * `short` is the case that used to be indistinguishable from `refused`: the walk was well-formed
- * and the server answered every window, but the budget ran out with folder left beneath it. That
- * is not an answer to "which claims exist", and it never becomes one — but the caller can ask a
- * narrower question about the part that was missed, which is what `floor` is for.
- */
-/**
- * The uid the server gave our own claim when we wrote it. Keyed on the CONNECTION: a map keyed by
- * folder path lets one account's uid answer another's question, and a closure inside the io is
- * rebuilt every call. The connection's lifetime matches — one per mailbox, gone on reconnect; a
- * weak key drops the entry with it. Paired with the GENERATION it was learned under: a recreated
- * folder renumbers from one, and the gap read is bounded BELOW by this number, so a stale uid
- * hides exactly the records the election must see — a second organizer. A mismatched or unknown
- * generation discards the memo. Only ever a HINT: every decision is made from records the server
- * returned this cycle.
- */
-/**
  * THE FOLDER'S CURRENT GENERATION, read from the selected mailbox under the caller's own lock.
  *
  * Every position this module remembers is a position in a NUMBERING, and this is the only thing
@@ -3187,186 +3124,8 @@ function generationOf(client: { readonly mailbox?: { uidValidity?: number | bigi
   return typeof v === "number" || typeof v === "bigint" ? v : null;
 }
 
-/**
- * WHY A CLAIM READ CAME BACK SHORT — the difference between a mailbox with nothing to say and one
- * that is permanently stuck.
- *
- * A read that cannot bound itself refuses, and refusing is correct: an election run on a partial
- * claim set is how two organizers happen. But the refusal on its own is indistinguishable from a
- * quiet mailbox, and the stuck case does not heal — uids only ever increase, so the same windows
- * come back empty for ever. Naming it is what turns "this mailbox seems idle" into something a
- * person can look at.
- */
-export interface ClaimReadFact {
-  /**
-   * `lease_compaction_owed`, `lease_gap_too_deep`, `lease_walk_short`, or
-   * `lease_own_record_absent`.
-   */
-  readonly fact: string;
-  /** How many uids lie between our own record and where the read stopped. */
-  readonly depth: number;
-  readonly floor: number;
-  readonly ownUid: number | null;
-  /**
-   * THE FOLDER'S LIVE RECORDS LIE OUTSIDE THE WALK, AND ONLY ITS ORGANIZER CAN MOVE THEM.
-   *
-   * Set when the walk stopped above the folder's own lowest uid: the records beneath the floor are
-   * really there and no bounded read reaches them. That is a fact about the FOLDER'S SHAPE rather
-   * than about who holds the mailbox, and the refusal has to say so — "another organizer holds it"
-   * would send a person looking for an install that does not exist. The remedy is the organizer's
-   * compaction ({@link RequestOrganizerIo.compactMeta}), which is why the sentence names it.
-   */
-  readonly compactionOwed: boolean;
-}
-
-type DescendingWalk =
-  | { kind: "covered"; uids: number[] }
-  /**
-   * `bottomUid` is the folder's own lowest uid where the server answered for it — present exactly
-   * when the walk stopped ABOVE it, which is the one shape a compaction can fix. Absent means the
-   * bottom could not be read, and a caller may conclude nothing from that.
-   */
-  | { kind: "short"; uids: number[]; floor: number; bottomUid?: number }
-  | { kind: "refused" };
-
-async function searchHeaders(
-  client: Pick<LeaseImapClient, "search" | "fetch" | "mailbox" | "status">,
-  path: string,
-  query: { header: Record<string, string | boolean>; before?: Date },
-  opts?: {
-    max?: number;
-    refuseWhenOver?: boolean;
-    /** The caller's own record, when it knows it — the floor for the gap read described below. */
-    gapDownTo?: number | null;
-    /** Named so a permanent stall is visible rather than silent. */
-    onShortfall?: (fact: {
-      floor: number; ownUid: number | null; closed: boolean;
-      /** The walk stopped ABOVE records the folder really holds — see {@link ClaimReadFact}. */
-      compactionOwed: boolean;
-    }) => void;
-    /** Fired when the anchor actually bounded a read, so a caller can tell what rested on it. */
-    onGapRead?: () => void;
-    /**
-     * The read's clock — see {@link metaReadBudget}. This function is a WALK (a STATUS, up to
-     * two windowed searches per window budget, then a fetch per batch), so a per-command clock
-     * here would compose into a total nobody bounded; the caller's single budget is the total.
-     */
-    budget?: ImapDeadline;
-  },
-): Promise<RawClaimMessage[] | null> {
-  if (typeof client.search !== "function") return null;
-  const max = opts?.max ?? SEARCH_UIDS_MAX;
-  const walk = await searchDescending(client, path, query, max, undefined, opts?.budget);
-  /* ── A WALK THAT RAN OUT OF BUDGET IS STILL NOT AN ANSWER ────────────────────────────────
-   *
-   * Every caller but one reads a short walk exactly as it always did: could not look. The claim
-   * read is the exception, and it asks the narrower question itself rather than being handed a
-   * partial set here — a partial claim set is the input to an election, and this module has one
-   * rule about those. */
-  const gap = opts?.gapDownTo;
-  let found: number[];
-  if (walk.kind === "refused") return null;
-  else if (walk.kind === "covered") found = walk.uids;
-  else if (gap === undefined || gap === null || gap >= walk.floor) {
-    /* Nothing to narrow: either the caller keeps no uid of its own, or its record sits inside the
-     * part the walk already covered — in which case a short walk means the folder genuinely
-     * extends below anything this read can account for. */
-    opts?.onShortfall?.({
-      floor: walk.floor, ownUid: gap ?? null, closed: false,
-      compactionOwed: walk.bottomUid !== undefined,
-    });
-    return null;
-  } else {
-    /**
-     * The uids between our own record and the walk's floor. The walk goes DOWN from the top, so
-     * it meets every record newer than ours before ours — uids ascend on append. What the budget
-     * can leave unread is the stretch between our record and where the walk stopped, and a
-     * competing claim in there is newer than ours and would go unseen: that stretch is read as
-     * its own bounded walk, and only then is the set complete. This never SEEDS the main walk
-     * from our own uid — starting there begins the read underneath every newer claim, which is
-     * how two organizers happen.
-     */
-    opts?.onGapRead?.();
-    const below = await searchDescending(
-      client, path, query, max, { from: walk.floor - 1, downTo: gap }, opts?.budget,
-    );
-    if (below.kind === "refused") return null;
-    if (below.kind === "short") {
-      /* Even the gap is deeper than one cycle may read. Fail closed exactly as before — but say
-       * so, because a stall that looks like a quiet mailbox is a stall nobody fixes. */
-      opts?.onShortfall?.({
-        floor: below.floor, ownUid: gap, closed: true,
-        compactionOwed: below.bottomUid !== undefined,
-      });
-      return null;
-    }
-    found = [...walk.uids, ...below.uids];
-  }
-  if (found.length === 0) return [];
-  /**
-   * The reply is bounded before it is spent, not after. Every ceiling that acts on the uid list
-   * applies to the RESULT of this function, and between the two sat an unbounded array turned
-   * into one comma-separated FETCH: a server answering with a million uids got a megabytes-long
-   * command built for it and the whole reply in memory before anything could refuse — the check
-   * that refuses an oversized claim set cannot run if the process is already gone. The set is cut
-   * to one PAST the largest ceiling (so a caller can tell exactly-at from over) and fetched in
-   * batches. Bounded work for an unbounded answer.
-   */
-  /**
-   * A slice is the right answer for a decision and the wrong one for a release. The election and
-   * the peek apply their own ceiling to the result — a set larger than the ceiling is refused by
-   * the caller, so the slice is a bound, not a loss. A release is enumerating, not deciding:
-   * every record this install owns has to be found or the release is partial, and a partial
-   * release that returns a COUNT reads as success — the omitted claim holds the mailbox against
-   * the next install until it goes stale. Same bound, different meaning at the crossing: the
-   * deciders take the slice; the release asks to be REFUSED, reported as a release that did not
-   * happen.
-   */
-  if (found.length > max && opts?.refuseWhenOver === true) return null;
-  /* ── SORTED BEFORE IT IS CAPPED, BECAUSE THE WINDOWS ARRIVE IN WINDOW ORDER ────────────────
-   *
-   * The walk collects one descending window at a time, so the array is ordered by WINDOW and not
-   * by uid — the last window's uids are the oldest in the folder but the last in the list. A cap
-   * applied to that keeps whatever the windows happened to yield first, which is not the newest
-   * and is not anything a caller asked for. Every caller that caps wants the NEWEST records; a
-   * caller that wants them all is not capping. So the set is put in newest-first order and the cap
-   * then means what it says. */
-  const ordered = [...found].sort((a, b) => b - a);
-  const capped = ordered.length > max ? ordered.slice(0, max) : ordered;
-  const out: RawClaimMessage[] = [];
-  for (let i = 0; i < capped.length; i += SEARCH_FETCH_BATCH) {
-    const batch = capped.slice(i, i + SEARCH_FETCH_BATCH);
-    /* `internalDate` is asked for HERE for the reason it is asked for in `readMetaFolderWindow`,
-       and the two are the only places a claim is built from the wire: a read that drops the
-       server's stamp hands the decision layer records it can only age by the writer's own clock —
-       silently, and exactly on the busy folders this path exists to serve.
-
-       Pulled through the bounded read rather than a bare `for await`: the batch is a uid list WE
-       chose, so a reply longer than it is a server over-answering a bounded page (`page_rows`),
-       and a `for await` consults no clock between rows — the one shape a byte-a-minute server
-       parks the whole walk in. Both axes come from the same budget the walk started with. */
-    const page = await boundedFetch(
-      client.fetch(
-        batch.join(","), { uid: true, headers: true, internalDate: true }, { uid: true },
-      ),
-      {
-        max: batch.length,
-        bound: "page_rows",
-        ...(opts?.budget === undefined ? {} : { deadline: opts.budget }),
-        folder: path,
-        map: (m): RawClaimMessage | null =>
-          m.headers
-            ? {
-                ref: m.uid, raw: m.headers.toString("utf8"),
-                internalDate: m.internalDate instanceof Date ? m.internalDate : null,
-              }
-            : null,
-      },
-    );
-    for (const m of page.items) if (m !== null) out.push(m);
-  }
-  return out;
-}
+/** What a bounded uid walk covered: every window answered, or it could not say. */
+type DescendingWalk = { kind: "covered"; uids: number[] } | { kind: "refused" };
 
 export function makeLeaseIo(
   client: LeaseImapClient,
@@ -3395,12 +3154,25 @@ export function makeLeaseIo(
    * only moment the two are known to belong together.
    */
   let generationAtLastRead: number | bigint | null = null;
-
-  /** Set by the claim read when it refuses or distrusts its own memory; cleared when it succeeds. */
-  let lastClaimReadFact: ClaimReadFact | null = null;
+  let lastEnumeration: { records: number; claims: number; total: number } | null = null;
   const currentGeneration = (): Generation => generationOf(client);
-  const sampleGeneration = (): void => {
-    generationAtLastRead = currentGeneration();
+
+  /**
+   * THE LEASE'S READ, UNDER THE CALLER'S LOCK, WITH ITS POSITIVE CONTROL: our own last claim, by the
+   * uid the server gave it, must come back recognised or the enumeration refuses `blind`. A uid our
+   * claim no longer holds is forgotten. The generation is the one the records came from.
+   */
+  const readClaimsLocked = async (metaPath: string, budget: ImapDeadline): Promise<RawClaimMessage[]> => {
+    const remembered = readMemo(identity, currentGeneration());
+    const ownUid = remembered.kind === "memo" && typeof remembered.memo.claimUid === "number"
+      ? remembered.memo.claimUid : null;
+    const read = await readLeaseRecords(
+      client, metaPath, budget, ownUid === null ? null : { uid: ownUid, installId: identity.installId },
+    );
+    if (read.probe === "absent") forgetMemo(identity, "claimUid");
+    generationAtLastRead = read.generation;
+    lastEnumeration = read.enumerated;
+    return read.records;
   };
 
 
@@ -3427,35 +3199,21 @@ export function makeLeaseIo(
     },
 
     async listClaims(): Promise<RawClaimMessage[]> {
-      // ONE BUDGET FOR THE WHOLE READ — see {@link metaReadBudget}. The gate runs this every
-      // cycle and holds the folder's lock across it, so an unclocked segment in front of the
-      // FETCH stalls the mailbox's mail, not merely this call.
+      /* ONE BUDGET FOR THE WHOLE READ — see {@link metaReadBudget}. The gate holds the folder's lock
+         across it, so an unclocked segment stalls the mailbox's mail. A read that cannot prove it
+         saw every claim refuses ({@link readLeaseRecords}); nothing is decided from part of it. */
       const budget = metaReadBudget(now);
       const metaPath = await meta.path(budget);
       const lock = await lockWithin(client, metaPath, budget);
       try {
-        // The gate's read is bounded, and this is the read that most needed it: it had no ceiling
-        // at all, so a folder anyone with APPEND rights can write to decided how much work every
-        // election did — and at a large enough count the FETCH times out, read as "the lease
-        // could not be read", exempted from the failure counter and retried indefinitely, so the
-        // mailbox's MAIL stops moving. A truncated read is refused rather than decided on: the
-        // nobody-has-organized arm is reached by seeing no claim, which is exactly what a hidden
-        // claim looks like. No claim is appended, nothing is expunged, and the install keeps
-        // whatever role it had — `ensureMetaFolder` has already run, so that is the exact
-        // guarantee.
-        const read = await readMetaFolderWindow(client, metaPath, undefined, undefined, budget);
-        // BESIDE THE RECORDS, INSIDE THE LOCK — see `generationAtLastRead`. Sampled before the
-        // truncation throw as well, because the gate acts on that window too.
-        sampleGeneration();
-        if (read.truncated) {
-          throw new MetaFolderTruncatedError(
-            read.records.length, read.total, read.records, read.truncatedBy,
-          );
-        }
-        return read.records;
+        return await readClaimsLocked(metaPath, budget);
       } finally {
         lock.release();
       }
+    },
+
+    lastEnumeration(): { records: number; claims: number; total: number } | null {
+      return lastEnumeration;
     },
 
     uidValidity(): number | bigint | null {
@@ -3508,7 +3266,8 @@ export function makeLeaseIo(
         : undefined;
       const generation = typeof gen === "number" || typeof gen === "bigint" ? gen : null;
       /* A uid with no generation cannot be checked for staleness later, so it is not kept: an
-       * unverifiable anchor is worse than none, because none simply falls back to the walk. */
+       * unverifiable anchor is worse than none, because none leaves the read's own-claim control
+       * unasked and the count check standing. */
       if (typeof uid === "number" && Number.isFinite(uid) && uid > 0 && generation !== null) {
         writeMemo(identity, generation, { claimUid: uid });
       } else {
@@ -3517,28 +3276,25 @@ export function makeLeaseIo(
     },
 
     async findOwnRecords(_installId: string): Promise<RawClaimMessage[] | null> {
-      /**
-       * A current folder read, not a server search. This was a windowed `UID SEARCH HEADER
-       * X-Ohmail-Install-Id`, and a real provider refused it on every poll while a plain
-       * current-folder delete succeeded every time; "stop organizing here" must always be able to
-       * finish. The locate is now the bounded read the gate decides from ({@link
-       * readMetaFolderWindow}), under the caller's lock and the current UIDVALIDITY, selection
-       * client-side. A window covering the folder whole is complete; one that could not is
-       * refused with a code, never sliced. Given up: residue buried under more than a window
-       * refuses `over_ceiling` — the caller's lapse bound ends that.
-       */
-      // The release reads the folder to enumerate its own records, so it is a read like the
-      // others and takes the same one budget across all four of its segments.
+      /* The gate's own read, complete or refused, under the caller's lock and the current
+         UIDVALIDITY; the selection is the caller's parser. A folder over the enumeration's ceiling
+         is `over_ceiling`, every other refusal `unreadable` with the read's error in `cause`. */
       const budget = metaReadBudget(now);
       const metaPath = await meta.path(budget);
       const lock = await lockWithin(client, metaPath, budget);
       try {
-        let read: MetaFolderRead;
+        let records: RawClaimMessage[];
         try {
-          read = await readMetaFolderWindow(client, metaPath, undefined, undefined, budget);
+          records = await readClaimsLocked(metaPath, budget);
         } catch (err) {
-          /* The read itself died — the connection, the SELECT, the FETCH. The provider's failure
-           * rides in `cause`, where the logger reduces it to class + code and never its text. */
+          if (metaFullOp(err) !== null) {
+            throw new ClaimReleaseError(
+              "over_ceiling",
+              `${META_FOLDER} holds more than one read of it may take, so a complete release cannot `
+              + "be told from a partial one and nothing was removed",
+              { cause: err },
+            );
+          }
           throw new ClaimReleaseError(
             "unreadable",
             `the records in ${META_FOLDER} could not be read on this connection, so a complete `
@@ -3546,112 +3302,10 @@ export function makeLeaseIo(
             { cause: err },
           );
         }
-        /* Beside the records, inside the lock — the refs below are facts only under THIS
-         * generation, and `removeClaims` refuses refs from another one. */
-        sampleGeneration();
-        if (read.truncated) {
-          throw new ClaimReleaseError(
-            "over_ceiling",
-            `${META_FOLDER} holds ${read.total ?? "more"} records where one read may take `
-            + `${META_RECORDS_MAX_PER_FETCH}, so a complete release cannot be told from a partial `
-            + "one and nothing was removed",
-          );
-        }
-        return read.records.map((m) => ({ ...m }));
+        return records.map((m) => ({ ...m }));
       } finally {
         lock.release();
       }
-    },
-
-    /**
-     * EVERY CLAIM IN THE FOLDER, wherever it sits — what the election reads when the window could
-     * not cover the folder.
-     *
-     * Only claims carry `X-Ohmail-Lease`: a settings document carries `X-Ohmail-Profile`, a request
-     * `X-Ohmail-Request`, an ack `X-Ohmail-Ack`. A MALFORMED claim still carries the discriminator
-     * and still matches, which is deliberate — arm 4 distinguishes "nobody has ever organized this"
-     * from "there is evidence here I cannot read", and that evidence must survive the search.
-     */
-    async listClaimRecords(): Promise<RawClaimMessage[] | null> {
-      // The window's fallback is a read like the window is, and a longer one — a STATUS, up to
-      // two windowed walks and a fetch per batch. One budget across all of it.
-      const budget = metaReadBudget(now);
-      const claimPath = await meta.path(budget);
-      const lock = await lockWithin(client, claimPath, budget);
-      try {
-        /* ── AN ANCHOR FROM ANOTHER GENERATION IS NOT AN ANCHOR ──────────────────────────────
-         *
-         * Checked BEFORE it is allowed to bound anything. The previous version checked only
-         * afterwards, whether the anchored record had come back — by which point the stale number
-         * had already set the floor of the gap read, so the reply omitted everything beneath it
-         * and still looked like a complete claim set. */
-        const generation = currentGeneration();
-        const remembered = readMemo(identity, generation);
-        let ownUid: number | null = null;
-        if (remembered.kind === "memo" && typeof remembered.memo.claimUid === "number") {
-          ownUid = remembered.memo.claimUid;
-        } else if (remembered.kind === "invalidated") {
-          /* The folder was replaced under us. Nothing remembered about the old numbering may bound
-           * this read — a uid from it can sit above every record now present, including a rival's,
-           * and the search would come back short while looking complete. */
-          lastClaimReadFact = {
-            fact: "lease_memo_invalidated", depth: 0, floor: 0, ownUid: null, compactionOwed: false,
-          };
-        }
-        const invalidated = lastClaimReadFact;
-        let gapWasRead = false;
-        const set = await searchHeaders(client, claimPath, { header: metaHeaderTerm(H.lease) }, {
-          budget,
-          gapDownTo: ownUid,
-          onGapRead: () => { gapWasRead = true; },
-          onShortfall: (fact) => {
-            /* A WALK THAT WAS SHORT BECAUSE ITS ANCHOR WAS DISCARDED should report the discard:
-             * "the folder is deeper than one pass" is true but downstream of the reason, and the
-             * reason is the one an operator can act on. The cause keeps precedence. */
-            if (invalidated !== null) return;
-            lastClaimReadFact = {
-              fact: fact.compactionOwed
-                ? "lease_compaction_owed"
-                : fact.closed ? "lease_gap_too_deep" : "lease_walk_short",
-              depth: Math.max(0, fact.floor - (fact.ownUid ?? fact.floor)),
-              floor: fact.floor,
-              ownUid: fact.ownUid,
-              compactionOwed: fact.compactionOwed,
-            };
-          },
-        });
-        if (set === null) return null;
-        lastClaimReadFact = invalidated;
-        /* ── THE REMEMBERED UID IS CHECKED AGAINST WHAT CAME BACK ────────────────────────────
-         *
-         * Uids are never reused inside a UIDVALIDITY, so the record at ours cannot become someone
-         * else's — but "cannot" is the kind of premise this module has been wrong about before,
-         * and the cost of being wrong here is renewing against a stranger's claim. If our uid is
-         * remembered and a record came back at it, it has to be a record we would recognise; if
-         * it is absent, our claim is simply gone, which is a legitimate answer an election is
-         * entitled to see. Either way the memory stops being trusted the moment it disagrees. */
-        if (ownUid !== null && !set.some((m) => m.ref === ownUid)) {
-          forgetMemo(identity, "claimUid");
-          lastClaimReadFact = {
-            fact: "lease_own_record_absent", depth: 0, floor: 0, ownUid, compactionOwed: false,
-          };
-          /* ── AND IF THAT NUMBER BOUNDED THE READ, THE READ IS NOT AN ANSWER ────────────────
-           *
-           * Where the walk covered the folder on its own, our claim being gone is a real answer
-           * and the election is entitled to it. Where the GAP read ran, the set's completeness
-           * rested on this uid being ours — and it is not, so the floor it set was arbitrary and
-           * anything below it went unread. Handing that to an election is handing it a partial
-           * claim set, which is the one input this module never accepts. */
-          if (gapWasRead) return null;
-        }
-        return set;
-      } finally {
-        lock.release();
-      }
-    },
-
-    claimReadFact(): ClaimReadFact | null {
-      return lastClaimReadFact;
     },
 
     async removeClaims(refs: readonly unknown[]): Promise<void> {
@@ -3677,26 +3331,18 @@ export function makeLeaseIo(
             + "record(s) and the delete, so the refs cannot be trusted and nothing was expunged",
           );
         }
-        // imapflow's `messageDelete` RESOLVES `false` when the server refuses the STORE/EXPUNGE
-        // — it does not reject. Swallowing that made a refused removal indistinguishable from a
-        // done one, and the gate's takeover path is now load-bearing on the difference: a
-        // handover whose displacement silently did not land returns `organize`, spends the
-        // caller's one-shot authorization, and leaves the beaten claim standing to win the next
-        // election. A refusal is a failure here, exactly as a rejection is.
-        const done = await client.messageDelete(uids, { uid: true });
-        if (done === false) {
-          throw new Error(`the server refused to expunge ${uids.length} claim message(s) from ${META_FOLDER}`);
+        /* In batches of {@link SWEEP_DELETE_BATCH}, each proved gone before the next. imapflow's
+           `messageDelete` RESOLVES `false` on a refused STORE/EXPUNGE, which is a failure here; and
+           a `true` proves only that an expunge RAN, so custody is read back ({@link proveGone}).
+           A failing batch throws with the earlier ones removed: the folder is smaller either way. */
+        for (let i = 0; i < uids.length; i += SWEEP_DELETE_BATCH) {
+          const batch = uids.slice(i, i + SWEEP_DELETE_BATCH);
+          const done = await client.messageDelete(batch, { uid: true });
+          if (done === false) {
+            throw new Error(`the server refused to expunge ${batch.length} claim message(s) from ${META_FOLDER}`);
+          }
+          await proveGone(client, batch, "claim message(s)", "remove_claims");
         }
-        /**
-         * And a `true` proves only that an expunge RAN, not that these messages went:
-         * `messageDelete`'s STORE result is not propagated, so a refused STORE under an accepted
-         * EXPUNGE resolves `true` having removed nothing, and the refusal check above cannot see
-         * it. Custody is read back instead — the uids must be GONE. On the release path this is
-         * the difference between reporting a claim removed and leaving it live while saying
-         * otherwise. {@link proveGone} holds the rule for all three deletion paths, including the
-         * late half: a read that could not RUN establishes nothing and must not return normally.
-         */
-        await proveGone(client, uids, "claim message(s)", "remove_claims");
       } finally {
         lock.release();
       }
@@ -3730,6 +3376,12 @@ export interface LeaseGateInput {
    * failures leaves the folder carrying a nonce the caller was never told about.
    */
   onNonceMinted?: (nonce: string) => void;
+  /**
+   * WHAT A CONFIRMED RENEW DOES WITH OTHER INSTALLS' CLAIM RESIDUE ({@link claimResidue}):
+   * `remove` (the default) removes it with our own older claims, `count` logs the plan and removes
+   * no foreign record. Our own older claims go in both modes.
+   */
+  residue?: "remove" | "count";
   log?: (event: string, detail: Record<string, unknown>) => void;
 }
 
@@ -3789,10 +3441,9 @@ export type MetaBaselineReading =
  * Every IO failure becomes {@link LeaseUnavailableError}; the one place a stand-down is
  * constructed is {@link decideLease}.
  */
-/** One of the gate's three reads of the folder, and whether it covered the whole of it. */
+/** One of the gate's reads of the folder, complete by construction. */
 interface GateRead {
   records: RawClaimMessage[];
-  truncated: boolean;
   /**
    * THE FOLDER'S UID GENERATION AT THE MOMENT OF THE READ, where the server reports one.
    *
@@ -3844,143 +3495,50 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     );
   }
   /**
-   * A folder too full to read is reported and then WORKED WITH, not refused. The gate is the one
-   * reader of `ohmail/_meta` that must not answer a full folder by refusing:
-   * `LeaseUnavailableError` is exempted by class and answered by not syncing the mailbox, so a
-   * refusal here would let one record over the ceiling — in a folder anyone with APPEND rights
-   * can write to — stop a customer's mail with no self-healing path. The truncation is LOGGED
-   * once per read with the counts (the one fault in this family that does not clear on its own),
-   * and the newest records the window covered are used. Every other failure still refuses.
+   * EVERY READ OF THE GATE IS COMPLETE, OR IT REFUSES AND WRITES NOTHING. The io reads the whole
+   * folder past the window ({@link readLeaseRecords}), so the election, the read-back, the custody
+   * check and the baseline each decide over every claim the folder holds. A truncated read from any
+   * io is `meta_folder_full`, never worked with; a refused enumeration keeps its code in `op`
+   * (`meta_folder_full` for the folder's size, `list_claims` for anything else) and is logged once.
    */
-  const readClaims = async (op: () => Promise<RawClaimMessage[]>): Promise<GateRead> => {
+  let enumRefusalSaid = false;
+  const readClaims = async (): Promise<GateRead> => {
     try {
-      const records = await op();
-      return { records, truncated: false, uidValidity: io.uidValidity?.() ?? null };
+      const records = await io.listClaims();
+      return { records, uidValidity: io.uidValidity?.() ?? null };
     } catch (err) {
       if (err instanceof MetaFolderTruncatedError) {
         log("lease_meta_truncated", { read: err.read, limit: err.limit, total: err.total });
-        return { records: [...err.records], truncated: true, uidValidity: io.uidValidity?.() ?? null };
+        throw new LeaseUnavailableError(err.message, { op: "meta_folder_full", cause: err });
+      }
+      if (err instanceof MetaEnumRefusedError) {
+        if (!enumRefusalSaid) {
+          enumRefusalSaid = true;
+          log("lease_enum_refused", { code: err.code, records: err.rows, total: err.total, ceiling: err.ceiling });
+          if (err.code === "blind") log("lease_enum_blind", { records: err.rows, total: err.total });
+        }
+        throw new LeaseUnavailableError(
+          `${err.message}, so no organizer can be proved or ruled out and nothing was written`,
+          { op: metaFullOp(err) ?? "list_claims", cause: err },
+        );
       }
       throw err;
     }
-  };
-
-  /**
-   * The election's read — neither the window nor a refusal; both obvious answers are wrong.
-   * Acting on the window reads a newest-first slice as the folder: an incumbent renewed just
-   * before five hundred appends is exactly an old record, so the election sees no claim, takes
-   * arm 4, and appends — two organizers. Refusing outright is `LeaseUnavailableError` every
-   * cycle, exempted by class: the mail stops and nothing quarantines. So the election asks the
-   * server: only claims carry `X-Ohmail-Lease`, so the reply is complete for claims regardless of
-   * position — the property an `organize` verdict needs. It refuses only when it cannot know.
-   * `err.records` stays on the error for the release path, its only consumer.
-   */
-  const electionRead = async (windowed: GateRead): Promise<GateRead> => {
-    if (!windowed.truncated) return windowed;
-
-    const set = await io.listClaimRecords?.();
-    if (set === null || set === undefined) {
-      /**
-       * Why it could not be read, where somebody will see it. The refusal below says the folder
-       * holds more than one read may take — the common cause, not always the real one: a read can
-       * also refuse because the folder was renumbered under a remembered uid, or the stretch
-       * below that uid is past the budget, and those do not heal by waiting, unlike a full folder
-       * the sweep eventually trims. Reporting them all as one thing is how a mailbox stuck for
-       * good looks merely busy. The adapter records which it was; this is the only reader.
-       */
-      const why = io.claimReadFact?.();
-      if (why) {
-        log("lease_claim_read_refused", {
-          fact: why.fact, depth: why.depth, floor: why.floor, ownUid: why.ownUid,
-          compactionOwed: why.compactionOwed,
-        });
-      }
-      /**
-       * A FOLDER SHAPE IS NOT A RIVAL, AND THE REFUSAL MAY NOT SOUND LIKE ONE.
-       *
-       * The records this read could not reach are really there and really below the walk: the uid
-       * space grew past it, one renewal at a time. Nobody else is holding the mailbox — the
-       * organizer's compaction is simply owed, and it is the organizer reading this sentence. The
-       * general refusal beneath says the folder is full, which is the other cause and the wrong
-       * thing to tell someone whose folder holds a handful of records.
-       */
-      if (why?.compactionOwed === true) {
-        throw new LeaseUnavailableError(
-          `${META_FOLDER} keeps its records more than ${SEARCH_WALK_SPAN} uids below the top of its `
-          + "uid space, which is further than one bounded read of it reaches — this install cannot "
-          + "prove no other organizer holds this mailbox until the folder is compacted, which its "
-          + "organizer does on its next pass",
-          { op: "meta_folder_full" },
-        );
-      }
-      throw new LeaseUnavailableError(
-        `${META_FOLDER} holds more records than one read may take, and the claims in it could not `
-        + "be asked for by header — this install cannot prove no other organizer holds this mailbox",
-        { op: "meta_folder_full" },
-      );
-    }
-
-    if (set.length > META_RECORDS_MAX_PER_FETCH) {
-      /* A claim set over the ceiling is not something an honest folder produces by itself: the only
-       * install that can legitimately have hundreds of claims here is THIS one, left by a writer
-       * whose expunge kept failing (a refused STORE with an accepted EXPUNGE resolves `true`). The
-       * protocol licenses an install to remove what it wrote, so its own residue is pruned to the
-       * newest and the cycle refuses; next cycle the set is smaller. Nothing another install wrote
-       * is touched — the folder is the customer's. */
-      /* Ordered by THIS install's own stamps, and that is licensed rather than overlooked: the
-         set holds only records this install wrote, and the skew check above has already refused
-         the cycle if its clock is outside the bound — so the order of its own appends is the
-         server's order too, to within a quarter of the window. */
-      const ours = set
-        .map((m) => ({ ref: m.ref, claim: parseClaim(m.raw, m.ref, m.internalDate ?? null) }))
-        .filter((c): c is { ref: unknown; claim: OrganizerClaim } =>
-          c.claim !== null && !isMalformed(c.claim) && c.claim.installId === self.installId);
-      /**
-       * "Newest" means what `coalesce` means by it, and this used to mean something else:
-       * comparing heartbeats alone with a strict `>` kept whichever copy the read yielded first
-       * among equals — input order deciding which of this install's own records survives.
-       * `coalesce` breaks the tie on the NONCE, and the record this prune keeps is the one the
-       * next gate reads back as ours: drop the copy carrying `self.lastNonce` and keep a sibling,
-       * and the next cycle finds a live claim under our own id it cannot account for — the clone
-       * defence's exact trigger, aimed at ourselves. Equal heartbeats are ordinary here: a renew
-       * and its residue are written in the same pass, stamped to the millisecond.
-       */
-      const newest = ours.reduce<{ ref: unknown; claim: OrganizerClaim } | null>(
-        (best, c) => (best === null || compareRecency(c.claim, best.claim, now) < 0 ? c : best),
-        null);
-      const residue = ours
-        .filter((c) => c !== newest)
-        .map((c) => c.ref)
-        .filter((r): r is unknown => r !== undefined);
-      log("lease_claim_set_overflow", { claims: set.length, pruning: residue.length });
-      if (residue.length > 0) {
-        // Best effort: a refusal to prune is not a reason to fail differently. The cycle refuses
-        // either way, and the next one tries again.
-        await io.removeClaims(residue).catch(() => undefined);
-      }
-      throw new LeaseUnavailableError(
-        `${META_FOLDER} holds ${set.length} claims, more than one read may take`,
-        { op: "meta_folder_full" },
-      );
-    }
-
-    log("lease_claim_set_searched", { claims: set.length });
-    return { records: set, truncated: false, uidValidity: windowed.uidValidity };
   };
 
   let messages: RawClaimMessage[];
   /** The UID generation the ELECTION saw — the confirm compares refs against this. See there. */
   let electionUidValidity: number | bigint | null = null;
   try {
-    const first = await electionRead(await readClaims(() => io.listClaims()));
+    const first = await readClaims();
     messages = first.records;
     electionUidValidity = first.uidValidity;
+    const enumerated = io.lastEnumeration?.() ?? null;
+    if (enumerated !== null) log("lease_meta_enumerated", { ...enumerated });
   } catch (err) {
-    /* A REFUSAL THAT ALREADY SAYS WHY KEEPS ITS OWN WORDS. The election's `meta_folder_full` names a
-     * condition this wrapper cannot: the folder is over the ceiling AND the claims in it could not
-     * be asked for. Re-wrapping it as `list_claims` would erase the one field that tells an operator
-     * which provider refused the header search, which is what the `op` is carried for. Same CLASS
-     * either way, so every host's exemption is unaffected. */
+    /* A REFUSAL THAT ALREADY SAYS WHY KEEPS ITS OWN WORDS: `meta_folder_full` names a folder too
+     * full to read, which `list_claims` would erase. Same CLASS either way, so every host's
+     * exemption is unaffected. */
     if (err instanceof LeaseUnavailableError) throw err;
     throw new LeaseUnavailableError(
       `the organizer lease in ${META_FOLDER} could not be read; this mailbox cannot be organized safely`,
@@ -4189,17 +3747,10 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
    */
   let verifyClaims: readonly ClaimRecord[];
   try {
-    /**
-     * Through `readClaims` for the election's reason: a full folder must not turn a landed renew
-     * into a mailbox that stops syncing. The old argument — everything the verify could newly
-     * need is inside a newest-first window by construction — was false: a window is bounded by
-     * COUNT, not time. A rival renews, a ceiling's worth of appends arrive, then we append: the
-     * rival is more than a ceiling back, `ownSurvived` passes, and the rival goes on organizing
-     * from the other side — two organizers without a lost write. So a verify over a TRUNCATED
-     * folder asks the server for the claim set, exactly as the election does; below the ceiling
-     * no search is issued; an unobtainable set refuses.
-     */
-    const after = (await electionRead(await readClaims(() => io.listClaims()))).records;
+    /* As complete as the election's read, whatever the folder did in between: a rival renewed
+       under a burst of appends is still seen, so a write is never confirmed over a read that could
+       not see all of what it decides about. */
+    const after = (await readClaims()).records;
     verifyClaims = after
       .map((m) => parseClaim(m.raw, m.ref, m.internalDate ?? null))
       .filter((c): c is ClaimRecord => c !== null);
@@ -4309,10 +3860,9 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     return { verdict: confirmed, nonce: null, uidValidity: electionUidValidity, stamp: noBaseline };
   }
 
-  // WHAT THIS WIN DISPLACED, plus our own older copies. One expunge, so a takeover cannot land
-  // half-applied — leaving the beaten claim behind is what made a takeover reverse itself on the
-  // next cycle, and leaving our own older copies behind is the append-then-expunge residue readers
-  // coalesce away.
+  // WHAT THIS WIN DISPLACED, plus our own older copies. A takeover that lands half-applied is
+  // caught by the custody re-read below — leaving the beaten claim behind is what made a takeover
+  // reverse itself on the next cycle; our own older copies are the residue readers coalesce away.
   // A best-effort release of a set of refs — the failure mode of every release: logged, never
   // thrown, because a cleanup must not convert the state it is cleaning into a fault.
   const releaseRefs = async (refs: readonly unknown[]): Promise<void> => {
@@ -4327,11 +3877,25 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     }
   };
 
-  const toRemove = [...ourRefs, ...verdict.displace];
+  /* A RENEW'S CLEANUP: our own older claims, as ever, and — displacing nothing — the foreign
+     residue no election can rank ({@link claimResidue}), computed over the verify's complete read,
+     oldest uid first, at most {@link RESIDUE_REMOVE_MAX_PER_PASS} per pass. A takeover already
+     displaces every foreign claim, so residue is a renew's alone; `count` mode removes none. */
+  const residueMode = input.residue ?? "remove";
+  const byUid = (a: unknown, b: unknown): number =>
+    (typeof a === "number" ? a : Infinity) - (typeof b === "number" ? b : Infinity) || 0;
+  const foreign = verdict.displace.length === 0
+    ? claimResidue(verifyClaims, self, now, staleWindowMs).map((c) => c.ref)
+      .filter((r): r is unknown => r !== undefined).sort(byUid)
+    : [];
+  const thisPass = residueMode === "remove" ? foreign.slice(0, RESIDUE_REMOVE_MAX_PER_PASS) : [];
+  const toRemove = [...new Set([...ourRefs, ...thisPass, ...verdict.displace])].sort(byUid);
+  let cleanupLanded = toRemove.length === 0;
   if (toRemove.length > 0) {
     let removalErr: unknown = null;
     try {
       await io.removeClaims(toRemove);
+      cleanupLanded = true;
     } catch (err) {
       if (verdict.displace.length === 0) {
         // An ORDINARY renew's failed cleanup is harmless: the folder holds our new claim plus
@@ -4362,14 +3926,14 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     // verdict, so a refused STORE under a no-op EXPUNGE resolves `true` with the message still
     // there, and a shared EXPUNGE on a non-UIDPLUS server can take messages this gate never named
     // — including, through a racing clone's release, the claim just written. A renew's cleanup
-    // keeps trusting the resolve: its leftovers are our own duplicates, not worth a FETCH per
-    // cycle. The re-read has its own failure path: a FETCH rejecting after a removal that may
+    // is proved per batch inside `removeClaims`; what it leaves is our own duplicates and residue
+    // the next pass takes, not worth a re-read per cycle. The re-read has its own failure path: a FETCH rejecting after a removal that may
     // have landed is a READ fault — rolling back could leave no claim at all — so it throws
     // `list_claims` and rolls nothing back.
     if (verdict.displace.length > 0) {
       let read: GateRead;
       try {
-        read = await readClaims(() => io.listClaims());
+        read = await readClaims();
       } catch (err) {
         throw new LeaseUnavailableError(
           `the organizer lease in ${META_FOLDER} could not be re-read after the handover was ` +
@@ -4385,23 +3949,12 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
         .filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId && c.nonce === nonce);
       const stillRefs = new Set(after.map((m) => m.ref));
       /**
-       * An absence is only evidence for a ref the window actually covered. A custody check — is
-       * the claim I displaced really gone — is the one place a truncated read cannot be worked
-       * with: old is exactly what a newest-first window drops, so a displaced claim outside the
-       * window is absent for the same reason an expunged one is, and reading that as success
-       * confirms a handover that never landed. UIDs ascend with arrival, so a ref below the
-       * window's floor is one this read could not have seen: treated exactly as a SURVIVOR,
-       * because "still there" and "I could not look" have the same correct answer here.
-       */
-      /**
-       * And the UID GENERATION decides whether the two reads' refs are comparable at all: after a
-       * renumbering `stillRefs.has(r)` compares two numbering schemes and can answer "gone" for a
-       * claim sitting right there under a new uid. Three answers, not two, and the door
-       * (`epoch.ts`) knows them: agree, contradict, or NOBODY NAMED ONE — which this used to read
-       * as "no change detected". Both non-`usable` answers are one fact, this read cannot speak
-       * about those refs, and take the truncated read's arm: could-not-look, never a stand-down.
-       * What a server that never names one costs is measured in
-       * `organizer-lease-meta-window.test.ts`.
+       * The read is complete, so an absent ref is an expunged one — while the UID GENERATION says
+       * the two reads' refs are comparable at all. After a renumbering `stillRefs.has(r)` compares
+       * two numberings and can answer "gone" for a claim sitting there under a new uid. The door
+       * (`epoch.ts`) answers agree, contradict, or NOBODY NAMED ONE; both non-`usable` answers mean
+       * this read cannot speak about those refs: could-not-look, never a stand-down. What a server
+       * that never names one costs is measured in `organizer-lease-meta-window.test.ts`.
        */
       const electionEpoch = epochOf(electionUidValidity);
       const confirmEpoch = epochOf(read.uidValidity);
@@ -4418,19 +3971,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
         log("lease_folder_renumbered", { op: "remove_claims" satisfies LeaseOp });
       }
       const incomparable = epochs !== "usable";
-      /* An absence is only evidence for a ref the window COVERED — and the check is gated on
-       * `truncated` so the floor is a real observation rather than a sentinel doing the work. On a
-       * complete read there is nothing to prove: every ref that exists is in `after`. */
-      const unprovable = read.truncated || incomparable
-        ? verdict.displace.find((r) => {
-          if (stillRefs.has(r)) return false;
-          if (incomparable) return true;
-          const floor = after.reduce<number>(
-            (lo, m) => (typeof m.ref === "number" && m.ref < lo ? m.ref : lo), Infinity,
-          );
-          return !(typeof r === "number" && Number.isFinite(floor) && r >= floor);
-        })
-        : undefined;
+      const unprovable = incomparable ? verdict.displace.find((r) => !stillRefs.has(r)) : undefined;
       const survivor = verdict.displace.find((r) => stillRefs.has(r)) ?? unprovable;
 
       if (ownStanding.length === 0) {
@@ -4513,6 +4054,10 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
       }
     }
   }
+  if (foreign.length > 0 || (residueMode === "count" && verdict.displace.length === 0)) {
+    const removed = cleanupLanded ? thisPass.length : 0;
+    log("lease_claim_residue", { residue: foreign.length, removed, remaining: foreign.length - removed });
+  }
   /**
    * THE BASELINE, AND THE PROOF THAT IT IS ONE — the gate's last act, issued and never awaited.
    *
@@ -4527,7 +4072,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     const stamp = io.stampMeta === undefined ? null : await io.stampMeta().catch(() => null);
     let after: readonly ClaimRecord[];
     try {
-      after = (await electionRead(await readClaims(() => io.listClaims()))).records
+      after = (await readClaims()).records
         .map((m) => parseClaim(m.raw, m.ref, m.internalDate ?? null))
         .filter((c): c is ClaimRecord => c !== null);
     } catch {
@@ -5183,11 +4728,9 @@ export function isAckRecord(raw: string): boolean {
 }
 
 /**
- * DOES THE ACK HEADER CARRY `1` — the local twin of the sweep's `HEADER X-Ohmail-Ack 1` term
- * ({@link metaHeaderTerm}), which matches a value CONTAINING it. Deliberately NOT {@link
- * isAckRecord}, which reads the value exactly: the sweep's fallback has to reach the same set the
- * compound SEARCH reaches or the two forms delete different records, and a provider's answer is
- * not a place to change what a sweep covers.
+ * DOES THE ACK HEADER CARRY `1` — the set the sweep's old `HEADER X-Ohmail-Ack 1` term matched
+ * ({@link metaHeaderTerm}): a value CONTAINING it. Deliberately NOT {@link isAckRecord}, which
+ * reads the value exactly: the sweep covers the records it always covered, on every provider.
  */
 function hasAckHeader(raw: string): boolean {
   const headerBlock = raw.split(/\r?\n\r?\n/, 1)[0] ?? "";
@@ -5421,14 +4964,6 @@ export const META_RECORDS_MAX_PER_FETCH = 500;
  */
 export const REQUEST_SET_MAX = META_RECORDS_MAX_PER_FETCH;
 
-/* `SEARCH_UIDS_MAX` is declared far above, beside the search it bounds, and must stay one past
- * this ceiling. Spelled as a literal there because this constant is declared later in the file;
- * pinned here so the two cannot drift apart silently — a cap BELOW the ceiling would make an
- * exactly-at-the-ceiling claim set look oversized, and one far above would put the bound back
- * where it cannot do its job. */
-const _searchCapMatchesCeiling: SEARCH_UIDS_MAX_IS_CEILING_PLUS_ONE = true;
-type SEARCH_UIDS_MAX_IS_CEILING_PLUS_ONE = typeof SEARCH_UIDS_MAX extends 501 ? true : never;
-void _searchCapMatchesCeiling;
 
 /** The shared read: the folder's headers, unfiltered and bounded — the parsers sort it out. */
 export interface MetaRecordsIo {
@@ -5463,11 +4998,10 @@ export interface RequestOrganizerIo extends MetaRecordsIo {
    * Expunge every ack older than `before`, WITHOUT reading the folder first. The ack sweep is the
    * only thing that ever makes `ohmail/_meta` smaller, and it sat behind the bounded read — which
    * refuses a folder over the ceiling — so a folder that crossed the ceiling BY ACKS could never
-   * come back down: the read refuses, the sweep never runs, every drain refuses for ever. The
-   * compactor was locked behind the thing it exists to fix. Asked of the server by header and
-   * date — integers in, an expunge out, no FETCH, bounded by construction; INTERNALDATE of an ack
-   * this organizer appended is its `ackedAt` to the day. Optional: a client that cannot search
-   * does not sweep. Returns how many were removed.
+   * come back down: the read refuses, the sweep never runs, every drain refuses for ever. So it
+   * reads uid windows by FETCH (header and INTERNALDATE, never SEARCH), bounded per window and per
+   * pass; INTERNALDATE of an ack this organizer appended is its `ackedAt` to the day. Returns how
+   * many were removed.
    */
   sweepStaleAcks?(before: Date): Promise<number>;
   /**
@@ -5668,38 +5202,14 @@ export function makeRequestReaderIo(
  * the boundary the type system can actually hold.
  */
 /**
- * WHICH CONNECTIONS HAVE REFUSED THE COMPOUND ACK SEARCH.
- *
- * Keyed on the CLIENT, which is the connection: a re-attach builds a new one and the question is
- * put again, while every io built over one connection shares the answer. NOT the io — the drain
- * builds a fresh one every cycle, so a latch there would put the refused term back on the wire
- * every thirty seconds and the fallback would never be reached twice.
- */
-const compoundAckSearchRefused = new WeakSet<object>();
-
-/**
- * THE STALE ACKS IN ONE UID WINDOW, ASKED TWO WAYS. iCloud refuses the compound term
- * (`HEADER X-Ohmail-Ack 1 BEFORE <date> UID lo:hi`) and imapflow resolves `false` rather than
- * rejecting; the sweep is the only thing that ever makes this folder smaller, so that provider's
- * folder only grows until every bounded read of it refuses. The fallback puts the same question
- * with no SEARCH — a uid-range FETCH of the headers this sweep keys on — under the two terms it
- * spelled: the header carrying `1` and an INTERNALDATE below a cutoff already floored to midnight.
- * Same window, same set. `null` is neither form could answer; a window it could not read WHOLE
- * throws instead.
+ * THE STALE ACKS IN ONE UID WINDOW, READ BY FETCH — the window's headers and INTERNALDATE, keyed
+ * on the ack header carrying `1` and a server stamp below a cutoff already floored to midnight.
+ * Never a SEARCH: a server whose header search answers nothing (or refuses it, iCloud's compound
+ * term) would otherwise report "none stale" and the one thing that shrinks this folder would stop.
  */
 async function staleAckUidsInWindow(
-  client: LeaseImapClient, lo: number, hi: number, before: Date,
-): Promise<number[] | null> {
-  if (typeof client.search === "function" && !compoundAckSearchRefused.has(client)) {
-    const page = await client.search(
-      { header: metaHeaderTerm(AH.ack), before, uid: `${lo}:${hi}` }, { uid: true },
-    );
-    if (Array.isArray(page)) return page;
-    /* Not an exhausted budget and not an empty window: this server declines this form, and it will
-     * decline it for the life of the connection. Latch it and ask the other way. */
-    compoundAckSearchRefused.add(client);
-  }
-  if (typeof client.fetch !== "function") return null;
+  client: Pick<LeaseImapClient, "fetch">, lo: number, hi: number, before: Date,
+): Promise<number[]> {
   const read = await boundedFetch(
     client.fetch(`${lo}:${hi}`, { uid: true, headers: true, internalDate: true }, { uid: true }),
     {
@@ -5746,36 +5256,26 @@ export function makeRequestOrganizerIo(
     /**
      * See {@link RequestOrganizerIo.sweepStaleAcks}. Only acks match — a request carries
      * `X-Ohmail-Request` and a claim `X-Ohmail-Lease` — so nothing else can be caught by it, and
-     * `before` is compared against INTERNALDATE by the server rather than by a parse here.
+     * `before` is compared against the server's INTERNALDATE, never a header.
      */
     async sweepStaleAcks(before: Date): Promise<number> {
       const metaPath = await meta.path();
       const lock = await client.getMailboxLock(metaPath);
       try {
-        if (typeof client.search !== "function" && typeof client.fetch !== "function") {
+        if (typeof client.fetch !== "function") {
           throw new RequestUnavailableError(
-            `${META_FOLDER} can be neither searched nor fetched by this connection, so stale `
-            + "acknowledgements cannot be identified and none were removed",
+            `${META_FOLDER} cannot be fetched by this connection, so stale acknowledgements cannot `
+            + "be identified and none were removed",
             { op: "sweep_acks", code: "sweep_no_reader" },
           );
         }
-        /**
-         * The cutoff is floored to a day boundary, and that is not rounding. IMAP's SEARCH BEFORE
-         * takes a DATE; without `WITHIN` the library widens a time-of-day cutoff by one day so a
-         * caller is never given less than it asked for — right for a reader, exactly wrong here,
-         * because this call DELETES and the widened term reaches records filed on the cutoff's
-         * own day: an acknowledgement half a day old removed as though a day past its life.
-         * Flooring makes the term one the library sends unchanged and moves the only error to the
-         * safe side: keeping a record too long costs one row in a folder swept again next cycle;
-         * removing a live one loses an answer somebody is waiting for.
-         */
+        /* The cutoff is floored to a day boundary, the set the SEARCH form reached, and the only
+           error it leaves is on the safe side: keeping a record too long costs one row in a folder
+           swept again next cycle; removing a live one loses an answer somebody is waiting for. */
         const floored = ackSweepCutoff(before);
-        /* ── WINDOWED, LIKE EVERY OTHER READ HERE ────────────────────────────────────────────
-         *
-         * The ceiling comes from the server rather than the connection's cached mailbox object,
-         * for the reason the claim search states: a stale ceiling puts every window below the
-         * records that matter. Without one there is no window to ask in, and this module has one
-         * answer for "I cannot ask in a way I can bound". */
+        /* WINDOWED. The ceiling comes from the server, never the connection's cached mailbox
+         * object: a stale ceiling puts every window below the records that matter. Without one
+         * there is no window to read, and this module has one answer for that. */
         const top = await highestUid(client, metaPath);
         if (top === null) {
           throw new RequestUnavailableError(
@@ -5798,22 +5298,7 @@ export function makeRequestOrganizerIo(
         let hi = resumeAt !== undefined && resumeAt < top ? resumeAt : top;
         for (let w = 0; w < SWEEP_SEARCH_WINDOW_BUDGET; w++) {
           const lo = Math.max(1, hi - SEARCH_UID_WINDOW + 1);
-          const page = await staleAckUidsInWindow(client, lo, hi, floored);
-          /* A REFUSED SEARCH IS NOT AN EXHAUSTED BUDGET. The library resolves `false` rather
-           * than rejecting, and treating that as "stop looking" reports a sweep that never ran —
-           * the caller reads 0 stale and concludes there is nothing to compact, which is the one
-           * conclusion that keeps a full folder full. Running out of WINDOWS is a smaller day's
-           * work and breaks; a refusal is answered by the other form ({@link
-           * staleAckUidsInWindow}), and only a window neither form could answer throws. */
-          if (page === null) {
-            throw new RequestUnavailableError(
-              `the search for stale acknowledgements in ${META_FOLDER} was refused and this `
-              + "connection cannot fetch the window instead, so none were removed and the folder "
-              + "was not compacted",
-              { op: "sweep_acks", code: "sweep_search_refused_no_fetch" },
-            );
-          }
-          found.push(...page);
+          found.push(...await staleAckUidsInWindow(client, lo, hi, floored));
           /* ── WHERE THIS PASS WOULD RESUME, DECIDED NOW AND WRITTEN LATER ────────────────
            *
            * Moving the mark here — before a single record has been removed — claims the stretch

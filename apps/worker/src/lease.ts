@@ -203,6 +203,8 @@ export interface MailboxLeaseInput {
   staleAfterMs?: number;
   /** See {@link LeaseGateInput.onNonceMinted} — the identity moves with the write, not the answer. */
   onNonceMinted?: (nonce: string) => void;
+  /** See {@link LeaseGateInput.residue}; the host's `TF_LEASE_RESIDUE`, absent meaning `remove`. */
+  residue?: "remove" | "count";
   log?: (event: string, detail: Record<string, unknown>) => void;
 }
 
@@ -255,6 +257,7 @@ export async function readMailboxLease(input: MailboxLeaseInput): Promise<Mailbo
     ...(input.takeover !== undefined ? { takeover: input.takeover } : {}),
     ...(input.staleAfterMs !== undefined ? { staleAfterMs: input.staleAfterMs } : {}),
     ...(input.onNonceMinted !== undefined ? { onNonceMinted: input.onNonceMinted } : {}),
+    ...(input.residue !== undefined ? { residue: input.residue } : {}),
     ...(leaseLog !== undefined ? { log: leaseLog } : {}),
   });
 

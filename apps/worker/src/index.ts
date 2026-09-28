@@ -1705,6 +1705,7 @@ export async function startWorkerWithLock(
           ? { authorizedAt: lease.takeoverAuthorizedAt, intent: lease.takeoverIntent }
           : null,
         ...(organizerStaleAfterMs !== undefined ? { staleAfterMs: organizerStaleAfterMs } : {}),
+        ...(config.organizer?.leaseResidue !== undefined ? { residue: config.organizer.leaseResidue } : {}),
         log: (event: string, detail: Record<string, unknown>): void => {
           log.info(event, { ...detail, mailboxId: mb.mailboxId, accountId: mb.accountId });
         },

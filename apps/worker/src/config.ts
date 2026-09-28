@@ -486,6 +486,11 @@ export interface WorkerConfig {
      * `ohmail/_meta`; `count` only logs `profile_tidy_planned`, the setting a first deploy reads.
      */
     profileTidy?: "remove" | "count";
+    /**
+     * `TF_LEASE_RESIDUE`: `remove` (the default) lets a confirmed renew remove other installs'
+     * claim residue no election can rank; `count` only logs `lease_claim_residue`.
+     */
+    leaseResidue?: "remove" | "count";
   };
   /** TEST SEAM: injected logger. Absent ⇒ a real JSON-lines logger on stdout. */
   logger?: Logger;
@@ -931,6 +936,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       ...(env.TF_LEASE_STALE_MS ? { staleAfterMs: optInt(env, "TF_LEASE_STALE_MS", 0) } : {}),
       ...(env.TF_PROFILE_FLUSH_MS ? { profileFlushIntervalMs: optInt(env, "TF_PROFILE_FLUSH_MS", 0) } : {}),
       profileTidy: profileTidyFrom(env),
+      leaseResidue: leaseResidueFrom(env),
     },
     alertWebhookUrl: env.TF_ALERT_WEBHOOK_URL,
     alertEmail: env.TF_ALERT_EMAIL,
@@ -1158,6 +1164,14 @@ export function profileTidyFrom(env: NodeJS.ProcessEnv): "remove" | "count" {
   if (v === undefined || v === "") return "remove";
   if (v === "remove" || v === "count") return v;
   throw new Error(`TF_PROFILE_TIDY=${JSON.stringify(v)} is neither "remove" nor "count"`);
+}
+
+/** `TF_LEASE_RESIDUE`, refused at boot unless it names one of the two modes. */
+export function leaseResidueFrom(env: NodeJS.ProcessEnv): "remove" | "count" {
+  const v = env.TF_LEASE_RESIDUE?.trim();
+  if (v === undefined || v === "") return "remove";
+  if (v === "remove" || v === "count") return v;
+  throw new Error(`TF_LEASE_RESIDUE=${JSON.stringify(v)} is neither "remove" nor "count"`);
 }
 
 export function organizerDisplayNameFrom(env: NodeJS.ProcessEnv): string | undefined {
