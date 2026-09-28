@@ -405,6 +405,9 @@ verify every update against a public key committed in this tree before it may
 install; a `.deb`, `.rpm` or Flatpak install updates through your package
 manager instead. [Updates](#updates), under Going deeper, has the rest.
 
+One copy of ohmail runs per login session; opening it again brings the running
+window forward.
+
 ### macOS
 
 > [!IMPORTANT]

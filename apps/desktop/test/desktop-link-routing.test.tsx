@@ -100,6 +100,9 @@ const submit = async (el: HTMLElement): Promise<void> => {
   await act(async () => {
     form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
   });
+  /* One task after the press: every shell call is raced against its deadline, one promise step
+     longer than a bare call, and a link proof takes several of them. */
+  await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 };
 
 const PIN = "D".repeat(43);

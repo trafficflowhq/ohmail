@@ -35,7 +35,7 @@ import {
   unknownSpeaks, type HostConnection,
 } from "../../webapp/app/shell/host-connection";
 import { BootStatus } from "./BootStatus.js";
-import { bridgeAvailable, bridgeFetch, engineStartOver, engineUnlockRetry } from "./bridge-fetch.js";
+import { bridgeAvailable, bridgeFetch, engineRetry, engineStartOver, engineUnlockRetry } from "./bridge-fetch.js";
 import {
   cloudNoticeDue, sessionOf, sessionReaders, signInCauseOf, waitForSessionMove, type CloudSessionWire,
 } from "./cloud-session.js";
@@ -806,24 +806,30 @@ export function DesktopGate() {
         />
       );
     }
-    if (gate.failureClass !== undefined) {
-      const locked = gate.failureClass === "DataDirLockedError";
+    if (gate.failureClass === "DataDirLockedError") {
       return (
         <GateNotice
-          reason={locked ? DOOR_COPY.gateLockedStore : DOOR_COPY.gateEngineReported(gate.failureClass)}
-          actionLabel={locked ? DOOR_COPY.gateUnlockRetry : DOOR_COPY.gateTryAgain}
-          onAction={
-            locked
-              ? () => void engineUnlockRetry().catch(() => undefined).then(() => void refresh())
-              : () => void refresh()
-          }
+          reason={DOOR_COPY.gateLockedStore}
+          actionLabel={DOOR_COPY.gateUnlockRetry}
+          onAction={() => void engineUnlockRetry().catch(() => undefined).then(() => void refresh())}
+        />
+      );
+    }
+    /* EVERY OTHER GIVEN-UP ENGINE IS RESTARTED BY THE PRESS; a card with no engine behind it (an
+       unreachable shell, a build without one) can only ask again, and its label says so. */
+    const givenUp = shell.kind === "status" && shell.status.state === "failed";
+    if (gate.failureClass !== undefined || givenUp) {
+      return (
+        <RetryNotice
+          reason={gate.failureClass !== undefined ? DOOR_COPY.gateEngineReported(gate.failureClass) : gate.reason}
+          onSettled={() => void refresh()}
         />
       );
     }
     return (
       <GateNotice
         reason={gate.reason}
-        actionLabel={DOOR_COPY.gateTryAgain}
+        actionLabel={DOOR_COPY.gateReadAgain}
         onAction={() => void refresh()}
       />
     );
@@ -1631,6 +1637,30 @@ function runMenuCommand(command: MenuCommand): void {
 function typeKey(init: KeyboardEventInit): void {
   if (typeof document === "undefined") return;
   document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+}
+
+/**
+ * AN ENGINE THE SHELL GAVE UP ON, for every class without a card of its own. The press restarts
+ * it through `engine_retry`, which removes nothing; a refused press says so.
+ */
+function RetryNotice({ reason, onSettled }: { reason: string; onSettled: () => void }) {
+  const [refused, setRefused] = useState(false);
+  const [pressing, setPressing] = useState(false);
+  const press = (): void => {
+    if (pressing) return;
+    setPressing(true);
+    void engineRetry()
+      .then(() => setRefused(false), () => setRefused(true))
+      .finally(() => {
+        setPressing(false);
+        onSettled();
+      });
+  };
+  return (
+    <GateNotice reason={reason} actionLabel={DOOR_COPY.gateTryAgain} onAction={press}>
+      {refused ? <p role="alert">{DOOR_COPY.gateRetryRefused}</p> : null}
+    </GateNotice>
+  );
 }
 
 /**

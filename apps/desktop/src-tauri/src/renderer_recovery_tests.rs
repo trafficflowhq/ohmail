@@ -65,3 +65,25 @@ fn the_relaunch_sentence_says_what_happened_and_what_the_button_does() {
     assert!(RELAUNCH_MESSAGE.contains("stopped again"));
     assert!(RELAUNCH_MESSAGE.contains(RELAUNCH_BUTTON));
 }
+
+#[test]
+fn a_webview2_renderer_that_exits_or_hangs_is_the_page_and_nothing_else_is() {
+    // COREWEBVIEW2_PROCESS_FAILED_KIND: 1 render exited, 2 unresponsive, 0 the browser process.
+    assert_eq!(windows_failure(1), Failure::Renderer("render_exited"));
+    assert_eq!(windows_failure(2), Failure::Renderer("render_unresponsive"));
+    assert_eq!(windows_failure(0), Failure::Browser);
+    // GPU (6), utility (4), a message frame's renderer (3): the page lives on, nothing is reloaded.
+    for kind in [3, 4, 5, 6, 7, 8, 9] {
+        assert_eq!(windows_failure(kind), Failure::Ignored, "kind {kind}");
+    }
+}
+
+#[test]
+fn a_browser_process_exit_offers_the_relaunch_once() {
+    let mut d = Deaths::default();
+    let t0 = Instant::now();
+    assert_eq!(d.on_fatal(t0), Action::OfferRelaunch);
+    assert_eq!(d.on_fatal(t0 + Duration::from_secs(1)), Action::AlreadyOffered);
+    // …and a renderer death after it does not reload under the question.
+    assert_eq!(d.on_death(t0 + Duration::from_secs(2)), Action::AlreadyOffered);
+}

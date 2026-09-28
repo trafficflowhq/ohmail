@@ -8151,6 +8151,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                  an identifier this build produces, never a server's text — nothing here carries
                  a message, a server name or an address. */
               profileBlocked: r.connection.profileBlocked,
+              /* WHAT THE LAST STOP LEFT IN THE SETTINGS DOCUMENT, and only the two a surface owes a
+                 sentence (this computer's decisions are on this computer only). Absent otherwise,
+                 and gone once this install claims the mailbox again. */
+              ...(r.organizer.settingsLeft === "kept_other" || r.organizer.settingsLeft === "not_saved"
+                ? { settingsLeft: r.organizer.settingsLeft } : {}),
             }));
             /* One line where this route answers, so a question that never arrived can be told
                from an answer that was refused — from the log's side those are the same absence.

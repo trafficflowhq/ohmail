@@ -37,6 +37,9 @@ const WINDOW_COMMANDS: &[&str] = &[
     // …and its sibling for a store the engine could not open: move the store aside (kept, the
     // shell resolves the path) and start the engine again, which reads the mail from its source.
     "engine_start_over",
+    // …and the card's Try again for every other class: start the given-up engine again, removing
+    // nothing. Refused until the shell has given up, like both presses above.
+    "engine_retry",
     // THE CANDIDATE WALK'S ONE STEP IN THIS PROCESS. The paired door's first question — is the
     // computer at this address the one the pairing link came from — is answered by the ENGINE,
     // whose pin ceremony is the only one in this repository; a fresh install has no engine, so

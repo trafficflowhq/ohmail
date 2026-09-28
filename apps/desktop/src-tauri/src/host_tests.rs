@@ -461,6 +461,66 @@ fn a_daemon_that_does_not_answer_is_not_running() {
     assert_eq!(probe_with(&|args| cli.run(args)), Err(Problem::NotRunning));
 }
 
+// ── A CLI that never answers is stopped at the bound ──────────────────────────────────────────
+//
+// A wedged daemon that accepts the connection and never answers held the launch (the probe runs
+// from `HostBoot::detect`) and every host-mode press. The stubs are real processes, because the
+// defect was a real `wait` on one.
+
+#[cfg(unix)]
+fn stub_cli(name: &str, body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("ohmail-ts-stub-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("stub dir");
+    let cli = dir.join("tailscale");
+    std::fs::write(&cli, format!("#!/bin/sh\n{body}\n")).expect("stub");
+    std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).expect("exec bit");
+    cli
+}
+
+#[cfg(unix)]
+#[test]
+fn a_tailscale_cli_that_never_answers_is_stopped_at_the_bound() {
+    let cli = stub_cli("silent", "exec sleep 600");
+    let args = vec!["status".to_string(), "--json".to_string()];
+    let started = std::time::Instant::now();
+    let got = run_cli_bounded(&cli, &args, std::time::Duration::from_millis(300));
+    assert!(matches!(got, CliResult::TimedOut), "a CLI that never answered was not stopped");
+    assert!(started.elapsed() < std::time::Duration::from_secs(5), "the bound did not hold");
+    let _ = std::fs::remove_dir_all(cli.parent().expect("stub dir"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_tailscale_cli_that_answers_is_read_whole() {
+    // The ordinary case: the bound must not cut an answer that arrives in time.
+    let cli = stub_cli("answers", &format!("printf '%s' '{STATUS_RUNNING}'"));
+    let got = run_cli_bounded(&cli, &["status".to_string()], std::time::Duration::from_secs(5));
+    match got {
+        CliResult::Ran { code: Some(0), stdout } => assert_eq!(stdout, STATUS_RUNNING),
+        _ => panic!("an answering CLI was not read as its answer"),
+    }
+    let _ = std::fs::remove_dir_all(cli.parent().expect("stub dir"));
+}
+
+#[cfg(unix)]
+#[test]
+fn the_launch_probe_returns_when_the_cli_never_answers() {
+    // Through the SHIPPED runner, the one `HostBoot::detect` passes: the stub is found by the
+    // same variable an operator would set, and the probe must come back as a guided state.
+    let cli = stub_cli("launch", "exec sleep 600");
+    std::env::set_var(TAILSCALE_PATH_VAR, &cli);
+    let (done, answered) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = done.send(probe_with(&|args| run_tailscale(args)));
+    });
+    let got = answered.recv_timeout(TAILSCALE_BOUND + std::time::Duration::from_secs(10));
+    std::env::remove_var(TAILSCALE_PATH_VAR);
+    let _ = std::fs::remove_dir_all(cli.parent().expect("stub dir"));
+    assert_eq!(got.expect("the launch probe never returned"), Err(Problem::NotRunning));
+}
+
 #[test]
 fn the_probe_runs_status_json_and_yields_the_identity() {
     let cli = FakeCli::answering(|_| ran(0, STATUS_RUNNING));

@@ -39,10 +39,17 @@
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
-  ; Everything the hook above wrote, and nothing else — the per-scheme keys are the bundler's
+  ; Everything the hook above wrote, and no other key — the per-scheme keys are the bundler's
   ; own section's to clean, and UserChoice is not ours to touch in either direction. Windows
   ; drops a choice whose ProgId has gone.
   DeleteRegValue SHCTX "Software\RegisteredApplications" "ohmail"
   DeleteRegKey SHCTX "Software\Clients\Mail\ohmail"
   DeleteRegKey SHCTX "Software\Classes\ohmail.mailto"
+
+  ; The host-mode web client the bundle carries. Its asset names change every release and the
+  ; uninstaller removes only its own version's files, so an updated install kept every earlier
+  ; version's assets. The directory is the bundle's own and is removed whole; the install directory
+  ; then goes too, and only if it is empty (the bundler's own removal ran before this hook).
+  RMDir /r "$INSTDIR\host-client"
+  RMDir "$INSTDIR"
 !macroend

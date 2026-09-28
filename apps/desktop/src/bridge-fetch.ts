@@ -27,6 +27,7 @@ import { WindowOutboxStore } from "./window-outbox-store.js";
 import { readStoredVerdict, storeVerdict } from "../../webapp/app/shell/wall-lift.js";
 import { forgetOpenVerdict, markOpenVerdict, refusalIsStale } from "../../webapp/app/shell/access-window.js";
 import { storageOwner } from "../../webapp/app/shell/storage-owner.js";
+import { SHELL_DEADLINE_MS, withDeadline } from "./shell-deadline.js";
 
 /**
  * The shape `HttpAdapterOptions.fetch` is satisfied by.
@@ -49,6 +50,10 @@ const SWITCH_COMMIT_COMMAND = "engine_switch_commit";
 const SWITCH_RESTORE_COMMAND = "engine_switch_restore";
 const UNLOCK_COMMAND = "engine_unlock_retry";
 const START_OVER_COMMAND = "engine_start_over";
+const RETRY_COMMAND = "engine_retry";
+
+/** Who a shell command's deadline sentence names: the shell answers these itself. */
+const THE_APP = "the app";
 
 const NO_SHELL =
   "ohmail Desktop: this window is not running inside the ohmail shell, so there is no local engine " +
@@ -234,7 +239,7 @@ export async function invokeShell(
   command: string,
   payload?: Record<string, unknown>,
 ): Promise<unknown> {
-  return shell().invoke(command, payload);
+  return withDeadline(THE_APP, () => shell().invoke(command, payload));
 }
 
 /** Whether this page is running inside the shell at all. */
@@ -371,15 +376,7 @@ interface BridgeInit {
  * liveness monitor covers the crash; this covers the process that lives and never answers. The
  * rejection is NAMED and its message is the sentence a press site's catch renders.
  */
-export const BRIDGE_DEADLINE_MS = 60_000;
-
-function deadlineError(): Error {
-  const err = new Error(
-    "ohmail Desktop: the local engine did not answer within a minute, so this request was given up.",
-  );
-  err.name = "BridgeDeadlineError";
-  return err;
-}
+export const BRIDGE_DEADLINE_MS = SHELL_DEADLINE_MS;
 
 /**
  * One request to the local engine, and the answer as a `Response`. ABORT IS HONOURED FOR THE
@@ -388,41 +385,22 @@ function deadlineError(): Error {
  * REJECT here or that race never settles. It does. What it cannot do is cancel the work: the
  * frame protocol carries no cancellation, so the engine finishes and the shell drops the
  * answer — one wasted read on a GET, and saying so beats implying a cancellation that does
- * not happen. The deadline above rides the same race; every racer is handed to `Promise.race`,
- * which keeps a handler on each, so a late loser rejecting is never an unhandled rejection.
+ * not happen. The deadline above rides the same race (`shell-deadline.ts`, the one helper every
+ * shell call here goes through), so a late loser rejecting is never an unhandled rejection.
  */
 export const bridgeFetch: BridgeFetch = async (url, init) => {
   const options = (init ?? {}) as BridgeInit;
-  const signal = options.signal;
-  if (signal?.aborted) throw abortError();
-
-  const answer = shell().invoke(REQUEST_COMMAND, {
-    method: (options.method ?? "GET").toUpperCase(),
-    url,
-    headers: headerPairs(options.headers),
-    body: bodyBytes(options.body),
-  });
-
-  let expire: ReturnType<typeof setTimeout> | undefined;
-  const racers: Promise<unknown>[] = [
-    answer,
-    new Promise<never>((_resolve, reject) => {
-      expire = setTimeout(() => reject(deadlineError()), BRIDGE_DEADLINE_MS);
+  const bytes = await withDeadline(
+    "the local engine",
+    () => shell().invoke(REQUEST_COMMAND, {
+      method: (options.method ?? "GET").toUpperCase(),
+      url,
+      headers: headerPairs(options.headers),
+      body: bodyBytes(options.body),
     }),
-  ];
-  if (signal) {
-    racers.push(
-      new Promise<never>((_resolve, reject) => {
-        signal.addEventListener("abort", () => reject(abortError()), { once: true });
-      }),
-    );
-  }
-  try {
-    const bytes = await Promise.race(racers);
-    return toResponse(asBytes(bytes), url);
-  } finally {
-    clearTimeout(expire);
-  }
+    options.signal ? { signal: options.signal } : {},
+  );
+  return toResponse(asBytes(bytes), url);
 };
 
 /**
@@ -434,12 +412,6 @@ export const bridgeFetch: BridgeFetch = async (url, init) => {
  * would have answered a moment later. GET only — the wrapper throws on anything else.
  */
 export const retryingBridgeFetch: BridgeFetch = retryingRead(bridgeFetch);
-
-function abortError(): Error {
-  const err = new Error("ohmail Desktop: the request was aborted.");
-  err.name = "AbortError";
-  return err;
-}
 
 /** Which door this install came in by. `null` means none has been chosen yet. */
 export type EngineMode = "local" | "cloud";
@@ -628,7 +600,11 @@ export type EngineConfig = LocalDoorConfig | CloudDoorConfig | HostDoorConfig | 
  */
 let doorGesture: "none" | "signing out" | "changing the door" = "none";
 
-/** Run a door gesture alone, or refuse and name the one already out. */
+/**
+ * Run a door gesture alone, or refuse and name the one already out. THE LATCH FOLLOWS THE SHELL,
+ * NOT THE DEADLINE: a gesture the window gave up on is still running in the shell, and a second
+ * one started then would meet the snapshot this latch exists to protect.
+ */
 async function alone<T>(
   gesture: "signing out" | "changing the door", run: () => Promise<T>,
 ): Promise<T> {
@@ -639,16 +615,21 @@ async function alone<T>(
     );
   }
   doorGesture = gesture;
+  let work: Promise<T>;
   try {
-    return await run();
-  } finally {
+    work = run();
+  } catch (err) {
     doorGesture = "none";
+    throw err;
   }
+  const release = (): void => { doorGesture = "none"; };
+  work.then(release, release);
+  return withDeadline(THE_APP, () => work);
 }
 
 /** Ask the shell what the engine is doing. Carries no credential — see the Rust `status_json`. */
 export async function engineStatus(): Promise<EngineStatus> {
-  return (await shell().invoke(STATUS_COMMAND)) as EngineStatus;
+  return (await withDeadline(THE_APP, () => shell().invoke(STATUS_COMMAND))) as EngineStatus;
 }
 
 /**
@@ -672,7 +653,7 @@ export async function engineConfigure(
   const payload = opts.provisional === true ? { config, provisional: true } : { config };
   return alone(
     "changing the door",
-    async () => (await shell().invoke(CONFIGURE_COMMAND, payload)) as EngineStatus,
+    () => shell().invoke(CONFIGURE_COMMAND, payload) as Promise<EngineStatus>,
   );
 }
 
@@ -680,7 +661,7 @@ export async function engineConfigure(
 export async function engineSwitchCommit(): Promise<EngineStatus> {
   return alone(
     "changing the door",
-    async () => (await shell().invoke(SWITCH_COMMIT_COMMAND)) as EngineStatus,
+    () => shell().invoke(SWITCH_COMMIT_COMMAND) as Promise<EngineStatus>,
   );
 }
 
@@ -691,7 +672,7 @@ export async function engineSwitchCommit(): Promise<EngineStatus> {
 export async function engineSwitchRestore(): Promise<EngineStatus> {
   return alone(
     "changing the door",
-    async () => (await shell().invoke(SWITCH_RESTORE_COMMAND)) as EngineStatus,
+    () => shell().invoke(SWITCH_RESTORE_COMMAND) as Promise<EngineStatus>,
   );
 }
 
@@ -702,7 +683,7 @@ export async function engineSwitchRestore(): Promise<EngineStatus> {
  * can never unlink a live engine's lock. Answers the status AFTER the restart has begun.
  */
 export async function engineUnlockRetry(): Promise<EngineStatus> {
-  return (await shell().invoke(UNLOCK_COMMAND)) as EngineStatus;
+  return (await withDeadline(THE_APP, () => shell().invoke(UNLOCK_COMMAND))) as EngineStatus;
 }
 
 /**
@@ -711,7 +692,16 @@ export async function engineUnlockRetry(): Promise<EngineStatus> {
  * resolves the directory and refuses unless it has already given up on the engine.
  */
 export async function engineStartOver(): Promise<EngineStatus> {
-  return (await shell().invoke(START_OVER_COMMAND)) as EngineStatus;
+  return (await withDeadline(THE_APP, () => shell().invoke(START_OVER_COMMAND))) as EngineStatus;
+}
+
+/**
+ * The failed-engine card's press for every other class: start an engine the shell has given up
+ * on again, removing nothing — the lock and the store keep their own presses, because removing
+ * either is a judgement the person makes on its own card. Refused unless the shell has given up.
+ */
+export async function engineRetry(): Promise<EngineStatus> {
+  return (await withDeadline(THE_APP, () => shell().invoke(RETRY_COMMAND))) as EngineStatus;
 }
 
 /**
@@ -724,7 +714,7 @@ export async function engineStartOver(): Promise<EngineStatus> {
 export async function engineLogout(): Promise<EngineStatus> {
   return alone(
     "signing out",
-    async () => (await shell().invoke(LOGOUT_COMMAND)) as EngineStatus,
+    () => shell().invoke(LOGOUT_COMMAND) as Promise<EngineStatus>,
   );
 }
 

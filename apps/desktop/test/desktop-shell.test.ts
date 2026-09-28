@@ -877,6 +877,9 @@ describe("the Rust side", () => {
       // Its sibling for a store the engine could not open: the store moves aside (kept) and the
       // engine starts again. Pressed, never aimed, and refused until the shell has given up.
       "engine_start_over",
+      // …and the card's Try again for every other class: the given-up engine starts again and
+      // nothing is removed. Refused until the shell has given up, like the two above.
+      "engine_retry",
       // The paired door's first step on an install that has no engine to ask: the shell starts one
       // for the CANDIDATE door, in a directory of its own, asks it the same `/cloud/probe` a
       // running engine would answer, and removes that directory. It takes the origin and the pin

@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { HttpAdapter } from "@ohmail/client-engine";
 
 import {
-  BRIDGE_DEADLINE_MS, bridgeFetch, createEngineAdapter, engineConfigure, engineLogout, engineStatus,
+  BRIDGE_DEADLINE_MS, bridgeFetch, createEngineAdapter, engineConfigure, engineLogout, engineRetry,
+  engineStartOver, engineStatus, engineSwitchCommit, engineSwitchRestore, engineUnlockRetry, invokeShell,
   WINDOW_SEARCH_PHASES_PATH,
 } from "../src/bridge-fetch.js";
 import { installOfflineGuard, isShellCommandChannel } from "../src/offline-guard.js";
@@ -388,6 +389,76 @@ describe("a sign-out and a door switch are one gesture at a time", () => {
 
     await expect(engineLogout()).rejects.toThrow(/refused to clear/);
     await expect(engineLogout()).rejects.toThrow(/refused to clear/);
+  });
+});
+
+describe("the shell's own commands give up at the same deadline", () => {
+  /** Every door into the shell this module owns, each asked of a shell that never answers. */
+  const DOORS: [string, () => Promise<unknown>][] = [
+    ["engineStatus", () => engineStatus()],
+    ["invokeShell", () => invokeShell("diagnostic_facts")],
+    ["engineConfigure", () => engineConfigure({ mode: "cloud" } as never)],
+    ["engineLogout", () => engineLogout()],
+    ["engineSwitchCommit", () => engineSwitchCommit()],
+    ["engineSwitchRestore", () => engineSwitchRestore()],
+    ["engineUnlockRetry", () => engineUnlockRetry()],
+    ["engineStartOver", () => engineStartOver()],
+    ["engineRetry", () => engineRetry()],
+  ];
+
+  for (const [name, ask] of DOORS) {
+    it(`${name} rejects BY NAME when the shell never answers`, async () => {
+      vi.useFakeTimers();
+      /* Answered AFTER the verdict, so a door gesture's latch opens again for the next case. */
+      let answer = (): void => {};
+      const late = new Promise<Record<string, never>>((r) => { answer = () => r({}); });
+      try {
+        shellAnswering(() => late);
+        const verdict = ask().then(() => "answered", (err: Error) => err.name);
+        await vi.advanceTimersByTimeAsync(BRIDGE_DEADLINE_MS);
+        expect(await Promise.race([verdict, Promise.resolve("still pending")])).toBe("BridgeDeadlineError");
+      } finally {
+        answer();
+        await vi.advanceTimersByTimeAsync(0);
+        vi.useRealTimers();
+      }
+    });
+  }
+
+  it("an answer inside the deadline resolves and leaves no timer behind", async () => {
+    vi.useFakeTimers();
+    try {
+      shellAnswering(() => ({ state: "serving" }));
+      await expect(engineStatus()).resolves.toEqual({ state: "serving" });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the door latch stays shut until the SHELL answers, not until the deadline", async () => {
+    /* The latch guards the shell's one snapshot of the door. A sign-out given up by the window
+       is still running in the shell, so a door switch started then would meet that snapshot. */
+    vi.useFakeTimers();
+    try {
+      let answer = (): void => {};
+      const held = new Promise<void>((r) => { answer = r; });
+      const asked = shellAnswering(async ({ command }) => {
+        if (command === "engine_logout") await held;
+        return {};
+      });
+      const out = engineLogout().then(() => "answered", (err: Error) => err.name);
+      await vi.advanceTimersByTimeAsync(BRIDGE_DEADLINE_MS);
+      expect(await Promise.race([out, Promise.resolve("still pending")])).toBe("BridgeDeadlineError");
+      await expect(engineConfigure({ mode: "cloud" } as never)).rejects.toThrow(/signing out/);
+      expect(asked.map((a) => a.command)).toEqual(["engine_logout"]);
+      answer();
+      await vi.advanceTimersByTimeAsync(0);
+      await engineConfigure({ mode: "cloud" } as never);
+      expect(asked.map((a) => a.command)).toEqual(["engine_logout", "engine_configure"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

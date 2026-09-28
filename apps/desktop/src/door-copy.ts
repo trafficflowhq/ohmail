@@ -396,6 +396,7 @@ const EN = {
   /* The shell reloaded the window after its web process died (`renderer-reloaded.ts`). */
   rendererReloaded: "ohmail's window stopped and was reloaded.",
   mailboxLabel: "Mailbox",
+  mailboxesLabel: "Mailboxes",
   doorNotChosen: "Not chosen",
   doorNoneWhy: "No mailbox has been chosen on this install yet.",
 
@@ -699,6 +700,9 @@ const EN = {
     "Your mail is untouched. It is on your own server, or in your hosted account, and this app "
     + "has not changed either.",
   gateTryAgain: "Try again",
+  /* Where there is no engine to restart (the shell did not answer, or this build carries none),
+     the press only asks again, and its label says so. */
+  gateReadAgain: "Read again",
   /* ── THE KEY STORE WOULD NOT ANSWER — before any mailbox was chosen, so no "your mailbox" ──
      The library's own error ("Couldn't access platform storage: SS error: …") is the log's; the
      card names the store in this platform's words and the remedy, which is a relaunch: the shell
@@ -734,6 +738,8 @@ const EN = {
   gateStartOver: "Start over on this computer",
   gateStartOverRefused:
     "The copy could not be set aside, so nothing was changed. ohmail's log file has the details.",
+  gateRetryRefused:
+    "The mail engine could not be started again, so nothing changed. ohmail's log file has the details.",
   gateSessionGone:
     "You were signed out of your hosted account, so this install stopped receiving new mail. "
     + "What was already here is kept; sign in again to reconnect.",

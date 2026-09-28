@@ -4,10 +4,9 @@
 //! an accessibility focus killed WebKitGTK's web process and only a relaunch helped. The first death
 //! reloads the page with a mark it reads to say so; a second within [`WINDOW`] offers a relaunch
 //! instead, so a page that dies on load is never a reload loop. Linux hooks WebKitGTK's
-//! `web-process-terminated`. macOS (WKWebView `webViewWebContentProcessDidTerminate:`, which Tauri
-//! exposes as `Builder::on_web_content_process_terminate`) and Windows (WebView2 `ProcessFailed`)
-//! take the same [`Deaths`] and are not hooked yet.
-#![cfg_attr(not(target_os = "linux"), allow(dead_code))]
+//! `web-process-terminated` and Windows WebView2's `ProcessFailed`, both from [`arm`]. macOS
+//! (the builder's `on_web_content_process_terminate`) takes the same [`Deaths`] and is not hooked yet.
+#![cfg_attr(not(any(target_os = "linux", target_os = "windows")), allow(dead_code))]
 
 use std::time::{Duration, Instant};
 
@@ -58,6 +57,40 @@ impl Deaths {
         }
         self.offered = true;
         Action::OfferRelaunch
+    }
+
+    /// A death no reload can reach (WebView2's browser process is gone with every page in it):
+    /// the relaunch is offered once, and never twice.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    pub fn on_fatal(&mut self, now: Instant) -> Action {
+        self.last = Some(now);
+        if self.offered {
+            return Action::AlreadyOffered;
+        }
+        self.offered = true;
+        Action::OfferRelaunch
+    }
+}
+
+/// What one WebView2 process failure is, by its `COREWEBVIEW2_PROCESS_FAILED_KIND` value.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Failure {
+    /// The page's renderer exited (1) or stopped answering (2): the page is gone, reload it.
+    Renderer(&'static str),
+    /// The browser process exited (0), taking the webview with it: only a relaunch helps.
+    Browser,
+    /// A GPU, utility, helper or frame renderer process, which does not take the page with it.
+    Ignored,
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub fn windows_failure(kind: i32) -> Failure {
+    match kind {
+        1 => Failure::Renderer("render_exited"),
+        2 => Failure::Renderer("render_unresponsive"),
+        0 => Failure::Browser,
+        _ => Failure::Ignored,
     }
 }
 
@@ -121,6 +154,16 @@ fn reason_name(reason: webkit2gtk::WebProcessTerminationReason) -> &'static str 
     }
 }
 
+/// Load the page again with the mark, keeping its view; a page whose address cannot be read
+/// reloads as it is.
+#[cfg(target_os = "windows")]
+fn reload_page(url: tauri::Result<tauri::Url>, navigate: impl Fn(tauri::Url), reload: impl Fn()) {
+    match url.ok().and_then(|u| tauri::Url::parse(&reload_uri(u.as_str())).ok()) {
+        Some(next) => navigate(next),
+        None => reload(),
+    }
+}
+
 /// From the one `setup`, where the config window exists: watch its web process from now on.
 pub fn arm<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     #[cfg(target_os = "linux")]
@@ -156,7 +199,65 @@ pub fn arm<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
             emit("{\"service\":\"shell\",\"event\":\"renderer_watch\",\"armed\":false,\"reason\":\"no_webview\"}");
         }
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    {
+        use std::sync::{Arc, Mutex};
+        use tauri::Manager;
+        let Some(window) = app.get_webview_window("main") else {
+            emit("{\"service\":\"shell\",\"event\":\"renderer_watch\",\"armed\":false,\"reason\":\"no_window\"}");
+            return;
+        };
+        let handle = app.clone();
+        let page = window.clone();
+        let deaths = Arc::new(Mutex::new(Deaths::default()));
+        let armed = window.with_webview(move |platform| {
+            use webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_PROCESS_FAILED_KIND;
+            // Raised on the thread that owns the webview, which is the event loop's, so the page
+            // calls below are answered in place rather than queued behind this handler.
+            let handler = webview2_com::ProcessFailedEventHandler::create(Box::new(move |_, args| {
+                let Some(args) = args else { return Ok(()) };
+                let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND::default();
+                unsafe { args.ProcessFailedKind(&mut kind)? };
+                let now = Instant::now();
+                let (reason, action) = match windows_failure(kind.0) {
+                    Failure::Ignored => return Ok(()),
+                    Failure::Renderer(reason) => {
+                        (reason, deaths.lock().map(|mut d| d.on_death(now)).unwrap_or(Action::Reload))
+                    }
+                    Failure::Browser => (
+                        "browser_exited",
+                        deaths.lock().map(|mut d| d.on_fatal(now)).unwrap_or(Action::OfferRelaunch),
+                    ),
+                };
+                emit(&line(reason, action));
+                match action {
+                    Action::Reload => reload_page(
+                        page.url(),
+                        |next| {
+                            let _ = page.navigate(next);
+                        },
+                        || {
+                            let _ = page.reload();
+                        },
+                    ),
+                    Action::OfferRelaunch => offer_relaunch(&handle),
+                    Action::AlreadyOffered => {}
+                }
+                Ok(())
+            }));
+            let mut token = 0i64;
+            let registered = unsafe {
+                platform.controller().CoreWebView2().and_then(|core| core.add_ProcessFailed(&handler, &mut token))
+            };
+            if registered.is_err() {
+                emit("{\"service\":\"shell\",\"event\":\"renderer_watch\",\"armed\":false,\"reason\":\"no_process_failed\"}");
+            }
+        });
+        if armed.is_err() {
+            emit("{\"service\":\"shell\",\"event\":\"renderer_watch\",\"armed\":false,\"reason\":\"no_webview\"}");
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     let _ = app;
 }
 

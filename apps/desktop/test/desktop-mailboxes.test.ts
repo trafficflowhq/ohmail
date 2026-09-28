@@ -4616,3 +4616,61 @@ describe("the organizer chip and a mail server this computer cannot reach", () =
     expect(said).not.toContain(copy.stateOrganizingHereUnreachable!);
   });
 });
+
+/**
+ * WHAT A STOP LEFT IN THE MAILBOX'S SETTINGS DOCUMENT, beside the released row. The stop writes
+ * this computer's settings first; where the mailbox kept another install's document, or the write
+ * failed, this computer's decisions are on this computer only, and the row said nothing of it.
+ */
+describe("a stop that left this computer's settings behind says so", () => {
+  const copy = (messages as unknown as { mailboxes: Record<string, string> }).mailboxes;
+  const RELEASED: MailboxFacts = {
+    ...MAILBOX,
+    organizerRole: "reader",
+    organizedBy: null,
+    organizerState: null,
+    organizeConsentedAt: "2026-08-01T09:00:00.000Z",
+    organizerReleasedAt: "2026-09-07T09:12:00.000Z",
+  };
+  const reachSaying = (settingsLeft?: string) => (): Response => new Response(JSON.stringify({
+    items: [{ mailboxId: MAILBOX.id, reachable: true, unreachableSince: null, ...(settingsLeft ? { settingsLeft } : {}) }],
+  }), { status: 200, headers: { "content-type": "application/json" } });
+
+  it("the mailbox kept another install's settings", async () => {
+    FACTS = [RELEASED];
+    bridgeReply = reachSaying("kept_other");
+    const said = (await render("local")).textContent ?? "";
+    expect(said).toContain(copy.stateReleasedSettingsOther);
+    expect(said).not.toContain(copy.stateReleasedSettingsUnsaved);
+  });
+
+  it("the settings could not be saved to the mailbox", async () => {
+    FACTS = [RELEASED];
+    bridgeReply = reachSaying("not_saved");
+    const said = (await render("local")).textContent ?? "";
+    expect(said).toContain(copy.stateReleasedSettingsUnsaved);
+    expect(said).not.toContain(copy.stateReleasedSettingsOther);
+  });
+
+  it("CONTROL: settings saved to the mailbox, or an engine that says nothing — no sentence", async () => {
+    for (const left of ["saved", undefined]) {
+      FACTS = [RELEASED];
+      bridgeReply = reachSaying(left);
+      const said = (await render("local")).textContent ?? "";
+      expect(said, String(left)).toContain(copy.stateReleased!.slice(0, copy.stateReleased!.indexOf("{when}")));
+      expect(said, String(left)).not.toContain("settings stayed on this computer");
+      expect(said, String(left)).not.toContain("could not be saved to the mailbox");
+      if (root) await act(async () => { root!.unmount(); });
+      root = null;
+      mountPoint?.remove();
+      mountPoint = null;
+    }
+  });
+
+  it("CONTROL: a mailbox this computer organizes again says nothing of a past stop", async () => {
+    FACTS = [{ ...RELEASED, organizerRole: "organizer", organizerReleasedAt: null }];
+    bridgeReply = reachSaying("kept_other");
+    const said = (await render("local")).textContent ?? "";
+    expect(said).not.toContain("settings stayed on this computer");
+  });
+});

@@ -343,22 +343,34 @@ pub enum CliResult {
         code: Option<i32>,
         stdout: String,
     },
+    /// It ran and did not finish within [`TAILSCALE_BOUND`], so it was stopped. To the person
+    /// this is a daemon that is not answering: the same guidance as one that is not running.
+    TimedOut,
 }
 
-/// Run the real CLI. Everything above this function takes the runner as a parameter so the
-/// guided-state mapping is provable without an installed Tailscale; this is the one
-/// implementation the shipped shell passes.
-///
-/// No timeout, stated rather than hidden: `tailscale status`/`serve` answer against a local
-/// daemon in milliseconds or fail fast when it is down. A wedged daemon that accepts the
-/// connection and never answers would hold the calling command — a residual accepted here and
-/// covered by the live rehearsal rather than by a watchdog thread over one subprocess.
+/// How long one run of the Tailscale CLI may take. `status` and `serve` answer a local daemon in
+/// milliseconds or fail fast; a daemon that accepts the connection and never answers held the
+/// launch, and every host-mode press, for ever. Past this the CLI is killed.
+pub const TAILSCALE_BOUND: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Run the real CLI, bounded by [`TAILSCALE_BOUND`]. Everything above this function takes the
+/// runner as a parameter so the guided-state mapping is provable without an installed Tailscale;
+/// this is the one implementation the shipped shell passes, at launch and on every press.
 fn run_tailscale(args: &[String]) -> CliResult {
     let get = |name: &str| std::env::var(name).ok();
     let Some(cli) = find_tailscale(&get, &engine::look) else {
         return CliResult::Missing;
     };
-    let mut command = std::process::Command::new(&cli);
+    run_cli_bounded(&cli, args, TAILSCALE_BOUND)
+}
+
+/// One run of `cli`, killed once `bound` has passed. Both pipes are read on their own threads so a
+/// child that writes a lot cannot stall on a full pipe while it is waited for; on a timeout they
+/// are left to finish on their own rather than joined, because a grandchild may still hold them.
+pub(crate) fn run_cli_bounded(cli: &Path, args: &[String], bound: std::time::Duration) -> CliResult {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    let mut command = Command::new(cli);
     // No console window behind the CLI on Windows — the same flag, for the same reason, as the
     // engine spawn: this is a GUI process and the child would otherwise get a console allocated.
     #[cfg(windows)]
@@ -366,30 +378,58 @@ fn run_tailscale(args: &[String]) -> CliResult {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x0800_0000);
     }
-    match command.args(args).output() {
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            // A refusal's own words go to the LOG, where somebody debugging can read them; the
-            // window only ever gets the typed state the callers map this result to.
-            if !output.status.success() {
-                let first = stderr.lines().next().unwrap_or("").trim();
-                engine::log_line(format_args!(
-                    "tailscale {} exited with {:?}{}{}",
-                    args.first().map(String::as_str).unwrap_or(""),
-                    output.status.code(),
-                    if first.is_empty() { "" } else { ": " },
-                    first
-                ));
+    command.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    // A binary that vanished between the look and the exec is the same guided answer as no
+    // binary at all.
+    let Ok(mut child) = command.spawn() else {
+        return CliResult::Missing;
+    };
+    let drain = |pipe: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            if let Some(mut pipe) = pipe {
+                let _ = pipe.read_to_end(&mut bytes);
             }
-            CliResult::Ran {
-                code: output.status.code(),
-                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            bytes
+        })
+    };
+    let out = drain(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let err = drain(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let deadline = std::time::Instant::now() + bound;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
             }
+            _ => break None,
         }
-        // A binary that vanished between the look and the exec is the same guided answer as no
-        // binary at all.
-        Err(_) => CliResult::Missing,
+    };
+    let verb = args.first().map(String::as_str).unwrap_or("");
+    let Some(status) = status else {
+        let _ = child.kill();
+        let _ = child.wait();
+        engine::log_line(format_args!(
+            "tailscale {verb} did not answer within {} s and was stopped",
+            bound.as_secs_f32()
+        ));
+        return CliResult::TimedOut;
+    };
+    let stdout = out.join().unwrap_or_default();
+    let stderr = err.join().unwrap_or_default();
+    // A refusal's own words go to the LOG, where somebody debugging can read them; the window
+    // only ever gets the typed state the callers map this result to.
+    if !status.success() {
+        let stderr = String::from_utf8_lossy(&stderr);
+        let first = stderr.lines().next().unwrap_or("").trim();
+        engine::log_line(format_args!(
+            "tailscale {verb} exited with {:?}{}{}",
+            status.code(),
+            if first.is_empty() { "" } else { ": " },
+            first
+        ));
     }
+    CliResult::Ran { code: status.code(), stdout: String::from_utf8_lossy(&stdout).into_owned() }
 }
 
 /// What the probe learned, reduced to the decisions this shell makes from it.
@@ -509,6 +549,7 @@ pub fn probe_with(run: &dyn Fn(&[String]) -> CliResult) -> Result<TailnetIdentit
     let args: Vec<String> = status_args().iter().map(|s| s.to_string()).collect();
     match run(&args) {
         CliResult::Missing => Err(Problem::NoCli),
+        CliResult::TimedOut => Err(Problem::NotRunning),
         CliResult::Ran { code: Some(0), stdout, .. } => match parse_status(&stdout) {
             Probe::Running { dns_name, version } => {
                 let origin = origin_for(&dns_name);
@@ -536,6 +577,7 @@ pub fn arm_serve_with(
     }
     match run(&serve_arm_args(port)) {
         CliResult::Missing => Err(Problem::NoCli),
+        CliResult::TimedOut => Err(Problem::NotRunning),
         CliResult::Ran { code: Some(0), .. } => Ok(()),
         CliResult::Ran { .. } => Err(Problem::ServeRefused),
     }
@@ -545,6 +587,7 @@ pub fn arm_serve_with(
 pub fn disarm_serve_with(run: &dyn Fn(&[String]) -> CliResult) -> Result<(), Problem> {
     match run(&serve_disarm_args()) {
         CliResult::Missing => Err(Problem::NoCli),
+        CliResult::TimedOut => Err(Problem::NotRunning),
         CliResult::Ran { code: Some(0), .. } => Ok(()),
         CliResult::Ran { .. } => Err(Problem::ServeRefused),
     }

@@ -307,6 +307,12 @@ webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
 # Same `0.18` the graph already resolves for wry and webkit2gtk, so no new code is compiled.
 gtk = "0.18"
 
+# WEBVIEW2, NAMED FOR ONE EVENT: `ProcessFailed`, so a renderer that dies on Windows is reloaded
+# (`src/renderer_recovery.rs`). The crate is already in this binary's graph (wry links the same
+# `=0.38.2`), so naming it adds no third-party code to audit; MIT, like everything else here.
+[target.'cfg(target_os = "windows")'.dependencies]
+webview2-com = "=0.38.2"
+
 [dev-dependencies]
 # The signature-verification biting test signs nothing at test time — it verifies
 # a committed fixture (`test/fixtures/updater/payload.bin{,.sig}`) against the

@@ -9,6 +9,11 @@
  * state degrades to `null` (generic guidance) rather than discarding the whole answer.
  */
 
+import { withDeadline } from "./shell-deadline.js";
+
+/** Who a deadline sentence names: every command here is the shell's own. */
+const THE_APP = "the app";
+
 /** The tri-state the tray and the screens render. */
 export type HostTriState = "serving" | "degraded" | "off";
 
@@ -163,14 +168,14 @@ export function tailscaleStatusOfPayload(payload: unknown): TailscaleStatus | nu
 export async function hostState(): Promise<HostState | null> {
   const shell = internals();
   if (!shell) return null;
-  return hostStateOfPayload(await shell.invoke(HOST_STATE_COMMAND));
+  return hostStateOfPayload(await withDeadline(THE_APP, () => shell.invoke(HOST_STATE_COMMAND)));
 }
 
 /** The tailnet as it stands — the detect-and-guide screen's probe. */
 export async function tailscaleStatus(): Promise<TailscaleStatus | null> {
   const shell = internals();
   if (!shell) return null;
-  return tailscaleStatusOfPayload(await shell.invoke(TAILSCALE_STATUS_COMMAND));
+  return tailscaleStatusOfPayload(await withDeadline(THE_APP, () => shell.invoke(TAILSCALE_STATUS_COMMAND)));
 }
 
 /**
@@ -194,7 +199,7 @@ export async function armHostMode(
   const shell = internals();
   if (!shell) return null;
   return hostStateOfPayload(
-    await shell.invoke(ARM_COMMAND, { port, autostart, lan: lan ?? null }),
+    await withDeadline(THE_APP, () => shell.invoke(ARM_COMMAND, { port, autostart, lan: lan ?? null })),
   );
 }
 
@@ -203,14 +208,14 @@ export async function armHostMode(
 export async function disarmHostMode(): Promise<HostState | null> {
   const shell = internals();
   if (!shell) return null;
-  return hostStateOfPayload(await shell.invoke(DISARM_COMMAND));
+  return hostStateOfPayload(await withDeadline(THE_APP, () => shell.invoke(DISARM_COMMAND)));
 }
 
 /** Whether this install starts at login. Null without a shell. */
 export async function getAutostart(): Promise<boolean | null> {
   const shell = internals();
   if (!shell) return null;
-  const answer = await shell.invoke(AUTOSTART_GET_COMMAND);
+  const answer = await withDeadline(THE_APP, () => shell.invoke(AUTOSTART_GET_COMMAND));
   return typeof answer === "boolean" ? answer : null;
 }
 
@@ -224,7 +229,7 @@ export async function getAutostart(): Promise<boolean | null> {
 export async function setAutostart(enabled: boolean): Promise<boolean | null> {
   const shell = internals();
   if (!shell) return null;
-  const answer = await shell.invoke(AUTOSTART_SET_COMMAND, { enabled });
+  const answer = await withDeadline(THE_APP, () => shell.invoke(AUTOSTART_SET_COMMAND, { enabled }));
   return typeof answer === "boolean" ? answer : null;
 }
 
@@ -236,5 +241,5 @@ export async function setAutostart(enabled: boolean): Promise<boolean | null> {
 export async function openTailscaleDownload(): Promise<void> {
   const shell = internals();
   if (!shell) return;
-  await shell.invoke(OPEN_DOWNLOAD_COMMAND);
+  await withDeadline(THE_APP, () => shell.invoke(OPEN_DOWNLOAD_COMMAND));
 }

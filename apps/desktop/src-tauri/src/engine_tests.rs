@@ -4282,6 +4282,96 @@ fn the_start_over_press_sets_the_store_aside_and_starts_the_engine_again() {
     let _ = fs::remove_dir_all(&root);
 }
 
+// ── THE FAILURE CARD'S "TRY AGAIN" ───────────────────────────────────────────────────────────
+//
+// Every class without a card of its own. It re-read the status of an engine the shell had given
+// up on, so only quitting helped; the press now starts it again and removes nothing.
+
+#[test]
+fn the_retry_press_refuses_while_the_engine_has_not_given_up() {
+    let calm = Shell::around(Engine::inert(EngineState::Stopped));
+    let said = calm
+        .retry()
+        .expect_err("an engine the shell has not given up on must refuse the press");
+    assert!(said.contains("has not given up"), "the refusal names the wrong thing: {said}");
+}
+
+#[cfg(unix)]
+#[test]
+fn the_retry_press_starts_the_engine_again_and_removes_nothing() {
+    use std::os::unix::fs::PermissionsExt;
+    with_key_in_env();
+    let root = candidate_root("retry");
+    let door = Config::Local(crate::config::LocalDoor {
+        imap_host: "mail.example.org".to_string(),
+        imap_user: "someone".to_string(),
+        imap_port: 993,
+        imap_secure: true,
+        smtp: None,
+        address: None,
+    });
+    crate::config::write(&root.join(crate::config::CONFIG_FILE_NAME), &door).expect("write door");
+    let res = root.join("resources");
+    fs::create_dir_all(res.join("engine").join("bin")).expect("engine dir");
+    fs::write(engine_path_in(&res), "").expect("engine bundle");
+    fs::create_dir_all(res.join(RUNTIME_RESOURCE_DIR)).expect("runtime dir");
+    let node = vendored_node_in(&res);
+    fs::write(&node, "#!/bin/sh\nexit 0\n").expect("fake runtime");
+    fs::set_permissions(&node, fs::Permissions::from_mode(0o755)).expect("exec bit");
+
+    let shell = Shell {
+        paths: ShellPaths { app_data: Some(root.clone()), resources: Some(res), downloads: None },
+        engine: Mutex::new(Arc::new(Engine::inert(EngineState::Failed {
+            reason: "four starts in a row failed with a class the card has no sentence for".to_string(),
+            last: None,
+        }))),
+        host_plan: Mutex::new(None),
+        door: Mutex::new(()),
+        leaving: Mutex::new(Leaving::NotStarted),
+        pending_door: AtomicBool::new(false),
+    };
+    let planned = shell.planned(None);
+    let Plan::Spawn(launch) = &planned else {
+        panic!("the fixture composes an inert plan: {planned:?}");
+    };
+    let dir = plan_data_dir(launch).expect("the plan names no data directory");
+    fs::create_dir_all(dir.join(STORE_DIR_NAME)).expect("store");
+    fs::write(dir.join(STORE_DIR_NAME).join("PG_VERSION"), "17\n").expect("store file");
+    let lock = dir.join("sidecar.lock");
+    fs::write(&lock, "{\"pid\":1}\n").expect("lock");
+
+    let answered = shell.retry().expect("the press must act once the shell has given up");
+    assert_ne!(
+        answered.get("state").and_then(|s| s.as_str()),
+        Some("failed"),
+        "the press never re-entered start"
+    );
+    assert!(lock.exists(), "the press removed the lock, which is the lock card's judgement");
+    assert!(dir.join(STORE_DIR_NAME).join("PG_VERSION").exists(), "the press moved the store");
+    shell.stop();
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_retry_press_refuses_an_install_with_no_engine_to_start() {
+    // Given up, and nothing to spawn: no configuration, so the plan is inert.
+    let root = candidate_root("retry-inert");
+    let shell = Shell {
+        paths: ShellPaths { app_data: Some(root.clone()), resources: None, downloads: None },
+        engine: Mutex::new(Arc::new(Engine::inert(EngineState::Failed {
+            reason: "the runtime is missing".to_string(),
+            last: None,
+        }))),
+        host_plan: Mutex::new(None),
+        door: Mutex::new(()),
+        leaving: Mutex::new(Leaving::NotStarted),
+        pending_door: AtomicBool::new(false),
+    };
+    let said = shell.retry().expect_err("an inert plan must refuse the press");
+    assert!(said.contains("no engine to start"), "the refusal names the wrong thing: {said}");
+    let _ = fs::remove_dir_all(&root);
+}
+
 // ── Signing out acts on the door the press was made on ─────────────────────────────────────────
 //
 // `logout` read the door ONCE and acted on that snapshot for its whole length — the clear, the

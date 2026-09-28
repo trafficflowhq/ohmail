@@ -26,7 +26,7 @@ import type { LocalAiStatus } from "./local-ai.js";
    why the predicate is the shared one. `useMailboxFacts` is the NON-throwing accessor,
    so a pane mounted without the provider keeps the sentence it always had. */
 import { useMailboxFacts } from "../../webapp/app/shell/MailStateProvider";
-import { readerHolder, screenerMode } from "../../webapp/app/shell/mail-state";
+import { isRemovedMailbox, readerHolder, screenerMode } from "../../webapp/app/shell/mail-state";
 import { mailboxRowWhy } from "./install-role.js";
 
 /**
@@ -282,7 +282,13 @@ export function DesktopSettings({
   const credential = credentialLine(status, session, host);
   /* "organizes" or "reads" — see `install-role.ts`. This pane said the first on an install that
      did the second, beside a Mailboxes pane saying the truth on the same machine. */
-  const readOnly = readerHolder(screenerMode(useMailboxFacts()));
+  const facts = useMailboxFacts();
+  const readOnly = readerHolder(screenerMode(facts));
+  /* THE MAILBOXES THIS INSTALL HOLDS, from the roster (`GET /mailboxes`). `status.address` is the
+     seed in the settings file, which stays when the seed is removed while another mailbox remains,
+     so it named a mailbox the install no longer held. Before the roster answers: the seed. */
+  const held = facts === null ? null : facts.filter((m) => !isRemovedMailbox(m)).map((m) => m.address);
+  const mailboxValue = held === null ? (status.address ?? "—") : held.length > 0 ? held.join(", ") : "—";
 
   const signOut = async (): Promise<void> => {
     if (busy) return;
@@ -301,9 +307,9 @@ export function DesktopSettings({
   return (
     <SettingsSection>
       <SettingsRow
-        label={DOOR_COPY.mailboxLabel}
+        label={held !== null && held.length > 1 ? DOOR_COPY.mailboxesLabel : DOOR_COPY.mailboxLabel}
         description={mailboxRowWhy(readOnly, paired ? host : null)}
-        value={status.address ?? "—"}
+        value={mailboxValue}
       />
       <SettingsRow
         label={DOOR_COPY.installConnectedThrough}

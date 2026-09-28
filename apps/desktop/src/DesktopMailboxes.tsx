@@ -94,6 +94,12 @@ export interface MailboxReach {
   profileBlocked: { code: string | null; confirmed: boolean } | null;
   /** ISO instant of the FIRST observation of death in the current outage; null while reachable. */
   unreachableSince: string | null;
+  /**
+   * WHAT THIS COMPUTER'S LAST STOP LEFT IN THE MAILBOX'S SETTINGS DOCUMENT: the mailbox kept
+   * another install's settings, or this computer's could not be written. `null` when they were
+   * saved, and on an engine older than the field.
+   */
+  settingsLeft: "kept_other" | "not_saved" | null;
 }
 
 /**
@@ -369,6 +375,7 @@ export async function readMailboxReachVia(
     const it = (typeof raw === "object" && raw !== null ? raw : {}) as {
       mailboxId?: unknown; reachable?: unknown; unreachableSince?: unknown; signInRefused?: unknown;
       credentialBlocked?: unknown; profileBlocked?: unknown; needsCredential?: unknown;
+      settingsLeft?: unknown;
     };
     /* NO ID, NOTHING TO SAY IT ABOUT. Dropped rather than faulted: marking the slice would let one
        unattributable entry speak for rows it never named. */
@@ -376,7 +383,7 @@ export async function readMailboxReachVia(
     if (typeof it.reachable !== "boolean") {
       out[it.mailboxId] = {
         answered: false, reachable: false, signInRefused: false, credentialBlocked: null,
-        profileBlocked: null, unreachableSince: null, needsCredential: false,
+        profileBlocked: null, unreachableSince: null, needsCredential: false, settingsLeft: null,
       };
       continue;
     }
@@ -399,6 +406,7 @@ export async function readMailboxReachVia(
       /* Same rule again: an engine older than the field says nothing about it, and nothing is
          what an absent field means. */
       profileBlocked: profileBlock(it.profileBlocked),
+      settingsLeft: it.settingsLeft === "kept_other" || it.settingsLeft === "not_saved" ? it.settingsLeft : null,
     };
   }
   /* STAMPED WHERE THE ANSWER IS MADE, not where it is stored: the sequence guard discards a read
@@ -1733,6 +1741,13 @@ export function DesktopMailboxes(
             speaks when the label moves — "Stopping" at the press, then the role the row settles
             into. The same `chipLabel`, so it cannot say something the chip does not. */}
         <span className="mbx-say" role="status">{chipLabel}</span>
+        {/* WHAT THE STOP LEFT IN THE SETTINGS DOCUMENT, once the claim is no longer this computer's:
+            the stop itself went through, and this computer's decisions may be here only. */}
+        {role !== "organizer" && reached?.settingsLeft ? (
+          <span className="mbx-say-set">
+            {t(reached.settingsLeft === "kept_other" ? "stateReleasedSettingsOther" : "stateReleasedSettingsUnsaved")}
+          </span>
+        ) : null}
         {/* ── AND THE PERSON WHO MEANT IT THIS WAY CAN SAY SO ONCE (issue #5) ──────────────
             One press, this install, this mailbox, this holder. It silences the sentence on the
             rail — the surface that repeats it on every poll — and NEVER the line below, which is
