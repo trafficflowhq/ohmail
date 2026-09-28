@@ -56,7 +56,7 @@ function hostRefusal(err: unknown, transport: "imap" | "smtp"): unknown {
 }
 
 /** One stored leg of a mailbox: where it dials, its TLS mode and its own plaintext consent. */
-export interface DialLeg { host: string; port: number; secure: boolean; consent: boolean }
+interface DialLeg { host: string; port: number; secure: boolean; consent: boolean }
 
 /**
  * THE FIELDS ONE LEG DIALS WITH, and the only place `allowInsecure` is set for a stored consent.

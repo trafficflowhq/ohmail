@@ -9,7 +9,8 @@ import { SettingsNote } from "@ohmail/ui";
  * the words a person consents over cannot differ between the two.
  */
 export function PlaintextConsent(props: {
-  ids: { imap: string; smtp: string };
+  /** The prefix of the two checkboxes' ids: `<id>-imap` and `<id>-smtp`. */
+  id: string;
   offer: { imap: boolean; smtp: boolean };
   checked: { imap: boolean; smtp: boolean };
   onChange: (protocol: "imap" | "smtp", checked: boolean) => void;
@@ -19,9 +20,9 @@ export function PlaintextConsent(props: {
   return (
     <>
       {(["imap", "smtp"] as const).filter((k) => props.offer[k]).map((k) => (
-        <label key={k} className="join-label" htmlFor={props.ids[k]}>
+        <label key={k} className="join-label" htmlFor={`${props.id}-${k}`}>
           <input
-            id={props.ids[k]} type="checkbox" checked={props.checked[k]}
+            id={`${props.id}-${k}`} type="checkbox" checked={props.checked[k]}
             onChange={(e) => props.onChange(k, e.target.checked)}
           />{" "}
           {t(k === "imap" ? "insecureConsentLabel" : "insecureConsentLabelSmtp")}

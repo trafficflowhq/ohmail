@@ -36,7 +36,7 @@ export const SMTP_SIZE_DEADLINE_MS = 40_000;
 export const apiSmtpSizeDial: SmtpSizeDial = (smtp) => verifySmtpLogin(smtp, PROBE_TIMEOUTS);
 
 /** {@link apiSmtpSizeDial}, with a consented plaintext leg re-asked at the dial like a send's. */
-export function apiSmtpSizeDialFor(deps: ApiDeps): SmtpSizeDial {
+function apiSmtpSizeDialFor(deps: ApiDeps): SmtpSizeDial {
   return async ({ allowInsecure, ...smtp }) => (allowInsecure === true && !smtp.secure
     ? verifySmtpLogin({
       ...smtp, ...(await dialFieldsFor(deps, { host: smtp.host, port: smtp.port, secure: false, consent: true }, "smtp")),

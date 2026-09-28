@@ -781,6 +781,8 @@ export function FirstRun({
     const opens = host.plaintextOffer?.(err, add === true ? "add" : "seed") ?? null;
     if (opens) setOffer((o) => ({ ...o, [opens]: true }));
   }, [add, host]);
+  /** The same, for a refused connect, which then leaves as it came. */
+  const offerAndRethrow = useCallback((err: unknown): never => { openOffer(err); throw err; }, [openOffer]);
 
   /**
    * A PRESET CHANGE REWRITES THE HOSTS THROUGH `hostsFor`, WHICH TAKES THE PREVIOUS CHOICE.
@@ -1131,8 +1133,7 @@ export function FirstRun({
                * settles on. That is why the parameter is required at the seam and why the word
                * comes off the route rather than out of a fallback here. */
               /* A connect refused for a protocol with no TLS on a private network opens its line. */
-              const { id } = await host.connect(mailboxInput(), add === true ? "add" : "seed")
-                .catch((err: unknown) => { openOffer(err); throw err; });
+              const { id } = await host.connect(mailboxInput(), add === true ? "add" : "seed").catch(offerAndRethrow);
               /* AND THE VERDICT IS RETIRED WITH THE FORM IT DESCRIBED. It proved a login that has
                * since been stored; leaving it standing would arm this screen's primary again the
                * moment somebody walked back onto it. */
@@ -1242,7 +1243,7 @@ export function FirstRun({
                 </div>
               ) : null}
               <PlaintextConsent
-                ids={{ imap: `${ids}-imap-plaintext`, smtp: `${ids}-smtp-plaintext` }}
+                id={`${ids}-plaintext`}
                 offer={offer} checked={plain}
                 onChange={(k, on) => { setPlain((v) => ({ ...v, [k]: on })); retireTest(); }}
               />

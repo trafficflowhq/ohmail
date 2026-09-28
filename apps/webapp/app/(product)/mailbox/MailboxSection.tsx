@@ -2662,7 +2662,7 @@ export function MailboxSection() {
                     </Button>
                   ) : null}
                   <PlaintextConsent
-                    ids={{ imap: "mb-insecure", smtp: "mb-insecure-smtp" }}
+                    id="mb-insecure"
                     offer={insecureOffer}
                     checked={{ imap: typed.allowInsecure, smtp: typed.allowInsecureSmtp }}
                     onChange={(k, on) => {
@@ -2867,7 +2867,7 @@ export function MailboxSection() {
             </Button>
           ) : null}
           <PlaintextConsent
-            ids={{ imap: "mb-edit-insecure", smtp: "mb-edit-insecure-smtp" }}
+            id="mb-edit-insecure"
             offer={insecureOffer}
             checked={{ imap: edited.allowInsecure, smtp: edited.allowInsecureSmtp }}
             onChange={(k, on) => setEdited((v) => (k === "imap" ? { ...v, allowInsecure: on } : { ...v, allowInsecureSmtp: on }))}

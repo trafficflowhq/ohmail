@@ -27,7 +27,7 @@ export interface DialHostGuard {
 export const ALLOW_ANY_DIAL_HOST: DialHostGuard = { check: async () => null };
 
 /** The self-host policy with a resolver, so a consented plaintext dial can be re-asked. */
-export function allowAnyDialHost(resolver: HostResolver): DialHostGuard {
+function allowAnyDialHost(resolver: HostResolver): DialHostGuard {
   return { check: async () => null, scope: resolver };
 }
 
@@ -79,7 +79,7 @@ export class MailboxHostRefused extends Error {
  * A consented plaintext dial whose host no longer resolves to the person's own network. The
  * detail the mailbox row stores, so Settings says that sentence and not "not available".
  */
-export class MailboxPlaintextRefused extends Error {
+class MailboxPlaintextRefused extends Error {
   readonly code = "MAILBOX_PLAINTEXT_REFUSED";
   constructor(transport: "imap" | "smtp") {
     super(
@@ -91,7 +91,7 @@ export class MailboxPlaintextRefused extends Error {
 }
 
 /** One stored leg: its TLS mode and its own plaintext consent (`TransportCreds` has both). */
-export interface DialLeg { secure: boolean; allowInsecure?: boolean }
+interface DialLeg { secure: boolean; allowInsecure?: boolean }
 
 /** The gate's own word for "the resolver had nothing to say" — a FIELD, never a message tail. */
 const UNRESOLVED = "host did not resolve";
