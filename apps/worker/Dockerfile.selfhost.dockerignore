@@ -15,6 +15,10 @@
 !apps/*/package.json
 !packages/*/package.json
 
+# The dependency patches, and the step that applies them after `npm ci`.
+!patches
+!scripts/apply-patches.mjs
+
 # The build steps the image runs: the host bundler and the esbuild loader it shares with the
 # engine build (the version pin lives there).
 !scripts/bundle-host.mjs

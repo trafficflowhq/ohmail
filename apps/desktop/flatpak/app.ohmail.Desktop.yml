@@ -62,6 +62,9 @@ modules:
       # 1 · the dependency trees, from the sources flatpak-node-generator wrote.
       - npm ci --offline --no-audit --no-fund
       - npm ci --offline --no-audit --no-fund --prefix apps/desktop
+      #     and the dependency patches this repository carries, applied with the SDK's git; the
+      #     engine bundler below refuses an engine without them.
+      - node scripts/apply-patches.mjs apply
 
       # 2 · the mail engine: one bundled file, its storage package and its migration journal.
       - node scripts/engine-bundle.mjs

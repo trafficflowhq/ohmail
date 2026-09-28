@@ -27,13 +27,14 @@
  *
  * ── WHAT THIS SCRIPT REFUSES TO WRITE ─────────────────────────────────────────────────────
  *
- * Nothing. It builds, writes, and reports; the censuses decide. That is deliberate and is the
- * opposite of the desktop engine's builder, which refuses a bundle carrying the private half —
- * because there the refusal IS the gate, whereas here the gate is a test that a person can watch
- * fail. A builder that both decides and reports gives a lane two places to look when it is wrong.
+ * One thing: a bundle without the literals of this repository's nodemailer patch, which the
+ * release builds install with npm and must apply themselves. Otherwise it builds, writes and
+ * reports, and the censuses decide — a gate a person can watch fail, where the desktop engine's
+ * builder refuses a bundle carrying the private half because there the refusal IS the gate.
  */
+import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -440,6 +441,17 @@ export async function buildPhoneEngine({ write = true, workspaceSources = false 
     writeFileSync(TYPES, declarationFor());
     markCommonJs(PACKAGED_DIR);
     writeFileSync(METAFILE, JSON.stringify(result.metafile));
+    /* The one refusal this script makes: the phone sends with nodemailer, which carries a patch of
+     * ours (`patches/`), and an npm install that skipped `apply-patches.mjs apply` bundles the
+     * unpatched copy. A bundle without the patch's literals is removed before the app can take it. */
+    const patched = spawnSync(process.execPath, [join(REPO, "scripts", "apply-patches.mjs"), "assert",
+      "--root", REPO, "--in", BUNDLE, "--require", "nodemailer"], { encoding: "utf8" });
+    if (patched.status !== 0) {
+      for (const f of [BUNDLE, TYPES, METAFILE]) rmSync(f, { force: true });
+      throw new Error(`the phone engine does not carry this repository's patches, so it was removed:\n`
+        + `${patched.stdout}${patched.stderr}${patched.error ? `${patched.error.message}\n` : ""}`
+        + "  After `npm ci`, run `node scripts/apply-patches.mjs apply`, then bundle again.");
+    }
   }
   return {
     metafile: result.metafile,

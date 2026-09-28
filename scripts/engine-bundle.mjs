@@ -9,6 +9,7 @@
  * journal (the db package composes it from `import.meta.url`, which the bundler rewrites to the OUTPUT URL,
  * so it sits at `<dirname(bundle)>/../drizzle` — the reason the output has a `bin/`; only the MAIL journal
  * is copied) and the database engine's WebAssembly (loaded relative to its module, vendored beside the bundle). A banner defines `require` for the MIME parser's runtime charset lookups. `.mjs` makes the ESM module type a fact when handed to a runtime by name; the shebang/execute bit are now a convenience, since the shell spawns `<node> <bundle>` (the only shape that works on Windows). */
+import { spawnSync } from "node:child_process";
 import { chmodSync, cpSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -144,6 +145,19 @@ export async function buildEngine({ root = ROOT, outRoot } = {}) {
 
   // To match the shebang — see the header. Without it the spawn is EACCES.
   chmodSync(bundlePath, 0o755);
+
+  /* The engine sends with nodemailer, which carries a patch of ours (`patches/`). An npm install that
+   * skipped `apply-patches.mjs apply` bundles the unpatched copy, so the bundle is asserted to carry the
+   * patch's own literals, and a refusal removes what it refused. */
+  const patched = spawnSync(process.execPath, [join(root, "scripts", "apply-patches.mjs"), "assert",
+    "--root", root, "--in", bundlePath, "--require", "nodemailer"], { encoding: "utf8" });
+  if (patched.status !== 0) {
+    rmSync(out, { recursive: true, force: true });
+    rmSync(metafilePath, { force: true });
+    throw new Error(`the engine bundle does not carry this repository's patches, so it was removed:\n`
+      + `${patched.stdout}${patched.stderr}${patched.error ? `${patched.error.message}\n` : ""}`
+      + "  After `npm ci`, run `node scripts/apply-patches.mjs apply`, then bundle again.");
+  }
 
   // The mail journal, at the path the bundle's own `import.meta.url` will compose.
   cpSync(join(root, "packages", "db-mail", "drizzle"), join(out, "drizzle"), { recursive: true });

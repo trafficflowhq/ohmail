@@ -9,6 +9,7 @@
  * packages compose them from `import.meta.url`, which the bundler rewrites to the OUTPUT file's URL, so they
  * must sit one level ABOVE (`build/host-<app>/drizzle` for mail, `.../drizzle-cloud` for cloud). Both hosts
  * get both; `packages/db/drizzle` (the pre-split journal) is NOT copied. Each image's build context is an allow-list, so an import reaching outside it fails the bundle at build time. esbuild loads as the engine build loads it (pinned, `OHMAIL_ESBUILD_FROM` first); `@electric-sql/pglite` stays external, unused today, and a future import would fail LOUDLY at boot. */
+import { spawnSync } from "node:child_process";
 import { chmodSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -85,6 +86,19 @@ const result = await build({
 // Beside the layout, never inside it — the layout is copied wholesale into the image.
 writeFileSync(`${out}.meta.json`, JSON.stringify(result.metafile));
 chmodSync(bundlePath, 0o755);
+
+/* Both hosts send with nodemailer, which carries a patch of ours (`patches/`): the recipe runs
+ * `apply-patches.mjs apply` after `npm ci`, and a bundle without the patch's literals is removed. */
+const patched = spawnSync(process.execPath, [join(ROOT, "scripts", "apply-patches.mjs"), "assert",
+  "--root", ROOT, "--in", bundlePath, "--require", "nodemailer"], { encoding: "utf8" });
+if (patched.status !== 0) {
+  rmSync(out, { recursive: true, force: true });
+  rmSync(`${out}.meta.json`, { force: true });
+  console.error(`${patched.stdout}${patched.stderr}${patched.error ? `${patched.error.message}\n` : ""}`
+    + `the ${name} bundle does not carry this repository's patches, so it was removed. After \`npm ci\`, run `
+    + "`node scripts/apply-patches.mjs apply`, then bundle again.");
+  process.exit(1);
+}
 
 // The journals, at the paths the bundle's own `import.meta.url` composes — see the header.
 cpSync(join(ROOT, "packages", "db-mail", "drizzle"), join(out, "drizzle"), { recursive: true });

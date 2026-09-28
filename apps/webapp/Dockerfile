@@ -11,8 +11,9 @@
 # producing the managed shape. The managed deployment never uses this file.
 #
 # BUILT FROM THIS REPOSITORY'S OWN TREE AND TOOLCHAIN: the manifests here are generated for
-# npm workspaces and the committed package-lock.json pins the resolution, so `npm ci` is the
-# whole install story. The workspace packages this app imports (`@ohmail/ui`,
+# npm workspaces and the committed package-lock.json pins the resolution, so `npm ci` and the
+# dependency patches this repository carries (`scripts/apply-patches.mjs`) are the whole
+# install story. The workspace packages this app imports (`@ohmail/ui`,
 # `@ohmail/client-engine`, …) are TypeScript sources resolved through npm's workspace links;
 # `next.config.mjs` names them in `transpilePackages`, so `next build` compiles them exactly
 # as the managed deployment does.
@@ -42,6 +43,11 @@ RUN test -f package-lock.json || { \
       echo "  (https://docs.docker.com/go/buildx/) and build again."; \
       exit 1; }
 RUN npm ci --no-audit --no-fund
+# `npm ci` installs upstream's code; `patches/` holds this repository's changes to it, the mail
+# sender's among them. git applies them, installed in this stage only (the runtime layer is
+# unchanged); a patch that does not apply fails the build by name.
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+RUN node scripts/apply-patches.mjs apply
 # Next type-checks the app as it builds. typescript and the @types the app compiles against
 # are build-stage tools, installed --no-save so they can never join the published manifests.
 # EXACT versions, not ranges: the committed lockfile cannot pin what the manifests do not

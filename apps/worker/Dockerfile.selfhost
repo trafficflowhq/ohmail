@@ -6,9 +6,10 @@
 # managed deployment's recipe: it builds in the development workspace, whose pnpm layout and
 # lockfile the public repository does not carry. THIS file is the recipe the public
 # repository's own release workflow builds and publishes — from the published tree, with its
-# own toolchain: `npm ci` against the committed package-lock.json, then a single-file
-# esbuild bundle with the same pinned bundler the desktop mail engine is built with
-# (`scripts/bundle-host.mjs` carries the reasoning and the entry-stub story).
+# own toolchain: `npm ci` against the committed package-lock.json, the dependency patches this
+# repository carries (`scripts/apply-patches.mjs`), then a single-file esbuild bundle with the
+# same pinned bundler the desktop mail engine is built with (`scripts/bundle-host.mjs` carries
+# the reasoning and the entry-stub story).
 #
 # THE ORGANIZER'S DEPENDENCY BOUNDARY IS ENFORCED BY THE BUILD CONTEXT. This process's
 # runtime closure is core + db (+ db-mail's journal constants) and nothing else — notably
@@ -47,6 +48,11 @@ RUN test -f package-lock.json || { \
       echo "  (https://docs.docker.com/go/buildx/) and build again."; \
       exit 1; }
 RUN npm ci --no-audit --no-fund
+# `npm ci` installs upstream's code; `patches/` holds this repository's changes to it, the mail
+# sender's among them. git applies them, installed in this stage only (the runtime layer is
+# unchanged); a patch that does not apply fails the build by name.
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+RUN node scripts/apply-patches.mjs apply
 RUN mkdir -p /tmp/esbuild && cd /tmp/esbuild && npm install --no-save esbuild@0.24.0
 # WHICH COMMIT THIS IMAGE WAS BUILT FROM, through the source this process TRUSTS. `bundle-host.mjs`
 # writes the label into `BUILD_VERSION` beside the bundle, and `build-version.ts` reads that file

@@ -202,6 +202,12 @@ jobs:
       - name: Install the locked dependency tree
         run: npm ci --no-audit --no-fund
 
+      # `npm ci` installs upstream's code; `patches/` holds this repository's changes to it (the
+      # engine's mail sender among them). Applied to every installed copy, refused by name when one
+      # does not apply, and the engine bundler refuses an engine that does not carry them.
+      - name: Apply the patches this repository carries
+        run: node scripts/apply-patches.mjs apply
+
       # The bundler is a pinned devDependency of the root manifest, so the
       # `npm ci` above is the whole resolution and this step reaches no network.
       # engine-bundle.mjs asserts the version it got: the bundle is only
@@ -582,6 +588,8 @@ jobs:
           # here is one the app resolves at launch; a rename on either side
           # produces an app that packages cleanly and reports "no engine".
           test -f "$RES/engine/bin/ohmail-engine.mjs"
+          # The engine that shipped carries this repository's patches, read in the packaged file.
+          node scripts/apply-patches.mjs assert --in "$RES/engine/bin/ohmail-engine.mjs" --require nodemailer
           test -d "$RES/engine/bin/node_modules/@electric-sql/pglite"
           test -d "$RES/engine/drizzle"
           test -x "$RES/runtime/node"
@@ -838,6 +846,12 @@ jobs:
 
       - name: Install the locked dependency tree
         run: npm ci --no-audit --no-fund
+
+      # `npm ci` installs upstream's code; `patches/` holds this repository's changes to it (the
+      # engine's mail sender among them). Applied to every installed copy, refused by name when one
+      # does not apply, and the engine bundler refuses an engine that does not carry them.
+      - name: Apply the patches this repository carries
+        run: node scripts/apply-patches.mjs apply
 
       # The bundler is a pinned devDependency of the root manifest, so the
       # `npm ci` above is the whole resolution and this step reaches no network.
@@ -1168,6 +1182,12 @@ jobs:
       - name: Install the locked dependency tree
         run: npm ci --no-audit --no-fund
 
+      # `npm ci` installs upstream's code; `patches/` holds this repository's changes to it (the
+      # engine's mail sender among them). Applied to every installed copy, refused by name when one
+      # does not apply, and the engine bundler refuses an engine that does not carry them.
+      - name: Apply the patches this repository carries
+        run: node scripts/apply-patches.mjs apply
+
       # The bundler is a pinned devDependency of the root manifest, so the
       # `npm ci` above is the whole resolution and this step reaches no network.
       # engine-bundle.mjs asserts the version it got: the bundle is only
@@ -1452,6 +1472,8 @@ jobs:
           rm -rf squashfs-root
           ./"$APPIMAGE" --appimage-extract > /dev/null
           test -f squashfs-root/usr/lib/ohmail/engine/bin/ohmail-engine.mjs
+          # The engine that shipped carries this repository's patches, read in the packaged file.
+          node scripts/apply-patches.mjs assert --in squashfs-root/usr/lib/ohmail/engine/bin/ohmail-engine.mjs --require nodemailer
           test -d squashfs-root/usr/lib/ohmail/engine/drizzle
           test -x squashfs-root/usr/lib/ohmail/runtime/node
           # It RUNS, which no file assertion can stand in for.
@@ -2304,6 +2326,12 @@ jobs:
       - name: Install the locked dependency tree
         run: npm ci --no-audit --no-fund
 
+      # `npm ci` installs upstream's code; `patches/` holds this repository's changes to it (the
+      # engine's mail sender among them). Applied to every installed copy, refused by name when one
+      # does not apply, and the engine bundler refuses an engine that does not carry them.
+      - name: Apply the patches this repository carries
+        run: node scripts/apply-patches.mjs apply
+
       # The bundler is a pinned devDependency of the root manifest, so the
       # `npm ci` above is the whole resolution and this step reaches no network.
       # engine-bundle.mjs asserts the version it got: the bundle is only
@@ -2547,6 +2575,8 @@ jobs:
           rm -rf squashfs-root
           ./"$APPIMAGE" --appimage-extract > /dev/null
           test -f squashfs-root/usr/lib/ohmail/engine/bin/ohmail-engine.mjs
+          # The engine that shipped carries this repository's patches, read in the packaged file.
+          node scripts/apply-patches.mjs assert --in squashfs-root/usr/lib/ohmail/engine/bin/ohmail-engine.mjs --require nodemailer
           test -d squashfs-root/usr/lib/ohmail/engine/drizzle
           test -x squashfs-root/usr/lib/ohmail/runtime/node
           # IT RUNS — an aarch64 Node executed on aarch64 hardware. On the x86_64
@@ -3572,6 +3602,12 @@ jobs:
       # on every machine — the reproducibility the exact-pinned manifests promise.
       - name: Install the locked dependency tree
         run: npm ci --no-audit --no-fund
+
+      # `npm ci` installs upstream's code; `patches/` holds this repository's changes to it (the
+      # engine's mail sender among them). Applied to every installed copy, refused by name when one
+      # does not apply, and the engine bundler refuses an engine that does not carry them.
+      - name: Apply the patches this repository carries
+        run: node scripts/apply-patches.mjs apply
 
       # typescript AND every @types package in ONE install: a second `npm install
       # --no-save` prunes what an earlier one added, after which `npx tsc` fetches

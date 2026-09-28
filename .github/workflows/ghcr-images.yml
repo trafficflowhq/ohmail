@@ -193,6 +193,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # For the prune check's patch read, which runs on the runner against the checked-out tree.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
@@ -244,6 +249,11 @@ jobs:
             SRC=$(docker run --rm --entrypoint sh "$IMG" -c \
               'find /app -type d \( -name src -o -name node_modules \)')
             test -z "$SRC" || { echo "src/module trees in $IMG:"; echo "$SRC"; exit 1; }
+            # The bundle this image runs carries this repository's patches (the mail sender's):
+            # copied out of the staged image and read with the literals the patch itself adds.
+            HOST="${{ matrix.image }}"
+            docker run --rm --entrypoint cat "$IMG" "/app/bin/${HOST}.mjs" > /tmp/image-bundle.mjs
+            node scripts/apply-patches.mjs assert --in /tmp/image-bundle.mjs --require nodemailer
           fi
 
   # The boot gate: what the README tells a stranger must work from the PUBLIC tree with the

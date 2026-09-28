@@ -136,6 +136,13 @@ jobs:
       - name: Install the locked dependency tree
         run: npm ci --no-audit --no-fund
 
+      # `npm ci` installs upstream's code. `patches/` holds this repository's changes to it, among
+      # them the TLS transport's Android half and the mail sender; this applies them to every
+      # installed copy and refuses by name when one does not apply. The dex step below reads the
+      # result in the compiled app, and the engine bundler refuses an engine without it.
+      - name: Apply the patches this repository carries
+        run: node scripts/apply-patches.mjs apply
+
       # ── THE FIRST STEP OF EVERY PHONE BUILD ────────────────────────────────────────────────
       # The app organizes a mailbox on the phone itself, and the engine that does it ships inside
       # the app as a pre-bundled file. `apps/mobile/src/engine/engine-bundle-native.ts` requires it
@@ -303,6 +310,9 @@ jobs:
           AAB_N=$(ls /tmp/dexcmp/aab | wc -l | tr -d ' ')
           test "${APK_N:-0}" -ge 1 || { echo "no dex came out of the APK — nothing was compared" >&2; exit 1; }
           test "${AAB_N:-0}" -ge 1 || { echo "no dex came out of the bundle — nothing was compared" >&2; exit 1; }
+          # The TLS transport's patch reached the compiled code: the literals it adds, read in the
+          # APK's dex (the bundle's dex is this dex, asserted below). Unpatched, this refuses.
+          node scripts/apply-patches.mjs assert --in /tmp/dexcmp/apk --require react-native-tcp-socket
           ( cd /tmp/dexcmp/apk && sha256sum classes*.dex > /tmp/dexcmp/apk.raw )
           ( cd /tmp/dexcmp/aab && sha256sum classes*.dex > /tmp/dexcmp/aab.raw )
           sort /tmp/dexcmp/apk.raw > /tmp/dexcmp/apk.sha
@@ -378,6 +388,13 @@ jobs:
 
       - name: Install the locked dependency tree
         run: npm ci --no-audit --no-fund
+
+      # `npm ci` installs upstream's code. `patches/` holds this repository's changes to it, among
+      # them the TLS transport's Android half and the mail sender; this applies them to every
+      # installed copy and refuses by name when one does not apply. The dex step below reads the
+      # result in the compiled app, and the engine bundler refuses an engine without it.
+      - name: Apply the patches this repository carries
+        run: node scripts/apply-patches.mjs apply
 
       # ── THE FIRST STEP OF EVERY PHONE BUILD ────────────────────────────────────────────────
       # The app organizes a mailbox on the phone itself, and the engine that does it ships inside
@@ -536,6 +553,9 @@ jobs:
           AAB_N=$(ls /tmp/dexcmp/aab | wc -l | tr -d ' ')
           test "${APK_N:-0}" -ge 1 || { echo "no dex came out of the APK — nothing was compared" >&2; exit 1; }
           test "${AAB_N:-0}" -ge 1 || { echo "no dex came out of the bundle — nothing was compared" >&2; exit 1; }
+          # The TLS transport's patch reached the compiled code: the literals it adds, read in the
+          # APK's dex (the bundle's dex is this dex, asserted below). Unpatched, this refuses.
+          node scripts/apply-patches.mjs assert --in /tmp/dexcmp/apk --require react-native-tcp-socket
           ( cd /tmp/dexcmp/apk && sha256sum classes*.dex > /tmp/dexcmp/apk.raw )
           ( cd /tmp/dexcmp/aab && sha256sum classes*.dex > /tmp/dexcmp/aab.raw )
           sort /tmp/dexcmp/apk.raw > /tmp/dexcmp/apk.sha

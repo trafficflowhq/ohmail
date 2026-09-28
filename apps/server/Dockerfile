@@ -4,10 +4,11 @@
 #
 # BUILT FROM THIS REPOSITORY'S OWN TREE AND TOOLCHAIN. The manifests here are generated for
 # npm and the committed package-lock.json pins the whole dependency resolution, so the build
-# is two deterministic steps: `npm ci` (which refuses to improvise), then a single-file
-# esbuild bundle — the same pinned bundler, resolution rules and layout the desktop mail
-# engine is built with from this same source (`scripts/bundle-host.mjs` and
-# `scripts/engine-bundle.mjs` state the reasoning and the pin).
+# is three deterministic steps: `npm ci` (which refuses to improvise), the dependency patches
+# this repository carries (`scripts/apply-patches.mjs`), then a single-file esbuild bundle —
+# the same pinned bundler, resolution rules and layout the desktop mail engine is built with
+# from this same source (`scripts/bundle-host.mjs` and `scripts/engine-bundle.mjs` state the
+# reasoning and the pin).
 #
 # The RUNTIME stage carries the bundle and the two migration journals it reads off disk —
 # never src/, never test/, and no node_modules at all (the bundle has no imports left to
@@ -43,6 +44,11 @@ RUN test -f package-lock.json || { \
 # The committed lockfile IS the resolution: the tree this bundle is built from is the tree
 # this repository's own CI typechecks.
 RUN npm ci --no-audit --no-fund
+# `npm ci` installs upstream's code; `patches/` holds this repository's changes to it, the mail
+# sender's among them. git applies them, installed in this stage only (the runtime layer is
+# unchanged); a patch that does not apply fails the build by name.
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+RUN node scripts/apply-patches.mjs apply
 # The bundler, pinned and off to one side — never a project dependency. Same arrangement as
 # the engine build; scripts/engine-bundle.mjs refuses any other esbuild version.
 RUN mkdir -p /tmp/esbuild && cd /tmp/esbuild && npm install --no-save esbuild@0.24.0

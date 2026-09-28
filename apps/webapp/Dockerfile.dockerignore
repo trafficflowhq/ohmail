@@ -17,6 +17,10 @@
 !apps/*/package.json
 !packages/*/package.json
 
+# The dependency patches, and the step that applies them after `npm ci`.
+!patches
+!scripts/apply-patches.mjs
+
 !apps/webapp
 !packages/client-engine
 !packages/fixtures

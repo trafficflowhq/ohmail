@@ -838,6 +838,9 @@ npm run smoke            # → SMOKE OK — renders, offline audit included
 # manifest, so `npm ci` at the root is the whole resolution. The bundle is only
 # reproducible for a fixed bundler version, so a different one is refused.
 npm ci
+# The changes this repository carries to its dependencies (`patches/`), applied
+# with git. The bundler refuses an engine that does not carry them.
+node scripts/apply-patches.mjs apply
 node scripts/engine-bundle.mjs
 
 # It boots from the layout it ships in — and refuses to when its migration

@@ -73,6 +73,7 @@ From a clone of this repository:
 
 ```bash
 npm ci                               # repo root — installs the workspace
+node scripts/apply-patches.mjs apply # the patches in patches/, which the Android build needs
 cd apps/mobile
 npx expo start                       # Metro on the default port
 ```
