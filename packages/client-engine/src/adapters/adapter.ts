@@ -55,7 +55,7 @@ export interface MutationOutcome {
    * when the worker ingests it later. That identity lets the engine drop its
    * optimistic Sent overlay the moment a drain delivers the real row instead
    * of leaving a fabricated twin. Absent ⇒ no Sent overlay is materialised,
-   * which is the FixturesAdapter's answer (the demo mints no ids).
+   * which is an older server's answer, and a Send later's.
    */
   providerMessageId?: string | null;
   /**

@@ -1747,7 +1747,7 @@
     "calloutUnreadTitle": "Ungelesenes steht immer oben",
     "calloutUnread": "Neue Post wartet in einer Gruppe ganz oben in der Ohbox, bis du sie liest — ist „Neu“ leer, bist du durch.",
     "calloutEarlierTitle": "Alles Gelesene landet unter „Gesehen“",
-    "calloutEarlier": "Gelesene Mail liegt unter „Gesehen“, in der Reihenfolge ihres Eingangs; die geöffnete bleibt, wo sie ist, bis du weitergehst. Nichts zu archivieren, nichts aufzuräumen.",
+    "calloutEarlier": "Gelesene Mail liegt unter „Gesehen“, in der Reihenfolge ihres Eingangs; die geöffnete bleibt, wo sie ist, bis du weitergehst oder antwortest. Nichts zu archivieren, nichts aufzuräumen.",
     "calloutsLabel": "Worauf du in der Demo achten kannst",
     "hintsLabel": "In der Demo",
     "hintCmdk": "alles, beim Namen",
