@@ -2,7 +2,7 @@ import { and, asc, eq, gt, inArray, sql, type SQL } from "drizzle-orm";
 import {
   accountSettings, accountSyncState, approvals, auditLog, changeLog, drafts, folderState, mailboxes,
   messageBodies, messageStates, messages, rules as rulesTbl, recordChange,
-  weAnsweredThisSenderWhere, type Tx, auditAction,} from "@trafficflow/db";
+  ruleNamesSenderSql, weAnsweredThisSenderWhere, type Tx, auditAction,} from "@trafficflow/db";
 import {
   migrationBulkPlacement, silentLogger,
   type Destination, type Logger, type NormalizedMessage,
@@ -420,10 +420,7 @@ async function selectCandidates(
       select 1 from ${rulesTbl} r
        where r.account_id = ${messages.accountId}
          and r.enabled = true
-         and (
-           (r.kind = 'sender' and lower(r.match) = lower(${messages.fromAddress}))
-           or (r.kind = 'domain' and lower(r.match) = split_part(lower(${messages.fromAddress}), '@', 2))
-         )
+         and ${ruleNamesSenderSql(dialect(t), { kind: sql`r.kind`, match: sql`r.match` }, sql`lower(${messages.fromAddress})`)}
     )`,
     // 2 — the user has triaged this message.
     sql`not exists (

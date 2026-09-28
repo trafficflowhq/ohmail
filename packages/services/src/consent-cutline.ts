@@ -3,8 +3,8 @@ import { DEFAULT_DORMANCY_DAYS, LEGACY_NEWS_FOLDER, type ScreeningScope } from "
 import type { ServiceContext } from "./context.js";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import {
-  activeSenderExpr, anyOf, cutlineInstant, destinationIsDecisionSql, resolveCutline, senderIsDecidedSql,
-  senderIsOwnSql,
+  activeSenderExpr, anyOf, cutlineInstant, destinationIsDecisionSql, resolveCutline, ruleMatchKeySql,
+  senderIsDecidedSql, senderIsOwnSql,
 } from "@trafficflow/db";
 
 /**
@@ -153,12 +153,12 @@ export async function cutlineCounts(
     -- and the same sender was first-time waiting on one screen and already decided on the other
     -- (the 2026-09-16 ruling). One expression now, three readers.
     decided_sender as (
-      select lower(match) m from rules
+      select ${ruleMatchKeySql(sql`match`)} m from rules
        where account_id = ${d.castUuid(ctx.accountId)} and enabled
          and kind = 'sender' and ${destinationIsDecisionSql(sql`destination`)}
     ),
     decided_domain as (
-      select lower(match) m from rules
+      select ${ruleMatchKeySql(sql`match`)} m from rules
        where account_id = ${d.castUuid(ctx.accountId)} and enabled
          and kind = 'domain' and ${destinationIsDecisionSql(sql`destination`)}
     ),

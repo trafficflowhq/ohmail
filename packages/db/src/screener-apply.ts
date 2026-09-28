@@ -6,6 +6,7 @@ import { AccountErasedError, readAccountErasedAt } from "./erasure-fence.js";
 import { readOrganizerRole } from "./organizer-role.js";
 import { recordLearningSignal } from "./learning-signal.js";
 import { upsertDesiredSeenMany } from "./flag-intent.js";
+import { ruleMatchKeySql } from "./rule-match-sql.js";
 
 /**
  * `@trafficflow/core/rule-order#RULE_PRIORITY_MAX`, copied: this package does not import core.
@@ -521,7 +522,7 @@ export async function applyScreenerDecision(
         (await tx.select({ priority: rulesTbl.priority, destination: rulesTbl.destination }).from(rulesTbl)
           .where(and(
             eq(rulesTbl.accountId, accountId), eq(rulesTbl.enabled, true), eq(rulesTbl.kind, "domain"),
-            sql`lower(${rulesTbl.match}) = ${domain}`,
+            sql`${ruleMatchKeySql(rulesTbl.match)} = ${domain}`,
           ))).map((r) => ({ priority: r.priority, destination: canonicalNewsSpelling(r.destination) })),
         canonicalNewsSpelling(appliedFolder), 0,
       ) ?? 0
@@ -558,7 +559,7 @@ export async function applyScreenerDecision(
       eq(rulesTbl.accountId, accountId),
       eq(rulesTbl.enabled, true),
       eq(rulesTbl.kind, scope === "domain" ? "domain" : "sender"),
-      sql`lower(${rulesTbl.match}) = ${scope === "domain" ? domain : address}`,
+      sql`${ruleMatchKeySql(rulesTbl.match)} = ${scope === "domain" ? domain : address}`,
       isNull(rulesTbl.subjectContains),
       isNull(rulesTbl.bodyContains),
       ne(rulesTbl.destination, appliedFolder),

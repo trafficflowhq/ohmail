@@ -3,6 +3,7 @@ import { folderState, mailboxes, messages } from "./schema-mail.js";
 import { recordChange, type LedgerTx, type Tx } from "./change-log.js";
 import type { Dialect } from "./dialect/index.js";
 import { CUTLINE_GATE_FOLDER } from "./screener-cutline.js";
+import { ruleNamesSenderSql } from "./rule-match-sql.js";
 
 /**
  * THE ACCOUNT'S OWN ADDRESSES, AS THE ORGANIZER READS THEM — every mailbox row of the account,
@@ -56,8 +57,7 @@ export async function releaseOwnMailAtGate(
         select 1 from rules rg
          where rg.account_id = ${messages.accountId}
            and rg.enabled
-           and ((rg.kind = 'sender' and trim(lower(rg.match)) = ${from})
-             or (rg.kind = 'domain' and trim(lower(rg.match)) = ${d.domainOf(messages.fromAddress)}))
+           and ${ruleNamesSenderSql(d, { kind: sql`rg.kind`, match: sql`rg.match` }, from)}
       )`,
       sql`not exists (select 1 from message_states ms where ms.message_id = ${messages.id} and ms.state <> 'none')`,
       sql`not exists (select 1 from drafts dr where dr.in_reply_to_message_id = ${messages.id})`,

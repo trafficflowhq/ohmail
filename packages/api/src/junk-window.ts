@@ -3,7 +3,7 @@ import { dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole, fenceErased,
   contacts, folderState, junkRescues, junkSweepCandidateWhere, mailboxes, messages,
-  recordRuleDelta, rules as rulesTbl, type LedgerTx, type Tx,
+  recordRuleDelta, ruleMatchKeySql, rules as rulesTbl, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import {
   FOLDER_PAGE_MAX, epochOf, sameEpoch,
@@ -440,7 +440,7 @@ async function allowSender(
     .where(and(
       eq(rulesTbl.accountId, accountId),
       eq(rulesTbl.kind, "sender"),
-      eq(rulesTbl.match, addr),
+      sql`${ruleMatchKeySql(rulesTbl.match)} = ${addr}`,
       eq(rulesTbl.destination, SPAM_RULE_DESTINATION),
       eq(rulesTbl.enabled, true),
     ))
@@ -458,7 +458,7 @@ async function allowSender(
     .where(and(
       eq(rulesTbl.accountId, accountId),
       eq(rulesTbl.kind, "sender"),
-      eq(rulesTbl.match, addr),
+      sql`${ruleMatchKeySql(rulesTbl.match)} = ${addr}`,
       eq(rulesTbl.enabled, true),
       inArray(rulesTbl.destination, [...ALLOW_SIDE]),
       isNull(rulesTbl.subjectContains),

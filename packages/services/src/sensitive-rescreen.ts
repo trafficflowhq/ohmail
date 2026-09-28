@@ -1,7 +1,8 @@
 import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
 import {
   mailboxes, messages, messageBodies, folderState, messageStates, drafts, approvals,
-  rules as rulesTbl, auditLog, changeLog, recordChange, type Tx, auditAction,} from "@trafficflow/db";
+  rules as rulesTbl, auditLog, changeLog, recordChange, ruleNamesSenderSql, type Tx, auditAction,} from "@trafficflow/db";
+import { dialect } from "@trafficflow/db/dialect";
 import {
   DEFAULT_OHBOX_POLICY, authVerdictFromHeaders, evaluateRules,
   silentLogger, type Destination, type Logger, type NormalizedMessage, type Rule,
@@ -669,10 +670,7 @@ async function selectCandidates(
          and r.enabled = true
          and r.subject_contains is null
          and r.body_contains is null
-         and (
-           (r.kind = 'sender' and lower(r.match) = lower(${messages.fromAddress}))
-           or (r.kind = 'domain' and lower(r.match) = split_part(lower(${messages.fromAddress}), '@', 2))
-         )
+         and ${ruleNamesSenderSql(dialect(t), { kind: sql`r.kind`, match: sql`r.match` }, sql`lower(${messages.fromAddress})`)}
     )`,
     // 3 — the user has triaged this message.
     sql`not exists (

@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import {
   auditAction, auditLog, contacts, fencedAccountWrite, folderState, learningSignals, messages,
-  recordChange, recordRuleDelta, rules as rulesTbl, SCREENER_FOLDER, admitsDestination,
+  recordChange, recordRuleDelta, ruleMatchKeySql, rules as rulesTbl, SCREENER_FOLDER, admitsDestination,
   SCREENER_ACT_TRIGGER_PREFIX, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -162,7 +162,8 @@ async function release(
 /**
  * The auto-act's own denials over a correspondent. A promoted denying SENDER rule counts only
  * when every Screener decision on record about that sender came from the act itself
- * (`screener:auto:`) — a rule the person made by pressing is theirs and stands.
+ * (`screener:auto:`) — a rule the person made by pressing is theirs and stands. The act records
+ * the rule's own spelling as the signal's sender, so both sides are keyed as `ruleMatchKey` keys.
  */
 async function retireAutoActRules(db: Tx, accountId: string, limit: number, now: Date): Promise<number> {
   const denying = await db.select({ id: rulesTbl.id, match: rulesTbl.match, destination: rulesTbl.destination })
@@ -176,14 +177,14 @@ async function retireAutoActRules(db: Tx, accountId: string, limit: number, now:
         select 1 from ${learningSignals} ls
          where ls.account_id = ${rulesTbl.accountId}
            and ls.kind = 'screener'
-           and lower(ls.sender_address) = lower(${rulesTbl.match})
+           and ${ruleMatchKeySql(sql`ls.sender_address`)} = ${ruleMatchKeySql(rulesTbl.match)}
            and ls.triggering_action_id like ${`${SCREENER_ACT_TRIGGER_PREFIX}%`}
       )`,
       sql`not exists (
         select 1 from ${learningSignals} ls
          where ls.account_id = ${rulesTbl.accountId}
            and ls.kind = 'screener'
-           and lower(ls.sender_address) = lower(${rulesTbl.match})
+           and ${ruleMatchKeySql(sql`ls.sender_address`)} = ${ruleMatchKeySql(rulesTbl.match)}
            and ls.triggering_action_id not like ${`${SCREENER_ACT_TRIGGER_PREFIX}%`}
       )`,
     ))

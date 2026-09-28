@@ -1,6 +1,7 @@
 import { sql, type SQL } from "drizzle-orm";
 import type { Dialect } from "./dialect/index.js";
 import { NEWS_FOLDER, LEGACY_NEWS_FOLDER } from "./screener-apply.js";
+import { ruleNamesSenderSql } from "./rule-match-sql.js";
 
 /**
  * The cutline, as SQL — one implementation of "is this sender still worth a decision", for every
@@ -202,14 +203,11 @@ export function destinationIsDecisionSql(destination: SQL): SQL {
  * A DECISION is an enabled `sender`/`domain` rule naming the author and sending them anywhere but
  * the gate ({@link CUTLINE_DECIDED_DESTINATIONS} — Spam and Screened included since 0.19.2), or a
  * `contacts` row; a rule pinning the sender TO the gate says "keep asking me" and alone defeats
- * the contact arm. `trim(lower(match))` is `matchPredicate`'s normalisation in SQL, so the set
- * this excludes is the set a rule moves, and the domain arm goes through {@link Dialect.domainOf}.
+ * the contact arm. {@link ruleNamesSenderSql} is `matchPredicate`'s normalisation in SQL, so
+ * the set this excludes is the set a rule moves.
  */
 export function senderIsDecidedSql(d: Dialect, accountId: string, senderExpr: SQL): SQL {
-  const claims = sql`(
-       (rd.kind = 'sender' and trim(lower(rd.match)) = ${senderExpr})
-    or (rd.kind = 'domain' and trim(lower(rd.match)) = ${d.domainOf(senderExpr)})
-  )`;
+  const claims = ruleNamesSenderSql(d, { kind: sql`rd.kind`, match: sql`rd.match` }, senderExpr);
   const ruleFor = (side: SQL): SQL => sql`exists (
     select 1 from rules rd
      where rd.account_id = ${d.castUuid(accountId)}
@@ -247,10 +245,7 @@ export function senderScreenedOutByPersonSql(
        and rp.enabled
        and rp.person_decided_at is not null
        and rp.destination in ${deny}
-       and (
-            (rp.kind = 'sender' and trim(lower(rp.match)) = ${senderExpr})
-         or (rp.kind = 'domain' and trim(lower(rp.match)) = ${d.domainOf(senderExpr)})
-       )
+       and ${ruleNamesSenderSql(d, { kind: sql`rp.kind`, match: sql`rp.match` }, senderExpr)}
   )`;
 }
 

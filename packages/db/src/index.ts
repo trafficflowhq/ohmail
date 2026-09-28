@@ -24,6 +24,8 @@ export { autoReplyByUsWhere } from "./auto-reply-by-us.js";
 // "Did the person answer this sender" — ONE spelling, read by ohbox-tidy, rule-retro and
 // screener-auto. See the module: three copies asked thread membership instead.
 export { weAnsweredThisSenderWhere } from "./we-answered.js";
+// A rule's `match` as SQL keys it, and whether it names a sender: ONE spelling for every reader.
+export { ruleMatchKeySql, ruleNamesSenderSql } from "./rule-match-sql.js";
 export {
   readDrainCursor, writeDrainCursor, UNSUB_DRAIN_PASS, type DrainCursor,
 } from "./unsubscribe-drain-cursor.js";

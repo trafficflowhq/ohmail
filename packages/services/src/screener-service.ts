@@ -14,7 +14,7 @@ import {
   // 0.14.1, 0.14.1 — the request path. See `screener-apply.ts` and `organizer-role.ts` in
   // `@trafficflow/db` for why the transactional core and the eligibility read live there.
   resolveCutline, senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type ResolvedCutline,
-  heldRowById, applyScreenerDecision, AccountErasedError, readAccountErasedAt, domainOf,
+  heldRowById, applyScreenerDecision, AccountErasedError, readAccountErasedAt, domainOf, ruleNamesSenderSql,
   readRequestEligibility, decisionCanBeApplied,
   listOutstandingForAccount,
   OrganizedElsewhereError, MailboxNotFoundError, ringFilingDoorbell,
@@ -1627,8 +1627,7 @@ export class ScreenerReadService {
       select 1 from organizer_requests o
        where o.account_id = ${d.castUuid(ctx.accountId)}
          and o.state in ('pending', 'sent')
-         and ((${field("scope")} = 'sender' and lower(${field("match")}) = ${sender})
-           or (${field("scope")} = 'domain' and lower(${field("match")}) = ${d.domainOf(sender)}))
+         and ${ruleNamesSenderSql(d, { kind: field("scope"), match: field("match") }, sender)}
     )`;
     // scoped-by: `reps` is the account-scoped messages subquery (eq messages.accountId, ctx.accountId)
     const [row] = await ctx.db.select({ n: sql<number | string>`count(*)` }).from(reps)

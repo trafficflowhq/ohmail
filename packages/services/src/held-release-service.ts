@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
   accountSettings, auditAction, auditLog, destinationIsDecisionSql, folderState, mailboxes,
-  messages, recordRuleDelta, rules as rulesTbl, type LedgerTx, type Tx,
+  messages, recordRuleDelta, ruleNamesSenderSql, rules as rulesTbl, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { SCREENER_FOLDER } from "./screener-service.js";
@@ -161,15 +161,11 @@ function decidedRule(accountId: string) {
  * twin: the set this COUNTS and the set the pass MOVES are offered as one number. The domain arm
  * goes through {@link Dialect.domainOf} because the phone bundle loads this module, and a pg-only
  * `substring … position` would crash the release screen (`dialect-census.test.ts` refuses it).
- * `trim(lower(…))` is the SQL spelling of the pass's `ruleMatchKey(rule.match)`, spaces only, and
- * both stores have both functions.
+ * `ruleNamesSenderSql` is the SQL spelling of the pass's `ruleMatchKey(rule.match)`, spaces only,
+ * on both stores.
  */
-const ruleClaimsSender = (d: ReturnType<typeof dialect>) => sql`(
-     (${rulesTbl.kind} = 'sender'
-      and trim(lower(${rulesTbl.match})) = lower(${messages.fromAddress}))
-  or (${rulesTbl.kind} = 'domain'
-      and trim(lower(${rulesTbl.match})) = ${d.domainOf(messages.fromAddress)})
-)`;
+const ruleClaimsSender = (d: ReturnType<typeof dialect>) =>
+  ruleNamesSenderSql(d, { kind: rulesTbl.kind, match: rulesTbl.match }, sql`lower(${messages.fromAddress})`);
 
 /** The screen's rows: every group with mail stuck behind it, largest first. */
 export async function heldReleaseGroups(

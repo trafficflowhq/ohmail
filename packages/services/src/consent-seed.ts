@@ -3,8 +3,8 @@ import { dialect } from "@trafficflow/db/dialect";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import {
   accountSettings, contacts, mailboxes, mailboxProfileMirror, messageBodies, messages,
-  recordChanges, recordRuleDelta, rules, PROFILE_SIGNATURE_MAX, TRAVELLING_SIGNATURE_HTML_MAX_BYTES,
-  type LedgerTx, type OrganizedBy, type Tx,
+  recordChanges, recordRuleDelta, ruleMatchKeySql, rules, PROFILE_SIGNATURE_MAX,
+  TRAVELLING_SIGNATURE_HTML_MAX_BYTES, type LedgerTx, type OrganizedBy, type Tx,
 } from "@trafficflow/db";
 import { listMailboxUserFolders, listUserFolders } from "./folders.js";
 import { bridgeTx, type ServiceContext } from "./context.js";
@@ -467,7 +467,7 @@ async function decidedSenders(
         eq(rules.accountId, accountId),
         eq(rules.kind, "sender"),
         eq(rules.enabled, true),
-        inArray(sql`lower(${rules.match})`, part),
+        inArray(ruleMatchKeySql(rules.match), part),
       ));
     for (const r of rows) out.add(ruleMatchKey(r.match));
   }

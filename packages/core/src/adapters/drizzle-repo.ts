@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass, readOwnAddresses, releaseOwnMailAtGate } from "@trafficflow/db";
+import { accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, ExternalOverrideInput, ExternalOverrideOutcome,
   StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
@@ -2373,10 +2373,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
            and r.enabled = true
            and r.subject_contains is null
            and r.body_contains is null
-           and (
-             (r.kind = 'sender' and lower(r.match) = lower(${messages.fromAddress}))
-             or (r.kind = 'domain' and lower(r.match) = split_part(lower(${messages.fromAddress}), '@', 2))
-           )
+           and ${ruleNamesSenderSql(this.d, { kind: sql`r.kind`, match: sql`r.match` }, sql`lower(${messages.fromAddress})`)}
       )`,
     ];
     if (opts.afterId) filters.push(sql`${messages.id} > ${this.d.castUuid(opts.afterId)}`);

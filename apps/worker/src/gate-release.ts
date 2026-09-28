@@ -3,7 +3,7 @@ import {
   accountSettings, approvals, autoReplyByUsWhere, contacts, drafts, folderState, mailboxes,
   messageStates, messages, recordChange, recordRuleDelta, rules as rulesTbl,
   AccountErasedError, readAccountErasedAt,
-  CUTLINE_ALLOW_DESTINATIONS, type LedgerTx, type Tx,
+  CUTLINE_ALLOW_DESTINATIONS, ruleNamesSenderSql, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { silentLogger, type Destination, type Logger } from "@trafficflow/core";
 import { dialect } from "@trafficflow/db/dialect";
@@ -110,8 +110,7 @@ const ruleClaimsAuthor = (t: Tx, side: "allow" | "any") => {
        and rg.enabled
        and rg.kind in ('sender', 'domain')
        ${side === "allow" ? sql`and rg.destination in ${allow}` : sql``}
-       and ((rg.kind = 'sender' and trim(lower(rg.match)) = lower(${messages.fromAddress}))
-         or (rg.kind = 'domain' and trim(lower(rg.match)) = ${d.domainOf(messages.fromAddress)}))
+       and ${ruleNamesSenderSql(d, { kind: sql`rg.kind`, match: sql`rg.match` }, sql`lower(${messages.fromAddress})`)}
   )`;
 };
 
@@ -182,10 +181,7 @@ export async function gateReleasePass(
           select 1 from ${messages}
             join ${folderState} on ${folderState.messageId} = ${messages.id}
            where ${atTheGate(accountId)}
-             and ((${rulesTbl.kind} = 'sender'
-                   and trim(lower(${rulesTbl.match})) = lower(${messages.fromAddress}))
-               or (${rulesTbl.kind} = 'domain'
-                   and trim(lower(${rulesTbl.match})) = ${d.domainOf(messages.fromAddress)}))
+             and ${ruleNamesSenderSql(d, { kind: rulesTbl.kind, match: rulesTbl.match }, sql`lower(${messages.fromAddress})`)}
         )`,
       ))
       .orderBy(asc(rulesTbl.id))
