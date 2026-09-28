@@ -264,14 +264,6 @@ and Version labels, the default name of a desktop that paired without one, the p
 and its Einordnen action. Every screen now addresses the reader as du. The keyboard hints under
 the lists read whole in German, and the phone's Screener doorbell no longer says "Screener" twice.
 
-### Known issue — Android
-
-Android builds up to 0.25.3 were made without two fixes this repository carries for the phone's TLS
-transport and mail sender. On those builds an outgoing server on a STARTTLS port (587) does not
-send, and adding a mailbox on port 143 fails and closes the app; implicit TLS on 465 and 993 works.
-A valid certificate for a different name than the server's is accepted on those builds. The next
-Android build carries both fixes. iOS and the desktop are not affected.
-
 ### Answering the message you have open moves it to Earlier
 <!-- changes: fix-026-an-answer-files-the-open-row.md -->
 
@@ -297,6 +289,14 @@ organizing yourself stays stopped, and one that another ohmail install took over
 was closed stays with it. The web app no longer says the subscription has ended right after you
 pay, notifications turned back on after the payment are kept, and the catch-up note says since when
 ohmail is catching up, without a count.
+
+### Known issue — Android
+
+Android builds up to 0.25.3 were made without two fixes this repository carries for the phone's TLS
+transport and mail sender. On those builds an outgoing server on a STARTTLS port (587) does not
+send, and adding a mailbox on port 143 fails and closes the app; implicit TLS on 465 and 993 works.
+A valid certificate for a different name than the server's is accepted on those builds. The next
+Android build carries both fixes. iOS and the desktop are not affected.
 
 ## [0.25.3] — 2026-09-27
 
