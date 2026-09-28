@@ -894,18 +894,20 @@ export function useShellCompose({
     return best;
   });
   /**
-   * THE LANE TAKES THE ROW, and the editor its text: the row's, unless this browser holds typing
-   * the row has not had yet (`scratch` differs and the row has not moved since this browser last
-   * wrote it). `scratch` null is an explicit open of the row. The audience, sender and subject
-   * live on the row only, so they are restored where they differ from the derived ones.
+   * THE LANE TAKES THE ROW, and the editor its text: the row's, unless this browser holds typing the
+   * row has not had yet (it last wrote this row, which has not moved since). Typing this browser never
+   * saved beside a row written elsewhere writes over neither: it opens as its own reply. `scratch`
+   * null is an explicit open of the row. The audience, sender and subject live on the row only.
    */
   const adoptReplyRow = useStableCallback((
     lane: string, d: EngineDraft, text: string, scratch: RichValue | null, all: boolean,
   ): RichValue => {
-    replyRows.current.set(lane, { row: d.id, seen: true });
     const meta = readReplyMeta(lane);
-    const moved = meta.row?.id === d.id && meta.row.at !== d.updatedAt;
+    const ours = meta.row?.id === d.id;
+    const moved = ours && meta.row!.at !== d.updatedAt;
     const rowWins = scratch === null || isRichEmpty(scratch) || moved;
+    if (!rowWins && !ours && scratch!.text.trim() !== text.trim()) return scratch!;
+    replyRows.current.set(lane, { row: d.id, seen: true });
     const parent = reader.get<EngineMessage>("message", lane) ?? null;
     const derived = parent ? replySubject(parent.subject) : d.subject;
     const subject = rowWins || meta.subject === undefined ? (d.subject !== derived ? d.subject : undefined) : meta.subject;
