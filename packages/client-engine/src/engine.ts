@@ -5310,12 +5310,14 @@ export class OhmailEngine {
    * The re-read is not a courtesy: the server moves nothing synchronously (it writes the intent
    * and the organizer's reconciler carries it out), so the only honest thing the screen can say
    * straight afterwards is what is left. Returns the message count the press screened, which is
-   * what a surface reports.
+   * what a surface reports. The press writes each message's move into the log, so one drain
+   * after the answer shows the moved mail; never awaited, so the sentence is not held behind it.
    */
   async screenUnscreenedSenders(addresses?: readonly string[]): Promise<number> {
     const press = this.adapter.screenUnscreened;
     if (!press) return 0;
     const out = await press.call(this.adapter, addresses);
+    void this.syncFresh().catch(() => { /* the press landed; the next poll catches up */ });
     await this.refreshUnscreened();
     return out.total;
   }
