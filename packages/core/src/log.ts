@@ -233,6 +233,10 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // chose, the tail's turn count, and how long a doorbell waited for its visit. Integers from a
   // clock and closed section names, naming no mailbox content.
   "rotationMs", "tailMs", "tailWallMs", "turns", "sections", "section", "ms", "wakeLatencyMs",
+  // A WRITE THE CLOUD DOOR FORWARDED (`cloud_write_forwarded`, `cloud_write_refused`), added WITH
+  // the call site: the matched route PATTERN (`:id` placeholders, never an id) and a sixteen-hex
+  // prefix of the Idempotency-Key's sha256, which matches the account's record and replays nothing.
+  "routeClass", "keyHash",
   // The nightly account sweep's counts (`account_lifecycle_pass`): accounts with a lifecycle
   // block, notices owed with no mailer configured, and erasures it named for the erase door.
   "withLifecycle", "unmailable", "due",

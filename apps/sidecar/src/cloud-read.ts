@@ -131,10 +131,14 @@ export const READ_ROUTES: ReadRoute[] = [
       const cursor = url.searchParams.get("cursor");
       const limitRaw = url.searchParams.get("limit");
       const limit = num(limitRaw);
+      // The labelled tail alone, a closed set at the read exactly as the local door's route reads
+      // it; anything else is the ordinary walk. Dropped, the window's tail rehydrate ran that walk.
+      const phase = url.searchParams.get("phase") === "tail" ? "tail" as const : undefined;
       return json(
         await syncService.getSnapshot(ctx, {
           ...(cursor ? { cursor } : {}),
           ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
+          ...(phase ? { phase } : {}),
         }),
       );
     },

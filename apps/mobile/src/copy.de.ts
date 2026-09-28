@@ -1154,6 +1154,15 @@ export const DE: Deck = {
       : `Beim Schließen von ohmail warteten noch ${n} Nachrichten — jetzt verschoben.`,
   routingReplayExpired: (n: number) =>
     `${n === 1 ? "1 Regel wurde" : `${n} Regeln wurden`} nie angelegt — seit der Anfrage ist zu viel Zeit vergangen. Verschiebe die Post noch einmal, wenn du die Regel weiterhin willst.`,
+  /* Das Angebot der Ohbox — die `screener.unscreened*`-Sätze des Web-Katalogs, Wort für Wort. */
+  unscreenedLead: (n: number) =>
+    n === 1
+      ? "1 Nachricht von einem Absender, über den du nie entschieden hast, liegt noch im Posteingang auf deinem Mailserver."
+      : `${n} Nachrichten von Absendern, über die du nie entschieden hast, liegen noch im Posteingang auf deinem Mailserver.`,
+  unscreenedAll: (n: number) => `${n} in den Screener`,
+  unscreenedMoved: (n: number) => `${n} in den Screener gelegt. Dein Organizer verschiebt sie beim nächsten Durchlauf.`,
+  unscreenedMovedNone: "Nichts mehr zu screenen.",
+  unscreenedFailed: "Screenen nicht möglich. Versuch es noch einmal.",
   toastRead: "Als gelesen markiert.",
   toastUnread: "Als ungelesen markiert.",
   /* ALLES ALS GELESEN — der `markAll`-Namespace des Web-Katalogs. */

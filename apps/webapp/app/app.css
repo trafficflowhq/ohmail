@@ -711,18 +711,20 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .sync-bar a:hover {
   background: oklch(1 0 0 / 0.75);
 }
+/* Dark: the pill is the face's deepest ground, hovered one step up. A white lift brightens the
+   ground under a mid-luminance accent, and the link read under 4.5:1 on it. */
 [data-theme="dark"] .sync-bar a {
-  background: oklch(1 0 0 / 0.08);
+  background: var(--canvas);
 }
 [data-theme="dark"] .sync-bar a:hover {
-  background: oklch(1 0 0 / 0.14);
+  background: var(--panel);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]):not([data-theme="dark"]) .sync-bar a {
-    background: oklch(1 0 0 / 0.08);
+    background: var(--canvas);
   }
   :root:not([data-theme="light"]):not([data-theme="dark"]) .sync-bar a:hover {
-    background: oklch(1 0 0 / 0.14);
+    background: var(--panel);
   }
 }
 /* …and `stopped` keeps its own, louder pair, declared after so it wins. */
@@ -1038,18 +1040,19 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .rail-sync a:hover {
   background: oklch(1 0 0 / 0.75);
 }
+/* The rail box's dark pill: the deepest ground, as the strip's (see `.sync-bar a`). */
 [data-theme="dark"] .rail-sync a {
-  background: oklch(1 0 0 / 0.08);
+  background: var(--canvas);
 }
 [data-theme="dark"] .rail-sync a:hover {
-  background: oklch(1 0 0 / 0.14);
+  background: var(--panel);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]):not([data-theme="dark"]) .rail-sync a {
-    background: oklch(1 0 0 / 0.08);
+    background: var(--canvas);
   }
   :root:not([data-theme="light"]):not([data-theme="dark"]) .rail-sync a:hover {
-    background: oklch(1 0 0 / 0.14);
+    background: var(--panel);
   }
 }
 /* BUSY is the quietest thing the rail says. `importing` and `awaiting` report work the server

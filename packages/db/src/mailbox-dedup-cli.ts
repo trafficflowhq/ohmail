@@ -8,6 +8,10 @@ import {
 import { assertExpectedHost, assertSessionUrl, PROD_DB_HOST_ENV } from "./setup-prod.js";
 import { onNotice } from "./notices.js";
 import { pgTlsOptions } from "./pg-tls.js";
+import { resetCeilings } from "./migrate.js";
+
+/** The ceilings this command lifts for its own scan, and resets before it closes. */
+const LIFTED = ["statement_timeout", "idle_in_transaction_session_timeout"] as const;
 
 /**
  * `pnpm db:mailboxes:dedup` — the operator's half of {@link findActiveAddressDuplicates}. Default
@@ -63,12 +67,13 @@ async function main(): Promise<number> {
   const client = postgres(url, { ...pgTlsOptions(url), max: 1, onnotice: onNotice });
   const db = drizzle(client);
   const now = new Date();
+  let lifted = false;
   try {
     // `client.ts#ROLE_DEFAULT_TIMEOUTS` is a ROLE-ONLY default (every database this role opens,
     // not only production's), so this scan across the real mailbox/message tables must not
     // silently inherit a 55 s ceiling.
-    await client.unsafe(`set statement_timeout = 0`);
-    await client.unsafe(`set idle_in_transaction_session_timeout = 0`);
+    for (const guc of LIFTED) await client.unsafe(`set ${guc} = 0`);
+    lifted = true;
     console.log(`[db:mailboxes:dedup] target host=${new URL(url).hostname}`);
     const groups = await findActiveAddressDuplicates(db);
     if (groups.length === 0) {
@@ -114,6 +119,8 @@ async function main(): Promise<number> {
     console.log(`[db:mailboxes:dedup] OK — ${outcomes.length} group(s) resolved. Re-run the migration.`);
     return 0;
   } finally {
+    // A session pooler hands this backend to its next client as it is left.
+    if (lifted) await resetCeilings(client, (m) => console.error(`[db:mailboxes:dedup] ${m}`), LIFTED);
     await client.end({ timeout: 5 });
   }
 }
