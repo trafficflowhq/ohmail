@@ -894,6 +894,7 @@ export interface JunkItemWire {
     seen: boolean;
     origin: "verdict" | "provider";
     rescue?: "queued" | "refused";
+    rescueId?: string;
 }
 
 export interface JunkMailboxWire {
